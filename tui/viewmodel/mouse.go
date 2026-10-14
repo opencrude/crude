@@ -550,6 +550,19 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// pointerReleaseWindow returns the floating window that owns a release: the
+// one whose content Host captured the pointer (passive popovers capture drags
+// without ever taking focus), else the focused window.
+func (m *App) pointerReleaseWindow() *wm.FloatingWindow {
+	windows := m.windowManager.Windows()
+	for i := len(windows) - 1; i >= 0; i-- {
+		if frame, ok := windows[i].Content.(*ui.WindowFrameWidget); ok && frame.Host() != nil && frame.Host().HasPointerCapture() {
+			return windows[i]
+		}
+	}
+	return m.windowManager.Focused()
+}
+
 func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	mouse := msg.Mouse()
@@ -560,9 +573,16 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		// The content never received the initial click (dispatchMouseClick returns
 		// early when IsDragging()), so forwarding a stray release would confuse it.
 		if released == nil {
-			if fw := m.windowManager.Focused(); fw != nil {
+			if fw := m.pointerReleaseWindow(); fw != nil {
+				frame, _ := fw.Content.(*ui.WindowFrameWidget)
+				owned := frame != nil && frame.Host() != nil && frame.Host().HasPointerCapture()
 				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 					cmds = append(cmds, cmd)
+				}
+				if owned {
+					// The window owned this gesture; the shell beneath never saw
+					// its press and must not receive its release.
+					return m, tea.Batch(cmds...)
 				}
 			}
 		}
@@ -588,7 +608,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 
 	switch region {
 	case regionSessionDeck:
-		return m, m.handleShellPointer(msg)
+		return m, tea.Batch(append(cmds, m.handleShellPointer(msg))...)
 
 	case regionEditor:
 		cmd := m.handleShellPointer(msg)
@@ -602,23 +622,23 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 			cmds = append(cmds, m.routeInputMouse(msg)...)
 			return m, tea.Batch(cmds...)
 		}
-		return m, m.handleShellPointer(msg)
+		return m, tea.Batch(append(cmds, m.handleShellPointer(msg))...)
 
 	case regionLauncher:
 		if m.launcherHostVisible() {
-			return m, m.handleShellPointer(msg)
+			return m, tea.Batch(append(cmds, m.handleShellPointer(msg))...)
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	case regionChat:
 		if m.Input.InputSelecting() {
 			cmds = append(cmds, m.routeInputMouse(msg)...)
 			return m, tea.Batch(cmds...)
 		}
-		return m, m.handleShellPointer(msg)
+		return m, tea.Batch(append(cmds, m.handleShellPointer(msg))...)
 	}
 
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 // updateDiagHoverPopup checks the editor's hover state and shows/updates a

@@ -29,6 +29,9 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("shell input paint produced no non-empty cells")
 	}
 	plain := bufferPlain(buf)
+	if strings.Contains(plain, "Capability") {
+		t.Fatalf("removed composer capability control remains: %s", plain)
+	}
 	for _, label := range []string{"hello world", "─"} {
 		if !strings.Contains(plain, label) {
 			t.Fatalf("missing shell input label %q:\n%s", label, plain)
@@ -141,15 +144,15 @@ func TestShellInputSlashPopupIncreasesHeight(t *testing.T) {
 	}
 }
 
-func TestShellInputClippedDraftShowsScrollRangeWithoutReplacingActions(t *testing.T) {
+func TestShellInputClippedDraftShowsScrollRangeWithoutCapabilityControl(t *testing.T) {
 	model := input.NewModel(theme.DefaultDark())
 	model.SetInput(strings.Repeat("draft line\n", 24) + "LAST-LINE")
 	screen := New(theme.DefaultDark())
 	screen.Bind(&model)
 	buf := screen.PaintTestBuffer(80, 7)
 	header := PlainRow(buf, 0, 80)
-	if !strings.Contains(header, "↑↓ 20–25/25") || !strings.Contains(header, "+ Capability") {
-		t.Fatalf("clipped input lacks quiet scroll/action chrome: %q", header)
+	if !strings.Contains(header, "↑↓ 20–25/25") || strings.Contains(header, "Capability") {
+		t.Fatalf("clipped input must show only quiet scroll chrome: %q", header)
 	}
 	if !strings.Contains(bufferPlain(buf), "LAST-LINE") {
 		t.Fatal("clipped input did not paint the caret row")

@@ -536,7 +536,7 @@ func (s *Session) HandleFetchModelsForAccount(providerID, accountID, baseURL, st
 	cfg := copyConfig(s.cfg)
 	s.mu.Unlock()
 	_ = providerID // The selected account, not the UI's provider label, owns routing.
-	p, err := cfg.ProviderForAccount(accountID, "")
+	p, err := cfg.ConnectionProvider(accountID)
 	if err != nil {
 		return nil, err
 	}

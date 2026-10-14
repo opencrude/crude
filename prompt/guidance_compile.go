@@ -37,7 +37,8 @@ func CompiledGuidance(digest string, sourceBytes int, manifest, ledger string) s
 
 func GuidanceDeferredResult(errorText string) string {
 	if errorText != "" {
-		return "Error: complete project guidance could not be read; no call in this batch was executed: " + errorText
+		return "Error: complete project guidance could not be read; no call in this batch was executed: " + errorText +
+			". Your run continues. Batches that need this guidance stay deferred while it is unreadable; report the blocker (to your parent or the user) if it persists."
 	}
 	return "Applicable project guidance is new or changed. This call was not executed. Review the supplied complete guidance update before deciding whether to retry."
 }

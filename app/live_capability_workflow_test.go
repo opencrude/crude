@@ -58,7 +58,7 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 	if main.AccountID == "" || main.Model == "" {
 		t.Skip("main agent account and model are not configured")
 	}
-	if _, err := cfg.ProviderForAccount(main.AccountID, main.Model); err != nil {
+	if _, err := cfg.ConnectionProvider(main.AccountID); err != nil {
 		t.Skipf("configured main agent is unavailable: %v", err)
 	}
 	// Explicit test transport selection, never an automatic gateway fallback

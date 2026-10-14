@@ -884,7 +884,9 @@ func TestRunBalancesToolCallsWhenCancelledDuringExecution(t *testing.T) {
 	}
 }
 
-func TestRunContainsToolPanicAndReturnsForSupervisedInspection(t *testing.T) {
+// A tool panic is an ordinary tool error with uncertain effects: the loop
+// continues and the model inspects state, never a parked run awaiting a human.
+func TestRunContainsToolPanicAndContinuesTheLoop(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests.Add(1) == 1 {
@@ -905,8 +907,8 @@ func TestRunContainsToolPanicAndReturnsForSupervisedInspection(t *testing.T) {
 		panic("boom")
 	}
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
-	if requests.Load() != 1 || agent.RunFailureKind() != RecoveryFailurePanic {
-		t.Fatalf("requests = %d, failure=%s; want one request and a parked panic", requests.Load(), agent.RunFailureKind())
+	if requests.Load() != 2 || agent.RunFailure() != nil {
+		t.Fatalf("requests = %d, failure=%v; want the loop to continue after the panic", requests.Load(), agent.RunFailure())
 	}
 	var panicResult *provider.ChatMessage
 	for i := range messages {
@@ -916,7 +918,7 @@ func TestRunContainsToolPanicAndReturnsForSupervisedInspection(t *testing.T) {
 		}
 	}
 	if panicResult == nil || !panicResult.ToolError ||
-		!strings.Contains(panicResult.ContentString(), "panicked") {
+		!strings.Contains(panicResult.ContentString(), "panicked") || !strings.Contains(panicResult.ContentString(), "effects are uncertain") {
 		t.Fatalf("panic tool result = %+v", panicResult)
 	}
 }

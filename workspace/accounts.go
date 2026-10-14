@@ -58,7 +58,7 @@ func (w *Workspace) PrepareAccountModels(templateID string, accountID, baseURL, 
 	if cfg == nil {
 		return func() ([]types.ModelEntry, error) { return nil, fmt.Errorf("account configuration is unavailable") }
 	}
-	p, err := cfg.ProviderForAccount(accountID, "")
+	p, err := cfg.ConnectionProvider(accountID)
 	if err != nil {
 		return func() ([]types.ModelEntry, error) { return nil, err }
 	}
@@ -107,7 +107,7 @@ func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL,
 	draftCfg := &session.Config{
 		Accounts: map[string]provider.Account{account.ID: provider.CloneAccount(account)},
 	}
-	p, err := draftCfg.ProviderForAccount(account.ID, "")
+	p, err := draftCfg.ConnectionProvider(account.ID)
 	if err != nil {
 		return func() ([]types.ModelEntry, error) { return nil, err }
 	}

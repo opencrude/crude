@@ -34,7 +34,7 @@ func IsStructuredTool(name string) bool {
 func IsCollaborationTool(name string) bool {
 	switch name {
 	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control",
-		"publish_report", "artifact_read", "agent_wait", "board_read", "agent_update_claims", "agent_narrow_claims":
+		"publish_report", "artifact_read", "agent_wait", "board_read", "agent_update_claims", "agent_narrow_claims", "agent_configure":
 		return true
 	default:
 		return false

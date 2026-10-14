@@ -35,7 +35,7 @@ func ProductCommands() []Descriptor {
 	add("composer.set", Write, "Edit the exact own bound draft; stage only, never send. Preserves existing reference identities.", `{"text":{"type":"string","maxLength":32768}}`, true, true, "text")
 	add("composer.reference", Write, "Stage an already-existing exact session reference in the own composer, not arbitrary external context or approval.", `{"id":{"type":"string"}}`, true, true, "id")
 	add("composer.send", Communication, "Submit the captured exact own draft through normal immutable input admission; report durable admission, not model completion.", `{}`, true, true)
-	add("capability.picker", Write, "Open normal capability staging UX for the exact own composer; selection never auto-sends or grants execution.", `{}`, true, true)
+	add("capability.picker", Write, "Open the searchable Skills/MCPs activation modal; opening never changes the composer, launches a server or grants access.", `{}`, true, true)
 	add("chat.follow", Write, "Jump the selected exact agent chat to its actual tail and arm following.", `{}`, true, true)
 	add("chat.scroll", Write, "Scroll the selected exact chat in rows and disarm following.", `{"offset":{"type":"integer","minimum":0}}`, true, true, "offset")
 	return out

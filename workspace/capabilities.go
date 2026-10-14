@@ -324,6 +324,9 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 				delete(working.Capabilities.Skills, action.ID)
 			} else {
 				value.Disabled = action.Operation == "disable"
+				if action.Operation == "enable" && value.Mode == "disabled" {
+					value.Mode = "automatic"
+				}
 				working.Capabilities.Skills[action.ID] = value
 			}
 		} else {

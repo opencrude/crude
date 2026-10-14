@@ -234,3 +234,40 @@ func TestPlanHoverRefreshResizeAndAbsentPlan(t *testing.T) {
 	}
 	app.rootHost.CancelPointerCapture()
 }
+
+// The passive plan popover is a reading surface: dragging over its text in the
+// real shell selects it and release copies it, without dismissing the popover
+// mid-drag or touching the composer draft.
+func TestPlanHoverTextIsSelectableAndCopiable(t *testing.T) {
+	app := newFullTestApp(t)
+	app.Tree.Visible = false
+	app.width, app.height = 160, 40
+	app.AddOrchestrator("solo")
+	app.Input.SetInput("retained draft")
+	paintHoverFixture(app, map[string]*activity.Plan{"solo": hoverPlanFixture("Selectable goal", 4)})
+	screen := app.mainPanes.agentViews["solo"].chat
+	anchor := app.planActivityRect(screen)
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 5, Y: anchor.Y})
+	fw := app.overlayHost.Window(ui.OverlayPlanHover)
+	if app.planHover == nil || fw == nil {
+		t.Fatal("plan popover did not open")
+	}
+	x, y := fw.Position()
+	w, h := fw.Size()
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: x + 3, Y: y + 1})
+	app.dispatchMouseClick(tea.MouseClickMsg{X: x + 2, Y: y + 2, Button: tea.MouseLeft})
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: x + w - 2, Y: y + h - 2, Button: tea.MouseLeft})
+	if app.planHover == nil {
+		t.Fatal("dragging over the popover dismissed it")
+	}
+	if !app.planHover.widget.Host().HasPointerCapture() {
+		t.Fatal("drag is not captured by the popover")
+	}
+	_, cmd := app.dispatchMouseRelease(tea.MouseReleaseMsg{X: x + w - 2, Y: y + h - 2, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("releasing a drag over the plan did not copy it")
+	}
+	if app.planHover == nil || app.Input.Value() != "retained draft" {
+		t.Fatalf("selection closed the popover or changed the draft: %q", app.Input.Value())
+	}
+}

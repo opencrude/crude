@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 
 	"crude/agent"
@@ -53,6 +54,11 @@ type SubAgentRunner struct {
 	turnMu         sync.Mutex
 	turnCounts     map[uint64]int
 	turnDone       map[uint64]chan struct{}
+	// connMu guards each live child's current connection and a parent's
+	// pending change, applied at the child's next request boundary.
+	connMu             sync.Mutex
+	activeConnections  map[agent.AgentID]childConnection
+	pendingConnections map[agent.AgentID]childConnection
 }
 
 type childRecoveryOwner struct {
@@ -320,6 +326,24 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	}
 
 	profileInstructions := r.resolveProfile(profileName, category, &spec)
+	connection, err := parseConnectionRequest(params)
+	if err != nil {
+		return tools.ToolResult{}, err
+	}
+	if !connection.empty() {
+		roleEffort := r.currentConfig().GetCategoryConfig(category).ThinkingEffort
+		chosen := connection.resolve(connectionOf(spec), roleEffort)
+		if chosen.Model == "" {
+			chosen.Model = r.currentConfig().GetCategoryConfig(category).Model
+		}
+		if chosen.AccountID == "" {
+			chosen.AccountID = r.currentConfig().GetCategoryConfig(category).AccountID
+		}
+		applyConnection(&spec, chosen)
+		if err := r.validateConnection(spec); err != nil {
+			return tools.ToolResult{}, err
+		}
+	}
 	if err := validateChildReportPermission(spec); err != nil {
 		return tools.ToolResult{}, err
 	}
@@ -448,11 +472,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 	spec.Model = resolvedModelName
 	spec.ThinkingEffort = resolvedThinkingEffort
-	turnCfg := CategoryConfig{
-		AccountID: spec.AccountID, Model: spec.Model, ThinkingEffort: spec.ThinkingEffort,
-		ModelTemperature: spec.ModelTemperature, ModelTopP: spec.ModelTopP,
-	}
-	p, err := cfg.providerForCategory(turnCfg)
+	p, err := cfg.providerForCategory(childProviderConfig(spec))
 	if err != nil {
 		return nil, fmt.Errorf("sub-agent account %q: %w", spec.AccountID, err)
 	}
@@ -506,10 +526,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		return nil, errors.New("parent session database is unavailable")
 	}
 
-	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "template", p.ID, "account", spec.AccountID, "model", resolvedModelName)
-	if spec.ModelContextWindow > 0 {
-		p.SetContextWindow(spec.ModelContextWindow)
-	}
+	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "template", p.ID, "account", spec.AccountID, "model", resolvedModelName, "effort", spec.ThinkingEffort)
 	if spec.ModelInputPrice > 0 {
 		provider.SetModelPrice(resolvedModelName, provider.ModelPrice{
 			InputPricePerToken:       spec.ModelInputPrice,
@@ -553,7 +570,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.ParentID = spec.ParentID
 	a.Policy = spec.Policy
 	r.session.bindAgentPermissionPolicy(a)
-	childTempDir := filepath.Join(r.session.TempDir(), "agents", string(spec.ID))
+	childTempDir := r.childTempDir(spec.ID)
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
 	r.session.observeCommandOutcomes(a.AsyncMgr, string(spec.ID))
 	if err := a.AsyncMgr.SetTempDir(childTempDir); err != nil {
@@ -745,8 +762,10 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 	a.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
-		return tools.ForModel(filteredTools, p.Model), nil
+		return tools.ForModel(agent.FilterToolsForModel(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true, a.Model), a.Model), nil
 	}
+	a.RequestBoundary = r.requestBoundary(handle, recoveryState, supervisor)
+	r.setActiveConnection(spec.ID, connectionOf(spec))
 	r.session.bindAgentControl(subCtx, a, spec.ControlTarget)
 	r.session.bindAgentRuntime(subCtx, a, captypes.RuntimeActor{ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: subSessionID, AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes}, spec.Name)
 
@@ -786,6 +805,42 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	return handle, nil
 }
 
+// childTempDir is the child's private scratch directory, exported to its
+// commands as CRUDE_TEMP_DIR and published in its prompt.
+func (r *SubAgentRunner) childTempDir(id agent.AgentID) string {
+	base := r.session.TempDir()
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, "agents", string(id))
+}
+
+// notifyParentOfRejectedWrite tells the parent that its running child was
+// denied a write, so the parent can extend the child's scope or redirect it.
+// Identical rejections within one run are published once.
+func (r *SubAgentRunner) notifyParentOfRejectedWrite(ctx context.Context, spec agent.SubAgentSpec, handle *agent.SubAgentHandle, target, reason string) {
+	store := r.session.CollaborationStore()
+	if store == nil || spec.ParentID == "" {
+		return
+	}
+	runID := ""
+	if handle != nil {
+		runID, _ = handle.RunIdentity()
+	}
+	digest := sha256.Sum256([]byte(target + "|" + reason))
+	body := fmt.Sprintf("%s (%s, %s) was denied a write to %s: %s. Nothing was changed and it is still running; it was told to stay in scope or ask you. To extend its scope, read its claims and run with agent_inspect, then call agent_update_claims.",
+		spec.Name, spec.Category, spec.ID, target, reason)
+	_, err := store.Publish(context.WithoutCancel(ctx), collaboration.PublishRequest{
+		SenderID: string(spec.ID), SenderName: spec.Name,
+		IdempotencyKey: fmt.Sprintf("write-rejected:%s:%x", runID, digest[:12]),
+		RecipientIDs:   []string{string(spec.ParentID)}, Origin: collaboration.OriginRuntime,
+		Kind: collaboration.EventPeerNote, Body: body,
+	})
+	if err != nil {
+		r.session.logger.Warn("COLLAB", "write_rejection_publish_failed", "agent_id", spec.ID, "error", err.Error())
+	}
+}
+
 func (r *SubAgentRunner) subAgentDBPath(sessionID string) (string, error) {
 	if r == nil || r.session == nil || r.session.logger == nil {
 		return "", nil
@@ -802,64 +857,72 @@ func (r *SubAgentRunner) subAgentDBPath(sessionID string) (string, error) {
 }
 
 // ResumeRecovery creates a fresh volatile attempt for one durable child task.
-// It is called only by the exact incident/generation-fenced session API.
-func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheckpoint) bool {
+// It is called only by the exact incident/generation-fenced session API. Every
+// refusal returns its reason, so neither the human nor the parent is left with
+// a Continue that silently does nothing.
+func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheckpoint) error {
 	if r == nil || r.session == nil || len(parentCheckpoint.OwnerData) == 0 {
-		return false
+		return errors.New("the child task has no recoverable owner record")
 	}
 	var owner childRecoveryOwner
 	if err := json.Unmarshal(parentCheckpoint.OwnerData, &owner); err != nil ||
 		string(owner.Spec.ID) != parentCheckpoint.Status.AgentID {
-		return false
+		return errors.New("the child task's owner record is unreadable or belongs to another agent")
 	}
 	spec := owner.Spec
 	if err := validateChildReportPermission(spec); err != nil {
 		r.session.logger.Warn("SUBAGENT", "report_permission_invalid", "agent_id", spec.ID, "error", err.Error())
-		return false
+		return fmt.Errorf("the child cannot report its result (%w); cancel it and launch a replacement", err)
 	}
 	spec.Policy = agent.ComposePolicy(safety.DefaultPolicy(), spec.PolicyName, spec.Category)
 	// Child session identity is the stable agent ID in the current format.
 	dbPath, err := r.subAgentDBPath(string(spec.ID))
 	if err != nil || dbPath == "" {
-		return false
+		return fmt.Errorf("the child session database path is unavailable: %v", err)
 	}
 	subDB, err := sessiondb.OpenAndMigrate(dbPath)
 	if err != nil {
-		return false
+		return fmt.Errorf("open the child session database: %w", err)
 	}
 	var recoveryAsync *fileio.AsyncCommandManager
-	fail := func() bool {
+	fail := func(err error) error {
 		if recoveryAsync != nil {
 			recoveryAsync.CloseAndWait()
 		}
 		_ = subDB.Close()
-		return false
+		return err
 	}
 	if err := sessiondb.InterruptActiveRecoveries(subDB, string(spec.ID)); err != nil {
-		return fail()
+		return fail(fmt.Errorf("settle the interrupted attempt: %w", err))
 	}
 	childCheckpoint, ok, err := sessiondb.LoadRecoveryCheckpoint(subDB, string(spec.ID), string(spec.ID))
-	if err != nil || !ok || childCheckpoint.Status.ID != parentCheckpoint.Status.ID ||
+	if err != nil {
+		return fail(fmt.Errorf("load the child recovery checkpoint: %w", err))
+	}
+	if !ok || childCheckpoint.Status.ID != parentCheckpoint.Status.ID ||
 		childCheckpoint.Status.Generation != parentCheckpoint.Status.Generation {
-		return fail()
+		return fail(errors.New("the child's durable checkpoint no longer matches this incident; inspect it again"))
 	}
 	childCheckpoint.Status.AgentID = string(spec.ID)
 	if err := r.session.bindChildPlanStore(string(spec.ID), string(spec.ID), subDB); err != nil {
-		return fail()
+		return fail(fmt.Errorf("bind the child plan: %w", err))
 	}
 	if spec.ExecutionID != "" {
 		e, err := r.session.executionService()
 		if err != nil {
-			return fail()
+			return fail(fmt.Errorf("execution service: %w", err))
 		}
 		retained, err := e.Inspect(spec.ExecutionID)
-		if err != nil || !retained.Ready || retained.Removed || retained.Root != spec.ExecutionRoot || retained.Owner.AgentID != string(spec.ID) {
-			return fail()
+		if err != nil {
+			return fail(fmt.Errorf("inspect the child's execution root: %w", err))
+		}
+		if !retained.Ready || retained.Removed || retained.Root != spec.ExecutionRoot || retained.Owner.AgentID != string(spec.ID) {
+			return fail(errors.New("the child's isolated execution root was removed or reassigned; cancel it and launch a replacement"))
 		}
 		for _, pin := range retained.Pins {
 			if pin.AgentID == string(spec.ID) && pin.RunID == spec.ExecutionRunID {
 				if err := r.session.ReleaseExecution(context.Background(), spec.ExecutionID, pin); err != nil {
-					return fail()
+					return fail(fmt.Errorf("release the previous execution pin: %w", err))
 				}
 			}
 		}
@@ -870,26 +933,27 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	if store := r.session.CollaborationStore(); store != nil {
 		claims, claimErr := store.Claims(context.Background(), string(spec.ID), true)
 		if claimErr != nil {
-			return fail()
+			return fail(fmt.Errorf("read the child's claims: %w", claimErr))
 		}
-		if len(claims) > 0 {
-			spec.FileOwnership = spec.FileOwnership[:0]
-			for _, claim := range claims {
-				if claim.RunID == "" {
-					spec.FileOwnership = append(spec.FileOwnership, claim.Path)
-				}
+		// Parent-updated declarations (no run) replace the launch scope. Claims
+		// still bound to the interrupted attempt are released by the runtime
+		// takeover when this attempt registers; they never block continuation.
+		declared := make([]string, 0, len(claims))
+		for _, claim := range claims {
+			if claim.RunID == "" {
+				declared = append(declared, claim.Path)
 			}
-			if len(spec.FileOwnership) == 0 {
-				return fail()
-			}
+		}
+		if len(declared) > 0 {
+			spec.FileOwnership = declared
 		}
 	}
 	if err := r.fileOwnership.ReplaceClaims(spec.ID, spec.Name, spec.FileOwnership); err != nil {
-		return fail()
+		return fail(fmt.Errorf("restore the child's file scope: %w", err))
 	}
 	updatedOwnerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: owner.ProfileInstructions})
 	if err != nil {
-		return fail()
+		return fail(err)
 	}
 	childCheckpoint.OwnerData = updatedOwnerData
 	recoveryState := newRecoveryRunState(parentCheckpoint.PendingInput, &childCheckpoint)
@@ -898,7 +962,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		recoveryState, &parentCheckpoint.Status, r.sender,
 	)
 	if err != nil {
-		return fail()
+		return fail(errors.New("another attempt of this child is already active"))
 	}
 	childPersist, childDiscard := supervisor.Persist, supervisor.Discard
 	supervisor.Persist = func(status recoverytypes.Status) error {
@@ -917,13 +981,13 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		}
 		return parentErr
 	}
-	parkResume := func(kind agent.RecoveryFailureKind, cause error) bool {
+	parkResume := func(kind agent.RecoveryFailureKind, cause error) error {
 		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), parentCheckpoint.Status.Generation)
 		status := supervisor.Park(agent.AttentionRecovery(kind, cause))
 		parent := recoveryState.checkpoint(status)
 		parent.ContextOwnerID = ""
 		r.session.parkRecovery(parent)
-		return fail()
+		return fail(fmt.Errorf("the continuation could not start and the task is parked again (recovery_id %s, generation %d): %w", status.ID, status.Generation, cause))
 	}
 
 	var cfg *Config
@@ -941,7 +1005,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	if cfg == nil {
 		return parkResume(agent.RecoveryFailureConfiguration, errors.New("child session configuration is unavailable"))
 	}
-	p, err := cfg.ProviderForAccount(spec.AccountID, spec.Model)
+	p, err := cfg.providerForCategory(childProviderConfig(spec))
 	if err != nil {
 		return parkResume(agent.RecoveryFailureConfiguration, err)
 	}
@@ -972,7 +1036,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	live.AgentID, live.TurnGeneration = spec.ID, parentCheckpoint.Status.Generation
 	live.Depth, live.ParentID, live.Policy = spec.Depth, spec.ParentID, spec.Policy
 	r.session.bindAgentPermissionPolicy(live)
-	childTempDir := filepath.Join(r.session.TempDir(), "agents", string(spec.ID))
+	childTempDir := r.childTempDir(spec.ID)
 	live.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
 	r.session.observeCommandOutcomes(live.AsyncMgr, string(spec.ID))
 	recoveryAsync = live.AsyncMgr
@@ -1052,8 +1116,10 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	r.SetParentToolFn(r.session.buildToolFn(false, p, spec.ModelModalities))
 	live.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
-		return tools.ForModel(filteredTools, live.Model), nil
+		return tools.ForModel(agent.FilterToolsForModel(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true, live.Model), live.Model), nil
 	}
+	live.RequestBoundary = r.requestBoundary(handle, recoveryState, supervisor)
+	r.setActiveConnection(spec.ID, connectionOf(spec))
 	r.session.bindAgentControl(subCtx, live, spec.ControlTarget)
 	r.session.bindAgentRuntime(subCtx, live, captypes.RuntimeActor{
 		ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: handle.SessionID,
@@ -1068,30 +1134,20 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		TempDir: childTempDir, Model: spec.Model,
 	})
 	if err := r.mgr.Register(handle); err != nil {
-		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), parentCheckpoint.Status.Generation)
-		status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureConfiguration, err))
-		parent := recoveryState.checkpoint(status)
-		parent.ContextOwnerID = ""
-		r.session.parkRecovery(parent)
 		r.interruptSubAgentAttempt(handle)
 		r.session.detachCollaborator(context.Background(), string(spec.ID))
 		subCancel()
-		return fail()
+		return parkResume(agent.RecoveryFailureConfiguration, err)
 	}
 	if err := r.persistResult(handle, agent.SubAgentResult{
 		AgentID: spec.ID, SessionID: handle.SessionID, Name: spec.Name,
 		Category: spec.Category, Status: agent.SubAgentRunning,
 	}); err != nil {
 		r.mgr.MarkInterrupted(spec.ID)
-		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), parentCheckpoint.Status.Generation)
-		status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
-		parent := recoveryState.checkpoint(status)
-		parent.ContextOwnerID = ""
-		r.session.parkRecovery(parent)
 		r.interruptSubAgentAttempt(handle)
 		r.session.detachCollaborator(context.Background(), string(spec.ID))
 		subCancel()
-		return fail()
+		return parkResume(agent.RecoveryFailureStorage, err)
 	}
 	r.wg.Add(1)
 	r.beginTurnChild(spec.ParentTurn)
@@ -1107,7 +1163,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		case <-handle.ResultCh:
 		}
 	}()
-	return true
+	return nil
 }
 
 func restoreChildReportArtifact(handle *agent.SubAgentHandle, messages []provider.ChatMessage) {
@@ -1158,6 +1214,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	var terminalDone *agent.AgentEvent
 	var terminalPublicationErr error
 	defer r.session.detachCollaborator(context.Background(), string(handle.Spec.ID))
+	defer r.forgetConnection(handle.Spec.ID)
 	r.session.reconcileCollaborationAdmissions(handle.DB, string(handle.Spec.ID))
 
 	// Send agent identity to TUI for tab labeling
@@ -1514,12 +1571,9 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		if cfg == nil {
 			return "", errors.New("child session configuration is unavailable")
 		}
-		currentProvider, err := cfg.ProviderForAccount(handle.Spec.AccountID, handle.Spec.Model)
+		currentProvider, err := cfg.providerForCategory(childProviderConfig(handle.Spec))
 		if err != nil {
 			return "", err
-		}
-		if handle.Spec.ModelContextWindow > 0 {
-			currentProvider.SetContextWindow(handle.Spec.ModelContextWindow)
 		}
 		handle.Agent.Provider, handle.Agent.Model = currentProvider, currentProvider.Model
 		handle.Spec.Provider = currentProvider.ID
@@ -1541,7 +1595,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			Snapshot:   recoveryState.snapshot,
 			OnAttention: func(failure agent.RecoveryFailure) agent.AttentionDisposition {
 				switch failure.Kind {
-				case agent.RecoveryFailureConfiguration, agent.RecoveryFailureGuidance, agent.RecoveryFailureStructural:
+				case agent.RecoveryFailureConfiguration, agent.RecoveryFailureGuidance:
 					return agent.AttentionParkAttempt
 				default:
 					return agent.AttentionWait
@@ -2050,6 +2104,7 @@ func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs 
 
 func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan ttypes.BlockResponse, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	root := childExecutionRoot(spec, r.session.WorkDir())
+	privateDir := r.childTempDir(spec.ID)
 	var turnProvider *provider.Provider
 	if handle != nil && handle.Agent != nil {
 		turnProvider = handle.Agent.Provider
@@ -2105,63 +2160,67 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		}
 
 		if isWriteTool(tool) {
-			targets := writeToolTargets(tool, params)
-			for _, target := range targets {
-				if !ownershipScopeAllows(spec.FileOwnership, target) {
-					cause := fmt.Errorf("file %q is outside this agent's committed ownership scope", target)
-					return tools.ToolResult{}, &tools.StructuralFailureError{
-						Kind: tools.StructuralFailureOwnershipScope, Tool: tool, Target: target,
-						OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: cause,
+			// The child's own temporary directory is private scratch space: it is
+			// never shared work, so it needs neither ownership scope nor claims.
+			requested := writeToolTargets(tool, params)
+			targets := sharedWriteTargets(requested, privateDir)
+			if len(requested) == 0 || len(targets) > 0 {
+				// A scoped child writes only inside its current committed scope,
+				// which its parent may replace while it runs.
+				if len(spec.FileOwnership) > 0 {
+					for _, target := range targets {
+						if !r.fileOwnership.WriteScopeAllows(spec.ID, target) {
+							scope := r.fileOwnership.WriteClaimsByAgent(spec.ID)
+							r.notifyParentOfRejectedWrite(ctx, spec, handle, target, fmt.Sprintf("outside its file scope (%s)", strings.Join(scope, ", ")))
+							return tools.ToolResult{}, fmt.Errorf("write to %q was rejected: it is outside your file scope (%s). Nothing was changed and your run continues. Work within your scope, use your temporary directory (%s) for scratch files, or ask your parent with agent_send to extend your scope via agent_update_claims", target, strings.Join(scope, ", "), privateDir)
+						}
 					}
 				}
-			}
-			if err := r.fileOwnership.CommitClaimAll(spec.ID, spec.Name, targets, true, func() error {
-				store := r.session.CollaborationStore()
-				if store == nil {
-					return errors.New("workspace collaboration runtime is unavailable")
-				}
-				participant, err := store.Agent(ctx, string(spec.ID))
-				if err != nil {
+				if err := r.fileOwnership.CommitClaimAll(spec.ID, spec.Name, targets, true, func() error {
+					store := r.session.CollaborationStore()
+					if store == nil {
+						return errors.New("workspace collaboration runtime is unavailable")
+					}
+					participant, err := store.Agent(ctx, string(spec.ID))
+					if err != nil {
+						return err
+					}
+					identity, err := collaborationExecutionIdentity(ctx)
+					if err != nil {
+						return err
+					}
+					runID := identity.RunID
+					if handle != nil {
+						runID, _ = handle.RunIdentity()
+					}
+					if runID == "" || participant.CurrentRunID != runID {
+						return collaboration.ErrStale
+					}
+					_, err = store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
+						AgentID: string(spec.ID), RunID: runID,
+						RequestID: identity.ToolCallID, Paths: targets,
+					})
 					return err
+				}); err != nil {
+					// Claims are published only after every target has passed the
+					// complete preflight, so a rejected effect leaves no claim behind.
+					r.notifyParentOfRejectedWrite(ctx, spec, handle, strings.Join(targets, ", "), err.Error())
+					return tools.ToolResult{}, fmt.Errorf("write was rejected: %w. Nothing was changed and your run continues. Coordinate with the owning agent or ask your parent with agent_send", err)
 				}
-				identity, err := collaborationExecutionIdentity(ctx)
+				releaseWrite, err := r.fileOwnership.BeginWrite(spec.ID, targets)
 				if err != nil {
-					return err
+					return tools.ToolResult{}, fmt.Errorf("write was rejected: %w (your scope changed during this call). Nothing was changed and your run continues", err)
 				}
-				runID := identity.RunID
-				if handle != nil {
-					runID, _ = handle.RunIdentity()
-				}
-				if runID == "" || participant.CurrentRunID != runID {
-					return collaboration.ErrStale
-				}
-				_, err = store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
-					AgentID: string(spec.ID), RunID: runID,
-					RequestID: identity.ToolCallID, Paths: targets,
-				})
-				return err
-			}); err != nil {
-				// Claims are published only after every target has passed the
-				// complete preflight, so a blocked effect has no local claim
-				// side effect to leak into the next repair attempt.
-				return tools.ToolResult{}, &tools.StructuralFailureError{Kind: tools.StructuralFailureOwnershipConflict, Tool: tool, OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: err}
-			}
-			releaseWrite, err := r.fileOwnership.BeginWrite(spec.ID, targets)
-			if err != nil {
-				return tools.ToolResult{}, &tools.StructuralFailureError{
-					Kind: tools.StructuralFailureOwnershipScope, Tool: tool,
-					OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: err,
-				}
-			}
-			defer releaseWrite()
-			for _, target := range targets {
-				if r.sender != nil {
-					r.sender.SendAgentEventWithID("file_claim", map[string]string{
-						"agent_id":   string(spec.ID),
-						"agent_name": spec.Name,
-						"category":   spec.Category,
-						"path":       target,
-					}, string(spec.ID))
+				defer releaseWrite()
+				for _, target := range targets {
+					if r.sender != nil {
+						r.sender.SendAgentEventWithID("file_claim", map[string]string{
+							"agent_id":   string(spec.ID),
+							"agent_name": spec.Name,
+							"category":   spec.Category,
+							"path":       target,
+						}, string(spec.ID))
+					}
 				}
 			}
 		}
@@ -2188,19 +2247,26 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 	}
 }
 
-func ownershipScopeAllows(scope []string, target string) bool {
-	if len(scope) == 0 {
-		return true
+// sharedWriteTargets drops targets inside the agent's private temporary
+// directory. Those paths belong to no shared scope, so they are neither checked
+// against nor claimed in the workspace ownership ledger.
+func sharedWriteTargets(targets []string, privateDir string) []string {
+	if privateDir == "" {
+		return targets
 	}
-	target = normalizeOwnershipTarget(target)
-	for _, root := range scope {
-		root = normalizeOwnershipTarget(root)
-		relative, err := filepath.Rel(root, target)
-		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return true
+	shared := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if !pathInside(privateDir, target) {
+			shared = append(shared, target)
 		}
 	}
-	return false
+	return shared
+}
+
+func pathInside(root, target string) bool {
+	root, target = normalizeOwnershipTarget(root), normalizeOwnershipTarget(target)
+	relative, err := filepath.Rel(root, target)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func normalizeOwnershipTarget(path string) string {

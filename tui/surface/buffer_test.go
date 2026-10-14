@@ -228,3 +228,27 @@ func TestCellBuffer_Clear(t *testing.T) {
 		t.Fatal("clear to transparent")
 	}
 }
+
+// A default background means "inherit what is under me". Inside one buffer
+// that is the fill already painted there (a popup body, a selected row); text
+// must never punch a hole through it to whatever lies below the window.
+func TestCellBuffer_WriteStringDefaultBackgroundKeepsPaintedFill(t *testing.T) {
+	popup := cell.NewTrueColor(22, 27, 34)
+	buf := NewCellBuffer(10, 2)
+	buf.FillRect(Rect{X: 0, Y: 0, W: 10, H: 1}, cell.BlankCell(popup))
+	buf.WriteString(1, 0, "ok", cell.NewTrueColor(200, 200, 200), cell.NoColor, 0)
+	if got := buf.Get(1, 0).BG; got != popup {
+		t.Fatalf("text over a popup fill lost it: %+v", got)
+	}
+	// Unpainted cells keep deferring to lower layers at blit time.
+	buf.WriteString(1, 1, "ok", cell.NewTrueColor(200, 200, 200), cell.NoColor, 0)
+	if got := buf.Get(1, 1).BG; !got.IsDefault() {
+		t.Fatalf("text over a transparent cell fixed a background: %+v", got)
+	}
+	// An explicit background still wins.
+	accent := cell.NewTrueColor(255, 140, 0)
+	buf.WriteString(4, 0, "x", cell.NewTrueColor(0, 0, 0), accent, 0)
+	if got := buf.Get(4, 0).BG; got != accent {
+		t.Fatalf("explicit background overridden: %+v", got)
+	}
+}

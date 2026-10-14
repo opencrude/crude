@@ -191,7 +191,7 @@ func SummarizeArgs(tool, argsStr string) string {
 		return ExtractArg(argsStr, "query")
 	case "crude_control":
 		return ExtractArg(argsStr, "command")
-	case "agent_update_claims":
+	case "agent_update_claims", "agent_configure":
 		return ExtractArg(argsStr, "agent_id")
 	case "agent_narrow_claims":
 		return ""
@@ -291,7 +291,7 @@ func RetainsStructuredToolInput(name string) bool {
 		"remember", "recall_memory", "update_memory",
 		"forget_memory", "memory_feedback", "search_history", "capability_search",
 		"capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt",
-		"agent_update_claims", "agent_narrow_claims", "crude_commands", "crude_control":
+		"agent_update_claims", "agent_narrow_claims", "agent_configure", "crude_commands", "crude_control":
 		return true
 	}
 	return strings.HasPrefix(name, "mcp__")

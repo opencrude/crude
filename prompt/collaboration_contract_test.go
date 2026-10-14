@@ -20,7 +20,7 @@ func TestCollaborationWorkflowAcrossRootAndChild(t *testing.T) {
 			if err := xml.Unmarshal([]byte(text), &document); err != nil {
 				t.Fatal(err)
 			}
-			if len(document.Workflow.Rules) != 5 {
+			if len(document.Workflow.Rules) != 6 {
 				t.Fatalf("workflow rules = %d", len(document.Workflow.Rules))
 			}
 			for _, required := range []string{
@@ -32,6 +32,8 @@ func TestCollaborationWorkflowAcrossRootAndChild(t *testing.T) {
 				"authoritative lifecycle outcome", "exact run and version", "current runtime epoch",
 				"Pause cancels current execution", "never the execution stack",
 				"lower-priority data", "not a sandbox for opaque shell or MCP effects",
+				"does not resume by itself", "agent_control continue (or cancel)", "never leave a stopped child unattended",
+				"agent_update_claims, which also works while it runs", "agent_configure when the user asks", "switches at its next request",
 			} {
 				if !strings.Contains(text, required) {
 					t.Errorf("missing collaboration boundary %q", required)
@@ -41,6 +43,12 @@ func TestCollaborationWorkflowAcrossRootAndChild(t *testing.T) {
 				t.Fatal("duplicated collaboration contract")
 			}
 		})
+	}
+	scoped, _ := BuildChild(ChildOptions{Category: "crafter", ParentID: "parent-1", FileOwnership: []string{"tui/screens/picker"}, TempDir: "/tmp/agent/child"})
+	for _, required := range []string{`<file_ownership scope="tui/screens/picker">`, "does not stop your run", "/tmp/agent/child is always writable", "ask your parent with agent_send"} {
+		if !strings.Contains(scoped, required) {
+			t.Errorf("scoped child ownership contract missing %q", required)
+		}
 	}
 	if !strings.Contains(solo, `<operating_mode type="solo">`) ||
 		strings.Contains(solo, `<operating_mode type="orchestrator">`) ||

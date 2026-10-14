@@ -10,7 +10,7 @@ import (
 type recoveryRetryResultMsg struct {
 	agentID, incidentID string
 	generation          uint64
-	accepted            bool
+	err                 error
 }
 
 type recoveryCancelResultMsg recoveryRetryResultMsg
@@ -41,7 +41,7 @@ func (m *App) retryAgentRecovery(agentID string) tea.Cmd {
 	}
 	generation := m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
-		return recoveryRetryResultMsg{agentID: agentID, incidentID: status.ID, generation: generation, accepted: run()}
+		return recoveryRetryResultMsg{agentID: agentID, incidentID: status.ID, generation: generation, err: run()}
 	}
 }
 
@@ -53,14 +53,14 @@ func (m *App) applyRecoveryRetryResult(result recoveryRetryResultMsg) {
 		node.State.RecoveryStatus().ID != result.incidentID {
 		return
 	}
-	if !result.accepted {
-		m.Feedback.NotifyInfo("The recovery changed or is no longer pending; review this agent before continuing")
+	if result.err != nil {
+		m.Feedback.NotifyInfo("Continue was not applied: " + result.err.Error())
 	}
 	// Success comes from the owner's recovery event, never an optimistic UI phase.
 }
 
 func (m *App) applyRecoveryCancelResult(result recoveryCancelResultMsg) {
-	if result.generation != m.workspaceSwitchGen.Load() || m.ws.AgentMgr() == nil || result.accepted {
+	if result.generation != m.workspaceSwitchGen.Load() || m.ws.AgentMgr() == nil || result.err == nil {
 		return
 	}
 	node := m.ws.AgentMgr().Get(result.agentID)
@@ -69,7 +69,7 @@ func (m *App) applyRecoveryCancelResult(result recoveryCancelResultMsg) {
 	}
 	m.ws.RejectAgentRecoveryCancellation(result.agentID, result.incidentID)
 	if m.Feedback != nil {
-		m.Feedback.NotifyInfo("The recovery changed before Stop was applied; review this agent's current run")
+		m.Feedback.NotifyInfo("Stop was not applied: " + result.err.Error())
 	}
 }
 

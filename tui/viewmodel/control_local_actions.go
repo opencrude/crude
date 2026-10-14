@@ -14,10 +14,10 @@ func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentI
 	if owner.window != nil && m.capabilityPicker != nil {
 		if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == m.capabilityPicker.screen && strings.HasPrefix(string(localID), "capability-picker/") {
 			switch action {
-			case "tabs.activate", "tabs.enter", "form.changed", "capability-picker.focus-list", "capability-picker.back", "capability-picker.close", "capability-picker.select", "capability-picker.insert", "capability-picker.stage":
+			case "activate", "select", "scroll", "set_offset", "tabs.activate", "tabs.enter", "capability-picker.focus-list", "capability-picker.close", "capability-picker.select":
 				return control.Write, false, nil
-			case "capability-picker.fetch":
-				return control.Read, false, nil
+			case "capability-picker.toggle":
+				return control.Write, true, nil
 			}
 		}
 	}

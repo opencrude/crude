@@ -1261,7 +1261,7 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 // choice to the provider.
 func thinkingSegments(current string) *ui.FieldState {
 	options := []ui.FormOption{{ID: "", Label: "Default"}}
-	for _, level := range ui.ThinkingLevels {
+	for _, level := range types.ThinkingLevels {
 		label := strings.ToUpper(level[:1]) + level[1:]
 		if level == "xhigh" {
 			label = "X-High"

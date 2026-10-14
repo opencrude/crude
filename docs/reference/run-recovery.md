@@ -29,7 +29,8 @@ new human message or a replacement for permission policy.
 
 | Failure | Response |
 |---|---|
-| Retryable network/provider outage or exhausted request-attempt budget | Automatic continuation with a capped cooldown while unfinished work remains owned |
+| Any provider failure without positive evidence of permanence (network/provider outage, lost HTTP/2 connection, peer reset, unfamiliar disconnect shape) or an exhausted request-attempt budget | Automatic continuation with a capped cooldown and Retry now while unfinished work remains owned |
+| Provider error object with no recognizable type, code or status | No fast retry inside the request; five supervised automatic attempts with the countdown, then Needs attention stating that automatic recovery stopped |
 | DNS lookup failure, including “not found” | The task supervisor rechecks automatically with capped pacing; the bounded request-attempt policy remains separate |
 | Request deadline, with the owning turn still live | Recover the attempt; never label it “stopped by you” |
 | Accepted partial response | Preserve it and append a semantic continuation, never replay the stochastic request |
@@ -37,9 +38,12 @@ new human message or a replacement for permission policy.
 | Repeated tool loop, output truncation, missing final report | Bounded corrective continuation, then an actionable pause if correction does not work |
 | Authentication, billing/quota, invalid configuration/trust/guidance | Needs attention; no unbounded invalid-request loop or silent account/model failover |
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
-| Native file-ownership conflict | Structural Needs attention; park the child attempt and retain its assignment, evidence and exact incident, never auto-retry the same blocked effect |
+| Native file-ownership rejection (outside scope, or another agent's claim) | Ordinary tool error: nothing changes, the run continues, the parent is notified and can replace the live child's scope with `agent_update_claims` |
+| Context compaction failure | Provider-originated failures recover like any provider request; a local fault (for example a checkpoint that still does not fit) needs attention with a compaction-specific action |
 | Faulty clipboard-image capture | Exclude only the missing/empty/invalid image, preserve the original text and reference evidence, report the exact exclusion and continue with usable attachments |
-| Panic or uncertain effects | Preserve safe boundaries and pause for reconciliation; keep the root input service usable |
+| Tool panic (uncertain effects) | Tool error result telling the model to inspect affected state; later serial siblings of that batch are skipped; the run continues |
+| Agent or child runtime panic | Preserve safe boundaries and pause for reconciliation; keep the root input service usable |
+| Child stopped for any attention reason | Parent is notified with the exact incident, sees it via `agent_inspect`/`agent_list`/`agent_wait`, and can `agent_control` `continue` or `cancel` it without a human |
 | Explicit user or parent cancellation | Stop promptly, preserve completed effects/text and record the explicit stop boundary |
 
 Provider request attempts, compaction extraction attempts, permission reviews and
@@ -47,6 +51,20 @@ background memory jobs retain their own bounded budgets. Spending one budget
 does not settle the unfinished coding task. Valid permission denials are never
 retried as technical errors, and recovery never expands tool/file/network grants.
 Children have no arbitrary task deadline; parents and users retain lifecycle control.
+
+`provider.Classify` is the single failure-classification authority and requires
+positive evidence of **permanence**: an explicit retry veto, a permanent HTTP
+status or provider code (authentication, permission, quota/billing, validation,
+unknown model/endpoint, policy), an identified invalid parameter, a certificate
+failure, an unparseable endpoint URL or an oversized response. Everything else is
+transient. An allowlist of transient errors cannot keep up with HTTP/2 stacks,
+proxies and gateways; each miss used to become a "configuration" incident that
+waited for a human (a lost HTTP/2 connection parked a root session this way).
+A failed read of an established response body while the caller still waits is
+typed at the stream boundary as a `transport_read_failure` interruption, so the
+agent continues accepted partial output and the supervisor recovers.
+`provider.Retryable` is the request owner's immediate-retry decision: transient
+only, excluding a spent attempt budget and a resolver "not found".
 
 HTTP failure classification is shared by every wire protocol and by streaming and
 non-streaming requests. A generic `invalid_request_error` / `invalid_request`
@@ -70,7 +88,8 @@ transient; authentication/billing/permission/not-found/oversized/validation
 evidence remains permanent even when wrapped in a transient status. Ollama's
 documented exact string-only model-execution failures are recoverable at the
 stream boundary; missing models, invalid input, insufficient-memory requirements
-and unknown text are not guessed transient. The successful-stream retry veto
+and unknown text are not guessed transient: they are unrecognized verdicts that are
+never fast-retried and receive only the bounded supervised attempts. The successful-stream retry veto
 also survives a missing terminal event. References: [Anthropic errors](https://platform.claude.com/docs/en/api/errors)
 and [Ollama errors](https://docs.ollama.com/api/errors). These tests simulate the
 documented wires locally, not live vendor availability.
@@ -120,10 +139,11 @@ before a natural completion is acknowledged.
 
 Finished parallel siblings are checkpointed while other calls are still running,
 including children of the native parallel wrapper. Interrupted wrapper snapshots
-retain real leaf results and mark their overall outcome unknown. Tool panics
-pause for inspection, including inside parallel batches; not-yet-started serial
-siblings do not execute after an uncertain failure. Per-path locks release even
-when the tool panics.
+retain real leaf results and mark their overall outcome unknown. A tool panic,
+including inside a parallel batch, becomes a tool error stating that its effects
+are uncertain; not-yet-started serial siblings do not execute after it, and the
+run continues so the model inspects state. Per-path locks release even when the
+tool panics.
 
 An unfinished wrapper's evolving leaf evidence is recovery state, not an immutable
 accepted tool message. `InFlightTools` preserves that exact evidence (including

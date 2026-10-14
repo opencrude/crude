@@ -32,13 +32,17 @@ func TestRetryAndCancelRecoveryUseExactIncidentFence(t *testing.T) {
 	}
 	live := &recoverySlot{id: "live-recovery", generation: 4, wake: make(chan struct{}, 1)}
 	session.recoverySlots["live"] = live
-	if session.RetryRecoveryFor("live", "stale", 4) {
+	if session.RetryRecoveryFor("live", live.id, live.generation) == nil {
+		t.Fatal("an agent executing normally accepted a continue")
+	}
+	live.status = recoverytypes.Status{ID: live.id, Generation: live.generation, State: recoverytypes.NeedsAttention}
+	if session.RetryRecoveryFor("live", "stale", 4) == nil {
 		t.Fatal("stale incident woke the live recovery")
 	}
-	if session.RetryRecoveryFor("live", live.id, 3) {
+	if session.RetryRecoveryFor("live", live.id, 3) == nil {
 		t.Fatal("stale generation woke the live recovery")
 	}
-	if !session.RetryRecoveryFor("live", live.id, live.generation) {
+	if session.RetryRecoveryFor("live", live.id, live.generation) != nil {
 		t.Fatal("exact live recovery did not wake")
 	}
 	select {
@@ -83,10 +87,10 @@ func TestRetryAndCancelRecoveryUseExactIncidentFence(t *testing.T) {
 	session.contextReason = checkpoint.ContextReason
 	session.activeContext = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
 	session.pendingRecoveries["root"] = checkpoint
-	if session.CancelRecoveryFor("root", checkpoint.Status.ID, 7) {
+	if session.CancelRecoveryFor("root", checkpoint.Status.ID, 7) == nil {
 		t.Fatal("stale cancellation settled the passive task")
 	}
-	if !session.CancelRecoveryFor("root", checkpoint.Status.ID, checkpoint.Status.Generation) {
+	if session.CancelRecoveryFor("root", checkpoint.Status.ID, checkpoint.Status.Generation) != nil {
 		t.Fatal("exact passive cancellation failed")
 	}
 	records, err := sessiondb.LoadRecoveryRecords(db, "session")
@@ -160,7 +164,7 @@ func TestRecoveryCancellationCannotHitAReplacementContext(t *testing.T) {
 		recoverySlots: map[string]*recoverySlot{"root": {id: "old-incident", generation: 1}},
 		orchestrators: map[string]*Orchestrator{"root": orch},
 	}
-	if s.CancelRecoveryFor("root", "old-incident", 1) || replacement.Err() != nil {
+	if s.CancelRecoveryFor("root", "old-incident", 1) == nil || replacement.Err() != nil {
 		t.Fatal("old slot cancellation reached the replacement turn context")
 	}
 }
@@ -196,7 +200,7 @@ func TestRootStopFencesContinuedReservationBeforeRecoveryRegistration(t *testing
 	}
 	o := NewOrchestrator("root", s)
 	s.orchestrators[o.ID] = o
-	if !s.RetryRecoveryFor(o.ID, checkpoint.Status.ID, checkpoint.Status.Generation) {
+	if s.RetryRecoveryFor(o.ID, checkpoint.Status.ID, checkpoint.Status.Generation) != nil {
 		t.Fatal("exact Continue did not reserve the parked task")
 	}
 	request := <-o.inputCh
@@ -209,7 +213,7 @@ func TestRootStopFencesContinuedReservationBeforeRecoveryRegistration(t *testing
 	started := make(chan struct{})
 	go func() {
 		close(started)
-		result <- s.CancelRecoveryFor(o.ID, checkpoint.Status.ID, checkpoint.Status.Generation)
+		result <- s.CancelRecoveryFor(o.ID, checkpoint.Status.ID, checkpoint.Status.Generation) == nil
 	}()
 	<-started
 	select {
@@ -286,7 +290,7 @@ func TestRootTurnPanicParksTaskAndInputServiceAcceptsExactRetry(t *testing.T) {
 	if first.State != recoverytypes.NeedsAttention || first.ID == "" {
 		t.Fatalf("panic recovery = %+v", first)
 	}
-	if !session.RetryRecoveryFor(orchestrator.ID, first.ID, first.Generation) {
+	if session.RetryRecoveryFor(orchestrator.ID, first.ID, first.Generation) != nil {
 		t.Fatal("exact passive retry was rejected")
 	}
 	second := waitRecoveryEvent(t, sender)
@@ -310,7 +314,7 @@ func TestRootTurnPanicParksTaskAndInputServiceAcceptsExactRetry(t *testing.T) {
 	if !foundContinuation {
 		t.Fatalf("passive retry lacked canonical continuation: %+v", checkpoint.ActiveContext)
 	}
-	if !session.CancelRecoveryFor(orchestrator.ID, first.ID, first.Generation) {
+	if session.CancelRecoveryFor(orchestrator.ID, first.ID, first.Generation) != nil {
 		t.Fatal("exact active recovery cancellation failed")
 	}
 }

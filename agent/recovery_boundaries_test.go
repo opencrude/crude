@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,12 +19,23 @@ import (
 	recoverytypes "crude/types/recovery"
 )
 
-func TestToolPanicParksSupervisedRunBeforeAnotherRequest(t *testing.T) {
+// The agentic loop is sacred: a tool panic, alone or inside a native parallel
+// batch, reaches the model as a tool error and the supervised run completes
+// without opening a recovery incident.
+func TestToolPanicContinuesSupervisedRunWithoutIncident(t *testing.T) {
 	for _, parallel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("parallel=%t", parallel), func(t *testing.T) {
 			var requests atomic.Int32
+			sawError := make(chan string, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if requests.Add(1) > 1 {
+					// The raw request carries the tool error wherever the wire
+					// placed it (a tool message or batch content parts).
+					body, _ := io.ReadAll(r.Body)
+					select {
+					case sawError <- string(body):
+					default:
+					}
 					writeChatSSE(w, "inspected and finished", "stop")
 					return
 				}
@@ -41,48 +54,81 @@ func TestToolPanicParksSupervisedRunBeforeAnotherRequest(t *testing.T) {
 			a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 				panic("effect may already have happened")
 			}
-			wake := make(chan struct{}, 1)
 			statuses := make(chan recoverytypes.Status, 8)
 			supervisor := NewSupervisor("root", 1, nil)
-			supervisor.Wake = wake
 			supervisor.Persist = func(recoverytypes.Status) error { return nil }
 			supervisor.Emit = func(event AgentEvent) { statuses <- event.Data.(recoverytypes.Status) }
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			done := make(chan SupervisedRunResult, 1)
-			go func() {
-				done <- a.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "task")},
-					"system", nil, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
-			}()
+			result := a.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "task")},
+				"system", nil, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
+			if result.State != SupervisedRunCompleted || requests.Load() != 2 {
+				t.Fatalf("tool panic ended the run: state=%s requests=%d", result.State, requests.Load())
+			}
 			select {
 			case status := <-statuses:
-				if status.State != recoverytypes.NeedsAttention {
-					t.Fatalf("uncertain tool effects were not parked: %+v", status)
-				}
-			case <-done:
-				t.Fatal("tool panic silently continued and completed the run")
-			case <-ctx.Done():
-				t.Fatal("tool panic was not surfaced")
+				t.Fatalf("tool panic opened a recovery incident: %+v", status)
+			default:
 			}
-			if requests.Load() != 1 {
-				t.Fatal("another stochastic request began before inspection")
-			}
-			wake <- struct{}{}
-			select {
-			case result := <-done:
-				var results int
-				for _, message := range result.Archive {
-					if message.Role == "tool" {
-						results++
-					}
-				}
-				if results != 1 || requests.Load() != 2 {
-					t.Fatalf("explicit continuation replayed tools: results=%d requests=%d", results, requests.Load())
-				}
-			case <-ctx.Done():
-				t.Fatal("explicit continuation failed")
+			if text := <-sawError; !strings.Contains(text, "panicked") || !strings.Contains(text, "effects are uncertain") {
+				t.Fatalf("model did not receive the uncertain-effect tool error: %q", text)
 			}
 		})
+	}
+}
+
+// Hannah's incident: a lost HTTP/2 connection after partial output surfaced as
+// an unrecognized sentinel and was parked as a settings fault. Any failure
+// without positive evidence of permanence recovers automatically.
+func TestUnknownTransportFailureRecoversAutomatically(t *testing.T) {
+	lost := errors.New("http2: client connection lost")
+	for _, err := range []error{
+		&apiCallError{Message: "stream interrupted after partial response: " + lost.Error(), Partial: true, Cause: lost},
+		&apiCallError{Message: "stream interrupted", Partial: true, Cause: &provider.StreamInterruptionError{Kind: provider.StreamInterruptionTransport, Cause: lost}},
+		&provider.ExhaustedError{Attempts: 3, Cause: lost},
+		errors.New("proxy: upstream went away"),
+	} {
+		failure := classifyRecordedRecovery("", err)
+		if failure.Kind != RecoveryFailureTransport || failure.AutomaticLimit >= 0 {
+			t.Fatalf("%v: recovery = %+v, want unbounded automatic transport recovery", err, failure)
+		}
+	}
+	verdict := classifyRecordedRecovery("", &provider.APIError{Message: "unrecognized backend failure"})
+	if verdict.AutomaticLimit <= 0 {
+		t.Fatalf("unrecognized provider verdict was not retried automatically: %+v", verdict)
+	}
+	for _, err := range []error{&provider.StatusError{StatusCode: 401}, &provider.APIError{Code: "insufficient_quota"}} {
+		if failure := classifyRecordedRecovery("", err); failure.AutomaticLimit != 0 || failure.Kind != RecoveryFailureConfiguration {
+			t.Fatalf("%v: permanent evidence retried automatically: %+v", err, failure)
+		}
+	}
+	if failure := classifyRecordedRecovery(RecoveryFailureCompaction, errors.New("compacted context remains above threshold")); failure.AutomaticLimit != 0 {
+		t.Fatalf("local compaction fault would repeat the pipeline: %+v", failure)
+	}
+	if failure := classifyRecordedRecovery(RecoveryFailureCompaction, &provider.ExhaustedError{Attempts: 3, Cause: lost}); failure.AutomaticLimit >= 0 {
+		t.Fatalf("compaction provider outage did not recover automatically: %+v", failure)
+	}
+}
+
+func TestBoundedRecoveryExhaustionSaysAutomaticRecoveryStopped(t *testing.T) {
+	supervisor := NewSupervisor("owner", 1, nil)
+	supervisor.Wait = func(context.Context, time.Duration) error { return nil }
+	attention := make(chan recoverytypes.Status, 1)
+	supervisor.Attention = func(status recoverytypes.Status) { attention <- status }
+	failure := VerdictRecovery(&provider.APIError{Message: "unrecognized backend failure"})
+	for attempt := 1; attempt <= failure.AutomaticLimit; attempt++ {
+		if !supervisor.Await(t.Context(), failure) {
+			t.Fatalf("automatic attempt %d did not continue", attempt)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan bool, 1)
+	go func() { done <- supervisor.Await(ctx, failure) }()
+	status := <-attention
+	cancel()
+	<-done
+	if status.State != recoverytypes.NeedsAttention || !strings.Contains(status.Action, "Automatic recovery stopped after 5 attempts") {
+		t.Fatalf("exhausted bounded recovery = %+v", status)
 	}
 }
 

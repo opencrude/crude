@@ -95,3 +95,57 @@ func TestPlanPopoverShortPlanUsesContentHeight(t *testing.T) {
 		t.Fatalf("short plan has oversized modal: %+v", size)
 	}
 }
+
+// The plan popover keeps its design and gains chat's text selection: a drag
+// highlights painted rows with the text-selection colors, release copies the
+// exact plain text, and the highlight never outlives the gesture.
+func TestPlanPopoverDragSelectsAndCopiesText(t *testing.T) {
+	th := theme.DefaultDark()
+	screen := New(th, planFixture(3))
+	host := ui.NewHost(th, screen)
+	host.Resize(60, 8)
+	host.Layout()
+	paint := func() *surface.CellBuffer {
+		buf := surface.NewCellBuffer(60, 8)
+		host.Paint(buf)
+		return buf
+	}
+	text := bufferText(paint())
+	if !strings.Contains(text, "Repair the chat status") {
+		t.Fatalf("plan text missing:\n%s", text)
+	}
+	row := -1
+	for y, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "Task 02") {
+			row = y
+		}
+	}
+	if row < 0 {
+		t.Fatalf("no Task 02 row:\n%s", text)
+	}
+	click := host.Handle(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	if !click.Handled || !host.HasPointerCapture() {
+		t.Fatalf("press did not start a captured selection: %+v", click)
+	}
+	host.Handle(tea.MouseMotionMsg{X: 59, Y: row, Button: tea.MouseLeft})
+	selectionBG := ui.NewTokenSet(th).Color(ui.ColorTextSelection)
+	if buf := paint(); buf.Get(2, 0).BG != selectionBG || buf.Get(2, row).BG != selectionBG {
+		t.Fatal("drag did not paint the text-selection highlight")
+	}
+	selected := screen.selectedText()
+	if !strings.HasPrefix(selected, "Repair the chat status") || !strings.Contains(selected, "Task 02 — inspect status") || strings.Contains(selected, "Task 03") {
+		t.Fatalf("selected text = %q", selected)
+	}
+	release := host.Handle(tea.MouseReleaseMsg{X: 59, Y: row, Button: tea.MouseLeft})
+	if release.Cmd == nil {
+		t.Fatal("release did not copy the selection")
+	}
+	if buf := paint(); buf.Get(2, 0).BG == selectionBG || host.HasPointerCapture() {
+		t.Fatal("selection or capture outlived the gesture")
+	}
+	// A plain click without a drag copies nothing.
+	host.Handle(tea.MouseClickMsg{X: 3, Y: 1, Button: tea.MouseLeft})
+	if result := host.Handle(tea.MouseReleaseMsg{X: 3, Y: 1, Button: tea.MouseLeft}); result.Cmd != nil {
+		t.Fatal("a click without a drag replaced the clipboard")
+	}
+}

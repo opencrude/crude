@@ -294,8 +294,8 @@ func (m *App) finishProductControl(done shellControlDoneMsg) (tea.Cmd, bool) {
 		if done.generation != m.workspaceSwitchGen.Load() || completion.generation != done.generation {
 			return m.failShellControl(done.request, control.Stale, "recovery completion belongs to a replaced workspace"), true
 		}
-		if !completion.accepted {
-			return m.failShellControl(done.request, control.Stale, "recovery no longer pending"), true
+		if completion.err != nil {
+			return m.failShellControl(done.request, control.Stale, completion.err.Error()), true
 		}
 		m.applyRecoveryRetryResult(completion)
 		result.State = control.Admitted

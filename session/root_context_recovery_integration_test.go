@@ -89,7 +89,7 @@ func TestRootStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testing
 			if err != nil || actor.CurrentRunID == "" {
 				t.Fatalf("real root run is unavailable: actor=%+v err=%v", actor, err)
 			}
-			if !s.CancelRecoveryFor(root.ID, first.ID, first.Generation) {
+			if s.CancelRecoveryFor(root.ID, first.ID, first.Generation) != nil {
 				t.Fatal("exact root Stop was rejected")
 			}
 			blocked := waitTerminalSettlementAttention(t, baseSender, root.ID)
@@ -135,7 +135,7 @@ func TestRootStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testing
 			if _, err := s.db.Exec(`DROP TRIGGER reject_root_settlement`); err != nil {
 				t.Fatal(err)
 			}
-			if !s.RetryRecoveryFor(root.ID, blocked.ID, blocked.Generation) {
+			if s.RetryRecoveryFor(root.ID, blocked.ID, blocked.Generation) != nil {
 				t.Fatal("exact root persistence retry was rejected")
 			}
 			waitTransitionTurn(t, baseSender, root)

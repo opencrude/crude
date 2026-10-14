@@ -20,6 +20,7 @@ type collaborationWaitObservation struct {
 	Run        *collaboration.Run      `json:"run,omitempty"`
 	Artifact   *collaboration.Artifact `json:"artifact,omitempty"`
 	Event      *collaboration.Event    `json:"event,omitempty"`
+	Recovery   *agentRecoveryView      `json:"recovery,omitempty"`
 	Snapshot   int64                   `json:"snapshot"`
 	ObservedAt time.Time               `json:"observed_at"`
 	Source     string                  `json:"source"`
@@ -154,6 +155,21 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 		result, ready, err := observe(readCtx)
 		if err != nil {
 			return result, false, err
+		}
+		// A stopped agent cannot make further progress on its own: end the wait
+		// with its exact incident instead of reporting a plain timeout/offline.
+		targetAgentID := agentID
+		if targetAgentID == "" && result.Run != nil {
+			targetAgentID = result.Run.AgentID
+		}
+		if recovery := s.agentRecovery(targetAgentID); recovery != nil {
+			result.Recovery = recovery
+			if !ready {
+				result.Status = "needs_attention"
+				result.Reason = "the agent stopped and needs attention: " + recovery.Summary
+				result.Guidance = "Address the cause, then agent_control operation continue (or cancel) with the returned recovery_id and recovery_generation."
+				return result, true, nil
+			}
 		}
 		if result.Agent != nil {
 			switch {

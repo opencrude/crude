@@ -73,7 +73,7 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 		}
 		request := collaboration.UpdateClaimsRequest{
 			ParentID: actorID, AgentID: target, RuntimeEpoch: runtimeEpoch,
-			TerminalRunID: getStrParam(params, "terminal_run_id"), ExpectedRunVersion: runVersion,
+			RunID: getStrParam(params, "run_id"), ExpectedRunVersion: runVersion,
 			ExpectedVersions: versions, Paths: validated,
 		}
 		var repaired collaboration.UpdateClaimsResult

@@ -214,7 +214,7 @@ func TestTransportSettingsFollowTemplateAndAccountEditsAndResume(t *testing.T) {
 		if s.provider == nil || s.provider.DialSettings() != want {
 			t.Fatalf("live account override=%t was not applied to requests: %+v", useOverride, s.provider)
 		}
-		other, err := s.cfg.ProviderForAccount("personal", "m")
+		other, err := s.cfg.ConnectionProvider("personal")
 		if err != nil || other.DialSettings() != *template.Dialer {
 			t.Fatalf("account override leaked to another account: provider=%+v err=%v", other, err)
 		}

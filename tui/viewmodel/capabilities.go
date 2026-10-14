@@ -11,7 +11,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/launcher"
@@ -103,6 +102,10 @@ func (app *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err 
 		return
 	}
 	app.capabilitySnapshot = snapshot
+	if app.capabilityPicker != nil {
+		app.capabilityPicker.screen.SetSnapshot(snapshot)
+		app.invalidateCapabilityPicker()
+	}
 	app.refreshActivityList()
 	if app.activityBar != nil {
 		for _, kind := range []captypes.Kind{captypes.KindSkill, captypes.KindMCP} {
@@ -175,7 +178,7 @@ func (app *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
 }
 
 func (app *App) capabilityObservationVisible() bool {
-	if app.launcherHostVisible() || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
+	if app.launcherHostVisible() || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil || app.capabilityPicker != nil {
 		return true
 	}
 	return app.Tree != nil && app.Tree.Visible && (app.activityView == activitySkills || app.activityView == activityMCP)
@@ -254,16 +257,6 @@ func (app *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) te
 		result.Content = "Cancellation requested for this operation; shared acquisitions may finish for other users."
 		return func() tea.Msg { return result }
 	}
-	if message.Action.Operation == "use" {
-		agent := app.ws.AgentMgr().Get(app.activeAgentTabID())
-		if agent == nil || !agent.IsOrchestrator() {
-			result.Err = fmt.Errorf("select a root agent before staging a skill")
-			return func() tea.Msg { return result }
-		}
-		app.Input.SetValuePreserveReferences("/skill " + message.Action.ID + " " + app.Input.Value())
-		result.Content = "Skill invocation staged in the current composer; nothing was sent."
-		return func() tea.Msg { return result }
-	}
 	if message.Action.Operation == "stage-context" {
 		owner, draft := app.ActiveSession, app.Input.Value()
 		agentID := app.activeAgentTabID()
@@ -329,48 +322,6 @@ func (app *App) cancelCapabilityOperations() {
 	for sequence, operation := range app.capabilityOperations {
 		operation.cancel()
 		delete(app.capabilityOperations, sequence)
-	}
-}
-
-type skillInvocationMsg struct {
-	workspace     uint64
-	agentID       string
-	draft         string
-	draftRevision uint64
-	sequence      uint64
-	input         provider.UserInput
-	err           error
-}
-
-func (app *App) invokeSkill(remainder, draft string) tea.Cmd {
-	return app.invokeSkillWithRefs(remainder, draft, nil)
-}
-
-func (app *App) invokeSkillWithRefs(remainder, draft string, refIDs []string) tea.Cmd {
-	id, arguments := remainder, ""
-	if split := strings.IndexAny(remainder, " \t\r\n"); split >= 0 {
-		id = remainder[:split]
-		arguments = remainder[split+1:]
-	} else {
-		arguments = ""
-	}
-	agentID := app.activeAgentTabID()
-	if id == "" || agentID == "" {
-		app.Input.SetValuePreserveReferences(draft)
-		app.Feedback.NotifyError("Select an active agent and a source-qualified skill identity")
-		return nil
-	}
-	owner, generation := app.ws, app.workspaceSwitchGen.Load()
-	app.skillInvocationSequence++
-	sequence := app.skillInvocationSequence
-	draftRevision := app.Input.DraftRevision()
-	references := append([]string(nil), refIDs...)
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		input, err := owner.PrepareSkillInput(ctx, agentID, id, arguments)
-		input.ReferenceIDs = references
-		return skillInvocationMsg{workspace: generation, agentID: agentID, draft: draft, draftRevision: draftRevision, sequence: sequence, input: input, err: err}
 	}
 }
 

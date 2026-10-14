@@ -282,6 +282,9 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 				delete(working.Capabilities.Skills, action.ID)
 			} else {
 				value.Disabled = action.Operation == "disable"
+				if action.Operation == "enable" && value.Mode == "disabled" {
+					value.Mode = "automatic"
+				}
 				working.Capabilities.Skills[action.ID] = value
 			}
 		} else {

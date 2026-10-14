@@ -706,8 +706,6 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg {
 			return PromptMsg{Target: model, Kind: PromptRemoveCapability, ID: catalog.id, Label: operation + " " + catalog.id + " at " + string(model.capabilityScope()), CapabilityAction: &request, capabilityDraft: preview, capabilityEditor: catalog}
 		}}
-	case "use":
-		return catalog.submit(captypes.Action{Operation: "use", Kind: catalog.kind, ID: catalog.id})
 	case "open-auth-url":
 		return catalog.submit(captypes.Action{Operation: "open-auth-url", Kind: catalog.kind, ID: catalog.id, Content: catalog.connectionState().AuthURL})
 	case "enable":

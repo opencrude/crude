@@ -526,7 +526,7 @@ var defaultActions = []*ActionDef{
 	{ID: "view.activity.skills", Label: "Skills", Description: "show workspace skills in the sidebar", Category: "View"},
 	{ID: "view.activity.mcp", Label: "MCP", Description: "show workspace MCP connections in the sidebar", Category: "View"},
 	{ID: "skills.manage", Label: "Manage Skills", Description: "browse, configure and inspect skills in Settings", Category: "Tools"},
-	{ID: "capabilities.pick", Label: "Insert Capability", Description: "stage a skill, tool selection, resource or prompt in the owning composer", Category: "Tools"},
+	{ID: "capabilities.pick", Label: "Capabilities", Description: "search and activate or deactivate installed skills and MCPs", Category: "Tools"},
 	{ID: "mcp.manage", Label: "Manage MCP", Description: "configure connections, tools, resources and prompts in Settings", Category: "Tools"},
 	{ID: "board.browse", Label: "Agent Board", Description: "inspect collaborations, participants and peer messages without waking agents", Category: "Agent"},
 	{ID: "workspace.panel.hide", Label: "Hide Workspace Panel", Description: "hide the panel without stopping processes or deleting drafts", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+j"}, {Mod: tea.ModCtrl | tea.ModAlt, Code: 'j'}}, HintKey: "Ctrl+Alt+J"},

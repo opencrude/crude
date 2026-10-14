@@ -78,7 +78,7 @@ func TestCollaborationRequestAndControlSchemasStateRevisionFences(t *testing.T) 
 			t.Errorf("conditional control field %s missing requirement: %v", field, properties[field])
 		}
 	}
-	for _, required := range []string{"Pause/cancel require run_id and expected_version", "resume/reopen require runtime_epoch and no active run", "not the execution stack", "not proof the control applied"} {
+	for _, required := range []string{"Pause/cancel require run_id and expected_version", "resume/reopen require runtime_epoch and no active run", "not the execution stack", "not proof the control applied", "A stopped agent", "is never stuck", "recovery_id and recovery_generation"} {
 		if !strings.Contains(control.Description, required) {
 			t.Errorf("control contract missing %q", required)
 		}

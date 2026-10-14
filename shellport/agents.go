@@ -86,8 +86,8 @@ type Agents interface {
 	ResolveConfirmation(agentID, blockID, choice string) bool
 	// RetryAgentRecovery captures an exact owner in the UI and does its durable
 	// resume work off Update. It never switches tabs or consumes the composer.
-	PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() bool
-	PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() bool
+	PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() error
+	PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() error
 	// RejectAgentRecoveryCancellation restores only the incident whose Stop was
 	// rejected. A replaced recovery or newer turn is never changed by a late
 	// reply.

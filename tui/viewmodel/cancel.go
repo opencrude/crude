@@ -55,7 +55,7 @@ func (m *App) cancelAgentTurn(agentID string) {
 				m.syncAgentMessages(agentID, true)
 				generation := m.workspaceSwitchGen.Load()
 				m.runDetachedAsyncCmd(func() tea.Msg {
-					return recoveryCancelResultMsg{agentID: agentID, incidentID: status.ID, generation: generation, accepted: cancel()}
+					return recoveryCancelResultMsg{agentID: agentID, incidentID: status.ID, generation: generation, err: cancel()}
 				})
 				return
 			}

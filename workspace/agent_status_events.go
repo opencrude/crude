@@ -69,6 +69,11 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		}
 		snapshot.ReadOnly, snapshot.NeedsAction = true, false
 		snapshot.Phase, snapshot.Detail = agentTerminalPhase(result)
+	case "connection_changed":
+		if identity, ok := evt.Data.(ttypes.TurnIdentity); ok && identity.Generation == snapshot.TurnGeneration {
+			snapshot.ProviderID, snapshot.ModelID = identity.ProviderID, identity.ModelID
+			snapshot.AccountID = identity.AccountID
+		}
 	case "turn_started":
 		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentPreparing, "Preparing context", false
 		snapshot.RequestID = ""

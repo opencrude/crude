@@ -76,6 +76,7 @@ var toolVerbs = map[string][3]string{
 	"mcp_get_prompt":          {"Preparing prompt fetch", "Fetching MCP prompt", "Fetched MCP prompt"},
 	"agent_update_claims":     {"Preparing scope repair", "Repairing agent file scope", "Repaired agent file scope"},
 	"agent_narrow_claims":     {"Preparing scope change", "Narrowing file scope", "Narrowed file scope"},
+	"agent_configure":         {"Preparing model change", "Changing agent model", "Changed agent model"},
 	"crude_commands":          {"Preparing command discovery", "Finding Crude commands", "Found Crude commands"},
 	"crude_control":           {"Preparing Crude operation", "Running Crude operation", "Ran Crude operation"},
 }
@@ -234,7 +235,7 @@ func isCollaborationOperation(name string) bool {
 	switch name {
 	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond",
 		"agent_control", "publish_report", "artifact_read", "agent_wait", "board_read",
-		"agent_update_claims", "agent_narrow_claims":
+		"agent_update_claims", "agent_narrow_claims", "agent_configure":
 		return true
 	default:
 		return false

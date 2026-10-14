@@ -64,8 +64,6 @@ type shellControlDoneMsg struct {
 	memoryEpoch   uint64
 	boardOwner    *boardbrowser.Screen
 	pickerOwner   *capabilityPickerOwner
-	draftRevision uint64
-	draftEpoch    uint64
 }
 
 type shellControlReplyMsg struct{ err error }
@@ -673,7 +671,6 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 				if owner.window != nil && m.capabilityPicker != nil {
 					if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == m.capabilityPicker.screen {
 						done.pickerOwner = m.capabilityPicker
-						done.draftRevision, done.draftEpoch = m.Input.DraftRevision(), m.Input.DraftEpoch()
 					}
 				}
 			}
@@ -719,11 +716,7 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 		} else if done.boardOwner != nil {
 			valid = valid && m.boardBrowser == done.boardOwner && m.termDock != nil && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelBoard
 		} else if done.pickerOwner != nil {
-			if _, staging := done.completion.(capabilityContextMsg); staging {
-				valid = valid && m.capabilityPicker == nil && done.pickerOwner.generation == done.generation && done.pickerOwner.session == m.ActiveSession && done.pickerOwner.agentID == m.activeAgentTabID() && m.Input.DraftRevision() == done.draftRevision && m.Input.DraftEpoch() == done.draftEpoch
-			} else {
-				valid = valid && m.capabilityPicker == done.pickerOwner
-			}
+			valid = valid && m.capabilityPicker == done.pickerOwner
 		} else if done.deckOwner != nil {
 			var intent shellControlIntent
 			if decodeShellInput(msg.Envelope.Request.Input, &intent) != nil {
@@ -916,12 +909,12 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			return m.failShellControl(msg, control.Stale, "board panel hidden")
 		}
 	case capabilityPickerResultMsg:
-		if !valid || completion.owner != done.pickerOwner || completion.owner != m.capabilityPicker || completion.sequence != completion.owner.sequence {
-			return m.failShellControl(msg, control.Stale, "capability picker fetch owner changed")
+		if !valid || completion.owner != m.capabilityPicker || (done.pickerOwner != nil && completion.owner != done.pickerOwner) || completion.sequence != completion.owner.sequence {
+			return m.failShellControl(msg, control.Stale, "capability modal owner changed")
 		}
 		m.applyCapabilityPickerResult(completion)
-		if completion.err != nil || !completion.owner.screen.PreviewReady() {
-			return m.failShellControl(msg, control.OperationFailed, "capability source could not produce a stageable preview")
+		if completion.err != nil {
+			return m.failShellControl(msg, control.OperationFailed, "capabilities could not be refreshed or updated")
 		}
 	case capabilityContextMsg:
 		if completion.result.Err != nil {

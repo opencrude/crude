@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -23,6 +24,8 @@ type recoverySlot struct {
 	id         string
 	generation uint64
 	wake       chan struct{}
+	// status is the supervisor's latest transition, guarded by recoveryMu.
+	status recoverytypes.Status
 }
 
 type recoveryRunState struct {
@@ -277,10 +280,20 @@ func (s *Session) newRecoverySupervisor(
 	slot := &recoverySlot{id: supervisor.IncidentID(), generation: generation, wake: make(chan struct{}, 1)}
 	supervisor.Wake = slot.wake
 	supervisor.Emit = func(event agent.AgentEvent) {
+		if status, ok := event.Data.(recoverytypes.Status); ok {
+			s.recoveryMu.Lock()
+			if current := s.recoverySlots[agentID]; current == slot {
+				slot.status = status
+			}
+			s.recoveryMu.Unlock()
+		}
 		if sender != nil {
 			sender.SendAgentEventWithID(event.Type, event.Data, agentID)
 		}
 	}
+	// A child waiting for an explicit wake must never wait unnoticed: its
+	// parent learns the exact incident and how to continue or cancel it.
+	supervisor.Attention = s.publishChildNeedsAttention
 	supervisor.Persist = func(status recoverytypes.Status) error {
 		state.mu.Lock()
 		owner := state.contextOwnerID
@@ -360,40 +373,81 @@ func (s *Session) parkRecovery(checkpoint sessiondb.RecoveryCheckpoint) {
 	delete(s.recoverySlots, checkpoint.Status.AgentID)
 	s.pendingRecoveries[checkpoint.Status.AgentID] = checkpoint
 	s.recoveryMu.Unlock()
+	// Notify only now: the parked task is registered, so the parent's
+	// continue/cancel can act on exactly this incident.
 	if checkpoint.Status.State == recoverytypes.NeedsAttention {
-		s.publishChildNeedsAttention(checkpoint)
+		s.publishChildNeedsAttention(checkpoint.Status)
 	}
 }
 
-func (s *Session) publishChildNeedsAttention(checkpoint sessiondb.RecoveryCheckpoint) {
-	if s == nil || len(checkpoint.OwnerData) == 0 {
-		return
-	}
-	var owner childRecoveryOwner
-	if json.Unmarshal(checkpoint.OwnerData, &owner) != nil || owner.Spec.ParentID == "" {
+// publishChildNeedsAttention tells a child's parent that the child stopped
+// executing, why, and the exact controls that continue or cancel it. Root
+// agents have no parent; their owner is the human, who sees the incident.
+func (s *Session) publishChildNeedsAttention(status recoverytypes.Status) {
+	if s == nil || status.AgentID == "" || status.ID == "" {
 		return
 	}
 	store := s.CollaborationStore()
 	if store == nil {
 		return
 	}
-	status := checkpoint.Status
-	remedy := status.Action
-	if remedy == "" {
-		remedy = "Inspect the child incident, repair its configuration/guidance/storage cause, then explicitly retry or Stop the exact incident."
+	child, err := store.Agent(context.Background(), status.AgentID)
+	if err != nil || child.ParentID == "" {
+		return
 	}
-	body := fmt.Sprintf("%s (%s, %s) needs attention; incident %s generation %d. %s Remedy: %s",
-		owner.Spec.Name, owner.Spec.Category, owner.Spec.ID, status.ID, status.Generation, status.Detail, remedy)
-	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
-		SenderID: string(owner.Spec.ID), SenderName: owner.Spec.Name,
-		IdempotencyKey: fmt.Sprintf("needs-attention:%s:%d:%d", status.ID, status.Generation, status.UpdatedAt.UnixNano()),
-		RecipientIDs:   []string{string(owner.Spec.ParentID)}, Origin: collaboration.OriginRuntime,
-		Kind: collaboration.EventPeerNote, Body: body, RunID: "",
+	detail := ""
+	if status.Detail != "" {
+		detail = " Detail: " + status.Detail + "."
+	}
+	body := fmt.Sprintf("%s (%s, %s) stopped and needs attention: %s.%s Its run is not executing; messages you send it are delivered when it continues. "+
+		"After addressing the cause, continue it with agent_control operation \"continue\" (recovery_id %q, recovery_generation %d), or abandon it with operation \"cancel\" and the same recovery identity.",
+		child.Name, child.Category, child.ID, status.Summary, detail, status.ID, status.Generation)
+	_, err = store.Publish(context.Background(), collaboration.PublishRequest{
+		SenderID: child.ID, SenderName: child.Name,
+		IdempotencyKey: fmt.Sprintf("needs-attention:%s:%d:%d", status.ID, status.Generation, status.Attempt),
+		RecipientIDs:   []string{child.ParentID}, Origin: collaboration.OriginRuntime,
+		Kind: collaboration.EventPeerNote, Body: body,
 		References: []collaboration.Reference{{Kind: "recovery_incident", ID: status.ID, Revision: int(status.Generation)}},
 	})
 	if err != nil && s.logger != nil {
 		s.logger.Warn("COLLAB", "child_attention_publish_failed", "agent_id", status.AgentID, "error", err.Error())
 	}
+}
+
+// agentRecoveryView is the inspectable, actionable form of one agent's open
+// recovery incident.
+type agentRecoveryView struct {
+	ID         string `json:"recovery_id"`
+	Generation uint64 `json:"recovery_generation"`
+	State      string `json:"state"`
+	Summary    string `json:"summary,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	Action     string `json:"action,omitempty"`
+	Controls   string `json:"controls"`
+}
+
+// agentRecovery reports an agent's open incident: a run waiting in place for
+// an explicit wake, or a parked task with no live execution.
+func (s *Session) agentRecovery(agentID string) *agentRecoveryView {
+	if s == nil || agentID == "" {
+		return nil
+	}
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	view := func(status recoverytypes.Status) *agentRecoveryView {
+		return &agentRecoveryView{
+			ID: status.ID, Generation: status.Generation, State: string(status.State),
+			Summary: status.Summary, Detail: status.Detail, Action: status.Action,
+			Controls: "agent_control operation \"continue\" or \"cancel\" with this recovery_id and recovery_generation",
+		}
+	}
+	if slot := s.recoverySlots[agentID]; slot != nil && slot.status.State == recoverytypes.NeedsAttention {
+		return view(slot.status)
+	}
+	if checkpoint, ok := s.pendingRecoveries[agentID]; ok && checkpoint.Status.ID != "" {
+		return view(checkpoint.Status)
+	}
+	return nil
 }
 
 func (s *Session) wakeRecovery(agentID string) bool {
@@ -431,30 +485,12 @@ func (s *Session) wakeAllRecoveries() {
 	}
 }
 
-// RetryRecovery wakes the current exact incident for an agent.
-func (s *Session) RetryRecovery(agentID string) bool {
-	if s == nil || agentID == "" {
-		return false
-	}
-	s.recoveryMu.Lock()
-	if slot := s.recoverySlots[agentID]; slot != nil {
-		id, generation := slot.id, slot.generation
-		s.recoveryMu.Unlock()
-		return s.RetryRecoveryFor(agentID, id, generation)
-	}
-	checkpoint, ok := s.pendingRecoveries[agentID]
-	s.recoveryMu.Unlock()
-	if !ok {
-		return false
-	}
-	return s.RetryRecoveryFor(agentID, checkpoint.Status.ID, checkpoint.Status.Generation)
-}
-
-// RetryRecoveryFor fences asynchronous UI actions to one exact incident and
-// generation. A stale action cannot wake replacement work.
-func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64) bool {
+// RetryRecoveryFor continues one exact incident and generation: it wakes a run
+// waiting in place, or starts a fresh attempt for a parked task. A stale action
+// cannot wake replacement work, and every refusal says why.
+func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64) error {
 	if s == nil || agentID == "" || recoveryID == "" || generation == 0 {
-		return false
+		return errors.New("continue requires an exact agent, recovery_id and recovery_generation")
 	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -462,43 +498,56 @@ func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64
 	if slot := s.recoverySlots[agentID]; slot != nil {
 		if slot.id != recoveryID || slot.generation != generation {
 			s.recoveryMu.Unlock()
-			return false
+			return fmt.Errorf("%w: agent %s's open incident is %s generation %d", errRecoveryStale, agentID, slot.id, slot.generation)
 		}
+		state := slot.status.State
 		wake := slot.wake
 		s.recoveryMu.Unlock()
+		if state != recoverytypes.NeedsAttention && state != recoverytypes.Recovering {
+			return fmt.Errorf("agent %s is executing normally; there is nothing to continue", agentID)
+		}
 		select {
 		case wake <- struct{}{}:
 		default:
 		}
-		return true
+		return nil
 	}
 	checkpoint, ok := s.pendingRecoveries[agentID]
-	if !ok || checkpoint.Status.ID != recoveryID || checkpoint.Status.Generation != generation {
-		s.recoveryMu.Unlock()
-		return false
-	}
 	s.recoveryMu.Unlock()
-
+	if !ok {
+		return fmt.Errorf("%w: agent %s has no open recovery incident", errRecoveryStale, agentID)
+	}
+	if checkpoint.Status.ID != recoveryID || checkpoint.Status.Generation != generation {
+		return fmt.Errorf("%w: agent %s's open incident is %s generation %d", errRecoveryStale, agentID, checkpoint.Status.ID, checkpoint.Status.Generation)
+	}
 	if len(checkpoint.TerminalSettlement) != 0 {
-		return s.retryTerminalSettlement(checkpoint)
+		if !s.retryTerminalSettlement(checkpoint) {
+			return errors.New("the finished result could not be published yet; storage is still unavailable")
+		}
+		return nil
 	}
 	s.orchMu.Lock()
 	orchestrator := s.orchestrators[agentID]
 	s.orchMu.Unlock()
 	if orchestrator != nil && checkpoint.ContextOwnerID == s.sessionID {
-		return orchestrator.submitRecovery(checkpoint)
+		if !orchestrator.submitRecovery(checkpoint) {
+			return errors.New("the agent is closing, already running a turn, or history admission is unavailable")
+		}
+		return nil
 	}
 	if runner := s.SubAgentRunner(); runner != nil {
 		return runner.ResumeRecovery(checkpoint)
 	}
-	return false
+	return errors.New("no runtime owns this agent's task")
 }
+
+var errRecoveryStale = errors.New("recovery incident is stale")
 
 // CancelRecoveryFor settles one exact unfinished task without starting a new
 // provider/tool/child attempt. Stale UI actions cannot cancel a replacement.
-func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint64) bool {
+func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint64) error {
 	if s == nil || agentID == "" || recoveryID == "" || generation == 0 {
-		return false
+		return errors.New("cancel requires an exact agent, recovery_id and recovery_generation")
 	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -506,7 +555,7 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	if slot := s.recoverySlots[agentID]; slot != nil {
 		if slot.id != recoveryID || slot.generation != generation {
 			s.recoveryMu.Unlock()
-			return false
+			return fmt.Errorf("%w: agent %s's open incident is %s generation %d", errRecoveryStale, agentID, slot.id, slot.generation)
 		}
 		s.recoveryMu.Unlock()
 		s.orchMu.Lock()
@@ -514,20 +563,23 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		s.orchMu.Unlock()
 		if orchestrator != nil {
 			cancelled, _ := orchestrator.cancelTurnForGeneration(generation)
-			return cancelled
+			if !cancelled {
+				return errors.New("the agent's turn could not be cancelled for this generation")
+			}
+			return nil
 		}
 		if runner := s.SubAgentRunner(); runner != nil {
 			if handle, ok := runner.Manager().GetActive(agent.AgentID(agentID)); ok {
 				handle.Cancel()
-				return true
+				return nil
 			}
 		}
-		return false
+		return fmt.Errorf("agent %s has no live execution to cancel", agentID)
 	}
 	checkpoint, ok := s.pendingRecoveries[agentID]
 	if !ok || checkpoint.Status.ID != recoveryID || checkpoint.Status.Generation != generation {
 		s.recoveryMu.Unlock()
-		return false
+		return fmt.Errorf("%w: agent %s has no matching open recovery incident", errRecoveryStale, agentID)
 	}
 	s.recoveryMu.Unlock()
 	s.orchMu.Lock()
@@ -539,11 +591,14 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		live := currentOrchestrator.turnCancel != nil
 		currentOrchestrator.turnMu.Unlock()
 		if currentGeneration != generation {
-			return false
+			return fmt.Errorf("%w: agent %s moved to turn generation %d", errRecoveryStale, agentID, currentGeneration)
 		}
 		if live {
 			cancelled, _ := currentOrchestrator.cancelTurnForGeneration(generation)
-			return cancelled
+			if !cancelled {
+				return errors.New("the agent's turn could not be cancelled for this generation")
+			}
+			return nil
 		}
 	}
 
@@ -561,13 +616,13 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		valid := exists && s.recoverySlots[agentID] == nil && current.Status.ID == recoveryID && current.Status.Generation == generation
 		s.recoveryMu.Unlock()
 		if !valid {
-			return false
+			return fmt.Errorf("%w: the incident changed while cancelling", errRecoveryStale)
 		}
 		checkpoint = current
 		var owner childRecoveryOwner
 		if json.Unmarshal(checkpoint.OwnerData, &owner) != nil ||
 			string(owner.Spec.ID) != agentID {
-			return false
+			return errors.New("the child task's owner record is unreadable")
 		}
 		result := agent.SubAgentResult{
 			AgentID: owner.Spec.ID, SessionID: agentID, Name: owner.Spec.Name,
@@ -577,11 +632,11 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		}
 		path := s.completedSubAgentDBPath(agentID)
 		if path == "" {
-			return false
+			return errors.New("the child session database path is unavailable")
 		}
 		childDB, err := sessiondb.OpenAndMigrate(path)
 		if err != nil {
-			return false
+			return fmt.Errorf("open the child session database: %w", err)
 		}
 		handle := &agent.SubAgentHandle{
 			DB: childDB, SessionID: agentID, Spec: owner.Spec,
@@ -592,10 +647,10 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		}
 		closeErr := childDB.Close()
 		if err != nil || closeErr != nil {
-			return false
+			return fmt.Errorf("record the cancelled child task: %w", errors.Join(err, closeErr))
 		}
 		if s.db == nil || sessiondb.InsertSubAgentResult(s.db, subAgentResultRow(s.sessionID, result)) != nil {
-			return false
+			return errors.New("record the cancelled child result in the parent session")
 		}
 		cancelledStatus = checkpoint.Status
 		cancelledChild = &result
@@ -603,7 +658,7 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		archive, active := stoppedRecoveryContext(checkpoint)
 		current, found, loadErr := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
 		if loadErr != nil {
-			return false
+			return fmt.Errorf("load the stopped context: %w", loadErr)
 		}
 		if found {
 			active = append([]provider.ChatMessage(nil), current.Messages...)
@@ -627,10 +682,10 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 			"", checkpoint.PendingInput.InternalID,
 			ttypes.TurnIdentity{Generation: generation}, active,
 		); err != nil {
-			return false
+			return fmt.Errorf("finalize the stopped turn: %w", err)
 		}
 		if err := sessiondb.FinishAgentTurn(s.db, s.sessionID, agentID, generation, sessiondb.TurnInterrupted); err != nil {
-			return false
+			return fmt.Errorf("finish the stopped turn: %w", err)
 		}
 	}
 	parentCheckpoint := checkpoint
@@ -642,10 +697,10 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		_, err := s.publishRootContext(sessiondb.ContextPublication{RuntimeAgentID: parentCheckpoint.Status.AgentID, Recovery: &parentCheckpoint})
 		s.msgsMu.Unlock()
 		if err != nil {
-			return false
+			return fmt.Errorf("publish the cancelled incident: %w", err)
 		}
 	} else if err := sessiondb.SaveRecoveryCheckpoint(s.db, s.sessionID, parentCheckpoint); err != nil {
-		return false
+		return fmt.Errorf("publish the cancelled incident: %w", err)
 	}
 	s.recoveryMu.Lock()
 	if current, exists := s.pendingRecoveries[agentID]; exists &&
@@ -672,7 +727,31 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 			"cancelled_at": time.Now(),
 		}, agentID)
 	}
-	return true
+	if cancelledChild != nil {
+		s.publishChildCancelled(agentID, recoveryID)
+	}
+	return nil
+}
+
+// publishChildCancelled tells the parent that its parked child was settled as
+// cancelled (by the human or the parent itself) and will not continue.
+func (s *Session) publishChildCancelled(agentID, recoveryID string) {
+	store := s.CollaborationStore()
+	if store == nil {
+		return
+	}
+	child, err := store.Agent(context.Background(), agentID)
+	if err != nil || child.ParentID == "" {
+		return
+	}
+	_, err = store.Publish(context.Background(), collaboration.PublishRequest{
+		SenderID: child.ID, SenderName: child.Name, IdempotencyKey: "recovery-cancelled:" + recoveryID,
+		RecipientIDs: []string{child.ParentID}, Origin: collaboration.OriginRuntime, Kind: collaboration.EventPeerNote,
+		Body: fmt.Sprintf("%s (%s, %s) was cancelled while it was stopped; its task will not continue. Launch a new assignment if the work is still needed.", child.Name, child.Category, child.ID),
+	})
+	if err != nil && s.logger != nil {
+		s.logger.Warn("COLLAB", "child_cancel_publish_failed", "agent_id", agentID, "error", err.Error())
+	}
 }
 
 func publishStoppedChildRecovery(handle *agent.SubAgentHandle, checkpoint sessiondb.RecoveryCheckpoint, status recoverytypes.Status) (sessiondb.RecoveryCheckpoint, error) {

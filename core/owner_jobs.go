@@ -31,10 +31,13 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			run = ws.PrepareCancelAgentRecovery(in.AgentID, in.IncidentID, in.Generation)
 		}
 		if run == nil {
-			return done(coreprotocol.BoolResult{})
+			return done(coreprotocol.BoolResult{Error: "no session owns this agent"})
 		}
 		return func(context.Context) coreprotocol.Response {
-			return response(request, coreprotocol.BoolResult{OK: run()})
+			if err := run(); err != nil {
+				return response(request, coreprotocol.BoolResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.BoolResult{OK: true})
 		}, true
 	case coreprotocol.AgentStopCommand:
 		var in coreprotocol.StopCommandRequest

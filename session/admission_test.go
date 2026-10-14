@@ -196,7 +196,7 @@ func TestAdmittedInputMirrorsItsOwningTurnBeforeCompletion(t *testing.T) {
 	if _, err := store.DB().Exec(`DROP TRIGGER reject_turn_mirror`); err != nil {
 		t.Fatal(err)
 	}
-	if !s.RetryRecoveryFor(o.ID, incident.ID, incident.Generation) {
+	if s.RetryRecoveryFor(o.ID, incident.ID, incident.Generation) != nil {
 		t.Fatal("exact finalization incident could not retry its mirror")
 	}
 	waitTurnDone(t, sender, o.ID)

@@ -212,7 +212,7 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 				if calls.Load() != 1 {
 					t.Fatalf("failed steering issued a weakened provider request: %d", calls.Load())
 				}
-				if !s.RetryRecoveryFor(o.ID, status.ID, status.Generation) {
+				if s.RetryRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 					t.Fatal("exact Continue was rejected")
 				}
 				status = awaitAttention(status.UpdatedAt)
@@ -223,7 +223,7 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 					if !strings.Contains(status.Detail, "protocol \"anthropic\"") || !strings.Contains(status.Detail, "video") {
 						t.Fatalf("steering did not fail for the intended wire limitation: %+v", status)
 					}
-					if !s.CancelRecoveryFor(o.ID, status.ID, status.Generation) {
+					if s.CancelRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 						t.Fatal("Stop did not reach blocked steering")
 					}
 					waitTurnDone(t, sender, o.ID)
@@ -301,7 +301,7 @@ func TestHumanSteeringPreparationRequestJourneys(t *testing.T) {
 					repaired.Agents.Profiles["default"].Categories[CategoryDefault] = category
 					s.runtimeProfile.UpdateBase(repaired)
 				}
-				if !s.RetryRecoveryFor(o.ID, status.ID, status.Generation) {
+				if s.RetryRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 					t.Fatal("Continue after exact repair was rejected")
 				}
 			}

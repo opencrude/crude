@@ -105,6 +105,17 @@ func (c *Conversation) BeginTurn(identity ttypes.TurnIdentity) bool {
 	return true
 }
 
+// SwitchConnection replaces the active turn's connection (provider, account,
+// model) within the same generation, so messages after a parent's
+// request-boundary model change are attributed to the model that produced them.
+func (c *Conversation) SwitchConnection(identity ttypes.TurnIdentity) bool {
+	if c == nil || identity.ModelID == "" || identity.Generation == 0 || identity.Generation != c.turnIdentity.Generation {
+		return false
+	}
+	c.turnIdentity = identity
+	return true
+}
+
 func (c *Conversation) attributeTurn(message *Message) {
 	if c == nil || message == nil || message.ModelID != "" {
 		return
