@@ -606,8 +606,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "skills.manage":
 		return m.openCapabilityManager(activitySkills, "", "")
 	case "capabilities.pick":
-		m.openCapabilityPicker()
-		return nil
+		return m.openCapabilityPicker()
 	case "mcp.manage":
 		return m.openCapabilityManager(activityMCP, "", "")
 	case "board.browse":

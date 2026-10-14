@@ -206,11 +206,7 @@ func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 	}
 
 	sep := rowText(app, inputY)
-	capabilityStart := app.inputRect.X + app.inputRect.W - rendering.VisibleWidth("+ Capability") - 1
 	for x := lay.SidebarW; x < lay.SidebarW+lay.ContentW && x < len(sep); x++ {
-		if app.inputRect.W >= 24 && x >= capabilityStart && x < capabilityStart+rendering.VisibleWidth("+ Capability") {
-			continue
-		}
 		c := []rune(sep)[x]
 		if c != ' ' && c != '─' {
 			t.Fatalf("input separator row polluted by chat overflow at col %d: %q", x, sep)

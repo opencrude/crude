@@ -71,10 +71,14 @@ func (c *Config) bindAccount(p *provider.Provider, accountID string) error {
 	return manager.Bind(p, accountID)
 }
 
-// ProviderForAccount builds one account-bound provider for explicit auxiliary
-// requests such as model discovery. The caller owns the returned instance.
-func (c *Config) ProviderForAccount(accountID, model string) (*provider.Provider, error) {
-	return c.providerForCategory(CategoryConfig{AccountID: accountID, Model: model})
+// ConnectionProvider binds an account's connection with no model and no
+// per-agent request settings; the caller owns the returned instance. It is for
+// listing models and probing endpoints, never for serving an agent: every
+// model-serving provider is built from a
+// complete CategoryConfig (account, model, thinking effort, sampling, context
+// window) so no request setting can be silently dropped.
+func (c *Config) ConnectionProvider(accountID string) (*provider.Provider, error) {
+	return c.providerForCategory(CategoryConfig{AccountID: accountID})
 }
 
 // pinAccounts captures effective role connections for a NEW session. A later

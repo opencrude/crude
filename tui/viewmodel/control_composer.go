@@ -85,7 +85,7 @@ func (m *App) handleComposerProduct(msg shellport.ControlRequestMsg) (tea.Cmd, b
 		if err := decodeShellInput(r.Input, &struct{}{}); err != nil {
 			return fail(control.Invalid, err.Error())
 		}
-		m.openCapabilityPicker()
+		return m.awaitShellControl(msg, m.openCapabilityPicker(), nil), true
 	case "composer.send":
 		if err := decodeShellInput(r.Input, &struct{}{}); err != nil {
 			return fail(control.Invalid, err.Error())

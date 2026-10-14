@@ -257,7 +257,6 @@ type App struct {
 	toolLayoutSavedVersion  uint64
 	workspacePanelMaximized bool
 	capabilitySnapshot      captypes.Snapshot
-	skillInvocationSequence uint64
 	providerPresets         []roottypes.ProviderPreset
 	asyncIO                 atomic.Pointer[appAsyncIOState]
 	asyncIOStopped          atomic.Bool

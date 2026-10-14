@@ -186,7 +186,6 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.boardBrowser = nil
 	m.pendingOperationIssues = nil
 	m.capabilitySnapshot = captypes.Snapshot{}
-	m.skillInvocationSequence++
 	m.workspacePanelHeights = nil
 	m.toolLayout = workspace.DefaultToolLayout()
 	m.toolLayoutVersion, m.toolLayoutSavedVersion = 0, 0

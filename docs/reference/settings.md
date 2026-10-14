@@ -111,8 +111,8 @@ stable setting IDs participate in Settings search. Hidden catalog controls have
 empty geometry and cannot paint or activate on other Settings pages.
 
 Skills offers local Create/Add, instructions and contained file browsing,
-Automatic/Manual only/Disabled modes, and explicit Use in session. Use stages
-`/skill <source-qualified-id>` in the selected root composer without sending it.
+and Automatic/Manual only/Disabled modes. `/skills` opens the simple activation
+modal instead of inserting an ID-based invocation into the composer.
 Managed artifacts are immutable; Make local copy creates a distinct authored
 identity before native editor opening. Remove unregisters the selected binding,
 not the authored directory or another workspace's selected artifact.
@@ -179,14 +179,17 @@ templates support explicit text-only fetch/preview and source-attributed compose
 attachments. Changed session, agent or draft rejects a late attachment. Nothing
 is submitted automatically.
 
-The composer's visible **+ Capability** control and **Insert Capability** palette
-action open the same descriptor-backed Skills/Tools/Resources/Prompts picker.
-Skill selection stages a source-qualified invocation. Tool selection inserts a
-selection-only reference chip, not a grant. Resources/prompts require arguments,
-Fetch, exact preview and Stage before a source-attributed attachment appears.
-Changing arguments, selected source, session/agent or composer rejects stale data;
-closing cancels pending fetches. Management remains available through Settings
-when no agent is selected.
+`/skills` and `/mcps` open one **Capabilities** modal on the matching tab.
+It contains only Skills/MCPs tabs, local search, friendly resource names,
+Active/Inactive status, and Activate/Deactivate plus Close. A row click selects;
+Enter/Space or the explicit action toggles the selected registration immediately.
+Changes persist at the registration's existing Application/Workspace binding.
+Activation enables future agent use; it does not launch an MCP, grant tool access,
+submit a prompt, or erase instructions already loaded. MCP connection status is
+shown separately from activation. Full install, connection and access management
+remain in Settings. The palette's **Capabilities** action opens the same modal;
+the composer has no **+ Capability** control and `/skill` and `/mcp` are removed.
+Async results are modal-lifetime/workspace-fenced and preserve search and selection.
 
 Sources supports local directories, commit-pinned repositories and registries.
 Trust/disable and acquisition budgets are independent controls. Automatic

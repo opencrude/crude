@@ -179,6 +179,7 @@ func (a *Agent) Run(
 	frozen = append(frozen, a.FrozenPrefix...)
 	prefix, prefixErr := newPrefixVerifier(frozen)
 	if prefixErr != nil {
+		a.setRunFailure(prefixErr, rootprompt.RecoveryInterrupted, RecoveryFailureUnknown)
 		a.emitError(emit, fmt.Errorf("initialize context prefix verifier: %w", prefixErr))
 		return append([]provider.ChatMessage(nil), msgs...)
 	}
@@ -306,6 +307,11 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 
+		if a.RequestBoundary != nil && a.RequestBoundary() {
+			providerName = a.providerDisplayName()
+			cacheUsageUnknown = a.Provider.ProtocolID() == "ollama"
+			l.Info("AGENT", "connection_changed", "step", step, "model", a.Model, "provider", providerName, "effort", a.Provider.ThinkingEffort())
+		}
 		if a.PrepareStep != nil {
 			var notices []provider.ChatMessage
 			a.FilteredTools, notices = a.PrepareStep()
@@ -432,7 +438,7 @@ func (a *Agent) Run(
 						emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 					} else {
 						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
-						a.setRunFailure(compactErr, rootprompt.RecoveryInterrupted)
+						a.setRunFailure(compactErr, rootprompt.RecoveryInterrupted, RecoveryFailureCompaction)
 						a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					}
 					return returnMessages()
@@ -447,7 +453,7 @@ func (a *Agent) Run(
 					data["model_id"] = outcome.ModelID
 					data["error"] = compactErrorText(compactErr)
 					emit(AgentEvent{Type: "context_compaction_failed", Data: data})
-					a.setRunFailure(compactErr, rootprompt.RecoveryInterrupted)
+					a.setRunFailure(compactErr, rootprompt.RecoveryInterrupted, RecoveryFailureCompaction)
 					a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					return returnMessages()
 				}
@@ -998,7 +1004,6 @@ func (a *Agent) Run(
 				}
 			}
 		}
-		var uncertain error
 		guidanceChanged := false
 		var guidanceOperandErr *guidanceOperandError
 		if a.guidance != nil {
@@ -1078,9 +1083,6 @@ func (a *Agent) Run(
 					resultMessages[r.index] = toolResultMessage(r, len(results))
 					resultMessages[r.index].InternalID = resultIDs[r.index]
 					receivedResults[r.index] = true
-					if r.failure != nil {
-						uncertain = r.failure
-					}
 					// Retain each finished sibling before waiting for the rest.
 					// Partial snapshots stay call-ordered and never invent outcomes
 					// for tools that are still running.
@@ -1145,28 +1147,18 @@ func (a *Agent) Run(
 			a.emitError(emit, fmt.Errorf("persist completed tool boundary: %w", checkpointErr))
 			return returnMessages()
 		}
-		if uncertain != nil {
-			var structural *tools.StructuralFailureError
-			if errors.As(uncertain, &structural) {
-				// Ownership blockers are deterministic and repairable by the
-				// parent. They are not uncertain effects and must not enter
-				// automatic panic recovery.
-				a.setRunFailure(uncertain, rootprompt.RecoveryInterrupted, RecoveryFailureStructural)
-			} else {
-				a.setRunFailure(uncertain, rootprompt.RecoveryUncertain, RecoveryFailurePanic)
-			}
-			a.emitError(emit, uncertain)
-			return returnMessages()
-		}
+		// Tool failures, including uncertain effects and ownership rejections,
+		// are ordinary tool results: the loop continues and the model decides.
+		// A guidance read failure deferred every call of this batch (or will
+		// defer the next batch on its pre-check), so it fails closed per call
+		// without ending the run.
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}
 		if guidanceErr != nil && guidanceOperandErr == nil {
-			a.setRunFailure(guidanceErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)
-			a.emitError(emit, fmt.Errorf("complete project guidance is required: %w", guidanceErr))
-			return returnMessages()
+			l.Warn("GUIDANCE", "scope_read_failed", "error", guidanceErr.Error())
 		}
-		if guidanceChanged {
+		if guidanceChanged && guidanceErr == nil {
 			rendered, refreshErr := a.refreshProjectGuidance(ctx, systemPrompt)
 			if refreshErr != nil {
 				a.setRunFailure(refreshErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)

@@ -188,7 +188,17 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 			break
 		}
 		r, _ := utf8.DecodeRuneInString(cluster)
-		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), FG: fg, BG: bg, Attr: attr})
+		cellBG := bg
+		if bg.IsDefault() {
+			// Default means "inherit what is under me". Inside this buffer
+			// that is an already painted fill (a popup body, a selected row);
+			// only still-transparent cells defer to lower layers at blit time.
+			// Writing a literal default here punched holes through the fill.
+			if under := b.Get(curX, y); !under.Transparent {
+				cellBG = under.BG
+			}
+		}
+		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), FG: fg, BG: cellBG, Attr: attr})
 		curX += w
 	}
 	return curX

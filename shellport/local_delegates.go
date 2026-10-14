@@ -222,11 +222,11 @@ func (l *local) ResolveConfirmation(agentID, blockID, choice string) bool {
 	return l.ws.ResolveConfirmation(agentID, blockID, choice)
 }
 
-func (l *local) PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() bool {
+func (l *local) PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() error {
 	return l.ws.PrepareAgentRecovery(agentID, incidentID, generation)
 }
 
-func (l *local) PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() bool {
+func (l *local) PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() error {
 	return l.ws.PrepareCancelAgentRecovery(agentID, incidentID, generation)
 }
 

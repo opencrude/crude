@@ -20,7 +20,7 @@ func TestMCPContextCannotAttachToDifferentAgentWithSameSessionAndDraft(test *tes
 	app.openCapabilityPicker()
 	owner := app.capabilityPicker
 	app.overlayHost.Close(ui.OverlayCapabilityPicker)
-	app.applyCapabilityPickerResult(capabilityPickerResultMsg{owner: owner, content: `{"Content":[{"Text":"late data"}]}`})
+	app.applyCapabilityPickerResult(capabilityPickerResultMsg{owner: owner})
 	if app.capabilityPicker != nil {
 		test.Fatal("late result resurrected closed picker")
 	}

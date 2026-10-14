@@ -52,10 +52,10 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |
 | LSP popup lists | List |
-| Current plan hover reader | Passive WindowFrame with VirtualList and ScrollbarControl over the plan owner's complete immutable step projection; no tool-JSON parsing or storage reads on paint | same |
+| Current plan hover reader | Passive WindowFrame with VirtualList and ScrollbarControl over the plan owner's complete immutable step projection; drag selection uses the shared chat line painter's selection columns and copies on release; no tool-JSON parsing or storage reads on paint | same |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
 | Skills/MCP catalogs | store-style retained `VirtualList` cards (quiet selection fill, accent edge) with native inline Install/Manage buttons, live-searching `FilterField` over a `ProgressRule`, an `Installed` chip (`ToggleButton.SetChip`) and Source/Sort choice lists on the search row; detail `ui.Tabs`/`Form`/read-only `TextArea`, contained skill `Tree`, and bounded bottom actions; scope stays in the separate Application/Workspace footer switch |
-| Composer capability selection | `capabilitypicker.Screen` in WindowFrame, Skills/Tools/Resources/Prompts tabs, native FilterField/List/Form/TextArea; visible + Capability control and palette, explicit preview before staged context |
+| Capability activation | `capabilitypicker.Screen` in modal WindowFrame; Skills/MCPs `Tabs`, local `FilterField`, selectable `List` + scrollbar, Activate/Deactivate and Close `ActionBar`. `/skills`, `/mcps` and Capabilities palette; no composer control or ID invocation. Clicking selects; Enter/Space or the action toggles, without starting a server or granting access. |
 | Memory / Board | retained workspace-panel owners, native knowledge/episodes or threads/participants tabs, search and scrollable copyable evidence detail; tabs/title share their first row with host controls, browse search and local actions share a row, narrow rows expose local actions through a same-row More button and accessible list; no floating memory overlay or session-deck mount |
 
 ### Tab bar contract (one look)

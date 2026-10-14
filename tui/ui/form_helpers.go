@@ -175,10 +175,6 @@ func SpacerFieldState(id string) *FieldState {
 	return &FieldState{ID: id, Type: FieldSpacer}
 }
 
-// ThinkingLevels is the canonical thinking-level option list, shared by the
-// workspace settings and session override forms.
-var ThinkingLevels = []string{"none", "low", "medium", "high", "xhigh", "max"}
-
 // ModelFieldState builds a model select field with the standard "fetch on
 // open" placeholder used when the provider's model list is not loaded yet.
 func ModelFieldState(id, label, value string, options []FormOption, description string) *FieldState {
@@ -187,10 +183,10 @@ func ModelFieldState(id, label, value string, options []FormOption, description 
 	return f
 }
 
-// ThinkingFieldState builds a thinking-level cycle field over ThinkingLevels
+// ThinkingFieldState builds a thinking-level cycle field over types.ThinkingLevels
 // with the standard "Provider default" placeholder.
 func ThinkingFieldState(id, current, description string) *FieldState {
-	f := CycleFieldState(id, "Thinking level", ThinkingLevels, current, description)
+	f := CycleFieldState(id, "Thinking level", types.ThinkingLevels, current, description)
 	f.Placeholder = "Provider default"
 	return f
 }

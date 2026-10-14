@@ -425,7 +425,7 @@ func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *test
 					t.Fatal("later preparation failure discarded the captured selected preimage")
 				}
 			}
-			if !s.CancelRecoveryFor(o.ID, status.ID, status.Generation) {
+			if s.CancelRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 				t.Fatal("Stop could not reach the blocked preparation")
 			}
 			if failure == "reference-load" {
@@ -563,7 +563,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 	if err := os.WriteFile(path, changed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !s.RetryRecoveryFor(o.ID, status.ID, status.Generation) {
+	if s.RetryRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 		t.Fatal("exact unrepaired Continue was rejected")
 	}
 	status = awaitAttention(status.UpdatedAt)
@@ -578,7 +578,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 	category.ModelModalities = []string{provider.ModalityImage}
 	repaired.Agents.Profiles["default"].Categories[CategoryDefault] = category
 	s.runtimeProfile.UpdateBase(repaired)
-	if !s.RetryRecoveryFor(o.ID, status.ID, status.Generation) {
+	if s.RetryRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 		t.Fatal("exact Continue after capability repair was rejected")
 	}
 	deadline := time.After(5 * time.Second)

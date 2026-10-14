@@ -93,7 +93,7 @@ func TestPassiveRecoveryRestoresAcceptedTranscriptAndClosesUnknownToolExchange(t
 		t.Fatal(err)
 	}
 	status := resumed.pendingRecoveries[orch.ID].Status
-	if !resumed.RetryRecoveryFor(orch.ID, status.ID, status.Generation) {
+	if resumed.RetryRecoveryFor(orch.ID, status.ID, status.Generation) != nil {
 		t.Fatal("explicit continuation was rejected")
 	}
 	deadline := time.After(5 * time.Second)
@@ -223,7 +223,7 @@ wait:
 	if _, err := s.db.Exec(`DROP TRIGGER reject_turn_finish`); err != nil {
 		t.Fatal(err)
 	}
-	if !s.RetryRecoveryFor(orch.ID, status.ID, status.Generation) {
+	if s.RetryRecoveryFor(orch.ID, status.ID, status.Generation) != nil {
 		t.Fatal("ledger retry rejected")
 	}
 	waitTurnDone(t, sender, orch.ID)

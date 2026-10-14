@@ -438,11 +438,11 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		}
 	}
 	if outcome != "complete" {
-		if s.CancelRecoveryFor(ownerID, "foreign-incident", cp.Status.Generation) ||
-			s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation+1) {
+		if s.CancelRecoveryFor(ownerID, "foreign-incident", cp.Status.Generation) == nil ||
+			s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation+1) == nil {
 			t.Fatal("stale Stop reached the real owner")
 		}
-		if !s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation) {
+		if s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation) != nil {
 			t.Fatal("exact-owner Stop rejected")
 		}
 	}

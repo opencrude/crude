@@ -82,6 +82,10 @@ type Agent struct {
 	// PrepareStep snapshots live tools and runtime notices between requests,
 	// never while a parallel tool batch is using the previous snapshot.
 	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
+	// RequestBoundary lets the owner apply a pending connection change (account,
+	// model, thinking effort) strictly between requests, before the step reads
+	// the provider. It reports whether the connection changed.
+	RequestBoundary func() bool
 	// FlushRuntimeMessages fences the durable inbox before an empty lane can
 	// end a turn. Async delivery alone cannot prove there is no pending input.
 	FlushRuntimeMessages func(context.Context) error

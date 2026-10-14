@@ -126,11 +126,11 @@ func TestSkillManualModeAndManagedCopyUseExactIdentity(t *testing.T) {
 	if catalog.dirty() {
 		t.Fatal("acknowledged mode remains dirty")
 	}
-	request = capabilityRequest(t, capabilityAction(catalog, "use"))
-	if request.Action.Operation != "use" || request.Action.ID != "vendor:guide" {
-		t.Fatal("Use did not stage source-qualified identity")
+	for _, bar := range catalog.actionBars() {
+		if slices.Contains(bar.ButtonLabels(), "Use in session") {
+			t.Fatal("removed skill invocation remains available")
+		}
 	}
-	completeCapability(model, catalog, request, "staged")
 	capabilityAction(catalog, "make-local-copy")
 	for id, value := range map[string]string{"id": "local:guide-copy", "name": "guide-copy", "path": "skills/guide-copy"} {
 		model.capabilityDraft.SetValue(id, ui.StringValue(value))

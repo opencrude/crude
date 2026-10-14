@@ -122,6 +122,17 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	if !a.acceptCompactionEvent(evt) {
 		return effects
 	}
+	if evt.Type == "connection_changed" {
+		identity, ok := parseTurnIdentity(evt.Data)
+		if !ok || !target.SwitchConnection(identity) {
+			return effects
+		}
+		if a.TurnIdentity.ProviderID != identity.ProviderID || a.TurnIdentity.AccountID != identity.AccountID || a.TurnIdentity.ModelID != identity.ModelID {
+			a.ReasoningMode = reasoning.Unknown
+		}
+		a.TurnIdentity = identity
+		return effects
+	}
 	if evt.Type == "turn_started" {
 		identity, ok := parseTurnIdentity(evt.Data)
 		if !ok || identity.Generation < a.TurnIdentity.Generation {

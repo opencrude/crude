@@ -186,21 +186,30 @@ func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
 	return w.decide(coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Choice: choice})
 }
 
-func (w *Workspace) recovery(method, agentID, incidentID string, generation uint64) func() bool {
+func (w *Workspace) recovery(method, agentID, incidentID string, generation uint64) func() error {
 	request := coreprotocol.RecoveryRequest{AgentID: agentID, IncidentID: incidentID, Generation: generation}
-	return func() bool {
+	return func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 		defer cancel()
 		var out coreprotocol.BoolResult
-		return w.call(ctx, method, request, &out) == nil && out.OK
+		if err := w.call(ctx, method, request, &out); err != nil {
+			return err
+		}
+		if !out.OK {
+			if out.Error == "" {
+				return errors.New("the recovery action was not applied")
+			}
+			return errors.New(out.Error)
+		}
+		return nil
 	}
 }
 
-func (w *Workspace) PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() bool {
+func (w *Workspace) PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() error {
 	return w.recovery(coreprotocol.AgentRecover, agentID, incidentID, generation)
 }
 
-func (w *Workspace) PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() bool {
+func (w *Workspace) PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() error {
 	return w.recovery(coreprotocol.AgentRecoverCancel, agentID, incidentID, generation)
 }
 

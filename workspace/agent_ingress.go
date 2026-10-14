@@ -181,6 +181,11 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 			pane.Status = state.Status
 			pane.Collapse()
 		}
+	case "connection_changed":
+		if identity, ok := parseTurnIdentity(evt.Data); ok && identity.ModelID != "" {
+			node.Model = identity.ModelID
+		}
+		result.Effects = state.ApplyEvent(evt)
 	case "input_queued":
 		data, _ := evt.Data.(map[string]any)
 		id, _ := data["input_id"].(string)

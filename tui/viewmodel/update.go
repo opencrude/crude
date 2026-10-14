@@ -944,18 +944,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			window.SetSize(width, height)
 			window.MarkContentDirty()
 		}
-	case skillInvocationMsg:
-		if msg.workspace != m.workspaceSwitchGen.Load() || msg.sequence != m.skillInvocationSequence {
-			break
-		}
-		if msg.err != nil {
-			if m.activeAgentTabID() == msg.agentID && m.Input.Value() == "" {
-				m.Input.SetValuePreserveReferences(msg.draft)
-			}
-			m.Feedback.NotifyError(msg.err.Error())
-			break
-		}
-		cmds = append(cmds, m.submitPreparedInput(msg.agentID, msg.input, msg.draftRevision))
 	case settingsui.CapabilityRequestMsg:
 		cmds = append(cmds, m.capabilityRequestCmd(msg))
 	case settingsui.CapabilityResultMsg:

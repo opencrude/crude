@@ -102,8 +102,8 @@ func TestThinkingFieldStateSharesCanonicalLevels(t *testing.T) {
 	if f.Label != "Thinking level" {
 		t.Fatalf("label=%q want canonical Thinking level", f.Label)
 	}
-	if len(f.Options) != len(ThinkingLevels) {
-		t.Fatalf("options=%d want %d canonical levels", len(f.Options), len(ThinkingLevels))
+	if len(f.Options) != len(types.ThinkingLevels) {
+		t.Fatalf("options=%d want %d canonical levels", len(f.Options), len(types.ThinkingLevels))
 	}
 	if f.Placeholder != "Provider default" {
 		t.Fatalf("placeholder=%q", f.Placeholder)

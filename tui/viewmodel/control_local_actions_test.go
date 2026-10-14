@@ -174,16 +174,16 @@ func TestConnectedLocalBoardOverflowAndPickerNavigation(t *testing.T) {
 		t.Fatal("Board overflow not painted")
 	}
 	one.app.width = 120
-	one.app.capabilitySnapshot = captypes.Snapshot{Connections: []captypes.ConnectionState{{ID: "observed", State: "connected", Resources: []captypes.Resource{{URI: "resource://exact", Name: "Exact external context"}}}}}
+	one.app.capabilitySnapshot = captypes.Snapshot{Settings: captypes.Settings{Connections: map[string]captypes.ConnectionConfig{"observed": {ID: "observed", Name: "Documentation"}}}, Entries: []captypes.Entry{{ID: "observed", Kind: captypes.KindMCP, Name: "Documentation", Installed: true}}}
 	one.app.openCapabilityPicker()
-	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/tabs", ui.ControlOperation{Verb: "activate", ItemID: "resources"}, control.Write, false); r.State != control.Applied {
+	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/tabs", ui.ControlOperation{Verb: "activate", ItemID: "mcps"}, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/list", ui.ControlOperation{Verb: "activate", ItemID: "observed/resource://exact"}, control.Write, false); r.State != control.Applied {
+	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/list", ui.ControlOperation{Verb: "activate", ItemID: "observed"}, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "Fetch the selected external source") {
-		t.Fatal("picker detail not painted")
+	if !strings.Contains(ansi.Strip(one.app.View().Content), "Deactivate") {
+		t.Fatal("capability activation action not painted")
 	}
 	if _, _, err := one.app.resolveControlHost("boardbrowser/action-list", one.app.ws.(shellport.ShellControl).ControlIdentity()); err == nil {
 		t.Fatal("modal allowed underlying owner")

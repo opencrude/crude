@@ -104,14 +104,13 @@ func runPermissionReviewAttempts(ctx context.Context, cfg *Config, settings type
 		if ctx.Err() != nil {
 			return agent.PermissionReview{}, false
 		}
-		p, err := cfg.ProviderForAccount(settings.AccountID, settings.Model)
+		p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort})
 		if err != nil {
 			return agent.PermissionReview{}, false
 		}
 		// Review requests never inherit arbitrary template extras. Every transport
 		// control below comes from the persisted Auto Review Agent settings.
 		p.SetExtraBody(nil)
-		p.SetThinkingEffort(settings.ThinkingEffort)
 		format := settings.ResponseFormat
 		if format == types.AutoPermissionFormatAuto {
 			format = types.AutoPermissionFormatPrompt

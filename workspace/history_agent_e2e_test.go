@@ -330,7 +330,7 @@ func TestHistoryStartFailurePausesBeforeProviderExecution(t *testing.T) {
 				if requests.Load() != 0 {
 					t.Fatalf("provider requests=%d", requests.Load())
 				}
-				if !frontend.backend.IsTurnActive() || !frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) {
+				if !frontend.backend.IsTurnActive() || frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) != nil {
 					t.Fatal("blocked history task was killed or cannot be explicitly stopped")
 				}
 				waitHistoryAgentDone(t, sender, orchestrator.ID)
@@ -388,7 +388,7 @@ func TestEnabledHistoryStoreOpenFailureBlocksProviderAndTools(t *testing.T) {
 				if requests.Load() != 0 {
 					t.Fatalf("provider requests=%d", requests.Load())
 				}
-				if !frontend.backend.IsTurnActive() || !frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) {
+				if !frontend.backend.IsTurnActive() || frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) != nil {
 					t.Fatal("unavailable history task was killed or cannot be explicitly stopped")
 				}
 				waitHistoryAgentDone(t, sender, orchestrator.ID)

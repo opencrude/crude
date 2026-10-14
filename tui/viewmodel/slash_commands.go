@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/types"
+	captypes "crude/types/capability"
 )
 
 type slashBackendResultMsg struct {
@@ -33,11 +34,9 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/retry":
 		return m.retryAgentRecovery(agentID)
 	case "/skills":
-		return m.openCapabilityManager(activitySkills, remainder, "")
-	case "/mcp":
-		return m.openCapabilityManager(activityMCP, remainder, "")
-	case "/skill":
-		return m.invokeSkill(remainder, cmd)
+		return m.openCapabilityPickerTab(captypes.KindSkill, remainder)
+	case "/mcps":
+		return m.openCapabilityPickerTab(captypes.KindMCP, remainder)
 	case "/settings":
 		m.ws.Logger().Info("INPUT", "slash", "command", "settings")
 		m.openSessionSettings()

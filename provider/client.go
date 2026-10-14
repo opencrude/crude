@@ -441,6 +441,15 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 					s.done()
 					return StreamUpdate{}, io.EOF
 				}
+			} else if s.ctx.Err() == nil && !errors.Is(err, ErrResponseTooLarge) {
+				// The established body failed to read while we still wanted it.
+				// That is the transport breaking the stream, whatever sentinel
+				// the HTTP stack uses ("http2: client connection lost", a peer
+				// RST_STREAM, a reset socket, ...).
+				var interrupted *StreamInterruptionError
+				if !errors.As(err, &interrupted) {
+					err = &StreamInterruptionError{Protocol: s.client.proto.Info().ID, Kind: StreamInterruptionTransport, Cause: err}
+				}
 			}
 			if retryVeto {
 				err = &streamRetryVetoError{cause: err}
@@ -1017,7 +1026,7 @@ func readBounded(reader io.Reader, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("response exceeds %d bytes", limit)
+		return nil, fmt.Errorf("%w: response exceeds %d bytes", ErrResponseTooLarge, limit)
 	}
 	return body, nil
 }

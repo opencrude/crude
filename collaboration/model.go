@@ -415,7 +415,7 @@ type UpdateClaimsRequest struct {
 	ParentID           string
 	AgentID            string
 	RuntimeEpoch       uint64
-	TerminalRunID      string
+	RunID              string
 	ExpectedRunVersion uint64
 	ExpectedVersions   map[string]uint64
 	Paths              []string

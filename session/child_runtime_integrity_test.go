@@ -491,10 +491,10 @@ func TestChildParkedStopPreservesNewerContextAndPassiveResume(t *testing.T) {
 		t.Fatal("fixture did not advance beyond the parked checkpoint")
 	}
 	status := f.checkpoint.Status
-	if s.CancelRecoveryFor(f.childID, "foreign-incident", status.Generation) || s.CancelRecoveryFor(f.childID, status.ID, status.Generation+1) {
+	if s.CancelRecoveryFor(f.childID, "foreign-incident", status.Generation) == nil || s.CancelRecoveryFor(f.childID, status.ID, status.Generation+1) == nil {
 		t.Fatal("stale child Stop settled the exact task")
 	}
-	if !s.CancelRecoveryFor(f.childID, status.ID, status.Generation) {
+	if s.CancelRecoveryFor(f.childID, status.ID, status.Generation) != nil {
 		t.Fatal("exact parked child Stop was rejected")
 	}
 	after, err := sessiondb.LoadMessagesWithMeta(db)
@@ -527,7 +527,7 @@ func TestChildParkedStopPreservesNewerContextAndPassiveResume(t *testing.T) {
 	if mirrorRevision != stopped.Revision || counts[f.checkpoint.PendingInput.InternalID] != 1 || counts[newer.InternalID] != 1 || counts["turn-stopped:"+status.ID] != 1 {
 		t.Fatalf("parent mirror lost or duplicated the child's exact facts: counts=%v revision=%d want=%d", counts, mirrorRevision, stopped.Revision)
 	}
-	if s.CancelRecoveryFor(f.childID, status.ID, status.Generation) || s.RetryRecoveryFor(f.childID, status.ID, status.Generation) {
+	if s.CancelRecoveryFor(f.childID, status.ID, status.Generation) == nil || s.RetryRecoveryFor(f.childID, status.ID, status.Generation) == nil {
 		t.Fatal("settled child incident remained executable")
 	}
 	path := s.dbPath
@@ -566,7 +566,7 @@ func TestChildParkedStopStorageFailureDoesNotRewriteTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := f.checkpoint.Status
-	if f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) {
+	if f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) == nil {
 		t.Fatal("child Stop acknowledged a failed checkpoint")
 	}
 	after, err := sessiondb.LoadMessagesWithMeta(db)
@@ -586,7 +586,7 @@ func TestChildParkedStopStorageFailureDoesNotRewriteTranscript(t *testing.T) {
 	if _, err := db.Exec(`DROP TRIGGER reject_child_stop`); err != nil {
 		t.Fatal(err)
 	}
-	if !f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) || f.requests.Load() != 0 || f.effects.Load() != 0 {
+	if f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) != nil || f.requests.Load() != 0 || f.effects.Load() != 0 {
 		t.Fatal("checked Stop retry failed or executed work")
 	}
 }
@@ -619,7 +619,7 @@ func TestChildParkedStopPublishesUnmirroredAcceptedSnapshotOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := checkpoint.Status
-	if !f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) {
+	if f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) != nil {
 		t.Fatal("Stop failed to reconcile the child's newer accepted checkpoint")
 	}
 	stopped, _, err := sessiondb.LoadContextState(db, f.childID, f.childID)
@@ -654,7 +654,7 @@ func TestChildParkedStopRejectsObsoleteSchemaWithoutRecreatingEvidence(t *testin
 		t.Fatal(err)
 	}
 	status := f.checkpoint.Status
-	if f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) {
+	if f.session.CancelRecoveryFor(f.childID, status.ID, status.Generation) == nil {
 		t.Fatal("child Stop accepted an obsolete persistence schema")
 	}
 	var recreated int
@@ -675,7 +675,7 @@ func TestChildParkedStopRetriesParentMirrorFailureWithoutDuplicateBoundary(t *te
 		t.Fatal(err)
 	}
 	status := f.checkpoint.Status
-	if s.CancelRecoveryFor(f.childID, status.ID, status.Generation) {
+	if s.CancelRecoveryFor(f.childID, status.ID, status.Generation) == nil {
 		t.Fatal("child Stop acknowledged a failed parent mirror")
 	}
 	_, before, _, err := loadSubAgentSnapshotDB(f.childPath, f.childID)
@@ -685,7 +685,7 @@ func TestChildParkedStopRetriesParentMirrorFailureWithoutDuplicateBoundary(t *te
 	if _, err := s.db.Exec(`DROP TRIGGER reject_child_stop_mirror`); err != nil {
 		t.Fatal(err)
 	}
-	if !s.CancelRecoveryFor(f.childID, status.ID, status.Generation) {
+	if s.CancelRecoveryFor(f.childID, status.ID, status.Generation) != nil {
 		t.Fatal("exact checked Stop retry could not finish its parent mirror")
 	}
 	_, after, _, err := loadSubAgentSnapshotDB(f.childPath, f.childID)
@@ -864,7 +864,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 				t.Fatalf("fault did not occur after successful terminal context publication: rows=%+v err=%v", before, err)
 			}
 			runID, _ := handle.RunIdentity()
-			if !s.CancelRecoveryFor(identity.AgentID, first.ID, first.Generation) {
+			if s.CancelRecoveryFor(identity.AgentID, first.ID, first.Generation) != nil {
 				t.Fatal("exact child Stop was rejected")
 			}
 			blocked := waitTerminalSettlementAttention(t, baseSender, identity.AgentID)
@@ -916,7 +916,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			if _, err := faultDB.Exec(`DROP TRIGGER IF EXISTS reject_terminal_mirror`); err != nil {
 				t.Fatal(err)
 			}
-			if !s.RetryRecoveryFor(identity.AgentID, blocked.ID, blocked.Generation) {
+			if s.RetryRecoveryFor(identity.AgentID, blocked.ID, blocked.Generation) != nil {
 				t.Fatal("exact child persistence retry was rejected")
 			}
 			waitSessionSupervisedJourney(t, "child persistence-only settlement", runner.Wait)
@@ -1090,7 +1090,7 @@ accepted:
 			}
 		})
 	}
-	if !s.CancelRecoveryFor(identity.AgentID, checkpoint.Status.ID, checkpoint.Status.Generation) {
+	if s.CancelRecoveryFor(identity.AgentID, checkpoint.Status.ID, checkpoint.Status.Generation) != nil {
 		t.Fatal("exact active child Stop was rejected")
 	}
 	if lateSteering {
@@ -1161,7 +1161,7 @@ accepted:
 		if _, err := db.Exec(`DROP TRIGGER reject_child_terminal`); err != nil {
 			t.Fatal(err)
 		}
-		if !s.CancelRecoveryFor(identity.AgentID, checkpoint.Status.ID, checkpoint.Status.Generation) {
+		if s.CancelRecoveryFor(identity.AgentID, checkpoint.Status.ID, checkpoint.Status.Generation) != nil {
 			t.Fatal("checked parked Stop could not persist the repaired terminal transcript")
 		}
 	}

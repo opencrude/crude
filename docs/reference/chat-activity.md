@@ -388,8 +388,10 @@ bypassed approval prompts while retaining hard blocks and restore safeguards.
 
 The transport owns retries only before model output has been accepted. It must
 never replay a stochastic request and compare the new response to an old prefix.
-Connection resets, premature EOF, stalled progress, transient gateway stream
-termination, rate limits, and overloaded providers can recover. Invalid requests,
+Classification requires positive evidence of permanence (see
+[run recovery](run-recovery.md)): connection resets, lost HTTP/2 connections,
+premature EOF, stalled progress, gateway stream termination, rate limits,
+overloaded providers and unfamiliar transport failures recover. Invalid requests,
 authentication/permission failures, exhausted billing/quota and invalid certificates
 remain nonretryable request failures. The task supervisor separately rechecks DNS
 lookup failures with capped cooldowns, because a temporarily missing provider

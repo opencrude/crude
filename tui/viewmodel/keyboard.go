@@ -738,12 +738,7 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			m.Feedback.NotifyError("Note was not sent: no active agent tab")
 		}
 	case input.SlashCommandEvent:
-		command, remainder := parseSlashCommand(e.Command)
-		if command == "/skill" {
-			cmds = append(cmds, m.invokeSkillWithRefs(remainder, e.Command, e.ReferenceIDs))
-		} else {
-			cmds = append(cmds, m.executeSlashCommand(e.Command))
-		}
+		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.HistoryRecallEvent:
 		cmds = append(cmds, m.recallPrompt(e))
 	case input.SettingsOpenEvent:

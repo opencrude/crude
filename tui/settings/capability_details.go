@@ -451,9 +451,9 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 				secondary = append(secondary, button("Open file", "open-file"))
 			}
 		case "access":
-			primary = append(primary, button("Save mode", "save-mode"), button("Use in session", "use"))
+			primary = append(primary, button("Save mode", "save-mode"))
 		default:
-			primary = append(primary, button("Edit registration", "edit"), button("Use in session", "use"))
+			primary = append(primary, button("Edit registration", "edit"))
 		}
 		if skill.Managed {
 			secondary = append(secondary, button("Make local copy", "make-local-copy"))
@@ -551,7 +551,7 @@ func (catalog *capabilityCatalog) buildDetailForm() *ui.FormModel {
 		case "files":
 			return formModel(ui.TextFieldState("file", "Relative file", "SKILL.md", "Containment and revision checks run in the capability service."), capabilityReadOnly("preview", "File preview", "List files, select a file, then Read file. No scripts run while browsing.", "Managed artifacts require Make local copy before editing."))
 		case "access":
-			return formModel(ui.SelectFieldState("mode", "Invocation", mapDefault(skill.Mode, "automatic"), []ui.FormOption{{ID: "automatic", Label: "Automatic"}, {ID: "manual", Label: "Manual only"}, {ID: "disabled", Label: "Disabled"}}, "This changes the selected scope's default, not execution permission."), capabilityReadOnly("access", "Effective access", fmt.Sprintf("Scope: %s\nState: %s\nReason: %s\n\nSkills load instructions, not executable authority. Scripts still require normal command permissions. Disabling cannot remove instructions already loaded by an agent. Use in session stages the exact identity; it never sends a task.", model.capabilityScope(), entry.State, entry.Reason), ""))
+			return formModel(ui.SelectFieldState("mode", "Invocation", mapDefault(skill.Mode, "automatic"), []ui.FormOption{{ID: "automatic", Label: "Automatic"}, {ID: "manual", Label: "Manual only"}, {ID: "disabled", Label: "Disabled"}}, "This changes the selected scope's default, not execution permission."), capabilityReadOnly("access", "Effective access", fmt.Sprintf("Scope: %s\nState: %s\nReason: %s\n\nSkills load instructions, not executable authority. Scripts still require normal command permissions. Disabling cannot remove instructions already loaded by an agent. /skills opens the searchable activation modal.", model.capabilityScope(), entry.State, entry.Reason), ""))
 		case "versions":
 			return formModel(capabilityReadOnly("versions", "Selected immutable version", fmt.Sprintf("Identity: %s\nSource: %s\nRevision: %s\nDigest: %s\nScope: %s\n\nRefresh Discover explicitly before reviewing a source update. Update previews the exact new source revision and current binding before publication. Existing agent context keeps its attributed loaded version; disabling does not erase it.", skill.ID, skill.Source, skill.Version, skill.Digest, model.capabilityScope()), ""))
 		default:

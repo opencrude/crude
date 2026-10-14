@@ -70,7 +70,8 @@ not a runnable process waiting to be reopened.
 | `agent_respond` | Accept, defer, or decline an exact request revision |
 | `agent_control` | Request pause/resume/cancel/reopen for an exact agent/run version |
 | `agent_narrow_claims` | Narrow or explicitly relinquish the caller's own exact active run claims, without ending the run |
-| `agent_update_claims` | Replace a stopped, unfinished child's declarations under the exact parent and expected claim versions; never starts execution |
+| `agent_configure` | Change a child's model, account or thinking effort; a running child switches at its next request, a stopped child keeps it for continuation; finished children need a new assignment |
+| `agent_update_claims` | Replace a child's complete scope (wider or narrower) during its live run or after an interrupted attempt, under the exact parent, run version and expected claim versions; never starts execution |
 | `publish_report` | Publish immutable authored evidence linked to the actual run/request |
 | `artifact_read` | Read an exact artifact revision; revision zero selects latest |
 | `agent_wait` | Wait for an exact run/report/agent condition without model polling |
@@ -213,13 +214,22 @@ Native writes conflict with another active owner; repeated writes reuse the
 run's claim. Failed launches release their exact runtime and claims rather than
 leaving invisible running agents.
 
-Native ownership rejection is structural evidence, not an ordinary tool error
-for the model to retry unchanged. It parks the unfinished child and identifies
-the exact child, attempted run and incident for its parent. Repair and execution
-are separate operations. The active parent may narrow its own claims, then
-update its stopped child's claims using the exact expected claim version.
-Only explicit, incident/generation-fenced Continue starts a replacement child
-run. Repair alone makes no provider call, file effect or automatic wake.
+Native ownership rejection is an ordinary, actionable tool error. Nothing
+changes, the child's run continues, and its parent receives one runtime note per
+distinct rejection naming the child, path and reason. A scoped child's write gate
+reads its current committed scope, so the parent's `agent_update_claims` on the
+live run takes effect on the child's next write. The child's private temporary
+directory is never scope-checked or claimed. A parent may widen or narrow its
+child's scope; the only bound is that it must not overlap another agent's active
+claims. A scope update never makes a provider call, file effect or wake.
+
+A child that stops for attention (a run-level fault such as rejected
+credentials, storage, compaction or exhausted bounded recovery) is never a dead
+end. Its parent is notified once the incident is actionable, sees it through
+`agent_inspect`, `agent_list` and `agent_wait` (which ends with
+`needs_attention`), and continues or cancels it with `agent_control`
+`continue`/`cancel` and the exact `recovery_id` and `recovery_generation`, even
+while the child has no attached runtime. Refusals return their reason.
 
 Run and claim preimages are positive exact integers; fractional, negative,
 unsafe or missing values fail closed. Narrowing cannot widen scope, steal a

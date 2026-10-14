@@ -970,7 +970,7 @@ func (s *Session) collaborationDefinitions(actorID string) []tools.ToolDef {
 	if leaf || s.runtimeProfile != nil && !s.runtimeProfile.GetEffectiveConfig(actorID).IsMultiAgentEnabled() {
 		filtered := definitions[:0]
 		for _, definition := range definitions {
-			if definition.Function.Name != "agent_start" {
+			if definition.Function.Name != "agent_start" && definition.Function.Name != "agent_configure" {
 				filtered = append(filtered, definition)
 			}
 		}
@@ -1017,7 +1017,20 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 			Presence:      collaboration.RuntimePresence(getStrParam(params, "presence")),
 			IncludeClosed: getBoolParam(params, "include_closed"), Limit: getIntParam(params, "limit"),
 		})
-		return collaborationResult(agents, err), true, err
+		if err != nil {
+			return tools.ToolResult{}, true, err
+		}
+		// A stopped agent's open incident is listed with it, so a parent never
+		// mistakes a parked child for an idle or running one.
+		type listedAgent struct {
+			collaboration.Agent
+			Recovery *agentRecoveryView `json:"recovery,omitempty"`
+		}
+		listed := make([]listedAgent, 0, len(agents))
+		for _, participant := range agents {
+			listed = append(listed, listedAgent{Agent: participant, Recovery: s.agentRecovery(participant.ID)})
+		}
+		return collaborationResult(listed, nil), true, nil
 	case "agent_inspect":
 		agentID := getStrParam(params, "agent_id")
 		agentState, err := store.Agent(ctx, agentID)
@@ -1041,11 +1054,12 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 			return tools.ToolResult{}, true, err
 		}
 		return collaborationResult(struct {
-			Agent   collaboration.Agent      `json:"agent"`
-			Run     *collaboration.Run       `json:"run,omitempty"`
-			Reports []collaboration.Artifact `json:"reports,omitempty"`
-			Claims  []collaboration.Claim    `json:"claims,omitempty"`
-		}{agentState, run, artifacts, claims}, nil), true, nil
+			Agent    collaboration.Agent      `json:"agent"`
+			Run      *collaboration.Run       `json:"run,omitempty"`
+			Recovery *agentRecoveryView       `json:"recovery,omitempty"`
+			Reports  []collaboration.Artifact `json:"reports,omitempty"`
+			Claims   []collaboration.Claim    `json:"claims,omitempty"`
+		}{agentState, run, s.agentRecovery(agentID), artifacts, claims}, nil), true, nil
 	case "agent_send":
 		identity, err := collaborationExecutionIdentity(ctx)
 		if err != nil {
@@ -1107,10 +1121,35 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 		if err != nil {
 			return tools.ToolResult{}, true, err
 		}
-		if participant.Presence != collaboration.RuntimeAttached {
-			return tools.ToolResult{}, true, fmt.Errorf("%w: agent has no attached execution owner; retained evidence is inspectable, but finished children need a new bounded assignment", collaboration.ErrUnavailable)
-		}
 		operation := getStrParam(params, "operation")
+		// A stopped agent (waiting for attention, or parked with no live
+		// execution) stays controllable: continue or cancel its exact incident.
+		recoveryID := getStrParam(params, "recovery_id")
+		if operation == "continue" || recoveryID != "" {
+			if operation != "continue" && operation != "cancel" {
+				return tools.ToolResult{}, true, fmt.Errorf("recovery_id applies only to continue or cancel")
+			}
+			generation := getIntParam(params, "recovery_generation")
+			if recoveryID == "" || generation <= 0 {
+				return tools.ToolResult{}, true, fmt.Errorf("%s of a stopped agent requires recovery_id and recovery_generation from agent_inspect", operation)
+			}
+			apply := s.RetryRecoveryFor
+			outcome := "continued: a new attempt of the preserved task started, or the waiting run was woken; its outcome arrives through the normal run and report channels"
+			if operation == "cancel" {
+				apply = s.CancelRecoveryFor
+				outcome = "cancelled: the task is settled and will not continue"
+			}
+			if err := apply(target, recoveryID, uint64(generation)); err != nil {
+				return tools.ToolResult{}, true, fmt.Errorf("%s was not applied: %w", operation, err)
+			}
+			return collaborationResult(map[string]any{
+				"agent_id": target, "operation": operation, "recovery_id": recoveryID,
+				"recovery_generation": generation, "outcome": outcome,
+			}, nil), true, nil
+		}
+		if participant.Presence != collaboration.RuntimeAttached {
+			return tools.ToolResult{}, true, fmt.Errorf("%w: agent has no attached execution owner. If agent_inspect shows an open recovery incident, use operation continue or cancel with its recovery_id and recovery_generation; a finished child needs a new bounded assignment", collaboration.ErrUnavailable)
+		}
 		switch operation {
 		case "pause", "resume", "cancel", "reopen":
 		default:
@@ -1189,6 +1228,9 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 	case "artifact_read":
 		artifact, err := store.Artifact(ctx, getStrParam(params, "artifact_id"), getIntParam(params, "revision"))
 		return collaborationResult(artifact, err), true, err
+	case "agent_configure":
+		value, err := s.configureChild(ctx, actorID, params)
+		return collaborationResult(value, err), true, err
 	case "agent_wait":
 		value, err := s.waitForCollaboration(ctx, store, params)
 		return collaborationResult(value, err), true, err
@@ -1281,7 +1323,7 @@ func collaborationEffect(name string) captypes.Effect {
 	switch name {
 	case "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read":
 		return captypes.EffectRead
-	case "agent_start", "agent_control", "agent_update_claims":
+	case "agent_start", "agent_control", "agent_update_claims", "agent_configure":
 		return captypes.EffectExecute
 	default:
 		return captypes.EffectCommunication

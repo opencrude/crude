@@ -61,7 +61,7 @@ func (r *SSEReader) Next() (StreamEvent, error) {
 
 		eventBytes += len(line) + 1
 		if eventBytes > r.maxEventBytes {
-			return StreamEvent{}, fmt.Errorf("SSE event exceeds %d bytes", r.maxEventBytes)
+			return StreamEvent{}, fmt.Errorf("%w: SSE event exceeds %d bytes", ErrResponseTooLarge, r.maxEventBytes)
 		}
 
 		if len(line) == 0 {
@@ -122,7 +122,7 @@ func (r *SSEReader) readLine() ([]byte, error) {
 		default:
 			line = append(line, next)
 			if len(line) > r.maxEventBytes {
-				return nil, fmt.Errorf("SSE line exceeds %d bytes", r.maxEventBytes)
+				return nil, fmt.Errorf("%w: SSE line exceeds %d bytes", ErrResponseTooLarge, r.maxEventBytes)
 			}
 		}
 	}

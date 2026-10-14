@@ -23,7 +23,10 @@ type execResult struct {
 	name      string
 	result    tools.ToolResult
 	toolError bool
-	failure   error
+	// failure marks a tool whose effects are uncertain (it panicked). Later
+	// serialized calls of the same batch are skipped, but the run continues:
+	// the model receives the error and inspects state before acting again.
+	failure error
 }
 
 type toolPanicError struct{ message string }
@@ -145,7 +148,7 @@ func (a *Agent) executeOneToolCallSafely(
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			message := fmt.Sprintf("Error: tool %q panicked: %v", tc.Function.Name, recovered)
+			message := fmt.Sprintf("Error: tool %q panicked: %v. Its effects are uncertain: inspect the affected state before relying on or retrying it.", tc.Function.Name, recovered)
 			a.logger.Error("TOOL", "panic", "name", tc.Function.Name, "error", recovered)
 			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 				"internal_id": tc.InternalID,
@@ -796,11 +799,6 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	var failure error
 	if errors.As(toolErr, &panicErr) {
 		failure = panicErr
-	} else {
-		var structural *tools.StructuralFailureError
-		if errors.As(toolErr, &structural) {
-			failure = structural
-		}
 	}
 	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure}
 }

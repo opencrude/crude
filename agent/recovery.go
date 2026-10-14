@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -26,10 +25,10 @@ const (
 	RecoveryFailureConfiguration RecoveryFailureKind = "configuration"
 	RecoveryFailureStorage       RecoveryFailureKind = "storage"
 	RecoveryFailureGuidance      RecoveryFailureKind = "guidance"
+	RecoveryFailureCompaction    RecoveryFailureKind = "compaction"
 	RecoveryFailureRepeatedTools RecoveryFailureKind = "repeated_tools"
 	RecoveryFailureTruncated     RecoveryFailureKind = "truncated"
 	RecoveryFailureMissingReport RecoveryFailureKind = "missing_report"
-	RecoveryFailureStructural    RecoveryFailureKind = "structural"
 	RecoveryFailurePanic         RecoveryFailureKind = "panic"
 	RecoveryFailureUnknown       RecoveryFailureKind = "unknown"
 )
@@ -80,6 +79,21 @@ func TransientRecovery(err error) RecoveryFailure {
 	}
 }
 
+// VerdictRecovery retries an unrecognized provider error object a bounded
+// number of times with the normal countdown: a transient backend fault heals
+// on its own, a deterministic rejection stops for attention instead of
+// repeating forever.
+func VerdictRecovery(err error) RecoveryFailure {
+	return RecoveryFailure{
+		Kind: RecoveryFailureTransport, Cause: err,
+		Summary:      "Provider returned an unrecognized error",
+		Action:       "Retrying automatically; Stop to cancel",
+		Continuation: rootprompt.RecoveryTransport, AutomaticLimit: verdictRecoveryAttempts,
+	}
+}
+
+const verdictRecoveryAttempts = 5
+
 func AttentionRecovery(kind RecoveryFailureKind, err error) RecoveryFailure {
 	failure := RecoveryFailure{
 		Kind: kind, Cause: err, AutomaticLimit: 0,
@@ -108,14 +122,13 @@ func AttentionRecovery(kind RecoveryFailureKind, err error) RecoveryFailure {
 	case RecoveryFailureGuidance:
 		failure.Summary = "Project guidance needs attention"
 		failure.Action = "Fix the guidance source or connection, then Continue"
+	case RecoveryFailureCompaction:
+		failure.Summary = "Context compaction needs attention"
+		failure.Action = "Check the compaction model or context settings, then Continue"
 	case RecoveryFailureMissingReport:
 		failure.Summary = "Final report is still required"
 		failure.Action = "Continue to publish the required final report"
 		failure.Continuation = rootprompt.RecoveryMissingReport
-	case RecoveryFailureStructural:
-		failure.Summary = "Child run is blocked by its ownership scope"
-		failure.Action = "Repair the exact claim, then Continue the preserved run"
-		failure.Continuation = rootprompt.RecoveryInterrupted
 	case RecoveryFailurePanic:
 		failure.Summary = "Run paused after an internal failure"
 		failure.Action = "Inspect current state, then Continue"
@@ -157,6 +170,9 @@ type Supervisor struct {
 	Persist    func(recoverytypes.Status) error
 	Discard    func(string) error
 	LogPersist func(error)
+	// Attention observes the run blocking on an explicit wake. The wake slot is
+	// live at that point, so an owner notified here can act on the incident.
+	Attention func(recoverytypes.Status)
 
 	RetryBase    time.Duration
 	RetryCeiling time.Duration
@@ -274,6 +290,11 @@ func (s *Supervisor) Await(ctx context.Context, failure RecoveryFailure) bool {
 			return s.awaitAttention(ctx, s.ensureStatus(), false)
 		}
 		return true
+	}
+	if failure.AutomaticLimit > 0 {
+		// Bounded automatic recovery ran out; say so instead of repeating the
+		// in-progress wording of the retry phase.
+		status.Action = fmt.Sprintf("Automatic recovery stopped after %d attempts; inspect the detail, then Continue", failure.AutomaticLimit)
 	}
 	status.State = recoverytypes.NeedsAttention
 	return s.awaitAttention(ctx, status, true)
@@ -408,6 +429,7 @@ func (s *Supervisor) transition(status recoverytypes.Status) bool {
 }
 
 func (s *Supervisor) awaitAttention(ctx context.Context, status *recoverytypes.Status, announce bool) bool {
+	notify := s.Attention
 	for {
 		if announce {
 			status.State = recoverytypes.NeedsAttention
@@ -415,6 +437,11 @@ func (s *Supervisor) awaitAttention(ctx context.Context, status *recoverytypes.S
 			_ = s.transition(*status)
 		}
 		announce = false
+		if notify != nil {
+			// Includes the persistence-blocked state a failed transition installed.
+			notify(*s.status)
+			notify = nil
+		}
 		if s.Wake == nil {
 			<-ctx.Done()
 			return false
@@ -473,32 +500,44 @@ func recoveryDiagnostic(err error) string {
 	return text
 }
 
+// classifyRecoveryError owns recovery for a provider request outcome. Only
+// positive permanent evidence (provider.Permanent) waits for a human; every
+// other failure, including disconnect shapes nobody has seen yet, recovers
+// automatically with a visible countdown and Retry now. Stop always works.
 func classifyRecoveryError(err error) RecoveryFailure {
 	if err == nil {
 		return AttentionRecovery(RecoveryFailureUnknown, errors.New("run ended without a natural finish"))
 	}
-	retryErr := err
+	cause := err
 	var exhausted *provider.ExhaustedError
 	if errors.As(err, &exhausted) && exhausted.Cause != nil {
-		retryErr = exhausted.Cause
+		// The request owner spent its attempt budget; the task recovers on.
+		cause = exhausted.Cause
 	}
-	if provider.Retryable(retryErr) || errors.Is(retryErr, context.DeadlineExceeded) {
-		return TransientRecovery(err)
-	}
-	var dns *net.DNSError
-	if errors.As(retryErr, &dns) {
-		// A resolver's "not found" can reflect loss of connectivity or a
-		// temporarily missing provider record. Request retries remain bounded;
-		// the owned task rechecks without requiring a human /retry.
-		return TransientRecovery(err)
-	}
-	var unknownAuthority x509.UnknownAuthorityError
-	var certificateInvalid x509.CertificateInvalidError
-	var hostname x509.HostnameError
-	if errors.As(err, &unknownAuthority) || errors.As(err, &certificateInvalid) || errors.As(err, &hostname) {
+	switch provider.Classify(cause) {
+	case provider.FailurePermanent:
 		return AttentionRecovery(RecoveryFailureConfiguration, err)
+	case provider.FailureUnrecognizedVerdict:
+		return VerdictRecovery(err)
+	default:
+		return TransientRecovery(err)
 	}
-	return AttentionRecovery(RecoveryFailureConfiguration, err)
+}
+
+// providerRequestFailure reports whether err came from a provider request (a
+// closed set of types this repository owns), as opposed to a local
+// deterministic fault that a retry would only repeat.
+func providerRequestFailure(err error) bool {
+	var call *apiCallError
+	var status *provider.StatusError
+	var api *provider.APIError
+	var interrupted *provider.StreamInterruptionError
+	var exhausted *provider.ExhaustedError
+	var stalled *provider.ProgressStallError
+	var network net.Error
+	return errors.As(err, &call) || errors.As(err, &status) || errors.As(err, &api) ||
+		errors.As(err, &interrupted) || errors.As(err, &exhausted) || errors.As(err, &stalled) ||
+		errors.As(err, &network)
 }
 
 func classifyRecordedRecovery(kind RecoveryFailureKind, err error) RecoveryFailure {
@@ -506,6 +545,14 @@ func classifyRecordedRecovery(kind RecoveryFailureKind, err error) RecoveryFailu
 	case RecoveryFailureTransport:
 		return classifyRecoveryError(err)
 	case RecoveryFailureGuidance:
+		return AttentionRecovery(kind, err)
+	case RecoveryFailureCompaction:
+		// Compaction already retried internally. A provider outage heals like
+		// any request; a local fault (for example a checkpoint that still does
+		// not fit) would only repeat an expensive multi-stage pipeline.
+		if providerRequestFailure(err) {
+			return classifyRecoveryError(err)
+		}
 		return AttentionRecovery(kind, err)
 	case RecoveryFailureStorage:
 		return AttentionRecovery(kind, err)
@@ -517,8 +564,6 @@ func classifyRecordedRecovery(kind RecoveryFailureKind, err error) RecoveryFailu
 		return CorrectiveRecovery(kind, err)
 	case RecoveryFailureMissingReport:
 		return CorrectiveRecovery(kind, err)
-	case RecoveryFailureStructural:
-		return AttentionRecovery(kind, err)
 	case RecoveryFailurePanic:
 		return AttentionRecovery(kind, err)
 	case RecoveryFailureUnknown:

@@ -24,6 +24,40 @@ type Screen struct {
 	scrollbar *ui.ScrollbarControl
 	width     int
 	rows      []chatprojection.PaintLine
+	selection textSelection
+}
+
+// textSelection is a pointer drag over painted plan rows. Like chat, the text
+// is copied on release and the highlight never outlives the gesture.
+type textSelection struct {
+	active                                 bool
+	anchorLine, anchorCol, endLine, endCol int
+}
+
+func (t textSelection) ordered() (startLine, startCol, endLine, endCol int) {
+	if t.anchorLine < t.endLine || t.anchorLine == t.endLine && t.anchorCol <= t.endCol {
+		return t.anchorLine, t.anchorCol, t.endLine, t.endCol
+	}
+	return t.endLine, t.endCol, t.anchorLine, t.anchorCol
+}
+
+// columns returns the highlighted column span of one row, or 0,0.
+func (t textSelection) columns(line int) (start, end int) {
+	if !t.active {
+		return 0, 0
+	}
+	startLine, startCol, endLine, endCol := t.ordered()
+	if line < startLine || line > endLine {
+		return 0, 0
+	}
+	start, end = 0, 1<<30
+	if line == startLine {
+		start = startCol
+	}
+	if line == endLine {
+		end = endCol
+	}
+	return start, end
 }
 
 func New(th *theme.Theme, plan *activity.Plan) *Screen {
@@ -34,8 +68,9 @@ func New(th *theme.Theme, plan *activity.Plan) *Screen {
 	s.list.SetSelectionAnchorsScroll(false)
 	s.list.SetPointerPolicy(ui.PointerPolicyPassthrough)
 	s.list.SetRowPainter(func(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, _ int, _ ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
-		line, _ := item.Payload.(chatprojection.PaintLine)
-		chatprojection.PaintLineAtBackground(buf, x, y, width, line, tokens, 0, 0, tokens.Color(ui.ColorPopupBg))
+		row, _ := item.Payload.(planRow)
+		start, end := s.selection.columns(row.index)
+		chatprojection.PaintLineAtBackground(buf, x, y, width, row.line, tokens, start, end, tokens.Color(ui.ColorPopupBg))
 	})
 	s.scrollbar = ui.NewScrollbarControl(ui.NewID(ScreenID, "scrollbar"), s.list.Scroll(), tokens)
 	s.scrollbar.SetPointerTargetSize(1)
@@ -85,8 +120,10 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.rows = chatprojection.PlanActivityRows(s.plan, w)
 		items := make([]ui.VirtItem, len(s.rows))
 		for i, row := range s.rows {
-			items[i] = ui.VirtItem{ID: fmt.Sprint(i), Height: 1, Payload: row}
+			items[i] = ui.VirtItem{ID: fmt.Sprint(i), Height: 1, Payload: planRow{index: i, line: row}}
 		}
+		// Rewrapping changes row coordinates; a drag cannot span the change.
+		s.selection = textSelection{}
 		offset := s.list.Scroll().Offset()
 		s.list.SetItems(items)
 		s.list.Scroll().ScrollTo(offset)
@@ -95,9 +132,85 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), W: min(1, r.W), H: r.H})
 }
 
-func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+type planRow struct {
+	index int
+	line  chatprojection.PaintLine
+}
+
+// lineAt maps a popover-local row to a painted plan row, clamping drags that
+// leave the viewport by scrolling one row toward the pointer.
+func (s *Screen) lineAt(localX, localY int) (line, col int, ok bool) {
+	scroll := s.list.Scroll()
+	if len(s.rows) == 0 {
+		return 0, 0, false
+	}
+	col = max(0, localX)
+	switch {
+	case localY < 0:
+		scroll.ScrollBy(-1)
+		return scroll.Offset(), 0, true
+	case localY >= scroll.Viewport():
+		scroll.ScrollBy(1)
+		return min(len(s.rows)-1, scroll.Offset()+scroll.Viewport()-1), 1 << 30, true
+	}
+	line = scroll.Offset() + localY
+	if line >= len(s.rows) {
+		return len(s.rows) - 1, 1 << 30, true
+	}
+	return line, col, true
+}
+
+func (s *Screen) selectedText() string {
+	lines := make([]string, len(s.rows))
+	for i, row := range s.rows {
+		lines[i] = row.PlainText()
+	}
+	startLine, startCol, endLine, endCol := s.selection.ordered()
+	return strings.TrimRight(rendering.ExtractSelectedText(lines, startLine, startCol, endLine, endCol), " \t\r\n")
+}
+
+// CancelPointerCapture drops a drag that lost the pointer without a release.
+func (s *Screen) CancelPointerCapture() { s.selection = textSelection{} }
+
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	scroll := s.list.Scroll()
 	switch evt.Kind {
+	case ui.EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft || ctx.LocalX >= s.width {
+			return ui.EventResult{Handled: true}
+		}
+		line, col, ok := s.lineAt(ctx.LocalX, ctx.LocalY)
+		if !ok {
+			return ui.EventResult{Handled: true}
+		}
+		s.selection = textSelection{active: true, anchorLine: line, anchorCol: col, endLine: line, endCol: col}
+		// Capture keeps the drag alive when it crosses the popover edge.
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.capture"}, Invalidate: ui.InvalidatePaint}
+	case ui.EventMouseMotion:
+		if !s.selection.active {
+			return ui.EventResult{}
+		}
+		if line, col, ok := s.lineAt(ctx.LocalX, ctx.LocalY); ok {
+			s.selection.endLine, s.selection.endCol = line, col
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	case ui.EventMouseRelease:
+		if !s.selection.active {
+			return ui.EventResult{}
+		}
+		if line, col, ok := s.lineAt(ctx.LocalX, ctx.LocalY); ok && ctx.LocalY >= 0 && ctx.LocalY < scroll.Viewport() {
+			s.selection.endLine, s.selection.endCol = line, col
+		}
+		text := ""
+		if s.selection.anchorLine != s.selection.endLine || s.selection.anchorCol != s.selection.endCol {
+			text = s.selectedText()
+		}
+		s.selection = textSelection{}
+		result := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		if text != "" {
+			result.Cmd = rendering.CopyToClipboardCmd(text)
+		}
+		return result
 	case ui.EventMouseWheel:
 		switch evt.MouseWheel.Button {
 		case tea.MouseWheelUp:
@@ -130,7 +243,7 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{}
 		}
 	default:
-		return ui.EventResult{Handled: evt.Kind == ui.EventMouseClick}
+		return ui.EventResult{}
 	}
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 }

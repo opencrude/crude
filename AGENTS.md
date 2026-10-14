@@ -1083,10 +1083,28 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 - `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
   exhaustion, deadlines, truncation, loop guards, missing reports and panics are
   not natural completion or permission to kill a task. Recover transient outages;
-  park configuration, guidance, storage and uncertain-effect failures with an
+  park configuration, guidance, storage and compaction failures with an
   actionable Needs attention state. Only natural finish or explicit user/parent
   lifecycle may settle work. Preserve safe canonical boundaries; never replay
   accepted stochastic output, historical tool effects or existing commands.
+- **The agentic loop is sacred.** Tool-level failures never end a run: ownership
+  scope/conflict rejections, write-lease races, tool panics (uncertain effects,
+  later serial siblings skipped) and guidance read failures for a batch are tool
+  error results the model handles. Only run-level faults (provider permanence,
+  configuration, storage, compaction, guidance compile, agent panic, exhausted
+  corrective/bounded recovery) stop a run. Never reintroduce a typed tool error
+  that parks or waits.
+- **A stopped child is never a dead end.** Every child `NeedsAttention` — parked
+  or waiting in place — notifies its parent at the point the incident is
+  actionable (`Supervisor.Attention` for waits, `parkRecovery` for parks) with
+  the exact `recovery_id`/`recovery_generation` and controls. `agent_inspect`,
+  `agent_list` and `agent_wait` expose the open incident (`agent_wait` ends with
+  `needs_attention`). The parent continues or cancels it with `agent_control`
+  `continue`/`cancel` + recovery identity, offline or not; human Retry/Stop use
+  the same `RetryRecoveryFor`/`CancelRecoveryFor`, which return reasons and are
+  shown in the TUI — never a silent no-op. A cancelled parked child notifies its
+  parent. `ResumeRecovery` reports every refusal; run-bound claims of the
+  interrupted attempt are released by runtime takeover and never block it.
 - `sessiondb` retains exact pending input, owner/generation, archive and active
   context through one durable recovery checkpoint. Transcript, turn ledger and
   collaboration settlement must succeed before acknowledging natural completion.
@@ -1120,18 +1138,60 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   allowlist member. Explicit denial is rejected before launch; schema projection,
   dispatch and prompt permissions agree. Missing reporting infrastructure parks as
   configuration failure before provider execution, never a model reminder loop.
-- Native file-ownership rejection is structural Needs attention and parks the
-  unfinished child. Public `agent_narrow_claims` changes the caller's exact active
-  claims; `agent_update_claims` changes only a stopped unfinished child at
-  the expected claim version. Neither wakes execution. Explicit incident-fenced
-  Continue starts a new run. Numeric preimages are exact positive integers,
-  widening and foreign/stale owners fail closed, and ownership read leases span
+- Native file-ownership rejection is an ordinary, actionable tool error: nothing
+  changes, the child's run continues, and its parent receives a deduplicated
+  runtime note. A scoped child's write gate reads its *current* committed scope
+  (`FileOwnership.WriteScopeAllows`), not the launch snapshot. The child's own
+  temporary directory (`CRUDE_TEMP_DIR`) is private scratch: never scope-checked
+  or claimed. Public `agent_narrow_claims` narrows the caller's active claims;
+  `agent_update_claims` replaces a child's complete scope — wider or narrower —
+  during its live run (claims bound to that run, effective on the next write) or
+  after an interrupted attempt (declarations used by Continue). The only bound is
+  no overlap with another agent's active claims; there is no frozen launch
+  ceiling. Neither wakes execution. Numeric preimages are exact positive
+  integers, foreign/stale owners fail closed, and ownership read leases span
   actual native effects so claim replacement cannot overtake an in-flight write.
 - `retry/` owns every Crude-managed automatic cooldown. Exponential math
   saturates safely and cancellation is prompt; **five minutes is the absolute
   per-wait maximum**, including Retry-After and millisecond/date hints. A server's
   24-hour hint must never cause an hours-long local retry sleep. Request/job
   attempt budgets and successful maintenance cadence remain separate.
+- **Child connections are complete and parent-controlled.** Every child
+  provider is built from `childProviderConfig` (account, model, thinking effort,
+  temperature, top-p, context window) at launch, each supervised attempt,
+  continuation and request-boundary switch. `Config.ConnectionProvider` is
+  connection-only (model listing/probing) and never serves an agent; there is no
+  account+model helper that can drop request settings. `categoryFieldRole`
+  classifies every `CategoryConfig` field and the wire regression asserts
+  `reasoning_effort`/`temperature` on every path, so a dropped setting fails
+  tests. A parent picks `model`/`account_id`/`thinking_effort` in `agent_start`
+  or changes them with `agent_configure`: a live child switches at its next
+  request via `Agent.RequestBoundary` (emitting `connection_changed` so the UI
+  and message attribution follow), a stopped child keeps it for `continue`.
+  A different model drops the previous model's capability/sampling overrides.
+  `types.ThinkingLevels` is the one effort ladder for settings and tools.
+- **Text painted with a default background inherits the fill already in its
+  buffer** (`CellBuffer.WriteString`); only transparent cells defer to lower
+  layers. Writing a literal default once punched through popup fills, leaving
+  dark bands behind labels in floating windows.
+- **A mouse release belongs to the window whose Host captured the pointer**,
+  focused or not (passive popovers never take focus), and stops there; every
+  release branch keeps the commands it accumulated.
+- **Provider failure classification requires positive evidence of permanence,
+  never of transience.** `provider.Classify` is the one authority:
+  `FailurePermanent` (auth/permission/quota/validation/unknown-model status or
+  code, identified param, retry veto, certificate, unparseable endpoint,
+  oversized response) waits for a human; `FailureUnrecognizedVerdict` (a provider
+  error object with no recognizable type/code/status) is never fast-retried and
+  gets five supervised automatic attempts, then attention saying recovery
+  stopped; everything else — including disconnect shapes nobody has seen — is
+  `FailureTransient` and recovers automatically with countdown and Retry now.
+  Never reintroduce a transient allowlist whose miss defaults to "configuration":
+  it parked Hannah on `http2: client connection lost`. A failed read of an
+  established body while the caller still waits is typed at the stream boundary
+  as `StreamInterruptionTransport`. Local agent faults carry explicit failure
+  kinds so this provider policy never applies to them; compaction recovers
+  automatically only for provider-originated failures.
 - Shared HTTP recovery uses status evidence, not generic error-envelope labels:
   `invalid_request_error` must not turn 408/429/5xx into a permanent settings
   fault. Specific auth/quota/validation evidence and explicit retry vetoes remain
@@ -1538,7 +1598,10 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   The session's one `plan.Store` publishes its committed immutable activity view;
   the strip never becomes another plan owner. Hovering the strip inspects all
   ordered steps in a bounded, scrollable passive WindowFrame popover, owned by
-  that exact pane without taking composer focus. Leave/Esc/outside/owner removal
+  that exact pane without taking composer focus. Its text is selectable like
+  chat: a captured drag paints `TextSelection` colors through the shared
+  `PaintLineAtBackground` columns, release copies the exact plain text, and the
+  highlight never outlives the gesture. Leave/Esc/outside/owner removal
   dismiss it. `Latest` is a centered native button in the existing reserved gap
   while scrolled up; it adds no transcript height and re-arms exact-pane follow.
 - Plans are clean desired snapshots, not execution logs. Omitted obsolete steps
@@ -1955,9 +2018,17 @@ button that needs a double click reads as broken.
   mutations require reviewed bytes; sidebar context actions open review instead
   of bypassing it. Discard requires exact preview + mandatory Local History
   safety recovery and never deletes untracked data.
-- Composer + Capability/palette selection is staging only. Exact source-qualified
-  skill invocation, tool reference and external context must retain the owning
-  session/agent/draft; old arguments or async results cannot attach elsewhere.
+- `/skills` and `/mcps` open one simple Capabilities modal: Skills/MCPs tabs,
+  local search, rows with a theme switch marker, friendly name and status chip,
+  and a detail pane for the selection (description, mode or observed MCP
+  connection and tool count, transport/endpoint, source name, scope, path), with
+  an "N of M active" summary and Activate/Deactivate + Close. MCP facts are
+  observed only; activation never claims a running transport.
+  Row clicks select; Enter/Space or the explicit action toggles the registration
+  at its existing binding. No composer capability control or `/skill` invocation.
+  Activation enables future use, never MCP startup or access grants; full setup
+  remains in Settings. Async results are modal/workspace fenced. Settings external
+  context staging still retains exact session/agent/draft ownership.
 - Directed collaboration events and report/outcome publications are delivered
   automatically at safe boundaries; Board reads are history/search, not polling
   transport. Peer data is never approval or permission. `agent_send` broadcast

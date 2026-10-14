@@ -119,7 +119,7 @@ func BuildChild(options ChildOptions) (systemPrompt, assignment string) {
 		CollaborationWorkflow,
 		ProjectGuidanceContract,
 		fmt.Sprintf(`<tool_permissions><allowed>%s</allowed><denied>%s</denied><rule>Stay within the permitted tool and policy boundary.</rule></tool_permissions>`, XMLText(strings.Join(options.AllowedTools, ", ")), XMLText(strings.Join(options.DeniedTools, ", "))),
-		fmt.Sprintf(`<file_ownership>%s</file_ownership>`, XMLText(strings.Join(options.FileOwnership, ", "))),
+		childFileOwnership(options.FileOwnership, options.TempDir),
 		fmt.Sprintf(`<report_contract required="true"><rule>Call publish_report with kind="final" exactly once before ending and address it to parent %s.</rule><rule>publish_report is the required child return channel and remains available outside optional task-tool allowlists. An explicit denial is an invalid launch configuration, not permission to bypass a tool boundary.</rule><rule>Include findings, changes, tests, unresolved risks, exact paths, and immediate parent actions.</rule><rule>A chat response or interim report is not the required final report.</rule></report_contract>`, XMLText(options.ParentID)),
 		planning,
 		fmt.Sprintf(`<profile_instructions>%s</profile_instructions>`, XMLText(options.ProfileInstructions)),
@@ -134,4 +134,14 @@ func BuildChild(options ChildOptions) (systemPrompt, assignment string) {
 </delegated_assignment>`, XMLText(options.ID), XMLText(options.ParentID), options.ParentTurn,
 		XMLText(options.Name), XMLText(options.Description), XMLText(options.Instructions), XMLText(options.PolicyName))
 	return systemPrompt, assignment
+}
+
+// childFileOwnership states the child's write scope and what a rejected write
+// means: an ordinary tool error, never the end of the run.
+func childFileOwnership(scope []string, tempDir string) string {
+	if len(scope) == 0 {
+		return `<file_ownership></file_ownership>`
+	}
+	return fmt.Sprintf(`<file_ownership scope="%s"><rule>Write only inside this scope. A write outside it is rejected with an error, changes nothing and does not stop your run; your parent is told.</rule><rule>Your temporary directory %s is always writable for scratch files.</rule><rule>If the assignment needs more scope, ask your parent with agent_send; it can replace your scope while you run.</rule></file_ownership>`,
+		XMLText(strings.Join(scope, ", ")), XMLText(tempDir))
 }

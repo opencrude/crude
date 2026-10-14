@@ -272,7 +272,7 @@ func checkUploadBlackholeRecovery(t *testing.T, owner string, stop bool) {
 			t.Fatalf("child countdown lacks exact parent mirror: found=%t err=%v", found, err)
 		}
 	}
-	if stop && !s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation) {
+	if stop && s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation) != nil {
 		t.Fatal("exact cooldown cancellation rejected")
 	}
 	// No RetryRecoveryFor, wake signal or configuration edit anywhere in this

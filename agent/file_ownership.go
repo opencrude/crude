@@ -121,6 +121,24 @@ func (fo *FileOwnership) BeginWrite(agentID AgentID, paths []string) (func(), er
 	return fo.mu.RUnlock, nil
 }
 
+// WriteScopeAllows reports whether path lies inside the agent's current
+// committed write scope. Parent scope updates and self-narrowing replace that
+// scope atomically, so a running agent observes them on its next write.
+func (fo *FileOwnership) WriteScopeAllows(agentID AgentID, raw string) bool {
+	path := normalizeClaimPath(raw)
+	if path == "" {
+		return false
+	}
+	fo.mu.RLock()
+	defer fo.mu.RUnlock()
+	for claimedPath, entry := range fo.claims {
+		if entry.AgentID == agentID && entry.IsWrite && pathWithin(path, claimedPath) {
+			return true
+		}
+	}
+	return false
+}
+
 func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []string) error {
 	return fo.ReplaceClaims(agentID, agentName, paths)
 }

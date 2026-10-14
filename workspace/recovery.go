@@ -62,18 +62,18 @@ func mergeRecoveryViews(views []ChatMessageView, records []recovery.Status) []Ch
 
 // RetryAgentRecovery captures an exact owner in the UI and does its durable
 // resume work off Update. It never switches tabs or consumes the composer.
-func (w *Workspace) PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() bool {
+func (w *Workspace) PrepareAgentRecovery(agentID, incidentID string, generation uint64) func() error {
 	if owner := w.sessionForAgent(agentID); owner != nil && owner.backend != nil {
 		backend := owner.backend
-		return func() bool { return backend.RetryRecoveryFor(agentID, incidentID, generation) }
+		return func() error { return backend.RetryRecoveryFor(agentID, incidentID, generation) }
 	}
 	return nil
 }
 
-func (w *Workspace) PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() bool {
+func (w *Workspace) PrepareCancelAgentRecovery(agentID, incidentID string, generation uint64) func() error {
 	if owner := w.sessionForAgent(agentID); owner != nil && owner.backend != nil {
 		backend := owner.backend
-		return func() bool { return backend.CancelRecoveryFor(agentID, incidentID, generation) }
+		return func() error { return backend.CancelRecoveryFor(agentID, incidentID, generation) }
 	}
 	return nil
 }

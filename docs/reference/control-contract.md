@@ -40,12 +40,15 @@ exact `expected_action`; actual effect and human-only metadata are re-resolved
 before execution. Generic controls or key injection cannot authorize consent,
 permission, secrets or privilege changes.
 
-Memory, Board and the composer capability picker resolve actions against their
+Memory, Board and the capabilities modal resolve actions against their
 live owners. Overflow choices carry their actual selected action's effect:
 inspection/refresh/fetch is read, local navigation/curation is write, and an exact
 retirement confirmation is delete. Clipboard export is explicitly unavailable
 through this generic path without its own host-effect receipt. An admitted read
 does not require a mutation approval token on a second resolution.
+Capability registration toggles retain human-owned settings authority through
+generic controls; opening, searching and selecting never grants activation,
+server launch or tool access.
 
 Effects are read/write/delete/execute/communication/authority, never implicit
 read. Manual/Auto Review/YOLO authorize eligible exact operations within explicit

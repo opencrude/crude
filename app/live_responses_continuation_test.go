@@ -28,10 +28,11 @@ func TestLiveResponsesStoredContinuation(t *testing.T) {
 		t.Skip("set CRUDE_LIVE_RESPONSES_ACCOUNT and CRUDE_LIVE_RESPONSES_MODEL")
 	}
 	cfg := FileConfigToSession(LoadFileConfig())
-	p, err := cfg.ProviderForAccount(accountID, model)
+	p, err := cfg.ConnectionProvider(accountID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.Model = model
 	if os.Getenv("CRUDE_LIVE_RESPONSES_FORCE_PROTOCOL") == "1" {
 		if err := p.SetProtocolID("openai-responses"); err != nil {
 			t.Fatal(err)
@@ -119,10 +120,11 @@ func TestLiveResponsesHistoricalSessionReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := FileConfigToSession(LoadFileConfig())
-	p, err := cfg.ProviderForAccount(accountID, model)
+	p, err := cfg.ConnectionProvider(accountID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.Model = model
 	if p.ProtocolID() != "openai-responses" {
 		t.Fatalf("account uses %s, need Responses", p.ProtocolID())
 	}

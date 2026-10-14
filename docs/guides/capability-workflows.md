@@ -34,7 +34,7 @@ Explicit manager changes still publish their committed snapshots immediately.
 
 ## Skills
 
-1. Open **Manage Skills**, the Skills rail, or `/skills [query]`. These routes use
+1. Open **Manage Skills** or the Skills rail's manager action. These routes use
    the same Settings manager and open at **Application Settings** by default:
    a capability belongs to the user, not to one project. Use the footer
    Application/Workspace toggle first when you explicitly want this workspace
@@ -63,8 +63,11 @@ Explicit manager changes still publish their committed snapshots immediately.
    Confirm rechecks it before publication. Changed metadata requires another
    review; incomplete acquisitions are never available.
 6. Access & use selects Automatic, Manual only or Disabled independently of
-   runtime permission. Use in session stages the exact `/skill <id> [arguments]`
-   without sending. Submitting that task performs the normal single submission.
+   runtime permission. For everyday activation, `/skills [query]` opens a simple
+   searchable modal: select a name, then Activate/Deactivate (or Enter/Space).
+   It persists at the registration's existing scope without changing the composer.
+   Activating a disabled-mode skill restores Automatic; existing manual mode is
+   retained. Deactivation prevents future loading, not removal of accepted context.
 
 Create/Add local validate standard `SKILL.md`. Removing a registration never
 deletes authored files or another workspace's chosen version. Automatic selection
@@ -106,7 +109,7 @@ bounded termination and reaping. Termination is armed before potentially blockin
 Windows pipe closes; it does not race a second `CommandContext` cancellation kill
 against a server that already exited gracefully.
 
-Manage MCP or `/mcp [query]` opens the same searchable store in the retained Settings
+Manage MCP opens the searchable store in the retained Settings
 window. The Installed chip is an explicit local-only filter. The official Registry
 includes remote HTTP and exact-version npm/PyPI packages; required setup is shown,
 and unsupported variants remain inspectable with reasons. Search is bounded to 100
@@ -131,12 +134,16 @@ ceilings. Authentication and consent remain user-owned. External MCP writes are 
 native file ownership and undo. Ambiguous mutating outcomes stay unknown and are
 not replayed.
 
-Resources/Prompts are separately browsable. Enter required prompt arguments,
-Fetch a preview, then Stage context. The + Capability composer control and Insert
-Capability palette action offer Skills/Tools/Resources/Prompts over the same
-descriptors. Tool chips express user selection, not approval. Resource/prompt
-chips retain external attribution; changed arguments/session/agent/draft reject
-late results. Nothing is submitted automatically.
+`/mcps [query]` opens the same **Capabilities** modal as `/skills`, on its MCPs tab.
+It shows installed registrations with search and Activate/Deactivate; this enables
+or disables future agent use, not connection startup or an access grant. Connection
+status stays distinct from Active/Inactive. The palette's **Capabilities** action
+opens this modal too. There is no composer **+ Capability** control, `/skill <id>`
+invocation, or singular `/mcp` command.
+
+Resources/Prompts remain separately browsable in Settings. Enter required prompt
+arguments, Fetch a preview, then Stage context. These source-attributed attachments
+reject changed arguments/session/agent/draft. Nothing is submitted automatically.
 
 The declared MCP profile uses Go SDK v1.8.0 negotiation: 2026-07-28,
 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. Advertised SDK protocol
