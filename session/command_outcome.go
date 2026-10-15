@@ -9,6 +9,7 @@ import (
 
 	"crude/collaboration"
 	"crude/fileio"
+	"crude/types/command"
 )
 
 // observeCommandOutcomes routes a background command manager's settled commands
@@ -37,18 +38,24 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 	if store == nil {
 		return
 	}
-	command := []rune(info.Command)
-	if len(command) > 300 {
-		command = append(command[:300], '…')
+	commandText := []rune(info.Command)
+	if len(commandText) > 300 {
+		commandText = append(commandText[:300], '…')
 	}
 	body := fmt.Sprintf("Background command %q settled after %s: %s\nCommand: %s",
-		info.Handle, info.Duration.Round(time.Second), FormatCommandStatus(info), string(command))
+		info.Handle, info.Duration.Round(time.Second), FormatCommandStatus(info), string(commandText))
 	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
 		SenderID: agentID, SenderName: "Background command " + info.Handle,
 		IdempotencyKey: fmt.Sprintf("command-outcome:%s:%s:%d:%d", agentID, info.Handle, info.PID, info.StartedAt.UnixNano()),
 		RecipientIDs:   []string{agentID},
 		Origin:         collaboration.OriginRuntime, Kind: collaboration.EventCommandOutcome,
 		Body: body,
+		Command: &command.Outcome{
+			Handle: info.Handle, Command: info.Command, PID: info.PID, Status: string(info.Status),
+			StartedAt: info.StartedAt, EndedAt: info.EndedAt, Duration: info.Duration,
+			ExitCode: info.ExitCode, ExitKnown: info.Status == fileio.AsyncCompleted || info.Status == fileio.AsyncFailed,
+			OutputBytes: info.OutputBytes, Error: info.Error,
+		},
 	})
 	if err != nil && s.logger != nil && !errors.Is(err, collaboration.ErrNotFound) {
 		s.logger.Warn("ASYNC", "command_outcome_publish_failed", "agent_id", agentID, "handle", info.Handle, "error", err.Error())

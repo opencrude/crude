@@ -303,11 +303,14 @@ type Settings struct {
 	SessionOverrides map[string]CategorySettings `json:"-"`
 	// SessionMultiAgent is the explicit session override for sub-agent
 	// spawning. nil means inherit the workspace/profile default.
-	SessionMultiAgent *bool          `json:"-"`
-	Theme             ThemeSettings  `json:"theme,omitempty"`
-	Editor            EditorSettings `json:"editor,omitempty"`
-	LSP               LSPSettings    `json:"lsp,omitempty"`
-	UI                UISettings     `json:"ui,omitempty"`
+	SessionMultiAgent *bool `json:"-"`
+	// SessionDisabledCapabilities lists installed skill/MCP IDs this session
+	// and every agent it runs have turned off. Sorted; nil means none.
+	SessionDisabledCapabilities []string       `json:"-"`
+	Theme                       ThemeSettings  `json:"theme,omitempty"`
+	Editor                      EditorSettings `json:"editor,omitempty"`
+	LSP                         LSPSettings    `json:"lsp,omitempty"`
+	UI                          UISettings     `json:"ui,omitempty"`
 }
 
 type AppSettings struct {

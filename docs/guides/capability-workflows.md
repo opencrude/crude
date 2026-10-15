@@ -63,11 +63,10 @@ Explicit manager changes still publish their committed snapshots immediately.
    Confirm rechecks it before publication. Changed metadata requires another
    review; incomplete acquisitions are never available.
 6. Access & use selects Automatic, Manual only or Disabled independently of
-   runtime permission. For everyday activation, `/skills [query]` opens a simple
-   searchable modal: select a name, then Activate/Deactivate (or Enter/Space).
-   It persists at the registration's existing scope without changing the composer.
-   Activating a disabled-mode skill restores Automatic; existing manual mode is
-   retained. Deactivation prevents future loading, not removal of accepted context.
+   runtime permission. For quick, temporary control, `/skills [query]` opens the
+   Capabilities modal: each card's switch turns a skill off or on for the current
+   session and all its agents, without changing the registration or the composer.
+   Turning one off prevents future loading, not removal of accepted context.
 
 Create/Add local validate standard `SKILL.md`. Removing a registration never
 deletes authored files or another workspace's chosen version. Automatic selection
@@ -134,11 +133,13 @@ ceilings. Authentication and consent remain user-owned. External MCP writes are 
 native file ownership and undo. Ambiguous mutating outcomes stay unknown and are
 not replayed.
 
-`/mcps [query]` opens the same **Capabilities** modal as `/skills`, on its MCPs tab.
-It shows installed registrations with search and Activate/Deactivate; this enables
-or disables future agent use, not connection startup or an access grant. Connection
-status stays distinct from Active/Inactive. The palette's **Capabilities** action
-opens this modal too. There is no composer **+ Capability** control, `/skill <id>`
+`/mcps [query]` opens the **MCP servers** view of the session capability modal
+(`/skills` opens its separate Skills view).
+Its switches turn a server off or on for the current session and all its agents,
+even mid-run: the next request drops or restores its tools. They never start a
+connection, grant access or change the registration; card info shows only observed
+connection state. **Install & manage** opens Settings. The palette's **Session MCP Servers** action
+opens this view too. There is no composer **+ Capability** control, `/skill <id>`
 invocation, or singular `/mcp` command.
 
 Resources/Prompts remain separately browsable in Settings. Enter required prompt

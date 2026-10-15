@@ -28,24 +28,27 @@ func hasTitleReason(msg types.ChatMessage) bool {
 func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
 	isActive := toolRowFrameSensitive(msg)
+	settled := msg.ToolPreviewPhase == types.ToolPreviewDone || msg.ToolPreviewPhase == types.ToolPreviewError
+	return paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
+}
 
+// paintToolTitle is shared by tool calls and code-authored command outcomes.
+// Their action, operand, lifecycle indicator and metadata use identical ink.
+func paintToolTitle(title tools.ToolTitle, status string, active, settled bool, spinFrame int, permSuffix string) PaintLine {
 	dot := "● "
 	if title.Failed {
 		dot = "× "
-	} else if msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted" {
+	} else if status == types.ToolStatusCancelled || status == "interrupted" {
 		dot = "○ "
-	} else if isActive {
+	} else if active {
 		dot = ui.ActivityDot(spinFrame) + " "
-	} else if !isActive && msg.ToolPreviewPhase != types.ToolPreviewDone &&
-		msg.ToolPreviewPhase != types.ToolPreviewError &&
-		msg.ToolStatus != "success" && msg.ToolStatus != "error" {
+	} else if !settled && status != types.ToolStatusSuccess && status != types.ToolStatusError {
 		dot = "○ "
 	}
 
-	permSuffix := tools.PermTagSuffix(msg.PermTag)
 	titleRole := ui.ColorToolTitle
 	iconRole := ui.ColorToolTitle
-	if msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted" {
+	if status == types.ToolStatusCancelled || status == "interrupted" {
 		iconRole = ui.ColorMuted
 	}
 	if title.Failed {

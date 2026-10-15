@@ -402,7 +402,7 @@ func (workspace *Workspace) PrepareSkillInput(ctx context.Context, agentID, id, 
 		return provider.UserInput{}, errors.New("owning agent is unavailable")
 	}
 	category := frontend.backend.RuntimeProfile().GetEffectiveConfig(agentID).GetActiveDefaultCategory()
-	actor := captypes.RuntimeActor{ID: agentID, SessionID: frontend.backend.SessionID(), Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectCommunication}, SkillModes: category.SkillModes, AllowedTools: category.AllowedTools, DeniedTools: category.DeniedTools}
+	actor := captypes.RuntimeActor{ID: agentID, SessionID: frontend.backend.SessionID(), Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectCommunication}, SkillModes: category.SkillModes, AllowedTools: category.AllowedTools, DeniedTools: category.DeniedTools, SessionDisabled: frontend.backend.DisabledCapabilities()}
 	result, err := workspace.Capabilities.Activate(ctx, actor, id, true)
 	if err != nil {
 		return provider.UserInput{}, err

@@ -73,7 +73,10 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 		preview.RequestedAccess = []string{"Tools are not granted by installation; review each observed schema, effect and scope", "External MCP mutations are outside native file ownership and undo"}
 	} else {
 		preview.RequestedAccess = []string{"Load source instructions; scripts still use native execution permissions"}
-		if candidate.Entry.Path != "" {
+		// Remote candidates carry a repository-relative subtree, not a path
+		// on this host. Inspect local metadata only; pinned remote bytes are
+		// validated by AcquireReviewed before a registration is published.
+		if candidate.ArchiveURL == "" && candidate.Entry.Path != "" {
 			skill, err := skills.Inspect(candidate.Entry.Path)
 			if err != nil {
 				return captypes.AcquisitionPreview{}, err
@@ -84,7 +87,7 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 			}
 			preview.RequestedAccess = append(preview.RequestedAccess, skill.AllowedTools...)
 		} else {
-			preview.Requirements = []string{"Declared requirements are verified after acquiring the pinned bytes, before activation"}
+			preview.Requirements = append(preview.Requirements, "Declared requirements are verified after acquiring the pinned bytes, before activation")
 		}
 	}
 	preview.Requirements = slices.DeleteFunc(preview.Requirements, func(value string) bool { return value == "" })

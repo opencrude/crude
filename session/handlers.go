@@ -376,6 +376,7 @@ func (s *Session) settingsSnapshotLocked() ttypes.Settings {
 	settings := detachedSettingsSnapshot(s.cfg)
 	settings.SessionMainAgent = s.selectedMainAgent
 	settings.SessionMultiAgent = cloneBoolPtr(s.multiAgentOverride)
+	settings.SessionDisabledCapabilities = s.DisabledCapabilities()
 	if s.multiAgentOverride != nil {
 		settings.Agents.Enabled = *s.multiAgentOverride
 	}

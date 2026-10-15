@@ -30,6 +30,11 @@ func (v *WorkspaceView) ToggleSessionMultiAgent(ctx context.Context, input corep
 	err := v.Client.Call(ctx, v.ID, coreprotocol.SessionMultiAgentToggle, input, &out)
 	return out, err
 }
+func (v *WorkspaceView) ToggleSessionCapability(ctx context.Context, input coreprotocol.SessionSettingsMutationRequest) (coreprotocol.SessionSettingsResult, error) {
+	var out coreprotocol.SessionSettingsResult
+	err := v.Client.Call(ctx, v.ID, coreprotocol.SessionCapabilityToggle, input, &out)
+	return out, err
+}
 func (v *WorkspaceView) ChangeAccount(ctx context.Context, input coreprotocol.AccountChangeRequest) (coreprotocol.AccountView, error) {
 	var out coreprotocol.AccountView
 	err := v.Client.Call(ctx, v.ID, coreprotocol.AccountChange, input, &out)

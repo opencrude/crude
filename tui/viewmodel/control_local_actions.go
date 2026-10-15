@@ -13,8 +13,13 @@ import (
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
 	if owner.window != nil && m.capabilityPicker != nil {
 		if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == m.capabilityPicker.screen && strings.HasPrefix(string(localID), "capability-picker/") {
+			// A card or detail switch commits the session gate; it completes
+			// with the session settings receipt.
+			if strings.HasSuffix(string(localID), "/switch") && (action == "activate" || action == "set_checked") {
+				return control.Write, true, nil
+			}
 			switch action {
-			case "activate", "select", "scroll", "set_offset", "tabs.activate", "tabs.enter", "capability-picker.focus-list", "capability-picker.close", "capability-picker.select":
+			case "activate", "set_checked", "scroll", "set_offset", "tabs.activate", "tabs.enter", "capability-picker.focus-list", "capability-picker.close", "capability-picker.manage":
 				return control.Write, false, nil
 			case "capability-picker.toggle":
 				return control.Write, true, nil

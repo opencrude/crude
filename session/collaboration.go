@@ -19,6 +19,7 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 	captypes "crude/types/capability"
+	"crude/types/command"
 )
 
 func (s *Session) SetCollaboration(store *collaboration.Store, instanceID string) {
@@ -178,6 +179,7 @@ func collaborationAttribution(event collaboration.Event) *provider.Collaboration
 		SenderName: event.SenderName, Kind: string(event.Kind),
 		RequestID: event.RequestID, RequestRevision: event.RequestRevision, RunID: event.RunID,
 		Broadcast:      event.Broadcast,
+		Command:        command.Clone(event.Command),
 		RecipientIDs:   collaborationRecipientIDs(event.Recipients),
 		RecipientNames: collaborationRecipientNames(event.Recipients),
 	}

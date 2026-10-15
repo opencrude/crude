@@ -141,6 +141,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if flags.MultiAgent != nil {
 		applySessionMultiAgent(cfg, *flags.MultiAgent)
 	}
+	disabledCapabilities, err := sessiondb.LoadDisabledCapabilities(db, meta.ID)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load session capabilities: %w", err)
+	}
 	cfg.SelectedAgent = flags.MainAgent
 	if flags.MainAgent != "" {
 		pin := overrides["root/"+flags.MainAgent]
@@ -299,6 +304,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("restore agent turn generations: %w", err)
 	}
 	sess.recoveredTurnGenerations = turns
+	sess.disabledCapabilities.Store(&disabledCapabilities)
 	store, err := sess.planStore()
 	if err == nil {
 		err = store.RestoreActivity(context.Background())

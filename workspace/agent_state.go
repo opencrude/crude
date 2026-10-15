@@ -8,6 +8,7 @@ import (
 	"crude/collaboration"
 	"crude/provider"
 	ttypes "crude/types"
+	"crude/types/command"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 )
@@ -181,6 +182,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 			EventID: event.ID, ThreadID: event.ThreadID, SenderID: event.SenderID,
 			SenderName: event.SenderName, Kind: string(event.Kind), RequestID: event.RequestID,
 			RequestRevision: event.RequestRevision, RunID: event.RunID,
+			Command: command.Clone(event.Command),
 		}
 		for _, recipient := range event.Recipients {
 			attribution.RecipientIDs = append(attribution.RecipientIDs, recipient.ID)

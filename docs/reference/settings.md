@@ -124,6 +124,14 @@ updated source revision. Downloads share a bounded immutable artifact cache;
 cancellation detaches one requester. Changed metadata/source/binding fails closed
 and requires another preview. An installation is not execution approval.
 
+Remote skill review treats the selected repository subtree as remote metadata,
+never a directory on the core host. The pinned archive is validated before
+registration. Connected capability failures retain the actionable reason with
+private connection/source/proxy values redacted rather than reporting a generic
+settings failure.
+Captured settings preimages are normalized after detachment: JSON's omission
+of empty registration maps must never be mistaken for a concurrent edit.
+
 Agent acquisitions publish through the same sparse registration maps as manual
 installs, but the binding follows the target scope: **Application Settings** by
 default (an install belongs to the user, not the project), or Workspace Settings
@@ -179,17 +187,34 @@ templates support explicit text-only fetch/preview and source-attributed compose
 attachments. Changed session, agent or draft rejects a late attachment. Nothing
 is submitted automatically.
 
-`/skills` and `/mcps` open one **Capabilities** modal on the matching tab.
-It contains only Skills/MCPs tabs, local search, friendly resource names,
-Active/Inactive status, and Activate/Deactivate plus Close. A row click selects;
-Enter/Space or the explicit action toggles the selected registration immediately.
-Changes persist at the registration's existing Application/Workspace binding.
-Activation enables future agent use; it does not launch an MCP, grant tool access,
-submit a prompt, or erase instructions already loaded. MCP connection status is
-shown separately from activation. Full install, connection and access management
-remain in Settings. The palette's **Capabilities** action opens the same modal;
-the composer has no **+ Capability** control and `/skill` and `/mcp` are removed.
-Async results are modal-lifetime/workspace-fenced and preserve search and selection.
+`/skills` and `/mcps` open separate **Skills** and **MCP servers** views of one
+session capability modal (no tabs). It is quick, temporary per-session control,
+not configuration: a padded heading naming the view and owning session (the
+window border carries no title), local search and a single-column list of self-contained bordered cards: name,
+compact facts (use mode, scope and source, or observed connection state and
+transport), a switch with a square knob, and up to three description lines.
+Clicking a card (or Enter / Right) expands it in place with the full description
+and every fact (use mode, scope, version, path, source; or connection, transport,
+endpoint and observed tools); clicking again (or Enter / Left) collapses it. The
+switch (click or Space) turns that skill or MCP server off or on for the selected
+session and every agent it runs (root and children), while they work or idle.
+An empty view shows a framed guide explaining what skills or MCP servers are and
+where to start, centred in the modal (Install & manage, adding your own in Settings, or asking an
+agent); a search miss explains how to recover. One **Install & manage** button
+opens the matching Settings page. Switches persist
+in the session (`session_capabilities`), survive resume, and never change the
+Application/Workspace registration, other sessions, the composer, MCP
+transports or access grants. A registration turned off in Settings shows "Off in
+Settings" and cannot be turned on per session; without a session switches are
+read-only. Running agents observe a change at their next request or tool call:
+an off MCP server's tools leave the request, and its calls, resource/prompt reads,
+access requests and `capability_activate` are refused; skills cannot be activated
+and search marks them off. Instructions already loaded stay in context. The
+palette's **Session Skills** and **Session MCP Servers** actions open the same
+views; the composer has no
+**+ Capability** control and `/skill` and `/mcp` are removed. Toggle receipts are
+session-revision fenced; refreshes are modal-lifetime/workspace-fenced and
+preserve search, focus and scroll.
 
 Sources supports local directories, commit-pinned repositories and registries.
 Trust/disable and acquisition budgets are independent controls. Automatic

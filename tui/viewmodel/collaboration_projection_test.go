@@ -6,13 +6,78 @@ import (
 	"testing"
 	"time"
 
+	"crude/collaboration"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/types"
+	"crude/types/command"
 	"crude/workspace"
 )
+
+func TestCommandOutcomeLiveEventSQLiteHydrationParity(t *testing.T) {
+	for _, width := range []int{48, 80, 160} {
+		for _, status := range []string{"completed", "failed", "killed"} {
+			t.Run(fmt.Sprintf("%s/%d", status, width), func(t *testing.T) {
+				event := collaboration.Event{ID: "command-event", Kind: collaboration.EventCommandOutcome, Origin: collaboration.OriginRuntime,
+					SenderID: "root", SenderName: "Background command build", CreatedAt: time.Unix(123, 0),
+					Recipients: []collaboration.Recipient{{ID: "root", Name: "Haruto"}}, Body: "Runtime-only output-reading guidance.",
+					Command: &command.Outcome{Handle: "build", Command: "go build ./...", Status: status, Duration: 4 * time.Second,
+						OutputBytes: 14, ExitKnown: status != "killed"},
+				}
+				if status == "failed" {
+					event.Command.ExitCode = 7
+				}
+				state := &workspace.AgentState{Messages: workspace.NewConversation()}
+				state.ApplyEvent(workspace.AgentEvent{Type: "collaboration_message", Data: event})
+				canonical := state.Messages.Messages()[0]
+				wire := provider.NewTextMessage("user", "<workspace_event>wire-only context</workspace_event>")
+				wire.InternalID, wire.Origin, wire.DisplayContent, wire.Collaboration = canonical.InternalID, canonical.Origin, canonical.Content, canonical.Collaboration
+				database := sessiondb.OpenAndMigrateAt(t.TempDir())
+				defer database.Close()
+				if err := sessiondb.CreateSessionRow(database, "session"); err != nil {
+					t.Fatal(err)
+				}
+				if err := sessiondb.AppendMessageWithMeta(database, "session", wire, 1, sessiondb.DisplayMeta{
+					SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{canonical},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				stored, err := sessiondb.LoadMessagesWithMeta(database)
+				if err != nil {
+					t.Fatal(err)
+				}
+				live := ChatMessagesFromViews([]workspace.ChatMessageView{canonical})
+				hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(stored))
+				for _, expanded := range []bool{false, true} {
+					render := func(messages []types.ChatMessage) []chatprojection.MessageRow {
+						r := chatprojection.NewRenderer(theme.DefaultDark())
+						r.SetSize(width, 40)
+						r.SetChatAreaBounds(0, 30)
+						r.SyncMessages(messages, 1)
+						if expanded {
+							r.ToggleDisclosure(canonical.InternalID)
+						}
+						return r.ExportMessageRowsSnapshot(width).Rows
+					}
+					left, right := render(live), render(hydrated)
+					if len(left) != 1 || len(right) != 1 {
+						t.Fatal("command outcome missing from live or hydrated transcript")
+					}
+					assertSameRows(t, "command outcome", left[0], right[0])
+					text := strings.Join(left[0].Lines, "\n")
+					if strings.Contains(text, "wire-only") || !strings.Contains(text, "build") {
+						t.Fatalf("projection lost command identity or leaked context: %s", text)
+					}
+					if !expanded && strings.Contains(text, "Runtime-only") {
+						t.Fatal("runtime instructions occupy the compact outcome row")
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 	for _, themeCase := range []struct {

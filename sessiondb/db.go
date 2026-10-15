@@ -175,6 +175,16 @@ CREATE TABLE IF NOT EXISTS session_flags (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
+-- session_capabilities turns installed skills/MCP servers off for one session
+-- and every agent it runs. Absent rows follow the application/workspace
+-- registration.
+CREATE TABLE IF NOT EXISTS session_capabilities (
+    session_id    TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    PRIMARY KEY (session_id, capability_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_context_state (
     session_id     TEXT NOT NULL,
     agent_id       TEXT NOT NULL,

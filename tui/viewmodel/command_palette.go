@@ -13,6 +13,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	captypes "crude/types/capability"
 	"crude/workspace"
 )
 
@@ -607,6 +608,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return m.openCapabilityManager(activitySkills, "", "")
 	case "capabilities.pick":
 		return m.openCapabilityPicker()
+	case "capabilities.pick.mcp":
+		return m.openCapabilityPickerTab(captypes.KindMCP, "")
 	case "mcp.manage":
 		return m.openCapabilityManager(activityMCP, "", "")
 	case "board.browse":

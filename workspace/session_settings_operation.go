@@ -17,6 +17,8 @@ type SessionSettingsOperation struct {
 	form     *types.Settings
 	expected *uint64
 	reset    bool
+	// capability turns one skill/MCP server on or off for the session.
+	capability *sessionCapabilityChange
 	// remote performs the operation in a core when the owner is a replica.
 	remote func() (session.SettingsSnapshotSet, error)
 	once   sync.Once
@@ -41,6 +43,22 @@ func (w *Workspace) PrepareSessionSettingsSave(sessionID string, settings types.
 
 func (w *Workspace) PrepareMultiAgentToggle(sessionID string) (*SessionSettingsOperation, error) {
 	return w.prepareSessionSettings(sessionID)
+}
+
+type sessionCapabilityChange struct {
+	id      string
+	enabled bool
+}
+
+// PrepareSessionCapabilityToggle turns one installed skill or MCP server on or
+// off for the session and all its agents. It is an idempotent set, not a flip,
+// so it needs no revision fence.
+func (w *Workspace) PrepareSessionCapabilityToggle(sessionID, id string, enabled bool) (*SessionSettingsOperation, error) {
+	op, err := w.prepareSessionSettings(sessionID)
+	if err == nil {
+		op.capability = &sessionCapabilityChange{id: id, enabled: enabled}
+	}
+	return op, err
 }
 
 func (w *Workspace) PrepareSessionSettingsSaveAtRevision(sessionID string, settings types.Settings, expected uint64) (*SessionSettingsOperation, error) {
@@ -86,6 +104,8 @@ func (operation *SessionSettingsOperation) Run() SessionSettingsResult {
 		operation.result.owner = operation.owner
 		if operation.remote != nil {
 			operation.result.Snapshot, operation.result.Err = operation.remote()
+		} else if operation.capability != nil {
+			operation.result.Snapshot, operation.result.Err = operation.backend.SetCapabilityEnabled(operation.capability.id, operation.capability.enabled)
 		} else if operation.reset {
 			operation.result.Snapshot, operation.result.Err = operation.backend.ResetSettingsSnapshotAtRevision(*operation.expected)
 		} else if operation.expected != nil && operation.form == nil {

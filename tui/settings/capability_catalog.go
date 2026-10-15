@@ -804,7 +804,7 @@ func (catalog *capabilityCatalog) editForm() {
 	} else if catalog.kind == captypes.KindSkill {
 		value := model.capabilities.Skills[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Skill: &value}
-		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Source-qualified identity"), ui.TextFieldState("name", "Name", value.Name, "Lowercase skill directory name"), ui.TextFieldState("path", "Directory", value.Path, "Authored directories are never deleted by Remove"), ui.SegmentedFieldState("mode", "Use", []ui.FormOption{{ID: "automatic", Label: "Automatically"}, {ID: "manual", Label: "When asked"}, {ID: "disabled", Label: "Never"}}, mapDefault(value.Mode, "automatic"), "Automatically lets agents load this skill when relevant. Loading a skill is not a permission grant."), ui.TextAreaFieldState("description", "Description", "", "Required for Create skill")}
+		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Source-qualified identity"), ui.TextFieldState("name", "Name", value.Name, "Lowercase skill directory name"), ui.TextFieldState("path", "Directory", value.Path, "Authored directories are never deleted by Remove"), ui.SegmentedFieldState("mode", "Use", []ui.FormOption{{ID: "automatic", Label: "Automatically"}, {ID: "manual", Label: "When asked"}, {ID: "disabled", Label: "Never"}}, mapDefault(value.Mode, "automatic"), "When agents may load these instructions; never grants execution access."), ui.TextAreaFieldState("description", "Description", "", "Required for Create skill")}
 		if value.Managed {
 			fields[2].ReadOnly = true
 			fields[2].Description = "Managed bytes are immutable. Make local copy before editing files."
@@ -859,7 +859,7 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 		field.Placeholder, field.Columns = add, captions
 		return field
 	}
-	args := ui.TextFieldState("args", "Arguments", joinShellWords(value.Args), `Written like a shell command line; quote values with spaces. Nothing is expanded or interpolated.`)
+	args := ui.TextFieldState("args", "Arguments", joinShellWords(value.Args), `Quote arguments with spaces; no shell expansion or interpolation.`)
 	args.Validator = func(field ui.FieldValue) []string {
 		if _, err := splitShellWords(field.String()); err != nil {
 			return []string{err.Error()}
@@ -867,28 +867,28 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 		return nil
 	}
 	transport := ui.SegmentedFieldState("transport", "Runs as", []ui.FormOption{{ID: "http", Label: "Remote server"}, {ID: "stdio", Label: "Local process"}}, mapDefault(value.Transport, "http"),
-		"Remote server connects over streamable HTTP. Local process launches an executable on this computer.")
+		"Remote uses streamable HTTP; Local launches an executable on the core host.")
 	auth := ui.SegmentedFieldState("auth", "Sign in", []ui.FormOption{{ID: "none", Label: "None"}, {ID: "oauth", Label: "OAuth"}}, mapDefault(value.Auth, "none"), "OAuth sign-in is always an explicit step you start.")
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("mcp-identity", "Connection"),
 		ui.TextFieldState("name", "Name", value.Name, "How this connection appears to you and your agents."),
-		ui.TextFieldState("id", "Identity", value.ID, "A stable identifier; tool grants and history refer to it."),
+		ui.TextFieldState("id", "Identity", value.ID, "Stable identifier used by tool grants and history."),
 		transport,
 		ui.SeparatorFieldState("mcp-remote", "Remote server"),
 		ui.TextFieldState("url", "Endpoint", value.URL, "The server's HTTPS URL. Credentials are bound to this exact endpoint."),
-		table("headers", "Headers", "Add header", value.Headers, "Non-secret request headers. Put tokens in Secret references.", "Header", "Value"),
+		table("headers", "Headers", "Add header", value.Headers, "Non-secret headers; put tokens in Secret references.", "Header", "Value"),
 		auth,
 		ui.TextFieldState("oauth-client", "OAuth client", value.OAuthClientID, "Leave blank to register dynamically."),
 		ui.TextFieldState("oauth-scopes", "OAuth scopes", strings.Join(value.OAuthScopes, " "), "Space- or comma-separated scopes to request at sign-in."),
 		ui.SeparatorFieldState("mcp-local", "Local process"),
-		ui.TextFieldState("command", "Executable", value.Command, "Program to launch, found on PATH or given as an absolute path. No shell is involved."),
+		ui.TextFieldState("command", "Executable", value.Command, "Executable on PATH or an absolute path; launched without a shell."),
 		args,
 		ui.TextFieldState("directory", "Working directory", value.Directory, "Where the process starts. Leave blank for the workspace."),
 		table("environment", "Environment", "Add variable", value.Environment, environmentDescription, "Variable", "Value"),
-		ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "The process runs unsandboxed with your user's privileges. Automatic acquisition can never start it."),
+		ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "Runs unsandboxed as you. Installation alone never approves launch."),
 		ui.SeparatorFieldState("mcp-secrets", "Secrets and limits"),
-		table("secrets", "Secret references", "Add reference", value.SecretRefs, "Map a header or environment name to env:VARIABLE. Credentials stay with the application, never in this file.", "Name", "Reference"),
-		capabilityIntField("timeout", "Timeout", "seconds", int64(max(1, value.TimeoutSeconds)), 1, 3600, "Each operation's deadline. Unknown remote changes are never retried automatically."),
+		table("secrets", "Secret references", "Add reference", value.SecretRefs, "Map header or variable names to env:VARIABLE; no credential bytes stored here.", "Name", "Reference"),
+		capabilityIntField("timeout", "Timeout", "seconds", int64(max(1, value.TimeoutSeconds)), 1, 3600, "Operation deadline; unknown remote changes are never retried."),
 	}
 }
 

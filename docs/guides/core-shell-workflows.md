@@ -46,6 +46,24 @@ Copy `config.json` into `<CRUDE_HOME>/.crude/` if the dev profile should reuse
 your accounts. Test binaries always isolate `CRUDE_HOME` through
 `internal/testhome`.
 
+For Linux visual capture, the **canonical** `<CRUDE_HOME>/.crude/corewire/core.sock`
+address must fit within 103 bytes. Session scratch paths are often too long;
+a symlink still resolves to the long target. Use a real short isolated profile:
+
+```sh
+profile=$(mktemp -d /tmp/crude-shot-XXXXXX)
+CRUDE_HOME="$profile" COLS=160 ROWS=40 FONT_SIZE=11 \
+  scripts/tuishot.sh "$CRUDE_TEMP_DIR/settings-capture" \
+  key:ctrl+alt+p 'type:application settings' key:Return
+CRUDE_HOME="$profile" crude --core-stop
+```
+
+The capture script rejects an oversized canonical profile before opening a
+window and stops with a nonzero status if Crude exits or capture fails. Read the
+boot image and startup diagnostics before continuing input; script exit alone
+does not prove the requested UI journey completed. Close the isolated core and
+dedicated window after review, leaving the developer's own core untouched.
+
 Without `--server`, the core drains after zero clients and zero active work persist
 for `--core-grace` (a Go duration). Core failure interrupts execution; restart and
 session resume are passive, never historical provider/tool replay. Private client

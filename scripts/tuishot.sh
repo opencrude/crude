@@ -18,6 +18,8 @@
 #
 # Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS CRUDE_CWD KEEP_OPEN
 # CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
+# An isolated CRUDE_HOME must be a real short directory, not a symlink to a
+# long path: the core canonicalizes it before creating its Unix socket.
 set -uo pipefail
 
 OUTDIR="${1:?usage: tuishot.sh <outdir> [step ...]}"
@@ -33,12 +35,27 @@ KEEP_OPEN="${KEEP_OPEN:-0}"
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CRUDE_CWD="${CRUDE_CWD:-$REPO}"
-WORK=/tmp/crude-tuishot
+# Evidence belongs to session scratch; only the socket-bound CRUDE_HOME needs
+# a separate real short directory on Unix. Give each capture private logs.
+WORK="$(mktemp -d "${CRUDE_TEMP_DIR:-/tmp}/crude-tuishot-XXXXXX")" || exit 1
 BIN="${CRUDE_BIN:-$WORK/crude}"
 LOG="$WORK/crude.log"
 LAUNCH="$WORK/launch.sh"
 mkdir -p "$WORK" "$OUTDIR"
 : > "$LOG"
+
+# Fail before opening a terminal when an isolated profile cannot host a core.
+# The canonical socket address is bounded by the smallest supported Unix limit.
+if [ -n "${CRUDE_HOME:-}" ]; then
+  mkdir -p "$CRUDE_HOME/.crude" || exit 1
+  DATA_DIR="$(cd "$CRUDE_HOME/.crude" && pwd -P)"
+  SOCKET="$DATA_DIR/corewire/core.sock"
+  if [ "${#SOCKET}" -gt 103 ]; then
+    echo "ERROR: canonical core socket path exceeds 103 bytes: $SOCKET" >&2
+    echo 'Use a real short profile directory (mktemp -d /tmp/crude-shot-XXXXXX); a symlink does not shorten the canonical path.' >&2
+    exit 1
+  fi
+fi
 
 IMPORT=/home/lenovo/tools/imagemagick-7.1.2-18/bin/import
 export DISPLAY="${DISPLAY:-:0}"
@@ -129,19 +146,33 @@ py() { echo $(( Y + $1 * CH + CH / 2 )); }
 
 sleep "$PAINT_WAIT"
 
+assert_running() {
+  if grep -q '^CRUDE-EXITED ' "$LOG"; then
+    echo "ERROR: Crude exited; refusing further input or screenshots" >&2
+    tail -30 "$LOG" >&2
+    exit 1
+  fi
+  if ! kill -0 "$CAPTURE_PID" 2>/dev/null; then
+    echo "ERROR: capture terminal exited" >&2
+    exit 1
+  fi
+}
+
 N=0
 shot() {
+  assert_running
   N=$((N + 1))
   xdotool windowraise "$WIN_ID" 2>/dev/null
   local p
   p="$(printf '%s/%02d-%s.png' "$OUTDIR" "$N" "${1:-shot}")"
-  if $IMPORT -window "$WIN_ID" "$p" 2>/dev/null; then echo "saved $p"; else echo "SHOT FAILED $p"; fi
+  if $IMPORT -window "$WIN_ID" "$p" 2>/dev/null; then echo "saved $p"; else echo "SHOT FAILED $p" >&2; exit 1; fi
 }
 slug() { printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_' | cut -c1-22; }
 
 shot boot
 
 for step in "$@"; do
+  assert_running
   case "$step" in
     key:*)
       spec="${step#key:}"

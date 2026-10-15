@@ -13,6 +13,15 @@ The canonical conversation is the audit log. The chat renderer projects it into 
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
+Background-command settle notifications are runtime evidence, not peer-message
+cards. The journal retains typed handle, command, status, duration, exit
+availability, PID and retained-output bytes. Their default projection is one
+ordinary-tool-styled row (`Completed command build 4s`); failures/timeouts keep
+their failure indicator. Native disclosure exposes complete command evidence
+without painting model-facing polling guidance. Live events and SQLite hydration
+share that builder, normal chat background and static settled geometry; no body
+text parsing supplies lifecycle facts.
+
 ## Capabilities and Peer Data
 
 `capability_search`, `capability_activate`, `agent_send`, `board_read`,

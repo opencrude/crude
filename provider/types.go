@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/command"
 	"crude/types/control"
 	"crude/types/reasoning"
 	"encoding/json"
@@ -28,20 +29,21 @@ type UserInput struct {
 }
 
 type CollaborationAttribution struct {
-	EventID          string   `json:"event_id"`
-	ThreadID         string   `json:"thread_id"`
-	SenderID         string   `json:"sender_id"`
-	SenderName       string   `json:"sender_name"`
-	RecipientIDs     []string `json:"recipient_ids,omitempty"`
-	RecipientNames   []string `json:"recipient_names,omitempty"`
-	Broadcast        bool     `json:"broadcast,omitempty"`
-	Kind             string   `json:"kind"`
-	RequestID        string   `json:"request_id,omitempty"`
-	RequestRevision  uint64   `json:"request_revision,omitempty"`
-	RunID            string   `json:"run_id,omitempty"`
-	HistoryMessageID string   `json:"history_message_id,omitempty"`
-	ArtifactID       string   `json:"artifact_id,omitempty"`
-	ArtifactRevision int      `json:"artifact_revision,omitempty"`
+	EventID          string           `json:"event_id"`
+	ThreadID         string           `json:"thread_id"`
+	SenderID         string           `json:"sender_id"`
+	SenderName       string           `json:"sender_name"`
+	RecipientIDs     []string         `json:"recipient_ids,omitempty"`
+	RecipientNames   []string         `json:"recipient_names,omitempty"`
+	Broadcast        bool             `json:"broadcast,omitempty"`
+	Kind             string           `json:"kind"`
+	RequestID        string           `json:"request_id,omitempty"`
+	RequestRevision  uint64           `json:"request_revision,omitempty"`
+	RunID            string           `json:"run_id,omitempty"`
+	HistoryMessageID string           `json:"history_message_id,omitempty"`
+	ArtifactID       string           `json:"artifact_id,omitempty"`
+	ArtifactRevision int              `json:"artifact_revision,omitempty"`
+	Command          *command.Outcome `json:"command,omitempty"`
 }
 
 func PlainInput(text string) UserInput {

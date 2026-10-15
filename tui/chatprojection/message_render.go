@@ -106,6 +106,9 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 }
 
 func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	if isCommandOutcome(&msg) {
+		return renderCommandOutcome(msg, ctx)
+	}
 	var ml messageLines
 	attribution := msg.Collaboration
 	if attribution == nil {
@@ -909,6 +912,6 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 }
 
 func messageHasPaneBackground(msg *types.ChatMessage) bool {
-	return msg.Role == types.RoleThinking || msg.Collaboration != nil ||
+	return msg.Role == types.RoleThinking || msg.Collaboration != nil && !isCommandOutcome(msg) ||
 		msg.Role == types.RoleTool && tools.IsCollaborationTool(msg.ToolName)
 }

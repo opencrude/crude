@@ -12,6 +12,7 @@ const (
 	SessionSettingsSave          = "settings.session.save"
 	SessionSettingsReset         = "settings.session.reset"
 	SessionMultiAgentToggle      = "settings.session.toggle_multi_agent"
+	SessionCapabilityToggle      = "settings.session.toggle_capability"
 	AccountChange                = "settings.account.change"
 	AccountModels                = "settings.account.models"
 	CapabilityRuntime            = "settings.capability.runtime"
@@ -28,6 +29,8 @@ type SessionSettingsDTO struct {
 	MainAgent  string                            `json:"main_agent"`
 	Overrides  map[string]types.CategorySettings `json:"overrides"`
 	MultiAgent *bool                             `json:"multi_agent"`
+	// DisabledCapabilities is the session-wide skill/MCP gate.
+	DisabledCapabilities []string `json:"disabled_capabilities,omitempty"`
 }
 
 type SessionSettingsResult struct {
@@ -43,6 +46,14 @@ type SessionSettingsMutationRequest struct {
 	SessionID        string             `json:"session_id"`
 	ExpectedRevision uint64             `json:"expected_revision"`
 	Settings         SessionSettingsDTO `json:"settings"`
+	// Capability turns one installed skill/MCP server on or off for the
+	// session and all its agents (SessionCapabilityToggle only).
+	Capability *SessionCapabilityChange `json:"capability,omitempty"`
+}
+
+type SessionCapabilityChange struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
 }
 
 // SecretUpdate is write-only. Keep must be explicit; empty Value means clear,

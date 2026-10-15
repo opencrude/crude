@@ -51,12 +51,12 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 	lsp = types.NormalizeLSP(lsp)
 	severity := ui.SegmentedFieldState("min-severity", "Show diagnostics from", []ui.FormOption{
 		{ID: "error", Label: "Errors"}, {ID: "warning", Label: "Warnings"}, {ID: "info", Label: "Info"}, {ID: "hint", Label: "Hints"},
-	}, lsp.MinSeverity, "The weakest diagnostic level shown. Hints show everything; Errors hides warnings, info and hints.")
+	}, lsp.MinSeverity, "Lowest level shown: Hints includes all; Errors includes errors only.")
 	return formModel(
 		ui.SeparatorFieldState("language-intelligence", "General"),
 		ui.BoolFieldState("enabled", "Language intelligence", lsp.Enabled, "Master switch for language servers in this scope. Off stops every server."),
-		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Start the matching built-in server for each file type. Servers you configure explicitly still run when this is off."),
-		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Launch a server only when an editor document of its language opens; the project is never scanned up front."),
+		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose built-in servers by file type; explicit servers work even when off."),
+		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Start a language server when its first document opens, not at startup."),
 		lspNumberField("debounce", "Update delay", "ms", lsp.UpdateDebounceMS, 60000, "Pause after typing before the server re-analyzes the document."),
 		&ui.FieldState{ID: "servers-nav", Label: "Language servers", Type: ui.FieldNav, Target: "settings.lsp.servers", Columns: []string{lspServerSummary(lsp.Languages)}, Description: "Commands, arguments and environment for each language server."},
 		ui.SeparatorFieldState("features", "Features"),
@@ -77,8 +77,8 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 		lspNumberField("max-servers", "Running servers", "max", lsp.MaxServers, 32, "How many language servers may run at once. Idle ones retire first."),
 		lspNumberField("idle-timeout", "Retire idle after", "seconds", lsp.IdleTimeoutSeconds, 86400, "Stop a server that has had no open documents for this long."),
 		lspNumberField("max-document", "Skip documents over", "MB", max(1, lsp.MaxDocumentBytes/mebibyte), 64, "Larger files open without language intelligence to keep servers responsive."),
-		lspNumberField("server-threads", "Threads per server", "threads", lsp.ServerThreads, 64, "Soft parallelism guidance passed to servers that support it. A server's own arguments win."),
-		lspNumberField("server-memory", "Memory per server", "MiB", lsp.ServerMemoryMB, 65536, "Soft heap guidance (Go heap, TypeScript old space), not a hard limit on process memory."),
+		lspNumberField("server-threads", "Threads per server", "threads", lsp.ServerThreads, 64, "Parallelism hint for supported servers; explicit arguments take priority."),
+		lspNumberField("server-memory", "Memory per server", "MiB", lsp.ServerMemoryMB, 65536, "Heap hint for Go and TypeScript, not a hard process memory limit."),
 	)
 }
 
@@ -191,11 +191,11 @@ func buildLSPServerForm(server lspServer) *ui.FormModel {
 	command := ui.TextFieldState(lspFieldCommand, "Command", cfg.Command, "Executable to launch, found on PATH or given as an absolute path.")
 	if server.builtin {
 		command.Placeholder = server.def.DefaultCmd
-		command.Description = "Executable to launch. Leave the default " + server.def.DefaultCmd + " unless you use a different build."
+		command.Description = "Executable on PATH; default is " + server.def.DefaultCmd + "."
 	} else {
 		command.Required = true
 	}
-	args := ui.TextFieldState(lspFieldArgs, "Arguments", joinShellWords(cfg.Args), `Written like a shell command line; quote values with spaces: --stdio "a path with spaces".`)
+	args := ui.TextFieldState(lspFieldArgs, "Arguments", joinShellWords(cfg.Args), `Command-line arguments; quote spaces: --stdio "a path with spaces".`)
 	args.Validator = func(value ui.FieldValue) []string {
 		if _, err := splitShellWords(value.String()); err != nil {
 			return []string{err.Error()}

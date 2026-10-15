@@ -45,6 +45,8 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 //   - completed tools keep a budgeted preview body (full only on toggle).
 func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	switch {
+	case isCommandOutcome(msg):
+		return DisclosureCollapsed
 	case msg.Recovery != nil:
 		return DisclosureCollapsed
 	case msg.Role == types.RoleThinking:
@@ -166,6 +168,8 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 		return false
 	}
 	switch {
+	case isCommandOutcome(msg):
+		return true
 	case msg.Recovery != nil:
 		return true
 	case msg.Role == types.RoleThinking:

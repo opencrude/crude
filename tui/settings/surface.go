@@ -742,6 +742,20 @@ func (s *WorkspaceSettingsSurface) Measure(_ ui.LayoutContext, cs ui.Constraints
 }
 func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
+	// Reconcile the capability page before choosing form-help versus collection
+	// geometry. A detail -> different catalog transition must not borrow the
+	// previous page's help reservations for its first retained layout.
+	if s.capabilitiesOpen() {
+		s.capCatalog.syncModel()
+		switch s.model.selected {
+		case catSkills:
+			s.capCatalog.switchKind("skill")
+		case catMCP:
+			s.capCatalog.switchKind("mcp")
+		case catSources:
+			s.capCatalog.switchKind("source")
+		}
+	}
 	innerW := max(1, r.W-workspaceSettingsInset*2)
 	leftW, gap := s.railGeometry(innerW)
 	railX := workspaceSettingsInset
@@ -754,14 +768,25 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	searchY := topPad
 	catY, catH := topPad+2, max(1, ruleY-1-(topPad+2))
 	bodyY := topPad + pageHeaderRows
-	// Every page body ends with one empty row, then the help row, then the
-	// footer rule, so the last field never touches the help text.
-	bodyBottom := max(bodyY+1, ruleY-2)
+	// Collections have no field help: their final action row sits directly
+	// above the footer rule. Forms reserve a breathing row and field help.
+	bodyBottom := ruleY
+	collection := s.accountsOpen() && s.model.accountEditor == nil ||
+		s.agentsOpen() && s.agents.draft == nil ||
+		s.capabilitiesOpen() && s.capCatalog.edit == "" && !s.capCatalog.detail ||
+		s.lspServersOpen() && s.lsp.draft == nil
+	if !collection {
+		bodyBottom -= 2
+	}
+	bodyBottom = max(bodyY+1, bodyBottom)
 	formH := max(1, bodyBottom-bodyY)
 	s.contentRect = ui.Rect{X: formX, Y: topPad, W: formW, H: max(1, ruleY-topPad)}
-	// Every page body ends one row above the rule; that empty row is where
-	// the hovered or focused field explains itself.
+	// Forms explain their hovered/focused field above the rule; collections
+	// use that row for their bottom-anchored actions instead.
 	s.helpRect = ui.Rect{X: formX, Y: ruleY - 1, W: formW, H: 1}
+	if collection {
+		s.helpRect = ui.Rect{}
+	}
 	s.search.Layout(ctx, ui.Rect{X: railX, Y: searchY, W: leftW, H: 1})
 	s.categories.Layout(ctx, ui.Rect{X: railX, Y: catY, W: leftW, H: catH})
 	formRect := ui.Rect{X: formX, Y: bodyY, W: formW, H: formH}
@@ -802,14 +827,6 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.agents.Layout(ctx, ui.Rect{})
 	}
 	if s.capabilitiesOpen() {
-		switch s.model.selected {
-		case catSkills:
-			s.capCatalog.switchKind("skill")
-		case catMCP:
-			s.capCatalog.switchKind("mcp")
-		case catSources:
-			s.capCatalog.switchKind("source")
-		}
 		s.capCatalog.Layout(ctx, ui.Rect{X: formX, Y: bodyY, W: formW, H: formH})
 	} else {
 		s.capCatalog.Layout(ctx, ui.Rect{})

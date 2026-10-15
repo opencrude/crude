@@ -909,7 +909,8 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			return m.failShellControl(msg, control.Stale, "board panel hidden")
 		}
 	case capabilityPickerResultMsg:
-		if !valid || completion.owner != m.capabilityPicker || (done.pickerOwner != nil && completion.owner != done.pickerOwner) || completion.sequence != completion.owner.sequence {
+		// Toggles are session commits, never superseded by a later refresh.
+		if !valid || completion.owner != m.capabilityPicker || (done.pickerOwner != nil && completion.owner != done.pickerOwner) || completion.toggle == nil && completion.sequence != completion.owner.sequence {
 			return m.failShellControl(msg, control.Stale, "capability modal owner changed")
 		}
 		m.applyCapabilityPickerResult(completion)

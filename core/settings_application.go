@@ -20,6 +20,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 	}
 	var operation func(context.Context) (types.AppSettings, any, error)
 	var publishApp bool
+	var capabilityFailure func(error) string
 	switch request.Method {
 	case coreprotocol.AccountChange:
 		var in coreprotocol.AccountChangeRequest
@@ -95,6 +96,9 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			return bad("invalid_request", err.Error())
 		}
 		effectiveBefore := a.ws.LoadAppSettings()
+		capabilityFailure = func(err error) string {
+			return publicCapabilityFailure(err, effectiveBefore, in.Action)
+		}
 		if request.Method == coreprotocol.CapabilityAction && in.ExpectedRevision != entityRevision(effectiveBefore.Capabilities) {
 			return bad("stale_preimage", "capability settings changed; fetch current revision")
 		}
@@ -188,7 +192,11 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 				return
 			}
 			if err != nil {
-				out = fault(request, "settings_failed", "settings operation failed; refresh the exact owner and retry")
+				if capabilityFailure != nil {
+					out = fault(request, "capability_failed", capabilityFailure(err))
+				} else {
+					out = fault(request, "settings_failed", "settings operation failed; refresh the exact owner and retry")
+				}
 				return
 			}
 			out = response(request, value)

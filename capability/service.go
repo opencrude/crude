@@ -228,7 +228,7 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 	prepared := captypes.RuntimeSnapshot{Generation: snapshot.Generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration}
 	schemaBytes := 0
 	for _, connection := range snapshot.Connections {
-		if connection.State != "connected" {
+		if connection.State != "connected" || actor.DisabledForSession(connection.ID) {
 			continue
 		}
 		if connection.Cached {
@@ -292,6 +292,11 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		if err != nil && len(entries) == 0 {
 			return captypes.Result{}, err
 		}
+		for index := range entries {
+			if actor.DisabledForSession(entries[index].ID) {
+				entries[index].State, entries[index].Reason = "disabled", "turned off for this session by the user"
+			}
+		}
 		var payload any = entries
 		if err != nil {
 			payload = captypes.SearchResult{Entries: entries, Warning: err.Error()}
@@ -336,6 +341,9 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		if id == "" || len(params) != 2 {
 			return captypes.Result{}, errors.New("mcp_request_access requires only connection_id and exact grants")
 		}
+		if actor.DisabledForSession(id) {
+			return captypes.Result{}, captypes.ErrSessionDisabled(id)
+		}
 		return service.activateAccess(ctx, actor, id, params["grants"])
 	case "mcp_read_resource":
 		if !actorAllows(actor, name, captypes.EffectRead) {
@@ -343,6 +351,9 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		}
 		id, _ := params["connection_id"].(string)
 		uri, _ := params["uri"].(string)
+		if actor.DisabledForSession(id) {
+			return captypes.Result{}, captypes.ErrSessionDisabled(id)
+		}
 		return service.actorClients(actor).ReadResource(ctx, id, uri)
 	case "mcp_get_prompt":
 		if !actorAllows(actor, name, captypes.EffectRead) {
@@ -350,6 +361,9 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		}
 		id, _ := params["connection_id"].(string)
 		prompt, _ := params["name"].(string)
+		if actor.DisabledForSession(id) {
+			return captypes.Result{}, captypes.ErrSessionDisabled(id)
+		}
 		arguments := make(map[string]string)
 		if values, ok := params["arguments"].(map[string]any); ok {
 			for key, value := range values {
@@ -364,6 +378,9 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		}
 		if !actorAllows(actor, name, tool.Effect) {
 			return captypes.Result{}, errors.New("tool is denied by this agent's effective policy")
+		}
+		if actor.DisabledForSession(tool.ConnectionID) {
+			return captypes.Result{}, captypes.ErrSessionDisabled(tool.ConnectionID)
 		}
 		if snapshot.RunID != actor.RunID || snapshot.TurnGeneration != actor.TurnGeneration {
 			return captypes.Result{}, errors.New("dynamic request belongs to an expired run")
@@ -414,6 +431,9 @@ func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActo
 		if err := service.validateRuntime(ctx, actor); err != nil {
 			return captypes.Result{}, err
 		}
+	}
+	if actor.DisabledForSession(id) {
+		return captypes.Result{}, captypes.ErrSessionDisabled(id)
 	}
 	if !actorAllows(actor, "capability_activate", captypes.EffectRead) {
 		return captypes.Result{}, errors.New("capability activation is denied for this agent")

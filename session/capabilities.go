@@ -74,6 +74,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		current.RuntimeEpoch = boundEpoch
 		current.TurnGeneration = live.TurnGeneration
 		current.ExecutionRoot = live.WorkDir
+		current.SessionDisabled = session.DisabledCapabilities()
 		if live.ControlTarget != nil {
 			current.WorkspaceID = live.ControlTarget.WorkspaceID
 			if live.ControlTarget.Shell != nil {

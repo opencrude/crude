@@ -152,6 +152,7 @@ Sessions is the session registry, lifecycle and per-session settings surface.
 | `BackendSession` | 1 | reads | no: returns live *session.Session backend | none; live backend (replica exposes a settings snapshot instead: settings.session.read) |
 | `SessionConnectionIssue` | 1 | reads | yes | session.snapshots replica |
 | `PrepareMultiAgentToggle` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.toggle_multi_agent |
+| `PrepareSessionCapabilityToggle` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.toggle_capability |
 | `PrepareSessionSettingsSave` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.save |
 | `ApplySessionSettingsResult` | 2 | mutates | partial: result embeds owner pointers | settings.session.save (result applied to replica) |
 | `ResetSessionSettingsForSession` | 1 | mutates | yes | settings.session.reset |
@@ -447,7 +448,7 @@ These signatures are local port contracts, not wire payloads. The connected adap
 | `Sessions.Sessions*` / `SessionForAgent` | Replica sessions without backend/database ownership. |
 | `Sessions.NewAgentSession` / `OpenAgentSession` | `session.create/open` identities; replica materializes their state later. |
 | `Sessions.BackendSession` | Always unavailable in connected shells. |
-| `Sessions.PrepareMultiAgentToggle` / `PrepareSessionSettingsSave` / `ApplySessionSettingsResult` | Captured typed settings RPC/result; local owner pointers stay client-side. |
+| `Sessions.PrepareMultiAgentToggle` / `PrepareSessionCapabilityToggle` / `PrepareSessionSettingsSave` / `ApplySessionSettingsResult` | Captured typed settings RPC/result; local owner pointers stay client-side. |
 | `Settings.BindToolLayout` | Attachment-bound RPC service, not a database object. |
 | `Settings.PreparePreferencesSave` | Off-UI typed revision-fenced preference command. |
 | `Settings.PrepareAccountModels` / `PrepareDraftAccountModels` | Captured `settings.account.models` request with write-only secret semantics. |

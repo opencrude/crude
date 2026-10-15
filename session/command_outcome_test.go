@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,18 @@ func TestSettledBackgroundCommandIsDeliveredToItsOwner(t *testing.T) {
 		!strings.Contains(event.Body, `"mcp_prepare"`) || !strings.Contains(event.Body, "exit_code=254") ||
 		!strings.Contains(event.Body, "read_async_output") || !strings.Contains(event.Body, "47s") {
 		t.Fatalf("command outcome event = %+v", event)
+	}
+	if event.Command == nil || event.Command.Handle != "mcp_prepare" || event.Command.ExitCode != 254 || !event.Command.ExitKnown || event.Command.OutputBytes != 120 {
+		t.Fatal("journal dropped typed command evidence")
+	}
+	attribution := collaborationAttribution(event)
+	clone := cloneCollaborationAttribution(attribution)
+	if !reflect.DeepEqual(clone.Command, event.Command) {
+		t.Fatal("persisted attribution lost command evidence")
+	}
+	attribution.Command.Handle = "changed"
+	if clone.Command.Handle != "mcp_prepare" || event.Command.Handle != "mcp_prepare" {
+		t.Fatal("command evidence aliases its producer or another observer")
 	}
 	// A duplicate settle observation is idempotent, never a second wake.
 	s.publishCommandOutcome(child.ID, fileio.AsyncCmdInfo{

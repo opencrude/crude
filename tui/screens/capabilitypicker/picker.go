@@ -1,7 +1,6 @@
 package capabilitypicker
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,48 +13,79 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
-	"crude/types/control"
 )
 
-// fact is one labelled property of the selected capability.
+// Card geometry: a rounded box around a title row (name, compact facts and
+// the switch) and three description rows. Cards stack in one column.
+const (
+	cardHeight       = 6
+	cardGap          = 1
+	descriptionLines = 3
+)
+
+// ManageTarget is the Settings destination of the Install & manage button.
+type ManageTarget struct {
+	Kind captypes.Kind
+	ID   string
+}
+
+// fact is one labelled property an expanded card shows.
 type fact struct {
 	label, value string
 	tone         ui.SemanticColor
 }
 
-type selection struct {
+// item is one installed skill or MCP server as this session sees it. A card
+// shows its summary; an expanded card shows all of it in place.
+type item struct {
 	id          string
 	kind        captypes.Kind
-	scope       captypes.Scope
-	active      bool
-	ready       bool
 	name        string
 	description string
-	chip        string
-	tone        ui.SemanticColor
-	facts       []fact
+	// meta is the compact fact line beside the name; tone colors it.
+	meta string
+	tone ui.SemanticColor
+	// registered is the application/workspace registration's enable state;
+	// a registration turned off in Settings cannot be turned on per session.
+	registered bool
+	facts      []fact
 }
 
-// Screen is an installed-capability switcher, not a store or invocation editor:
-// a searchable list of friendly names with a status chip per row, and a detail
-// pane that explains the selected skill or MCP server before it is toggled.
+// Screen is the session capability switcher: a list of self-contained
+// cards, each with a switch that turns that skill or MCP server on or off for
+// the current session and every agent it runs.
 type Screen struct {
 	ui.Base
-	tokens     *ui.TokenSet
-	snapshot   captypes.Snapshot
-	tabs       *ui.Tabs
-	filter     *ui.FilterField
-	list       *capabilityList
-	scroll     *ui.ScrollbarControl
-	actions    *ui.ActionBar
-	status     *ui.Label
-	category   captypes.Kind
-	busy       bool
+	tokens   *ui.TokenSet
+	snapshot captypes.Snapshot
+	category captypes.Kind
+
+	filter *ui.FilterField
+	scroll *ui.ScrollbarControl
+	model  *ui.ScrollModel
+	status *ui.Label
+	manage *ui.ActionBar
+
+	// Session gate: whether a session owns this modal, the IDs it turned off
+	// and optimistic targets of toggles still being saved.
+	session  bool
+	disabled map[string]bool
+	pending  map[string]bool
+	// expanded cards show their full description and facts in place.
+	expanded map[string]bool
+
+	cards   map[string]*card
+	visible []*card
+
+	// label names the owning session in the heading.
+	label      string
 	failure    string
-	summary    string
 	generation uint64
 	focus      func(ui.ComponentID)
-	detail     ui.Rect
+
+	list      ui.Rect
+	heading   ui.Rect
+	cardWidth int
 }
 
 func New(th *theme.Theme, snapshot captypes.Snapshot) *Screen {
@@ -63,22 +93,21 @@ func New(th *theme.Theme, snapshot captypes.Snapshot) *Screen {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	s := &Screen{Base: ui.NewBase("capability-picker"), tokens: tokens, snapshot: snapshot, category: captypes.KindSkill}
-	s.tabs = ui.NewTabs("capability-picker/tabs", tokens)
-	s.tabs.SetChrome(ui.TabsPopup)
+	s := &Screen{Base: ui.NewBase("capability-picker"), tokens: tokens, snapshot: snapshot, category: captypes.KindSkill,
+		disabled: map[string]bool{}, pending: map[string]bool{}, expanded: map[string]bool{}, cards: map[string]*card{}}
 	s.filter = ui.NewFilterField("capability-picker/filter", tokens)
 	s.filter.SetSubmitAction("capability-picker.focus-list")
-	s.filter.OnChanged(func(string) { s.generation++; s.rows() })
-	s.list = &capabilityList{List: ui.NewList("capability-picker/list", tokens), owner: s}
-	s.list.SetActivateAction("capability-picker.select")
-	s.list.SetRowPainter(s.paintRow)
-	s.scroll = ui.NewScrollbarControl("capability-picker/scroll", s.list.Scroll(), tokens)
+	s.filter.OnChanged(func(string) { s.generation++; s.rebuild() })
+	s.model = ui.NewScrollModel()
+	s.scroll = ui.NewScrollbarControl("capability-picker/scroll", s.model, tokens)
+	s.scroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.scroll.SetPointerTargetSize(1)
-	s.actions = ui.NewActionBar("capability-picker/actions", tokens)
-	s.actions.SetCancelAction("capability-picker.close")
-	s.actions.SetExitActions("capability-picker.focus-list", "capability-picker.focus-list")
 	s.status = ui.NewLabel("capability-picker/status", "", th)
 	s.status.SetColorRole(ui.ColorMuted)
+	// The one command: installing and configuring belong to Settings.
+	s.manage = ui.NewActionBar("capability-picker/actions", tokens)
+	s.manage.SetCancelAction("capability-picker.close")
+	s.manage.SetButtons(ui.ActionBarButton{ID: "capability-picker/manage", Label: "Install & manage", Action: "capability-picker.manage", Enabled: true})
 	s.SetCategory(captypes.KindSkill)
 	return s
 }
@@ -96,34 +125,77 @@ func (s *Screen) SetCategory(kind captypes.Kind) {
 		kind = captypes.KindSkill
 	}
 	s.category = kind
-	active, noun := "skills", "skills"
-	if kind == captypes.KindMCP {
-		active, noun = "mcps", "MCP servers"
-	}
-	s.tabs.SetItems([]ui.TabItem{{ID: "skills", Label: "Skills"}, {ID: "mcps", Label: "MCPs"}}, active)
-	s.filter.SetPlaceholder("Search " + noun)
+	s.filter.SetPlaceholder("Search " + s.lowerNoun())
+	s.model.ScrollTo(0)
 	s.generation++
-	s.rows()
+	s.rebuild()
 }
 
-func (s *Screen) SetQuery(query string) { s.filter.SetValue(query); s.generation++; s.rows() }
+func (s *Screen) Category() captypes.Kind { return s.category }
+
+// noun is the view's heading: Skills and MCP servers are separate views.
+func (s *Screen) noun() string {
+	if s.category == captypes.KindMCP {
+		return "MCP servers"
+	}
+	return "Skills"
+}
+
+// lowerNoun is the noun inside sentences; acronyms keep their case.
+func (s *Screen) lowerNoun() string {
+	if s.category == captypes.KindMCP {
+		return "MCP servers"
+	}
+	return "skills"
+}
+
+// SetSessionLabel names the owning session in the heading.
+func (s *Screen) SetSessionLabel(label string) { s.label = strings.TrimSpace(label) }
+
+func (s *Screen) SetQuery(query string) { s.filter.SetValue(query); s.generation++; s.rebuild() }
+
 func (s *Screen) SetSnapshot(snapshot captypes.Snapshot) {
 	s.snapshot = snapshot
 	s.generation++
-	s.rows()
+	s.rebuild()
+}
+
+// SetSession installs the owning session's capability gate. available false
+// means no session owns this modal, so switches are read-only.
+func (s *Screen) SetSession(available bool, disabled []string) {
+	s.session = available
+	s.disabled = make(map[string]bool, len(disabled))
+	for _, id := range disabled {
+		s.disabled[id] = true
+	}
+	s.generation++
+	s.rebuild()
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
-	s.tabs.SetTokens(tokens)
 	s.filter.SetTokens(tokens)
-	s.list.SetTokens(tokens)
 	s.scroll.SetTokens(tokens)
-	s.actions.SetTokens(tokens)
 	s.status.SetTokens(tokens)
+	s.manage.SetTokens(tokens)
 }
 
-func (s *Screen) rows() {
+// on reports the switch position: optimistic while saving, otherwise the
+// registration and session gate together.
+func (s *Screen) on(value item) bool {
+	if target, saving := s.pending[value.id]; saving {
+		return target
+	}
+	return value.registered && !s.disabled[value.id]
+}
+
+// toggleable reports whether the switch accepts input.
+func (s *Screen) toggleable(value item) bool {
+	_, saving := s.pending[value.id]
+	return s.session && value.registered && !saving
+}
+
+func (s *Screen) rebuild() {
 	entries := make(map[string]captypes.Entry)
 	for _, entry := range s.snapshot.Entries {
 		if entry.Kind == s.category {
@@ -131,111 +203,97 @@ func (s *Screen) rows() {
 		}
 	}
 	query := strings.ToLower(strings.TrimSpace(s.filter.Value()))
-	var rows []ui.ListItem
-	total, enabled := 0, 0
-	add := func(value selection, name string, source string, facts func(*selection, captypes.Entry)) {
-		total++
-		if value.active {
-			enabled++
-		}
-		entry := entries[value.id]
-		if entry.Name != "" {
-			name = entry.Name
-		}
-		if name == "" {
-			name = value.id
-		}
-		if !strings.Contains(strings.ToLower(name+" "+value.id+" "+entry.Description+" "+source), query) {
+	var items []item
+	add := func(value item, name, source string, summary []string, entry captypes.Entry, details []fact) {
+		value.name = firstNonEmpty(entry.Name, name, value.id)
+		value.description = strings.Join(strings.Fields(entry.Description), " ")
+		if query != "" && !strings.Contains(strings.ToLower(value.name+" "+value.id+" "+value.description+" "+source), query) {
 			return
 		}
-		if value.scope == "" {
-			value.scope = captypes.ScopeApplication
+		switch {
+		case !value.registered:
+			value.meta, value.tone = "Off in Settings", ui.ColorMuted
+		case entry.State == "unavailable":
+			value.meta, value.tone = firstNonEmpty(entry.Reason, "Unavailable"), ui.ColorWarning
+		case entry.State == "setup required":
+			value.meta, value.tone = firstNonEmpty(entry.Reason, "Setup required"), ui.ColorWarning
+		case value.meta == "":
+			value.meta, value.tone = strings.Join(summary, " · "), ui.ColorMuted
 		}
-		value.name = name
-		value.description = strings.Join(strings.Fields(entry.Description), " ")
-		value.ready = entry.State != "unavailable" && entry.State != "setup required"
-		value.chip, value.tone = "Inactive", ui.ColorMuted
-		if value.active {
-			value.chip, value.tone = "Active", ui.ColorSuccess
-		}
-		switch entry.State {
-		case "unavailable":
-			value.chip, value.tone = value.chip+" · Unavailable", ui.ColorWarning
-		case "setup required":
-			value.chip, value.tone = value.chip+" · Setup required", ui.ColorWarning
-		}
-		value.facts = append(value.facts, fact{label: "Status", value: value.chip, tone: value.tone})
-		facts(&value, entry)
+		value.facts = details
 		if source != "" {
 			value.facts = append(value.facts, fact{label: "Source", value: s.sourceName(source)})
 		}
-		value.facts = append(value.facts, fact{label: "Scope", value: scopeLabel(value.scope)})
-		if entry.Reason != "" {
+		if !value.registered {
+			value.facts = append(value.facts, fact{label: "Note", value: "Turned off in Settings for every session", tone: ui.ColorWarning})
+		} else if entry.Reason != "" {
 			value.facts = append(value.facts, fact{label: "Note", value: entry.Reason, tone: ui.ColorWarning})
 		}
-		rows = append(rows, ui.ListItem{ID: value.id, Label: name, Detail: value.chip, Payload: value})
+		items = append(items, value)
 	}
 	if s.category == captypes.KindSkill {
-		for id, value := range s.snapshot.Settings.Skills {
-			config := value
-			add(selection{id: id, kind: s.category, scope: value.Scope, active: !value.Disabled && value.Mode != "disabled"}, value.Name, value.Source,
-				func(item *selection, entry captypes.Entry) {
-					item.facts = append(item.facts, fact{label: "Mode", value: skillModeLabel(config.Mode)})
-					if version := firstNonEmpty(config.Version, entry.Version); version != "" {
-						item.facts = append(item.facts, fact{label: "Version", value: version})
-					}
-					if path := firstNonEmpty(config.Path, entry.Path); path != "" {
-						item.facts = append(item.facts, fact{label: "Path", value: path})
-					}
-				})
+		for id, config := range s.snapshot.Settings.Skills {
+			entry := entries[id]
+			summary := []string{skillModeLabel(config.Mode), scopeLabel(config.Scope)}
+			if config.Source != "" {
+				summary = append(summary, s.sourceName(config.Source))
+			}
+			details := []fact{{label: "Use", value: skillModeLabel(config.Mode)}, {label: "Installed for", value: scopeLabel(config.Scope)}}
+			if version := firstNonEmpty(config.Version, entry.Version); version != "" {
+				details = append(details, fact{label: "Version", value: version})
+			}
+			if path := firstNonEmpty(config.Path, entry.Path); path != "" {
+				details = append(details, fact{label: "Path", value: path})
+			}
+			add(item{id: id, kind: captypes.KindSkill, registered: !config.Disabled && config.Mode != "disabled"}, config.Name, config.Source, summary, entry, details)
 		}
 	} else {
-		for id, value := range s.snapshot.Settings.Connections {
-			config := value
-			add(selection{id: id, kind: s.category, scope: value.Scope, active: !value.Disabled}, value.Name, value.Source,
-				func(item *selection, entry captypes.Entry) {
-					connection, tone := s.connectionState(config.ID)
-					if item.active && entry.State != "unavailable" && entry.State != "setup required" {
-						// Activation is availability for future use, never a claim
-						// that a transport is running.
-						item.chip += " · " + connection
-					}
-					item.facts = append(item.facts, fact{label: "Connection", value: connection, tone: tone})
-					item.facts = append(item.facts, fact{label: "Transport", value: firstNonEmpty(config.Transport, entry.Transport)})
-					if endpoint := firstNonEmpty(config.URL, strings.TrimSpace(config.Command+" "+strings.Join(config.Args, " "))); endpoint != "" {
-						item.facts = append(item.facts, fact{label: "Endpoint", value: endpoint})
-					}
-				})
+		for id, config := range s.snapshot.Settings.Connections {
+			entry := entries[id]
+			// Only observed transport facts; an enabled server is available
+			// to agents, not necessarily running.
+			connection, tone := s.connectionState(id, entry)
+			value := item{id: id, kind: captypes.KindMCP, registered: !config.Disabled, meta: connection, tone: tone}
+			details := []fact{{label: "Connection", value: connection, tone: tone}}
+			if transport := firstNonEmpty(config.Transport, entry.Transport); transport != "" {
+				value.meta += " · " + transport
+				details = append(details, fact{label: "Transport", value: transport})
+			}
+			if endpoint := firstNonEmpty(config.URL, strings.TrimSpace(config.Command+" "+strings.Join(config.Args, " "))); endpoint != "" {
+				details = append(details, fact{label: "Endpoint", value: endpoint})
+			}
+			if tools := s.toolNames(id); tools != "" {
+				details = append(details, fact{label: "Tools", value: tools})
+			}
+			details = append(details, fact{label: "Installed for", value: scopeLabel(config.Scope)})
+			add(value, config.Name, config.Source, nil, entry, details)
 		}
 	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Label == rows[j].Label {
-			return rows[i].ID < rows[j].ID
+	sort.Slice(items, func(i, j int) bool {
+		first, second := strings.ToLower(items[i].name), strings.ToLower(items[j].name)
+		if first == second {
+			return items[i].id < items[j].id
 		}
-		return strings.ToLower(rows[i].Label) < strings.ToLower(rows[j].Label)
+		return first < second
 	})
-	noun := "skills"
-	if s.category == captypes.KindMCP {
-		noun = "MCP servers"
-	}
-	if len(rows) == 0 {
-		label := "No installed " + noun + ". Install them from Settings."
-		if query != "" {
-			label = "No " + noun + " match “" + strings.TrimSpace(s.filter.Value()) + "”"
+	s.visible = s.visible[:0]
+	retained := make(map[string]*card, len(items))
+	for _, value := range items {
+		c := s.cards[value.id]
+		if c == nil {
+			c = newCard(s, value.id)
 		}
-		rows = append(rows, ui.ListItem{ID: "empty", Label: label, Disabled: true})
+		c.item = value
+		retained[value.id] = c
+		s.visible = append(s.visible, c)
 	}
-	s.summary = fmt.Sprintf("%d of %d %s active · changes apply to future agent use", enabled, total, noun)
-	if total == 0 {
-		s.summary = "Changes apply to future agent use"
-	}
-	s.list.SetItemsStable(rows)
-	s.buttons()
+	s.cards = retained
 	s.syncStatus()
 }
 
-// connectionState reports only observed transport facts for an MCP server.
-func (s *Screen) connectionState(id string) (string, ui.SemanticColor) {
+// connectionState reports only observed transport facts for an MCP server,
+// explaining an idle server with its observed registration state.
+func (s *Screen) connectionState(id string, entry captypes.Entry) (string, ui.SemanticColor) {
 	for _, connection := range s.snapshot.Connections {
 		if connection.ID != id {
 			continue
@@ -244,17 +302,39 @@ func (s *Screen) connectionState(id string) (string, ui.SemanticColor) {
 		case connection.AuthPending:
 			return "Authorization pending", ui.ColorWarning
 		case connection.State == "connected" && !connection.Cached:
-			tools := len(connection.Tools)
 			noun := "tools"
-			if tools == 1 {
+			if len(connection.Tools) == 1 {
 				noun = "tool"
 			}
-			return fmt.Sprintf("Connected · %d %s", tools, noun), ui.ColorSuccess
+			return fmt.Sprintf("Connected · %d %s", len(connection.Tools), noun), ui.ColorSuccess
 		case connection.Error != "":
 			return "Failed: " + connection.Error, ui.ColorError
 		}
 	}
+	switch entry.State {
+	case "approval required":
+		return "Not connected · asks before launching", ui.ColorMuted
+	case "needs sign-in":
+		return "Needs sign-in", ui.ColorWarning
+	case "failed":
+		return "Failed: " + firstNonEmpty(entry.Reason, "unknown error"), ui.ColorError
+	}
 	return "Not connected", ui.ColorMuted
+}
+
+// toolNames lists an observed connection's tools.
+func (s *Screen) toolNames(id string) string {
+	for _, connection := range s.snapshot.Connections {
+		if connection.ID != id {
+			continue
+		}
+		names := make([]string, 0, len(connection.Tools))
+		for _, tool := range connection.Tools {
+			names = append(names, firstNonEmpty(tool.OriginalName, tool.Name))
+		}
+		return strings.Join(names, ", ")
+	}
+	return ""
 }
 
 func (s *Screen) sourceName(id string) string {
@@ -274,9 +354,9 @@ func scopeLabel(scope captypes.Scope) string {
 func skillModeLabel(mode string) string {
 	switch mode {
 	case "manual":
-		return "Manual only"
+		return "Only when asked"
 	case "disabled":
-		return "Disabled"
+		return "Never"
 	default:
 		return "Automatic"
 	}
@@ -291,278 +371,375 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (s *Screen) syncStatus() {
+// statusText is shown only when there is something to say: a failure or a
+// modal without a session.
+func (s *Screen) statusText() (string, ui.SemanticColor) {
 	switch {
-	case s.busy:
-		s.status.SetText("Applying change…")
-		s.status.SetColorRole(ui.ColorMuted)
 	case s.failure != "":
-		s.status.SetText("Could not apply change: " + s.failure)
-		s.status.SetColorRole(ui.ColorError)
-	default:
-		s.status.SetText(s.summary)
-		s.status.SetColorRole(ui.ColorMuted)
+		return "Could not save: " + s.failure, ui.ColorError
+	case !s.session:
+		return "Open a session to turn skills and MCP servers on or off.", ui.ColorMuted
 	}
+	return "", ui.ColorMuted
 }
 
-func (s *Screen) selected() (selection, bool) {
-	row, ok := s.list.Selected()
-	if !ok || row.Disabled {
-		return selection{}, false
-	}
-	value, ok := row.Payload.(selection)
-	return value, ok
+func (s *Screen) syncStatus() {
+	text, tone := s.statusText()
+	s.status.SetText(text)
+	s.status.SetColorRole(tone)
 }
 
-func (s *Screen) buttons() {
-	value, ok := s.selected()
-	label := "Activate"
-	if value.active {
-		label = "Deactivate"
+func (s *Screen) item(id string) (item, bool) {
+	if c := s.cards[id]; c != nil {
+		return c.item, true
 	}
-	if s.busy {
-		label = "Applying…"
-	}
-	s.actions.SetButtons(
-		ui.ActionBarButton{ID: "capability-picker/toggle", Label: label, Action: "capability-picker.toggle", Enabled: ok && !s.busy && (value.active || value.ready), Variant: ui.VariantPrimary},
-		ui.ActionBarButton{ID: "capability-picker/close", Label: "Close", Action: "capability-picker.close", Enabled: true})
+	return item{}, false
 }
 
-func (s *Screen) BeginAction() (captypes.Action, bool) {
-	value, ok := s.selected()
-	if !ok || s.busy || (!value.active && !value.ready) {
-		return captypes.Action{}, false
+// target resolves an action's item: its payload, else the focused card.
+func (s *Screen) target(payload any) string {
+	if id, ok := payload.(string); ok && id != "" {
+		return id
 	}
-	operation := "enable"
-	if value.active {
-		operation = "disable"
+	for _, c := range s.visible {
+		if c.focused {
+			return c.item.id
+		}
 	}
-	s.busy = true
+	return ""
+}
+
+// BeginToggle admits one switch change and shows it optimistically. It
+// returns the exact item and its requested state.
+func (s *Screen) BeginToggle(payload any) (string, bool, bool) {
+	id := s.target(payload)
+	value, ok := s.item(id)
+	if !ok || !s.toggleable(value) {
+		return "", false, false
+	}
+	enabled := !s.on(value)
+	s.pending[id] = enabled
 	s.failure = ""
 	s.generation++
 	s.syncStatus()
-	s.buttons()
-	return captypes.Action{Operation: operation, Kind: value.kind, ID: value.id, Scope: value.scope}, true
+	return id, enabled, true
 }
 
-func (s *Screen) Apply(snapshot captypes.Snapshot, err error) {
-	s.busy = false
+// FinishToggle settles a switch. The session gate must already reflect the
+// committed result; a failure reverts the switch and stays visible.
+func (s *Screen) FinishToggle(id string, err error) {
+	delete(s.pending, id)
 	s.failure = ""
 	if err != nil {
 		s.failure = err.Error()
 	}
-	s.SetSnapshot(snapshot)
+	s.generation++
+	s.syncStatus()
 }
 
-func (s *Screen) Busy() bool                    { return s.busy }
+func (s *Screen) Busy() bool                    { return len(s.pending) > 0 }
 func (s *Screen) ControlEditGeneration() uint64 { return s.generation }
+
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.tabs, s.filter, s.list, s.scroll, s.status, s.actions}
+	children := []ui.Component{s.filter}
+	for _, c := range s.visible {
+		children = append(children, c)
+	}
+	return append(children, s.scroll, s.status, s.manage)
 }
+
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
 
-// detailMinRows is the smallest detail pane worth showing; below it the list
-// keeps the whole body so cramped windows still work.
-const detailMinRows = 6
-
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	s.tabs.Layout(ctx, ui.Rect{W: r.W, H: min(ui.StripHeight, r.H)})
-	s.filter.Layout(ctx, ui.Rect{Y: min(ui.StripHeight+1, r.H), W: r.W, H: min(1, max(0, r.H-ui.StripHeight-1))})
-	bottom := max(0, r.H-3)
-	s.status.Layout(ctx, ui.Rect{Y: bottom, W: r.W, H: min(1, r.H)})
-	s.actions.Layout(ctx, ui.Rect{Y: min(bottom+2, r.H), W: r.W, H: min(1, max(0, r.H-bottom-2))})
-	bodyY := min(ui.StripHeight+3, bottom)
-	bodyH := max(0, bottom-bodyY-1)
-	listH := bodyH
-	s.detail = ui.Rect{}
-	if bodyH >= detailMinRows+4 {
-		// The list takes what its rows need, up to about half the body; the
-		// rest explains the selection.
-		listH = min(len(s.list.Items()), bodyH/2)
-		listH = max(listH, min(3, len(s.list.Items())))
-		listH = max(listH, 1)
-		s.detail = ui.Rect{Y: bodyY + listH + 1, W: r.W, H: bodyH - listH - 1}
+	// Everything keeps the shared side padding and one breathing row off the
+	// window border: heading, search, then the cards.
+	pad := min(s.tokens.PadLR(), max(0, r.W/10))
+	x, w := pad, max(0, r.W-2*pad)
+	s.heading = ui.Rect{X: x + 1, Y: min(1, r.H), W: max(0, w-1), H: min(1, max(0, r.H-1))}
+	filterY := min(3, r.H)
+	s.filter.Layout(ctx, ui.Rect{X: x, Y: filterY, W: w, H: min(1, max(0, r.H-filterY))})
+	bottom := max(0, r.H-1)
+	s.manage.Layout(ctx, ui.Rect{X: x, Y: bottom, W: w, H: min(1, r.H)})
+	if text, _ := s.statusText(); text != "" && bottom > 0 {
+		bottom--
+		s.status.Layout(ctx, ui.Rect{X: x, Y: bottom, W: w, H: 1})
+	} else {
+		s.status.Layout(ctx, ui.Rect{})
 	}
-	gutter, stroke := 0, 0
-	if s.scroll.NeededForViewport(listH) {
-		gutter = min(ui.ScrollbarWidth+1, r.W)
-		stroke = min(ui.ScrollbarWidth, gutter)
-	}
-	s.list.Layout(ctx, ui.Rect{Y: bodyY, W: max(0, r.W-gutter), H: listH})
-	s.scroll.Layout(ctx, ui.Rect{X: max(0, r.W-stroke), Y: bodyY, W: stroke, H: listH})
+	bottom = max(0, bottom-1)
+	top := min(filterY+2, bottom)
+	s.layoutList(ctx, ui.Rect{X: x, Y: top, W: w, H: max(0, bottom-top)})
 }
 
-// Paint draws the selected capability's detail pane under a divider rule. The
-// list, search, status and buttons are children and paint themselves.
-func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
-	if s.detail.Empty() {
-		return
+// layoutList stacks cards from the first visible one. Cards have variable
+// height (expanded cards grow), so the scroll model counts cards: its
+// viewport is chosen so the largest offset still fills the list.
+func (s *Screen) layoutList(ctx ui.LayoutContext, body ui.Rect) {
+	s.list = body
+	gutter := 0
+	s.cardWidth = body.W
+	if s.lastFirst(body.W, body.H) > 0 {
+		gutter = min(ui.ScrollbarWidth+1, body.W)
+		s.cardWidth = max(0, body.W-gutter)
 	}
-	tokens := s.tokens
-	x, y, width := originX+s.detail.X, originY+s.detail.Y, s.detail.W
-	rule := tokens.Glyphs().BorderH
-	if rule == "" {
-		rule = "─"
-	}
-	buf.WriteString(x, y-1, strings.Repeat(rule, width), tokens.Color(ui.ColorPopupDivider), cell.NoColor, 0)
-	value, ok := s.selected()
-	if !ok {
-		return
-	}
-	fg, muted := tokens.Color(ui.ColorFg), tokens.Color(ui.ColorMuted)
-	inner := max(0, width-2)
-	row, last := y+1, y+s.detail.H-1
-	kind := "Skill"
-	if value.kind == captypes.KindMCP {
-		kind = "MCP server"
-	}
-	end := buf.WriteString(x+1, row, rendering.TruncateVisual(value.name, max(0, inner-len(kind)-3), "…"), fg, cell.NoColor, cell.AttrBold)
-	buf.WriteString(end+2, row, kind, muted, cell.NoColor, 0)
-	row += 2
-	labelWidth := 0
-	for _, item := range value.facts {
-		labelWidth = max(labelWidth, rendering.VisibleWidth(item.label))
-	}
-	factRows := len(value.facts)
-	description := value.description
-	descriptionColor := fg
-	if description == "" {
-		description, descriptionColor = "No description provided.", muted
-	}
-	// The description keeps at least one line; facts yield the remainder.
-	lines := rendering.WordWrap(description, inner)
-	room := max(1, last-row+1-factRows-1)
-	if len(lines) > room {
-		lines = lines[:room]
-		lines[room-1] = rendering.TruncateVisual(lines[room-1]+" …", inner, "…")
-	}
-	for _, line := range lines {
-		if row > last {
-			return
+	maxFirst := s.lastFirst(s.cardWidth, body.H)
+	s.model.SetContent(len(s.visible))
+	s.model.SetViewport(len(s.visible) - maxFirst)
+	s.model.Clamp()
+	first := s.model.Offset()
+	y, bottom := body.Y, body.Y+body.H
+	for index, c := range s.visible {
+		height := min(c.height(s.cardWidth), body.H)
+		if index < first || y+height > bottom {
+			c.Layout(ctx, ui.Rect{})
+			continue
 		}
-		buf.WriteString(x+1, row, line, descriptionColor, cell.NoColor, 0)
+		c.Layout(ctx, ui.Rect{X: body.X, Y: y, W: s.cardWidth, H: height})
+		y += height + cardGap
+	}
+	stroke := min(ui.ScrollbarWidth, gutter)
+	s.scroll.Layout(ctx, ui.Rect{X: body.X + body.W - stroke, Y: body.Y, W: stroke, H: body.H * min(1, gutter)})
+}
+
+// lastFirst is the largest first-card offset whose remaining cards still
+// fill height rows; 0 when every card fits.
+func (s *Screen) lastFirst(width, height int) int {
+	used := 0
+	for index := len(s.visible) - 1; index >= 0; index-- {
+		next := min(s.visible[index].height(width), height)
+		if used > 0 {
+			next += cardGap
+		}
+		if used+next > height {
+			return index + 1
+		}
+		used += next
+	}
+	return 0
+}
+
+// ensureVisible scrolls the fewest cards so index is fully in view.
+func (s *Screen) ensureVisible(index int) {
+	if index < 0 || index >= len(s.visible) {
+		return
+	}
+	width, height := s.cardWidth, s.list.H
+	if width <= 0 || height <= 0 {
+		s.model.EnsureVisible(index)
+		return
+	}
+	first := min(s.model.Offset(), index)
+	for first < index {
+		used := 0
+		for i := first; i <= index; i++ {
+			used += min(s.visible[i].height(width), height)
+			if i > first {
+				used += cardGap
+			}
+		}
+		if used <= height {
+			break
+		}
+		first++
+	}
+	s.model.SetContent(len(s.visible))
+	s.model.SetViewport(1)
+	s.model.ScrollTo(first)
+}
+
+// expand opens or closes a card's full details in place.
+func (s *Screen) expand(id string, open bool) ui.EventResult {
+	if open {
+		s.expanded[id] = true
+	} else {
+		delete(s.expanded, id)
+	}
+	s.generation++
+	for index, c := range s.visible {
+		if c.item.id == id {
+			s.ensureVisible(index)
+		}
+	}
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+}
+
+// Paint draws the heading and the empty-collection message; children paint
+// everything else.
+func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
+	if !s.heading.Empty() {
+		x, y := originX+s.heading.X, originY+s.heading.Y
+		end := buf.WriteString(x, y, s.noun(), s.tokens.Color(ui.ColorFg), cell.NoColor, cell.AttrBold)
+		if s.label != "" {
+			buf.WriteString(end, y, rendering.TruncateVisual(" · "+s.label, max(0, x+s.heading.W-end), "…"), s.tokens.Color(ui.ColorMuted), cell.NoColor, 0)
+		}
+	}
+	if len(s.visible) > 0 || s.list.Empty() {
+		return
+	}
+	s.paintEmpty(buf, originX+s.list.X, originY+s.list.Y, s.list.W, s.list.H)
+}
+
+// emptyStep is one "where to start" line of the empty state.
+type emptyStep struct{ action, detail string }
+
+// emptyGuide explains what this view holds and where to start, or how to
+// recover from a search that matched nothing.
+func (s *Screen) emptyGuide() (title, intro string, steps []emptyStep) {
+	if query := strings.TrimSpace(s.filter.Value()); query != "" {
+		return "No " + s.lowerNoun() + " match “" + query + "”", "Try a shorter name or another word from the description.",
+			[]emptyStep{{"Install & manage", "find more in the catalogs"}}
+	}
+	if s.category == captypes.KindMCP {
+		return "No MCP servers installed yet",
+			"MCP servers connect agents to outside tools and data: browsers, issue trackers, databases, design files and more.",
+			[]emptyStep{
+				{"Install & manage", "browse the official MCP registry"},
+				{"Add your own", "a local command or a remote URL, in Settings"},
+				{"Or just ask", "agents can find and connect one when a task needs it"},
+			}
+	}
+	return "No skills installed yet",
+		"Skills are reusable instructions agents load when a task calls for them: reverse engineering, document formats, house style and more.",
+		[]emptyStep{
+			{"Install & manage", "browse Anthropic skills and the Skills Directory"},
+			{"Add your own", "any folder with a SKILL.md, in Settings"},
+			{"Or just ask", "agents can find and install one when a task needs it"},
+		}
+}
+
+// paintEmpty draws the guide as a quiet framed panel centred in the list
+// area: a bold title, a short explanation and where to start. Step
+// details wrap under their own column rather than being cut off.
+func (s *Screen) paintEmpty(buf *surface.CellBuffer, x, y, width, height int) {
+	tokens := s.tokens
+	title, intro, steps := s.emptyGuide()
+	boxW := min(width, 72)
+	inner := max(0, boxW-6)
+	introLines := rendering.WordWrap(intro, inner)
+	actionWidth := 0
+	for _, step := range steps {
+		actionWidth = max(actionWidth, rendering.VisibleWidth(step.action))
+	}
+	detailWidth := max(1, inner-2-actionWidth-2)
+	details := make([][]string, len(steps))
+	stepRows := 0
+	for index, step := range steps {
+		details[index] = rendering.WordWrap(step.detail, detailWidth)
+		stepRows += max(1, len(details[index]))
+	}
+	// Frame, padding row, title, gap, intro, gap, steps, padding row, frame.
+	boxH := min(height, 2+1+1+1+len(introLines)+1+stepRows+1)
+	if boxW < 24 || boxH < 5 {
+		buf.WriteString(x, y, rendering.TruncateVisual(title, width, "…"), tokens.Color(ui.ColorFg), cell.NoColor, cell.AttrBold)
+		return
+	}
+	left := x + (width-boxW)/2
+	y += max(0, (height-boxH)/2)
+	paintBox(buf, tokens, left, y, boxW, boxH, tokens.Color(ui.ColorBorder))
+	row, last := y+2, y+boxH-2
+	write := func(column int, text string, color cell.Color, attrs cell.Attrs) int {
+		if row > last {
+			return column
+		}
+		return buf.WriteString(column, row, text, color, cell.NoColor, attrs)
+	}
+	write(left+3, rendering.TruncateVisual(title, inner, "…"), tokens.Color(ui.ColorFg), cell.AttrBold)
+	row += 2
+	for _, line := range introLines {
+		write(left+3, line, tokens.Color(ui.ColorMuted), 0)
 		row++
 	}
 	row++
-	for _, item := range value.facts {
-		if row > last {
-			return
+	for index, step := range steps {
+		end := write(left+3, "→ ", tokens.Color(ui.ColorMuted), 0)
+		color, attrs := tokens.Color(ui.ColorFg), cell.Attrs(0)
+		if step.action == "Install & manage" {
+			// Matches the button below, which is where this step happens.
+			color, attrs = tokens.Color(ui.ColorAccent), cell.AttrBold
 		}
-		buf.WriteString(x+1, row, item.label, muted, cell.NoColor, 0)
-		color := fg
-		if item.tone != ui.ColorFg && item.tone != 0 {
-			color = tokens.Color(item.tone)
+		write(end, step.action, color, attrs)
+		detailX := end + actionWidth + 2
+		for _, line := range details[index] {
+			write(detailX, line, tokens.Color(ui.ColorMuted), 0)
+			row++
 		}
-		valueX := x + 1 + labelWidth + 2
-		buf.WriteString(valueX, row, rendering.TruncateVisual(item.value, max(0, x+width-1-valueX), "…"), color, cell.NoColor, 0)
-		row++
-	}
-}
-
-// paintRow shows each capability as a status marker, its friendly name and a
-// right-aligned status chip. The list has already filled the state background.
-func (s *Screen) paintRow(buf *surface.CellBuffer, x, y, width int, item ui.ListItem, state ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
-	value, ok := item.Payload.(selection)
-	if !ok {
-		buf.WriteString(x+1, y, rendering.TruncateVisual(item.Label, max(0, width-2), "…"), tokens.Color(ui.ColorMuted), cell.NoColor, 0)
-		return
-	}
-	glyphs := tokens.Glyphs()
-	marker := glyphs.SwitchOff
-	if value.active {
-		marker = glyphs.SwitchOn
-	}
-	buf.WriteString(x+1, y, marker, tokens.Color(value.tone), cell.NoColor, 0)
-	nameColor := tokens.Color(ui.ColorFg)
-	if state == ui.StateFocused || state == ui.StateSelected {
-		nameColor = tokens.Color(ui.ColorAccent)
-	}
-	chipWidth := rendering.VisibleWidth(value.chip)
-	nameX := x + 3
-	nameWidth := max(0, width-3-chipWidth-3)
-	if nameWidth < 8 {
-		chipWidth, nameWidth = 0, max(0, width-4)
-	}
-	buf.WriteString(nameX, y, rendering.TruncateVisual(item.Label, nameWidth, "…"), nameColor, cell.NoColor, cell.AttrBold)
-	if chipWidth > 0 {
-		buf.WriteString(x+width-1-chipWidth, y, value.chip, tokens.Color(value.tone), cell.NoColor, 0)
+		if len(details[index]) == 0 {
+			row++
+		}
 	}
 }
 
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Capabilities"}
 }
-func (s *Screen) Handle(_ ui.EventContext, event ui.Event) ui.EventResult {
-	if event.IsKey() {
-		switch event.Key.Code {
-		case tea.KeyEsc:
-			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "capability-picker.close"}}
-		case tea.KeyDown:
-			s.focusID(s.list.ID())
+
+// scrollBy moves the list by whole cards.
+func (s *Screen) scrollBy(delta int) ui.EventResult {
+	before := s.model.Offset()
+	s.model.ScrollBy(delta)
+	if s.model.Offset() == before {
+		return ui.EventResult{Handled: true}
+	}
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+}
+
+// move focuses the card delta positions from the focused one, keeping it in
+// view; moving above the first card returns to search.
+func (s *Screen) move(delta int) ui.EventResult {
+	if len(s.visible) == 0 {
+		return ui.EventResult{Handled: true}
+	}
+	current := -1
+	for index, c := range s.visible {
+		if c.focused {
+			current = index
+			break
+		}
+	}
+	next := 0
+	if current >= 0 {
+		next = current + delta
+		if next < 0 {
+			s.FocusSearch()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
+		next = min(len(s.visible)-1, next)
+	}
+	s.ensureVisible(next)
+	s.focusID(s.visible[next].ID())
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+}
+
+func (s *Screen) Handle(_ ui.EventContext, event ui.Event) ui.EventResult {
+	if !event.IsKey() || event.Key.Mod != 0 {
+		return ui.EventResult{}
+	}
+	switch event.Key.Code {
+	case tea.KeyEsc:
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "capability-picker.close"}}
+	case tea.KeyDown:
+		return s.move(1)
+	case tea.KeyUp:
+		return s.move(-1)
 	}
 	return ui.EventResult{}
 }
+
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	switch action.ID {
-	case "tabs.activate", "tabs.enter":
-		category, _ := action.Payload.(string)
-		if category == "mcps" {
-			s.SetCategory(captypes.KindMCP)
-		} else {
-			s.SetCategory(captypes.KindSkill)
-		}
-		s.FocusSearch()
 	case "capability-picker.focus-list":
-		s.focusID(s.list.ID())
-	case "capability-picker.select":
-		s.generation++
-		s.buttons()
+		return s.move(0)
+	case "capability-picker.manage":
+		action.Payload = ManageTarget{Kind: s.category}
+		result.Action = &action
 	case "capability-picker.toggle", "capability-picker.close":
 		result.Action = &action
 	default:
 		return ui.EventResult{Action: &action}
-	}
-	return result
-}
-
-// The list owns selection/scroll; this adapter only gives Enter/Space the
-// explicit toggle action while clicks remain non-mutating selections.
-type capabilityList struct {
-	*ui.List
-	owner *Screen
-}
-
-func (l *capabilityList) ControlActions() []control.Descriptor {
-	var out []control.Descriptor
-	for _, id := range []string{"activate", "select", "scroll", "set_offset"} {
-		out = append(out, control.Descriptor{ID: id, Scope: control.Shell, Effect: control.Write, Input: control.Schema{ID: "ui.control.operation", Revision: 1, Document: json.RawMessage(`{"type":"object"}`)}, Output: control.Schema{ID: "ui.control.result", Revision: 1, Document: json.RawMessage(`{"type":"object"}`)}, Requires: control.Requirements{OpenEpoch: true, Revision: true}, Availability: control.Availability{Available: true}})
-	}
-	return out
-}
-func (l *capabilityList) HandleControl(ctx ui.EventContext, op ui.ControlOperation) (ui.EventResult, error) {
-	result, err := l.List.HandleControl(ctx, op)
-	if err == nil {
-		l.owner.generation++
-		l.owner.buttons()
-		result.Invalidate |= ui.InvalidateLayout
-	}
-	return result, err
-}
-func (l *capabilityList) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
-	if event.IsKey() && event.Key.Mod == 0 && (event.Key.Code == tea.KeyEnter || event.Key.Code == tea.KeySpace) {
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "capability-picker.toggle"}}
-	}
-	result := l.List.Handle(ctx, event)
-	if result.Handled {
-		l.owner.generation++
-		l.owner.buttons()
-		result.Invalidate |= ui.InvalidateLayout
 	}
 	return result
 }
