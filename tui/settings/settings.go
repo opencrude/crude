@@ -234,6 +234,7 @@ const (
 	fieldMultiAgent           = "multi-agent"
 	fieldContextCompaction    = "context-compaction-percent"
 	fieldContextRetention     = "context-retention-tokens"
+	fieldServiceTier          = "service-tier"
 	fieldSafetyConfirmAt      = "safety-confirm-at"
 	fieldSafetyUnknown        = "safety-unknown-risk"
 	fieldSafetyScript         = "safety-script-risk"
@@ -1224,21 +1225,13 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		thinkingSegments(cfg.ThinkingEffort),
 	}
 	fields = append(fields, m.capabilityFields(cfg)...)
-	compaction := types.DefaultContextCompactionPercent
-	if cfg.ContextCompactionPercent != nil {
-		compaction = *cfg.ContextCompactionPercent
-	}
-	compactionField := ui.NumberFieldState(fieldContextCompaction, "Compact context at", compaction, "% full",
-		"Summarize older context at this fullness; 0 disables automatic compaction.")
-	compactionField.Validator = intRangeValidator(0, 100)
-	retention := types.DefaultContextRetentionTokens
-	if cfg.ContextRetentionTokens != nil {
-		retention = *cfg.ContextRetentionTokens
-	}
-	retentionField := ui.NumberFieldState(fieldContextRetention, "Keep recent input", retention, "tokens",
-		"Verbatim input kept after compaction, within available context space.")
-	retentionField.Validator = intRangeValidator(types.MinContextRetentionTokens, types.MaxContextRetentionTokens)
-	fields = append(fields,
+	compactionField := optionalNumberField(fieldContextCompaction, "Compact context at", cfg.ContextCompactionPercent, "% full",
+		"Blank is Auto (cost and capacity aware). A percent compacts there; 0 is off.",
+		0, 100)
+	retentionField := optionalNumberField(fieldContextRetention, "Keep older input", cfg.ContextRetentionTokens, "tokens",
+		"Blank is Auto: older requests kept up to the checkpoint's size.",
+		types.MinContextRetentionTokens, types.MaxContextRetentionTokens)
+	fields = append(fields, serviceTierSegments(cfg.ServiceTier),
 		ui.SeparatorFieldState("context-management", "Context management"),
 		compactionField,
 		retentionField,
@@ -1259,6 +1252,17 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 
 // thinkingSegments shows every reasoning level at once; Default leaves the
 // choice to the provider.
+// serviceTierSegments picks the role's processing tier. Account keeps the
+// connection's own setting; a tier the provider does not offer is ignored.
+func serviceTierSegments(current string) *ui.FieldState {
+	options := []ui.FormOption{{ID: "", Label: "Account"}}
+	for _, tier := range provider.ServiceTierChoices() {
+		options = append(options, ui.FormOption{ID: tier, Label: strings.ToUpper(tier[:1]) + tier[1:]})
+	}
+	return ui.SegmentedFieldState(fieldServiceTier, "Speed", options, current,
+		"Fast and Priority cost more where offered; Flex is slower and cheaper.")
+}
+
 func thinkingSegments(current string) *ui.FieldState {
 	options := []ui.FormOption{{ID: "", Label: "Default"}}
 	for _, level := range types.ThinkingLevels {
@@ -2578,6 +2582,7 @@ func (m *Model) agentCategoryFromForm(form *ui.FormModel, category types.Categor
 	category.ModelTopP = parseFloatPtr(value(fieldTopP))
 	category.ContextCompactionPercent = parsePercentPtr(value(fieldContextCompaction))
 	category.ContextRetentionTokens = parseIntPtr(value(fieldContextRetention))
+	category.ServiceTier = value(fieldServiceTier)
 	return category
 }
 
@@ -2750,4 +2755,27 @@ func (m *Model) Restore() {
 	m.accountEditor = nil
 	m.accountError = ""
 	m.rebuildAccountsForm()
+}
+
+// optionalNumberField edits a setting whose blank value means "Auto": Crude
+// decides adaptively until the user chooses an explicit number.
+func optionalNumberField(id, label string, value *int, unit, description string, low, high int) *ui.FieldState {
+	text := ""
+	if value != nil {
+		text = strconv.Itoa(*value)
+	}
+	field := ui.TextFieldState(id, label, text, description)
+	field.Numeric, field.Unit, field.Placeholder = true, unit, "Auto"
+	field.Validator = func(v ui.FieldValue) []string {
+		trimmed := strings.TrimSpace(v.String())
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil || parsed < low || parsed > high {
+			return []string{fmt.Sprintf("Leave blank for Auto, or enter %d–%d.", low, high)}
+		}
+		return nil
+	}
+	return field
 }

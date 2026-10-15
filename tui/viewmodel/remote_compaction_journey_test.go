@@ -45,7 +45,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 			case <-r.Context().Done():
 				return
 			}
-			text = "Preserve the accepted request and evidence; continue with the next human input."
+			text = "<<<intent>>>\nPreserve the accepted request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nContinue with the next human input."
 		} else {
 			normal.Add(1)
 			for i := len(request.Messages) - 1; i >= 0; i-- {
@@ -139,7 +139,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 		}
 		return true
 	})
-	if extraction.Load() != 4 || normal.Load() != 3 {
+	if extraction.Load() != 1 || normal.Load() != 3 {
 		t.Fatalf("provider calls: extraction=%d normal=%d", extraction.Load(), normal.Load())
 	}
 	mu.Lock()

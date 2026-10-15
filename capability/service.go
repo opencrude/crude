@@ -14,10 +14,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"crude/mcpclient"
 	"crude/skills"
 	captypes "crude/types/capability"
+	"crude/webmcp"
 )
 
 type binding struct {
@@ -27,6 +29,10 @@ type binding struct {
 }
 
 var ErrApprovalRequired = errors.New("capability acquisition needs explicit user approval")
+
+func init() {
+	mcpclient.RegisterBuiltin(captypes.WebConnectionID, webmcp.New)
+}
 
 type Service struct {
 	mu               sync.RWMutex
@@ -53,6 +59,8 @@ type Service struct {
 	executionClients map[string]*mcpclient.Manager
 	// prepared records package preparation identities known to be installed.
 	prepared map[string]bool
+	// recoveryNoticed marks connection outages already reported to an agent.
+	recoveryNoticed map[string]bool
 }
 
 func New(root, cache string, db *sql.DB) (*Service, error) {
@@ -130,6 +138,9 @@ func (service *Service) configure(ctx context.Context, settings captypes.Setting
 			Installed: true, State: "not started", Transport: config.Transport,
 			PackageType: config.PackageType, Repository: config.RepositoryURL, Website: config.WebsiteURL,
 		}
+		if builtin, exists := captypes.Builtin(config.Command); config.IsBuiltin() && exists {
+			entry.Description, entry.Publisher = builtin.Description, "Crude"
+		}
 		if config.Disabled {
 			entry.State = "disabled"
 		} else if missing := mcpclient.MissingConfiguration(config); len(missing) > 0 {
@@ -165,7 +176,7 @@ func (service *Service) configure(ctx context.Context, settings captypes.Setting
 func (service *Service) Snapshot() captypes.Snapshot {
 	service.mu.RLock()
 	defer service.mu.RUnlock()
-	snapshot := captypes.Snapshot{Generation: service.generation, Settings: captypes.Clone(service.settings), Connections: service.clients.States()}
+	snapshot := captypes.Snapshot{Generation: service.generation, Settings: captypes.Clone(service.settings), Connections: service.clients.States(), StoredSecrets: service.clients.SecretNames()}
 	states := make(map[string]captypes.ConnectionState)
 	for _, state := range snapshot.Connections {
 		states[state.ID] = state
@@ -203,6 +214,7 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 	if err := service.prepareHosts(ctx, actor); err != nil {
 		return captypes.RuntimeSnapshot{}, err
 	}
+	recoveryNotices := service.recoverConnections(ctx, actor)
 	snapshot := service.actorSnapshot(actor)
 	service.mu.Lock()
 	var retired *mcpclient.Manager
@@ -217,7 +229,7 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 	if retired != nil {
 		retired.Close()
 	}
-	prepared := captypes.RuntimeSnapshot{Generation: snapshot.Generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration}
+	prepared := captypes.RuntimeSnapshot{Generation: snapshot.Generation, RunID: actor.RunID, TurnGeneration: actor.TurnGeneration, Notices: recoveryNotices}
 	schemaBytes := 0
 	for _, connection := range snapshot.Connections {
 		if connection.State != "connected" || actor.DisabledForSession(connection.ID) {
@@ -251,6 +263,132 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 		}
 	}
 	return prepared, nil
+}
+
+// recoverConnections starts built-in servers and reconnects connections that
+// dropped after working, so a restarted server or a network blip costs the
+// agent nothing but the tools' brief absence. Each connection backs off on its
+// own; a notice is returned only for connections that used to work.
+func (service *Service) recoverConnections(ctx context.Context, actor captypes.RuntimeActor) []string {
+	service.mu.RLock()
+	configs := captypes.Clone(service.settings).Connections
+	service.mu.RUnlock()
+	clients := service.localActorClients(actor)
+	states := make(map[string]captypes.ConnectionState)
+	for _, state := range clients.States() {
+		states[state.ID] = state
+	}
+	ids := make([]string, 0, len(configs))
+	for id := range configs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var notices []string
+	notice := func(id, text string) {
+		key := actorKey(actor) + "\x00" + id
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		if service.recoveryNoticed == nil {
+			service.recoveryNoticed = make(map[string]bool)
+		}
+		if text == "" {
+			delete(service.recoveryNoticed, key)
+			return
+		}
+		// One notice per outage: every notice enters the agent's context.
+		if !service.recoveryNoticed[key] {
+			service.recoveryNoticed[key] = true
+			notices = append(notices, text)
+		}
+	}
+	for _, id := range ids {
+		config := configs[id]
+		state := states[id]
+		if config.Disabled || config.Host == "shell" || actor.DisabledForSession(id) {
+			continue
+		}
+		if state.State == "connected" {
+			notice(id, "")
+			continue
+		}
+		if !config.IsBuiltin() {
+			if state.State != "failed" && !hasDurableGrant(config) {
+				continue
+			}
+			// External servers reconnect off the request path; their tools
+			// return on a later step instead of delaying this one.
+			if state.State != "connecting" {
+				go func(id string, config captypes.ConnectionConfig) {
+					recoverCtx, cancel := context.WithTimeout(context.Background(), connectionTimeout(config))
+					defer cancel()
+					_ = clients.Recover(recoverCtx, id)
+				}(id, config)
+			}
+			if state.State == "failed" {
+				notice(id, fmt.Sprintf("MCP connection %s is reconnecting; its tools return automatically when it recovers.", id))
+			}
+			continue
+		}
+		err := clients.Recover(ctx, id)
+		if err == nil {
+			notice(id, "")
+			continue
+		}
+		if errors.Is(err, mcpclient.ErrNotRecoverable) || ctx.Err() != nil {
+			continue
+		}
+		notice(id, fmt.Sprintf("MCP connection %s is unavailable (%v); its tools return automatically when it recovers.", id, err))
+	}
+	return notices
+}
+
+func hasDurableGrant(config captypes.ConnectionConfig) bool {
+	for _, grant := range config.Grants {
+		if !grant.Disabled && grant.Fingerprint != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// SetSecrets stores (or, with empty values, removes) secrets in Crude's
+// application secret store. Connections that read them reconnect so the new
+// values take effect on the next request.
+func (service *Service) SetSecrets(ctx context.Context, values map[string]string) error {
+	if len(values) == 0 {
+		return errors.New("no secrets to store")
+	}
+	if err := service.clients.SetSecrets(values); err != nil {
+		return err
+	}
+	service.mu.RLock()
+	settings := captypes.Clone(service.settings)
+	managers := []*mcpclient.Manager{service.clients}
+	for _, clients := range service.executionClients {
+		managers = append(managers, clients)
+	}
+	service.mu.RUnlock()
+	for id, config := range settings.Connections {
+		uses := config.IsBuiltin()
+		for _, reference := range config.SecretRefs {
+			name, found := strings.CutPrefix(reference, "secret:")
+			_, changed := values[name]
+			uses = uses || found && changed
+		}
+		if !uses {
+			continue
+		}
+		for _, clients := range managers {
+			connected := false
+			for _, state := range clients.States() {
+				connected = connected || state.ID == id && state.State == "connected"
+			}
+			if connected {
+				_ = clients.Restart(ctx, id)
+			}
+		}
+	}
+	return ctx.Err()
 }
 
 func actorAllows(actor captypes.RuntimeActor, name string, effect captypes.Effect) bool {
@@ -830,4 +968,11 @@ func (service *Service) Close() {
 	for _, client := range clients {
 		client.Close()
 	}
+}
+
+func connectionTimeout(config captypes.ConnectionConfig) time.Duration {
+	if config.TimeoutSeconds > 0 {
+		return time.Duration(config.TimeoutSeconds) * time.Second
+	}
+	return 30 * time.Second
 }

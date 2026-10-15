@@ -18,7 +18,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Project search query | native `ui.SearchField` in `tui/screens/findinfiles` (SearchGlyph + PromptStart; Cc/.* toggles on the right) | same |
 | Project replace field | native `ui.TextField` on the Find in Files sibling (Replace in Files) | same |
 | Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); `FieldSelect` paints a bordered overlay dropdown (`PaintOverlay`) so opening it does not grow form height or push later fields; `Form.Paint` clips to the viewport so scrolled fields cannot leak into chrome; docked forms use `SetArrowExitsForm(true)` so Up/Down cycle onto the ActionBar; floating settings also exit to the category rail; Esc emits `form.cancel`; Tab/Shift+Tab still leave the form; spacious settings forms paint one row per field with a breathing row between fields, never fill a row, align every control box on one value column and show the hovered (else focused) field's help in the breathing row above the settings footer (see [Settings design language](settings-design.md)); `FieldCycle` styles are switch (a compact `‹ On ›` box; compact rows read `‹ On ›` too), segmented pill (click selects a segment) and the fixed-width `‹ value ›` stepper whose halves step back/forward and whose ends hold; unit and `Numeric` fields are short boxes with a muted unit; compact `FieldNav`/`FieldCycle` share `planCompactTable`: leftover width becomes space after the label and before the last column (never filler periods), `·` is a separator only, labels/values use `ColorFg`, inherited/meta use `ColorMuted`, focused row uses `ColorHover` + accent label. Lists/menus use the same `TableMinGap` + `MenuInk`. Trailing `TreeCollapsed` (`▸`) on nav only. Never `❯`. `FieldKeyValues` (`ui.KeyValueGrid`) edits a keyed list as a Name/value table below the label — captions from the field's two `Columns` (default `Name`/`Value`), an append row named by its `Placeholder` (default `Add header`), row removal with the shared `Close` glyph, arrows move rows/cells, `MultiLine()` keeps Up/Down inside the table, and `Form.moveFocus` blurs the open cell editor. Row states reuse `ListRowColors`/`MenuInk` (focused accent, selected, hovered). | `ui.Form` / `FormField` over shared TextEdit engine |
-| Hand-built prompt | `tui/widgets/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
+| Hand-built prompt | `tui/ui/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
 | Append/backspace filter | palette, launcher, settings, session model/provider pickers | `FilterField` / `SearchField` with `SearchGlyphEnd` + `PromptEnd` (magnifier at the trailing edge) and `FilterSurface` (`ColorPopupSubtleBg`) so the input never shares the list/dock fill |
 | File/workspace picker filter | native `ui.TextField` in `tui/screens/filepicker` | same |
 | Document editor | `tui/editor/` PieceTable; main viewport `shelleditor` Host; gutter paints diagnostics then Git line edits (`+`/`~`); blame is status-bar + editor context menu, not a sidebar | Specialized `DocumentEditor` (kept) |
@@ -29,7 +29,6 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 |---------|--------|
 | Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends. Floating bars right-align (`alignEnd`); `NewDockedActionBar` packs from the left with a top rule. Constrained rows first omit displayed shortcut hints, then shrink the widest buttons within the supplied width; no trailing decision may escape the parent's paint/hit bounds. Button labels elide inside their brackets; widening restores hints and shortcuts remain active throughout. Idle buttons use variant-colored `[ Label ]` on the surface; hover/focus invert — variant color becomes the fill, `cell.ContrastColor` picks a readable fg. Up/Down leave the bar (`actionbar.exit.*`) so forms and buttons cycle together; Left/Right wrap among buttons. |
 | Find in Files / Replace in Files | native `ui.ActionBar` (Open/Close; Replace/All on the replace row), right-aligned |
-| `PopupButton` / `PopupButtonRow` | same Button + ActionBar |
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |
 | Tool confirmation / YOLO actions | native PanelDeck `ui.ActionBar` with typed quick keys and Escape actions | same |
 | Background command termination | One retained `ui.Button` per running row, with exact command identity; compact close label only when constrained. Opens passively; explicit interaction alone retains button focus. | same |
@@ -174,7 +173,7 @@ and agent-minimize semantics. Palette operations use the shared ActionRegistry.
 
 | Current | Target |
 |---------|--------|
-| `widgets.PopupChromeLines` | **deleted** — product uses `ui.WindowFrame`; `ContextMenuLines`/`Reveal` deleted with it (WindowFrame reveal animation pending; state-level menu tests kept in `contextmenu_v2_test.go`) |
+| Popup chrome | `ui.WindowFrame` only; the old string chrome helpers are deleted (a WindowFrame reveal animation is pending; state-level menu tests live in `contextmenu_v2_test.go`) |
 | `wm` decoration (deleted) | `ui.WindowFrame` |
 | Hand-drawn ╭─╮ in LSP popups | same WindowFrame |
 
@@ -259,7 +258,7 @@ API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
 | Tree focus + filter routing (viewmodel) | `tui/viewmodel/tree_focus_contract_test.go`, `tree_filter_contract_test.go` | sidebarHost gating, two-step Esc, Ctrl+C not back, hidden tree, open-once |
 | Overlay click-outside (20 static product overlays) | `tui/viewmodel/overlay_click_outside_contract_test.go` | Full declared policy matrix plus real-opener integration by policy group; includes the modal capability picker. Dynamic terminal owners use separate IDs. |
 | Shell header | `tui/screens/shellheader/header_contract_test.go` | **Display-only** — `Handle` no-op |
-| Shell status hints | `tui/screens/shellstatus/status_contract_test.go` | **Display-only** Screen; chords via ActionRegistry |
+| Shell status hints | `tui/screens/shellfooter/footer_test.go`, `tui/viewmodel/status_keyboard_contract_test.go` | **Display-only** Screen; chords via ActionRegistry |
 | Status hint chords (save/undo) | `tui/viewmodel/status_keyboard_contract_test.go` | `dispatchEditorKey` + `Text: "ctrl+…"` form |
 | Shell tabs / input | `tui/screens/shelltabs/tabs_contract_test.go`, `shellinput/input_contract_test.go` | Prior pass |
 | Welcome launcher | `tui/screens/launcher/composition_test.go`, `tui/screens/launcher/interaction_test.go`, `tui/screens/launcher/capabilities_test.go`, `tui/viewmodel/launcher_lifecycle_test.go` | Wide full-width New Session with New Workspace back in the left pane above an equal-height Skills/MCP split; cramped stacked actions with hidden capabilities and full-width Recent workspaces; bottom-pinned guide, dedicated search, quiet separators, filter/paste/Esc, independent scrolling, owner-safe async loading/error/retry, named live capabilities, context delete/undo |
@@ -301,3 +300,82 @@ Source-control snapshots and mutations also run as `tea.Cmd`, with one
 A wedged Git subprocess therefore resolves back into the normal error state
 instead of leaving the panel loading indefinitely
 (`TestSourceControlMutationHasDeadline`, `git_panel_mutation_test.go`).
+
+## Compact chrome language
+
+- Prefer established, theme-aware symbols over spelled-out words in constrained
+  chrome when the symbol is meaningful and consistent elsewhere in Crude. Keep
+  text when a symbol would be ambiguous; never introduce one-off icon dialects.
+- **One tab-bar look**: every tab bar is the shared `ui.Tabs` strip (labels row
+  + its own baseline rule, accent bold + accent underline on the active tab,
+  heavy accent baseline while the strip is focused). Never hand-paint a tab row,
+  never add a bespoke segmented switch, and never restyle per consumer —
+  `TabsChrome` only picks the background, `SetLabelInset` only indents label
+  content. `ui.StripHeight` rows are reserved by every host, and the baseline row
+  — rule and active underline — always starts at the strip's own left edge
+  (empty columns to its left read as a broken bar). Contract:
+  `docs/reference/control-usage.md` (Tab bar contract).
+- Workspace docks share their first content row with the host's More/Maximize/Hide
+  controls: searchable status panels reserve trailing search space, while Memory
+  and Board reserve it beside their tabs or detail title. Browse search and local
+  actions share a row; constrained widths replace local buttons with More and
+  an accessible action list rather than splitting ordinary dock chrome.
+  Terminal instances use compact numbered `ui.Tabs` beside the terminal controls,
+  with one full-width baseline and a full-width PTY body, never a side instance rail.
+  Numbers follow titles (`Terminal 1`); cramped strips use `T 1`. Shared Tabs
+  overflow is independently browsable by wheel/trackpad and `‹`/`›`, preserving
+  manual position across repaint/same-active projections. Selection alone reveals
+  the active tab. Picker numbers match dock tabs; placement is Docked/Floating,
+  never a raw enum.
+
+## Hover
+
+- **`ui.ColorHover`** (theme `Hover`) is the one hover background token; never
+  hard-code a hover color in a component.
+- **Priority: focused (keyboard) > selected > hovered > nothing.**
+- **Activity rail entries are whole bands.** `activitybar.RowStride` is odd
+  so the glyph sits on the band's exact middle row (`iconRow`), and every
+  highlight — hover background and the `▌` accent marker — covers the full
+  band. A one-row marker next to a multi-row hover box reads as
+  misalignment. `SetPanelOpen(false)` drops the marker when the sidebar is
+  collapsed so the rail shows its toggle state. The rail keeps one blank
+  column before its panel rule so file-tree / Agents / Terminals / Git
+  left borders are not flush against the icons.
+
+## Scrollbar direct manipulation
+
+- `ui.ScrollbarControl` is the only click/drag/wheel interaction math. Nested
+  chat panes and terminal scrollback adapt their models to it; never duplicate
+  thumb mapping or track-click formulas.
+- Keep the painted stroke one cell. `PointerHitBounds` expands inward toward the
+  content, capped by the configured target, and explicit hit bounds outrank
+  deeper content descendants in `Host.HitTest`. Adjacent scrollbars must cap
+  expansion so their targets never overlap. Settings scrollbars set a 1-column
+  target (`SetPointerTargetSize(1)`) and reserve a blank gutter column
+  (`ui.ScrollbarWidth+1`), so a click aimed at the field, filter, or list row
+  beside the bar cannot land on the scrollbar.
+- A changed offset invalidates layout AND paint: retained forms encode scroll
+  in child bounds while lists consume it during paint. Offset-only tests are
+  insufficient; assert that painted content moves.
+- Exact Host hits do not bubble pointer events through the parent. Consumers
+  with an authoritative mirror (notably file tree and terminal scrollback) use
+  `ScrollbarControl.OnScroll`; never rely on a parent fallback handler to copy
+  the offset.
+- Mounted scrollbars route through Host capture. Manual composite routing uses
+  `ui.ChildEventContext`, never unchanged parent-local coordinates. Editor
+  pointer input enters through `shelleditor.Screen` so drags release outside.
+- Decide visibility with `NeededForViewport(candidateViewport)`, not stale
+  previous-frame viewport state.
+
+## Sidebar list rows: resource vs command
+`ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").
+`activitylist` arms resource rows on the first click and activates on the
+second (matching the pickers), but command rows fire on a single click — a
+button that needs a double click reads as broken.
+
+## Workspace and Open Tabs rows
+
+- Workspace and Open Tabs collapsed resource rows occupy exactly one line.
+  Keep explicit Workspace section headings even for a single group. Click,
+  Enter/Space, and Left/Right own disclosure; Open/Resume is an explicit action
+  inside expanded details, not an ambiguous first click.

@@ -4,7 +4,10 @@ import (
 	"crude/worktree"
 	"encoding/json"
 	"reflect"
+	"slices"
+	"sort"
 	"strings"
+	"unicode"
 )
 
 // StructSchema derives only exported JSON data fields, never methods. Domain
@@ -60,19 +63,75 @@ func StructSchema(t reflect.Type) map[string]any {
 
 // Catalog is bounded discovery, not an execution grant. Schemas describe the
 // semantic API, not arbitrary core RPC methods. Lookup returns detached values.
+// A query matches by its words. Commands containing every word are returned
+// when any exist (terms in the command ID rank first); otherwise commands are
+// ranked by how many words they contain, so a natural phrase still finds the
+// right command instead of requiring one exact substring.
 func Catalog(query string) []Descriptor {
-	query = strings.ToLower(strings.TrimSpace(query))
-	out := make([]Descriptor, 0)
+	terms := catalogTerms(query)
+	type ranked struct {
+		descriptor Descriptor
+		matched    int
+		score      int
+	}
+	matches := make([]ranked, 0)
+	complete := false
 	for _, d := range commandCatalog {
-		if query != "" && !strings.Contains(strings.ToLower(d.ID+" "+string(d.Input.Document)), query) {
-			continue
+		match := ranked{descriptor: d}
+		if len(terms) > 0 {
+			id, text := strings.ToLower(d.ID), strings.ToLower(d.ID+" "+string(d.Input.Document))
+			for _, term := range terms {
+				if strings.Contains(text, term) {
+					match.matched++
+					match.score++
+					if strings.Contains(id, term) {
+						match.score++
+					}
+				}
+			}
+			if match.matched == 0 {
+				continue
+			}
 		}
-		out = append(out, d.Clone())
-		if len(out) == MaxPageLimit {
-			break
+		complete = complete || match.matched == len(terms)
+		matches = append(matches, match)
+	}
+	if complete {
+		matches = slices.DeleteFunc(matches, func(match ranked) bool { return match.matched < len(terms) })
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].matched != matches[j].matched {
+			return matches[i].matched > matches[j].matched
 		}
+		return matches[i].score > matches[j].score
+	})
+	out := make([]Descriptor, 0, min(len(matches), MaxPageLimit))
+	for _, match := range matches[:min(len(matches), MaxPageLimit)] {
+		out = append(out, match.descriptor.Clone())
 	}
 	return out
+}
+
+// catalogTerms splits a query into words and reduces simple plurals, so
+// "capability" finds "capabilities" and "secrets" finds "secret".
+func catalogTerms(query string) []string {
+	var terms []string
+	for _, word := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '_' && r != '-'
+	}) {
+		switch {
+		case strings.HasSuffix(word, "ies") && len(word) > 4:
+			word = strings.TrimSuffix(word, "ies")
+		case strings.HasSuffix(word, "y") && len(word) > 3:
+			word = strings.TrimSuffix(word, "y")
+		case strings.HasSuffix(word, "s") && len(word) > 3:
+			word = strings.TrimSuffix(word, "s")
+		}
+		if len(word) > 1 {
+			terms = append(terms, word)
+		}
+	}
+	return terms
 }
 
 func Lookup(id string) (Descriptor, bool) {
@@ -103,6 +162,13 @@ var commandCatalog = func() []Descriptor {
 	}
 	add("settings.get", Domain, Read, "Read redacted settings and exact revisions. Session scope requires target.session_id.", `{"scope":{"type":"string","enum":["application","workspace","session"],"description":"Defaults to workspace."}}`)
 	add("settings.fields", Domain, Read, "Discover exact ordinary JSON field paths, redacted values, schemas, ownership and revisions. Echo cursor for the next bounded page.", `{"scope":{"type":"string","enum":["application","workspace","session"]},"prefix":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":128},"cursor":{"type":"string"}}`, "scope", "limit")
+	add("capabilities.inspect", Domain, Read, "List MCP connections (state, usable and switched-off tools, built-in provider keys stored or unset), skills and stored secret names. Secret values are never returned.", `{}`)
+	add("capabilities.set_secret", Domain, Write, "Store a credential in Crude's secret store for the user, e.g. a search API key they gave you (EXA_API_KEY, BRAVE_SEARCH_API_KEY, TAVILY_API_KEY, SEARXNG_URL, JINA_API_KEY for the built-in web tools). Connections reference it as secret:NAME and reconnect to use it. Never echo the value back.", `{"name":{"type":"string","description":"Secret name, e.g. EXA_API_KEY"},"secret":{"type":"string","description":"The credential value (write-only)"}}`, "name", "secret")
+	add("capabilities.remove_secret", Domain, Delete, "Delete a stored secret by name.", `{"name":{"type":"string"}}`, "name")
+	add("capabilities.set_enabled", Domain, Write, "Enable or disable an installed MCP connection (including built-ins such as web) for every session.", `{"id":{"type":"string"},"enabled":{"type":"boolean"}}`, "id", "enabled")
+	add("capabilities.set_tool_enabled", Domain, Write, "Switch one tool of an installed MCP connection on or off. Enabling an external server's tool for the first time uses mcp_request_access instead.", `{"id":{"type":"string"},"tool":{"type":"string","description":"The server's tool name, e.g. arxiv_search"},"enabled":{"type":"boolean"}}`, "id", "tool", "enabled")
+	add("capabilities.save_connection", Domain, Execute, "Create or edit an MCP connection. Omitted fields keep their stored values. transport is http (Streamable HTTP; falls back to legacy SSE automatically), sse, or stdio (a local process). Put credentials in secret_refs as secret:NAME after capabilities.set_secret, not in headers or environment.", `{"connection":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"name":{"type":"string"},"transport":{"type":"string","enum":["http","sse","stdio"]},"url":{"type":"string"},"command":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"directory":{"type":"string"},"environment":{"type":"object","additionalProperties":{"type":"string"}},"headers":{"type":"object","additionalProperties":{"type":"string"}},"secret_refs":{"type":"object","additionalProperties":{"type":"string"},"description":"Header or variable name to secret:NAME or env:NAME"},"auth":{"type":"string","enum":["none","oauth"]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600},"launch_approved":{"type":"boolean"},"enabled":{"type":"boolean"}},"required":["id"]}}`, "connection")
+	add("capabilities.remove_connection", Domain, Delete, "Remove an installed MCP connection. Built-in connections can only be disabled.", `{"id":{"type":"string"}}`, "id")
 	add("execution.selection", Domain, Read, "Read the exact session's persisted next-input execution selection. Requires target.session_id; no resource target.", `{}`)
 	out[len(out)-1].Requires.Session = true
 	add("execution.select", Domain, Write, "Select execution for future input in target.session_id; never moves live runs or queued input. Resource target must equal id, including empty id for shared execution. expected_revision fences the persisted session selection.", `{"id":{"type":"string","description":"Exact ready execution ID, or empty for shared logical workspace."},"expected_revision":{"type":"integer","minimum":0}}`, "id", "expected_revision")
@@ -139,7 +205,7 @@ var commandCatalog = func() []Descriptor {
 			props += `,"value":{"description":"JSON value of the field's exact current Go JSON type; unknown nested fields are rejected."}`
 			required = append(required, "value")
 		}
-		add(id, Domain, Write, "Revision-fenced single-field settings operation. Authority, secrets and account/capability entities require human-owned operations.", props+`}`, required...)
+		add(id, Domain, Write, "Revision-fenced single-field settings operation. Authority and account entities require human-owned operations; MCP connections and their secrets use the capabilities.* commands.", props+`}`, required...)
 	}
 	add("session.list", Domain, Read, "List saved sessions without starting model work.", `{}`)
 	add("operation.receipt", Domain, Read, "Observe the original domain or shell mutation receipt owned by this exact caller. Never replay uncertain effects.", `{"request_id":{"type":"string"}}`, "request_id")

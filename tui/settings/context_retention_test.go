@@ -10,7 +10,7 @@ import (
 func TestContextRetentionFieldDefaultsValidatesAndPersists(t *testing.T) {
 	model := New(theme.DefaultDark(), types.AppSettings{}, nil)
 	field := model.categories[catMain].Form.Field(fieldContextRetention)
-	if field == nil || field.Value.String() != "20000" || field.Unit != "tokens" {
+	if field == nil || field.Value.String() != "" || field.Placeholder != "Auto" || field.Unit != "tokens" {
 		t.Fatalf("retention field = %+v", field)
 	}
 

@@ -179,6 +179,9 @@ type AgentStatusSnapshot struct {
 	Unsafe         bool
 	ActiveTools    int
 	ActiveChildren int
+	// Checkpoint is background context preparation: "preparing", "ready" or
+	// empty. It never blocks the agent and is not part of Phase.
+	Checkpoint string
 }
 
 type OperationState string

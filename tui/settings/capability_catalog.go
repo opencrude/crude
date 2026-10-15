@@ -303,8 +303,12 @@ func (catalog *capabilityCatalog) actions() {
 		}
 		decision = []ui.ActionBarButton{button(label, "save"), button("Back", "back")}
 		decision[0].Variant = ui.VariantPrimary
-		if catalog.kind == captypes.KindMCP && catalog.edit != "grant" && catalog.edit != "import" {
+		builtin := catalog.owner.model.capabilities.Connections[catalog.id].IsBuiltin()
+		if catalog.kind == captypes.KindMCP && catalog.edit != "grant" && catalog.edit != "import" && !builtin {
 			primary = []ui.ActionBarButton{button("Test draft", "test")}
+		}
+		if builtin && catalog.edit == "edit" {
+			decision[0].Label = "Save keys"
 		}
 	} else if catalog.detail {
 		decision, primary, secondary = catalog.detailActions(button)
@@ -816,7 +820,11 @@ func (catalog *capabilityCatalog) editForm() {
 	} else {
 		value := captypes.Clone(model.capabilities).Connections[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Connection: &value}
-		fields = mcpConnectionFields(value)
+		if value.IsBuiltin() {
+			fields = builtinConnectionFields(value, model.capabilitySnapshot.StoredSecrets)
+		} else {
+			fields = mcpConnectionFields(value)
+		}
 	}
 	if catalog.id != "" && catalog.edit == "edit" {
 		for _, field := range fields {
@@ -892,6 +900,53 @@ func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
 	}
 }
 
+// builtinConnectionFields presents a built-in server as what users configure:
+// its optional provider keys. Values are write-only; a stored key shows as
+// stored and is kept unless replaced or removed.
+func builtinConnectionFields(value captypes.ConnectionConfig, stored []string) []*ui.FieldState {
+	descriptor, _ := captypes.Builtin(value.Command)
+	about := capabilityReadOnly("builtin-about", "About", descriptor.Description, "Built into Crude; disable it to use another MCP server.")
+	about.Rows = 4
+	fields := []*ui.FieldState{
+		ui.SeparatorFieldState("builtin-identity", value.Name),
+		about,
+		ui.SeparatorFieldState("builtin-secrets", "Provider keys · blank keeps a key, - removes it"),
+	}
+	for _, secret := range descriptor.Secrets {
+		field := ui.PasswordFieldState("secret/"+secret.Name, secret.Label, "", secret.Description)
+		field.Placeholder = "Not set"
+		if slices.Contains(stored, secret.Name) {
+			field.Placeholder = "Stored"
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+// builtinSecretsAction turns the keys typed into a built-in's form into one
+// write-only secret update.
+func builtinSecretsAction(request captypes.Action, form *ui.FormModel) (captypes.Action, error) {
+	updates := make(map[string]string)
+	for _, field := range form.Fields() {
+		name, ok := strings.CutPrefix(field.ID, "secret/")
+		if !ok {
+			continue
+		}
+		switch value := strings.TrimSpace(field.Value.String()); value {
+		case "":
+		case "-":
+			updates[name] = ""
+		default:
+			updates[name] = value
+		}
+	}
+	if len(updates) == 0 {
+		return request, fmt.Errorf("enter a key to store, or - to remove a stored one")
+	}
+	request.Operation, request.Arguments = "set-secrets", updates
+	return request, nil
+}
+
 func mapDefault(value, fallback string) string {
 	if value == "" {
 		return fallback
@@ -922,6 +977,9 @@ func (catalog *capabilityCatalog) draftAction() (captypes.Action, error) {
 	if catalog.edit == "import" {
 		request.Operation, request.Content = "import", value("import")
 		return request, nil
+	}
+	if existing, ok := catalog.owner.model.capabilities.Connections[catalog.id]; catalog.kind == captypes.KindMCP && ok && existing.IsBuiltin() {
+		return builtinSecretsAction(request, form)
 	}
 	if value("id") == "" || value("name") == "" {
 		return request, fmt.Errorf("identity and name are required")

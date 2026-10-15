@@ -240,7 +240,7 @@ func (s *Session) executeMemoryTool(
 	}
 	switch name {
 	case "remember":
-		evidence, err := memoryEvidenceParam(params)
+		evidence, err := memoryEvidenceParam(params, s.sessionID)
 		if err != nil {
 			return tools.ToolResult{}, true, err
 		}
@@ -318,7 +318,7 @@ func (s *Session) executeMemoryTool(
 		if err != nil {
 			return tools.ToolResult{}, true, err
 		}
-		evidence, err := memoryEvidenceParam(params)
+		evidence, err := memoryEvidenceParam(params, s.sessionID)
 		if err != nil {
 			return tools.ToolResult{}, true, err
 		}
@@ -378,6 +378,11 @@ func (s *Session) executeMemoryTool(
 		}
 		for index := range items {
 			items[index].SessionID, items[index].Actor = s.sessionID, memory.ActorTool
+			for evidence := range items[index].Evidence {
+				if items[index].Evidence[evidence].SessionID == "" {
+					items[index].Evidence[evidence].SessionID = s.sessionID
+				}
+			}
 		}
 		if err := store.Feedback(ctx, items); err != nil {
 			return tools.ToolResult{}, true, err
@@ -438,7 +443,9 @@ func compactMemoryEvidence(evidence []memory.Evidence) []memory.Evidence {
 	return compact
 }
 
-func memoryEvidenceParam(params map[string]any) ([]memory.Evidence, error) {
+// memoryEvidenceParam decodes model-cited evidence. References that omit
+// session_id cite the calling session, which the model cannot otherwise name.
+func memoryEvidenceParam(params map[string]any, sessionID string) ([]memory.Evidence, error) {
 	raw, found := params["evidence"]
 	if !found {
 		return nil, nil
@@ -449,7 +456,12 @@ func memoryEvidenceParam(params map[string]any) ([]memory.Evidence, error) {
 	}
 	var evidence []memory.Evidence
 	if err := json.Unmarshal(payload, &evidence); err != nil {
-		return nil, fmt.Errorf("memory: evidence must be an array of origin-attributed references: %w", err)
+		return nil, fmt.Errorf("memory: evidence must be an array of objects with kind, summary, outcome and tool_call_id or message_id: %w", err)
+	}
+	for index := range evidence {
+		if evidence[index].SessionID == "" {
+			evidence[index].SessionID = sessionID
+		}
 	}
 	return evidence, nil
 }

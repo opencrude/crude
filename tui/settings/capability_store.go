@@ -118,8 +118,11 @@ func (catalog *capabilityCatalog) storeEntryType(entry captypes.Entry) string {
 		if entry.PackageType != "" || entry.Transport == "local package" || entry.Transport == "stdio" {
 			return "package"
 		}
-		if entry.Transport == "remote" || entry.Transport == "http" {
+		if entry.Transport == "remote" || entry.Transport == "http" || entry.Transport == captypes.TransportSSE {
 			return "remote"
+		}
+		if entry.Transport == captypes.TransportBuiltin {
+			return "built-in"
 		}
 		return "custom"
 	case captypes.KindSkill:
@@ -756,6 +759,8 @@ func (catalog *capabilityCatalog) storeEntryMeta(entry captypes.Entry) string {
 	}
 	if entry.PackageType != "" {
 		parts = append(parts, entry.PackageType)
+	} else if entry.Transport == captypes.TransportBuiltin {
+		parts = append(parts, "built-in")
 	} else if entry.Transport != "" {
 		parts = append(parts, entry.Transport)
 	}

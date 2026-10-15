@@ -498,6 +498,9 @@ type TokenUsage struct {
 	ReasoningTokens     int  `json:"reasoning_tokens,omitempty"`
 	ReasoningKnown      bool `json:"reasoning_known,omitempty"`
 	ReasoningInOutput   bool `json:"reasoning_in_output,omitempty"`
+	// ServiceTier is the provider-reported processing tier that served the
+	// request; empty when the provider does not report one.
+	ServiceTier string `json:"service_tier,omitempty"`
 	// Native runtimes such as Ollama report timing but not cache-read token
 	// counts. These diagnostics let live probes distinguish fast prefix reuse
 	// from a full prompt evaluation without pretending they are billing data.
@@ -619,6 +622,9 @@ type ChatResponse struct {
 	Choices            []ChatChoice  `json:"choices"`
 	Usage              *ChatUsage    `json:"usage,omitempty"`
 	Error              *ChatAPIError `json:"error,omitempty"`
+	// ServiceTier is the processing tier the provider reports it actually used
+	// (for example "default" after a fast-mode downgrade).
+	ServiceTier string `json:"service_tier,omitempty"`
 }
 
 type ChatChoice struct {

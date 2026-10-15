@@ -210,6 +210,9 @@ type Snapshot struct {
 	Settings    Settings
 	Error       string
 	Bindings    []AgentBinding
+	// StoredSecrets names the values held in Crude's secret store. Values never
+	// leave the core.
+	StoredSecrets []string
 }
 
 type AgentBinding struct {
@@ -532,15 +535,27 @@ func DefaultSources() map[string]SourceConfig {
 	}
 }
 
-// WithDefaultSources adds missing curated presets while preserving explicit
-// edits and disable choices on existing entries. Built-ins may be disabled but
-// are not silently deleted and recreated with changed trust.
-func WithDefaultSources(settings Settings) Settings {
+// WithDefaults adds missing curated sources and built-in connections while
+// preserving explicit edits and disable choices on existing entries. Built-ins
+// may be disabled but are not silently deleted and recreated with changed trust.
+func WithDefaults(settings Settings) Settings {
 	settings = Normalize(settings)
 	for id, source := range DefaultSources() {
 		if _, exists := settings.Sources[id]; !exists {
 			settings.Sources[id] = source
 		}
+	}
+	for id, connection := range DefaultConnections() {
+		existing, exists := settings.Connections[id]
+		if !exists {
+			settings.Connections[id] = connection
+			continue
+		}
+		// The built-in identity is Crude's own code; only the user's choices
+		// (enabled state, name, timeout, per-tool grants) are theirs to keep.
+		existing.Transport, existing.Command, existing.Host = connection.Transport, connection.Command, ""
+		existing.URL, existing.Args, existing.Directory, existing.Source = "", nil, "", ""
+		settings.Connections[id] = existing
 	}
 	return settings
 }

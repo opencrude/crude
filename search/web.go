@@ -1,6 +1,9 @@
 package search
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,151 +18,181 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-// WebSearch queries multiple search engines concurrently, deduplicates results,
-// and returns formatted output. Falls back through engines automatically on failure.
-func WebSearch(query string, maxResults int) (string, error) {
-	if query == "" {
-		return "", fmt.Errorf("search: empty query")
-	}
-	if maxResults <= 0 {
-		maxResults = 6
-	}
-
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "web_search", "query", query, "max_results", maxResults) })
-	start := time.Now()
-	results, succeeded, failed := SuperSearch(query, maxResults)
-	dur := time.Since(start).Milliseconds()
-
-	if len(results) == 0 {
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "No results found for: %s\n\n", query)
-
-		if len(succeeded) == 0 && len(failed) > 0 {
-			sb.WriteString("All search engines failed:\n")
-			logIf(func(lg *logger.Logger) {
-				lg.Warn("SEARCH", "all_engines_failed", "query", query, "latency_ms", dur, "failures", fmt.Sprintf("%v", failed))
-			})
-			for eng, errMsg := range failed {
-				fmt.Fprintf(&sb, "  - %s: %s\n", eng, errMsg)
-			}
-			sb.WriteString("\nThis may be due to network issues or rate limiting.\n")
-			sb.WriteString("Suggestions:\n")
-			sb.WriteString("  - Retry the search in a moment\n")
-			sb.WriteString("  - Try a simpler or different query\n")
-			sb.WriteString("  - Use web_fetch to access a specific URL directly\n")
-		} else {
-			sb.WriteString("Suggestions:\n")
-			sb.WriteString("  - Try different or more specific keywords\n")
-			sb.WriteString("  - Remove quotes or special characters\n")
-			sb.WriteString("  - Try a related topic\n")
-		}
-
-		return sb.String(), nil
-	}
-
-	logIf(func(lg *logger.Logger) {
-		lg.Info("SEARCH", "web_search_ok", "query", query, "results", len(results), "engines", len(succeeded), "latency_ms", dur)
-	})
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Web search results for: %s\n", query)
-
-	if len(succeeded) > 0 {
-		fmt.Fprintf(&sb, "(Sources: %s)\n", strings.Join(succeeded, ", "))
-	}
-	if len(failed) > 0 {
-		var failedEngines []string
-		for eng := range failed {
-			failedEngines = append(failedEngines, eng)
-		}
-		fmt.Fprintf(&sb, "(Unavailable: %s)\n", strings.Join(failedEngines, ", "))
-	}
-	sb.WriteString("\n")
-
-	for i, r := range results {
-		fmt.Fprintf(&sb, "%d. %s\n", i+1, r.Title)
-		fmt.Fprintf(&sb, "   %s\n", r.URL)
-		if r.Description != "" {
-			desc := r.Description
-			if len([]rune(desc)) > 200 {
-				desc = string([]rune(desc)[:200]) + "..."
-			}
-			fmt.Fprintf(&sb, "   %s\n", desc)
-		}
-		sb.WriteString("\n")
-	}
-
-	return sb.String(), nil
-}
-
 // WebPage is extracted page content.
 type WebPage struct {
 	URL        string
 	Title      string
 	Content    string
 	TotalChars int
+	// Reader names the fallback service that produced the content, if any.
+	Reader string
 }
 
-// WebFetch fetches a URL and extracts its text content with smart extraction
-// and robust error handling. offset is 1-based character position (0 = start).
-// limit is max chars to return (0 = all).
-func WebFetch(rawURL string, offset, limit int) (string, error) {
+// Fetch returns the readable content of rawURL. offset is a 1-based character
+// position (0 = start) and limit the maximum characters (0 = all). A document
+// is fetched once per client and paginated from memory afterwards. When a site
+// refuses direct requests, a configured reader (Exa contents or Jina Reader)
+// fetches it instead.
+func (client *Client) Fetch(ctx context.Context, rawURL string, offset, limit int) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return "", fmt.Errorf("fetch: empty URL")
+		return "", fmt.Errorf("fetch: url is empty; pass the http(s) URL to read")
 	}
-
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		rawURL = "https://" + rawURL
 	}
-
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "fetch", "url", rawURL, "offset", offset, "limit", limit) })
 	start := time.Now()
-
-	result, err := fetchWebContent(rawURL, offset, limit)
-	if err != nil {
-		logIf(func(lg *logger.Logger) {
-			lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error())
-		})
-		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
-			return "", fmt.Errorf("fetch: request timed out for %s — the site may be slow or blocking automated requests. Try again or try a different URL", rawURL)
+	page, cached := client.pages.get(rawURL)
+	if !cached {
+		var err error
+		page, err = client.fetchPage(ctx, rawURL)
+		if err != nil {
+			logIf(func(lg *logger.Logger) {
+				lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error())
+			})
+			return "", err
 		}
-		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
-			return "", fmt.Errorf("fetch: could not connect to %s — the site may be down or the URL may be incorrect. Verify the URL and try again", rawURL)
-		}
-		if strings.Contains(err.Error(), "TLS") || strings.Contains(err.Error(), "certificate") {
-			return "", fmt.Errorf("fetch: TLS/certificate error for %s — the site may have security issues. Try http:// instead of https:// if appropriate", rawURL)
-		}
-		return "", fmt.Errorf("fetch: %w", err)
+		client.pages.put(rawURL, page)
 	}
-
-	dur := time.Since(start).Milliseconds()
 	logIf(func(lg *logger.Logger) {
-		lg.Info("SEARCH", "fetch_ok", "url", rawURL, "total_chars", result.TotalChars, "latency_ms", dur)
+		lg.Info("SEARCH", "fetch_ok", "url", rawURL, "total_chars", page.TotalChars, "cached", cached, "latency_ms", time.Since(start).Milliseconds())
 	})
-
-	if result.Content == "" {
-		return fmt.Sprintf("No content could be extracted from %s\n\nThe page may be:\n- A JavaScript-rendered single-page app (try a different URL)\n- Empty or requiring authentication\n- A binary file (PDF, image, etc.)", rawURL), nil
+	if strings.TrimSpace(page.Content) == "" {
+		return fmt.Sprintf("No content could be extracted from %s. The page may render with JavaScript, require sign-in, or be empty. Configure an Exa or Jina Reader key in Settings → MCP → Web to read such pages.", page.URL), nil
 	}
+	content := sliceContent(page.Content, offset, limit)
+	result := formatPage(page, offset, content)
+	// A page that would not fit the transport is cut to the largest prefix
+	// that does, with the offset to continue from.
+	for client.resultBudget > 0 && encodedLen(result) > client.resultBudget && content != "" {
+		runes := []rune(content)
+		keep := int(float64(len(runes)) * float64(client.resultBudget) / float64(encodedLen(result)) * 0.98)
+		content = string(runes[:max(0, min(keep, len(runes)-1))])
+		result = formatPage(page, offset, content)
+	}
+	return result, nil
+}
 
-	totalChars := result.TotalChars
-
+func formatPage(page WebPage, offset int, content string) string {
 	var sb strings.Builder
-	if result.Title != "" {
-		fmt.Fprintf(&sb, "Title: %s\n", result.Title)
+	if page.Title != "" {
+		fmt.Fprintf(&sb, "Title: %s\n", page.Title)
 	}
-	fmt.Fprintf(&sb, "URL: %s\n", result.URL)
-
-	if (offset > 1 || limit > 0) && totalChars > 0 {
-		endPos := offset + len([]rune(result.Content)) - 1
-		if limit > 0 && offset+limit-1 < endPos {
-			endPos = offset + limit - 1
-		}
-		fmt.Fprintf(&sb, "Characters %d–%d of %s (%d total):\n\n", offset, endPos, result.URL, totalChars)
+	fmt.Fprintf(&sb, "URL: %s\n", page.URL)
+	if page.Reader != "" {
+		fmt.Fprintf(&sb, "Read via: %s\n", page.Reader)
+	}
+	first := max(1, offset)
+	last := first + len([]rune(content)) - 1
+	if first > 1 || last < page.TotalChars {
+		fmt.Fprintf(&sb, "Characters %d–%d of %d; pass offset=%d to continue.\n\n", first, max(first-1, last), page.TotalChars, last+1)
 	} else {
-		fmt.Fprintf(&sb, "Total characters: %d\n\n", totalChars)
+		fmt.Fprintf(&sb, "Total characters: %d\n\n", page.TotalChars)
 	}
-	sb.WriteString(result.Content)
-	return sb.String(), nil
+	sb.WriteString(content)
+	return sb.String()
+}
+
+// encodedLen is the size of text inside a JSON result.
+func encodedLen(text string) int {
+	encoded, _ := json.Marshal(text)
+	return len(encoded)
+}
+
+// fetchPage reads one document directly, falling back to a configured reader
+// when the site refuses automated requests or yields no readable text.
+func (client *Client) fetchPage(ctx context.Context, rawURL string) (WebPage, error) {
+	page, err := fetchWebContent(ctx, rawURL)
+	if err == nil && strings.TrimSpace(page.Content) != "" {
+		return *page, nil
+	}
+	if ctx.Err() != nil {
+		return WebPage{}, ctx.Err()
+	}
+	var readerErrs []string
+	if key := client.lookup("EXA_API_KEY"); key != "" {
+		read, readErr := exaContents(ctx, client.endpoints.exa, key, rawURL)
+		if readErr == nil && strings.TrimSpace(read.Content) != "" {
+			return read, nil
+		}
+		if readErr != nil {
+			readerErrs = append(readerErrs, readErr.Error())
+		}
+	}
+	if key := client.lookup("JINA_API_KEY"); key != "" {
+		read, readErr := jinaRead(ctx, client.endpoints.jina, key, rawURL)
+		if readErr == nil && strings.TrimSpace(read.Content) != "" {
+			return read, nil
+		}
+		if readErr != nil {
+			readerErrs = append(readerErrs, readErr.Error())
+		}
+	}
+	if err == nil {
+		return *page, nil
+	}
+	err = explainFetchError(rawURL, err)
+	if len(readerErrs) > 0 {
+		err = fmt.Errorf("%w; readers also failed: %s", err, strings.Join(readerErrs, "; "))
+	}
+	return WebPage{}, err
+}
+
+func explainFetchError(rawURL string, err error) error {
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "timeout") || strings.Contains(text, "deadline"):
+		return fmt.Errorf("fetch: request timed out for %s; the site may be slow or blocking automated requests", rawURL)
+	case strings.Contains(text, "connection refused") || strings.Contains(text, "no such host"):
+		return fmt.Errorf("fetch: could not connect to %s; verify the URL", rawURL)
+	case strings.Contains(text, "TLS") || strings.Contains(text, "certificate"):
+		return fmt.Errorf("fetch: TLS/certificate error for %s: %w", rawURL, err)
+	}
+	return fmt.Errorf("fetch: %w", err)
+}
+
+func exaContents(ctx context.Context, base, key, rawURL string) (WebPage, error) {
+	var response struct {
+		Results []struct {
+			URL   string `json:"url"`
+			Title string `json:"title"`
+			Text  string `json:"text"`
+		} `json:"results"`
+	}
+	request := map[string]any{"urls": []string{rawURL}, "text": true}
+	if err := postJSON(ctx, "Exa", "POST", base+"/contents", map[string]string{"x-api-key": key}, request, &response); err != nil {
+		return WebPage{}, err
+	}
+	if len(response.Results) == 0 {
+		return WebPage{}, errors.New("exa returned no content for the URL")
+	}
+	result := response.Results[0]
+	return WebPage{URL: firstNonEmpty(result.URL, rawURL), Title: result.Title, Content: result.Text, TotalChars: len([]rune(result.Text)), Reader: "Exa"}, nil
+}
+
+func jinaRead(ctx context.Context, base, key, rawURL string) (WebPage, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", base+"/"+rawURL, nil)
+	if err != nil {
+		return WebPage{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Accept", "text/plain")
+	httpClient := network.NewClient(60 * time.Second)
+	defer httpClient.CloseIdleConnections()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return WebPage{}, redactRequestURL(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return WebPage{}, fmt.Errorf("jina reader returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return WebPage{}, err
+	}
+	content := strings.ReplaceAll(string(body), "\r\n", "\n")
+	return WebPage{URL: rawURL, Content: content, TotalChars: len([]rune(content)), Reader: "Jina Reader"}, nil
 }
 
 // mimeToExt maps document MIME types to file extensions for docconv.
@@ -187,8 +220,8 @@ func docExtFromURL(rawURL string) string {
 	return ""
 }
 
-func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
-	req, err := http.NewRequest("GET", fetchURL, nil)
+func fetchWebContent(ctx context.Context, fetchURL string) (*WebPage, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fetchURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +257,6 @@ func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 			content = strings.ReplaceAll(content, "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "")
 			totalChars := len([]rune(content))
-			content = sliceContent(content, offset, limit)
 			return &WebPage{
 				URL:        finalURL,
 				Title:      "",
@@ -264,7 +296,6 @@ func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 			}
 			content += md
 			totalChars := len([]rune(content))
-			content = sliceContent(content, offset, limit)
 			return &WebPage{
 				URL:        finalURL,
 				Title:      "Document: " + docconv.FormatName(ext),
@@ -313,7 +344,6 @@ func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 	rawContent = strings.Join(strings.Fields(rawContent), " ")
 
 	totalChars := len([]rune(rawContent))
-	rawContent = sliceContent(rawContent, offset, limit)
 
 	return &WebPage{
 		URL:        finalURL,

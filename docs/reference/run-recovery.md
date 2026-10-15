@@ -39,7 +39,9 @@ new human message or a replacement for permission policy.
 | Authentication, billing/quota, invalid configuration/trust/guidance | Needs attention; no unbounded invalid-request loop or silent account/model failover |
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
 | Native file-ownership rejection (outside scope, or another agent's claim) | Ordinary tool error: nothing changes, the run continues, the parent is notified and can replace the live child's scope with `agent_update_claims` |
-| Context compaction failure | Provider-originated failures recover like any provider request; a local fault (for example a checkpoint that still does not fit) needs attention with a compaction-specific action |
+| Automatic compaction failure while the next request still fits | The run continues on the retained full context and retries compaction after the context grows by a bounded step; the boundary row records a deferred failure, nothing needs attention. Background preparation failures back off silently |
+| Compaction model unavailable at capacity | After the extractor's own adaptation (chunking, staged sections, learned output ceilings, retries), the agent's own connection writes that checkpoint; if no model can, deterministic decay of re-runnable tool results frees room; only then does the run stop recoverably |
+| Compaction failure with no room left (at the hard limit, or after a provider context-overflow rejection) | Provider-originated failures recover like any provider request; a local fault (for example a checkpoint that still does not fit) needs attention with a compaction-specific action |
 | Faulty clipboard-image capture | Exclude only the missing/empty/invalid image, preserve the original text and reference evidence, report the exact exclusion and continue with usable attachments |
 | Tool panic (uncertain effects) | Tool error result telling the model to inspect affected state; later serial siblings of that batch are skipped; the run continues |
 | Agent or child runtime panic | Preserve safe boundaries and pause for reconciliation; keep the root input service usable |
@@ -99,6 +101,74 @@ as an HTTP 408 JSON response even when Crude is using Chat Completions. Typing
 only a Responses SSE disconnect event does not cover that path. Such a
 misclassification parks without a deadline; the five-minute ceiling cannot wake
 an attention state that never scheduled an automatic wait.
+
+## Runtime invariants
+
+- `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
+  exhaustion, deadlines, truncation, loop guards, missing reports and panics are
+  not natural completion or permission to kill a task. Recover transient outages;
+  park configuration, guidance, storage and unavoidable compaction failures with
+  an actionable Needs attention state. A compaction failure that leaves room for
+  the next request is deferred, never a stop: cheap or unstable compaction
+  models must not halt a run that can still make requests. Only natural finish or explicit user/parent
+  lifecycle may settle work. Preserve safe canonical boundaries; never replay
+  accepted stochastic output, historical tool effects or existing commands.
+- **The agentic loop is sacred.** Tool-level failures never end a run: ownership
+  scope/conflict rejections, write-lease races, tool panics (uncertain effects,
+  later serial siblings skipped) and guidance read failures for a batch are tool
+  error results the model handles. Only run-level faults (provider permanence,
+  configuration, storage, compaction, guidance compile, agent panic, exhausted
+  corrective/bounded recovery) stop a run. Never reintroduce a typed tool error
+  that parks or waits.
+- **A stopped child is never a dead end.** Every child `NeedsAttention` — parked
+  or waiting in place — notifies its parent at the point the incident is
+  actionable (`Supervisor.Attention` for waits, `parkRecovery` for parks) with
+  the exact `recovery_id`/`recovery_generation` and controls. `agent_inspect`,
+  `agent_list` and `agent_wait` expose the open incident (`agent_wait` ends with
+  `needs_attention`). The parent continues or cancels it with `agent_control`
+  `continue`/`cancel` + recovery identity, offline or not; human Retry/Stop use
+  the same `RetryRecoveryFor`/`CancelRecoveryFor`, which return reasons and are
+  shown in the TUI — never a silent no-op. A cancelled parked child notifies its
+  parent. `ResumeRecovery` reports every refusal; run-bound claims of the
+  interrupted attempt are released by runtime takeover and never block it.
+  Parked recovery is published only after old-attempt cleanup releases its run,
+  manager, claims, connection, DB and runtime attachment. Fence its in-place wake
+  slot as teardown-only before parking; an immediate Continue must not race
+  deferred cleanup or inherit a run still owned by the interrupted attempt.
+- `sessiondb` retains exact pending input, owner/generation, archive and active
+  context through one durable recovery checkpoint. Transcript, turn ledger and
+  collaboration settlement must succeed before acknowledging natural completion.
+  Finished parallel leaves checkpoint while siblings run, including native batches;
+  completed results receive their stable message IDs before their first checkpoint.
+  Evolving native-batch evidence lives in `RecoveryCheckpoint.InFlightTools`, not
+  the immutable active-message prefix. Completion clears only its exact evidence;
+  passive interruption preserves finished leaves and marks the remainder unknown.
+  missing crash outcomes are unknown, never fabricated user cancellations.
+  Preflight-blocked inputs keep their DB even without transcript rows. Pending
+  children restore as actionable review surfaces, not completed or invisible work.
+  Resume remains passive; explicit
+  Continue run or `/retry` fences the exact incident/generation and must not
+  consume drafts, switch another tab or restart old effects. Stop must also work
+  for parked/interrupted work without an active collaboration run.
+- `sessiondb.PublishContext` is the revision-fenced runtime publication owner.
+  Root writers serialize durable publication and live installation under
+  `msgsMu`; checkpoints retain every committed source message, finalization
+  cannot roll back a newer admission, and complete tool rounds never regress
+  partial checkpoints. No root write buffer or child whole-transcript replacement
+  writer remains. Original input, successful immutable preparation and the
+  initial supervisor checkpoint commit before a receipt. Closing rejects new
+  reservations and preserves prepared input without enqueueing execution.
+  Stopped children use current authoritative context and retain newer facts;
+  parent mirrors/results are separately checked, never silently acknowledged.
+  Root and child checkpoints reconcile exact late lifecycle controls and
+  journal-admitted human steering with its immutable preparation suffix.
+  Runtime-note receipts commit before one complete batch checkpoint, never after
+  checkpointing reserved notes that a failed admission would try to remove.
+- `retry/` owns every Crude-managed automatic cooldown. Exponential math
+  saturates safely and cancellation is prompt; **five minutes is the absolute
+  per-wait maximum**, including Retry-After and millisecond/date hints. A server's
+  24-hour hint must never cause an hours-long local retry sleep. Request/job
+  attempt budgets and successful maintenance cadence remain separate.
 
 ## Shared cooldown contract
 
@@ -224,6 +294,36 @@ with its accepted transcript and own incident; child mirror incidents do not
 appear in the root chat. A prior attempt's final report remains evidence and cannot
 satisfy a replacement collaboration run's deliverable.
 
+## Provider failure classification
+
+- **Provider failure classification requires positive evidence of permanence,
+  never of transience.** `provider.Classify` is the one authority:
+  `FailurePermanent` (auth/permission/quota/validation/unknown-model status or
+  code, identified param, retry veto, certificate, unparseable endpoint,
+  oversized response) waits for a human; `FailureUnrecognizedVerdict` (a provider
+  error object with no recognizable type/code/status) is never fast-retried and
+  gets five supervised automatic attempts, then attention saying recovery
+  stopped; everything else — including disconnect shapes nobody has seen — is
+  `FailureTransient` and recovers automatically with countdown and Retry now.
+  Never reintroduce a transient allowlist whose miss defaults to "configuration":
+  it parked Hannah on `http2: client connection lost`. A failed read of an
+  established body while the caller still waits is typed at the stream boundary
+  as `StreamInterruptionTransport`. Local agent faults carry explicit failure
+  kinds so this provider policy never applies to them; compaction recovers
+  automatically only for provider-originated failures.
+- Shared HTTP recovery uses status evidence, not generic error-envelope labels:
+  `invalid_request_error` must not turn 408/429/5xx into a permanent settings
+  fault. Specific auth/quota/validation evidence and explicit retry vetoes remain
+  non-retryable. Test every registered protocol plus real root/child timer expiry;
+  an SSE-only adapter test does not cover a gateway's HTTP JSON rejection.
+- Established-stream errors use the shared `provider.streamErrorDecoder` for
+  Chat Completions, Responses/Codex, Anthropic SSE and Ollama NDJSON. A gateway
+  may translate an upstream disconnect into any of these wires, including a
+  string error. Recognize narrow typed/observed disconnect evidence at the stream
+  boundary, not arbitrary diagnostic prose in global retry policy. Preserve
+  auth/quota/validation and retry vetoes; accepted output requires semantic
+  continuation, never stochastic replay or execution of partial tool arguments.
+
 ## Presentation and interaction
 
 One ID-keyed incident row is updated through Recovering, Needs attention,
@@ -288,6 +388,23 @@ private timer, or optimistic lifecycle state is used for the row.
 See [network transport](network.md) for secure remediation of routing/TLS issues,
 [chat activity](chat-activity.md) for transcript contracts, and
 [workspace collaboration](workspace-collaboration.md) for exact lifecycle controls.
+
+## Incident presentation
+
+- Recovery uses one compact, expandable incident row. Automatic transport/DNS
+  recovery needs no `/retry`; a real countdown and exact-owner `(Retry now)`
+  action can shorten its cooldown. A red square blinks on the shared activity
+  clock only during recovery, with stable measured width. Expansion shows the
+  full neutral diagnostic and muted guidance without rewrapping on clock ticks.
+  Waiting for attention never animates fake work. Live and hydrated projection,
+  copy/selection, timestamps and explicit cancellation must agree.
+- A deadline-free recovering acknowledgement is an active replacement attempt,
+  not another cooldown. Its retained incident must never overwrite subsequent
+  upload/wait/thinking/response phases during inventory or activity projection.
+  Paint it as a static, muted Run resumed boundary, not a blinking red Recovering
+  row above tools already executing; keep its unfinished checkpoint and evidence.
+  Resolve the live attention issue on acknowledgement, retain Notices history,
+  remove duplicate Continue actions, and let explicit Stop outrank the incident.
 
 ## Regression acceptance
 

@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS agent_output_limits (
  );
  CREATE TABLE IF NOT EXISTS response_media_replay_limitations (
   provider_scope TEXT PRIMARY KEY, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS connection_concurrency_refusals (
+ provider_scope TEXT NOT NULL, account_id TEXT NOT NULL, model_id TEXT NOT NULL,
+ updated_at INTEGER NOT NULL,
+ PRIMARY KEY(provider_scope, account_id, model_id)
 );`
 
 const modelCatalogRefreshInterval = 6 * time.Hour

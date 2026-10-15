@@ -118,6 +118,65 @@ Terminal-owned keys remain PTY input. Pane commands do not bypass a modal
 decision. Main-resource pop-out/floating-window composition remains deferred;
 existing floating dialogs and terminals retain their own contracts.
 
+## Agent tab close is minimize, not terminate
+
+Closing an agent tab **minimizes** it: the shell's `AgentView` hides it, the window
+tab goes away, and nothing else changes. The orchestrator keeps streaming,
+the conversation, panes, chat projections, scroll offsets, and session
+ownership are all retained. A stray click must never destroy work in flight.
+
+- `App.MinimizeAgent` / `RestoreAgent` change only that shell's exact-node
+  visibility map; `AgentView.IsHidden()` also checks
+  ancestors. Minimizing a root hides its subtree without overwriting archived
+  child choices. Restoring it returns previously open children, while completed
+  review children remain closed. Explicitly opening a nested child reveals its
+  ancestor path and leaves archived siblings closed.
+- `AgentTabViews()` filters effectively hidden nodes, so `syncAgentWindowTabs` cannot
+  resurrect a minimized tab, and `purgeStaleAgentTabs` closes one that
+  lingers.
+- Initial tabs for each session put its main agent before visible descendants.
+  Background sync preserves deliberate user order and group selections; new
+  children belong with their parent rather than another focused empty pane.
+  Resumed completed children are
+  retained in the Agents panel as closed review surfaces, never mass-opened.
+- **`AgentMgr.Count()` vs `AgentView.VisibleCount()`**: shell gates choosing between
+  launcher / chat / editor must use the latter, otherwise a workspace
+  whose agents are all minimized shows an empty chat instead of the
+  launcher. `Count()` stays the true total for the aggregate status report and
+  the Agents rail badge. The footer remains a quiet system-level utility rail;
+  provider waits and tool-specific lifecycle detail live in the active header
+  and chat timeline.
+- Restoring: the Agents panel lists minimized agents with a `minimized`
+  detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
+  on its own so every path back works.
+- Terminating is explicit: `terminateAgent` (tab and Agents-panel context
+  menus) still cancels the turn, stops the orchestrator, and drops state.
+  `cleanupAgent` remains the destructive path; do not wire it to tab close.
+- Guarded by `tui/viewmodel/agent_minimize_test.go`.
+
+## New agents surface a tab immediately
+
+Creating or restoring an agent **must add its window tab and make it the
+painted main view even while editor tabs are open**. A stray early return
+in `syncAgentWindowTabs` when `EditorState.ActiveView != ""` used to skip
+`OpenTab` entirely: New Agent created the session in `AgentMgr`, but the
+tab bar stayed on the editors until every editor tab was closed and the
+next tick finally synced.
+
+- `syncAgentWindowTabs` always creates/updates/purges **visible** agent
+  tabs, including while an editor is showing. Minimized agents still get
+  no tab (`AgentTabViews` filters `Hidden`).
+- Tick and other background callers must not steal the editor: `OpenTab`
+  activates the new tab, so when an editor is the painted view the sync
+  restores that editor as the window's active tab **without**
+  `handleTabSwitch` (which would clear `ActiveView`).
+- Explicit user actions — New Agent / `launcherNewSession` /
+  `AddOrchestrator` / restore / `switchToAgentView` — call
+  `activateAgentWindowTab` after sync so the agent becomes the selected
+  tab and `handleTabSwitch` clears `ActiveView`. Do not call that helper
+  from the tick path.
+- Guarded by `tui/viewmodel/agent_new_session_focus_test.go`.
+
 ## Git and local comparisons
 
 The Git **Changes** review (every changed file, or one commit, stacked in one
@@ -165,3 +224,20 @@ labels or multi-selection behavior. Preparation runs off Update; workspace,
 group, manager and request identities fence installation. A newer live buffer
 wins over prepared disk bytes. See the recorded measurements in
 [performance baselines](performance-baselines.md).
+
+## Rail, Git and Memory destinations
+
+- Rail destinations are Files, Agents, Skills and MCP; Terminals and Git have no
+  rail identity. Git is the `gitpanel` bottom-dock destination (footer pill,
+  `Ctrl+Alt+G`); its multi-file `gitreview` main tab and the panel preview
+  share one `gitdiff.Document` and one prepared change set
+  (`prepareGitChanges`, re-derived only while a Git view is visible). Each
+  review is its own main tab (`gitReviews`, keyed by tab, per-instance
+  component IDs); never return to a single replaced review screen. Commit
+  messages are drafted by the Aeron role via `Workspace.PrepareCommitMessageWriter`
+  (configuration read on the update goroutine, streaming I/O in the background). Workspace Memory is a retained footer panel shared with
+  `/memory`/palette, never a second floating overlay or session PanelDeck.
+- Git comparisons are typed main tabs, prepared off the UI goroutine. Index
+  mutations require reviewed bytes; sidebar context actions open review instead
+  of bypassing it. Discard requires exact preview + mandatory Local History
+  safety recovery and never deletes untracked data.

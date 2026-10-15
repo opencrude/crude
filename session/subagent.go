@@ -344,6 +344,7 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 			return tools.ToolResult{}, err
 		}
 	}
+	keepChildCoordinationTools(&spec)
 	if err := validateChildReportPermission(spec); err != nil {
 		return tools.ToolResult{}, err
 	}
@@ -356,9 +357,18 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	if categoryCfg := activeConfig.GetCategoryConfig(spec.Category); categoryCfg.Enabled != nil && !*categoryCfg.Enabled {
 		return tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
 	}
-	identity, err := allocateAgentName(r.session.nameHome)
-	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
+	identity := ""
+	if chosen := getStrParam(params, "nickname"); strings.TrimSpace(chosen) != "" {
+		var err error
+		if identity, err = validChildName(chosen); err != nil {
+			return tools.ToolResult{}, err
+		}
+		identity = r.distinctChildName(ctx, identity)
+	} else {
+		var err error
+		if identity, err = allocateAgentName(r.session.nameHome); err != nil {
+			return tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
+		}
 	}
 	spec.Name = identity + " sub " + r.session.AgentName()
 	if callID, _ := ctx.Value(agent.SubAgentToolCallIDKey{}).(string); callID != "" {
@@ -472,6 +482,9 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 	spec.Model = resolvedModelName
 	spec.ThinkingEffort = resolvedThinkingEffort
+	if spec.ServiceTier == "" {
+		spec.ServiceTier = categoryCfg.ServiceTier
+	}
 	p, err := cfg.providerForCategory(childProviderConfig(spec))
 	if err != nil {
 		return nil, fmt.Errorf("sub-agent account %q: %w", spec.AccountID, err)
@@ -558,12 +571,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if cfg != nil {
 		a.CommandPolicy = safety.CommandPolicyFromSettings(cfg.Safety)
 	}
-	if spec.ContextCompactionPercent != nil {
-		a.ContextCompactionPercent = *spec.ContextCompactionPercent
-	}
-	if spec.ContextRetentionTokens != nil {
-		a.CompactionRetentionTokens = *spec.ContextRetentionTokens
-	}
+	a.ContextCompactionPercent = agent.CompactionPercentSetting(spec.ContextCompactionPercent)
+	a.CompactionRetentionTokens = agent.RetentionSetting(spec.ContextRetentionTokens)
 	a.AgentID = spec.ID
 	a.TurnGeneration = 1
 	a.Depth = spec.Depth
@@ -656,20 +665,37 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		handle.Spec = spec
 		a.WorkDir = spec.ExecutionRoot
 		a.GuidancePaths = slices.Clone(spec.FileOwnership)
-		if err := r.fileOwnership.PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
-			return nil, err
-		}
-
 		if len(spec.FileOwnership) > 0 {
-			if _, err := store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
+			// Delegating a file the parent itself holds hands that claim to the
+			// child in the same transaction instead of failing the launch.
+			acquired, err := store.AcquireDelegatedClaims(ctx, collaboration.AcquireClaimsRequest{
 				AgentID: string(spec.ID), RunID: run.ID, RequestID: spec.ParentToolCallID, Paths: spec.FileOwnership,
-			}); err != nil {
+				DelegatorID: string(spec.ParentID),
+			})
+			if err != nil {
 				r.fileOwnership.Release(spec.ID)
 				if subDB != nil {
 					_ = subDB.Close()
 				}
+				if errors.Is(err, collaboration.ErrConflict) {
+					return nil, fmt.Errorf("reserve workspace child ownership: %w. Nothing was launched; choose file_ownership paths no other agent holds, or coordinate with the holder first", err)
+				}
 				return nil, fmt.Errorf("reserve workspace child ownership: %w", err)
 			}
+			if len(acquired.Transferred) > 0 {
+				transferred := make([]string, 0, len(acquired.Transferred))
+				for _, claim := range acquired.Transferred {
+					transferred = append(transferred, claim.Path)
+				}
+				r.fileOwnership.ReleasePaths(spec.ParentID, transferred)
+				r.session.logger.Info("SUBAGENT", "claims_delegated", "agent_id", spec.ID, "parent_id", spec.ParentID, "paths", strings.Join(transferred, ","))
+			}
+		}
+		// Publish the local projection after the durable hand-over. A failure
+		// here aborts the launch; finishing the aborted run releases the child's
+		// claims, and the parent re-acquires any transferred path on its next write.
+		if err := r.fileOwnership.PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
+			return nil, err
 		}
 	} else {
 		// Standalone explicit shared sessions create no managed artifact or
@@ -1027,12 +1053,8 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		live.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 	}
 	live.CommandPolicy = safety.CommandPolicyFromSettings(cfg.Safety)
-	if spec.ContextCompactionPercent != nil {
-		live.ContextCompactionPercent = *spec.ContextCompactionPercent
-	}
-	if spec.ContextRetentionTokens != nil {
-		live.CompactionRetentionTokens = *spec.ContextRetentionTokens
-	}
+	live.ContextCompactionPercent = agent.CompactionPercentSetting(spec.ContextCompactionPercent)
+	live.CompactionRetentionTokens = agent.RetentionSetting(spec.ContextRetentionTokens)
 	live.AgentID, live.TurnGeneration = spec.ID, parentCheckpoint.Status.Generation
 	live.Depth, live.ParentID, live.Policy = spec.Depth, spec.ParentID, spec.Policy
 	r.session.bindAgentPermissionPolicy(live)
@@ -1453,6 +1475,27 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 		return err
 	}
+	// The child's background checkpoint preparation spans every attempt of
+	// this loop and stops with it; its spend is recorded like any request.
+	precompaction := agent.NewPrecompactionSlot(ctx, func(evt agent.AgentEvent) {
+		evt.AgentID = string(handle.Spec.ID)
+		if evt.Type == "usage" {
+			r.session.processUsageEvent(evt.Data, handle.Spec.Model, evt.AgentID, string(handle.Spec.ParentID))
+			if handle.DB != nil {
+				if record, ok := sessiondb.UsageRecordFromEvent(evt.Data, handle.SessionID, evt.AgentID, string(handle.Spec.ParentID), handle.Spec.Model); ok {
+					if record.AccountID == "" {
+						record.AccountID = handle.Spec.AccountID
+					}
+					_ = sessiondb.UpsertUsageRecord(handle.DB, record)
+				}
+			}
+		}
+		if r.sender != nil {
+			sendRuntimeEvent(r.sender, evt)
+		}
+	})
+	defer precompaction.Close()
+	handle.Agent.Precompaction = precompaction
 	for {
 		if handle.DB == nil {
 			if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, errors.New("child database is unavailable"))) {

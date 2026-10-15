@@ -21,6 +21,9 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 	if strings.HasPrefix(in.CommandID, "execution.") {
 		return a.prepareControlExecution(in, owner)
 	}
+	if strings.HasPrefix(in.CommandID, "capabilities.") {
+		return a.prepareControlCapabilities(in, owner)
+	}
 	if in.CommandID == "settings.fields" {
 		return a.prepareControlSettingsFields(in)
 	}

@@ -115,18 +115,24 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    upload is past 90 percent, accepted, or streaming output, notes retain the
    normal next-request behavior. A queued note is rechecked if the transport
    starts another upload attempt with the old body.
-2. Bound the configured percentage by the main model's normal response and
-   safety reserves. Extraction plans each request independently against the
+2. Decide when to compact with the adaptive policy below (or the user's
+   explicit percentage, bounded by the main model's normal response and
+   safety reserves). Extraction plans each request independently against the
    resolved Aeron connection's capacity; a small extraction model uses smaller
    source chunks instead of forcing early compaction of a larger main model.
 3. Persist the exact source before any extraction. A fitting source shares its
-   immutable prefix across the four extraction requests. Oversized sources use
+   immutable prefix with the conversation's cached prefix. Oversized sources use
    chronological fragments;
    individual large messages and tool arguments/results are split on Unicode
    code-point boundaries without deleting their text. Every fragment includes
    source role, origin, and tool-result identity as data, not instructions.
-4. Extract each of the four stages from all source chunks, then merge that
-   stage's fragments. The selected model's configured reasoning remains active
+4. Extract all four sections (intent, work, state, continuation) in one
+   combined request that reads the source once. A section the model omits, a
+   truncated response, an output cap the provider over-advertises, or a
+   rejected request shape falls back to extracting the missing sections one at
+   a time on the same compaction model; that fallback is learned per
+   connection and model (`combinedCompactionWorks`). Each section extraction
+   runs over all source chunks, then merges its fragments. The selected model's configured reasoning remains active
    on every extraction request. The response allowance follows its model output
    capability and each request's available context, including hidden reasoning;
    it is independent of checkpoint text length. On truncation, the extractor
@@ -152,9 +158,10 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    remaining context after its system prompt and tool schemas. There is no
    independent 16K checkpoint ceiling or fixed per-stage quota. A complete
    extraction that exceeds the remaining space is refined with the same model;
-   verbatim recent human input is retained up to the resolved agent setting
-   (20,000 estimated tokens by default, configurable from 1,000 to 200,000),
-   then further bounded by whatever continuation space actually remains. Answered
+   older verbatim human input is retained newest-first up to the size of the
+   checkpoint itself (an explicit agent setting of 1,000 to 200,000 estimated
+   tokens replaces that bound), then further bounded by whatever continuation
+   space actually remains. Recent turns stay verbatim as the tail (below). Answered
    human requirements use the same limit inside their marked context-only history
    block. Oversized individual
    inputs are represented in the checkpoint rather than retained unboundedly
@@ -209,8 +216,8 @@ the active context transactionally and starts a fresh transport chain. Context
 admission and reported usage always use full inherited context, not delta bytes.
 
 `ContextCompactionPercent: 0` still disables automatic pressure and overflow
-recovery; manual `/compact` uses the same extractor. Four lifecycle stages stay
-four stages; chunk progress is additional truthful detail within a stage.
+recovery; manual `/compact` uses the same extractor. Checkpoints keep four
+sections whether they were extracted together or one at a time; chunk progress is additional truthful detail within a stage.
 The chat boundary and the agent activity strip report the same operation:
 while manual compaction is active, its progress replaces the paused turn's
 plan activity; after success the strip says the context is ready to continue.
@@ -259,6 +266,213 @@ model used high reasoning, consuming much of that response allowance before
 the work stage returned `length`. The former workaround disabled thinking;
 that quality regression has been removed. Request capacity and checkpoint size
 are now calculated separately, preserving the user's selected reasoning mode.
+
+## Request boundaries and provider replay
+
+Responses delta uploads and inline-image replay recovery are specified in
+[prompt architecture](prompt-architecture.md#responses-delta-uploads).
+
+- Wire/model/account/config switches are ordinary request boundaries. Preserve
+  the canonical transcript and exact tool identities; the destination adapter
+  owns schema-valid projection and only outgoing opaque replay is filtered.
+  Never clear history, force a producing protocol, or add transport-level tool
+  vetoes for forms an adapter can encode. Cold transition requests are expected;
+  unchanged subsequent projections must preserve their warm prefix. Guard every
+  registered protocol pair through resume, real tool loops and compound settings
+  changes, not only empty-session protocol switches.
+- Provider-reported request input is the context authority. Project the next
+  request from that baseline plus reported completion and semantic local deltas;
+  fallback estimation is `ceil(runes/4)` over canonical content, never stream
+  envelopes or repeated provider-item wrappers.
+- Completed provider replay metadata is canonicalized before estimation,
+  persistence, replay, and logging. OpenAI reasoning fragments merge once;
+  signed or encrypted protocol blocks remain byte-exact.
+- Opaque replay state is bound to the producing provider endpoint/protocol and
+  exact request prefix. Request-local filtering never mutates the transcript:
+  cross-provider or changed-prefix turns omit opaque reasoning, while a model
+  switch on the same provider preserves it for the provider's documented
+  compatibility check. Compaction summarizes visible/tool state only and never
+  attempts to inspect ciphertext.
+- Established partial stream interruptions never replay a stochastic request. Commit
+  canonical partial assistant output and append one hidden continuation request;
+  if tool-call construction was interrupted, execute none of those calls, drop
+  malformed protocol fragments, and ask the model to issue complete calls from
+  scratch. Upload/header stalls may retry the original request because no model
+  output was accepted.
+- Provider-reported output-parameter ceilings are distinct from context-window
+  errors. A typed 400/422 naming the exact sent output token value and valid
+  upper bound reduces that stage's allowance, not its source or thinking mode.
+  App-wide `model-catalog.db` retains the lowest confirmed ceiling keyed by
+  Aeron agent profile, provider endpoint/protocol, account, and model across
+  new sessions/workspaces and restarts, expiring after seven days. Never tie
+  this learned transport capacity to one session DB or retry a known-invalid
+  output request for every stage. Recursive source reduction still recomputes
+  the response room for each smaller request under the learned ceiling.
+
+## When to compact: adaptive policy and background preparation
+
+`agent/precompaction.go` owns the decision; there is no fixed fullness default.
+
+- **Physical.** The next request must fit the window with the model's full
+  output allowance and safety reserve (the hard limit). Reaching it, or a
+  provider context-overflow rejection, requires a checkpoint before sending.
+- **Economic (default).** With catalog prices for the main and compaction
+  models, each accepted request adds the share of its input spend that a
+  checkpoint would have removed. Compaction is due when that accumulated
+  excess reaches the price of compacting (extraction plus the cold cache of
+  the next request): the ski-rental rule, never worse than twice the best
+  choice made with hindsight. Learned compaction cost and checkpoint size
+  replace the first estimate. Unknown prices count only uncached tokens, and
+  missing cache reporting is read as cached, so missing data never compacts
+  sooner. The planner lives in the agent's precompaction slot, so short human
+  turns accumulate across runs.
+- **Explicit.** A user percentage is a boundary: past it the next request
+  waits for a checkpoint. `0` disables automatic compaction.
+- **Preparation leads.** Background preparation starts halfway to the trigger
+  (a quarter of the excess, halfway in tokens for capacity and explicit
+  percentages) and runs while the agent keeps working, at most one job per
+  agent. A ready checkpoint is adopted when the trigger fires; in adaptive
+  mode it is adopted as soon as the accumulated excess covers the cold cache
+  of the next request, because its extraction is already paid. The job lives
+  in a slot owned by the session (roots) or the child loop, so it survives the
+  end of a run and the next run adopts it when its source is still the start
+  of the context (`contextDigest` over message identities). A connection
+  that refused concurrent requests (learned in `model-catalog.db`) compacts
+  synchronously instead.
+- **What is adopted.** The fresh system prompt and tools, the checkpoint of the
+  older context, a refreshed runtime continuity handoff, and the recent turns
+  verbatim. `verbatimTailCut` keeps the current and previous human turns,
+  else recent tool rounds, never more than the part being summarized, and
+  never splits a tool call from its result. Re-runnable tool results older
+  than the latest round in that tail (file reads, searches, listings, web
+  pages, async output) become one-line stubs that say how to fetch them
+  again (`decayVerbatimTail`); command output, edits and external results stay
+  verbatim. Decay happens only at a checkpoint, where the cached prefix is
+  rebuilt anyway.
+- **Survival.** Background failures back off exponentially and never block.
+  The capacity margin is the largest step growth since the last checkpoint,
+  so one large paste cannot keep the agent near capacity. At capacity, after
+  the compaction model's adaptive handling (chunking, staged sections,
+  learned output ceilings, retries) has failed because the connection is
+  unavailable (credentials, missing model, outage), the agent's own
+  connection writes that one checkpoint; if no model can, deterministic decay
+  of the whole context frees room. Only when none of these fits does the run
+  stop, recoverably.
+- **Visibility.** Preparation is reported as `context_precompaction`
+  (`started`, `progress`, `ready`, `failed`); the agent header shows
+  "checkpoint…" or "checkpoint ready". Adoption emits the normal compaction
+  boundary with trigger `background` (or `decay`).
+
+## Compaction operations
+
+- Automatic and manual compaction use the resolved Aeron category model for
+  a combined no-tools extraction of four sections (intent, work, state,
+  continuation) over one immutable durable source, falling back to one request
+  per section when needed. Fitting sources share the cached prefix; oversized
+  histories or individual tool inputs/results use complete chronological,
+  origin-attributed text fragments and bounded model-backed chunk-and-reduce,
+  never oldest-history deletion. Each fragment repeats its source role/origin
+  and tool-result identity instead of sending orphan protocol calls.
+  The retained boundary records the actual model and real chunk progress.
+  Context windows are connection-scoped when explicitly configured; ordinary
+  pressure reserves normal output and includes runtime notices before admission.
+  Every extraction request plans against its own model's available context.
+  Provider-confirmed overflow retries only after checkpoint reduction; extraction
+  shrinks its input budget on provider evidence. Preserve the configured thinking
+  mode during extraction: hidden reasoning counts toward the response allowance,
+  so checkpoint text size must never cap generation. Use the actual available
+  continuation space for checkpoint size; refine complete sections if necessary.
+  A truncated extraction reduces and reprocesses the complete source in smaller
+  regions; never replay the identical exhausted request or install a partial
+  checkpoint. Bounded genuine-input retention and continuation capacity are
+  validated before installation.
+  Models emit terse plain text; Crude escapes and wraps the four bodies in one
+  deterministic XML checkpoint. Retry only the current stage, at most three
+  recoveries; cancellation never retries. Previous-generation archival,
+  checkpoint installation, and terminal operation state commit atomically.
+  The exact source context is durable before extraction starts, including
+  in-flight turn state. Failure, cancellation, or pre-commit crash leaves that
+  source authoritative.
+- Automatic compaction is best-effort while the next request still fits. Below
+  the hard limit (window minus the normal output reserve and safety reserve), a
+  failed attempt, or a checkpoint that does not leave room for a response, keeps
+  the full context, emits a deferred `context_compaction_failed` boundary, and
+  continues; the next attempt waits until the context grows by the largest
+  step growth seen since the last checkpoint (at least 2% of the window). A checkpoint that reduces the
+  context but stays above the threshold is committed and defers the next attempt
+  the same way. Only provider context-overflow evidence or reaching the hard
+  limit makes a compaction failure stop the run.
+- Compaction presentation is one retained, operation-ID-keyed context-boundary
+  table on the normal chat background with full-bleed top/bottom rules using
+  the active-rail accent color. It shows
+  real stage units, never fabricated completion percentages. Active, retrying,
+  completed, cancelled, failed, and resumed-interrupted forms share geometry;
+  generic turn cleanup must never consume these durable operation rows.
+- Manual compaction is a separate exact-ID operation after a completed/stopped
+  model turn, never permission to reactivate old output. Connected composers
+  queue input durably with replicated pending rows; dequeue, context and recovery
+  commit atomically before execution. Stop preserves the queue, cold resume is
+  passive, and queue-only sessions are not empty. Core capacity/receipt checks
+  precede owner preparation; shutdown cancels extraction before joining workers
+  and mirrors final session metadata without reading a closed SQL handle.
+- Context-boundary tables are ordinary chat content for interaction: native
+  rows, full-bleed rules, and body cells all participate in drag selection,
+  clipboard copy, hover/hit testing, and row context menus. Their distinct
+  visual treatment must never create a second opaque interaction path.
+
+## Continuity handoff
+
+- Message origin and visibility, not provider role or string prefixes,
+  distinguish human/BTW input, runtime context, continuation controls, child
+  wakes, assignments, and checkpoints. Runtime or memory data is never
+  attributed as human intent.
+- A compacted context ends with one fresh code-authored `runtime_context`
+  handoff. It states that compaction is not a new user turn, carries the latest
+  durable human-turn state, current plan, session/model/account/capability
+  selection, child identities/statuses, and command-owner snapshots. Extraction
+  may describe those facts but never owns them. Refresh the handoff after all
+  extraction stages because commands and children may settle during compaction.
+- Retain a verbatim human tail as input only for a request that is still
+  pending. If a later terminal assistant answer already completed the latest
+  human request, never append it as a pending user turn (the next invocation
+  would answer it again); carry those requests verbatim in one code-authored,
+  context-only `<answered_human_requests>` history block so their requirements
+  stay binding without being re-answered. A child's latest assignment may use
+  all available continuation space, not only the recent-input cap; only an
+  assignment that cannot fit at all is left to extraction.
+- In-run automatic compaction rebuilds the continuation system message from the
+  current guidance render. Guidance updates admitted during the run live in
+  runtime messages that the checkpoint replaces; never continue on the run's
+  initial render.
+- Async continuity uses exact owner data: handle, command, cwd, PID, start time,
+  running/terminal status, terminal exit only when known, total output bytes,
+  and the last observed byte cursor. Taking a continuity snapshot must not read
+  output, advance a cursor, signal a process, restart a command, or treat a
+  running command as exit zero. Compaction preserves and observes existing
+  handles; it never relaunches work to rediscover state.
+- New-format resume is passive: restore exact per-agent active context and turn
+  state, mark interrupted work, issue zero provider calls, and restart zero
+  children. Existing development sessions have no compatibility path.
+- Root checkpoints preserve human intent and child-result ownership; child
+  checkpoints preserve assignment, policy, file ownership, evidence, and the
+  `publish_report` obligation. Compaction requests never enter memory extraction.
+
+## Memory jobs and shutdown
+
+- Memory extraction and maintenance are session-owned cancellable jobs. Closing
+  cancels and joins them before the workspace DB closes, without launching new
+  provider work. Durable turn mirrors finish, and pending extraction watermarks
+  recover on next startup, including a resume of the same session.
+- Workspace memory and the session registry are mandatory session dependencies.
+  `CreateSession`/`ResumeSession` retry a transient workspace-DB startup failure
+  and wire the recovered store before returning; never launch an agent with a
+  nil memory store and a merely logged `db_open_failed` warning.
+- Turn finalization writes its one batched transcript mirror synchronously on the
+  off-UI orchestrator goroutine before releasing the turn. Never register a
+  flush WaitGroup after observers may already be waiting; that races shutdown,
+  manual compaction, and persistence acceptance tests.
+- Async output length and cursors are owner facts, not permission to read the
+  bytes during continuity or compaction. Snapshotting never drains output.
 
 ## Harness research and decisions
 

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"database/sql"
 	"math/big"
 	"path/filepath"
 	"regexp"
@@ -84,14 +85,14 @@ func TestAgentNamePoolUniqueAndUnlimited(t *testing.T) {
 	}
 }
 
-func TestAgentNameAllocatorIsDurableAndConcurrent(t *testing.T) {
+func TestAgentNameAllocatorIsDurableConcurrentAndShuffled(t *testing.T) {
 	home := t.TempDir()
 	first, err := allocateAgentName(home)
-	if err != nil || first != "Jeff" {
+	if err != nil || first == "" {
 		t.Fatalf("first=%q err=%v", first, err)
 	}
 	second, err := allocateAgentName(home)
-	if err != nil || second != "Tom" {
+	if err != nil || second == "" || second == first {
 		t.Fatalf("reopened allocator=%q err=%v", second, err)
 	}
 	names := make(chan string, 80)
@@ -109,18 +110,61 @@ func TestAgentNameAllocatorIsDurableAndConcurrent(t *testing.T) {
 	waitGroup.Wait()
 	close(names)
 	seen := map[string]bool{first: true, second: true}
+	inOrder := 0
 	for name := range names {
 		if seen[name] {
 			t.Fatalf("reused name %q", name)
 		}
 		seen[name] = true
 	}
-	if len(seen) != 82 || !seen[agentFirstNames[64]] || seen["Jeff 2"] {
+	for position := 0; position < 82; position++ {
+		if seen[agentNameAt(big.NewInt(int64(position)))] {
+			inOrder++
+		}
+	}
+	if len(seen) != 82 {
 		t.Fatalf("durable concurrent pool: %d names", len(seen))
 	}
+	// The single-name tier is a permutation, so all 82 are given names; they
+	// must not simply be the first 82 catalog entries.
+	if inOrder == 82 {
+		t.Fatal("allocation walks the catalog in order instead of shuffling")
+	}
+	db, err := sql.Open("sqlite", filepath.Join(home, ".crude", "agent-names.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key []byte
+	if err := db.QueryRow("SELECT key FROM name_key WHERE id=1").Scan(&key); err != nil || len(key) != 32 {
+		t.Fatalf("installation key=%x err=%v", key, err)
+	}
+	_ = db.Close()
 	reopened, err := allocateAgentName(home)
-	if err != nil || reopened != agentNameAt(big.NewInt(82)) {
+	if err != nil || reopened != shuffledAgentName(big.NewInt(82), key) {
 		t.Fatalf("reopened sequence: %q, err=%v", reopened, err)
+	}
+}
+
+func TestShuffledNamesAreABijectionOfEachTier(t *testing.T) {
+	key := []byte("fixed test key for permutations")
+	for _, size := range []int64{2, 3, 528, 1000, 4099} {
+		seen := make(map[int64]bool, size)
+		for value := int64(0); value < size; value++ {
+			permuted := permuteBelow(big.NewInt(value), big.NewInt(size), key, 1)
+			if permuted.Sign() < 0 || permuted.Int64() >= size || seen[permuted.Int64()] {
+				t.Fatalf("size %d: %d -> %s is not a bijection", size, value, permuted)
+			}
+			seen[permuted.Int64()] = true
+		}
+	}
+	huge := new(big.Int).Exp(big.NewInt(10), big.NewInt(200), nil)
+	names := make(map[string]bool)
+	for offset := int64(0); offset < 64; offset++ {
+		name := shuffledAgentName(new(big.Int).Add(huge, big.NewInt(offset)), key)
+		if names[name] || len(strings.Fields(name)) < 3 {
+			t.Fatalf("huge-tier name %q is invalid or repeated", name)
+		}
+		names[name] = true
 	}
 }
 
@@ -132,7 +176,7 @@ func TestRootAgentNamePersistsAcrossResumeAndWorkspaceSessions(t *testing.T) {
 	}
 	defer s.Close()
 	name := s.AgentName()
-	if name != "Jeff" || !strings.Contains(s.systemPrompt(true), "Your name is Jeff") {
+	if name == "" || !strings.Contains(s.systemPrompt(true), "Your name is "+name) {
 		t.Fatalf("root identity=%q", name)
 	}
 	meta, err := sessiondb.GetMeta(s.DB())
@@ -160,7 +204,25 @@ func TestRootAgentNamePersistsAcrossResumeAndWorkspaceSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	if other.AgentName() != "Tom" {
+	if other.AgentName() == "" || other.AgentName() == name {
 		t.Fatalf("other workspace reused identity: %q", other.AgentName())
+	}
+}
+
+func TestParentChosenChildNamesAreValidatedAndKeptDistinct(t *testing.T) {
+	for _, bad := range []string{"", "   ", strings.Repeat("a", 41), "<b>Nova</b>", "Nova sub Root", "tab\x00null"} {
+		if _, err := validChildName(bad); err == nil {
+			t.Fatalf("name %q accepted", bad)
+		}
+	}
+	for input, want := range map[string]string{"  Nova  ": "Nova", "Zoë Ödegaard": "Zoë Ödegaard", "Ana-María O'Neil": "Ana-María O'Neil", "R2 D2": "R2 D2"} {
+		if got, err := validChildName(input); err != nil || got != want {
+			t.Fatalf("name %q -> %q err=%v", input, got, err)
+		}
+	}
+	for value, want := range map[int]string{2: "II", 4: "IV", 9: "IX", 14: "XIV", 1994: "MCMXCIV"} {
+		if got := romanNumeral(value); got != want {
+			t.Fatalf("numeral %d=%q", value, got)
+		}
 	}
 }

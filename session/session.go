@@ -133,11 +133,16 @@ type Session struct {
 	closing    int32
 	// pruned records that Close found nothing durable to keep and removed the
 	// session's storage; the workspace registry must then forget the session.
-	pruned                   atomic.Bool
-	hardCancelled            int32
-	activeTurns              atomic.Int32
-	turnGate                 sync.RWMutex
-	compactionMu             sync.Mutex
+	pruned        atomic.Bool
+	hardCancelled int32
+	activeTurns   atomic.Int32
+	turnGate      sync.RWMutex
+	compactionMu  sync.Mutex
+	// precompaction holds each root agent's background checkpoint slot.
+	precompactionMu          sync.Mutex
+	precompaction            map[string]*agent.PrecompactionSlot
+	precompactionCtx         context.Context
+	precompactionCancel      context.CancelFunc
 	compactionCancel         context.CancelFunc
 	compactionID             string
 	compactionAgent          string
@@ -517,6 +522,7 @@ func (s *Session) Close() {
 	s.settingsOperationMu.Unlock()
 	s.stopCompactionForClose()
 	s.compactionWg.Wait()
+	s.closePrecompaction("")
 	// Join any accepted queue admission before closing its database. Late
 	// kicks recheck closing under this same barrier and cannot touch storage.
 	s.queueAdmitMu.Lock()
@@ -1138,6 +1144,7 @@ func (s *Session) CloseOrchestrator(id string) {
 	delete(s.orchestrators, id)
 	s.orchMu.Unlock()
 	if ok && o.closing.CompareAndSwap(false, true) {
+		s.closePrecompaction(id)
 		o.CancelTurn()
 		if runner := o.subAgentRunner(); runner != nil {
 			runner.CancelAllActive()

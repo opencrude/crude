@@ -33,14 +33,32 @@ func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tool
 	return agent.FilterToolsForModel(orchestratorTools(enabled), category.AllowedTools, category.DeniedTools, "", false, model)
 }
 
+// childCoordinationTools are a child's channel back to its parent: report the
+// result, read the artifacts it was handed, and ask when blocked. Narrowing a
+// child's task tools never removes them; only an explicit deny does (and
+// denying publish_report is rejected at admission). Children once received
+// artifact IDs they could not read and reported themselves blocked.
+var childCoordinationTools = []string{"publish_report", "artifact_read", "agent_send"}
+
+// keepChildCoordinationTools adds the coordination tools to an explicit
+// allow-list unless the parent or profile denied them.
+func keepChildCoordinationTools(spec *agent.SubAgentSpec) {
+	if len(spec.AllowedTools) == 0 {
+		return
+	}
+	for _, name := range childCoordinationTools {
+		if !slices.Contains(spec.AllowedTools, name) && !slices.Contains(spec.DeniedTools, name) {
+			spec.AllowedTools = append(spec.AllowedTools, name)
+		}
+	}
+}
+
 func constrainConfiguredTools(spec *agent.SubAgentSpec, allowed, denied []string) {
 	spec.DeniedTools = append(spec.DeniedTools, denied...)
 	if len(allowed) > 0 {
 		definitions := append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...)
 		for _, tool := range definitions {
-			// Reporting is the mandatory return channel of every child, not an
-			// optional task tool. An explicit deny is still rejected at admission.
-			if tool.Function.Name == "publish_report" {
+			if slices.Contains(childCoordinationTools, tool.Function.Name) {
 				continue
 			}
 			if !slices.Contains(allowed, tool.Function.Name) {

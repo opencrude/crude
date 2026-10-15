@@ -15,7 +15,7 @@ entries until the list is empty.
 | `tui/chatprojection/` | message row paint uses theme tokens (replaces deleted `widgets/chatmessage.go`) |
 | `tui/editor/render.go` | raw ANSI diagnostic underlines |
 
-Note: `tui/diffview/style.go` (full independent palette) was **deleted** 2026-08-01 — the package had zero importers and was the last non-theme hex allowlist entry.
+Note: the old tui/diffview/style.go (full independent palette) was **deleted** 2026-08-01 — the package had zero importers and was the last non-theme hex allowlist entry.
 
 ## Parallel style pipelines
 

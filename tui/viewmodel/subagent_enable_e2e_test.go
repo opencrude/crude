@@ -111,7 +111,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		parentAgentID.Store(orch.ID)
 		app.AddOrchestrator(orch.ID)
 		backend := app.ws.BackendSession(owner.SessionID)
-		if app.ws.AgentMgr().Get(orch.ID).Label != "Jeff" || app.Win.TabByTitle(app.agentTabTitle(orch.ID)).DisplayTitle != "Jeff" {
+		if label := app.ws.AgentMgr().Get(orch.ID).Label; label == "" || app.Win.TabByTitle(app.agentTabTitle(orch.ID)).DisplayTitle != label {
 			t.Fatal("root tab did not render the allocated first name")
 		}
 		backend.SetYolo(true)
@@ -168,7 +168,9 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		if !agentTabPresent(app, childID) {
 			t.Fatal("running child missing from tabs")
 		}
-		if node.Label != "Tom sub Jeff" || app.Win.TabByTitle(app.agentTabTitle(childID)).DisplayTitle != "Tom sub Jeff" {
+		rootLabel := app.ws.AgentMgr().Get(orch.ID).Label
+		childLabel := node.Label
+		if !strings.HasSuffix(node.Label, " sub "+rootLabel) || node.Label == " sub "+rootLabel || app.Win.TabByTitle(app.agentTabTitle(childID)).DisplayTitle != node.Label {
 			t.Fatalf("child task hint replaced personal identity/parentage: %q", node.Label)
 		}
 		if app.ws.PaneMgr().Get(childID) == nil {
@@ -260,11 +262,11 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		if !persistedSteering {
 			t.Fatal("child transcript lost admitted human steering provenance")
 		}
-		if snapshots[0].Result.Name != "Tom sub Jeff" || rows[len(rows)-1].AgentName != "Tom sub Jeff" {
+		if snapshots[0].Result.Name != childLabel || rows[len(rows)-1].AgentName != childLabel {
 			t.Fatal("saved child history lost personal identity and parentage")
 		}
 		registered, err := app.ws.WorkspaceDB().ListSessions()
-		if err != nil || len(registered) != 1 || registered[0].AgentName.String != "Jeff" {
+		if err != nil || len(registered) != 1 || registered[0].AgentName.String != rootLabel {
 			t.Fatalf("previous-session registry lost root name: %+v err=%v", registered, err)
 		}
 	})

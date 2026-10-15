@@ -339,3 +339,30 @@ func ParseModelPricing(modelID string, pricing map[string]string) {
 		OutputPricePerToken: completionPrice,
 	})
 }
+
+// premiumServiceTier reports whether a processing tier bills above the
+// standard catalog rate (OpenAI Fast mode, formerly priority, and faster tiers).
+func premiumServiceTier(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "priority", "fast", "ultrafast":
+		return true
+	}
+	return false
+}
+
+// RequestPriceKnown prices one request made through p. The tier the provider
+// reports having served wins over the requested one, so a fast request that
+// was downgraded is priced at the standard rate. Crude has no tier-specific
+// prices, so a premium-tier request reports its cost as unknown rather than
+// silently understating it at the standard rate.
+func (p *Provider) RequestPriceKnown(model, servedTier string) (ModelPrice, bool, string) {
+	price, known, source := LookupPriceKnown(model)
+	tier := servedTier
+	if tier == "" && p != nil && p.protocolSettings != nil {
+		tier = p.protocolSettings.ServiceTier
+	}
+	if known && premiumServiceTier(tier) {
+		return price, false, "catalog standard rate; " + strings.ToLower(tier) + " tier not priced"
+	}
+	return price, known, source
+}

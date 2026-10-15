@@ -124,3 +124,29 @@ func TestModelNativeToolSelectionMatchesRuntimeDispatch(t *testing.T) {
 		})
 	}
 }
+
+// A parent that narrows a child's task tools must not strip its coordination
+// channel: children were handed artifact IDs they could not read and reported
+// themselves blocked. An explicit deny of an optional coordination tool wins.
+func TestNarrowedChildKeepsCoordinationTools(t *testing.T) {
+	spec := agent.SubAgentSpec{Category: CategoryResearcher, AllowedTools: []string{"web_search", "web_fetch", "publish_report"}, DeniedTools: []string{"agent_send"}}
+	constrainConfiguredTools(&spec, []string{"web_search", "web_fetch"}, nil)
+	keepChildCoordinationTools(&spec)
+	offered := agent.FilterTools(append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...), spec.AllowedTools, spec.DeniedTools, spec.Category, true)
+	has := func(name string) bool {
+		return slices.ContainsFunc(offered, func(d tools.ToolDef) bool { return d.Function.Name == name })
+	}
+	if !has("artifact_read") || !has("publish_report") {
+		t.Fatalf("narrowed child lost coordination tools: %v", spec.AllowedTools)
+	}
+	if has("agent_send") {
+		t.Fatal("explicitly denied coordination tool was offered")
+	}
+	if has("read_file") || has("execute_command") {
+		t.Fatal("coordination allowance widened task tools")
+	}
+	actor := captypes.RuntimeActor{ID: "child", ParentID: "parent", AllowedTools: []string{"web_search"}}
+	if !runtimeCollaborationToolSelected(actor, "artifact_read") || runtimeCollaborationToolSelected(captypes.RuntimeActor{ID: "root", AllowedTools: []string{"web_search"}}, "artifact_read") {
+		t.Fatal("runtime gate must admit coordination tools for children only")
+	}
+}

@@ -170,8 +170,14 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
 			return result, err
 		}
-		if runtime != nil && (strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt" || tool == "mcp_request_access") {
-			if !strings.HasPrefix(tool, "mcp__") && !runtimeToolSelected(actor, tool) {
+		mu.RLock()
+		dynamic := false
+		for _, prepared := range snapshot.Tools {
+			dynamic = dynamic || prepared.Name == tool
+		}
+		mu.RUnlock()
+		if runtime != nil && (dynamic || strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt" || tool == "mcp_request_access") {
+			if !dynamic && !strings.HasPrefix(tool, "mcp__") && !runtimeToolSelected(actor, tool) {
 				return tools.ToolResult{}, fmt.Errorf("capability operation %q is excluded by this agent", tool)
 			}
 			mu.RLock()
@@ -187,6 +193,9 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				result, err = runtime.Execute(captypes.WithPrepared(callCtx, preparation.Key), currentActor(), requestSnapshot, tool, params)
 			}
 			return capabilityMediaResult(result, err, live.MediaReadPolicy)
+		}
+		if _, native := tools.NativeMetadata(tool); !native && tool != "multi_tool_use.parallel" {
+			return tools.ToolResult{}, fmt.Errorf("tool %q is not available in this request; it may belong to an MCP connection that is disabled, turned off for this session, or reconnecting", tool)
 		}
 		if !agent.PolicyAllows(live.Policy, tool) && tool != "multi_tool_use.parallel" {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is denied by the agent policy", tool)
@@ -239,7 +248,7 @@ func runtimeCollaborationToolSelected(actor captypes.RuntimeActor, name string) 
 	if slices.Contains(actor.DeniedTools, name) {
 		return false
 	}
-	return name == "publish_report" && actor.ParentID != "" || actorToolSelected(actor, name)
+	return slices.Contains(childCoordinationTools, name) && actor.ParentID != "" || actorToolSelected(actor, name)
 }
 
 func runtimeToolSelected(actor captypes.RuntimeActor, name string) bool {

@@ -396,7 +396,7 @@ func validateKindDefaults(record *Record) error {
 		return err
 	}
 	if record.Kind == KindLesson && !SupportsLesson(record.Evidence) {
-		return ErrUnsupported
+		return fmt.Errorf("%w: kind=lesson needs tool_call_id evidence of a failed validation, a succeeded verified_change and a later succeeded validation", ErrUnsupported)
 	}
 	if record.Kind == KindLesson && strings.TrimSpace(record.AppliesWhen) == "" {
 		return fmt.Errorf("memory: technical lessons require applies_when")
@@ -478,6 +478,10 @@ func writeRecordTx(ctx context.Context, tx *sql.Tx, record Record, expected int6
 		observations, err := groundedEvidenceTx(ctx, tx, record.Evidence)
 		if err != nil {
 			return err
+		}
+		record.Evidence = make([]Evidence, len(observations))
+		for index, observation := range observations {
+			record.Evidence[index] = observation.Evidence
 		}
 		if record.Kind == KindLesson && !supportedLessonObservations(observations) {
 			return fmt.Errorf("%w: lesson requires matching failed validation, intervening change and successful validation", ErrUnsupported)

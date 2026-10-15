@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	captypes "crude/types/capability"
 
@@ -96,19 +97,63 @@ func TestMCPAgentAccessApprovalUseAndPassiveDurability(t *testing.T) {
 	if err := reopened.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err = reopened.Prepare(t.Context(), actor)
-	if err != nil || len(prepared.Tools) != 0 || requests.Load() != beforeRestart || calls.Load() != 1 {
-		t.Fatalf("passive reopen connected or replayed a tool: err=%v tools=%d requests=%d before=%d calls=%d", err, len(prepared.Tools), requests.Load(), beforeRestart, calls.Load())
+	// Opening the service is passive: nothing connects until an agent run
+	// prepares a request.
+	if requests.Load() != beforeRestart || calls.Load() != 1 {
+		t.Fatalf("passive reopen connected or replayed a tool: requests=%d before=%d calls=%d", requests.Load(), beforeRestart, calls.Load())
 	}
 	if len(reopened.Snapshot().Settings.Connections["docs"].Grants) != 1 {
 		t.Fatal("grant vanished after reopen")
 	}
-	if _, err := reopened.Activate(t.Context(), actor, "docs", false); err != nil {
+	// A run reconnects the durably granted connection off the request path;
+	// an explicit activation meanwhile joins that attempt instead of failing.
+	if _, err := reopened.Prepare(t.Context(), actor); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := reopened.Activate(t.Context(), actor, "docs", false); err != nil {
+		t.Fatalf("activation during automatic reconnect: %v", err)
+	}
 	prepared, err = reopened.Prepare(t.Context(), actor)
-	if err != nil || len(prepared.Tools) != 1 {
-		t.Fatalf("durable grant unusable after explicit reactivation: %+v %v", prepared, err)
+	if err != nil || len(prepared.Tools) != 1 || calls.Load() != 1 {
+		t.Fatalf("durable grant unusable after reconnect: %+v %v calls=%d", prepared, err, calls.Load())
+	}
+}
+
+func TestDurablyGrantedConnectionReturnsInALaterRunWithoutReactivation(t *testing.T) {
+	service, actor, _, _ := accessFixture(t)
+	params := observedAccess(t, service, actor)
+	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
+	var approval *captypes.AccessApprovalRequired
+	if !errors.As(err, &approval) {
+		t.Fatal(err)
+	}
+	if _, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err != nil {
+		t.Fatal(err)
+	}
+	settings := service.store.(*testRegistrationStore).load(t)
+	service.Close()
+	reopened, err := New(service.root, service.cache, service.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reopened.Close)
+	reopened.SetRegistrationStore(service.store)
+	if err := reopened.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		prepared, err := reopened.Prepare(t.Context(), actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(prepared.Tools) == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("granted connection never returned to a later step")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

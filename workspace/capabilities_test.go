@@ -83,7 +83,7 @@ func TestBuiltInCapabilitySourceCanDisableButNotDisappear(t *testing.T) {
 		RootPath: t.TempDir(), WorkspaceDir: t.TempDir(),
 		WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{},
 	}
-	defaults := types.AppSettings{Capabilities: captypes.WithDefaultSources(captypes.Settings{})}
+	defaults := types.AppSettings{Capabilities: captypes.WithDefaults(captypes.Settings{})}
 	owner.SetAppDefaults(defaults)
 	t.Cleanup(func() {
 		if owner.Capabilities != nil {

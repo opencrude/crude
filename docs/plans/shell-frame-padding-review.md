@@ -1,9 +1,8 @@
 # Shell Frame Padding — Review Findings & Open Issues
 
-> Status: Open review findings for the four-side configurable shell frame
-> (Settings → Appearance → Shell frame). Feature is implemented, tested, and
-> green on `go test ./...` / `golangci-lint`; the items below are hardening
-> follow-ups to do when the tree is next stable. Written 2026-08-28.
+> Status: IN PROGRESS — open hardening findings for the four-side configurable
+> shell frame (Settings → Appearance → Shell frame). The feature itself is
+> implemented and tested; the items below are follow-ups. Written 2026-08-28.
 
 ## Shipped summary (context)
 

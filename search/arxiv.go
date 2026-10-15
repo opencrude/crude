@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -54,7 +55,7 @@ type ArxivResult struct {
 }
 
 // ArxivSearch queries the arXiv API and returns formatted results.
-func ArxivSearch(query string, maxResults int) (string, error) {
+func ArxivSearch(ctx context.Context, query string, maxResults int) (string, error) {
 	if query == "" {
 		return "", fmt.Errorf("search: empty query")
 	}
@@ -79,7 +80,7 @@ func ArxivSearch(query string, maxResults int) (string, error) {
 
 	client := network.NewClient(15 * time.Second)
 	defer client.CloseIdleConnections()
-	req, err := http.NewRequest("GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -91,7 +92,10 @@ func ArxivSearch(query string, maxResults int) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("search: arxiv returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", fmt.Errorf("search: reading response: %w", err)
 	}

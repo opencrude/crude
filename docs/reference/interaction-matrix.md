@@ -370,3 +370,30 @@ rewrites collaborators' accepted text. Pending/unknown commands require original
 receipt reconciliation first, never replay. External disk conflicts need separate
 comparison/reconciliation; accepting shared text is not permission to overwrite
 external changes. Failure keeps the draft and actionable reason visible.
+
+## File tree filter and guide geometry
+
+- Connected trees project the header/panel's one core Git snapshot and retained
+  diagnostics, including unloaded descendants and filtered search matches. Both
+  ordinary file and Git metadata changes arm reconciliation. Directory response
+  order cannot erase status; clean snapshots clear it. Never add client resolvers
+  or project watchers to repair missing replica metadata.
+- `shelltree.FilterField` is the single text owner for clicked input AND
+  type-to-filter while the tree has focus. `FileTreeModel` may derive its
+  in-memory projection when no async path-search service is installed; the
+  product's async search never writes legacy model filter text over the input.
+  Clearing the final character cancels the old generation, so late results
+  cannot resurrect a removed query.
+- The shared `filetree.NewTreeRowPainter` adjusts the preferred whitespace
+  between ancestor rails using the visible tree's cached maximum depth and
+  viewport width. The shell computes the deepest offscreen ancestor shared by
+  every painted row. Its clickable breadcrumb owns that common prefix, and the
+  row painter omits ONLY those repeated ancestor guide columns. A viewport
+  crossing branches rebases to their common ancestor. When it crosses the
+  workspace root, the first visible row keeps its normal breadcrumb and ALL
+  absolute guides return; do not hide the breadcrumb in that transition.
+  narrow breadcrumbs keep the nearest parents and a non-clickable `…` prefix.
+  Local guides keep one column per remaining ancestor even on narrow grids;
+  directory rows, disclosure, scroll and path ownership stay intact. Focus and
+  selection alone never change guide alignment. Do not replace this with
+  single-child path flattening or row-local indent math that makes rails jump.

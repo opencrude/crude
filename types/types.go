@@ -179,12 +179,16 @@ type CategorySettings struct {
 	ModelTemperature *float64
 	ModelTopP        *float64
 	// ContextCompactionPercent starts an automatic context compaction when the
-	// agent reaches this percentage of its effective model window. nil uses the
-	// product default; 0 disables automatic compaction.
+	// agent reaches this percentage of its effective model window. nil lets
+	// Crude decide from cost and capacity; 0 disables automatic compaction.
 	ContextCompactionPercent *int `json:"context_compaction_percent,omitempty"`
-	// ContextRetentionTokens bounds recent verbatim input retained across
-	// compaction. nil uses the product default.
+	// ContextRetentionTokens bounds older verbatim input retained across
+	// compaction. nil sizes it adaptively.
 	ContextRetentionTokens *int `json:"context_retention_tokens,omitempty"`
+	// ServiceTier selects this role's processing tier ("standard", "fast",
+	// "priority", "flex"); empty uses the account's setting. A tier the
+	// connection's protocol does not offer is ignored.
+	ServiceTier string `json:"service_tier,omitempty"`
 }
 
 type ProfileSettings struct {
@@ -484,10 +488,9 @@ func (s LocalHistorySettings) SafetySnapshotValue() bool {
 // Memory system defaults (applied by ApplyAppDefaults and used as fallbacks
 // wherever a MemorySettings value is unset).
 const (
-	DefaultMemoryRecallBudget       = 1500
-	DefaultMemoryRecallLimit        = 10
-	DefaultMemoryExtractCadence     = 3
-	DefaultContextCompactionPercent = 85
+	DefaultMemoryRecallBudget   = 1500
+	DefaultMemoryRecallLimit    = 10
+	DefaultMemoryExtractCadence = 3
 )
 
 // MemorySettings configures the workspace memory system. Tri-state strings

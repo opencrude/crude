@@ -23,6 +23,22 @@ type ToolFuncDef struct {
 // Tool Definitions
 
 // AgentTools lists the tools exposed to the model every conversation turn.
+// memoryEvidenceItemSchema mirrors memory.validateEvidence exactly: every
+// reference needs kind, summary, outcome and an origin (tool_call_id for a tool
+// result, message_id for a user statement). session_id defaults to the caller.
+const memoryEvidenceItemSchema = `{"type":"object","properties":{` +
+	`"tool_call_id":{"type":"string","description":"ID of the cited tool call. Required unless message_id is given."},` +
+	`"message_id":{"type":"string","description":"ID of the cited user message. Required unless tool_call_id is given."},` +
+	`"session_id":{"type":"string","description":"Session that produced the observation; omit for the current session."},` +
+	`"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},` +
+	`"summary":{"type":"string","maxLength":1024,"description":"One-line synopsis of what the cited observation shows."},` +
+	`"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},` +
+	`"required":["kind","summary","outcome"]}`
+
+const memoryEvidenceSchema = `{"type":"array","maxItems":16,"description":"Origin-attributed references supporting the memory. kind=lesson requires a failed validation, an intervening succeeded verified_change and a later succeeded validation of the same command, all from completed earlier turns; kind and outcome must match what was recorded.","items":` + memoryEvidenceItemSchema + `}`
+
+const memoryFeedbackEvidenceSchema = `{"type":"array","minItems":1,"maxItems":16,"items":` + memoryEvidenceItemSchema + `}`
+
 var AgentTools = []ToolDef{
 	{
 		Type: "function",
@@ -213,65 +229,11 @@ var AgentTools = []ToolDef{
 				"type":"object",
 				"properties":{
 					"pattern":{"type":"string","description":"Regex pattern to search for (e.g. 'func\\s+\\w+')"},
-					"path":{"type":"string","description":"Directory or file to search in (optional; default: current directory)"},
+					"path":{"type":"string","description":"Directory, file, or glob to search (e.g. 'workspace/lsp*.go', 'tui/**/*_test.go'); default: workspace root. Results use workspace-relative paths."},
 					"recursive":{"type":"boolean","description":"Search subdirectories recursively (optional; default: true)"},
 					"include_hidden":{"type":"boolean","description":"Recurse into hidden directories (names starting with '.') in addition to normal directories (optional; default: false)"}
 				},
 				"required":["pattern"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "arxiv_search",
-			Description: "Search academic papers on arXiv by query. " +
-				"Returns paper titles, authors, publication dates, summaries, and links. " +
-				"Use for finding research papers, academic references, or staying current with ML/AI literature.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"query":{"type":"string","description":"Search query for arXiv papers"},
-					"max_results":{"type":"integer","description":"Maximum number of results to return (1-10, optional; default: 5)"}
-				},
-				"required":["query"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "web_search",
-			Description: "Search the web using Brave Search API. " +
-				"Returns titles, URLs, and snippets for web pages matching the query. " +
-				"Use for finding current information, documentation, or general web content.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"query":{"type":"string","description":"Search query for web search"}
-				},
-				"required":["query"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "web_fetch",
-			Description: "Fetch and extract readable content from a URL. " +
-				"Returns the main text content of a web page, stripped of HTML markup. " +
-				"Use offset and limit to read a specific range of characters (like read_file). " +
-				"First fetch gives the total content length — use offset/limit for subsequent pagination. " +
-				"Use to read documentation, articles, or any web page content. " +
-				"PDFs, Word docs, and other document URLs are automatically converted to Markdown.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"url":{"type":"string","description":"URL to fetch content from"},
-					"offset":{"type":"integer","description":"Starting character position (1-based, optional; default: 1)"},
-					"limit":{"type":"integer","description":"Maximum characters to return (optional; default: 0 = all)"}
-				},
-				"required":["url"]
 			}`),
 		},
 	},
@@ -489,7 +451,7 @@ var AgentTools = []ToolDef{
 					"paths":{"type":"array","items":{"type":"string"},"description":"Repo-relative files/dirs this memory applies to. Boosts recall when those files are active. Omit for project-wide."},
 					"pinned":{"type":"boolean","description":"Always inject this memory into context. Reserve for critical rules."},
 					"applies_when":{"type":"string","description":"Conditions or exceptions that limit this assertion."},
-					"evidence":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"session_id":{"type":"string"},"message_id":{"type":"string"},"tool_call_id":{"type":"string"},"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},"summary":{"type":"string","maxLength":1024},"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},"required":["session_id","kind","summary"]}}
+					"evidence":` + memoryEvidenceSchema + `
 				},
 				"required":["title","content"]
 			}`),
@@ -529,7 +491,7 @@ var AgentTools = []ToolDef{
 					"paths":{"type":"array","items":{"type":"string"},"description":"New scope paths; omit to keep."},
 					"pinned":{"type":"boolean","description":"New pin preference; omit to keep."},
 					"applies_when":{"type":"string","description":"New applicability conditions; omit to keep."},
-					"evidence":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"session_id":{"type":"string"},"message_id":{"type":"string"},"tool_call_id":{"type":"string"},"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},"summary":{"type":"string","maxLength":1024},"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},"required":["session_id","kind","summary"]}}
+					"evidence":` + memoryEvidenceSchema + `
 				},
 				"required":["id","expected_revision","content"]
 			}`),
@@ -558,7 +520,7 @@ var AgentTools = []ToolDef{
 			Description: "Record evidence-based useful, misleading, contradicted or not_applicable feedback for exact memory revisions. Mere exposure or successful turns are not usefulness evidence; peer claims are not verification.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
-				"properties":{"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"integer","minimum":1},"kind":{"type":"string","enum":["useful","misleading","contradicted","not_applicable"]},"evidence":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","properties":{"session_id":{"type":"string"},"message_id":{"type":"string"},"tool_call_id":{"type":"string"},"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},"summary":{"type":"string","maxLength":1024},"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},"required":["session_id","kind","summary"]}}},"required":["id","revision","kind","evidence"]}}},
+				"properties":{"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"integer","minimum":1},"kind":{"type":"string","enum":["useful","misleading","contradicted","not_applicable"]},"evidence":` + memoryFeedbackEvidenceSchema + `},"required":["id","revision","kind","evidence"]}}},
 				"required":["items"]
 			}`),
 		},

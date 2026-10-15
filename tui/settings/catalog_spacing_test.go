@@ -19,6 +19,7 @@ func TestSettingsHelpStaysConciseAndReadable(t *testing.T) {
 	model, body, _ := capabilityFixture(t, "mcp")
 	forms := []*ui.FormModel{model.buildAgentForm(model.agents.Categories["default"], true), model.buildAutoReviewerForm(), model.buildLSPForm(types.LSPSettings{}), model.buildAcquisitionForm()}
 	forms = append(forms, formModel(mcpConnectionFields(model.capabilities.Connections["docs"])...))
+	forms = append(forms, formModel(builtinConnectionFields(captypes.DefaultConnections()[captypes.WebConnectionID], nil)...))
 	if err := model.beginAccountEdit(true, "openai"); err != nil {
 		t.Fatal(err)
 	}

@@ -375,7 +375,7 @@ review gate instead (see "Timing review guidance").
 | `TestAgentToAgentSwitchKeepsBothProjectionsWarm` | Focus-only agent switches render zero message rows. |
 | `TestIdleCadenceNeverDropsBelowTwoFPS` | Idle cadence remains 250–500 ms (2–4 FPS), preserving cursor animation without high CPU. |
 | `TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation` | Every rendered frame-dependent row advances; static rows remain cached without role-specific tick logic. |
-| `TestLifecycleMetricSourceVersionUpdatesExactRow` | Context-upload/progress changes update exactly their canonical row through source versioning. |
+| `TestTransientLifecycleMetricsDoNotInvalidateTranscript` | Context-upload/progress metric changes do not invalidate transcript rows. |
 
 Two by-design carve-outs keep the budgets honest:
 

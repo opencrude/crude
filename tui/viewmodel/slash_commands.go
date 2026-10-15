@@ -107,6 +107,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 
+	case "/fast":
+		return m.toggleSessionFastTier()
 	case "/yolo":
 		if agentID == "" {
 			m.Feedback.NotifyError("No active session")
@@ -166,5 +168,48 @@ func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 			return
 		}
 		m.ws.Logger().Info("COMPACT", "slash_ok", "before", msg.compact.Before, "after", msg.compact.After)
+	}
+}
+
+// toggleSessionFastTier switches this session's main agent between the
+// provider's fast tier and the account's own setting. It is a session override
+// like any other: revision-fenced, persisted, applied at the next request, and
+// ignored by connections whose protocol has no fast tier.
+func (m *App) toggleSessionFastTier() tea.Cmd {
+	owner, runtime := m.ActiveSession, m.ws
+	if owner == nil || runtime == nil || owner.Settings == nil {
+		m.Feedback.NotifyError("No session is selected")
+		return nil
+	}
+	settings := owner.Settings.Effective
+	overrides := make(map[string]ttypes.CategorySettings, len(owner.Settings.Overrides)+1)
+	for key, value := range owner.Settings.Overrides {
+		overrides[key] = value
+	}
+	key := "default"
+	if settings.SessionMainAgent != "" {
+		key = "root/" + settings.SessionMainAgent
+	}
+	current := overrides[key]
+	enable := current.ServiceTier != "fast"
+	current.ServiceTier = ""
+	if enable {
+		current.ServiceTier = "fast"
+	}
+	overrides[key] = current
+	settings.SessionOverrides = overrides
+	operation, err := runtime.PrepareSessionSettingsSave(owner.SessionID, settings)
+	if err != nil {
+		m.Feedback.NotifyError(err.Error())
+		return nil
+	}
+	if enable {
+		m.Feedback.NotifyInfo("Fast tier on for this session's main agent from its next request; it bills at the provider's fast rate where offered")
+	} else {
+		m.Feedback.NotifyInfo("Fast tier off; the account's tier applies from the next request")
+	}
+	generation := m.workspaceSwitchGen.Load()
+	return func() tea.Msg {
+		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: operation.Run()}
 	}
 }

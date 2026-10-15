@@ -397,6 +397,7 @@ type openAIResponse struct {
 	Usage             *openAIResponsesUsage    `json:"usage"`
 	Error             *openAIResponsesError    `json:"error"`
 	IncompleteDetails *openAIIncompleteDetails `json:"incomplete_details"`
+	ServiceTier       string                   `json:"service_tier"`
 }
 
 type openAIResponsesUsage struct {
@@ -521,9 +522,10 @@ func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 		}
 	}
 	resp := &ChatResponse{
-		ID:      r.ID,
-		Model:   r.Model,
-		Choices: []ChatChoice{{Message: msg, FinishReason: finishReason}},
+		ServiceTier: r.ServiceTier,
+		ID:          r.ID,
+		Model:       r.Model,
+		Choices:     []ChatChoice{{Message: msg, FinishReason: finishReason}},
 	}
 	if r.Status == "completed" && (r.Store == nil || *r.Store) {
 		resp.ContinuationID = r.ID
@@ -797,6 +799,7 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 			CompletionTokensDetails: response.Usage.OutputTokensDetails,
 		}
 		usage := wire.normalized()
+		usage.ServiceTier = response.ServiceTier
 		update.Usage = &usage
 	}
 

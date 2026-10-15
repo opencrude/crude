@@ -379,30 +379,46 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 			return Context{}, errors.New("logical root must be repository top-level")
 		}
 	}
+	// A freshly initialized repository has no commit to branch a worktree
+	// from. It shares the checkout like a non-Git project until it does.
+	unborn := false
+	if isGit && source == nil && req.BaseCommit == "" {
+		if _, err := s.git(ctx, sourceRoot, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+			unborn = true
+		}
+	}
 	reason := "explicit shared checkout"
 	if mode == Auto {
 		mode, reason = Shared, "coupled or read-only task"
-		if req.Independent && isGit {
+		if req.Independent && isGit && !unborn {
 			mode, reason = Isolated, "independent task isolation"
 		}
 		if !isGit {
 			reason = "non-Git project uses shared checkout"
 		}
+		if unborn {
+			reason = "repository has no commits yet; shared checkout"
+		}
 	}
 	if mode == Isolated && !isGit {
 		return Context{}, fmt.Errorf("worktree requires Git: %w", gitErr)
 	}
+	if mode == Isolated && unborn {
+		return Context{}, errors.New("worktree isolation needs at least one commit; commit once or use shared isolation")
+	}
 	var base, common string
 	if isGit {
-		ref := "HEAD"
-		if req.BaseCommit != "" {
-			ref = req.BaseCommit
+		if !unborn {
+			ref := "HEAD"
+			if req.BaseCommit != "" {
+				ref = req.BaseCommit
+			}
+			b, err := s.git(ctx, sourceRoot, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+			if err != nil {
+				return Context{}, err
+			}
+			base = strings.TrimSpace(string(b))
 		}
-		b, err := s.git(ctx, sourceRoot, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
-		if err != nil {
-			return Context{}, err
-		}
-		base = strings.TrimSpace(string(b))
 		g, err := s.git(ctx, sourceRoot, "rev-parse", "--path-format=absolute", "--git-common-dir")
 		if err != nil {
 			return Context{}, err
@@ -443,7 +459,7 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if !bytes.Equal(firstBytes, secondBytes) {
 		return Context{}, errors.New("source changed during baseline capture")
 	}
-	if isGit {
+	if isGit && !unborn {
 		head, err := s.git(ctx, sourceRoot, "rev-parse", "HEAD")
 		if err != nil {
 			return Context{}, err
@@ -610,6 +626,13 @@ func (s *Service) capture(ctx context.Context, root, common string, docs map[str
 		// The tree/index audit rejects unsupported submodules/symlinks even if
 		// their disk state happens to be missing or replaced by a regular file.
 		for _, args := range [][]string{{"ls-tree", "-r", "HEAD"}, {"ls-files", "--stage"}} {
+			if args[0] == "ls-tree" {
+				// A repository without commits has no tree yet; its index still
+				// lists every staged entry.
+				if _, err := s.git(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+					continue
+				}
+			}
 			data, err := s.git(ctx, root, args...)
 			if err != nil {
 				return nil, err

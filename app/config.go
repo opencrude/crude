@@ -270,7 +270,7 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	if fc.Capabilities != nil {
 		cfg.Capabilities = captypes.Clone(*fc.Capabilities)
 	}
-	cfg.Capabilities = captypes.WithDefaultSources(cfg.Capabilities)
+	cfg.Capabilities = captypes.WithDefaults(cfg.Capabilities)
 	if fc.Safety != nil {
 		cfg.Safety = *fc.Safety
 		cfg.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), fc.Safety.CommandRules...)

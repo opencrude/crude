@@ -243,9 +243,13 @@ func resolveRelativeParamsAtRoot(root, tool string, params map[string]any) {
 		if getStrParam(params, "base_dir") == "" {
 			params["base_dir"] = root
 		}
+		params["_display_root"] = root
 	case "grep_files", "list_directory":
 		if getStrParam(params, "path") == "" {
 			params["path"] = root
+		}
+		if tool == "grep_files" {
+			params["_display_root"] = root
 		}
 	}
 	pathKeys := []string{"path", "source", "destination", "base_dir", "directory"}

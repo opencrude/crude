@@ -129,6 +129,16 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 				usage.ContextUsed.Known, usage.ContextLimit.Known = false, false
 			}
 			segments = append(segments, agentHeaderUsageSegments(usage, target)...)
+			// Background context preparation never blocks the agent; show
+			// it so a later checkpoint is not a surprise.
+			if status, ok := m.ws.Status().Agent(node.ID); ok {
+				switch status.Checkpoint {
+				case "preparing":
+					segments = append(segments, shellheader.Segment{Text: "checkpoint…", Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
+				case "ready":
+					segments = append(segments, shellheader.Segment{Text: "checkpoint ready", Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
+				}
+			}
 		}
 	} else {
 		if context != "" {

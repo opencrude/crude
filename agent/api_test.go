@@ -27,6 +27,9 @@ func newTestAgent(t *testing.T, p *provider.Provider, model string) *Agent {
 	t.Cleanup(func() { _ = lg.Close() })
 	agent := NewAgent(p, model, lg)
 	agent.MaxRetries = 1
+	// These fixtures answer one section per request; combined single-pass
+	// extraction has its own tests.
+	recordCombinedCompactionFailure(p, model)
 	return agent
 }
 

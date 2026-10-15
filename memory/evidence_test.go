@@ -368,3 +368,55 @@ func TestRedactedBoundedObservationsRetainOrigin(t *testing.T) {
 		t.Fatal("secret persisted in knowledge")
 	}
 }
+
+// A model cannot see the recorded synopsis of its own tool calls, so lessons
+// ground by origin identity plus kind/outcome, and the stored evidence is the
+// recorded observation rather than the caller's paraphrase.
+func TestLessonGroundsByOriginAndStoresRecordedSynopsis(t *testing.T) {
+	store := openTestStore(t)
+	evidence := lessonEvidence(t, store)
+	for index := range evidence {
+		evidence[index].Summary = "paraphrase " + evidence[index].ToolCallID
+	}
+	record, err := store.Remember(t.Context(), Record{Kind: KindLesson, Title: "Word-left climbs blank lines",
+		Content: "Continue climbing instead of returning.", AppliesWhen: "Previous line is blank", Evidence: evidence})
+	if err != nil {
+		t.Fatalf("lesson citing recorded origins rejected: %v", err)
+	}
+	stored, err := store.Get(t.Context(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, observation := range lessonObservations() {
+		if stored.Evidence[index].Summary != observation.Summary {
+			t.Fatalf("evidence[%d] stored caller synopsis %q, want recorded %q", index, stored.Evidence[index].Summary, observation.Summary)
+		}
+	}
+}
+
+func TestLessonEvidenceErrorsNameTheFaultyReference(t *testing.T) {
+	store := openTestStore(t)
+	evidence := lessonEvidence(t, store)
+	evidence[1].Outcome = OutcomeFailed
+	_, err := store.Remember(t.Context(), Record{Kind: KindLesson, Title: "No fix", Content: "x", AppliesWhen: "y", Evidence: evidence})
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "a succeeded verified_change") {
+		t.Fatalf("lesson-shape error = %v", err)
+	}
+	evidence = lessonEvidence(t, store)
+	evidence[0].Kind = EvidenceTool
+	_, err = store.Remember(t.Context(), Record{Kind: KindLesson, Title: "Mismatched", Content: "x", AppliesWhen: "y", Evidence: evidence})
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "evidence[0] (tool_call_id=fail) claims kind=tool_result outcome=failed") ||
+		!strings.Contains(err.Error(), "recorded observation is kind=validation outcome=failed") {
+		t.Fatalf("mismatch error = %v", err)
+	}
+	evidence = lessonEvidence(t, store)
+	evidence[2].ToolCallID = "not-yet-recorded"
+	_, err = store.Remember(t.Context(), Record{Kind: KindLesson, Title: "Unrecorded", Content: "x", AppliesWhen: "y", Evidence: evidence})
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "evidence[2] (tool_call_id=not-yet-recorded) has no recorded observation") {
+		t.Fatalf("unrecorded error = %v", err)
+	}
+	_, err = store.Remember(t.Context(), Record{Title: "Fact", Content: "x", Evidence: []Evidence{{SessionID: "s1", Kind: EvidenceTool, Summary: "ran"}}})
+	if err == nil || !strings.Contains(err.Error(), "evidence[0] is missing tool_call_id or message_id, outcome") {
+		t.Fatalf("missing-field error = %v", err)
+	}
+}

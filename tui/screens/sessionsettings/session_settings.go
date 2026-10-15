@@ -606,30 +606,39 @@ func (s *Screen) openRole(role string) {
 		Target: "session-settings.model.open",
 	})
 	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, ""))
-	compaction := types.DefaultContextCompactionPercent
+	compactionText := ""
 	if cfg.ContextCompactionPercent != nil {
-		compaction = *cfg.ContextCompactionPercent
+		compactionText = strconv.Itoa(*cfg.ContextCompactionPercent)
 	}
-	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", strconv.Itoa(compaction),
-		"Percent of this agent's context window; 0 disables automatic compaction.")
+	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", compactionText,
+		"Blank is Auto (cost and capacity aware). A percent compacts there; 0 is off.")
+	compactionField.Placeholder = "Auto"
 	compactionField.Validator = func(value ui.FieldValue) []string {
-		parsed, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		trimmed := strings.TrimSpace(value.String())
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
 		if err != nil || parsed < 0 || parsed > 100 {
-			return []string{"Must be an integer between 0 and 100."}
+			return []string{"Leave blank for Auto, or enter 0–100."}
 		}
 		return nil
 	}
 	model.AddField(compactionField)
-	retention := types.DefaultContextRetentionTokens
+	retentionText := ""
 	if cfg.ContextRetentionTokens != nil {
-		retention = *cfg.ContextRetentionTokens
+		retentionText = strconv.Itoa(*cfg.ContextRetentionTokens)
 	}
-	retentionField := ui.TextFieldState(fieldContextRetention, "Keep recent input", strconv.Itoa(retention), "Estimated tokens retained verbatim through compaction; actual context capacity remains the hard limit.")
-	retentionField.Numeric, retentionField.Unit = true, "tokens"
+	retentionField := ui.TextFieldState(fieldContextRetention, "Keep older input", retentionText, "Blank is Auto: older requests kept up to the checkpoint's size.")
+	retentionField.Numeric, retentionField.Unit, retentionField.Placeholder = true, "tokens", "Auto"
 	retentionField.Validator = func(value ui.FieldValue) []string {
-		parsed, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		trimmed := strings.TrimSpace(value.String())
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
 		if err != nil || parsed < types.MinContextRetentionTokens || parsed > types.MaxContextRetentionTokens {
-			return []string{"Must be an integer between 1,000 and 200,000."}
+			return []string{"Leave blank for Auto, or enter 1,000–200,000."}
 		}
 		return nil
 	}
@@ -1153,16 +1162,23 @@ func (s *Screen) applyRoleForm() {
 	}
 	cfg.Model = s.formModel.Field(fieldModel).Value.String()
 	cfg.ThinkingEffort = s.formModel.Field(fieldThinking).Value.String()
-	compaction, err := strconv.Atoi(strings.TrimSpace(s.formModel.Field(fieldContextCompaction).Value.String()))
-	if err == nil {
+	cfg.ContextCompactionPercent = nil
+	if text := strings.TrimSpace(s.formModel.Field(fieldContextCompaction).Value.String()); text != "" {
+		compaction, err := strconv.Atoi(text)
+		if err != nil {
+			return
+		}
 		compaction = min(100, max(0, compaction))
 		cfg.ContextCompactionPercent = &compaction
 	}
-	retention, err := strconv.Atoi(strings.TrimSpace(s.formModel.Field(fieldContextRetention).Value.String()))
-	if err != nil || retention < types.MinContextRetentionTokens || retention > types.MaxContextRetentionTokens {
-		return
+	cfg.ContextRetentionTokens = nil
+	if text := strings.TrimSpace(s.formModel.Field(fieldContextRetention).Value.String()); text != "" {
+		retention, err := strconv.Atoi(text)
+		if err != nil || retention < types.MinContextRetentionTokens || retention > types.MaxContextRetentionTokens {
+			return
+		}
+		cfg.ContextRetentionTokens = &retention
 	}
-	cfg.ContextRetentionTokens = &retention
 	// A manual override never carries a live-inherit marker.
 	cfg.Inherit = ""
 	setCategory(&s.effective, s.role, cfg)

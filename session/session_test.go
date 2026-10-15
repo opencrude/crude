@@ -234,7 +234,8 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 		}
 		requestModels = append(requestModels, request.Model)
 		calls++
-		encoded, _ := json.Marshal(fmt.Sprintf("- stage: %d\n- exact evidence retained", calls))
+		// One combined extraction answers every checkpoint section at once.
+		encoded, _ := json.Marshal(fmt.Sprintf("<<<intent>>>\n- stage: %d\n<<<work>>>\n- exact evidence retained\n<<<state>>>\n- clean\n<<<continuation>>>\n- None", calls))
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\n", encoded)
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
@@ -280,7 +281,7 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 	account.Connection = providerConfig
 	s.cfg.Accounts["account"] = account
 	result := s.HandleCompact()
-	if result.Error != "" || calls != 4 || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
+	if result.Error != "" || calls != 1 || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
 		t.Fatalf("compact result=%+v archive=%d active=%d generation=%d", result, len(s.msgs), len(s.activeContext), s.contextGeneration)
 	}
 	for index, model := range requestModels {

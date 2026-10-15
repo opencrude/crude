@@ -58,6 +58,8 @@ type CategoryConfig struct {
 	ModelTopP                *float64 `json:"model_top_p,omitempty"`
 	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
 	ContextRetentionTokens   *int     `json:"context_retention_tokens,omitempty"`
+	// ServiceTier is the role's processing tier; empty uses the account's.
+	ServiceTier string `json:"service_tier,omitempty"`
 }
 
 type ProfileConfig struct {
@@ -143,6 +145,7 @@ func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provide
 	if err := c.bindAccount(p, category.AccountID); err != nil {
 		return nil, err
 	}
+	p.SetServiceTier(category.ServiceTier)
 	return p, nil
 }
 
@@ -336,6 +339,9 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		if over.ContextRetentionTokens != nil {
 			selected.ContextRetentionTokens = cloneIntPtr(over.ContextRetentionTokens)
 		}
+		if over.ServiceTier != "" {
+			selected.ServiceTier = over.ServiceTier
+		}
 	}
 	return selected, nil
 }
@@ -468,17 +474,12 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 }
 
 func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
-	if cat.ContextCompactionPercent == nil {
-		value := ttypes.DefaultContextCompactionPercent
-		cat.ContextCompactionPercent = &value
-	} else {
+	// Unset compaction and retention stay unset: Crude decides adaptively.
+	if cat.ContextCompactionPercent != nil {
 		value := min(100, max(0, *cat.ContextCompactionPercent))
 		cat.ContextCompactionPercent = &value
 	}
-	if cat.ContextRetentionTokens == nil {
-		value := ttypes.DefaultContextRetentionTokens
-		cat.ContextRetentionTokens = &value
-	} else {
+	if cat.ContextRetentionTokens != nil {
 		value := min(ttypes.MaxContextRetentionTokens, max(ttypes.MinContextRetentionTokens, *cat.ContextRetentionTokens))
 		cat.ContextRetentionTokens = &value
 	}
@@ -518,6 +519,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		ModelTopP:                v.ModelTopP,
 		ContextCompactionPercent: cloneIntPtr(v.ContextCompactionPercent),
 		ContextRetentionTokens:   cloneIntPtr(v.ContextRetentionTokens),
+		ServiceTier:              v.ServiceTier,
 	}
 }
 
@@ -544,6 +546,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		ModelTopP:                v.ModelTopP,
 		ContextCompactionPercent: cloneIntPtr(v.ContextCompactionPercent),
 		ContextRetentionTokens:   cloneIntPtr(v.ContextRetentionTokens),
+		ServiceTier:              v.ServiceTier,
 	}
 }
 
@@ -705,6 +708,7 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 		merged.ModelTopP = cloneFloatPtr(value.ModelTopP)
 		merged.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
 		merged.ContextRetentionTokens = cloneIntPtr(value.ContextRetentionTokens)
+		merged.ServiceTier = value.ServiceTier
 		merged.Instructions = value.Instructions
 		merged.AllowedTools = append([]string(nil), value.AllowedTools...)
 		merged.DeniedTools = append([]string(nil), value.DeniedTools...)

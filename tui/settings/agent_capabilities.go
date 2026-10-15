@@ -77,7 +77,7 @@ func (catalog *agentCatalog) syncCapabilityFields() {
 	for _, tool := range tools.AgentTools {
 		add(tool.Function.Name, strings.ReplaceAll(tool.Function.Name, "_", " "), nativeAllowed[tool.Function.Name])
 	}
-	for _, connection := range catalog.model.capabilitySnapshot.Connections {
+	for _, connection := range catalog.connectionTools() {
 		addGroup("agent-tool-group/mcp/"+connection.ID, "MCP · "+connection.ID)
 		for _, tool := range connection.Tools {
 			add(tool.Name, tool.OriginalName+" · "+connection.ID, len(catalog.base.AllowedTools) == 0 || slices.Contains(catalog.base.AllowedTools, tool.Name))
@@ -134,7 +134,7 @@ func (catalog *agentCatalog) refreshCapabilityLimits() {
 	policy := agent.ComposePolicy(safety.DefaultPolicy(), catalog.base.Policy, role)
 	dynamic := make(map[string]captypes.Tool)
 	connections := make(map[string]captypes.ConnectionState)
-	for _, connection := range catalog.model.capabilitySnapshot.Connections {
+	for _, connection := range catalog.connectionTools() {
 		connections[connection.ID] = connection
 		for _, tool := range connection.Tools {
 			dynamic[tool.Name] = tool
@@ -231,4 +231,40 @@ func (catalog *agentCatalog) selectedSkillModes() map[string]string {
 		}
 	}
 	return modes
+}
+
+// connectionTools is the observed MCP catalog plus enabled built-in servers
+// that have not started yet. Built-ins start on an agent's first request, and
+// their tools must be selectable per agent before that.
+func (catalog *agentCatalog) connectionTools() []captypes.ConnectionState {
+	connections := slices.Clone(catalog.model.capabilitySnapshot.Connections)
+	observed := make(map[string]bool, len(connections))
+	for _, connection := range connections {
+		observed[connection.ID] = len(connection.Tools) > 0
+	}
+	ids := make([]string, 0)
+	for id, config := range catalog.model.capabilities.Connections {
+		if config.IsBuiltin() && !config.Disabled && !observed[id] {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		config := catalog.model.capabilities.Connections[id]
+		descriptor, exists := captypes.Builtin(config.Command)
+		if !exists {
+			continue
+		}
+		state := captypes.ConnectionState{ID: id, State: "not started"}
+		for _, name := range descriptor.Tools {
+			tool := captypes.Tool{Name: name, OriginalName: name, ConnectionID: id, Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: "builtin", Selected: true}
+			if config.Grants[name].Disabled {
+				tool.Selected, tool.Reason = false, "Turned off for this connection"
+			}
+			state.Tools = append(state.Tools, tool)
+		}
+		connections = slices.DeleteFunc(connections, func(existing captypes.ConnectionState) bool { return existing.ID == id })
+		connections = append(connections, state)
+	}
+	return connections
 }

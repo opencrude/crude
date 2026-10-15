@@ -115,8 +115,12 @@ func (s *Screen) SetCapabilities(snapshot captypes.Snapshot) {
 					break
 				}
 			}
+			if state == "not started" && snapshot.Settings.Connections[entry.ID].IsBuiltin() {
+				// Crude's own servers start on an agent's first request.
+				state = "ready"
+			}
 			switch state {
-			case "connected":
+			case "connected", "ready":
 				connected++
 			case "failed", "needs sign-in", "unavailable", "setup required", "approval required":
 				attention++

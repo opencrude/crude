@@ -3,6 +3,7 @@ package confirmation
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"strings"
 
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -57,7 +58,13 @@ func (s *Screen) Reset(details Details) {
 			continue
 		}
 		value := ui.StringValue(field.value)
-		model.AddField(&ui.FieldState{ID: field.id, Label: field.label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true})
+		state := &ui.FieldState{ID: field.id, Label: field.label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true}
+		if lines := strings.Count(field.value, "\n") + 1; lines > 1 {
+			// Exact operation arguments arrive one "path: value" per line.
+			state = ui.TextAreaFieldState(field.id, field.label, field.value, "")
+			state.ReadOnly, state.Rows = true, lines
+		}
+		model.AddField(state)
 	}
 	s.form = ui.NewDockedForm(FormID, model, "Confirmation required", details.Question, s.tokens)
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,

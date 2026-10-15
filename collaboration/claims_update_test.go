@@ -1,7 +1,9 @@
 package collaboration
 
 import (
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -197,4 +199,60 @@ func normalizedTestPath(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return normalized
+}
+
+// Delegating a path the parent itself holds transfers the parent's claim in the
+// same transaction. A broader parent claim and another agent's claim still
+// conflict, and a failed acquisition transfers nothing.
+func TestAcquireDelegatedClaimsTransfersOnlyContainedDelegatorClaims(t *testing.T) {
+	store, _ := openTestStore(t)
+	parent, child := registerTestAgents(t, store)
+	parentRun, err := store.StartRun(t.Context(), StartRunRequest{AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, RequestID: "human", Origin: OriginHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := store.AcquireClaims(t.Context(), AcquireClaimsRequest{AgentID: parent.ID, RunID: parentRun.ID, RequestID: "edit", Paths: []string{"src/a.go", "notes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRun, err := store.StartRun(t.Context(), StartRunRequest{AgentID: child.ID, RuntimeEpoch: child.RuntimeEpoch, RequestID: "assignment", Origin: OriginPeer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireClaims(t.Context(), AcquireClaimsRequest{AgentID: child.ID, RunID: childRun.ID, RequestID: "assignment", Paths: []string{"src"}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("undelegated overlap must conflict, got %v", err)
+	}
+	_, err = store.AcquireDelegatedClaims(t.Context(), AcquireClaimsRequest{AgentID: child.ID, RunID: childRun.ID, RequestID: "assignment", Paths: []string{"src", "notes/guide.md"}, DelegatorID: parent.ID})
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "broader claim") {
+		t.Fatalf("broader delegator claim must conflict with guidance, got %v", err)
+	}
+	var current Claim
+	if err := store.transaction(t.Context(), func(tx *sql.Tx) (err error) {
+		current, err = loadClaim(t.Context(), tx, held[0].ID)
+		return err
+	}); err != nil || !current.ReleasedAt.IsZero() {
+		t.Fatalf("failed delegation released a parent claim: %+v %v", current, err)
+	}
+	result, err := store.AcquireDelegatedClaims(t.Context(), AcquireClaimsRequest{AgentID: child.ID, RunID: childRun.ID, RequestID: "assignment", Paths: []string{"src"}, DelegatorID: parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Transferred) != 1 || filepath.ToSlash(result.Transferred[0].Path) != filepath.ToSlash(mustAbs(t, "src/a.go")) || len(result.Claims) != 1 || result.Claims[0].AgentID != child.ID {
+		t.Fatalf("delegation result = %+v", result)
+	}
+	if _, err := store.AcquireClaims(t.Context(), AcquireClaimsRequest{AgentID: parent.ID, RunID: parentRun.ID, RequestID: "late", Paths: []string{"src/a.go"}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("parent kept write access to a delegated path: %v", err)
+	}
+	if _, err := store.AcquireClaims(t.Context(), AcquireClaimsRequest{AgentID: parent.ID, RunID: parentRun.ID, RequestID: "notes", Paths: []string{"notes"}}); err != nil {
+		t.Fatalf("undelegated parent claim was disturbed: %v", err)
+	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return absolute
 }

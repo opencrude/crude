@@ -139,3 +139,56 @@ Local History safety/undo; active-run, Keep and recovery pins prevent unsafe cle
 See [managed executions](managed-executions.md) for conservative baseline exclusions,
 crash recovery and explicit native Windows/SSH acceptance limits. Research links
 above motivate policy, not a guarantee of universal automatic isolation.
+
+## Child reporting, ownership and connections
+
+- `publish_report` is the mandatory child return channel, not an optional task-tool
+  allowlist member. Explicit denial is rejected before launch; schema projection,
+  dispatch and prompt permissions agree. `artifact_read` and `agent_send` complete
+  the coordination channel: narrowing a child's tools with `allowed_tools` keeps
+  all three, and only an explicit deny removes the optional two. Children were
+  otherwise handed artifact IDs they could not read. Missing reporting infrastructure parks as
+  configuration failure before provider execution, never a model reminder loop.
+- Native file-ownership rejection is an ordinary, actionable tool error: nothing
+  changes, the child's run continues, and its parent receives a deduplicated
+  runtime note. A scoped child's write gate reads its *current* committed scope
+  (`FileOwnership.WriteScopeAllows`), not the launch snapshot. The child's own
+  temporary directory (`CRUDE_TEMP_DIR`) is private scratch: never scope-checked
+  or claimed. Public `agent_narrow_claims` narrows the caller's active claims;
+  `agent_update_claims` replaces a child's complete scope — wider or narrower —
+  during its live run (claims bound to that run, effective on the next write) or
+  after an interrupted attempt (declarations used by Continue). The only bound is
+  no overlap with another agent's active claims; there is no frozen launch
+  ceiling. Neither wakes execution. Run identity, run version and claim
+  versions are optional: omitted ones are read from the target's current state
+  at call time (an interrupted child needs its `run_id`), and explicit ones are
+  exact preimages from `agent_inspect`; the store fences both. Numeric
+  preimages are exact positive integers, foreign/stale owners fail closed, and ownership read leases span
+  actual native effects so claim replacement cannot overtake an in-flight write.
+- **Names.** Agents draw names from a durable, unbounded app-wide sequence
+  mapped through a per-installation keyed permutation of each tier (one given
+  name, then given name plus one, two, ... surnames), so consecutive agents get
+  unrelated names and none repeats. A parent may pass `nickname` to
+  `agent_start`; a taken nickname gets the next numeral ("Nova II"). The child's
+  full name keeps its lineage ("Nova sub Sigrid").
+- **Parents do not poll.** Whenever a child's state changes (working, waiting
+  for the human, waiting for a delivery, idle, finished), the root receives one
+  `<children_status>` runtime notice before its next request; reports,
+  questions and outcomes are delivered automatically as before.
+- **Repositories without commits** run every child in the shared checkout
+  (auto isolation falls back with that reason); an explicit worktree request
+  explains that it needs a first commit.
+- **Child connections are complete and parent-controlled.** Every child
+  provider is built from `childProviderConfig` (account, model, thinking effort,
+  temperature, top-p, context window) at launch, each supervised attempt,
+  continuation and request-boundary switch. `Config.ConnectionProvider` is
+  connection-only (model listing/probing) and never serves an agent; there is no
+  account+model helper that can drop request settings. `categoryFieldRole`
+  classifies every `CategoryConfig` field and the wire regression asserts
+  `reasoning_effort`/`temperature` on every path, so a dropped setting fails
+  tests. A parent picks `model`/`account_id`/`thinking_effort` in `agent_start`
+  or changes them with `agent_configure`: a live child switches at its next
+  request via `Agent.RequestBoundary` (emitting `connection_changed` so the UI
+  and message attribution follow), a stopped child keeps it for `continue`.
+  A different model drops the previous model's capability/sampling overrides.
+  `types.ThinkingLevels` is the one effort ladder for settings and tools.

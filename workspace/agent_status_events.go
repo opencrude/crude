@@ -44,6 +44,20 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		}
 	}
 	snapshot.UpdatedAt = time.Now()
+	// Background checkpoint preparation outlives runs and never changes the
+	// agent's lifecycle phase.
+	if evt.Type == "context_precompaction" {
+		switch agentEventString(evt.Data, "phase") {
+		case "started", "progress":
+			snapshot.Checkpoint = "preparing"
+		case "ready":
+			snapshot.Checkpoint = "ready"
+		default:
+			snapshot.Checkpoint = ""
+		}
+		center.SetAgent(snapshot)
+		return
+	}
 	// Retained semantic evidence is not a new lifecycle transition. Inactive
 	// AgentState accepts late tokens/tool results for history, but it must never
 	// reactivate status before a later inventory repaint repairs it.
@@ -215,6 +229,9 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		}
 	case "context_compacted", "context_compaction_cancelled", "context_compaction_failed":
 		snapshot.NeedsAction = false
+		if evt.Type == "context_compacted" {
+			snapshot.Checkpoint = ""
+		}
 		if values, ok := evt.Data.(map[string]any); ok {
 			if id, _ := values["request_id"].(string); id != "" {
 				snapshot.RequestID = id

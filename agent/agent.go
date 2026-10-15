@@ -62,23 +62,37 @@ type Agent struct {
 	AgentID                AgentID
 	// RunID is the immutable durable owner of this instance's effects. Never
 	// discover a replacement run from current inventory during tool execution.
-	RunID                     string
-	TurnGeneration            uint64
-	Policy                    safety.Policy
-	CommandPolicy             safety.CommandPolicy
-	PermissionReviewer        PermissionReviewer
-	Depth                     int
-	ParentID                  AgentID
-	WorkDir                   string
-	GuidancePaths             []string
-	MaxRetries                int
-	MaxOutputTokens           int
-	ContextCompactionPercent  int
+	RunID              string
+	TurnGeneration     uint64
+	Policy             safety.Policy
+	CommandPolicy      safety.CommandPolicy
+	PermissionReviewer PermissionReviewer
+	Depth              int
+	ParentID           AgentID
+	WorkDir            string
+	GuidancePaths      []string
+	MaxRetries         int
+	MaxOutputTokens    int
+	// ContextCompactionPercent is the user's compaction choice: 0 lets Crude
+	// decide from cost and capacity (the default), 1-100 compacts at that
+	// fullness of the window, and CompactionOff disables automatic compaction.
+	ContextCompactionPercent int
+	// CompactionRetentionTokens bounds older verbatim human input carried
+	// through compaction; 0 sizes it to the checkpoint itself.
 	CompactionRetentionTokens int
-	ContextArchive            []provider.ChatMessage
-	FrozenPrefix              []provider.ChatMessage
-	lastActiveContext         []provider.ChatMessage
-	FilteredTools             []tools.ToolDef
+	// compactionTailHasHuman marks a checkpoint of older context followed by
+	// a verbatim tail that holds a later human turn.
+	compactionTailHasHuman bool
+	// Precompaction is the agent's background checkpoint slot. Owners that
+	// span runs (sessions, child handles) provide it; nil uses a run-local one.
+	Precompaction *PrecompactionSlot
+	// PriorCheckpointTokens is the size of this agent's last checkpoint,
+	// learned from earlier runs.
+	PriorCheckpointTokens int
+	ContextArchive        []provider.ChatMessage
+	FrozenPrefix          []provider.ChatMessage
+	lastActiveContext     []provider.ChatMessage
+	FilteredTools         []tools.ToolDef
 	// PrepareStep snapshots live tools and runtime notices between requests,
 	// never while a parallel tool batch is using the previous snapshot.
 	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
@@ -239,11 +253,9 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 		turn = lg.Turn()
 	}
 	return &Agent{
-		Provider:                  p,
-		Model:                     model,
-		ContextCompactionPercent:  ttypes.DefaultContextCompactionPercent,
-		CompactionRetentionTokens: ttypes.DefaultContextRetentionTokens,
-		CommandPolicy:             safety.DefaultCommandPolicy(),
+		Provider:      p,
+		Model:         model,
+		CommandPolicy: safety.DefaultCommandPolicy(),
 		ToolFn: func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 			return tools.ToolResult{}, nil
 		},

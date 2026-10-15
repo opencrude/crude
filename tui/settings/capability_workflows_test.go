@@ -569,3 +569,44 @@ func TestAgentDynamicIntentAndSkillModesSurviveUnavailableSnapshots(t *testing.T
 		t.Fatalf("dynamic preferences did not round trip: %+v", configured)
 	}
 }
+
+func TestBuiltinWebConnectionEditsWriteOnlyProviderKeys(t *testing.T) {
+	model, root, host := capabilityFixture(t, captypes.KindMCP)
+	settings := captypes.WithDefaults(model.capabilities)
+	model.capabilities = settings
+	snapshot := model.capabilitySnapshot
+	snapshot.Settings, snapshot.StoredSecrets = settings, []string{"EXA_API_KEY"}
+	model.SetCapabilitySnapshot(snapshot)
+	catalog := root.capCatalog
+	catalog.detail, catalog.id = true, captypes.WebConnectionID
+	catalog.detailForm("connection")
+	capabilityAction(catalog, "edit")
+	form := model.capabilityDraft
+	exa, brave := form.Field("secret/EXA_API_KEY"), form.Field("secret/BRAVE_SEARCH_API_KEY")
+	if exa == nil || exa.Type != ui.FieldPassword || exa.Placeholder != "Stored" || brave == nil || brave.Placeholder != "Not set" {
+		t.Fatalf("provider key fields: exa=%+v brave=%+v", exa, brave)
+	}
+	if form.Field("transport") != nil || form.Field("command") != nil {
+		t.Fatal("a built-in connection must not offer transport or launch fields")
+	}
+	host.MarkLayout()
+	host.Layout()
+	buffer := surface.NewCellBuffer(130, 36)
+	host.Paint(buffer)
+	painted := bufferPlain(buffer)
+	for _, want := range []string{"Exa API key", "Brave Search API key", "Stored", "Not set"} {
+		if !strings.Contains(painted, want) {
+			t.Fatalf("built-in editor did not paint %q:\n%s", want, painted)
+		}
+	}
+	if _, err := catalog.draftAction(); err == nil {
+		t.Fatal("saving an untouched key form must explain that nothing changed")
+	}
+	form.SetValue("secret/BRAVE_SEARCH_API_KEY", ui.StringValue("brave-value"))
+	form.SetValue("secret/EXA_API_KEY", ui.StringValue("-"))
+	action := capabilityRequest(t, capabilityAction(catalog, "save")).Action
+	if action.Operation != "set-secrets" || action.Arguments["BRAVE_SEARCH_API_KEY"] != "brave-value" ||
+		action.Arguments["EXA_API_KEY"] != "" || len(action.Arguments) != 2 || action.Connection != nil {
+		t.Fatalf("key update action=%+v", action)
+	}
+}

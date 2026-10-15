@@ -11,11 +11,9 @@ import (
 )
 
 const (
-	// DefaultContextRetentionTokens preserves the established compaction policy:
-	// keep up to 20K estimated tokens of recent genuine human input verbatim.
-	DefaultContextRetentionTokens = 20_000
-	MinContextRetentionTokens     = 1_000
-	MaxContextRetentionTokens     = 200_000
+	// Explicit verbatim-retention bounds; unset retention is adaptive.
+	MinContextRetentionTokens = 1_000
+	MaxContextRetentionTokens = 200_000
 )
 
 // AccountChange is one revision-checked application credential mutation.
@@ -103,7 +101,7 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s == nil {
 		return
 	}
-	s.Capabilities = captypes.WithDefaultSources(s.Capabilities)
+	s.Capabilities = captypes.WithDefaults(s.Capabilities)
 	s.Network = network.Normalize(s.Network)
 	if s.Theme.Preset == "" {
 		s.Theme.Preset = "dark"

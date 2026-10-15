@@ -17,18 +17,53 @@ import (
 	"crude/fileio"
 	"crude/logger"
 	"crude/provider"
-	"crude/search"
 )
 
-// readFileHint wraps a read_file error with a helpful hint when the file
-// is not found — this guides less experienced LLMs toward using list_directory
-// to discover actual filenames instead of guessing them.
+// readFileHint wraps a read_file error. For a missing file it names real
+// candidates from the nearest existing directory, so a guessed path costs one
+// failed call instead of a list_directory round trip and another guess.
 func readFileHint(err error, path string) string {
 	msg := "Error: " + err.Error()
-	if errors.Is(err, fs.ErrNotExist) {
-		msg += "\n\nHint: file not found. Use list_directory on the parent directory to discover actual filenames — package directories often contain multiple files with different names."
+	if !errors.Is(err, fs.ErrNotExist) || path == "" {
+		return msg
 	}
-	return msg
+	dir, want := filepath.Dir(path), strings.ToLower(filepath.Base(path))
+	for dir != "" && dir != filepath.Dir(dir) {
+		if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+			break
+		}
+		want = strings.ToLower(filepath.Base(dir))
+		dir = filepath.Dir(dir)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		return msg + "\n\nHint: file not found. Use glob_files or list_directory to discover actual names."
+	}
+	stem := strings.TrimSuffix(want, filepath.Ext(want))
+	var close, other []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if entry.IsDir() {
+			name += "/"
+		}
+		lower := strings.ToLower(name)
+		if stem != "" && (strings.Contains(lower, stem) || strings.Contains(stem, strings.TrimSuffix(strings.TrimSuffix(lower, "/"), filepath.Ext(lower)))) {
+			close = append(close, name)
+		} else {
+			other = append(other, name)
+		}
+	}
+	candidates := append(close, other...)
+	if len(candidates) > 12 {
+		candidates = candidates[:12]
+	}
+	if len(candidates) == 0 {
+		return fmt.Sprintf("%s\n\nHint: file not found; %s is empty.", msg, dir)
+	}
+	return fmt.Sprintf("%s\n\nHint: file not found. Entries in %s (closest first): %s", msg, dir, strings.Join(candidates, ", "))
 }
 
 func GetStrArg(args map[string]any, key string, defaultVal string) string {
@@ -513,12 +548,13 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			break
 		}
 		if len(matches) == 0 {
-			result = ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, baseDir)}
+			result = ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, displayPath(GetStrArg(params, "_display_root", ""), baseDir))}
 		} else {
+			displayRoot := GetStrArg(params, "_display_root", "")
 			var sb strings.Builder
-			fmt.Fprintf(&sb, "%d file(s) matching %q under %s:\n", len(matches), pattern, baseDir)
+			fmt.Fprintf(&sb, "%d file(s) matching %q under %s:\n", len(matches), pattern, displayPath(displayRoot, baseDir))
 			for _, m := range matches {
-				sb.WriteString(m)
+				sb.WriteString(displayPath(displayRoot, m))
 				sb.WriteByte('\n')
 			}
 			result = ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
@@ -538,58 +574,20 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			break
 		}
 		if len(matches) == 0 {
-			result = ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, searchPath)}
+			result = ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, displayPath(GetStrArg(params, "_display_root", ""), searchPath))}
 		} else {
+			displayRoot := GetStrArg(params, "_display_root", "")
 			var sb strings.Builder
-			fmt.Fprintf(&sb, "%d match(es) for %q in %s:\n", len(matches), pattern, searchPath)
+			fmt.Fprintf(&sb, "%d match(es) for %q in %s:\n", len(matches), pattern, displayPath(displayRoot, searchPath))
+			if len(matches) >= fileio.MaxGrepResults {
+				fmt.Fprintf(&sb, "(stopped at %d matches; narrow the pattern or path)\n", fileio.MaxGrepResults)
+			}
 			for _, m := range matches {
-				fmt.Fprintf(&sb, "%s:%d: %s\n", m.Path, m.LineNum, m.Line)
+				fmt.Fprintf(&sb, "%s:%d: %s\n", displayPath(displayRoot, m.Path), m.LineNum, m.Line)
 			}
 			result = ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
 		}
 		lg.Info("TOOL", "result", "tool", tool, "matches", len(matches), "latency_ms", time.Since(start).Milliseconds())
-
-	case "web_search":
-		query := GetStrArg(params, "query", "")
-		lg.Info("TOOL", "call", "tool", tool, "query_len", len(query))
-		resultText, err := search.WebSearch(query, 6)
-		if err != nil {
-			result = ToolResult{Content: "Search error: " + err.Error()}
-			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-			break
-		}
-		result = ToolResult{Content: resultText}
-		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
-
-	case "arxiv_search":
-		query := GetStrArg(params, "query", "")
-		maxResults := GetIntArgAny(params, "max_results", 5)
-		if maxResults <= 0 || maxResults > 10 {
-			maxResults = 5
-		}
-		lg.Info("TOOL", "call", "tool", tool, "query_len", len(query), "max_results", maxResults)
-		resultText, err := search.ArxivSearch(query, maxResults)
-		if err != nil {
-			result = ToolResult{Content: "ArXiv search error: " + err.Error()}
-			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-			break
-		}
-		result = ToolResult{Content: resultText}
-		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
-
-	case "web_fetch":
-		url := GetStrArg(params, "url", "")
-		offset := GetIntArgAny(params, "offset", 0)
-		limit := GetIntArgAny(params, "limit", 0)
-		lg.Info("TOOL", "call", "tool", tool, "url", url, "offset", offset, "limit", limit)
-		resultText, err := search.WebFetch(url, offset, limit)
-		if err != nil {
-			result = ToolResult{Content: "Fetch error: " + err.Error()}
-			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-			break
-		}
-		result = ToolResult{Content: resultText}
-		lg.Info("TOOL", "result", "tool", tool, "url", url, "latency_ms", time.Since(start).Milliseconds())
 
 	case "reply":
 		content := GetStrArg(params, "content", "")
@@ -702,4 +700,21 @@ func noChangeEditResult(oldString, newString string) ToolResult {
 		reason = "no changes to make: old_string and new_string are exactly the same"
 	}
 	return ToolResult{Content: fmt.Sprintf("Error: %s\nHint: match the file's current bytes exactly — read_file the section first, and make old_string and new_string differ.", reason)}
+}
+
+// displayPath renders path relative to root when it lies inside it, so search
+// results cost fewer tokens and can be passed straight back to file tools,
+// which resolve relative paths against the same workspace root.
+func displayPath(root, path string) string {
+	if root == "" || path == "" {
+		return path
+	}
+	rel, err := filepath.Rel(root, filepath.FromSlash(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	if rel == "." {
+		return "."
+	}
+	return filepath.ToSlash(rel)
 }
