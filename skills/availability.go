@@ -51,22 +51,8 @@ func CheckAvailability(skill Skill) error {
 			failures = append(failures, err)
 		}
 	}
-	if skill.Compatibility != "" {
-		declaration := strings.TrimSpace(skill.Compatibility)
-		switch {
-		case strings.EqualFold(declaration, "crude"), strings.EqualFold(declaration, "Designed for Crude"):
-		case declaration == "linux" || declaration == "darwin" || declaration == "windows":
-			if declaration != runtime.GOOS {
-				failures = append(failures, &RequirementError{Requirement: "compatibility", Reason: "requires " + declaration + "; running " + runtime.GOOS})
-			}
-		case strings.HasPrefix(declaration, "Requires "):
-			if err := checkExecutables("compatibility", strings.TrimPrefix(declaration, "Requires ")); err != nil {
-				failures = append(failures, err)
-			}
-		default:
-			failures = append(failures, &RequirementError{Requirement: "compatibility", Reason: "free-form requirements cannot be verified automatically; inspect before use"})
-		}
-	}
+	// Compatibility is human-readable prose, not an executable dependency list.
+	// Only explicit metadata declarations above define machine-checkable needs.
 	return errors.Join(failures...)
 }
 

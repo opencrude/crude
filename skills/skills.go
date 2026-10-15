@@ -94,10 +94,10 @@ func LoadContext(ctx context.Context, path string) (Skill, error) {
 		return Skill{}, err
 	}
 	defer root.Close()
-	return loadRoot(ctx, root, absolute, filepath.Base(absolute), true)
+	return loadRoot(ctx, root, absolute, filepath.Base(absolute))
 }
 
-func loadRoot(ctx context.Context, root *os.Root, path, name string, availability bool) (Skill, error) {
+func loadRoot(ctx context.Context, root *os.Root, path, name string) (Skill, error) {
 	definition, definitionRecord, err := readBytes(ctx, root, "SKILL.md", MaxDefinitionBytes)
 	if err != nil {
 		return Skill{}, fmt.Errorf("load SKILL.md: %w", err)
@@ -128,9 +128,6 @@ func loadRoot(ctx context.Context, root *os.Root, path, name string, availabilit
 	}
 	skill.snapshotPath = path
 	skill.snapshotDigest = skill.Digest
-	if availability {
-		return skill, CheckAvailability(skill)
-	}
 	return skill, nil
 }
 
@@ -153,7 +150,7 @@ func ReadFile(skill Skill, relative string, maxBytes int64) ([]byte, error) {
 		return nil, fmt.Errorf("%w: load the skill before reading resources", ErrInvalid)
 	}
 	if skill.records == nil {
-		loaded, err := loadRoot(context.Background(), root, absolute, filepath.Base(absolute), false)
+		loaded, err := loadRoot(context.Background(), root, absolute, filepath.Base(absolute))
 		if err != nil {
 			return nil, err
 		}

@@ -53,7 +53,7 @@ func MakeLocalCopy(ctx context.Context, skill Skill, destination string) (Skill,
 		return Skill{}, err
 	}
 	defer source.Close()
-	verified, err := loadRoot(ctx, source, absolute, filepath.Base(absolute), false)
+	verified, err := loadRoot(ctx, source, absolute, filepath.Base(absolute))
 	if err != nil {
 		return Skill{}, err
 	}
@@ -128,7 +128,7 @@ func MakeLocalCopy(ctx context.Context, skill Skill, destination string) (Skill,
 				return err
 			}
 		}
-		current, err := loadRoot(ctx, source, absolute, filepath.Base(absolute), false)
+		current, err := loadRoot(ctx, source, absolute, filepath.Base(absolute))
 		if err != nil {
 			return err
 		}
@@ -217,7 +217,7 @@ func publishSkill(ctx context.Context, destination, name string, populate func(*
 	if err := populate(staging); err != nil {
 		return Skill{}, errors.Join(err, staging.Close())
 	}
-	staged, loadErr := loadRoot(ctx, staging, absolute, name, false)
+	staged, loadErr := loadRoot(ctx, staging, absolute, name)
 	if err := errors.Join(loadErr, staging.Close()); err != nil {
 		return Skill{}, err
 	}

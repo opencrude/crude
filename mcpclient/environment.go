@@ -1,6 +1,39 @@
 package mcpclient
 
-import "os"
+import (
+	"os"
+	"sort"
+	"strings"
+
+	captypes "crude/types/capability"
+)
+
+// MissingConfiguration checks the inputs actually used by the transport, not
+// just explicit overrides. Shell-host environment is checked on that shell.
+// An empty header value records a required header awaiting configuration.
+func MissingConfiguration(config captypes.ConnectionConfig) []string {
+	var missing []string
+	if config.ExecutionHost() != "shell" {
+		for _, name := range config.RequiredEnv {
+			value, explicit := config.Environment[name]
+			if !explicit && config.Transport == "stdio" {
+				value = os.Getenv(name)
+			}
+			if strings.TrimSpace(value) == "" && strings.TrimSpace(config.SecretRefs[name]) == "" {
+				missing = append(missing, "environment "+name)
+			}
+		}
+	}
+	if config.Transport == "http" {
+		for name, value := range config.Headers {
+			if strings.TrimSpace(value) == "" && strings.TrimSpace(config.SecretRefs[name]) == "" {
+				missing = append(missing, "header "+name)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
 
 // stdioBaseEnvironment is the complete environment of the host process. A
 // stdio server is an authorized, unsandboxed process running with the user's

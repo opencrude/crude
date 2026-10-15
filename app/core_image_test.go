@@ -8,9 +8,179 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
+
+// Two callers can both observe a missing image before either finishes copying.
+// The later copy must reuse the first published inode, not rename over it.
+func TestCopyCoreImageDoesNotReplacePublishedImage(t *testing.T) {
+	home := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := stageCoreImage(home, exe, "immutable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	winner, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = source.Close() }()
+	if err := copyCoreImage(source, CoreImageDir(home), target); err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(winner, current) {
+		t.Fatal("a losing copy replaced the published executable inode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, target, "-test.run=^$")
+	cmd.Env = append(os.Environ(), "CRUDE_APP_TEST_MAIN=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("execute the published winner: %v: %s", err, output)
+	}
+	entries, err := os.ReadDir(CoreImageDir(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(target) {
+		t.Fatalf("copy left staging files: %v", entries)
+	}
+}
+
+// Separate shells share no Go mutex. Force each process down the copy path as
+// though it observed a cache miss before another caller published the winner.
+func TestCopyCoreImageAcrossProcesses(t *testing.T) {
+	if home := os.Getenv("CRUDE_TEST_COPY_CORE_IMAGE"); home != "" {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := os.Open(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = source.Close() }()
+		target := filepath.Join(CoreImageDir(home), coreImagePrefix+"processes"+filepath.Ext(exe))
+		if err := copyCoreImage(source, CoreImageDir(home), target); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	home := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := stageCoreImage(home, exe, "processes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	winner, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	const shells = 6
+	outputs := make([][]byte, shells)
+	errs := make([]error, shells)
+	var wg sync.WaitGroup
+	for i := range shells {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cmd := exec.CommandContext(ctx, exe, "-test.run=^TestCopyCoreImageAcrossProcesses$")
+			cmd.Env = append(os.Environ(), "CRUDE_APP_TEST_MAIN=0", "CRUDE_TEST_COPY_CORE_IMAGE="+home)
+			outputs[i], errs[i] = cmd.CombinedOutput()
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("shell %d: %v: %s", i, err, outputs[i])
+		}
+	}
+	current, err := os.Stat(target)
+	if err != nil || !os.SameFile(winner, current) {
+		t.Fatalf("concurrent processes replaced the published winner: %v", err)
+	}
+	// Execute after all losing copies; retained core startup must stay usable.
+	cmd := exec.CommandContext(ctx, target, "-test.run=^$")
+	cmd.Env = append(os.Environ(), "CRUDE_APP_TEST_MAIN=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("execute after concurrent copies: %v: %s", err, output)
+	}
+}
+
+func TestCoreImageRejectsInvalidPublishedWinner(t *testing.T) {
+	for _, kind := range []string{"truncated", "directory", "symlink", "not executable"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "not executable" && runtime.GOOS == "windows" {
+				t.Skip("Windows executable access does not use Unix mode bits")
+			}
+			home := t.TempDir()
+			source := filepath.Join(t.TempDir(), "crude.exe")
+			if err := os.WriteFile(source, []byte("complete build"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			dir := CoreImageDir(home)
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "crude-core-invalid.exe")
+			var err error
+			switch kind {
+			case "truncated":
+				err = os.WriteFile(target, []byte("partial"), 0o700)
+			case "directory":
+				err = os.Mkdir(target, 0o700)
+			case "symlink":
+				err = os.Symlink(source, target)
+				if err != nil && runtime.GOOS == "windows" {
+					t.Skipf("symlink privilege unavailable: %v", err)
+				}
+			case "not executable":
+				err = os.WriteFile(target, []byte("complete build"), 0o600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Lstat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := stageCoreImage(home, source, "invalid"); err == nil {
+				t.Fatal("staging accepted or replaced an invalid published image")
+			}
+			in, err := os.Open(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = in.Close() }()
+			if err := copyCoreImage(in, dir, target); err == nil {
+				t.Fatal("a losing copy accepted or replaced an invalid winner")
+			}
+			after, err := os.Lstat(target)
+			if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() {
+				t.Fatalf("invalid image was mutated: before=%v after=%v err=%v", before, after, err)
+			}
+		})
+	}
+}
 
 func TestStageCoreImageIsContentAddressedAndPrunesOtherBuilds(t *testing.T) {
 	home, source := t.TempDir(), filepath.Join(t.TempDir(), "crude.exe")

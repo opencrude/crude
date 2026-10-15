@@ -25,7 +25,8 @@ type recoverySlot struct {
 	generation uint64
 	wake       chan struct{}
 	// status is the supervisor's latest transition, guarded by recoveryMu.
-	status recoverytypes.Status
+	status  recoverytypes.Status
+	parking bool // attempt is unwinding; only the final parked publication is actionable
 }
 
 type recoveryRunState struct {
@@ -380,6 +381,14 @@ func (s *Session) parkRecovery(checkpoint sessiondb.RecoveryCheckpoint) {
 	}
 }
 
+func (s *Session) beginRecoveryParking(agentID, incidentID string, generation uint64) {
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	if slot := s.recoverySlots[agentID]; slot != nil && slot.id == incidentID && slot.generation == generation {
+		slot.parking = true
+	}
+}
+
 // publishChildNeedsAttention tells a child's parent that the child stopped
 // executing, why, and the exact controls that continue or cancel it. Root
 // agents have no parent; their owner is the human, who sees the incident.
@@ -429,8 +438,13 @@ type agentRecoveryView struct {
 // agentRecovery reports an agent's open incident: a run waiting in place for
 // an explicit wake, or a parked task with no live execution.
 func (s *Session) agentRecovery(agentID string) *agentRecoveryView {
+	view, _ := s.agentRecoveryState(agentID)
+	return view
+}
+
+func (s *Session) agentRecoveryState(agentID string) (*agentRecoveryView, bool) {
 	if s == nil || agentID == "" {
-		return nil
+		return nil, false
 	}
 	s.recoveryMu.Lock()
 	defer s.recoveryMu.Unlock()
@@ -441,13 +455,18 @@ func (s *Session) agentRecovery(agentID string) *agentRecoveryView {
 			Controls: "agent_control operation \"continue\" or \"cancel\" with this recovery_id and recovery_generation",
 		}
 	}
-	if slot := s.recoverySlots[agentID]; slot != nil && slot.status.State == recoverytypes.NeedsAttention {
-		return view(slot.status)
+	if slot := s.recoverySlots[agentID]; slot != nil {
+		if slot.parking {
+			return nil, true
+		}
+		if slot.status.State == recoverytypes.NeedsAttention {
+			return view(slot.status), false
+		}
 	}
 	if checkpoint, ok := s.pendingRecoveries[agentID]; ok && checkpoint.Status.ID != "" {
-		return view(checkpoint.Status)
+		return view(checkpoint.Status), false
 	}
-	return nil
+	return nil, false
 }
 
 func (s *Session) wakeRecovery(agentID string) bool {
@@ -496,6 +515,10 @@ func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64
 	defer s.lifecycleMu.Unlock()
 	s.recoveryMu.Lock()
 	if slot := s.recoverySlots[agentID]; slot != nil {
+		if slot.parking {
+			s.recoveryMu.Unlock()
+			return errors.New("the previous attempt is still releasing resources; Continue is not ready yet")
+		}
 		if slot.id != recoveryID || slot.generation != generation {
 			s.recoveryMu.Unlock()
 			return fmt.Errorf("%w: agent %s's open incident is %s generation %d", errRecoveryStale, agentID, slot.id, slot.generation)

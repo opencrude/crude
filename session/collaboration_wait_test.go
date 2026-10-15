@@ -7,8 +7,30 @@ import (
 	"time"
 
 	"crude/collaboration"
+	"crude/sessiondb"
 	"crude/tools"
+	recoverytypes "crude/types/recovery"
 )
+
+func TestCollaborationWaitParkedIncidentOutranksOffline(t *testing.T) {
+	s, store, _, child := collaborationContractFixture(t)
+	if err := store.DetachAgent(t.Context(), child.ID, "contract-owner", child.RuntimeEpoch); err != nil {
+		t.Fatal(err)
+	}
+	s.recoveryMu.Lock()
+	s.pendingRecoveries = map[string]sessiondb.RecoveryCheckpoint{child.ID: {Status: recoverytypes.Status{
+		ID: "parked-child", AgentID: child.ID, Generation: 1, State: recoverytypes.NeedsAttention, Summary: "Repair credentials",
+	}}}
+	s.recoveryMu.Unlock()
+	value, err := s.waitForCollaboration(t.Context(), store, map[string]any{"agent_id": child.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := value.(collaborationWaitObservation)
+	if got.Status != "needs_attention" || got.Recovery == nil || got.Recovery.ID != "parked-child" {
+		t.Fatalf("offline status hid actionable parked recovery: %+v", got)
+	}
+}
 
 func TestCollaborationWaitReadyAndOrdinaryTimeoutAreObservations(t *testing.T) {
 	s, store, parent, _ := collaborationContractFixture(t)

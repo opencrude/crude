@@ -127,14 +127,5 @@ func (service *Service) AcquireReviewed(ctx context.Context, preview captypes.Ac
 	if err := verify(); err != nil {
 		return captypes.Settings{}, err
 	}
-	if skill, exists := acquired.Skills[preview.ID]; exists {
-		loaded, err := skills.LoadContext(ctx, skill.Path)
-		if err != nil {
-			return captypes.Settings{}, err
-		}
-		if err := skills.CheckAvailability(loaded); err != nil {
-			return captypes.Settings{}, fmt.Errorf("acquired skill is unavailable: %w", err)
-		}
-	}
 	return acquired, nil
 }

@@ -73,13 +73,28 @@ deletes authored files or another workspace's chosen version. Automatic selectio
 and new acquisition are separate settings under Acquisition; Manual acquisition
 does not prevent user-managed install or browsing.
 
+Frontmatter is bounded YAML. Foreign extension fields and nested authoring
+metadata are inert rather than install blockers; hooks never run. Tool requests
+accept space/comma-separated text or lists, without granting tools. Compatibility
+prose is guidance, not guessed executable requirements. Content validation and
+host readiness are separate: a missing declared dependency leaves the skill
+installed and readable with **setup required**; retry activation after repair.
+
 ## MCP
+
+Registry installation saves the connection without launching or granting tools.
+Required HTTP headers remain visible through review and install: fill their empty
+header rows or add Secret references in Manage. Fixed headers and declared
+variable defaults are retained. Unknown transports or unresolved endpoint/command
+variables give an explicit manual-configuration reason rather than a guessed
+launch. Missing credentials are setup needs, not permission to fabricate them.
 
 Local (stdio) servers inherit the complete host environment, exactly like agent
 shell commands: an authorized launch already runs unsandboxed with the user's
 privileges, so a curated variable list was never a boundary and only broke
 display, session-bus, locale, proxy and toolchain-dependent servers. Explicit
-connection environment and secret references override inherited values. The
+connection environment and secret references override inherited values. Required
+variable checks use those same host values; shell-host checks run on that shell. The
 server's redacted stderr tail is captured per launch and attached to handshake,
 disconnect and tool-call failures and to the connection state, so a crash reads
 as its own reason (for example `Could not open main display`), not a bare EOF.

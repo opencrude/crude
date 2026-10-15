@@ -25,6 +25,12 @@ rebuild can replace `crude.exe` while the previous core lingers, which Windows
 otherwise refuses. Copies of other builds are pruned on the next start once they
 no longer run. `crude --core-status` prints the image a core runs from.
 
+Publication is immutable: concurrent same-build starters close their complete
+private candidates, then atomically link one winner without replacing its inode.
+Losers validate and reuse the existing image. Invalid type/size/executable mode
+fails closed; this is not a same-size corruption hash check. The data filesystem
+must support hard links. Other-build pruning remains best-effort.
+
 ### Developing crude inside crude
 
 A shell refuses to replace a core from another build while that core has shells

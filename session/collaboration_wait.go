@@ -162,9 +162,14 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 		if targetAgentID == "" && result.Run != nil {
 			targetAgentID = result.Run.AgentID
 		}
-		if recovery := s.agentRecovery(targetAgentID); recovery != nil {
+		recovery, parking := s.agentRecoveryState(targetAgentID)
+		if parking {
+			result.Unmet = append(result.Unmet, "attempt_teardown")
+			return result, false, nil
+		}
+		if recovery != nil {
 			result.Recovery = recovery
-			if !ready {
+			if !ready || runID == "" && artifactID == "" {
 				result.Status = "needs_attention"
 				result.Reason = "the agent stopped and needs attention: " + recovery.Summary
 				result.Guidance = "Address the cause, then agent_control operation continue (or cancel) with the returned recovery_id and recovery_generation."

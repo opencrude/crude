@@ -1204,11 +1204,17 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	recoveryState *recoveryRunState,
 	resumed bool,
 ) {
+	// A parked task becomes actionable only after every old-attempt owner
+	// (claims, manager, connection, runtime attachment and DB) has unwound.
+	var parked *sessiondb.RecoveryCheckpoint
 	defer func() {
 		if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
 			handle.Agent.AsyncMgr.CloseAndWait()
 		}
 		r.releaseExecutionPin(handle.Spec, handle)
+		if parked != nil {
+			r.session.parkRecovery(*parked)
+		}
 	}()
 	done := false
 	var terminalDone *agent.AgentEvent
@@ -1244,14 +1250,14 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		if rec := recover(); rec != nil {
 			stack := debug.Stack()
 			r.session.logger.Error("SUBAGENT", "crash", "agent_id", handle.Spec.ID, "error", fmt.Sprintf("%v", rec))
-			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+			r.session.beginRecoveryParking(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
 			status := supervisor.Park(agent.AttentionRecovery(
 				agent.RecoveryFailurePanic,
 				fmt.Errorf("child panic: %v\n\n%s", rec, stack),
 			))
 			checkpoint := recoveryState.checkpoint(status)
 			checkpoint.ContextOwnerID = ""
-			r.session.parkRecovery(checkpoint)
+			parked = &checkpoint
 			r.interruptSubAgentAttempt(handle)
 			r.mgr.MarkInterrupted(handle.Spec.ID)
 			if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
@@ -1273,11 +1279,11 @@ func (r *SubAgentRunner) runSubAgentLoop(
 				}, supervisor.Cancel, 0)
 			}
 			if err != nil {
-				r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+				r.session.beginRecoveryParking(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
 				status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
 				checkpoint := recoveryState.checkpoint(status)
 				checkpoint.ContextOwnerID = ""
-				r.session.parkRecovery(checkpoint)
+				parked = &checkpoint
 				r.interruptSubAgentAttempt(handle)
 				r.mgr.MarkInterrupted(handle.Spec.ID)
 				if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
@@ -1302,14 +1308,14 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 		if !done {
 			r.session.logger.Error("SUBAGENT", "unexpected_exit", "agent_id", handle.Spec.ID)
-			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+			r.session.beginRecoveryParking(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
 			status := supervisor.Park(agent.AttentionRecovery(
 				agent.RecoveryFailurePanic,
 				errors.New("child exited unexpectedly before a natural finish"),
 			))
 			checkpoint := recoveryState.checkpoint(status)
 			checkpoint.ContextOwnerID = ""
-			r.session.parkRecovery(checkpoint)
+			parked = &checkpoint
 			r.interruptSubAgentAttempt(handle)
 			r.mgr.MarkInterrupted(handle.Spec.ID)
 			if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
@@ -1596,6 +1602,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			OnAttention: func(failure agent.RecoveryFailure) agent.AttentionDisposition {
 				switch failure.Kind {
 				case agent.RecoveryFailureConfiguration, agent.RecoveryFailureGuidance:
+					r.session.beginRecoveryParking(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
 					return agent.AttentionParkAttempt
 				default:
 					return agent.AttentionWait
@@ -1668,7 +1675,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		committedCheckpoint.ContextGeneration = generation
 		committedCheckpoint.ContextReason = reason
 		committedCheckpoint.ActiveContext = append([]provider.ChatMessage(nil), active...)
-		r.session.parkRecovery(committedCheckpoint)
+		parked = &committedCheckpoint
 		if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
 			handle.Agent.AsyncMgr.CloseAndWait()
 		}

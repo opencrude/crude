@@ -228,16 +228,10 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		manager.mu.Unlock()
 		return err
 	}
-	var missing []string
-	for _, name := range config.RequiredEnv {
-		if strings.TrimSpace(config.Environment[name]) == "" && strings.TrimSpace(config.SecretRefs[name]) == "" {
-			missing = append(missing, name)
-		}
-	}
+	missing := MissingConfiguration(config)
 	if len(missing) > 0 {
-		sort.Strings(missing)
 		manager.mu.Unlock()
-		return fmt.Errorf("connection needs required environment configuration: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("connection needs required configuration: %s", strings.Join(missing, ", "))
 	}
 	if config.Transport == "stdio" && !config.LaunchApproved {
 		if _, authorized := ctx.Value(launchAuthorizationKey{}).(captypes.ConnectionConfig); !authorized {

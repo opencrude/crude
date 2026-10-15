@@ -15,18 +15,21 @@ import (
 )
 
 type registryInput struct {
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Value       string `json:"value"`
-	Default     string `json:"default"`
-	Description string `json:"description"`
-	Required    bool   `json:"isRequired"`
-	Secret      bool   `json:"isSecret"`
+	Type        string                   `json:"type"`
+	Name        string                   `json:"name"`
+	Value       string                   `json:"value"`
+	Default     string                   `json:"default"`
+	Description string                   `json:"description"`
+	Required    bool                     `json:"isRequired"`
+	Secret      bool                     `json:"isSecret"`
+	Variables   map[string]registryInput `json:"variables"`
 }
 
 type registryTransport struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type      string                   `json:"type"`
+	URL       string                   `json:"url"`
+	Headers   []registryInput          `json:"headers"`
+	Variables map[string]registryInput `json:"variables"`
 }
 
 type registryPackage struct {
@@ -192,7 +195,32 @@ func registryServerCandidates(source captypes.SourceConfig, server registryServe
 		}
 		entry := baseEntry
 		entry.ID, entry.Transport, entry.ConnectionID = id, "remote", id
-		candidates = append(candidates, Candidate{Entry: entry, Connection: &config})
+		endpoint, err := registryValue(registryInput{Value: remote.URL, Variables: remote.Variables})
+		if err != nil {
+			entry.State, entry.Reason = "unsupported", "Endpoint needs manual configuration in Settings: "+err.Error()
+			candidates = append(candidates, Candidate{Entry: entry})
+			continue
+		}
+		config.URL = endpoint
+		var requirements []string
+		for _, header := range remote.Headers {
+			value, valueErr := registryValue(header)
+			if value == "" && !header.Required && valueErr == nil {
+				continue
+			}
+			if config.Headers == nil {
+				config.Headers = make(map[string]string)
+			}
+			// Empty required headers remain editable on the existing connection;
+			// they block connection, not installation, and never invent credentials.
+			config.Headers[header.Name] = value
+			if value == "" || valueErr != nil {
+				config.Headers[header.Name] = ""
+				entry.State, entry.Reason = "setup required", "Configure required header "+header.Name+" in Settings (use Secret references for credentials)"
+			}
+			requirements = append(requirements, "Header: "+header.Name+" — "+header.Description)
+		}
+		candidates = append(candidates, Candidate{Entry: entry, Connection: &config, Requirements: requirements})
 	}
 	for _, packageSpec := range server.Packages {
 		config, requirements, err := registryPackageConnection(source, server, packageSpec, name)
@@ -272,14 +300,14 @@ func registryPackageConnection(source captypes.SourceConfig, server registryServ
 		if input.Name == "" {
 			continue
 		}
-		value := input.Value
-		if value == "" {
-			value = input.Default
+		value, valueErr := registryValue(input)
+		if valueErr != nil {
+			value = ""
 		}
 		if value != "" {
 			environment[input.Name] = value
 		}
-		if input.Required && value == "" {
+		if valueErr != nil || input.Required && value == "" {
 			required = append(required, input.Name)
 			detail := "Required environment: " + input.Name
 			if input.Description != "" {
@@ -301,9 +329,9 @@ func registryPackageConnection(source captypes.SourceConfig, server registryServ
 func fixedRegistryArguments(inputs []registryInput) ([]string, error) {
 	var arguments []string
 	for _, input := range inputs {
-		value := input.Value
-		if value == "" {
-			value = input.Default
+		value, err := registryValue(input)
+		if err != nil {
+			return nil, fmt.Errorf("registry command argument needs manual configuration in Settings: %w", err)
 		}
 		if value == "" {
 			if input.Required {
@@ -321,6 +349,36 @@ func fixedRegistryArguments(inputs []registryInput) ([]string, error) {
 		}
 	}
 	return arguments, nil
+}
+
+// Substitute only declared variables. Braces without a matching declaration
+// are literal by the registry contract, not guessed placeholders.
+func registryValue(input registryInput) (string, error) {
+	value := input.Value
+	if value == "" {
+		value = input.Default
+	}
+	keys := make([]string, 0, len(input.Variables))
+	for key := range input.Variables {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var replacements []string
+	for _, key := range keys {
+		if !strings.Contains(value, "{"+key+"}") {
+			continue
+		}
+		variable := input.Variables[key]
+		text := variable.Value
+		if text == "" {
+			text = variable.Default
+		}
+		if text == "" {
+			return "", fmt.Errorf("supply variable %q: %s", key, variable.Description)
+		}
+		replacements = append(replacements, "{"+key+"}", text)
+	}
+	return strings.NewReplacer(replacements...).Replace(value), nil
 }
 
 func registryConnectionID(sourceID, serverName, variant, identity string) string {
