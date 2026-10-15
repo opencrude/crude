@@ -54,8 +54,15 @@ func ImportConnections(data []byte, scope captypes.Scope) (map[string]captypes.C
 			return nil, fmt.Errorf("connection %q: %w", name, err)
 		}
 		transport := definition.Type
-		if transport == "streamable-http" {
+		switch transport {
+		case "streamable-http", "streamableHttp", "streamable_http":
 			transport = "http"
+		case "sse":
+			transport = mcpclient.TransportSSE
+		case "":
+			if definition.URL != "" {
+				transport = "http"
+			}
 		}
 		if transport == "" && definition.Command != "" {
 			transport = "stdio"

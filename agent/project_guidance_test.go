@@ -171,7 +171,10 @@ func TestOversizedGuidanceIsFullyCompiledBeforeBoundedNormalRequest(t *testing.T
 	}
 }
 
-func TestRunDefersScopedBatchUntilWholeGuidanceIsVisible(t *testing.T) {
+// A batch that reaches newly governed scope defers its effects until the model
+// has seen the complete guidance; pure reads in the same batch cannot violate
+// it and run immediately instead of costing a round trip.
+func TestRunDefersScopedEffectsButRunsReadsUntilWholeGuidanceIsVisible(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "nested")
 	if err := os.Mkdir(nested, 0700); err != nil {
@@ -180,45 +183,61 @@ func TestRunDefersScopedBatchUntilWholeGuidanceIsVisible(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nested, "AGENTS.md"), []byte(strings.Repeat("scoped rules\n", 900)+"scoped-final-rule"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var requests, executed atomic.Int32
+	var requests, reads, writes atomic.Int32
+	writeCall := func(w http.ResponseWriter, id string) {
+		_, _ = fmt.Fprintf(w, "{\"index\":%d,\"id\":\"%s\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"nested/out.txt\\\",\\\"content\\\":\\\"x\\\"}\"}}", map[bool]int{true: 1, false: 0}[id == "write-1"], id)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := requests.Add(1)
 		var request provider.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		if call == 2 {
-			if executed.Load() != 0 {
-				t.Error("task tool executed before scoped guidance reached the model")
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch call {
+		case 1:
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"read-1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"nested/file.txt\\\"}\"}},")
+			writeCall(w, "write-1")
+			_, _ = fmt.Fprint(w, "]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+		case 2:
+			if writes.Load() != 0 {
+				t.Error("write executed before scoped guidance reached the model")
+			}
+			if reads.Load() != 1 {
+				t.Errorf("read in the deferred batch ran %d times, want once", reads.Load())
 			}
 			var visible strings.Builder
 			for _, message := range request.Messages {
 				visible.WriteString(message.ContentString())
 			}
-			if !strings.Contains(visible.String(), "scoped-final-rule") || !strings.Contains(visible.String(), "not executed") {
-				t.Error("deferred call did not deliver complete scoped guidance")
+			if !strings.Contains(visible.String(), "scoped-final-rule") || !strings.Contains(visible.String(), "not executed") || !strings.Contains(visible.String(), "File inspected.") {
+				text := visible.String()
+				t.Errorf("deferred batch did not deliver complete guidance with the read result: rule=%t deferred=%t read=%t", strings.Contains(text, "scoped-final-rule"), strings.Contains(text, "not executed"), strings.Contains(text, "File inspected."))
 			}
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[")
+			writeCall(w, "write-2")
+			_, _ = fmt.Fprint(w, "]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+		default:
+			writeChatSSE(w, "Finished after reading all applicable rules.", "stop")
 		}
-		if call <= 2 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"nested/file.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", call)
-			return
-		}
-		writeChatSSE(w, "Finished after reading all applicable rules.", "stop")
 	}))
 	defer server.Close()
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "scoped-guidance-model"
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
-	a.WorkDir = dir
-	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
-		executed.Add(1)
-		return tools.ToolResult{Content: "File inspected."}, nil
+	a.WorkDir, a.Yolo = dir, true
+	a.ToolFn = func(_ context.Context, name string, _ map[string]any) (tools.ToolResult, error) {
+		if name == "read_file" {
+			reads.Add(1)
+			return tools.ToolResult{Content: "File inspected."}, nil
+		}
+		writes.Add(1)
+		return tools.ToolResult{Content: "Written."}, nil
 	}
-	a.Run(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "Inspect nested/file.txt")}, "system", nil, nil, "", nil)
-	if requests.Load() != 3 || executed.Load() != 1 {
-		t.Fatalf("requests=%d tools=%d want one deferred attempt and one execution", requests.Load(), executed.Load())
+	a.Run(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "Inspect and update nested files")}, "system", nil, nil, "", nil)
+	if requests.Load() != 3 || reads.Load() != 1 || writes.Load() != 1 {
+		t.Fatalf("requests=%d reads=%d writes=%d want one deferred write, an immediate read and one later write", requests.Load(), reads.Load(), writes.Load())
 	}
 }
 
@@ -462,83 +481,35 @@ func TestGuidanceCallPathsIncludeNativeAndParallelPatches(t *testing.T) {
 		{Type: "custom", Function: provider.FunctionCall{Name: "apply_patch", Arguments: patch}},
 		{Type: "function", Function: provider.FunctionCall{Name: "multi_tool_use.parallel", Arguments: string(args)}},
 	} {
-		paths, pathErr := guidanceCallPaths([]provider.ToolCall{call})
-		if pathErr != nil {
-			t.Fatal(pathErr)
-		}
+		paths := guidanceCallPaths([]provider.ToolCall{call})
 		if strings.Join(paths, ",") != "nested/AGENTS.md,nested/CLAUDE.md" {
 			t.Fatalf("patch operands missing from guidance preflight: %v", paths)
 		}
 	}
 }
 
-func TestGuidanceCallPathsRejectsWildcardLiteralWithoutPoisoningSet(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("root rule"), 0600); err != nil {
-		t.Fatal(err)
+// A glob operand contributes its literal directory prefix as a guidance
+// scope. It must not fail the batch: one sibling's operand once turned every
+// valid read in a parallel batch into the same wildcard error.
+func TestGuidanceCallPathsUseGlobLiteralPrefix(t *testing.T) {
+	calls := []provider.ToolCall{
+		{Function: provider.FunctionCall{Name: "grep_files", Arguments: `{"pattern":"needle","path":"tui/ui/text*"}`}},
+		{Function: provider.FunctionCall{Name: "read_file", Arguments: `{"path":"valid.go"}`}},
+		{Function: provider.FunctionCall{Name: "grep_files", Arguments: `{"pattern":"x","path":"nested/**/*_test.go"}`}},
 	}
-	set, err := rootprompt.DiscoverGuidance(t.Context(), dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := set.Digest()
-	calls := []provider.ToolCall{{Function: provider.FunctionCall{Name: "grep_files", Arguments: `{"pattern":"needle","path":"tui/ui/text*"}`}}}
-	paths, err := guidanceCallPaths(calls)
-	if err == nil || !strings.Contains(err.Error(), "wildcard syntax") {
-		t.Fatalf("expected actionable wildcard error, got paths=%v err=%v", paths, err)
-	}
-	if set.Digest() != before {
-		t.Fatal("invalid operand mutated the accepted guidance snapshot")
-	}
-	changed, err := set.AddPaths(t.Context(), []string{filepath.Join(dir, "name[1].go")})
-	if err != nil || changed {
-		t.Fatalf("ordinary bracket path rejected or changed guidance: changed=%t err=%v", changed, err)
+	if got := strings.Join(guidanceCallPaths(calls), ","); got != "tui/ui,valid.go,nested" {
+		t.Fatalf("glob operands did not reduce to literal prefixes: %s", got)
 	}
 }
 
 func TestGuidanceCallPathsTreatsGlobPatternSeparatelyFromConcreteBase(t *testing.T) {
-	paths, err := guidanceCallPaths([]provider.ToolCall{{Function: provider.FunctionCall{Name: "glob_files", Arguments: `{"pattern":"**/*.go","base_dir":"tui/ui"}`}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	paths := guidanceCallPaths([]provider.ToolCall{{Function: provider.FunctionCall{Name: "glob_files", Arguments: `{"pattern":"**/*.go","base_dir":"tui/ui"}`}}})
 	if strings.Join(paths, ",") != "tui/ui" {
 		t.Fatalf("glob pattern leaked into guidance scopes: %v", paths)
 	}
 }
 
-func TestWildcardLiteralToolPathReturnsLocalErrorWithoutExecution(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("root rule"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	a := &Agent{WorkDir: dir}
-	set, err := rootprompt.DiscoverGuidance(t.Context(), dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.guidance = &projectGuidance{set: set, digest: set.Digest()}
-	executed := false
-	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
-		executed = true
-		return tools.ToolResult{Content: "unexpected"}, nil
-	}
-	call := provider.ToolCall{ID: "bad-path", InternalID: "bad-path", Type: "function", Function: provider.FunctionCall{
-		Name: "grep_files", Arguments: `{"pattern":"needle","path":"tui/ui/text*"}`,
-	}}
-	paths, pathErr := guidanceCallPaths([]provider.ToolCall{call})
-	if pathErr == nil || len(paths) != 0 {
-		t.Fatalf("expected rejected local operand, got paths=%v err=%v", paths, pathErr)
-	}
-	before := a.guidance.set.Digest()
-	if _, err := a.guidance.loadPaths(t.Context(), paths); err != nil {
-		t.Fatalf("empty valid preflight unexpectedly failed: %v", err)
-	}
-	if executed || a.guidance.set.Digest() != before {
-		t.Fatalf("invalid path executed=%t or changed snapshot", executed)
-	}
-}
-
-func TestRunWildcardLiteralPathIsOrdinaryToolErrorAndContinues(t *testing.T) {
+func TestRunGlobOperandExecutesEveryCallInBatch(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("root rule"), 0600); err != nil {
 		t.Fatal(err)
@@ -547,7 +518,7 @@ func TestRunWildcardLiteralPathIsOrdinaryToolErrorAndContinues(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := requests.Add(1)
 		if call == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"bad-path\",\"type\":\"function\",\"function\":{\"name\":\"grep_files\",\"arguments\":\"{\\\"pattern\\\":\\\"needle\\\",\\\"path\\\":\\\"tui/ui/text*\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"glob-path\",\"type\":\"function\",\"function\":{\"name\":\"grep_files\",\"arguments\":\"{\\\"pattern\\\":\\\"needle\\\",\\\"path\\\":\\\"tui/ui/text*\\\"}\"}},{\"index\":1,\"id\":\"sibling\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"AGENTS.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
 			return
 		}
 		var request provider.ChatRequest
@@ -558,8 +529,8 @@ func TestRunWildcardLiteralPathIsOrdinaryToolErrorAndContinues(t *testing.T) {
 		for _, message := range request.Messages {
 			joined += message.ContentString()
 		}
-		if !strings.Contains(joined, "wildcard syntax is unsupported") {
-			t.Errorf("second request lacked local operand result: %s", joined)
+		if strings.Count(joined, "executed ") != 2 {
+			t.Errorf("both calls should have executed: %s", joined)
 		}
 		writeChatSSE(w, "Recovered without parking.", "stop")
 	}))
@@ -573,29 +544,29 @@ func TestRunWildcardLiteralPathIsOrdinaryToolErrorAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedDigest := expectedSet.Digest()
-	executed := atomic.Bool{}
-	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
-		executed.Store(true)
-		return tools.ToolResult{Content: "unexpected"}, nil
+	var executed atomic.Int32
+	a.ToolFn = func(_ context.Context, name string, _ map[string]any) (tools.ToolResult, error) {
+		executed.Add(1)
+		return tools.ToolResult{Content: "executed " + name}, nil
 	}
 	events := make([]AgentEvent, 0)
 	history := a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "search")}, rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: dir}), func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "", nil)
-	if requests.Load() != 2 || executed.Load() || a.RunFailure() != nil {
-		t.Fatalf("requests=%d executed=%t failure=%v history=%v", requests.Load(), executed.Load(), a.RunFailure(), history)
+	if requests.Load() != 2 || executed.Load() != 2 || a.RunFailure() != nil {
+		t.Fatalf("requests=%d executed=%d failure=%v history=%v", requests.Load(), executed.Load(), a.RunFailure(), history)
 	}
 	for _, event := range events {
 		if event.Type == "recovery" {
-			t.Fatalf("invalid operand parked the agent: %+v", event)
+			t.Fatalf("glob operand parked the agent: %+v", event)
 		}
 	}
 	if a.guidance == nil || a.guidance.digest != expectedDigest {
-		t.Fatal("invalid operand changed accepted guidance snapshot")
+		t.Fatal("glob operand changed accepted guidance snapshot")
 	}
 }
 
-func TestGuidanceCallPathsRejectsNativeAndParallelWildcardOperands(t *testing.T) {
+func TestGuidanceCallPathsReduceNativeAndParallelGlobOperands(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: tui/ui/text*\n@@\n-old\n+new\n*** End Patch"
 	parallel, err := json.Marshal(map[string]any{"tool_uses": []any{
 		map[string]any{"recipient_name": "functions.read_file", "parameters": map[string]any{"path": "valid.go"}},
@@ -604,13 +575,12 @@ func TestGuidanceCallPathsRejectsNativeAndParallelWildcardOperands(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []provider.ToolCall{
-		{Type: "custom", Function: provider.FunctionCall{Name: "apply_patch", Arguments: patch}},
-		{Type: "function", Function: provider.FunctionCall{Name: "multi_tool_use.parallel", Arguments: string(parallel)}},
+	for call, want := range map[*provider.ToolCall]string{
+		{Type: "custom", Function: provider.FunctionCall{Name: "apply_patch", Arguments: patch}}:                          "tui/ui",
+		{Type: "function", Function: provider.FunctionCall{Name: "multi_tool_use.parallel", Arguments: string(parallel)}}: "valid.go,tui/ui",
 	} {
-		paths, err := guidanceCallPaths([]provider.ToolCall{call})
-		if err == nil || len(paths) != 0 || !strings.Contains(err.Error(), "wildcard syntax") {
-			t.Fatalf("call=%+v paths=%v err=%v", call, paths, err)
+		if got := strings.Join(guidanceCallPaths([]provider.ToolCall{*call}), ","); got != want {
+			t.Fatalf("call=%s paths=%s want %s", call.Function.Name, got, want)
 		}
 	}
 }

@@ -1166,6 +1166,7 @@ func chatResponseToUpdate(resp *ChatResponse) StreamUpdate {
 	}
 	if resp.Usage != nil {
 		usage := resp.Usage.normalized()
+		usage.ServiceTier = resp.ServiceTier
 		update.Usage = &usage
 	}
 	return update

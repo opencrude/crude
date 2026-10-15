@@ -1,12 +1,13 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func (t *engineTracker) engines() []string {
 	return all
 }
 
-func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
+func searchWithEngine(ctx context.Context, engine, query string, limit int) ([]SearchResult, error) {
 	logIf(func(lg *logger.Logger) {
 		lg.Debug("SEARCH", "engine_start", "engine", engine, "query", query, "limit", limit)
 	})
@@ -100,15 +101,15 @@ func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
 	results, err := func() ([]SearchResult, error) {
 		switch strings.ToLower(engine) {
 		case "brave":
-			return searchBrave(query, limit)
+			return searchBrave(ctx, query, limit)
 		case "duckduckgo":
-			return searchDuckDuckGo(query, limit)
+			return searchDuckDuckGo(ctx, query, limit)
 		case "startpage":
-			return searchStartpage(query, limit)
+			return searchStartpage(ctx, query, limit)
 		case "exa":
-			return searchExa(query, limit)
+			return searchExaPublic(ctx, query, limit)
 		default:
-			return searchBrave(query, limit)
+			return nil, fmt.Errorf("unknown search engine %q", engine)
 		}
 	}()
 	dur := time.Since(start).Milliseconds()
@@ -124,10 +125,10 @@ func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
 	return results, err
 }
 
-// SuperSearch queries multiple engines concurrently, deduplicates results,
+// keylessSearch queries the keyless engines concurrently, deduplicates results,
 // and tracks engine health. Returns deduplicated results, succeeded engines,
 // and failed engines with their error messages.
-func SuperSearch(query string, limit int) ([]SearchResult, []string, map[string]string) {
+func keylessSearch(ctx context.Context, query string, limit int) ([]SearchResult, []string, map[string]string) {
 	engines := tracker.engines()
 	logIf(func(lg *logger.Logger) {
 		lg.Info("SEARCH", "super_start", "query", query, "limit", limit, "engines", engines)
@@ -143,7 +144,7 @@ func SuperSearch(query string, limit int) ([]SearchResult, []string, map[string]
 
 	for _, eng := range engines {
 		go func(e string) {
-			results, err := searchWithEngine(e, query, limit)
+			results, err := searchWithEngine(ctx, e, query, limit)
 			ch <- engineResult{engine: e, results: results, err: err}
 		}(eng)
 	}
@@ -204,11 +205,11 @@ func deduplicateResults(results []SearchResult, limit int) []SearchResult {
 
 // Search Engine Implementations
 
-func searchBrave(query string, limit int) ([]SearchResult, error) {
+func searchBrave(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 	encodedQuery := url.QueryEscape(query)
 	reqURL := fmt.Sprintf("https://search.brave.com/search?q=%s&source=web", encodedQuery)
 
-	req, err := http.NewRequest("GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -268,11 +269,11 @@ func searchBrave(query string, limit int) ([]SearchResult, error) {
 	return results, nil
 }
 
-func searchDuckDuckGo(query string, limit int) ([]SearchResult, error) {
+func searchDuckDuckGo(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 	encodedQuery := url.QueryEscape(query)
 	urlStr := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", encodedQuery)
 
-	req, err := http.NewRequest("GET", urlStr, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -339,11 +340,11 @@ func decodeDDGURL(rawURL string) string {
 	return rawURL
 }
 
-func searchStartpage(query string, limit int) ([]SearchResult, error) {
+func searchStartpage(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 	encodedQuery := url.QueryEscape(query)
 	reqURL := fmt.Sprintf("https://www.startpage.com/do/search?query=%s", encodedQuery)
 
-	req, err := http.NewRequest("GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -430,8 +431,10 @@ func searchStartpage(query string, limit int) ([]SearchResult, error) {
 	return results, nil
 }
 
-func searchExa(query string, limit int) ([]SearchResult, error) {
-	type ExaSearchRequest struct {
+// searchExaPublic uses Exa's hosted MCP endpoint, which serves a keyless free
+// tier. Configured keys use the Exa API instead (see exaSearch).
+func searchExaPublic(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+	type exaSearchRequest struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      int    `json:"id"`
 		Method  string `json:"method"`
@@ -445,76 +448,54 @@ func searchExa(query string, limit int) ([]SearchResult, error) {
 			} `json:"arguments"`
 		} `json:"params"`
 	}
-
-	type ExaSearchResponse struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      int    `json:"id"`
-		Result  struct {
+	type exaSearchResponse struct {
+		Result struct {
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"content"`
 		} `json:"result"`
 	}
-
-	apiKey := os.Getenv("EXA_API_KEY")
-	baseURL := "https://mcp.exa.ai/mcp"
-	if apiKey != "" {
-		baseURL = fmt.Sprintf("https://mcp.exa.ai/mcp?exaApiKey=%s", apiKey)
-	}
-
-	reqBody := ExaSearchRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "tools/call",
-	}
-	reqBody.Params.Name = "web_search_exa"
-	reqBody.Params.Arguments.Query = query
-	reqBody.Params.Arguments.Type = "auto"
-	reqBody.Params.Arguments.NumResults = limit
-	reqBody.Params.Arguments.LiveCrawl = "fallback"
-
-	body, err := json.Marshal(reqBody)
+	request := exaSearchRequest{JSONRPC: "2.0", ID: 1, Method: "tools/call"}
+	request.Params.Name = "web_search_exa"
+	request.Params.Arguments.Query = query
+	request.Params.Arguments.Type = "auto"
+	request.Params.Arguments.NumResults = limit
+	request.Params.Arguments.LiveCrawl = "fallback"
+	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
-
-	req, err := http.NewRequest("POST", baseURL, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://mcp.exa.ai/mcp", strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}
-
 	req.Header.Set("accept", "application/json, text/event-stream")
 	req.Header.Set("content-type", "application/json")
-
 	client := network.NewClient(30 * time.Second)
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, redactRequestURL(err)
 	}
 	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("exa: HTTP %d", resp.StatusCode)
 	}
-
-	lines := strings.Split(string(respBody), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "data: ") {
-			dataStr := strings.TrimPrefix(line, "data: ")
-			var data ExaSearchResponse
-			if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
-				continue
-			}
-			if len(data.Result.Content) > 0 {
-				text := data.Result.Content[0].Text
-				return parseExaResults(text, limit)
-			}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return nil, redactRequestURL(err)
+	}
+	for _, line := range strings.Split(string(respBody), "\n") {
+		data, found := strings.CutPrefix(line, "data: ")
+		if !found {
+			continue
+		}
+		var decoded exaSearchResponse
+		if json.Unmarshal([]byte(data), &decoded) == nil && len(decoded.Result.Content) > 0 {
+			return parseExaResults(decoded.Result.Content[0].Text, limit)
 		}
 	}
-
 	return []SearchResult{}, nil
 }
 
@@ -547,4 +528,20 @@ func parseExaResults(text string, limit int) ([]SearchResult, error) {
 	}
 
 	return results, nil
+}
+
+// redactRequestURL drops the query string from a transport error's URL. Go's
+// *url.Error embeds the full request URL, which for Exa carries the API key;
+// engine errors reach logs and the model's tool result.
+func redactRequestURL(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil && parsed.RawQuery != "" {
+			parsed.RawQuery = "redacted"
+			redacted := *urlErr
+			redacted.URL = parsed.String()
+			return &redacted
+		}
+	}
+	return err
 }

@@ -267,6 +267,16 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	case "context_compaction_failed":
 		status := parseCompactionStatus("compaction_failed", evt.Data)
 		target.UpdateTurnStatus(status)
+		if values, _ := evt.Data.(map[string]any); values != nil {
+			if deferred, _ := values["deferred"].(bool); deferred {
+				// The run keeps its full context and continues; the boundary row
+				// records why, and nothing stays active or needs attention.
+				a.ActiveCompaction = TurnStatus{}
+				a.Cancelling = false
+				effects.setStatus("Compaction deferred")
+				break
+			}
+		}
 		if status.Trigger == "manual" {
 			a.Running = false
 			a.Thinking = false

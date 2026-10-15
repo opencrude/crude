@@ -350,6 +350,144 @@ The native Markdown bridge uses the shared ANSI decoder and carries SGR state
 across wrapped lines. OSC hyperlink metadata is not printable content and must
 not change table widths, wrapping, selection text, or the painted transcript.
 
+## Activity motion
+
+- `ui.ActivityDot(spinFrame)` is the only product activity-dot animation:
+  synchronized Unix-millisecond clock, `●` for 400ms then `○` for 400ms.
+- Active chat lifecycle/thinking/tool/sub-agent/session rows use it with one
+  stable semantic color. Never add local speed formulas, brightness/color
+  pulses, braille frames, or `AttrBlink`; see `docs/guides/component-authoring.md`.
+- Every active fixed-strip page uses `ui.TextTide`, a paint-only ink sweep that
+  fades off both ends before wrapping in forward mode. `ui.TextTideMotion` keeps
+  the crest in cell columns on the shared clock, so text growth and resize do
+  not rephase a visible sweep. Entry and exit share its travel speed; the full
+  highlight clears the last character before reentering from the left.
+  Explicit reasoning kind and semantic blocks come from provider wire contracts.
+  Flattened unlabelled text gets a neutral provisional strip preview and
+  expandable full train, not a guessed
+  raw pane or confirmed summary. A strong provider-reported usage discrepancy
+  can settle the accepted request and, with repeated connection-scoped evidence,
+  calibrate subsequent streams. Explicit wire raw always keeps its pane. Never
+  classify by model name or infer from current-request usage before it arrives.
+- Active collapsed compact thoughts paint no stray transcript header. The fixed
+  strip owns a clickable chevron and the normal disclosure shortcut reveals the
+  complete retained trace in the transcript. `ColorActivityText` blends muted
+  ink 30% toward the theme foreground, keeping the strip distinct from metadata.
+  Provisional thinking tides reversibly; a confirmed summary tides left-to-right
+  through the remaining active turn for that serving
+  connection. A provider/account/model change resets the direction. Do not
+  change transcript text, width or rows on animation frames.
+- Reasoning contracts live in `types/reasoning`, request outcomes in
+  `types/accounting`, and immutable plan activity in `types/activity`. Rendering
+  and the event pump never import provider implementations for these contracts.
+  `chatprojection.ActivityStrip` derives cached rows; `shellchat` only publishes
+  geometry and paints. Never parse Markdown, decode plan-tool JSON, or access
+  storage from `Screen.Paint`.
+
+## Activity strip, plans and notices
+
+- Chat reserves activity-strip geometry independently of phase. Transient
+  provider/tool status must not appear/disappear as transcript rows. Durable
+  history and compaction boundaries remain visible. Ordinary stopped boundaries
+  and cancelled recovery notices remain canonical/context evidence but contribute
+  no chat rows, spacers, grouping boundaries or height. One quiet `Stopped` strip
+  remains; interrupted tools and genuine actionable recovery keep their evidence.
+  Memory-summary titles
+  load through session-owned cancellable jobs, never from a screen or Update.
+- The strip prioritizes upload bytes/percent, provider waiting, retry and required
+  action over optional rotation. Tidal motion applies to every active strip
+  state; provisional and summarized thinking get the compact preview. Do not
+  echo the user prompt there. Ordinary planned activity is only `a/n Task name`;
+  no Goal/Next/progress-count pages or call-count suffix. Thinking can share or
+  rotate with that compact task. Stopping, cancelled, completed and idle strips
+  are static; cancellation says only `Stopped`. Stopping never changes the
+  persisted plan lifecycle.
+  The session's one `plan.Store` publishes its committed immutable activity view;
+  the strip never becomes another plan owner. Hovering the strip inspects all
+  ordered steps in a bounded, scrollable passive WindowFrame popover, owned by
+  that exact pane without taking composer focus. Its text is selectable like
+  chat: a captured drag paints `TextSelection` colors through the shared
+  `PaintLineAtBackground` columns, release copies the exact plain text, and the
+  highlight never outlives the gesture. Leave/Esc/outside/owner removal
+  dismiss it. `Latest` is a centered native button in the existing reserved gap
+  while scrolled up; it adds no transcript height and re-arms exact-pane follow.
+- Plans are clean desired snapshots, not execution logs. Omitted obsolete steps
+  remain only in immutable revision history. Both plan tool interfaces expose
+  `replace=true` to atomically supersede a changed goal and reset step provenance;
+  neither silently appends cancelled steps. Prompts require latest-intent review,
+  updates at milestones and honest closure before the final response. Explicit
+  revision fences and transaction rollback preserve history and current activity.
+- Command safety assessments belong to owner-scoped Notices, not retained
+  `AgentState` alerts or live `NeedsAction` status. Only pending permissions and
+  questions need input. Completed, cancelled and failed turns keep their own
+  phase while safety notification history stays unread until acknowledged.
+
+## Tool leaves and titles
+
+- Activity groups and parallel batches share one staged tool-leaf projection.
+  Expansion reveals hidden branches in place; it never replaces the tree with
+  standalone legacy rows. Execution events carry exact tool arguments, not
+  formatted/truncated summaries. Native command JSON envelopes are decoded only
+  at presentation; file edits/writes/patches stay separate and default-open.
+  **Never print a raw JSON tool-argument envelope in any tool title, status,
+  compact pane, or batch leaf.** `tools.SummarizeArgs` is the single semantic
+  operand authority for live events, child projections, and resumed snapshots.
+  Missing, malformed, nested, and unfamiliar argument shapes fail closed to a
+  name-only title, not a truncated JSON fallback; a real command/query/path
+  extracted from a field remains readable. The shared title painter must also
+  guard raw structured progress labels, unsafe tool identifiers, and nested
+  structured error reasons. Every new tool schema needs live,
+  parallel (when applicable), and hydrated tests asserting the same title,
+  row geometry, disclosure, and full evidence access across both paths.
+  Sub-agent tool identities include allocated nickname, exact category and exact
+  handle whenever those facts are available: running panes, launch outcomes,
+  polls, cancellations, list entries and authored reports. A call awaiting
+  allocation shows requested category + assignment; once allocated it never
+  guesses a nickname from the requested role/task, or attaches a name from a
+  mismatched result. Lists keep a bounded title and expose each name+handle pair
+  in expanded evidence. Live, batch and hydrated rows share the same title/
+  progress snapshot and must paint identically.
+  Batch preview names come from closed strings in the original input, never
+  JSON-repaired partial names. Unnamed children and empty live envelopes occupy
+  no transcript row; named children stream their arguments immediately in the
+  correct tree/standalone placement. A batch's first groupable child starts in
+  its tree rather than reparenting when its siblings arrive.
+  Summary counts and visible membership are source/disclosure-derived, not
+  rescanned on animation ticks. See `docs/reference/chat-activity.md`.
+- Tool titles keep action, operand and metadata as distinct semantic spans,
+  with theme-dependent colors that do not change with lifecycle. Wrapping must
+  retain those roles, including in compact sub-agent lists. Reserve the red
+  title and `×` indicator for actual failures; never recolor the operand or
+  whole result red, or turn settled tool rows into full-foreground text.
+- Keep at least six recent eligible tool leaves and the last two tool request
+  rounds visible, extending backward by whole rounds; completion alone must not
+  fold a leaf. Completed thoughts do not consume that tool budget. Promoted
+  thinking returns to its original canonical transcript slot on completion and
+  releases the temporary pane, so long thoughts cannot orphan adjacent tools.
+  Transcript items own one leading spacer; subpanes never add trailing gaps.
+  Persist `ToolRoundID` and inherit it in parallel projections. Retry
+  feedback is one retained, cancellable row. User stops preserve readable work
+  and append a durable `turn_stopped` boundary; never strike through cancelled
+  content or invalidate a prior completed turn.
+
+## Markdown and assignment rendering
+
+- **Markdown keeps its established hierarchy:** use Glamour's differentiated
+  headings, links and inline code, with theme-bound document/fenced-code ink and
+  a readable light palette. Never force `StyleConfig.Text.Color` globally; it
+  overrides inherited heading colours. Native bridges tokenize through the
+  shared ANSI decoder, suppress OSC/control payloads, and carry SGR state across
+  a rendered block (`BridgeAnsiLines`), not only within individual rows.
+  `rendering.MarkdownRenderer` is Glamour's ANSI renderer over goldmark with
+  only the raw-HTML parsers removed: chat text is not HTML, so `<context>` or
+  `Vec<T>` stays literal instead of being sanitized away. Never add an escaping
+  pre-pass or restore `glamour.NewTermRenderer` for chat.
+- **Child assignments display typed fields, never their envelope.** Providers
+  receive `prompt.BuildChild`'s escaped `<delegated_assignment>`; live events,
+  persisted snapshots and recovery checkpoints carry `childAssignmentDisplay`
+  (description + verbatim instructions as Markdown). Never parse the envelope
+  or model-authored structure back out of text.
+
 ## Identity And Usage
 
 Current selection and historical production identities are separate. The header
@@ -372,6 +510,49 @@ stable monetary accumulation order and retain unknown/estimated/partial cost
 availability. Open Tabs keeps current identity, activity, turn count and cost in
 collapsed rows; expanded usage exposes each producing model alongside the
 existing aggregate totals.
+
+## Usage accounting
+
+- Accounting request IDs use `math/rand/v2` for non-security uniqueness, never
+  runtime turn/step counters that restart after resume. UI and persistence share
+  `sessiondb.UsageRecordFromEvent`; preserve uint64 generations and per-field
+  reported availability. Provider omissions are not measured zeros. A revision
+  replaces the same request once and older revisions cannot overwrite it. Context
+  stays agent-local even when inspecting subtree/session totals.
+- Current model selection is read from the owning session's configuration, not
+  its last usage record or another tab's backend. Per-model accounting groups
+  the immutable producing account/provider/model. Displayed turns count successful
+  API calls, not actor generations; request outcomes are durable and immutable
+  across billing revisions. Unknown outcomes remain unknown. Actor generations
+  are separate cancellation/recovery identities. Preserve cost availability.
+
+## Header and footer telemetry
+
+- The footer is static, low-profile aggregate text. Only required
+  user action (`⚠`) and failures (`✕`) receive attention signs.
+- A settled sub-agent publishes one short owner-scoped footer transient with
+  nickname, category and explicit outcome (completed, cancelled, crashed, timed
+  out or failed). It enters through Update and forces the presentation deadline;
+  cached output must never hide it. Anonymous status such as `✓ done` is invalid.
+- Compact editor status retains current-line blame in the active header; full
+  blame identity and Copy blame commit stay available in Status Overview and
+  the editor context menu. Footer-right carries meaningful workspace-scoped LSP
+  health, project Problems, and background work (Git identity and tracking stay in
+  the header branch segment); it omits zero counts but must not collapse to a
+  placeholder when those facts exist.
+- Editor position uses compact `line:column` header geometry in the same muted
+  treatment as blame/uptime. Footer-left is the guidance group: unread Notices,
+  then a small ranked navigation set (find, next tab, focus tree), then Help.
+  It must remain focus-aware and must not regress into the old Save/Undo/Redo
+  inventory. The status group is capped at half the footer row so a wide status
+  set never truncates the guidance group; keep the two-group split in
+  `configureFooterScreen`, not in the screen painter.
+- Agent header is muted telemetry only: model, `↑` latest reported input tokens
+  over that request's runtime context capacity/occupancy, `↓` cumulative agent
+  output, reported cache-hit rate, known estimated cost, and uptime. It never
+  changes `↑` into upload bytes or adds lifecycle/status text. Request age,
+  serialized payload and lifecycle belong in agent/tab details and Activity;
+  existing permission/question/safety surfaces remain authoritative.
 
 ## Recovery And Stop
 
@@ -443,6 +624,17 @@ and cancellation paths and the public [Claude error contract](https://platform.c
 and [interactive controls](https://code.claude.com/docs/en/interactive-mode).
 Crude retains its own protocol-neutral ownership and safety rules; no upstream
 implementation is copied or depended on.
+
+## Dense resume
+
+- Hydration publishes one normalized stopped transcript, never each growing
+  prefix. Diff previews select their lexer once per file and tokenize only their
+  visible preview budget; counting omitted visual rows must not highlight them.
+- Hydration projects explicit display snapshots first, then excludes context-only
+  provider envelopes using visibility/metadata. Recalled memory without a display
+  snapshot must contribute zero chat rows, not blank fallback rows sorted at the
+  transcript tail by their later persistence timestamp. Restore and compaction
+  boundary snapshots remain visible; provider history is not deleted.
 
 ## Data and parity
 

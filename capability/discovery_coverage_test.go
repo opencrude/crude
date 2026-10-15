@@ -156,10 +156,23 @@ func TestRegistryPaginationFuzzyResultsMetadataAndUnsupported(t *testing.T) {
 	if err != nil || len(entries) != 5 {
 		t.Fatalf("registry entries=%+v err=%v", entries, err)
 	}
-	if entries[0].Name != "Remote fuzzy" || entries[1].State != "setup required" || !strings.Contains(entries[1].Reason, "TOKEN") || entries[2].State != "unsupported" || !strings.Contains(entries[2].Reason, "interactive") || entries[3].State != "unsupported" || !strings.Contains(entries[3].Reason, "oci") || entries[4].State != "unsupported" || !strings.Contains(entries[4].Reason, "sse") {
+	byName := make(map[string]captypes.Entry)
+	var unsupported []captypes.Entry
+	for _, entry := range entries {
+		byName[entry.Name] = entry
+		if entry.State == "unsupported" {
+			unsupported = append(unsupported, entry)
+		}
+	}
+	if entries[0].Name != "Remote fuzzy" || byName["Local fuzzy"].State != "setup required" || !strings.Contains(byName["Local fuzzy"].Reason, "TOKEN") ||
+		!strings.Contains(byName["vendor/interactive"].Reason, "interactive") || !strings.Contains(byName["vendor/unknown"].Reason, "oci") ||
+		byName["vendor/sse"].State != "not acquired" || byName["vendor/sse"].Transport != "remote" || len(unsupported) != 2 {
 		t.Fatalf("metadata/setup/unsupported entries=%+v", entries)
 	}
-	for _, entry := range entries[2:] {
+	if preview, err := service.PreviewAcquisition(t.Context(), byName["vendor/sse"].ID, captypes.ScopeWorkspace, "install"); err != nil || preview.Candidate.ID == "" {
+		t.Fatalf("legacy SSE remote must be acquirable: %+v %v", preview, err)
+	}
+	for _, entry := range unsupported {
 		if _, err := service.PreviewAcquisition(t.Context(), entry.ID, captypes.ScopeWorkspace, "install"); err == nil || !strings.Contains(err.Error(), entry.Reason) {
 			t.Fatalf("unsupported preview %q: %v", entry.ID, err)
 		}

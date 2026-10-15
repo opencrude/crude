@@ -9,6 +9,7 @@
 #      vendored go.mod comments) point at existing files under docs/
 #   5. no orphan docs — every file under docs/ is indexed in docs/README.md
 #   6. no stale references to moved/renamed legacy doc names
+#   7. code paths and test names cited in AGENTS.md and docs/ exist
 #
 # Usage: scripts/docs_check.sh    (CI: make docs-check)
 
@@ -97,7 +98,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5) Orphans: every file under docs/ must be linked from docs/README.md
-# (index links are written relative to docs/, e.g. (plans/end-to-end-hardening-plan.md))
+# (index links are written relative to docs/, e.g. (plans/lsp-acceptance.md))
 # ---------------------------------------------------------------------------
 for f in $(find docs -type f \( -name '*.md' -o -name '*.json' \) ! -path 'docs/README.md' | sort); do
   rel="${f#docs/}"
@@ -144,6 +145,44 @@ if [[ -n "$stale_hits" ]]; then
   done <<< "$stale_hits"
 else
   echo "OK: no stale doc references"
+fi
+
+# ---------------------------------------------------------------------------
+# 7) Code paths: a code span naming a repository file or directory must exist.
+# Applies to AGENTS.md and docs/. A span counts when it starts with a tracked
+# top-level directory and ends in "/" or a source/doc extension; globs must
+# match at least one file. Name deleted files in plain text, not code spans.
+# ---------------------------------------------------------------------------
+tops="$(git ls-files | cut -d/ -f1 | sort -u | grep -v '\.' | paste -sd'|')"
+missing_paths=0
+while IFS= read -r doc; do
+  while IFS=: read -r line span; do
+    path="${span//\`/}"
+    [[ "$path" =~ ^($tops)/ ]] || continue
+    [[ "$path" == */ || "$path" =~ \.(go|sh|md|json|ya?ml|ps1|txt|mod)$ ]] || continue
+    if [[ "$path" == *'*'* ]]; then
+      compgen -G "$path" >/dev/null && continue
+    elif [[ -e "$path" ]]; then
+      continue
+    fi
+    fail_msg "$doc:$line cites missing path: $path"
+    missing_paths=1
+  done < <(grep -noE '`[A-Za-z0-9_./*-]+`' "$doc" || true)
+done < <(echo AGENTS.md; find docs -type f -name '*.md' | sort)
+# Cited test and benchmark names (`TestFoo`, `pkg/TestFoo`) must exist.
+known_tests="$(grep -rhoE 'func (Test|Benchmark)[A-Za-z0-9_]+' --include='*_test.go' \
+  --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.commandcode . | sed 's/^func //' | sort -u)"
+while IFS=: read -r doc line span; do
+  name="${span//\`/}"
+  name="${name##*/}"
+  name="${name##*.}"
+  if ! grep -qxF "$name" <<< "$known_tests"; then
+    fail_msg "$doc:$line cites missing test: $name"
+    missing_paths=1
+  fi
+done < <(grep -rnoE '`[A-Za-z0-9_./]*(Test|Benchmark)[A-Z][A-Za-z0-9_]*`' AGENTS.md docs --include='*.md' || true)
+if [[ $missing_paths -eq 0 ]]; then
+  echo "OK: cited code paths and tests exist"
 fi
 
 if [[ $fail -ne 0 ]]; then

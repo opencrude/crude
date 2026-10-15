@@ -3,6 +3,7 @@ package fileio
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -161,7 +162,7 @@ func readFileForEdit(absPath string, policy *pathPolicy) ([]byte, os.FileInfo, e
 
 	ft, _ := classifyPath(absPath)
 	if ft == ftNonexistent {
-		return nil, nil, fmt.Errorf("file not found: %s", absPath)
+		return nil, nil, fmt.Errorf("file not found: %s: %w", absPath, fs.ErrNotExist)
 	}
 
 	data, fi, err := readFile(absPath)

@@ -179,7 +179,11 @@ func registryServerCandidates(source captypes.SourceConfig, server registryServe
 	}
 	var candidates []Candidate
 	for _, remote := range server.Remotes {
-		if remote.Type != "streamable-http" {
+		transport := "http"
+		if remote.Type == "sse" {
+			transport = captypes.TransportSSE
+		}
+		if remote.Type != "streamable-http" && remote.Type != "sse" {
 			entry := baseEntry
 			entry.ID = registryConnectionID(source.ID, server.Name, "remote:"+remote.Type, remote.URL)
 			entry.Transport, entry.State = "remote", "unsupported"
@@ -189,7 +193,7 @@ func registryServerCandidates(source captypes.SourceConfig, server registryServe
 		}
 		id := registryConnectionID(source.ID, server.Name, "remote", remote.URL)
 		config := captypes.ConnectionConfig{
-			ID: id, Name: name, Transport: "http", URL: remote.URL,
+			ID: id, Name: name, Transport: transport, URL: remote.URL,
 			Source: source.ID, Version: server.Version, Scope: source.Scope,
 			RepositoryURL: server.Repository.URL, WebsiteURL: server.WebsiteURL,
 		}

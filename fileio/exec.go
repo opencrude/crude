@@ -211,6 +211,9 @@ const maxGrepLineLen = 500
 // maxGrepResults caps total matches to avoid flooding context.
 const maxGrepResults = 500
 
+// MaxGrepResults is the match cap a grep result reports when it stops early.
+const MaxGrepResults = maxGrepResults
+
 // skipDirs are directories we never recurse into during glob/grep.
 var skipDirs = map[string]bool{
 	".git":          true,
@@ -305,6 +308,38 @@ func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]st
 	return matches, err
 }
 
+// SplitGlobPath separates a path containing "*" or "?" into its longest
+// literal directory prefix and the remaining slash-separated glob. A path that
+// exists literally is never treated as a glob. "[" is left literal because it is
+// common in real file names.
+func SplitGlobPath(path string) (base, pattern string, isGlob bool) {
+	if !strings.ContainsAny(path, "*?") {
+		return path, "", false
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return path, "", false
+	}
+	segments := strings.Split(filepath.ToSlash(path), "/")
+	literal := 0
+	for literal < len(segments) && !strings.ContainsAny(segments[literal], "*?") {
+		literal++
+	}
+	base = strings.Join(segments[:literal], "/")
+	switch {
+	case base == "" && strings.HasPrefix(filepath.ToSlash(path), "/"):
+		base = "/"
+	case base == "":
+		base = "."
+	case filepath.VolumeName(filepath.FromSlash(base)) == filepath.FromSlash(base):
+		// "C:" alone is drive-relative on Windows; the glob was rooted.
+		base += "/"
+	}
+	return filepath.FromSlash(base), strings.Join(segments[literal:], "/"), true
+}
+
+// GrepFiles searches regular files under baseDir. baseDir may be a directory, a
+// file, or a glob such as "workspace/lsp*.go" or "tui/**/*_test.go"; a glob
+// searches only the files it matches.
 func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden bool) ([]GrepMatch, error) {
 	if baseDir == "" {
 		baseDir = "."
@@ -314,9 +349,22 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
 
+	baseDir, fileGlob, isGlob := SplitGlobPath(baseDir)
+	globDepth := -1
+	if isGlob && !strings.Contains(fileGlob, "**") {
+		globDepth = strings.Count(fileGlob, "/")
+		recursive = true
+	}
+	if isGlob && strings.Contains(fileGlob, "**") {
+		recursive = true
+	}
+
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return nil, err
+	}
+	if _, err := os.Stat(absBase); err != nil {
+		return nil, fmt.Errorf("search path %s: %w", baseDir, err)
 	}
 
 	if l.logger != nil {
@@ -338,10 +386,21 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 			if path != absBase && shouldSkipDir(d.Name(), includeHidden) {
 				return fs.SkipDir
 			}
+			if globDepth >= 0 && path != absBase {
+				if rel, err := filepath.Rel(absBase, path); err == nil && strings.Count(filepath.ToSlash(rel), "/") >= globDepth {
+					return fs.SkipDir
+				}
+			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
 			return nil
+		}
+		if isGlob {
+			rel, err := filepath.Rel(absBase, path)
+			if err != nil || !matchGlobPattern(fileGlob, filepath.ToSlash(rel)) {
+				return nil
+			}
 		}
 		if len(results) >= maxGrepResults {
 			return nil

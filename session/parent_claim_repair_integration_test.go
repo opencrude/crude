@@ -436,3 +436,42 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	noOpenIncident("after completion")
 	waitTurnDone(t, sender, root.ID)
 }
+
+// The common case states only the new scope: identities and claim versions
+// default to the agent's current state and are still fenced by the store.
+func TestClaimChangesNeedOnlyTheNewPaths(t *testing.T) {
+	s, store, parent, _ := collaborationContractFixture(t)
+	workDir := t.TempDir()
+	s.SetWorkDir(workDir)
+	broad := filepath.Join(workDir, "src")
+	narrow := filepath.Join(broad, "owned.go")
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{
+		AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, RequestID: "parent-task", Origin: collaboration.OriginHuman,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireClaims(t.Context(), collaboration.AcquireClaimsRequest{
+		AgentID: parent.ID, RunID: run.ID, RequestID: run.RequestID, Paths: []string{broad},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FileOwnership().ReplaceClaims(agent.AgentID(parent.ID), parent.Name, []string{broad}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: parent.ID, ToolCallID: "narrow-paths-only"})
+	result, handled, err := s.executeCollaborationTool(ctx, parent.ID, "agent_narrow_claims", map[string]any{"paths": []any{narrow}})
+	if err != nil || !handled {
+		t.Fatalf("paths-only narrow: handled=%v result=%+v err=%v", handled, result, err)
+	}
+	active, err := store.Claims(t.Context(), parent.ID, true)
+	if err != nil || len(active) != 1 || active[0].Path != filepath.Clean(narrow) {
+		t.Fatalf("narrowed claims = %+v err=%v", active, err)
+	}
+	stale := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: parent.ID, ToolCallID: "narrow-stale"})
+	if _, _, err := s.executeCollaborationTool(stale, parent.ID, "agent_narrow_claims", map[string]any{
+		"paths": []any{}, "expected_versions": map[string]any{active[0].ID: int(active[0].Version) + 1},
+	}); err == nil {
+		t.Fatal("an explicit stale claim version was not fenced")
+	}
+}

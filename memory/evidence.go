@@ -52,15 +52,31 @@ func validateEvidence(evidence []Evidence) error {
 	if len(evidence) > MaxEvidence {
 		return fmt.Errorf("memory: at most %d evidence references", MaxEvidence)
 	}
-	for _, item := range evidence {
-		if item.SessionID == "" || (item.MessageID == "" && item.ToolCallID == "") || item.Kind == "" || strings.TrimSpace(item.Summary) == "" || !validOutcome(item.Outcome) {
-			return fmt.Errorf("memory: evidence requires origin identity, kind, synopsis and explicit outcome")
+	for index, item := range evidence {
+		var missing []string
+		if item.SessionID == "" {
+			missing = append(missing, "session_id")
+		}
+		if item.MessageID == "" && item.ToolCallID == "" {
+			missing = append(missing, "tool_call_id or message_id")
+		}
+		if item.Kind == "" {
+			missing = append(missing, "kind")
+		}
+		if strings.TrimSpace(item.Summary) == "" {
+			missing = append(missing, "summary")
+		}
+		if !validOutcome(item.Outcome) {
+			missing = append(missing, "outcome (succeeded|failed|unmeasured|cancelled)")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("memory: evidence[%d] is missing %s", index, strings.Join(missing, ", "))
 		}
 		if len(item.Summary) > MaxEvidenceSummaryBytes || len(item.SessionID) > 256 || len(item.MessageID) > 256 || len(item.ToolCallID) > 256 || len(item.Kind) > 64 {
-			return fmt.Errorf("memory: evidence exceeds bounds")
+			return fmt.Errorf("memory: evidence[%d] exceeds bounds (summary at most %d bytes)", index, MaxEvidenceSummaryBytes)
 		}
 		if Redact(item.Summary) != item.Summary {
-			return fmt.Errorf("memory: secrets are not permitted in evidence")
+			return fmt.Errorf("memory: evidence[%d] summary contains a secret", index)
 		}
 	}
 	return nil
@@ -106,44 +122,66 @@ type evidenceObservation struct {
 	Position int
 }
 
+// groundedEvidenceTx resolves each cited reference to the durable observation
+// with the same origin. The observation, not the caller's synopsis, is the
+// authority: kind and outcome must agree, and the returned observations carry
+// the recorded summary so stored evidence never repeats an unverified claim.
 func groundedEvidenceTx(ctx context.Context, tx *sql.Tx, evidence []Evidence) ([]evidenceObservation, error) {
-	var grounded []evidenceObservation
-	for _, item := range evidence {
-		rows, err := tx.QueryContext(ctx, `SELECT observation, position FROM memory_observations
-			WHERE session_id=? AND tool_call_id=? AND message_id=? ORDER BY turn, position LIMIT 2`, item.SessionID, item.ToolCallID, item.MessageID)
+	grounded := make([]evidenceObservation, 0, len(evidence))
+	for index, item := range evidence {
+		candidates, err := observationsByOriginTx(ctx, tx, item)
 		if err != nil {
 			return nil, err
 		}
-		found := false
-		for rows.Next() {
-			var payload string
-			var observation evidenceObservation
-			if err := rows.Scan(&payload, &observation.Position); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if err := json.Unmarshal([]byte(payload), &observation.Observation); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if observation.Evidence == item {
-				found = true
-				grounded = append(grounded, observation)
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("%w: evidence[%d] (%s) has no recorded observation; observations are recorded when a turn completes, so cite tool calls or messages from an earlier turn",
+				ErrUnsupported, index, evidenceOrigin(item))
+		}
+		matched := false
+		for _, candidate := range candidates {
+			if candidate.Kind == item.Kind && candidate.Outcome == item.Outcome {
+				grounded = append(grounded, candidate)
+				matched = true
 				break
 			}
 		}
-		rowsErr := rows.Err()
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
-		if rowsErr != nil {
-			return nil, rowsErr
-		}
-		if !found {
-			return nil, fmt.Errorf("%w: evidence does not match a durable source observation", ErrUnsupported)
+		if !matched {
+			observed := candidates[0]
+			return nil, fmt.Errorf("%w: evidence[%d] (%s) claims kind=%s outcome=%s but the recorded observation is kind=%s outcome=%s",
+				ErrUnsupported, index, evidenceOrigin(item), item.Kind, item.Outcome, observed.Kind, observed.Outcome)
 		}
 	}
 	return grounded, nil
+}
+
+func observationsByOriginTx(ctx context.Context, tx *sql.Tx, item Evidence) ([]evidenceObservation, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT observation, position FROM memory_observations
+		WHERE session_id=? AND tool_call_id=? AND (?='' OR message_id=?) ORDER BY turn, position LIMIT 4`,
+		item.SessionID, item.ToolCallID, item.MessageID, item.MessageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var observations []evidenceObservation
+	for rows.Next() {
+		var payload string
+		var observation evidenceObservation
+		if err := rows.Scan(&payload, &observation.Position); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(payload), &observation.Observation); err != nil {
+			return nil, err
+		}
+		observations = append(observations, observation)
+	}
+	return observations, rows.Err()
+}
+
+func evidenceOrigin(item Evidence) string {
+	if item.ToolCallID != "" {
+		return "tool_call_id=" + item.ToolCallID
+	}
+	return "message_id=" + item.MessageID
 }
 
 func supportedLessonObservations(observations []evidenceObservation) bool {
@@ -311,14 +349,17 @@ func (st *Store) Feedback(ctx context.Context, items []Feedback) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, item := range items {
+	for index, item := range items {
 		switch item.Kind {
 		case FeedbackUseful, FeedbackMisleading, FeedbackContradicted, FeedbackNotApplicable:
 		default:
-			return fmt.Errorf("memory: unknown feedback kind %q", item.Kind)
+			return fmt.Errorf("memory: items[%d] has unknown feedback kind %q (useful|misleading|contradicted|not_applicable)", index, item.Kind)
 		}
-		if err := validateEvidence(item.Evidence); err != nil || len(item.Evidence) == 0 {
-			return fmt.Errorf("memory: feedback requires bounded supporting evidence")
+		if len(item.Evidence) == 0 {
+			return fmt.Errorf("memory: items[%d] requires at least one evidence reference", index)
+		}
+		if err := validateEvidence(item.Evidence); err != nil {
+			return fmt.Errorf("items[%d]: %w", index, err)
 		}
 		if err := revisionExistsTx(ctx, tx, item.RevisionRef); err != nil {
 			return err

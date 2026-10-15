@@ -9,7 +9,7 @@ import (
 func TestCapabilityToolGuidanceExplainsDiscoveryAndDurableUse(t *testing.T) {
 	expected := map[string][]string{
 		"capability_search":   {"short name or distinctive keywords", "Omit kind", "descriptors, not loaded instructions", "exact ID unchanged", "Discovery is not an access grant"},
-		"capability_activate": {"not a display name or directory path", "owned by the user (application scope) by default", "scope \"workspace\"", "deleting that workspace then removes the binding", "bundled files resolve from that path", "explicitly activate the saved MCP connection", "resume itself is passive", "mcp_request_access"},
+		"capability_activate": {"not a display name or path", "user-owned application registrations", "scope \"workspace\"", "this project to own the binding", "bundled files resolve from that path", "Granted connections reconnect automatically", "connected is not access", "mcp_request_access"},
 	}
 	for _, tool := range CapabilityTools {
 		phrases, exists := expected[tool.Function.Name]

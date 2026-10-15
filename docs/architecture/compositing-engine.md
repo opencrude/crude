@@ -1,6 +1,6 @@
 # Compositing Engine Architecture
 
-> Status: Current architecture. The component-system plan supersedes its historical phase sections where they conflict.
+> Status: Current architecture — cells, surfaces, compositor and window manager. The shell-level frame contract is in [the shell host](shell-host.md).
 
 ## 1. Vision
 
@@ -24,7 +24,7 @@ Build a production-grade multi-window compositing engine for the Crude TUI that:
 │  (FloatingWindow, WindowManager, focus, frame hit-test,  │
 │   z-order, drag, resize, hit-testing)                    │
 ├                             ┤
-│  Layer 2.5: Widget Interface (tui/widget/)              │
+│  Layer 2.5: Window content (wm.WindowContent)          │
 │  (Widget, RenderContext, Container, adapters)            │
 ├                             ┤
 │  Layer 2: Compositor (tui/compositor/)                   │
@@ -67,10 +67,9 @@ tui/
 ├  ui/                      # Retained components and unified visual chrome
 │   ├  window_frame.go     # Window/Dialog/Popover border, title, close paint
 │   └  component_widget.go # Component/WindowFrame bridge into FloatingWindow
-├  widget/                  # Layer 2.5: Widget interface
-│   ├  widget.go           # Widget interface, RenderContext
-│   └  container.go        # Container widget (holds children, layout)
 ```
+
+The window-content contract (Layer 2.5) lives in `tui/wm/content.go`.
 
 ## 4. Layer 0: Cell Primitives (tui/cell/)
 
@@ -727,135 +726,31 @@ func GenerateDiffANSI(buf *surface.CellBuffer, diff *DiffResult) string { ... }
 func cellToANSI(sb *strings.Builder, c cell.Cell, cur *cellStyleState) { ... }
 ```
 
-## 7. Layer 2.5: Widget Interface (tui/widget/)
+## 7. Layer 2.5: Window Content
 
-### 7.1 Widget
+The original design had a standalone widget package (`Widget`, `Container`,
+layout managers). It was deleted: retained `tui/ui` components replaced it, and
+the window manager keeps only the minimal render contract it needs.
 
 ```go
-package widget
-
-// Widget is the interface that all renderable components implement.
-//
-// This replaces the informal "has a View() string" pattern used currently.
-// Widgets now render into a Surface (cell buffer) rather than returning
-// ANSI strings. This enables:
-// - Compositing at the cell level
-// - Overlapping widgets
-// - Transparency
-// - Proper clipping
-// - Damage tracking
-//
-// A Widget is also a tea.Model — it can receive Bubble Tea messages
-// and return commands. This integrates with the existing event system.
-type Widget interface {
-    // Init initializes the widget (tea.Model.Init).
-    Init() tea.Cmd
-
-    // Update handles a Bubble Tea message (tea.Model.Update).
-    // Returns the (possibly modified) widget and any commands.
-    Update(msg tea.Msg) (Widget, tea.Cmd)
-
-    // Render draws the widget into the given surface.
-    // The surface is pre-sized to the widget's allocated space.
-    // The widget should fill the surface completely.
-    //
-    // This replaces View() string. Instead of returning an ANSI string,
-    // the widget writes cells directly into the surface's buffer.
-    Render(surf *surface.Surface, ctx *RenderContext)
-
-    // Measure reports the minimum and preferred size of the widget.
-    // availW, availH: the maximum space available.
-    // Returns: (preferredWidth, preferredHeight).
-    //
-    // This is used by the layout engine to allocate space.
-    Measure(availW, availH int) (int, int)
+// tui/wm/content.go
+type WindowContent interface {
+	// Render draws the content into the given surface, pre-sized to the
+	// content's allocated space.
+	Render(surf *surface.Surface, ctx *RenderContext)
 }
 
-// RenderContext carries rendering state through the widget tree.
-//
-// It is passed to every Widget.Render() call. Widgets can modify
-// the context for their children (e.g., push a clip rect, change
-// opacity) and must restore it when done.
 type RenderContext struct {
-    Theme     *theme.Theme
-    ClipStack *surface.ClipStack
-    Opacity   float32       // Current opacity multiplier (0.0-1.0)
-    Focused   bool          // Whether this widget has keyboard focus
-    SpinFrame int           // Current animation frame (for spinners, blink)
+	Theme     *theme.Theme
+	Focused   bool // the window has keyboard focus
+	SpinFrame int  // shared animation clock
 }
-
-// PushClip pushes a clip rect and returns a function to pop it.
-// Usage: defer ctx.PushClip(r)()
-func (ctx *RenderContext) PushClip(r surface.Rect) func() { ... }
-
-// WithOpacity returns a copy of the context with modified opacity.
-// The new opacity is the product of the current and the given factor.
-func (ctx *RenderContext) WithOpacity(factor float32) *RenderContext { ... }
-
-// WithFocus returns a copy of the context with the given focus state.
-func (ctx *RenderContext) WithFocus(focused bool) *RenderContext { ... }
 ```
 
-### 7.2 Container
-
-```go
-// Container is a widget that holds and layouts child widgets.
-//
-// Container is the foundation for nested composition. A Container
-// creates a sub-surface for each child and renders children into
-// their allocated sub-surfaces. The sub-surfaces are then composited
-// onto the container's own surface.
-//
-// This enables virtually infinite nesting:
-// App → Container → FloatingWindow → Container → TabBar + Content
-//   → Container → SplitPane → Container → Widget
-type Container struct {
-    id       string
-    children []ChildWidget
-    layout   Layout
-    surf     *surface.Surface // Own surface (reused across frames)
-}
-
-// ChildWidget is a widget with position/size within its parent container.
-type ChildWidget struct {
-    Widget  Widget
-    X, Y    int     // Position within parent
-    W, H    int     // Allocated size
-    ZOrder  int     // Z-order among siblings
-    Visible bool
-}
-
-// Layout determines how children are positioned within a Container.
-type Layout interface {
-    // Arrange computes positions and sizes for all children
-    // given the available space.
-    Arrange(children []ChildWidget, availW, availH int)
-}
-
-// StackLayout arranges children in a vertical or horizontal stack.
-type StackLayout struct {
-    Direction Direction // Vertical or Horizontal
-    Gap      int        // Spacing between children
-}
-
-type Direction int
-
-const (
-    Vertical   Direction = iota
-    Horizontal
-)
-
-// OverlayLayout stacks all children on top of each other (same position, same size).
-// Children are composited in z-order. The topmost child gets focus.
-type OverlayLayout struct{}
-
-// Render implements Widget. Creates sub-surfaces for each child,
-// calls child.Render(), and composites them onto this container's surface.
-func (c *Container) Render(surf *surface.Surface, ctx *RenderContext) { ... }
-
-// Measure implements Widget. Sum of child sizes (stack) or max of child sizes (overlay).
-func (c *Container) Measure(availW, availH int) (int, int) { ... }
-```
+`ui.ComponentWidget` adapts a component tree (normally a `ui.WindowFrame` plus
+its body) to `WindowContent`, owning its own `ui.Host` for layout, paint and
+focus. The compositor owns clipping and z-order; nothing consumes per-window
+opacity. Shell-level rules are in [the shell host](shell-host.md).
 
 ## 8. Layer 3: Window Manager (tui/wm/)
 
@@ -877,7 +772,7 @@ package wm
 type FloatingWindow struct {
     ID         string
     Title      string
-    content    widget.Widget      // The widget inside this window
+    Content    WindowContent      // The content inside this window
     surf       *surface.Surface   // This window's placement/z-order surface
     x, y       int                // Position (screen coordinates)
     w, h       int                // Full WindowFrame size
@@ -932,7 +827,7 @@ const (
 )
 
 // NewFloatingWindow creates a new floating window.
-func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts ...WindowOption) *FloatingWindow { ... }
+func NewFloatingWindow(id, title string, content WindowContent, w, h int, opts ...WindowOption) *FloatingWindow { ... }
 
 // WindowOption configures a floating window.
 type WindowOption func(*FloatingWindow)
@@ -947,7 +842,7 @@ func WithMaxSize(w, h int) WindowOption { ... }
 
 // Render draws full-size content into the window's surface.
 // Then the surface is composited onto the screen by the WindowManager.
-func (fw *FloatingWindow) Render(ctx *widget.RenderContext) { ... }
+func (fw *FloatingWindow) Render(ctx *RenderContext) { ... }
 
 // ContentBounds returns the full WM surface. WindowFrame owns inner bounds.
 func (fw *FloatingWindow) ContentBounds() surface.Rect { ... }
@@ -1042,10 +937,10 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow { ... }
 
 // Render renders the background and all floating windows.
 // Uses the compositor's surface tree for proper z-ordered compositing.
-func (wm *WindowManager) Render(ctx *widget.RenderContext) { ... }
+func (wm *WindowManager) Render(ctx *RenderContext) { ... }
 
 // SetBackground sets the main content widget that renders behind all windows.
-func (wm *WindowManager) SetBackground(w widget.Widget) { ... }
+func (wm *WindowManager) SetBackground(w WindowContent) { ... }
 ```
 
 ### 8.3 Unified Window Chrome (`tui/ui/window_frame.go`)
@@ -1082,150 +977,26 @@ func ClampPosition(fw *FloatingWindow, screenW, screenH int) { ... }
 func ClampSize(fw *FloatingWindow) { ... }
 ```
 
-## 9. Integration Strategy
+## 9. Integration with Bubble Tea
 
-### 9.1 Integration with Bubble Tea
-
-The compositing engine integrates with Bubble Tea through the `View()` method:
-
-```
-Current flow:
-  App.View() → build []string of ANSI lines → join → return
-
-New flow:
-  App.View() →
-    1. compositor.BeginFrame()
-    2. windowManager.Render(ctx)
-       → background widget renders into root surface
-       → each FloatingWindow renders into its own surface
-       → surfaces composited into back buffer
-    3. return compositor.Present()
-       → diff back vs front buffer
-       → generate ANSI string
-       → swap buffers
-```
-
-The return value of `View()` is still a string — Bubble Tea doesn't need to change.
-The difference is that the string is now generated from a cell-level composited buffer
-rather than from concatenated ANSI strings.
-
-### 9.2 Widget Adapter
-
-To incrementally migrate existing widgets (which return `View() string`) to the
-new `Render(surf, ctx)` interface, we provide an adapter:
-
-```go
-// ANSIAdapter wraps a legacy View()-returning widget into the Widget interface.
-// It renders the widget's View() output into a surface by parsing ANSI escape
-// sequences and writing the corresponding cells.
-//
-// This enables existing widgets to work within the compositing system
-// without being rewritten. Widgets can be migrated one by one.
-type ANSIAdapter struct {
-    model tea.Model  // Any Bubble Tea model with View()
-}
-
-// NewANSIAdapter creates an adapter for a legacy widget.
-func NewANSIAdapter(model tea.Model) *ANSIAdapter { ... }
-
-// Render implements Widget. Calls model.View(), parses the ANSI string,
-// and writes cells into the surface.
-func (a *ANSIAdapter) Render(surf *surface.Surface, ctx *RenderContext) {
-    view := a.model.View()
-    ansi.RenderToSurface(surf, view)
-}
-```
-
-The `ansi.RenderToSurface` function parses ANSI escape sequences from a string
-and writes the corresponding cells into a surface. This is a bridge between
-the old and new rendering models.
-
-### 9.3 Rendering Pipeline Redesign
-
-The existing `App.View()` function (currently 669 lines) will be simplified:
+`App.View()` returns a string built from the composited cell buffer, so Bubble
+Tea itself is unchanged:
 
 ```
-func (m *App) View() tea.View {
-    if m.width == 0 || m.height == 0 {
-        return tea.NewView("")
-    }
-    
-    // 1. Begin frame
-    m.compositor.BeginFrame()
-    
-    // 2. Render background (main layout: header, chat, input, status)
-    m.rootWidget.Render(m.compositor.Root(), m.renderCtx)
-    
-    // 3. Render floating windows
-    m.windowManager.Render(m.compositor.Root(), m.renderCtx)
-    
-    // 4. Composite and present
-    output := m.compositor.Present()
-    return tea.NewView(output)
-}
+App.View()
+  1. compositor.BeginFrame()            clear root children and back buffer
+  2. fill background, mount mainSurf    the whole shell is one surface (z=0)
+  3. configureShell + renderShellToSurface
+                                        root ui.Host: layout → focus → paint
+  4. windowManager.Render(ctx)          each FloatingWindow paints its surface
+  5. compositor.Present()               flatten z-order, blit, diff, emit ANSI
 ```
 
-The rootWidget is a Container that arranges the main layout:
-- Header bar
-- Agent tab bar (if visible)
-- Chat area (MessageList)
-- Input area
-- Status bar
-
-Floating windows are rendered on top of this background.
-
-### 9.4 Replacement of Overlay System
-
-Floating surfaces use `OverlayHost` and `WindowFrame`; session-bound structured
-surfaces use the per-session docked `PanelDeck` between messages and chat input.
-The current surface inventory is
-[`docs/reference/surface-catalog.md`](../reference/surface-catalog.md).
-
-```go
-// Historical example only; current product opens through OverlayHost:
-func (m *App) openSettings() {
-    settingsWidget := newSettingsWidget(m.settings)
-    win := wm.NewFloatingWindow("settings", "Settings", settingsWidget,
-        60, 30,
-        wm.WithDecoration(true),
-        wm.WithMovable(true),
-        wm.WithResizable(true),
-        wm.WithClosable(true),
-        wm.WithBorderStyle(wm.BorderRounded),
-        wm.WithMinSize(40, 20),
-    )
-    win.SetPosition(centerX, centerY) // Center on screen
-    m.wm.AddWindow(win)
-}
-```
-
-Current migration direction:
-- Workspace settings → `OverlayHost` FloatingWindow with native form content.
-- Session settings → native per-session `PanelDeck` forms.
-- Confirmation, questions, and YOLO → native blocking per-session PanelDeck screens.
-- Background command details → native passive per-session PanelDeck Form; events
-  update the owning session without focus steal and no longer render status-bar rows.
-- FilePicker → native TextField/List/ScrollbarControl/ActionBar body in its retained
-  `OverlayHost` FloatingWindow; workspace owns neutral directory enumeration.
-- TextOverlay → `OverlayHost` FloatingWindow pending body migration.
-
-### 9.5 ANSI Parser for Adapter (New File)
-
-To make the ANSIAdapter work, we need a function that parses ANSI escape
-sequences from a string and writes cells into a surface:
-
-```go
-// RenderToSurface parses an ANSI string and writes the cells into a surface.
-// Handles:
-// - SGR (color/attribute) sequences: \x1b[...m
-// - Regular characters → cells
-// - Wide characters → wide cells + continuation
-// - Newlines → row advancement
-// - Cursor positioning sequences (for future diff-based output)
-func RenderToSurface(surf *surface.Surface, ansi string) { ... }
-```
-
-This is essentially a "reverse" of the output.go GenerateANSI function.
+Floating windows (pickers, palettes, settings, menus, LSP popups) are
+`OverlayHost`-managed `FloatingWindow`s whose content is a `ui.ComponentWidget`.
+The original ANSI-line overlay system and the string-returning widget adapter
+were deleted. The per-frame contract — what is rebuilt every frame and what is
+cached — is specified in [the shell host](shell-host.md).
 
 ## 10. Key Design Decisions
 

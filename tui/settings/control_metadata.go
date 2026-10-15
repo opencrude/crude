@@ -26,7 +26,7 @@ func agentControlPath(category int, id string) string {
 	if role == "" {
 		return ""
 	}
-	leaf := map[string]string{fieldConnection: "account_id", fieldModel: "Model", fieldThinkingEffort: "ThinkingEffort", "agent-description": "Description", "agent-instructions": "Instructions", fieldCtxWindow: "ModelContextWindow", fieldMaxOutput: "ModelMaxOutput", fieldTemperature: "ModelTemperature", fieldTopP: "ModelTopP", fieldContextCompaction: "context_compaction_percent", "context-retention-tokens": "context_retention_tokens", fieldMultiAgent: "multi_agent"}[id]
+	leaf := map[string]string{fieldConnection: "account_id", fieldModel: "Model", fieldThinkingEffort: "ThinkingEffort", "agent-description": "Description", "agent-instructions": "Instructions", fieldCtxWindow: "ModelContextWindow", fieldMaxOutput: "ModelMaxOutput", fieldTemperature: "ModelTemperature", fieldTopP: "ModelTopP", fieldContextCompaction: "context_compaction_percent", "context-retention-tokens": "context_retention_tokens", fieldServiceTier: "service_tier", fieldMultiAgent: "multi_agent"}[id]
 	if strings.HasPrefix(id, fieldModalityPrefix) {
 		leaf = "ModelModalities"
 	}

@@ -24,7 +24,7 @@ func MissingConfiguration(config captypes.ConnectionConfig) []string {
 			}
 		}
 	}
-	if config.Transport == "http" {
+	if config.Transport == "http" || config.Transport == TransportSSE {
 		for name, value := range config.Headers {
 			if strings.TrimSpace(value) == "" && strings.TrimSpace(config.SecretRefs[name]) == "" {
 				missing = append(missing, "header "+name)

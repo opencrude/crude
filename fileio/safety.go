@@ -3,6 +3,7 @@ package fileio
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -155,7 +156,7 @@ func validatePathForRead(absPath string) error {
 	}
 	switch ft {
 	case ftNonexistent:
-		return fmt.Errorf("file not found: %s", absPath)
+		return fmt.Errorf("file not found: %s: %w", absPath, fs.ErrNotExist)
 	case ftDirectory:
 		return fmt.Errorf("%s is a directory, not a file", absPath)
 	case ftDevice:

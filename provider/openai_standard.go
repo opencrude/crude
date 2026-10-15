@@ -341,6 +341,7 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 	var update StreamUpdate
 	if chunk.Usage != nil {
 		usage := chunk.Usage.normalized()
+		usage.ServiceTier = chunk.ServiceTier
 		update.Usage = &usage
 	}
 	if len(chunk.Choices) == 0 {

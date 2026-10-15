@@ -37,7 +37,9 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 		text := "completed"
 		if in.ToolChoice == "none" {
 			releaseRequest := release
-			if extractions.Add(1) > 4 {
+			// The first compaction is one combined extraction; any later one
+			// is held for the shutdown check.
+			if extractions.Add(1) > 1 {
 				releaseRequest = shutdownRelease
 			}
 			entered <- struct{}{}
@@ -46,7 +48,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 			case <-r.Context().Done():
 				return
 			}
-			text = "Retain the exact human request, accepted evidence, and current runtime owners."
+			text = "<<<intent>>>\nRetain the exact human request.\n<<<work>>>\nAccepted evidence.\n<<<state>>>\nCurrent runtime owners.\n<<<continuation>>>\nNone"
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", text)

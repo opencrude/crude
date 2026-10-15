@@ -414,7 +414,7 @@ func TestLiveDefaultCapabilitySources(t *testing.T) {
 		t.Skip("set CRUDE_LIVE_CAPABILITY_SOURCES=1 for pinned public source acceptance")
 	}
 	service, _, _ := capabilityFixture(t)
-	settings := captypes.WithDefaultSources(captypes.Settings{})
+	settings := captypes.WithDefaults(captypes.Settings{})
 	if err := service.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}

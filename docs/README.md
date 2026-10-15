@@ -8,7 +8,7 @@ This directory is the complete documentation set for Crude — a three-layer IDE
 terminals, and a provider/agent layer.
 
 Canonical startup instructions live in the root [`AGENTS.md`](../AGENTS.md).
-Read that first; this index only organizes the reference material.
+It holds only cross-cutting rules and a topic map; detailed contracts live here.
 
 ## Layout
 
@@ -21,106 +21,118 @@ Read that first; this index only organizes the reference material.
 
 ## Index
 
+Start with the root [`AGENTS.md`](../AGENTS.md); its topic map says which of these
+documents to read before changing each area.
+
 ### Architecture
 
-- [Compositing engine](architecture/compositing-engine.md) — the multi-window
-  compositor: surface tree, per-cell compositing, floating windows, blit
-  semantics.
+- [Code map](architecture/code-map.md) — which package owns each responsibility,
+  and the key viewmodel files.
+- [Shell host and frame pipeline](architecture/shell-host.md) — the root Host,
+  shell surface, floating/docked overlay ownership, unconditional repaint and
+  popup frames.
+- [Compositing engine](architecture/compositing-engine.md) — cells, surfaces,
+  per-cell compositing, floating windows and blit semantics.
 
-### Reference
+### Reference — runtime and agents
 
-- [Model prompts and project guidance](reference/prompt-architecture.md) - the
-  canonical ownership/development contract, direct package APIs, bounded
-  instruction intake, profile overlays, provider adapters, and continuity rules.
+- [Model prompts and project guidance](reference/prompt-architecture.md) — prompt
+  ownership, bounded guidance intake, profile overlays, provider adapters,
+  Responses delta uploads and continuity rules.
 - [Adaptive context handling](reference/adaptive-context.md) — request budgeting,
-  complete oversized-source extraction, atomic recovery, and harness comparison.
+  compaction, continuity handoff, memory jobs and harness comparison.
 - [Agent orchestration](reference/agent-orchestration.md) — bounded delegation,
-  evidence-based handoffs, completion delivery, and links to the canonical prompt
-  architecture contract.
-- [Unfinished run recovery](reference/run-recovery.md) — supervised root/child
-  attempts, durable pending work, actionable pauses and the five-minute retry ceiling.
-- [Network transport](reference/network.md) — application-owned connection,
-  proxy, TLS trust and exact-host client identity.
+  child reporting, ownership and connections.
+- [Unfinished run recovery](reference/run-recovery.md) — supervised attempts,
+  provider failure classification, durable pending work and cooldowns.
+- [Workspace collaboration runtime](reference/workspace-collaboration.md) —
+  durable agents/runs, directed delivery, reports, controls and recovery.
+- [Skills, MCP and capabilities](reference/capabilities.md) — registration,
+  binding, acquisition approval, session gates and built-in sources.
+- [Crude semantic control](reference/control-contract.md) — shared native/MCP
+  command catalog, exact-shell targeting and truthful receipts.
+- [Managed execution contexts](reference/managed-executions.md) — worktree
+  baselines, exact run/tool roots, guarded integration and retention.
+- [Background commands](reference/background-commands.md) — tracked command
+  lifetime, termination, completion delivery and bounded output.
+- [Local history](reference/local-history.md) — immutable snapshots,
+  operation-scoped agent undo and precondition-checked restore.
 - [Codex tool adapters](reference/codex-tools.md) — native patch, command,
-  permission, wire, and history contracts under the canonical Crude prompt.
-- [Chat activity projection](reference/chat-activity.md) — grouped, expandable
-  tool activity with matching live and recovered transcript behavior.
-- [Terminal display width](reference/terminal-width.md) — canonical Unicode
-  column-measurement contract shared by layout, surfaces, ultraviolet, and the
-  renderer.
+  permission, wire and history contracts.
+- [Network transport](reference/network.md) — routing, proxy, TLS trust, client
+  identity, timeouts and stalled-connection recovery.
+
+### Reference — core, shell and lifecycle
+
+- [Core client protocol](reference/core-client-protocol.md) — connected CLI,
+  retained actors, core/shell ownership, shared editors and SSH, with explicit
+  acceptance limits.
+- [Shell port](reference/shell-port.md) — the `shellport.Workspace` interface the
+  TUI consumes and the matching `coreprotocol` methods.
+- [Async ownership and lifecycle](reference/async-lifecycle.md) — the Update
+  goroutine, generation boundaries, shutdown ordering and retained resources.
+- [Settings layers](reference/settings.md) — the app → workspace → session model,
+  agent settings, LSP settings and semantic settings control.
+- [In-app terminals](reference/in-app-terminals.md) — libghostty-vt PTY engine,
+  placement, focus, core lane and input backpressure.
+
+### Reference — interface
+
+- [Settings design language](reference/settings-design.md) — the one page
+  anatomy, control dialect, help strip, footer and live store search.
+- [Dialog and prompt design language](reference/dialog-design-language.md) —
+  confirms and prompts.
+- [Chat activity projection](reference/chat-activity.md) — tool activity,
+  reasoning, activity strip, header/footer telemetry and live/hydrated parity.
+- [Main view panes](reference/main-view-panes.md) — tab groups, splits, agent tab
+  minimize, Git and local comparisons.
+- [Editor and language servers](reference/editor.md) — editor geometry, motion,
+  dirty/save authority, gutter and LSP transport.
+- [Text input and composer](reference/text-input.md) — shared text controls,
+  cursor, clipboard, composer pastes, attachments and prompt history.
+- [Interaction matrix](reference/interaction-matrix.md) — keyboard/mouse
+  contracts, collection navigation and file-tree geometry.
+- [Control usage map](reference/control-usage.md) — control categories, tab bars,
+  docks, hover and scrollbars.
 - [Surface catalog](reference/surface-catalog.md) — every user-visible surface
   and where it lives in the code.
-- [Interaction matrix](reference/interaction-matrix.md) — keyboard/mouse
-  contracts the component system must preserve.
-- [Main view panes](reference/main-view-panes.md) — draggable tab groups,
-  split previews, keyboard panes, retained resource state and ownership.
-- [Control usage map](reference/control-usage.md) — control categories and
-  their `tui/ui` implementations.
-- [Crude semantic control](reference/control-contract.md) — shared native/MCP
-  command catalog, exact-shell targeting, contextual authority and truthful receipts.
-- [Managed execution contexts](reference/managed-executions.md) — faithful checkout
-  baselines, exact run/tool roots, guarded integration, undo and retained work.
-- [Settings layers](reference/settings.md) — the three-level settings model
-  (app → workspace → session) and what each layer owns.
-- [Settings design language](reference/settings-design.md) — the one page
-  anatomy, control dialect, help strip, footer and live store search every
-  Settings page follows.
-- [Workspace collaboration runtime](reference/workspace-collaboration.md)
-  — durable agents/runs, automatic directed delivery, report revisions, live-only
-  broadcast, explicit context admission, Board history and recovery.
-- [Core client protocol](reference/core-client-protocol.md) — implemented typed
-  connected CLI, retained actors, shared editors and SSH, with explicit transfer,
-  native-platform, distinct-host and performance acceptance limits.
-- [Shell port](reference/shell-port.md) — the `shellport.Workspace` interface the
-  TUI consumes instead of `*workspace.Workspace`: sub-interface layout, call
-  counts, mutation/RPC-ability inventory and the matching `coreprotocol` methods.
-- [In-app terminals](reference/in-app-terminals.md) — the embedded terminal
-  multiplexer: libghostty-vt PTY engine, pinned Ghostty environment.
+- [Terminal display width](reference/terminal-width.md) — the canonical Unicode
+  column-measurement contract.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
-  and allocation numbers; leaf allocation ceilings (`scripts/perf_ceilings.txt`)
-  and per-frame work-budget tests are both CI-enforced via `make bench-gate`,
-  and live runs can be watched with `CRUDE_PERF_LOG`.
+  and allocation numbers, CI-enforced ceilings and `CRUDE_PERF_LOG`.
 - [Design token bypasses](reference/design-token-bypasses.md) — the frozen
   allowlist of theme-system bypasses, mirrored from
-  [bypass-manifest.json](reference/bypass-manifest.json).
-- [bypass-manifest.json](reference/bypass-manifest.json) — machine-readable
-  allowlist enforced by `scripts/tui_design_audit.sh`.
-- [Dialog & prompt design language](reference/dialog-design-language.md) —
-  the authoritative visual/interaction language for confirms and prompts.
+  [bypass-manifest.json](reference/bypass-manifest.json), which
+  `scripts/tui_design_audit.sh` enforces.
 
 ### Guides
 
-- [Core and shell workflows](guides/core-shell-workflows.md) — local/SSH commands,
-  shared-editor recovery, authoritative source owners and review acceptance limits.
-
-- [Component authoring](guides/component-authoring.md) — recipes for building
-  TUI screens with the native `tui/ui` component system.
+- [Validation and visual capture](guides/validation.md) — gates, test isolation,
+  helper ownership and the Linux capture workflow.
+- [Component authoring](guides/component-authoring.md) — building TUI screens
+  with the native `tui/ui` component system.
+- [Core and shell workflows](guides/core-shell-workflows.md) — local/SSH
+  commands, shared-editor recovery and review acceptance limits.
 - [Capability workflows](guides/capability-workflows.md) — manual Skills/MCP,
-  composer selection, Board, workspace Memory, Git review and validated limits.
-- [Windows visual capture](guides/windows-visual-capture.md) — safe native
-  Windows Terminal launch, exact-HWND input, NirCmd screenshots, and cleanup.
+  composer selection, Board, workspace Memory and Git review.
+- [Windows visual capture](guides/windows-visual-capture.md) — native Windows
+  Terminal launch, exact-HWND input, screenshots and cleanup.
 
 ### Plans (active work only)
 
+- [Agent experience roadmap](plans/agent-experience-roadmap.md) — vision and
+  ordered roadmap for survivable, economical, frictionless agent work: working-set
+  budgets, background compaction, lazy tool families, search providers, fast mode.
 - [Agentic control, MCP capabilities, and worktree execution](plans/agentic-control-and-capabilities.md)
-  — implementation plan for precise Crude self-control, generic MCP interoperability,
-  coherent capability autonomy and managed isolated coding work.
-- [Core and shell separation](plans/core-shell-separation.md) — active migration
-  to a single runtime authority with independent local/remote TUI clients;
-  remaining native, distinct-host and final performance/release gates.
-- [LSP and runtime repair handoff](plans/lsp-runtime-handoff.md) — paused LSP
-  integration and restart-first runtime repair, with preserved child evidence.
-
-- [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE
-  HANDOFF** for in-flight chat-projection work.
+  — remaining integrated and native-platform acceptance.
+- [Core and shell separation](plans/core-shell-separation.md) — remaining native
+  Windows, distinct-host and resource-baseline acceptance.
+- [LSP acceptance](plans/lsp-acceptance.md) — process containment and
+  installed-server acceptance.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open
-  hardening findings for the configurable shell frame padding feature.
-- [End-to-end reliability and interaction hardening](plans/end-to-end-hardening-plan.md)
-  — **ACTIVE** umbrella execution plan for transport liveness, safety,
-  projections, shared interaction controls, editor latency, and undo delivery.
+  hardening findings for the configurable shell frame.
 - [Tree picker and internal Fastwalk plan](plans/tree-picker-fastwalk-plan.md)
-  — **IN PROGRESS, APPROVED** design for preserving the current New
-  Workspace UI while replacing picker lists with bounded tree/path search.
+  — approved design replacing picker lists with bounded tree/path search.
 
 ## Documentation rules
 
@@ -155,8 +167,13 @@ docs-check`). A docs change that breaks them fails the build.
 9. **One current contract per topic.** Link current references from related docs
    and active plans instead of copying policy or silently treating a plan as
    implementation truth. Prompt changes must update
-   [model prompts and project guidance](reference/prompt-architecture.md) and the
-   root agent rules; document tested guarantees and explicit limits separately.
+   [model prompts and project guidance](reference/prompt-architecture.md); document
+   tested guarantees and explicit limits separately.
+10. **Cite only real paths.** A code span naming a repository file or directory
+    must resolve; mention deleted files in plain text, not as code.
+11. **Keep `AGENTS.md` lean.** It is injected into every agent request. Put
+    area-specific contracts in the matching reference and add a topic-map line
+    to `AGENTS.md`; only rules that apply to every change belong there.
 
 ## Acceptance gate
 
@@ -171,6 +188,8 @@ docs-check`). A docs change that breaks them fails the build.
 - **Orphans** — every file under `docs/` is listed in this index.
 - **Stale references** — no reference to a moved/renamed legacy doc name
   (`TERMINAL_WIDTH.md`, `docs/tui/…`, etc.).
+- **Cited code paths** — a code span in `AGENTS.md` or `docs/` naming a
+  repository file or directory must exist. Name deleted files in plain text.
 
 A failure is a broken build: fix the link, the name, or the header — do not
 weaken the gate.

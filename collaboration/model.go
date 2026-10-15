@@ -405,6 +405,18 @@ type AcquireClaimsRequest struct {
 	RunID     string
 	RequestID string
 	Paths     []string
+	// DelegatorID is the agent delegating this work (a launching parent). Its
+	// own active claims that lie inside a requested path transfer to AgentID in
+	// the same transaction; a delegator claim broader than the request still
+	// conflicts, because releasing it would also release work not delegated.
+	DelegatorID string
+}
+
+// AcquireClaimsResult reports the claims now held and any delegator claims
+// that were released to make the hand-over.
+type AcquireClaimsResult struct {
+	Claims      []Claim
+	Transferred []Claim
 }
 
 type ReleaseClaimsRequest struct {

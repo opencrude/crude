@@ -147,3 +147,35 @@ leaf-pin isolation, TLS minimums and HTTP/2. Provider integration tests exercise
 saved proxy changes, immutable in-flight policy, custom CA use and fail-closed
 missing material. App/settings tests cover persistence, scope and busy/failure
 ownership. Cross-compilation is not a claim of native-platform acceptance.
+
+## Transport invariants, timeouts and stalled connections
+
+- `network/` owns the shared outbound HTTP transport for providers, OAuth,
+  catalogs, web tools, capability downloads and MCP HTTP/OAuth. Network settings
+  are application-only Connection / Proxy / Certificates pages; workspaces
+  cannot grant trust or client credentials. Secure system trust, exact-host leaf
+  exceptions and exact-host mTLS stay isolated from proxies/unrelated origins.
+  Proxy failure never falls back direct, and invalid material fails closed.
+  Certificate reads and preference persistence run off Update with retained
+  form/workspace ownership; an unchanged request keeps its captured policy.
+  See `docs/reference/run-recovery.md` and `docs/reference/network.md` for the
+  authoritative contracts, coverage and explicit limits.
+- **Account timeouts are one shared transport policy.** Accounts
+  expose Request/Connect timeout, initial/minimum/maximum progress timeout, and
+  attempt/backoff budgets directly in Connection tuning. There is no template
+  inheritance or Override dialer switch. Progress defaults
+  are 60/45/300 seconds and require minimum <= initial <= maximum. Streaming and
+  non-streaming requests honor the overall deadline across retries, even when
+  the caller already has a longer deadline; close/completion/error releases the
+  stream timer. Unlimited overall duration does not disable progress detection.
+  An explicit provider/account connect setting also owns its TLS handshake
+  budget; unset values inherit the separate Network TCP/TLS defaults. Neither
+  is a competing response-header timeout.
+- **Progress-stall recovery retires the exact failed connection.** HTTP/2 stream
+  cancellation alone can leave a blackholed pooled connection eligible after
+  cooldown. Provider watchdogs capture `httptrace.GotConn` and close only that
+  connection when a typed upload/header/download stall wins; ordinary stop and
+  overall deadline do not flush the pool or change routing/TLS. Sibling streams
+  on the failed connection may be interrupted and retain normal accepted-output
+  continuation safeguards. Real same-client and root/child upload tests must prove
+  automatic redial plus complete payload delivery, not just a finished countdown.

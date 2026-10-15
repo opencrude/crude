@@ -33,7 +33,7 @@ func connectionOf(spec agent.SubAgentSpec) childConnection {
 // configured thinking effort and sampling.
 func childProviderConfig(spec agent.SubAgentSpec) CategoryConfig {
 	return CategoryConfig{
-		AccountID: spec.AccountID, Model: spec.Model, ThinkingEffort: spec.ThinkingEffort,
+		AccountID: spec.AccountID, Model: spec.Model, ThinkingEffort: spec.ThinkingEffort, ServiceTier: spec.ServiceTier,
 		ModelTemperature: spec.ModelTemperature, ModelTopP: spec.ModelTopP,
 		ModelContextWindow: spec.ModelContextWindow,
 	}

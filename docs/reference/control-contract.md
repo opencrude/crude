@@ -21,6 +21,21 @@ explicitly. [Managed executions](managed-executions.md) describes isolation and
 integration. Existing [core protocol](core-client-protocol.md) ownership remains
 in force.
 
+Discovery matches by words: commands containing every word of the query are
+returned (words in the command ID rank first); when none contains them all,
+commands are ranked by how many they contain. Simple plurals match.
+
+MCP connections and their secrets are agent-manageable for the user through
+`capabilities.inspect` (read), `capabilities.set_secret` (write),
+`capabilities.remove_secret` (delete), `capabilities.set_enabled` and
+`capabilities.set_tool_enabled` (write), `capabilities.save_connection`
+(execute, since it can define a local launch) and
+`capabilities.remove_connection` (delete). They run through the same owner as
+Settings, follow the session's Manual/Auto Review/YOLO policy, never return
+secret values, and mask secret, authorization, header and environment values
+in approval prompts. Enabling an external server's tool for the first time
+still uses `mcp_request_access`.
+
 ## Exact identity and admission
 
 Targets retain logical workspace, optional execution/session/resource identities
@@ -61,8 +76,9 @@ exact arguments as readable `path: value` lines. Chat rows project
 receipts by state, fault, identities and output, never a raw JSON envelope.
 Settings Save considers **all dirty drafts**, including off-page editors; an
 ordinary page does not sanitize an authority-bearing pending draft. Field-level
-settings paths, schema and revisions are discoverable; account/capability entities,
-credentials and security authority use their human-owned paths. Questions retain
+settings paths, schema and revisions are discoverable; account entities and
+security authority use their human-owned paths, and MCP connections and secrets
+use the `capabilities.*` commands. Questions retain
 agent versus external-client answer provenance, never fabricated human input.
 See [settings layers](settings.md).
 

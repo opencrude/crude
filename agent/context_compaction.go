@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	ttypes "crude/types"
 	"crude/types/accounting"
 	"encoding/xml"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"io"
 	rand2 "math/rand/v2"
 	"strings"
+	"sync"
 	"time"
 
 	rootprompt "crude/prompt"
@@ -65,7 +65,9 @@ type CompactionSource struct {
 }
 
 type compactOutcome struct {
-	Messages      []provider.ChatMessage
+	Messages []provider.ChatMessage
+	// SourceTokens is the size of the context this checkpoint summarizes.
+	SourceTokens  int
 	Usage         provider.TokenUsage
 	AfterTokens   int
 	ContextWindow int
@@ -298,7 +300,56 @@ func (a *Agent) compactWithModel(
 	sections := make(map[string]string, len(stages))
 	var aggregate provider.TokenUsage
 	usageRatio := float64(1)
+	if combinedCompactionWorks(a.Provider, a.Model) {
+		// One request reads the source once and writes every section; any
+		// section it misses is extracted on its own below.
+		combined := rootprompt.CombinedCompactionStage()
+		data := a.compactionEventData(requestID, trigger, role, 1, 0, beforeTokens, 0, ctxWindow)
+		data["stage_name"], data["stage_label"] = combined.Name, combined.Label
+		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
+		extractor := compactionExtractor{
+			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
+			stage: combined, stageIndex: 0, beforeTokens: beforeTokens, targetWindow: ctxWindow,
+			system: msgs[0], common: common, inputBudget: inputBudget, outputBudget: checkpointBudget - 1,
+			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
+			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
+		}
+		text, combinedErr := extractor.request(msgs[1:], rootprompt.InitialCompactionDirective(), 0)
+		aggregate = addTokenUsage(aggregate, extractor.usage)
+		inputBudget, usageRatio = extractor.inputBudget, extractor.usageRatio
+		if extractor.learnedOutputLimit > 0 {
+			learnedLimit = extractor.learnedOutputLimit
+		}
+		if ctx.Err() != nil {
+			return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, ctx.Err()
+		}
+		if combinedErr == nil {
+			parsed, missing := rootprompt.ParseCombinedCompaction(text)
+			for name, body := range parsed {
+				sections[name] = body
+			}
+			if len(missing) > 0 {
+				recordCombinedCompactionFailure(a.Provider, a.Model)
+			}
+		} else if !compactionModelUnavailable(combinedErr) {
+			// Truncation, an over-advertised output cap or a rejected request
+			// shape: extract one section at a time, chunked as needed.
+			recordCombinedCompactionFailure(a.Provider, a.Model)
+		} else {
+			// An unavailable connection would fail every section the same way.
+			return compactOutcome{
+					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+					StageName: combined.Label, StageIndex: 1, RetryAttempt: extractor.retryAttempt,
+					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
+				},
+				fmt.Errorf("%s: %w", combined.Name, combinedErr)
+		}
+	}
 	for index, stage := range stages {
+		if sections[stage.Name] != "" {
+			continue
+		}
 		remaining := checkpointBudget - 1
 		for _, section := range sections {
 			remaining -= provider.EstimateTokens(section, targetModel)
@@ -358,7 +409,14 @@ func (a *Agent) compactWithModel(
 		return compactOutcome{}, err
 	}
 	available := max(0, continuationLimit-fixed-provider.EstimateMessageTokens(checkpointMsg, targetModel)-provider.EstimateMessageTokens(continuity, targetModel)-1)
-	retentionBudget := min(a.compactionRetentionTokens(), available)
+	// Older verbatim human input is kept newest-first. An explicit setting
+	// bounds it; otherwise it may be as large as the checkpoint itself, so
+	// requirements stay verbatim without ever dominating the continuation.
+	retention := a.CompactionRetentionTokens
+	if retention <= 0 {
+		retention = provider.EstimateMessageTokens(checkpointMsg, targetModel)
+	}
+	retentionBudget := min(retention, available)
 	answered := latestHumanRequestAnswered(msgs[1:])
 	if role == "root" && a.LatestHumanTurnState != nil {
 		state, known, stateErr := a.LatestHumanTurnState(ctx)
@@ -368,6 +426,11 @@ func (a *Agent) compactWithModel(
 		if known {
 			answered = state == "completed"
 		}
+	}
+	if a.compactionTailHasHuman {
+		// A later human turn stays verbatim after this checkpoint, so every
+		// request summarized here has been superseded by it.
+		answered = true
 	}
 	compacted := []provider.ChatMessage{checkpointMsg}
 	if role == "root" && answered {
@@ -405,17 +468,10 @@ func (a *Agent) compactWithModel(
 	}
 
 	return compactOutcome{
-		Messages: compacted, Usage: aggregate, AfterTokens: afterTokens,
+		Messages: compacted, Usage: aggregate, AfterTokens: afterTokens, SourceTokens: beforeTokens,
 		ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
 		AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 	}, nil
-}
-
-func (a *Agent) compactionRetentionTokens() int {
-	if a == nil || a.CompactionRetentionTokens <= 0 {
-		return ttypes.DefaultContextRetentionTokens
-	}
-	return a.CompactionRetentionTokens
 }
 
 func compactionEventData(requestID, trigger, role string, stage, completed, before, after, ctxWindow int) map[string]any {
@@ -445,7 +501,7 @@ func (a *Agent) emitCompactionUsage(emit func(AgentEvent), usage provider.TokenU
 	if succeeded {
 		outcome = accounting.Succeeded
 	}
-	price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
+	price, costKnown, costSource := a.Provider.RequestPriceKnown(a.Model, usage.ServiceTier)
 	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 {
 		costKnown = false
 	}
@@ -664,4 +720,25 @@ func (a *Agent) CompactWithRequestID(
 		RequestID: outcome.RequestID, Trigger: outcome.Trigger, Role: outcome.Role,
 		AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 	}, nil
+}
+
+// Combined extraction is learned per connection and model: a model that
+// truncates or drops sections from one combined response is extracted one
+// section at a time afterwards.
+var combinedCompactionFailures sync.Map
+
+func combinedCompactionKey(connection *provider.Provider, model string) string {
+	if connection == nil {
+		return model
+	}
+	return connection.ReplayScope() + "\x00" + connection.AccountID + "\x00" + model
+}
+
+func combinedCompactionWorks(connection *provider.Provider, model string) bool {
+	_, failed := combinedCompactionFailures.Load(combinedCompactionKey(connection, model))
+	return !failed
+}
+
+func recordCombinedCompactionFailure(connection *provider.Provider, model string) {
+	combinedCompactionFailures.Store(combinedCompactionKey(connection, model), struct{}{})
 }

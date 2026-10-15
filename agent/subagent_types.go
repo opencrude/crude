@@ -33,18 +33,20 @@ const (
 )
 
 type SubAgentSpec struct {
-	ID               AgentID           `json:"id"`
-	Name             string            `json:"name"`
-	Category         string            `json:"category"`
-	Description      string            `json:"description"`
-	Instructions     string            `json:"instructions"`
-	Model            string            `json:"model"`
-	Provider         string            `json:"provider"`
-	AccountID        string            `json:"account_id,omitempty"`
-	ProviderURL      string            `json:"provider_url,omitempty"`
-	APIKey           string            `json:"-"`
-	APIStandard      string            `json:"api_standard,omitempty"`
-	ThinkingEffort   string            `json:"thinking_effort,omitempty"`
+	ID             AgentID `json:"id"`
+	Name           string  `json:"name"`
+	Category       string  `json:"category"`
+	Description    string  `json:"description"`
+	Instructions   string  `json:"instructions"`
+	Model          string  `json:"model"`
+	Provider       string  `json:"provider"`
+	AccountID      string  `json:"account_id,omitempty"`
+	ProviderURL    string  `json:"provider_url,omitempty"`
+	APIKey         string  `json:"-"`
+	APIStandard    string  `json:"api_standard,omitempty"`
+	ThinkingEffort string  `json:"thinking_effort,omitempty"`
+	// ServiceTier is the child's processing tier; empty inherits its role's.
+	ServiceTier      string            `json:"service_tier,omitempty"`
 	PolicyName       string            `json:"policy"`
 	Policy           safety.Policy     `json:"-"`
 	AllowedTools     []string          `json:"allowed_tools"`

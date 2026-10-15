@@ -278,7 +278,7 @@ func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *prov
 	}
 	normalized := usage.Normalized()
 	cached := normalized.PromptTokensCached
-	price, known, source := provider.LookupPriceKnown(p.Model)
+	price, known, source := p.RequestPriceKnown(p.Model, normalized.ServiceTier)
 	emit(agent.AgentEvent{Type: "usage", Data: map[string]any{
 		"request_outcome": string(outcome),
 		"request_id":      fmt.Sprintf("permission-review-%s", newMessageID()), "request_kind": "permission_review",

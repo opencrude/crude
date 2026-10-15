@@ -748,8 +748,11 @@ filterable picker page. Filter inputs use `FilterSurface`
 (`ColorPopupSubtleBg`), never the dock fill. Docked forms are compact:
 title + rule, one line per field, a shared value column — every
 second-column value (nav columns, cycle controls, and single-line
-editors such as `Compact context at 85`) paints in that one column.
-The compaction percentage is a provider-context trigger, not a local JSON-size
+editors such as `Compact context at Auto`) paints in that one column.
+**Compact context at** is blank (shown as Auto) by default: Crude decides from
+cost and capacity and prepares checkpoints in the background (see
+[adaptive context handling](adaptive-context.md#when-to-compact-adaptive-policy-and-background-preparation)).
+An explicit percentage is a provider-context trigger, not a local JSON-size
 threshold. The effective trigger reserves the main model's response and safety
 headroom; the Aeron model budgets each extraction request against its own
 capacity while preserving the configured reasoning effort. Each category's
@@ -762,8 +765,10 @@ fragments and bounded model-backed chunk-and-reduce instead of deleting history.
 Provider-confirmed overflow retries only after reducing the request; extraction
 capacity adapts to reported usage and explicit context-limit rejections.
 Checkpoints and verbatim human retention are sized for the continuation model.
-Each agent's **Keep recent input** setting controls the preferred verbatim budget
-from 1,000 to 200,000 estimated tokens (20,000 by default). Application values
+Recent turns always stay verbatim after a checkpoint. Each agent's **Keep older
+input** setting bounds older verbatim human requests; blank (Auto) keeps them up
+to the checkpoint's own size, and an explicit value is 1,000 to 200,000 estimated
+tokens. Application values
 flow into workspace defaults field by field, and a session snapshots/overrides the
 resolved agent value like its compaction threshold. The checkpoint, current runtime
 handoff, tool/system envelope, and real continuation capacity remain hard bounds;
@@ -772,7 +777,15 @@ same budget in their marked context-only history block. A child's latest assignm
 may use all remaining continuation space rather than this recent-input cap.
 Failure, truncated extraction, or cancellation installs no partial checkpoint.
 Zero disables automatic compaction and overflow recovery; `/compact` uses the
-same transaction. See [adaptive context handling](adaptive-context.md).
+same transaction.
+
+Each agent's **Speed** chooses its processing tier: Account (the connection's own
+setting), Standard, Fast, Priority or Flex (`service_tier`). The tier applies only
+where the connection's protocol offers it and is otherwise ignored, so a choice
+never breaks a backend without tiers. Children use their role's tier. `/fast`
+toggles the fast tier for the session's main agent as an ordinary revision-fenced
+session override. Requests served at a premium tier report their cost as unknown
+rather than at the standard rate. See [adaptive context handling](adaptive-context.md).
 Leftover width is distributed as space after the label and before
 inherited text (not filler periods). `·` is a column separator only.
 Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.
@@ -838,11 +851,97 @@ detach releases only its document views, not shared LSP servers. Universal
 connected editors use the core live-text authority and per-client open/close
 views; final native and distinct-host runtime acceptance remains separate.
 
-The unfinished LSP runtime now has its minimal launch/settings contract so the
-normal source build remains runnable. Keep LSP disabled until the lifecycle work
-in [the active handoff](../plans/lsp-runtime-handoff.md) is validated. Its resource
-fields default to two servers, a 300-second idle timeout and a 2 MiB document limit,
-edited on Code Intelligence (the document limit in MB).
+Resource fields default to two servers, a 300-second idle timeout and a 2 MiB
+document limit, edited on Code Intelligence (the document limit in MB). Remaining
+acceptance work is tracked in [LSP acceptance](../plans/lsp-acceptance.md).
+
+## Semantic settings control and authority
+
+The [control API](control-contract.md) discovers redacted settings, exact field
+paths/types and revisions; ordinary set/reset operations use the authoritative
+app/workspace/session owner and exact preimages. Generic native form Save resolves
+the effect of **all pending drafts**, including off-page account/capability/agent
+editors, not merely the currently visible ordinary field. Open epochs and edit
+generations reject close/reopen and edit/undo ABA; modal decision policy is not
+bypassed by semantic controls. Credentials, grants, consent and privilege changes
+stay human-owned and cannot approve themselves through generic buttons/keys.
+
+Capability acquisitions and exact stdio launch are eligible for Manual/Auto
+Review/YOLO within explicit denials, source trust, host and effect ceilings. Human
+MCP grant approval persists at the connection binding; reviewer/YOLO grants are
+run-local, not durable human authority. Authentication/consent remain user actions.
+Core is the default execution host; shell-host stdio requires an explicit absolute
+local directory and exact attachment epoch. Full manual shell-host configuration
+UI remains a limitation, not a promised automatic host selection.
+
+## Agent settings and session root selection
+
+- Accounts and Agents catalogs share a full-width search and
+  bottom-anchored actions; narrow screens stack action rows below results.
+  Main Agent remains available as a fallback. Built-in roles, Memory Agent,
+  and Auto Review Agent
+  can be edited or reset; named agents can be cloned, enabled/disabled, or
+  removed. Memory's background jobs are no-tools completions: its account,
+  model, instructions and enable flag live in Agents, while job cadence and
+  recall limits stay on the Memory page.
+- **Accounts own complete connections.** There is no Providers page or persisted
+  provider-template map. `provider.Account.Connection` owns endpoint, auth,
+  headers, wire protocol/options, dialer and extra body directly. Start from
+  copies an embedded preset into a new draft only; Clone creates a new ID with
+  detached connection bytes and no credentials. Never reintroduce override
+  toggles or live template inheritance. Account IDs, model pins and provenance
+  survive explicit development-data alignment outside product code.
+- **Operational startup failures never lock out repair.** Missing/invalid account,
+  config, network or session startup opens a usable shell plus a native recovery
+  dialog with exact reason, guidance and explicit repair. Invalid network policy
+  stays fail-closed; no default account/direct connection/reset is inferred.
+  Notices are independently recorded but optional. Failed New Session/Resume
+  must not paint error text under the launcher action or instruct users to check
+  Notices for the reason. Close/Esc dismisses without replay or draft loss.
+- Auto Review Agent is the bounded, no-tools permission reviewer. Every root and
+  child gets an independent reviewer instance, per-agent-turn budget and audit
+  attribution while sharing the persisted application/workspace policy. The
+  owning session's live YOLO state bypasses review and confirmation for that
+  root's complete descendant tree without affecting another root/session. Its
+  enable switch, explicitly pinned account/model, extra restrictions and
+  complete runtime policy live on the Agents Model / Instructions / Review
+  tabs. Security > Auto Review Policy is a synchronized projection of that
+  same persisted authority, not a second configuration owner. Thinking effort,
+  response format, timeout, initial/retry token budgets, attempt count/growth,
+  input bytes and denial behavior must never become hidden runtime constants.
+  There is no lifetime or per-turn review-count cap: every exact non-hard-blocked
+  operation remains eligible throughout a multi-day turn. Technical retries
+  alone consume the configured attempt/token budget; valid
+  allow/deny/ask decisions are never retried. An unresolved-mode choice may ask
+  a human or deny the exact call so unattended work continues, but can never
+  approve uncertainty, secret/oversized input or exhausted recovery. Unknown,
+  network, destructive and shell-composed operations are reviewer evidence, not
+  structural exclusions; immutable hard blocks still run before review. Security
+  keeps Command Safety separate. Never add toggles for hard blocks, human-owned
+  authority changes, or mandatory restore safeguards; explain those constraints beside the
+  controls they govern. A rejected reviewer result never becomes an Always
+  allow grant.
+- `ui.FormField` paints multiline labels (textarea and key/value grid) on the
+  containing surface even on hover/focus. Single-line labels may use the row
+  highlight; multiline editor bodies retain their own fill and interaction.
+- Agent model discovery must refresh retained dropdown items AND geometry on
+  the first result, without rebuilding the draft or closing its open selector.
+  Fill inherited capabilities without replacing manual overrides. Preserve the
+  Model / Instructions / Tool Access presentation and Main Agent's Multi Agent
+  delegation toggle; do not replace the model selector with a free-text redesign.
+- Breadcrumb labels are separate navigation targets measured with shared
+  terminal widths. Settings parents use existing back/discard ownership,
+  session parents preserve staged edits, and file-tree parents reveal their
+  row. Separators never navigate.
+- `/settings` persists a session-only `SessionMainAgent`. A named profile or
+  built-in role resolves the root connection/model/instructions at the next
+  request boundary; its account pin lives under a distinct `root/<choice>`
+  session override. Never collapse those overrides into workspace Main Agent
+  or silently fall back if a selected agent is removed or disabled. The root
+  selector excludes Memory. Save as Workspace must not promote this session-only
+  choice into workspace defaults.
+  Default agent uses the same compact navigation row and filtered picker page
+  as Account/Model, never an inline dropdown or a different chevron dialect.
 
 ## Tests
 
@@ -882,22 +981,3 @@ Layer coverage lives next to the code:
   `workspace/tool_root_e2e_test.go` — same-turn multimodal tool delivery,
   protocol schemas, persistence/resume, capability and safety gates, and
   workspace-switch execution roots
-
-## Semantic settings control and authority
-
-The [control API](control-contract.md) discovers redacted settings, exact field
-paths/types and revisions; ordinary set/reset operations use the authoritative
-app/workspace/session owner and exact preimages. Generic native form Save resolves
-the effect of **all pending drafts**, including off-page account/capability/agent
-editors, not merely the currently visible ordinary field. Open epochs and edit
-generations reject close/reopen and edit/undo ABA; modal decision policy is not
-bypassed by semantic controls. Credentials, grants, consent and privilege changes
-stay human-owned and cannot approve themselves through generic buttons/keys.
-
-Capability acquisitions and exact stdio launch are eligible for Manual/Auto
-Review/YOLO within explicit denials, source trust, host and effect ceilings. Human
-MCP grant approval persists at the connection binding; reviewer/YOLO grants are
-run-local, not durable human authority. Authentication/consent remain user actions.
-Core is the default execution host; shell-host stdio requires an explicit absolute
-local directory and exact attachment epoch. Full manual shell-host configuration
-UI remains a limitation, not a promised automatic host selection.

@@ -215,6 +215,9 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if override.ThinkingEffort != "" {
 		merged.ThinkingEffort = override.ThinkingEffort
 	}
+	if override.ServiceTier != "" {
+		merged.ServiceTier = override.ServiceTier
+	}
 	if override.Policy != "" {
 		merged.Policy = override.Policy
 	}

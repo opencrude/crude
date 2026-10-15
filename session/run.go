@@ -785,6 +785,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(effectiveCfg)
 	ag.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
+	ag.Precompaction = s.precompactionSlot(o.ID)
+	ag.PriorCheckpointTokens = lastCheckpointTokens(s.CompactionRecords(o.ID))
 	ag.AgentID = agent.AgentID(o.ID)
 	ag.RunID = collaborationRun.ID
 	ag.TurnGeneration = turnGeneration
@@ -805,19 +807,25 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		recoveryState.snapshotTools(archive, active, inFlight)
 		return persistRecoveryBoundary(ctx, supervisor)
 	}
-	if activeCfg.ContextCompactionPercent != nil {
-		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
+	ag.ContextCompactionPercent = agent.CompactionPercentSetting(activeCfg.ContextCompactionPercent)
+	ag.CompactionRetentionTokens = agent.RetentionSetting(activeCfg.ContextRetentionTokens)
+	// The provider-reported size of the last request seeds the projection of
+	// the first one: local estimates can be off by half for dense content. The
+	// new human turn is already admitted after that request's final reply.
+	lastReply := -1
+	for index := len(frozenPrefix) - 1; index >= 0; index-- {
+		if frozenPrefix[index].Role == "assistant" {
+			lastReply = index
+			break
+		}
 	}
-	if activeCfg.ContextRetentionTokens != nil {
-		ag.CompactionRetentionTokens = *activeCfg.ContextRetentionTokens
-	}
-	if len(frozenPrefix) > 0 && frozenPrefix[len(frozenPrefix)-1].Role == "assistant" && s.db != nil {
+	if lastReply >= 0 && s.db != nil {
 		if baseline, ok, baselineErr := sessiondb.LatestNormalUsageRecord(s.db, s.sessionID, o.ID); baselineErr != nil {
 			l.Warn("COMPACT", "context_baseline_load_failed", "error", baselineErr.Error())
 		} else if ok && baseline.ModelID == activeCfg.Model && baseline.ProviderID == turnProvider.ID && baseline.AccountID == turnProvider.AccountID {
-			// Agent.Run prepends one system message. The prior final assistant
-			// therefore begins at index len(frozenPrefix) in the new request.
-			ag.SeedContextUsage(baseline.ContextUsed, baseline.CompletionTokens, len(frozenPrefix))
+			// Agent.Run prepends one system message, so the final reply sits at
+			// index lastReply+1 of the new request; messages after it are new.
+			ag.SeedContextUsage(baseline.ContextUsed, baseline.CompletionTokens, lastReply+1)
 		}
 	}
 	ag.ContextArchive = archiveCopy
@@ -845,6 +853,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	defer func() {
 		s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, pendingCollaboration, "turn ended before context admission")
 	}()
+	childrenDigest := ""
 	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {
 		if ctx.Err() != nil || s.isHardCancelled() {
 			return nil
@@ -860,6 +869,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		for _, delivery := range pendingCollaboration {
 			notices = append(notices, collaborationMessage(delivery))
+		}
+		if notice, digest := s.childrenStatusNotice(ctx, o.ID, childrenDigest); notice != nil {
+			notices = append(notices, *notice)
+			childrenDigest = digest
 		}
 		return notices
 	}
@@ -987,12 +1000,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		ag.MaxOutputTokens = category.ModelMaxOutput
 		ag.CompactionProvider = currentCompactionProvider
 		ag.CompactionMaxOutput = currentCompactionCfg.ModelMaxOutput
-		if category.ContextCompactionPercent != nil {
-			ag.ContextCompactionPercent = *category.ContextCompactionPercent
-		}
-		if category.ContextRetentionTokens != nil {
-			ag.CompactionRetentionTokens = *category.ContextRetentionTokens
-		}
+		ag.ContextCompactionPercent = agent.CompactionPercentSetting(category.ContextCompactionPercent)
+		ag.CompactionRetentionTokens = agent.RetentionSetting(category.ContextRetentionTokens)
 		turnIdentity = ttypes.TurnIdentity{
 			Generation: turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,

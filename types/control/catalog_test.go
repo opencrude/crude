@@ -99,3 +99,20 @@ func TestExecutionSelectionCatalogRequiresExactSession(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogMatchesNaturalPhrasesByTerms(t *testing.T) {
+	results := Catalog("capability secret store")
+	if len(results) == 0 || results[0].ID != "capabilities.set_secret" {
+		ids := make([]string, 0, len(results))
+		for _, result := range results {
+			ids = append(ids, result.ID)
+		}
+		t.Fatalf("natural phrase did not rank capabilities.set_secret first: %v", ids)
+	}
+	if exact := Catalog("settings.get"); len(exact) == 0 || exact[0].ID != "settings.get" {
+		t.Fatalf("exact command id did not rank first: %+v", exact)
+	}
+	if none := Catalog("zzzqqq"); len(none) != 0 {
+		t.Fatalf("unrelated query matched %d commands", len(none))
+	}
+}

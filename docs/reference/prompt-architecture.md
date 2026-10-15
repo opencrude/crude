@@ -62,7 +62,8 @@ mode: direct work versus an existing suitable peer versus a bounded leaf,
 exact request revisions/dispositions, no acknowledgement loops, exact artifact
 reads, and report/control/lifecycle separation. Actual tool availability remains
 authoritative; leaves cannot recursively delegate. Named child selection uses the
-offered `agent_start.profile` field, not a nonexistent nickname argument.
+offered `agent_start.profile` field; the separate optional `nickname` names the
+child itself and never selects a profile.
 Runtime event envelopes include escaped exact evidence references and typed
 dispositions. Summaries are notifications, not substitutes for reading evidence.
 Enforcement and passive recovery live in the
@@ -79,7 +80,7 @@ stay with the executing interface. They are not competing system prompts. Extern
 MCP prompt templates are source-attributed capability data, not shipped Crude
 policy; see [capability workflows](../guides/capability-workflows.md).
 
-There is no bundled vendor behavioral prompt tree and no `agent/prompts.go`
+There is no bundled vendor behavioral prompt tree and no agent/prompts.go
 compatibility facade. If a future change genuinely needs shipped instruction
 assets, their sole owner remains `prompt/`, not a second provider-local loader.
 Names such as `tui/ui/textprompt.go`, `dirty_prompt.go`, or
@@ -222,6 +223,11 @@ the runtime defers **all calls in that batch before effects**, supplies a
 superseding complete guidance projection, and requires reassessment. It does not
 execute the original batch automatically after reading the files.
 
+A glob operand (for example a `grep_files` path of `workspace/lsp*.go`) scopes
+guidance discovery to its literal directory prefix. Operand validity is each
+tool's own per-call decision: one call's operand never fails or defers its
+siblings.
+
 Known scopes are rechecked before a tool batch and after its execution, including
 creation, modification, deletion and native/freeform patch operands. Source
 loading is transactional: failure retains the previous complete snapshot and
@@ -238,8 +244,12 @@ same admitted batch use the pre-batch rules; the post-batch update governs the
 next request. They do not recursively scan unrelated project directories.
 
 For example, a first call targeting `backend/server.go` discovers
-`backend/AGENTS.md`. Neither that call nor its siblings execute on that attempt.
-The next model request receives the new rules and can issue revised calls.
+`backend/AGENTS.md`. No effectful call in that batch executes on that attempt;
+pure reads (`read_file`, `grep_files`, `glob_files`, `list_directory`, memory,
+history, plan, async-output, Board, artifact and agent inspection reads, and a
+parallel wrapper made only of them) cannot violate rules and run now, sparing a
+round trip. The next model request receives the new rules with those results
+and can issue revised calls. Unreadable guidance defers the whole batch.
 
 Current path discovery inspects recognized path/cwd arguments, parallel-call
 parameters and parsed native patch operands. It is not an arbitrary shell-script
@@ -451,3 +461,13 @@ and known template text. It is a regression guard, not exhaustive data-flow
 analysis. Extend its coverage for new packages/templates and manually review new
 request paths; renaming a constant or embedding instructions in a local string
 does not make a second owner acceptable.
+
+## Placement rules
+
+- Provider and model differences belong to the narrowest real adapter: wire
+  encoding/replay in `provider/`, exact offered schemas in `tools/`, and native
+  interfaces such as OpenAI/Codex freeform `apply_patch` in `codexio/`. A native
+  tool does not justify replacing Crude's behavioral prompt.
+- Guidance snapshots must not churn: no timestamps or counters in republished
+  guidance, no raw JSON tool-name rewriting, and unchanged rereads never rewrite
+  an accepted cache prefix.

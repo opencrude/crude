@@ -480,8 +480,8 @@ func TestResumeRestoresActiveContextIndependentlyFromFullArchive(t *testing.T) {
 func TestContextCompactionDefaultsAndLiveInheritance(t *testing.T) {
 	cfg := testConfig()
 	main := cfg.GetActiveDefaultCategory()
-	if main.ContextCompactionPercent == nil || *main.ContextCompactionPercent != 85 {
-		t.Fatalf("default compaction = %#v", main.ContextCompactionPercent)
+	if main.ContextCompactionPercent != nil {
+		t.Fatalf("default compaction must stay adaptive (unset), got %#v", main.ContextCompactionPercent)
 	}
 	disabled := 0
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]

@@ -37,6 +37,7 @@ var categoryFieldRole = map[string]string{
 	"ModelMaxOutput":           "agent output cap",
 	"ContextCompactionPercent": "agent compaction",
 	"ContextRetentionTokens":   "agent compaction",
+	"ServiceTier":              "provider",
 }
 
 func TestEveryCategorySettingIsClassifiedForChildProviders(t *testing.T) {
@@ -62,6 +63,7 @@ func fullChildSpec() agent.SubAgentSpec {
 	return agent.SubAgentSpec{
 		ID: "child", Category: CategoryCrafter, AccountID: "account", Model: "child-model",
 		ThinkingEffort: "high", ModelTemperature: &temperature, ModelTopP: &topP, ModelContextWindow: 123456,
+		ServiceTier: "fast",
 	}
 }
 

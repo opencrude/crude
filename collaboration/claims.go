@@ -10,31 +10,49 @@ import (
 )
 
 func (store *Store) AcquireClaims(ctx context.Context, request AcquireClaimsRequest) ([]Claim, error) {
+	result, err := store.AcquireDelegatedClaims(ctx, request)
+	return result.Claims, err
+}
+
+// AcquireDelegatedClaims is AcquireClaims with the delegator hand-over
+// reported. Every transfer and acquisition commits atomically or not at all.
+func (store *Store) AcquireDelegatedClaims(ctx context.Context, request AcquireClaimsRequest) (AcquireClaimsResult, error) {
+	var outcome AcquireClaimsResult
+	claims, transferred, err := store.acquireClaims(ctx, request)
+	outcome.Claims, outcome.Transferred = claims, transferred
+	return outcome, err
+}
+
+func (store *Store) acquireClaims(ctx context.Context, request AcquireClaimsRequest) ([]Claim, []Claim, error) {
 	if err := validateIdentity("agent_id", request.AgentID, 256); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateOptionalIdentity("run_id", request.RunID, 256); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateOptionalIdentity("request_id", request.RequestID, 256); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if err := validateOptionalIdentity("delegator_id", request.DelegatorID, 256); err != nil {
+		return nil, nil, err
 	}
 	if len(request.Paths) == 0 || len(request.Paths) > 256 {
-		return nil, fmt.Errorf("%w: claim paths", ErrInvalid)
+		return nil, nil, fmt.Errorf("%w: claim paths", ErrInvalid)
 	}
 	paths := make([]string, 0, len(request.Paths))
 	for _, path := range request.Paths {
 		normalized, err := normalizedPath(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		paths = append(paths, normalized)
 	}
 	slices.Sort(paths)
 	paths = slices.Compact(paths)
 
-	var result []Claim
+	var result, transferred []Claim
 	err := store.transaction(ctx, func(tx *sql.Tx) error {
+		result, transferred = nil, nil
 		agent, err := loadAgent(ctx, tx, request.AgentID)
 		if err != nil {
 			return err
@@ -58,7 +76,8 @@ func (store *Store) AcquireClaims(ctx context.Context, request AcquireClaimsRequ
 		}
 		for _, path := range paths {
 			reused := false
-			for _, existing := range active {
+			for index := 0; index < len(active); index++ {
+				existing := active[index]
 				if !pathsOverlap(path, existing.Path) {
 					continue
 				}
@@ -70,8 +89,22 @@ func (store *Store) AcquireClaims(ctx context.Context, request AcquireClaimsRequ
 				if existing.AgentID == request.AgentID && existing.RunID == request.RunID {
 					continue
 				}
-				return fmt.Errorf("%w: path %q overlaps claim %s owned by agent %s",
-					ErrConflict, path, existing.ID, existing.AgentID)
+				if request.DelegatorID != "" && existing.AgentID == request.DelegatorID {
+					if !pathWithin(existing.Path, path) {
+						return fmt.Errorf("%w: path %q is inside the broader claim %s on %q held by the delegating agent %s; delegate the whole %q or narrow your own claim first",
+							ErrConflict, path, existing.ID, existing.Path, existing.AgentID, existing.Path)
+					}
+					released, err := releaseClaimTx(ctx, tx, existing)
+					if err != nil {
+						return err
+					}
+					transferred = append(transferred, released)
+					active = append(active[:index], active[index+1:]...)
+					index--
+					continue
+				}
+				return fmt.Errorf("%w: path %q overlaps claim %s on %q owned by agent %s",
+					ErrConflict, path, existing.ID, existing.Path, existing.AgentID)
 			}
 			if reused {
 				continue
@@ -94,7 +127,29 @@ func (store *Store) AcquireClaims(ctx context.Context, request AcquireClaimsRequ
 		}
 		return nil
 	})
-	return result, err
+	return result, transferred, err
+}
+
+// releaseClaimTx releases one active claim at its current version.
+func releaseClaimTx(ctx context.Context, tx *sql.Tx, claim Claim) (Claim, error) {
+	now := time.Now().UTC()
+	update, err := tx.ExecContext(ctx, `UPDATE collaboration_claims
+		SET version=version+1,released_at=?
+		WHERE id=? AND agent_id=? AND version=? AND released_at=0`,
+		now.UnixNano(), claim.ID, claim.AgentID, claim.Version)
+	if err != nil {
+		return Claim{}, err
+	}
+	affected, err := update.RowsAffected()
+	if err != nil {
+		return Claim{}, err
+	}
+	if affected != 1 {
+		return Claim{}, ErrStale
+	}
+	claim.Version++
+	claim.ReleasedAt = now
+	return claim, nil
 }
 
 func (store *Store) ReleaseClaims(ctx context.Context, request ReleaseClaimsRequest) ([]Claim, error) {

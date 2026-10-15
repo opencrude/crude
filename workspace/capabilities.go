@@ -176,11 +176,13 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 	case "save-connection":
 		if action.Connection == nil {
 			err = errors.New("connection draft is missing")
-		} else if err = mcpclient.Validate(*action.Connection); err == nil {
-			value := *action.Connection
+		} else if err = mcpclient.Validate(builtinIdentity(working.Capabilities, *action.Connection)); err == nil {
+			value := builtinIdentity(working.Capabilities, *action.Connection)
 			value.Scope = action.Scope
 			working.Capabilities.Connections[value.ID], persist = value, true
 		}
+	case "set-secrets":
+		err = service.SetSecrets(ctx, action.Arguments)
 	case "save-source":
 		if action.Source == nil || action.Source.ID == "" || action.Source.Location == "" {
 			err = errors.New("source needs an identity and location")
@@ -335,7 +337,9 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 				err = errors.New("connection is unavailable")
 				break
 			}
-			if action.Operation == "remove" {
+			if action.Operation == "remove" && value.IsBuiltin() {
+				err = errors.New("built-in connections can be disabled but not removed")
+			} else if action.Operation == "remove" {
 				delete(working.Capabilities.Connections, action.ID)
 			} else {
 				value.Disabled = action.Operation == "disable"
@@ -443,4 +447,14 @@ func (authority capabilityRuntimeAuthority) ValidateRuntime(ctx context.Context,
 		return collaboration.ErrStale
 	}
 	return ctx.Err()
+}
+
+// builtinIdentity keeps a built-in connection's identity (Crude's own server)
+// while a user edits its name, timeout or per-tool switches.
+func builtinIdentity(settings captypes.Settings, value captypes.ConnectionConfig) captypes.ConnectionConfig {
+	if existing, exists := settings.Connections[value.ID]; exists && existing.IsBuiltin() {
+		value.Transport, value.Command, value.Host = existing.Transport, existing.Command, ""
+		value.URL, value.Args, value.Directory, value.Source = "", nil, "", ""
+	}
+	return value
 }

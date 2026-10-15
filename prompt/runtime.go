@@ -236,3 +236,22 @@ func PreviousSessions(sessions []PreviousSession) string {
 	text.WriteString("</previous_workspace_sessions>")
 	return text.String()
 }
+
+// ChildStatus is one delegated agent's current state for its parent.
+type ChildStatus struct {
+	Name     string
+	Category string
+	State    string
+}
+
+// ChildrenStatus tells a parent where its children stand. Crude sends it only
+// when a child's state changes, so the parent never needs to poll for it.
+func ChildrenStatus(children []ChildStatus) string {
+	var out strings.Builder
+	out.WriteString("<children_status>\nAutomatic update, sent when a child's state changes. Reports, questions and outcomes are delivered automatically; do not poll agent_inspect or agent_list for them.")
+	for _, child := range children {
+		fmt.Fprintf(&out, "\n- %s [%s]: %s", XMLText(child.Name), XMLText(child.Category), XMLText(child.State))
+	}
+	out.WriteString("\n</children_status>")
+	return out.String()
+}

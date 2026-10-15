@@ -1,7 +1,6 @@
 package sessionsettings
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
@@ -558,7 +557,7 @@ func TestRolePageTextEditorJoinsValueColumn(t *testing.T) {
 	if compaction == "" || provider == "" {
 		t.Fatalf("missing role rows:\n%s", plain)
 	}
-	value := strconv.Itoa(types.DefaultContextCompactionPercent)
+	value := "Auto"
 	if !strings.Contains(compaction, value) {
 		t.Fatalf("compaction row missing %q:\n%s", value, compaction)
 	}

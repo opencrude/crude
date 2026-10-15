@@ -69,9 +69,9 @@ not a runnable process waiting to be reopened.
 | `agent_send` | Directed note/reply/request/revision or rare running-agent broadcast |
 | `agent_respond` | Accept, defer, or decline an exact request revision |
 | `agent_control` | Request pause/resume/cancel/reopen for an exact agent/run version |
-| `agent_narrow_claims` | Narrow or explicitly relinquish the caller's own exact active run claims, without ending the run |
+| `agent_narrow_claims` | Narrow or explicitly relinquish the caller's own active run claims, without ending the run; only `paths` is required, identities default to the current run and claims |
 | `agent_configure` | Change a child's model, account or thinking effort; a running child switches at its next request, a stopped child keeps it for continuation; finished children need a new assignment |
-| `agent_update_claims` | Replace a child's complete scope (wider or narrower) during its live run or after an interrupted attempt, under the exact parent, run version and expected claim versions; never starts execution |
+| `agent_update_claims` | Replace a child's complete scope (wider or narrower) during its live run or after an interrupted attempt, under the exact parent; run version and claim versions default to the child's current state unless given as preimages; never starts execution |
 | `publish_report` | Publish immutable authored evidence linked to the actual run/request |
 | `artifact_read` | Read an exact artifact revision; revision zero selects latest |
 | `agent_wait` | Wait for an exact run/report/agent condition without model polling |
@@ -211,7 +211,10 @@ claim. Unknown or unfenced effects remain explicitly limited.
 
 Declared child ownership is reserved before model execution, across sessions.
 Native writes conflict with another active owner; repeated writes reuse the
-run's claim. Failed launches release their exact runtime and claims rather than
+run's claim. Delegating a path the launching parent itself holds transfers the
+parent's claim to the child in the same transaction (`DelegatorID`); a parent
+claim broader than the delegated path, or another agent's claim, still conflicts
+and names the holder and the remedy. Failed launches release their exact runtime and claims rather than
 leaving invisible running agents.
 
 Native ownership rejection is an ordinary, actionable tool error. Nothing
@@ -325,3 +328,34 @@ and [Codex subagent guidance](https://developers.openai.com/codex/subagents), no
 claim of deterministic replay or a multi-machine Temporal-style service.
 Held-out real-model with/without comparisons are still required before claiming
 general task-quality, token, latency, or cost improvement.
+
+## Delivery and control invariants
+
+- Directed collaboration events and report/outcome publications are delivered
+  automatically at safe boundaries; Board reads are history/search, not polling
+  transport. Peer data is never approval or permission. `agent_send` broadcast
+  is peer-note-only and snapshots only other available, attached agents with a
+  current nonterminal run; it excludes idle/suspended/offline/finished history
+  and is never routine progress or task fan-out. Human unread and durable agent
+  context admission remain independent. Memory revisions use expected-version
+  correction; exposure never reinforces usefulness.
+- Collaboration work requests are journal-owned: initial revision 1, exact next
+  author-issued revision with unchanged recipients, and typed latest-revision
+  accept/defer/decline. Never infer agreement from prose or allow duplicate
+  acknowledgement loops. Roots select reusable children with `agent_start.profile`;
+  bounded leaves coordinate with peers but cannot recursively delegate.
+- Controls fence exact run ID/version or availability epoch; a replacement run
+  never inherits an earlier cancel. Pause cancels execution and suspends admission;
+  resume restores availability, not a stack. Human outcomes are durable audit
+  facts, not fake model deliveries. Publication is never proof of application.
+- Report author/run/request provenance is immutable across revisions. Only an
+  actual child-owned final addressed to its parent satisfies the deliverable;
+  interim reports and missing-final terminal reasons cannot become completed
+  work. Notifications expose exact artifact references; read the referenced
+  revision before relying on its summary.
+- Runtime takeover first loads local context receipts, then atomically reconciles
+  admissions, requeues only uncommitted reservations, interrupts orphaned runs and
+  releases their claims under the exact process lock/epoch. Root admission,
+  compaction and normal turns share one authoritative active context. Resume
+  admits old evidence passively with zero provider/tool/child replay; genuinely
+  new peer input may wake the attached idle root.

@@ -166,7 +166,36 @@ Key coverage:
 | `tui/compositor/TestEndToEndWidthAgreement` | compositor and UV agreement |
 | `tui/compositor/TestFloatingBorderOccludesEmojiWithoutHalfGrapheme` | floating borders cannot expose half an underlying emoji |
 | `tui/surface/TestBlitBorderAtomicallyOccludesUnderlyingWideGrapheme` | all layer overlap is grapheme-atomic |
-| `tui/editor/TestViewWideGlyphsKeepScrollbarColumn` | wide glyphs cannot shift the editor scrollbar |
-| `tui/editor/TestRenderWideGlyphsKeepScrollbarColumn` | Markdown/`✅` survives compositor→UV with the scrollbar at the right edge |
+| `tui/editor/TestRenderWideGlyphsKeepScrollbarColumn` | wide glyphs (Markdown, `✅`) survive compositor→UV without shifting the editor scrollbar |
 | `third_party/ultraviolet/TestCellbufMatchesXansiWidths` | UV and x/ansi agreement |
 | `third_party/ultraviolet/TestStyledStringAcceptsMeasuredWidthBeyondFour` | legacy measured clusters remain representable |
+
+## Pitfalls
+
+- **Search plain text, never styled text.** `strings.Index(rawLine, label)` on
+  an ANSI-styled string can match inside escape codes; strip with `ansi.Strip`
+  (`third_party/xansi`) first.
+- **UTF-8 byte positions**: Box-drawing chars like `│` (U+2502) are 3
+  bytes. Byte-position assertions break if you count them as 1. Use
+  `len([]rune(s))` or account for the 3-byte offset.
+- **`VisibleWidth`** is the only layout width API — it must stay identical
+  to ultraviolet’s grapheme measure (`third_party/xansi`).
+- **Editor cells must retain full graphemes.** Geometry width plus only the
+  first rune is lossy: UV remeasures the emitted rune and shifts right-edge
+  chrome. Paint `Cell.Content` plus the calibrated width and continuations.
+- **go.mod replaces**:
+  - `charm.land/bubbletea/v2` → `./third_party/bubbletea`
+  - `github.com/charmbracelet/x/ansi` → `./third_party/xansi`
+  - `github.com/charmbracelet/ultraviolet` → `./third_party/ultraviolet`
+  - `github.com/charmbracelet/x/powernap` → `./third_party/powernap`
+    (vendored so the LSP transport can be patched; see [editor and language servers](editor.md))
+
+## Historical: scrollbar artifact bug
+
+`VisibleWidth` once used `uniseg` (☰ → 1) while UV used `ansi` (☰ → 2).
+The first fix shared GraphemeWidth but incorrectly keyed a correction to
+`runtime.GOOS`, which failed under WSL/multiplexers. The current solution is
+the asynchronous effective-grid profile described above.
+
+Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
+`makeNoColorBgTransparent()`.

@@ -921,7 +921,7 @@ func (catalog *capabilityCatalog) consumeResult() {
 			catalog.message = "Remote response is failed, unknown or unsupported; it cannot be staged."
 		}
 	}
-	if slices.Contains([]string{"save-connection", "save-skill", "save-source", "create-skill", "add-local", "import", "make-local-copy"}, request.action.Operation) {
+	if slices.Contains([]string{"save-connection", "set-secrets", "save-skill", "save-source", "create-skill", "add-local", "import", "make-local-copy"}, request.action.Operation) {
 		if request.form != nil && catalog.owner.model.capabilityDraft == request.form && reflect.DeepEqual(request.draft, formDraftBytes(catalog.owner.model.capabilityDraft)) {
 			catalog.baseline = slices.Clone(request.draft)
 			catalog.owner.model.capabilityDraft.Commit()

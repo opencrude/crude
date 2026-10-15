@@ -235,6 +235,10 @@ func TestCompactionThresholdAccountsForOutputAndExtractionCapacity(t *testing.T)
 	compactor.SetContextWindow(64_000)
 	agent := NewAgent(main, main.Model, nil)
 	agent.CompactionProvider = compactor
+	if got := agent.contextThreshold(1_000_000); got != 0 {
+		t.Fatalf("adaptive compaction has no fixed threshold, got %d", got)
+	}
+	agent.ContextCompactionPercent = 85
 	if got := agent.contextThreshold(1_000_000); got != 850_000 {
 		t.Fatalf("threshold %d ignored the configured main-model pressure", got)
 	}

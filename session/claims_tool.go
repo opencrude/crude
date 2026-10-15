@@ -49,35 +49,29 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 	if err != nil {
 		return tools.ToolResult{}, true, err
 	}
-	versions, err := exactClaimVersions(params["expected_versions"])
-	if err != nil {
-		return tools.ToolResult{}, true, err
+	target := actor
+	if name == "agent_update_claims" {
+		id := getStrParam(params, "agent_id")
+		if !canControlAgent(ctx, store, actorID, id) {
+			return tools.ToolResult{}, true, fmt.Errorf("agent %q cannot repair unrelated agent %q", actorID, id)
+		}
+		if target, err = store.Agent(ctx, id); err != nil {
+			return tools.ToolResult{}, true, err
+		}
 	}
-	runtimeEpoch, err := exactClaimNumber(params, "runtime_epoch")
-	if err != nil {
-		return tools.ToolResult{}, true, err
-	}
-	runVersion, err := exactClaimNumber(params, "expected_run_version")
+	runtimeEpoch, runID, runVersion, versions, err := resolveClaimPreimage(ctx, store, target, params)
 	if err != nil {
 		return tools.ToolResult{}, true, err
 	}
 	var result collaboration.NarrowActiveClaimsResult
 	if name == "agent_update_claims" {
-		target := getStrParam(params, "agent_id")
-		if !canControlAgent(ctx, store, actorID, target) {
-			return tools.ToolResult{}, true, fmt.Errorf("agent %q cannot repair unrelated agent %q", actorID, target)
-		}
-		targetAgent, targetErr := store.Agent(ctx, target)
-		if targetErr != nil {
-			return tools.ToolResult{}, true, targetErr
-		}
 		request := collaboration.UpdateClaimsRequest{
-			ParentID: actorID, AgentID: target, RuntimeEpoch: runtimeEpoch,
-			RunID: getStrParam(params, "run_id"), ExpectedRunVersion: runVersion,
+			ParentID: actorID, AgentID: target.ID, RuntimeEpoch: runtimeEpoch,
+			RunID: runID, ExpectedRunVersion: runVersion,
 			ExpectedVersions: versions, Paths: validated,
 		}
 		var repaired collaboration.UpdateClaimsResult
-		err = s.FileOwnership().CommitReplaceClaims(agent.AgentID(target), targetAgent.Name, validated, func() error {
+		err = s.FileOwnership().CommitReplaceClaims(agent.AgentID(target.ID), target.Name, validated, func() error {
 			var commitErr error
 			repaired, commitErr = store.UpdateClaims(ctx, request)
 			return commitErr
@@ -85,7 +79,7 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 		return collaborationResult(repaired, err), true, err
 	}
 	request := collaboration.NarrowActiveClaimsRequest{
-		AgentID: actorID, RuntimeEpoch: runtimeEpoch, RunID: getStrParam(params, "run_id"),
+		AgentID: actorID, RuntimeEpoch: runtimeEpoch, RunID: runID,
 		ExpectedRunVersion: runVersion, ExpectedVersions: versions, Paths: validated,
 	}
 	err = s.FileOwnership().CommitReplaceClaims(agent.AgentID(actorID), actor.Name, validated, func() error {
@@ -94,6 +88,54 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 		return commitErr
 	})
 	return collaborationResult(result, err), true, err
+}
+
+// resolveClaimPreimage returns the identities a claim change is fenced on.
+// Values the caller passes are exact preimages (as read from agent_inspect);
+// omitted ones are read from the target's current state, so the common case
+// needs only the new paths. The store still rejects the change if any of them
+// moves before it commits.
+func resolveClaimPreimage(ctx context.Context, store *collaboration.Store, target collaboration.Agent, params map[string]any) (epoch uint64, runID string, runVersion uint64, versions map[string]uint64, err error) {
+	epoch = target.RuntimeEpoch
+	if _, given := params["runtime_epoch"]; given {
+		if epoch, err = exactClaimNumber(params, "runtime_epoch"); err != nil {
+			return
+		}
+	}
+	runID = getStrParam(params, "run_id")
+	if runID == "" {
+		runID = target.CurrentRunID
+	}
+	if runID == "" {
+		err = fmt.Errorf("agent %q has no current run; pass the run_id of its interrupted run from agent_inspect", target.ID)
+		return
+	}
+	if _, given := params["expected_run_version"]; given {
+		if runVersion, err = exactClaimNumber(params, "expected_run_version"); err != nil {
+			return
+		}
+	} else {
+		run, runErr := store.Run(ctx, runID)
+		if runErr != nil {
+			err = runErr
+			return
+		}
+		runVersion = run.Version
+	}
+	if raw, given := params["expected_versions"]; given {
+		versions, err = exactClaimVersions(raw)
+		return
+	}
+	claims, claimsErr := store.Claims(ctx, target.ID, true)
+	if claimsErr != nil {
+		err = claimsErr
+		return
+	}
+	versions = make(map[string]uint64, len(claims))
+	for _, claim := range claims {
+		versions[claim.ID] = claim.Version
+	}
+	return
 }
 
 func exactClaimNumber(params map[string]any, key string) (uint64, error) {

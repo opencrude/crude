@@ -233,6 +233,24 @@ func pathWithin(path, parent string) bool {
 	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
+// ReleasePaths drops agentID's local claims that lie inside any of paths, used
+// when those claims were durably transferred to a delegated child.
+func (fo *FileOwnership) ReleasePaths(agentID AgentID, paths []string) {
+	fo.mu.Lock()
+	defer fo.mu.Unlock()
+	for claimed, entry := range fo.claims {
+		if entry.AgentID != agentID {
+			continue
+		}
+		for _, path := range paths {
+			if path = normalizeClaimPath(path); path != "" && pathWithin(claimed, path) {
+				delete(fo.claims, claimed)
+				break
+			}
+		}
+	}
+}
+
 func (fo *FileOwnership) Release(agentID AgentID) {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()

@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	"crude/codexio"
+	"crude/fileio"
 	rootprompt "crude/prompt"
 	"crude/provider"
 )
@@ -23,10 +23,6 @@ type projectGuidance struct {
 	basePrompt    string
 	initialPrompt string
 }
-
-type guidanceOperandError struct{ message string }
-
-func (e *guidanceOperandError) Error() string { return e.message }
 
 func (a *Agent) loadProjectGuidance(ctx context.Context, systemPrompt string) (string, error) {
 	if a.WorkDir == "" {
@@ -274,31 +270,26 @@ func (a *Agent) refreshProjectGuidance(ctx context.Context, systemPrompt string)
 	return rendered, nil
 }
 
-func guidanceCallPaths(calls []provider.ToolCall) ([]string, error) {
+func guidanceCallPaths(calls []provider.ToolCall) []string {
 	var paths []string
-	appendConcrete := func(tool, key, path string) error {
+	appendConcrete := func(path string) {
 		if path == "" || strings.Contains(path, "://") {
-			return nil
+			return
 		}
-		if strings.ContainsAny(path, "*?") {
-			return &guidanceOperandError{message: fmt.Sprintf("invalid %s %s %q: wildcard syntax is unsupported in a literal path; pass a concrete path (glob_files uses pattern plus an optional concrete base_dir)", tool, key, path)}
-		}
-		if _, err := filepath.Abs(path); err != nil {
-			return &guidanceOperandError{message: fmt.Sprintf("invalid %s %s %q: %v", tool, key, path, err)}
+		// A glob operand governs the directories it can reach, which all lie
+		// under its literal prefix. Whether the tool accepts a glob is the
+		// tool's own per-call decision; one call's operand never fails a batch.
+		if base, _, isGlob := fileio.SplitGlobPath(path); isGlob {
+			path = base
 		}
 		paths = append(paths, path)
-		return nil
 	}
 	for _, call := range calls {
 		if call.Function.Name == "apply_patch" && call.Type == "custom" {
 			if patch, err := codexio.Parse(call.Function.Arguments); err == nil {
 				for _, operation := range patch.Operations {
-					if err := appendConcrete(call.Function.Name, "path", operation.Path); err != nil {
-						return nil, err
-					}
-					if err := appendConcrete(call.Function.Name, "move_to", operation.MoveTo); err != nil {
-						return nil, err
-					}
+					appendConcrete(operation.Path)
+					appendConcrete(operation.MoveTo)
 				}
 			}
 			continue
@@ -322,11 +313,7 @@ func guidanceCallPaths(calls []provider.ToolCall) ([]string, error) {
 					name, _ := child["recipient_name"].(string)
 					children = append(children, provider.ToolCall{Function: provider.FunctionCall{Name: strings.TrimPrefix(name, "functions."), Arguments: string(data)}})
 				}
-				childPaths, err := guidanceCallPaths(children)
-				if err != nil {
-					return nil, err
-				}
-				paths = append(paths, childPaths...)
+				paths = append(paths, guidanceCallPaths(children)...)
 			}
 		}
 		keys := []string{"path", "file_path", "source", "destination", "cwd", "workdir"}
@@ -337,24 +324,47 @@ func guidanceCallPaths(calls []provider.ToolCall) ([]string, error) {
 		}
 		for _, key := range keys {
 			if path, ok := params[key].(string); ok {
-				if err := appendConcrete(call.Function.Name, key, path); err != nil {
-					return nil, err
-				}
+				appendConcrete(path)
 			}
 		}
 		if call.Function.Name == "apply_patch" {
 			input, _ := params["input"].(string)
 			if patch, err := codexio.Parse(input); err == nil {
 				for _, operation := range patch.Operations {
-					if err := appendConcrete(call.Function.Name, "path", operation.Path); err != nil {
-						return nil, err
-					}
-					if err := appendConcrete(call.Function.Name, "move_to", operation.MoveTo); err != nil {
-						return nil, err
-					}
+					appendConcrete(operation.Path)
+					appendConcrete(operation.MoveTo)
 				}
 			}
 		}
 	}
-	return paths, nil
+	return paths
+}
+
+// guidanceReadTools only observe the workspace or session; they cannot act on
+// rules the model has not seen yet, so they need not wait for new guidance.
+var guidanceReadTools = map[string]bool{
+	"read_file": true, "glob_files": true, "grep_files": true, "list_directory": true,
+	"recall_memory": true, "search_history": true, "get_plan": true,
+	"check_async_command": true, "read_async_output": true,
+	"board_read": true, "artifact_read": true, "agent_list": true, "agent_inspect": true,
+}
+
+func guidanceSafeRead(call provider.ToolCall) bool {
+	if call.Function.Name != "multi_tool_use.parallel" {
+		return guidanceReadTools[call.Function.Name]
+	}
+	var params struct {
+		ToolUses []struct {
+			Name string `json:"recipient_name"`
+		} `json:"tool_uses"`
+	}
+	if json.Unmarshal([]byte(call.Function.Arguments), &params) != nil || len(params.ToolUses) == 0 {
+		return false
+	}
+	for _, use := range params.ToolUses {
+		if !guidanceReadTools[strings.TrimPrefix(use.Name, "functions.")] {
+			return false
+		}
+	}
+	return true
 }

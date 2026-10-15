@@ -97,17 +97,15 @@ func TestChildRetentionAlwaysKeepsAssignment(t *testing.T) {
 	}
 }
 
-func TestCompactionRetentionTokensDefaultsAndOverrides(t *testing.T) {
-	if got := (*Agent)(nil).compactionRetentionTokens(); got != 20_000 {
-		t.Fatalf("nil-agent retention = %d, want 20000", got)
+func TestCompactionSettingsMapUnsetToAdaptiveAndZeroToOff(t *testing.T) {
+	zero, explicit, oversized := 0, 70, 150
+	if CompactionPercentSetting(nil) != 0 || CompactionPercentSetting(&zero) != CompactionOff ||
+		CompactionPercentSetting(&explicit) != 70 || CompactionPercentSetting(&oversized) != 100 {
+		t.Fatal("compaction percent setting mapping changed")
 	}
-	a := &Agent{}
-	if got := a.compactionRetentionTokens(); got != 20_000 {
-		t.Fatalf("zero retention = %d, want default 20000", got)
-	}
-	a.CompactionRetentionTokens = 4_000
-	if got := a.compactionRetentionTokens(); got != 4_000 {
-		t.Fatalf("configured retention = %d, want 4000", got)
+	cap := 4_000
+	if RetentionSetting(nil) != 0 || RetentionSetting(&cap) != 4_000 {
+		t.Fatal("retention setting mapping changed")
 	}
 }
 
@@ -476,5 +474,54 @@ func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
 	if len(result.Messages) != 3 || result.Messages[1].EffectiveOrigin() != provider.OriginAssignment || result.Messages[2].EffectiveOrigin() != provider.OriginRuntimeContext ||
 		!strings.Contains(result.Messages[0].ContentString(), "<continuation>") {
 		t.Fatalf("child compacted messages = %#v", result.Messages)
+	}
+}
+
+// A cheap or unstable compaction model must not stop a run that can still
+// make requests: below the hard limit a failed automatic compaction keeps the
+// full context, continues, and retries later.
+func TestFailedAutomaticCompactionWithHeadroomContinuesRun(t *testing.T) {
+	var compactorCalls, mainCalls atomic.Int32
+	compactorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		compactorCalls.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"model is overloaded with this request shape","type":"invalid_request_error"}}`)
+	}))
+	defer compactorServer.Close()
+	mainServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mainCalls.Add(1)
+		writeChatSSE(w, "continued", "stop")
+	}))
+	defer mainServer.Close()
+	p := provider.FromPreset("openai-chat", "key", mainServer.URL)
+	p.Model = "headroom-main-model"
+	provider.SetModelContext(p.Model, 1_000_000)
+	a := newTestAgent(t, p, p.Model)
+	a.ContextCompactionPercent = 2
+	compactor := provider.FromPreset("openai-chat", "key", compactorServer.URL)
+	compactor.Model = "unstable-cheap-compactor"
+	provider.SetModelContext(compactor.Model, 1_000_000)
+	a.CompactionProvider = compactor
+	a.SeedContextUsage(43_000, 200, 2)
+	messages := []provider.ChatMessage{
+		provider.NewTextMessage("user", "previous request"),
+		provider.NewTextMessage("assistant", "previous answer"),
+		provider.NewTextMessage("user", "next request"),
+	}
+	var deferred bool
+	result := a.Run(context.Background(), messages, "system", func(event AgentEvent) {
+		if event.Type == "context_compaction_failed" {
+			data, _ := event.Data.(map[string]any)
+			deferred, _ = data["deferred"].(bool)
+		}
+	}, nil, "", nil)
+	if compactorCalls.Load() == 0 {
+		t.Fatal("automatic compaction was never attempted")
+	}
+	if a.RunFailure() != nil || !deferred {
+		t.Fatalf("failed compaction stopped the run: failure=%v deferred=%t", a.RunFailure(), deferred)
+	}
+	if mainCalls.Load() != 1 || len(result) == 0 || !strings.Contains(result[len(result)-1].ContentString(), "continued") {
+		t.Fatalf("run did not continue on the full context: main calls=%d result=%+v", mainCalls.Load(), result)
 	}
 }

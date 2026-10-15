@@ -210,7 +210,7 @@
       "id": "statusbar-ansi-body",
       "path": "tui/widgets/statusbar.go",
       "status": "deleted",
-      "note": "Native tui/screens/shellstatus + ui.Hint; legacy ANSI statusbar deleted"
+      "note": "Native tui/screens/shellheader + tui/screens/shellfooter; legacy ANSI statusbar deleted"
     },
     {
       "id": "shelleditor-main-ansi",

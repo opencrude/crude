@@ -49,6 +49,76 @@ alone installs batches and presents neutral effects. Pane renderers use the
 canonical replica Conversation. Create/open are off-UI; pending root activation
 waits for replica inventory and peer-created roots preserve editor focus.
 
+## Ownership across core and shell
+
+Closing a shell detaches it; it never closes sessions or the retained workspace,
+and server mode retains work with zero shells. Never attach multiple Apps to one
+mutable Workspace.
+
+- `App` owns selected session, model display alias and focus; `Workspace` has no
+  active session. Lifecycle, backend lookup and hydration require explicit session
+  IDs. `NewAgentSession`/`OpenAgentSession` return identities without selecting a
+  shell; opening an already-live session reuses its backend.
+- `App.AgentView` owns selected agent and exact-node tab visibility. AgentManager
+  owns inventory only; no shared Hidden/active field may return. Width-dependent
+  thinking panes are reversible shell projections of the canonical thought, not
+  another Conversation or a core ThinkingPaneID. Each owner uses its own retained
+  geometry and session latch; promotion never rewrites shared transcript content.
+- `EventBus` accepts a neutral `MessageSink`; the TUI owns the concrete program
+  adapter. It remains synchronous single-sink ingress, not a queued/replayable
+  subscription stream. Its debug log is not delivery or durable evidence.
+- `Workspace.ApplyAgentEvent` owns semantic inventory, conversation, prompt,
+  status and request-keyed usage reduction; `AgentState.ApplyEvent` returns neutral
+  effects. Root registration and cold hydration install retained canonical state,
+  never a one-shot client tail. Snapshot messages detach nested attribution and
+  references. Core actors now own semantic ingress/ticks; connected shells install
+  immutable deltas on Update and present accepted effects without reducing again.
+  `workspace/` must not import Bubble Tea or TUI rendering.
+- `lspclient/` owns the nonvisual LSP transport. Workspace installs its default
+  runtime without TUI construction. Shared documents own didOpen/didChange/save;
+  exact per-client views release only their own LSP interest. Detach never stops a
+  peer's language server or replaces canonical text with shell-provided bytes.
+- The new `core/` path owns retained workspace actors, atomic snapshot/subscription
+  admission, bounded resource workers, durable mutation receipts and private framed
+  client transport. `coreclient.WorkspaceView` is a detached read mirror, never a
+  fake Workspace containing runtime services. `shellport/remote` is the only CLI
+  runtime path; `shellport.Local` remains core/test infrastructure. Read
+  `docs/reference/core-client-protocol.md` before extending it. `--ssh` selects a
+  strictly host-key-verified system-SSH connection to the fixed stdio bridge;
+  remote paths stay in frames. Ten real Linux shells, twenty retained workspaces
+  and loopback SSH have measured acceptance, not physically unlimited/efficient
+  resources or distinct-host/native-Windows acceptance.
+- Retained core creation hydrates Notices and initializes capability metadata on
+  its factory worker before actor publication, never from shell startup or a
+  model session. Passive capability observations bypass long settings operations;
+  editable settings reads retain ordered preimages. Explicit refresh sequence plus
+  workspace generation fences stale cancellations. Terminal create receipts mount
+  exact returned identity before inventory; Notices→Terminals must repaint.
+- `workspace.TerminalService` now owns the one `terminalvt` parser and reply source
+  before PTY reads start in the retained core. `shellterm`
+  consumes immutable rows and typed asynchronous intents; `termview` owns local
+  scroll/selection/wrapping-aware copy. Never restore a second shell parser or raw
+  reply-capable output feed. Input/resize use exact controller leases and ordered
+  queues; OSC clipboard text is an explicit controller-local copy offer. Placement
+  is shell-local. Detach revokes authority, not the PTY.
+- `workspace.DocumentService` and the editor's shared-document adapter provide
+  revision-fenced live text, safe pending edits and author-specific undo. The
+  connected product editors use that authority for every open/edit/undo/save;
+  shell PieceTables are optimistic projections with private cursors and no source
+  watcher. SQLite current-format checkpoints plus revision-fenced operation deltas
+  and exact receipts commit before accepted edits; cold recovery is passive.
+  Stable document IDs survive durable file/directory relocation. Core file and
+  document watchers publish invalidations; shell reads/transfers use typed RPC.
+  Lost edit/save/format outcomes recover their original receipt, never replay an
+  effect. Native conflict decisions default to Keep draft; explicit Use shared
+  backs up private work and never overwrites collaborators. `document.snapshot_save`
+  is checked disk infrastructure, not another live-text authority. `clientstate`
+  persists private composers and unresolved editor evidence with profile locks,
+  epochs and CAS; old data requires backed-up manual alignment outside product
+  code. Prompt history has one core writer. Invocation account/model/provider/key
+  selectors are captured per new/cold session, not application defaults; keys are
+  write-only ephemeral and `--system` extends the canonical profile overlay.
+
 ## Wire format and bounded delivery
 
 Protocol version 1 uses length-prefixed JSON frames: a four-byte big-endian length

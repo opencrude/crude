@@ -41,6 +41,9 @@ func TestAgentStartOffersOptionalExactProfileWithRequiredCategory(t *testing.T) 
 	if _, oldName := properties["name"]; oldName {
 		t.Fatal("nickname masquerades as configured profile")
 	}
+	if nickname, ok := properties["nickname"].(map[string]any); !ok || nickname["type"] != "string" || !strings.Contains(nickname["description"].(string), "Not a profile") {
+		t.Fatalf("optional parent-chosen nickname must be distinct from profile: %v", properties["nickname"])
+	}
 	if !strings.Contains(definition.Description, "not the allocated nickname") ||
 		!strings.Contains(profile["description"].(string), "match category") {
 		t.Fatal("profile/category identity is ambiguous")

@@ -1020,12 +1020,13 @@ func controlArgumentLines(raw json.RawMessage) string {
 	var lines []string
 	sensitive := func(path string) bool {
 		path = strings.ToLower(path)
-		for _, term := range []string{"password", "secret", "token", "credential", "api_key", "apikey", "private_key"} {
+		for _, term := range []string{"password", "secret", "token", "credential", "api_key", "apikey", "private_key", "authorization"} {
 			if strings.Contains(path, term) {
 				return true
 			}
 		}
-		return false
+		// Connection environment and header values are write-only settings.
+		return strings.HasPrefix(path, "connection.environment.") || strings.HasPrefix(path, "connection.headers.")
 	}
 	var walk func(prefix string, value any)
 	walk = func(prefix string, value any) {

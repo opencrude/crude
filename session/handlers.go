@@ -255,8 +255,8 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 			overrides[category] = sessiondb.AgentSettingOverride{
 				AccountID: cfg.AccountID, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
 				ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
-				ContextRetentionTokens: cloneIntPtr(cfg.ContextRetentionTokens),
-				AllowedTools:           slices.Clone(cfg.AllowedTools), DeniedTools: slices.Clone(cfg.DeniedTools), SkillModes: maps.Clone(cfg.SkillModes),
+				ContextRetentionTokens: cloneIntPtr(cfg.ContextRetentionTokens), ServiceTier: cfg.ServiceTier,
+				AllowedTools: slices.Clone(cfg.AllowedTools), DeniedTools: slices.Clone(cfg.DeniedTools), SkillModes: maps.Clone(cfg.SkillModes),
 			}
 		}
 		return overrides
@@ -265,8 +265,8 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 		overrides[category] = sessiondb.AgentSettingOverride{
 			AccountID: cfg.AccountID, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
 			ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
-			ContextRetentionTokens: cloneIntPtr(cfg.ContextRetentionTokens),
-			AllowedTools:           slices.Clone(cfg.AllowedTools), DeniedTools: slices.Clone(cfg.DeniedTools), SkillModes: maps.Clone(cfg.SkillModes),
+			ContextRetentionTokens: cloneIntPtr(cfg.ContextRetentionTokens), ServiceTier: cfg.ServiceTier,
+			AllowedTools: slices.Clone(cfg.AllowedTools), DeniedTools: slices.Clone(cfg.DeniedTools), SkillModes: maps.Clone(cfg.SkillModes),
 		}
 	}
 	if _, ok := overrides[CategoryDefault]; !ok {
@@ -274,6 +274,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 			AccountID: settings.AccountID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort,
 			ContextCompactionPercent: cloneIntPtr(settings.Agents.Categories[CategoryDefault].ContextCompactionPercent),
 			ContextRetentionTokens:   cloneIntPtr(settings.Agents.Categories[CategoryDefault].ContextRetentionTokens),
+			ServiceTier:              settings.Agents.Categories[CategoryDefault].ServiceTier,
 			Inherit:                  settings.Agents.Categories[CategoryDefault].Inherit,
 		}
 	}
@@ -329,6 +330,9 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		}
 		if override.ContextRetentionTokens != nil {
 			current.ContextRetentionTokens = cloneIntPtr(override.ContextRetentionTokens)
+		}
+		if override.ServiceTier != "" {
+			current.ServiceTier = override.ServiceTier
 		}
 		current.Inherit = ""
 		if override.AllowedTools != nil {
@@ -423,6 +427,7 @@ func (s *Session) sessionOverridesSnapshotLocked() map[string]ttypes.CategorySet
 			Inherit:                  override.Inherit,
 			ContextCompactionPercent: cloneIntPtr(override.ContextCompactionPercent),
 			ContextRetentionTokens:   cloneIntPtr(override.ContextRetentionTokens),
+			ServiceTier:              override.ServiceTier,
 			AllowedTools:             slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes),
 		}
 	}

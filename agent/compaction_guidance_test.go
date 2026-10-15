@@ -14,7 +14,6 @@ import (
 	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/tools"
-	ttypes "crude/types"
 )
 
 // Guidance changed during a run is delivered as hidden runtime context. An
@@ -79,18 +78,19 @@ func TestAutomaticCompactionKeepsCurrentGuidanceAndBasePrompt(t *testing.T) {
 // available continuation space and only falls back to extraction when it
 // cannot fit at all.
 func TestChildAssignmentUsesAvailableSpaceBeyondRecentInputCap(t *testing.T) {
+	const recentInputCap = 20_000
 	assignment := provider.NewTextMessage("user", strings.Repeat("assignment detail ", 20_000))
 	assignment.Origin = provider.OriginAssignment
 	human := provider.NewTextMessage("user", "steer")
 	cost := provider.EstimateMessageTokens(assignment, "model")
-	if cost <= ttypes.DefaultContextRetentionTokens {
+	if cost <= recentInputCap {
 		t.Fatalf("fixture assignment %d tokens does not exceed the recent-input cap", cost)
 	}
-	kept := boundedRecentUserContext([]provider.ChatMessage{assignment, human}, "child", ttypes.DefaultContextRetentionTokens, cost+100, "model")
+	kept := boundedRecentUserContext([]provider.ChatMessage{assignment, human}, "child", recentInputCap, cost+100, "model")
 	if len(kept) != 2 || kept[0].EffectiveOrigin() != provider.OriginAssignment || kept[1].ContentString() != "steer" {
 		t.Fatalf("assignment not retained within available space: %d messages", len(kept))
 	}
-	if dropped := boundedRecentUserContext([]provider.ChatMessage{assignment}, "child", ttypes.DefaultContextRetentionTokens, cost-1, "model"); len(dropped) != 0 {
+	if dropped := boundedRecentUserContext([]provider.ChatMessage{assignment}, "child", recentInputCap, cost-1, "model"); len(dropped) != 0 {
 		t.Fatal("assignment exceeding available space must be left to extraction")
 	}
 }

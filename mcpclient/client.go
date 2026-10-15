@@ -11,7 +11,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -30,7 +29,11 @@ import (
 )
 
 const maxDiscovery = 512
-const maxResultBytes = 1 << 20
+const maxResultBytes = MaxResultBytes
+
+// MaxResultBytes bounds one MCP result as received, including its JSON
+// encoding. Built-in servers size their pages to fit it.
+const MaxResultBytes = 1 << 20
 
 var identityPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
@@ -47,6 +50,17 @@ type connection struct {
 	// stderr belongs to the exact launch epoch that created it.
 	stderr      *stderrTail
 	stderrEpoch uint64
+	// builtinEffects are the effects Crude's own in-process server declares.
+	builtinEffects map[string]captypes.Effect
+	// connectedOnce, retryAt and retryAttempt drive Recover's reconnect backoff.
+	connectedOnce bool
+	retryAt       time.Time
+	retryAttempt  int
+	// parked marks a user Disconnect; automatic recovery respects it.
+	parked bool
+	// connecting closes when the in-flight connect attempt settles, so a
+	// concurrent connect joins it instead of failing.
+	connecting chan struct{}
 }
 
 type Manager struct {
@@ -77,7 +91,7 @@ func Validate(config captypes.ConnectionConfig) error {
 		return errors.New("shell MCP host supports stdio only")
 	}
 	switch config.Transport {
-	case "http":
+	case "http", TransportSSE:
 		endpoint, err := url.Parse(config.URL)
 		if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") {
 			return errors.New("connection URL must be HTTP(S), with no embedded credentials")
@@ -89,8 +103,15 @@ func Validate(config captypes.ConnectionConfig) error {
 		if strings.TrimSpace(config.Command) == "" {
 			return errors.New("stdio connection requires an executable")
 		}
+	case captypes.TransportBuiltin:
+		if _, exists := builtinFactory(config.Command); !exists {
+			return errors.New("built-in MCP server " + config.Command + " is not part of this Crude build")
+		}
+		if config.Host == "shell" {
+			return errors.New("built-in MCP servers run in the core")
+		}
 	default:
-		return errors.New("supported transports are stdio and Streamable HTTP")
+		return errors.New("supported transports are stdio, Streamable HTTP and legacy HTTP+SSE")
 	}
 	for name, value := range config.Headers {
 		if strings.ContainsAny(name+value, "\r\n") || strings.TrimSpace(name) == "" {
@@ -169,7 +190,7 @@ func (manager *Manager) States() []captypes.ConnectionState {
 	for _, entry := range manager.connections {
 		state := entry.state
 		if entry.stderr != nil {
-			state.Stderr = redactSecrets(entry.config, entry.secrets, entry.stderr.Text(0))
+			state.Stderr = redactSecrets(entry.config, entry.secrets, manager.resolveSecret, entry.stderr.Text(0))
 		}
 		encoded, _ := json.Marshal(state)
 		var detached captypes.ConnectionState
@@ -207,9 +228,27 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		manager.mu.Unlock()
 		return nil
 	}
-	if entry.state.State == "connecting" {
+	if entry.state.State == "connecting" && entry.connecting != nil {
+		// Join the attempt already in flight (for example an automatic
+		// reconnect) rather than failing or starting a second launch.
+		wait := entry.connecting
 		manager.mu.Unlock()
-		return errors.New("connection is already connecting")
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		manager.mu.Lock()
+		connected := manager.connections[id] == entry && entry.session != nil
+		failure := entry.state.Error
+		manager.mu.Unlock()
+		if connected {
+			return nil
+		}
+		if failure == "" {
+			failure = "connection attempt did not complete"
+		}
+		return errors.New(failure)
 	}
 	config := entry.config
 	if config.Host == "shell" {
@@ -246,9 +285,12 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	entry.interactiveAuth = interactive
 	entry.state.State, entry.state.Error = "connecting", ""
 	entry.state.AuthPending, entry.state.AuthURL = false, ""
+	settled := make(chan struct{})
+	entry.connecting = settled
 	manager.lifetimeTasks.Add(1)
 	manager.mu.Unlock()
 	defer manager.lifetimeTasks.Done()
+	defer close(settled)
 	defer func() {
 		manager.mu.Lock()
 		if current := manager.connections[id]; current == entry && current.epoch == epoch {
@@ -293,7 +335,14 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		return manager.safeError(config, err)
 	}
 	defer cleanup()
+	probe := probeHandshake(transport)
 	session, err := client.Connect(connectCtx, transport, nil)
+	if err != nil && connectCtx.Err() == nil && probe.legacyServer() {
+		// A 2024-11-05 server answers the Streamable HTTP initialize POST with
+		// a client error; the spec's compatibility path is the HTTP+SSE stream.
+		manager.log(id, epoch, "Server rejected Streamable HTTP; connecting with legacy HTTP+SSE")
+		session, err = client.Connect(connectCtx, legacySSE(transport), nil)
+	}
 	if err != nil {
 		if connectCtx.Err() != nil {
 			err = connectCtx.Err()
@@ -312,6 +361,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	}
 	entry.session = session
 	entry.state.State, entry.state.Cached = "connected", false
+	entry.connectedOnce, entry.parked = true, false
 	manager.mu.Unlock()
 	if err := manager.Refresh(connectCtx, id); err != nil {
 		manager.mu.Lock()
@@ -341,7 +391,7 @@ func (manager *Manager) watchSession(id string, epoch uint64, session *mcp.Clien
 		cancel()
 		entry.session, entry.cancel = nil, nil
 		entry.state.State, entry.state.Cached = "failed", hasCatalog(entry.state)
-		entry.state.Error = redactSecrets(entry.config, entry.secrets, err.Error())
+		entry.state.Error = redactSecrets(entry.config, entry.secrets, manager.resolveSecret, err.Error())
 	}
 }
 
@@ -362,7 +412,7 @@ func (manager *Manager) log(id string, epoch uint64, message string) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if entry := manager.connections[id]; entry != nil && entry.epoch == epoch {
-		entry.state.Logs = append(entry.state.Logs, redactSecrets(entry.config, entry.secrets, message))
+		entry.state.Logs = append(entry.state.Logs, redactSecrets(entry.config, entry.secrets, manager.resolveSecret, message))
 		if len(entry.state.Logs) > 100 {
 			entry.state.Logs = entry.state.Logs[len(entry.state.Logs)-100:]
 		}
@@ -373,7 +423,7 @@ func (manager *Manager) failed(id string, epoch uint64, err error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if entry := manager.connections[id]; entry != nil && entry.epoch == epoch {
-		entry.state.State, entry.state.Error = "failed", redactSecrets(entry.config, entry.secrets, err.Error())
+		entry.state.State, entry.state.Error = "failed", redactSecrets(entry.config, entry.secrets, manager.resolveSecret, err.Error())
 		entry.state.AuthPending, entry.state.AuthURL = false, ""
 		entry.state.Cached = hasCatalog(entry.state)
 		message := strings.ToLower(err.Error())
@@ -446,6 +496,10 @@ func (body *boundedBody) Close() error {
 
 func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime context.Context, epoch uint64, interactive bool) (mcp.Transport, func(), error) {
 	cleanup := func() {}
+	if config.IsBuiltin() {
+		transport, err := manager.builtinTransport(config, lifetime, epoch)
+		return transport, cleanup, err
+	}
 	if config.Transport == "stdio" {
 		// The pipe owner owns cancellation, termination and Wait together. A
 		// CommandContext kill races graceful EOF and can report Access denied on
@@ -462,7 +516,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 			command.Env = append(command.Env, name+"="+value)
 		}
 		for name, reference := range config.SecretRefs {
-			value, err := resolveSecret(reference)
+			value, err := manager.resolveSecret(reference)
 			if err != nil {
 				return nil, cleanup, err
 			}
@@ -481,7 +535,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 		headers[name] = value
 	}
 	for name, reference := range config.SecretRefs {
-		value, err := resolveSecret(reference)
+		value, err := manager.resolveSecret(reference)
 		if err != nil {
 			return nil, cleanup, err
 		}
@@ -501,6 +555,9 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 	client := network.NewClient(0)
 	client.Transport = headerTransport{base: client.Transport, headers: headers, endpoint: endpoint, lifetime: lifetime}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if config.Transport == TransportSSE {
+		return &mcp.SSEClientTransport{Endpoint: config.URL, HTTPClient: client, MaxEventSize: maxResultBytes}, cleanup, nil
+	}
 	transport := &mcp.StreamableClientTransport{Endpoint: config.URL, HTTPClient: client, MaxRetries: -1, MaxEventSize: maxResultBytes}
 	if config.Auth == "oauth" {
 		handler, closeAuth, err := manager.oauthHandler(config, lifetime, epoch, interactive)
@@ -513,18 +570,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 	return transport, cleanup, nil
 }
 
-func resolveSecret(reference string) (string, error) {
-	if !strings.HasPrefix(reference, "env:") || len(reference) <= 4 {
-		return "", errors.New("secret reference must name an application environment variable (env:NAME)")
-	}
-	value, exists := os.LookupEnv(strings.TrimPrefix(reference, "env:"))
-	if !exists || value == "" {
-		return "", fmt.Errorf("credential reference %q is unavailable", reference)
-	}
-	return value, nil
-}
-
-func redactSecrets(config captypes.ConnectionConfig, secrets map[string]struct{}, text string) string {
+func redactSecrets(config captypes.ConnectionConfig, secrets map[string]struct{}, resolve func(string) (string, error), text string) string {
 	values := make(map[string]struct{}, len(secrets))
 	for value := range secrets {
 		values[value] = struct{}{}
@@ -539,7 +585,10 @@ func redactSecrets(config captypes.ConnectionConfig, secrets map[string]struct{}
 		values[value] = struct{}{}
 	}
 	for _, reference := range config.SecretRefs {
-		if value, err := resolveSecret(reference); err == nil && value != "" {
+		if resolve == nil {
+			break
+		}
+		if value, err := resolve(reference); err == nil && value != "" {
 			values[value] = struct{}{}
 		}
 	}
@@ -567,7 +616,7 @@ func (manager *Manager) redact(config captypes.ConnectionConfig, text string) st
 	if entry := manager.connections[config.ID]; entry != nil {
 		secrets = entry.secrets
 	}
-	return redactSecrets(config, secrets, text)
+	return redactSecrets(config, secrets, manager.resolveSecret, text)
 }
 
 func (manager *Manager) safeError(config captypes.ConnectionConfig, err error) error {
@@ -618,7 +667,7 @@ func (manager *Manager) diagnosed(id string, epoch uint64, err error) error {
 	if len(text) > diagnosticTailBytes {
 		text = "…" + strings.ToValidUTF8(text[len(text)-diagnosticTailBytes:], "")
 	}
-	return fmt.Errorf("%w; server stderr (tail): %s", err, redactSecrets(config, secrets, text))
+	return fmt.Errorf("%w; server stderr (tail): %s", err, redactSecrets(config, secrets, manager.resolveSecret, text))
 }
 
 func (manager *Manager) session(id string) (*mcp.ClientSession, captypes.ConnectionConfig, uint64, error) {
@@ -644,6 +693,12 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	defer cancel()
 	state := captypes.ConnectionState{ID: id, State: "connected"}
 	outputSchemas := make(map[string]*jsonschema.Resolved)
+	manager.mu.RLock()
+	var builtinEffects map[string]captypes.Effect
+	if entry := manager.connections[id]; entry != nil && entry.epoch == epoch {
+		builtinEffects = entry.builtinEffects
+	}
+	manager.mu.RUnlock()
 	cursor := ""
 	seen := make(map[string]bool)
 	pages := 0
@@ -687,6 +742,17 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 				projected := captypes.Tool{Name: ToolName(id, tool.Name), OriginalName: tool.Name, ConnectionID: id, Description: tool.Description, InputSchema: schema, OutputSchema: output, Fingerprint: fingerprint, Reason: "Needs explicit effect and scope grant"}
 				if grant, found := config.Grants[tool.Name]; found && !grant.Disabled && grant.Fingerprint == fingerprint && grant.Scope != "" && validEffect(grant.Effect) {
 					projected.Effect, projected.Scope, projected.Selected, projected.Reason = grant.Effect, grant.Scope, true, ""
+				}
+				if config.IsBuiltin() {
+					// Crude's own server: tools keep their plain names and are
+					// usable with their declared effect unless the user turned
+					// that tool off.
+					projected.Name = tool.Name
+					if effect, declared := builtinEffects[tool.Name]; declared && !config.Grants[tool.Name].Disabled {
+						projected.Effect, projected.Scope, projected.Selected, projected.Reason = effect, "workspace", true, ""
+					} else {
+						projected.Selected, projected.Reason = false, "Turned off for this connection"
+					}
 				}
 				state.Tools = append(state.Tools, projected)
 			}
@@ -830,6 +896,12 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 		return captypes.Result{}, errors.New("MCP operation changed or discovery is unverified; refresh and review access before execution")
 	}
 	grant, exists := config.Grants[tool.OriginalName]
+	if config.IsBuiltin() && task == nil {
+		manager.mu.RLock()
+		effect, declared := entry.builtinEffects[tool.OriginalName]
+		manager.mu.RUnlock()
+		grant, exists = captypes.ToolGrant{Effect: effect, Scope: "workspace", Fingerprint: tool.Fingerprint, Disabled: grant.Disabled}, declared
+	}
 	if task != nil {
 		if !reflect.DeepEqual(task.expected, config) {
 			return captypes.Result{}, errors.New("MCP connection changed after task authorization")
@@ -935,13 +1007,26 @@ func (manager *Manager) GetPrompt(ctx context.Context, id, name string, argument
 	return projection.finish()
 }
 
-func (manager *Manager) Disconnect(id string) error {
+// Disconnect closes a connection at the user's request. Recover leaves it
+// closed until something connects it explicitly again.
+func (manager *Manager) Disconnect(id string) error { return manager.disconnect(id, true) }
+
+// Restart reconnects a live connection so changed settings or secrets apply.
+func (manager *Manager) Restart(ctx context.Context, id string) error {
+	if err := manager.disconnect(id, false); err != nil {
+		return err
+	}
+	return manager.Recover(ctx, id)
+}
+
+func (manager *Manager) disconnect(id string, park bool) error {
 	manager.mu.Lock()
 	entry := manager.connections[id]
 	if entry == nil {
 		manager.mu.Unlock()
 		return errors.New("connection is unavailable")
 	}
+	entry.parked = park
 	entry.epoch++
 	cancel := entry.cancel
 	transport := entry.config.Transport

@@ -65,6 +65,7 @@ var availableCmds = []CmdInfo{
 	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills"},
 	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
+	{Name: "fast", Label: "fast", Desc: "Toggle the provider's fast tier for this session's main agent"},
 	{Name: "retry", Label: "retry", Desc: "Continue this agent's pending recovery without replaying completed work"},
 	{Name: "help", Label: "help", Desc: "Open help"},
 }

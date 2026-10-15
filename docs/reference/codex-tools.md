@@ -23,7 +23,7 @@ Crude does not embed or select vendor behavioral prompt templates. The root
 routed and local models; escaped user profile instructions are a lower-priority
 overlay. The owner map and development checklist live in
 [model prompts and project guidance](prompt-architecture.md). Do not restore
-`codexio/prompts/`, model-family base-prompt selection, or an `agent/` forwarding
+a codexio/prompts/ tree, model-family base-prompt selection, or an `agent/` forwarding
 API to implement a native tool. Codex-specific behavior is limited to the tool
 and wire interfaces in this document. The native patch grammar and tool
 description remain authoritative when `apply_patch` is offered. Prompt caching

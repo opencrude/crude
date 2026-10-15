@@ -236,3 +236,18 @@ environment block is explicitly double-null terminated. Noninteractive agent
 commands are separate from the PTY path and use `CREATE_NO_WINDOW`/`HideWindow`,
 so tools such as WinGet cannot paint directly into Crude's host terminal; their
 stdout/stderr appears only in the captured tool/background-job channel.
+
+## Core lane and input backpressure
+
+- **Terminals have their own core lane and settings-owned shells.** Terminal
+  create/input/resize/control/rows run on the actor's `terminalLane`, never
+  behind document/file/LSP effects on `resourceLane`. The core resolves an
+  ordinary new terminal's shell from effective `TerminalSettings` with
+  `workspace.DetectTerminalShells` (Auto: PowerShell 7 → Windows PowerShell →
+  cmd; `$SHELL` first on Unix); `startTerminalIO` has no shell fallback. A
+  missing selected shell fails with guidance, never a silent substitute. The
+  detected list is core-host metadata (`AppSettings.TerminalShells`, `json:"-"`).
+- **PTY input is bounded and non-blocking.** `ptyWriter.Write` either queues the
+  complete payload or returns `ErrTerminalBackpressure`; never silently drop
+  bytes. `NormalizeTerminalSize` is the shared emulator/PTY 8×2 floor, and a
+  failed PTY resize must not commit the emulator grid.
