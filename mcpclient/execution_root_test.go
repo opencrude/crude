@@ -51,7 +51,8 @@ func TestOfficialSDKBindsCwdAndRootsWithoutRebasingAbsoluteDirectory(t *testing.
 		}
 		for _, directory := range []string{"", "relative", absolute} {
 			manager := New(root)
-			config := captypes.ConnectionConfig{ID: "root", Name: "Root fixture", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestExecutionRootStdioHelper$"}, Environment: map[string]string{"CRUDE_EXECUTION_ROOT_HELPER": "execution-root-helper-enabled"}, Directory: directory, LaunchApproved: true}
+			t.Setenv("CRUDE_EXECUTION_ROOT_HELPER", "execution-root-helper-enabled")
+			config := captypes.ConnectionConfig{ID: "root", Name: "Root fixture", Transport: "stdio", Command: executable, Args: []string{"-test.run=^TestExecutionRootStdioHelper$"}, RequiredEnv: []string{"CRUDE_EXECUTION_ROOT_HELPER"}, Directory: directory, LaunchApproved: true}
 			manager.Configure(map[string]captypes.ConnectionConfig{"root": config})
 			if err := manager.Connect(t.Context(), "root"); err != nil {
 				manager.Close()

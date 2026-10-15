@@ -1061,6 +1061,9 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 - **Detached cores run from a staged image.** `spawnCore` executes
   `~/.crude/bin/crude-core-<build-id>`, never the starting executable, so
   `go run`/rebuilds can delete or replace it on Windows while the core lives.
+  Publish one closed candidate by no-replace hard link; concurrent losers reuse
+  the immutable winner, never rename another writable inode over it (ETXTBSY).
+  Invalid type/size/mode or unsupported hard-link filesystems fail explicitly.
 - **`buildinfo.Home` is the one crude data root.** `CRUDE_HOME` gives an
   isolated profile (own core, config, workspaces, sessions) for developing crude
   inside crude; never call `os.UserHomeDir` for crude data paths. Display-only
@@ -1123,6 +1126,10 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   shown in the TUI — never a silent no-op. A cancelled parked child notifies its
   parent. `ResumeRecovery` reports every refusal; run-bound claims of the
   interrupted attempt are released by runtime takeover and never block it.
+  Parked recovery is published only after old-attempt cleanup releases its run,
+  manager, claims, connection, DB and runtime attachment. Fence its in-place wake
+  slot as teardown-only before parking; an immediate Continue must not race
+  deferred cleanup or inherit a run still owned by the interrupted attempt.
 - `sessiondb` retains exact pending input, owner/generation, archive and active
   context through one durable recovery checkpoint. Transcript, turn ledger and
   collaboration settlement must succeed before acknowledging natural completion.
@@ -2005,6 +2012,19 @@ button that needs a double click reads as broken.
   exact authorization: human approval persists durable grants, while reviewer/YOLO
   grants are run-local, never human authority or source annotations. Skill activation includes its installed path. Passive restart
   reconnects/downloads/replays nothing; explicit activation rechecks tool schemas.
+  Skill loading/installation validates content independently of host readiness.
+  Unknown client fields and nested authoring metadata are inert (hooks never run);
+  tool requests accept spaces, commas or lists and never grant authority.
+  Compatibility prose remains guidance, not executable-name inference. Explicit
+  requirement metadata is checked at activation; missing dependencies retain an
+  installed, readable setup-required entry. Recheck readiness on activation.
+  Bounded YAML still rejects duplicate keys and anchors/aliases everywhere.
+  MCP registry headers and declared-variable defaults survive acquisition;
+  required empty headers use the existing editor/Secret references and block
+  connection, not install. Required stdio environment checks include actual host
+  inheritance; shell-host checks defer to the shell, never the core's environment.
+  Unsupported transports/unresolved command or endpoint variables remain explicit;
+  never fabricate credentials, grants or executable behavior to claim success.
   Live capability observation refreshes Settings/sidebar/home without configuring
   transports or inspecting skill files on Update. It must keep running with
   Settings/sidebar visible after an agent removes the launcher screen. Inspected

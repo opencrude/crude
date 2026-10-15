@@ -78,8 +78,8 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 	if config.Disabled {
 		return errors.New("MCP connection is disabled")
 	}
-	if missing := missingConnectionEnvironment(config); len(missing) != 0 {
-		return fmt.Errorf("MCP connection needs required environment: %s. Supply values you have through capability_activate environment; ask the user only for credentials you do not have", strings.Join(missing, ", "))
+	if missing := mcpclient.MissingConfiguration(config); len(missing) != 0 {
+		return fmt.Errorf("MCP connection is installed but needs setup: %s. Configure headers or credential references in Settings; local environment values can also be supplied through capability_activate", strings.Join(missing, ", "))
 	}
 	if config.Source != "" {
 		source, exists := settings.Sources[config.Source]

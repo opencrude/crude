@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -16,8 +16,6 @@ import (
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/text/unicode/norm"
 )
-
-var toolRequestPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*(\([A-Za-z0-9_./:*,+@=-]+\))?$`)
 
 func readFrontmatter(ctx context.Context, root *os.Root) ([]byte, error) {
 	file, before, _, err := openRegular(root, "SKILL.md", MaxDefinitionBytes)
@@ -120,8 +118,8 @@ func decodeFrontmatter(frontmatter []byte) (*yaml.Node, error) {
 }
 
 func validateYAMLNode(node *yaml.Node, depth int) error {
-	if depth > 4 {
-		return fmt.Errorf("%w: nested frontmatter structures are unsupported", ErrUnsupported)
+	if depth > 32 {
+		return fmt.Errorf("%w: frontmatter nesting exceeds 32 levels", ErrUnsupported)
 	}
 	if node.Kind == yaml.AliasNode || node.Anchor != "" {
 		return fmt.Errorf("%w: YAML anchors and aliases are unsupported", ErrUnsupported)
@@ -137,7 +135,14 @@ func validateYAMLNode(node *yaml.Node, depth int) error {
 				return fmt.Errorf("%w: duplicate frontmatter key %q", ErrInvalid, key.Value)
 			}
 			seen[key.Value] = true
+			if err := validateYAMLNode(key, depth+1); err != nil {
+				return err
+			}
+			if err := validateYAMLNode(node.Content[index+1], depth+1); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
 	for _, child := range node.Content {
 		if err := validateYAMLNode(child, depth+1); err != nil {
@@ -145,6 +150,45 @@ func validateYAMLNode(node *yaml.Node, depth int) error {
 		}
 	}
 	return nil
+}
+
+// Metadata and tool requests describe the source; neither grants authority.
+// Keep scalar metadata verbatim and leave host-specific objects uninterpreted.
+func collectMetadata(metadata map[string]string, node *yaml.Node) {
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+	for entry := 0; entry < len(node.Content); entry += 2 {
+		key, value := node.Content[entry], node.Content[entry+1]
+		if value.Kind == yaml.ScalarNode && value.Tag != "!!null" {
+			metadata[key.Value] = value.Value
+		}
+	}
+}
+
+func toolRequests(node *yaml.Node) []string {
+	if node.Kind == yaml.SequenceNode {
+		var tools []string
+		for _, item := range node.Content {
+			tools = append(tools, toolRequests(item)...)
+		}
+		return tools
+	}
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return nil
+	}
+	depth := 0
+	return strings.FieldsFunc(node.Value, func(r rune) bool {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+		return depth == 0 && (r == ',' || unicode.IsSpace(r))
+	})
 }
 
 func parseFrontmatter(frontmatter []byte, directoryName string) (Skill, error) {
@@ -156,20 +200,21 @@ func parseFrontmatter(frontmatter []byte, directoryName string) (Skill, error) {
 	for index := 0; index < len(mapping.Content); index += 2 {
 		key, value := mapping.Content[index].Value, mapping.Content[index+1]
 		if key == "metadata" {
-			if value.Kind != yaml.MappingNode || value.Tag != "!!map" {
-				return Skill{}, fmt.Errorf("%w: metadata must map string keys to string values", ErrInvalid)
-			}
-			for entry := 0; entry < len(value.Content); entry += 2 {
-				metadataKey, metadataValue := value.Content[entry], value.Content[entry+1]
-				if metadataValue.Kind != yaml.ScalarNode || metadataValue.Tag != "!!str" {
-					return Skill{}, fmt.Errorf("%w: metadata values must be strings", ErrInvalid)
+			collectMetadata(skill.Metadata, value)
+			continue
+		}
+		if key == "allowed-tools" {
+			for _, tool := range toolRequests(value) {
+				if !slices.Contains(skill.AllowedTools, tool) {
+					skill.AllowedTools = append(skill.AllowedTools, tool)
 				}
-				skill.Metadata[metadataKey.Value] = metadataValue.Value
 			}
 			continue
 		}
-		if key != "name" && key != "description" && key != "license" && key != "compatibility" && key != "allowed-tools" {
-			return Skill{}, fmt.Errorf("%w: unsupported frontmatter field %q; executable hooks and client-specific behavior are not supported", ErrUnsupported, key)
+		// Other clients' extensions (including hooks) are inert source data.
+		// Interpret only our documented fields; never execute or emulate them.
+		if key != "name" && key != "description" && key != "license" && key != "compatibility" {
+			continue
 		}
 		if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
 			return Skill{}, fmt.Errorf("%w: %s must be a string", ErrInvalid, key)
@@ -186,17 +231,6 @@ func parseFrontmatter(frontmatter []byte, directoryName string) (Skill, error) {
 				return Skill{}, fmt.Errorf("%w: compatibility must contain 1-500 characters", ErrInvalid)
 			}
 			skill.Compatibility = value.Value
-		case "allowed-tools":
-			seen := make(map[string]bool)
-			for _, tool := range strings.Fields(value.Value) {
-				if !toolRequestPattern.MatchString(tool) {
-					return Skill{}, fmt.Errorf("%w: allowed-tools contains an unsupported executable expression", ErrUnsupported)
-				}
-				if !seen[tool] {
-					skill.AllowedTools = append(skill.AllowedTools, tool)
-					seen[tool] = true
-				}
-			}
 		}
 	}
 	if err := validateName(skill.Name); err != nil {

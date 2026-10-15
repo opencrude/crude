@@ -51,6 +51,77 @@ func TestReviewedRemoteSkillSubtreeIsNotAHostDirectory(t *testing.T) {
 	}
 }
 
+// Published catalog skills declare authoring metadata that Crude only reports:
+// unquoted numbers, booleans and nested host objects. Installing such a skill
+// must not fail because an authoring detail is not a plain string, and the
+// scalar declarations that Crude can verify must survive installation.
+func TestReviewedRemoteSkillAcceptsAuthoringMetadata(t *testing.T) {
+	// Each case mirrors a real catalog skill: an unquoted `tool_count` in the
+	// "reverse-engineer-anything" entries, and the nested host object that
+	// published Go skills write under metadata.
+	cases := []struct {
+		name         string
+		metadata     string
+		declarations map[string]string
+		ignored      []string
+	}{
+		{
+			name:         "unquoted-number",
+			metadata:     "  version: \"27\"\n  tool_count: 133\n  catalog_digest: \"ed0b788d\"\n",
+			declarations: map[string]string{"version": "27", "tool_count": "133", "catalog_digest": "ed0b788d"},
+		},
+		{
+			name:         "nested-host-object",
+			metadata:     "  author: samber\n  openclaw:\n    emoji: ok\n    requires:\n      bins:\n        - go\n",
+			declarations: map[string]string{"author": "samber"},
+			ignored:      []string{"openclaw"},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			service, _, _ := capabilityFixture(t)
+			definition := "---\nname: reverse-engineer-anything\ndescription: Inspect shipped artifacts.\nmetadata:\n" + test.metadata + "---\nRetained instructions.\n"
+			archive := skillArchive(t,
+				archiveFixtureEntry{name: "repository/skills/reverse-engineer-anything/SKILL.md", body: definition},
+				archiveFixtureEntry{name: "repository/skills/reverse-engineer-anything/references/native.md", body: "Bundled reference."})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(archive)
+			}))
+			defer server.Close()
+			id := "skills-directory:morluto/rea/reverse-engineer-anything"
+			service.candidates = map[string]Candidate{id: {
+				Entry:      captypes.Entry{ID: id, Name: "reverse-engineer-anything", Kind: captypes.KindSkill, Source: "team", Path: "skills/reverse-engineer-anything", Version: "exact-commit"},
+				ArchiveURL: server.URL, Subpath: "skills/reverse-engineer-anything", SkillID: "reverse-engineer-anything",
+			}}
+			preview, err := service.PreviewAcquisition(t.Context(), id, captypes.ScopeApplication, "install")
+			if err != nil {
+				t.Fatalf("published metadata blocked install review: %v", err)
+			}
+			acquired, err := service.AcquireReviewed(t.Context(), preview)
+			if err != nil {
+				t.Fatalf("published metadata blocked installation: %v", err)
+			}
+			loaded, err := skills.Load(acquired.Skills[id].Path)
+			if err != nil {
+				t.Fatalf("installed skill did not load: %v", err)
+			}
+			for key, want := range test.declarations {
+				if loaded.Metadata[key] != want {
+					t.Fatalf("installed metadata[%q] = %q, want %q", key, loaded.Metadata[key], want)
+				}
+			}
+			for _, key := range test.ignored {
+				if _, nested := loaded.Metadata[key]; nested {
+					t.Fatalf("nested authoring object became a declaration: %v", loaded.Metadata)
+				}
+			}
+			if loaded.Name != "reverse-engineer-anything" || loaded.Instructions != "Retained instructions.\n" || len(loaded.Files) != 2 {
+				t.Fatalf("installation lost pinned skill content: %+v", loaded)
+			}
+		})
+	}
+}
+
 func TestReviewedAcquisitionIsPassiveAndRejectsChangedPreimage(test *testing.T) {
 	root := test.TempDir()
 	directory := filepath.Join(root, "source", "guide")

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -38,35 +39,59 @@ func stageCoreImage(home, exe, buildID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if staged, err := os.Stat(target); err != nil || !staged.Mode().IsRegular() || staged.Size() != info.Size() {
+	if err := validateCoreImage(target, info.Size()); errors.Is(err, os.ErrNotExist) {
 		if err := copyCoreImage(source, dir, target); err != nil {
 			return "", err
 		}
+	} else if err != nil {
+		return "", err
 	}
 	pruneCoreImages(dir, filepath.Base(target))
 	return target, nil
 }
 
-// copyCoreImage publishes the copy atomically, so a concurrent start never
-// executes a partially written image.
+// validateCoreImage checks an existing publication without following symlinks or
+// repairing it in place. A build-named image is immutable once published.
+func validateCoreImage(target string, size int64) error {
+	staged, err := os.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if !staged.Mode().IsRegular() || staged.Size() != size || (runtime.GOOS != "windows" && staged.Mode().Perm()&0o100 == 0) {
+		return fmt.Errorf("invalid staged core executable %s: expected a regular executable of %d bytes", target, size)
+	}
+	return nil
+}
+
+// copyCoreImage closes its complete candidate before atomically publishing it
+// without replacement. Renaming over an existing image is not safe: a concurrent
+// fork may still hold a candidate's writable descriptor until exec, even after
+// this process closes it. Replacing the ready winner with that inode can then
+// make another start fail with ETXTBSY. A hard link elects one immutable winner
+// across processes (including Windows) and never changes the inode being run.
 func copyCoreImage(source *os.File, dir, target string) error {
+	info, err := source.Stat()
+	if err != nil {
+		return err
+	}
 	temp, err := os.CreateTemp(dir, ".staging-*")
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(temp, source)
+	defer func() { _ = os.Remove(temp.Name()) }()
+	n, copyErr := io.Copy(temp, source)
+	if copyErr == nil && n != info.Size() {
+		copyErr = fmt.Errorf("core executable changed size while staging: copied %d bytes, expected %d", n, info.Size())
+	}
+	modeErr := temp.Chmod(0o700)
 	syncErr := temp.Sync()
 	closeErr := temp.Close()
-	if err := errors.Join(copyErr, syncErr, closeErr, os.Chmod(temp.Name(), 0o700)); err != nil {
-		_ = os.Remove(temp.Name())
+	if err := errors.Join(copyErr, modeErr, syncErr, closeErr); err != nil {
 		return err
 	}
-	if err := os.Rename(temp.Name(), target); err != nil {
-		_ = os.Remove(temp.Name())
-		// A concurrent start of the same build may already run the identical
-		// image, which Windows will not let a rename replace.
-		if staged, statErr := os.Stat(target); statErr == nil && staged.Mode().IsRegular() {
-			return nil
+	if err := os.Link(temp.Name(), target); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return validateCoreImage(target, info.Size())
 		}
 		return err
 	}

@@ -206,6 +206,15 @@ launch. **Continue run** explicitly requests a checked replacement attempt.
 Collaboration `RunID`/version/epoch facts remain immutable attempt identities;
 an interrupted attempt does not prove its unfinished task was completed.
 
+A child's parked incident becomes actionable only after the old attempt has
+released its run, claims, manager entry, connection state, execution pin, database
+handle and runtime attachment. Needs-attention persistence is not teardown
+completion. Parking fences the old in-place wake slot as teardown-only before
+emitting its status; waits remain pending until the parent notification and
+actionable recovery entry publish last. An
+immediate Continue therefore cannot collide with an old run or have its new
+attachment/connection removed by the previous attempt's deferred cleanup.
+
 The accepted checkpoint tail is restored into the ordinary root transcript before
 resume is exposed. Missing tool outcomes are explicitly unknown, never reported as
 “cancelled by user.” A newer finalized transcript is not replaced with an older

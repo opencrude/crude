@@ -117,6 +117,34 @@ Managed artifacts are immutable; Make local copy creates a distinct authored
 identity before native editor opening. Remove unregisters the selected binding,
 not the authored directory or another workspace's selected artifact.
 
+An installed skill is a standard `SKILL.md`. The bounded YAML parser validates
+identity, text, duplicate keys, anchors/aliases and resource containment. Other
+clients' extension fields (including hooks) remain inert: Crude neither executes
+them nor rejects the instructions because it does not implement them. Tool
+requests accept spaces, commas or YAML lists, retain parenthesized expressions,
+and never grant permissions. Scalar metadata keeps its literal text; nested
+host objects are uninterpreted. `compatibility` is human-readable source guidance,
+not a list of executable names, and accompanies activated instructions.
+
+Loading/installing verifies content, not this host's readiness. Explicit
+`crude.os`, `crude.arch`, `crude.product`, `crude.requires`, `requires` and
+`dependencies` metadata declarations are checked separately before activation.
+Missing dependencies leave a durable, readable **Installed · setup required**
+skill; repairing them permits activation without another install or approval.
+Disabled skills stay disabled. Corrupt/unsafe packages still fail installation.
+
+MCP registration is likewise separate from connecting or launching. Registry
+fixed headers and declared-variable defaults are preserved; missing required
+headers install as empty editable header rows with **setup required**, not as a
+silently incomplete connection. Fill them or bind Secret references in the
+existing connection editor. Stdio setup checks include the actual inherited host
+environment, with explicit values taking precedence; shell-host checks run on
+that shell. HTTP headers never inherit same-named environment values implicitly.
+Only declared registry variables are substituted, never arbitrary brace text.
+Unresolved command/endpoint variables require manual configuration; unsupported
+transports remain explicit rather than being guessed or silently substituted.
+No credentials, launch approvals or tool grants are inferred by installation.
+
 Install and Update first show the exact source, revision/digest, target scope,
 requirements, requested access and previous binding. Confirm rechecks that
 preimage before publishing. Search sources again explicitly before reviewing an

@@ -89,24 +89,80 @@ func TestLoadRejectsMalformedFrontmatter(t *testing.T) {
 		{name: "directory-mismatch", header: "name: other-skill\ndescription: Good.\n", want: skills.ErrInvalid},
 		{name: "duplicate-key", header: "name: test-skill\nname: test-skill\ndescription: Good.\n", want: skills.ErrInvalid},
 		{name: "duplicate-metadata", header: "name: test-skill\ndescription: Good.\nmetadata:\n  version: '1'\n  version: '2'\n", want: skills.ErrInvalid},
-		{name: "non-string-metadata", header: "name: test-skill\ndescription: Good.\nmetadata:\n  version: 1\n", want: skills.ErrInvalid},
-		{name: "non-mapping-metadata", header: "name: test-skill\ndescription: Good.\nmetadata: []\n", want: skills.ErrInvalid},
+		{name: "nested-duplicate", header: "name: test-skill\ndescription: Good.\nmetadata:\n  host:\n    version: 1\n    version: 2\n", want: skills.ErrInvalid},
+		{name: "metadata-anchor", header: "name: test-skill\ndescription: Good.\nmetadata:\n  author: &author test\n  other: *author\n", want: skills.ErrUnsupported},
 		{name: "compatibility-too-long", header: "name: test-skill\ndescription: Good.\ncompatibility: " + strings.Repeat("x", 501) + "\n", want: skills.ErrInvalid},
 		{name: "empty-compatibility", header: "name: test-skill\ndescription: Good.\ncompatibility: ''\n", want: skills.ErrInvalid},
 		{name: "yaml-alias", header: "name: &alias test-skill\ndescription: *alias\n", want: skills.ErrUnsupported},
 		{name: "yaml-object", header: "name: test-skill\ndescription: !!python/object test\n", want: skills.ErrInvalid},
-		{name: "hooks", header: "name: test-skill\ndescription: Good.\nhooks:\n  load: echo injected\n", want: skills.ErrUnsupported},
-		{name: "client-fields", header: "name: test-skill\ndescription: Good.\ndisable-model-invocation: true\n", want: skills.ErrUnsupported},
-		{name: "dependencies-field", header: "name: test-skill\ndescription: Good.\ndependencies: python\n", want: skills.ErrUnsupported},
-		{name: "tool-list", header: "name: test-skill\ndescription: Good.\nallowed-tools: [Read]\n", want: skills.ErrInvalid},
-		{name: "shell-injection", header: "name: test-skill\ndescription: Good.\nallowed-tools: Bash($(touch /tmp/injected))\n", want: skills.ErrUnsupported},
-		{name: "shell-separator", header: "name: test-skill\ndescription: Good.\nallowed-tools: Read;touch\n", want: skills.ErrUnsupported},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			directory := fixture(t, "test-skill", test.header, "# Body\n")
 			if _, err := skills.Load(directory); !errors.Is(err, test.want) {
 				t.Fatalf("Load = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
+// Published skills write authoring metadata that Crude does not execute:
+// numbers, booleans and nested host objects. Those declarations are advisory,
+// so they must neither be interpreted nor make otherwise valid instructions
+// uninstallable. See the repository "reverse-engineer-anything" skill, whose
+// unquoted `tool_count: 133` used to reject the whole skill.
+func TestLoadAcceptsAuthoringMetadata(t *testing.T) {
+	cases := []struct {
+		name     string
+		metadata string
+		want     map[string]string
+	}{
+		{
+			name:     "numeric-value",
+			metadata: "metadata:\n  version: \"27\"\n  tool_count: 133\n  catalog_digest: \"ed0b788d\"\n",
+			want:     map[string]string{"version": "27", "tool_count": "133", "catalog_digest": "ed0b788d"},
+		},
+		{
+			name:     "scalar-forms",
+			metadata: "metadata:\n  version: 1.0\n  enabled: true\n  revision: 0x10\n  note:\n  empty: ''\n",
+			want:     map[string]string{"version": "1.0", "enabled": "true", "revision": "0x10", "empty": ""},
+		},
+		{
+			name:     "nested-authoring-object",
+			metadata: "metadata:\n  author: samber\n  version: \"1.2.2\"\n  openclaw:\n    emoji: ok\n    requires:\n      bins:\n        - go\n    install:\n      - kind: go\n",
+			want:     map[string]string{"author": "samber", "version": "1.2.2"},
+		},
+		{
+			name:     "flow-mapping",
+			metadata: "metadata: {\"nexscope\":{\"emoji\":\"x\",\"category\":\"amazon\"}}\n",
+			want:     map[string]string{},
+		},
+		{
+			name:     "deep-nesting",
+			metadata: "metadata:\n  a:\n    b:\n      c:\n        d:\n          e:\n            - f\n",
+			want:     map[string]string{},
+		},
+		{name: "sequence", metadata: "metadata: [one, two]\n", want: map[string]string{}},
+		{name: "scalar", metadata: "metadata: just-a-note\n", want: map[string]string{}},
+		{name: "null", metadata: "metadata:\n", want: map[string]string{}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			directory := fixture(t, "test-skill", "name: test-skill\ndescription: Good.\n"+test.metadata, "# Body\n")
+			loaded, err := skills.Load(directory)
+			if err != nil {
+				t.Fatalf("authoring metadata rejected: %v", err)
+			}
+			if len(loaded.Metadata) != len(test.want) {
+				t.Fatalf("metadata = %v, want %v", loaded.Metadata, test.want)
+			}
+			for key, value := range test.want {
+				if loaded.Metadata[key] != value {
+					t.Fatalf("metadata[%q] = %q, want %q", key, loaded.Metadata[key], value)
+				}
+			}
+			if loaded.Name != "test-skill" || loaded.Instructions != "# Body\n" || loaded.Digest == "" {
+				t.Fatalf("metadata changed the loaded skill: %+v", loaded)
 			}
 		})
 	}
@@ -133,6 +189,35 @@ func TestLoadTextEncodingAndUnicodeLimits(t *testing.T) {
 		if _, err := skills.Load(directory); !errors.Is(err, skills.ErrInvalid) {
 			t.Fatalf("invalid document accepted: %v", err)
 		}
+	}
+}
+
+func TestLoadForeignExtensionsAreInert(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "must-not-run")
+	header := "name: test-skill\ndescription: Good.\nversion: 1.2\nuser-invocable: true\n" +
+		"argument-hint: '[file]'\npaths: ['**/*.go']\ndependencies: [python]\n" +
+		"hooks:\n  load:\n    command: touch " + marker + "\n" +
+		"compatibility: Requires a filesystem-based client with Python 3.14+ and internet access.\n"
+	for _, tools := range []struct {
+		value string
+		want  []string
+	}{
+		{"Read, Grep, Glob", []string{"Read", "Grep", "Glob"}},
+		{"[Read, Grep, Glob]", []string{"Read", "Grep", "Glob"}},
+		{"'Read Bash(go test:*,git:*) Read'", []string{"Read", "Bash(go test:*,git:*)"}},
+		{"'Bash($(touch " + marker + "))'", []string{"Bash($(touch " + marker + "))"}},
+	} {
+		directory := fixture(t, "test-skill", header+"allowed-tools: "+tools.value+"\n", "Exact instructions.\n")
+		loaded := load(t, directory)
+		if !reflect.DeepEqual(loaded.AllowedTools, tools.want) || loaded.Instructions != "Exact instructions.\n" {
+			t.Fatalf("source declarations changed: %+v", loaded)
+		}
+		if err := skills.CheckAvailability(loaded); err != nil {
+			t.Fatalf("prose or foreign dependency metadata interpreted as executable names: %v", err)
+		}
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("source extension executed: %v", err)
 	}
 }
 
@@ -352,10 +437,6 @@ func TestRequirementsDoNotExecuteOrPersistEnvironment(t *testing.T) {
 		t.Fatalf("dependency was executed: %v", err)
 	}
 	for _, header := range []string{
-		"compatibility: Requires missing-helper\n",
-		"compatibility: Requires Python 3.14+ and uv\n",
-		"compatibility: Requires and\n",
-		"compatibility: Designed for another product\n",
 		"metadata:\n  crude.os: unavailable-platform\n",
 		"metadata:\n  dependencies: missing-helper\n",
 		"metadata:\n  crude.requires: $(touch-marker)\n",
@@ -365,6 +446,10 @@ func TestRequirementsDoNotExecuteOrPersistEnvironment(t *testing.T) {
 			t.Fatalf("unavailable skills cannot be inspected: %v", err)
 		}
 		unavailable, err := skills.Load(directory)
+		if err != nil {
+			t.Fatalf("setup needs blocked content loading: %v", err)
+		}
+		err = skills.CheckAvailability(unavailable)
 		var requirement *skills.RequirementError
 		if !errors.Is(err, skills.ErrUnavailable) || !errors.As(err, &requirement) || requirement.Reason == "" {
 			t.Fatalf("requirements do not have a precise unavailable reason: %v", err)

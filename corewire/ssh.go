@@ -151,6 +151,7 @@ func (c *sshConn) Read(b []byte) (int, error) {
 func (c *sshConn) Write(b []byte) (int, error) {
 	n, err := c.in.Write(b)
 	if err != nil {
+		_ = c.Close() // Join stderr capture before reporting a terminal pipe error.
 		return n, c.failure(err)
 	}
 	return n, nil

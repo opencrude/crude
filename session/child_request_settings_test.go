@@ -8,11 +8,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"crude/agent"
+	"crude/collaboration"
 	"crude/provider"
 	ttypes "crude/types"
 )
@@ -246,4 +248,59 @@ func TestAgentStartExplicitModelAndEffortReachTheWire(t *testing.T) {
 	first := h.next(h.children, "child first request")
 	requireSettings(t, "explicit launch", first.body, "chosen-model", "max", nil)
 	h.finish(first, h.root.ID)
+}
+
+func TestParkedChildIsActionableOnlyAfterAttemptTeardown(t *testing.T) {
+	h := newChildWireHarness(t, CategoryConfig{AccountID: "account", Model: wireChildModel})
+	child := h.launch(map[string]any{})
+	first := h.next(h.children, "child first request")
+	runner := h.session.SubAgentRunner()
+	// Retain an ordinary write lease to stop deferred claim release. This
+	// exposes the real teardown window deterministically, without a sleep in
+	// production or a test-only runtime callback.
+	release, err := runner.fileOwnership.BeginWrite(agent.AgentID(child), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	unblock := func() { once.Do(release) }
+	defer unblock()
+	first.reply <- map[string]any{"status": http.StatusUnauthorized}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, active := runner.mgr.GetActive(agent.AgentID(child)); !active {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("child did not enter attempt teardown")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.session.recoveryMu.Lock()
+	_, prematurelyParked := h.session.pendingRecoveries[child]
+	h.session.recoveryMu.Unlock()
+	if prematurelyParked || h.session.agentRecovery(child) != nil {
+		t.Fatal("Continue was exposed while the old attempt still owned cleanup")
+	}
+	unblock()
+	for h.session.agentRecovery(child) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("finished teardown did not expose recovery")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	incident := h.session.agentRecovery(child)
+	old, err := h.session.CollaborationStore().Agent(t.Context(), child)
+	if err != nil || old.CurrentRunID != "" || old.Presence != collaboration.RuntimeOffline {
+		t.Fatalf("actionable recovery retained the old attachment/run: %+v %v", old, err)
+	}
+	if err := h.session.RetryRecoveryFor(child, incident.ID, incident.Generation); err != nil {
+		t.Fatalf("immediate Continue failed: %v", err)
+	}
+	continued := h.next(h.children, "replacement child request")
+	current, err := h.session.CollaborationStore().Agent(t.Context(), child)
+	if err != nil || current.Presence != collaboration.RuntimeAttached || current.CurrentRunID == "" || current.RuntimeEpoch <= old.RuntimeEpoch {
+		t.Fatalf("replacement lost its attachment: %+v %v", current, err)
+	}
+	h.finish(continued, h.root.ID)
 }

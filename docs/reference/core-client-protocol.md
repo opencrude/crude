@@ -12,6 +12,11 @@ in-process interactive CLI fallback. Follow the
 integration and release acceptance; connected startup is not universal resource
 migration or proof of uninterrupted work after a core crash.
 
+Same-build startup publishes one immutable staged executable under the data
+directory using atomic no-replace hard-link publication. Concurrent losers never
+replace the inode another shell is executing. Unsupported hard-link filesystems
+and invalid existing image type/size/mode return explicit staging failures.
+
 ## Ownership and attachment
 
 `core.Runtime` accepts an application-owned workspace factory and private SQLite
@@ -218,6 +223,9 @@ paths belong in frames, never interpolated shell arguments. CLI selection is
 and `--ssh-identity`. Authentication is noninteractive public-key/system SSH
 configuration, not disabled verification. Loopback OpenSSH acceptance is not
 distinct-host filesystem proof; cross-build is not native pipe/ConPTY acceptance.
+Both terminal read and write failures join the owned SSH process/stderr capture
+before formatting their bounded diagnostic, so a negotiation broken pipe cannot
+race away the actionable host-key error.
 
 Unsolicited workspace snapshots exclude credentials. Explicit settings reads
 redact account/connection secrets and return presence/precondition data.
