@@ -32,6 +32,9 @@ type Sessions interface {
 	// offers explicit repair of a missing or removed connection.
 	SessionConnectionIssue(sessionID string) error
 	PrepareMultiAgentToggle(sessionID string) (*workspace.SessionSettingsOperation, error)
+	// PrepareSessionCapabilityToggle turns one installed skill/MCP server on or
+	// off for the session and every agent it runs.
+	PrepareSessionCapabilityToggle(sessionID, id string, enabled bool) (*workspace.SessionSettingsOperation, error)
 	PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*workspace.SessionSettingsOperation, error)
 	// ApplySessionSettingsResult runs only on the workspace owner, after its
 	// caller checks the attachment generation. Replacement owners and old

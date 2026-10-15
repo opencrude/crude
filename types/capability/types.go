@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 )
 
 type Kind string
@@ -260,6 +261,19 @@ type RuntimeActor struct {
 	DeniedTools    []string
 	Effects        []Effect
 	SkillModes     map[string]string
+	// SessionDisabled lists skill/MCP IDs the owning session turned off for
+	// itself and all its agents, read live at each request.
+	SessionDisabled []string
+}
+
+// DisabledForSession reports whether the owning session turned id off.
+func (actor RuntimeActor) DisabledForSession(id string) bool {
+	return id != "" && slices.Contains(actor.SessionDisabled, id)
+}
+
+// ErrSessionDisabled explains a capability the owning session turned off.
+func ErrSessionDisabled(id string) error {
+	return fmt.Errorf("capability %q is turned off for this session; the user can turn it back on with /skills or /mcps", id)
 }
 
 type RuntimeSnapshot struct {

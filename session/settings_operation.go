@@ -195,3 +195,47 @@ func (s *Session) resetSessionSettingsLocked() error {
 	s.wakeAllRecoveries()
 	return nil
 }
+
+// DisabledCapabilities returns a detached, sorted copy of the session-wide
+// capability gate. Safe without locks: agents read it at every request.
+func (s *Session) DisabledCapabilities() []string {
+	if s == nil {
+		return nil
+	}
+	if ids := s.disabledCapabilities.Load(); ids != nil && len(*ids) > 0 {
+		return slices.Clone(*ids)
+	}
+	return nil
+}
+
+// SetCapabilityEnabled turns one installed skill or MCP server on or off for
+// this session and every agent it runs. Running agents observe the change at
+// their next request or tool call; the registration itself is untouched.
+func (s *Session) SetCapabilityEnabled(id string, enabled bool) (SettingsSnapshotSet, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return SettingsSnapshotSet{}, errors.New("capability id is required")
+	}
+	return s.withSettingsSnapshot(nil, func() error {
+		current := s.DisabledCapabilities()
+		next := slices.DeleteFunc(slices.Clone(current), func(value string) bool { return value == id })
+		if !enabled {
+			next = append(next, id)
+			slices.Sort(next)
+		}
+		if slices.Equal(current, next) {
+			return nil
+		}
+		if s.db != nil {
+			if err := sessiondb.SaveDisabledCapabilities(s.db, s.sessionID, next); err != nil {
+				return fmt.Errorf("save session capabilities: %w", err)
+			}
+		}
+		if len(next) == 0 {
+			next = nil
+		}
+		s.disabledCapabilities.Store(&next)
+		s.settingsRevision++
+		return nil
+	})
+}

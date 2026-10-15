@@ -9,6 +9,7 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/command"
 )
 
 func childAgentIDFromResult(text string) string {
@@ -245,6 +246,7 @@ func cloneCollaborationAttribution(input *provider.CollaborationAttribution) *pr
 	result := *input
 	result.RecipientIDs = append([]string(nil), input.RecipientIDs...)
 	result.RecipientNames = append([]string(nil), input.RecipientNames...)
+	result.Command = command.Clone(input.Command)
 	return &result
 }
 

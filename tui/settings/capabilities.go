@@ -167,16 +167,16 @@ func (m *Model) capabilityScope() capability.Scope {
 func (m *Model) buildAcquisitionForm() *ui.FormModel {
 	settings := m.capabilities.Acquisition
 	selection := ui.SegmentedFieldState("capability-automatic-selection", "Use installed", []ui.FormOption{{ID: "on", Label: "When relevant"}, {ID: "off", Label: "Only when asked"}}, settings.AutomaticSelection,
-		"Whether agents may load installed skills and tools that look relevant on their own. Using something installed never acquires or approves anything new.")
+		"Use relevant installed capabilities; never installs or grants new access.")
 	mode := ui.SegmentedFieldState("capability-acquisition-mode", "Install new", []ui.FormOption{{ID: "manual", Label: "Never"}, {ID: "ask", Label: "Ask first"}, {ID: "automatic", Label: "Within approved sources"}}, settings.Mode,
-		"Whether agents may acquire capabilities they find. Discovery is not a grant; updates stay explicit and changed schemas need access review.")
+		"Agent installs only; manual installs still work. No execution access granted.")
 	return formModel(
 		ui.SeparatorFieldState("capability-selection", "Selection and approval"), selection, mode,
 		&ui.FieldState{ID: "capability-sources", Label: "Sources and trust", Type: ui.FieldNav, Target: "settings.capability.sources", Columns: []string{"Registries and repositories"}, Description: "Where Skills and MCP search, and which sources are trusted."},
 		ui.SeparatorFieldState("capability-budgets", "Operation and request budgets"),
 		capabilityIntField("capability-timeout", "Install timeout", "seconds", int64(settings.TimeoutSeconds), 1, 3600, "A bounded acquisition deadline, not permission to retry a remote change."),
-		capabilityIntField("capability-download-bytes", "Largest download", "MB", max(1, settings.MaxDownloadBytes/mebibyte), 1, 1024, "Downloads above this size are refused. Every artifact is verified before it becomes usable."),
-		capabilityIntField("capability-max-tools", "Tools per request", "max", int64(settings.MaxTools), 1, 1024, "The most dynamic tools offered to a model in one request; selection intent survives the cut."),
+		capabilityIntField("capability-download-bytes", "Largest download", "MB", max(1, settings.MaxDownloadBytes/mebibyte), 1, 1024, "Maximum download size; artifacts are verified before use."),
+		capabilityIntField("capability-max-tools", "Tools per request", "max", int64(settings.MaxTools), 1, 1024, "Maximum dynamic tools offered per request; selections are retained."),
 		capabilityIntField("capability-schema-bytes", "Schema budget", "KB", int64(settings.MaxSchemaBytes)/1024, 1, 16<<10, "Total size of dynamic tool schemas in one request."),
 	)
 }

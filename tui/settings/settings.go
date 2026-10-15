@@ -1008,16 +1008,16 @@ func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
 	d := dialerValue(dialer)
 	startup := dialSecondsField(fieldDialProgressStartup, "Initial progress timeout", d.ProgressStartupTimeoutSeconds,
 		int(provider.DefaultProgressStartupTimeout.Seconds()), dialProgressLadder,
-		"Silence before the first byte in each upload, response-header, or download phase.")
+		"Initial silence limit for upload, response headers and download.")
 	floor := dialSecondsField(fieldDialProgressFloor, "Min progress timeout", d.ProgressTimeoutFloorSeconds,
 		int(provider.DefaultProgressTimeoutFloor.Seconds()), dialProgressLadder,
-		"Minimum allowed silence after bytes start moving; must not exceed the initial timeout.")
+		"Min silence after progress; must not exceed the initial timeout.")
 	ceiling := dialSecondsField(fieldDialProgressCeiling, "Max progress timeout", d.ProgressTimeoutCeilingSeconds,
 		int(provider.DefaultProgressTimeoutCeiling.Seconds()), dialProgressLadder,
 		"Maximum adaptive silence budget; must be at least the initial timeout.")
 	backoff := dialSecondsField(fieldDialBackoff, "Max backoff", d.MaxBackoffSeconds,
 		int(provider.DefaultMaxBackoff.Seconds()), dialBackoffLadder,
-		"Local exponential delay cap (1-300 seconds). Retry-After may extend it; every cooldown is at most 300 seconds.")
+		"Local cap: 1-300 seconds. Retry-After also stays within five minutes.")
 	backoff.Validator = func(value ui.FieldValue) []string {
 		if backoff.ReadOnly {
 			return nil
@@ -1046,7 +1046,7 @@ func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("dialer", "Connection tuning"),
 		dialSecondsField(fieldDialTimeout, "Request timeout", d.RequestTimeoutSeconds, 0, dialTimeoutLadder,
-			"Overall cap including upload, streaming, retries and retry waits. Unlimited does not disable progress timeouts."),
+			"Overall request limit. Unlimited still enforces progress timeouts."),
 		dialConnectField(d.ConnectTimeoutSeconds),
 		startup, floor, ceiling,
 		dialCountField(fieldDialAttempts, "Max attempts", d.MaxAttempts, provider.DefaultMaxAttempts, dialAttemptsLadder,
@@ -1057,7 +1057,7 @@ func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
 
 func dialConnectField(seconds int) *ui.FieldState {
 	field := ui.CycleFieldState(fieldDialConnect, "Connect timeout", nil, strconv.Itoa(seconds),
-		"Network defaults inherit separate TCP/TLS budgets. An explicit value overrides both, not model response waiting.")
+		"TCP/TLS connection limit; Network defaults inherit both budgets.")
 	field.Options = []ui.FormOption{{ID: "0", Label: "Network defaults"}}
 	for _, option := range dialFieldOptions(seconds, 0, dialConnectLadder, "s") {
 		if option.ID != "0" {
@@ -1229,14 +1229,14 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		compaction = *cfg.ContextCompactionPercent
 	}
 	compactionField := ui.NumberFieldState(fieldContextCompaction, "Compact context at", compaction, "% full",
-		"Summarize older context once the window is this full. 0 never compacts automatically.")
+		"Summarize older context at this fullness; 0 disables automatic compaction.")
 	compactionField.Validator = intRangeValidator(0, 100)
 	retention := types.DefaultContextRetentionTokens
 	if cfg.ContextRetentionTokens != nil {
 		retention = *cfg.ContextRetentionTokens
 	}
 	retentionField := ui.NumberFieldState(fieldContextRetention, "Keep recent input", retention, "tokens",
-		"Keep up to this many estimated tokens of recent human input verbatim after compaction. The checkpoint, runtime handoff, and context capacity still take priority.")
+		"Verbatim input kept after compaction, within available context space.")
 	retentionField.Validator = intRangeValidator(types.MinContextRetentionTokens, types.MaxContextRetentionTokens)
 	fields = append(fields,
 		ui.SeparatorFieldState("context-management", "Context management"),
@@ -1269,7 +1269,7 @@ func thinkingSegments(current string) *ui.FieldState {
 		options = append(options, ui.FormOption{ID: level, Label: label})
 	}
 	return ui.SegmentedFieldState(fieldThinkingEffort, "Thinking", options, current,
-		"How much the model reasons before answering. Default leaves it to the provider; higher levels are slower and cost more.")
+		"Reasoning effort; Default lets the provider choose. Higher costs more.")
 }
 
 // capabilityFields builds the Model capabilities section: window limits and
@@ -1464,7 +1464,7 @@ func (m *Model) buildAutoReviewPolicyForm(settings types.AutoPermissionSettings)
 
 func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 	auto := m.autoReviewer.Normalized()
-	purpose := ui.TextFieldState("agent-description", "Purpose", "Reviews eligible root and child permission requests", "Fixed safety role; every agent owns an independent review lifecycle and this agent executes no tools.")
+	purpose := ui.TextFieldState("agent-description", "Purpose", "Reviews eligible root and child permission requests", "Each agent has its own no-tools reviewer; the safety role is fixed.")
 	purpose.ReadOnly = true
 	instructions := ui.TextAreaFieldState("agent-instructions", "Extra restrictions", auto.Instructions,
 		"May only narrow approvals. Core reviewer safety instructions cannot be changed.")
@@ -1490,39 +1490,39 @@ func (m *Model) autoReviewPolicyFields(settings types.AutoPermissionSettings) []
 	askDeny := []ui.FormOption{{ID: "ask", Label: "Ask me"}, {ID: "deny", Label: "Deny"}}
 	thinking := ui.SegmentedFieldState(fieldAutoPermThinking, "Thinking effort", []ui.FormOption{
 		{ID: "low", Label: "Low"}, {ID: "medium", Label: "Medium"}, {ID: "high", Label: "High"}, {ID: "max", Label: "Maximum"},
-	}, auto.ThinkingEffort, "Low is the reliable default. Higher effort spends more of the output budget; values a model does not support fail closed.")
+	}, auto.ThinkingEffort, "Low uses fewer tokens. Unsupported thinking levels fail.")
 	format := ui.SegmentedFieldState(fieldAutoPermFormat, "Response format", []ui.FormOption{
 		{ID: types.AutoPermissionFormatAuto, Label: "Auto"},
 		{ID: types.AutoPermissionFormatJSONSchema, Label: "JSON schema"},
 		{ID: types.AutoPermissionFormatJSONObject, Label: "JSON object"},
 		{ID: types.AutoPermissionFormatPrompt, Label: "Prompt only"},
-	}, auto.ResponseFormat, "Auto (recommended) tries a strict schema on OpenAI Chat endpoints, then falls back when a retry is available. Explicit formats fail closed when unsupported.")
+	}, auto.ResponseFormat, "Auto may retry with prompt-only output; explicit formats must be supported.")
 	retries := autoPermissionIntField(fieldAutoPermRetries, "Retries", auto.MaxAttempts-1, 0, 5,
-		"Extra requests after a timeout, truncation, transport failure or invalid output. Valid allow, deny and ask decisions are never retried.")
+		"Retry technical failures, not valid allow, deny or ask decisions.")
 	retries.Unit = "max"
 	growth := ui.SegmentedFieldState(fieldAutoPermGrowth, "Grow budget on retry", []ui.FormOption{
 		{ID: types.AutoPermissionGrowthFixed, Label: "Fixed"},
 		{ID: types.AutoPermissionGrowth2x, Label: "2×"},
 		{ID: types.AutoPermissionGrowth4x, Label: "4×"},
-	}, auto.RetryTokenGrowth, "How much the output budget grows after each technical failure (4× recommended). The retry ceiling always wins.")
+	}, auto.RetryTokenGrowth, "Token growth after technical failure; never exceeds the retry ceiling.")
 	ceiling := autoPermissionIntField(fieldAutoPermRetryCeiling, "Retry ceiling", auto.MaxRetryOutputTokens, 16, 8192,
-		"Hard per-attempt output limit. Too little headroom can exhaust reasoning before the verdict.")
+		"Hard output cap per attempt, including reasoning before the verdict.")
 	ceiling.Unit = "tokens"
 	unresolved := ui.SegmentedFieldState(fieldAutoPermUnresolved, "When unsure", askDeny, auto.UnresolvedMode,
-		"Ask me pauses for a person. Deny rejects structural uncertainty, a model 'ask' or exhausted recovery so unattended work continues safely.")
+		"Ask me pauses. Deny rejects uncertainty or exhausted review without approving.")
 	timeout := autoPermissionIntField(fieldAutoPermTimeout, "Timeout per attempt", auto.TimeoutSeconds, 1, 120,
 		"Each attempt has this deadline. A fully exhausted review never approves.")
 	timeout.Unit = "seconds"
 	initial := autoPermissionIntField(fieldAutoPermOutputTokens, "First attempt budget", auto.MaxOutputTokens, 16, 4096,
-		"First-attempt response cap, including hidden reasoning on providers that report it as output.")
+		"First response token budget, including hidden reasoning.")
 	initial.Unit = "tokens"
 	input := autoPermissionIntField(fieldAutoPermInputBytes, "Review input limit", auto.MaxInputBytes, 64<<10, 1<<20,
-		"Caps the complete serialized review payload for the exact tool arguments and operation metadata; conversation history and the ambient environment are excluded. The safe floor is 64 KiB (65536), the ceiling 1 MiB (1048576), and nothing is truncated.")
+		"Arguments and metadata, no conversation; 64 KiB–1 MiB, never truncated.")
 	input.Unit = "bytes"
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("auto-permission-section-outcomes", "Review outcomes"),
 		ui.SegmentedFieldState(fieldAutoPermDenyMode, "When it denies", askDeny, auto.DenyMode,
-			"Ask you, or reject the call, when the reviewer returns deny. Review never creates a permanent grant."),
+			"Ask you or reject a denied call. Never creates a permanent grant."),
 		unresolved,
 		thinking,
 		format,

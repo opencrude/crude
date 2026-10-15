@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"crude/provider"
+	"crude/types/command"
 	"crude/types/recovery"
 )
 
@@ -15,6 +16,7 @@ func ownedMessageFixture() Message {
 		Collaboration: &provider.CollaborationAttribution{
 			EventID: "event", SenderID: "sender", RecipientIDs: []string{"recipient"},
 			RecipientNames: []string{"Recipient"},
+			Command:        &command.Outcome{Handle: "build", Command: "go build ./..."},
 		},
 		Recovery: &recovery.Status{ID: "incident", Detail: "original diagnostic"},
 	}
@@ -25,6 +27,7 @@ func mutateMessageReferences(message Message) {
 	message.Collaboration.EventID = "changed event"
 	message.Collaboration.RecipientIDs[0] = "changed recipient"
 	message.Collaboration.RecipientNames[0] = "changed name"
+	message.Collaboration.Command.Handle = "changed command"
 	message.Recovery.Detail = "changed diagnostic"
 }
 

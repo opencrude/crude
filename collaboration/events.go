@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"crude/types/command"
 )
 
 func (store *Store) Publish(ctx context.Context, request PublishRequest) (PublishResult, error) {
@@ -17,6 +19,7 @@ func (store *Store) Publish(ctx context.Context, request PublishRequest) (Publis
 	}
 	request.RecipientIDs = normalizedRecipients(request.RecipientIDs)
 	request.References = append([]Reference(nil), request.References...)
+	request.Command = command.Clone(request.Command)
 	var result PublishResult
 	err := store.transaction(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -103,6 +106,7 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 		ReplyTo: request.ReplyTo, ThreadID: eventID, RequestID: request.RequestID,
 		RequestRevision: request.RequestRevision, RunID: request.RunID,
 		Supersedes: request.Supersedes, References: request.References, CreatedAt: now,
+		Command: request.Command,
 	}
 	if request.ReplyTo != "" {
 		parent, err := loadEvent(ctx, tx, request.ReplyTo)
@@ -595,6 +599,17 @@ func validatePublishRequest(request PublishRequest) error {
 	}
 	if err := validateBody(request.Body, MaxBodyBytes); err != nil {
 		return err
+	}
+	if request.Command != nil {
+		if request.Kind != EventCommandOutcome || request.Origin != OriginRuntime {
+			return fmt.Errorf("%w: command evidence requires a runtime command outcome", ErrInvalid)
+		}
+		if err := validateIdentity("command handle", request.Command.Handle, 256); err != nil {
+			return err
+		}
+		if len(request.Command.Command)+len(request.Command.Error) > MaxBodyBytes || request.Command.Duration < 0 || request.Command.OutputBytes < 0 {
+			return fmt.Errorf("%w: invalid command evidence", ErrInvalid)
+		}
 	}
 	if err := validateOptionalIdentity("reply_to", request.ReplyTo, 256); err != nil {
 		return err

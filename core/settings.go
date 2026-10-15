@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"strings"
 
 	"crude/coreprotocol"
@@ -96,7 +97,7 @@ func publicSession(value types.Settings) coreprotocol.SessionSettingsDTO {
 		copy := *multi
 		multi = &copy
 	}
-	return coreprotocol.SessionSettingsDTO{Value: out, MainAgent: main, Overrides: detachedOverrides, MultiAgent: multi}
+	return coreprotocol.SessionSettingsDTO{Value: out, MainAgent: main, Overrides: detachedOverrides, MultiAgent: multi, DisabledCapabilities: slices.Clone(value.SessionDisabledCapabilities)}
 }
 
 func publicSessionSet(value session.SettingsSnapshotSet) coreprotocol.SessionSettingsResult {
@@ -264,7 +265,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			}
 			return response(request, publicCapabilityResult(snapshot, nil, ""))
 		}, nil, true
-	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle:
+	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle, coreprotocol.SessionCapabilityToggle:
 		return a.prepareSessionSettings(request)
 	case coreprotocol.AccountChange, coreprotocol.ApplicationPreferencesSave, coreprotocol.CapabilitySnapshot, coreprotocol.CapabilityAction, coreprotocol.CapabilityAcquisitionPreview, coreprotocol.SkillInput:
 		return a.prepareApplicationSettings(request)
@@ -274,7 +275,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 
 func settingsMutation(method string) bool {
 	switch method {
-	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle, coreprotocol.AccountChange, coreprotocol.CapabilityAction, coreprotocol.SkillInput, coreprotocol.ApplicationPreferencesSave:
+	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle, coreprotocol.SessionCapabilityToggle, coreprotocol.AccountChange, coreprotocol.CapabilityAction, coreprotocol.SkillInput, coreprotocol.ApplicationPreferencesSave:
 		return true
 	}
 	return false

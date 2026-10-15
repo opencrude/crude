@@ -1,6 +1,9 @@
 package types
 
-import "slices"
+import (
+	"crude/types/command"
+	"slices"
+)
 
 // CloneConversationMessage detaches all mutable evidence in a message. Strings,
 // reasoning metadata and timestamps are value data; the nested attribution,
@@ -11,6 +14,7 @@ func CloneConversationMessage(message ConversationMessage) ConversationMessage {
 		attribution := *message.Collaboration
 		attribution.RecipientIDs = slices.Clone(attribution.RecipientIDs)
 		attribution.RecipientNames = slices.Clone(attribution.RecipientNames)
+		attribution.Command = command.Clone(attribution.Command)
 		message.Collaboration = &attribution
 	}
 	if message.Recovery != nil {

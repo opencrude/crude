@@ -322,6 +322,10 @@ func (l *local) PrepareMultiAgentToggle(sessionID string) (*workspace.SessionSet
 	return l.ws.PrepareMultiAgentToggle(sessionID)
 }
 
+func (l *local) PrepareSessionCapabilityToggle(sessionID, id string, enabled bool) (*workspace.SessionSettingsOperation, error) {
+	return l.ws.PrepareSessionCapabilityToggle(sessionID, id, enabled)
+}
+
 func (l *local) PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*workspace.SessionSettingsOperation, error) {
 	return l.ws.PrepareSessionSettingsSave(sessionID, settings)
 }

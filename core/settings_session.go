@@ -14,7 +14,7 @@ import (
 // worker commits persistence; only the actor publishes its private receipt.
 func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
 	switch request.Method {
-	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle:
+	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle, coreprotocol.SessionCapabilityToggle:
 	default:
 		return nil, nil, false
 	}
@@ -36,6 +36,11 @@ func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(conte
 		op, err = a.ws.PrepareSessionSettingsResetAtRevision(in.SessionID, in.ExpectedRevision)
 	case coreprotocol.SessionMultiAgentToggle:
 		op, err = a.ws.PrepareSessionSettingsToggleAtRevision(in.SessionID, in.ExpectedRevision)
+	case coreprotocol.SessionCapabilityToggle:
+		if in.Capability == nil || in.Capability.ID == "" {
+			return bad("invalid_request", "capability id is required")
+		}
+		op, err = a.ws.PrepareSessionCapabilityToggle(in.SessionID, in.Capability.ID, in.Capability.Enabled)
 	}
 	if err != nil {
 		return bad("session_missing", "exact session is not open")

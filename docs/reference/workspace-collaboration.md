@@ -267,6 +267,12 @@ receipt state, report references, copy text, disclosure, and hit testing.
 Incoming collaboration must not steal focus, select a tab, modify a draft,
 consume attachment state, reset undo, or break pointer capture.
 
+Command-outcome events carry immutable typed command facts into live and persisted
+conversation attribution. They paint compact ordinary-tool rows, not shaded peer
+cards; disclosure retains exact command, PID, exit availability, time and output
+size. Model-facing event bodies and durable delivery remain independent of this
+presentation. No renderer parses event prose to reconstruct process state.
+
 Resume is passive: it restores participants, contexts, pending deliveries,
 artifacts, and run facts without provider calls, command replay, or implicit
 child launch. Already-published evidence is admitted passively through a stable

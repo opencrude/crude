@@ -15,6 +15,7 @@ import (
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
+	captypes "crude/types/capability"
 	"crude/workspace"
 )
 
@@ -272,6 +273,8 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return m.openCapabilityManager(activitySkills, "", "")
 	case "capabilities.pick":
 		return m.openCapabilityPicker()
+	case "capabilities.pick.mcp":
+		return m.openCapabilityPickerTab(captypes.KindMCP, "")
 	case "mcp.manage":
 		return m.openCapabilityManager(activityMCP, "", "")
 	case "workspace.panel.maximize":

@@ -59,3 +59,40 @@ func ClearSessionFlags(db *sql.DB, sessionID string) error {
 	_, err := db.Exec(`DELETE FROM session_flags WHERE session_id = ?`, sessionID)
 	return err
 }
+
+// LoadDisabledCapabilities returns the sorted capability IDs this session has
+// turned off.
+func LoadDisabledCapabilities(db *sql.DB, sessionID string) ([]string, error) {
+	rows, err := db.Query(`SELECT capability_id FROM session_capabilities WHERE session_id = ? ORDER BY capability_id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SaveDisabledCapabilities replaces the session's complete disabled set.
+func SaveDisabledCapabilities(db *sql.DB, sessionID string, ids []string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM session_capabilities WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(`INSERT INTO session_capabilities (session_id, capability_id) VALUES (?, ?)`, sessionID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

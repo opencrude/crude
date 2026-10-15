@@ -139,7 +139,7 @@ func (a *actor) publishStatusIfChanged() {
 // announceSettings tells shells which replica a completed mutation changed.
 func (a *actor) announceSettings(method string) {
 	switch method {
-	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle,
+	case coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsReset, coreprotocol.SessionMultiAgentToggle, coreprotocol.SessionCapabilityToggle,
 		coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename,
 		coreprotocol.ReferenceDelete, coreprotocol.ReferenceUploadCommit, coreprotocol.HistoryRestore:
 		a.broadcast(coreprotocol.Change{Sessions: true})

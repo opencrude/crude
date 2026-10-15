@@ -42,6 +42,9 @@ format. The reference implementation is `tui/settings/surface.go` (anatomy),
   field's description, otherwise the focused field's, or its validation errors
   in error ink. One row, ending with `…` when longer; it takes no body rows and
   nothing moves when it changes.
+  Write one useful sentence that fits an ordinary 80-column content pane;
+  retain behavior and important constraints without turning help into a
+  paragraph. Narrow panes elide at their actual width.
 - **Footer (rule + one row)**, owned by `WorkspaceSettingsSurface.layoutFooter`
   and resolved per page by `footer()`: the Application/Workspace switch, a `│`
   separator continuing the rail divider (joined to the rule with `┼`), the page
@@ -126,6 +129,11 @@ status row, then a left-aligned action row (`[ Add … ]` primary first,
 destructive last). Opening an item replaces only the right pane and adds a
 breadcrumb; Esc, the breadcrumb parent and `[ Back … ]` return with selection,
 query and scroll retained.
+
+Collection pages do not reserve form-help rows: Accounts, Agents, Skills,
+MCP, Language Servers and Sources anchor their last action row immediately
+above the shared footer rule. Status stays above the actions, never below
+them; wrapping actions on narrow panes does not introduce blank bottom rows.
 
 Language Servers edits apply to the settings draft immediately (the rail marker
 and Save follow); an incomplete custom server stays open with guidance instead of

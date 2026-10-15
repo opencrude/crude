@@ -178,15 +178,19 @@ type Session struct {
 	selectedMainAgent string
 	// multiAgentOverride is the explicit session flag. nil inherits workspace.
 	multiAgentOverride *bool
-	historyMu          sync.RWMutex
-	historyStart       func(context.Context, string, string) error
-	historyEnd         func(context.Context, string, string) error
-	historyContinue    func(context.Context, string, string) error
-	historyContinueEnd func(context.Context, string, string) error
-	beforeTurn         func(context.Context, string) error
-	historyMutation    func(context.Context, HistoryMutation) error
-	historyWg          sync.WaitGroup
-	historyFinalizers  atomic.Int32
+	// disabledCapabilities is the session-wide capability gate. Every agent
+	// of this session (root and children) reads it live at each request and
+	// tool call; settings operations replace it atomically.
+	disabledCapabilities atomic.Pointer[[]string]
+	historyMu            sync.RWMutex
+	historyStart         func(context.Context, string, string) error
+	historyEnd           func(context.Context, string, string) error
+	historyContinue      func(context.Context, string, string) error
+	historyContinueEnd   func(context.Context, string, string) error
+	beforeTurn           func(context.Context, string) error
+	historyMutation      func(context.Context, HistoryMutation) error
+	historyWg            sync.WaitGroup
+	historyFinalizers    atomic.Int32
 }
 
 // HistoryMutation is a successful, direct filesystem mutation reported by an

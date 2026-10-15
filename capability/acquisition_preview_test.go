@@ -3,6 +3,8 @@ package capability
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +12,44 @@ import (
 	"crude/skills"
 	captypes "crude/types/capability"
 )
+
+func TestReviewedRemoteSkillSubtreeIsNotAHostDirectory(t *testing.T) {
+	service, settings, _ := capabilityFixture(t)
+	archive := skillArchive(t,
+		archiveFixtureEntry{name: "repository/skills/ghidra-reverse/SKILL.md", body: "---\nname: ghidra-reverse\ndescription: Inspect binaries with Ghidra.\n---\nRetained instructions.\n"},
+		archiveFixtureEntry{name: "repository/skills/ghidra-reverse/references/guide.md", body: "Bundled reference."})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer server.Close()
+	id := "team:ghidra-reverse"
+	service.candidates = map[string]Candidate{id: {
+		Entry:      captypes.Entry{ID: id, Name: "ghidra-reverse", Kind: captypes.KindSkill, Source: "team", Path: "skills/ghidra-reverse", Version: "exact-commit"},
+		ArchiveURL: server.URL, Subpath: "skills/ghidra-reverse", SkillID: "ghidra-reverse",
+	}}
+	preview, err := service.PreviewAcquisition(t.Context(), id, captypes.ScopeApplication, "install")
+	if err != nil || preview.Token == "" || preview.Candidate.Version != "exact-commit" {
+		t.Fatalf("remote review tried to inspect a repository path locally: %+v %v", preview, err)
+	}
+	if len(service.Snapshot().Entries) != 0 {
+		t.Fatal("review registered or activated the skill")
+	}
+	acquired, err := service.AcquireReviewed(t.Context(), preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := skills.Load(acquired.Skills[id].Path)
+	if err != nil || loaded.Name != "ghidra-reverse" || loaded.Instructions != "Retained instructions.\n" || len(loaded.Files) != 2 {
+		t.Fatalf("reviewed remote acquisition lost pinned skill content: %+v %v", loaded, err)
+	}
+	settings.Sources["team"] = captypes.SourceConfig{ID: "team", Name: "Changed", Kind: "local", Location: t.TempDir(), Trusted: true}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AcquireReviewed(t.Context(), preview); err == nil {
+		t.Fatal("changed source accepted the previous review")
+	}
+}
 
 func TestReviewedAcquisitionIsPassiveAndRejectsChangedPreimage(test *testing.T) {
 	root := test.TempDir()

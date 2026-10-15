@@ -110,7 +110,7 @@ func remoteJourneyUntil(t *testing.T, shells []remoteJourneyShell, condition fun
 
 var remoteJourneyAmbientHome = os.Getenv("HOME")
 
-func remoteJourneyRuntime(t *testing.T, endpoint string) *core.Runtime {
+func remoteJourneyRuntime(t *testing.T, endpoint string, configure ...func(*workspace.Workspace)) *core.Runtime {
 	t.Helper()
 	home := os.Getenv("HOME")
 	if home == "" || home == remoteJourneyAmbientHome {
@@ -131,6 +131,9 @@ func remoteJourneyRuntime(t *testing.T, endpoint string) *core.Runtime {
 		profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelSupportsTools: true, ModelContextWindow: 200_000}
 		profile.Categories[session.CategoryAeron] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048}
 		agents.Profiles["default"] = profile
+		for _, apply := range configure {
+			apply(ws)
+		}
 		ws.SetBackendConfig(&session.Config{Agents: agents, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}, home)
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

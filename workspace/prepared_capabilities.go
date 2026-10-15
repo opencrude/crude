@@ -40,6 +40,10 @@ func (w *Workspace) PrepareCapabilities(commit func(context.Context, types.AppSe
 		raw, _ := json.Marshal(v)
 		var out types.AppSettings
 		_ = json.Unmarshal(raw, &out)
+		// JSON omits empty capability maps. Re-establish the same normalized
+		// contract as AppDefaults/FileConfigToAppSettings before retaining a
+		// private preimage; nil maps must not fabricate a concurrent edit.
+		types.ApplyAppDefaults(&out)
 		return out
 	}
 	return &PreparedCapabilities{service: w.Capabilities, generation: w.Capabilities.Snapshot().Generation, defaults: clone(w.AppDefaults()), effective: clone(w.LoadAppSettings()), root: w.RootPath, commit: commit}, nil
@@ -414,7 +418,7 @@ func (w *Workspace) PrepareSkillActivation(agentID, id, arguments string) (func(
 	}
 	backend, service := frontend.backend, w.Capabilities
 	category := backend.RuntimeProfile().GetEffectiveConfig(agentID).GetActiveDefaultCategory()
-	actor := captypes.RuntimeActor{ID: agentID, SessionID: backend.SessionID(), Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectCommunication}, SkillModes: category.SkillModes, AllowedTools: category.AllowedTools, DeniedTools: category.DeniedTools}
+	actor := captypes.RuntimeActor{ID: agentID, SessionID: backend.SessionID(), Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectCommunication}, SkillModes: category.SkillModes, AllowedTools: category.AllowedTools, DeniedTools: category.DeniedTools, SessionDisabled: backend.DisabledCapabilities()}
 	raw, _ := json.Marshal(actor)
 	_ = json.Unmarshal(raw, &actor)
 	return func(ctx context.Context) (provider.UserInput, error) {

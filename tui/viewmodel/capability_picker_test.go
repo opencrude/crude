@@ -2,21 +2,18 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"crude/core"
 	"crude/tui/input"
+	"crude/tui/screens/capabilitypicker"
 	"crude/tui/ui"
-	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
@@ -36,7 +33,7 @@ func TestCapabilitySlashCommandsOpenSimpleModalWithoutChangingDraft(t *testing.T
 			t.Fatal("slash route did not open the simple capabilities modal", route.command)
 		}
 		paint := ansi.Strip(app.View().Content)
-		if !strings.Contains(paint, route.label) || !strings.Contains(paint, "Deactivate") {
+		if !strings.Contains(paint, route.label) || !strings.Contains(paint, "Install & manage") {
 			t.Fatalf("wrong tab or missing action for %s:\n%s", route.command, paint)
 		}
 		for _, removed := range []string{"+ Capability", "stage in composer", "Inspect / select", "Resources", "Prompts"} {
@@ -83,7 +80,11 @@ func TestCapabilityModalIgnoresClosedReopenedAndOldWorkspaceResults(t *testing.T
 	}
 }
 
-func TestConnectedCapabilityModalPersistsTogglesWithoutLaunchOrComposerMutation(t *testing.T) {
+// The connected modal switches skills/MCP servers for the selected session
+// only: the core session commits the gate, both shells' replicas observe it,
+// and the registration, other sessions, the composer and MCP transports are
+// untouched.
+func TestConnectedCapabilityModalTogglesSessionGateOnly(t *testing.T) {
 	root := t.TempDir()
 	skillPath := filepath.Join(root, "guide")
 	if err := os.MkdirAll(skillPath, 0755); err != nil {
@@ -95,93 +96,80 @@ func TestConnectedCapabilityModalPersistsTogglesWithoutLaunchOrComposerMutation(
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 	t.Cleanup(server.Close)
-	settingsPath := filepath.Join(t.TempDir(), "settings.json")
-	baseline := types.AppSettings{Capabilities: captypes.Settings{
-		Skills:      map[string]captypes.SkillConfig{"local:guide": {ID: "local:guide", Name: "Guide", Path: skillPath, Mode: "disabled", Disabled: true, Scope: captypes.ScopeApplication}},
-		Connections: map[string]captypes.ConnectionConfig{"docs": {ID: "docs", Name: "Documentation", Transport: "http", URL: server.URL, Disabled: true, Scope: captypes.ScopeApplication}},
-	}}
-	var commits atomic.Int32
-	runtime, err := core.New(func(project string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(project, "", "tester", types.Settings{}, noopLogger{})
-		ws.SetAppDefaults(baseline)
-		baseline = ws.AppDefaults()
-		ws.OnAppPreferencesCommit = func(before, after types.AppSettings) (types.AppSettings, error) {
-			if !reflect.DeepEqual(before.Capabilities, baseline.Capabilities) {
-				return types.AppSettings{}, errors.New("stale settings")
-			}
-			data, err := json.Marshal(after)
-			if err != nil {
-				return types.AppSettings{}, err
-			}
-			if err := os.WriteFile(settingsPath, data, 0600); err != nil {
-				return types.AppSettings{}, err
-			}
-			baseline = after
-			commits.Add(1)
-			return after, nil
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:9", func(ws *workspace.Workspace) {
+		defaults := ws.AppDefaults()
+		defaults.Capabilities = captypes.Settings{
+			Skills:      map[string]captypes.SkillConfig{"local:guide": {ID: "local:guide", Name: "Guide", Path: skillPath, Mode: "automatic", Scope: captypes.ScopeApplication}},
+			Connections: map[string]captypes.ConnectionConfig{"docs": {ID: "docs", Name: "Documentation", Transport: "http", URL: server.URL, Scope: captypes.ScopeApplication}},
 		}
-		return ws, nil
-	}, filepath.Join(t.TempDir(), "receipts.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := runtime.Close(); err != nil {
-			t.Error(err)
-		}
+		ws.SetAppDefaults(defaults)
 	})
-	shell := newRemoteJourneyShell(t, runtime, root)
-	app := shell.app
-	app.Input.SetInput("untouched draft")
+	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)
+	shells := []remoteJourneyShell{one, two}
+	first := remoteJourneyCreate(t, one)
+	owner := one.app.ws.SessionForAgent(first)
+	other := one.app.ws.SessionForAgent(remoteJourneyCreate(t, one))
+	one.app.switchToAgentView(first)
+	one.app.Input.SetInput("untouched draft")
+	gate := func(app *App, id string) []string {
+		session := app.ws.SessionsByID()[id]
+		if session == nil || session.Settings == nil {
+			return nil
+		}
+		return session.Settings.Effective.SessionDisabledCapabilities
+	}
 	for _, route := range []struct {
-		command, id string
-		kind        captypes.Kind
-	}{{"/skills", "local:guide", captypes.KindSkill}, {"/mcps", "docs", captypes.KindMCP}} {
-		runAppCommand(t, app, app.executeSlashCommand(route.command))
-		for _, active := range []bool{true, false} {
-			cmd, handled := app.handleCapabilityPickerAction(ui.Action{ID: "capability-picker.toggle"})
+		command, id, label string
+	}{{"/skills", "local:guide", "A concise guide."}, {"/mcps", "docs", "Documentation"}} {
+		runAppCommand(t, one.app, one.app.executeSlashCommand(route.command))
+		if one.app.capabilityPicker == nil || one.app.capabilityPicker.session != owner {
+			t.Fatal("modal is not bound to the selected session", route.command)
+		}
+		remoteJourneyUntil(t, shells, func() bool { return strings.Contains(ansi.Strip(one.app.View().Content), route.label) })
+		for _, enabled := range []bool{false, true} {
+			cmd, handled := one.app.handleCapabilityPickerAction(ui.Action{ID: "capability-picker.toggle", Payload: route.id})
 			if !handled || cmd == nil {
-				t.Fatal("visible activation action unavailable", route.command)
+				t.Fatal("switch unavailable", route.command)
 			}
-			runAppCommand(t, app, cmd)
-			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-				caps := app.ws.LoadAppSettings().Capabilities
-				if route.kind == captypes.KindSkill {
-					return caps.Skills[route.id].Disabled == !active
+			runAppCommand(t, one.app, cmd)
+			want := !enabled
+			remoteJourneyUntil(t, shells, func() bool {
+				for _, shell := range shells {
+					if slices.Contains(gate(shell.app, owner.SessionID), route.id) != want {
+						return false
+					}
 				}
-				return caps.Connections[route.id].Disabled == !active
+				return !one.app.capabilityPicker.screen.Busy()
 			})
-			data, err := os.ReadFile(settingsPath)
-			if err != nil {
-				t.Fatal(err)
+			if len(gate(one.app, other.SessionID)) != 0 {
+				t.Fatal("switch leaked into another session")
 			}
-			var saved types.AppSettings
-			if err := json.Unmarshal(data, &saved); err != nil {
-				t.Fatal(err)
+			caps := one.app.ws.LoadAppSettings().Capabilities
+			if caps.Skills["local:guide"].Disabled || caps.Connections["docs"].Disabled {
+				t.Fatal("session switch rewrote the registration")
 			}
-			if route.kind == captypes.KindSkill {
-				if value := saved.Capabilities.Skills[route.id]; value.Disabled != !active || value.Mode != "automatic" {
-					t.Fatal("skill toggle did not persist effective mode", value)
-				}
-			} else if saved.Capabilities.Connections[route.id].Disabled != !active {
-				t.Fatal("MCP toggle did not persist")
-			}
-			paint := ansi.Strip(app.View().Content)
-			expected := "Activate"
-			if active {
-				expected = "Deactivate"
-			}
-			if !strings.Contains(paint, expected) || app.Input.Value() != "untouched draft" || app.capabilityPicker.screen.Busy() {
+			if paint := ansi.Strip(one.app.View().Content); strings.Contains(paint, "Could not save") || one.app.Input.Value() != "untouched draft" {
 				t.Fatal("toggle did not settle cleanly", paint)
 			}
 		}
-		_, command := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-		runAppCommand(t, app, command)
-		if app.overlayHost.IsOpen(ui.OverlayCapabilityPicker) {
+		_, command := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+		runAppCommand(t, one.app, command)
+		if one.app.overlayHost.IsOpen(ui.OverlayCapabilityPicker) {
 			t.Fatal("connected Esc did not close capability modal", route.command)
 		}
 	}
-	if commits.Load() != 4 || requests.Load() != 0 {
-		t.Fatal("toggles replayed effects or implicitly connected MCP", commits.Load(), requests.Load())
+	if requests.Load() != 0 {
+		t.Fatal("switching implicitly connected an MCP server", requests.Load())
 	}
+}
+
+func TestCapabilityModalManageButtonOpensSettings(t *testing.T) {
+	app := newFullTestApp(t)
+	app.capabilitySnapshot = captypes.Snapshot{Settings: captypes.Settings{Connections: map[string]captypes.ConnectionConfig{"docs": {ID: "docs", Name: "Documentation"}}}}
+	app.openCapabilityPickerTab(captypes.KindMCP, "")
+	cmd, handled := app.handleCapabilityPickerAction(ui.Action{ID: "capability-picker.manage", Payload: capabilitypicker.ManageTarget{Kind: captypes.KindMCP}})
+	if !handled || app.overlayHost.IsOpen(ui.OverlayCapabilityPicker) || !app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
+		t.Fatal("Install & manage did not hand off to Settings")
+	}
+	_ = cmd
 }

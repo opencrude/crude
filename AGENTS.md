@@ -192,6 +192,14 @@ interactive review, close it and verify no matching window remains
 (`xdotool search --class CrudeShot` on Linux; `tasklist /v | findstr
 /i CrudeShot` on Windows).
 
+Linux capture profiles must use a real short `CRUDE_HOME` directory: the canonical
+`<CRUDE_HOME>/.crude/corewire/core.sock` must fit 103 bytes, and a symlink to a long
+session scratch path does not help. `scripts/tuishot.sh` rejects that setup and
+fails immediately after a product exit or screenshot error. Inspect boot evidence
+before input; a capture driver finishing is not product success. Use
+`mktemp -d /tmp/crude-shot-XXXXXX` for this socket-bound profile, keep screenshots
+and logs in `CRUDE_TEMP_DIR`, and close only the isolated test core afterward.
+
 ### Compact chrome language
 - Prefer established, theme-aware symbols over spelled-out words in constrained
   chrome when the symbol is meaningful and consistent elsewhere in Crude. Keep
@@ -770,6 +778,12 @@ Legacy `tui/widgets/popupchrome.go` is **deleted**.
   waking the idle agent). Never make agents poll or `wait` for completion.
   Explicit kills, exits already returned inline or by an exec-session call, and
   `RetainSettled` output retention are not reported again.
+- Command outcomes carry typed immutable command evidence through the journal,
+  live conversation and SQLite display snapshots. Their chat projection shares
+  ordinary tool title ink/disclosure and normal background, defaults to one static
+  row, and reveals exact command/exit/time/output evidence only on expansion.
+  Never paint model-facing completion guidance as an oversized peer-message card
+  or recover status by parsing its prose.
 - Local stdio MCP servers inherit the full host environment, like agent shell
   commands; never reintroduce a variable allowlist. Server stderr tails are
   attached to failures. Registry packages are prepared through the owning
@@ -860,6 +874,10 @@ next tick finally synced.
 - Skills/MCP search live after a typing pause over the shared `ProgressRule`;
   a newer live search supersedes an in-flight one. Language Servers is a
   list → detail page; `LSPSettings.Languages` is the only server authority.
+- Collections (Accounts, Agents, Skills, MCP, Language Servers and Sources)
+  reserve no form-help rows below their actions: the last action row touches
+  the shared footer rule. Field help stays one useful sentence fitting ordinary
+  80-column content, retaining meaningful behavior/constraints; narrow panes elide.
 
 ### Agent Settings and Session Root Selection
 
@@ -2018,17 +2036,20 @@ button that needs a double click reads as broken.
   mutations require reviewed bytes; sidebar context actions open review instead
   of bypassing it. Discard requires exact preview + mandatory Local History
   safety recovery and never deletes untracked data.
-- `/skills` and `/mcps` open one simple Capabilities modal: Skills/MCPs tabs,
-  local search, rows with a theme switch marker, friendly name and status chip,
-  and a detail pane for the selection (description, mode or observed MCP
-  connection and tool count, transport/endpoint, source name, scope, path), with
-  an "N of M active" summary and Activate/Deactivate + Close. MCP facts are
-  observed only; activation never claims a running transport.
-  Row clicks select; Enter/Space or the explicit action toggles the registration
-  at its existing binding. No composer capability control or `/skill` invocation.
-  Activation enables future use, never MCP startup or access grants; full setup
-  remains in Settings. Async results are modal/workspace fenced. Settings external
-  context staging still retains exact session/agent/draft ownership.
+- `/skills` and `/mcps` open separate Skills / MCP servers views (no tabs) of
+  the session capability modal: quick, temporary per-session control. A padded
+  body heading names the view and session (no border title), search, a one-column list of
+  self-contained bordered cards (chevron, name, compact facts, square-knob switch,
+  three description lines) that expand in place on click/Enter to show every
+  fact (no separate details page), a framed where-to-start guide when empty,
+  and one **Install & manage** button to Settings. Switches set the session-owned
+  capability gate (`Session.SetCapabilityEnabled`, `session_capabilities`,
+  `settings.session.toggle_capability`), never the registration. Every agent of
+  the session reads it live through `RuntimeActor.SessionDisabled`; the capability
+  service drops off MCP tools from the next request and refuses their calls,
+  resource/prompt reads, access requests and activation. Focus is an accent
+  border, never a fill that swallows text. MCP facts are observed only; switching
+  never starts a transport or grants access.
 - Directed collaboration events and report/outcome publications are delivered
   automatically at safe boundaries; Board reads are history/search, not polling
   transport. Peer data is never approval or permission. `agent_send` broadcast

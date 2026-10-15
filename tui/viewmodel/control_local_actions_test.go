@@ -175,20 +175,18 @@ func TestConnectedLocalBoardOverflowAndPickerNavigation(t *testing.T) {
 	}
 	one.app.width = 120
 	one.app.capabilitySnapshot = captypes.Snapshot{Settings: captypes.Settings{Connections: map[string]captypes.ConnectionConfig{"observed": {ID: "observed", Name: "Documentation"}}}, Entries: []captypes.Entry{{ID: "observed", Kind: captypes.KindMCP, Name: "Documentation", Installed: true}}}
-	one.app.openCapabilityPicker()
-	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/tabs", ui.ControlOperation{Verb: "activate", ItemID: "mcps"}, control.Write, false); r.State != control.Applied {
+	one.app.openCapabilityPickerTab(captypes.KindMCP, "")
+	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/filter", ui.ControlOperation{Verb: "set_value", Value: json.RawMessage(`"docu"`)}, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "capability-picker/list", ui.ControlOperation{Verb: "activate", ItemID: "observed"}, control.Write, false); r.State != control.Applied {
-		t.Fatal(r)
-	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "Deactivate") {
-		t.Fatal("capability activation action not painted")
+	localControlNode(t, one.app, "capability-picker/card/observed/switch")
+	if paint := ansi.Strip(one.app.View().Content); !strings.Contains(paint, "Documentation") || !strings.Contains(paint, "Open a session") {
+		t.Fatal("capability card or no-session state not painted", paint)
 	}
 	if _, _, err := one.app.resolveControlHost("boardbrowser/action-list", one.app.ws.(shellport.ShellControl).ControlIdentity()); err == nil {
 		t.Fatal("modal allowed underlying owner")
 	}
-	old := localControlNode(t, one.app, "capability-picker/tabs")
+	old := localControlNode(t, one.app, "capability-picker/filter")
 	one.app.overlayHost.Close(ui.OverlayCapabilityPicker)
 	one.app.openCapabilityPicker()
 	if _, _, err := one.app.resolveControlHost(old.ID, one.app.ws.(shellport.ShellControl).ControlIdentity()); err == nil {

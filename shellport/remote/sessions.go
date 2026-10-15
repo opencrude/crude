@@ -97,6 +97,12 @@ func (w *Workspace) PrepareMultiAgentToggle(sessionID string) (*workspace.Sessio
 	})
 }
 
+func (w *Workspace) PrepareSessionCapabilityToggle(sessionID, id string, enabled bool) (*workspace.SessionSettingsOperation, error) {
+	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error) {
+		return rpc.ToggleSessionCapability(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, ExpectedRevision: revision, Capability: &coreprotocol.SessionCapabilityChange{ID: id, Enabled: enabled}})
+	})
+}
+
 func (w *Workspace) PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*workspace.SessionSettingsOperation, error) {
 	dto := coreprotocol.SessionSettingsDTO{Value: settings, MainAgent: settings.SessionMainAgent, Overrides: settings.SessionOverrides, MultiAgent: settings.SessionMultiAgent}
 	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error) {

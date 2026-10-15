@@ -212,6 +212,7 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 		projection.deck.Open(sessionSettingsPanel(projection.settings))
 		projection.deckHost.MarkLayout()
 	}
+	m.refreshCapabilityPickerSession(session)
 }
 
 func (m *App) refreshAllSessionSettingsProjections() {
