@@ -45,10 +45,6 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 	default:
 		return tools.ToolResult{}, true, fmt.Errorf("paths is required; use an explicit empty array to relinquish scope")
 	}
-	validated, err := validateOwnershipPaths(s.WorkDir(), paths)
-	if err != nil {
-		return tools.ToolResult{}, true, err
-	}
 	target := actor
 	if name == "agent_update_claims" {
 		id := getStrParam(params, "agent_id")
@@ -62,6 +58,36 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 	runtimeEpoch, runID, runVersion, versions, err := resolveClaimPreimage(ctx, store, target, params)
 	if err != nil {
 		return tools.ToolResult{}, true, err
+	}
+	root := s.WorkDir()
+	// The execution service retains the child's exact checkout across active
+	// and interrupted attempts. Never bind relative repairs to the parent's root.
+	if target.ParentID != "" {
+		if service, serviceErr := s.executionService(); serviceErr == nil {
+			found := false
+			for _, execution := range service.List() {
+				if execution.Owner.AgentID != target.ID {
+					continue
+				}
+				if !execution.Ready || execution.Removed || execution.LogicalRoot != s.WorkDir() {
+					return tools.ToolResult{}, true, fmt.Errorf("child execution checkout is unavailable or foreign")
+				}
+				if found {
+					return tools.ToolResult{}, true, fmt.Errorf("child execution checkout is ambiguous")
+				}
+				found = true
+				root = execution.Root
+			}
+		}
+	}
+	validated, err := validateOwnershipPaths(root, paths)
+	if err != nil {
+		return tools.ToolResult{}, true, err
+	}
+	if root != s.WorkDir() {
+		if err := validateExecutionWriteTargets(root, "", validated); err != nil {
+			return tools.ToolResult{}, true, err
+		}
 	}
 	var result collaboration.NarrowActiveClaimsResult
 	if name == "agent_update_claims" {

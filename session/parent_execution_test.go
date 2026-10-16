@@ -4,6 +4,7 @@ import (
 	"crude/agent"
 	"crude/types/control"
 	"crude/worktree"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +73,12 @@ func TestChildPreparationBindsParentCheckoutAndOwnControlTarget(t *testing.T) {
 	bad := agent.SubAgentSpec{ID: "bad", Isolation: "shared", ControlTarget: &control.Target{ExecutionID: "unknown"}}
 	if err := r.prepareChildExecution(t.Context(), &bad, "bad-run"); err == nil {
 		t.Fatal("unknown source launched")
+	}
+	for i, claim := range []string{filepath.Join(root, "foo"), filepath.Join(a.Root, "foo"), filepath.Join("..", "outside")} {
+		bad := agent.SubAgentSpec{ID: agent.AgentID(fmt.Sprintf("outside-%d", i)), Isolation: "worktree", FileOwnership: []string{claim}}
+		if err := r.prepareChildExecution(t.Context(), &bad, fmt.Sprintf("outside-run-%d", i)); err == nil {
+			t.Fatalf("isolated child accepted external claim %q", claim)
+		}
 	}
 }
 

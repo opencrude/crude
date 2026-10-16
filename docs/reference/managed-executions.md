@@ -33,6 +33,17 @@ logical-workspace document overlays. Missing/foreign/unready source contexts fai
 closed. Absolute logical-checkout file claims cannot silently rebase into a new
 checkout; relative claims bind its exact resolved root.
 
+Native file mutations in a managed checkout are checked against that checkout
+independently of optional file ownership. Absolute shared-checkout operands,
+`..` escapes and symlink-resolved escapes are rejected before claims or effects;
+move sources and destinations and all patch operands are checked together. Only
+the owning agent's private scratch directory is exempt. Launch, live claim repair
+and interrupted-child continuation enforce the same checkout boundary; relative
+child claim repairs resolve against the child's checkout, not the parent's logical
+workspace. Explicit shared execution retains normal external-path authority.
+This is not an OS sandbox: shell commands and external MCP effects can still
+write outside the checkout and are not constrained by native ownership checks.
+
 Git preparation disables hooks/fsmonitor and removes inherited `GIT_*` controls;
 a detached no-checkout worktree plus captured bytes avoids executing setup hooks
 or filters. A configured Git filter driver that an attribute applies to a
