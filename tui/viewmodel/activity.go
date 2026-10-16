@@ -277,14 +277,18 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return m.openCapabilityPickerTab(captypes.KindMCP, "")
 	case "mcp.manage":
 		return m.openCapabilityManager(activityMCP, "", "")
-	case "workspace.panel.maximize":
-		m.toggleWorkspacePanelMaximized()
-		return nil
 	case "workspace.panel.hide":
 		m.hideWorkspacePanel()
 		return nil
-	case "workspace.panel.more":
-		m.openFooterMenu()
+	case termdock.ActionOpenAsTab:
+		if id, ok := action.Payload.(string); ok {
+			m.openPanelAsTab(id)
+		}
+		return nil
+	case termdock.ActionOpenAsWindow:
+		if id, ok := action.Payload.(string); ok {
+			m.openPanelAsWindow(id)
+		}
 		return nil
 	case "terminal.picker":
 		m.openTerminalPicker()
@@ -332,6 +336,17 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if ok {
 			return m.handleSidebarActivate(item)
 		}
+	case chatprojection.ChatAgentOpenActionID:
+		payload, ok := action.Payload.(chatprojection.ChatAgentOpenPayload)
+		if !ok || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(payload.AgentID) == nil {
+			return nil
+		}
+		if payload.Window {
+			m.openAgentInWindow(payload.AgentID)
+			return nil
+		}
+		m.restoreAgent(payload.AgentID)
+		return nil
 	case chatprojection.ChatRecoveryRetryActionID:
 		payload, ok := action.Payload.(chatprojection.ChatRecoveryRetryPayload)
 		if !ok || m.ws.AgentMgr() == nil {

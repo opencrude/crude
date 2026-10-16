@@ -154,6 +154,14 @@ func cloneSettings(src types.Settings) types.Settings {
 		value := *src.SessionMultiAgent
 		dst.SessionMultiAgent = &value
 	}
+	if src.SessionCodeIntelligence != nil {
+		value := *src.SessionCodeIntelligence
+		dst.SessionCodeIntelligence = &value
+	}
+	if src.SessionMaxSubAgents != nil {
+		value := *src.SessionMaxSubAgents
+		dst.SessionMaxSubAgents = &value
+	}
 	return dst
 }
 

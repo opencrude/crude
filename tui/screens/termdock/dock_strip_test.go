@@ -44,7 +44,7 @@ func TestDockUsesNumberedTerminalTabsAndFullWidthBody(t *testing.T) {
 		t.Fatalf("terminal body width=%d want full dock width", second.Bounds().W)
 	}
 	painted := readCellsRange(buf, dividerH, 0, 80)
-	for _, want := range []string{"one 1", "two 2", "≡", "+", "⇱", "✕", "↕", "⌄"} {
+	for _, want := range []string{"one 1", "two 2", "≡", "+", "⇱", "✕", "⌄"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("terminal tab/action row missing %q: %q", want, painted)
 		}
@@ -96,7 +96,7 @@ func TestDockSearchSharesHeaderWithPanelActions(t *testing.T) {
 				buf := surface.NewCellBuffer(width, 12)
 				host.Paint(buf)
 				row := readCellsRange(buf, search.Y, 0, width)
-				for _, want := range []string{"Search agents", "…", "↕", "⌄"} {
+				for _, want := range []string{"Search agents", "⧉", "⇱", "⌄"} {
 					if !strings.Contains(row, want) {
 						t.Fatalf("dock header missing %q: %q", want, row)
 					}
@@ -279,7 +279,7 @@ func TestDockRetainedPanelsShareTabsAndHostControls(t *testing.T) {
 			buffer := surface.NewCellBuffer(120, 20)
 			host.Paint(buffer)
 			row := readCellsRange(buffer, header.Y, 0, 120)
-			if !strings.Contains(row, "…") || !strings.Contains(row, "↕") || !strings.Contains(row, "⌄") {
+			if !strings.Contains(row, "⧉") || !strings.Contains(row, "⇱") || !strings.Contains(row, "⌄") {
 				t.Fatalf("panel children erased shared host controls: %q", row)
 			}
 			host.Focus(tabID)

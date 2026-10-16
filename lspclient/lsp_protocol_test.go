@@ -107,6 +107,19 @@ func TestProtocolServerHelper(t *testing.T) {
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": nil})
 		case "exit":
 			os.Exit(0)
+		case "textDocument/didOpen":
+			if mode != "progress" {
+				continue
+			}
+			// Report progress the way gopls does: create, begin, publish while
+			// still loading, then end. Only the post-end state is settled.
+			doc := msg["params"].(map[string]any)["textDocument"].(map[string]any)
+			write(map[string]any{"jsonrpc": "2.0", "id": "progress-create", "method": "window/workDoneProgress/create", "params": map[string]any{"token": 7}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{"token": 7, "value": map[string]any{"kind": "begin", "title": "Loading packages"}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": map[string]any{"uri": doc["uri"], "version": doc["version"], "diagnostics": []any{map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 1}}, "message": "could not import (loading)", "severity": 1}}}})
+			time.Sleep(50 * time.Millisecond)
+			write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": map[string]any{"uri": doc["uri"], "version": doc["version"], "diagnostics": []any{map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 8}, "end": map[string]any{"line": 0, "character": 9}}, "message": "undefined: y", "severity": 1, "source": "compiler", "code": "UndeclaredName"}}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{"token": 7, "value": map[string]any{"kind": "end"}}})
 		case "textDocument/didChange":
 			doc := msg["params"].(map[string]any)["textDocument"].(map[string]any)
 			for _, version := range []float64{doc["version"].(float64) - 1, doc["version"].(float64)} {
@@ -181,7 +194,8 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 		case "initialize":
 			p := msg["params"].(map[string]any)
 			caps := p["capabilities"].(map[string]any)
-			if caps["window"] != nil || caps["workspace"].(map[string]any)["applyEdit"] != nil {
+			window, _ := caps["window"].(map[string]any)
+			if len(window) != 1 || window["workDoneProgress"] != true || caps["workspace"].(map[string]any)["applyEdit"] != nil {
 				t.Fatalf("unsupported capabilities: %v", caps)
 			}
 			for _, feature := range caps["textDocument"].(map[string]any) {

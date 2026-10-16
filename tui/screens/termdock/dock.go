@@ -40,10 +40,17 @@ const (
 )
 
 const (
-	ActionNew = "terminal.new"
+	ActionNew  = "terminal.new"
+	ActionHide = "workspace.panel.hide"
+	// ActionOpenAsTab and ActionOpenAsWindow move the active surface out of
+	// the dock (payload: panel ID).
+	ActionOpenAsTab    = "workspace.panel.tab"
+	ActionOpenAsWindow = "workspace.panel.window"
 
 	iconNew   = "+"
 	iconFloat = "⇱"
+	iconTab   = "⧉"
+	iconHide  = "⌄"
 	iconClose = "✕"
 )
 
@@ -392,7 +399,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	bodyY, bodyH := dividerH, max(0, r.H-dividerH)
 
 	if s.TerminalActive() {
-		glyphs := []headerAction{{id: "terminal.picker", glyph: "≡"}, {id: ActionNew, glyph: iconNew}, {id: shellterm.ActionPromote, glyph: iconFloat}, {id: shellterm.ActionClose, glyph: iconClose}, {id: "workspace.panel.maximize", glyph: "↕"}, {id: "workspace.panel.hide", glyph: "⌄"}}
+		glyphs := []headerAction{{id: "terminal.picker", glyph: "≡"}, {id: ActionNew, glyph: iconNew}, {id: shellterm.ActionPromote, glyph: iconFloat}, {id: shellterm.ActionClose, glyph: iconClose}, {id: ActionHide, glyph: iconHide}}
 		s.layoutHeader(ctx, r.W, bodyY, glyphs)
 		s.tabs.SetRuleBleed(0, r.W)
 		s.tabs.Layout(ctx, ui.Rect{Y: bodyY, W: max(0, r.W-s.header.Bounds().W-1), H: ui.StripHeight})
@@ -405,7 +412,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.actions = s.actions[:0]
 	s.header.Layout(ctx, ui.Rect{})
 	if child := s.activeContent(); child != nil {
-		glyphs := []headerAction{{id: "workspace.panel.more", glyph: "…"}, {id: "workspace.panel.maximize", glyph: "↕"}, {id: "workspace.panel.hide", glyph: "⌄"}}
+		glyphs := []headerAction{{id: ActionOpenAsTab, glyph: iconTab}, {id: ActionOpenAsWindow, glyph: iconFloat}, {id: ActionHide, glyph: iconHide}}
 		s.layoutHeader(ctx, r.W, bodyY, glyphs)
 		if panel, ok := child.(interface{ SetDockHeaderInset(int) }); ok {
 			panel.SetDockHeaderInset(s.header.Bounds().W)
@@ -482,8 +489,10 @@ func (s *Screen) actionAt(lx, ly int) int {
 
 func (s *Screen) runHeaderAction(id string) ui.EventResult {
 	switch id {
-	case "workspace.panel.more", "workspace.panel.maximize", "workspace.panel.hide", "terminal.picker":
+	case ActionHide, "terminal.picker":
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: id}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+	case ActionOpenAsTab, ActionOpenAsWindow:
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: id, Payload: s.activePanel}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case ActionNew:
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionNew}, Invalidate: ui.InvalidatePaint}
 	case shellterm.ActionPromote, shellterm.ActionClose:

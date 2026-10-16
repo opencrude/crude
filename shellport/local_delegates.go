@@ -78,6 +78,10 @@ func (l *local) DiscardGitHunk(ctx context.Context, comparison workspace.GitComp
 	return l.ws.DiscardGitHunk(ctx, comparison, hunk)
 }
 
+func (l *local) ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []workspace.GitConflictChoice) (string, error) {
+	return l.ws.ResolveGitConflict(ctx, path, fingerprint, choices)
+}
+
 func (l *local) PrepareCommitMessageWriter() (CommitMessageWriter, error) {
 	writer, err := l.ws.PrepareCommitMessageWriter()
 	if err != nil {

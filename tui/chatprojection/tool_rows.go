@@ -29,7 +29,17 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int)
 	title := tools.BuildToolTitle(msg, titlePhase)
 	isActive := toolRowFrameSensitive(msg)
 	settled := msg.ToolPreviewPhase == types.ToolPreviewDone || msg.ToolPreviewPhase == types.ToolPreviewError
-	return paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
+	line := paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
+	// A started sub-agent stays minimized; its row is where it is opened.
+	if id := tools.StartedAgentID(msg); id != "" {
+		line.Spans = append(line.Spans,
+			RowSpan{Text: "  "},
+			RowSpan{Text: "⧉ open", Role: ui.ColorAccent, Action: &ui.Action{ID: ChatAgentOpenActionID, Payload: ChatAgentOpenPayload{AgentID: id}}},
+			RowSpan{Text: "  "},
+			RowSpan{Text: "⇱ window", Role: ui.ColorAccent, Action: &ui.Action{ID: ChatAgentOpenActionID, Payload: ChatAgentOpenPayload{AgentID: id, Window: true}}},
+		)
+	}
+	return line
 }
 
 // paintToolTitle is shared by tool calls and code-authored command outcomes.

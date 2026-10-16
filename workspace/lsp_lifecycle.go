@@ -35,6 +35,10 @@ type lspDocument struct {
 	opened         bool
 	revision       uint64
 	syncedRevision uint64
+	// editor is the DocumentService view; probes counts agent requests that
+	// borrowed this document. Either keeps the server view alive.
+	editor bool
+	probes int
 }
 
 type lspClosedDocument struct {
@@ -50,7 +54,7 @@ func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 		fileDiagnostics: make(map[string][]LSPDiagnostic), docSymbols: make(map[string][]LSPSymbol),
 		fileLastSync: make(map[string]int64), fileDiagnosticServer: make(map[string]string),
 		serverDiagnosticCounts: make(map[string]diagnosticAggregate), issueCount: make(map[string]int),
-		diagnosticChanges: make(map[string]bool),
+		diagnosticChanges: make(map[string]bool), stateChanged: make(chan struct{}),
 	}
 	if len(runtimes) > 0 {
 		m.runtime = runtimes[0]
@@ -222,7 +226,7 @@ func (m *LSPManager) reconcile() bool {
 		m.mu.Unlock()
 		return true
 	}
-	if m.closed || m.paused || !m.settings.Enabled || m.runtime == nil || (!m.settings.StartOnOpen && !m.manualStart) {
+	if m.closed || m.paused || m.runtime == nil || !m.anyWantedLocked() {
 		m.mu.Unlock()
 		return false
 	}
@@ -258,10 +262,10 @@ func (m *LSPManager) reconcile() bool {
 	sort.Strings(paths)
 	for _, path := range paths {
 		doc := m.documents[path]
-		if doc.key != "" {
+		if doc.key != "" || !m.wantedLocked(doc) {
 			continue
 		}
-		spec, ok := m.settings.ResolveServer(path)
+		spec, ok := m.resolveServerLocked(path)
 		if !ok {
 			continue
 		}
@@ -289,7 +293,7 @@ func (m *LSPManager) reconcile() bool {
 	for _, path := range paths {
 		doc := m.documents[path]
 		state := m.states[doc.key]
-		if state == nil || state.stopped || len(doc.text) > m.settings.MaxDocumentBytes {
+		if state == nil || state.stopped || !m.wantedLocked(doc) || len(doc.text) > m.settings.MaxDocumentBytes {
 			continue
 		}
 		if doc.opened && (doc.syncedRevision == doc.revision || m.updateTimers[path] != nil) {
@@ -348,7 +352,7 @@ func (m *LSPManager) reconcile() bool {
 
 func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPClient, err error) {
 	m.mu.Lock()
-	stale := m.states[key] != state || state.closing || m.closed || m.paused || !m.settings.Enabled
+	stale := m.states[key] != state || state.closing || m.closed || m.paused || !m.keyWantedLocked(key)
 	if stale || err != nil {
 		m.mu.Unlock()
 		if client != nil {
@@ -416,8 +420,9 @@ func (m *LSPManager) OpenFile(_ context.Context, path, text string) {
 			doc.text = text
 			doc.revision++
 		}
+		doc.editor = true
 	} else {
-		m.documents[path] = &lspDocument{text: text, revision: 1}
+		m.documents[path] = &lspDocument{text: text, revision: 1, editor: true}
 	}
 	m.activeFilePath = path
 	m.recomputeActiveStatusLocked()
@@ -449,7 +454,7 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 		return
 	}
 	state := m.states[doc.key]
-	if state == nil || state.closing || state.stopped || state.status != LSPConnected || m.paused || !m.settings.Enabled || len(doc.text) > m.settings.MaxDocumentBytes {
+	if state == nil || state.closing || state.stopped || state.status != LSPConnected || m.paused || !m.wantedLocked(doc) || len(doc.text) > m.settings.MaxDocumentBytes {
 		m.mu.Unlock()
 		return
 	}
@@ -469,16 +474,35 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 	} else {
 		client.OpenFile(ctx, path, language, text)
 	}
+	m.mu.Lock()
+	m.broadcastLocked()
+	m.mu.Unlock()
 }
 
 func (m *LSPManager) CloseFile(_ context.Context, path string) {
 	path = filepath.Clean(path)
 	m.mu.Lock()
-	doc := m.documents[path]
-	delete(m.documents, path)
+	defer m.mu.Unlock()
 	if m.activeFilePath == path {
 		m.activeFilePath = ""
 	}
+	doc := m.documents[path]
+	if doc != nil {
+		doc.editor = false
+		if doc.probes > 0 {
+			// An agent request still borrows the server view; it is released
+			// with the last probe.
+			m.recomputeActiveStatusLocked()
+			return
+		}
+	}
+	m.dropDocumentLocked(path, doc)
+}
+
+// dropDocumentLocked forgets a document no holder wants and queues its
+// didClose; the worker sends it off the caller's goroutine.
+func (m *LSPManager) dropDocumentLocked(path string, doc *lspDocument) {
+	delete(m.documents, path)
 	if timer := m.updateTimers[path]; timer != nil {
 		timer.Stop()
 		delete(m.updateTimers, path)
@@ -503,7 +527,6 @@ func (m *LSPManager) CloseFile(_ context.Context, path string) {
 	if m.workerRunning {
 		m.signalLocked()
 	}
-	m.mu.Unlock()
 }
 
 func (m *LSPManager) UpdateFile(_ context.Context, path, text string) {
@@ -599,11 +622,8 @@ func (m *LSPManager) NotifyFileSave(ctx context.Context, path, text string, reas
 func (m *LSPManager) clientForFile(path string) LSPClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.paused || !m.settings.Enabled {
-		return nil
-	}
 	doc := m.documents[filepath.Clean(path)]
-	if doc == nil || !doc.opened {
+	if m.paused || doc == nil || !doc.opened || !m.wantedLocked(doc) {
 		return nil
 	}
 	state := m.states[doc.key]
@@ -618,7 +638,7 @@ func (m *LSPManager) clientForFile(path string) LSPClient {
 func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int) {
 	m.mu.Lock()
 	var clients []LSPClient
-	if !m.paused && m.settings.Enabled {
+	if !m.paused {
 		for _, state := range m.states {
 			if state.status == LSPConnected && !state.closing && pathWithin(filePathFromURI(state.rootURI), path) {
 				clients = append(clients, state.client)
@@ -750,7 +770,7 @@ func (m *LSPManager) requestClient(ctx context.Context, path string) (LSPClient,
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		state := m.states[key]
-		return !m.paused && !m.closed && m.settings.Enabled && m.settingsGeneration == generation && m.documents[path] == doc && doc.revision == revision && state != nil && !state.closing && !state.stopped && state.client == client
+		return !m.paused && !m.closed && m.wantedLocked(doc) && m.settingsGeneration == generation && m.documents[path] == doc && doc.revision == revision && state != nil && !state.closing && !state.stopped && state.client == client
 	}
 	return client, ctx, valid, cancel
 }
@@ -769,4 +789,49 @@ func lspServerKey(root string, spec ttypes.LSPServerSpec) string {
 	spec.LanguageID = ""
 	b, _ := json.Marshal(spec)
 	return fmt.Sprintf("%s|%x", root, sha256.Sum256(b))
+}
+
+// editorActiveLocked reports whether the editor's own documents may use
+// language servers. Agent probes are admitted separately by their callers.
+func (m *LSPManager) editorActiveLocked() bool {
+	return m.settings.Enabled && (m.settings.StartOnOpen || m.manualStart)
+}
+
+func (m *LSPManager) wantedLocked(doc *lspDocument) bool {
+	return doc != nil && (doc.probes > 0 || doc.editor && m.editorActiveLocked())
+}
+
+func (m *LSPManager) anyWantedLocked() bool {
+	for _, doc := range m.documents {
+		if m.wantedLocked(doc) {
+			return true
+		}
+	}
+	// Live or closing servers still need the worker for idle eviction and
+	// teardown even when no document wants them any more.
+	return len(m.states) > 0
+}
+
+func (m *LSPManager) keyWantedLocked(key string) bool {
+	for _, doc := range m.documents {
+		if doc.key == key && m.wantedLocked(doc) {
+			return true
+		}
+	}
+	return false
+}
+
+// broadcastLocked wakes probes waiting for a server or document transition.
+func (m *LSPManager) broadcastLocked() {
+	close(m.stateChanged)
+	m.stateChanged = make(chan struct{})
+}
+
+// resolveServerLocked maps a path to its configured server. The editor's
+// master switch is not consulted here: whether anyone may use the server is
+// decided per document by wantedLocked.
+func (m *LSPManager) resolveServerLocked(path string) (ttypes.LSPServerSpec, bool) {
+	settings := m.settings
+	settings.Enabled = true
+	return settings.ResolveServer(path)
 }

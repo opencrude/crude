@@ -31,6 +31,8 @@ func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(conte
 	case coreprotocol.SessionSettingsSave:
 		value := in.Settings.Value
 		value.SessionMainAgent, value.SessionOverrides, value.SessionMultiAgent = in.Settings.MainAgent, in.Settings.Overrides, in.Settings.MultiAgent
+		value.SessionCodeIntelligence = in.Settings.CodeIntelligence
+		value.SessionMaxSubAgents = in.Settings.MaxSubAgents
 		op, err = a.ws.PrepareSessionSettingsSaveAtRevision(in.SessionID, value, in.ExpectedRevision)
 	case coreprotocol.SessionSettingsReset:
 		op, err = a.ws.PrepareSessionSettingsResetAtRevision(in.SessionID, in.ExpectedRevision)

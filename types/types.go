@@ -308,6 +308,12 @@ type Settings struct {
 	// SessionMultiAgent is the explicit session override for sub-agent
 	// spawning. nil means inherit the workspace/profile default.
 	SessionMultiAgent *bool `json:"-"`
+	// SessionCodeIntelligence lets this session's agents use language servers
+	// independently of the editor; nil follows the workspace LSP switch.
+	SessionCodeIntelligence *bool `json:"-"`
+	// SessionMaxSubAgents caps this session's concurrently running sub-agents;
+	// nil follows the workspace setting.
+	SessionMaxSubAgents *int `json:"-"`
 	// SessionDisabledCapabilities lists installed skill/MCP IDs this session
 	// and every agent it runs have turned off. Sorted; nil means none.
 	SessionDisabledCapabilities []string       `json:"-"`
@@ -902,3 +908,7 @@ type ModelsErrorMsg string
 
 type SelectionTickMsg time.Time
 type HistoryMessagesMsg []ChatMessage
+
+// MaxConcurrentSubAgents bounds the configurable sub-agent limit. Every
+// running child holds a model connection and tool processes.
+const MaxConcurrentSubAgents = 32

@@ -706,6 +706,9 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 		},
 		"workspace": map[string]any{"configuration": true, "workspaceFolders": true},
 		"general":   map[string]any{"positionEncodings": []string{"utf-16"}},
+		// Crude patch: progress lets the client tell "still analyzing" from
+		// "analyzed, no problems" before reporting diagnostics as settled.
+		"window": map[string]any{"workDoneProgress": true},
 	}
 }
 

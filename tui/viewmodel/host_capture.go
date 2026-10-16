@@ -14,7 +14,7 @@ func (m *App) chatHostVisible() bool {
 	if m.isEditorActive() {
 		return false
 	}
-	if m.isComparisonActive() {
+	if m.hostTabActive() {
 		return false
 	}
 	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {

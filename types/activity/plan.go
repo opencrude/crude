@@ -14,6 +14,16 @@ type Plan struct {
 	Next                                 *Step
 }
 
+// SameRevision reports whether two snapshots describe the same committed plan
+// revision. Connected shells receive a fresh copy on every read, so pointer
+// identity is never plan identity.
+func SameRevision(a, b *Plan) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.ID == b.ID && a.Revision == b.Revision && a.Status == b.Status
+}
+
 type Step struct {
 	Number               int
 	Text, Status, Reason string

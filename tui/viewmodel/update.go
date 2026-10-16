@@ -136,6 +136,14 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case liveConflictMsg:
 		return m, m.applyLiveConflict(msg)
+	case gitMessageEditorMsg:
+		return m, m.applyGitMessageEditor(msg)
+	case gitMergeDecisionMsg:
+		return m, m.applyGitMergeDecision(msg)
+	case gitConflictLoadedMsg:
+		return m, m.applyGitConflictLoaded(msg)
+	case gitConflictSavedMsg:
+		return m, m.applyGitConflictSaved(msg)
 	case editorRecoveryClearedMsg:
 		m.applyEditorRecoveryCleared(msg)
 		return m, nil
@@ -380,8 +388,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case types.SelectionTickMsg:
 		if m.chatScreen != nil && m.rootHost != nil {
-			m.rootHost.Focus(m.chatScreen.ID())
-			res := m.rootHost.Handle(msg)
+			host := m.hostFor(m.chatScreen.ID())
+			host.Focus(m.chatScreen.ID())
+			res := host.Handle(msg)
 			if res.Cmd != nil {
 				cmds = append(cmds, res.Cmd)
 			}
@@ -1311,9 +1320,13 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 			return tea.Batch(result.Cmd, m.closePopupWindowByID(fw.ID))
 		}
 		if result.Action != nil && result.Action.ID == "window.titleaction" {
-			// Terminal windows use the title action as their Dock button.
+			// Terminal and surface windows use the title action as their Dock button.
 			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok {
 				m.dockTerminal(id)
+				return result.Cmd
+			}
+			if group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID)); ok {
+				m.dockPaneWindow(group)
 				return result.Cmd
 			}
 		}
@@ -1321,6 +1334,7 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 			target, _ := result.Action.Payload.(ui.ClipboardPasteTarget)
 			return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID))
 		}
+		result.Action = windowScreenAction(fw, result.Action)
 		cmd := m.handleHostAction(result.Action)
 		return tea.Batch(result.Cmd, cmd)
 	}
@@ -1346,6 +1360,14 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	defer m.syncRootFocus()
 	if tab.Resource.Kind == window.ResourceLocalDiff {
 		m.closeLocalDiff(tab.ID)
+		return nil
+	}
+	if tab.Resource.Kind == window.ResourcePanel {
+		// Closing a surface's tab returns it to the dock, hidden.
+		m.setPlacement(tab.Resource.ID, placeDock)
+		m.Win.CloseTabByID(tab.ID)
+		m.handleTabSwitch()
+		m.forceFrame()
 		return nil
 	}
 	if tab.Resource.Kind == window.ResourceGitReview {
@@ -1429,7 +1451,7 @@ func (m *App) handleTabSwitch() {
 		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}
-	if activeTab.Resource.Kind == window.ResourceGitReview || activeTab.Resource.Kind == window.ResourceLocalDiff {
+	if activeTab.Resource.Kind == window.ResourceGitReview || activeTab.Resource.Kind == window.ResourceLocalDiff || activeTab.Resource.Kind == window.ResourcePanel {
 		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}

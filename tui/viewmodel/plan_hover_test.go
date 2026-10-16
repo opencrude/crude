@@ -271,3 +271,47 @@ func TestPlanHoverTextIsSelectableAndCopiable(t *testing.T) {
 		t.Fatalf("selection closed the popover or changed the draft: %q", app.Input.Value())
 	}
 }
+
+// Connected shells receive a fresh copy of the plan on every frame. Comparing
+// pointers treated each copy as a new plan, re-laid out the popover and wiped
+// the selection mid-drag, so nothing could be copied in the real product.
+func TestPlanHoverSelectionSurvivesFreshPlanCopiesEachFrame(t *testing.T) {
+	app := newFullTestApp(t)
+	app.Tree.Visible = false
+	app.width, app.height = 160, 40
+	app.AddOrchestrator("solo")
+	original := hoverPlanFixture("Selectable goal", 4)
+	frame := func() {
+		copied := *original
+		copied.Steps = append([]activity.Step(nil), original.Steps...)
+		paintHoverFixture(app, map[string]*activity.Plan{"solo": &copied})
+	}
+	frame()
+	screen := app.mainPanes.agentViews["solo"].chat
+	anchor := app.planActivityRect(screen)
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 5, Y: anchor.Y})
+	frame()
+	fw := app.overlayHost.Window(ui.OverlayPlanHover)
+	if app.planHover == nil || fw == nil {
+		t.Fatal("plan popover did not open")
+	}
+	x, y := fw.Position()
+	w, h := fw.Size()
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: x + 3, Y: y + 1})
+	frame()
+	app.dispatchMouseClick(tea.MouseClickMsg{X: x + 2, Y: y + 2, Button: tea.MouseLeft})
+	frame()
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: x + w - 2, Y: y + h - 2, Button: tea.MouseLeft})
+	frame()
+	_, cmd := app.dispatchMouseRelease(tea.MouseReleaseMsg{X: x + w - 2, Y: y + h - 2, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("a drag across per-frame plan copies copied nothing")
+	}
+	// A genuinely newer revision still replaces the projection.
+	newer := hoverPlanFixture("Replacement goal", 4)
+	newer.Revision = original.Revision + 1
+	paintHoverFixture(app, map[string]*activity.Plan{"solo": newer})
+	if text := hoverPopoverText(app); !strings.Contains(text, "Replacement goal") {
+		t.Fatalf("newer revision not shown: %q", text)
+	}
+}

@@ -202,3 +202,68 @@ func TestPanelDividerDragsBetweenListAndPreview(t *testing.T) {
 		t.Fatalf("divider %d → %d, want +12", before, panel.divider)
 	}
 }
+
+// The status row offers the controls the repository state needs, and the
+// one that finishes a merge survives a narrow panel.
+func TestStatusRowControlsFollowRepositoryState(t *testing.T) {
+	panel := New(theme.DefaultDark())
+	snapshot := workspace.GitSnapshot{RepositoryRoot: "/r", Branch: "main", Upstream: "origin/main", Ahead: 2, Behind: 1, Remotes: []string{"origin"}}
+	panel.SetSnapshot(snapshot)
+	labels := func() []string {
+		panel.Layout(ui.LayoutContext{}, ui.Rect{W: 60, H: 20})
+		var out []string
+		for _, button := range panel.statusButtons() {
+			if !button.Bounds().Empty() {
+				out = append(out, button.Semantics().Label)
+			}
+		}
+		return out
+	}
+	if got := strings.Join(labels(), ","); got != "Pull ↓1,Push ↑2" && got != "Fetch,Pull ↓1,Push ↑2" {
+		t.Fatalf("sync controls = %q", got)
+	}
+	snapshot.Operation = workspace.GitOperationMerge
+	snapshot.Changes = []workspace.GitChange{{Path: "a.go", Area: workspace.GitAreaConflict}}
+	panel.SetSnapshot(snapshot)
+	if got := strings.Join(labels(), ","); got != "Resolve 1,Abort" {
+		t.Fatalf("conflict controls = %q", got)
+	}
+	snapshot.Changes = []workspace.GitChange{{Path: "a.go", Area: workspace.GitAreaStaged}}
+	panel.SetSnapshot(snapshot)
+	if got := strings.Join(labels(), ","); got != "Complete,Abort" {
+		t.Fatalf("resolved controls = %q", got)
+	}
+	panel.SetRemoteBusy("Push")
+	if got := strings.Join(labels(), ","); got != "Stop" {
+		t.Fatalf("busy controls = %q", got)
+	}
+}
+
+// Either side of the split view can be hidden and restored; the other side
+// takes the whole width meanwhile.
+func TestSplitSidesCollapseAndRestore(t *testing.T) {
+	panel := New(theme.DefaultDark())
+	panel.SetSnapshot(workspace.GitSnapshot{RepositoryRoot: "/r", Branch: "main", Changes: []workspace.GitChange{{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}}})
+	layout := func() { panel.Layout(ui.LayoutContext{}, ui.Rect{W: 140, H: 30}) }
+	key := func(k string) {
+		panel.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: rune(k[0]), Text: k}))
+		layout()
+	}
+	layout()
+	if panel.list.Bounds().Empty() || panel.preview.Bounds().Empty() {
+		t.Fatal("split view not showing both sides")
+	}
+	key("[")
+	if !panel.list.Bounds().Empty() || panel.preview.Bounds().W < 130 {
+		t.Fatalf("list not hidden: list=%v preview=%v", panel.list.Bounds(), panel.preview.Bounds())
+	}
+	key("[")
+	key("]")
+	if !panel.preview.Bounds().Empty() || panel.list.Bounds().W < 130 {
+		t.Fatalf("preview not hidden: list=%v preview=%v", panel.list.Bounds(), panel.preview.Bounds())
+	}
+	key("]")
+	if panel.list.Bounds().Empty() || panel.preview.Bounds().Empty() {
+		t.Fatal("split view not restored")
+	}
+}

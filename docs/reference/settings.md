@@ -525,6 +525,18 @@ tools on the next model request, including within an active turn. Toggling alone
 does not start an idle model request. Persisted child history may instantiate a
 runner on resume for review; this does not enable new launches.
 
+**Concurrent sub-agents is a ceiling, not a queue.** Main Agent settings
+(Application or Workspace) hold **Concurrent sub-agents** (`max_sub_agents`;
+Auto = 4, maximum 32). A session may override it in Session Settings; the
+override is persisted with the session (`max_sub_agents`) and, like every
+session field, also settable through the control API. Changes apply live to the
+session's runner: lowering the limit never cancels running children, it only
+refuses new launches until enough finish. A refused launch names the running
+children and the remedy (`agent_wait` / `agent_control`). Resetting the
+workspace/app field to Auto restores the default, not the last explicit value.
+Sub-agents start minimized in the shell; see
+[main view panes](main-view-panes.md#new-agents-surface-a-tab-immediately).
+
 **Auto permissions are an explicit, bounded opt-in.** Settings → Agents →
 Auto Review Agent selects an explicit account and model; blank values never
 silently inherit the main model. Its Review tab owns thinking effort, response
@@ -854,6 +866,24 @@ views; final native and distinct-host runtime acceptance remains separate.
 Resource fields default to two servers, a 300-second idle timeout and a 2 MiB
 document limit, edited on Code Intelligence (the document limit in MB). Remaining
 acceptance work is tracked in [LSP acceptance](../plans/lsp-acceptance.md).
+
+**Agent code intelligence is a separate, session-bound switch.** Session
+Settings → **Code Intelligence** (`code_intelligence`, persisted per session and
+settable through the control API) gives that session's agents the `lsp` tool
+(diagnostics, definition, references, hover, document symbols) and a post-edit
+diagnostics notice for files an agent changed. It is independent of the editor
+master enable: with editor LSP off, an agent's probe may still start the
+configured server for the files it asks about; with the session switch off,
+agents never start a server and the editor keeps its own behavior. A user stop
+(paused server) blocks both. Probes only use servers configured and enabled
+under Language Servers and are bounded by the same resource limits; they never
+install, download or guess a server. Agent-owned documents are refcounted
+separately from editor views, so closing an editor never closes a document an
+agent probe holds (and vice versa). Diagnostics settle on the server's progress
+reports, not a fixed sleep. Server launch and resource settings (command,
+arguments, environment, settings, initialization options, limits) are
+human-owned: an agent may toggle `lsp.languages.<id>.enabled` through the
+control API but cannot change what runs.
 
 ## Semantic settings control and authority
 

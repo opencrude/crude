@@ -99,7 +99,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.openFilePicker()
 					return m, nil
 				case "file.close":
-					if m.isComparisonActive() {
+					if m.hostTabActive() {
 						return m, m.handleAgentTabClose(m.Win.ActiveIndex())
 					}
 					if m.emptyPaneActive() {
@@ -169,15 +169,15 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.chatScreen.ClearSelection()
 		return m, nil
 	}
-	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+	if m.sessionDeckCapturesInput() && m.focusedPopup() == nil {
 		return m, m.handleSessionDeckEvent(msg)
 	}
-	if m.isComparisonActive() && m.focusTarget() != FocusTree && m.focusTarget() != FocusTabBar && m.focusTarget() != FocusFloatingWindow && !m.termDockOwnsKeys() {
+	if m.hostTabActive() && m.focusTarget() != FocusTree && m.focusTarget() != FocusTabBar && m.focusTarget() != FocusFloatingWindow && !m.termDockOwnsKeys() {
 		m.syncRootFocus()
-		result := m.rootHost.Handle(msg)
+		result := m.mainHost().Handle(msg)
 		return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
 	}
-	if m.termDockOwnsKeys() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+	if m.termDockOwnsKeys() && m.focusedPopup() == nil {
 		return m.dispatchTermDockKey(msg)
 	}
 	if m.emptyPaneActive() && m.focusTarget() == FocusInput {
@@ -191,7 +191,8 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// close them with the window X / Close action, not Esc.
 	if msg.Code == tea.KeyEsc && m.windowManager != nil {
 		if topWin := m.windowManager.TopWindow(); topWin != nil && topWin.Focusable() {
-			if !ui.IsTerminalOverlay(ui.OverlayID(topWin.ID)) && topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
+			_, pane := paneGroupFromOverlay(ui.OverlayID(topWin.ID))
+			if !pane && !ui.IsTerminalOverlay(ui.OverlayID(topWin.ID)) && topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
 				m.closePopupWindowByID(topWin.ID)
 				return m, nil
 			}
@@ -550,8 +551,9 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.tabBarVisible() && m.tabScreen != nil && m.rootHost != nil {
 		m.syncTabBarHost()
-		m.rootHost.Focus(m.tabScreen.TabsControl().ID())
-		res := m.rootHost.Handle(msg)
+		host := m.hostFor(m.tabScreen.TabsControl().ID())
+		host.Focus(m.tabScreen.TabsControl().ID())
+		res := host.Handle(msg)
 		cmd := m.handleTabBarHostResult(res)
 		if msg.Code == tea.KeyEsc && m.FocusStack.Top() == FocusTabBar {
 			m.FocusStack.Pop()
@@ -651,8 +653,9 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 				}
 			}
 			if m.chatScreen != nil && m.rootHost != nil {
-				m.rootHost.Focus(m.chatScreen.ID())
-				res := m.rootHost.Handle(msg)
+				host := m.hostFor(m.chatScreen.ID())
+				host.Focus(m.chatScreen.ID())
+				res := host.Handle(msg)
 				if res.Handled {
 					return m, nil
 				}
@@ -771,10 +774,10 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 // (or no explicit owner) reaches the chat input.
 func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+	if m.sessionDeckCapturesInput() && m.focusedPopup() == nil {
 		return m, m.handleSessionDeckEvent(msg)
 	}
-	if m.termDockOwnsKeys() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+	if m.termDockOwnsKeys() && m.focusedPopup() == nil {
 		return m.dispatchTermDockPaste(msg)
 	}
 
@@ -806,8 +809,9 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.tabBarVisible() && m.tabScreen != nil {
 			m.syncTabBarHost()
-			m.rootHost.Focus(m.tabScreen.TabsControl().ID())
-			res := m.rootHost.Handle(msg)
+			host := m.hostFor(m.tabScreen.TabsControl().ID())
+			host.Focus(m.tabScreen.TabsControl().ID())
+			res := host.Handle(msg)
 			return m, m.handleTabBarHostResult(res)
 		}
 		return m, nil

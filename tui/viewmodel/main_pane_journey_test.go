@@ -334,7 +334,7 @@ func TestMainPaneJourneyPreviewMatchesSourceCollapse(t *testing.T) {
 			_, _ = app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
 			_ = app.View()
 			g := app.mainPanes.groups[app.Win.GroupOf(tab)]
-			actual := app.mainPanes.screenRect(g.Bounds(), ui.Rect{W: g.Bounds().W, H: g.Bounds().H})
+			actual := g.screen(ui.Rect{W: g.Bounds().W, H: g.Bounds().H})
 			if actual != preview {
 				t.Fatalf("preview=%+v actual=%+v after source collapse", preview, actual)
 			}

@@ -40,7 +40,7 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 		git = workspace.NewGitService(root)
 		// Discard's recovery owner is currently logical-root scoped. Do not
 		// substitute raw Git discard and lose its mandatory safety receipt.
-		if request.Method == coreprotocol.PreviewGitDiscard || request.Method == coreprotocol.DiscardGitReviewed || request.Method == coreprotocol.DiscardGitHunk {
+		if request.Method == coreprotocol.PreviewGitDiscard || request.Method == coreprotocol.DiscardGitReviewed || request.Method == coreprotocol.DiscardGitHunk || request.Method == coreprotocol.ResolveGitConflict {
 			return func(context.Context) coreprotocol.Response {
 				return fault(request, "unavailable", "isolated Git discard requires an execution-root Local History adapter")
 			}, true
@@ -155,6 +155,48 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 		return serviceCall(request, func(ctx context.Context, in coreprotocol.DiscardGitHunkRequest) (coreprotocol.DiscardGitHunkResult, error) {
 			value, err := ws.DiscardGitHunk(ctx, in.Comparison, in.Hunk)
 			return coreprotocol.DiscardGitHunkResult{SafetyID: value}, err
+		})
+	case coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation:
+		return serviceCall(request, func(ctx context.Context, _ coreprotocol.GitRemoteRequest) (coreprotocol.GitRemoteResult, error) {
+			if git == nil {
+				return coreprotocol.GitRemoteResult{}, errors.New("git service is unavailable")
+			}
+			var out coreprotocol.GitRemoteResult
+			var err error
+			switch request.Method {
+			case coreprotocol.GitFetch:
+				err = git.Fetch(ctx)
+			case coreprotocol.GitPull:
+				out.Sync, err = git.Pull(ctx)
+			case coreprotocol.GitPush:
+				err = git.Push(ctx)
+			case coreprotocol.GitAbortOperation:
+				err = git.AbortOperation(ctx)
+			default:
+				err = git.ContinueOperation(ctx)
+			}
+			return out, err
+		})
+	case coreprotocol.GitMerge:
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.GitMergeRequest) (coreprotocol.GitRemoteResult, error) {
+			if git == nil {
+				return coreprotocol.GitRemoteResult{}, errors.New("git service is unavailable")
+			}
+			sync, err := git.Merge(ctx, in.Ref)
+			return coreprotocol.GitRemoteResult{Sync: sync}, err
+		})
+	case coreprotocol.GitConflictFile:
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.GitConflictFileRequest) (coreprotocol.GitConflictFileResult, error) {
+			if git == nil {
+				return coreprotocol.GitConflictFileResult{}, errors.New("git service is unavailable")
+			}
+			file, err := git.ConflictFile(ctx, in.Path)
+			return coreprotocol.GitConflictFileResult{File: file}, err
+		})
+	case coreprotocol.ResolveGitConflict:
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.ResolveGitConflictRequest) (coreprotocol.ResolveGitConflictResult, error) {
+			value, err := ws.ResolveGitConflict(ctx, in.Path, in.Fingerprint, in.Choices)
+			return coreprotocol.ResolveGitConflictResult{SafetyID: value}, err
 		})
 	case coreprotocol.SearchMemories:
 		return serviceCall(request, func(ctx context.Context, in coreprotocol.SearchMemoriesRequest) (coreprotocol.SearchMemoriesResult, error) {
@@ -287,7 +329,9 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 
 func serviceMutation(method string) bool {
 	switch method {
-	case coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk, coreprotocol.PinMemory, coreprotocol.ForgetMemoryRecord, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
+	case coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
+		coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation, coreprotocol.ResolveGitConflict,
+		coreprotocol.PinMemory, coreprotocol.ForgetMemoryRecord, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
 		return true
 	}
 	return false

@@ -12,6 +12,7 @@ func TestAgentTabViewsExposeDomainStateWithoutTUIObjects(t *testing.T) {
 	root := manager.AddOrchestrator("root", workspace.NewAgentState("root", nil, nil))
 	root.Category = "default"
 	manager.AddSubAgent("child", "root", "Research", "model", "researcher", workspace.NewAgentState("child", nil, nil))
+	app.AgentView.SetHidden("child", false) // opened by the user
 	app.AgentView.SetActive("child")
 
 	views := app.AgentTabViews()

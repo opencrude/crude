@@ -21,6 +21,14 @@ const (
 	PreviewGitDiscard    = "git.discard_preview"
 	DiscardGitReviewed   = "git.discard_reviewed"
 	DiscardGitHunk       = "git.discard_hunk"
+	GitFetch             = "git.fetch"
+	GitPull              = "git.pull"
+	GitPush              = "git.push"
+	GitMerge             = "git.merge"
+	GitAbortOperation    = "git.abort_operation"
+	GitContinueOperation = "git.continue_operation"
+	GitConflictFile      = "git.conflict_file"
+	ResolveGitConflict   = "git.resolve_conflict"
 	SearchMemories       = "memory.search"
 	SearchMemoryEpisodes = "memory.episodes"
 	InspectMemory        = "memory.inspect"
@@ -104,6 +112,28 @@ type GitInspectCommitRequest struct {
 }
 type GitInspectCommitResult struct {
 	Evidence workspace.GitCommitEvidence `json:"evidence"`
+}
+
+type GitRemoteRequest struct{}
+type GitRemoteResult struct {
+	Sync workspace.GitSyncResult `json:"sync"`
+}
+type GitMergeRequest struct {
+	Ref string `json:"ref"`
+}
+type GitConflictFileRequest struct {
+	Path string `json:"path"`
+}
+type GitConflictFileResult struct {
+	File workspace.GitConflictFile `json:"file"`
+}
+type ResolveGitConflictRequest struct {
+	Path        string                        `json:"path"`
+	Fingerprint string                        `json:"fingerprint"`
+	Choices     []workspace.GitConflictChoice `json:"choices"`
+}
+type ResolveGitConflictResult struct {
+	SafetyID string `json:"safety_id"`
 }
 
 type GitCheckoutRequest struct {

@@ -69,6 +69,7 @@ func (w *Window) PreviewTabPlacement(p TabPlacement) (*PaneNode, GroupID) {
 		return &c
 	}
 	copy.paneRoot = clone(w.paneRoot)
+	copy.floating = append([]*PaneNode(nil), w.floating...)
 	target := copy.PlaceTab(p)
 	return copy.paneRoot, target
 }
@@ -117,6 +118,11 @@ func (w *Window) GroupIDs() []GroupID {
 
 func (w *Window) groupNode(group GroupID) *PaneNode {
 	w.ensureGroups()
+	for _, leaf := range w.floating {
+		if leaf.Group == group {
+			return leaf
+		}
+	}
 	var find func(*PaneNode) *PaneNode
 	find = func(n *PaneNode) *PaneNode {
 		if n.Split == nil {
@@ -164,14 +170,101 @@ func (w *Window) FocusGroup(group GroupID) bool {
 	if w.groupNode(group) == nil {
 		return false
 	}
-	w.focusedGroup = group
+	w.focus(group)
 	return true
+}
+
+// focus is the single writer of focusedGroup. Leaving a docked group for a
+// floating one remembers where docked work continues.
+func (w *Window) focus(group GroupID) {
+	if w.focusedGroup != group && w.focusedGroup != 0 && !w.IsFloating(w.focusedGroup) {
+		w.lastDocked = w.focusedGroup
+	}
+	w.focusedGroup = group
+}
+
+// HasGroup reports whether group is a docked or floating leaf.
+func (w *Window) HasGroup(group GroupID) bool { return w.groupNode(group) != nil }
+
+// IsFloating reports whether group is shown in its own window.
+func (w *Window) IsFloating(group GroupID) bool {
+	for _, leaf := range w.floating {
+		if leaf.Group == group {
+			return true
+		}
+	}
+	return false
+}
+
+// FloatingGroupIDs returns window groups in creation order.
+func (w *Window) FloatingGroupIDs() []GroupID {
+	ids := make([]GroupID, 0, len(w.floating))
+	for _, leaf := range w.floating {
+		ids = append(ids, leaf.Group)
+	}
+	return ids
+}
+
+// AllGroupIDs returns docked leaves in visual order, then window groups.
+func (w *Window) AllGroupIDs() []GroupID {
+	return append(w.GroupIDs(), w.FloatingGroupIDs()...)
+}
+
+// DockedGroup is where docked work continues: the focused group when it is
+// docked, else the docked group focused before a window took focus.
+func (w *Window) DockedGroup() GroupID {
+	w.ensureGroups()
+	if !w.IsFloating(w.focusedGroup) && paneContains(w.paneRoot, w.focusedGroup) {
+		return w.focusedGroup
+	}
+	if paneContains(w.paneRoot, w.lastDocked) {
+		return w.lastDocked
+	}
+	return w.GroupIDs()[0]
+}
+
+func paneContains(n *PaneNode, group GroupID) bool {
+	if n == nil || group == 0 {
+		return false
+	}
+	if n.Split == nil {
+		return n.Group == group
+	}
+	return paneContains(n.First, group) || paneContains(n.Second, group)
+}
+
+// DetachTab moves an existing tab into a new floating group and focuses it.
+// The tab keeps its identity; an emptied docked group collapses as usual.
+func (w *Window) DetachTab(id TabID) GroupID {
+	index := w.IndexOf(id)
+	if index < 0 {
+		return 0
+	}
+	if w.IsFloating(w.tabs[index].Group) && len(w.GroupTabs(w.tabs[index].Group)) == 1 {
+		return w.tabs[index].Group
+	}
+	leaf := newLeaf()
+	w.floating = append(w.floating, leaf)
+	if !w.MoveTabToGroup(id, leaf.Group, 0) {
+		w.floating = w.floating[:len(w.floating)-1]
+		return 0
+	}
+	return leaf.Group
+}
+
+// DockGroup returns every tab of a floating group to the docked group where
+// work continues, keeping identities and the window's selection.
+func (w *Window) DockGroup(group GroupID) bool {
+	if !w.IsFloating(group) {
+		return false
+	}
+	return w.MergeGroup(group, w.DockedGroup())
 }
 
 // SplitGroup inserts an empty focused leaf before or after the original leaf.
 func (w *Window) SplitGroup(group GroupID, dir ui.Direction, before bool) GroupID {
 	leaf := w.groupNode(group)
-	if leaf == nil || (dir != ui.Horizontal && dir != ui.Vertical) {
+	if leaf == nil || w.IsFloating(group) || (dir != ui.Horizontal && dir != ui.Vertical) {
 		return 0
 	}
 	old := *leaf
@@ -180,7 +273,7 @@ func (w *Window) SplitGroup(group GroupID, dir ui.Direction, before bool) GroupI
 	if before {
 		leaf.First, leaf.Second = leaf.Second, leaf.First
 	}
-	w.focusedGroup = added.Group
+	w.focus(added.Group)
 	return added.Group
 }
 
@@ -234,7 +327,7 @@ func (w *Window) MoveTabToGroup(id TabID, target GroupID, beforeTab TabID) bool 
 	copy(w.tabs[insert+1:], w.tabs[insert:])
 	w.tabs[insert] = tab
 	w.groupActive[target] = id
-	w.focusedGroup = target
+	w.focus(target)
 	if source != target {
 		w.RemoveEmptyGroup(source)
 	}
@@ -244,6 +337,23 @@ func (w *Window) MoveTabToGroup(id TabID, target GroupID, beforeTab TabID) bool 
 // RemoveEmptyGroup collapses its parent, preserving the sibling subtree and
 // its split sizing. Focus chooses the previous visual leaf, or next if first.
 func (w *Window) RemoveEmptyGroup(group GroupID) bool {
+	if w.IsFloating(group) {
+		if len(w.GroupTabs(group)) != 0 {
+			return false
+		}
+		floating := make([]*PaneNode, 0, len(w.floating)-1)
+		for _, leaf := range w.floating {
+			if leaf.Group != group {
+				floating = append(floating, leaf)
+			}
+		}
+		w.floating = floating
+		delete(w.groupActive, group)
+		if w.focusedGroup == group {
+			w.focusedGroup = w.DockedGroup()
+		}
+		return true
+	}
 	ids := w.GroupIDs()
 	if len(ids) == 1 || w.groupNode(group) == nil || len(w.GroupTabs(group)) != 0 {
 		return false
@@ -312,19 +422,20 @@ func (w *Window) MergeGroup(source, target GroupID) bool {
 	w.tabs = append(retained[:insert], append(moved, retained[insert:]...)...)
 	w.groupActive[target] = selected
 	if w.focusedGroup == source {
-		w.focusedGroup = target
+		w.focus(target)
 	}
 	w.RemoveEmptyGroup(source)
 	return true
 }
 
-// MergeAllGroups preserves the focused group's identity and selected tab.
+// MergeAllGroups merges the docked layout, preserving the docked focus
+// group's identity and selected tab. Windows stay windows.
 func (w *Window) MergeAllGroups() bool {
 	ids := w.GroupIDs()
 	if len(ids) < 2 {
 		return false
 	}
-	target := w.focusedGroup
+	target := w.DockedGroup()
 	for _, group := range ids {
 		if group != target {
 			w.MergeGroup(group, target)

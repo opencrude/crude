@@ -58,7 +58,7 @@ func TestLanguageServerNativeFieldAuthorityAndFilterOwner(t *testing.T) {
 	for _, tc := range []struct {
 		id    string
 		human bool
-	}{{lspFieldCommand, false}, {lspFieldArgs, false}, {lspFieldEnvironment, true}} {
+	}{{lspFieldCommand, true}, {lspFieldArgs, true}, {lspFieldEnvironment, true}} {
 		id := ui.NewID(LanguageServerFormID, tc.id)
 		effect, human, err := s.ControlMetadata(id, "form.changed")
 		if err != nil || human != tc.human || (effect == control.Authority) != tc.human {

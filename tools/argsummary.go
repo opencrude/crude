@@ -116,6 +116,24 @@ func SummarizeArgs(tool, argsStr string) string {
 		}
 		return argsStr
 	}
+	if tool == "lsp" {
+		operation, target := ExtractArg(argsStr, "operation"), ExtractArg(argsStr, "path")
+		if target == "" {
+			var batch struct {
+				Paths []string `json:"paths"`
+			}
+			if json.Unmarshal([]byte(argsStr), &batch) == nil && len(batch.Paths) > 0 {
+				target = batch.Paths[0]
+				if len(batch.Paths) > 1 {
+					target = fmt.Sprintf("%d files", len(batch.Paths))
+				}
+			}
+		}
+		if symbol := ExtractArg(argsStr, "symbol"); symbol != "" && operation != "diagnostics" && operation != "symbols" {
+			target = joinOperands(symbol, target)
+		}
+		return joinOperands(operation, target)
+	}
 	if tool == "update_plan" || tool == "get_plan" {
 		return ExtractArg(argsStr, "plan_id")
 	}

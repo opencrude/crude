@@ -96,6 +96,9 @@ type Agent struct {
 	// PrepareStep snapshots live tools and runtime notices between requests,
 	// never while a parallel tool batch is using the previous snapshot.
 	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
+	// BeforeFinish runs once per run when the model gives a final answer.
+	// Returned notices are appended and the run takes one more step.
+	BeforeFinish func() []provider.ChatMessage
 	// RequestBoundary lets the owner apply a pending connection change (account,
 	// model, thinking effort) strictly between requests, before the step reads
 	// the provider. It reports whether the connection changed.

@@ -681,8 +681,11 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	}
 	cfg.Agents.ActiveProfile = profileName
 	cfg.Agents.Enabled = agents.Enabled
-	if agents.MaxConcurrent > 0 {
-		cfg.Agents.MaxConcurrent = agents.MaxConcurrent
+	// Zero is Auto: clearing the field must restore the default, not keep
+	// the last explicit value.
+	cfg.Agents.MaxConcurrent = agents.MaxConcurrent
+	if cfg.Agents.MaxConcurrent <= 0 {
+		cfg.Agents.MaxConcurrent = DefaultAgentsConfig().MaxConcurrent
 	}
 	profile := cfg.Agents.Profiles[profileName]
 	enabled := agents.Enabled

@@ -163,7 +163,6 @@ func TestConnectedLocalBoardOverflowAndPickerNavigation(t *testing.T) {
 	// A narrow real layout uses More rather than a second dispatch engine.
 	one.app.width = 32
 	one.app.Tree.Visible = false
-	one.app.workspacePanelMaximized = true
 	if r := invokeLocalControl(t, runtime, shells, one, "boardbrowser/more", ui.ControlOperation{Verb: "activate"}, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}

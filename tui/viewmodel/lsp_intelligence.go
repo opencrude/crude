@@ -70,7 +70,7 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	if m.ws.LSPMgr() == nil || !m.ws.LSPMgr().Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.LSPPopup.CompletionID != "" {
 		return nil
 	}
-	if m.windowManager != nil && m.windowManager.Focused() != nil {
+	if m.focusedPopup() != nil {
 		return nil
 	}
 	raw := ed.LineText(ed.CursorLine())

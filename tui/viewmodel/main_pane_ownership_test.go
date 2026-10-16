@@ -89,6 +89,7 @@ func TestMainPaneOwnershipCompletedChildKeepsSingleFamilyChrome(t *testing.T) {
 	app.Input.SetInput("ROOT_DRAFT_MARKER")
 	child := app.ws.AgentMgr().AddSubAgent("completed-child", "first", "Completed", "model", "crafter", workspace.NewAgentState("completed-child", nil, nil))
 	child.State.Completed = true
+	app.AgentView.SetHidden(child.ID, false) // opened for review
 	app.syncAgentWindowTabs()
 	app.Win.MoveTabToGroup(app.Win.TabByTitle(app.agentTabTitle(child.ID)).ID, right, 0)
 	app.focusMainGroup(right)

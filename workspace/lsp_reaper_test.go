@@ -39,3 +39,7 @@ func (c *reapableClient) RequestRename(context.Context, string, int, int, string
 func (c *reapableClient) RequestCompletions(context.Context, string, int, int) []CompletionItem {
 	return nil
 }
+
+func (*reapableClient) AwaitDiagnostics(context.Context, string) ([]LSPDiagnostic, bool) {
+	return nil, true
+}

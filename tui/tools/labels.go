@@ -78,6 +78,7 @@ var toolVerbs = map[string][3]string{
 	"agent_narrow_claims":     {"Preparing scope change", "Narrowing file scope", "Narrowed file scope"},
 	"agent_configure":         {"Preparing model change", "Changing agent model", "Changed agent model"},
 	"crude_commands":          {"Preparing command discovery", "Finding Crude commands", "Found Crude commands"},
+	"lsp":                     {"Preparing code query", "Asking language server", "Language server"},
 	"crude_control":           {"Preparing Crude operation", "Running Crude operation", "Ran Crude operation"},
 }
 

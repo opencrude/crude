@@ -29,6 +29,9 @@ func (app *App) openBoardBrowser() tea.Cmd {
 		app.boardBrowser = boardbrowser.New(app.Theme)
 		app.termDock.SetPanel(termdock.PanelBoard, app.boardBrowser)
 	}
+	if app.revealPlacedPanel(termdock.PanelBoard) {
+		return app.boardRequestCmd(app.boardBrowser.Request("refresh"))
+	}
 	app.termDockHeight = defaultWorkspacePanelHeight(termdock.PanelBoard)
 	if height := app.workspacePanelHeights[termdock.PanelBoard]; height > 0 {
 		app.termDockHeight = height
@@ -41,7 +44,7 @@ func (app *App) openBoardBrowser() tea.Cmd {
 }
 
 func (app *App) toggleBoardBrowser() tea.Cmd {
-	if app.termDock != nil && app.termDock.IsOpen() && app.termDock.ActivePanel() == termdock.PanelBoard {
+	if app.termDock != nil && app.placementOf(termdock.PanelBoard) == placeDock && app.termDock.IsOpen() && app.termDock.ActivePanel() == termdock.PanelBoard {
 		app.hideWorkspacePanel()
 		return nil
 	}

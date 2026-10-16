@@ -111,6 +111,19 @@ func SettingsAuthority(path string) bool {
 			return true
 		}
 	}
+	if parts[0] == "lsp" && len(parts) > 1 {
+		// A server definition is a program launch: its command, arguments and
+		// server settings (gopls buildFlags=-toolexec=…, for example) run code
+		// outside command review. Resource limits decide how hard the user's
+		// machine works. Agents may switch features on and off, never these.
+		if parts[1] == "languages" {
+			return parts[len(parts)-1] != "enabled" || len(parts) != 4
+		}
+		switch parts[1] {
+		case "max_servers", "server_threads", "server_memory_mb", "idle_timeout_seconds", "max_document_bytes":
+			return true
+		}
+	}
 	if parts[0] == "agents" || parts[0] == "overrides" || strings.HasPrefix(path, "memory.memory_category.") || (len(parts) > 1 && parts[0] == "value" && parts[1] == "Agents") {
 		return !OrdinaryAgentLeaf(parts[len(parts)-1])
 	}

@@ -162,7 +162,9 @@ func (m *App) computeContentLayout() contentLayout {
 // configureShell updates the root-tree slots and screen projections for one
 // frame. It must run after computeContentLayout so the rects are fresh.
 func (m *App) configureShell() {
+	m.syncPaneWindowFocus()
 	m.syncEditorTabPresentation()
+	m.syncPaneWindows()
 	lay := m.computeContentLayout()
 	m.mainPanes.configureMessages()
 	frame := m.frameInsets()
@@ -306,6 +308,11 @@ func (m *App) syncRootFocus() {
 			if current := m.rootHost.Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
 				id = current
 			}
+		} else if content := m.activePanelTabContent(); content != nil {
+			id = preferredFocus(content)
+			if current := m.rootHost.Focused(); panelOwnsFocus(content, current) {
+				id = current
+			}
 		} else if view := m.activeLocalDiff(); view != nil {
 			id = view.screen.DocumentID()
 			if current := m.rootHost.Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
@@ -317,7 +324,19 @@ func (m *App) syncRootFocus() {
 	default:
 		id = m.chatScreen.ID()
 	}
-	m.rootHost.Focus(id)
+	// The focused group may be mounted in a window: focus lives in exactly
+	// one host, so the other paints no second caret.
+	host := m.hostFor(id)
+	var pane *ui.Host
+	if m.Win != nil {
+		pane = m.paneWindowHost(m.Win.ActiveGroup())
+	}
+	if host != m.rootHost {
+		m.rootHost.Focus(ui.RootID)
+	} else if pane != nil {
+		pane.Focus(ui.RootID)
+	}
+	host.Focus(id)
 }
 
 func (m *App) syncFloatingTerminalFocus() {
@@ -352,7 +371,7 @@ func (m *App) syncTerminalFocusReports() {
 	focusedFloating := ""
 	wmFocused := false
 	if m.windowManager != nil {
-		if fw := m.windowManager.Focused(); fw != nil {
+		if fw := m.focusedPopup(); fw != nil {
 			wmFocused = true
 			if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
 				if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok {
@@ -568,7 +587,7 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 		return "", []ui.HintSegment{ui.TextSeg("N new session · O open file · Tab choose"), ui.ActionSeg("pane.next"), ui.ActionSeg("file.close")}
 	}
 	if m.windowManager != nil {
-		if fw := m.windowManager.Focused(); fw != nil {
+		if fw := m.focusedPopup(); fw != nil {
 			switch fw.ID {
 			case string(ui.OverlayFindReplace):
 				// The in-buffer popup stays chrome-clean (no hint row):

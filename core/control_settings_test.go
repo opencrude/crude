@@ -135,3 +135,43 @@ func TestControlSessionRootPinResetPreservesOtherRoleFields(t *testing.T) {
 		}
 	}
 }
+
+// Agents may turn code intelligence on for their session through settings.set,
+// and the change reaches the live session; reset returns it to inheritance.
+func TestControlSessionCodeIntelligenceSetAndReset(t *testing.T) {
+	a := controlExecutionFixture(t)
+	var sessionID string
+	for _, front := range a.ws.Sessions {
+		sessionID = front.SessionID
+		break
+	}
+	backend := a.ws.BackendSession(sessionID)
+	call := func(command string, input map[string]any) control.Result {
+		t.Helper()
+		input["scope"], input["path"], input["session_revision"] = "session", "code_intelligence", backend.SettingsSnapshots().Revision
+		raw, _ := json.Marshal(input)
+		run, apply, _ := a.prepareControlDomain(control.Request{ID: command, CommandID: command, Target: control.Target{SessionID: sessionID}, Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
+		out := run(context.Background())
+		if apply != nil {
+			apply(out)
+		}
+		return out
+	}
+	if out := call("settings.set", map[string]any{"value": true}); out.Fault != nil {
+		t.Fatal(out.Fault)
+	}
+	if got := backend.SettingsSnapshots().Effective.SessionCodeIntelligence; got == nil || !*got {
+		t.Fatalf("session override after set = %v", got)
+	}
+	if out := call("settings.reset", map[string]any{}); out.Fault != nil {
+		t.Fatal(out.Fault)
+	}
+	if got := backend.SettingsSnapshots().Effective.SessionCodeIntelligence; got != nil {
+		t.Fatalf("session override after reset = %v", *got)
+	}
+	raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": "lsp.languages.go.command", "value": "/tmp/evil", "expected_revision": "old"})
+	run, _, _ := a.prepareControlDomain(control.Request{ID: "server", CommandID: "settings.set", Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
+	if out := run(context.Background()); out.Fault == nil || out.Fault.Code != control.Denied {
+		t.Fatalf("server command change accepted: %#v", out)
+	}
+}

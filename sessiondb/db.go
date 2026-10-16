@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS session_flags (
     session_id  TEXT PRIMARY KEY,
     multi_agent INTEGER,
     main_agent TEXT NOT NULL DEFAULT '',
+    code_intelligence INTEGER,
+    max_sub_agents INTEGER,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -417,6 +419,8 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE session_agent_settings ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE usage_requests ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE session_flags ADD COLUMN code_intelligence INTEGER",
+		"ALTER TABLE session_flags ADD COLUMN max_sub_agents INTEGER",
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil &&

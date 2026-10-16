@@ -27,7 +27,7 @@ detailed contracts.
 | Package | Owns |
 |---|---|
 | `agent/` | Agent turn loop, supervisor and recovery, request boundaries, guidance intake, tool dispatch. |
-| `session/` | Session runtime: tools execution, memory pipeline, children, collaboration wiring, compaction triggers. |
+| `session/` | Session runtime: tools execution, memory pipeline, children (live sub-agent limit), collaboration wiring, compaction triggers, agent code intelligence (`code_intelligence.go`) and plan discipline (`plan_discipline.go`). |
 | `sessiondb/` | Session SQLite schema: transcript, recovery checkpoints, context publication, queue. |
 | `prompt/` | Every code-authored model instruction template ([prompt architecture](../reference/prompt-architecture.md)). |
 | `provider/` | Wire protocols, streaming, failure classification, connection accounting. |
@@ -95,6 +95,8 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `shell_root.go`, `layout.go` | Root shell composite and geometry |
 | `keyboard.go`, `mouse.go`, `popupmouse.go` | Key and pointer dispatch |
 | `main_panes.go`, `tab_bar.go`, `agent_tabs.go`, `editor_tabs.go` | Main-pane groups and tab lifecycle |
+| `floating_panes.go`, `panel_placement.go` | Pane windows (floating tab groups) and dock/tab/window placement of workspace surfaces ([main view panes](../reference/main-view-panes.md#pane-windows)) |
+| `git_sync.go` | Git fetch/pull/push/merge commands, results and the merge resolver lifecycle |
 | `agent_events.go`, `agent_view.go` | Agent event presentation and shell-local agent visibility |
 | `focus.go`, `focus_stack.go` | Shell-owned focus targets and LIFO |
 | `session_selection.go` | Shell-selected session/model and owner-fenced settings results |
@@ -114,7 +116,9 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `agent_status_events.go` | Accepted-event status reduction |
 | `agent_state_events.go` | Tool handling sub-methods on AgentState |
 | `conversation.go` | Canonical live message store (Conversation/Message) |
-| `lsp_manager.go` | LSPManager (connections, diagnostics cache) |
+| `lsp_manager.go` | LSPManager (connections, diagnostics cache, editor/probe document holders) |
+| `lsp_probe.go` | Agent code-intelligence probes (diagnostics, definition, references, hover, symbols) |
+| `git_remote.go`, `git_conflicts.go` | Remote Git operations, merge state, conflict parsing and Local-History-backed resolution |
 | `references.go` | ReferenceStore (SQLite-backed @references) |
 | `file_ops.go` | FileOpsService (filesystem mutations) |
 | `project_search.go` | ProjectSearchService (Find in Files execution) |
@@ -146,7 +150,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `guidance_compile.go` | Oversized-guidance compiler/verifier requests and compiled projection |
 | `memory.go` | Memory extraction/consolidation instructions and prompt data envelopes |
 | `permission.go` | No-tools permission-review policy and narrowing overlay |
-| `runtime.go` | Turn context, continuity, plan, memory recall, delegation, and wake projections |
+| `runtime.go` | Turn context, continuity, plan (including drift/reconcile notices), memory recall, diagnostics, delegation, and wake projections |
 
 ## Data locations
 

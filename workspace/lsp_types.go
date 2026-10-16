@@ -51,6 +51,9 @@ type LSPClient interface {
 	RequestHover(context.Context, string, int, int) (string, error)
 	RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error)
 	RequestCompletions(context.Context, string, int, int) []CompletionItem
+	// AwaitDiagnostics returns the open document's diagnostics once the
+	// server has settled, or the latest seen and false when ctx ends first.
+	AwaitDiagnostics(context.Context, string) ([]LSPDiagnostic, bool)
 }
 
 // LSPRuntime creates transport clients; language and project policy stay in the workspace.

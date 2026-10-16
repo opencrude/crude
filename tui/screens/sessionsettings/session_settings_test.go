@@ -758,3 +758,48 @@ func TestMultiAgentControlAlignsUnderModelColumn(t *testing.T) {
 		t.Fatalf("inherit text must be right of the model column: inh=%d model=%d", inh, modelCol)
 	}
 }
+
+// The row shows the workspace LSP switch until the user changes it; an
+// untouched row never pins an override on save.
+func TestCodeIntelligenceRowInheritsUntilChanged(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{
+		Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "router", Model: "m"}},
+	}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	screen.SetWorkspaceCodeIntelligence(true)
+	field := screen.formModel.Field(fieldCodeIntelligence)
+	if field == nil || !ui.BoolFieldValue(field) || !field.Inherited || field.InheritedFrom != "workspace" {
+		t.Fatalf("code intelligence row = %#v", field)
+	}
+	if got := screen.ToSettings(); got.SessionCodeIntelligence != nil {
+		t.Fatalf("untouched row pinned %v", *got.SessionCodeIntelligence)
+	}
+	screen.formModel.SetValue(fieldCodeIntelligence, ui.StringValue("off"))
+	got := screen.ToSettings()
+	if got.SessionCodeIntelligence == nil || *got.SessionCodeIntelligence {
+		t.Fatalf("turning code intelligence off did not pin it: %v", got.SessionCodeIntelligence)
+	}
+	screen.ResetToWorkspace(settings)
+	if got := screen.ToSettings(); got.SessionCodeIntelligence != nil {
+		t.Fatal("reset kept the session override")
+	}
+}
+
+// The sub-agent limit shows the workspace value until changed, then pins it.
+func TestSessionSubAgentLimitInheritsUntilChanged(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{MaxConcurrent: 6,
+		Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "router", Model: "m"}},
+	}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	field := screen.formModel.Field(fieldMaxSubAgents)
+	if field == nil || field.Value.String() != "6" || !field.Inherited {
+		t.Fatalf("limit row = %#v", field)
+	}
+	if got := screen.ToSettings(); got.SessionMaxSubAgents != nil {
+		t.Fatal("untouched limit pinned")
+	}
+	screen.formModel.SetValue(fieldMaxSubAgents, ui.StringValue("2"))
+	if got := screen.ToSettings(); got.SessionMaxSubAgents == nil || *got.SessionMaxSubAgents != 2 {
+		t.Fatalf("changed limit = %v", got.SessionMaxSubAgents)
+	}
+}

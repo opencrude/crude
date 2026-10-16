@@ -26,7 +26,7 @@ func agentControlPath(category int, id string) string {
 	if role == "" {
 		return ""
 	}
-	leaf := map[string]string{fieldConnection: "account_id", fieldModel: "Model", fieldThinkingEffort: "ThinkingEffort", "agent-description": "Description", "agent-instructions": "Instructions", fieldCtxWindow: "ModelContextWindow", fieldMaxOutput: "ModelMaxOutput", fieldTemperature: "ModelTemperature", fieldTopP: "ModelTopP", fieldContextCompaction: "context_compaction_percent", "context-retention-tokens": "context_retention_tokens", fieldServiceTier: "service_tier", fieldMultiAgent: "multi_agent"}[id]
+	leaf := map[string]string{fieldConnection: "account_id", fieldModel: "Model", fieldThinkingEffort: "ThinkingEffort", "agent-description": "Description", "agent-instructions": "Instructions", fieldCtxWindow: "ModelContextWindow", fieldMaxOutput: "ModelMaxOutput", fieldTemperature: "ModelTemperature", fieldTopP: "ModelTopP", fieldContextCompaction: "context_compaction_percent", "context-retention-tokens": "context_retention_tokens", fieldServiceTier: "service_tier", fieldMultiAgent: "multi_agent", fieldMaxSubAgents: "MaxConcurrent"}[id]
 	if strings.HasPrefix(id, fieldModalityPrefix) {
 		leaf = "ModelModalities"
 	}
@@ -123,6 +123,9 @@ func (s *WorkspaceSettingsSurface) agentDraftAuthority() bool {
 		after.Agents.Categories[c.id] = cfg
 		if c.roleIndex == catMain {
 			after.Agents.Enabled = ui.BoolFieldValue(c.draft.Field(fieldMultiAgent))
+			if field := c.draft.Field(fieldMaxSubAgents); field != nil {
+				after.Agents.MaxConcurrent = maxSubAgentsValue(field)
+			}
 		}
 	} else {
 		if after.Agents.AgentProfiles == nil {

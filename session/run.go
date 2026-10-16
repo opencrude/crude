@@ -848,6 +848,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
 	s.bindAgentControl(ctx, ag, userInput.ControlTarget)
+	s.bindCodeIntelligence(ag)
+	s.bindPlanDiscipline(ag)
 	defer s.FileOwnership().Release(agent.AgentID(o.ID))
 	var pendingCollaboration []collaboration.PendingDelivery
 	defer func() {

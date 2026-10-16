@@ -2,6 +2,7 @@ package safety
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -162,6 +163,20 @@ func isPathUnderPrefix(path string, prefix string) bool {
 	return len(abs) == len(absPrefix) || abs[len(absPrefix)] == filepath.Separator
 }
 
+// isStreamDevicePath reports whether a path names a stream pseudo-device that
+// cannot damage the system when read or written (`2>/dev/null`, `<(…)` paths).
+func isStreamDevicePath(path string) bool {
+	if strings.EqualFold(path, "NUL") {
+		return true
+	}
+	switch filepath.ToSlash(filepath.Clean(path)) {
+	case "/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom",
+		"/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/tty":
+		return true
+	}
+	return strings.HasPrefix(filepath.ToSlash(path), "/dev/fd/")
+}
+
 func isBlockDevicePath(path string) bool {
 	cleaned := filepath.Clean(path)
 	if runtime.GOOS == "windows" {
@@ -216,18 +231,56 @@ var remoteSourceCommands = map[string]bool{
 // that is only data (heredoc bodies, quoted arguments) cannot trigger it.
 var remotePipeToShellRe = regexp.MustCompile(`(?i)\b(curl|wget|ssh|scp|sftp|nc|ncat|netcat|socat|fetch|xh)\b[^|]*\|\s*(bash|sh|zsh|dash|fish|ksh|ash)\b`)
 
-var expandCfg = &expand.Config{
-	Env: expand.FuncEnviron(os.Getenv),
+// symbolicGetenv resolves variables this process can see. Variables set only
+// for the command (CRUDE_TEMP_DIR, a preceding assignment) stay as `$NAME`, so
+// "$CRUDE_TEMP_DIR/out" is never read as the root-level path "/out".
+func symbolicGetenv(name string) string {
+	if value, ok := os.LookupEnv(name); ok {
+		return value
+	}
+	return "$" + name
 }
 
+var errProcSubstUnresolved = errors.New("process substitution is not resolved")
+
+// expandCfg resolves words without running anything. The expander calls
+// ProcSubst unconditionally, so it must be set: `<(cmd)` stays unresolved and
+// the word falls back to its printed form, while the walker still classifies
+// the commands inside it.
+var expandCfg = &expand.Config{
+	Env: expand.FuncEnviron(symbolicGetenv),
+	ProcSubst: func(ps *syntax.ProcSubst) (string, error) {
+		return "", errProcSubstUnresolved
+	},
+}
+
+// preprocessCommand prepares a command for the bash parser. On POSIX a
+// backslash is shell syntax (escapes, `\`+newline continuations), so it is
+// kept. Windows commands use it as the path separator; it becomes `/` there,
+// except before a line break, where it still continues the line.
 func preprocessCommand(cmd string) string {
 	normalized := cmd
-	normalized = strings.ReplaceAll(normalized, "\\", "/")
+	if runtime.GOOS == "windows" {
+		normalized = windowsSeparatorsToSlash(normalized)
+	}
 	for cdPrefixRe.MatchString(normalized) {
 		normalized = cdPrefixRe.ReplaceAllString(normalized, "")
 	}
 	normalized = cmdPrefixRe.ReplaceAllString(normalized, "")
 	return normalized
+}
+
+func windowsSeparatorsToSlash(cmd string) string {
+	var b strings.Builder
+	b.Grow(len(cmd))
+	for i := 0; i < len(cmd); i++ {
+		if cmd[i] == '\\' && (i+1 == len(cmd) || (cmd[i+1] != '\n' && cmd[i+1] != '\r')) {
+			b.WriteByte('/')
+			continue
+		}
+		b.WriteByte(cmd[i])
+	}
+	return b.String()
 }
 
 func extractCmdsSimple(cmd string) (calls []string, pipedToShell bool, redirectTargets []string, allArgs []string) {
@@ -350,6 +403,9 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 				obfuscated = true
 			}
 		case *syntax.Redirect:
+			if !writesFile(n.Op) {
+				return true
+			}
 			target := resolveWord(n.Word)
 			if target != "" {
 				redirectTargets = append(redirectTargets, target)
@@ -358,6 +414,17 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 		return true
 	})
 	return
+}
+
+// writesFile reports whether a redirect opens its target for writing. Input
+// redirects and descriptor duplication (`>&2`) never modify a path.
+func writesFile(op syntax.RedirOperator) bool {
+	switch op {
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.AppClob, syntax.RdrAll, syntax.AppAll,
+		syntax.RdrAllClob, syntax.AppAllClob, syntax.RdrInOut:
+		return true
+	}
+	return false
 }
 
 func callExpr(stmt *syntax.Stmt) *syntax.CallExpr {
@@ -437,6 +504,7 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 	var pipedToShell bool
 	var redirectTargets []string
 	var allArgs []string
+	var shellCalls []shellCall
 	var prog *syntax.File
 
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
@@ -447,9 +515,21 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		calls, pipedToShell, redirectTargets, stmts, obfuscated = extractCmds(parsedProg)
 		res.Obfuscated = obfuscated
 		allArgs = collectAllArgs(stmts)
+		for _, stmt := range stmts {
+			call := shellCall{args: make([]string, len(stmt.Args))}
+			for i, w := range stmt.Args {
+				call.args[i] = resolveWord(w)
+			}
+			shellCalls = append(shellCalls, call)
+		}
 		prog = parsedProg
 	} else {
 		calls, pipedToShell, redirectTargets, allArgs = extractCmdsSimple(preprocessed)
+		// Unparsed text cannot be split into argument lists reliably, so each
+		// command is judged against every argument: never less strict.
+		for _, name := range calls {
+			shellCalls = append(shellCalls, shellCall{args: append([]string{name}, allArgs...)})
+		}
 		if len(calls) == 0 {
 			res.Risk = RiskUnknown
 			res.Reason = fmt.Sprintf("Could not parse or extract command: %v", parseErr)
@@ -464,6 +544,9 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 	res.RedirectTargets = redirectTargets
 
 	for _, rt := range redirectTargets {
+		if isStreamDevicePath(rt) {
+			continue
+		}
 		for _, sp := range systemPrefixes {
 			if isPathUnderPrefix(rt, sp) {
 				res.TargetsSystem = true
@@ -490,7 +573,7 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 			continue
 		}
 		resolved := a
-		if strings.HasPrefix(a, "~/") || a == "~" {
+		if strings.HasPrefix(a, "~/") || a == "~" || isStreamDevicePath(a) {
 			continue
 		}
 		for _, sp := range systemPrefixes {
@@ -515,9 +598,7 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		return res
 	}
 
-	firstCmd := calls[0]
-	res.BaseCommand = firstCmd
-	argsAfterFirst := allArgs
+	res.BaseCommand = calls[0]
 
 	if res.Obfuscated {
 		res.Risk = RiskDestructive
@@ -576,7 +657,57 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		return res
 	}
 
-	lowCmd := strings.ToLower(firstCmd)
+	// Writing into a system path is destructive whatever command produces the
+	// bytes; read-only commands below only stay safe without such a redirect.
+	if systemWrite := systemRedirectTargets(redirectTargets); len(systemWrite) > 0 {
+		res.Risk = RiskDestructive
+		res.Reason = "Redirecting output to system path: " + strings.Join(systemWrite, ", ")
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
+	}
+
+	// Every command in a list or pipeline runs, so the line is as risky as its
+	// riskiest command: `cd x && rm -rf y` is a recursive delete, not a cd.
+	var worst *CommandSafetyResult
+	for _, call := range shellCalls {
+		verdict := classifyCall(call)
+		if worst == nil || riskRank(verdict.Risk) > riskRank(worst.Risk) {
+			worst = verdict
+		}
+	}
+	res.BaseCommand = worst.BaseCommand
+	res.Risk, res.Reason, res.Suggestion = worst.Risk, worst.Reason, worst.Suggestion
+	if res.ReadsCredentials && riskRank(res.Risk) < riskRank(RiskDestructive) {
+		res.Risk = RiskDestructive
+		res.Reason = "Command reads credentials or secrets"
+		res.Suggestion = ""
+	}
+	if riskRank(res.Risk) >= riskRank(RiskDestructive) {
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+	} else {
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+	}
+	return res
+}
+
+// classifyCall rates one simple command by what it runs, after unwrapping
+// launchers such as env, timeout and xargs.
+func classifyCall(call shellCall) *CommandSafetyResult {
+	args := unwrapCommand(call.args)
+	res := &CommandSafetyResult{BaseCommand: args[0]}
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "-") || strings.HasPrefix(a, "~/") || a == "~" || isStreamDevicePath(a) {
+			continue
+		}
+		for _, sp := range systemPrefixes {
+			if isPathUnderPrefix(a, sp) {
+				res.TargetsSystem = true
+				res.AffectedPaths = append(res.AffectedPaths, a)
+				break
+			}
+		}
+	}
+	lowCmd := strings.ToLower(filepath.Base(args[0]))
 
 	switch lowCmd {
 	case "ls", "cat", "grep", "egrep", "fgrep", "rg", "ripgrep",
@@ -594,117 +725,138 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		"dir", "where", "findstr", "more", "less",
 		"python3":
 		res.Risk = RiskSafe
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
+
+	case "ps", "pgrep", "sleep", "test", "[", "jq", "tree", "seq", "tac", "rev",
+		"shuf", "column", "cmp", "sha256sum", "sha1sum", "md5sum", "cksum",
+		"command", "hash", "tput", "tty", "lsof", "mktemp", "yes",
+		"exit", "return", "set", "export", "unset", "local", "declare", "readonly",
+		"read", "shift", "wait", "break", "continue", ":", "ulimit", "umask", "jobs":
+		res.Risk = RiskSafe
+		return res
+
+	case "gofmt", "goimports":
+		if hasShortFlag(args, 'w') {
+			res.Risk = RiskProjectWrite
+			res.Reason = "Formats files in place"
+			return res
+		}
+		res.Risk = RiskSafe
+		return res
+
+	case "golangci-lint":
+		if containsArg(args, "--fix") || hasArgPrefix(args, "--fix=") {
+			res.Risk = RiskProjectWrite
+			res.Reason = "Applies lint fixes in place"
+			return res
+		}
+		res.Risk = RiskSafe
+		return res
+
+	case "find":
+		return classifyFind(args, res)
+
+	case "tee":
+		res.Risk = RiskProjectWrite
+		res.Reason = "Writes files"
+		for _, a := range args[1:] {
+			if !strings.HasPrefix(a, "-") && !isStreamDevicePath(a) {
+				return res
+			}
+		}
+		res.Risk = RiskSafe
+		res.Reason = ""
 		return res
 
 	case "git":
-		res = classifyGit(argsAfterFirst, res)
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res = classifyGit(args, res)
 		return res
 
 	case "npm":
-		res = classifyNpm(argsAfterFirst, res)
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res = classifyNpm(args, res)
 		return res
 
 	case "pip", "pip3":
-		res = classifyPip(argsAfterFirst, res)
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res = classifyPip(args, res)
 		return res
 
 	case "go":
-		res = classifyGo(argsAfterFirst, res)
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res = classifyGo(args, res)
 		return res
 
 	case "cargo":
-		res = classifyCargo(argsAfterFirst, res)
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res = classifyCargo(args, res)
 		return res
 
 	case "rm", "rmdir", "unlink":
-		res = classifyRm(argsAfterFirst, res)
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res = classifyRm(args, res)
 		return res
 
 	case "mv", "cp":
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = "Moving/copying to system path"
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
 		res.Reason = "File move/copy"
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "sed":
-		if hasFlag(argsAfterFirst, "i") {
+		if hasShortFlag(args, 'i') || containsArg(args, "--in-place") || hasArgPrefix(args, "--in-place=") {
 			if res.TargetsSystem {
 				res.Risk = RiskDestructive
 				res.Reason = "In-place edit of system files"
-				lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 				return res
 			}
 			res.Risk = RiskProjectWrite
 			res.Reason = "In-place file edit"
-			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskSafe
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "mkdir", "touch", "ln", "rename", "install":
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Modifying system path: %s", strings.Join(res.AffectedPaths, ", "))
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "chmod", "chown", "chattr", "setfacl":
-		isRec := hasRecursiveFlag(allArgs)
+		isRec := hasRecursiveFlag(args)
 		if res.TargetsSystem && isRec {
 			res.Risk = RiskBlocked
 			res.Reason = fmt.Sprintf("Recursive permission change on system path: %s", strings.Join(res.AffectedPaths, ", "))
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Permission change on system path: %s", strings.Join(res.AffectedPaths, ", "))
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		if isRec {
 			res.Risk = RiskDestructive
 			res.Reason = "Recursive permission change"
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "sudo", "doas":
 		res.Risk = RiskDestructive
 		res.Reason = "Privilege escalation — running as root"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "su":
 		res.Risk = RiskDestructive
 		res.Reason = "Switching user"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "dd":
-		for _, a := range allArgs {
+		for _, a := range args {
 			if strings.HasPrefix(a, "of=") {
 				target := strings.TrimPrefix(a, "of=")
 				for _, sp := range systemPrefixes {
@@ -712,7 +864,6 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 						res.Risk = RiskBlocked
 						res.Reason = fmt.Sprintf("Writing directly to block device: %s", target)
 						res.Suggestion = "This destroys all data on the target device"
-						lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 						return res
 					}
 				}
@@ -720,14 +871,12 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 					res.Risk = RiskBlocked
 					res.Reason = fmt.Sprintf("Writing directly to block device: %s", target)
 					res.Suggestion = "This destroys all data on the target device"
-					lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 					return res
 				}
 			}
 		}
 		res.Risk = RiskDestructive
 		res.Reason = "Direct disk write — can destroy data"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "mkfs", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs",
@@ -736,74 +885,63 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		res.Risk = RiskBlocked
 		res.Reason = "Disk partitioning/formatting — can destroy all data on a drive"
 		res.Suggestion = "This should not be done by an AI agent. If needed, do it manually."
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "shred", "wipe", "wipefs", "blkdiscard":
 		res.Risk = RiskBlocked
 		res.Reason = "Irreversible data destruction"
 		res.Suggestion = "This cannot be undone. Do not run this from an AI agent."
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "reboot", "shutdown", "poweroff", "halt", "init":
 		res.Risk = RiskDestructive
 		res.Reason = "System state change"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "apt", "apt-get", "aptitude", "dpkg", "rpm",
 		"yum", "dnf", "zypper", "pacman":
-		if containsFlag(allArgs, "--allow-unauthenticated") {
+		if containsFlag(args, "--allow-unauthenticated") {
 			res.Risk = RiskBlocked
 			res.Reason = "Installing packages without authentication check — security risk"
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskDestructive
 		res.Reason = "Package manager — modifies system packages"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "curl", "wget":
 		res.Risk = RiskNetwork
 		res.Reason = "Network request"
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "ssh", "scp", "sftp", "rsync":
 		res.Risk = RiskNetwork
 		res.Reason = "Remote connection — network access"
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "nc", "ncat", "netcat", "socat", "telnet", "ftp", "ping":
 		res.Risk = RiskNetwork
 		res.Reason = "Network tool — external connection"
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "docker", "podman", "nerdctl":
-		if hasAnyArg(allArgs, "run", "exec", "build", "push", "pull") {
-			res.Risk = RiskDestructive
-			res.Reason = "Container operation with potential system impact"
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		if len(args) == 2 && (args[1] == "--version" || args[1] == "version" || args[1] == "info") ||
+			hasAnyArg(args, "ps", "images", "inspect", "logs") {
+			res.Risk = RiskSafe
 			return res
 		}
 		res.Risk = RiskDestructive
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res.Reason = "Container operation with potential system impact"
 		return res
 
 	case "eval", "source", ".":
 		res.Risk = RiskDestructive
 		res.Reason = "Shell code evaluation — can execute arbitrary code"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "kill", "pkill", "killall":
 		res.Risk = RiskProjectWrite
 		res.Reason = "Process termination"
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "passwd", "chpasswd", "adduser", "useradd",
@@ -811,52 +949,122 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		res.Risk = RiskBlocked
 		res.Reason = "User/group management — should not be done by an AI agent"
 		res.Suggestion = "Manage users manually or use configuration management tools"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "crontab", "at", "batch":
 		res.Risk = RiskDestructive
 		res.Reason = "Scheduling commands — possible persistence mechanism"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "systemctl", "service":
-		if hasAnyArg(allArgs, "enable", "disable", "start", "stop", "restart") {
+		if hasAnyArg(args, "enable", "disable", "start", "stop", "restart") {
 			res.Risk = RiskDestructive
 			res.Reason = "System service modification"
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskSafe
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
-		return res
-	}
-
-	if prog != nil && isHeredocEval(prog) {
-		res.Risk = RiskDestructive
-		res.Reason = "Evaluating code from heredoc — possible arbitrary code execution"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
-		return res
-	}
-
-	if res.ReadsCredentials {
-		res.Risk = RiskDestructive
-		res.Reason = "Command reads credentials or secrets"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
 	if res.TargetsSystem {
 		res.Risk = RiskDestructive
 		res.Reason = fmt.Sprintf("Command targets system files: %s", strings.Join(res.AffectedPaths, ", "))
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
 	res.Risk = RiskUnknown
 	res.Reason = "Unknown command — requires confirmation"
-	lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 	return res
+}
+
+func systemRedirectTargets(targets []string) []string {
+	var out []string
+	for _, rt := range targets {
+		if isStreamDevicePath(rt) {
+			continue
+		}
+		for _, sp := range systemPrefixes {
+			if isPathUnderPrefix(rt, sp) {
+				out = append(out, rt)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// shellCall is one simple command: args[0] is the command name.
+type shellCall struct {
+	args []string
+}
+
+// launcherValueFlags lists, per launcher, the options that consume the next
+// argument, so the launched command is found after them.
+var launcherValueFlags = map[string]map[string]bool{
+	"env":     {"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true},
+	"timeout": {"-s": true, "--signal": true, "-k": true, "--kill-after": true},
+	"nice":    {"-n": true, "--adjustment": true},
+	"ionice":  {"-c": true, "--class": true, "-n": true, "--classdata": true},
+	"stdbuf":  {"-i": true, "-o": true, "-e": true},
+	"xargs": {"-I": true, "-n": true, "--max-args": true, "-P": true, "--max-procs": true, "-L": true,
+		"--max-lines": true, "-d": true, "--delimiter": true, "-s": true, "--max-chars": true,
+		"-a": true, "--arg-file": true, "-E": true},
+	"time": {}, "nohup": {}, "setsid": {}, "exec": {}, "command": {},
+}
+
+// unwrapCommand returns the command a launcher runs (`env X=1 go test`,
+// `timeout 60 go test`, `xargs rm`). A launcher with nothing to launch, or
+// `command -v` lookups, is returned unchanged.
+func unwrapCommand(args []string) []string {
+	for len(args) > 1 {
+		name := strings.ToLower(filepath.Base(args[0]))
+		valueFlags, ok := launcherValueFlags[name]
+		if !ok {
+			return args
+		}
+		if name == "command" && (containsArg(args, "-v") || containsArg(args, "-V")) {
+			return args
+		}
+		i := 1
+		for i < len(args) {
+			a := args[i]
+			switch {
+			case a == "--":
+				i++
+			case strings.HasPrefix(a, "-") && len(a) > 1:
+				i++
+				if valueFlags[a] && i < len(args) {
+					i++
+				}
+				continue
+			case name == "env" && strings.Contains(a, "="):
+				i++
+				continue
+			case name == "timeout" && a != "" && (a[0] >= '0' && a[0] <= '9'):
+				i++
+			}
+			break
+		}
+		if i >= len(args) {
+			return args
+		}
+		args = args[i:]
+	}
+	return args
+}
+
+// hasShortFlag reports whether a single-dash option cluster (`-n`, `-ni`,
+// `-i.bak`) sets the given letter. Long options and operands never match.
+func hasShortFlag(args []string, letter byte) bool {
+	for _, a := range args[1:] {
+		if len(a) < 2 || a[0] != '-' || a[1] == '-' {
+			continue
+		}
+		if strings.IndexByte(a[1:], letter) >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func collectAllArgs(stmts []*syntax.CallExpr) []string {
@@ -869,24 +1077,13 @@ func collectAllArgs(stmts []*syntax.CallExpr) []string {
 	return all
 }
 
-func hasFlag(args []string, flag string) bool {
-	for _, a := range args {
-		a = strings.TrimLeft(a, "-")
-		if strings.Contains(a, flag) {
-			return true
-		}
-	}
-	return false
+func hasRecursiveFlag(args []string) bool {
+	return containsArg(args, "--recursive") || hasShortFlag(args, 'r') || hasShortFlag(args, 'R')
 }
 
-func hasRecursiveFlag(args []string) bool {
+func hasArgPrefix(args []string, prefix string) bool {
 	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			continue
-		}
-		a = strings.ToLower(a)
-		a = strings.TrimLeft(a, "-")
-		if a == "recursive" || strings.Contains(a, "r") {
+		if strings.HasPrefix(a, prefix) {
 			return true
 		}
 	}
@@ -922,23 +1119,37 @@ func hasAnyArg(args []string, targets ...string) bool {
 	return false
 }
 
-func isHeredocEval(prog *syntax.File) bool {
-	hasHeredoc := false
-	var firstCmd string
-	syntax.Walk(prog, func(node syntax.Node) bool {
-		switch n := node.(type) {
-		case *syntax.Redirect:
-			if n.Hdoc != nil {
-				hasHeredoc = true
+// classifyFind treats find as a read unless it deletes, writes a listing to
+// a file, or runs commands; an -exec command is judged like any other.
+func classifyFind(args []string, res *CommandSafetyResult) *CommandSafetyResult {
+	worst := &CommandSafetyResult{BaseCommand: args[0], Risk: RiskSafe}
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-delete":
+			worst = &CommandSafetyResult{BaseCommand: args[0], Risk: RiskDestructive, Reason: "find -delete removes every match"}
+		case "-fprint", "-fprint0", "-fprintf", "-fls":
+			if riskRank(worst.Risk) < riskRank(RiskProjectWrite) {
+				worst = &CommandSafetyResult{BaseCommand: args[0], Risk: RiskProjectWrite, Reason: "find writes a listing file"}
 			}
-		case *syntax.CallExpr:
-			if len(n.Args) > 0 && firstCmd == "" {
-				firstCmd = resolveWord(n.Args[0])
+		case "-exec", "-execdir", "-ok", "-okdir":
+			end := i + 1
+			for end < len(args) && args[end] != ";" && args[end] != "+" {
+				end++
 			}
+			if end > i+1 {
+				verdict := classifyCall(shellCall{args: args[i+1 : end]})
+				if riskRank(verdict.Risk) > riskRank(worst.Risk) {
+					worst = verdict
+				}
+			}
+			i = end
 		}
-		return true
-	})
-	return hasHeredoc && (firstCmd == "eval" || firstCmd == "source" || firstCmd == ".")
+	}
+	res.Risk, res.Reason = worst.Risk, worst.Reason
+	if worst.BaseCommand != args[0] {
+		res.BaseCommand = worst.BaseCommand
+	}
+	return res
 }
 
 func classifyGit(args []string, res *CommandSafetyResult) *CommandSafetyResult {

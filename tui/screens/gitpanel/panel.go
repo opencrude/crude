@@ -33,6 +33,14 @@ const (
 	GenerateID  ui.ComponentID = "gitpanel/generate"
 	DividerID   ui.ComponentID = "gitpanel/divider"
 	WritingID   ui.ComponentID = "gitpanel/writing"
+	EditID      ui.ComponentID = "gitpanel/edit-message"
+	FetchID     ui.ComponentID = "gitpanel/fetch"
+	PullID      ui.ComponentID = "gitpanel/pull"
+	PushID      ui.ComponentID = "gitpanel/push"
+	StopID      ui.ComponentID = "gitpanel/stop-remote"
+	ResolveID   ui.ComponentID = "gitpanel/resolve"
+	AbortID     ui.ComponentID = "gitpanel/abort"
+	CompleteID  ui.ComponentID = "gitpanel/complete"
 )
 
 const (
@@ -49,8 +57,19 @@ const (
 	ActionStopGenerate = "gitpanel.generate-stop"
 	ActionInspect      = "gitpanel.inspect"
 	ActionOpenCommit   = "gitpanel.open-commit"
-	ActionCheckout     = "gitpanel.checkout" // payload workspace.GitBranchSummary
-	ActionBranchMenu   = "gitpanel.branch-menu"
+	ActionCheckout     = "gitpanel.checkout"    // payload workspace.GitBranchSummary
+	ActionBranchMenu   = "gitpanel.branch-menu" // payload workspace.GitBranchSummary
+	// ActionEditMessage opens the full message editor (payload string draft).
+	ActionEditMessage = "gitpanel.edit-message"
+	ActionFetch       = "gitpanel.fetch"
+	ActionPull        = "gitpanel.pull"
+	ActionPush        = "gitpanel.push"
+	ActionStopRemote  = "gitpanel.stop-remote"
+	// The operation actions act on the merge, rebase, cherry-pick or revert
+	// that stopped for conflicts.
+	ActionResolve           = "gitpanel.resolve"
+	ActionAbortOperation    = "gitpanel.abort-operation"
+	ActionContinueOperation = "gitpanel.continue-operation"
 
 	actionSelect       = "gitpanel.select"
 	actionBranchSelect = "gitpanel.branch-select"
@@ -90,6 +109,12 @@ type Panel struct {
 	commitLabel     string
 	reviewAll       *ui.Button
 	generate        *ui.Button
+	edit            *ui.Button
+	fetch, pull     *ui.Button
+	push, stop      *ui.Button
+	resolve, abort  *ui.Button
+	complete        *ui.Button
+	remoteBusy      string
 	writingRule     *ui.ProgressRule
 	writing         bool
 	draftBackup     string
@@ -141,10 +166,26 @@ func New(th *theme.Theme) *Panel {
 	panel.reviewAll.SetVariant(ui.VariantSecondary)
 	panel.generate = ui.NewButton(GenerateID, "Generate", ActionGenerate)
 	panel.generate.SetVariant(ui.VariantSecondary)
+	panel.edit = ui.NewButton(EditID, "Edit…", ActionEditMessage)
+	panel.edit.SetVariant(ui.VariantSecondary)
+	panel.fetch = ui.NewButton(FetchID, "Fetch", ActionFetch)
+	panel.pull = ui.NewButton(PullID, "Pull", ActionPull)
+	panel.push = ui.NewButton(PushID, "Push", ActionPush)
+	panel.stop = ui.NewButton(StopID, "Stop", ActionStopRemote)
+	panel.resolve = ui.NewButton(ResolveID, "Resolve", ActionResolve)
+	panel.resolve.SetVariant(ui.VariantPrimary)
+	panel.abort = ui.NewButton(AbortID, "Abort", ActionAbortOperation)
+	panel.abort.SetVariant(ui.VariantDanger)
+	panel.complete = ui.NewButton(CompleteID, "Complete", ActionContinueOperation)
+	panel.complete.SetVariant(ui.VariantPrimary)
+	for _, button := range []*ui.Button{panel.fetch, panel.pull, panel.push, panel.stop} {
+		button.SetVariant(ui.VariantSecondary)
+	}
 	panel.writingRule = ui.NewProgressRule(WritingID, tokens)
 	panel.split = ui.NewSplitModel(ui.Horizontal)
 	panel.split.SetMinSizes(34, 30)
 	panel.split.SetFraction(0.36)
+	panel.split.SetCollapsible(true)
 	panel.splitter = ui.NewSplitDivider(DividerID, panel.split)
 	panel.splitter.SetColorRole(ui.ColorBorder)
 	panel.splitter.SetFill(true)
@@ -164,7 +205,7 @@ func New(th *theme.Theme) *Panel {
 	panel.commitDoc.SetReadOnly(true)
 	panel.commitDoc.SetEmptyText("Select a commit to see its changes")
 	panel.branches = ui.NewList(BranchesID, tokens)
-	panel.branches.SetActivateAction(ActionCheckout)
+	panel.branches.SetActivateAction(ActionBranchMenu)
 	panel.branches.SetDefaultRowBackground(ui.ColorBg)
 	panel.branchesBox = &selectList{list: panel.branches, onMove: func() *ui.Action { return &ui.Action{ID: actionBranchSelect} }}
 	panel.SetTokens(tokens)
@@ -196,7 +237,7 @@ func (panel *Panel) SetTokens(tokens *ui.TokenSet) {
 	panel.message.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
 	panel.commit.SetTokens(tokens)
 	panel.commit.SetSurfaceBackground(tokens.Color(ui.ColorBg))
-	for _, button := range []*ui.Button{panel.reviewAll, panel.generate} {
+	for _, button := range panel.secondaryButtons() {
 		button.SetTokens(tokens)
 		button.SetSurfaceBackground(tokens.Color(ui.ColorBg))
 	}
@@ -208,6 +249,36 @@ func (panel *Panel) SetTokens(tokens *ui.TokenSet) {
 	panel.commitDoc.SetTokens(tokens)
 	panel.branches.SetTokens(tokens)
 }
+
+func (panel *Panel) secondaryButtons() []*ui.Button {
+	return []*ui.Button{panel.reviewAll, panel.generate, panel.edit, panel.fetch, panel.pull, panel.push, panel.stop, panel.resolve, panel.abort, panel.complete}
+}
+
+// statusButtons are the controls on the repository status row: conflict
+// handling while an operation waits, the Stop of a running remote command,
+// or the sync group otherwise.
+func (panel *Panel) statusButtons() []*ui.Button {
+	switch {
+	case panel.remoteBusy != "":
+		return []*ui.Button{panel.stop}
+	case panel.snapshot.Operation != "":
+		if panel.hasConflicts() {
+			return []*ui.Button{panel.resolve, panel.abort}
+		}
+		return []*ui.Button{panel.complete, panel.abort}
+	case panel.snapshot.RepositoryRoot != "" && len(panel.snapshot.Remotes) > 0:
+		return []*ui.Button{panel.fetch, panel.pull, panel.push}
+	}
+	return nil
+}
+
+// SetRemoteBusy labels a running fetch, pull, push or merge; empty clears it.
+func (panel *Panel) SetRemoteBusy(label string) {
+	panel.remoteBusy = label
+	panel.syncCommit()
+}
+
+func (panel *Panel) RemoteBusy() string { return panel.remoteBusy }
 
 func (panel *Panel) SetTheme(th *theme.Theme) {
 	if th != nil {
@@ -426,11 +497,61 @@ func (panel *Panel) syncCommit() {
 		panel.generate.SetActionID(ActionGenerate)
 		panel.generate.SetDisabled(changes == 0 || panel.busy != "" || panel.hasConflicts())
 	}
+	panel.edit.SetDisabled(panel.writing || panel.busy != "")
+	panel.syncStatusButtons()
 	placeholder := "Commit message"
 	if staged == 0 && changes > 0 {
 		placeholder = "Message · nothing staged, so Commit stages all"
 	}
 	panel.message.SetPlaceholder(placeholder)
+}
+
+func (panel *Panel) syncStatusButtons() {
+	snapshot := panel.snapshot
+	blocked := panel.busy != "" || panel.writing
+	pull := "Pull"
+	if snapshot.Behind > 0 {
+		pull = fmt.Sprintf("Pull ↓%d", snapshot.Behind)
+	}
+	panel.pull.SetLabel(pull)
+	panel.pull.SetDisabled(blocked || snapshot.Upstream == "" || snapshot.Operation != "")
+	push := "Push"
+	switch {
+	case snapshot.Upstream == "":
+		push = "Publish"
+	case snapshot.Ahead > 0:
+		push = fmt.Sprintf("Push ↑%d", snapshot.Ahead)
+	}
+	panel.push.SetLabel(push)
+	panel.push.SetDisabled(blocked || snapshot.Operation != "" || (snapshot.Upstream != "" && snapshot.Ahead == 0))
+	panel.fetch.SetDisabled(blocked)
+	conflicts := len(snapshot.ConflictedPaths())
+	panel.resolve.SetLabel(fmt.Sprintf("Resolve %d", conflicts))
+	panel.resolve.SetDisabled(blocked || conflicts == 0)
+	// The status row is narrow: "Complete" or "Continue" is the whole verb;
+	// the row's text already names the operation.
+	panel.complete.SetLabel(strings.Fields(operationVerb(snapshot.Operation, true))[0])
+	panel.complete.SetDisabled(blocked || conflicts > 0)
+	panel.abort.SetDisabled(blocked)
+}
+
+// operationVerb names the operation for its status (Merging) or its
+// completing button (Complete merge).
+func operationVerb(operation string, complete bool) string {
+	names := map[string][2]string{
+		workspace.GitOperationMerge:      {"Merging", "Complete merge"},
+		workspace.GitOperationRebase:     {"Rebasing", "Continue rebase"},
+		workspace.GitOperationCherryPick: {"Cherry-picking", "Continue cherry-pick"},
+		workspace.GitOperationRevert:     {"Reverting", "Continue revert"},
+	}
+	name, ok := names[operation]
+	if !ok {
+		name = [2]string{"Operation in progress", "Continue"}
+	}
+	if complete {
+		return name[1]
+	}
+	return name[0]
 }
 
 func (panel *Panel) canCommit() bool {
@@ -445,6 +566,9 @@ func (panel *Panel) hasConflicts() bool {
 	}
 	return false
 }
+
+// CommitRequest is what Commit would record now, if it can commit.
+func (panel *Panel) CommitRequest() (CommitRequest, bool) { return panel.commitRequest() }
 
 func (panel *Panel) commitRequest() (CommitRequest, bool) {
 	if !panel.canCommit() {
@@ -507,9 +631,12 @@ func (panel *Panel) Children() []ui.Component {
 			}
 		}
 	}
+	for _, button := range panel.statusButtons() {
+		add(button)
+	}
 	switch panel.mode {
 	case ModeChanges:
-		add(panel.messageBox, panel.writingRule, panel.commit, panel.generate, panel.reviewAll, panel.list)
+		add(panel.messageBox, panel.writingRule, panel.commit, panel.generate, panel.edit, panel.reviewAll, panel.list)
 		if panel.wide {
 			add(panel.splitter, panel.preview)
 		}
@@ -536,7 +663,7 @@ func (panel *Panel) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 			component.Layout(ctx, ui.Rect{})
 		}
 	}
-	hide(panel.messageBox, panel.writingRule, panel.commit, panel.generate, panel.reviewAll, panel.list, panel.splitter, panel.preview, panel.historyBox, panel.historyBar, panel.commitDoc, panel.branchesBox)
+	hide(panel.messageBox, panel.writingRule, panel.commit, panel.generate, panel.edit, panel.reviewAll, panel.list, panel.fetch, panel.pull, panel.push, panel.stop, panel.resolve, panel.abort, panel.complete, panel.splitter, panel.preview, panel.historyBox, panel.historyBar, panel.commitDoc, panel.branchesBox)
 	panel.tabs.SetRuleBleed(0, width)
 	panel.tabs.Layout(ctx, ui.Rect{W: max(0, width-panel.dockHeaderInset), H: min(ui.StripHeight, height)})
 	top := min(ui.StripHeight, height)
@@ -546,7 +673,14 @@ func (panel *Panel) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 	panel.divider = -1
 	if panel.wide && panel.mode != ModeBranches {
 		first, gap, _ := panel.split.Resolve(width)
-		leftW = max(34, min(first, width-30))
+		switch panel.split.Collapsed() {
+		case ui.SplitFirst:
+			leftW = 0
+		case ui.SplitSecond:
+			leftW = width - gap
+		default:
+			leftW = max(34, min(first, width-30))
+		}
 		panel.divider = leftW
 		panel.splitter.SetCurrentFirst(leftW)
 		panel.splitter.Layout(ctx, ui.Rect{X: leftW, Y: top, W: gap, H: bodyH})
@@ -554,6 +688,23 @@ func (panel *Panel) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 	right := ui.Rect{X: leftW + 1, Y: top, W: max(0, width-leftW-1), H: bodyH}
 	// Row one of the body is the repository status line in every mode.
 	panel.statusRow = ui.Rect{X: 1, Y: top, W: max(0, leftW-2), H: min(1, bodyH)}
+	if panel.statusRow.H > 0 {
+		// Status buttons sit at the right end of the row; the identity text
+		// keeps at least a short branch name, so a narrow panel drops buttons
+		// from the left of the group first.
+		end := panel.statusRow.X + panel.statusRow.W
+		buttons := panel.statusButtons()
+		for i := len(buttons) - 1; i >= 0; i-- {
+			w := buttons[i].Measure(ctx, ui.Loose(30, 1)).W
+			if end-w < panel.statusRow.X+16 {
+				break
+			}
+			end -= w
+			buttons[i].Layout(ctx, ui.Rect{X: end, Y: top, W: w, H: 1})
+			end--
+		}
+		panel.statusRow.W = max(0, end-panel.statusRow.X)
+	}
 	y := top + panel.statusRow.H
 	switch panel.mode {
 	case ModeChanges:
@@ -577,7 +728,7 @@ func (panel *Panel) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 			panel.messageBox.Layout(ctx, ui.Rect{X: inner.X, Y: y, W: inner.W, H: textH})
 			y += messageH
 			x := inner.X
-			for _, button := range []*ui.Button{panel.commit, panel.generate, panel.reviewAll} {
+			for _, button := range []*ui.Button{panel.commit, panel.generate, panel.edit, panel.reviewAll} {
 				if button == panel.reviewAll && len(panel.snapshot.Changes) == 0 {
 					continue
 				}
@@ -643,6 +794,15 @@ func (panel *Panel) paintStatus(buf *surface.CellBuffer, x, y int) {
 		buf.WriteString(col, y+row.Y, text, tokens.Color(role), bg, attr)
 		col += rendering.VisibleWidth(text)
 	}
+	// optional segments are shown whole or not at all: a lone "…" where the
+	// upstream name was reads as an error.
+	optional := func(text string, role ui.SemanticColor) bool {
+		if rendering.VisibleWidth(text) > end-col {
+			return false
+		}
+		write(text, role, 0)
+		return true
+	}
 	if panel.errText != "" {
 		write("✕ "+panel.errText, ui.ColorError, 0)
 		return
@@ -660,6 +820,23 @@ func (panel *Panel) paintStatus(buf *surface.CellBuffer, x, y int) {
 		write(fmt.Sprintf("  ↓%d", panel.snapshot.Behind), ui.ColorWarning, 0)
 	}
 	switch {
+	case panel.remoteBusy != "":
+		write("  · "+panel.remoteBusy+"…", ui.ColorAccent, 0)
+	case panel.snapshot.Operation != "":
+		label := "  ⚠ " + operationVerb(panel.snapshot.Operation, false)
+		if detail := panel.snapshot.OperationDetail; detail != "" {
+			label += " · " + detail
+		}
+		if conflicts := len(panel.snapshot.ConflictedPaths()); conflicts > 0 {
+			label += fmt.Sprintf(" · %d conflicted", conflicts)
+		} else {
+			label += " · conflicts resolved"
+		}
+		// The full description, else just the operation, else nothing: the
+		// buttons beside it already say what to do.
+		if !optional(label, ui.ColorWarning) {
+			optional("  ⚠ "+operationVerb(panel.snapshot.Operation, false), ui.ColorWarning)
+		}
 	case panel.writing:
 		write("  · Aeron is writing…", ui.ColorAccent, 0)
 	case panel.busy != "":
@@ -667,7 +844,7 @@ func (panel *Panel) paintStatus(buf *surface.CellBuffer, x, y int) {
 	case panel.loading:
 		write("  · refreshing…", ui.ColorMuted, 0)
 	case panel.snapshot.Upstream != "":
-		write("  → "+panel.snapshot.Upstream, ui.ColorMuted, 0)
+		optional("  → "+panel.snapshot.Upstream, ui.ColorMuted)
 	}
 }
 
@@ -694,6 +871,21 @@ func (panel *Panel) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	switch evt.Key.String() {
 	case "ctrl+r":
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionRefresh}}
+	case "[", "]":
+		// Hide or restore the list ([) or the preview (]) beside it.
+		if panel.wide && panel.mode != ModeBranches {
+			side := ui.SplitFirst
+			if evt.Key.String() == "]" {
+				side = ui.SplitSecond
+			}
+			panel.split.ToggleCollapsed(side)
+			if panel.split.Collapsed() == ui.SplitFirst {
+				panel.focusID(panel.previewFocus())
+			} else if panel.split.Collapsed() == ui.SplitSecond {
+				panel.focusID(panel.PreferredFocus())
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		}
 	case "tab":
 		panel.cycleFocus(1)
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
@@ -818,11 +1010,17 @@ func (panel *Panel) HandleAction(_ ui.EventContext, action ui.Action) ui.EventRe
 		}
 		return result
 	}
-	if action.ID == ActionCheckout {
+	if action.ID == ActionCheckout || action.ID == ActionBranchMenu {
 		if row, ok := panel.branches.Selected(); ok {
 			if branch, ok := row.Payload.(workspace.GitBranchSummary); ok && !branch.Current {
-				result.Action = &ui.Action{ID: ActionCheckout, Payload: branch}
+				result.Action = &ui.Action{ID: action.ID, Payload: branch}
 			}
+		}
+		return result
+	}
+	if action.ID == ActionEditMessage {
+		if !panel.writing {
+			result.Action = &ui.Action{ID: ActionEditMessage, Payload: panel.message.Value()}
 		}
 		return result
 	}
@@ -914,4 +1112,11 @@ func (panel *Panel) FinishWriting(message string, err error) {
 	}
 	panel.draftBackup = ""
 	panel.syncCommit()
+}
+
+func (panel *Panel) previewFocus() ui.ComponentID {
+	if panel.mode == ModeHistory {
+		return CommitDocID
+	}
+	return PreviewID
 }

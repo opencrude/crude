@@ -37,8 +37,19 @@ type ActivityStrip struct {
 	tide                     ui.TextTideMotion
 }
 
+// sameActivitySource compares two projections by value. Connected shells
+// copy the plan on every read, so its pointer is not its identity: the
+// committed revision is.
+func sameActivitySource(a, b types.AgentActivityView) bool {
+	if !activity.SameRevision(a.Plan, b.Plan) {
+		return false
+	}
+	b.Plan = a.Plan
+	return a == b
+}
+
 func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *theme.Theme, tokens *ui.TokenSet) {
-	if s.ready && s.source == source && s.width == width && s.theme == th && s.tokens == tokens {
+	if s.ready && sameActivitySource(s.source, source) && s.width == width && s.theme == th && s.tokens == tokens {
 		return
 	}
 	if s.width != width || s.theme != th || s.tokens != tokens {

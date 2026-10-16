@@ -17,6 +17,11 @@ required before LSP is accepted as complete.
 - The catalog covers Go, Rust, Python, TypeScript/JavaScript, HTML, CSS, C/C++,
   C# and Zig plus custom stdio servers (`types/language_servers.go`).
 - A dead connection is marked failed and needs an explicit restart.
+- Agent code intelligence: the session-bound `lsp` tool and post-edit
+  diagnostics notice, editor/probe document holders, progress-settled
+  diagnostics, and human-owned launch settings. Real `gopls` coverage:
+  `workspace/lsp_probe_gopls_test.go` (skipped when `gopls` is absent);
+  session wiring: `session/code_intelligence_test.go`.
 
 ## Remaining
 

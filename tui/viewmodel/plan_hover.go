@@ -26,7 +26,7 @@ func (m *App) planActivityRect(screen *shellchat.Screen) ui.Rect {
 	if screen == nil || m.rootHost == nil {
 		return ui.Rect{}
 	}
-	r, ok := m.rootHost.ScreenRect(screen.ID())
+	r, ok := m.screenRectOf(screen.ID())
 	if !ok || r.Empty() {
 		return ui.Rect{}
 	}
@@ -136,7 +136,7 @@ func (m *App) syncPlanHover() {
 		m.clearPlanHover()
 		return
 	}
-	if p == h.plan && h.anchor == anchor && h.width == m.width && h.height == m.height {
+	if activity.SameRevision(p, h.plan) && h.anchor == anchor && h.width == m.width && h.height == m.height {
 		return
 	}
 	h.body.SetPlan(p)

@@ -160,11 +160,9 @@ func newSurface(th *theme.Theme, projection Projection, docked, stats bool) *Sur
 		s.search.field.SetPlaceholder("Search agents, files and previous sessions")
 	}
 	s.search.field.SetSubmitAction("")
-	searchBG := tokens.Color(ui.ColorPopupSubtleBg)
-	if docked {
-		searchBG = tokens.Color(ui.ColorBg)
-	}
-	s.search.field.SetBackgroundColor(searchBG)
+	// Search inputs use the shared filter fill everywhere, docked or not:
+	// a field painted in the panel colour reads as plain text.
+	s.search.field.SetBackgroundColor(ui.FilterSurface(tokens))
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.list = &listControl{Base: ui.NewBase(ListID), owner: s, list: ui.NewList(ListID, tokens)}
 	if docked {
@@ -216,11 +214,9 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 	s.views.SetTokens(tokens)
 	s.search.field.SetTokens(tokens)
 	s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
-	searchBG := tokens.Color(ui.ColorPopupSubtleBg)
-	if s.docked {
-		searchBG = tokens.Color(ui.ColorBg)
-	}
-	s.search.field.SetBackgroundColor(searchBG)
+	// Search inputs use the shared filter fill everywhere, docked or not:
+	// a field painted in the panel colour reads as plain text.
+	s.search.field.SetBackgroundColor(ui.FilterSurface(tokens))
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.list.list.SetTokens(tokens)
 	s.listScroll.SetTokens(tokens)

@@ -104,7 +104,7 @@ func (w *Workspace) PrepareSessionCapabilityToggle(sessionID, id string, enabled
 }
 
 func (w *Workspace) PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*workspace.SessionSettingsOperation, error) {
-	dto := coreprotocol.SessionSettingsDTO{Value: settings, MainAgent: settings.SessionMainAgent, Overrides: settings.SessionOverrides, MultiAgent: settings.SessionMultiAgent}
+	dto := coreprotocol.SessionSettingsDTO{Value: settings, MainAgent: settings.SessionMainAgent, Overrides: settings.SessionOverrides, MultiAgent: settings.SessionMultiAgent, CodeIntelligence: settings.SessionCodeIntelligence, MaxSubAgents: settings.SessionMaxSubAgents}
 	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error) {
 		return rpc.SaveSessionSettings(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, ExpectedRevision: revision, Settings: dto})
 	})

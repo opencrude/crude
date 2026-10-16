@@ -58,7 +58,7 @@ func validateEvidence(evidence []Evidence) error {
 			missing = append(missing, "session_id")
 		}
 		if item.MessageID == "" && item.ToolCallID == "" {
-			missing = append(missing, "tool_call_id or message_id")
+			missing = append(missing, "tool_call_id or message_id (the id of the tool call being cited, as shown in your transcript; omit evidence entirely when there is no specific call to cite)")
 		}
 		if item.Kind == "" {
 			missing = append(missing, "kind")

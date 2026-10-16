@@ -282,6 +282,17 @@ The plan store publishes full ordered immutable activity steps in addition to it
 existing current/next projections. Presentation and resumed context consume the
 committed current snapshot, never the historical cancelled-step graveyard.
 
+Plan drift is measured, not counted by a fixed rule (`session/plan_discipline.go`).
+While an active plan has open steps and stands still, the session counts model
+steps since its last revision. Past a threshold (at least 8 steps, raised to
+twice the plan's own observed pace per completed step), the next request carries
+a context-only `RuntimePlanDrift` notice naming the open steps; an unheeded
+notice doubles the threshold, and any plan revision resets it. Before a run
+would finish with tool work done and open steps still on the plan, the agent's
+`BeforeFinish` hook asks once per run (`RuntimePlanReconcile`) to update or close
+the plan honestly. Neither notice infers progress or edits the plan; both live
+in `prompt/runtime.go`.
+
 `prompt/` owns extraction wording and the checkpoint envelope; it does not own
 turn completion, plans, child execution or command lifetime. Session/file owners
 publish typed facts for the final code-authored handoff, refreshed after

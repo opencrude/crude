@@ -396,7 +396,7 @@ func validateKindDefaults(record *Record) error {
 		return err
 	}
 	if record.Kind == KindLesson && !SupportsLesson(record.Evidence) {
-		return fmt.Errorf("%w: kind=lesson needs tool_call_id evidence of a failed validation, a succeeded verified_change and a later succeeded validation", ErrUnsupported)
+		return fmt.Errorf("%w: kind=lesson is reserved for a failure whose fix was then validated and needs tool_call_id evidence of a failed validation, a succeeded verified_change and a later succeeded validation; save an observation or workflow insight as kind=fact, where evidence is optional", ErrUnsupported)
 	}
 	if record.Kind == KindLesson && strings.TrimSpace(record.AppliesWhen) == "" {
 		return fmt.Errorf("memory: technical lessons require applies_when")

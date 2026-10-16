@@ -237,6 +237,7 @@ func TestAgentTabSyncPreservesUserOrderWithoutMovingEditorOrSelection(t *testing
 		pane := app.ws.PaneMgr().GetOrCreate(id, workspace.PaneAgent, id)
 		app.ws.AgentMgr().AddSubAgent(id, "root", id, "model", "researcher",
 			workspace.NewAgentState(id, pane.Messages, app.ws.Logger()))
+		app.AgentView.SetHidden(id, false) // opened by the user
 		app.syncAgentWindowTabs()
 	}
 	secondEditor := openEditorTabs(t, app, "second.go")[0]
@@ -268,9 +269,11 @@ func TestAgentTabSyncGroupsMultipleRootsWithoutStealingSelection(t *testing.T) {
 	app.AddOrchestrator("first")
 	app.ws.AgentMgr().AddSubAgent("first-child", "first", "first child", "model", "researcher",
 		workspace.NewAgentState("first-child", nil, nil))
+	app.AgentView.SetHidden("first-child", false)
 	app.AddOrchestrator("second")
 	app.ws.AgentMgr().AddSubAgent("second-child", "second", "second child", "model", "researcher",
 		workspace.NewAgentState("second-child", nil, nil))
+	app.AgentView.SetHidden("second-child", false)
 	app.syncAgentWindowTabs()
 	want := []string{"first", "first-child", "second", "second-child"}
 	for i, id := range want {
@@ -289,6 +292,7 @@ func TestTabSyncRepairsStaleManagerSelectionFromVisibleWindow(t *testing.T) {
 	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
 	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher",
 		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
+	app.AgentView.SetHidden("child", false)
 	app.syncAgentWindowTabs()
 	app.AgentView.SetActive("child") // simulate stale background/domain selection
 
@@ -336,6 +340,7 @@ func TestSubAgentTabCreatedWhileEditingDoesNotStealEditor(t *testing.T) {
 	) == nil {
 		t.Fatal("failed to create child")
 	}
+	app.AgentView.SetHidden("child", false) // the user opened it from the parent
 	app.syncAgentWindowTabs()
 	if !agentTabPresent(app, "child") {
 		t.Fatal("sub-agent tab must appear while editing")

@@ -97,7 +97,17 @@ func publicSession(value types.Settings) coreprotocol.SessionSettingsDTO {
 		copy := *multi
 		multi = &copy
 	}
-	return coreprotocol.SessionSettingsDTO{Value: out, MainAgent: main, Overrides: detachedOverrides, MultiAgent: multi, DisabledCapabilities: slices.Clone(value.SessionDisabledCapabilities)}
+	code := value.SessionCodeIntelligence
+	if code != nil {
+		copy := *code
+		code = &copy
+	}
+	var maxAgents *int
+	if value.SessionMaxSubAgents != nil {
+		copy := *value.SessionMaxSubAgents
+		maxAgents = &copy
+	}
+	return coreprotocol.SessionSettingsDTO{Value: out, MainAgent: main, Overrides: detachedOverrides, MultiAgent: multi, CodeIntelligence: code, MaxSubAgents: maxAgents, DisabledCapabilities: slices.Clone(value.SessionDisabledCapabilities)}
 }
 
 func publicSessionSet(value session.SettingsSnapshotSet) coreprotocol.SessionSettingsResult {

@@ -101,6 +101,7 @@ func (d *SplitDivider) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 	fg, bg := d.paintColors(ctx)
 	glyph := d.glyph()
 	vertical := d.model == nil || d.model.Dir() == Horizontal
+	defer d.paintCollapseControls(buf, ox, oy, r, bg)
 	if vertical {
 		mid := r.W / 2
 		for y := 0; y < r.H; y++ {
@@ -130,6 +131,67 @@ func (d *SplitDivider) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 			buf.Set(ox+x, oy+y, cell.NewCell(ch, fg, bg, 0))
 		}
 	}
+}
+
+// collapseControls lists the clickable collapse glyphs at the start of the
+// handle: which pane each hides (or restores) and its offset on the cross axis.
+func (d *SplitDivider) collapseControls() []struct {
+	side   SplitSide
+	glyph  rune
+	offset int
+} {
+	if d.model == nil || !d.model.Collapsible() {
+		return nil
+	}
+	horizontal := d.model.Dir() == Horizontal
+	pick := func(h, v rune) rune {
+		if horizontal {
+			return h
+		}
+		return v
+	}
+	type control = struct {
+		side   SplitSide
+		glyph  rune
+		offset int
+	}
+	switch d.model.Collapsed() {
+	case SplitFirst:
+		return []control{{SplitFirst, pick('▸', '▾'), 0}}
+	case SplitSecond:
+		return []control{{SplitSecond, pick('◂', '▴'), 0}}
+	}
+	return []control{{SplitFirst, pick('◂', '▴'), 0}, {SplitSecond, pick('▸', '▾'), 1}}
+}
+
+func (d *SplitDivider) paintCollapseControls(buf *surface.CellBuffer, ox, oy int, r Rect, bg cell.Color) {
+	fg := cell.NoColor
+	if d.tokens != nil {
+		fg = d.tokens.Color(ColorAccent)
+	}
+	for _, control := range d.collapseControls() {
+		x, y := ox+r.W/2, oy+control.offset
+		if d.model.Dir() == Vertical {
+			x, y = ox+control.offset, oy+r.H/2
+		}
+		if control.offset < r.H || d.model.Dir() == Vertical && control.offset < r.W {
+			buf.Set(x, y, cell.NewCell(control.glyph, fg, bg, 0))
+		}
+	}
+}
+
+// collapseAt returns the pane the control at a local position toggles.
+func (d *SplitDivider) collapseAt(localX, localY int) SplitSide {
+	offset := localY
+	if d.model.Dir() == Vertical {
+		offset = localX
+	}
+	for _, control := range d.collapseControls() {
+		if control.offset == offset {
+			return control.side
+		}
+	}
+	return SplitNone
 }
 
 func (d *SplitDivider) paintColors(ctx PaintContext) (fg, bg cell.Color) {
@@ -183,6 +245,14 @@ func (d *SplitDivider) Handle(ctx EventContext, evt Event) EventResult {
 	case EventMouseClick:
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
+		}
+		if side := d.collapseAt(ctx.LocalX, ctx.LocalY); side != SplitNone {
+			d.model.ToggleCollapsed(side)
+			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
+		}
+		if d.model.Collapsed() != SplitNone {
+			// A collapsed split has nothing to drag; its control restores it.
+			return EventResult{Handled: true}
 		}
 		d.model.BeginDrag(d.model.PointerMain(ctx.ScreenX, ctx.ScreenY), d.currentFirst)
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}

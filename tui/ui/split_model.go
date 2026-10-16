@@ -26,6 +26,55 @@ type SplitModel struct {
 	dragging    bool
 	dragPointer int
 	dragFirst   int
+	collapsible bool
+	collapsed   SplitSide
+}
+
+// SplitSide names one pane of a split.
+type SplitSide uint8
+
+const (
+	SplitNone SplitSide = iota
+	SplitFirst
+	SplitSecond
+)
+
+// SetCollapsible lets the divider hide either pane. Splits that own their
+// visibility elsewhere (the shell sidebar) leave it off.
+func (m *SplitModel) SetCollapsible(v bool) {
+	if m != nil {
+		m.collapsible = v
+		if !v {
+			m.collapsed = SplitNone
+		}
+	}
+}
+
+func (m *SplitModel) Collapsible() bool { return m != nil && m.collapsible }
+
+// Collapsed reports the hidden pane, if any.
+func (m *SplitModel) Collapsed() SplitSide {
+	if m == nil {
+		return SplitNone
+	}
+	return m.collapsed
+}
+
+// ToggleCollapsed hides side, or restores it when it is the hidden one.
+// Hiding one side while the other is hidden restores the other first.
+func (m *SplitModel) ToggleCollapsed(side SplitSide) {
+	if m == nil || !m.collapsible {
+		return
+	}
+	if m.collapsed == side {
+		m.collapsed = SplitNone
+		return
+	}
+	if m.collapsed != SplitNone {
+		m.collapsed = SplitNone
+		return
+	}
+	m.collapsed = side
 }
 
 // NewSplitModel creates a split model with a 0.5 fraction and 1-cell divider.
@@ -236,6 +285,14 @@ func (m *SplitModel) Resolve(mainTotal int) (first, divider, second int) {
 	remain := mainTotal - divider
 	if remain < 0 {
 		remain = 0
+	}
+	// A hidden pane keeps the divider at its edge so the restore control
+	// stays reachable.
+	switch m.collapsed {
+	case SplitFirst:
+		return 0, divider, remain
+	case SplitSecond:
+		return remain, divider, 0
 	}
 	first = m.first
 	if first < 0 {

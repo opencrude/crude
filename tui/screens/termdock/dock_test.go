@@ -46,8 +46,8 @@ func TestDockHeaderActionsEmitPanelCommands(t *testing.T) {
 	dock.Mount("t1", a)
 	dock.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: 80, H: 12})
 
-	if len(dock.actions) != 6 {
-		t.Fatalf("header actions=%d want 6", len(dock.actions))
+	if len(dock.actions) != 5 {
+		t.Fatalf("header actions=%d want 5 (picker, new, float, close, hide)", len(dock.actions))
 	}
 	click := func(i int) ui.EventResult {
 		r := dock.actions[i].rect
@@ -89,5 +89,25 @@ func TestDockAttentionClearedOnUnmount(t *testing.T) {
 	dock.Unmount("t1")
 	if dock.HasAttention("t1") {
 		t.Fatal("unmount left a stale attention flag")
+	}
+}
+
+// A surface's header moves it to a tab or a window, naming which surface.
+func TestDockSurfaceHeaderEmitsPlacementActions(t *testing.T) {
+	dock := New(theme.DefaultDark())
+	dock.SetPanel(PanelProblems, ui.NewLabel("problems/body", "Problems", theme.DefaultDark()))
+	dock.ShowPanel(PanelProblems)
+	dock.Layout(ui.LayoutContext{}, ui.Rect{W: 80, H: 12})
+	header := dock.header.Bounds()
+	for index, want := range []string{ActionOpenAsTab, ActionOpenAsWindow, ActionHide} {
+		r := dock.actions[index].rect
+		res := dock.Handle(ui.EventContext{LocalX: header.X + r.X + 1, LocalY: header.Y},
+			ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y}))
+		if res.Action == nil || res.Action.ID != want {
+			t.Fatalf("action %d = %+v, want %s", index, res.Action, want)
+		}
+		if want != ActionHide && res.Action.Payload != PanelProblems {
+			t.Fatalf("%s payload = %v", want, res.Action.Payload)
+		}
 	}
 }

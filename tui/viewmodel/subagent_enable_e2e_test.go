@@ -165,8 +165,12 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		if node == nil || node.Parent == nil || node.Parent.ID != orch.ID {
 			t.Fatal("running child missing from agent tree")
 		}
+		if agentTabPresent(app, childID) {
+			t.Fatal("a running child opened a tab by itself")
+		}
+		app.restoreAgent(childID) // the user opens it from the parent
 		if !agentTabPresent(app, childID) {
-			t.Fatal("running child missing from tabs")
+			t.Fatal("opened running child missing from tabs")
 		}
 		rootLabel := app.ws.AgentMgr().Get(orch.ID).Label
 		childLabel := node.Label

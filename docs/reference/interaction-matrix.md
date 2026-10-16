@@ -222,7 +222,11 @@ clears old markers. Shells never add a local Git resolver or project watcher.
 | Generate message | `[ Generate ]` beside Commit; `[ Stop ]` or Esc in the message while writing | Aeron (the narrow-task model role) drafts from exactly what Commit would record; text streams into the message under an animated progress rule; Stop, failure or timeout restore the previous draft. Commit is disabled while writing |
 | Resize list/preview | Drag the divider (or focus it and use ←/→) | Same shared split control as every other pane; the review's navigator/document divider works the same way |
 | Commit | **Commit** button, Ctrl+Enter in the message, `c` focuses the message | Commits the shown staged set via Git (hooks/signing apply); nothing staged → "Commit all N" stages exactly the listed paths; a different staged set or a conflict fails closed |
-| History / Branches | Tabs, `1` `2` `3` | History previews a commit read-only, Enter opens it in the main area; Branches switch after confirmation |
+| History / Branches | Tabs, `1` `2` `3` | History previews a commit read-only, Enter opens it in the main area; a branch row's menu offers Switch (after confirmation) and Merge into current |
+| Full commit message | **Edit…** beside the message | Dialog with the whole message, Save / Commit / Cancel and the repository's commit conventions |
+| Fetch / Pull / Push | Status-row buttons (**Fetch**, **Pull ↓n**, **Push ↑n**, **Publish** without upstream); **Stop** while running | Pull merges (`--no-rebase`); Push is never forced. Authentication is never prompted on the terminal; failures name the cause |
+| Merge conflicts | Status row **Resolve n**, **Abort**, **Complete** during a merge | Resolve opens the merge resolver: per conflict choose ours, theirs or both, preview, Save. Each save takes a Local History snapshot; Complete is enabled only when no conflicts remain |
+| Collapse a side | Divider ◂ ▸ controls, `[` / `]` | Temporarily closes Changes or History; the same control restores it |
 | Refresh | Ctrl+R | Explicit refresh shows "refreshing…"; watcher reconciliation stays silent |
 
 ## Git review (main area)
@@ -237,6 +241,16 @@ clears old markers. Shells never add a local Git resolver or project watcher.
 | Open a line | Double-click any line | Opens the editor on that line (deleted lines land on the nearest surviving line) |
 | Presentation | `v`, **Split** / **Unified** link | Split needs 100 columns; narrower reverts to unified and keeps the preference |
 | Tabs | Every review is its own main tab: all changes (`[ Review all ]`), one file (Enter / double-click in the panel), a folder or file (Explorer/editor **View Changes**), one commit (History Enter) | Any number stay open, move and split like documents; reopening the same scope or commit activates its tab. A scoped tab offers `[ All changes ]`; Esc returns to the tab it came from |
+
+## Pane windows
+
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| Open a tab in a window | Tab context menu **Open in Window**, palette **Open Tab in Window** | Moves the same tab (editor, agent, surface, review) into a movable, resizable window |
+| Open a file / agent in a window | File tree **Open in window**; Agents panel **Open in window**; **⇱ window** on a Started-agent row | Sub-agents never open by themselves; **⧉ open** opens a main tab |
+| Open a dock surface as tab / window | Dock header **⧉** / **⇱**; palette Open Panel as Tab / Window | The surface leaves the dock; closing its tab returns it there |
+| Focus | Click inside the window; click the main area or sidebar to leave | Keys follow the focused window's editor or composer; popups opened from it keep it focused |
+| Return to the main area | Title **⇲**, window **✕**, tab menu **Move to Main Area**, palette **Move Window to Main Area** | Tabs are never closed by closing the window; a lone dock surface returns to the dock |
 
 ## Agents panel
 

@@ -255,3 +255,21 @@ func ChildrenStatus(children []ChildStatus) string {
 	out.WriteString("\n</children_status>")
 	return out.String()
 }
+
+// RuntimeDiagnostics carries language-server problems found in files the
+// agent just changed. Body is preformatted data, not instructions.
+func RuntimeDiagnostics(body string) string {
+	return "<runtime_diagnostics>Language servers report these problems in files you just changed. They may be transient while a multi-file change is still in progress; fix real ones before reporting the work as done.\n" + XMLText(body) + "</runtime_diagnostics>"
+}
+
+// RuntimePlanDrift reminds an agent whose saved plan has stood still while it
+// kept working. Plan is the current banner as data.
+func RuntimePlanDrift(plan string) string {
+	return "<runtime_plan_reminder>Your saved plan has not changed while you kept working, and the user reads it as a live progress banner. If a step finished, started, or became obsolete, call update_plan now; if it is still accurate, continue without mentioning this reminder.\n" + XMLText(plan) + "</runtime_plan_reminder>"
+}
+
+// RuntimePlanReconcile asks for one plan update before a final answer that
+// would otherwise leave the banner describing unfinished work.
+func RuntimePlanReconcile(plan string) string {
+	return "<runtime_plan_reminder>Before your final answer, make the saved plan true: complete finished steps, cancel abandoned ones, or keep it open only for work that genuinely remains (for example while waiting for the user). Then give your final answer.\n" + XMLText(plan) + "</runtime_plan_reminder>"
+}

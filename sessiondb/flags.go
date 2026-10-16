@@ -3,19 +3,21 @@ package sessiondb
 import "database/sql"
 
 // SessionFlags holds session-scoped settings that are not per-role overlays.
-// A nil MultiAgent means inherit the workspace/profile default.
+// A nil MultiAgent or CodeIntelligence means inherit the workspace default.
 type SessionFlags struct {
-	MultiAgent *bool
-	MainAgent  string
+	MultiAgent       *bool
+	MainAgent        string
+	CodeIntelligence *bool
+	MaxSubAgents     *int
 }
 
 func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
 	var flags SessionFlags
-	var multi sql.NullInt64
+	var multi, code, maxAgents sql.NullInt64
 	var mainAgent string
 	err := db.QueryRow(`
-		SELECT multi_agent, main_agent FROM session_flags WHERE session_id = ?
-	`, sessionID).Scan(&multi, &mainAgent)
+		SELECT multi_agent, main_agent, code_intelligence, max_sub_agents FROM session_flags WHERE session_id = ?
+	`, sessionID).Scan(&multi, &mainAgent, &code, &maxAgents)
 	if err == sql.ErrNoRows {
 		return flags, nil
 	}
@@ -25,6 +27,14 @@ func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
 	if multi.Valid {
 		enabled := multi.Int64 != 0
 		flags.MultiAgent = &enabled
+	}
+	if code.Valid {
+		enabled := code.Int64 != 0
+		flags.CodeIntelligence = &enabled
+	}
+	if maxAgents.Valid {
+		value := int(maxAgents.Int64)
+		flags.MaxSubAgents = &value
 	}
 	flags.MainAgent = mainAgent
 	return flags, nil
@@ -37,22 +47,35 @@ func SaveSessionFlags(db *sql.DB, sessionID string, flags SessionFlags) error {
 func saveSessionFlags(db interface {
 	Exec(string, ...any) (sql.Result, error)
 }, sessionID string, flags SessionFlags) error {
-	if flags.MultiAgent == nil && flags.MainAgent == "" {
+	if flags.MultiAgent == nil && flags.MainAgent == "" && flags.CodeIntelligence == nil && flags.MaxSubAgents == nil {
 		_, err := db.Exec(`DELETE FROM session_flags WHERE session_id = ?`, sessionID)
 		return err
 	}
-	var value any
-	if flags.MultiAgent != nil && *flags.MultiAgent {
-		value = 1
-	} else if flags.MultiAgent != nil {
-		value = 0
-	}
 	_, err := db.Exec(`
-		INSERT INTO session_flags (session_id, multi_agent, main_agent)
-		VALUES (?, ?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET multi_agent = excluded.multi_agent, main_agent = excluded.main_agent
-	`, sessionID, value, flags.MainAgent)
+		INSERT INTO session_flags (session_id, multi_agent, main_agent, code_intelligence, max_sub_agents)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET multi_agent = excluded.multi_agent, main_agent = excluded.main_agent,
+			code_intelligence = excluded.code_intelligence, max_sub_agents = excluded.max_sub_agents
+	`, sessionID, nullableFlag(flags.MultiAgent), flags.MainAgent, nullableFlag(flags.CodeIntelligence), nullableInt(flags.MaxSubAgents))
 	return err
+}
+
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableFlag(value *bool) any {
+	switch {
+	case value == nil:
+		return nil
+	case *value:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func ClearSessionFlags(db *sql.DB, sessionID string) error {

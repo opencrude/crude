@@ -103,7 +103,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		}
 		// Private exact state, not the redacted read projection: replaying that
 		// projection would clear write-only invocation credentials on save.
-		value := coreprotocol.SessionSettingsDTO{Value: snap.Effective, MainAgent: snap.Effective.SessionMainAgent, Overrides: snap.Effective.SessionOverrides, MultiAgent: snap.Effective.SessionMultiAgent}
+		value := coreprotocol.SessionSettingsDTO{Value: snap.Effective, MainAgent: snap.Effective.SessionMainAgent, Overrides: snap.Effective.SessionOverrides, MultiAgent: snap.Effective.SessionMultiAgent, CodeIntelligence: snap.Effective.SessionCodeIntelligence, MaxSubAgents: snap.Effective.SessionMaxSubAgents}
 		// The session persists exact role pins, not the effective display fields.
 		value.Overrides = make(map[string]types.CategorySettings, len(snap.Overrides)+1)
 		for id, cfg := range snap.Overrides {

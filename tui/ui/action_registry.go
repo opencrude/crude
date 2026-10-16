@@ -531,7 +531,10 @@ var defaultActions = []*ActionDef{
 	{ID: "mcp.manage", Label: "Manage MCP", Description: "configure connections, tools, resources and prompts in Settings", Category: "Tools"},
 	{ID: "board.browse", Label: "Agent Board", Description: "inspect collaborations, participants and peer messages without waking agents", Category: "Agent"},
 	{ID: "workspace.panel.hide", Label: "Hide Workspace Panel", Description: "hide the panel without stopping processes or deleting drafts", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+j"}, {Mod: tea.ModCtrl | tea.ModAlt, Code: 'j'}}, HintKey: "Ctrl+Alt+J"},
-	{ID: "workspace.panel.maximize", Label: "Maximize / Restore Workspace Panel", Description: "temporarily fill the content area while preserving the main tab", Category: "View"},
+	{ID: "workspace.panel.tab", Label: "Open Panel as Tab", Description: "move the visible dock panel into the main tabs, like a file or agent", Category: "View"},
+	{ID: "workspace.panel.window", Label: "Open Panel as Window", Description: "move the visible dock panel into its own movable window", Category: "View"},
+	{ID: "tab.window", Label: "Open Tab in Window", Description: "move the focused tab into its own movable, resizable window", Category: "View"},
+	{ID: "tab.dock", Label: "Move Window to Main Area", Description: "return the focused window's tabs to the main tabs", Category: "View"},
 	{
 		ID:          "terminal.new",
 		Label:       "New Terminal",

@@ -54,6 +54,7 @@ type LSPManager struct {
 	syncing                                                               bool
 	inflight                                                              int
 	version                                                               uint64
+	stateChanged                                                          chan struct{}
 }
 
 type diagnosticAggregate struct{ files, errors, warnings, information, hints int }
@@ -66,6 +67,7 @@ func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) 
 
 func (m *LSPManager) recomputeActiveStatusLocked() {
 	m.version++
+	m.broadcastLocked()
 	if m.paused || m.closed || !m.settings.Enabled {
 		m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
 		return

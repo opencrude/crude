@@ -36,6 +36,16 @@ secret values, and mask secret, authorization, header and environment values
 in approval prompts. Enabling an external server's tool for the first time
 still uses `mcp_request_access`.
 
+Session settings are session-owned fields of the same settings catalog. Besides
+model, thinking and permission fields they include `multi_agent`,
+`code_intelligence` (the agent `lsp` tool) and `max_sub_agents` (0 = inherit the
+app/workspace value). Each set is fenced by the session's settings revision and
+applied live through the session owner; it never rewrites application or
+workspace layers. Language-server launch and resource fields
+(`lsp.languages.<id>.command`, arguments, environment, settings, initialization
+options and resource limits) are human-owned: an agent may toggle a configured
+server's `enabled` field but cannot change what runs.
+
 ## Exact identity and admission
 
 Targets retain logical workspace, optional execution/session/resource identities

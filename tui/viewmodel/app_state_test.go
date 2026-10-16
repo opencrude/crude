@@ -612,6 +612,7 @@ func TestPreparedInputStopReceiptCannotClearSiblingAgentDraft(t *testing.T) {
 	app.ws.CancelAgent(agentID)
 	message := command().(inputAdmissionMsg)
 	app.ws.AgentMgr().AddSubAgent("sibling", agentID, "Sibling", "test", "researcher", workspace.NewAgentState("sibling", nil, nil))
+	app.AgentView.SetHidden("sibling", false)
 	app.AgentView.SetActive("sibling")
 	app.applyInputAdmission(message)
 	if app.Input.Value() != "submitted draft" {

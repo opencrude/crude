@@ -151,6 +151,11 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	}
 
 	app.syncAgentWindowTabs()
+	if app.Win.TabByTitle(app.agentTabTitle("child")) != nil {
+		t.Fatal("a sub-agent opened a tab without being opened")
+	}
+	app.RestoreAgent("child")
+	app.syncAgentWindowTabs()
 	if app.Win.TabByTitle(app.agentTabTitle("child")) == nil {
 		t.Fatal("child tab missing before orchestrator close")
 	}
@@ -331,8 +336,12 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 			"agent_id": "child", "agent_name": "Child", "parent_id": "root", "prompt": assignment,
 		},
 	})
+	if app.Win.TabByTitle(app.agentTabTitle("child")) != nil {
+		t.Fatal("a started sub-agent opened a tab by itself")
+	}
+	app.restoreAgent("child")
 	if app.Win.TabByTitle(app.agentTabTitle("child")) == nil {
-		t.Fatal("live child tab was not created")
+		t.Fatal("opening the live child did not create its tab")
 	}
 	pane := app.ws.PaneMgr().Get("child")
 	projection := app.subPaneProjections.GetExisting("child")

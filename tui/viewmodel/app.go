@@ -229,56 +229,68 @@ type App struct {
 	// thinkingLatch records sessions that have already promoted a reasoning
 	// block. Once latched, every later thinking block in that session opens in
 	// its own pane instead of restarting inline. A settings change clears it.
-	thinkingLatch           map[*workspace.Session]bool
-	editorScreen            *shelleditor.Screen
-	launcherScreen          *launcher.Screen
-	historyScreen           *historyscreen.Screen
-	sessionPicker           *sessionpicker.Screen
-	helpScreen              *helpscreen.Screen
-	commandPaletteModel     *commandPaletteModel
-	findInFiles             *findinfiles.Screen
-	findInFilesRequest      uint64
-	findInFilesGen          int
-	memoryBrowser           *memorybrowser.Screen
-	boardBrowser            *boardbrowser.Screen
-	gitReviews              map[window.TabID]*gitReviewView
-	gitPrepareGen           uint64
-	gitPrepareInFlight      bool
-	gitPrepareDirty         bool
-	gitEvidenceSequence     uint64
-	gitCommitWriteSequence  uint64
-	gitCommitWriteCancel    context.CancelFunc
-	localDiffs              map[window.TabID]*localDiffView
-	workspacePanelHeights   map[string]int
-	toolLayout              workspace.ToolLayout
-	toolLayoutVersion       uint64
-	toolLayoutSaveQueued    bool
-	toolLayoutSaving        bool
-	toolLayoutSavedVersion  uint64
-	workspacePanelMaximized bool
-	capabilitySnapshot      captypes.Snapshot
-	providerPresets         []roottypes.ProviderPreset
-	asyncIO                 atomic.Pointer[appAsyncIOState]
-	asyncIOStopped          atomic.Bool
-	asyncIOStopOnce         sync.Once
-	treeWatcherLifeMu       sync.Mutex // fences startup admission against UI shutdown
-	treeWatcherStarts       sync.WaitGroup
-	launcherLoadGen         atomic.Uint64 // generation of the in-flight async launcher load
-	gitRefreshGen           atomic.Uint64
-	editorGitGen            atomic.Uint64
-	editorGitStale          atomic.Bool
-	editorGitEditAt         time.Time // most recent text change awaiting projection refresh
-	editorGitSince          time.Time // start of the current unrefreshed burst (hold cap)
-	editorGitCancel         context.CancelFunc
-	sourceControlTimeout    time.Duration
-	treeGitRefreshAt        time.Time
+	thinkingLatch          map[*workspace.Session]bool
+	editorScreen           *shelleditor.Screen
+	launcherScreen         *launcher.Screen
+	historyScreen          *historyscreen.Screen
+	sessionPicker          *sessionpicker.Screen
+	helpScreen             *helpscreen.Screen
+	commandPaletteModel    *commandPaletteModel
+	findInFiles            *findinfiles.Screen
+	findInFilesRequest     uint64
+	findInFilesGen         int
+	memoryBrowser          *memorybrowser.Screen
+	boardBrowser           *boardbrowser.Screen
+	gitReviews             map[window.TabID]*gitReviewView
+	gitPrepareGen          uint64
+	gitPrepareInFlight     bool
+	gitPrepareDirty        bool
+	gitEvidenceSequence    uint64
+	gitCommitWriteSequence uint64
+	gitCommitWriteCancel   context.CancelFunc
+	localDiffs             map[window.TabID]*localDiffView
+	workspacePanelHeights  map[string]int
+	toolLayout             workspace.ToolLayout
+	toolLayoutVersion      uint64
+	toolLayoutSaveQueued   bool
+	toolLayoutSaving       bool
+	toolLayoutSavedVersion uint64
+	capabilitySnapshot     captypes.Snapshot
+	providerPresets        []roottypes.ProviderPreset
+	asyncIO                atomic.Pointer[appAsyncIOState]
+	asyncIOStopped         atomic.Bool
+	asyncIOStopOnce        sync.Once
+	treeWatcherLifeMu      sync.Mutex // fences startup admission against UI shutdown
+	treeWatcherStarts      sync.WaitGroup
+	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
+	gitRefreshGen          atomic.Uint64
+	editorGitGen           atomic.Uint64
+	editorGitStale         atomic.Bool
+	editorGitEditAt        time.Time // most recent text change awaiting projection refresh
+	editorGitSince         time.Time // start of the current unrefreshed burst (hold cap)
+	editorGitCancel        context.CancelFunc
+	sourceControlTimeout   time.Duration
+	treeGitRefreshAt       time.Time
 	// Header Git reconciliation (git_snapshot.go): watcher events arm a
 	// debounced, coalesced silent snapshot read so the header identity follows
 	// the repository without the user opening the Git panel.
-	gitSnapshotEventAt time.Time       // most recent unreconciled watcher event
-	gitSnapshotBurstAt time.Time       // start of the current unreconciled burst
-	gitSnapshotAt      time.Time       // when the last snapshot read settled
-	gitReadsInFlight   int             // snapshot reads (explicit or silent) awaiting a result
+	gitSnapshotEventAt time.Time // most recent unreconciled watcher event
+	gitSnapshotBurstAt time.Time // start of the current unreconciled burst
+	gitSnapshotAt      time.Time // when the last snapshot read settled
+	gitReadsInFlight   int       // snapshot reads (explicit or silent) awaiting a result
+	// gitReadsBoundary is the Git generation of the last workspace boundary:
+	// results at or below it belong to an abandoned project and hold no slot.
+	gitReadsBoundary uint64
+	// gitRemoteSeq identifies the running fetch, pull, push or merge;
+	// gitRemoteCancel stops it.
+	gitRemoteSeq    uint64
+	gitRemoteCancel context.CancelFunc
+	gitMerge        *gitMergeDialog
+	// panelPlacements records surfaces shown as a tab or window instead of
+	// in the dock (panel_placement.go).
+	panelPlacements map[string]panelPlacement
+	// paneFocusSeen is Window's focused group at the last window-focus sync.
+	paneFocusSeen      window.GroupID
 	workspaceSwitchGen atomic.Uint64   // invalidates project-bound async callbacks
 	lspRequestCtx      context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel   context.CancelFunc
@@ -831,7 +843,7 @@ func maxInt(a, b int) int {
 func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	// First, close any focused floating window
 	if m.windowManager != nil {
-		if fw := m.windowManager.Focused(); fw != nil {
+		if fw := m.focusedPopup(); fw != nil {
 			if fw.ID == string(ui.OverlayWorkspaceSettings) {
 				return m, m.closePopupWindowByID(fw.ID)
 			}
@@ -942,6 +954,9 @@ func (m *App) openSessionSettings() {
 	}
 	p.settings.ConfigureAccounts(m.ws.AllAccounts())
 	p.settings.SetCapabilities(m.capabilitySnapshot)
+	if lsp := m.ws.LSPMgr(); lsp != nil {
+		p.settings.SetWorkspaceCodeIntelligence(lsp.Settings().Enabled)
+	}
 	p.settings.SaveSnapshot()
 	m.openSessionSettingsPanel()
 }
@@ -984,6 +999,11 @@ func (m *App) registerOverlayHandlers() {
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {
+			return
+		}
+		// Pane windows mount live main content; its geometry (editor and
+		// composer rects) must be exact from the first frame.
+		if _, pane := paneGroupFromOverlay(id); pane {
 			return
 		}
 		m.beginReveal(fw, string(id))

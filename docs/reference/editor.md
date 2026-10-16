@@ -74,6 +74,16 @@ Tea's update goroutine (the tab-close hang).
   stops the process. A lost server is not silently restarted on every keypress or
   open; the user restarts it explicitly. Test fakes return a nil `Done()` channel.
 - `LSPIntegration.WithServerEnv` sets the server subprocess environment.
+- The client advertises `window.workDoneProgress`, answers
+  `window/workDoneProgress/create` and tracks `$/progress` tokens.
+  `AwaitDiagnostics` waits until the server's work settles (no active progress
+  and a quiet interval) under the caller's deadline, so agent diagnostics are
+  not read from a half-indexed server. Diagnostics carry `source` and `code`.
+- `LSPManager` documents have holders: the editor view flag and a refcount of
+  agent probes (`workspace/lsp_probe.go`). A document closes on the server only
+  when no holder remains. Probes are allowed when the session's agent code
+  intelligence is on even if editor LSP is off; a user-paused server refuses
+  both. Probe results are plain data (`types.LSPProbeView`), never editor state.
 - Language settings, resource limits and lifecycle are specified in
   [settings](settings.md#lsp); merely constructing a manager launches no server.
 

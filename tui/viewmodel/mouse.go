@@ -222,7 +222,7 @@ func (m *App) inputLocalMouse(msg tea.Msg) tea.Msg {
 	if m.rootHost == nil {
 		return msg
 	}
-	r, ok := m.rootHost.ScreenRect(m.inputScreen.ID())
+	r, ok := m.screenRectOf(m.inputScreen.ID())
 	if !ok || r.Empty() {
 		return msg
 	}
@@ -272,6 +272,9 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.windowManager.IsDragging() {
 				return m, tea.Batch(cmds...)
+			}
+			if group, ok := paneGroupFromOverlay(ui.OverlayID(hitWin.ID)); ok && m.Win.IsFloating(group) {
+				m.activatePaneWindow(group)
 			}
 			if cmd := m.handlePopupContentClick(hitWin, msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -456,6 +459,14 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	if m.routePlanHoverMotion(msg) {
 		return m, tea.Batch(cmds...)
 	}
+	// A drag that began in a window (editor selection, scrollbar) follows the
+	// pointer outside it until release, as root-host capture does.
+	if fw := m.capturingWindow(); fw != nil {
+		if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+	}
 	if m.windowManager != nil {
 		// Popup hover pre-selection: if the mouse is over a focusable
 		// popup, update its hover state and return (don't route motion
@@ -550,15 +561,26 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// pointerReleaseWindow returns the floating window that owns a release: the
-// one whose content Host captured the pointer (passive popovers capture drags
-// without ever taking focus), else the focused window.
-func (m *App) pointerReleaseWindow() *wm.FloatingWindow {
+// capturingWindow is the window whose content host holds pointer capture.
+func (m *App) capturingWindow() *wm.FloatingWindow {
+	if m.windowManager == nil {
+		return nil
+	}
 	windows := m.windowManager.Windows()
 	for i := len(windows) - 1; i >= 0; i-- {
 		if frame, ok := windows[i].Content.(*ui.WindowFrameWidget); ok && frame.Host() != nil && frame.Host().HasPointerCapture() {
 			return windows[i]
 		}
+	}
+	return nil
+}
+
+// pointerReleaseWindow returns the floating window that owns a release: the
+// one whose content Host captured the pointer (passive popovers capture drags
+// without ever taking focus), else the focused window.
+func (m *App) pointerReleaseWindow() *wm.FloatingWindow {
+	if fw := m.capturingWindow(); fw != nil {
+		return fw
 	}
 	return m.windowManager.Focused()
 }
@@ -828,6 +850,12 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
 			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(hitWin.ID)); ok {
 				m.openTerminalControlMenu(id)
+				return m, nil
+			}
+			if group, ok := paneGroupFromOverlay(ui.OverlayID(hitWin.ID)); ok && m.Win.IsFloating(group) {
+				if st := m.paneWindowContextMenu(group, mouse); st != nil {
+					return m, m.openContextMenuState(mouse, st)
+				}
 				return m, nil
 			}
 			if hit, ok := windowTextClipboardHit(hitWin, mouse); ok {

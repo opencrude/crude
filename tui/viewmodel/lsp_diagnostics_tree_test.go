@@ -201,3 +201,7 @@ func awaitTreeLSP(t *testing.T, app *App, path string) {
 	}
 	app.drainLSPDiagnostics()
 }
+
+func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
+	return nil, true
+}

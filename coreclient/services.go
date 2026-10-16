@@ -84,6 +84,48 @@ func (s *GitService) InspectCommit(ctx context.Context, hash string) (workspace.
 	return out.Evidence, err
 }
 
+func (s *GitService) remote(ctx context.Context, method string) (workspace.GitSyncResult, error) {
+	var out coreprotocol.GitRemoteResult
+	err := s.client.Call(ctx, s.workspaceID, method, coreprotocol.GitRemoteRequest{}, &out)
+	return out.Sync, err
+}
+
+func (s *GitService) Fetch(ctx context.Context) error {
+	_, err := s.remote(ctx, coreprotocol.GitFetch)
+	return err
+}
+
+func (s *GitService) Pull(ctx context.Context) (workspace.GitSyncResult, error) {
+	return s.remote(ctx, coreprotocol.GitPull)
+}
+
+func (s *GitService) Push(ctx context.Context) error {
+	_, err := s.remote(ctx, coreprotocol.GitPush)
+	return err
+}
+
+func (s *GitService) AbortOperation(ctx context.Context) error {
+	_, err := s.remote(ctx, coreprotocol.GitAbortOperation)
+	return err
+}
+
+func (s *GitService) ContinueOperation(ctx context.Context) error {
+	_, err := s.remote(ctx, coreprotocol.GitContinueOperation)
+	return err
+}
+
+func (s *GitService) Merge(ctx context.Context, ref string) (workspace.GitSyncResult, error) {
+	var out coreprotocol.GitRemoteResult
+	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitMerge, coreprotocol.GitMergeRequest{Ref: ref}, &out)
+	return out.Sync, err
+}
+
+func (s *GitService) ConflictFile(ctx context.Context, path string) (workspace.GitConflictFile, error) {
+	var out coreprotocol.GitConflictFileResult
+	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitConflictFile, coreprotocol.GitConflictFileRequest{Path: path}, &out)
+	return out.File, err
+}
+
 func (s *GitService) Checkout(ctx context.Context, branch string) error {
 	var out coreprotocol.GitCheckoutResult
 	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitCheckout, coreprotocol.GitCheckoutRequest{Branch: branch}, &out)
@@ -105,6 +147,12 @@ func (v *WorkspaceView) DiscardGitReviewed(ctx context.Context, preview workspac
 func (v *WorkspaceView) DiscardGitHunk(ctx context.Context, comparison workspace.GitComparison, hunk workspace.GitHunkRange) (string, error) {
 	var out coreprotocol.DiscardGitHunkResult
 	err := v.Client.Call(ctx, v.ID, coreprotocol.DiscardGitHunk, coreprotocol.DiscardGitHunkRequest{Comparison: comparison, Hunk: hunk}, &out)
+	return out.SafetyID, err
+}
+
+func (v *WorkspaceView) ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []workspace.GitConflictChoice) (string, error) {
+	var out coreprotocol.ResolveGitConflictResult
+	err := v.Client.Call(ctx, v.ID, coreprotocol.ResolveGitConflict, coreprotocol.ResolveGitConflictRequest{Path: path, Fingerprint: fingerprint, Choices: choices}, &out)
 	return out.SafetyID, err
 }
 

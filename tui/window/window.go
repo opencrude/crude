@@ -42,6 +42,9 @@ const (
 	ResourceAgent     ResourceKind = "agent"
 	ResourceGitReview ResourceKind = "git-review"
 	ResourceLocalDiff ResourceKind = "local-diff"
+	// ResourcePanel is a workspace surface (Git, Problems, …) promoted from
+	// the dock to an ordinary tab. ID is the dock panel ID.
+	ResourcePanel ResourceKind = "panel"
 )
 
 type Resource struct {
@@ -87,6 +90,12 @@ type Window struct {
 	paneRoot     *PaneNode
 	focusedGroup GroupID
 	groupActive  map[GroupID]TabID
+	// floating are single-leaf groups shown in their own windows, in
+	// creation order. They never take part in the split tree.
+	floating []*PaneNode
+	// lastDocked is the docked group that had focus before a floating group
+	// took it; focus and docked tabs return there.
+	lastDocked GroupID
 
 	hint  string
 	Hover ui.Hover
@@ -181,8 +190,10 @@ func (w *Window) CloseActiveTab() CloseAction {
 func (w *Window) CloseAll() {
 	w.tabs = nil
 	w.paneRoot = nil
+	w.floating = nil
 	w.groupActive = nil
 	w.focusedGroup = 0
+	w.lastDocked = 0
 	w.ensureGroups()
 }
 
@@ -190,7 +201,7 @@ func (w *Window) SwitchTo(index int) {
 	w.ensureGroups()
 	if index >= 0 && index < len(w.tabs) {
 		tab := w.tabs[index]
-		w.focusedGroup = tab.Group
+		w.focus(tab.Group)
 		w.groupActive[tab.Group] = tab.ID
 	}
 }

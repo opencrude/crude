@@ -405,7 +405,7 @@ func TestNotifyFileSaveFlushesLatestChangeBeforeSaveBoundary(t *testing.T) {
 	client := &saveOrderClient{}
 	path := filepath.Join(t.TempDir(), "file.go")
 	m.states["save-test"] = &lspClientState{client: client, status: LSPConnected}
-	m.documents[path] = &lspDocument{key: "save-test", opened: true, text: "initial", revision: 1, syncedRevision: 1}
+	m.documents[path] = &lspDocument{key: "save-test", opened: true, editor: true, text: "initial", revision: 1, syncedRevision: 1}
 	m.QueueFileUpdate(path, "old")
 	m.QueueFileUpdate(path, "latest")
 	m.NotifyFileSave(context.Background(), path, "saved", DocumentSaveAfterDelay, true)
