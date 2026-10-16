@@ -271,8 +271,8 @@ use explicit workspace deletion entries; Reset inherited restores application
 definitions without changing them.
 
 Agents → Tool Access groups built-ins, MCP tools and skill invocation modes.
-`/settings` → Capabilities stages the owning role/root selection and links to the
-manual manager. `capability_selection` in `session_agent_settings` persists
+`/skills` and `/mcps` own the per-session view and open the manual manager;
+`capability_selection` in `session_agent_settings` persists
 AllowedTools, DeniedTools and SkillModes; `root/<selected-agent>` overrides remain
 separate. Selection cannot widen a category ceiling or create an execution grant.
 

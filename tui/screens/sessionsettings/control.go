@@ -58,8 +58,8 @@ func authorityChanges(path string, before, after any) bool {
 // carries. An ordinary picker must never smuggle a staged human-only edit.
 func (s *Screen) ControlMetadata(id ui.ComponentID, action string) (control.Effect, bool, error) {
 	human := false
-	switch {
-	case action == "session-settings.save":
+	switch action {
+	case "session-settings.save":
 		if s.snapshot == nil {
 			return "", false, fmt.Errorf("session settings snapshot unavailable")
 		}
@@ -108,16 +108,14 @@ func (s *Screen) ControlMetadata(id ui.ComponentID, action string) (control.Effe
 			}
 			human = human || authorityChanges("overrides."+key, oldOverride, newOverride)
 		}
-	case action == "session-settings.save-workspace" || action == "session-settings.reset" || strings.Contains(action, "capabilities"):
-		human = true
-	case s.page == capabilityPage:
+	case "session-settings.save-workspace", "session-settings.reset":
 		human = true
 	default:
 		if s.formModel != nil {
 			for _, field := range s.formModel.Fields() {
 				if id == ui.NewID(FormID, field.ID) {
 					switch field.ID {
-					case fieldMultiAgent, "capabilities":
+					case fieldMultiAgent:
 						human = true
 					case fieldProvider, fieldModel, fieldThinking, fieldContextCompaction, fieldContextRetention:
 						human = control.SettingsAuthority("agents.categories." + s.role + "." + map[string]string{fieldProvider: "account_id", fieldModel: "Model", fieldThinking: "ThinkingEffort", fieldContextCompaction: "context_compaction_percent", fieldContextRetention: "context_retention_tokens"}[field.ID])
