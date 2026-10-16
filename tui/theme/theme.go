@@ -27,6 +27,10 @@ type Colors struct {
 	Bg, Fg, Muted, Accent, Accent2     color.Color
 	Success, Error, Warning, Border    color.Color
 	Selection, SubPaneBg, IncompleteBg color.Color
+	// Gutter is the editor gutter's explicit fill (line numbers, Git rail and
+	// diagnostics), distinct from the text area so it reads as chrome on any
+	// surface the editor is mounted on, including a window over other panes.
+	Gutter color.Color
 	// TextSelection is the distinct high-visibility fill for text ranges, not list rows.
 	TextSelection, TextSelectionFg color.Color
 	// Hover is the background color for interactive elements (file tree
@@ -170,6 +174,7 @@ func DefaultDark() *Theme {
 		TextSelectionFg: lipgloss.Color("#ffffff"),
 		Hover:           lipgloss.Color("#21262d"),
 		SubPaneBg:       lipgloss.Color("#1c2333"),
+		Gutter:          lipgloss.Color("#11161d"),
 		IncompleteBg:    lipgloss.Color("#3a1a1a"),
 		// Popup chrome: unified design across all popups.
 		// Code.Bg provides the "card on editor" feel used by the

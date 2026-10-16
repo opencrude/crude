@@ -66,6 +66,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		boundEpoch = session.collaborationAgents[actor.ID].RuntimeEpoch
 		session.mu.Unlock()
 	}
+	session.capabilitySharing.join(actor, name)
 	var mu sync.RWMutex
 	snapshot := captypes.RuntimeSnapshot{}
 	currentActor := func() captypes.RuntimeActor {
@@ -91,6 +92,9 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			definitions, notices = previousPrepare()
 		} else {
 			definitions = append([]tools.ToolDef(nil), live.FilteredTools...)
+		}
+		for _, text := range session.capabilitySharing.drain(actor.ID) {
+			notices = append(notices, runtimeMessage(text))
 		}
 		if runtime != nil {
 			prepared, err := runtime.Prepare(ctx, currentActor())
@@ -191,6 +195,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 					return outcome, prepErr
 				}
 				result, err = runtime.Execute(captypes.WithPrepared(callCtx, preparation.Key), currentActor(), requestSnapshot, tool, params)
+			}
+			if err == nil {
+				if operation, id := sharedCapabilityID(tool, params); id != "" {
+					session.capabilitySharing.share(actor.ID, operation, id)
+				}
 			}
 			return capabilityMediaResult(result, err, live.MediaReadPolicy)
 		}

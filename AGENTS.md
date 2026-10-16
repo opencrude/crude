@@ -99,7 +99,10 @@ sufficient.
   gates, and the full suite when feasible; cross-compile cross-platform code.
   See [validation](docs/guides/validation.md).
 - Use the repository visual capture workflow for UI acceptance at desktop and
-  constrained sizes. Never run two captures at once; close every capture window.
+  constrained sizes: `scripts/tuishot.sh` on Linux, `scripts/tuishot.ps1` on
+  Windows. It drives the real product and screenshots it; do not search for or
+  install a screenshot or computer-use capability instead. Never run two
+  captures at once; close every capture window.
 - Never call a task complete while a known reproduction still fails. Report
   blocked or aborted gates explicitly.
 - Keep architecture docs, plans, baselines and this file synchronized with the

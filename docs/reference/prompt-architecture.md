@@ -293,6 +293,16 @@ would finish with tool work done and open steps still on the plan, the agent's
 the plan honestly. Neither notice infers progress or edits the plan; both live
 in `prompt/runtime.go`.
 
+Capability discovery is proactive, but applicable project guidance takes
+precedence: a workflow, script or tool that guidance names for a job (for
+example `scripts/tuishot.sh` for screenshots) is used, never replaced by a
+searched-for capability (`RuntimeCapabilities`). When another agent of the
+session makes a capability usable, the next request carries a context-only
+`RuntimeCapabilityShared` notice (see
+[capabilities](capabilities.md#sharing-within-a-session)). Tool-failure hints
+are model instruction text too: `prompt/tool_hints.go` owns them and their
+separator, and presentation strips them from rows.
+
 `prompt/` owns extraction wording and the checkpoint envelope; it does not own
 turn completion, plans, child execution or command lifetime. Session/file owners
 publish typed facts for the final code-authored handoff, refreshed after

@@ -49,13 +49,26 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   without replacing filters or editable drafts; removed tools clear old claims.
   Local/installed/pinned-repository discovery ranks normalized keywords before
   applying limits. Agent guidance proactively uses relevant installed capabilities or acquisitions
-  when they improve the task, even when native tools exist, within the user-selected
+  when they improve the task, even when native tools exist, except that a workflow
+  named by applicable project guidance takes precedence over discovery, within the user-selected
   Manual/Auto Review/YOLO policy, explicit denials, source trust and host/effect
   ceilings. Authentication and consent remain user-owned. Exact stdio launch is
   review/YOLO eligible, not a sandbox or durable tool grant. Use concise queries and exact returned IDs,
   not catalog paths as a substitute for durable installation. Live acceptance
   submits through the actual composer and keeps chat visible; screenshot-driver
   exit alone is not proof that the model/persistence test completed.
+
+## Sharing within a session
+
+- Sub-agents may search for and acquire capabilities like their parent, but
+  the session's agents are told about each other's work: a successful
+  `capability_activate` or `mcp_request_access` queues one
+  `prompt.RuntimeCapabilityShared` notice for every other agent of the session
+  (parent, children, siblings), delivered at its next request
+  (`session/capability_sharing.go`). Each operation and ID is announced once,
+  undelivered notices are bounded, and the activating agent is not told about
+  its own change. The notice asks the recipient to activate that exact ID rather
+  than search for or install an alternative.
 
 ## Acquisition and approval
 

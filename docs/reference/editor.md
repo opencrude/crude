@@ -45,6 +45,10 @@ engine and its invariants.
   patches. Paint derives current-line rails and exact deletion boundaries from
   those hunks; diagnostics, numbers, change rails, and source spacing keep
   independent stable lanes. Stale async hunks never attach to new revisions.
+- The gutter has its own explicit fill (`theme.Colors.Gutter`) on every body
+  row, past the last line and beside the horizontal scrollbar, and the editor
+  clears its whole surface before painting. No editor cell is transparent, so
+  a window or any other mount never shows through it.
 - Automatic saves are opt-in and text-only. They never format, reload, move the
   cursor, clear selection/undo, or emit synthetic text changes. Manual format
   runs on an immutable snapshot and applies as one revision-checked undo group.

@@ -11,7 +11,19 @@ import (
 )
 
 func (m *App) tabBarVisible() bool {
-	return m.Win != nil && (m.Win.TabCount() >= 1 || len(m.Win.GroupIDs()) > 1) && m.Win.Layout() == window.TabHorizontal
+	return m.Win != nil && !m.mainAreaEmpty() && m.Win.Layout() == window.TabHorizontal
+}
+
+// mainAreaEmpty reports that the docked main area is one group holding no
+// tab. Tabs may still live in windows: the main area then shows the
+// launcher, exactly as when nothing is open, never an empty pane the user
+// did not ask for.
+func (m *App) mainAreaEmpty() bool {
+	if m.Win == nil {
+		return true
+	}
+	root := m.Win.PaneRoot()
+	return root.Split == nil && m.Win.GroupTabCount(root.Group) == 0
 }
 
 // tabBarRailCol is the screen column where the strip's first label (and so its

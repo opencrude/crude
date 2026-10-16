@@ -315,7 +315,13 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 	}
 	g.tabs.SetTokens(m.rootHost.Tokens())
 	tabH := 0
-	if m.tabBarVisible() {
+	// A window's title row already names its tab; a strip appears only once
+	// the window holds several tabs to choose between.
+	stripVisible := m.tabBarVisible()
+	if m.Win.IsFloating(id) {
+		stripVisible = m.Win.GroupTabCount(id) > 1 && m.Win.Layout() == window.TabHorizontal
+	}
+	if stripVisible {
 		tabH = min(ui.StripHeight, r.H)
 		g.add(g.tabs, ui.Rect{W: r.W, H: tabH})
 	}
@@ -323,7 +329,7 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 	g.body = g.screen(body)
 	g.view = p.view(tab)
 	switch {
-	case tab == nil && len(m.Win.AllGroupIDs()) == 1 && m.Win.TabCount() == 0 && m.launcherScreen != nil:
+	case tab == nil && !m.Win.IsFloating(id) && m.mainAreaEmpty() && m.launcherScreen != nil:
 		pad, inner := boundedContentGeometry(body.W, m.Theme.Spacing.PadLR)
 		if inner >= 20 && body.H >= 3 {
 			g.add(m.launcherScreen, ui.Rect{X: pad, Y: body.Y, W: inner, H: body.H})

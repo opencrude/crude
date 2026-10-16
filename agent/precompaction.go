@@ -139,9 +139,9 @@ func (p *compactionPlanner) buyCost(a *Agent, source, post int) float64 {
 // adopting now. Its extraction is paid for, so the only remaining price is the
 // cold cache of the next request; once the excess spend has covered that,
 // carrying the old context any longer is pure waste. An explicit percent keeps
-// its exact boundary instead.
-func (p *compactionPlanner) adoptPrepared(a *Agent, post int) bool {
-	if a.ContextCompactionPercent != 0 || p.units == "" {
+// its exact boundary instead, and the economic floor still applies.
+func (p *compactionPlanner) adoptPrepared(a *Agent, active, post, hardLimit int) bool {
+	if a.ContextCompactionPercent != 0 || p.units == "" || active < economicFloor(max(p.floor, 1), hardLimit) {
 		return false
 	}
 	main, _, units := p.prices(a)
@@ -168,6 +168,16 @@ func (p *compactionPlanner) learn(a *Agent, source, checkpoint, after int, usage
 	// The capacity margin is the largest growth since this checkpoint: one
 	// past jump (a large paste) must not keep the agent near capacity forever.
 	p.excess, p.floor, p.previous, p.maxGrowth = 0, after, after, 0
+}
+
+// economicFloor is the smallest context the economic rule may compact. A
+// checkpoint is lossy: it trades exact history the agent can still reason
+// over for a summary, a cost the spend accounting cannot see. Below half of
+// the model's capacity that history is cheap to keep in quality terms, so a
+// cheap extraction model next to an expensive main model never compacts a
+// large window after a few steps; only fullness or an explicit percent can.
+func economicFloor(floor, hardLimit int) int {
+	return max(floor, hardLimit/2)
 }
 
 // checkpointEstimate is the expected checkpoint size: the last one observed in
@@ -199,11 +209,11 @@ func (p *compactionPlanner) evaluate(a *Agent, active, fixed, tail, hardLimit, w
 		plan.force = plan.swap
 		plan.prepare = active >= floor+(threshold-floor)/2
 		plan.reason = fmt.Sprintf("context reached the configured %d%%", percent)
-	} else {
+	} else if quality := economicFloor(floor, hardLimit); active >= quality*3/4 {
 		buy := p.buyCost(a, source, post)
 		// Excess grows roughly quadratically with steps, so a quarter of the
 		// price is halfway in steps.
-		plan.swap = buy > 0 && p.excess >= buy
+		plan.swap = active >= quality && buy > 0 && p.excess >= buy
 		plan.prepare = buy > 0 && p.excess >= buy/4
 		plan.reason = "carrying the older context now costs more than a checkpoint"
 	}

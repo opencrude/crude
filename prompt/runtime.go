@@ -273,3 +273,12 @@ func RuntimePlanDrift(plan string) string {
 func RuntimePlanReconcile(plan string) string {
 	return "<runtime_plan_reminder>Before your final answer, make the saved plan true: complete finished steps, cancel abandoned ones, or keep it open only for work that genuinely remains (for example while waiting for the user). Then give your final answer.\n" + XMLText(plan) + "</runtime_plan_reminder>"
 }
+
+// RuntimeCapabilityShared tells an agent that another agent of its session
+// (its parent or one of its children) just made a capability usable, so it
+// reuses that exact capability instead of searching for or installing an
+// alternative. Every value is data.
+func RuntimeCapabilityShared(agentName, relation, operation, id string) string {
+	return fmt.Sprintf("<runtime_capability_shared agent=\"%s\" relation=\"%s\" operation=\"%s\" id=\"%s\">Another agent of this session made this capability usable. If your task needs this kind of capability, activate this exact id with capability_activate instead of searching for or installing an alternative; do not repeat its approval or installation. Ignore this note when your task does not need it.</runtime_capability_shared>",
+		XMLText(agentName), XMLText(relation), XMLText(operation), XMLText(id))
+}

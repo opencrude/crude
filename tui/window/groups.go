@@ -148,6 +148,19 @@ func (w *Window) GroupActiveTab(group GroupID) *Tab {
 	return nil
 }
 
+// GroupTabCount is the number of tabs in group, without allocating: frame
+// predicates (tab strip and launcher visibility) ask it every frame.
+func (w *Window) GroupTabCount(group GroupID) int {
+	w.ensureGroups()
+	count := 0
+	for _, tab := range w.tabs {
+		if tab.Group == group {
+			count++
+		}
+	}
+	return count
+}
+
 func (w *Window) GroupTabs(group GroupID) []Tab {
 	w.ensureGroups()
 	var tabs []Tab

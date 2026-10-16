@@ -13,6 +13,8 @@ import (
 
 // BuildSubPaneHeaderLine builds the title bar ("│ ● agent-name 12s").
 func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame int) SubPaneLine {
+	controls := agentPaneControls(header, width)
+	width -= spansWidth(controls)
 	var spans []RowSpan
 	spans = append(spans, RowSpan{Text: "│ ", Role: ui.ColorBorder})
 
@@ -66,13 +68,45 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 	}
 
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
+	pl.Spans = append(pl.Spans, controls...)
 	line := NativeLine(pl)
 	line.FrameSensitive = !header.Done
 	return line
 }
 
+// agentPaneControls are a sub-agent pane's explicit open buttons. Sub-agents
+// start minimized, so the pane is where the user opens one as a main tab or
+// as its own window. Thinking panes and panes too narrow to keep a readable
+// title get none.
+func agentPaneControls(header workspace.SubPaneHeaderView, width int) []RowSpan {
+	if header.Type != workspace.PaneAgent || header.ID == "" {
+		return nil
+	}
+	controls := []RowSpan{
+		{Text: "  "},
+		{Text: "⧉ tab", Role: ui.ColorAccent, Action: &ui.Action{ID: ChatAgentOpenActionID, Payload: ChatAgentOpenPayload{AgentID: header.ID}}},
+		{Text: "  "},
+		{Text: "⇱ window", Role: ui.ColorAccent, Action: &ui.Action{ID: ChatAgentOpenActionID, Payload: ChatAgentOpenPayload{AgentID: header.ID, Window: true}}},
+		{Text: " "},
+	}
+	if width-spansWidth(controls) < 24 {
+		return nil
+	}
+	return controls
+}
+
+func spansWidth(spans []RowSpan) int {
+	total := 0
+	for _, span := range spans {
+		total += rendering.VisibleWidth(span.Text)
+	}
+	return total
+}
+
 // BuildSubPaneSummaryLine builds the collapsed summary ("│ ● agent for 5.0s").
 func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine {
+	controls := agentPaneControls(view.Header, width)
+	width -= spansWidth(controls)
 	summary := ""
 	if view.Summary != nil {
 		summary = view.Summary.Text
@@ -101,6 +135,7 @@ func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine 
 	}
 	spans = append(spans, RowSpan{Text: " ▸", Role: ui.ColorMuted})
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
+	pl.Spans = append(pl.Spans, controls...)
 	return NativeLine(pl)
 }
 

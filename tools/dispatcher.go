@@ -16,6 +16,7 @@ import (
 	"crude/docconv"
 	"crude/fileio"
 	"crude/logger"
+	"crude/prompt"
 	"crude/provider"
 )
 
@@ -37,7 +38,7 @@ func readFileHint(err error, path string) string {
 	}
 	entries, readErr := os.ReadDir(dir)
 	if readErr != nil {
-		return msg + "\n\nHint: file not found. Use glob_files or list_directory to discover actual names."
+		return prompt.WithToolHint(msg, prompt.HintDiscoverNames)
 	}
 	stem := strings.TrimSuffix(want, filepath.Ext(want))
 	var close, other []string
@@ -61,9 +62,9 @@ func readFileHint(err error, path string) string {
 		candidates = candidates[:12]
 	}
 	if len(candidates) == 0 {
-		return fmt.Sprintf("%s\n\nHint: file not found; %s is empty.", msg, dir)
+		return prompt.WithToolHint(msg, prompt.HintEmptyDirectory(dir))
 	}
-	return fmt.Sprintf("%s\n\nHint: file not found. Entries in %s (closest first): %s", msg, dir, strings.Join(candidates, ", "))
+	return prompt.WithToolHint(msg, prompt.HintNearbyEntries(dir, candidates))
 }
 
 func GetStrArg(args map[string]any, key string, defaultVal string) string {
@@ -359,7 +360,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 					result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 					break
 				}
-				result = ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
+				result = ToolResult{Content: prompt.WithToolHint(fmt.Sprintf("Error: %v", err), prompt.HintVerifyEditContent)}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
@@ -378,14 +379,14 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
-				result = ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
+				result = ToolResult{Content: prompt.WithToolHint(fmt.Sprintf("Error: %v", err), prompt.HintVerifyEditContent)}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			orig = string(data)
 			count := strings.Count(orig, oldString)
 			if count == 0 {
-				result = ToolResult{Content: fmt.Sprintf("Error: old_string not found in %s\nHint: use read_file to verify the exact content before retrying.", path)}
+				result = ToolResult{Content: prompt.WithToolHint("Error: old_string not found in "+path, prompt.HintVerifyEditContent)}
 				lg.Warn("TOOL", "old_string_not_found", "path", path)
 				break
 			}
@@ -699,7 +700,7 @@ func noChangeEditResult(oldString, newString string) ToolResult {
 	if oldString == newString {
 		reason = "no changes to make: old_string and new_string are exactly the same"
 	}
-	return ToolResult{Content: fmt.Sprintf("Error: %s\nHint: match the file's current bytes exactly — read_file the section first, and make old_string and new_string differ.", reason)}
+	return ToolResult{Content: prompt.WithToolHint("Error: "+reason, prompt.HintNoChangeEdit)}
 }
 
 // displayPath renders path relative to root when it lies inside it, so search

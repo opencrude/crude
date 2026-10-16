@@ -200,7 +200,10 @@ control, not external desktop access.
 ## Agent Discovery, Acquisition, And Durable Use
 
 Relevant installed capabilities and acquisition may be used proactively when they
-improve the task, even when native tools exist. Exact activation follows the user's
+improve the task, even when native tools exist. A workflow, script or tool that
+applicable project guidance names for the job (such as `scripts/tuishot.sh` for
+screenshots) takes precedence; agents do not search for or install a capability to
+replace it. Exact activation follows the user's
 Manual/Auto Review/YOLO policy, explicit denials, trusted sources, host and effect
 ceilings. Source text and server annotations never impersonate human authorization.
 

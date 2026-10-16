@@ -146,10 +146,15 @@ func (c *ComponentWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
 	}
 	c.host.Resize(w, h)
 	c.host.Layout()
-	// Clear to popup background so transparent cells do not punch holes.
+	// Clear to the frame's fill (popup background unless the frame says
+	// otherwise) so transparent cells do not punch holes.
 	bg := cell.NoColor
 	if c.host.Tokens() != nil {
-		bg = c.host.Tokens().Color(ColorPopupBg)
+		role := ColorPopupBg
+		if frame, ok := c.host.Root().(*WindowFrame); ok {
+			role = frame.Fill()
+		}
+		bg = c.host.Tokens().Color(role)
 	}
 	buf := surf.Buffer()
 	if !bg.IsDefault() {

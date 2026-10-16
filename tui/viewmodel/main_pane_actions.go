@@ -28,7 +28,7 @@ type paneFilePickerOwner struct {
 }
 
 func (m *App) emptyPaneActive() bool {
-	return m.Win != nil && m.Win.ActiveTab() == nil && (m.Win.TabCount() > 0 || len(m.Win.GroupIDs()) > 1)
+	return m.Win != nil && m.Win.ActiveTab() == nil && !m.mainAreaEmpty()
 }
 
 func (m *App) mainPaneDragActive() bool {
@@ -284,7 +284,7 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 		if !ok {
 			group = m.Win.ActiveGroup()
 		}
-		if !paneHasGroup(m.Win.PaneRoot(), group) {
+		if !paneHasGroup(m.Win.PaneRoot(), group) && !m.Win.IsFloating(group) {
 			return nil, true
 		}
 		m.focusMainGroup(group)
@@ -456,6 +456,13 @@ func (m *App) paneMenuSection(tab window.TabID) ui.ContextMenuSection {
 			m.syncPaneWindows()
 			m.forceFrame()
 		}})
+		// Several windows can be open at once: a window holding more than one
+		// tab can give any of them its own window.
+		if m.Win.GroupTabCount(m.Win.GroupOf(tab)) > 1 {
+			items = append(items, ui.ContextMenuItem{Label: "Open in New Window", Detail: "separate window", Action: func() {
+				m.openTabInWindow(tab)
+			}})
+		}
 		return ui.ContextMenuSection{SectionLabel: "Window", Items: items}
 	}
 	items = append(items, ui.ContextMenuItem{Label: "Open in Window", Detail: "movable, resizable", Action: func() {
