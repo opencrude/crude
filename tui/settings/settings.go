@@ -234,6 +234,7 @@ const (
 	fieldMultiAgent           = "multi-agent"
 	fieldContextCompaction    = "context-compaction-percent"
 	fieldContextRetention     = "context-retention-tokens"
+	fieldMaxSubAgents         = "max-sub-agents"
 	fieldServiceTier          = "service-tier"
 	fieldSafetyConfirmAt      = "safety-confirm-at"
 	fieldSafetyUnknown        = "safety-unknown-risk"
@@ -1245,6 +1246,8 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 			ui.SeparatorFieldState("delegation", "Delegation"),
 			ui.BoolFieldState(fieldMultiAgent, "Multi Agent",
 				m.agentsEnabled(), "Allow delegation to other agents."),
+			optionalNumberField(fieldMaxSubAgents, "Concurrent sub-agents", m.maxSubAgents(), "agents",
+				"How many sub-agents may run at once; more wait for a free slot. Auto is 4.", 1, types.MaxConcurrentSubAgents),
 		)
 	}
 	return formModel(fields...)
@@ -2536,6 +2539,9 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 	if field := m.categories[catMain].Form.Field(fieldMultiAgent); field != nil {
 		agents.Enabled = ui.BoolFieldValue(field)
 	}
+	if field := m.categories[catMain].Form.Field(fieldMaxSubAgents); field != nil {
+		agents.MaxConcurrent = maxSubAgentsValue(field)
+	}
 }
 
 func (m *Model) agentCategoryFromForm(form *ui.FormModel, category types.CategorySettings) types.CategorySettings {
@@ -2778,4 +2784,20 @@ func optionalNumberField(id, label string, value *int, unit, description string,
 		return nil
 	}
 	return field
+}
+
+// maxSubAgents is the configured sub-agent limit; nil shows Auto.
+func (m *Model) maxSubAgents() *int {
+	if m.agents == nil || m.agents.MaxConcurrent <= 0 {
+		return nil
+	}
+	value := m.agents.MaxConcurrent
+	return &value
+}
+
+func maxSubAgentsValue(field *ui.FieldState) int {
+	if value := parseIntPtr(field.Value.String()); value != nil {
+		return *value
+	}
+	return 0
 }

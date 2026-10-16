@@ -16,6 +16,8 @@ Session persistence does not imply pane-layout persistence.
 | `tui/window/window.go`, `tui/window/groups.go` | One resource-tab identity, group membership/order, selected tab per group, focused group, recursive `PaneNode` topology |
 | `tui/viewmodel/main_panes.go` | Retained group controls and per-tab views, parent-local geometry, compact presentation, session-family chrome placement |
 | `tui/viewmodel/main_pane_actions.go` | Input policy, group activation, split/move/merge/resize commands, drop targets and preview, owner-bound file picker |
+| `tui/viewmodel/floating_panes.go` | Pane windows: one WM window per floating group, window/group focus agreement, host resolution for focus and geometry |
+| `tui/viewmodel/panel_placement.go` | Workspace surfaces (Git, Problems, Notices, Workspace, Memory, Board) placed in the dock, a main tab or a pane window |
 | `tui/ui/action_registry.go` | Shared shortcut and palette metadata |
 | `ui.Host`, `ui.SplitModel`, `ui.SplitDivider`, `ui.Tabs` | Shared focus/capture, split sizing, divider manipulation, strip navigation/overflow and drag gestures |
 
@@ -112,11 +114,59 @@ minimums, the tree and selections remain intact while only the focused group
 is shown. Alt+[ / Alt+] or the header's Pane menu visits the other groups; enlargement restores the
 layout rather than rebuilding it.
 
-Existing floating-window and blocking-deck policy precedes pane input. Settings
+Existing popup and blocking-deck policy precedes pane input. Settings
 remains Ignore/consume outside clicks, not click-through to an underlying pane.
 Terminal-owned keys remain PTY input. Pane commands do not bypass a modal
-decision. Main-resource pop-out/floating-window composition remains deferred;
-existing floating dialogs and terminals retain their own contracts.
+decision. Pane windows (below) are main content, not popups: `focusedPopup()`
+excludes them, so they never take the `FocusFloatingWindow` route.
+
+## Pane windows
+
+Any tab (file, agent, workspace surface, Git review, local comparison) can live
+in its own movable, resizable window. A pane window is a **floating group** of
+`window.Window`: the same tab identity, editor, session and selection move into
+it, and the same viewmodel policy drives it. There is no second editor, chat or
+composer path.
+
+- `Window.DetachTab` moves a tab into a new floating leaf; `DockGroup` merges a
+  floating group back into `DockedGroup()` (the focused docked group, else the
+  docked group focused before a window took focus). Floating leaves never join
+  the split tree: they cannot be split, `GroupIDs()` stays the docked visual
+  order, `AllGroupIDs()` appends windows, and Merge All merges only the docked
+  layout. A window whose last tab closes disappears.
+- `syncPaneWindows` keeps one WM window per floating group and lays it out every
+  frame before focused-view geometry is derived. The frame body mounts the
+  group's `mainPaneGroup` through the same `configureGroup` docked groups use;
+  group rects (`body`, `editor`, `chat`, `input`, `deck`) are screen
+  coordinates, so popovers, hit policy and composer ownership need no special
+  case. A component is mounted in exactly one host; `hostFor`, `mainHost` and
+  `screenRectOf` resolve focus, key dispatch and geometry to the root host or
+  the window's frame host.
+- Focus: `syncPaneWindowFocus` keeps Window's focused group and the WM's focused
+  window in agreement. Code that focuses a window group raises its window; a
+  user who raises a window moves the focused group into it; leaving every
+  window (a click outside all windows) returns the focused group to the docked
+  one. A popup opened from the window (find, completion, dirty prompt) keeps
+  the group. A press inside window content activates the group like a click
+  into a docked pane; drags captured by a window host follow the pointer until
+  release.
+- Dragging a tab out of a window's strip onto the main area moves it there
+  (edge, center or strip, as for docked drags); a drop inside any window is
+  not a target. Window hosts report pointer geometry in window coordinates;
+  `windowScreenAction` converts it before the shared drop logic runs.
+- The title bar's **⇲** returns the tabs to the main area; a window holding only
+  a workspace surface returns it to the bottom dock. The window **✕** also
+  returns tabs to the main area and never closes them. Esc is never a window
+  close for pane windows; it belongs to the editor or composer.
+- Entry points: tab context menu **Open in Window** (in a window: **Move to Main
+  Area**), file tree **Open in window**, Agents panel **Open in window**, the
+  **⇱ window** chip on a "Started agent" transcript row, the dock header **⇱**,
+  and palette **Open Tab in Window** / **Move Window to Main Area**. A
+  core-backed document opens asynchronously; the window intent travels with the
+  open request and the landed tab floats.
+- Pane windows open without the popup reveal animation: their content geometry
+  must be exact from the first frame. Windows are process-local like the split
+  layout and are not restored on restart.
 
 ## Agent tab close is minimize, not terminate
 
@@ -155,6 +205,11 @@ ownership are all retained. A stray click must never destroy work in flight.
 - Guarded by `tui/viewmodel/agent_minimize_test.go`.
 
 ## New agents surface a tab immediately
+
+Sub-agents start **minimized**: a child never opens a tab on its own. Its
+"Started agent" transcript row carries **⧉ open** (main tab) and **⇱ window**
+(pane window) chips, and the Agents panel lists it with Open / Open in window
+actions. The rest of this section concerns root agents and explicit opens.
 
 Creating or restoring an agent **must add its window tab and make it the
 painted main view even while editor tabs are open**. A stray early return
@@ -210,9 +265,9 @@ cancelled/stale results are rejected on return. Comparisons are process-local,
 not persisted across restart. Local narrow chrome uses **More**, preserving all
 actions rather than shrinking seven labels into unreadable fragments.
 
-The reader does not provide writable merge, hunk staging, conflict resolution,
-intraline word-diff or remote Git operations. These are not implied by split
-presentation.
+The reader does not provide writable merge, hunk staging or intraline
+word-diff. Conflict resolution and remote operations live in the Git panel
+(next section), not in the comparison reader.
 
 See [interaction matrix](interaction-matrix.md),
 [control usage](control-usage.md), and [surface catalog](surface-catalog.md).
@@ -241,3 +296,22 @@ wins over prepared disk bytes. See the recorded measurements in
   mutations require reviewed bytes; sidebar context actions open review instead
   of bypassing it. Discard requires exact preview + mandatory Local History
   safety recovery and never deletes untracked data.
+- Git panel sync and merge: the status row offers Fetch, Pull (`--no-rebase`),
+  Push (never forced; publishes an upstream when missing), and during a merge
+  Resolve n / Abort / Complete. A branch row's menu offers Switch and Merge into
+  current. Unmerged paths come from `git diff --diff-filter=U`; the
+  `gitmerge` resolver dialog chooses ours/theirs/both per conflict (diff3 and
+  CRLF aware) and writes through `Workspace.ResolveGitConflict` with a Local
+  History safety snapshot. Remote commands run with `GIT_TERMINAL_PROMPT=0`;
+  an authentication failure is reported, never prompted on the TTY. Results
+  carry their own sequence and are dropped when stale.
+- The commit message **Edit…** button opens a dialog with the full message
+  (Save / Commit / Cancel) and the repository's commit conventions.
+- The Changes/History split collapses either side with the divider's ◂ ▸
+  controls or `[` / `]`; collapse is shared `ui.SplitModel` state.
+- Workspace surfaces live in the bottom dock by default. The dock header's **⧉**
+  promotes the visible surface to an ordinary main tab (split, moved and closed
+  like a file; closing returns it to the dock) and **⇱** opens it in a pane
+  window; **⌄** hides the dock. The footer pill reveals the surface wherever it
+  is placed instead of opening a second copy. A surface is mounted in exactly
+  one place.

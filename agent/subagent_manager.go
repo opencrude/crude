@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -41,11 +43,29 @@ func (m *SubAgentManager) Validate(spec SubAgentSpec) error {
 	return nil
 }
 
+// SetMaxConcurrent changes the limit for later launches. Children already
+// running above a lowered limit finish normally.
+func (m *SubAgentManager) SetMaxConcurrent(limit int) {
+	if limit <= 0 {
+		limit = 4
+	}
+	m.mu.Lock()
+	m.maxConcurrent = limit
+	m.mu.Unlock()
+}
+
 func (m *SubAgentManager) Register(handle *SubAgentHandle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.active) >= m.maxConcurrent {
-		return fmt.Errorf("maximum concurrent sub-agents (%d) reached", m.maxConcurrent)
+		running := make([]string, 0, len(m.active))
+		for id, h := range m.active {
+			running = append(running, fmt.Sprintf("%s (%s)", h.Spec.Name, id))
+		}
+		sort.Strings(running)
+		return fmt.Errorf("maximum concurrent sub-agents (%d) reached; running: %s. "+
+			"Nothing was launched. Use agent_wait on one of them (or continue other work: you are notified when a child settles) and launch again, "+
+			"or stop one with agent_control", m.maxConcurrent, strings.Join(running, ", "))
 	}
 	m.active[handle.Spec.ID] = handle
 	return nil

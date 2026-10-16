@@ -7,6 +7,15 @@ const ChatToggleActionID = "chat.toggle-details"
 
 const ChatRecoveryRetryActionID = "chat.retry-recovery"
 
+// ChatAgentOpenActionID opens the sub-agent a "Started agent" row names, as a
+// tab or as a window (payload ChatAgentOpenPayload).
+const ChatAgentOpenActionID = "chat.agent-open"
+
+type ChatAgentOpenPayload struct {
+	AgentID string
+	Window  bool
+}
+
 type ChatRecoveryRetryPayload struct {
 	AgentID, IncidentID string
 	Generation          uint64

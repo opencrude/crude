@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -550,7 +551,13 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 			t.Fatalf("%s row %d span counts differ: %d vs %d", label, i, len(want), len(got))
 		}
 		for s := range want {
-			if want[s] != got[s] {
+			// Actions are compared by value: each projection allocates its own.
+			w, g := want[s], got[s]
+			if !reflect.DeepEqual(w.Action, g.Action) {
+				t.Fatalf("%s row %d span %d action differs:\n live     %+v\n hydrated %+v", label, i, s, w.Action, g.Action)
+			}
+			w.Action, g.Action = nil, nil
+			if w != g {
 				t.Fatalf("%s row %d span %d differs:\n live     %+v\n hydrated %+v", label, i, s, want[s], got[s])
 			}
 		}

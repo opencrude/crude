@@ -21,6 +21,13 @@ func TestAgentViewIndependentShellNavigationPreservesSharedLifecycle(t *testing.
 	// Navigation-only holders: no running Apps, event sinks or shared UI resources.
 	left := &App{ws: shared, AgentView: NewAgentViewState(manager)}
 	right := &App{ws: shared, AgentView: NewAgentViewState(manager)}
+	// Both shells start with every sub-agent opened.
+	for _, node := range manager.AllNodes() {
+		if node.Parent != nil {
+			left.AgentView.SetHidden(node.ID, false)
+			right.AgentView.SetHidden(node.ID, false)
+		}
+	}
 	before := make(map[string]workspace.AgentState)
 	for _, node := range manager.AllNodes() {
 		before[node.ID] = *node.State

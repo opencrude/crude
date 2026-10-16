@@ -250,3 +250,7 @@ func TestEditorLastTabCloseSwitchesToLauncher(t *testing.T) {
 	assertLauncherBack(t, app, 0)
 	t.Log("editor last-tab close OK")
 }
+
+func (noopLSPClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
+	return nil, true
+}

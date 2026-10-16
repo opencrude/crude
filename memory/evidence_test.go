@@ -416,7 +416,12 @@ func TestLessonEvidenceErrorsNameTheFaultyReference(t *testing.T) {
 		t.Fatalf("unrecorded error = %v", err)
 	}
 	_, err = store.Remember(t.Context(), Record{Title: "Fact", Content: "x", Evidence: []Evidence{{SessionID: "s1", Kind: EvidenceTool, Summary: "ran"}}})
-	if err == nil || !strings.Contains(err.Error(), "evidence[0] is missing tool_call_id or message_id, outcome") {
+	if err == nil || !strings.Contains(err.Error(), "evidence[0] is missing tool_call_id or message_id") ||
+		!strings.Contains(err.Error(), "omit evidence entirely") || !strings.Contains(err.Error(), ", outcome") {
 		t.Fatalf("missing-field error = %v", err)
+	}
+	_, err = store.Remember(t.Context(), Record{Kind: KindLesson, Title: "Observation", Content: "x", AppliesWhen: "y"})
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "kind=fact") {
+		t.Fatalf("an unsupported lesson must point at kind=fact, got %v", err)
 	}
 }

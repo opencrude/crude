@@ -66,6 +66,11 @@ type GitSnapshot struct {
 	Changes        []GitChange
 	RecentCommits  []GitCommitSummary
 	Branches       []GitBranchSummary
+	Remotes        []string
+	// Operation is the merge, rebase, cherry-pick or revert waiting for
+	// conflict resolution; OperationDetail is Git's description of it.
+	Operation       string
+	OperationDetail string
 }
 
 // GitService owns repository reads and mutations for one workspace. The TUI
@@ -107,6 +112,14 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 	snapshot.Changes = projectGitChanges(root, status)
 	snapshot.RecentCommits = recentGitCommits(repo, 8)
 	snapshot.Branches = gitBranches(repo, snapshot.Branch)
+	snapshot.Remotes = gitRemotes(repo)
+	snapshot.readOperation(ctx)
+	if snapshot.Operation != "" {
+		// go-git does not report unmerged index stages; Git itself does.
+		if conflicts, err := s.conflictedPaths(ctx); err == nil {
+			snapshot.Changes = markGitConflicts(root, snapshot.Changes, conflicts)
+		}
+	}
 	return snapshot, nil
 }
 

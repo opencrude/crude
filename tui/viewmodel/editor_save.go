@@ -360,7 +360,7 @@ func (m *App) logicalEditorFocus() *editor.Editor {
 		return nil
 	}
 	if m.windowManager != nil {
-		if fw := m.windowManager.Focused(); fw != nil {
+		if fw := m.focusedPopup(); fw != nil {
 			switch fw.ID {
 			case string(ui.OverlayFindReplace), "completion-popup", "diag-hover", "editor-changes", "context-menu", "dirty-close-prompt":
 				return m.EditorState.Editor

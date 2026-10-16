@@ -5,14 +5,24 @@ import "crude/workspace"
 // AgentViewState is one shell's navigation over a shared inventory. Exact node
 // identities prevent a replacement with the same ID inheriting old tab choices.
 // It owns no lifecycle, execution, conversation or status state.
+//
+// Root agents are shown unless minimized. Sub-agents start minimized: they
+// appear in their parent's transcript and the Agents list, and own a tab only
+// after someone opens them.
 type AgentViewState struct {
 	inventory *workspace.AgentManager
 	selected  *workspace.AgentNode
 	hidden    map[*workspace.AgentNode]bool
+	shown     map[*workspace.AgentNode]bool
 }
 
 func NewAgentViewState(inventory *workspace.AgentManager) *AgentViewState {
-	return &AgentViewState{inventory: inventory, hidden: make(map[*workspace.AgentNode]bool)}
+	return &AgentViewState{inventory: inventory, hidden: make(map[*workspace.AgentNode]bool), shown: make(map[*workspace.AgentNode]bool)}
+}
+
+// collapsed reports whether node itself is minimized, ignoring ancestors.
+func (v *AgentViewState) collapsed(node *workspace.AgentNode) bool {
+	return v.hidden[node] || node.Parent != nil && !v.shown[node]
 }
 
 func (v *AgentViewState) ActiveNode() *workspace.AgentNode {
@@ -44,7 +54,7 @@ func (v *AgentViewState) IsHidden(id string) bool {
 		return false
 	}
 	for node := v.inventory.Get(id); node != nil; node = node.Parent {
-		if v.hidden[node] {
+		if v.collapsed(node) {
 			return true
 		}
 	}
@@ -58,10 +68,17 @@ func (v *AgentViewState) SetHidden(id string, hidden bool) {
 	if node == nil {
 		return
 	}
+	if v.shown == nil {
+		v.shown = make(map[*workspace.AgentNode]bool)
+	}
 	if hidden {
 		v.hidden[node] = true
+		delete(v.shown, node)
 	} else {
 		delete(v.hidden, node)
+		if node.Parent != nil {
+			v.shown[node] = true
+		}
 	}
 	if v.IsHidden(v.ActiveID()) {
 		v.ClearActive()
@@ -86,7 +103,7 @@ func (v *AgentViewState) VisibleCount() int {
 	count := 0
 	var visit func(*workspace.AgentNode)
 	visit = func(node *workspace.AgentNode) {
-		if node == nil || v.hidden[node] {
+		if node == nil || v.collapsed(node) {
 			return
 		}
 		count++
@@ -106,6 +123,7 @@ func (v *AgentViewState) forgetSubtree(node *workspace.AgentNode) {
 		return
 	}
 	delete(v.hidden, node)
+	delete(v.shown, node)
 	if v.selected == node {
 		v.ClearActive()
 	}

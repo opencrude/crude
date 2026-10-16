@@ -37,13 +37,15 @@ type paneFilesOpenedMsg struct {
 	refs             *liveDocumentRefs
 	position         *editor.LSPDiagnostic
 	lspPosition      bool
+	// window opens the landed tab in its own window (Open in window).
+	window bool
 }
 
 // openPaneFiles captures ownership on Update, but reads only in the command.
 // Its private manager cannot publish buffers into a closed/replaced workspace.
 func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 	m.paneFileOpenSeq++ // An empty request also cancels an earlier pending open.
-	if len(paths) == 0 || m.Win == nil || m.BufferMgr == nil || !paneHasGroup(m.Win.PaneRoot(), group) {
+	if len(paths) == 0 || m.Win == nil || m.BufferMgr == nil || !m.Win.HasGroup(group) {
 		return nil
 	}
 	msg := paneFilesOpenedMsg{seq: m.paneFileOpenSeq, generation: m.workspaceSwitchGen.Load(), manager: m.BufferMgr,
@@ -92,7 +94,7 @@ func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 
 func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if msg.seq != m.paneFileOpenSeq || msg.generation != m.workspaceSwitchGen.Load() || msg.manager != m.BufferMgr ||
-		msg.win != m.Win || m.Win == nil || !paneHasGroup(m.Win.PaneRoot(), msg.group) {
+		msg.win != m.Win || m.Win == nil || !m.Win.HasGroup(msg.group) {
 		return releasePaneDocuments(msg)
 	}
 	currentGroup := m.Win.ActiveGroup()
@@ -195,6 +197,9 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			ed.SetSelection(p.Line, p.Col, p.EndLine, p.EndCol)
 		}
 		ed.ScrollToCursor()
+	}
+	if tab := m.Win.ActiveTab(); msg.window && tab != nil && m.isEditorTabTitle(tab.Title) {
+		m.openTabInWindow(tab.ID)
 	}
 	if match := msg.landing; match != nil && m.EditorState.ActiveView == match.Path {
 		ed := m.EditorState.Editor

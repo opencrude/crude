@@ -383,3 +383,17 @@ func TestLocalHistorySettingsFileConfigRoundTrip(t *testing.T) {
 		t.Fatalf("local history round trip=%+v", got)
 	}
 }
+
+// Turn dumps copy the whole prompt to disk after every request; a long run
+// wrote 65 MB of them by default.
+func TestTurnLogsAreOptIn(t *testing.T) {
+	var fc FileConfig
+	if fc.IsTurnLogsEnabled() {
+		t.Fatal("turn logs are enabled without an explicit setting")
+	}
+	on := true
+	fc.TurnLogsEnabled = &on
+	if !fc.IsTurnLogsEnabled() {
+		t.Fatal("explicit turn_logs_enabled=true was ignored")
+	}
+}

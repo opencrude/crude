@@ -25,7 +25,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	}
 	ed := m.EditorState.Editor
 	if m.rootHost != nil {
-		if rect, ok := m.rootHost.ScreenRect(m.editorScreen.ID()); ok && rect.Contains(mouse.X, mouse.Y) {
+		if rect, ok := m.screenRectOf(m.editorScreen.ID()); ok && rect.Contains(mouse.X, mouse.Y) {
 			if pos, valid := ed.PositionAt(mouse.X-rect.X, mouse.Y-rect.Y); valid && !ed.HasSelection() {
 				ed.SetCursorPosition(pos.Line, pos.Col)
 			}
@@ -328,6 +328,9 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 				{Label: "Open agent", Action: func() {
 					m.restoreAgent(node.ID)
 				}},
+				{Label: "Open in window", Detail: "movable, resizable", Action: func() {
+					m.openAgentInWindow(node.ID)
+				}},
 				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Detail: "from saved work", Action: func() {
 					m.runDetachedAsyncCmd(m.retryAgentRecovery(node.ID))
 				}},
@@ -383,6 +386,11 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Open", Disabled: path == "" || isDir, Action: func() {
 				if path != "" {
 					_, _ = m.openFileFromTree(path)
+				}
+			}},
+			{Label: "Open in window", Disabled: path == "" || isDir, Action: func() {
+				if path != "" {
+					m.runDetachedAsyncCmd(m.openFileInWindow(path))
 				}
 			}},
 			{Label: "Expand / collapse", Disabled: path == "" || !isDir, Action: func() {
@@ -556,6 +564,17 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				{Label: "Terminate agent", Detail: "stops work", Action: func() {
 					m.terminateAgent(agentID)
 				}},
+			},
+		})
+	}
+	if tab.Resource.Kind == window.ResourcePanel {
+		id := tab.Resource.ID
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Panel",
+			Items: []ui.ContextMenuItem{
+				{Label: "Open as window", Action: func() { m.openPanelAsWindow(id) }},
+				{Label: "Move to dock", Action: func() { m.dockPanel(id) }},
+				{Label: "Close tab", Detail: "returns it to the dock", Action: func() { _ = m.handleAgentTabClose(hit.TabIndex) }},
 			},
 		})
 	}
@@ -786,7 +805,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 	if m.chatScreen != nil && m.rootHost != nil && m.ActiveSession != nil && m.ws.HistoryService() != nil {
-		if rect, ok := m.rootHost.ScreenRect(m.chatScreen.VirtualList().ID()); ok {
+		if rect, ok := m.screenRectOf(m.chatScreen.VirtualList().ID()); ok {
 			if row, ok := m.chatScreen.MessageAtLocalY(mouse.Y - rect.Y); ok {
 				role := ""
 				var canonical workspace.Message

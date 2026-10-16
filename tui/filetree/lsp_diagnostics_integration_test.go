@@ -243,3 +243,7 @@ func TestLSPManager_TreeDiagnostics_AfterExpand(t *testing.T) {
 		t.Errorf("sub DiagnosticCount after expand = %d, want 1", subNode.DiagnosticCount)
 	}
 }
+
+func (*treeLSPTestClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
+	return nil, true
+}

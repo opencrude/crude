@@ -86,7 +86,6 @@ func (app *App) changeNavigation(view activitybar.View, direction int) {
 func (app *App) resetToolLayout() {
 	app.toolLayout = workspace.DefaultToolLayout()
 	app.workspacePanelHeights = make(map[string]int)
-	app.workspacePanelMaximized = false
 	app.termDockHeight = defaultTermDockHeight
 	app.activityBar.SetOrder(app.toolLayout.Rail)
 	app.toolLayoutVersion++

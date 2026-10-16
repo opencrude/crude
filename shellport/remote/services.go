@@ -34,6 +34,21 @@ func (g gitService) client() *coreclient.GitService {
 func (g gitService) AnnotateFile(ctx context.Context, absPath, content string) (workspace.GitFileAnnotation, error) {
 	return g.client().AnnotateFile(ctx, absPath, content)
 }
+func (g gitService) Fetch(ctx context.Context) error { return g.client().Fetch(ctx) }
+func (g gitService) Pull(ctx context.Context) (workspace.GitSyncResult, error) {
+	return g.client().Pull(ctx)
+}
+func (g gitService) Merge(ctx context.Context, ref string) (workspace.GitSyncResult, error) {
+	return g.client().Merge(ctx, ref)
+}
+func (g gitService) Push(ctx context.Context) error           { return g.client().Push(ctx) }
+func (g gitService) AbortOperation(ctx context.Context) error { return g.client().AbortOperation(ctx) }
+func (g gitService) ContinueOperation(ctx context.Context) error {
+	return g.client().ContinueOperation(ctx)
+}
+func (g gitService) ConflictFile(ctx context.Context, path string) (workspace.GitConflictFile, error) {
+	return g.client().ConflictFile(ctx, path)
+}
 func (g gitService) Checkout(ctx context.Context, branch string) error {
 	return g.client().Checkout(ctx, branch)
 }
@@ -79,6 +94,9 @@ func (w *Workspace) DiscardGitReviewed(ctx context.Context, preview workspace.Gi
 }
 func (w *Workspace) DiscardGitHunk(ctx context.Context, comparison workspace.GitComparison, hunk workspace.GitHunkRange) (string, error) {
 	return w.rpc().DiscardGitHunk(ctx, comparison, hunk)
+}
+func (w *Workspace) ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []workspace.GitConflictChoice) (string, error) {
+	return w.rpc().ResolveGitConflict(ctx, path, fingerprint, choices)
 }
 
 // commitWriter generates through the core's Aeron role, streaming the draft

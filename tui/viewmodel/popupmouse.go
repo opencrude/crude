@@ -80,6 +80,11 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 	switch fw.ID {
 	case "filepicker", "workspace-settings", "tab-stats", "find-in-files", "replace-in-files", string(ui.OverlayWorkspaceDelete):
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
+		return
+	}
+	// Pane windows host live surfaces whose controls track hover.
+	if _, pane := paneGroupFromOverlay(ui.OverlayID(fw.ID)); pane {
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
 	}
 }
 

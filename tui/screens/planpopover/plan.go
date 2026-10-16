@@ -78,10 +78,13 @@ func New(th *theme.Theme, plan *activity.Plan) *Screen {
 	return s
 }
 
+// SetPlan adopts a newer plan revision. An equal revision (a fresh copy from
+// the shell projection) keeps rows and any selection in progress.
 func (s *Screen) SetPlan(p *activity.Plan) {
-	if s.plan != p {
-		s.plan, s.width = p, -1
+	if !activity.SameRevision(s.plan, p) {
+		s.width = -1
 	}
+	s.plan = p
 }
 
 // PreferredSize measures wrapped rows, not the count of unwrapped steps. All

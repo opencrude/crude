@@ -167,7 +167,7 @@ func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
 		return nil, false
 	}
 	// Pane commands do not bypass a modal decision or the terminal's keys.
-	if m.windowManager != nil && m.windowManager.Focused() != nil {
+	if m.focusedPopup() != nil {
 		return nil, true
 	}
 	if m.sessionDeckBlocking() && !m.sessionDeckAllowsNavigation() {
@@ -337,7 +337,7 @@ func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
 	if g == nil {
 		return nil
 	}
-	r := m.mainPanes.screenRect(g.Bounds(), ui.Rect{W: g.Bounds().W, H: g.Bounds().H})
+	r := g.screen(ui.Rect{W: g.Bounds().W, H: g.Bounds().H})
 	d := &paneDrop{tab: tab, group: g.id, rect: g.body}
 	if y < g.body.Y {
 		i, _ := g.tabs.HitTest(x - r.X)
@@ -444,6 +444,23 @@ func (m *App) paintPaneDropPreview() {
 
 func (m *App) paneMenuSection(tab window.TabID) ui.ContextMenuSection {
 	items := []ui.ContextMenuItem{}
+	floating := m.Win.IsFloating(m.Win.GroupOf(tab))
+	if floating {
+		items = append(items, ui.ContextMenuItem{Label: "Move to Main Area", Detail: "dock this tab", Action: func() {
+			if m.Win.IndexOf(tab) < 0 {
+				return
+			}
+			m.Win.MoveTabToGroup(tab, m.Win.DockedGroup(), 0)
+			m.unfocus()
+			m.handleTabSwitch()
+			m.syncPaneWindows()
+			m.forceFrame()
+		}})
+		return ui.ContextMenuSection{SectionLabel: "Window", Items: items}
+	}
+	items = append(items, ui.ContextMenuItem{Label: "Open in Window", Detail: "movable, resizable", Action: func() {
+		m.openTabInWindow(tab)
+	}})
 	for _, a := range []struct{ label, id string }{
 		{"Split Right", "pane.split-right"}, {"Split Down", "pane.split-down"},
 		{"Move Tab to Right Split", "pane.move-right"}, {"Move Tab to Lower Split", "pane.move-down"},

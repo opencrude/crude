@@ -40,6 +40,11 @@ type LSPIntegration struct {
 	openFiles      map[string]*openFileState // filePath -> state
 	versionCounter int
 
+	// progress holds the server's active work-done tokens; changed is closed
+	// and replaced whenever progress or a document's diagnostics change.
+	progress map[string]bool
+	changed  chan struct{}
+
 	onDiagnostics func(filePath string, diags []LSPDiagnostic)
 }
 
@@ -75,6 +80,11 @@ type openFileState struct {
 	uri        string
 	languageID string
 	text       string
+	// syncedAt is when this version was sent; publishedAt and diagnostics
+	// record the latest publication for exactly this version.
+	syncedAt    time.Time
+	publishedAt time.Time
+	diagnostics []LSPDiagnostic
 }
 
 // OnDiagnostics sets the callback for receiving diagnostics for open files.
@@ -90,6 +100,8 @@ func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string, op
 		serverArgs: serverArgs,
 		rootURI:    rootURI,
 		openFiles:  make(map[string]*openFileState),
+		progress:   make(map[string]bool),
+		changed:    make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -151,6 +163,20 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 					l.updateDiagnostics(launch, diagnostics.URI, diagnostics.Version, diagnostics.Diagnostics)
 				}
 			})
+			client.RegisterHandler("window/workDoneProgress/create", func(context.Context, string, json.RawMessage) (any, error) {
+				return nil, nil
+			})
+			client.RegisterNotificationHandler("$/progress", func(_ context.Context, _ string, params json.RawMessage) {
+				var progress struct {
+					Token any `json:"token"`
+					Value struct {
+						Kind string `json:"kind"`
+					} `json:"value"`
+				}
+				if json.Unmarshal(params, &progress) == nil {
+					l.updateProgress(launch, fmt.Sprint(progress.Token), progress.Value.Kind)
+				}
+			})
 			err = client.Initialize(initCtx, true)
 			if err != nil {
 				client.Kill()
@@ -207,14 +233,18 @@ func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, tex
 		}
 		if l.client.NotifyDidChangeTextDocument(ctx, state.uri, version, []protocol.TextDocumentContentChangeEvent{{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}}}) == nil {
 			state.text = text
-			state.version = version
+			state.resetVersion(version)
 			l.versionCounter = version
+			l.signalLocked()
 		}
 		return
 	}
 	if l.client.NotifyDidOpenTextDocument(ctx, uri, languageID, version, text) == nil {
 		l.versionCounter = version
-		l.openFiles[fp] = &openFileState{uri: uri, languageID: languageID, text: text, version: version}
+		state := &openFileState{uri: uri, languageID: languageID, text: text}
+		state.resetVersion(version)
+		l.openFiles[fp] = state
+		l.signalLocked()
 	}
 }
 
@@ -233,8 +263,9 @@ func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string) 
 		{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}},
 	}); err == nil {
 		state.text = text
-		state.version = version
+		state.resetVersion(version)
 		l.versionCounter = version
+		l.signalLocked()
 	}
 }
 
@@ -597,6 +628,8 @@ func (l *LSPIntegration) Stop() {
 	client := l.client
 	l.client = nil
 	l.openFiles = make(map[string]*openFileState)
+	l.progress = make(map[string]bool)
+	l.signalLocked()
 	var starting *lsp.Client
 	if launch != nil {
 		launch.cancel()
@@ -664,18 +697,111 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 		l.mu.Unlock()
 		return
 	}
-	cb := l.onDiagnostics
-	l.mu.Unlock()
 	out := make([]LSPDiagnostic, 0, len(diags))
 	for _, d := range diags {
-		out = append(out, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity)})
+		out = append(out, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity), Source: d.Source, Code: diagnosticCode(d.Code)})
 	}
+	state.publishedAt, state.diagnostics = time.Now(), out
+	l.signalLocked()
+	cb := l.onDiagnostics
+	l.mu.Unlock()
 	if cb != nil {
 		l.mu.Lock()
 		current := l.launch == launch && l.openFiles[filePath] == state && (version == nil || state.version == int(*version))
 		l.mu.Unlock()
 		if current {
 			cb(filePath, out)
+		}
+	}
+}
+
+// diagnosticCode renders the protocol's integer-or-string code.
+func diagnosticCode(code any) string {
+	switch v := code.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func (s *openFileState) resetVersion(version int) {
+	s.version, s.syncedAt = version, time.Now()
+	s.publishedAt, s.diagnostics = time.Time{}, nil
+}
+
+func (l *LSPIntegration) signalLocked() {
+	close(l.changed)
+	l.changed = make(chan struct{})
+}
+
+func (l *LSPIntegration) updateProgress(launch *lspLaunch, token, kind string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.launch != launch {
+		return
+	}
+	switch kind {
+	case "begin":
+		l.progress[token] = true
+	case "end":
+		delete(l.progress, token)
+	default:
+		return
+	}
+	l.signalLocked()
+}
+
+// Settled diagnostics bound how long a quiet server is trusted: the wait after
+// the last publication matches the server's own response time, within limits
+// that keep a slow first analysis from stalling the caller indefinitely.
+const (
+	minDiagnosticsQuiet = 50 * time.Millisecond
+	maxDiagnosticsQuiet = time.Second
+)
+
+// AwaitDiagnostics waits until the server has published diagnostics for the
+// document's current version, reports no work in progress, and has stayed
+// quiet for as long as it took to answer. It returns the published
+// diagnostics and whether they settled before ctx ended; an unsettled result
+// may be partial and must be presented as such.
+func (l *LSPIntegration) AwaitDiagnostics(ctx context.Context, filePath string) ([]LSPDiagnostic, bool) {
+	fp := filepath.Clean(filePath)
+	for {
+		l.mu.Lock()
+		state := l.openFiles[fp]
+		if state == nil || l.client == nil {
+			l.mu.Unlock()
+			return nil, false
+		}
+		published, synced, busy, changed := state.publishedAt, state.syncedAt, len(l.progress) > 0, l.changed
+		diagnostics := append([]LSPDiagnostic(nil), state.diagnostics...)
+		l.mu.Unlock()
+		var timer *time.Timer
+		var fired <-chan time.Time
+		if !published.IsZero() && !busy {
+			quiet := min(max(published.Sub(synced), minDiagnosticsQuiet), maxDiagnosticsQuiet)
+			remaining := quiet - time.Since(published)
+			if remaining <= 0 {
+				return diagnostics, true
+			}
+			timer = time.NewTimer(remaining)
+			fired = timer.C
+		}
+		select {
+		case <-ctx.Done():
+		case <-changed:
+		case <-fired:
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+		if ctx.Err() != nil {
+			return diagnostics, false
 		}
 	}
 }

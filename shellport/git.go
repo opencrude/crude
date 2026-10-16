@@ -17,6 +17,10 @@ type SourceControl interface {
 	// DiscardGitHunk reverts one hunk of a tracked working-tree file on disk after
 	// capturing a mandatory Local History snapshot. Any newer change aborts.
 	DiscardGitHunk(ctx context.Context, comparison workspace.GitComparison, hunk workspace.GitHunkRange) (string, error)
+	// ResolveGitConflict writes one choice per conflict region of a conflicted
+	// file after a mandatory Local History snapshot, then marks it resolved.
+	// A file that changed since fingerprint was read is left alone.
+	ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []workspace.GitConflictChoice) (string, error)
 	// PrepareCommitMessageWriter captures a writer without performing I/O. A
 	// connected writer resolves the core-owned Aeron configuration in Write.
 	PrepareCommitMessageWriter() (CommitMessageWriter, error)
@@ -64,4 +68,17 @@ type GitService interface {
 	// the index; the working tree is untouched.
 	UnstageHunk(ctx context.Context, comparison workspace.GitComparison, hunk workspace.GitHunkRange) error
 	UnstageReviewed(ctx context.Context, comparison workspace.GitComparison) error
+	// Fetch updates remote-tracking branches; Pull merges the upstream (never
+	// rebases) and Merge merges a ref, both reporting conflicts as a result.
+	// Push never forces and publishes a new branch to its only remote.
+	Fetch(ctx context.Context) error
+	Pull(ctx context.Context) (workspace.GitSyncResult, error)
+	Merge(ctx context.Context, ref string) (workspace.GitSyncResult, error)
+	Push(ctx context.Context) error
+	// AbortOperation and ContinueOperation end the merge, rebase, cherry-pick
+	// or revert waiting for conflict resolution.
+	AbortOperation(ctx context.Context) error
+	ContinueOperation(ctx context.Context) error
+	// ConflictFile parses one conflicted working file for resolution.
+	ConflictFile(ctx context.Context, path string) (workspace.GitConflictFile, error)
 }

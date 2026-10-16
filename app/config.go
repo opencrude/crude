@@ -34,9 +34,12 @@ type FileConfig struct {
 	Network         *network.Settings            `json:"network,omitempty"`
 }
 
+// IsTurnLogsEnabled reports whether full request/response dumps are written
+// under the session's turns/ directory. They are a debugging aid: each dump
+// holds the whole prompt, so they stay off unless explicitly enabled.
 func (c *FileConfig) IsTurnLogsEnabled() bool {
 	if c.TurnLogsEnabled == nil {
-		return true
+		return false
 	}
 	return *c.TurnLogsEnabled
 }

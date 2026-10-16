@@ -29,6 +29,12 @@ type SessionSettingsDTO struct {
 	MainAgent  string                            `json:"main_agent"`
 	Overrides  map[string]types.CategorySettings `json:"overrides"`
 	MultiAgent *bool                             `json:"multi_agent"`
+	// CodeIntelligence is the session's agent code-intelligence override;
+	// null follows the workspace LSP switch.
+	CodeIntelligence *bool `json:"code_intelligence"`
+	// MaxSubAgents caps the session's running children; null follows the
+	// workspace setting.
+	MaxSubAgents *int `json:"max_sub_agents"`
 	// DisabledCapabilities is the session-wide skill/MCP gate.
 	DisabledCapabilities []string `json:"disabled_capabilities,omitempty"`
 }

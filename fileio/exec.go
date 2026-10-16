@@ -337,6 +337,50 @@ func SplitGlobPath(path string) (base, pattern string, isGlob bool) {
 	return filepath.FromSlash(base), strings.Join(segments[literal:], "/"), true
 }
 
+// normalizeUnicodeEscapes rewrites the `\uXXXX` and `\UXXXXXXXX` escapes that
+// PCRE, ripgrep and JSON users write into RE2's `\x{...}` form. An escaped
+// backslash (`\\u`) is left alone.
+func normalizeUnicodeEscapes(pattern string) string {
+	if !strings.Contains(pattern, `\u`) && !strings.Contains(pattern, `\U`) {
+		return pattern
+	}
+	var b strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		if c != '\\' || i+1 >= len(pattern) {
+			b.WriteByte(c)
+			continue
+		}
+		next := pattern[i+1]
+		width := 0
+		switch next {
+		case 'u':
+			width = 4
+		case 'U':
+			width = 8
+		}
+		if width > 0 && i+2+width <= len(pattern) && isHexDigits(pattern[i+2:i+2+width]) {
+			b.WriteString(`\x{` + pattern[i+2:i+2+width] + `}`)
+			i += 1 + width
+			continue
+		}
+		b.WriteByte(c)
+		b.WriteByte(next)
+		i++
+	}
+	return b.String()
+}
+
+func isHexDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // GrepFiles searches regular files under baseDir. baseDir may be a directory, a
 // file, or a glob such as "workspace/lsp*.go" or "tui/**/*_test.go"; a glob
 // searches only the files it matches.
@@ -344,7 +388,7 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 	if baseDir == "" {
 		baseDir = "."
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := regexp.Compile(normalizeUnicodeEscapes(pattern))
 	if err != nil {
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}

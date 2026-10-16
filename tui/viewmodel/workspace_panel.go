@@ -55,7 +55,7 @@ func (m *App) syncWorkspacePanels() {
 		return
 	}
 	m.workspacePanelLastVersion, m.workspacePanelLastSecond = version, second
-	if m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelWorkspace {
+	if m.panelShown(termdock.PanelWorkspace) {
 		m.refreshWorkspaceSessions(false)
 	}
 	for panelID, view := range map[string]statusoverview.ViewID{
@@ -73,6 +73,10 @@ func (m *App) syncWorkspacePanels() {
 
 func (m *App) toggleWorkspacePanel(panelID string) {
 	if m.termDock == nil {
+		return
+	}
+	if m.revealPlacedPanel(panelID) {
+		m.preparePlacedPanel(panelID)
 		return
 	}
 	if panelID == termdock.PanelWorkspace {
@@ -120,14 +124,14 @@ func (app *App) hideWorkspacePanel() {
 		app.termDock.ClosePanel()
 	}
 	app.setTermDockFocused(false)
-	app.workspacePanelMaximized = false
 }
 
-func (app *App) toggleWorkspacePanelMaximized() {
+// activeDockPanel is the surface the dock shows, for the move commands.
+func (app *App) activeDockPanel() string {
 	if app.termDock == nil || !app.termDock.IsOpen() {
-		return
+		return ""
 	}
-	app.workspacePanelMaximized = !app.workspacePanelMaximized
+	return app.termDock.ActivePanel()
 }
 
 func (app *App) openTerminalPicker() {

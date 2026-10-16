@@ -141,8 +141,8 @@ func (m *App) agentPromptInlineEligible(agentID string) bool {
 	if owner == nil || m.Win == nil {
 		return false
 	}
-	for _, group := range m.Win.GroupIDs() {
-		if m.mainPanes != nil && m.mainPanes.compact && group != m.Win.ActiveGroup() {
+	for _, group := range m.Win.AllGroupIDs() {
+		if m.mainPanes != nil && m.mainPanes.compact && group != m.Win.ActiveGroup() && !m.Win.IsFloating(group) {
 			continue
 		}
 		tab := m.Win.GroupActiveTab(group)

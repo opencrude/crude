@@ -62,6 +62,13 @@ func (m *App) isComparisonActive() bool {
 	return m.isGitReviewActive() || m.activeLocalDiff() != nil
 }
 
+// hostTabActive reports a main tab whose content is an ordinary host
+// component (a comparison or a surface moved out of the dock): keys, close
+// and chat visibility follow the host, not the composer or editor.
+func (m *App) hostTabActive() bool {
+	return m.isComparisonActive() || m.activePanelTabContent() != nil
+}
+
 func (m *App) compareEditorWithDisk(ed *editor.Editor) tea.Cmd {
 	return m.openLocalDiff(ed, localDiffDisk)
 }

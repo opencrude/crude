@@ -39,7 +39,7 @@ const (
 // editor-open resolution win and "Focus Chat" would be a no-op, the exact bug
 // the palette cleanup fixed.
 func (m *App) focusTarget() FocusTarget {
-	if m.windowManager != nil && m.windowManager.Focused() != nil {
+	if m.focusedPopup() != nil {
 		return FocusFloatingWindow
 	}
 	top := FocusNone
@@ -83,8 +83,8 @@ func (m *App) setFocusTree() {
 // pushing FocusInput onto the stack so focusTarget() returns FocusInput
 // even when an editor tab is open. Used by view.focus.chat.
 func (m *App) setFocusInput() {
-	if m.Win != nil && m.activeAgentTabID() == "" && len(m.Win.GroupIDs()) > 1 {
-		for _, id := range m.Win.GroupIDs() {
+	if m.Win != nil && m.activeAgentTabID() == "" && len(m.Win.AllGroupIDs()) > 1 {
+		for _, id := range m.Win.AllGroupIDs() {
 			if tab := m.Win.GroupActiveTab(id); tab != nil && m.isAgentTabTitle(tab.Title) {
 				m.focusMainGroup(id)
 				break
@@ -111,8 +111,8 @@ func (m *App) setFocusInput() {
 // stack also drops any stale FocusInput (from a prior view.focus.chat)
 // that would otherwise shadow the editor.
 func (m *App) setFocusEditor() {
-	if m.Win != nil && !m.isEditorActive() && len(m.Win.GroupIDs()) > 1 {
-		for _, id := range m.Win.GroupIDs() {
+	if m.Win != nil && !m.isEditorActive() && len(m.Win.AllGroupIDs()) > 1 {
+		for _, id := range m.Win.AllGroupIDs() {
 			if tab := m.Win.GroupActiveTab(id); tab != nil && m.isEditorTabTitle(tab.Title) {
 				m.focusMainGroup(id)
 				break

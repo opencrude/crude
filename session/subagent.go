@@ -793,6 +793,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.RequestBoundary = r.requestBoundary(handle, recoveryState, supervisor)
 	r.setActiveConnection(spec.ID, connectionOf(spec))
 	r.session.bindAgentControl(subCtx, a, spec.ControlTarget)
+	r.session.bindCodeIntelligence(a)
+	r.session.bindPlanDiscipline(a)
 	r.session.bindAgentRuntime(subCtx, a, captypes.RuntimeActor{ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: subSessionID, AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes}, spec.Name)
 
 	if err := ctx.Err(); err != nil {
@@ -1143,6 +1145,8 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	live.RequestBoundary = r.requestBoundary(handle, recoveryState, supervisor)
 	r.setActiveConnection(spec.ID, connectionOf(spec))
 	r.session.bindAgentControl(subCtx, live, spec.ControlTarget)
+	r.session.bindCodeIntelligence(live)
+	r.session.bindPlanDiscipline(live)
 	r.session.bindAgentRuntime(subCtx, live, captypes.RuntimeActor{
 		ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: handle.SessionID,
 		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes,

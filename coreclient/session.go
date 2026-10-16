@@ -51,6 +51,8 @@ func SettingsSnapshot(result coreprotocol.SessionSettingsResult) session.Setting
 func SessionSettingsValue(dto coreprotocol.SessionSettingsDTO) types.Settings {
 	value := dto.Value
 	value.SessionMainAgent, value.SessionOverrides, value.SessionMultiAgent = dto.MainAgent, dto.Overrides, dto.MultiAgent
+	value.SessionCodeIntelligence = dto.CodeIntelligence
+	value.SessionMaxSubAgents = dto.MaxSubAgents
 	value.SessionDisabledCapabilities = dto.DisabledCapabilities
 	return value
 }

@@ -77,7 +77,7 @@ func (controller *memoryBrowserController) cancel() {
 }
 
 func (m *App) memoryBrowserVisible() bool {
-	return m.memoryBrowser != nil && m.memoryBrowser.IsOpen() && m.termDock != nil && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelMemory
+	return m.memoryBrowser != nil && m.memoryBrowser.IsOpen() && m.termDock != nil && m.panelShown(termdock.PanelMemory)
 }
 
 func (m *App) toggleMemoryBrowser() (tea.Model, tea.Cmd) {
@@ -85,6 +85,9 @@ func (m *App) toggleMemoryBrowser() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.syncMemoryBrowserLifecycle()
+	if m.memoryBrowser != nil && m.memoryBrowser.IsOpen() && m.revealPlacedPanel(termdock.PanelMemory) {
+		return m, nil
+	}
 	if m.memoryBrowserVisible() && m.termDockFocused {
 		m.closeMemoryBrowser()
 		return m, nil
@@ -129,9 +132,8 @@ func (m *App) closeMemoryBrowser() {
 	if value, ok := memoryBrowserControllers.Load(m); ok {
 		value.(*memoryBrowserController).cancel()
 	}
-	if m.termDock != nil && m.termDock.ActivePanel() == termdock.PanelMemory {
-		m.termDock.ClosePanel()
-		m.setTermDockFocused(false)
+	if m.termDock != nil {
+		m.releasePlacement(termdock.PanelMemory)
 	}
 	m.markMemoryBrowserDirty()
 }

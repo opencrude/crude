@@ -23,6 +23,7 @@ type workspaceSwitchState struct {
 	editorGitGen uint64
 	launcherGen  uint64
 	gitReads     int
+	gitBoundary  uint64
 }
 
 type workspaceTreeReadyMsg struct {
@@ -58,6 +59,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 		editorGitGen: m.editorGitGen.Load(),
 		launcherGen:  m.launcherLoadGen.Load(),
 		gitReads:     m.gitReadsInFlight,
+		gitBoundary:  m.gitReadsBoundary,
 	}
 	if m.Tree != nil {
 		state.tree = m.Tree.Model
@@ -68,6 +70,8 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	// Reads started for the old project are abandoned by that generation bump:
 	// their results settle without occupying a slot for the new project.
 	m.gitReadsInFlight = 0
+	m.gitReadsBoundary = m.gitRefreshGen.Load()
+	m.cancelGitRemote()
 	m.editorGitGen.Add(1)
 	if m.editorGitCancel != nil {
 		m.editorGitCancel()
@@ -101,6 +105,7 @@ func (state workspaceSwitchState) restore(m *App) {
 	// The rewound Git generation makes the old project's in-flight reads valid
 	// again, so their slots come back with it.
 	m.gitReadsInFlight = state.gitReads
+	m.gitReadsBoundary = state.gitBoundary
 	m.wireLSPDiagnostics()
 	if state.tree != nil {
 		m.wireAndStartWorkspaceTreeWatcher(state.tree)
@@ -190,7 +195,10 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.toolLayout = workspace.DefaultToolLayout()
 	m.toolLayoutVersion, m.toolLayoutSavedVersion = 0, 0
 	m.toolLayoutSaving, m.toolLayoutSaveQueued = false, false
-	m.workspacePanelMaximized = false
+	// Surfaces moved out of the dock belong to the old project's layout.
+	for id := range m.panelPlacements {
+		m.releasePlacement(id)
+	}
 	if m.activityBar != nil {
 		m.activityBar.SetBadge(activityAgents, 0)
 	}
@@ -210,6 +218,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.gitSnapshotBurstAt = time.Time{}
 	m.gitSnapshotAt = time.Time{}
 	m.gitReadsInFlight = 0
+	m.gitReadsBoundary = m.gitRefreshGen.Load()
 	m.requestGitSnapshot(time.Now())
 	m.startSourceControlMutation(m.loadToolLayoutCmd())
 	m.startSourceControlMutation(m.capabilitySnapshotCmd())

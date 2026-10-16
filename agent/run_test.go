@@ -1224,3 +1224,33 @@ func hasEvent(events []AgentEvent, typ string) bool {
 	}
 	return false
 }
+
+// BeforeFinish buys exactly one more step per run, so an owner's end-of-turn
+// reconciliation can never loop.
+func TestBeforeFinishAddsOneStepPerRun(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeChatSSE(w, "final answer", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	a := newTestAgent(t, p, p.Model)
+	calls := 0
+	a.BeforeFinish = func() []provider.ChatMessage {
+		calls++
+		return []provider.ChatMessage{provider.NewTextMessage("user", "<runtime_plan_reminder>reconcile</runtime_plan_reminder>")}
+	}
+	messages := a.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
+	if got := requests.Load(); got != 2 || calls != 1 {
+		t.Fatalf("requests=%d BeforeFinish calls=%d; want 2 and 1", got, calls)
+	}
+	found := false
+	for _, message := range messages {
+		found = found || strings.Contains(message.ContentString(), "runtime_plan_reminder")
+	}
+	if !found {
+		t.Fatal("the BeforeFinish notice did not reach the model context")
+	}
+}

@@ -101,6 +101,20 @@ type LSPDiagnostic struct {
 	Severity int
 	EndLine  int
 	EndCol   int
+	// Source names the producer (compiler, linter, "go vet"); Code is its
+	// stable rule identifier when the server reports one.
+	Source string
+	Code   string
+}
+
+// LSPProbeView describes the text an agent code-intelligence request was
+// answered for.
+type LSPProbeView struct {
+	// BufferDiffers is true when the file is open in the editor with text
+	// that differs from disk; answers then describe the editor buffer.
+	BufferDiffers bool
+	// Server names the language server command that answered.
+	Server string
 }
 
 type LSPLocation struct {

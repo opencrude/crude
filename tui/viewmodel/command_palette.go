@@ -616,8 +616,22 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return m.openBoardBrowser()
 	case "workspace.panel.hide":
 		m.hideWorkspacePanel()
-	case "workspace.panel.maximize":
-		m.toggleWorkspacePanelMaximized()
+	case "workspace.panel.tab":
+		m.openPanelAsTab(m.activeDockPanel())
+	case "workspace.panel.window":
+		m.openPanelAsWindow(m.activeDockPanel())
+	case "tab.window":
+		if tab := m.Win.ActiveTab(); tab != nil {
+			m.openTabInWindow(tab.ID)
+		} else {
+			m.Feedback.NotifyInfo("No tab is focused")
+		}
+	case "tab.dock":
+		if group := m.Win.ActiveGroup(); m.Win.IsFloating(group) {
+			m.dockPaneWindow(group)
+		} else {
+			m.Feedback.NotifyInfo("The focused tab is not in a window")
+		}
 	case "view.activity.git":
 		return m.toggleGitPanel()
 	case "git.review":
@@ -669,7 +683,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.setWorkspaceAutosave(cmdID == "editor.autosave.enable")
 
 	case "file.close":
-		if m.isComparisonActive() {
+		if m.hostTabActive() {
 			return m.handleAgentTabClose(m.Win.ActiveIndex())
 		}
 		m.closeEditorTab()

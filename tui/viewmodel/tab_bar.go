@@ -21,7 +21,7 @@ func (m *App) tabBarVisible() bool {
 // instead of re-deriving the arithmetic.
 func (m *App) tabBarRailCol() int {
 	if m.mainPanes != nil {
-		if r, ok := m.rootHost.ScreenRect(m.tabScreen.ID()); ok {
+		if r, ok := m.screenRectOf(m.tabScreen.ID()); ok {
 			return r.X + shelltabs.RailInset
 		}
 	}
@@ -33,7 +33,7 @@ func (m *App) tabBarRailCol() int {
 // screen translates through its tabs bounds internally.
 func (m *App) tabBarLocalX(screenX int) int {
 	if m.mainPanes != nil {
-		if r, ok := m.rootHost.ScreenRect(m.tabScreen.ID()); ok {
+		if r, ok := m.screenRectOf(m.tabScreen.ID()); ok {
 			return screenX - r.X
 		}
 	}

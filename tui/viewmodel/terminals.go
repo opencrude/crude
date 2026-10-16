@@ -64,9 +64,6 @@ func (m *App) termDockHeightClamped() int {
 	if availableH < termdock.MinRenderableHeight {
 		return 0
 	}
-	if m.workspacePanelMaximized && !m.sessionDeckBlocking() {
-		return max(0, availableH-ui.StripHeight)
-	}
 	h := m.termDockHeight
 	if h <= 0 {
 		h = defaultTermDockHeight

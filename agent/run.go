@@ -246,6 +246,7 @@ func (a *Agent) Run(
 	runtimeInput := runtimeCh
 	continuations := 0
 	finalReportReminders := 0
+	finishChecked := false
 	interruptionRecoveries := 0
 	overflowRecoveries := 0
 	continuationWarningSent := false
@@ -1143,6 +1144,15 @@ steps:
 			if queued > 0 {
 				continuations = 0
 				continue
+			}
+			if a.BeforeFinish != nil && !finishChecked {
+				finishChecked = true
+				if notices := a.BeforeFinish(); len(notices) > 0 {
+					for _, notice := range notices {
+						appendWire(notice)
+					}
+					continue
+				}
 			}
 			if a.Depth > 0 && !a.reportPublished {
 				if finalReportReminders < maxFinalReportReminders {

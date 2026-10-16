@@ -328,3 +328,8 @@ func TestLSPRootUsesLanguageMarkersAndWorkspaceBoundary(t *testing.T) {
 		t.Fatal("escaped workspace boundary", got)
 	}
 }
+
+func (c *lifecycleClient) AwaitDiagnostics(_ context.Context, path string) ([]LSPDiagnostic, bool) {
+	c.record("await:" + filepath.Base(path))
+	return []LSPDiagnostic{{Message: "probe diagnostic", Severity: 1}}, true
+}

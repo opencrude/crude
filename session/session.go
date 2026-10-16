@@ -183,6 +183,13 @@ type Session struct {
 	selectedMainAgent string
 	// multiAgentOverride is the explicit session flag. nil inherits workspace.
 	multiAgentOverride *bool
+	// codeIntelOverride is the explicit session code-intelligence flag; nil
+	// follows the workspace's LSP switch.
+	codeIntelOverride *bool
+	codeIntel         CodeIntelligence
+	// maxSubAgentsOverride caps this session's running children; nil
+	// follows the workspace setting.
+	maxSubAgentsOverride *int
 	// disabledCapabilities is the session-wide capability gate. Every agent
 	// of this session (root and children) reads it live at each request and
 	// tool call; settings operations replace it atomically.
@@ -564,7 +571,9 @@ func (s *Session) Close() {
 	if s.subAgentSup != nil {
 		s.subAgentSup.SessionCancel()
 		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
-			h.Cancel()
+			if h.Cancel != nil {
+				h.Cancel()
+			}
 		}
 		s.subAgentSup.Wait()
 	}
@@ -844,7 +853,7 @@ func (s *Session) initSubAgentRunner() bool {
 	if cfg == nil || !cfg.IsMultiAgentEnabled() {
 		return false
 	}
-	runner := NewSubAgentRunner(s, cfg.Agents.MaxConcurrent)
+	runner := NewSubAgentRunner(s, s.effectiveMaxSubAgents())
 	if owner != nil {
 		runner.SetSender(owner.sender)
 		runner.SetOrchestratorID(owner.ID)

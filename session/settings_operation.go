@@ -124,7 +124,7 @@ func (s *Session) toggleMultiAgentLocked() error {
 	before := s.cfg.IsMultiAgentEnabled()
 	enabled := !before
 	if s.db != nil {
-		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: &enabled, MainAgent: s.selectedMainAgent}); err != nil {
+		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: &enabled, MainAgent: s.selectedMainAgent, CodeIntelligence: s.codeIntelOverride, MaxSubAgents: s.maxSubAgentsOverride}); err != nil {
 			return fmt.Errorf("save session delegation: %w", err)
 		}
 	}
@@ -187,6 +187,9 @@ func (s *Session) resetSessionSettingsLocked() error {
 	s.selectedMainAgent = ""
 	s.sessionOverrides = pins
 	s.multiAgentOverride = nil
+	s.codeIntelOverride = nil
+	s.maxSubAgentsOverride = nil
+	s.applySubAgentLimitLocked()
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}

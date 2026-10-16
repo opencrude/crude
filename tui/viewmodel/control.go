@@ -624,7 +624,7 @@ func (m *App) describeShellControl(in shellControlIntent, target control.Target)
 	if d.Effect == "" {
 		switch d.ID {
 		case "tabs.activate", "tabs.close", "tree.select", ui.ActionSplitResize,
-			"workspace.panel.hide", "workspace.panel.maximize", "workspace.panel.more", "terminal.picker":
+			"workspace.panel.hide", "workspace.panel.tab", "workspace.panel.window", "terminal.picker":
 			d.Effect = control.Write
 		default:
 			return d, control.Node{}, errors.New("owner action requires contextual authority not offered by this shell")
@@ -941,7 +941,7 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	case treeControlCompletion:
 		return m.finishTreeControl(done, completion, valid)
 	case paneFilesOpenedMsg:
-		valid = valid && completion.seq == m.paneFileOpenSeq && completion.manager == m.BufferMgr && completion.win == m.Win && paneHasGroup(m.Win.PaneRoot(), completion.group)
+		valid = valid && completion.seq == m.paneFileOpenSeq && completion.manager == m.BufferMgr && completion.win == m.Win && m.Win.HasGroup(completion.group)
 		if !valid {
 			follow = releasePaneDocuments(completion)
 			result.State = control.Failed

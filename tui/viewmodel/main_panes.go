@@ -32,6 +32,7 @@ type mainPaneLayout struct {
 	dividerRects    map[uint64]ui.Rect
 	dividerFirst    map[uint64]int
 	drop            *paneDrop
+	windows         map[window.GroupID]*paneWindow
 	compact         bool
 	initialChatUsed bool
 }
@@ -49,6 +50,7 @@ type mainPaneGroup struct {
 	parts                     []panePart
 	children                  []ui.Component
 	body                      ui.Rect // screen coordinates, shared by drop preview and input policy
+	screenX, screenY          int     // screen origin of the group's bounds
 	chat, input, editor, deck ui.Rect
 	view                      *mainPaneView
 }
@@ -265,60 +267,7 @@ func (p *mainPaneLayout) configure() {
 		if !visible {
 			continue
 		}
-		g.SetBounds(r)
-		g.parts, g.children = g.parts[:0], g.children[:0]
-		g.chat, g.input, g.editor, g.deck = ui.Rect{}, ui.Rect{}, ui.Rect{}, ui.Rect{}
-		tab := m.Win.GroupActiveTab(id)
-		activeID := window.TabID(0)
-		if tab != nil {
-			activeID = tab.ID
-		}
-		g.tabs.SetProjectionFromTabs(m.Win.GroupTabs(id), activeID, id == m.Win.ActiveGroup() && m.focusTarget() == FocusTabBar)
-		if m.rootHost.Hovered() != g.tabs.TabsControl().ID() {
-			g.tabs.TabsControl().SyncHover(-1)
-		}
-		g.tabs.SetTokens(m.rootHost.Tokens())
-		tabH := 0
-		if m.tabBarVisible() {
-			tabH = min(ui.StripHeight, r.H)
-			g.add(g.tabs, ui.Rect{W: r.W, H: tabH})
-		}
-		body := ui.Rect{Y: tabH, W: r.W, H: max(0, r.H-tabH)}
-		g.body = p.screenRect(r, body)
-		g.view = p.view(tab)
-		switch {
-		case tab == nil && len(m.Win.GroupIDs()) == 1 && m.Win.TabCount() == 0 && m.launcherScreen != nil:
-			pad, inner := boundedContentGeometry(body.W, m.Theme.Spacing.PadLR)
-			if inner >= 20 && body.H >= 3 {
-				g.add(m.launcherScreen, ui.Rect{X: pad, Y: body.Y, W: inner, H: body.H})
-			}
-		case tab == nil:
-			g.empty.SetTokens(m.rootHost.Tokens())
-			g.empty.compact = p.compact
-			g.add(g.empty, body)
-		case m.isEditorTabTitle(tab.Title):
-			ed := m.editorForWindowTab(tab.Title)
-			g.view.editor.Bind(ed)
-			pad := min(m.Theme.Spacing.PadLR, body.W/2)
-			left := pad
-			if m.sidebarHostVisible() || len(m.Win.GroupIDs()) > 1 {
-				left = 0
-			}
-			g.view.editor.SetPadding(left, pad)
-			g.view.editor.SetFocused(id == m.Win.ActiveGroup() && m.focusTarget() == FocusEditor)
-			g.add(g.view.editor, body)
-			g.editor = g.body
-		case m.isAgentTabTitle(tab.Title):
-			p.configureAgent(g, tab, body)
-		case tab.Resource.Kind == window.ResourceGitReview:
-			if view := m.gitReviews[tab.ID]; view != nil {
-				g.add(view.screen, body)
-			}
-		case tab.Resource.Kind == window.ResourceLocalDiff:
-			if view := m.localDiffs[tab.ID]; view != nil {
-				g.add(view.screen, body)
-			}
-		}
+		p.configureGroup(g, r, p.Bounds().X+r.X, p.Bounds().Y+r.Y)
 		p.children = append(p.children, g)
 	}
 	for id, rect := range p.dividerRects {
@@ -334,7 +283,7 @@ func (p *mainPaneLayout) configure() {
 		}
 	}
 	for id := range p.groups {
-		if !paneHasGroup(m.Win.PaneRoot(), id) {
+		if !m.Win.HasGroup(id) {
 			delete(p.groups, id)
 		}
 	}
@@ -342,6 +291,72 @@ func (p *mainPaneLayout) configure() {
 		if !paneHasNode(m.Win.PaneRoot(), id) {
 			delete(p.dividers, id)
 			delete(p.dividerFirst, id)
+		}
+	}
+}
+
+// configureGroup binds one group's tab strip and active content. r is the
+// group's parent-local bounds; (x, y) is its screen origin, which docked
+// groups take from the split layout and window groups from their window.
+func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
+	m, id := p.app, g.id
+	g.screenX, g.screenY = x, y
+	g.SetBounds(r)
+	g.parts, g.children = g.parts[:0], g.children[:0]
+	g.chat, g.input, g.editor, g.deck = ui.Rect{}, ui.Rect{}, ui.Rect{}, ui.Rect{}
+	tab := m.Win.GroupActiveTab(id)
+	activeID := window.TabID(0)
+	if tab != nil {
+		activeID = tab.ID
+	}
+	g.tabs.SetProjectionFromTabs(m.Win.GroupTabs(id), activeID, id == m.Win.ActiveGroup() && m.focusTarget() == FocusTabBar)
+	if m.rootHost.Hovered() != g.tabs.TabsControl().ID() {
+		g.tabs.TabsControl().SyncHover(-1)
+	}
+	g.tabs.SetTokens(m.rootHost.Tokens())
+	tabH := 0
+	if m.tabBarVisible() {
+		tabH = min(ui.StripHeight, r.H)
+		g.add(g.tabs, ui.Rect{W: r.W, H: tabH})
+	}
+	body := ui.Rect{Y: tabH, W: r.W, H: max(0, r.H-tabH)}
+	g.body = g.screen(body)
+	g.view = p.view(tab)
+	switch {
+	case tab == nil && len(m.Win.AllGroupIDs()) == 1 && m.Win.TabCount() == 0 && m.launcherScreen != nil:
+		pad, inner := boundedContentGeometry(body.W, m.Theme.Spacing.PadLR)
+		if inner >= 20 && body.H >= 3 {
+			g.add(m.launcherScreen, ui.Rect{X: pad, Y: body.Y, W: inner, H: body.H})
+		}
+	case tab == nil:
+		g.empty.SetTokens(m.rootHost.Tokens())
+		g.empty.compact = p.compact
+		g.add(g.empty, body)
+	case tab.Resource.Kind == window.ResourcePanel:
+		if content := m.termDock.Panel(tab.Resource.ID); content != nil && m.placementOf(tab.Resource.ID) == placeTab {
+			g.add(content, body)
+		}
+	case m.isEditorTabTitle(tab.Title):
+		ed := m.editorForWindowTab(tab.Title)
+		g.view.editor.Bind(ed)
+		pad := min(m.Theme.Spacing.PadLR, body.W/2)
+		left := pad
+		if m.sidebarHostVisible() || len(m.Win.GroupIDs()) > 1 || m.Win.IsFloating(id) {
+			left = 0
+		}
+		g.view.editor.SetPadding(left, pad)
+		g.view.editor.SetFocused(id == m.Win.ActiveGroup() && m.focusTarget() == FocusEditor)
+		g.add(g.view.editor, body)
+		g.editor = g.body
+	case m.isAgentTabTitle(tab.Title):
+		p.configureAgent(g, tab, body)
+	case tab.Resource.Kind == window.ResourceGitReview:
+		if view := m.gitReviews[tab.ID]; view != nil {
+			g.add(view.screen, body)
+		}
+	case tab.Resource.Kind == window.ResourceLocalDiff:
+		if view := m.localDiffs[tab.ID]; view != nil {
+			g.add(view.screen, body)
 		}
 	}
 }
@@ -376,12 +391,12 @@ func (p *mainPaneLayout) configureAgent(g *mainPaneGroup, tab *window.Tab, body 
 	}
 	chatH := max(0, body.H-inputH-deckH)
 	chatRect := ui.Rect{Y: body.Y, W: body.W, H: chatH}
-	g.chat = p.screenRect(g.Bounds(), chatRect)
+	g.chat = g.screen(chatRect)
 	g.add(v.chat, chatRect)
 	if deckH > 0 {
 		r := ui.Rect{Y: body.Y + chatH, W: body.W, H: deckH}
 		g.add(v.deck, r)
-		g.deck = p.screenRect(g.Bounds(), r)
+		g.deck = g.screen(r)
 	}
 	if inputH > 0 {
 		model.SetSpinFrame(m.SpinFrame)
@@ -389,7 +404,7 @@ func (p *mainPaneLayout) configureAgent(g *mainPaneGroup, tab *window.Tab, body 
 		v.input.SetWidth(body.W)
 		r := ui.Rect{Y: body.Y + chatH + deckH, W: body.W, H: inputH}
 		g.add(v.input, r)
-		g.input = p.screenRect(g.Bounds(), r)
+		g.input = g.screen(r)
 	}
 }
 
@@ -404,7 +419,7 @@ func (p *mainPaneLayout) ownsSessionChrome(group window.GroupID, sess *workspace
 			return group == m.Win.ActiveGroup()
 		}
 	}
-	for _, id := range m.Win.GroupIDs() {
+	for _, id := range m.Win.AllGroupIDs() {
 		tab := m.Win.GroupActiveTab(id)
 		if tab == nil || !m.isAgentTabTitle(tab.Title) {
 			continue
@@ -435,7 +450,7 @@ func (p *mainPaneLayout) ownsSessionComposer(group window.GroupID, sess *workspa
 	if eligible(m.Win.ActiveGroup()) {
 		return group == m.Win.ActiveGroup()
 	}
-	for _, id := range m.Win.GroupIDs() {
+	for _, id := range m.Win.AllGroupIDs() {
 		if eligible(id) {
 			return group == id
 		}
@@ -444,7 +459,10 @@ func (p *mainPaneLayout) ownsSessionComposer(group window.GroupID, sess *workspa
 }
 
 func (p *mainPaneLayout) configureMessages() {
-	for id := range p.placements {
+	for _, id := range p.app.Win.AllGroupIDs() {
+		if _, docked := p.placements[id]; !docked && p.windows[id] == nil {
+			continue
+		}
 		g := p.groups[id]
 		if g != nil && g.view != nil && g.view.chat != nil && !g.chat.Empty() {
 			tab := p.app.Win.GroupActiveTab(id)
@@ -500,10 +518,11 @@ func (g *mainPaneGroup) add(c ui.Component, r ui.Rect) {
 	g.parts = append(g.parts, panePart{c, r})
 	g.children = append(g.children, c)
 }
-func (p *mainPaneLayout) screenRect(group, child ui.Rect) ui.Rect {
-	r := p.Bounds()
-	child.X += r.X + group.X
-	child.Y += r.Y + group.Y
+
+// screen converts a group-local rect to screen coordinates.
+func (g *mainPaneGroup) screen(child ui.Rect) ui.Rect {
+	child.X += g.screenX
+	child.Y += g.screenY
 	return child
 }
 func (p *mainPaneLayout) Children() []ui.Component { return p.children }

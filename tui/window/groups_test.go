@@ -204,3 +204,68 @@ func TestGroupsBackgroundPresentationUpdatesPreserveEmptyFocus(t *testing.T) {
 		t.Fatal("whole-window registry no longer exposes background tab")
 	}
 }
+
+func TestFloatingGroupDetachFocusAndDock(t *testing.T) {
+	var w Window
+	docked := w.ActiveGroup()
+	a := w.OpenTab("a", "", true).ID
+	b := w.OpenTab("b", "", true).ID
+	right := w.SplitGroup(docked, ui.Horizontal, false)
+	c := w.OpenTab("c", "", true).ID
+	w.FocusGroup(docked)
+
+	float := w.DetachTab(b)
+	if float == 0 || !w.IsFloating(float) || w.ActiveGroup() != float || w.ActiveTab().ID != b {
+		t.Fatalf("detach: group=%v floating=%v active=%v", float, w.IsFloating(float), w.ActiveGroup())
+	}
+	if !slices.Equal(w.GroupIDs(), []GroupID{docked, right}) || !slices.Equal(w.FloatingGroupIDs(), []GroupID{float}) {
+		t.Fatalf("window group joined the split tree: docked=%v floating=%v", w.GroupIDs(), w.FloatingGroupIDs())
+	}
+	if w.DockedGroup() != docked || w.GroupActiveTab(docked).ID != a {
+		t.Fatalf("docked focus not remembered: %v", w.DockedGroup())
+	}
+	if w.SplitGroup(float, ui.Horizontal, false) != 0 || w.PlaceTab(TabPlacement{Tab: c, Group: float, Split: true, Direction: ui.Vertical}) != 0 {
+		t.Fatal("a window group was split")
+	}
+	if w.DetachTab(b) != float {
+		t.Fatal("detaching a window's only tab created another window")
+	}
+	// Opening while a window is focused targets that window, like a group.
+	d := w.OpenTab("d", "", true).ID
+	if w.GroupOf(d) != float {
+		t.Fatal("new tab skipped the focused window group")
+	}
+	// Merging the docked layout never swallows windows.
+	w.MergeAllGroups()
+	if !slices.Equal(w.GroupIDs(), []GroupID{docked}) || !w.IsFloating(float) || w.GroupOf(c) != docked {
+		t.Fatalf("merge all: docked=%v floating=%v", w.GroupIDs(), w.FloatingGroupIDs())
+	}
+	w.FocusGroup(float)
+	if !w.DockGroup(float) || w.IsFloating(float) || w.HasGroup(float) {
+		t.Fatal("dock left the window group behind")
+	}
+	if w.ActiveGroup() != docked || w.GroupOf(b) != docked || w.GroupOf(d) != docked || w.ActiveTab().ID != w.GroupActiveTab(docked).ID {
+		t.Fatalf("dock did not keep tab identities: active=%v", w.ActiveGroup())
+	}
+}
+
+func TestFloatingGroupClosesWithLastTab(t *testing.T) {
+	var w Window
+	docked := w.ActiveGroup()
+	w.OpenTab("a", "", true)
+	b := w.OpenTab("b", "", true).ID
+	float := w.DetachTab(b)
+	if w.CloseTabByID(b) != CloseCancel || w.HasGroup(float) || w.ActiveGroup() != docked {
+		t.Fatalf("closing the window's last tab: has=%v active=%v", w.HasGroup(float), w.ActiveGroup())
+	}
+	// The only docked group may be emptied; it stays as the docked target.
+	only := w.Tabs()[0].ID
+	float = w.DetachTab(only)
+	if !w.IsFloating(float) || len(w.GroupIDs()) != 1 || w.DockedGroup() != docked {
+		t.Fatal("detaching the last docked tab lost the docked group")
+	}
+	w.CloseAll()
+	if len(w.FloatingGroupIDs()) != 0 || w.HasGroup(float) {
+		t.Fatal("close all kept window groups")
+	}
+}

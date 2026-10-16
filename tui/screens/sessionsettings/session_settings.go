@@ -1,6 +1,7 @@
 package sessionsettings
 
 import (
+	"fmt"
 	"maps"
 	"reflect"
 	"slices"
@@ -33,6 +34,8 @@ const (
 	fieldModel             = "model"
 	fieldThinking          = "thinking-effort"
 	fieldMultiAgent        = "multi-agent"
+	fieldCodeIntelligence  = "code-intelligence"
+	fieldMaxSubAgents      = "max-sub-agents"
 	fieldContextCompaction = "context-compaction-percent"
 	fieldContextRetention  = "context-retention-tokens"
 )
@@ -95,19 +98,22 @@ type Screen struct {
 	form      *ui.Form
 	actions   *ui.ActionBar
 
-	base            types.Settings
-	effective       types.Settings
-	overrides       map[string]types.CategorySettings
-	accounts        map[string]provider.Account
-	fetchGeneration map[string]uint64
-	models          map[string][]types.ModelEntry
-	snapshot        *snapshot
-	modelFilter     *ui.FilterField
-	modelList       *ui.List
-	modelQuery      string
-	capabilities    captypes.Snapshot
-	ruleBleedX      int
-	ruleBleedW      int
+	base      types.Settings
+	effective types.Settings
+	// workspaceCodeIntel is the workspace LSP switch a session without its
+	// own code-intelligence override follows.
+	workspaceCodeIntel bool
+	overrides          map[string]types.CategorySettings
+	accounts           map[string]provider.Account
+	fetchGeneration    map[string]uint64
+	models             map[string][]types.ModelEntry
+	snapshot           *snapshot
+	modelFilter        *ui.FilterField
+	modelList          *ui.List
+	modelQuery         string
+	capabilities       captypes.Snapshot
+	ruleBleedX         int
+	ruleBleedW         int
 }
 
 type snapshot struct {
@@ -523,6 +529,28 @@ func (s *Screen) openRoot() {
 		multi.InheritedFrom = "workspace"
 	}
 	model.AddField(multi)
+	code := ui.BoolFieldState(fieldCodeIntelligence, "Code Intelligence", s.codeIntelligenceEnabled(),
+		"Let agents ask language servers for diagnostics, definitions and references.")
+	if s.effective.SessionCodeIntelligence == nil {
+		code.Inherited = true
+		code.InheritedFrom = "workspace"
+	}
+	model.AddField(code)
+	limit := ui.TextFieldState(fieldMaxSubAgents, "Concurrent sub-agents", strconv.Itoa(s.maxSubAgents()),
+		"How many sub-agents this session may run at once; more wait for a free slot.")
+	limit.Numeric, limit.Unit = true, "agents"
+	limit.Validator = func(v ui.FieldValue) []string {
+		value, err := strconv.Atoi(strings.TrimSpace(v.String()))
+		if err != nil || value < 1 || value > types.MaxConcurrentSubAgents {
+			return []string{fmt.Sprintf("Enter 1 to %d.", types.MaxConcurrentSubAgents)}
+		}
+		return nil
+	}
+	if s.effective.SessionMaxSubAgents == nil {
+		limit.Inherited = true
+		limit.InheritedFrom = "workspace"
+	}
+	model.AddField(limit)
 	model.AddField(&ui.FieldState{ID: "capabilities", Label: "Capabilities", Type: ui.FieldNav, Columns: []string{"Inherit / override"}, Target: "session-settings.capabilities.open"})
 	s.formModel = model
 	s.form.SetForm(model, s.title(), "")
@@ -1048,6 +1076,19 @@ func (s *Screen) applyRootForm() {
 	if selected := s.formModel.Field(fieldMainAgent); selected != nil && selected.Value.String() != s.effective.SessionMainAgent {
 		s.selectMainAgent(selected.Value.String())
 	}
+	if field := s.formModel.Field(fieldMaxSubAgents); field != nil {
+		if value, err := strconv.Atoi(strings.TrimSpace(field.Value.String())); err == nil && value >= 1 &&
+			value <= types.MaxConcurrentSubAgents && value != s.maxSubAgents() {
+			s.effective.SessionMaxSubAgents = &value
+			field.Inherited, field.InheritedFrom = false, ""
+		}
+	}
+	// Pin code intelligence only when the user changed it; an untouched row
+	// keeps following the workspace.
+	if field := s.formModel.Field(fieldCodeIntelligence); field != nil && ui.BoolFieldValue(field) != s.codeIntelligenceEnabled() {
+		s.effective.SessionCodeIntelligence = boolPtr(ui.BoolFieldValue(field))
+		field.Inherited, field.InheritedFrom = false, ""
+	}
 	field := s.formModel.Field(fieldMultiAgent)
 	if field == nil {
 		return
@@ -1269,6 +1310,8 @@ func (s *Screen) ToSettings() types.Settings {
 	}
 	settings.Agents.Enabled = s.effective.Agents.Enabled
 	settings.SessionMultiAgent = cloneBoolPtr(s.effective.SessionMultiAgent)
+	settings.SessionCodeIntelligence = cloneBoolPtr(s.effective.SessionCodeIntelligence)
+	settings.SessionMaxSubAgents = cloneIntPtr(s.effective.SessionMaxSubAgents)
 	settings.SessionMainAgent = s.effective.SessionMainAgent
 	// The Memory Agent role is stored alongside the other roles in
 	// Agents.Categories["memory"] but resolved as the session's memory
@@ -1305,6 +1348,8 @@ func (s *Screen) RestoreSnapshot() {
 func (s *Screen) ResetToWorkspace(base types.Settings) {
 	s.base, s.effective, s.overrides = cloneSettings(base), cloneSettings(base), make(map[string]types.CategorySettings)
 	s.effective.SessionMultiAgent = nil
+	s.effective.SessionCodeIntelligence = nil
+	s.effective.SessionMaxSubAgents = nil
 	s.openRoot()
 }
 
@@ -1409,6 +1454,8 @@ func cloneSettings(src types.Settings) types.Settings {
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
 	dst.SessionMultiAgent = cloneBoolPtr(src.SessionMultiAgent)
+	dst.SessionCodeIntelligence = cloneBoolPtr(src.SessionCodeIntelligence)
+	dst.SessionMaxSubAgents = cloneIntPtr(src.SessionMaxSubAgents)
 	// Memory.MemoryCategory is the memory role's workspace-level source; clone
 	// its pointer so the base and effective layers never share one int.
 	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
@@ -1427,3 +1474,32 @@ func cloneBoolPtr(src *bool) *bool {
 var _ ui.Component = (*Screen)(nil)
 var _ ui.Parent = (*Screen)(nil)
 var _ ui.ActionHandler = (*Screen)(nil)
+
+// SetWorkspaceCodeIntelligence supplies the inherited code-intelligence value.
+func (s *Screen) SetWorkspaceCodeIntelligence(enabled bool) {
+	if s.workspaceCodeIntel == enabled {
+		return
+	}
+	s.workspaceCodeIntel = enabled
+	if s.page == rootPage {
+		s.openRoot()
+	}
+}
+
+func (s *Screen) codeIntelligenceEnabled() bool {
+	if s.effective.SessionCodeIntelligence != nil {
+		return *s.effective.SessionCodeIntelligence
+	}
+	return s.workspaceCodeIntel
+}
+
+// maxSubAgents is the session's effective sub-agent limit.
+func (s *Screen) maxSubAgents() int {
+	switch {
+	case s.effective.SessionMaxSubAgents != nil:
+		return *s.effective.SessionMaxSubAgents
+	case s.effective.Agents.MaxConcurrent > 0:
+		return s.effective.Agents.MaxConcurrent
+	}
+	return 4
+}

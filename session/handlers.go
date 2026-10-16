@@ -202,7 +202,7 @@ func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 	connectionChanged := oldMain.AccountID != mainCat.AccountID
 	modelChanged := mainCat.Model != oldModel
 	if s.db != nil {
-		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newTemplate, mainCat.AccountID, overrides, sessiondb.SessionFlags{MultiAgent: tuiSettings.SessionMultiAgent, MainAgent: tuiSettings.SessionMainAgent}); err != nil {
+		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newTemplate, mainCat.AccountID, overrides, sessiondb.SessionFlags{MultiAgent: tuiSettings.SessionMultiAgent, MainAgent: tuiSettings.SessionMainAgent, CodeIntelligence: tuiSettings.SessionCodeIntelligence, MaxSubAgents: tuiSettings.SessionMaxSubAgents}); err != nil {
 			return fmt.Errorf("save session settings: %w", err)
 		}
 	}
@@ -215,6 +215,9 @@ func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 		applySessionMultiAgent(s.cfg, *tuiSettings.SessionMultiAgent)
 	}
 	s.multiAgentOverride = cloneBoolPtr(tuiSettings.SessionMultiAgent)
+	s.codeIntelOverride = cloneBoolPtr(tuiSettings.SessionCodeIntelligence)
+	s.maxSubAgentsOverride = cloneIntPtr(tuiSettings.SessionMaxSubAgents)
+	s.applySubAgentLimitLocked()
 	// Update the runtime profile's base config so per-orchestrator overrides
 	// continue to work on top of the new saved config.
 	if s.runtimeProfile != nil {
@@ -380,6 +383,8 @@ func (s *Session) settingsSnapshotLocked() ttypes.Settings {
 	settings := detachedSettingsSnapshot(s.cfg)
 	settings.SessionMainAgent = s.selectedMainAgent
 	settings.SessionMultiAgent = cloneBoolPtr(s.multiAgentOverride)
+	settings.SessionCodeIntelligence = cloneBoolPtr(s.codeIntelOverride)
+	settings.SessionMaxSubAgents = cloneIntPtr(s.maxSubAgentsOverride)
 	settings.SessionDisabledCapabilities = s.DisabledCapabilities()
 	if s.multiAgentOverride != nil {
 		settings.Agents.Enabled = *s.multiAgentOverride
@@ -522,6 +527,7 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 	if s.multiAgentOverride != nil {
 		applySessionMultiAgent(s.cfg, *s.multiAgentOverride)
 	}
+	s.applySubAgentLimitLocked()
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}

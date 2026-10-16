@@ -43,6 +43,12 @@ type sourceControlResultMsg struct {
 	// never sets the panel's loading state, records a status operation, notifies
 	// a failure, or touches the commit field.
 	silent bool
+	// remoteSeq identifies a fetch, pull, push or merge (runGitRemote); its
+	// completion is matched by sequence and workspace, not by read generation.
+	remoteSeq    uint64
+	workspaceGen uint64
+	remoteLabel  string
+	conflicts    []string
 }
 
 func (m *App) sourceControlContext() (context.Context, context.CancelFunc) {
@@ -114,11 +120,15 @@ func (m *App) startSourceControlMutation(cmd tea.Cmd) {
 }
 
 func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
-	// Every read settles exactly one in-flight slot. A read invalidated by a
-	// workspace boundary no longer owns a slot: that boundary resets the count
-	// itself (beginWorkspaceSwitch / finishWorkspaceSwitch).
-	if msg.gen != 0 && msg.gen == m.gitRefreshGen.Load() && m.gitReadsInFlight > 0 {
+	// Every read settles exactly one in-flight slot, including a read a newer
+	// one superseded: otherwise the slot leaked and silent reconciliation
+	// never ran again. A read invalidated by a workspace boundary no longer
+	// owns a slot: that boundary resets the count itself.
+	if msg.gen != 0 && msg.gen > m.gitReadsBoundary && m.gitReadsInFlight > 0 {
 		m.gitReadsInFlight--
+	}
+	if msg.remoteSeq != 0 {
+		return m.applyGitRemoteResult(msg)
 	}
 	if msg.gen == 0 || msg.gen != m.gitRefreshGen.Load() || m.gitPanel == nil {
 		return nil
@@ -180,6 +190,9 @@ func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
 	}
 	m.gitPanel.SetSnapshot(snapshot)
 	m.projectTreeGitSnapshot(snapshot)
+	if cmd := m.syncGitMergeDialog(snapshot); cmd != nil {
+		m.startSourceControlMutation(cmd)
+	}
 	if m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 		m.markEditorGitStaleNow()
 	}
@@ -303,6 +316,9 @@ func (m *App) toggleGitPanel() tea.Cmd {
 	if m.termDock == nil || m.gitPanel == nil {
 		return nil
 	}
+	if m.revealPlacedPanel(termdock.PanelGit) {
+		return m.refreshSourceControl()
+	}
 	if m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelGit && !m.termDockFocused {
 		m.setSessionDeckFocused(false)
 		m.setTermDockFocused(true)
@@ -322,6 +338,9 @@ func (m *App) openGitPanel(mode gitpanel.Mode) tea.Cmd {
 		return nil
 	}
 	m.gitPanel.SetMode(mode)
+	if m.revealPlacedPanel(termdock.PanelGit) {
+		return m.refreshSourceControl()
+	}
 	if m.gitPanelOpen() {
 		m.setTermDockFocused(true)
 		if m.rootHost != nil {
@@ -333,7 +352,7 @@ func (m *App) openGitPanel(mode gitpanel.Mode) tea.Cmd {
 }
 
 func (m *App) gitPanelOpen() bool {
-	return m.termDock != nil && m.gitPanel != nil && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelGit
+	return m.termDock != nil && m.gitPanel != nil && m.panelShown(termdock.PanelGit)
 }
 
 // prepareGitChangesIfVisible re-derives every listed diff while a surface
@@ -685,6 +704,9 @@ func (m *App) handleGitPanelAction(action ui.Action) (tea.Cmd, bool) {
 			return m.handleGitFileIntent(intent), true
 		}
 		return nil, true
+	}
+	if cmd, handled := m.handleGitSyncAction(action); handled {
+		return cmd, true
 	}
 	return m.handleGitReviewScreenAction(action)
 }

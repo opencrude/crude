@@ -118,6 +118,7 @@ func TestMinimizeHidesSubAgentsWithTheirOrchestrator(t *testing.T) {
 	newMinimizeTestAgent(t, app, "orch-1")
 	app.ws.AgentMgr().AddSubAgent("sub-1", "orch-1", "Research", "model", "researcher",
 		workspace.NewAgentState("sub-1", nil, nil))
+	app.RestoreAgent("sub-1") // the user opened the sub-agent
 
 	app.minimizeAgent("orch-1")
 	if !app.AgentView.IsHidden("sub-1") {
@@ -148,6 +149,7 @@ func TestRestoreRootPreservesArchivedChildrenAndRootTabOrder(t *testing.T) {
 	}
 	live := app.ws.AgentMgr().AddSubAgent("live", "root", "Live", "model", "researcher",
 		workspace.NewAgentState("live", nil, nil))
+	app.RestoreAgent("live") // the user opened the live child
 	app.syncAgentWindowTabs()
 	app.minimizeAgent("root")
 	app.restoreAgent("root")
@@ -301,5 +303,23 @@ func TestTabSyncDoesNotResurrectMinimizedAgents(t *testing.T) {
 	}
 	if app.AgentTabViews() != nil && len(app.AgentTabViews()) != 0 {
 		t.Fatalf("minimized agent must not appear in tab views: %#v", app.AgentTabViews())
+	}
+}
+
+// Sub-agents start minimized: a parent's children appear in its transcript
+// and the Agents list, and own a tab only after someone opens them.
+func TestSubAgentsDoNotOpenTabsByThemselves(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	newMinimizeTestAgent(t, app, "orch-1")
+	app.ws.AgentMgr().AddSubAgent("sub-1", "orch-1", "Research", "model", "researcher",
+		workspace.NewAgentState("sub-1", nil, nil))
+	app.syncAgentWindowTabs()
+	if app.Win.TabByTitle(app.agentTabTitle("sub-1")) != nil || !app.AgentView.IsHidden("sub-1") {
+		t.Fatal("a new sub-agent opened a tab")
+	}
+	app.restoreAgent("sub-1")
+	if app.Win.TabByTitle(app.agentTabTitle("sub-1")) == nil {
+		t.Fatal("opening the sub-agent did not give it a tab")
 	}
 }
