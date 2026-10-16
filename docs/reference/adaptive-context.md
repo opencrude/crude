@@ -326,11 +326,17 @@ Responses delta uploads and inline-image replay recovery are specified in
   missing cache reporting is read as cached, so missing data never compacts
   sooner. The planner lives in the agent's precompaction slot, so short human
   turns accumulate across runs.
+- **Quality floor.** A checkpoint is lossy, a cost the spend accounting cannot
+  see, so the economic rule never compacts below half of the hard limit
+  (`economicFloor`), and a prepared checkpoint is not adopted below it either.
+  Without the floor a cheap Aeron model next to an expensive main model
+  compacted a 1M-token window at ~90K tokens after a few steps. Below the
+  floor only the physical trigger or an explicit percentage compacts.
 - **Explicit.** A user percentage is a boundary: past it the next request
   waits for a checkpoint. `0` disables automatic compaction.
 - **Preparation leads.** Background preparation starts halfway to the trigger
-  (a quarter of the excess, halfway in tokens for capacity and explicit
-  percentages) and runs while the agent keeps working, at most one job per
+  (a quarter of the excess once three quarters of the quality floor is
+  reached, halfway in tokens for capacity and explicit percentages) and runs while the agent keeps working, at most one job per
   agent. A ready checkpoint is adopted when the trigger fires; in adaptive
   mode it is adopted as soon as the accumulated excess covers the cold cache
   of the next request, because its extraction is already paid. The job lives

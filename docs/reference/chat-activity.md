@@ -424,6 +424,11 @@ not change table widths, wrapping, selection text, or the painted transcript.
 
 ## Tool leaves and titles
 
+- A tool failure may end with one model-facing hint for the next call
+  (`prompt.WithToolHint`, text owned by `prompt/`). Rows never show it: every
+  tool row, live, hydrated and in sub-agent panes, renders the content before
+  `types.ToolHintSeparator` (`types.StripToolHint`). The model still receives
+  the full result.
 - Activity groups and parallel batches share one staged tool-leaf projection.
   Expansion reveals hidden branches in place; it never replaces the tree with
   standalone legacy rows. Execution events carry exact tool arguments, not

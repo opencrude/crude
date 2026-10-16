@@ -615,7 +615,7 @@ steps:
 					return returnMessages()
 				}
 			}
-			if job != nil && job.ready() && job.err == nil && planner.adoptPrepared(a, postCompaction) {
+			if job != nil && job.ready() && job.err == nil && planner.adoptPrepared(a, activeTokens, postCompaction, hardLimit) {
 				plan.swap, plan.reason = true, "a prepared checkpoint now costs less than carrying the older context"
 			}
 			if job != nil && job.ready() && (plan.swap || plan.force) {

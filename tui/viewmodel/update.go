@@ -1326,6 +1326,12 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 				return result.Cmd
 			}
 			if group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID)); ok {
+				if result.Action.Payload == paneWindowNewTab {
+					x, y := fw.Position()
+					w, _ := fw.Size()
+					rect := ui.Rect{X: x + w - 3 - 2*ui.TitleActionWidth, Y: y, W: ui.TitleActionWidth, H: 1}
+					return tea.Batch(result.Cmd, m.openContextMenuState(tea.Mouse{X: rect.X + 1, Y: rect.Y + 1}, m.paneWindowNewTabMenu(group)))
+				}
 				m.dockPaneWindow(group)
 				return result.Cmd
 			}

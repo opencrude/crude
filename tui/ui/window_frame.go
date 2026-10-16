@@ -35,16 +35,23 @@ type WindowFrame struct {
 	closable     bool
 	borderAccent cell.Color // optional accent override for border
 	titleAccent  cell.Color // optional accent override for title
-	// Optional title-bar action button (glyph left of close, JetBrains
-	// tool-window style). Empty = none. Click emits "window.titleaction".
-	titleAction     string
-	titleActionHint string
+	// Optional title-bar buttons left of close, rightmost first (JetBrains
+	// tool-window style). A click emits "window.titleaction" with the
+	// button's ID as payload.
+	titleActions []TitleAction
+	// fill is the frame's background role: popup chrome by default; a window
+	// hosting main content uses the shell background so its elements match
+	// the same elements in the main area.
+	fill    SemanticColor
+	fillSet bool
 	// Content rect relative to frame bounds (after layout).
 	contentR Rect
 	// Close button hit region relative to frame bounds.
 	closeR Rect
-	// Title-action hit region relative to frame bounds.
-	titleActionR Rect
+	// Title-action hit regions relative to frame bounds, parallel to
+	// titleActions; titleActionR is their union.
+	titleActionRs []Rect
+	titleActionR  Rect
 	// hoverEdge is the resize edge under the mouse pointer. The frame paints
 	// that edge with the accent color so the user sees which border a press
 	// will drag (the WM feeds this from FloatingWindow.HoverEdge).
@@ -126,28 +133,66 @@ func (f *WindowFrame) ContentBounds() Rect { return f.contentR }
 // CloseBounds returns the close-button rectangle in parent-local coords.
 func (f *WindowFrame) CloseBounds() Rect { return f.closeR }
 
-// SetTitleAction installs an optional title-bar button rendered left of the
-// close glyph. Clicking it emits Action{ID: "window.titleaction"}. hint is
-// used for semantics/tooltips only. The hit region is recomputed immediately
-// so callers may install the action after the widget's initial layout.
+// TitleAction is one title-bar button: a one-column glyph, a hint for
+// semantics/tooltips, and the ID its click carries.
+type TitleAction struct {
+	Glyph, Hint, ID string
+}
+
+// TitleActionWidth is the columns each title-bar button occupies.
+const TitleActionWidth = 3
+
+// SetTitleAction installs one title-bar button rendered left of the close
+// glyph. Clicking it emits Action{ID: "window.titleaction"}. hint is used for
+// semantics/tooltips only.
 func (f *WindowFrame) SetTitleAction(glyph, hint string) {
-	f.titleAction = glyph
-	f.titleActionHint = hint
+	if glyph == "" {
+		f.SetTitleActions(nil)
+		return
+	}
+	f.SetTitleActions([]TitleAction{{Glyph: glyph, Hint: hint}})
+}
+
+// SetTitleActions installs title-bar buttons, rightmost first. The hit
+// regions are recomputed immediately so callers may install them after the
+// widget's initial layout.
+func (f *WindowFrame) SetTitleActions(actions []TitleAction) {
+	f.titleActions = append([]TitleAction(nil), actions...)
 	f.layoutTitleAction(f.Bounds())
 }
 
-// TitleActionBounds returns the title-action rectangle in parent-local coords.
+// SetFill selects the frame's background role (ColorPopupBg by default).
+func (f *WindowFrame) SetFill(role SemanticColor) { f.fill, f.fillSet = role, true }
+
+// Fill is the frame's background role.
+func (f *WindowFrame) Fill() SemanticColor {
+	if !f.fillSet {
+		return ColorPopupBg
+	}
+	return f.fill
+}
+
+// TitleActionBounds returns the union of the title-action rectangles in
+// parent-local coords.
 func (f *WindowFrame) TitleActionBounds() Rect { return f.titleActionR }
 
 func (f *WindowFrame) layoutTitleAction(r Rect) {
-	if f.titleAction != "" && r.W >= 6 {
-		x := r.W - 3
-		if f.closable && r.W >= 3 {
-			x = r.W - 6
+	f.titleActionRs, f.titleActionR = f.titleActionRs[:0], Rect{}
+	end := r.W
+	if f.closable && r.W >= 3 {
+		end = r.W - 3
+	}
+	for range f.titleActions {
+		x := end - TitleActionWidth
+		if x < 3 {
+			break
 		}
-		f.titleActionR = Rect{X: x, Y: 0, W: 3, H: 1}
-	} else {
-		f.titleActionR = Rect{}
+		f.titleActionRs = append(f.titleActionRs, Rect{X: x, Y: 0, W: TitleActionWidth, H: 1})
+		end = x
+	}
+	if n := len(f.titleActionRs); n > 0 {
+		left := f.titleActionRs[n-1].X
+		f.titleActionR = Rect{X: left, Y: 0, W: f.titleActionRs[0].X + TitleActionWidth - left, H: 1}
 	}
 }
 
@@ -232,7 +277,7 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 			borderFG = f.tokens.Color(ColorPopupBorder)
 			titleFG = f.tokens.Color(ColorPopupTitle)
 		}
-		bg = f.tokens.Color(ColorPopupBg)
+		bg = f.tokens.Color(f.Fill())
 	}
 	// Apply severity accent overrides
 	if !f.borderAccent.IsDefault() {
@@ -369,9 +414,9 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		}
 		buf.WriteString(cx, oy, " "+closeGlyph+" ", titleFG, bg, 0)
 	}
-	// Title-bar action button (left of close).
-	if !f.titleActionR.Empty() {
-		buf.WriteString(ox+f.titleActionR.X, oy, " "+f.titleAction+" ", titleFG, bg, 0)
+	// Title-bar buttons (left of close).
+	for index, rect := range f.titleActionRs {
+		buf.WriteString(ox+rect.X, oy, " "+f.titleActions[index].Glyph+" ", titleFG, bg, 0)
 	}
 	// Content is painted by Host via Children(); frame only draws chrome.
 	// When used without Host, callers should PaintTree(frame) or use ComponentWidget.
@@ -387,11 +432,13 @@ func (f *WindowFrame) Handle(ctx EventContext, evt Event) EventResult {
 				Invalidate: InvalidatePaint,
 			}
 		}
-		if !f.titleActionR.Empty() && f.titleActionR.Contains(ctx.LocalX, ctx.LocalY) {
-			return EventResult{
-				Handled:    true,
-				Action:     &Action{ID: "window.titleaction"},
-				Invalidate: InvalidatePaint,
+		for index, rect := range f.titleActionRs {
+			if rect.Contains(ctx.LocalX, ctx.LocalY) {
+				return EventResult{
+					Handled:    true,
+					Action:     &Action{ID: "window.titleaction", Payload: f.titleActions[index].ID},
+					Invalidate: InvalidatePaint,
+				}
 			}
 		}
 	}

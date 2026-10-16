@@ -139,6 +139,7 @@ type Session struct {
 	turnGate      sync.RWMutex
 	compactionMu  sync.Mutex
 	// precompaction holds each root agent's background checkpoint slot.
+	capabilitySharing        capabilitySharing
 	precompactionMu          sync.Mutex
 	precompaction            map[string]*agent.PrecompactionSlot
 	precompactionCtx         context.Context

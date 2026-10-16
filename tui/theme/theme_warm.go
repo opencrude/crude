@@ -21,6 +21,7 @@ func DefaultWarm() *Theme {
 		TextSelectionFg:    lipgloss.Color("#000000"),
 		Hover:              lipgloss.Color("#292524"),
 		SubPaneBg:          lipgloss.Color("#231f1c"),
+		Gutter:             lipgloss.Color("#211d1a"),
 		IncompleteBg:       lipgloss.Color("#3f1d1d"),
 		PopupBg:            lipgloss.Color("#292524"),
 		PopupBorder:        lipgloss.Color("#57534e"),

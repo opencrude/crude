@@ -133,7 +133,19 @@ composer path.
   docked group focused before a window took focus). Floating leaves never join
   the split tree: they cannot be split, `GroupIDs()` stays the docked visual
   order, `AllGroupIDs()` appends windows, and Merge All merges only the docked
-  layout. A window whose last tab closes disappears.
+  layout. A window whose last tab closes disappears. Any number of windows
+  can be open at once; a tab in a window holding several tabs offers **Open in
+  New Window**.
+- With every tab in windows the docked main area is empty (`mainAreaEmpty`: one
+  docked group holding no tab) and shows the launcher, with no tab strip and no
+  empty pane, exactly as when nothing is open. `syncPaneWindows` recreates the
+  launcher screen if surfacing an agent into a window dropped it, and a click
+  on the main area gives it keys (`launcherHostVisible`).
+- Window chrome: the title row names the active tab; the tab strip appears only
+  when the window holds more than one tab. Title buttons, right to left: **✕**,
+  **⇲** (dock), **+** (a New Session / Open File… menu whose result lands in that
+  window). The frame fills with the shell background (`WindowFrame.SetFill`),
+  not popup chrome, so every element paints as it does in the main area.
 - `syncPaneWindows` keeps one WM window per floating group and lays it out every
   frame before focused-view geometry is derived. The frame body mounts the
   group's `mainPaneGroup` through the same `configureGroup` docked groups use;
@@ -150,7 +162,7 @@ composer path.
   the group. A press inside window content activates the group like a click
   into a docked pane; drags captured by a window host follow the pointer until
   release.
-- Dragging a tab out of a window's strip onto the main area moves it there
+- Dragging a tab out of a window's strip (a window with several tabs) onto the main area moves it there
   (edge, center or strip, as for docked drags); a drop inside any window is
   not a target. Window hosts report pointer geometry in window coordinates;
   `windowScreenAction` converts it before the shared drop logic runs.
@@ -160,7 +172,7 @@ composer path.
   close for pane windows; it belongs to the editor or composer.
 - Entry points: tab context menu **Open in Window** (in a window: **Move to Main
   Area**), file tree **Open in window**, Agents panel **Open in window**, the
-  **⇱ window** chip on a "Started agent" transcript row, the dock header **⇱**,
+  **⇱ window** control on a sub-agent's transcript pane, the dock header **⇱**,
   and palette **Open Tab in Window** / **Move Window to Main Area**. A
   core-backed document opens asynchronously; the window intent travels with the
   open request and the landed tab floats.
@@ -206,10 +218,12 @@ ownership are all retained. A stray click must never destroy work in flight.
 
 ## New agents surface a tab immediately
 
-Sub-agents start **minimized**: a child never opens a tab on its own. Its
-"Started agent" transcript row carries **⧉ open** (main tab) and **⇱ window**
-(pane window) chips, and the Agents panel lists it with Open / Open in window
-actions. The rest of this section concerns root agents and explicit opens.
+Sub-agents start **minimized**: a child never opens a tab on its own. Its pane
+in the parent transcript carries explicit right-aligned **⧉ tab** (main tab) and
+**⇱ window** (pane window) controls on its header, live and on the collapsed
+summary after it finishes (`agentPaneControls`; dropped only when the row is too
+narrow to keep a readable title), and the Agents panel lists it with Open / Open
+in window actions. The rest of this section concerns root agents and explicit opens.
 
 Creating or restoring an agent **must add its window tab and make it the
 painted main view even while editor tabs are open**. A stray early return

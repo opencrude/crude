@@ -8,6 +8,8 @@ import (
 // SubPaneHeaderView is presentation-neutral subpane header data. The TUI
 // renders the ANSI header line from this struct.
 type SubPaneHeaderView struct {
+	// ID is the pane's identity; for an agent pane it is the agent ID.
+	ID         string
 	Title      string
 	Type       PaneType
 	Done       bool
@@ -47,6 +49,7 @@ func (sp *SubPane) View() SubPaneView {
 	msgs := sp.Messages.Messages()
 
 	header := SubPaneHeaderView{
+		ID:         sp.ID,
 		Title:      sp.Title,
 		Type:       sp.Type,
 		Done:       sp.Done,

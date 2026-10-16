@@ -29,6 +29,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	bgColor := e.cellColor(e.th.Colors.Bg)
 	selFgColor, selBgColor := e.tokens.TextSelectionColors(e.cellColor(e.th.Colors.Fg))
 	blankCell := cell.NewCell(' ', bgColor, bgColor, 0)
+	gutterBg := bgColor
+	if e.th.Colors.Gutter != nil {
+		gutterBg = e.cellColor(e.th.Colors.Gutter)
+	}
+	gutterBlank := cell.NewCell(' ', gutterBg, gutterBg, 0)
 	sw := e.gutterWidth()
 	sbW := e.scrollbarColWidth()
 	textW := w - sw - sbW
@@ -76,6 +81,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	}
 
 	buf := surf.Buffer()
+	// Every cell is the editor's: rows the body loop does not reach (the
+	// horizontal scrollbar row, its corner) must never show what the editor
+	// is mounted on, such as a window's popup fill.
+	buf.Fill(blankCell)
 	sbX := sw + textW
 	e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
 	for y := 0; y < bodyH; y++ {
@@ -121,9 +130,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					}
 					iconColor := diagIconColors[lineSev]
 					cluster := string(icon)
-					buf.Set(x, bufY, cell.NewClusterCell(cluster, max(1, rendering.VisibleWidth(cluster)), iconColor, bgColor, 0))
+					buf.Set(x, bufY, cell.NewClusterCell(cluster, max(1, rendering.VisibleWidth(cluster)), iconColor, gutterBg, 0))
 				} else {
-					buf.Set(x, bufY, blankCell)
+					buf.Set(x, bufY, gutterBlank)
 				}
 			} else if x >= gutter.numberX && x < gutter.numberX+gutter.numberW {
 				index := x - gutter.numberX
@@ -134,16 +143,16 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						fg = e.cellColor(e.th.Colors.Fg)
 						attrs = cell.AttrBold
 					}
-					buf.Set(x, bufY, cell.NewCell(rune(numStr[index]), fg, bgColor, attrs))
+					buf.Set(x, bufY, cell.NewCell(rune(numStr[index]), fg, gutterBg, attrs))
 				} else {
-					buf.Set(x, bufY, blankCell)
+					buf.Set(x, bufY, gutterBlank)
 				}
 			} else if x == gutter.railX {
 				ch, fg := e.gitGutterCell(gitKind)
-				buf.Set(x, bufY, cell.NewCell(ch, fg, bgColor, 0))
+				buf.Set(x, bufY, cell.NewCell(ch, fg, gutterBg, 0))
 			} else if x == gutter.gapX {
 				marker := e.gitDeletionMarkerAt(lineIdx, e.buf.LineCount())
-				fg := bgColor
+				fg := gutterBg
 				if marker != ' ' {
 					color := e.th.Tree.Colors.GitDeleted
 					if e.gitConflicted {
@@ -151,7 +160,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					}
 					fg = e.cellColor(color)
 				}
-				buf.Set(x, bufY, cell.NewCell(marker, fg, bgColor, 0))
+				buf.Set(x, bufY, cell.NewCell(marker, fg, gutterBg, 0))
+			} else if x < sw {
+				buf.Set(x, bufY, gutterBlank)
 			} else {
 				cx := x
 				vCol := e.scrollX + (cx - sw)
@@ -257,6 +268,17 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 	}
 
+	// The gutter runs the full body height, past the last line and beside
+	// the horizontal scrollbar.
+	gutterEnd := h
+	if e.statusChrome {
+		gutterEnd = h - 1
+	}
+	for y := bodyH; y < gutterEnd; y++ {
+		for x := 0; x < sw; x++ {
+			buf.Set(x, y, gutterBlank)
+		}
+	}
 	e.paintScrollbar(buf, sbX, bodyH)
 	e.paintHorizontalScrollbar(buf, sw, bodyH, textW)
 

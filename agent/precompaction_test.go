@@ -63,9 +63,11 @@ func economicAgent(t *testing.T, model string) *Agent {
 	return NewAgent(p, model, nil)
 }
 
-// A 1M-token window used to be carried to 85% (~850K tokens re-read on every
-// request). With known prices the context is compacted once carrying it costs
-// more than a checkpoint, far below that, and preparation starts earlier.
+// The economic rule used to adopt a checkpoint as soon as a cheap extraction
+// paid for itself, so a 1M-token window was compacted at ~90K tokens after a
+// handful of steps (sessions 2026-10-16_064433 and _113625). A checkpoint is
+// lossy; below half of capacity the exact history is kept, and past it the
+// spend rule decides with preparation leading adoption.
 func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testing.T) {
 	a := economicAgent(t, "economic-main-model")
 	planner := newCompactionPlanner(30_000)
@@ -85,8 +87,8 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 		usage := provider.TokenUsage{PromptTokens: active, PromptTokensCached: active - 6_000, CacheReadKnown: true}
 		planner.observe(a, usage, active, fixed+planner.checkpointEstimate()+tail, false)
 	}
-	if swapAt == 0 || swapAt > 400_000 {
-		t.Fatalf("checkpoint adopted at %d tokens; carrying a 1M window must not be the default", swapAt)
+	if swapAt < hardLimit/2 || swapAt > hardLimit*6/10 {
+		t.Fatalf("checkpoint adopted at %d tokens; want just past half of the %d capacity", swapAt, hardLimit)
 	}
 	if prepareAt == 0 || prepareAt >= swapAt {
 		t.Fatalf("background preparation started at %d, adoption at %d; preparation must lead", prepareAt, swapAt)
@@ -111,11 +113,39 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 	unpriced := economicAgent(t, "unpriced-main-model")
 	provider.SetModelPrice("unpriced-main-model", provider.ModelPrice{})
 	tokens := newCompactionPlanner(30_000)
-	for active := 60_000; active < 440_000; active += 6_000 {
+	for active := 60_000; active < hardLimit-12_000; active += 6_000 {
 		if plan := tokens.evaluate(unpriced, active, fixed, tail, hardLimit, window, false); plan.swap {
 			t.Fatalf("unpriced cached context compacted at %d tokens", active)
 		}
 		tokens.observe(unpriced, provider.TokenUsage{PromptTokens: active, PromptTokensCached: active, CacheReadKnown: true}, active, fixed+30_000+tail, false)
+	}
+}
+
+// A premium main model with a cheap compaction model, the exact pairing of
+// the reported sessions: a checkpoint is never adopted below half of
+// capacity, and background preparation (which leaves the context untouched)
+// does not even start before three quarters of that.
+func TestCheapCompactorNeverCompactsAPremiumWindowEarly(t *testing.T) {
+	a := economicAgent(t, "premium-main-model")
+	provider.SetModelPrice("premium-main-model", provider.ModelPrice{InputPricePerToken: 2e-6, OutputPricePerToken: 1e-5, InputCachedPricePerToken: 1e-7})
+	compactor := provider.FromPreset("openai-chat", "key", "http://127.0.0.1:0")
+	compactor.Model = "cheap-compaction-model"
+	provider.SetModelPrice("cheap-compaction-model", provider.ModelPrice{InputPricePerToken: 1.5e-7, OutputPricePerToken: 5e-7, InputCachedPricePerToken: 3e-8})
+	a.CompactionProvider = compactor
+	planner := newCompactionPlanner(40_000)
+	const fixed, hardLimit, window = 25_000, 900_000, 1_050_000
+	previous := 0
+	for active := 30_000; active < hardLimit/2; active += 12_000 {
+		tail := active / 4
+		plan := planner.evaluate(a, active, fixed, tail, hardLimit, window, false)
+		if plan.swap || plan.force || plan.prepare && active < hardLimit*3/8 {
+			t.Fatalf("checkpoint planned at %d of %d tokens: %+v", active, hardLimit, plan)
+		}
+		planner.observe(a, provider.TokenUsage{PromptTokens: active, PromptTokensCached: previous, CacheReadKnown: true}, active, fixed+40_000+tail, false)
+		previous = active
+	}
+	if plan := planner.evaluate(a, hardLimit-1_000, fixed, 100_000, hardLimit, window, false); !plan.swap {
+		t.Fatalf("near capacity the checkpoint must be adopted: %+v", plan)
 	}
 }
 
@@ -369,21 +399,21 @@ func TestOneLargeJumpDoesNotKeepTheAgentNearCapacity(t *testing.T) {
 func TestPreparedCheckpointIsAdoptedOnceItsColdCacheIsPaidFor(t *testing.T) {
 	a := economicAgent(t, "sunk-checkpoint-model")
 	planner := newCompactionPlanner(0)
-	if planner.adoptPrepared(a, 20_000) {
+	if planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
 		t.Fatal("adopted before any spend was observed")
 	}
 	// A cold 20K-token request costs (2e-6-0.2e-6)*20K = $0.036 more than a cached one.
 	for planner.excess < 0.036 {
 		planner.observe(a, provider.TokenUsage{PromptTokens: 500_000, PromptTokensCached: 499_000, CacheReadKnown: true}, 500_000, 20_000, false)
-		if planner.excess < 0.036 && planner.adoptPrepared(a, 20_000) {
+		if planner.excess < 0.036 && planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
 			t.Fatalf("adopted at excess %.4f, before the cold cache was paid for", planner.excess)
 		}
 	}
-	if !planner.adoptPrepared(a, 20_000) {
+	if !planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
 		t.Fatal("prepared checkpoint not adopted once carrying cost exceeded its cold request")
 	}
 	a.ContextCompactionPercent = 80
-	if planner.adoptPrepared(a, 20_000) {
+	if planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
 		t.Fatal("an explicit percent must keep its own boundary")
 	}
 }

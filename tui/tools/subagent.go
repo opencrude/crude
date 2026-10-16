@@ -3,8 +3,6 @@ package tools
 import (
 	"encoding/json"
 	"strings"
-
-	"crude/types"
 )
 
 // An agent_start result identifies the newly running workspace agent. Terminal
@@ -64,15 +62,4 @@ func categoryDisplayLabel(category string) string {
 		}
 	}
 	return strings.Join(words, " ")
-}
-
-// StartedAgentID is the agent a successful agent_start launched, or "".
-func StartedAgentID(msg types.ChatMessage) string {
-	if msg.ToolName != "agent_start" || msg.ToolStatus != types.ToolStatusSuccess {
-		return ""
-	}
-	if outcome, ok := subAgentOutcome(msg.Content); ok && !structuredToolLabel(outcome.id) {
-		return outcome.id
-	}
-	return ""
 }

@@ -42,7 +42,7 @@ func (m *App) sidebarContentVisible() bool {
 // launcherHostVisible matches the shellLauncherSlot condition including
 // minimum inner width and chat-area height.
 func (m *App) launcherHostVisible() bool {
-	if m.Win != nil && (m.Win.TabCount() > 0 || len(m.Win.GroupIDs()) > 1) {
+	if m.Win != nil && (!m.mainAreaEmpty() || m.Win.IsFloating(m.Win.ActiveGroup())) {
 		return false
 	}
 	if m.isGitReviewActive() {
@@ -51,8 +51,12 @@ func (m *App) launcherHostVisible() bool {
 	if m.launcherScreen == nil {
 		return false
 	}
-	if m.AgentView.VisibleCount() != 0 || m.EditorState.ActiveView != "" {
-		return false
+	// Agents and editors shown in windows do not hide the launcher; the
+	// main area itself is empty.
+	if m.Win == nil || len(m.Win.FloatingGroupIDs()) == 0 {
+		if m.AgentView.VisibleCount() != 0 || m.EditorState.ActiveView != "" {
+			return false
+		}
 	}
 	layout := m.computeLayout()
 	return layout.InnerW >= 20 && m.ChatAreaHeight >= 3

@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -617,5 +618,39 @@ func TestGitConflictUsesDistinctLineState(t *testing.T) {
 	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"conflict\n"}}}, nil, true)
 	if got := ed.gitKindAt(0); got != GitLineConflict {
 		t.Fatalf("kind=%d", got)
+	}
+}
+
+// The gutter (diagnostics, numbers, Git rail) has its own explicit fill on
+// every body row, including rows past the last line and the horizontal
+// scrollbar row, and the editor leaves no cell transparent: in a window the
+// popup fill beneath used to show through the scrollbar row's gutter.
+func TestGutterHasExplicitBackgroundOnEveryBodyRow(t *testing.T) {
+	th := theme.DefaultDark()
+	ed := NewPreview(th, filepath.Join(t.TempDir(), "wide.go"), strings.Repeat("wide", 80)+"\nshort", 1)
+	surf := surface.NewSurface("gutter", 50, 8, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{Theme: th, Focused: true})
+	if !ed.hScrollbarVisible {
+		t.Fatal("fixture needs the horizontal scrollbar")
+	}
+	gutter := rendering.ThemeColorToCell(th.Colors.Gutter)
+	text := rendering.ThemeColorToCell(th.Colors.Bg)
+	if gutter == text {
+		t.Fatal("gutter fill must differ from the text area")
+	}
+	buf := surf.Buffer()
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 50; x++ {
+			c := buf.Get(x, y)
+			if c.Transparent {
+				t.Fatalf("cell %d,%d left transparent", x, y)
+			}
+			if x < ed.gutterWidth() && c.BG != gutter {
+				t.Fatalf("gutter cell %d,%d bg=%v, want %v", x, y, c.BG, gutter)
+			}
+		}
+	}
+	if c := buf.Get(ed.gutterWidth(), 0); c.BG != text {
+		t.Fatalf("text cell bg=%v, want %v", c.BG, text)
 	}
 }

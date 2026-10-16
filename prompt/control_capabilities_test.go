@@ -24,6 +24,7 @@ func TestControlAndCapabilityContractsReachRootAndChild(t *testing.T) {
 			for _, required := range []string{
 				"Proactively discover and activate relevant installed Skills and MCP",
 				"a missing native tool is not required", "returned exact identity",
+				"Applicable project guidance takes precedence", "runtime_capability_shared",
 				"Manual/Auto Review/YOLO", "explicit denials", "host and effect ceilings",
 				"Reviewer/YOLO authorization is not a human grant",
 				"authentication, consent and authority changes remain user-owned",

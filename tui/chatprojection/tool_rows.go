@@ -29,17 +29,7 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int)
 	title := tools.BuildToolTitle(msg, titlePhase)
 	isActive := toolRowFrameSensitive(msg)
 	settled := msg.ToolPreviewPhase == types.ToolPreviewDone || msg.ToolPreviewPhase == types.ToolPreviewError
-	line := paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
-	// A started sub-agent stays minimized; its row is where it is opened.
-	if id := tools.StartedAgentID(msg); id != "" {
-		line.Spans = append(line.Spans,
-			RowSpan{Text: "  "},
-			RowSpan{Text: "⧉ open", Role: ui.ColorAccent, Action: &ui.Action{ID: ChatAgentOpenActionID, Payload: ChatAgentOpenPayload{AgentID: id}}},
-			RowSpan{Text: "  "},
-			RowSpan{Text: "⇱ window", Role: ui.ColorAccent, Action: &ui.Action{ID: ChatAgentOpenActionID, Payload: ChatAgentOpenPayload{AgentID: id, Window: true}}},
-		)
-	}
-	return line
+	return paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
 }
 
 // paintToolTitle is shared by tool calls and code-authored command outcomes.
@@ -147,6 +137,8 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	if _, exit, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok && exit != nil && *exit != 0 {
 		msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
 	}
+	// A failure's trailing hint addresses the model's next call, not the reader.
+	msg.Content = types.StripToolHint(msg.Content)
 	titlePhase := msg.ToolPreviewPhase
 	if titlePhase == "" {
 		titlePhase = phase

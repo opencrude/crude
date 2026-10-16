@@ -21,6 +21,7 @@ func DefaultMidnight() *Theme {
 		TextSelectionFg:    lipgloss.Color("#000000"),
 		Hover:              lipgloss.Color("#152238"),
 		SubPaneBg:          lipgloss.Color("#111827"),
+		Gutter:             lipgloss.Color("#0f1527"),
 		IncompleteBg:       lipgloss.Color("#3f1d2e"),
 		PopupBg:            lipgloss.Color("#111827"),
 		PopupBorder:        lipgloss.Color("#334155"),

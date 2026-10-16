@@ -186,13 +186,16 @@ func (m *App) newPaneWindow(group window.GroupID) *paneWindow {
 	body := &paneWindowBody{Base: ui.NewBase(ui.NewID(ui.RootID, string(oid)+"-body")), layout: p, group: group}
 	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, string(oid)+"-frame"), ui.FrameWindow, m.paneWindowTitle(group), body, nil, true, w, h)
 	if frame.Frame() != nil {
-		frame.Frame().SetTitleAction("⇲", "Dock")
+		// A pane window is main content: it paints on the shell background,
+		// so every element looks as it does in the main area.
+		frame.Frame().SetFill(ui.ColorBg)
+		frame.Frame().SetTitleActions(paneWindowTitleActions)
 	}
 	fw := wm.NewFloatingWindow(string(oid), m.paneWindowTitle(group), frame, w, h,
 		wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true),
 		wm.WithClosable(true), wm.WithFocusable(true), wm.WithMinSize(min(30, w), min(8, h)),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute))
-	fw.SetTitleActionWidth(3)
+	fw.SetTitleActionWidth(ui.TitleActionWidth * len(paneWindowTitleActions))
 	wm.CenterOnScreen(fw, m.width, m.height)
 	if count > 0 {
 		x, y := fw.Position()
@@ -215,6 +218,37 @@ func (m *App) newPaneWindow(group window.GroupID) *paneWindow {
 	return pw
 }
 
+// paneWindowTitleActions are a pane window's title-bar buttons, rightmost
+// first: Dock beside close, then + to open another tab in the window, which
+// has no tab strip while it holds a single tab.
+var paneWindowTitleActions = []ui.TitleAction{
+	{Glyph: "⇲", Hint: "Dock", ID: paneWindowDock},
+	{Glyph: "+", Hint: "New tab in this window", ID: paneWindowNewTab},
+}
+
+const (
+	paneWindowDock   = "pane-window.dock"
+	paneWindowNewTab = "pane-window.new-tab"
+)
+
+// paneWindowNewTabMenu offers what a new tab in the window holds, the same
+// choices as the main strip's + and an empty pane.
+func (m *App) paneWindowNewTabMenu(group window.GroupID) *ui.ContextMenuState {
+	action := func(id string) func() {
+		return func() {
+			cmd, _ := m.handleMainPaneAction(&ui.Action{ID: id, Payload: group})
+			m.startSourceControlMutation(cmd)
+		}
+	}
+	return &ui.ContextMenuState{Title: "New tab", Sections: []ui.ContextMenuSection{{
+		SectionLabel: "New tab in this window",
+		Items: []ui.ContextMenuItem{
+			{Label: "New Session", Detail: "agent", Action: action("pane.new-session")},
+			{Label: "Open File…", Detail: "editor", Action: action("pane.open-file")},
+		},
+	}}}
+}
+
 // syncPaneWindows makes the open windows match Window's floating groups and
 // lays each one out with this frame's state, before focused-view geometry is
 // derived. Mutations of the group (tab close, dock, detach) take effect here.
@@ -227,6 +261,12 @@ func (m *App) syncPaneWindows() {
 		p.windows = make(map[window.GroupID]*paneWindow)
 	}
 	floating := m.Win.FloatingGroupIDs()
+	// With every tab in windows the main area is empty and shows the
+	// launcher, whichever transition emptied it (an eject, a session opened
+	// into a window): surfacing an agent anywhere drops the launcher screen.
+	if len(floating) > 0 && m.launcherScreen == nil && m.mainAreaEmpty() {
+		m.openLauncher()
+	}
 	for group := range p.windows {
 		if !m.Win.IsFloating(group) || !m.overlayHost.IsOpen(paneWindowID(group)) {
 			delete(p.windows, group)
