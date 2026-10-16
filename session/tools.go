@@ -93,6 +93,11 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			}
 		}
 		resolveRelativeParamsAtRoot(root, tool, params)
+		if isWriteTool(tool) && root != s.WorkDir() {
+			if err := validateExecutionWriteTargets(root, s.TempDir(), writeToolTargets(tool, params)); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 		s.recordToolTouch(tool, params)
 		if result, handled, err := s.executeMemoryTool(ctx, tool, params); handled {
 			return result, err

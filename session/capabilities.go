@@ -210,6 +210,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			return tools.ToolResult{}, fmt.Errorf("tool %q is denied by the agent policy", tool)
 		}
 		resolveRelativeParamsAtRoot(live.WorkDir, tool, params)
+		if isWriteTool(tool) && actor.ParentID == "" && live.WorkDir != session.WorkDir() {
+			if err := validateExecutionWriteTargets(live.WorkDir, session.TempDir(), writeToolTargets(tool, params)); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 		ownership := session.FileOwnership()
 		if tool == "read_file" {
 			ownership.RecordRead(agent.AgentID(actor.ID), getStrParam(params, "path"))

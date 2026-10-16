@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -235,7 +236,54 @@ func (r *SubAgentRunner) prepareChildExecution(ctx context.Context, spec *agent.
 		return err
 	}
 	spec.FileOwnership = paths
+	if spec.ExecutionRoot != root {
+		return validateExecutionWriteTargets(spec.ExecutionRoot, "", paths)
+	}
 	return nil
+}
+
+// Managed checkouts are native mutation boundaries, independently of optional
+// ownership scopes. Absolute operands never rebase into a different checkout.
+// Commands and external MCP effects are opaque and are not sandboxed here.
+func validateExecutionWriteTargets(root, privateDir string, targets []string) error {
+	for _, target := range targets {
+		allowedRoot := root
+		if privateDir != "" && pathInside(privateDir, target) {
+			allowedRoot = privateDir
+		}
+		if !pathInside(allowedRoot, target) {
+			return fmt.Errorf("write to %q is outside the execution checkout %q; use a checkout-relative path or explicit shared execution. Nothing was changed", target, root)
+		}
+		// Check existing ancestors as well as lexical spelling, including targets
+		// that do not exist yet. A symlink inside a checkout is not an escape hatch.
+		resolvedRoot, err := resolveExecutionPath(allowedRoot)
+		if err != nil {
+			return fmt.Errorf("resolve execution checkout %q: %w", allowedRoot, err)
+		}
+		resolvedTarget, err := resolveExecutionPath(target)
+		if err != nil {
+			return fmt.Errorf("resolve execution checkout target %q: %w", target, err)
+		}
+		if !pathInside(resolvedRoot, resolvedTarget) {
+			return fmt.Errorf("write to %q resolves outside the execution checkout %q. Nothing was changed", target, root)
+		}
+	}
+	return nil
+}
+
+func resolveExecutionPath(path string) (string, error) {
+	path = normalizeOwnershipTarget(path)
+	if _, err := os.Lstat(path); err == nil {
+		return filepath.EvalSymlinks(path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return "", fmt.Errorf("cannot resolve execution path %q", path)
+	}
+	resolved, err := resolveExecutionPath(parent)
+	return filepath.Join(resolved, filepath.Base(path)), err
 }
 
 func childIndependentWriter(spec agent.SubAgentSpec) bool {

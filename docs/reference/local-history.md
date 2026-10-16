@@ -40,7 +40,10 @@
   mutations use compact relative keys inside the workspace and canonical
   absolute keys outside it; both receive the same operation receipt, preview,
   safety snapshot, crash recovery, and selective restore guarantees. Never
-  reject or silently omit a direct mutation merely because its path is external.
+  reject or silently omit an otherwise authorized direct mutation merely because
+  its path is external. Managed execution separately bounds native writes to its
+  exact checkout and the owning agent's private scratch directory; Local History
+  does not widen that execution or file-ownership authority.
 - Restores append one hidden `<workspace_history_event>` to provider context and
   one visible canonical `history_restored` context-boundary table without
   rewriting accepted conversation prefix. The completed boundary is static,

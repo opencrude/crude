@@ -976,6 +976,11 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 			spec.FileOwnership = declared
 		}
 	}
+	if spec.ExecutionRoot != "" && spec.ExecutionRoot != r.session.WorkDir() {
+		if err := validateExecutionWriteTargets(spec.ExecutionRoot, "", spec.FileOwnership); err != nil {
+			return fail(fmt.Errorf("restore the child's checkout scope: %w", err))
+		}
+	}
 	if err := r.fileOwnership.ReplaceClaims(spec.ID, spec.Name, spec.FileOwnership); err != nil {
 		return fail(fmt.Errorf("restore the child's file scope: %w", err))
 	}
@@ -2217,6 +2222,12 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			// The child's own temporary directory is private scratch space: it is
 			// never shared work, so it needs neither ownership scope nor claims.
 			requested := writeToolTargets(tool, params)
+			if root != r.session.WorkDir() {
+				if err := validateExecutionWriteTargets(root, privateDir, requested); err != nil {
+					r.notifyParentOfRejectedWrite(ctx, spec, handle, strings.Join(requested, ", "), err.Error())
+					return tools.ToolResult{}, err
+				}
+			}
 			targets := sharedWriteTargets(requested, privateDir)
 			if len(requested) == 0 || len(targets) > 0 {
 				// A scoped child writes only inside its current committed scope,

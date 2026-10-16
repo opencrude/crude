@@ -112,7 +112,14 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 			name, params = "execute_command", map[string]any{"command": "pwd; cat dirty.txt accepted.txt overlap.txt"}
 		case 7:
 			name, params = "exec_command", map[string]any{"cmd": "pwd; cat overlap.txt", "yield_time_ms": 1000}
-		case 8:
+		case 8, 9:
+			// A parent-supplied absolute path must not redirect a managed child
+			// into the logical checkout, even though absolute reads are allowed.
+			// First intake the logical checkout's guidance, then retry the effect.
+			name, params = "write_file", map[string]any{"path": filepath.Join(root, "escaped.txt"), "content": "must not escape\n"}
+		case 10:
+			name, params = "read_file", map[string]any{"path": "overlap.txt"}
+		case 11:
 			// Real child-authored report required by the runtime, addressed to its
 			// exact parent. These fixtures use the session root collaborator ID.
 			name, params = "publish_report", map[string]any{"kind": "final", "recipient_ids": []string{"worktree-parent"}, "summary": key + " isolated proof", "body": "Isolated effects verified."}
@@ -134,6 +141,8 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 				name, params = "apply_patch", map[string]any{"input": "*** Begin Patch\n*** Add File: overlap.txt\n+second\n*** End Patch"}
 			case 4:
 				name, params = "apply_patch", map[string]any{"input": "*** Begin Patch\n*** Update File: overlap.txt\n@@\n-second\n+second edited\n*** End Patch"}
+			case 8, 9:
+				name, params = "apply_patch", map[string]any{"input": "*** Begin Patch\n*** Add File: " + filepath.Join(root, "escaped.txt") + "\n+must not escape\n*** End Patch"}
 			}
 		}
 		args, _ := json.Marshal(params)
@@ -175,6 +184,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		params := map[string]any{"category": CategoryCrafter, "description": marker, "instructions": "Perform the fixture sequence", "file_ownership": []string{"overlap.txt"}}
 		if marker == "SECOND_CHILD" {
 			params["profile"] = "native"
+			delete(params, "file_ownership") // Exercise checkout isolation without a scope.
 		}
 		result, err := r.StartAgent(t.Context(), params)
 		if err != nil {
@@ -231,18 +241,42 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		if state.Messages[0].InternalID != "assignment-"+string(h.Spec.ID) {
 			t.Fatalf("assignment identity changed: %+v", state.Messages[0])
 		}
+		for _, message := range state.Messages {
+			if message.Role != "tool" {
+				continue
+			}
+			if message.ToolCallID == key+"-8" {
+				if !strings.Contains(message.ContentString(), "This call was not executed") {
+					t.Fatalf("expected guidance intake before escape retry: %s", message.ContentString())
+				}
+			} else if message.ToolCallID == key+"-9" {
+				if !strings.Contains(message.ContentString(), "outside the execution checkout") {
+					t.Fatalf("absolute escape was not rejected: %s", message.ContentString())
+				}
+			} else if message.ToolError || agent.IsToolError(message.ContentString()) {
+				t.Fatalf("unexpected failure for %s: %s", message.ToolCallID, message.ContentString())
+			}
+		}
 		mu.Lock()
 		wire := strings.Join(requests[key], "\n")
 		count := len(requests[key])
 		mu.Unlock()
 		// The wire is JSON, so the root's separators appear escaped on Windows.
 		encodedRoot, _ := json.Marshal(h.Spec.ExecutionRoot)
-		if count != 10 || !strings.Contains(wire, strings.Trim(string(encodedRoot), `"`)) || !strings.Contains(wire, "dirty baseline") || !strings.Contains(wire, "accepted document") || !strings.Contains(wire, key+" patched") || !strings.Contains(wire, "Use the isolated fixture root.") || strings.Contains(wire, "Error:") {
-			t.Fatalf("real wire proof failed count=%d wire=%s", count, wire)
+		if count != 13 || !strings.Contains(wire, strings.Trim(string(encodedRoot), `"`)) || !strings.Contains(wire, "dirty baseline") || !strings.Contains(wire, "accepted document") || !strings.Contains(wire, key+" patched") || !strings.Contains(wire, "Use the isolated fixture root.") || !strings.Contains(wire, "outside the execution checkout") {
+			for _, message := range state.Messages {
+				if message.Role == "tool" && (message.ToolCallID == key+"-8" || message.ToolCallID == key+"-9") {
+					t.Logf("escape attempt: %s", message.ContentString())
+				}
+			}
+			t.Fatalf("real wire proof failed count=%d checkout=%q boundary rejection=%v", count, h.Spec.ExecutionRoot, strings.Contains(wire, "outside the execution checkout"))
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "overlap.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("logical source was mutated")
+	}
+	if _, err := os.Stat(filepath.Join(root, "escaped.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("absolute path escaped into logical source")
 	}
 	if data, _ := os.ReadFile(filepath.Join(root, "dirty.txt")); string(data) != "dirty baseline\n" {
 		t.Fatal("dirty source changed")

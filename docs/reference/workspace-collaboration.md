@@ -224,7 +224,9 @@ reads its current committed scope, so the parent's `agent_update_claims` on the
 live run takes effect on the child's next write. The child's private temporary
 directory is never scope-checked or claimed. A parent may widen or narrow its
 child's scope; the only bound is that it must not overlap another agent's active
-claims. A scope update never makes a provider call, file effect or wake.
+claims. Managed-checkout children also remain bounded to their execution checkout:
+relative claim repairs bind that checkout and absolute external claims are rejected,
+not rebased. A scope update never makes a provider call, file effect or wake.
 
 A child that stops for attention (a run-level fault such as rejected
 credentials, storage, compaction or exhausted bounded recovery) is never a dead

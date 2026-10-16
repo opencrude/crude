@@ -158,8 +158,10 @@ above motivate policy, not a guarantee of universal automatic isolation.
   `agent_update_claims` replaces a child's complete scope — wider or narrower —
   during its live run (claims bound to that run, effective on the next write) or
   after an interrupted attempt (declarations used by Continue). The only bound is
-  no overlap with another agent's active claims; there is no frozen launch
-  ceiling. Neither wakes execution. Run identity, run version and claim
+  no overlap with another agent's active claims and, for a managed checkout,
+  containment in that checkout; there is no frozen launch ceiling. Relative
+  repairs bind the child's root, not the logical workspace. Neither wakes
+  execution. Run identity, run version and claim
   versions are optional: omitted ones are read from the target's current state
   at call time (an interrupted child needs its `run_id`), and explicit ones are
   exact preimages from `agent_inspect`; the store fences both. Numeric
