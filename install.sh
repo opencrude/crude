@@ -43,7 +43,7 @@ detect_install_dir() {
         return
     fi
 
-    # Linux / macOS — try system-wide first
+    # Linux / macOS: try system-wide first
     if [[ -w /usr/local/bin ]] || [[ -w / ]] 2>/dev/null; then
         echo "/usr/local/bin"
         return

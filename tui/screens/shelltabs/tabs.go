@@ -20,7 +20,7 @@ const (
 // RailInset is the empty column the main tab bar leaves between the navigation
 // rail's border and its first tab label. Only the label row takes it: the
 // baseline keeps spanning the whole content column from the rail, so the rule
-// stays put and nothing is left floating to its left. Only this bar takes it —
+// stays put and nothing is left floating to its left. Only this bar takes it;
 // the dock, deck, and mode strips sit inside their own chrome and would read as
 // misaligned with it.
 const RailInset = 1

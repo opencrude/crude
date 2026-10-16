@@ -43,7 +43,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleSettingsPromptKey(msg)
 	}
 
-	// Global keybindings from the action registry — checked first,
+	// Global keybindings from the action registry are checked first,
 	// before focus routing. These work across shell views, while terminal
 	// key ownership keeps the explicit passthrough exceptions below.
 	if m.actionRegistry != nil {
@@ -362,9 +362,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// LSP keybinds (only when a file is open and the LSP is up).
 	if m.EditorState.Editor.IsOpen() && m.ws.LSPMgr() != nil {
 		switch msg.String() {
-		case "alt+.": // gd (go to definition) — Alt+. is widely used in TUI editors
+		case "alt+.": // gd (go to definition): Alt+. is widely used in TUI editors
 			return m, m.requestDefinitionCmd()
-		case "alt+;": // gr (find references) — Alt+; mirrors the VSCode chord
+		case "alt+;": // gr (find references): Alt+; mirrors the VSCode chord
 			return m, m.requestReferencesCmd()
 		case "alt+o": // outline: refresh document symbols and toggle the outline panel
 			return m, m.requestDocumentSymbolsCmd()
@@ -511,7 +511,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 				return m, nil
 			}
 			// Copy with a selection: copy (don't close the
-			// composer — matches the chat input's behavior).
+			// composer; matches the chat input's behavior).
 			if ui.IsCopyChord(msg) && composer.HasActiveSelection() {
 				return m, rendering.CopyToClipboardCmd(composer.SelectedText())
 			}
@@ -718,7 +718,7 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 	var cmds []tea.Cmd
 	switch e := evt.(type) {
 	case input.SubmitEvent:
-		// Rename arming overrides the normal submit — the user typed a
+		// Rename arming overrides the normal submit: the user typed a
 		// new symbol name after F2. We consume the text and fire the
 		// rename request instead of sending it as a chat message.
 		if m.LSPPopup.RenameArmed {
@@ -762,7 +762,7 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 // "editor" and "everything else → chat input". That meant paste
 // silently went to the chat input even when the user was in a
 // settings form, a find/replace popup, a text overlay, the file
-// picker, the composer, the context menu's text field, etc. — which
+// picker, the composer, the context menu's text field, etc., which
 // is why "Ctrl+V doesn't work in settings" was the user's #1 pain.
 //
 // The dispatch mirrors dispatchKeyPress: it asks the focus resolver
@@ -816,7 +816,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		// A popup is focused. Route to the focused window's
 		// content if it knows how to handle paste. The current
 		// popups that accept paste are the find/replace popup
-		// (via its OnChange callback flow — but the user actually
+		// (via its OnChange callback flow, but the user actually
 		// pastes into the find field via handleFindReplaceKey) and the
 		// text overlay / composer (ui.TextArea). For now, just route to the
 		// content if it implements a Paste handler.
@@ -856,7 +856,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 
 // pasteToWindowContent forwards a PasteMsg to the content of a
 // focused floating window. The content must implement either
-// HandleEvent(tea.Msg) tea.Cmd or Update(tea.Msg) — whichever
+// HandleEvent(tea.Msg) tea.Cmd or Update(tea.Msg), whichever
 // matches its public API. Returns the resulting cmd (or nil).
 func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.Cmd {
 	if fw == nil || fw.Content == nil {
@@ -864,7 +864,7 @@ func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.
 	}
 	// The paste may change the focused text control (value, cursor,
 	// horizontal viewport). Mark the window dirty so the new text is
-	// actually painted — without this the value sat in the model until
+	// actually painted; without this the value sat in the model until
 	// mouse motion or an arrow key forced a repaint.
 	defer fw.MarkContentDirty()
 	switch c := fw.Content.(type) {
@@ -1212,7 +1212,7 @@ func (m *App) openFileInEditor(path string) error {
 }
 
 // showReferencesPopup displays the list of references in a floating window.
-// The list is selectable — pressing Enter on a row jumps the editor to that
+// The list is selectable: pressing Enter on a row jumps the editor to that
 // location and closes the popup.
 type refRow = RefRow
 

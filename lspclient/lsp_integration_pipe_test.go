@@ -20,7 +20,7 @@ import (
 // helper-process pattern), spawned BY the LSP client via ClientConfig:
 //
 //  1. it answers the initialize handshake,
-//  2. then STOPS reading its stdin entirely — simulating a back-pressured
+//  2. then STOPS reading its stdin entirely, simulating a back-pressured
 //     or wedged language server during the project-wide didOpen sync.
 //
 // Before the fix, a CloseFile issued once the pipe buffer was full blocked
@@ -28,7 +28,7 @@ import (
 // every LSP write returns promptly and that connection death is observable.
 
 // fakeLSPMain is the wedged fake server body. It reads LSP-framed messages
-// until it has answered initialize, then blocks forever without reading —
+// until it has answered initialize, then blocks forever without reading;
 // the pipe fills and stays full.
 func fakeLSPMain() {
 	reader := bufio.NewReader(os.Stdin)

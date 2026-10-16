@@ -71,7 +71,7 @@ func TestDialerFromFormCapturesNonDefaults(t *testing.T) {
 
 func TestDialerFromFormPersistsBuiltInDefaultAsUnset(t *testing.T) {
 	// A row explicitly moved to the built-in default must not freeze that
-	// number into the config — it persists as unset so a future change to the
+	// number into the config; it persists as unset so a future change to the
 	// built-in default is honored.
 	dialer := dialerFromForm("0", "0", strconv.Itoa(provider.DefaultMaxAttempts), strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())), "60", "45", "300")
 	if dialer != nil {
@@ -135,8 +135,8 @@ func TestDialerFieldsSelectBuiltInDefaultsForNil(t *testing.T) {
 	}
 }
 
-// Ladders read in natural order — the default sits at its own value and
-// Unlimited comes last — so a stepper's ‹ always means less and › more.
+// Ladders read in natural order: the default sits at its own value and
+// Unlimited comes last, so a stepper's ‹ always means less and › more.
 func TestDialFieldOptionsLabelBuiltInDefault(t *testing.T) {
 	options := dialFieldOptions(0, 30, dialConnectLadder, "s")
 	var ids []string

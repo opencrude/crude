@@ -18,7 +18,7 @@ import (
 // TestSettingsPaste_MarksFloatingWindowDirty ensures a paste into a focused
 // floating window (workspace settings API key) marks the window content dirty
 // so the inserted text is actually painted. Without this, the value sat in the
-// model until mouse motion or an arrow key forced a repaint — "I paste and see
+// model until mouse motion or an arrow key forced a repaint: "I paste and see
 // nothing until I move the cursor".
 func TestSettingsPaste_MarksFloatingWindowDirty(t *testing.T) {
 	app := newPaintableThemeApp(t)
@@ -46,7 +46,7 @@ func TestSettingsPaste_MarksFloatingWindowDirty(t *testing.T) {
 }
 
 // TestApplyThemePreset_PaintedCellsLeaveOldPalette asserts on actual painted
-// cell backgrounds — not theme pointers. A pointer-only check previously
+// cell backgrounds, not theme pointers. A pointer-only check previously
 // passed while live screenshots still showed dark voids / half-themed UI.
 func TestApplyThemePreset_PaintedCellsLeaveOldPalette(t *testing.T) {
 	app := newPaintableThemeApp(t)
@@ -234,7 +234,7 @@ func capturePaintedShell(t *testing.T, app *App) *surface.CellBuffer {
 	t.Helper()
 	app.renderShellToSurface()
 	// Reconstruct the composited frame: theme-bg fill at the bottom, then
-	// the shell surface's painted (non-transparent) cells on top — exactly
+	// the shell surface's painted (non-transparent) cells on top, exactly
 	// what the compositor produces from the root fill + mainSurf.
 	buf := surface.NewCellBuffer(app.width, app.height)
 	bg := cell.BlankCell(rendering.ThemeColorToCell(app.Theme.Colors.Bg))

@@ -22,7 +22,7 @@ import (
 // user sees.
 //
 // This is the definitive test for "bubble tea/ultra violet cant track
-// that place" — it uses REAL UTF-8 emoji/markdown content from
+// that place"; it uses REAL UTF-8 emoji/markdown content from
 // ../../docs/reference/terminal-width.md, not synthetic strings.
 func TestEndToEndWidthAgreement(t *testing.T) {
 	lines := []string{
@@ -35,14 +35,14 @@ func TestEndToEndWidthAgreement(t *testing.T) {
 
 	for _, line := range lines {
 		const w = 200
-		// Step 1: compositor path — RenderToSurface (the SAME
+		// Step 1: compositor path, RenderToSurface (the SAME
 		// decoder ultraviolet uses) packs cells, then GenerateANSI emits
 		// the ANSI string the app feeds to Bubble Tea.
 		surf := surface.NewSurface("test", w, 1, cell.TransparentBlank())
 		rendering.RenderToSurface(surf, line)
 		emitted := GenerateANSI(surf.Buffer())
 
-		// The compositor CONTENT width — what layout uses to
+		// The compositor CONTENT width, what layout uses to
 		// pad, truncate, and position the actual text.
 		compW := rendering.VisibleWidth(line)
 

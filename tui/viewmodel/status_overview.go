@@ -48,7 +48,7 @@ func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 }
 
 // gitChangesIcon is the header's changed-file marker. It deliberately differs
-// from the branch glyph — and matches the dirty-tab pencil — so
+// from the branch glyph and matches the dirty-tab pencil, so
 // "⑂ master · ✎ 9" never reads as two branch icons. A BMP glyph keeps it
 // font-independent (already in the terminal-width probe corpus).
 func gitChangesIcon() string { return "✎" }

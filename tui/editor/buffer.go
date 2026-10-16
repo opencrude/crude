@@ -83,7 +83,7 @@ func (pt *PieceTable) Load(filePath string) error {
 // the supplied text. Savepoint and view state belong to Buffer and Editor.
 //
 // We keep the filePath unchanged so the editor stays bound to the same
-// file. The "didChange" notification must be fired by the caller — this
+// file. The "didChange" notification must be fired by the caller; this
 // function only touches the buffer.
 func (pt *PieceTable) ReplaceAll(text string) {
 	size := 0

@@ -12,7 +12,7 @@ import (
 // This file owns the dedicated answer controls for the question deck: the
 // stacked option rows, the write-in prompt area, and the focus gates that give
 // each pane its Tab/Esc policy. Nothing here touches the shared form field
-// types — the deck composes existing shared primitives (List, TextArea)
+// types; the deck composes existing shared primitives (List, TextArea)
 // instead.
 
 const (
@@ -109,7 +109,7 @@ var _ ui.Component = (*focusGate)(nil)
 // so typing in the write-in editor updates answer state without polling. It
 // is deliberately the same control as the session chat composer: multi-line,
 // Enter inserts a newline, Ctrl+Enter submits, and it carries no raised form
-// background — the deck paints flat ColorBg everywhere.
+// background; the deck paints flat ColorBg everywhere.
 type answerInput struct {
 	*ui.TextArea
 	onChange func(value string)
@@ -133,7 +133,7 @@ var _ ui.Component = (*answerInput)(nil)
 // optionItems builds the stacked answer rows: one line per option followed by
 // a divider rule and the write-in row. Choice state rides the icon column
 // (single ○/●, multiple [ ]/[x]) while the shared list row colors carry the
-// highlight — never a prompt glyph.
+// highlight, never a prompt glyph.
 func optionItems(item Item, choices []string) []ui.ListItem {
 	if len(item.Options) == 0 {
 		return nil

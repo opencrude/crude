@@ -234,7 +234,7 @@ func (e *Editor) writeBytesTracked(path string, newBytes []byte, prepare Mutatio
 		if !errors.Is(statErr, os.ErrNotExist) {
 			return fmt.Errorf("write %s: pre-read: %w", path, statErr)
 		}
-		// File doesn't exist — creating new file
+		// File doesn't exist: create a new file
 		e.logger.Debug("FILEIO", "write_create", "path", abs, "op_id", opID)
 		parentPaths, err := missingParentMutationPaths(abs)
 		if err != nil {
@@ -264,7 +264,7 @@ func (e *Editor) writeBytesTracked(path string, newBytes []byte, prepare Mutatio
 		return err
 	}
 
-	// Existing file — recording before/after content details
+	// Existing file: record before/after content details
 	oldSize := len(existing)
 	newSize := len(newBytes)
 	e.logger.Debug("FILEIO", "write_overwrite", "path", abs, "old_size", oldSize, "new_size", newSize, "delta", newSize-oldSize, "op_id", opID)

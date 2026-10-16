@@ -70,7 +70,7 @@ func parseUnifiedDiff(raw string) []diffFile {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimRight(line, "\r")
 
-		// File headers — extract path and start new file block
+		// File headers: extract the path and start a new file block
 		if strings.HasPrefix(line, "--- ") {
 			if current != nil && currentHunk != nil {
 				current.Hunks = append(current.Hunks, *currentHunk)
@@ -95,7 +95,7 @@ func parseUnifiedDiff(raw string) []diffFile {
 			continue
 		}
 
-		// Hunk header — extract new-file and old-file start lines
+		// Hunk header: extract new-file and old-file start lines
 		if strings.HasPrefix(line, "@@") {
 			if current != nil && currentHunk != nil {
 				current.Hunks = append(current.Hunks, *currentHunk)
@@ -115,7 +115,7 @@ func parseUnifiedDiff(raw string) []diffFile {
 			continue
 		}
 
-		// Skip git-specific metadata headers — these appear before the
+		// Skip git-specific metadata headers; these appear before the
 		// standard unified diff headers (---/+++) and are not content.
 		if strings.HasPrefix(line, "diff --git ") ||
 			strings.HasPrefix(line, "index ") ||
@@ -217,7 +217,7 @@ const (
 	compactElisionMinGap = 4
 )
 
-// ── RenderDiff — the single unified diff renderer
+// ── RenderDiff: the single unified diff renderer
 
 // RenderDiff produces a professional, line-numbered diff presentation.
 // maxLines controls how many output lines are available (from terminal height);
@@ -435,7 +435,7 @@ func trimContext(lines []renderLine, keep int) []renderLine {
 	}
 
 	if len(changePositions) == 0 {
-		// No changes — return first and last context line, unless the hidden
+		// No changes: return the first and last context line, unless the hidden
 		// middle is small enough to keep whole.
 		if len(lines) <= keep*2+compactElisionMinGap {
 			return lines
@@ -517,8 +517,8 @@ func IsDiffContent(content string) bool {
 
 // IsPatchCardTool reports whether a success body belongs to a file writer whose
 // result is a patch the transcript paints in the patch card. Evidence tools are
-// excluded by name even when their body contains diff-like text — a read of a
-// fixture file can embed "```diff" inside a string literal — so the card is
+// excluded by name even when their body contains diff-like text: a read of a
+// fixture file can embed "```diff" inside a string literal, so the card is
 // gated by this predicate together with IsDiffContent, never by content alone.
 func IsPatchCardTool(name string) bool {
 	switch name {

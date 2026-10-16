@@ -136,7 +136,7 @@ type ModelOptions struct {
 // up to the nearest loaded ancestor directory.
 //
 // This is O(git_statuses * depth) and scales to very large repos because it
-// never walks unloaded subtrees — it uses the git resolver's complete map.
+// never walks unloaded subtrees; it uses the git resolver's complete map.
 func (m *FileTreeModel) recomputeAggregateStatuses() {
 	if m.Root == nil {
 		return
@@ -217,7 +217,7 @@ func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int)
 
 	// If the tree node doesn't exist yet (file is in a collapsed directory),
 	// load the parent directory so the node becomes available.  The directory
-	// stays collapsed — we only materialise the tree node so its diagnostic
+	// stays collapsed: we only materialise the tree node so its diagnostic
 	// counts are set and propagated upward for aggregate display.
 	if _, ok := m.nodes[fp]; !ok && !m.noLocalIO && m.containsPath(fp) {
 		m.ensureDiagnosticsNode(fp)
@@ -238,7 +238,7 @@ func (m *FileTreeModel) ClearDiagnostics() {
 
 // ensureDiagnosticsNode recursively loads parent directories until the
 // given file path has a node in m.nodes.  It does NOT expand any directory
-// — children are loaded but the dir remains collapsed.
+// The directory stays collapsed even though its children are loaded.
 func (m *FileTreeModel) ensureDiagnosticsNode(fp string) {
 	parentPath := filepath.Dir(fp)
 	if parentPath == fp || parentPath == "." {
@@ -246,7 +246,7 @@ func (m *FileTreeModel) ensureDiagnosticsNode(fp string) {
 	}
 	parentNode, ok := m.nodes[parentPath]
 	if !ok {
-		// Grandparent not loaded yet — recurse.
+		// Grandparent not loaded yet: recurse.
 		m.ensureDiagnosticsNode(parentPath)
 		parentNode, ok = m.nodes[parentPath]
 	}
@@ -341,7 +341,7 @@ type FileTreeModel struct {
 	// Hover tracks which visible node the mouse cursor is currently
 	// pointing at. -1 means no node is hovered (mouse off-tree or
 	// over the scrollbar). Index is in the same space as cursorIndex
-	// — i.e. an index into visibleNodes — so render code can compare
+	// It is an index into visibleNodes, so render code can compare
 	// it directly to the loop variable.
 	Hover ui.Hover
 
@@ -976,7 +976,7 @@ func (m *FileTreeModel) Select(path string) {
 		}
 	}
 
-	// Path not visible — move cursor to first node.
+	// Path not visible: move the cursor to first node.
 	if len(m.visibleNodes) > 0 {
 		m.setCursorIndexLocked(0)
 		return
@@ -1168,7 +1168,7 @@ func (m *FileTreeModel) clampScrollRangeLocked(vh int) {
 
 // unfilteredWalk appends visible nodes depth-first with no active filter.
 // The workspace root stays in the model for git/diagnostic aggregation and
-// path operations, but it is not a painted row — the explorer search hint
+// path operations, but it is not a painted row: the explorer search hint
 // names the workspace instead.
 func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
 	if node.Hidden && !m.showHidden {
@@ -1242,7 +1242,7 @@ func (m *FileTreeModel) applyFilterState() {
 // computeFilterMatches fills filterMatchPos/filterSubtree for node's subtree,
 // lazily loading unloaded directories while budget lasts. Returns true when
 // the subtree (including node itself) contains a match. The root node never
-// self-matches — matching the workspace name would defeat the filter.
+// self-matches; matching the workspace name would defeat the filter.
 func (m *FileTreeModel) computeFilterMatches(node *TreeNode, pattern string, budget *int) bool {
 	if node == nil || (node.Hidden && !m.showHidden) {
 		return false
@@ -1560,7 +1560,7 @@ func (m *FileTreeModel) handleFileModified(path string) {
 func (m *FileTreeModel) handleFileRenamed(oldPath, newPath string) {
 	node, ok := m.nodes[oldPath]
 	if !ok {
-		// Old path not tracked — treat as create.
+		// Old path not tracked: treat it as a create.
 		m.handleFileCreated(newPath)
 		return
 	}
@@ -1719,7 +1719,7 @@ func (m *FileTreeModel) ExpandToPath(path string) bool {
 			current = filepath.Join(current, part)
 			child, ok := m.nodes[current]
 			if !ok {
-				// Directory contents changed since the last load — refresh
+				// Directory contents changed since the last load: refresh
 				// once and retry before giving up.
 				if err := m.loadDirectory(node); err != nil {
 					return false

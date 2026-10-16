@@ -48,7 +48,7 @@ func TestKeyboardSelection_BareMouseMotionDoesNotExtend(t *testing.T) {
 		t.Fatal("keyboard selection must not arm mouseDragging")
 	}
 
-	// Bare motion (no button) to a different row — must not change selection.
+	// Bare motion (no button) to a different row must not change selection.
 	_ = ed.HandleEvent(tea.MouseMotionMsg{X: 5, Y: 8, Button: 0})
 	nsLine, nsCol, neLine, neCol, nhas := selectionSnapshot(ed)
 	if !nhas || nsLine != sLine || nsCol != sCol || neLine != eLine || neCol != eCol {

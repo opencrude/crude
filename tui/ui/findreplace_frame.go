@@ -93,7 +93,7 @@ func (g *frGapRow) Semantics() Semantics { return Semantics{Role: RoleGroup, Lab
 // input is full width; the last line carries the action buttons. In find
 // mode the counter shares the action row; in replace mode the counter
 // gets its own row (the Replace/Replace All bar would otherwise starve
-// it). Both forms share one width — the popup sizer's floor — so the
+// it). Both forms share one width (the popup sizer's floor) so the
 // Ctrl+F ↔ Ctrl+H transform never changes the window width (and never
 // pushes it off screen).
 func BuildFindReplaceFrame(th *theme.Theme, spec FindReplaceFrameSpec) *ComponentWidget {
@@ -165,7 +165,7 @@ func BuildFindReplaceFrame(th *theme.Theme, spec FindReplaceFrameSpec) *Componen
 	navBar.SetExitActions("find.focus.find", "find.focus.find")
 	if spec.ReplaceMode {
 		// Replace mode: the counter gets its own full-width row above the
-		// action bar — the Replace/Replace All bar would otherwise starve
+		// action bar because the Replace/Replace All bar would otherwise starve
 		// the counter slice on narrow terminals.
 		children = append(children, newFRGapRow(1), statusLabel, newFRGapRow(1), navBar)
 	} else {
@@ -213,8 +213,8 @@ func BuildFindReplaceFrame(th *theme.Theme, spec FindReplaceFrameSpec) *Componen
 }
 
 // FindReplaceSharedWidthFloor returns the minimum total window width both
-// forms share: the replace-mode action bar — the widest natural row of
-// either form — plus the frame chrome. The popup sizer floors on this so
+// forms share: the replace-mode action bar (the widest natural row of
+// either form) plus the frame chrome. The popup sizer floors on this so
 // the Ctrl+F ↔ Ctrl+H transform never changes the window width, and the
 // bar never clamps into the counter. Derived from the same Button metrics
 // (label + 4, gap 2) the bar paints with, so theme label changes keep the
@@ -235,7 +235,7 @@ func FindReplaceSharedWidthFloor() int {
 // findNavButtons returns the action-row buttons for the spec. They share the
 // confirm-dialog Button + ButtonVariant language (label-sized, action-
 // semantic variants, focus accents). Replace mode adds Replace/Replace All
-// in front of the shared ↑/↓ navigation pair — glyph labels keep the bar
+// in front of the shared ↑/↓ navigation pair; glyph labels keep the bar
 // compact so the counter keeps room.
 func findNavButtons(spec FindReplaceFrameSpec) []ActionBarButton {
 	nav := []ActionBarButton{
@@ -254,7 +254,7 @@ func findNavButtons(spec FindReplaceFrameSpec) []ActionBarButton {
 
 // matchCountText renders the live match counter for the status label. The
 // counter shares the buttons row: it paints on the left, the buttons pack
-// the right, and the row never grows the box — long counters truncate from
+// the right, and the row never grows the box; long counters truncate from
 // the right edge of the label's slice only.
 func matchCountText(matchCount, currentIdx int) string {
 	switch {
@@ -270,7 +270,7 @@ func matchCountText(matchCount, currentIdx int) string {
 // frFindRow lays out the find input first and the three filter toggles
 // after it on one line: the input fills every leading column, then the ⌕
 // search glyph (prompt at end) and the Aa/ab/.* pills pack the trailing
-// edge ("needle ⌕ Aa ab .*"). Each toggle keeps its bare label width —
+// edge ("needle ⌕ Aa ab .*"). Each toggle keeps its bare label width plus
 // one padding cell per side so its hit target matches its painted pill.
 type frFindRow struct {
 	Base
@@ -355,7 +355,7 @@ func (f *frFindRow) Semantics() Semantics {
 // frButtonsRow lays out the match counter and the action buttons on one
 // line: the live counter ("3 of 10" / "No results") hugs the left on the
 // muted ink, and the ActionBar packs from the right edge. This row is the
-// last content line of the popup in both forms — no separate filter row.
+// last content line of the popup in both forms, with no separate filter row.
 type frButtonsRow struct {
 	Base
 	status *Label
@@ -551,7 +551,7 @@ func FindReplaceFrameReplaceField(cw *ComponentWidget) *TextField {
 }
 
 // FindReplaceFrameToggleBounds reports the POPUP-LOCAL bounds of a filter
-// toggle (0=case, 1=whole-word, 2=regex) as painted by the Host — the same
+// toggle (0=case, 1=whole-word, 2=regex) as painted by the Host, using the same
 // screen-rect registry that drives Host.Handle's EventContext locals, so the
 // reported rect is exactly the pill a click must land on. ok is false when
 // the toggle has no geometry yet.
@@ -573,7 +573,7 @@ func FindReplaceFrameToggleBounds(cw *ComponentWidget, idx int) (r Rect, ok bool
 // FindReplaceActionAt maps popup-local mouse coords (window-local: title row
 // is y=0, content starts at y=1) to a find/replace action-row action ID
 // ("find.prev", "find.next", "find.replace.one", "find.replace.all") using
-// the Host's screen-rect registry — the same geometry that drives Paint and
+// the Host's screen-rect registry, the same geometry that drives Paint and
 // Host.Handle's EventContext locals. Empty when the point is not on an
 // action-row button.
 func FindReplaceActionAt(cw *ComponentWidget, localX, localY int) string {
@@ -589,7 +589,7 @@ func FindReplaceActionAt(cw *ComponentWidget, localX, localY int) string {
 		return ""
 	}
 	// Button bounds are bar-local; ScreenRect(FRActions) is the bar's
-	// popup-local origin. Translate once — never sum ancestors by hand
+	// popup-local origin. Translate once; never sum ancestors by hand
 	// (componentOffset already includes the target's own bounds, so adding
 	// bb.X/bb.Y on top double-counted the offset and shifted every button
 	// below the popup).
@@ -629,7 +629,7 @@ func FindReplaceActionBounds(cw *ComponentWidget, action string) (r Rect, ok boo
 }
 
 // SetHoveredButton moves Host hover to the hovered action-row button (or
-// clears it past the row) without touching keyboard focus — hover paints
+// clears it past the row) without touching keyboard focus: hover paints
 // the subtle ColorHover fill while the focused control keeps its accent
 // fill, keeping the two states distinct per the control-state language.
 // Hover resolves through the Host's screen rects, mirroring

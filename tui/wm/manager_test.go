@@ -491,7 +491,7 @@ func TestHandleMouseDuringDrag(t *testing.T) {
 	msg1 := tea.MouseClickMsg{X: 5, Y: 0}
 	mgr.HandleMouse(msg1)
 
-	// Second click during drag — should not start a new drag
+	// Second click during drag should not start a new drag
 	msg2 := tea.MouseClickMsg{X: 8, Y: 0}
 	clicked := mgr.HandleMouse(msg2)
 	if clicked != fw {
@@ -890,7 +890,7 @@ func TestHandleMouseInsideWindowFocuses(t *testing.T) {
 		t.Error("fw2 should be focused")
 	}
 
-	// Now click inside fw1 — but fw2 is on top, so fw2 should still be hit
+	// Now click inside fw1, but fw2 is on top, so fw2 should still be hit
 	msg2 := tea.MouseClickMsg{X: 5, Y: 3}
 	clicked2 := mgr.HandleMouse(msg2)
 	if clicked2 != fw2 {

@@ -250,7 +250,7 @@ func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
 	store2 := NewReferenceStore("sess1", dir, db)
 	store2.AddExisting(ref1)
 
-	// Create new ref — should NOT collide
+	// Create new ref; it should NOT collide
 	ref2, err := store2.CreateReference(sessiondb.CreateRequest{
 		Kind:    sessiondb.KindPastedTextFile,
 		Content: "second content",

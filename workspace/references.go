@@ -77,7 +77,7 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 			label = defaultReferenceLabel(req.Kind, idx)
 		}
 	} else if s.labelExists(label) {
-		// Custom label collides with an existing active label — uniquify
+		// Custom label collides with an existing active label; uniquify
 		// by appending an incrementing numeric suffix.
 		base := label[:len(label)-1] // strip trailing ]
 		suffix := 1

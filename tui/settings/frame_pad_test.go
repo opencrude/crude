@@ -78,7 +78,7 @@ func TestAppearanceFramePadInvalidRejected(t *testing.T) {
 
 // TestAppearanceFramePadUnsetCollectsDefault verifies a fresh form (rows
 // seeded with the effective values) saves zeros, which resolve identically to
-// unset — the shell renders edge to edge.
+// unset, and the shell renders edge to edge.
 func TestAppearanceFramePadUnsetCollectsDefault(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
 	got := m.AppSettings().Theme

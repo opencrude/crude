@@ -10,7 +10,7 @@ import (
 )
 
 // closeableBlockingSink is an io.Writer that never accepts bytes until
-// Close — it simulates a wedged language server whose stdin pipe is full,
+// Close; it simulates a wedged language server whose stdin pipe is full,
 // unblocking on Close (as the processCloser does by closing the pipe).
 type closeableBlockingSink struct {
 	mu     sync.Mutex

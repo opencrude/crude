@@ -63,7 +63,7 @@ func TestWindow_HoverReportsChangeCorrectly(t *testing.T) {
 		t.Error("expected Clear() to return true after active hover")
 	}
 
-	// Clear again — no-op, should report false.
+	// Clear again: no-op, should report false.
 	if w.Hover.Clear() {
 		t.Error("expected Clear() to return false when already clear")
 	}

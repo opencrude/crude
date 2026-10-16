@@ -143,7 +143,7 @@ type App struct {
 	promptHistoryPath   string
 	LastSettings        roottypes.Settings
 
-	// Display state (owned by viewmodel — tracks what's visible/active)
+	// Display state (owned by viewmodel; tracks what's visible/active)
 	EditorState    *EditorState
 	OverlayState   *OverlayState
 	LSPPopup       *LSPPopupState
@@ -471,7 +471,7 @@ func (m *App) SetPromptHistory(store *history.Store) {
 // recordPrompt folds a submitted prompt into the global history and returns a
 // command that persists the store to disk off the UI thread. The in-memory
 // fold is synchronous so ↑ recalls the prompt immediately; the file write is
-// deferred. Merged repeats still save — they change count/lastSeen/text.
+// deferred. Merged repeats still save, because they change count/lastSeen/text.
 func (m *App) recordPrompt(text string, referenceIDs ...string) tea.Cmd {
 	var refs []sessiondb.Reference
 	if store := m.RefStore(); store != nil {
@@ -877,7 +877,7 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// No tabs left and no sessions — quit
+	// No tabs left and no sessions: quit
 	for _, tab := range m.EditorState.Tabs {
 		if tab == nil || tab.Editor == nil {
 			continue

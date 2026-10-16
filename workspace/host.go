@@ -116,9 +116,9 @@ func PTYEnviron(extra []string) []string {
 // TerminfoDir returns the directory to expose as TERMINFO to child PTYs so
 // the pinned xterm-ghostty entry resolves. Precedence:
 //
-//  1. CRUDE_TERMINFO_DIR — explicit override (installers, tests); used
+//  1. CRUDE_TERMINFO_DIR: explicit override (installers, tests); used
 //     verbatim, nothing is materialized.
-//  2. <home>/<app data dir>/terminfo — the embedded pinned entry is
+//  2. <home>/<app data dir>/terminfo: the embedded pinned entry is
 //     written there unless an identical file already exists.
 //
 // Returns "" when no usable directory can be established (no home dir, or an

@@ -174,7 +174,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 // the launcher paints immediately with the last-known data (or fixed actions
 // only on first open) and the workspace rows arrive in a later
 // launcherWorkspacesMsg. The ~200ms DB scan must never block the update
-// goroutine — every back-to-launcher (last tab close, editor close, quit)
+// goroutine; every back-to-launcher (last tab close, editor close, quit)
 // used to stall input and rendering for its full duration.
 func (m *App) openLauncher() {
 	cwd := m.ws.RootPath()

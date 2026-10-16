@@ -7,7 +7,7 @@ import (
 )
 
 // AgentDisplayLabel returns a human-readable presentation label for an agent
-// node. Internal IDs are never returned — callers must omit the UI parenthetical
+// node. Internal IDs are never returned; callers must omit the UI parenthetical
 // / tab text when this is empty.
 //
 // Fallback order:

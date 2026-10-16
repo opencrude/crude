@@ -17,7 +17,7 @@ import (
 // prepareCapabilityPackage installs an authorized MCP package through the
 // owning agent's background command manager, the same path as any other
 // command: it continues inline when quick, and a slow download is promoted to
-// an ordinary tracked command — shown in the background jobs panel, stoppable
+// an ordinary tracked command, shown in the background jobs panel, stoppable
 // by the human or the agent, and reported to the agent when it settles. There
 // is no deadline; a stalled download is visible and cancellable instead of
 // being killed mid-write (which left npm's cache half-populated).

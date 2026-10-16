@@ -314,7 +314,7 @@ func InlineThinkingBlock(content string, start int) string {
 //
 // No provider field name, declared reasoning kind or reported reasoning-token
 // count participates: none of them reliably describe the block. Content with no
-// measurable elapsed time — a synchronous or already-inflated delta — counts as
+// measurable elapsed time (a synchronous or already-inflated delta) counts as
 // a burst, since it was never observed trickling in.
 func ThinkingOverflowsInline(content string, start int, started time.Time, contentWidth int) bool {
 	block := InlineThinkingBlock(content, start)

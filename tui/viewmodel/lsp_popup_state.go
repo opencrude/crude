@@ -22,7 +22,7 @@ type OutlineRow struct {
 // LSPPopupState holds the transient UI state for LSP-related popups:
 // rename preview, outline, references, and completion.
 //
-// This is DISPLAY state — it tracks which LSP popups are open right now,
+// This is DISPLAY state: it tracks which LSP popups are open right now,
 // cursor positions within them, and the rendered data.
 type LSPPopupState struct {
 	RenamePreview                 *lspRenamePreview

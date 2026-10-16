@@ -69,7 +69,7 @@ func BuildCommandPaletteFrame(th *theme.Theme, spec CommandPaletteSpec) *Compone
 	frame.SetContent(stack)
 
 	cw := NewComponentWidget(th, frame, w, h)
-	// Focus the search field — typing filters the list.
+	// Focus the search field so typing filters the list.
 	cw.Focus(CPSearchField)
 	return cw
 }

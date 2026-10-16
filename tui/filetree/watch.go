@@ -111,7 +111,7 @@ func (w *Watcher) Start() error {
 	// Walk the directory tree and add all directories to the watch list.
 	if err := filepath.Walk(w.rootPath, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
-			// Permission denied or similar — skip silently.
+			// Permission denied or similar: skip silently.
 			return nil
 		}
 		if !fi.IsDir() {
@@ -305,7 +305,7 @@ func (w *Watcher) flushPendingEvents() {
 		select {
 		case w.events <- evt:
 		default:
-			// Channel full — drop the event rather than blocking.
+			// Channel full: drop the event rather than blocking.
 		}
 	}
 }

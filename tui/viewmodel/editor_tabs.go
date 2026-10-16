@@ -187,7 +187,7 @@ func (m *App) gotoFirstDiagnostic() {
 
 // firstErrorOf returns the first error-severity diagnostic in the
 // given list (sorted by line then col, as LSP publishes them). The
-// returned pointer aliases the input slice — safe to dereference
+// returned pointer aliases the input slice; it is safe to dereference
 // before the next mutation.
 func firstErrorOf(diags []editor.LSPDiagnostic) *editor.LSPDiagnostic {
 	for i := range diags {

@@ -565,7 +565,7 @@ func autoSaveDelayField(delay int) *ui.FieldState {
 }
 
 // appearanceColorFields builds read-only hex+swatch rows reflecting the active
-// preset (or an explicit override string when set). They are not editable —
+// preset (or an explicit override string when set). They are not editable:
 // palette changes happen by cycling the preset.
 func appearanceColorFields(preset string, overrides types.ThemeSettings) []*ui.FieldState {
 	th := theme.FromPreset(preset)
@@ -1169,7 +1169,7 @@ func dialAttemptsFromChoice(choice string) int {
 
 // dialerFromForm folds the connection-tuning rows back into persisted settings.
 // Rows left on the built-in default persist as unset, and an all-default form
-// stores nil — defaults, not a frozen copy of them.
+// stores nil: defaults, not a frozen copy of them.
 func dialerFromForm(timeout, connect, attempts, backoff, startup, floor, ceiling string) *provider.DialSettings {
 	dialer := provider.DialSettings{
 		RequestTimeoutSeconds:         dialSecondsFromChoice(timeout, 0),
@@ -1215,7 +1215,7 @@ func (m *Model) rebuildAccountsForm() {
 // buildAgentForm builds an agent's behavior form. When isMain is true it also
 // carries the Multi-Agent enable/disable toggle so the main settings surface
 // mirrors the /settings deck. Communication protocol is deliberately not an
-// agent property — it is resolved from the provider at use time.
+// agent property; it is resolved from the provider at use time.
 func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.FormModel {
 	providerID := m.accounts[cfg.AccountID].ProviderID
 	fields := []*ui.FieldState{
@@ -2463,7 +2463,7 @@ func (m *Model) collectAccounts(settings *types.AppSettings) {
 func (m *Model) storeAccountForm() { m.storeAccountEditorForm() }
 
 // protocolSettingsFromForm folds the protocol option rows back into persisted
-// settings. A form left entirely on defaults stores nil — protocol defaults,
+// settings. A form left entirely on defaults stores nil: protocol defaults,
 // not a frozen copy of them. Fields the protocol does not expose never render,
 // so their form lookups read empty and stay unset.
 func (m *Model) protocolSettingsFromForm(category int) *provider.ProtocolSettings {

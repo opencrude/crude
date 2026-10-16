@@ -9,7 +9,7 @@ import (
 // TestLauncherListOffsetSurvivesRelayout guards against scroll snap-back in
 // the recent-workspaces list: the offset produced by wheel scrolling must not
 // be yanked back to the selection by the next per-frame relayout. The
-// launcher opts out of selection-anchored scroll for exactly this reason —
+// launcher opts out of selection-anchored scroll for exactly this reason:
 // every frame re-runs Layout, and anchoring used to undo wheel gestures
 // within one tick whenever the selected row left the viewport.
 func TestLauncherListOffsetSurvivesRelayout(t *testing.T) {

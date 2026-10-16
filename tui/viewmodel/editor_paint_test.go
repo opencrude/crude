@@ -45,7 +45,7 @@ func bufferContainsPlain(buf *surface.CellBuffer, needle string) bool {
 }
 
 // TestOpenFile_FirstFramePaintsEditorGlyphs asserts the very first View()
-// after opening a file paints real editor content — no blink / second frame.
+// after opening a file paints real editor content, with no blink / second frame.
 func TestOpenFile_FirstFramePaintsEditorGlyphs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "unique_marker_alpha.go")
@@ -64,7 +64,7 @@ func TestOpenFile_FirstFramePaintsEditorGlyphs(t *testing.T) {
 	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}
-	// Do NOT run blink / second frame — only the immediate View after open.
+	// Do NOT run blink / second frame; only the immediate View after open.
 	_ = app.View()
 
 	if app.editorRect.Empty() {
@@ -84,7 +84,7 @@ func TestOpenFile_FirstFramePaintsEditorGlyphs(t *testing.T) {
 }
 
 // TestOpenFile_RepeatedFramesKeepPainting verifies the shell surface is
-// repainted unconditionally on every View() — a chrome-only frame (no dirty
+// repainted unconditionally on every View(); a chrome-only frame (no dirty
 // mark, no size change) must still show the file, not a stale buffer.
 func TestOpenFile_RepeatedFramesKeepPainting(t *testing.T) {
 	dir := t.TempDir()
@@ -117,7 +117,7 @@ func TestOpenFile_RepeatedFramesKeepPainting(t *testing.T) {
 }
 
 // TestEditorTabSwitch_FirstFramePaintsNewFile asserts switching tabs paints
-// the newly selected file immediately — not the previous file until blink.
+// the newly selected file immediately, not the previous file until blink.
 func TestEditorTabSwitch_FirstFramePaintsNewFile(t *testing.T) {
 	dir := t.TempDir()
 	pathA := filepath.Join(dir, "file_aaa.go")
@@ -141,7 +141,7 @@ func TestEditorTabSwitch_FirstFramePaintsNewFile(t *testing.T) {
 	if _, err := app.openEditorTab(pathB); err != nil {
 		t.Fatal(err)
 	}
-	// Immediate first frame after switch — no blink.
+	// Immediate first frame after switch, with no blink.
 	_ = app.View()
 	buf := app.mainSurf.Buffer()
 	if !bufferContainsPlain(buf, "file_bbb") && !bufferContainsPlain(buf, "TripleB") {

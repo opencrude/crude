@@ -64,7 +64,7 @@ type Session struct {
 
 	// ── Backend session (owned by this frontend session)
 	//
-	// The backend session (session.Session) is the heavy lifter — it owns
+	// The backend session (session.Session) is the heavy lifter; it owns
 	// the provider connection, tool executor, permission store, and message
 	// persistence. Each frontend Session is paired 1:1 with a backend session.
 

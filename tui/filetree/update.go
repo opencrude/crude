@@ -40,7 +40,7 @@ type TreeRefreshDoneMsg struct {
 }
 
 // ---------------------------------------------------------------------------
-// TreeMsg — messages routed through the tree's event loop
+// TreeMsg carries messages routed through the tree's event loop
 // ---------------------------------------------------------------------------
 
 // TreeMsg is the base interface for all file tree internal messages.
@@ -110,7 +110,7 @@ type TreeFilterMsg struct {
 func (TreeFilterMsg) treeMsg() {}
 
 // ---------------------------------------------------------------------------
-// Update — main event handler
+// Update is the main event handler
 // ---------------------------------------------------------------------------
 
 // Update processes a tree-level message and returns a command for side
@@ -149,7 +149,7 @@ func (m *FileTreeModel) Update(msg TreeMsg) tea.Cmd {
 }
 
 // ---------------------------------------------------------------------------
-// handleKey — keyboard navigation
+// handleKey performs keyboard navigation
 // ---------------------------------------------------------------------------
 
 // handleKey processes a key-press and dispatches it to the appropriate
@@ -295,7 +295,7 @@ func (m *FileTreeModel) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
 }
 
 // ---------------------------------------------------------------------------
-// handleMouse — mouse interaction
+// handleMouse handles mouse interaction
 // ---------------------------------------------------------------------------
 
 // handleMouse processes mouse events (click, scroll, motion, etc.) and
@@ -324,11 +324,11 @@ func (m *FileTreeModel) handleMouse(msg tea.Msg) tea.Cmd {
 // handleMouseMotion updates the hover state when the mouse moves over
 // the tree. The hover index is in visible-node space (same as
 // cursorIndex), so render code can compare it directly to the loop
-// variable. Returns true if the hover state changed — the caller uses
+// variable. Returns true if the hover state changed; the caller uses
 // this to decide whether to mark the view as dirty.
 //
 // Indices outside the visible range map to -1 (no hover), which is
-// the convention used by every other hover-capable widget — see
+// the same convention as every other hover-capable widget; see
 // ui.Hover for the rationale.
 func (m *FileTreeModel) handleMouseMotion(msg tea.MouseMotionMsg) bool {
 	m.mu.RLock()
@@ -373,7 +373,7 @@ func (m *FileTreeModel) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 		return m.onFileSelected(node.Path)
 	}
 
-	// File clicked — emit FileSelectedMsg so the parent opens it.
+	// File clicked: emit FileSelectedMsg so the parent opens it.
 	return func() tea.Msg {
 		return FileSelectedMsg{
 			Path: node.Path,
@@ -474,7 +474,7 @@ func (m *FileTreeModel) pageSize() int {
 
 // updateScrollOffset adjusts the scroll offset so that the cursor remains
 // within the visible area.  Only scrolls when the cursor is strictly outside
-// the viewport — scroll up by 1 when above the top, scroll down by 1 when
+// the viewport: scroll up by 1 when above the top, scroll down by 1 when
 // below the bottom.  Page-sized movements set scrollOffset directly.
 func (m *FileTreeModel) updateScrollOffset() {
 	m.mu.Lock()
@@ -508,7 +508,7 @@ func (m *FileTreeModel) ToggleExpandOrSelect() tea.Cmd {
 		return m.onFileSelected(node.Path)
 	}
 
-	// File selected — return a command that emits a message the parent app
+	// File selected: return a command that emits a message the parent app
 	// can handle.
 	return func() tea.Msg {
 		return FileSelectedMsg{
@@ -559,7 +559,7 @@ func (m *FileTreeModel) expandOrMoveIn() tea.Cmd {
 		return m.Expand(node.Path)
 	}
 
-	// Already expanded — move cursor to first visible child.
+	// Already expanded: move the cursor to the first visible child.
 	// Find the first child in visible nodes.
 	nodes := m.VisibleNodes()
 	cursorIdx := m.CursorIndex()

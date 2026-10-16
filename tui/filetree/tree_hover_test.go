@@ -45,7 +45,7 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 		t.Fatalf("initial hover index = %d, want -1", m.Hover.Index)
 	}
 
-	// Mouse over row 1 (should be b.txt — visible node index 1).
+	// Mouse over row 1 (should be b.txt, visible node index 1).
 	changed := m.handleMouseMotion(tea.MouseMotionMsg{X: 5, Y: 1})
 	if !changed {
 		t.Fatal("expected hover state to change on first motion into a row")
@@ -54,13 +54,13 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 		t.Fatalf("hover index after motion = %d, want 1", m.Hover.Index)
 	}
 
-	// Motion over the same row — no change.
+	// Motion over the same row: no change.
 	changed = m.handleMouseMotion(tea.MouseMotionMsg{X: 5, Y: 1})
 	if changed {
 		t.Fatal("expected no change when motion stays in the same row")
 	}
 
-	// Motion to row 2 — change.
+	// Motion to row 2: change.
 	changed = m.handleMouseMotion(tea.MouseMotionMsg{X: 5, Y: 2})
 	if !changed {
 		t.Fatal("expected hover state to change on motion between rows")
@@ -71,7 +71,7 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 }
 
 // TestHover_ClearsOnOutOfRange verifies that motion outside the
-// visible range clears the hover state — the GUI equivalent of
+// visible range clears the hover state, the GUI equivalent of
 // "the cursor left the list".
 func TestHover_ClearsOnOutOfRange(t *testing.T) {
 	root := &TreeNode{
@@ -97,7 +97,7 @@ func TestHover_ClearsOnOutOfRange(t *testing.T) {
 		t.Fatal("setup: hover should be active")
 	}
 
-	// Y beyond the visible height — clear.
+	// Y beyond the visible height: clear.
 	changed := m.handleMouseMotion(tea.MouseMotionMsg{X: 0, Y: 10})
 	if !changed {
 		t.Fatal("expected hover to clear when mouse moves below the tree")

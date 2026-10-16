@@ -1357,7 +1357,7 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 	// The memory agent's authoritative setting is Memory.MemoryCategory, not
 	// Agents.Categories. A session override publishes the latter, but without
 	// one the role must still show its own configured provider/model rather
-	// than silently displaying the main agent's — that display is what the
+	// than silently displaying the main agent's; that display is what the
 	// role form prefills, so getting it wrong makes Apply overwrite the real
 	// override with the main agent's model.
 	if role == memoryRole {

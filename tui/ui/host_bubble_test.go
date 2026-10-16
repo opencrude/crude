@@ -8,7 +8,7 @@ import (
 	"crude/tui/theme"
 )
 
-// parentCatcher handles keys its children leave unhandled — used to prove Host bubbling.
+// parentCatcher handles keys its children leave unhandled; it is used to prove Host bubbling.
 type parentCatcher struct {
 	Base
 	child   Component

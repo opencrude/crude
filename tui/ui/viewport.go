@@ -14,7 +14,7 @@ const unboundedCells = 1 << 20
 // and blitting the visible region through a surface.ClipStack.
 //
 // The viewport is a leaf: it lays out and paints its child subtree itself, so
-// HitTest returns the viewport for every cell in its visible rect — matching
+// HitTest returns the viewport for every cell in its visible rect, matching
 // the painted region exactly. Phase 5 adds scroll/drag wiring and can introduce
 // clip-aware hit routing for children.
 type Viewport struct {

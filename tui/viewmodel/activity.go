@@ -110,7 +110,7 @@ func (m *App) refreshActivityList() {
 	}
 	if m.activityBar != nil {
 		if m.ws.AgentMgr() != nil {
-			// Counts every agent the panel lists, minimized included —
+			// Counts every agent the panel lists, minimized included:
 			// that badge is how a backgrounded agent stays discoverable.
 			m.activityBar.SetBadge(activityAgents, m.ws.AgentMgr().Count())
 		}

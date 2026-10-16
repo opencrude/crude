@@ -11,7 +11,7 @@ import (
 // TestFindReplaceToggleHitTargets pins the component-driven toggle hit-test:
 // each Aa/ab/.* ToggleButton's popup-local bounds must equal its painted
 // position (Host screen geometry), so a click at the pill's painted center
-// resolves to that toggle — no band math, no assumed content offsets.
+// resolves to that toggle, with no band math or assumed content offsets.
 func TestFindReplaceToggleHitTargets(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	app.FindReplace = &popup.FindReplaceState{}

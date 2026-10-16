@@ -120,7 +120,7 @@ func FromModelPrice(price ModelPrice, contextWindow int) ModelMeta {
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic pricing map — populated at runtime from models.dev (or OpenRouter
+// Dynamic pricing map, populated at runtime from models.dev (or OpenRouter
 // API when available) and persisted to the config file.
 // ---------------------------------------------------------------------------
 

@@ -32,7 +32,7 @@ func (m *App) View() tea.View {
 	m.compositor.BeginFrame()
 	// Fill the root with the active theme background so uncovered cells
 	// (padding rows, transparent blits) follow the preset instead of the
-	// terminal's default colour — otherwise light presets leave dark strips.
+	// terminal's default colour; otherwise light presets leave dark strips.
 	if m.Theme != nil {
 		bg := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
 		m.compositor.Root().Buffer().Fill(bg)
@@ -225,11 +225,11 @@ func (m *App) isEditorActive() bool {
 // full-screen surface. Relayout is unconditional: the shell is shallow
 // (measure+layout of ~10 components), and relayouting every frame guarantees
 // the hit tree, focus registry, and paint all come from THIS frame's
-// geometry — the one-geometry-source contract of the root host.
+// geometry, as required by the one-geometry-source contract of the root host.
 //
 // The surface is filled with the theme background BEFORE the tree paints:
 // unmounted slots (the launcher replacing the editor, chat replacing the
-// launcher, ...) must not leave their previous opaque cells behind — every
+// launcher, ...) must not leave their previous opaque cells behind; every
 // cell not covered by an active slot shows the clean background.
 func (m *App) renderShellToSurface() {
 	if m.mainSurf == nil || m.rootHost == nil || m.shell == nil {
@@ -499,7 +499,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	// The first export renders inline subpanes, and that render is what sets
 	// each pane's ScrollModel content/viewport. The nested-gutter nesting
 	// level (does any pane reserve a scrollbar column?) depends on those
-	// metrics, so it must be computed after this pass — otherwise a thinking
+	// metrics, so it must be computed after this pass; otherwise a thinking
 	// pane that just appeared on this frame computes nesting=0 and shows no
 	// scrollbar until the next frame.
 	snapshot := activeML.ExportMessageRowsSnapshot(renderInnerW)

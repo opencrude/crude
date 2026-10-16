@@ -132,7 +132,7 @@ func TestWindowFrameWidgetHoverEdgeHighlightsBorder(t *testing.T) {
 // (FloatingWindow.HitTestEdge reports Edge*Corner). The corner-hover paint
 // used to repaint the whole top/bottom row and left/right column with
 // straight ─/│ glyphs, flattening the far corners of those runs into │ or ─.
-// Corner cells must be recolored only — glyphs stay rounded, and only the
+// Corner cells must be recolored only; glyphs stay rounded, and only the
 // corners adjacent to a hovered border lift to the accent.
 func TestWindowFrameCornerHoverKeepsCurveGlyphs(t *testing.T) {
 	th := theme.DefaultDark()
@@ -312,7 +312,7 @@ func TestWindowFrameRevealHostHitTestMatchesGeometry(t *testing.T) {
 	host.Layout()
 
 	// Revealed area: rows 1..4 (5 rows: title + 4 content). Row 5+ is the
-	// hidden lower body — hit-testing must return the frame/root, not body.
+	// hidden lower body; hit-testing must return the frame/root, not body.
 	if id := host.HitTest(5, 2); id != "body" {
 		t.Fatalf("hit in revealed area=%q, want body", id)
 	}

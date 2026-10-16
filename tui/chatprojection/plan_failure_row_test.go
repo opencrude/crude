@@ -11,7 +11,7 @@ import (
 )
 
 // A structured planning failure must read as a red contract dot plus a short
-// reason — never as the canonical JSON payload that addresses the model.
+// reason: never as the canonical JSON payload that addresses the model.
 func TestPlanToolFailureShowsRedDotAndReasonNotPayload(t *testing.T) {
 	payload := `{"current_plan":{"id":"normalize-weird-filenames","revision":2,"objective":"Find weirdly-named files",` +
 		`"status":"active","steps":[{"id":"audit","description":"Audit repo","status":"completed"}]},` +

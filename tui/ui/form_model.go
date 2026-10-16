@@ -7,7 +7,7 @@ import (
 
 // FieldType identifies the kind of form field.
 //
-// Indicator contract — each type renders one canonical affordance, owned by
+// Indicator contract: each type renders one canonical affordance, owned by
 // FormField.paint* (form_field.go). New field types must pick an affordance
 // from this list or extend the list, never invent an ad-hoc glyph:
 //

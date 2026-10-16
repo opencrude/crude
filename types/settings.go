@@ -40,7 +40,7 @@ const (
 // Each category holds a partial JSON object carrying just the leaf values
 // the workspace overrides; an absent key inherits from the application
 // layer forever, including later application-level edits. Whole-category
-// snapshots are what made a workspace behave like a hard copy — changing
+// snapshots are what made a workspace behave like a hard copy: changing
 // one editor field used to freeze every other editor field at whatever the
 // application happened to hold that day, so a later app-level change to an
 // untouched field silently did nothing.

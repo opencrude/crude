@@ -56,7 +56,7 @@ func TestFindReplaceFramePaintsValueViaNativeTextField(t *testing.T) {
 
 // TestFindReplaceFramePaintsVSCodeLayout pins the chrome-clean composition:
 // no in-field "Find: "/"Replace: " labels, no chevron affordances, no hint
-// row, no bordered filter row — the find value leads its line ("needle ⌕
+// row, no bordered filter row; the find value leads its line ("needle ⌕
 // Aa ab .*": input first, glyph + pills at the trailing edge), the replace
 // input is full width, and replace mode gives the counter its own row above
 // the action bar.

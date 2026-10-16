@@ -1146,7 +1146,7 @@ func TestApplySearchReplace_mixedIndentLevelsAcrossBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	// } gets re-indented from col 0 to \t (matching content's \t).
-	// func bar stays at col 0 (both search and content are at col 0 — absolute).
+	// func bar stays at col 0 (both search and content are at col 0, so absolute).
 	// But since splice replaces 4 lines including the full content line "func bar() {",
 	// and the replacement only has "func bar", the signature is lost.
 	want := "func foo() {\n\treturn i\n\t}\n\nfunc bar"

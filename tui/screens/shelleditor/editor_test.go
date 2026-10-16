@@ -152,7 +152,7 @@ func TestSearchHighlightPaintsInCellBuffer(t *testing.T) {
 	screen := shelleditor.New(theme.DefaultDark())
 	screen.Bind(ed)
 	buf := screen.PaintTestBuffer(40, 6)
-	// Find first 'f' of foo in text area — must have selection/accent bg.
+	// Find first 'f' of foo in text area: must have selection/accent bg.
 	found := false
 	for x := 0; x < buf.Width(); x++ {
 		c := buf.Get(x, 0)

@@ -13,7 +13,7 @@ import (
 // Slots are the persistent shell surfaces; each maps to exactly one screen
 // component. Active slots are mounted as children of shellRoot (the others
 // are not in the tree at all), so Host hit-testing, focus, and paint all
-// agree on what is visible — the geometry that paints is the geometry that
+// agree on what is visible: the geometry that paints is the geometry that
 // receives input.
 type shellSlotID uint8
 

@@ -81,7 +81,7 @@ func TestCellBuffer_ResizePreserves(t *testing.T) {
 	if !b.Get(0, 0).Equal(c) {
 		t.Fatal("preserved 0,0")
 	}
-	// 2,2 was in old buffer — still there
+	// 2,2 was in the old buffer; still there
 	if !b.Get(2, 2).Equal(c) {
 		t.Fatal("preserved 2,2")
 	}

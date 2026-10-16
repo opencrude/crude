@@ -94,7 +94,7 @@ func (m *App) RemoveOrchestrator(orchID string) {
 // alive: the orchestrator keeps running, the conversation, panes, scroll
 // offsets, and session deck are retained, and the agent is listed in the
 // Agents panel so one click brings it back. Closing a tab must never kill
-// work in flight — terminating is the explicit cleanupAgent path.
+// work in flight; terminating is the explicit cleanupAgent path.
 func (m *App) minimizeAgent(agentID string) {
 	if agentID == "" || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(agentID) == nil {
 		return
@@ -114,7 +114,7 @@ func (m *App) minimizeAgent(agentID string) {
 
 // terminateAgent is the explicit destructive close: it cancels the running
 // turn, stops the orchestrator, and drops every buffer. Only user-invoked
-// "Terminate" actions reach it — closing a tab minimizes instead.
+// "Terminate" actions reach it; closing a tab minimizes instead.
 func (m *App) terminateAgent(agentID string) tea.Cmd {
 	if agentID == "" || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(agentID) == nil {
 		return nil
@@ -380,7 +380,7 @@ func (m *App) agentIDFromTabTitle(title string) string {
 
 // activateAgentWindowTab makes agentID the selected window tab and the
 // painted main view. Explicit user actions (New Agent, restore, existing
-// orchestrator re-entry) must call this even when an editor tab is open —
+// orchestrator re-entry) must call this even when an editor tab is open;
 // otherwise the session exists only in AgentMgr until every editor tab is
 // closed. Background syncAgentWindowTabs must not call it.
 func (m *App) activateAgentWindowTab(agentID string) {
@@ -419,7 +419,7 @@ func (m *App) keepWindowTab(title string) {
 
 // syncAgentWindowTabs creates/removes window tabs to match the current agent set.
 // Every visible agent gets its own tab, including while an editor is the
-// painted view — skipping creation there was the New Agent-while-editing bug.
+// painted view; skipping creation there was the New Agent-while-editing bug.
 //
 // This function is structural only: it never chooses a tab. The Window's
 // selected tab is preserved, then handleTabSwitch derives every active view

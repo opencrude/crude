@@ -11,7 +11,7 @@ import (
 // TestMemoryFormKeepsRecallAndAddsAgentBehavior verifies the Memory settings
 // form retains the recall/extract/consolidation controls and adds an agent
 // behavior section (provider/model/thinking) that round-trips into
-// Memory.MemoryCategory — without losing the legacy settings.
+// Memory.MemoryCategory, without losing the legacy settings.
 func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 	th := theme.DefaultDark()
 	disabled := 0

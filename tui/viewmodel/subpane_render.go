@@ -15,7 +15,7 @@ import (
 //
 // The workspace owns the canonical Conversation data; this projection
 // synchronizes its MessageList from workspace.SubPane.View() by stable
-// message ID and Conversation version — the same pattern used for
+// message ID and Conversation version, the same pattern used for
 // AgentState.Messages -> syncAgentMessages.
 type subPaneProjection struct {
 	paneID   string

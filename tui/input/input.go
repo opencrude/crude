@@ -242,8 +242,8 @@ func (m *Model) ContextHint() string {
 }
 
 // ContextHelpSegments returns status-bar hint segments for the chat input.
-// The guidance persists while the prompt has text — every chord stays
-// actionable mid-draft (Enter sends, Alt+Enter breaks the line) — and only
+// The guidance persists while the prompt has text, keeping every chord
+// actionable mid-draft (Enter sends, Alt+Enter breaks the line), and only
 // hides via DismissHint. Callers with a full ActionRegistry should prefer
 // these ActionSeg values.
 func (m *Model) ContextHelpSegments() []ui.HintSegment {

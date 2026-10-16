@@ -976,7 +976,7 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
 		index := l.list.SelectedIndex()
 		if row, ok := l.owner.rowAt(index); ok && row.kind == rowHeader {
-			// A header click toggles the group immediately — no double-click
+			// A header click toggles the group immediately: no double-click
 			// arming, no open action.
 			l.owner.selectRow(index)
 			l.owner.toggleGroup(row.group)

@@ -5,7 +5,7 @@ import (
 )
 
 // ============================================================================
-// text_edit_suite_test.go — Comprehensive TextEdit behavior specification
+// text_edit_suite_test.go: Comprehensive TextEdit behavior specification
 //
 // This file is the contract for the shared editing engine. Every test here
 // documents an invariant that must hold before and after the TextArea
@@ -21,7 +21,7 @@ import (
 //   8. SetValue round-trip
 //   9. RED tests: multi-line behaviors TextEdit lacks (TextArea contract)
 //
-// The RED tests (section 9) are intentionally failing — they specify what
+// The RED tests (section 9) are intentionally failing; they specify what
 // TextArea must add. Each is marked with t.Skip or will fail with a clear
 // message explaining the gap.
 // ============================================================================
@@ -214,7 +214,7 @@ func TestSuiteUnicode_RuneSafety(t *testing.T) {
 	t.Run("cursor lands between runes correctly", func(t *testing.T) {
 		e := NewTextEdit()
 		e.Insert("a文b")
-		// runes: a(0) 文(1) b(2) — cursor can be 0,1,2,3
+		// runes: a(0) 文(1) b(2); cursor can be 0,1,2,3
 		e.SetCursor(1, false)
 		if e.Cursor() != 1 {
 			t.Fatalf("cursor=%d want 1", e.Cursor())
@@ -585,7 +585,7 @@ func TestSuiteSelection_AllCases(t *testing.T) {
 		e.SetValue("abcdef")
 		e.SetCursor(3, false)
 		e.SetCursor(1, true) // select [1,3)
-		e.SetCursor(5, true) // extend to [3,5) — anchor stays at 3
+		e.SetCursor(5, true) // extend to [3,5); anchor stays at 3
 		a, b := e.SelectionRange()
 		if a != 3 || b != 5 {
 			t.Fatalf("range=[%d,%d) want [3,5)", a, b)
@@ -656,7 +656,7 @@ func TestSuiteWordMotion_EdgeCases(t *testing.T) {
 	t.Run("MoveWordLeft with multiple spaces", func(t *testing.T) {
 		e := NewTextEdit()
 		e.SetValue("foo   bar")
-		e.SetCursor(8, false) // in "bar" — 'b' is at index 6 (3 spaces at 3,4,5)
+		e.SetCursor(8, false) // in "bar"; 'b' is at index 6 (3 spaces at 3,4,5)
 		e.MoveWordLeft(false)
 		if e.Cursor() != 6 {
 			t.Fatalf("cursor=%d want 6 (start of 'bar', 'b' at index 6)", e.Cursor())
@@ -1024,7 +1024,7 @@ func TestSuiteInsertRunes_Filtering(t *testing.T) {
 	})
 
 	t.Run("Insert does NOT filter newlines (unlike InsertRunes)", func(t *testing.T) {
-		// Insert is the raw rune insert — it does NOT filter newlines.
+		// Insert is the raw rune insert; it does NOT filter newlines.
 		// This is the path TextArea would use for newline insertion.
 		e := NewTextEdit()
 		e.Insert("a\nb")
@@ -1104,7 +1104,7 @@ func TestSuiteSetValue_RoundTrip(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// Section 9: RED tests — multi-line behaviors TextEdit lacks
+// Section 9: RED tests for multi-line behaviors TextEdit lacks
 //
 // These tests document what TextArea MUST add. They call TextEdit methods
 // with multi-line content and assert the behavior that a TextArea needs.
@@ -1197,7 +1197,7 @@ func TestSuiteMultiLine_RedTests(t *testing.T) {
 		// Cursor at start of line2 (flat offset 6).
 		// Backspace should delete the newline, joining "line1" and "line2"
 		// → "line1line2", cursor at offset 5 (end of former line1).
-		// Currently Backspace at flat 6 deletes rune at 5 ('\n') —
+		// Currently Backspace at flat 6 deletes rune at 5 ('\n');
 		// this actually WORKS for flat backspace, but TextArea needs to
 		// verify the cursor lands at the right visual position.
 		// Let's test it:
@@ -1472,13 +1472,13 @@ func TestSuiteStress_IntegrationScenarios(t *testing.T) {
 		e.SetValue("     ")
 		e.SetCursor(5, false)
 		e.MoveWordLeft(false)
-		// All spaces — should go to 0
+		// All spaces: should go to 0
 		if e.Cursor() != 0 {
 			t.Fatalf("cursor=%d want 0 (all spaces)", e.Cursor())
 		}
 		e.SetCursor(0, false)
 		e.MoveWordRight(false)
-		// All spaces — should go to end (5)
+		// All spaces: should go to end (5)
 		if e.Cursor() != 5 {
 			t.Fatalf("cursor=%d want 5 (all spaces)", e.Cursor())
 		}
@@ -1573,7 +1573,7 @@ func TestSuiteStress_IntegrationScenarios(t *testing.T) {
 // Section 11: Newline-aware behavior documentation
 //
 // These tests document how TextEdit currently handles newlines in various
-// operations. They are NOT red — they record the actual behavior so the
+// operations. They are NOT red; they record the actual behavior so the
 // TextArea migration knows what changes.
 // ----------------------------------------------------------------------------
 
@@ -1587,7 +1587,7 @@ func TestSuiteNewline_DocumentationTests(t *testing.T) {
 		e.MoveWordLeft(false)
 		// Skips no spaces (cursor at 'r'), then skips word chars back to 'b'
 		// Actually: pos=7, pos-- → 6 ('a'), is 'a' space? no. buf[5]='r'?
-		// Wait: "foo\nbar" → f(0)o(1)o(2)\n(3)b(4)a(5)r(6) — cursor=7
+		// Wait: "foo\nbar" → f(0)o(1)o(2)\n(3)b(4)a(5)r(6); cursor=7
 		// pos=7, pos-- → 6. buf[6]='r', is space? no.
 		// for pos>0 && buf[pos-1] != ' ': pos=6, buf[5]='a' not space → pos=5
 		// pos=5, buf[4]='b' not space → pos=4. pos=4, buf[3]='\n' IS space → stop.

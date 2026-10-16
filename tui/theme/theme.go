@@ -39,7 +39,7 @@ type Colors struct {
 	Hover color.Color
 	// Popup chrome colors. All popups (context menu, find/replace,
 	// save dialog, text prompt, file picker, diagnostic) use a
-	// unified design system — see widgets.PopupChromeConfig.
+	// unified design system; see widgets.PopupChromeConfig.
 	// - PopupBg: the body fill of every popup (typically == Code.Bg)
 	// - PopupBorder: the border color when unfocused
 	// - PopupBorderFocused: the border color when the popup has focus
@@ -80,7 +80,7 @@ type TreeColors struct {
 	SelectedBg, SelectedFg   color.Color
 	CursorBg, CursorFg       color.Color
 	// Hover is the background colour for the row under the mouse
-	// cursor. Falls below SelectedBg and CursorBg in priority — see
+	// cursor. Falls below SelectedBg and CursorBg in priority; see
 	// filetree.render.formatLine for the ordering rules.
 	Hover                                    color.Color
 	IndentLine                               color.Color
@@ -171,7 +171,7 @@ func DefaultDark() *Theme {
 		Hover:           lipgloss.Color("#21262d"),
 		SubPaneBg:       lipgloss.Color("#1c2333"),
 		IncompleteBg:    lipgloss.Color("#3a1a1a"),
-		// Popup chrome — unified design across all popups.
+		// Popup chrome: unified design across all popups.
 		// Code.Bg provides the "card on editor" feel used by the
 		// diagnostic hover popup. PopupBorder is intentionally
 		// dim so the title color carries the visual weight.

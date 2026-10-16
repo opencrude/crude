@@ -5,7 +5,7 @@ import (
 )
 
 // HandleTextEditKey applies navigation and editing keys to ed.
-// Enter and Esc are not handled — callers use those for submit/cancel.
+// Enter and Esc are not handled; callers use those for submit/cancel.
 // Returns true if the key was consumed as an edit/navigation action.
 func HandleTextEditKey(ed *TextEdit, msg tea.KeyPressMsg) bool {
 	if ed == nil {

@@ -68,7 +68,7 @@ func TestApplyThemePreset_UpdatesAllRegisteredConsumers(t *testing.T) {
 		}
 	}
 
-	// Every non-nil Host on App must hold the new theme (direct field access —
+	// Every non-nil Host on App must hold the new theme (direct field access;
 	// reflection cannot Interface unexported fields).
 	for _, h := range appHostHolders(app) {
 		if h.host == nil {

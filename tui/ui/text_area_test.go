@@ -709,7 +709,7 @@ func TestTextArea_ShiftHomeEndSelectsLine(t *testing.T) {
 		t.Fatalf("shift+home selection=[%d,%d) want [0,5)", s, e)
 	}
 	// Shift+End extends from the anchor (5) to end, flipping the selection
-	// direction — this matches standard editor behavior.
+	// direction; this matches standard editor behavior.
 	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift}))
 	s2, e2 := ta.SelectionRange()
 	if s2 != 5 || e2 != 11 {

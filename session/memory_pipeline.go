@@ -396,7 +396,7 @@ func (s *Session) maybeExtractMemories(turn int) {
 
 // runExtraction extracts durable memories + a rolling session summary from
 // the unprocessed turn window of sessionID (read from the history mirror,
-// which persists — a run that never happens is picked up by a later
+// which persists; a run that never happens is picked up by a later
 // maintenance sweep; nothing is ever lost).
 func (s *Session) runExtraction(parent context.Context, sessionID string, notify bool) {
 	store := s.MemoryStore()

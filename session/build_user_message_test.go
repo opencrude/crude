@@ -13,7 +13,7 @@ import (
 
 // TestBuildUserMessageDeliversFileAttachments guards the whole point of
 // attaching files: the referenced content must reach the agent as readable
-// text — decoded for text files, metadata+hex-dump summary for binaries
+// text: decoded for text files, metadata+hex-dump summary for binaries
 // (never raw garbage bytes, never a dead end that forces the agent into its
 // own read tool).
 func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
@@ -24,7 +24,7 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 	defer database.Close()
 
-	// prompt_references carries an FK on sessions(id) — seed the parent row.
+	// prompt_references carries an FK on sessions(id); seed the parent row.
 	if _, err := database.Exec(
 		`INSERT INTO sessions (id, project_path, project_name, created_at) VALUES (?, ?, ?, 0)`,
 		"s", dir, "test",

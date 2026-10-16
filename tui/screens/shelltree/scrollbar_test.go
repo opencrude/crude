@@ -53,7 +53,7 @@ func TestTreeScrollbarDrag(t *testing.T) {
 	if scroll.Offset() != model.ScrollOffset() {
 		t.Fatalf("ScrollModel offset=%d diverged from FileTreeModel offset=%d (round-trip broken)", scroll.Offset(), model.ScrollOffset())
 	}
-	// Paint again — syncFromModel must not yank the offset back.
+	// Paint again; syncFromModel must not yank the offset back.
 	buf2 := screen.PaintTestBuffer(w, h)
 	if scroll.Offset() == 0 {
 		t.Fatal("paint-time sync yanked the scroll offset back to 0 (EnsureVisible re-anchor)")

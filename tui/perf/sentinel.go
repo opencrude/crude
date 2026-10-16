@@ -25,7 +25,7 @@ const (
 	// seconds.
 	sentinelWindowTicks = 32
 	// throttleGap keeps the file readable when something degenerates into a
-	// continuous bust — one line per distinct top offender per gap.
+	// continuous bust: one line per distinct top offender per gap.
 	throttleGap = 10 * time.Second
 )
 
@@ -44,7 +44,7 @@ var (
 	sentinelFile *os.File
 	sentinelOnce sync.Once
 	// activityFlag is set by NoteActivity for windows containing live
-	// streaming or recent user input — work in those windows is expected.
+	// streaming or recent user input; work in those windows is expected.
 	activityFlag atomic.Bool
 	// windowBase is the last Snapshot read as a window base.
 	windowBase  Stats

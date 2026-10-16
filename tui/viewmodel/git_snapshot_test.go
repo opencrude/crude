@@ -243,7 +243,7 @@ func TestSilentGitSnapshotSkipsUnchangedProjection(t *testing.T) {
 }
 
 // Nobody asked for a reconcile read, so it must not report failures, record
-// status operations, or flash the panel into its loading state — while an
+// status operations, or flash the panel into its loading state, while an
 // explicit refresh keeps reporting exactly as before.
 func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	app := newTestApp(t)

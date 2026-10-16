@@ -67,7 +67,7 @@ func TestCloseAgentPersistsRecoverableRegistryRow(t *testing.T) {
 		Logger:          nopLogger{},
 	}
 
-	// Intentionally never registered — CloseAgent must Register + CloseSession.
+	// Intentionally never registered; CloseAgent must Register + CloseSession.
 	ws.CloseAgent("agent")
 
 	metas, err := wdb.ListSessions()

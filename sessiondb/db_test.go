@@ -557,7 +557,7 @@ func TestReplaceMessagesMultipartRoundtrip(t *testing.T) {
 }
 
 func TestParseMessageContent_NullContentType(t *testing.T) {
-	// Old DB rows may have NULL content_type — should default to text behavior
+	// Old DB rows may have NULL content_type; they should default to text behavior
 	got := parseMessageContent("hello world", "")
 	if !got.IsText() {
 		t.Error("empty content_type should default to text")

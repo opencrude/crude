@@ -22,7 +22,7 @@ type Settings interface {
 	// persistent settings dialog.
 	WorkspaceAgentDefaults() types.AgentsSettings
 	// SaveAppSettings persists application-layer settings to config.json via
-	// OnAppSettingsSave. It does not write workspace.db — workspace overrides stay
+	// OnAppSettingsSave. It does not write workspace.db; workspace overrides stay
 	// on SaveWorkspaceSettings.
 	SaveAppSettings(s types.AppSettings) error
 	// SaveWorkspaceSettings persists sparse workspace overrides and reapplies the

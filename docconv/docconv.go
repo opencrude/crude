@@ -2,7 +2,7 @@
 // formats (PDF, DOCX, PPTX, XLSX, XLS, EPUB) to clean Markdown.
 //
 // It is used by the read_file and web_fetch tools so that users can read
-// PDFs and Office documents without leaving the terminal — no CGO needed.
+// PDFs and Office documents without leaving the terminal; no CGO needed.
 package docconv
 
 import (

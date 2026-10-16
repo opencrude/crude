@@ -104,7 +104,7 @@ func IsPasteChord(m tea.KeyPressMsg) bool {
 //
 //	Ctrl+C, Ctrl+Shift+C  copy the selection (never mutates the text)
 //	Ctrl+X                cut the selection, or the whole value when nothing is
-//	                      selected — the same thing the context menu's Cut does
+//	                      selected, the same thing the context menu's Cut does
 //	Esc                   drop the selection, leaving Esc to the host after
 //
 // copier builds the clipboard command so controls can inject their own write

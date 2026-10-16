@@ -29,7 +29,7 @@ func tabSwitchCacheProbe(app *App, paneID, content string) (cached bool, ok bool
 // TestTabSwitchSteadyStateKeepsRenderCache: handleTabSwitch re-derives the
 // active view on every tick (syncAgentWindowTabs calls it unconditionally).
 // Re-deriving the SAME agent tab must not drop the projection's retained
-// render cache — that turned every tick into a full-session re-render.
+// render cache; that turned every tick into a full-session re-render.
 func TestTabSwitchSteadyStateKeepsRenderCache(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")

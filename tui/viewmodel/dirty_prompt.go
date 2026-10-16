@@ -21,7 +21,7 @@ func (m *App) showDirtyClosePrompt(path string) {
 	if !ok {
 		return
 	}
-	// BaseTitle: the tab's ● dirty marker must not leak into dialog text —
+	// BaseTitle: the tab's ● dirty marker must not leak into dialog text;
 	// the dialog itself communicates state.
 	filename := tab.Editor.BaseTitle()
 	if m.ws.Documents() != nil {

@@ -189,7 +189,7 @@ func TestSurface_DirtyRect(t *testing.T) {
 	if len(rects) != 1 || rects[0] != (Rect{X: 2, Y: 2, W: 3, H: 3}) {
 		t.Fatalf("%+v", rects)
 	}
-	// OOB clipped to empty — no dirty if completely outside
+	// OOB clipped to empty; no dirty if completely outside
 	s.ClearDirty()
 	s.MarkDirtyRect(Rect{X: 100, Y: 100, W: 1, H: 1})
 	if s.IsDirty() {

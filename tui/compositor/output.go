@@ -38,7 +38,7 @@ type cellStyleState struct {
 //     bugs with partial SGR updates)
 //
 // Performance: this function is called every frame (potentially at 60fps).
-// The inner loop is kept tight — style changes use fmt.Fprintf which is
+// The inner loop is kept tight: style changes use fmt.Fprintf, which is
 // only invoked when the style actually differs from the previous cell.
 func GenerateANSI(buf *surface.CellBuffer) string {
 	w, h := buf.Width(), buf.Height()
@@ -60,7 +60,7 @@ func GenerateANSI(buf *surface.CellBuffer) string {
 		for x := 0; x < w; x++ {
 			c := buf.Get(x, y)
 
-			// Skip continuation cells — they're rendered as part of their
+			// Skip continuation cells: they're rendered as part of their
 			// primary wide cell. Writing them would produce duplicate output.
 			if c.Width == 0 {
 				continue
@@ -96,7 +96,7 @@ func GenerateANSI(buf *surface.CellBuffer) string {
 
 		// Reset style at end of row if non-default.
 		// This ensures each row starts clean, which is important for
-		// terminals that wrap lines — a style leak from one row would
+		// terminals that wrap lines, and a style leak from one row would
 		// bleed into the next.
 		if !cur.fg.IsDefault() || !cur.bg.IsDefault() || cur.attr != 0 {
 			sb.WriteString("\x1b[0m")

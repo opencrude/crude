@@ -126,7 +126,7 @@ func (v *VirtualList) EnsureSelectedVisible() { v.ensureSelectedVisible() }
 func (v *VirtualList) PointerPolicy() PointerPolicy { return v.pointerPolicy }
 
 // SetBottomPadding adds trailing blank content rows (item count extension).
-// This is NOT chat gravity — see SetBottomGravity.
+// This is NOT chat gravity; see SetBottomGravity.
 func (v *VirtualList) SetBottomPadding(n int) {
 	if n < 0 {
 		n = 0

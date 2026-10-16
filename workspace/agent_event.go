@@ -39,7 +39,7 @@ func (w *Workspace) StaleAgentUpload(evt AgentEvent) bool {
 
 // SanitizeForTerminal removes control characters and invalid UTF-8 from
 // agent text before it enters conversation data. This is a domain concern
-// (data hygiene), not a rendering concern — the workspace stores clean text
+// (data hygiene), not a rendering concern; the workspace stores clean text
 // and the TUI projects it.
 func SanitizeForTerminal(s string) string {
 	if s == "" {

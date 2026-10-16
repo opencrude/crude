@@ -108,7 +108,7 @@ func (noopEventSender) SendAgentEventEnvelope(agent.AgentEvent)              {}
 
 // newTestApp builds an App with the full shell tree mounted (all shell
 // screens under one rootHost painted into mainSurf) plus the workspace
-// stubs. No compositor/renderCtx are created — tests that call View()
+// stubs. No compositor/renderCtx are created; tests that call View()
 // should use newFullTestApp instead.
 func newTestApp(t testing.TB) *App {
 	t.Helper()

@@ -103,7 +103,7 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 	}
 
 	// Session registry: tracks all AI sessions that have run in this workspace.
-	// This is the workspace's view of sessions — each session also has its own DB.
+	// This is the workspace's view of sessions; each session also has its own DB.
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS workspace_sessions (
 			session_id    TEXT PRIMARY KEY,
@@ -189,7 +189,7 @@ func (wdb *WorkspaceDB) SetSetting(key, value string) error {
 // RegisterSession records a new AI session in the workspace's session registry.
 // Called when a new session is created within this workspace.
 // Returns a non-nil error when the INSERT fails. Callers must log/surface the
-// error but must not treat it as fatal for session creation — the session DB
+// error but must not treat it as fatal for session creation; the session DB
 // remains the source of truth.
 func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, model, provider string) error {
 	if wdb == nil || wdb.DB == nil {

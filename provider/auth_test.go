@@ -17,7 +17,7 @@ func TestAuthHeadersOmitEmptyKey(t *testing.T) {
 func TestHeaderSourceSkipsEmptyAuthHeader(t *testing.T) {
 	p := FromPreset("ollama", "", "")
 	// The header source used by every request must not emit an Authorization
-	// header when the key is empty — keyless local endpoints (Ollama, LM
+	// header when the key is empty; keyless local endpoints (Ollama, LM
 	// Studio) reject "Bearer " with 401/403.
 	headers, err := p.RequestHeaders(t.Context())
 	if err != nil {

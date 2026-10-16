@@ -60,7 +60,7 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 	}
 
 	// The ConPTY takes ownership of ptyInRead and ptyOutWrite. Make sure
-	// our side's handles are NOT inherited by the child process — otherwise
+	// our side's handles are NOT inherited by the child process; otherwise
 	// the child keeps the write end of our input pipe open and Read never
 	// sees EOF. SetHandleInformation clears the inherit flag by passing
 	// HANDLE_FLAG_INHERIT as the mask and 0 as the flags value.
@@ -154,10 +154,10 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 
 	creationFlags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_SUSPENDED)
 	if err := windows.CreateProcess(
-		nil,        // appName — let CreateProcess parse the command line
-		cmdLinePtr, // commandLine — must be mutable UTF-16
+		nil,        // appName: let CreateProcess parse the command line
+		cmdLinePtr, // commandLine: must be mutable UTF-16
 		nil, nil,   // process/thread security attributes
-		true, // inheritHandles — required for attribute list
+		true, // inheritHandles: required for attribute list
 		creationFlags,
 		envBlock,
 		cwdPtr,

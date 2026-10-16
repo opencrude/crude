@@ -369,7 +369,7 @@ func SetConfirmFocus(cw *ComponentWidget, index int) bool {
 
 // SetConfirmHover sets the hovered confirm button (mouse path), leaving
 // keyboard focus untouched: hover paints the subtle ColorHover fill while
-// the focused button keeps the accent fill — the two states stay distinct
+// the focused button keeps the accent fill; the two states stay distinct
 // per the control-state language. index < 0 clears hover. Returns true when
 // the hover target changed.
 func SetConfirmHover(cw *ComponentWidget, index int) bool {

@@ -36,7 +36,7 @@ type SubPaneView struct {
 	Summary *SubPaneSummaryView
 	// Messages is the canonical Conversation pointer. The TUI projection
 	// reads Messages()/Version() to synchronize its MessageList by stable
-	// ID/version — same pattern as AgentState.Messages.
+	// ID/version, the same pattern as AgentState.Messages.
 	Messages *Conversation
 }
 

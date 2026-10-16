@@ -15,7 +15,7 @@ import (
 
 // setTestHome redirects the home directory to a temp dir for the duration of
 // a test. Sets both HOME (Unix) and USERPROFILE (Windows) because
-// os.UserHomeDir() reads USERPROFILE on Windows and HOME on Unix — setting
+// os.UserHomeDir() reads USERPROFILE on Windows and HOME on Unix; setting
 // only HOME leaves the real user's home reachable on Windows, which breaks
 // tests that assert "config should not exist yet" or "should not invent
 // Theme from disk". Returns a restore function.

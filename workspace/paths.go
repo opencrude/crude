@@ -20,7 +20,7 @@
 // - Workspace → TUI: event bus publishes (e.g., bus.Publish(FileOpened{path}))
 //
 // The workspace package intentionally has NO knowledge of rendering or input
-// handling — those concerns live in the tui/ layer.
+// handling; those concerns live in the tui/ layer.
 package workspace
 
 import (
@@ -147,7 +147,7 @@ type WorkspaceInfo struct {
 
 // WorkspaceDisplayName returns a human-readable label for a workspace row.
 // Prefer a stored ProjectName, then the project directory basename. Never
-// returns the raw workspace hash id — empty/unknown metadata yields a
+// returns the raw workspace hash id; empty/unknown metadata yields a
 // stable placeholder instead.
 func WorkspaceDisplayName(info WorkspaceInfo) string {
 	name := strings.TrimSpace(info.ProjectName)
@@ -190,7 +190,7 @@ func ListWorkspaces() ([]string, error) {
 // ListWorkspaceInfos enumerates workspaces with display metadata for the
 // launcher. Best-effort: missing/corrupt/locked DBs still produce an entry
 // and never block the UI for long. Display names are always human-readable
-// (path basename or "unnamed workspace") — never the raw hash id.
+// (path basename or "unnamed workspace"), never the raw hash id.
 func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 	ids, err := ListWorkspaces()
 	if err != nil {
@@ -271,7 +271,7 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 //
 // Both the read AND the goroutine's channel send are bound to the same
 // context: if the read outlives the limit, the query is cancelled (releasing
-// the DB handle), the send aborts, and the goroutine exits — it can never
+// the DB handle), the send aborts, and the goroutine exits; it can never
 // leak an open sqlite handle (which would keep the DB file locked on
 // Windows) past the timeout.
 func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo {
@@ -290,7 +290,7 @@ func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo
 	case r := <-ch:
 		return r.info
 	case <-ctx.Done():
-		// Timed out — try a metadata-only fast path that avoids scanning
+		// Timed out: try a metadata-only fast path that avoids scanning
 		// workspace_sessions (the usual stall under a live writer lock).
 		return readWorkspaceMetaLight(dbPath)
 	}
@@ -321,7 +321,7 @@ func readWorkspaceMetaLight(dbPath string) *WorkspaceInfo {
 }
 
 // readWorkspaceMeta opens a workspace.db read-only and extracts project info.
-// It must not migrate or otherwise write — listing known workspaces from the
+// It must not migrate or otherwise write; listing known workspaces from the
 // launcher must not mutate ~/.crude (including other projects' DBs).
 // All queries are context-bound so a stalled read can be cancelled (which
 // also releases the file handle; see readWorkspaceMetaBounded).
@@ -375,7 +375,7 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 			}
 		}
 		// Close BEFORE the count query: the pool is capped at one
-		// connection, and an open Rows holds it — the count would wait on
+		// connection, and an open Rows holds it; the count would wait on
 		// itself (self-deadlock) until the deferred Close runs.
 		_ = rows.Close()
 	}

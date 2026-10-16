@@ -5,7 +5,7 @@
 // tui/ui.WindowFrame.
 //
 // The Window Manager depends only on the surface, widget, cell, and theme packages.
-// It does NOT depend on the compositor package — integration with the compositor
+// It does NOT depend on the compositor package; integration with the compositor
 // happens at the application layer.
 package wm
 
@@ -50,7 +50,7 @@ const (
 	// ClickOutsideKeepRoute keeps the window open and routes the click
 	// to the underlying widget. Used for find/replace, file picker.
 	ClickOutsideKeepRoute
-	// ClickOutsideIgnore does nothing — the window stays focused and
+	// ClickOutsideIgnore does nothing; the window stays focused and
 	// the click has no effect. Used for modal dialogs (save confirm,
 	// text prompt, tree delete confirm).
 	ClickOutsideIgnore

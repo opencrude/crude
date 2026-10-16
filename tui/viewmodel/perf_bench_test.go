@@ -20,7 +20,7 @@ import (
 // cheaper than a cold frame. Ceilings live in scripts/perf_ceilings.txt.
 
 // BenchmarkIdleTick_200Msgs measures one idle tick+paint of a warm
-// 200-message session — the steady state the user actually lives in on a
+// 200-message session, the steady state the user actually lives in on a
 // resumed session.
 func BenchmarkIdleTick_200Msgs(b *testing.B) {
 	app := newFullTestApp(b)

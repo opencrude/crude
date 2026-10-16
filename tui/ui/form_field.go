@@ -53,7 +53,7 @@ func NewFormField(id ComponentID, f *FieldState, tokens *TokenSet) *FormField {
 // NewBoundFormField binds a control to the supplied form model.
 func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *TokenSet) *FormField {
 	ff := &FormField{Base: NewBase(id), model: model, field: f, tokens: tokens}
-	// Read-only hex colour reflections paint as swatches — no text editor.
+	// Read-only hex colour reflections paint as swatches, not a text editor.
 	if (f.Type == FieldText || f.Type == FieldPassword) && (!f.ReadOnly || !isHexColor(f.Value.String())) {
 		ff.control = NewTextField(NewID(id, "input"), tokens)
 		ff.control.SetValue(f.Value.String())
@@ -1713,7 +1713,7 @@ func (ff *FormField) handleSelect(ctx EventContext, evt Event) EventResult {
 	if evt.Kind == EventMouseClick && ff.selectFilter != nil && ff.filterContains(ctx.LocalX, ctx.LocalY) {
 		return ff.selectFilter.Handle(ff.filterContext(ctx), evt)
 	}
-	// Keys go to the filter first — typing narrows the list. Arrow keys,
+	// Keys go to the filter first; typing narrows the list. Arrow keys,
 	// Enter, and Esc-with-empty-filter fall through to the list.
 	if evt.IsKey() && ff.selectFilter != nil {
 		filterCtx := ctx

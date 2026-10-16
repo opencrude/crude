@@ -562,8 +562,8 @@ func decayVerbatimTail(tail []provider.ChatMessage, model string) []provider.Cha
 }
 
 // compactionModelUnavailable reports a compaction failure caused by the
-// connection itself — credentials, a missing model, an outage or rate limit
-// that outlasted its retries — rather than by the request. Limit and shape
+// connection itself (credentials, a missing model, an outage or rate limit
+// that outlasted its retries) rather than by the request. Limit and shape
 // rejections (context, output caps a provider over-advertises, invalid
 // request sizes) are the extractor's to adapt: smaller chunks, staged
 // sections, learned ceilings.

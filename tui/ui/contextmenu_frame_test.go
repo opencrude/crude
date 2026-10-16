@@ -325,7 +325,7 @@ func TestBuildContextMenuFrame_AllLinesSameWidth(t *testing.T) {
 // TestBuildContextMenuFrame_TightHeight: the frame height should
 // match content + chrome (2 border rows), no extra padding. Replaces
 // TestContextMenu_TightHeight (which tested ContextMenuPopupHeight
-// directly — still valid, re-asserted here for the frame path).
+// directly; still valid, re-asserted here for the frame path).
 func TestBuildContextMenuFrame_TightHeight(t *testing.T) {
 	st := &ContextMenuState{
 		Sections: []ContextMenuSection{{Items: []ContextMenuItem{

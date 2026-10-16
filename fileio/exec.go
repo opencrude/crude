@@ -35,7 +35,7 @@ func windowsCommandWarning(cmd string) string {
 		}
 	}
 
-	// echo on Windows does not read stdin — piping to it silently discards data.
+	// echo on Windows does not read stdin; piping to it silently discards data.
 	if strings.Contains(lower, "| echo") || strings.Contains(lower, "|echo") {
 		warnings = append(warnings, "piping to 'echo' will not work on Windows — echo does not read stdin")
 	}
@@ -287,7 +287,7 @@ func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]st
 		if rel == "." {
 			return nil
 		}
-		// Never skip the root directory itself — if the user points
+		// Never skip the root directory itself: if the user points
 		// directly at e.g. node_modules, they mean to search it.
 		if d.IsDir() && path != absBase && shouldSkipDir(d.Name(), includeHidden) {
 			return fs.SkipDir

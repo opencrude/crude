@@ -26,7 +26,7 @@ import (
 // TUI is the terminal UI layer. It holds the Bubble Tea program and
 // provides methods for the app layer to send events into the TUI.
 //
-// The TUI does NOT own business state — it delegates everything to the
+// The TUI does NOT own business state; it delegates everything to the
 // workspace via the embedded viewmodel.App.
 type TUI struct {
 	app      *viewmodel.App

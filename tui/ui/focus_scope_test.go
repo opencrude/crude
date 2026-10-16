@@ -100,7 +100,7 @@ func TestHost_ModalScopeTrapsFocusAndKeys(t *testing.T) {
 		t.Fatal("top scope should be modal")
 	}
 
-	// Focus may not leave the modal subtree — not to the editor (prior
+	// Focus may not leave the modal subtree, not to the editor (prior
 	// focus) and not to a sibling popover.
 	if host.Focus("editor") {
 		t.Fatal("modal scope must reject focus to the editor")
@@ -163,7 +163,7 @@ func TestOverlayHost_NestedOpenCloseRestoresExactFocusPath(t *testing.T) {
 		t.Fatalf("scopes=%v want [popover dialog]", got)
 	}
 
-	// Close the dialog: focus returns to the popover — the EXACT prior focus.
+	// Close the dialog: focus returns to the popover, the EXACT prior focus.
 	overlay.Close(OverlayID("dialog"))
 	if got := host.Focused(); got != "popover" {
 		t.Fatalf("after dialog close focus=%q want %q", got, "popover")
@@ -172,7 +172,7 @@ func TestOverlayHost_NestedOpenCloseRestoresExactFocusPath(t *testing.T) {
 		t.Fatalf("scopes=%v want [popover]", got)
 	}
 
-	// Close the popover: focus returns to the editor — the EXACT prior focus.
+	// Close the popover: focus returns to the editor, the EXACT prior focus.
 	overlay.Close(OverlayID("popover"))
 	if got := host.Focused(); got != "editor" {
 		t.Fatalf("after popover close focus=%q want %q", got, "editor")
@@ -230,7 +230,7 @@ func TestOverlayHost_NonTopCloseDropsScopeWithoutRestore(t *testing.T) {
 	}
 
 	// Closing the remaining (now top) overlay restores the focus that existed
-	// before the REMOVED popover opened — the editor, not the gone popover.
+	// before the REMOVED popover opened: the editor, not the gone popover.
 	overlay.Close(OverlayID("dialog"))
 	if got := host.Focused(); got != "editor" {
 		t.Fatalf("after final close focus=%q want %q", got, "editor")

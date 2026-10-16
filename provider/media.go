@@ -20,7 +20,7 @@ func ValidateImageBytes(mime string, data []byte) error {
 // MediaModalityFromPath maps a file path to the canonical input modality it
 // represents (provider.ModalityImage/PDF/Video/Audio) and its MIME type.
 // The second return value reports whether the path is a recognised media
-// attachment candidate at all — plain documents and unknown binaries are not.
+// attachment candidate at all; plain documents and unknown binaries are not.
 func MediaModalityFromPath(path string) (modality, mime string, ok bool) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if m, known := ImageMimeFromExt(ext); known {

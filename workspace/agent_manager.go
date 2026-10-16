@@ -2,7 +2,7 @@ package workspace
 
 // AgentNode is one node in the agent tree. An orchestrator is a root node
 // with children (sub-agents). A sub-agent has a non-nil Parent pointing to
-// its orchestrator. All per-agent state lives here — no parallel maps.
+// its orchestrator. All per-agent state lives here; there are no parallel maps.
 type AgentNode struct {
 	ID       string
 	Parent   *AgentNode

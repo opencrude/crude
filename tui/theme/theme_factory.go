@@ -25,7 +25,7 @@ func (c Colors) ToolTextColors() (color.Color, color.Color) {
 }
 
 // DefaultFrameInsets is the shell frame every theme starts with: zero on all
-// four sides — the shell renders edge to edge. Frame padding is a user
+// four sides; the shell renders edge to edge. Frame padding is a user
 // preference configured in Settings → Appearance; nothing in the layout may
 // assume a blank row or column exists.
 func DefaultFrameInsets() Insets {

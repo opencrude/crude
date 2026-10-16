@@ -67,7 +67,7 @@ func (c *ComponentWidget) Focus(id ComponentID) {
 }
 
 // MarkContentDirty forwards a visual change to the owning FloatingWindow.
-// Without this, the WM composites the stale cached surface — Host paint
+// Without this, the WM composites the stale cached surface because Host paint
 // flags never cross the window boundary. No-op before WM wiring.
 func (c *ComponentWidget) MarkContentDirty() {
 	if c != nil && c.markContentDirty != nil {

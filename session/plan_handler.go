@@ -174,10 +174,10 @@ func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 
 // decodePlanStep accepts one step object. Models legitimately reach for field
 // aliases (a step "content" or "title" instead of "description"), so the
-// obvious spellings are repaired rather than rejected — a rejection costs a
+// obvious spellings are repaired rather than rejected, because a rejection costs a
 // whole turn and teaches nothing the schema did not already say. Step
 // annotations are the exception: a result/note/outcome field is dropped, never
-// stored. The card shows the step banner, not a progress log — narration
+// stored. The card shows the step banner, not a progress log; narration
 // belongs in conversation, and only a deviation status carries a reason.
 func decodePlanStep(raw any) (plan.PlanStep, error) {
 	if text, ok := raw.(string); ok {

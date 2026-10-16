@@ -2039,7 +2039,7 @@ func (s *settingsCategoryList) Semantics() ui.Semantics       { return s.list.Se
 func (s *settingsCategoryList) SetTokens(tokens *ui.TokenSet) { s.list.SetTokens(tokens) }
 
 // syncItems reconciles the rail rows with the model. It re-anchors the
-// viewport only when the selected category actually moved — keyboard
+// viewport only when the selected category actually moved; keyboard
 // navigation, a deep link, or a filtered row disappearing.
 //
 // The popup forwards every pointer event its children do not consume through

@@ -37,7 +37,7 @@ func TestTreeFilterTypingContractViewmodel(t *testing.T) {
 	}
 
 	// Filtering moves the cursor to the first match. The workspace root is
-	// not a painted row, so a tight filter may leave a single match — keys
+	// not a painted row, so a tight filter may leave a single match; keys
 	// must still route to the model without moving off the list.
 	before := model.CursorIndex()
 	switch {

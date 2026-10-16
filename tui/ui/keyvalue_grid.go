@@ -46,7 +46,7 @@ type KeyValuePair struct {
 // states reuse the shared list/table language (focused accent, selected,
 // hovered) so it reads like every other table in the app.
 //
-// Keyboard model — arrows move between rows and cells, Enter advances to the
+// Keyboard model: arrows move between rows and cells, Enter advances to the
 // next cell in reading order (Name → Value → next row), Backspace/Delete
 // removes the focused row, and typing on a row starts a fresh edit of that
 // cell. The add row below the last pair creates the next row.

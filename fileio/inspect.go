@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultHexHeadBytes is how many leading bytes of a binary file get rendered
-// as a hex dump — enough context for an LLM or a human to identify the
+// as a hex dump, enough context for an LLM or a human to identify the
 // format without flooding the context window.
 const DefaultHexHeadBytes = 512
 

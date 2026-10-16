@@ -16,7 +16,7 @@ package ui
 // And call Hover.Set(idx) when the mouse moves over an item, Hover.Clear()
 // when the mouse leaves, and read Hover.Index at render time.
 //
-// Index == -1 means "no item hovered" — the same convention used by
+// Index == -1 means "no item hovered", the same convention used by
 // the existing popup hover fields (fr.HoveredToggle = -1 when nothing
 // is hovered, m.refCursor = -1 when no reference is selected, etc.).
 // Centralising this lets every widget agree on what "no hover" looks
@@ -24,7 +24,7 @@ package ui
 // paint the hover background.
 //
 // Because Go's struct zero value for an int field is 0 (not -1), widgets
-// that embed Hover must initialise it explicitly — either by calling
+// that embed Hover must initialise it explicitly, either by calling
 // the NewHover constructor and assigning it back, or by calling
 // h.Clear() at construction time. See FileTreeModel.NewFileTreeModel
 // for the canonical pattern.
@@ -49,7 +49,7 @@ func (h *Hover) IsActive() bool {
 	return h.Index >= 0
 }
 
-// Set updates the hover index. Returns true if the value changed —
+// Set updates the hover index. Returns true if the value changed;
 // callers can use the return value to set the dirty flag without
 // unconditionally marking the widget as needing a re-render on every
 // motion event (which would burn cycles even when the mouse only

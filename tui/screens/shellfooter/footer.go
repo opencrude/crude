@@ -34,7 +34,7 @@ type Segment struct {
 }
 
 // Projection is the footer's two groups. A group is either a pill strip (every
-// segment a Pill) or a plain text row — the separator between segments follows
+// segment a Pill) or a plain text row; the separator between segments follows
 // the group's kind, so the two never mix inside one group: pills abut their
 // neighbours and plain segments keep the dotted separator.
 type Projection struct {

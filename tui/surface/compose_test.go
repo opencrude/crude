@@ -157,7 +157,7 @@ func TestMergeDown(t *testing.T) {
 	src.Set(0, 0, opaqueLetter('S'))
 	src.Set(1, 0, cell.TransparentBlank())
 	src.Set(2, 0, cell.NewWideCell('中', cell.Red, cell.Blue, 0))
-	// Need only 1 cell for wide at end — buffer is 3 wide so wide at 2 would need col 3
+	// Need only 1 cell for wide at end; buffer is 3 wide, so wide at 2 would need col 3
 	// Place wide at 0 instead for second test; first check transparent skip
 	MergeDown(dst, 0, 0, src)
 	if dst.Get(0, 0).Char != 'S' {

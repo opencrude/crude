@@ -190,7 +190,7 @@ func SupportsVision(modelID string) bool {
 
 // SupportsTools returns true if the model supports tool/function calling.
 // It checks the dynamicCaps map populated from models.dev data.
-// If the model is not found in dynamicCaps, it returns true (safe default —
+// If the model is not found in dynamicCaps, it returns true (safe default, because
 // most modern models support tools).
 func SupportsTools(modelID string) bool {
 	if caps, ok := lookupCaps(modelID); ok {

@@ -37,7 +37,7 @@ type ProtocolInfo struct {
 	// Root is the canonical API root segment of the protocol's reference
 	// host (e.g. "/v1" for OpenAI, "/api" for Ollama). When a configured
 	// base URL is a bare origin, the root is appended. A base URL that
-	// already carries a path is kept as-is — proxies and gateways may
+	// already carries a path is kept as-is; proxies and gateways may
 	// mount the API anywhere.
 	Root string
 	// ChatPath is the leaf path of the chat endpoint.
@@ -173,8 +173,8 @@ type AuthContext struct {
 }
 
 // ModelLister is implemented by protocols whose backend can enumerate
-// models. The protocol builds the request URL — including any required
-// query parameters and the pagination cursor — and decodes one page; the
+// models. The protocol builds the request URL (including any required
+// query parameters and the pagination cursor) and decodes one page; the
 // client owns the pagination loop.
 type ModelLister interface {
 	// ModelsURL resolves the listing endpoint for a page. cursor is empty

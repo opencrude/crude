@@ -148,7 +148,7 @@ func PartsContent(parts []ContentPart) MessageContent {
 }
 
 // IsText returns true if this is plain text content (not multipart).
-// Uses the sentinel prefix to distinguish — no reliance on '[' heuristic.
+// Uses the sentinel prefix to distinguish, with no reliance on the '[' heuristic.
 func (c MessageContent) IsText() bool {
 	s := string(c)
 	if len(s) == 0 {
@@ -304,10 +304,10 @@ func (c MessageContent) MarshalJSON() ([]byte, error) {
 		return json.Marshal("")
 	}
 	if !strings.HasPrefix(s, multipartSentinel) {
-		// Plain text — marshal as JSON string
+		// Plain text: marshal as JSON string
 		return json.Marshal(s)
 	}
-	// Multipart — strip sentinel and emit raw JSON array
+	// Multipart: strip sentinel and emit raw JSON array
 	return []byte(strings.TrimPrefix(s, multipartSentinel)), nil
 }
 

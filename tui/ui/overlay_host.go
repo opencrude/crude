@@ -84,7 +84,7 @@ func (p OutsidePolicy) toWM() wm.ClickOutsideBehavior {
 		return wm.ClickOutsideCloseRoute
 	case OutsideCloseAndConsume:
 		// WM has no CloseAndConsume; emulate as CloseRoute (close +
-		// route) — the consume part is handled by the caller
+		// route); the consume part is handled by the caller
 		// deciding whether to forward the click. We use CloseRoute
 		// as the closest WM primitive.
 		return wm.ClickOutsideCloseRoute
@@ -155,7 +155,7 @@ type OverlayEntry struct {
 	OnClose func() // cleanup invoked when the overlay is removed
 
 	// priorFocus is the floating-window ID that had window-manager focus when
-	// this overlay opened ("" when the shell — editor/tree/chat — owned focus).
+	// this overlay opened ("" when the shell (editor/tree/chat) owned focus).
 	// Closing the focused overlay restores it, so nested overlays unwind to the
 	// exact prior focus path instead of "whatever is on top of the z-order".
 	priorFocus string
@@ -166,7 +166,7 @@ type OverlayEntry struct {
 // click/hover routing so product code does not need bespoke switches
 // per popup ID.
 //
-// The OverlayHost does NOT own the wm.WindowManager — it wraps it.
+// The OverlayHost does NOT own the wm.WindowManager; it wraps it.
 // The viewmodel creates the OverlayHost with its windowManager and
 // uses typed methods instead of raw WM + popupmouse switches.
 //
@@ -453,7 +453,7 @@ func (h *OverlayHost) HasHoverHandler(id OverlayID) bool {
 }
 
 // focusedWindowID returns the ID of the WM's focused window, or "" when no
-// window has focus (the shell — editor/tree/chat — owns focus).
+// window has focus (the shell (editor/tree/chat) owns focus).
 func (h *OverlayHost) focusedWindowID() string {
 	if h == nil || h.wm == nil {
 		return ""

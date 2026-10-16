@@ -95,7 +95,7 @@ func TestOverlayHost_ClickOutsideIgnoreSuppresses(t *testing.T) {
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	host.Open(OverlayDirtyClose, fw, ModalDialogPolicy(), nil)
-	// Click at (50,50) — far outside the 10x3 window at (0,0).
+	// Click at (50,50), far outside the 10x3 window at (0,0).
 	suppressed := host.HandleClickOutside(50, 50)
 	if !suppressed {
 		t.Fatal("modal overlay should suppress outside click")

@@ -42,7 +42,7 @@ type Store struct {
 
 // Attach initializes the current memory schema onto db and returns a Store. FTS5
 // availability is probed during initialization: when unavailable, the store
-// degrades to scan-based retrieval and records the fault in memory_meta —
+// degrades to scan-based retrieval and records the fault in memory_meta;
 // Attach only fails on base-schema errors.
 func Attach(db *sql.DB) (*Store, error) {
 	if db == nil {
@@ -302,7 +302,7 @@ var ftsSpecs = []ftsSpec{
 
 // migrateFTS probes FTS5 and installs the index tables + sync triggers.
 // Any failure disables FTS for this process and records an observable
-// fault in memory_meta — retrieval then uses the scan fallback. It never
+// fault in memory_meta; retrieval then uses the scan fallback. It never
 // fails the open: memory must degrade, not break the workspace.
 func (st *Store) migrateFTS() {
 	for _, spec := range ftsSpecs {
@@ -599,7 +599,7 @@ func (st *Store) Get(ctx context.Context, id string) (Record, error) {
 	return record, nil
 }
 
-// Supersede marks a record superseded (the "forget" operation — nothing is
+// Supersede marks a record superseded (the "forget" operation: nothing is
 // deleted). byID links to the replacement when there is one.
 func (st *Store) Supersede(ctx context.Context, id string, expectedRevision int64, byID, actor, sessionID string) error {
 	tx, err := st.db.BeginTx(ctx, nil)

@@ -8,7 +8,7 @@ import (
 )
 
 // isSummaryOnlyTool returns true for tools whose result is fully expressed
-// in the title-line summary — no content lines are rendered below. Search and
+// in the title-line summary, and no content lines are rendered below. Search and
 // listing tools (grep_files, glob_files, list_directory, web_search,
 // arxiv_search) are deliberately NOT summary-only: their actual matches are
 // the content the user wants to read, so they render in the body.
@@ -47,8 +47,8 @@ func TerminalResultHeight(height int) int {
 }
 
 //                    ─
-// Result summary functions — all use " — " as the consistent
-// separator between the action+target and the result gist.
+// Result summary functions all use the same separator, a dash, between the
+// action+target and the result gist.
 // ─
 
 // resultSummary dispatches to the appropriate tool-specific
@@ -159,7 +159,7 @@ func grepResultSummary(content, target, duration string) string {
 		return label
 	}
 
-	// "N match(es) for ..." — extract N from first line
+	// "N match(es) for ...": extract N from the first line
 	firstNewline := strings.Index(content, "\n")
 	firstLine := content
 	if firstNewline > 0 {
@@ -193,7 +193,7 @@ func listDirResultSummary(content, target, duration string) string {
 		return label
 	}
 
-	// "path — N entries:" or "path — N entries (recursive):"
+	// The header is the path, a dash, then "N entries:" (or "(recursive):").
 	if idx := strings.Index(content, " — "); idx > 0 {
 		afterDash := content[idx+len(" — "):]
 		colonIdx := strings.Index(afterDash, ":")
@@ -260,7 +260,7 @@ func webSearchResultSummary(content, target, duration string) string {
 		return "" // let default handle error
 	}
 
-	// "Web search results for: query" — count numbered results (lines starting with "N. ")
+	// "Web search results for: query": count numbered results (lines starting with "N. ")
 	count := strings.Count(content, "\n") + 1
 	// Count numbered entries like "1. ", "2. ", etc.
 	resultCount := 0

@@ -38,7 +38,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if _, ok := screen.Selected(); !ok {
 		t.Fatal("expected initial selection")
 	}
-	// NOTE: no byte-identical golden here — the picker renders Today/
+	// NOTE: no byte-identical golden here, because the picker renders Today/
 	// Yesterday date grouping from time.Now(), which is inherently
 	// non-deterministic. The property checks above cover its content.
 }

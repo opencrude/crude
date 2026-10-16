@@ -29,7 +29,7 @@ type TextField struct {
 	viewStart int
 	// viewReset shows the HEAD of a programmatically replaced value until the
 	// user interacts. Without it, SetValue (cursor placed at end-of-value)
-	// scrolls a long URL to its tail, hiding the changed part — e.g. a
+	// scrolls a long URL to its tail, hiding the changed part, as when a
 	// provider switch looked like "the base URL just has a 1 in it".
 	viewReset     bool
 	bg            cell.Color

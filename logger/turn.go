@@ -86,7 +86,7 @@ func formatTurn(rec TurnRecord, num int) string {
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "finish: %s\n\n", rec.FinishReason)
 
-	// REQUEST section — full JSON dump
+	// REQUEST section: full JSON dump
 	b.WriteString("## REQUEST\n\n")
 	if len(rec.RequestBody) > 0 {
 		var pretty bytes.Buffer
@@ -101,7 +101,7 @@ func formatTurn(rec TurnRecord, num int) string {
 		}
 	}
 
-	// RESPONSE section — reconstructed from stream
+	// RESPONSE section: reconstructed from stream
 	b.WriteString("## RESPONSE\n\n")
 	if rec.ResponseContent != "" {
 		b.WriteString("content:\n")

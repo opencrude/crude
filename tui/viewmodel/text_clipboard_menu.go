@@ -94,8 +94,8 @@ func windowTextClipboardHit(fw *wm.FloatingWindow, mouse tea.Mouse) (textClipboa
 }
 
 // textClipboardMenuSection builds the whole-text Copy/Cut items every text
-// control offers from its context menu. Copy takes the entire value — the
-// menu's subject is the control, not a selection — while the Ctrl+C / Ctrl+X
+// control offers from its context menu. Copy takes the entire value (the
+// menu's subject is the control, not a selection), while the Ctrl+C / Ctrl+X
 // chords keep their selection semantics.
 func (m *App) textClipboardMenuSection(hit textClipboardHit) ui.ContextMenuSection {
 	value := hit.target.TextValue()
@@ -112,7 +112,7 @@ func (m *App) textClipboardMenuSection(hit textClipboardHit) ui.ContextMenuSecti
 				// dispatch owns the edit, so the owning component updates its
 				// model exactly as a key press would. Its copy command is
 				// deliberately dropped so the clipboard is written once, and
-				// an action it returns (form.changed) reaches the viewmodel —
+				// an action it returns (form.changed) reaches the viewmodel;
 				// popup-local action handlers are not re-entered from here.
 				m.copyToClipboard(value)
 				res := hit.owner.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}))

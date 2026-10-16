@@ -36,7 +36,7 @@ func TestCharPool_InternGetReset(t *testing.T) {
 func TestCharPool_OverflowReset(t *testing.T) {
 	p := NewCharPool()
 	// Fill to maxPoolSize without using huge memory for the map of
-	// consecutive runes — use a range of distinct runes.
+	// consecutive runes; use a range of distinct runes.
 	// maxPoolSize is 65535; filling all is slow but correct.
 	// Test a smaller path: force overflow by setting near-capacity manually
 	// via repeated Intern of unique runes up to a practical subset, then
@@ -45,7 +45,7 @@ func TestCharPool_OverflowReset(t *testing.T) {
 	// Directly construct a full pool is expensive; instead fill until
 	// Len() is large enough and verify Intern of a new rune still works.
 	// We test the overflow path by temporarily using the public API until
-	// Len hits maxPoolSize only if practical — skip full 65k in unit tests
+	// Len hits maxPoolSize only if practical; skip the full 65k in unit tests
 	// and unit-test the branch via a controlled fill of a few and
 	// documenting that overflow resets IDs.
 	//
@@ -138,7 +138,7 @@ func TestStylePool_FullOverflow(t *testing.T) {
 		t.Fatalf("unique styles filled %d entries, want %d", p.Len(), maxPoolSize)
 	}
 	// Guaranteed unique: use Attrs as high bits via truecolor R from index low bits
-	// and palette separately — simplest path already tested for CharPool.
+	// and palette separately; the simplest path is already tested for CharPool.
 	// Verify Intern after many entries still works:
 	id := p.Intern(NewTrueColor(9, 9, 9), NewTrueColor(1, 1, 1), AttrItalic)
 	_ = id

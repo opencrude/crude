@@ -249,7 +249,7 @@ func TestIsDiffContent(t *testing.T) {
 // gapDiff builds a compact-mode diff whose two change groups are separated by
 // exactly `gap` hidden context lines. With CompactContextLines of context kept
 // around each change, the change rows sit at 2/3 and 6+gap/7+gap, which leaves
-// rows 6…5+gap — exactly `gap` lines — uncovered between them.
+// rows 6…5+gap, exactly `gap` lines, uncovered between them.
 func gapDiff(gap int) string {
 	lines := []string{
 		"--- a/f.go", "+++ b/f.go", "@@ -1,40 +1,40 @@",

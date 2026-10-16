@@ -9,7 +9,7 @@ import (
 )
 
 // RowSpan is one styled text run within a PaintLine. Colors normally resolve
-// through ui.SemanticColor at paint time — no ANSI in the projection path. For bridged ANSI content that carries explicit colours
+// through ui.SemanticColor at paint time, with no ANSI in the projection path. For bridged ANSI content that carries explicit colours
 // that do not correspond to a theme role (e.g. Chroma syntax-highlight
 // 24-bit colours), FGColor/BGColor provide an optional direct override that
 // is painted verbatim; when FGSet/BGSet is false, the Role/BgRole is resolved

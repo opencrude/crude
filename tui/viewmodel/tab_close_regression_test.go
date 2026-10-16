@@ -180,7 +180,7 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 }
 
 // TestRealSessionLastTabCloseSwitchesToLauncher drives the REAL
-// launcher session flow (NewAgentSession — session DB + orchestrator)
+// launcher session flow (NewAgentSession: session DB + orchestrator)
 // then closes the last tab via the tab-bar close click.
 func TestRealSessionLastTabCloseSwitchesToLauncher(t *testing.T) {
 	app, ws := newRealShellApp(t)

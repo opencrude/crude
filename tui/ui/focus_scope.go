@@ -9,8 +9,8 @@ import "strings"
 // focus within their subtree.
 //
 // Focus scopes live on the Host (the single focus authority), not in the
-// window manager, so any component subtree can declare a focus scope — modal
-// dialogs, popovers, menus — independent of how floating windows are layered.
+// window manager, so any component subtree can declare a focus scope (modal
+// dialogs, popovers, menus) independent of how floating windows are layered.
 type FocusScope struct {
 	// boundary is the component subtree this scope owns. RootID scopes the
 	// whole host. A scope's boundary is a ComponentID (an overlay's window

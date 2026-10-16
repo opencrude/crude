@@ -72,7 +72,7 @@ func TestTextAreaCopyChordsCopySelection(t *testing.T) {
 }
 
 // Ctrl+X cuts the selection, and with nothing selected it cuts the whole value
-// — the same command the context menu's Cut performs.
+// using the same command the context menu's Cut performs.
 func TestTextAreaCutChordCutsSelectionThenWholeValue(t *testing.T) {
 	t.Run("selection", func(t *testing.T) {
 		area, copied := newClipboardTextArea(t, "hello world")

@@ -10,7 +10,7 @@ import (
 )
 
 // =============================================================================
-// Popup mouse dispatch — click-outside, click-on-content, and hover
+// Popup mouse dispatch: click-outside, click-on-content, and hover
 // pre-selection for all popup windows.
 // =============================================================================
 
@@ -290,7 +290,7 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 
 	// Input fields: resolve the clicked TextField through the Host so the
 	// focus/cursor track the painted layout (the replace field sits two
-	// content rows down in replace mode — one field + one gap row).
+	// content rows down in replace mode: one field + one gap row).
 	fw := m.windowManager.Window("find-replace")
 	if fw == nil {
 		return nil
@@ -378,7 +378,7 @@ func (m *App) activateFindReplaceButton(action string) tea.Cmd {
 
 // findReplaceToggleAt returns the filter-toggle index (0=case, 1=whole-word,
 // 2=regex) under the popup-local point, or -1 when none. Bounds come from
-// FindReplaceFrameToggleBounds — the Host's screen-rect registry, i.e. the
+// FindReplaceFrameToggleBounds, the Host's screen-rect registry, i.e. the
 // exact geometry the pills are painted at.
 func (m *App) findReplaceToggleAt(localX, localY int) int {
 	fw := m.windowManager.Window("find-replace")
@@ -441,7 +441,7 @@ func (m *App) hoverFindReplace(localX, localY int) {
 
 // =============================================================================
 // Confirm prompt (dirty-close-prompt): click & hover
-// WindowFrame + ui.Button row — hit-test via Host.
+// WindowFrame + ui.Button row; hit-test via Host.
 // =============================================================================
 
 func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
@@ -514,7 +514,7 @@ func (m *App) hoverTreeDeleteConfirm(localX, localY int) {
 }
 
 // =============================================================================
-// Tree delete confirm: click — WindowFrame + Yes/No buttons.
+// Tree delete confirm: click handling with WindowFrame + Yes/No buttons.
 // =============================================================================
 
 func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {

@@ -9,7 +9,7 @@
 package cell
 
 // ---------------------------------------------------------------------------
-// CharPool — Rune Interning
+// CharPool: rune interning.
 // ---------------------------------------------------------------------------
 
 // maxPoolSize is the maximum number of entries in a pool before it resets.
@@ -82,7 +82,7 @@ func (p *CharPool) Len() int {
 }
 
 // ---------------------------------------------------------------------------
-// StylePool — Style Interning
+// StylePool: style interning.
 // ---------------------------------------------------------------------------
 
 // StyleEntry represents a complete cell style: foreground, background, and attributes.
