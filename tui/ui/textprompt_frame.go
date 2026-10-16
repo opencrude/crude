@@ -20,7 +20,7 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	w := TextPromptPopupWidth(st)
 	h := TextPromptPopupHeight(st)
 
-	// Body: prompt label, input field, spacer, hint — colors via semantic
+	// Body: prompt label, input field, spacer, hint; colors via semantic
 	// tokens (same pipeline as every other dialog).
 	promptLabel := NewLabel(NewID(RootID, "tree-prompt/prompt"), st.Prompt, th)
 	promptLabel.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), 0)

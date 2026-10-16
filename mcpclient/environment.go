@@ -37,7 +37,7 @@ func MissingConfiguration(config captypes.ConnectionConfig) []string {
 
 // stdioBaseEnvironment is the complete environment of the host process. A
 // stdio server is an authorized, unsandboxed process running with the user's
-// privileges — the same authority as an agent shell command, which also
+// privileges, the same authority as an agent shell command, which also
 // inherits the full environment. Filtering it through a list of names is not a
 // security boundary (the process can read the user's files and sockets
 // directly) and cannot be complete: display, session-bus, locale, proxy,

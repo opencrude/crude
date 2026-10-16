@@ -40,7 +40,7 @@ func TestVisualBaseline_Gallery_80x24_Dark(t *testing.T) {
 		t.Fatal("gallery produced no visible text at 80x24")
 	}
 
-	// Gallery must contain the title "Crude UI — State Gallery".
+	// Gallery must contain the title Crude UI, an em dash, then State Gallery.
 	if !bufContainsString(buf, "Crude UI") {
 		t.Fatal("gallery missing title text at 80x24")
 	}

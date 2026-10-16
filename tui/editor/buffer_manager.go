@@ -17,7 +17,7 @@ import (
 // Multiple Editor views can share the same Buffer. The viewmodel removes its
 // manager entry only when the last managed tab closes.
 //
-// Buffer is the "what IS" layer — it has no knowledge of cursor position,
+// Buffer is the "what IS" layer; it has no knowledge of cursor position,
 // scroll offset, undo history, or any view-specific state. Those live on
 // the Editor.
 type Buffer struct {
@@ -208,7 +208,7 @@ func NewBufferManager() *BufferManager {
 
 // OpenFile loads a file from disk into a Buffer and registers it. If the
 // buffer already exists (file already open in another tab/view), it returns
-// the existing buffer — no reload, no duplicate.
+// the existing buffer, with no reload and no duplicate.
 func (m *BufferManager) OpenFile(path string) (*Buffer, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

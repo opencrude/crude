@@ -148,7 +148,7 @@ func TestActivityPanelsShareConfiguredSidebarWidth(t *testing.T) {
 }
 
 // Clicking the icon of the view already on screen collapses the sidebar, and
-// clicking again brings it back — for every destination, through the real
+// clicking again brings it back, for every destination, through the real
 // mouse path rather than by calling toggleActivity directly.
 func TestRailClickTogglesSidebarForEveryView(t *testing.T) {
 	for _, view := range activitybar.Views() {

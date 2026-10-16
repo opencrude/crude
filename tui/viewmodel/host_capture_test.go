@@ -33,7 +33,7 @@ func openTestEditor(t *testing.T, app *App) string {
 // Root-host capture is validated by Host.Layout: when the captured component
 // leaves the tree (slot deactivated), validatePointerCapture cancels it. The
 // viewmodel no longer runs per-host capture arbitration (syncPersistentHost
-// Capture) — unmounting is the cancel path.
+// Capture); unmounting is the cancel path.
 
 func TestRootHostCapture_ChatHiddenByEditor(t *testing.T) {
 	app := newFullTestApp(t)
@@ -137,7 +137,7 @@ func TestRootHostCapture_LauncherHiddenByMinSize(t *testing.T) {
 
 	// Shrink the terminal so the launcher chat area drops below the
 	// 3-row minimum (computeContentLayout derives ChatAreaHeight from
-	// real geometry every frame — manual overrides do not stick). The
+	// real geometry every frame; manual overrides do not stick). The
 	// launcher needs ChatAreaHeight >= 3, i.e. height >= top chrome +
 	// bottom chrome + 3.
 	app.height = app.chromeTopRow() + app.chromeBottomRows() + 2
@@ -156,7 +156,7 @@ func TestRootHostCapture_SingleCaptureService(t *testing.T) {
 		{ID: "m1", Lines: []string{"single capture owner"}},
 	})
 
-	// Motion over the header, sidebar, tab bar, and status rows — every
+	// Motion over the header, sidebar, tab bar, and status rows: every
 	// motion must keep the chat selection drag alive.
 	for _, pt := range [][2]int{{5, 1}, {app.Tree.Width - 1, 6}, {40, 3}, {40, app.height - 1}} {
 		_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: pt[0], Y: pt[1], Button: tea.MouseLeft})

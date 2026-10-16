@@ -38,7 +38,7 @@ func TestViewmodel_OverlayOpenCloseUsesHostFocusScopes(t *testing.T) {
 // TestViewmodel_NestedOverlayCloseRestoresExactPriorWindowFocus drives the
 // exit-criterion scenario end to end: a keep-route popover stays open while
 // the user clicks the shell (WM focus drops to nil), a modal opens over it,
-// and closing the modal must restore the shell focus — NOT snap to the stale
+// and closing the modal must restore the shell focus, NOT snap to the stale
 // popover on top of the z-order.
 func TestViewmodel_NestedOverlayCloseRestoresExactPriorWindowFocus(t *testing.T) {
 	app := newTestApp(t)

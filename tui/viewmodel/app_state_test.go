@@ -134,7 +134,7 @@ func TestComputeContentLayout_NilActiveML(t *testing.T) {
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
 	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: nil})
 
-	// This should not panic — the nil activeML guard in computeContentLayout
+	// This should not panic: the nil activeML guard in computeContentLayout
 	// should produce a chat layout instead of dereferencing nil.
 	lay := app.computeContentLayout()
 	if lay.ChatH < 1 {
@@ -199,7 +199,7 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 	}
 
 	// First handleQuit closes the tab and shows launcher. The agent is
-	// minimized, not destroyed — its orchestrator keeps running.
+	// minimized, not destroyed; its orchestrator keeps running.
 	_, cmd := app.handleQuit()
 	if cmd != nil {
 		t.Fatal("expected nil cmd (launcher shown)")
@@ -224,7 +224,7 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 // TestHandleQuit_TwoAgentTabs_ClosesActiveOnly is the regression test for
 // Ctrl+Q hard-exiting the app while an agent tab was active with another
 // agent tab open. The window-tabs branch of handleQuit must consume the
-// quit after closing the active tab (minimizing its agent) — the tea.Quit
+// quit after closing the active tab (minimizing its agent); the tea.Quit
 // fall-through is only reachable when there are genuinely no window tabs
 // to close, mirroring handleAgentTabClose's never-quit ladder.
 func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
@@ -251,7 +251,7 @@ func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
 	}
 	activeID := app.agentIDFromTabTitle(activeTitle)
 
-	// First Ctrl+Q: close only the active agent tab — no quit.
+	// First Ctrl+Q: close only the active agent tab, with no quit.
 	_, cmd := app.handleQuit()
 	if cmd != nil {
 		t.Fatal("expected nil cmd (no tea.Quit) while another agent tab remains")
@@ -329,7 +329,7 @@ func TestHandleQuit_LastTabRefreshesLauncher(t *testing.T) {
 //
 // handleTabSwitch is the single source of truth for these view
 // fields, so it must clear them whenever the underlying tab is
-// gone — not just when the active tab transitions between types.
+// gone, not just when the active tab transitions between types.
 func TestHandleTabSwitch_ClearsStaleViewOnLastClose(t *testing.T) {
 	app := newTestApp(t)
 
@@ -913,7 +913,7 @@ func TestClassifyShellRegion_NoAgents_NoEditor(t *testing.T) {
 
 	// With no launcher (e.g. during the very first frame before the
 	// launcher is created), classifyShellRegion falls through to regionInput
-	// — same as the old behavior, so we don't regress.
+	// This matches the old behavior, so we don't regress.
 	region := app.classifyShellRegion(10, 10, false)
 	if region != regionInput {
 		t.Fatalf("expected regionInput with no agents and no launcher, got %v", region)
@@ -1054,7 +1054,7 @@ func TestHandleInputEvent_SlashCommand(t *testing.T) {
 	// to the cmds slice. Even if it returns nil, the slice gets a nil entry.
 	app := newFullTestApp(t)
 	cmds := app.handleInputEvent(input.SlashCommandEvent{Command: ""})
-	// cmds has 1 entry (nil cmd) — verify no panic
+	// cmds has 1 entry (nil cmd); verify no panic
 	if len(cmds) != 1 {
 		t.Fatalf("expected 1 cmd entry (nil), got %d", len(cmds))
 	}

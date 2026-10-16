@@ -187,7 +187,7 @@ func (h *Host) CapturedPointer() (ComponentID, tea.MouseButton, bool) {
 // position (EventContext locals are computed against id's screen rect, so the
 // component sees negative/out-of-range locals when the pointer is outside),
 // so a drag continues outside the component's original bounds and ends
-// reliably on release. A new MouseClick is NOT captured — it hit-tests a
+// reliably on release. A new MouseClick is NOT captured; it hit-tests a
 // fresh interaction. When capture moves to a different owner, the previous
 // owner's PointerCaptureCanceller is invoked: it lost the pointer without a
 // matching release. Returns false and leaves capture unchanged when id is not
@@ -522,7 +522,7 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 	// Unhandled key presses bubble to ancestors. Pointer/paste stay leaf-only
 	// so hit-tested targets and text editors keep exclusive ownership of those
 	// events. Bubbling stops at the first ancestor that handles the key and
-	// never leaves this Host — modal overlays stay contained by viewmodel
+	// never leaves this Host; modal overlays stay contained by viewmodel
 	// routing keys only into the focused floating-window Host.
 	if !res.Handled {
 		if evt.IsKey() {

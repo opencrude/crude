@@ -57,7 +57,7 @@ func TestTextEdit_WordMotion(t *testing.T) {
 	e.MoveEnd(false)
 	e.MoveWordLeft(false)
 	if e.Cursor() != 9 { // start of baz
-		// "foo bar  baz" — baz starts at 9
+		// "foo bar  baz": baz starts at 9
 		if string([]rune(e.Value())[e.Cursor():]) != "baz" {
 			t.Fatalf("cur=%d rest=%q", e.Cursor(), string([]rune(e.Value())[e.Cursor():]))
 		}

@@ -44,7 +44,7 @@ func TestEditorTab_StatePreservedAcrossSwitch(t *testing.T) {
 	}
 
 	// Now "switch" by creating a new editor for B (mimicking what
-	// openEditorTab does internally — create a fresh editor and
+	// openEditorTab does internally: create a fresh editor and
 	// point m.editor at it).
 	edB := editor.New(th)
 	t.Cleanup(edB.Close)
@@ -86,7 +86,7 @@ func TestEditorTab_StatePreservedAcrossSwitch(t *testing.T) {
 }
 
 // TestEditorTab_MapIndependentTabs verifies the editorTabs map keeps
-// each tab's buffer independent — typing in one doesn't affect another.
+// each tab's buffer independent; typing in one doesn't affect another.
 func TestEditorTab_MapIndependentTabs(t *testing.T) {
 	th := theme.DefaultDark()
 

@@ -115,7 +115,7 @@ func New(th *theme.Theme) *Screen {
 	s.input.onChange = func(value string) { s.onInputChanged(value) }
 
 	// Focus cycle: rail ⇄ options ⇄ input ⇄ actions. Esc climbs one level at
-	// a time — the write-in hands back to the rows, the rows hand back to the
+	// a time: the write-in hands back to the rows, the rows hand back to the
 	// rail, and only Esc on the rail cancels the deck.
 	s.railGate = newFocusGate(RailID, s.railRows, OptionsID, ActionsID, "question.cancel", nil)
 	s.optionsGate = newFocusGate(OptionsID, s.options, InputID, RailID, railFocusAction, RailID)
@@ -206,7 +206,7 @@ func (s *Screen) ruleSpan(contentW int) (x, w int) {
 // syncRail rebuilds the question rail rows. Each question paints as
 // "○ N. Title" (unanswered) or "✓ N. Title" (answered); divider rules
 // separate entries; the active question is indicated by background and text
-// color only (the shared List selection row) — never a marker glyph.
+// color only (the shared List selection row), never a marker glyph.
 func (s *Screen) syncRail() {
 	if s.railRows == nil {
 		return
@@ -706,7 +706,7 @@ func (s *Screen) syncAnswer() {
 }
 
 // canAdvance reports whether the current question carries a submittable
-// answer. An empty write-in blocks even though it paints no message — the
+// answer. An empty write-in blocks even though it paints no message: the
 // prompt area's placeholder already asks for text, and repeating it as an
 // error line under the input said the same thing twice.
 func (s *Screen) canAdvance() bool {

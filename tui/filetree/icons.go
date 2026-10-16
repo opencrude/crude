@@ -23,7 +23,7 @@ import (
 // The Color is an image/color.Color (typically from lipgloss.Color("…"))
 // that callers can pass to lipgloss.NewStyle().Foreground(icon.Color).
 type IconResult struct {
-	// Icon is the icon character(s) — either a NerdFont glyph or
+	// Icon is the icon character(s): either a NerdFont glyph or
 	// a Unicode/ASCII fallback.
 	Icon string
 
@@ -220,7 +220,7 @@ const fallbackFileIcon = "●"
 // DetectNerdFont checks the terminal environment for NerdFont support.
 //
 // Detection strategy:
-//  1. Check TERM_PROGRAM env var — terminals like "iTerm2", "kitty", "WezTerm",
+//  1. Check TERM_PROGRAM env var: terminals like "iTerm2", "kitty", "WezTerm",
 //     "tmux", "Ghostty", "Warp" typically support NerdFonts with proper config.
 //  2. Check TERMINFO/TERM for common NerdFont-aware terminals.
 //  3. Check for explicit NerdFont env vars (NERD_FONT, NERD_ICONS, etc.).
@@ -270,7 +270,7 @@ func DetectNerdFont() bool {
 	}
 
 	// If TERM is set to something modern, assume NerdFont.
-	// On Windows, be conservative — most users don't have NerdFonts installed
+	// On Windows, be conservative; most users don't have NerdFonts installed
 	// even if TERM indicates modern capabilities (e.g., Windows Terminal).
 	term := os.Getenv("TERM")
 	if strings.Contains(term, "truecolor") || strings.Contains(term, "256color") {
@@ -283,7 +283,7 @@ func DetectNerdFont() bool {
 		return false
 	}
 
-	// Default to true — most modern terminals support NerdFonts.
+	// Default to true: most modern terminals support NerdFonts.
 	return true
 }
 
@@ -293,7 +293,7 @@ func DetectNerdFont() bool {
 
 var (
 	// iconColorDir is the suggested color for directory icons.
-	// Defaults from theme.DefaultDark().Tree — ApplyTheme overrides at runtime.
+	// Defaults from theme.DefaultDark().Tree; ApplyTheme overrides at runtime.
 	iconColorDir color.Color = theme.DefaultDark().Tree.Colors.IconDir
 
 	// iconColorFile is the suggested color for regular file icons.

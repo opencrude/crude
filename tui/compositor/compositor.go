@@ -9,10 +9,10 @@ import (
 // Compositor manages the double-buffer frame pipeline.
 //
 // Frame lifecycle:
-//  1. BeginFrame() — reset damage, keep persistent back buffer
+//  1. BeginFrame(): reset damage, keep persistent back buffer
 //  2. App renders widgets into surfaces (only dirty surfaces need re-rendering)
-//  3. Composite() — flatten surface tree, composite only dirty surfaces into back buffer
-//  4. Present() — generate ANSI output from changed regions, swap front and back
+//  3. Composite(): flatten surface tree, composite only dirty surfaces into back buffer
+//  4. Present(): generate ANSI output from changed regions, swap front and back
 //
 // The compositor owns the screen-sized cell buffers and manages the
 // conversion from cell buffer → ANSI escape sequences for the terminal.
@@ -42,7 +42,7 @@ func NewCompositor(w, h int) *Compositor {
 
 	// Create root surface at full terminal size with transparent base
 	// (transparent so that the back buffer clearing with transparent blanks
-	// means "nothing drawn" — surfaces will blit their opaque cells on top)
+	// means "nothing drawn"; surfaces will blit their opaque cells on top)
 	c.root = surface.NewSurface("root", w, h, cell.TransparentBlank())
 
 	return c

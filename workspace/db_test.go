@@ -12,7 +12,7 @@ import (
 )
 
 // openTestWorkspaceDB creates a workspace DB in a temp dir and returns it.
-// The caller does not need to close it — t.Cleanup handles that.
+// The caller does not need to close it; t.Cleanup handles that.
 func openTestWorkspaceDB(t *testing.T) *WorkspaceDB {
 	t.Helper()
 	dir := t.TempDir()
@@ -104,7 +104,7 @@ func TestUpdateSessionCost(t *testing.T) {
 		t.Fatalf("after first push: expected 0.42, got %v", got)
 	}
 
-	// Push again — cumulative cost replaces (not adds). The workspace tracks
+	// Push again: cumulative cost replaces (not adds). The workspace tracks
 	// the running total in memory and pushes the snapshot.
 	if err := wdb.UpdateSessionCost(sid, 0.71); err != nil {
 		t.Fatalf("UpdateSessionCost #2: %v", err)
@@ -116,7 +116,7 @@ func TestUpdateSessionCost(t *testing.T) {
 
 func TestUpdateSessionCostUnknownSessionNoOp(t *testing.T) {
 	wdb := openTestWorkspaceDB(t)
-	// Updating a session that was never registered should not error —
+	// Updating a session that was never registered should not error;
 	// the UPDATE just matches zero rows.
 	if err := wdb.UpdateSessionCost("never-registered", 1.0); err != nil {
 		t.Fatalf("UpdateSessionCost on unknown session: %v", err)

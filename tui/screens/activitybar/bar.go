@@ -126,7 +126,7 @@ func (v View) Icon(nerdFont bool) string {
 func (v View) Glyph() string { return v.Icon(false) }
 
 // SettingsIcon is the manage control pinned to the bottom of the rail.
-// nf-fa-cogs is the denser two-cog glyph the Agents entry used to carry —
+// nf-fa-cogs is the denser two-cog glyph the Agents entry used to carry;
 // a single cog (nf-fa-cog) reads as a one-column speck.
 func SettingsIcon(nerdFont bool) string {
 	if nerdFont {

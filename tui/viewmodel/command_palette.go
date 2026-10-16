@@ -703,7 +703,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "edit.undo":
-		// Editor undo — legitimate palette command when an editor is
+		// Editor undo is a legitimate palette command when an editor is
 		// open. Mirrors the Ctrl+Z keyboard path (keyboard.go:146).
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 			if m.Feedback != nil {
@@ -714,7 +714,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "edit.redo":
-		// Editor redo — mirrors the Ctrl+Y keyboard path (keyboard.go:150).
+		// Editor redo mirrors the Ctrl+Y keyboard path (keyboard.go:150).
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 			if m.Feedback != nil {
 				m.Feedback.NotifyInfo("No file open to redo")

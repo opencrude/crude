@@ -54,7 +54,7 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 		t.Fatalf("unexpected cmd: %v", cmd)
 	}
 
-	// The open window's model must now show signed in — this is the reported
+	// The open window's model must now show signed in; this is the reported
 	// bug: it stayed "Not signed in" until the window was reopened.
 	if status := model.ValueForTest(model.SelectedCategory(), "chatgpt-status"); status != "Sign-in stored" {
 		t.Errorf("status after sign-in = %q, want stored sign-in", status)

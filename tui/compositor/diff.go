@@ -21,7 +21,7 @@ type CellChange struct {
 //
 // Optimization: only rows within the damage region bounds are examined.
 // Within each row, only columns within the damage region are compared.
-// Continuation cells (Width==0) are skipped — they are handled by their
+// Continuation cells (Width==0) are skipped; they are handled by their
 // primary wide cell.
 func Diff(front, back *surface.CellBuffer, damage *DamageRegion) *DiffResult {
 	result := &DiffResult{}
@@ -57,7 +57,7 @@ func Diff(front, back *surface.CellBuffer, damage *DamageRegion) *DiffResult {
 			fc := front.Get(x, y)
 			bc := back.Get(x, y)
 
-			// Skip continuation cells — they're handled by their primary wide cell
+			// Skip continuation cells; they're handled by their primary wide cell
 			if bc.Width == 0 {
 				continue
 			}

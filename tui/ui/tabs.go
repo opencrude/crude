@@ -12,7 +12,7 @@ import (
 
 // TabsChrome selects the background the strip sits on: shell chrome uses the
 // shell background, popup chrome the popup background. It never changes the
-// strip's structure — every tab bar in the app shares one look.
+// strip's structure; every tab bar in the app shares one look.
 type TabsChrome uint8
 
 const (
@@ -61,8 +61,8 @@ type tabRange struct {
 //
 // Structure (the shared shell mode strip is the reference):
 //
-//	row 0: labels — active accent+bold, others muted, hover fills the tab
-//	row 1: baseline rule — border ink, accent when the strip is focused, and
+//	row 0: labels; active accent+bold, others muted, hover fills the tab
+//	row 1: baseline rule; border ink, accent when the strip is focused, and
 //	       accent under the active tab so the selection reads at a glance
 //
 // The strip owns its baseline. Parents may publish a wider rule row (RuleBleed)
@@ -291,7 +291,7 @@ func (t *Tabs) Layout(_ LayoutContext, r Rect) {
 // idealTabWidth is the content-sized width: ordinary strips never pad short
 // labels out to a fixed slot, so the active underline matches the label.
 // The caller passes the composed display label, which already carries the
-// attention prefix — adding it here as well padded every dirty tab with two
+// attention prefix; adding it here as well padded every dirty tab with two
 // stray columns between the filename and its close glyph.
 func (t *Tabs) idealTabWidth(i int, displayLabel string) int {
 	w := rendering.VisibleWidth(displayLabel)

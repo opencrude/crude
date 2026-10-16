@@ -137,7 +137,7 @@ func ContextMenuPopupWidth(st *ContextMenuState) int {
 
 // ContextMenuPopupHeight returns the floating window total height.
 // Just the chrome (2 rows) plus the content rows. Context menus
-// are tight — no extra padding at the bottom.
+// are tight, with no extra padding at the bottom.
 func ContextMenuPopupHeight(st *ContextMenuState) int {
 	h := 0
 	for i, sec := range st.Sections {

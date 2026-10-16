@@ -42,7 +42,7 @@ func TestClickOutside_ConfirmPrompt_SuppressesClick(t *testing.T) {
 		t.Fatal("test setup: dirty-close-prompt not found")
 	}
 
-	// Click outside the modal — must be suppressed.
+	// Click outside the modal; the click must be suppressed.
 	msg := tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}
 	suppressed := app.handlePopupClickOutside(msg)
 	if !suppressed {
@@ -61,7 +61,7 @@ func TestClickOutside_FindReplace_KeepsOpenAndRoutes(t *testing.T) {
 		t.Fatal("test setup: find-replace not found")
 	}
 
-	// Click outside — must not be suppressed, popup must remain open.
+	// Click outside; the click must not be suppressed, and the popup must remain open.
 	msg := tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}
 	suppressed := app.handlePopupClickOutside(msg)
 	if suppressed {
@@ -76,7 +76,7 @@ func TestClickOutside_RightClick_DoesNothing(t *testing.T) {
 	app := setupTestAppWithPopup(t, "dirty-close-prompt", wm.ClickOutsideIgnore)
 	defer app.overlayHost.Close(ui.OverlayDirtyClose)
 
-	// Right-click — should be passed through to dispatchMouseRightClick
+	// Right-click should be passed through to dispatchMouseRightClick
 	// and NOT considered for click-outside suppression.
 	msg := tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseRight}
 	suppressed := app.handlePopupClickOutside(msg)
@@ -89,7 +89,7 @@ func TestClickOutside_InsidePopup_DoesNothing(t *testing.T) {
 	app := setupTestAppWithPopup(t, "context-menu", wm.ClickOutsideCloseRoute)
 	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
-	// Click INSIDE the popup — should not trigger click-outside.
+	// Click INSIDE the popup; this should not trigger click-outside.
 	fw := app.windowManager.Window("context-menu")
 	if fw == nil {
 		t.Fatal("test setup: context-menu not found")
@@ -288,7 +288,7 @@ func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 
 // TestDirtyPromptKey_CancelDiscardsLoop verifies that pressing Esc
 // (which now maps to Cancel on the dirty-prompt) does NOT re-trigger
-// the close — i.e. no infinite Esc loop. Regression test for the
+// the close, i.e. no infinite Esc loop. Regression test for the
 // "closing a tab seems to hang" bug.
 func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
@@ -314,7 +314,7 @@ func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	if app.windowManager.Window("dirty-close-prompt") != nil {
 		t.Fatal("Esc on dirty-prompt should remove the popup")
 	}
-	// Crucially: app.EditorState.ActiveView is preserved — the tab is
+	// Crucially: app.EditorState.ActiveView is preserved; the tab is
 	// still there, the editor is still modified, and a second Esc
 	// (e.g. routed to dispatchEditorKey) must NOT reopen the prompt.
 	if app.EditorState.ActiveView != "/tmp/foo.go" {
@@ -339,7 +339,7 @@ func TestDispatchEditorKey_CtrlWClosesTab(t *testing.T) {
 }
 
 // =============================================================================
-// Focus restoration tests — verify keyboard focus flows correctly
+// Focus restoration tests verify keyboard focus flows correctly
 // through popup open/close, mouse clicks, and chained popups.
 // =============================================================================
 
@@ -513,7 +513,7 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 		t.Fatal("context-menu should be closed after outside click")
 	}
 
-	// The stack is preserved — region handler will update focus.
+	// The stack is preserved; the region handler will update focus.
 	if app.FocusStack.Top() != FocusTree {
 		t.Fatal("treeFocused must be preserved through popup close")
 	}

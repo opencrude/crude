@@ -9,7 +9,7 @@ import (
 // TestMouseToInputPosUsesInputLocalGeometry locks the coordinate contract of
 // the migrated mouse path: MouseToInputPos maps shellinput-LOCAL coordinates
 // (relative to the input shell rect, as delivered by the Host hit tree)
-// against the model's own painted rows — it must never depend on a screen Y or
+// against the model's own painted rows; it must never depend on a screen Y or
 // chat-area offset. Verified at narrow/standard/wide widths.
 func TestMouseToInputPosUsesInputLocalGeometry(t *testing.T) {
 	for _, tc := range []struct {

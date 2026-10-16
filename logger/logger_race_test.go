@@ -34,14 +34,14 @@ func TestLoggerCloseConcurrentWithWrite(t *testing.T) {
 		}()
 	}
 
-	// Close while the writers are mid-flight — this is the racing window.
+	// Close while the writers are mid-flight; this is the racing window.
 	if err := l.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	close(stop)
 	wg.Wait()
 
-	// Second close must be a no-op (idempotent) — and any straggler write
+	// Second close must be a no-op (idempotent), and any straggler write
 	// must not panic or deadlock.
 	if err := l.Close(); err != nil {
 		t.Fatalf("second close: %v", err)

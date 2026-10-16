@@ -32,7 +32,7 @@ func providerFamilyLimits(modelID string) modelLimits {
 	switch provider {
 	case "anthropic":
 		return modelLimits{
-			MaxImageFileSize:     32 * 1024 * 1024, // 32 MB — Claude supports larger images
+			MaxImageFileSize:     32 * 1024 * 1024, // 32 MB; Claude supports larger images
 			MaxTextFileSize:      2 * 1024 * 1024,  // 2 MB
 			MaxInlineContentSize: 32 * 1024 * 1024, // 32 MB
 		}
@@ -133,7 +133,7 @@ func SetModelLimits(modelID string, limits modelLimits) {
 func FileSizeExceeded(path string, maxSize int64) string {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return "" // can't stat — let caller handle read error
+		return "" // can't stat; let caller handle read error
 	}
 	if fi.Size() > maxSize {
 		return fmt.Sprintf("file too large: %s (%d bytes, max %d)", path, fi.Size(), maxSize)

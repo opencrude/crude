@@ -269,7 +269,7 @@ func TestShellChatHostScrollbarDragCrossesList(t *testing.T) {
 // TestShellChatHostScrollbarDragUsesExplicitCapture proves the migrated
 // scrollbar thumb drag requests capture through the explicit ui.capture
 // service (CapturedPointer reports the scrollbar as owner) and that the drag
-// continues outside the gutter and ends reliably on release — exit criterion
+// continues outside the gutter and ends reliably on release, meeting exit criterion
 // #3 through the real Host dispatch path.
 func TestShellChatHostScrollbarDragUsesExplicitCapture(t *testing.T) {
 	th := theme.DefaultDark()

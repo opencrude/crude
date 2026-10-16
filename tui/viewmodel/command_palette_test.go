@@ -436,7 +436,7 @@ func TestPaletteIncludesNewCommands(t *testing.T) {
 }
 
 // TestPaletteSelfReferenceHidden asserts the "Command Palette" entry
-// that opens the palette is excluded — selecting it from the palette
+// that opens the palette is excluded, because selecting it from the palette
 // is meaningless and visually noisy.
 func TestPaletteSelfReferenceHidden(t *testing.T) {
 	reg := ui.DefaultRegistry()
@@ -595,7 +595,7 @@ func TestExecutePaletteCommandRoutesCycleTheme(t *testing.T) {
 // nested file, then assert the tree contains the file's parents.
 func TestExecutePaletteCommandRevealInTree(t *testing.T) {
 	app := newFullTestApp(t)
-	// Open a file — newFullTestApp already opens a workspace.
+	// Open a file; newFullTestApp already opens a workspace.
 	if app.EditorState.Editor == nil || !app.EditorState.Editor.IsOpen() {
 		// Nothing to reveal; just confirm the command does not crash.
 		app.executePaletteCommand("file.revealInTree")
@@ -715,7 +715,7 @@ func TestExecutePaletteCommandEditUndoRedo(t *testing.T) {
 // test for the core focus-architecture fix. Before the fix,
 // view.focus.chat called unfocus() (clearing the stack), and
 // focusTarget() then fell through to FocusEditor because an editor was
-// open — so "Focus Chat" was a no-op. The fix pushes FocusInput onto
+// open, so "Focus Chat" was a no-op. The fix pushes FocusInput onto
 // the stack and focusTarget() now returns FocusInput even with an
 // editor open.
 func TestExecutePaletteCommandFocusChatWithEditorOpen(t *testing.T) {
@@ -730,7 +730,7 @@ func TestExecutePaletteCommandFocusChatWithEditorOpen(t *testing.T) {
 	if app.FocusStack.Top() != FocusInput {
 		t.Fatalf("FocusStack.Top=%v want FocusInput", app.FocusStack.Top())
 	}
-	// And the editor is still open — focus.chat must not close it.
+	// And the editor is still open; focus.chat must not close it.
 	if app.EditorState.ActiveView != mainPath {
 		t.Fatalf("view.focus.chat closed the editor: ActiveView=%q want %q", app.EditorState.ActiveView, mainPath)
 	}

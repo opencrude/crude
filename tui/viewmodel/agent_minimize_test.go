@@ -20,7 +20,7 @@ func newMinimizeTestAgent(t *testing.T, app *App, id string) {
 
 // Closing an agent tab must not stop the agent. The orchestrator keeps
 // running, the conversation is retained, and the tab is the only thing that
-// goes away — otherwise a stray click destroys work in flight.
+// goes away; otherwise a stray click destroys work in flight.
 func TestClosingAgentTabMinimizesWithoutCancelling(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40

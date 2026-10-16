@@ -692,7 +692,7 @@ func formatEditResult(path string, count int, oldContent, newContent string) Too
 // the file already holds: the edit did not happen, and reporting "Replaced 1
 // occurrence" would both mislead the model and hand the projection a body that
 // is prose instead of a patch. A no-change edit is an error the model must
-// correct — the same contract Claude Code's Edit tool ships ("No changes to
+// correct; Claude Code's Edit tool uses the same contract ("No changes to
 // make: old_string and new_string are exactly the same.").
 func noChangeEditResult(oldString, newString string) ToolResult {
 	reason := "no changes to make: the patch left the file byte-identical"

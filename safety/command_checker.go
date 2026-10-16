@@ -132,7 +132,7 @@ func isPathUnderPrefix(path string, prefix string) bool {
 	if runtime.GOOS == "windows" {
 		if rootAnchored {
 			// POSIX-style path on Windows (\etc\config.conf, \, etc.).
-			// Match against POSIX-style prefixes only — Windows drive
+			// Match against POSIX-style prefixes only; Windows drive
 			// prefixes (C:\Windows) don't apply to root-relative paths.
 			if cleanPrefix == "/" || cleanPrefix == "\\" {
 				return cleaned == cleanPrefix

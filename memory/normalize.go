@@ -132,7 +132,7 @@ const maxQueryTokens = 24
 
 // BuildMatchQuery converts free text (plus extra context strings) into a
 // safe FTS5 OR-query over normalized tokens. Returns "" when nothing
-// searchable remains — callers must treat that as "no query", not match-all.
+// searchable remains; callers must treat that as "no query", not match-all.
 func BuildMatchQuery(text string, extra ...string) string {
 	set := tokenSet(text)
 	for _, e := range extra {

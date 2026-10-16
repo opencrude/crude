@@ -30,7 +30,7 @@ type NewSessionResult struct {
 	NeedsAccount bool
 }
 
-// Workspace is the project-scoped composition root — the IDE instance.
+// Workspace is the project-scoped composition root for one IDE instance.
 //
 // One Workspace per project directory, inspired by JetBrains' project model.
 // Each workspace gets:
@@ -213,7 +213,7 @@ type Workspace struct {
 	// registryErr holds the most recent non-fatal workspace_sessions
 	// registry write failure (RegisterSession / SyncSessionMeta / CloseSession).
 	// Cleared on the next successful registry write. Session create/resume
-	// must not fail because of this — it is surfaced for logging/UI only.
+	// must not fail because of this; it is surfaced for logging/UI only.
 	registryErr    error
 	persistenceMu  sync.Mutex
 	workspaceDBErr error
@@ -550,7 +550,7 @@ func (w *Workspace) persistSessionRegistry(fs *Session, sessionDB *sql.DB) {
 	projectName := filepath.Base(w.RootPath)
 	if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, provider); err != nil {
 		w.noteRegistryErr("session_register_failed", err)
-		// Still attempt meta sync / close stamp — Register may have failed for
+		// Still attempt meta sync / close stamp; Register may have failed for
 		// an unrelated reason while the row already exists.
 	} else {
 		w.noteRegistryErr("", nil)

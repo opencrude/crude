@@ -84,7 +84,7 @@ func TestSupportsVision_CaseInsensitive(t *testing.T) {
 func TestSupportsVision_NoFuzzyMatch(t *testing.T) {
 	resetDynamicCaps()
 
-	// Fuzzy heuristics are removed — "vision" substring should NOT match
+	// Fuzzy heuristics are removed; the "vision" substring should NOT match
 	if SupportsVision("my-custom-vision-model") {
 		t.Error("SupportsVision should NOT use fuzzy 'vision' substring matching")
 	}

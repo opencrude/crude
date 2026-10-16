@@ -31,8 +31,8 @@ type projectionCase struct {
 	want      []string
 }
 
-// The transcript is filled from two directions — live agent events through the
-// workspace conversation, and a resumed session's persisted history — and both
+// The transcript is filled from two directions: live agent events through the
+// workspace conversation, and a resumed session's persisted history; both
 // must land in the same projection authority with identical rows. Each case runs
 // through both real entry points: workspace.Conversation for live, and the
 // canonical DisplayMeta snapshot the session writes
@@ -563,15 +563,15 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 // operand with a hand-written scanner that knew \" \n \t but not \uXXXX. The
 // painted row then showed "u0026u0026" where the shell ran "&&".
 //
-// This drives that exact ingress — it does not call the Conversation setters
-// directly, which is why the other parity cases could not observe the defect —
+// This drives that exact ingress (it does not call the Conversation setters
+// directly, which is why the other parity cases could not observe the defect)
 // and asserts on the painted row text the user actually reads.
 func TestPaintedCommandRowShowsRealOperators(t *testing.T) {
 	const want = "cd /home/lenovo/ocd/crude && golangci-lint run ./x 2>&1 | tail -20"
 
 	// Build the payload the way it actually arrives. Go's json.Marshal applies
 	// HTML-escaping by default, so the "&&" and ">" reach the event as
-	// \u0026\u0026 and \u003e — the exact input that used to leak.
+	// \u0026\u0026 and \u003e, the exact input that used to leak.
 	payload, err := json.Marshal(map[string]any{"command": want, "timeout_seconds": 600})
 	if err != nil {
 		t.Fatal(err)

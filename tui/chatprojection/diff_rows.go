@@ -92,7 +92,7 @@ func BuildDiffRows(raw string, maxLines, maxWidth int) []PaintLine {
 }
 
 // BuildBandedDiffRows renders a unified diff in Crude's compact banded format:
-// no fences, no file/hunk headers — just right-aligned dim line numbers, a
+// no fences, no file/hunk headers: just right-aligned dim line numbers, a
 // tight `+`/`-` indicator column, and per-line background bands (full-width
 // green for additions, red for deletions) so changes read as colored stripes.
 // Context lines render without a band; trimmed gaps render as untinted `···`.
@@ -494,8 +494,8 @@ func BuildPlanViewRows(raw string, contentWidth int) []PaintLine {
 }
 
 // BuildPlanViewRowsCollapsed renders the collapsed ("unopened") plan card: a
-// windowed slice centered on the live step — the current in_progress step (or
-// the next pending one) plus its immediate neighbours — because what is
+// windowed slice centered on the live step: the current in_progress step (or
+// the next pending one) plus its immediate neighbours; because what is
 // happening now matters more to a reader than steps finished hours ago. Rows
 // hidden on either side are summarized by count.
 func BuildPlanViewRowsCollapsed(raw string, contentWidth int) []PaintLine {
@@ -653,7 +653,7 @@ func parsePlanView(raw string) (*PlanViewData, bool) {
 }
 
 // buildPlanViewHeader renders the card banner rows: "│   Plan: <objective>
-// (<status> · done/total)". The objective is never truncated — it wraps with a
+// (<status> · done/total)". The objective is never truncated: it wraps with a
 // hanging indent aligned under the objective's first word, and the status
 // suffix trails the final row (or starts its own row when it does not fit), so
 // a long title stays completely visible in both compact and expanded form.
@@ -723,7 +723,7 @@ func buildPlanViewHeader(view *PlanViewData, contentWidth int) []PaintLine {
 }
 
 // planTextChunks splits one token wider than the row into hard-wrapped
-// pieces, so even an unbroken token stays fully visible — shared by the header
+// pieces, so even an unbroken token stays fully visible; shared by the header
 // objective words and the expanded step text.
 func planTextChunks(word string, width int) []string {
 	if rendering.VisibleWidth(word) <= width {
@@ -734,7 +734,7 @@ func planTextChunks(word string, width int) []string {
 
 // buildPlanViewStep renders one step. Compact keeps the banner contract of
 // exactly one elided row per step. Expanded is the reading view: the step's
-// full text — description plus any result or reason — wraps across rows with a
+// full text (description plus any result or reason) wraps across rows with a
 // hanging indent aligned under the text, so nothing a step carries stays
 // hidden behind an ellipsis.
 func buildPlanViewStep(step PlanStepView, contentWidth int, collapsed bool) []PaintLine {

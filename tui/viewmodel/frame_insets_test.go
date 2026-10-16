@@ -61,7 +61,7 @@ func TestFrameInsetsShiftShellGeometry(t *testing.T) {
 }
 
 // TestFrameInsetsDefaultZero keeps the zero-padding contract: a theme straight
-// from the factory renders edge to edge — the header content row IS row 0 and
+// from the factory renders edge to edge: the header content row IS row 0 and
 // the main chrome starts right below the two header rows.
 func TestFrameInsetsDefaultZero(t *testing.T) {
 	app := newFullTestApp(t)
@@ -103,7 +103,7 @@ func TestApplyFramePreviewLiveReInsets(t *testing.T) {
 
 // TestApplyFramePreviewReplacesNotAdds guards the live-preview math: the
 // settings form seeds rows with the PERSISTED values, so its message carries
-// the complete frame. Editing one side must not double the untouched sides —
+// the complete frame. Editing one side must not double the untouched sides;
 // the overlay replaces the persisted frame instead of stacking on it.
 func TestApplyFramePreviewReplacesNotAdds(t *testing.T) {
 	app := newFullTestApp(t)
@@ -133,7 +133,7 @@ func TestApplyFramePreviewReplacesNotAdds(t *testing.T) {
 
 // TestApplyFramePreviewBlankFieldMeansZero verifies a blanked form field
 // previews as zero (what a save persists), not as the previously persisted
-// value — preview and save must agree.
+// value; preview and save must agree.
 func TestApplyFramePreviewBlankFieldMeansZero(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
@@ -211,7 +211,7 @@ func TestThemeFrameFromWorkspaceSettings(t *testing.T) {
 }
 
 // TestThemeFrameDefaultsWhenUnset verifies an empty config leaves the theme's
-// zero frame untouched — no padding is forced on anyone.
+// zero frame untouched; no padding is forced on anyone.
 func TestThemeFrameDefaultsWhenUnset(t *testing.T) {
 	app := newFullTestApp(t)
 	app.ApplyThemePreset("dark")

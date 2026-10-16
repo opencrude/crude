@@ -134,7 +134,7 @@ func (e *Editor) moveWordLeft() {
 				ri--
 			}
 		} else {
-			// Punctuation run — stop at its start (do not skip through to a word).
+			// Punctuation run: stop at its start (do not skip through to a word).
 			for ri > 0 && !isWordChar(runes[ri-1]) && !unicode.IsSpace(runes[ri-1]) {
 				ri--
 			}
@@ -182,7 +182,7 @@ func (e *Editor) moveWordRight() {
 				}
 			}
 		} else {
-			// Punctuation run — stop at its end.
+			// Punctuation run: stop at its end.
 			for ri < len(runes) && !isWordChar(runes[ri]) && !unicode.IsSpace(runes[ri]) {
 				ri++
 			}

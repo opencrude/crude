@@ -105,7 +105,7 @@ func WithMediaReplayRecovery(enabled bool) ClientOption {
 }
 
 // OnRequestEncoded registers a callback receiving the fully encoded request
-// body (after extras merge) for each chat request — used for turn logging.
+// body (after extras merge) for each chat request; used for turn logging.
 func OnRequestEncoded(fn func(body []byte)) ClientOption {
 	return func(c *Client) { c.onRequestEncoded = fn }
 }
@@ -1118,7 +1118,7 @@ func looksLikeNDJSON(peeked []byte) bool {
 // chatResponseDecoder adapts a protocol's non-streaming response decoder to
 // the stream decoder interface. It is selected when a provider answers a
 // streaming request with one JSON document (Content-Type application/json or
-// a JSON-sniffed body), whose schema follows the non-streaming response —
+// a JSON-sniffed body), whose schema follows the non-streaming response,
 // which differs from the event schema for several protocols.
 type chatResponseDecoder struct {
 	proto Protocol

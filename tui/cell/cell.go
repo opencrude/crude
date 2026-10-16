@@ -6,7 +6,7 @@
 // Core types:
 // - Color: terminal color (default, 256-palette, 24-bit truecolor)
 // - Attrs: text rendering attributes as a bitmask (bold, italic, etc.)
-// - Cell: the atomic unit of compositing — a single terminal cell
+// - Cell: the atomic unit of compositing, a single terminal cell
 //
 // Pool types (pool.go):
 // - CharPool: interns frequently-used runes to reduce memory
@@ -40,7 +40,7 @@ const (
 )
 
 // Color represents a terminal color. Supports default, palette, and truecolor.
-// Color is a value type — it is always passed by copy, never by pointer.
+// Color is a value type: it is always passed by copy, never by pointer.
 type Color struct {
 	Type    ColorType
 	Palette uint8 // For ColorPalette: index 0-255
@@ -338,7 +338,7 @@ func (a Attrs) Has(mask Attrs) bool {
 // Cell
 // ---------------------------------------------------------------------------
 
-// Cell represents a single terminal cell — the atomic unit of compositing.
+// Cell represents a single terminal cell, the atomic unit of compositing.
 //
 // Each primary cell occupies one or more columns on the effective terminal
 // grid and owns Width-1 continuation cells. Modern wide characters normally
@@ -369,7 +369,7 @@ func NewWideCell(ch rune, fg, bg Color, attr Attrs) Cell {
 
 // NewClusterCell creates a cell whose visible glyph is a full grapheme
 // cluster (e.g. ♻️ = ♻ + FE0F, 👨‍👩‍👧‍👦, 🇯🇵). Storing the cluster text in
-// Content keeps the ANSI lossy step lossless — GenerateANSI emits every
+// Content keeps the ANSI lossy step lossless: GenerateANSI emits every
 // rune, so ultraviolet re-parses the same cluster and computes the same
 // width. width is the measured terminal advance for the whole cluster.
 func NewClusterCell(cluster string, width int, fg, bg Color, attr Attrs) Cell {

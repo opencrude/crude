@@ -1,12 +1,12 @@
 // Package perf exposes work-accounting counters for the TUI render pipeline.
 //
 // A CPU-hammering regression in a tick-driven TUI is almost never a single
-// function getting fatter — it is a call-frequency regression (a cache dropped
+// function getting fatter; it is a call-frequency regression (a cache dropped
 // every tick, a stream of full re-renders) that multiplies per-frame cost by
 // 25Hz. Leaf allocation benches cannot see that class: nothing they benchmark
 // gets slower, the pipeline around them just does 25x the work. These
-// counters measure the consequence — render volume at the pipeline chokepoints
-// — so whatever path re-dirties cached state pays a visible price, regardless
+// counters measure the consequence: render volume at the pipeline chokepoints,
+// so whatever path re-dirties cached state pays a visible price, regardless
 // of which file it lives in. Work-budget tests (tui/viewmodel perf_budget)
 // and the live sentinel (CRUDE_PERF_LOG) gate on them.
 package perf
@@ -107,7 +107,7 @@ func MarkItemRendered(lines int) {
 // MarkStatusRerender records a role-status re-render. InvalidateCache drops
 // status rows every tick and they are never cached, so status churn is
 // pre-existing bounded churn (short bodies) that scales with historical
-// status-row count — not the re-render class these budgets hunt. Counted
+// status-row count, not the re-render class these budgets hunt. Counted
 // separately so it cannot drown the expensive-work signal.
 func MarkStatusRerender() {
 	statusRenders.Add(1)
@@ -134,7 +134,7 @@ func MarkItemInvalidation() {
 
 // MarkANSIFrame records one compositor Present that regenerated full-frame
 // ANSI (cells = w*h of the layer). Full-frame regeneration is a known,
-// documented per-frame cost — the counter is for visibility, and budgets
+// documented per-frame cost; the counter is for visibility, and budgets
 // should treat it relative to layer size, not in isolation.
 func MarkANSIFrame(cells int) {
 	ansiFrames.Add(1)

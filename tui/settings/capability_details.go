@@ -415,7 +415,7 @@ func (catalog *capabilityCatalog) entityBytes() []byte {
 }
 
 // detailActions splits a detail page's buttons into its footer decision
-// (the install/review step, then Back — always last) and the page's own
+// (the install/review step, then Back, always last) and the page's own
 // operations, which stay above the footer.
 func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.ActionBarButton) (decision, primary, secondary []ui.ActionBarButton) {
 	back := button("Back", "back")

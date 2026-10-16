@@ -17,7 +17,7 @@ import (
 )
 
 // Work-budget tests: a CPU-hammering regression in this TUI is almost never a
-// single function getting fatter — it is cached state re-dirtied every tick
+// single function getting fatter; it is cached state re-dirtied every tick
 // (at idle or active cadence), which turns steady state into a full-session re-render. These tests
 // pin the work per frame at the pipeline chokepoints via tui/perf counters:
 // idle ticks must re-render ~nothing, hydration renders each row once, tab
@@ -29,7 +29,7 @@ import (
 // markdown assistant bodies, finished tool calls, inactive thinking, plus
 // statusCount status rows. Status rows legitimately re-render every tick (by
 // design, never cached) so the budget tests keep their count FIXED across
-// sizes and count them separately (perf.StatusRenders) — only the
+// sizes and count them separately (perf.StatusRenders); only the
 // glamour-class re-render work is budgeted.
 func seedBudgetSession(count, statusCount int) []ttypes.ChatMessage {
 	const paragraph = "The renderer keeps a per-message line cache so idle frames do not " +
@@ -112,7 +112,7 @@ func idleWindowWork(t *testing.T, app *App, ticks int) perf.Stats {
 
 // Steady-state budgets over pumpTicks idle frames (tick+paint). Only
 // glamour-class work counts: status rows and subpanes are counted separately
-// by the perf package. There should be nothing to re-render in steady state —
+// by the perf package. There should be nothing to re-render in steady state;
 // budgets exist for tolerated edge cases, not for steady churn. A single
 // 200-message session re-rendered per tick measures in the tens of thousands
 // of lines over the same window.
@@ -124,7 +124,7 @@ const (
 
 // clearTurnTail mirrors a completed agent turn: ClearTurnStatus removes the
 // trailing turn-status row the conversation keeps pinned at the visual tail,
-// so the session ends on a real (heavyweight) assistant body — exactly the
+// so the session ends on a real (heavyweight) assistant body, exactly the
 // shape the guarded trailing-assistant drop in InvalidateCache hunts for.
 func clearTurnTail(t *testing.T, app *App) {
 	t.Helper()
@@ -252,7 +252,7 @@ func TestHydrationRendersOnceThenStaysWarm(t *testing.T) {
 	work := idleWindowWork(t, app, pumpTicks)
 	// A hydrated (dead) session re-renders almost nothing per idle tick.
 	// Master tolerates a couple of one-off edge rows per window, but a stuck
-	// mid-flight row re-renders EVERY tick — so the item ceiling is one
+	// mid-flight row re-renders EVERY tick, so the item ceiling is one
 	// tick's worth, not pumpTicks worth.
 	if work.ItemsRendered > pumpTicks || work.LinesRendered > lineBudgetPerTick*pumpTicks {
 		churn := drainChurnReport(app)
@@ -376,7 +376,7 @@ func TestSidebarResizeDefersChatReflowUntilRelease(t *testing.T) {
 }
 
 // TestEditorAgentSwitchWorkBounded: toggling editor/agent is a real
-// transition — returning to the agent refreshes (renders at most the session
+// transition: returning to the agent refreshes (renders at most the session
 // once), and while the editor is active the chat must render nothing at all.
 // Steady re-derivations after the switch must stay at zero.
 func TestEditorAgentSwitchWorkBounded(t *testing.T) {

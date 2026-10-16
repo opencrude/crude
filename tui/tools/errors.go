@@ -9,7 +9,7 @@ import (
 // ToolErrorReason renders a short, human reason for a tool failure whose
 // payload is structured. Planning tools answer with canonical JSON addressed to
 // the model; a row must never dump that payload at the user, so the failure
-// reads as "<tool> failed — <reason>". Edit-tool failures carry prose plus a
+// reads as "<tool> failed" followed by the reason. Edit-tool failures carry prose plus a
 // trailing "Hint: …" line addressed to the model's next call, so their row keeps
 // only the first line as the reason. Returns "" when the content carries no
 // recognizable reason (plain-text errors keep their own message).
@@ -90,7 +90,7 @@ func editFailureReason(content string) string {
 	return CollapseLine(strings.TrimSpace(strings.TrimPrefix(text, "Error:")))
 }
 
-// CollapseLine flattens any run of whitespace — including newlines — into
+// CollapseLine flattens any run of whitespace (including newlines) into
 // single spaces so a value destined for a one-line row can never wrap or
 // smuggle a paragraph into a title.
 func CollapseLine(text string) string {

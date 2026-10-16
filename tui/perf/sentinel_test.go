@@ -58,7 +58,7 @@ func TestSentinelWarnsOnIdleBudgetBust(t *testing.T) {
 	path := sentinelWithFile(t)
 
 	// A per-tick full re-render: 20 items / ~60 lines per frame plus a
-	// whole-projection invalidation — the signature of every bug class from
+	// whole-projection invalidation, the signature of every bug class from
 	// the 2026-08-30 incident.
 	for range sentinelWindowTicks {
 		MarkCacheInvalidation()

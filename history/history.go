@@ -3,18 +3,18 @@
 // mechanisms layered on top of a normalization function. Multimodal prompts
 // retain exact attachment spans and independent, content-addressed media.
 //
-//  1. Exact-repeat folding — prompts are keyed by their normalized text
+//  1. Exact-repeat folding: prompts are keyed by their normalized text
 //     (trim + whitespace collapse + lowercase). A repeat bumps the entry's
 //     count and lastSeen and refreshes its stored text, so "hello" typed
 //     thirty times becomes one entry with count 30 instead of thirty rows.
 //
-//  2. Retry-window collapsing — near-identical resubmits within a short
+//  2. Retry-window collapsing: near-identical resubmits within a short
 //     window (a typo fix, a re-send after an error) merge into the entry they
 //     retry. Similarity is Jaccard over character 4-gram shingles of the
 //     normalized text, applied only to texts long enough for the metric to be
 //     meaningful (short strings like "hi" must match exactly).
 //
-//  3. Score-based eviction — the list is capped; when it overflows, the
+//  3. Score-based eviction: the list is capped; when it overflows, the
 //     entry with the lowest score is dropped, where score decays with age:
 //     score = count * 2^(-ageDays). Frequently used prompts survive; stale
 //     one-offs go first.
@@ -248,7 +248,7 @@ func shingles(text string) map[string]struct{} {
 	for i := 0; i+shingleN <= len(r); i++ {
 		out[string(r[i:i+shingleN])] = struct{}{}
 	}
-	if len(out) == 0 { // shorter than n — fall back to the whole text
+	if len(out) == 0 { // shorter than n; fall back to the whole text
 		out[text] = struct{}{}
 	}
 	return out

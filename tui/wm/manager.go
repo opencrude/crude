@@ -261,7 +261,7 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 	// If we have an active drag or resize, don't start a new one;
 	// the motion handler continues the interaction.
 	// However, still check if the click is on the close button of the
-	// actively dragged window — users expect to close by clicking the X.
+	// actively dragged window; users expect to close by clicking the X.
 	if wm.activeDrag != nil || wm.activeResize != nil {
 		if wm.activeDrag != nil && wm.activeDrag.Closable() && wm.activeDrag.IsOnCloseButton(m.X, m.Y) {
 			return wm.activeDrag // Let caller handle close
@@ -295,7 +295,7 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 			// they must start neither a title drag nor a top-edge resize.
 			onTitleAction := fw.IsOnTitleAction(m.X, m.Y)
 
-			// Check title bar for drag (before edge check — title bar is
+			// Check title bar for drag (before edge check, because title bar is
 			// a more specific hit target than the resize edge).
 			if fw.Movable() && fw.IsOnTitleBar(m.X, m.Y) && !onTitleAction {
 				wm.activeDrag = fw
@@ -323,7 +323,7 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 		}
 	}
 
-	// Click outside all windows — unfocus.
+	// Click outside all windows: unfocus.
 	if wm.focused != nil {
 		wm.focused.Unfocus()
 		wm.focused = nil

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Consolidation limits: conservative on purpose — a background rewrite that
+// Consolidation limits: conservative on purpose, because a background rewrite that
 // goes wrong must not be able to gut the store.
 const (
 	maxConsolidationOps   = 12

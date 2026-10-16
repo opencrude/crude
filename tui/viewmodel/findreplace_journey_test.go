@@ -12,7 +12,7 @@ import (
 // TestFindReplace_FullUserJourney simulates the complete find/replace
 // workflow exactly as a user drives it: keys through the real dispatch
 // chain, clicks at painted (Host screen) positions. This is the
-// integration guard for the interaction overhaul — if any layer (dispatch
+// integration guard for the interaction overhaul: if any layer (dispatch
 // ordering, hit geometry, state sync) regresses, this fails.
 func TestFindReplace_FullUserJourney(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
@@ -40,7 +40,7 @@ func TestFindReplace_FullUserJourney(t *testing.T) {
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'c', Mod: tea.ModAlt}) // off again
 
 	// Transform to Replace via Ctrl+H while the popup owns focus, then type
-	// the replacement into the (focused) find field — Tab to replace.
+	// the replacement into the (focused) find field; Tab to replace.
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl})
 	if !app.FindReplace.ReplaceMode {
 		t.Fatal("ctrl+h did not transform to replace mode")

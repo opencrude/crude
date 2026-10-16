@@ -16,8 +16,8 @@ type LayoutInfo struct {
 }
 
 // frameInsets returns the effective blank inset around the whole shell: the
-// persisted theme frame, or — while the settings overlay previews unsaved
-// edits (FramePreviewMsg) — the overlay's own complete frame in its place.
+// persisted theme frame or, while the settings overlay previews unsaved
+// edits (FramePreviewMsg), the overlay's own complete frame in its place.
 // Everything the viewmodel positions is measured inside this frame: the
 // header/status/activity/tab bar and the content column all start at its
 // inner edge, and the frame itself stays background-painted. Values are
@@ -25,7 +25,7 @@ type LayoutInfo struct {
 //
 // The overlay REPLACES the persisted frame rather than adding to it: the
 // settings form seeds its rows with the effective (persisted) values, so the
-// preview message already carries the full frame — adding would double every
+// preview message already carries the full frame; adding would double every
 // untouched side on each edit.
 func (m *App) frameInsets() ui.Insets {
 	if m == nil || m.Theme == nil {

@@ -769,8 +769,8 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 }
 
 // Handle processes keyboard, paste, and mouse events. Read-only areas still
-// accept every reading interaction — pointer selection with copy-on-release,
-// Ctrl+C, scrolling, cursor movement — and refuse only what would mutate the
+// accept every reading interaction (pointer selection with copy-on-release,
+// Ctrl+C, scrolling, cursor movement) and refuse only what would mutate the
 // text (typing, paste, delete, undo, cut).
 func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 	switch evt.Kind {
@@ -867,7 +867,7 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 		return res
 	}
 	// A clipboard chord that fell through (Ctrl+C with nothing selected) stays
-	// unhandled so the host owns the next rung of its ladder — the chat
+	// unhandled so the host owns the next rung of its ladder: the chat
 	// composer clears its draft.
 	if ClipboardChordFor(m) != ClipboardChordNone {
 		return EventResult{}
@@ -926,8 +926,8 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 
 // readOnlyKeyAllowed reports whether a key may reach the engine while the area
 // is read-only. Reading keys (cursor movement, scrolling, select-all) never
-// mutate the text; everything else — typing, newlines, delete, word-delete,
-// undo/redo — is refused so a preview stays immutable.
+// mutate the text; everything else (typing, newlines, delete, word-delete,
+// undo/redo) is refused so a preview stays immutable.
 func (t *TextArea) readOnlyKeyAllowed(m tea.KeyPressMsg) bool {
 	if m.Code == tea.KeyEsc {
 		return false
@@ -1040,7 +1040,7 @@ var _ Component = (*TextArea)(nil)
 var _ TextClipboardTarget = (*TextArea)(nil)
 
 // ---------------------------------------------------------------------------
-// textAreaEngine — the multi-line editing model
+// textAreaEngine: the multi-line editing model
 //
 // This is the engine from components/text.go, relocated into the foundation
 // package (tui/ui) so TextArea can own it natively without an import cycle.
@@ -1287,7 +1287,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		if primary && len(msg.Text) == 0 {
 			switch msg.Code {
 			case 'a':
-				// Ctrl+A: select all (unless Shift also held — in that
+				// Ctrl+A: select all (unless Shift also held: in that
 				// case the legacy binding to go to line start still
 				// applies, so honour shift+ctrl+a as select-all too).
 				total := e.Len()

@@ -88,7 +88,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	// The launcher fills the main content area (same Y range as the
 	// editor/chat area). Clicks OUTSIDE this Y range (e.g. on the
 	// input bar at the bottom) fall through to the input/chat
-	// regions below — the launcher must NOT steal those clicks.
+	// regions below; the launcher must NOT steal those clicks.
 	// The file tree (sidebar) is already handled above (regionSidebar
 	// check), so the launcher never interferes with it.
 	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
@@ -261,7 +261,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	// Click-outside handling for all popups. Check every open popup:
 	// if the click missed it, act based on its click-outside behavior.
 	if m.handlePopupClickOutside(msg) {
-		return m, nil // modal popup — suppress the click entirely
+		return m, nil // modal popup: suppress the click entirely
 	}
 
 	if m.windowManager != nil {
@@ -440,7 +440,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 	// Root-host pointer capture: drags (chat selection, scrollbar thumbs,
 	// split dividers, input selection, deck gutters) continue outside their
-	// original bounds until release — one capture service for the whole shell.
+	// original bounds until release, using one capture service for the whole shell.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		m.clearPlanHover()
 		res := m.rootHost.Handle(msg)
@@ -538,7 +538,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleShellPointer(msg)
 	}
 
-	// Mouse is outside every interactive region — clear stale hover.
+	// Mouse is outside every interactive region; clear stale hover.
 	if m.Tree.Model != nil {
 		m.Tree.Model.Hover.Clear()
 	}

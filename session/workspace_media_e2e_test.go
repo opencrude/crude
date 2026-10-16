@@ -736,7 +736,7 @@ func TestSubAgentMediaUsesChildModelCapabilities(t *testing.T) {
 
 // TestE2EWorkspaceSwitchReRootsToolExecution is the real lifecycle: create a
 // session in workspace A, run a tool, switch the workspace to B, create a
-// session there, run the same tool — the second run must execute inside B.
+// session there, run the same tool; the second run must execute inside B.
 func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
@@ -804,7 +804,7 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 
 // TestE2ERelativePathsResolveAgainstWorkspaceRoot verifies that relative
 // tool paths resolve against the session's workspace root, not the process
-// cwd — the exact failure mode reported when the agent cwd does not change.
+// cwd, the exact failure mode reported when the agent cwd does not change.
 func TestE2ERelativePathsResolveAgainstWorkspaceRoot(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()

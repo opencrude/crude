@@ -501,7 +501,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
 // now: an agent/sub-pane is actively streaming, a workspace load is pending,
-// or a popup reveal is mid-flight. An idle launcher does NOT qualify — it has no 60 Hz
+// or a popup reveal is mid-flight. An idle launcher does NOT qualify; it has no 60 Hz
 // animation, and a permanent 16 ms tick there repaints full 160x40 frames
 // (roughly a quarter CPU on an idle floating terminal).
 func (m *App) wantsFastTick() bool {
@@ -1224,7 +1224,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
-		// Index, ref, and HEAD writes (commit, checkout, reset — ours or an
+		// Index, ref, and HEAD writes (commit, checkout, reset, whether ours or an
 		// external tool's) move the branch and tracking counts: arm the header's
 		// own reconciliation instead of waiting for the panel to be opened.
 		m.requestGitSnapshot(time.Now())
@@ -1253,7 +1253,7 @@ func (m *App) ToggleSidebar() {
 	}
 	m.Tree.Visible = !m.Tree.Visible
 	if m.Tree.Visible {
-		// Revealing the sidebar must not steal launcher focus — Enter on the
+		// Revealing the sidebar must not steal launcher focus; Enter on the
 		// welcome screen remains New Session. Use Ctrl+1 (view.focus.sidebar)
 		// for an explicit tree-focus move. When an editor is already open and
 		// nothing else owns the stack, focusing the tree is a reasonable default.
@@ -1398,7 +1398,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 // current window tab. Called on every tab change (open, close,
 // switch). Both activeEditorView and activeAgentView are *always*
 // cleared at the start so that closing the last tab correctly falls
-// back to the launcher view — leaving them stale when no tab is
+// back to the launcher view; leaving them stale when no tab is
 // active would break the renderer's region classification and cause
 // Ctrl+Q to attempt a no-op close instead of quitting.
 func (m *App) handleTabSwitch() {
@@ -1450,7 +1450,7 @@ func (m *App) handleTabSwitch() {
 	if m.isEditorTabTitle(activeTab.Title) {
 		path := m.editorPathFromTabTitle(activeTab.Title)
 		// Look up the tab's pre-loaded Editor. We DO NOT call
-		// editor.Open() here — that would reload the file from disk
+		// editor.Open() here, because that would reload the file from disk
 		// and destroy cursor, scroll, undo, and any unsaved edits.
 		// The Editor was created and loaded once in openEditorTab and
 		// lives in the editorTabs map for the lifetime of the tab.

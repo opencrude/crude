@@ -187,7 +187,7 @@ func TestSetDiagnostics_NodeNotLoaded(t *testing.T) {
 		t.Fatal("sub children should be nil before SetDiagnostics")
 	}
 
-	// Set diagnostics for the deep file — should auto-load the parent
+	// Set diagnostics for the deep file: should auto-load the parent
 	// without expanding it.
 	tree.SetDiagnostics(subFile, 1, 0, 0)
 

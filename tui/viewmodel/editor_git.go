@@ -119,7 +119,7 @@ func (m *App) applyEditorGitAnnotation(msg editorGitAnnotationMsg) {
 	if msg.err != nil {
 		// A transient failure (canceled or timed-out Git work) must not blank a
 		// projection the user is looking at; the next refresh replaces it.
-		// Deterministic failures — no repository, path outside it — genuinely
+		// Deterministic failures (no repository, path outside it) genuinely
 		// have no annotation, so they clear.
 		if !errors.Is(msg.err, context.Canceled) && !errors.Is(msg.err, context.DeadlineExceeded) {
 			m.EditorState.Editor.ClearGitAnnotation()

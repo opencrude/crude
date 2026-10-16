@@ -26,7 +26,7 @@ func overrideHintKey(t *testing.T, id ui.ActionID, hint string) *ui.ActionRegist
 }
 
 // TestStatusHelpRendersShortcutsFromRegistryMetadata proves the editor
-// status hints paint FormatShortcut(registry.HintFor(actionID)) — an
+// status hints paint FormatShortcut(registry.HintFor(actionID)); an
 // overridden registry key appears and the hardcoded default does not.
 func TestStatusHelpRendersShortcutsFromRegistryMetadata(t *testing.T) {
 	app := newFullTestApp(t)
@@ -171,7 +171,7 @@ func TestPaletteEntriesRenderFromActionMetadata(t *testing.T) {
 }
 
 // TestPaletteListPaintsRegistryMetadata proves the command palette List
-// paints the registry's label for a registered action — the frame renders
+// paints the registry's label for a registered action; the frame renders
 // from ActionDef metadata, not a hardcoded command table.
 func TestPaletteListPaintsRegistryMetadata(t *testing.T) {
 	reg := ui.NewActionRegistry()

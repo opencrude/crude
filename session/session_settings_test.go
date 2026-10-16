@@ -65,7 +65,7 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 
 func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 	// Gateway catalogs (Command Code, OpenRouter) require the full vendored
-	// model id on the wire — "z-ai/glm-5.3-flash". Neither the settings
+	// model id on the wire: "z-ai/glm-5.3-flash". Neither the settings
 	// round-trip nor category resolution may reduce it to the bare name.
 	const vendored = "z-ai/glm-5.3-flash"
 

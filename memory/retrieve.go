@@ -81,7 +81,7 @@ func scopeApplicable(record Record, paths []string) bool {
 }
 
 // gatherCandidates merges FTS matches (or the scan fallback), pinned
-// records, and — for empty queries — recent records, deduplicated by ID.
+// records and, for empty queries, recent records, all deduplicated by ID.
 func (st *Store) gatherCandidates(
 	ctx context.Context, q RecallQuery, statuses []string,
 ) ([]ScoredRecord, error) {
@@ -106,7 +106,7 @@ func (st *Store) gatherCandidates(
 			if match != "" {
 				matched, err := st.ftsCandidates(ctx, match, statuses)
 				if err != nil {
-					// FTS query failure degrades to scan — recall must
+					// FTS query failure degrades to scan; recall must
 					// answer, never silently fail (observable via meta).
 					_ = st.SetMeta(ctx, MetaFTSFault, "query: "+err.Error())
 					matched = nil
@@ -153,7 +153,7 @@ func statusPlaceholders(statuses []string) (string, []any) {
 }
 
 // ftsCandidates runs the BM25 query. Column weights: id(unindexed)=0,
-// title=4, content=1, entities=2, norm=2 — titles and code entities are
+// title=4, content=1, entities=2, norm=2; titles and code entities are
 // the highest-signal fields.
 func (st *Store) ftsCandidates(
 	ctx context.Context, match string, statuses []string,

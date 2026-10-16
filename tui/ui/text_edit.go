@@ -22,7 +22,7 @@ func intAbs(v int) int {
 // TextEdit is the shared grapheme/rune-safe editing model for all non-document
 // text inputs (TextField, SearchField, FilterField, PromptField, form fields).
 //
-// Cursor and selection indices are rune offsets into Value runes — never bytes.
+// Cursor and selection indices are rune offsets into Value runes, never bytes.
 type TextEdit struct {
 	runes     []rune
 	cursor    int // rune index [0, len]
@@ -145,7 +145,7 @@ func (e *TextEdit) DeleteSelection() bool {
 // Insert inserts s at the cursor, replacing any selection.
 func (e *TextEdit) Insert(s string) {
 	r := []rune(s)
-	// filter non-printable except newline/tab if present — single-line callers
+	// filter non-printable except newline/tab if present; single-line callers
 	// should strip newlines before insert.
 	if len(r) == 0 {
 		return

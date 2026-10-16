@@ -11,9 +11,9 @@ import (
 //
 // Background: jsonrpc2's buffered stream performs a synchronous,
 // context-unaware bufio flush on every WriteObject (see
-// third_party/powernap). When the language server's stdin pipe is full —
+// third_party/powernap). When the language server's stdin pipe is full,
 // e.g. while the server chews through the project-wide didOpen sync, or
-// when the server is wedged — that flush blocks the calling goroutine
+// when the server is wedged, that flush blocks the calling goroutine
 // indefinitely. Several LSP operations (CloseFile, NotifyWatchedFilesChanged,
 // SyncFileFromDisk) run on Bubble Tea's update goroutine, so a blocked flush
 // previously froze the entire UI, and the connection's write mutex convoyed
@@ -25,7 +25,7 @@ import (
 //     Write only enqueues a copy of the payload (O(1), microseconds) and
 //     returns; a single dedicated writer goroutine performs the actual pipe
 //     writes in FIFO order. Server back-pressure can therefore only stall
-//     that goroutine — never the caller.
+//     that goroutine, never the caller.
 //
 //  2. lspPipeMonitor observes BOTH stream sides. The reader side reports
 //     EOF/error when the server process dies (even with no write pending),
@@ -87,8 +87,8 @@ func newAsyncPipeWriter(sink io.Writer) *asyncPipeWriter {
 }
 
 // Done is closed when the writer stops for any reason: a fatal condition
-// (queue cap, sink/pipe error) closes it immediately — even if a sink write
-// is still blocked in flight — while a graceful Close closes it once the
+// (queue cap, sink/pipe error) closes it immediately (even if a sink write
+// is still blocked in flight), while a graceful Close closes it once the
 // writer drains and exits.
 func (w *asyncPipeWriter) Done() <-chan struct{} { return w.done }
 
@@ -127,7 +127,7 @@ func (w *asyncPipeWriter) Write(p []byte) (int, error) {
 }
 
 // Close stops accepting writes and lets the writer drain the remaining
-// queue. The wait is bounded: a wedged sink should never stall the caller —
+// queue. The wait is bounded: a wedged sink should never stall the caller;
 // in production the stream's processCloser closes the pipe within its own
 // kill timeout (~5s), which unblocks a stuck drain with an error.
 func (w *asyncPipeWriter) Close() error {
@@ -241,7 +241,7 @@ func (m *lspPipeMonitor) Close() error {
 }
 
 // lspReadMonitor closes the connection's Done channel when the server's
-// stdout reaches EOF or errors — i.e. the server process died or the pipe
+// stdout reaches EOF or errors, i.e. the server process died or the pipe
 // broke. Without this, a dead server with no pending write would never be
 // observed.
 type lspReadMonitor struct {

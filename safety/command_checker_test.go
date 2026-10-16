@@ -385,7 +385,7 @@ func TestPipedToShellPrecision(t *testing.T) {
 	}
 }
 
-// Command text that is data — heredoc bodies and quoted arguments — is not a
+// Command text that is data (heredoc bodies and quoted arguments) is not a
 // command. Writing a test, script or note that mentions `curl … | sh` must not
 // be mistaken for running it.
 func TestCommandTextThatIsDataIsNotBlocked(t *testing.T) {

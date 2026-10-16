@@ -59,7 +59,7 @@ func (p *unixPTY) SetSize(cols, rows int) error {
 // child a session leader (Setsid+Setctty), so its pgid equals its pid and a
 // negative-pid kill reaches descendants that stayed in that group (sh -c
 // pipelines, non-job-control children). SIGHUP first for normal terminal
-// hangup semantics — shells forward it to their jobs — then SIGKILL after a
+// hangup semantics (shells forward it to their jobs), then SIGKILL after a
 // short grace for anything that ignored it.
 func (p *unixPTY) Close() error {
 	pid := 0

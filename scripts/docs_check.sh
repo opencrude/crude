@@ -7,7 +7,7 @@
 #   3. relative .md links resolve to existing files
 #   4. doc references in code (Go comments, shell scripts, workflow YAML,
 #      vendored go.mod comments) point at existing files under docs/
-#   5. no orphan docs — every file under docs/ is indexed in docs/README.md
+#   5. no orphan docs: every file under docs/ is indexed in docs/README.md
 #   6. no stale references to moved/renamed legacy doc names
 #   7. code paths and test names cited in AGENTS.md and docs/ exist
 #

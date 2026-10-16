@@ -103,7 +103,7 @@ func (m *App) closeFindReplace() {
 }
 
 // findReplaceSpec assembles the frame build/sync spec from live popup state
-// plus the owning editor's per-tab title (BaseTitle — never the dirty dot).
+// plus the owning editor's per-tab title (BaseTitle, never the dirty dot).
 func (m *App) findReplaceSpec(fr *popup.FindReplaceState, w, h int) ui.FindReplaceFrameSpec {
 	title := "Find"
 	if m.EditorState.Editor != nil {
@@ -170,7 +170,7 @@ func (m *App) refreshFindReplacePopup() {
 
 	if fw := m.windowManager.Window("find-replace"); fw != nil {
 		// Transform-safe rebuild: measure the fresh tree for its own size
-		// (never trust the stale window geometry — Ctrl+H adds a row, Ctrl+F
+		// (never trust the stale window geometry: Ctrl+H adds a row, Ctrl+F
 		// removes one, and the popup sizer only estimates). The window keeps
 		// position/focus; content swaps and the window adopts the measured
 		// tree size. Both forms measure the SAME width, so a transform can
@@ -354,7 +354,7 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Mode transform while the popup owns focus: Ctrl+H morphs the open
 	// Find popup into the Replace form, Ctrl+F morphs an open Replace form
-	// back to Find — the same window, rebuilt in place (smooth transform,
+	// back to Find in the same window, rebuilt in place (smooth transform,
 	// no close/reopen flicker). openFindReplace pulls the current query
 	// and filter state from the owning editor and rebuilds the window with
 	// the new form height.

@@ -101,8 +101,8 @@ func (l *List) SetItems(items []ListItem) {
 // SetItemsStable replaces items while preserving the user's view: the
 // previously selected item stays selected (matched by ID) and the viewport
 // offset is re-anchored instead of snapping back toward the first row. Use
-// this for live resyncs of an effectively unchanged collection — spinner
-// ticks, status refreshes — where SetItems' reset-to-first-row behavior
+// this for live resyncs of an effectively unchanged collection (spinner
+// ticks, status refreshes) where SetItems' reset-to-first-row behavior
 // clobbers the reader's scroll position several times per second. When the
 // previous selection no longer exists (filtering, removal), behavior falls
 // back to SetItems semantics.
@@ -332,7 +332,7 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			continue
 		}
 		// Subsection rows sit one column in from section titles. Selection
-		// is background + bold only — never a prompt glyph or leading marker.
+		// is background + bold only, never a prompt glyph or leading marker.
 		prefix := strings.Repeat(" ", l.itemIndent())
 		if item.Icon != "" {
 			prefix += item.Icon + " "

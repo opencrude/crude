@@ -10,7 +10,7 @@ import (
 )
 
 // RecordTurn upserts one compact cross-session history row. Texts are
-// truncated to keep the mirror small — full transcripts stay in the
+// truncated to keep the mirror small; full transcripts stay in the
 // per-session databases; this index only has to make them findable.
 func (st *Store) RecordTurn(ctx context.Context, turn TurnRecord) error {
 	if turn.SessionID == "" || turn.Turn <= 0 {
@@ -98,7 +98,7 @@ func (st *Store) ObservationsForSession(ctx context.Context, sessionID string, a
 }
 
 // TurnsForSession returns a session's mirrored turns after afterTurn,
-// oldest first — the extraction pipeline's input window.
+// oldest first, forming the extraction pipeline's input window.
 func (st *Store) TurnsForSession(
 	ctx context.Context, sessionID string, afterTurn, limit int,
 ) ([]HistoryHit, error) {
@@ -118,7 +118,7 @@ func (st *Store) TurnsForSession(
 	return scanHistoryHits(rows)
 }
 
-// SessionTurnHeads returns the highest mirrored turn per session — used by
+// SessionTurnHeads returns the highest mirrored turn per session, used by
 // the maintenance sweep to find sessions with unextracted turns.
 func (st *Store) SessionTurnHeads(ctx context.Context) (map[string]int, error) {
 	rows, err := st.db.QueryContext(ctx, `

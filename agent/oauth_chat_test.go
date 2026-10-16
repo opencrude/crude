@@ -12,7 +12,7 @@ import (
 
 // TestCompleteStreamAttachesOAuth verifies a chat request to the codex backend
 // carries the OAuth bearer token and the codex headers (originator,
-// chatgpt-account-id, session-id, thread-id) — the path that produced
+// chatgpt-account-id, session-id, thread-id); this covers the path that produced
 // "Authentication failed" when the token was missing.
 func TestCompleteStreamAttachesOAuth(t *testing.T) {
 	var gotAuth, gotAccountID, gotOriginator, gotSessionID, gotThreadID, gotUserAgent string

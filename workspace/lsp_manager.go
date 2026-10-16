@@ -162,7 +162,7 @@ func (m *LSPManager) IsConfigured() bool {
 
 // AllDiagnostics returns a snapshot of every cached diagnostic across
 // all files the LSP server has reported on. The returned map is a
-// copy — mutating it does not affect internal state. Used by the
+// copy; mutating it does not affect internal state. Used by the
 // status bar's "Goto first error" action and similar cross-file
 // navigation features.
 func (m *LSPManager) AllDiagnostics() map[string][]LSPDiagnostic {
@@ -632,7 +632,7 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 }
 
 // DocumentSymbols returns the cached document outline for a file, if any.
-// Callers should not assume the cache is fresh — refresh via
+// Callers should not assume the cache is fresh; refresh via
 // RequestDocumentSymbols when the file's content has changed materially.
 func (m *LSPManager) DocumentSymbols(filePath string) []LSPSymbol {
 	m.mu.Lock()

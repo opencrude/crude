@@ -319,8 +319,8 @@ func substringReplaceInLine(contentLine, searchLine string, replaceLines []strin
 // at column 0 (relative). The per-line approach uses the content line's actual
 // leading WS (cws) as the target indent for each position where we have that info.
 // Lines where the search and content share the same leading WS (sws == cws) are
-// "absolute" — the model already placed them at the correct file depth.
-// Lines where sws != cws (search at col 0, content indented) are "relative" —
+// "absolute": the model already placed them at the correct file depth.
+// Lines where sws != cws (search at col 0, content indented) are "relative":
 // the model placed them at column 0 and they need the content's indent applied.
 func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLines []string) []string {
 	if len(replaceLines) == 0 {

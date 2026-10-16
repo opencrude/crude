@@ -56,7 +56,7 @@ type ActionDef struct {
 	FocusContext FocusContext // empty = global
 	HintKey      string       // shortcut label for hints (e.g. "Ctrl+Alt+F")
 	// DisplayOnly marks a registry entry that exists only to feed the
-	// status-bar HintFor / HintLabelFor helpers — it has no runnable
+	// status-bar HintFor / HintLabelFor helpers; it has no runnable
 	// command and MUST be hidden from the command palette. Status-bar
 	// hint fragments (Close, Next, Navigate, …) are DisplayOnly.
 	DisplayOnly bool
@@ -68,7 +68,7 @@ type ActionDef struct {
 //
 // Phase 5 foundation: the registry is defined here. Product keyboard
 // dispatch migrates to query the registry over time. Until then,
-// the existing keyboard.go switches coexist with the registry —
+// the existing keyboard.go switches coexist with the registry;
 // the registry is authoritative for display labels (palette,
 // launcher, status hints) and the keyboard dispatch is being
 // progressively migrated to call MatchGlobal.
@@ -208,7 +208,7 @@ func FormatShortcut(key string) string {
 
 // DefaultRegistry returns a registry pre-populated with the global
 // actions used by Crude. This is the single source of truth for
-// shortcuts — the command palette, launcher, status hints, and
+// shortcuts: the command palette, launcher, status hints, and
 // keyboard dispatch all read from here.
 func DefaultRegistry() *ActionRegistry {
 	r := NewActionRegistry()
@@ -683,7 +683,7 @@ var defaultActions = []*ActionDef{
 		Category:    "System",
 		// Ctrl+Alt+S: free of collisions with palette (Ctrl+Alt+P), find
 		// (Ctrl+Alt+F), sidebar (Ctrl+B), composer (Alt+C), save (Ctrl+S
-		// editor-only), and quit (Ctrl+Q). Available while tabs are open —
+		// editor-only), and quit (Ctrl+Q). Available while tabs are open because
 		// the launcher is unreachable then.
 		Bindings: []KeyBinding{
 			{Key: "ctrl+alt+s"},

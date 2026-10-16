@@ -4,7 +4,7 @@ import "crude/workspace"
 
 // OverlayState tracks floating-window input modes and durable safety state.
 //
-// This is DISPLAY state — it tracks which UI mode is visible right now
+// This is DISPLAY state: it tracks which UI mode is visible right now
 // (chat, text overlay, and file picker). Session settings and blocking prompts
 // are retained by the per-session PanelDeck rather than represented as modes.
 // The Mode enum itself is defined in workspace (workspace.Mode).

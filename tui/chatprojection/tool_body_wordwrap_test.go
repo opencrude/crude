@@ -11,7 +11,7 @@ import (
 
 // Regression: plain tool bodies used to character-wrap (HardWrap), which could
 // break mid-token and strand a 1–2 character orphan at the right edge of the
-// 4-column gutter band — a fragment like "zqx" dangling after "{". Bodies must
+// 4-column gutter band, a fragment like "zqx" dangling after "{". Bodies must
 // now break at word boundaries (with a hard-break fallback for tokenless runs)
 // and every painted segment must stay inside the band width.
 func TestPlainToolBodyWordWrapsAtWordBoundaries(t *testing.T) {

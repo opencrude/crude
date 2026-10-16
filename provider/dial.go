@@ -36,7 +36,7 @@ type DialSettings struct {
 }
 
 // DialConfig is the resolved transport configuration used by Client. All
-// values are final — no zero-means-default semantics.
+// values are final; there are no zero-means-default semantics.
 type DialConfig struct {
 	RequestTimeout         time.Duration
 	ConnectTimeout         time.Duration

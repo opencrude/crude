@@ -55,7 +55,7 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 	app.paintShellFrame()
 
 	// The nested gutter paints '│' track cells. The thinking block cursor is
-	// also '█', but '│' is unambiguous — its presence proves the pane reserved
+	// also '█', but '│' is unambiguous: its presence proves the pane reserved
 	// and painted a scrollbar column on this first frame.
 	buf := app.mainSurf.Buffer()
 	track := 0

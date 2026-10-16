@@ -12,7 +12,7 @@ import (
 // compact label every projection shows. Both producers of a transcript row call
 // it: the live path (agent events → workspace.AgentState → the conversation) and
 // the resumed path (the persisted tool snapshot → workspace.ConvertMessagesForDisplay).
-// Keeping one implementation is the point — a second copy drifted before, and
+// Keeping one implementation is the point: a second copy drifted before, and
 // duplicated label logic is how live and hydrated rows start disagreeing.
 
 // ExtractArg reads one argument out of a tool-call payload. Two encodings reach
@@ -62,7 +62,7 @@ func ExtractArg(str, key string) string {
 				continue
 			}
 			token := strings.TrimSpace(rest[:end])
-			// "pattern: path: x" — the value is another key, so this key has no
+			// "pattern: path: x": the value is another key, so this key has no
 			// value in the summary form.
 			if strings.HasSuffix(token, ":") {
 				continue

@@ -34,7 +34,7 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 	host := newTestHost(t, screen)
 	host.Focus(OptionsID)
 
-	// The highlighted stacked row commits on Enter — no dropdown open step.
+	// The highlighted stacked row commits on Enter, with no dropdown open step.
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if screen.Current() != 1 || screen.Answer(0) != "red" {
 		t.Fatalf("after option commit index=%d answer=%q", screen.Current(), screen.Answer(0))
@@ -235,7 +235,7 @@ func TestScreenOptionMouseSelectionMatchesKeyboardSelection(t *testing.T) {
 	host := newTestHost(t, screen)
 	host.Focus(OptionsID)
 
-	// The option row is always painted — clicking it commits directly, no
+	// The option row is always painted; clicking it commits directly, no
 	// dropdown open/close dance.
 	buf := surface.NewCellBuffer(80, 12)
 	host.Paint(buf)
@@ -268,7 +268,7 @@ func TestScreenRailShowsAnswerStateAndSelectsQuestions(t *testing.T) {
 	if strings.ContainsAny(painted, "▾▴❯") {
 		t.Fatalf("deck painted a dropdown/marker glyph:\n%s", painted)
 	}
-	// Stacked rows sit on consecutive lines — every answer visible at once.
+	// Stacked rows sit on consecutive lines, with every answer visible at once.
 	_, redY, _ := bufferFind(buf, "red")
 	_, blueY, _ := bufferFind(buf, "blue")
 	if blueY != redY+1 {
@@ -353,7 +353,7 @@ func TestScreenEscapeClimbsLadderFromWriteIn(t *testing.T) {
 		t.Fatal("write-in area lost the flat deck background override")
 	}
 
-	// First Esc steps back to the option rows — the edit stays intact and
+	// First Esc steps back to the option rows; the edit stays intact and
 	// nothing is denied.
 	for _, r := range "hi" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})

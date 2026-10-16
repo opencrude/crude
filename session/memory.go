@@ -278,7 +278,7 @@ func (s *Session) executeMemoryTool(
 			return tools.ToolResult{}, true, err
 		}
 		if len(records) == 0 {
-			// Explicit empty answer — silent recall failures are a known
+			// Explicit empty answer: silent recall failures are a known
 			// agent-memory failure mode.
 			return tools.ToolResult{Content: fmt.Sprintf(
 				"No workspace memories matched %q. Memory search is working; nothing has been stored about this yet.",

@@ -3,7 +3,7 @@ package tools
 import "testing"
 
 // The label authority is shared by the live transcript and a resumed session, so
-// it must read both encodings of a tool call's arguments — and it must not lose
+// it must read both encodings of a tool call's arguments, and it must not lose
 // the value behind the colon (the previous copy consumed the space that followed
 // "key:" and returned an empty label for every summary-form payload).
 func TestExtractArgReadsBothArgumentEncodings(t *testing.T) {
@@ -61,7 +61,7 @@ func TestExtractArgDecodesJSONEscapesAndUnicode(t *testing.T) {
 // A stream is observed while its envelope is still open. An unfinished envelope
 // is not a key/value summary, so the operand stays empty rather than being
 // guessed from a partial payload; the completed envelope supplies it. This is the
-// pre-existing contract — the escape fix must not change it.
+// pre-existing contract; the escape fix must not change it.
 func TestExtractArgLeavesAnUnfinishedEnvelopeUnlabelled(t *testing.T) {
 	for _, args := range []string{
 		`{"command":"cd /a \u0026\u0026 go test`,

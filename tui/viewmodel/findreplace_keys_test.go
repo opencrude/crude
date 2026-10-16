@@ -12,7 +12,7 @@ import (
 // popup feel dead:
 //
 //  1. alt+c was swallowed by the global composer.toggle binding BEFORE focus
-//     routing — opening the composer, stealing focus, and killing every
+//     routing, opening the composer, stealing focus, and killing every
 //     subsequent key. The popup must own its filter chords.
 //  2. ctrl+h/ctrl+f were not handled while the popup held focus, so the
 //     find ↔ replace transform only worked from the editor.
@@ -26,7 +26,7 @@ func TestFindReplace_PopupOwnedKeysThroughDispatch(t *testing.T) {
 		t.Fatalf("find-replace window not focused: %v", fw)
 	}
 
-	// Alt+C toggles case sensitivity IN THE POPUP — and must not open the
+	// Alt+C toggles case sensitivity IN THE POPUP and must not open the
 	// composer or steal focus.
 	if cs := app.FindReplace.CaseSensitive; cs {
 		t.Fatal("precondition: CaseSensitive should start false")

@@ -406,7 +406,7 @@ func findStrEnd(s string, start int) (int, bool) {
 // unesc decodes one JSON string body. It delegates to the shared JSON unescaper
 // instead of re-implementing the escape table: a local switch that handled
 // \" \\ \/ \n \t \r but not \uXXXX left a raw "u0026" where the stream carried a
-// shell "&&". Text that is not yet decodable — a stream truncated mid-escape —
+// shell "&&". Text that is not yet decodable (a stream truncated mid-escape)
 // stays raw and is replaced once the payload completes.
 func unesc(s string) string {
 	if !strings.ContainsRune(s, '\\') {

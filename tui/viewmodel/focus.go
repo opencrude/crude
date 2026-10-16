@@ -15,20 +15,20 @@ const (
 // focusTarget resolves which region owns keyboard input.
 //
 // Precedence (highest first):
-//  1. FocusFloatingWindow — a focused OverlayHost / FloatingWindow is modal for keys.
-//  2. FocusTree — only when the sidebar was *explicitly* focused (Ctrl+1 toggle,
+//  1. FocusFloatingWindow: a focused OverlayHost / FloatingWindow is modal for keys.
+//  2. FocusTree:           only when the sidebar was *explicitly* focused (Ctrl+1 toggle,
 //     mouse click on the tree, or EnterFilterMode). Explicit tree focus wins even
 //     while the welcome launcher is still visible, so `/` filter and tree nav work
 //     before any tab is open. Startup must NOT push FocusTree; the launcher keeps
 //     Enter = New Session until the user moves focus.
-//  3. FocusLauncher — welcome screen with no agent/editor tabs open.
-//  4. FocusTabBar — explicit keyboard tab-strip navigation (Ctrl+T).
-//  5. FocusInput — *explicitly* requested chat focus (view.focus.chat) — wins
+//  3. FocusLauncher:       welcome screen with no agent/editor tabs open.
+//  4. FocusTabBar:         explicit keyboard tab-strip navigation (Ctrl+T).
+//  5. FocusInput:          *explicitly* requested chat focus (view.focus.chat); wins
 //     over the editor even when an editor tab is open, so the user can drive
 //     the chat input without closing the editor.
-//  6. FocusEditor — an open editor tab is the main document. Wins when no
+//  6. FocusEditor:         an open editor tab is the main document. Wins when no
 //     explicit FocusInput/FocusTabBar is on the stack.
-//  7. FocusInput — implicit chat input (agent session without an editor tab).
+//  7. FocusInput:          implicit chat input (agent session without an editor tab).
 //
 // Move focus to the file tree with Ctrl+1 (view.focus.sidebar); press Ctrl+1 or
 // Esc again to return. Status-bar hints must follow this same resolution.
@@ -36,7 +36,7 @@ const (
 // The FocusInput-on-stack check (step 5) is inserted between FocusTabBar and
 // the editor-or-input fallthrough so an explicit "Focus Chat" keeps working
 // while an editor is open. Without it, unfocus()/Clear() would let the natural
-// editor-open resolution win and "Focus Chat" would be a no-op — the exact bug
+// editor-open resolution win and "Focus Chat" would be a no-op, the exact bug
 // the palette cleanup fixed.
 func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
@@ -104,7 +104,7 @@ func (m *App) setFocusInput() {
 //
 // Implementation: clear the stack so the natural focusTarget()
 // fallthrough returns FocusEditor. Pushing a FocusEditor token would be
-// dead weight — focusTarget() never consults the stack for FocusEditor
+// dead weight; focusTarget() never consults the stack for FocusEditor
 // because launcherHostVisible() is false whenever an editor is open
 // (see host_capture.go:37), so the FocusTree/FocusLauncher/FocusTabBar
 // checks are skipped and the editor-open branch wins. Clearing the

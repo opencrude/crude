@@ -47,7 +47,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	}
 
 	// Byte-identical regression. Deterministic: the search root (TempDir) is
-	// never rendered — only query, result paths, and status.
+	// never rendered; only query, result paths, and status are shown.
 	t.Logf("find in files cell projection:\n%s", painted)
 	uitest.CheckGolden(t, "findinfiles_dark_80x24", buf)
 }

@@ -101,7 +101,7 @@ func TestWarmAndMidnightDifferFromExisting(t *testing.T) {
 
 // TestAllPresetsHaveCompleteTokens walks every required Colors field (including
 // nested Code/Spinner/Diff/Tree) and fails if any is nil or fully transparent
-// zero — which would paint as black-on-black in the terminal.
+// zero, which would paint as black-on-black in the terminal.
 func TestAllPresetsHaveCompleteTokens(t *testing.T) {
 	for _, th := range AllPresets() {
 		t.Run(th.Name, func(t *testing.T) {

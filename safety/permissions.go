@@ -76,7 +76,7 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 		}
 	}
 
-	// 3. Check path tree permission (for file operations — "allow for this directory and all children")
+	// 3. Check path tree permission (for file operations: "allow for this directory and all children")
 	if targetPath != "" {
 		absPath, err := filepath.Abs(targetPath)
 		if err == nil {

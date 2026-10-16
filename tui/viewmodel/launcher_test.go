@@ -130,7 +130,7 @@ func TestLauncher_ResumeSession(t *testing.T) {
 
 	cmd := app.launcherResumeSession("ses_test_1", &sessiondb.SessionMeta{ID: "ses_test_1", ProjectName: "test-project"})
 
-	// Without a real backend the resume fails gracefully — but must not quit.
+	// Without a real backend the resume fails gracefully but must not quit.
 	if app.Quit {
 		t.Fatal("launcherResumeSession must not quit for in-place resume")
 	}

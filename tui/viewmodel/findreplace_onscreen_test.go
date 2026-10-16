@@ -12,7 +12,7 @@ import (
 // opening Find via Ctrl+F and then transforming to Replace via Ctrl+H must
 // keep the window fully inside the terminal. Both forms share one width
 // (the replace form's widest content), so the transform changes height
-// only — and any window grown past the screen edge is clamped back in.
+// only, and any window grown past the screen edge is clamped back in.
 func TestFindReplace_TransformNeverLeavesScreen(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	// Narrow terminal: the editor area leaves just enough room that the
@@ -53,7 +53,7 @@ func TestFindReplace_TransformNeverLeavesScreen(t *testing.T) {
 		t.Fatalf("replace form positioned off the top/left: x=%d y=%d", x, y)
 	}
 
-	// Transform back — same contract.
+	// Transform back: same contract.
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
 	fw3 := app.windowManager.Window(string(ui.OverlayFindReplace))
 	if fw3 == nil {

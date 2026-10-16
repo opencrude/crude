@@ -566,7 +566,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 // buildInputContextMenu creates the menu for the chat input.
 func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// Right-click on an attached reference chip gets attachment management
-	// instead of the clipboard menu — the block under the pointer is the
+	// instead of the clipboard menu, because the block under the pointer is the
 	// object of interest.
 	if rr, ok := m.refRangeAtMouse(mouse); ok {
 		if st := m.buildAttachmentContextMenu(rr); st != nil {
@@ -677,7 +677,7 @@ func (m *App) removeAttachment(rr input.RefRange) {
 }
 
 // startAttachmentRename opens the shared text prompt to relabel one chip.
-// The chip's draft spans are captured BEFORE the store rename — once the
+// The chip's draft spans are captured BEFORE the store rename, because once the
 // store knows only the new label, the old tokens no longer resolve by scan.
 func (m *App) startAttachmentRename(refID, current string) {
 	if m.RefStore() == nil {

@@ -10,8 +10,8 @@ import (
 )
 
 // The patch gutter must only ever paint patch rows. A result that carries no
-// diff — an edit that changed nothing, whose body is only "Replaced 1
-// occurrence in <path>" — used to be handed to the lenient unified-diff parser,
+// diff: an edit that changed nothing, whose body is only "Replaced 1
+// occurrence in <path>", used to be handed to the lenient unified-diff parser,
 // which turned that prose into a fake context row with line number 1.
 func TestProseToolBodyNeverRendersAsPatch(t *testing.T) {
 	msg := types.ChatMessage{
@@ -147,7 +147,7 @@ func patchGutterRow(line string) bool {
 }
 
 // A wider gap between change groups still collapses to the marker, and a small
-// one stays visible — the rule the patch card inherits from the trimmed rows.
+// one stays visible, the rule the patch card inherits from the trimmed rows.
 func TestBandedDiffOnlyElidesWideGaps(t *testing.T) {
 	raw := func(midLines int) string {
 		var sb strings.Builder

@@ -208,7 +208,7 @@ func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 	if _, ok := settings.SessionOverrides["crafter"]; ok {
 		t.Fatal("reset role still has an explicit session override")
 	}
-	// A sub-agent reset returns to inheriting the session main agent live —
+	// A sub-agent reset returns to inheriting the session main agent live:
 	// no stale copy, no explicit provider/model.
 	got := settings.Agents.Categories["crafter"]
 	if got.Inherit != "main" || got.Model != "" || got.Provider != "" {

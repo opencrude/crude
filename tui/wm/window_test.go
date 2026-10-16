@@ -299,7 +299,7 @@ func TestIsOnWindowFrameTitleBar(t *testing.T) {
 }
 
 func TestIsOnTitleBarUndecorated(t *testing.T) {
-	// Undecorated windows on the WindowFrame path paint their own chrome —
+	// Undecorated windows on the WindowFrame path paint their own chrome:
 	// row 0 IS the title bar, so they stay title-draggable.
 	fw := NewFloatingWindow("tb-undec", "TB", testWidget{}, 10, 6,
 		WithDecoration(false))

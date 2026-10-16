@@ -50,7 +50,7 @@ func TestRecordPromptPersistsGlobalHistory(t *testing.T) {
 }
 
 // TestRecordPromptFoldsRepeats verifies that resubmitting the same prompt
-// does not grow the recall list — it folds into one entry.
+// does not grow the recall list; it folds into one entry.
 func TestRecordPromptFoldsRepeats(t *testing.T) {
 	app := newTestApp(t)
 	app.SetPromptHistory(history.New())

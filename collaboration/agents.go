@@ -555,7 +555,7 @@ func loadRun(ctx context.Context, tx *sql.Tx, id string) (Run, error) {
 // never took part in collaboration, so a pruned empty session leaves no agent
 // behind. It fails closed: when any of the session's agents is still attached,
 // or any run, event, delivery, artifact, claim or child agent refers to one,
-// nothing is removed and retired is false — that session holds work and must
+// nothing is removed and retired is false; that session holds work and must
 // be kept.
 func (store *Store) RetireUnreferencedSession(ctx context.Context, sessionID string) (bool, error) {
 	if err := validateIdentity("session_id", sessionID, 256); err != nil {

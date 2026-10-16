@@ -16,7 +16,7 @@ import (
 // value/cursor sync from these editors.
 type FindReplaceState struct {
 	// ReplaceMode is true when the replace field is shown (Ctrl+H).
-	// When false, only the find field is visible — keeps the popup
+	// When false, only the find field is visible, keeping the popup
 	// compact for users who never use replace.
 	ReplaceMode bool
 
@@ -98,7 +98,7 @@ func (st *FindReplaceState) Replace() string {
 }
 
 // SetQuery replaces the find query and moves the cursor to the end.
-// The OnChange callback (if set) is NOT called by this setter —
+// The OnChange callback (if set) is NOT called by this setter;
 // callers that want to recompute matches should invoke OnChange
 // themselves after the assignment.
 func (st *FindReplaceState) SetQuery(q string) {
@@ -152,8 +152,8 @@ func (st *FindReplaceState) ActiveEdit() *ui.TextEdit {
 }
 
 // FindReplacePopupWidth returns the total width for the floating window.
-// BOTH forms share this width: the replace mode's widest content — its
-// Replace/Replace All/↑/↓ action bar plus chrome — sets a floor via
+// BOTH forms share this width: the replace mode's widest content (its
+// Replace/Replace All/↑/↓ action bar plus chrome) sets a floor via
 // ui.FindReplaceSharedWidthFloor so the Ctrl+F ↔ Ctrl+H transform never
 // changes the window width and never moves its edges on screen. The
 // counter never widens the box: it lives on its own row in replace mode
@@ -182,12 +182,12 @@ func FindReplacePopupWidth(st *FindReplaceState) int {
 
 // FindReplacePopupHeight returns the suggested height for the popup.
 // Counts: 2 borders + N content lines (the find row, an optional replace
-// row, the counter — its own row in replace mode, shared with the buttons
-// row in find mode — and the action bar, each separated by one gap row).
+// row, the counter (its own row in replace mode, shared with the buttons
+// row in find mode) and the action bar, each separated by one gap row).
 func FindReplacePopupHeight(st *FindReplaceState) int {
 	// Find mode: find(1) + gap(1) + counter+buttons(1) = 3.
 	// Replace mode: find(1) + gap + replace(1) + gap + counter(1) + gap +
-	// buttons(1) = 7 — the counter gets its own row above the bar.
+	// buttons(1) = 7; the counter gets its own row above the bar.
 	contentH := 3
 	if st.ReplaceMode {
 		contentH = 7

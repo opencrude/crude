@@ -42,7 +42,7 @@ func TestCodexEncodeRequestRequiresStoreFalseAndStreamTrue(t *testing.T) {
 }
 
 // TestCodexEncodeStripsUnsupportedOutputParams pins that max_output_tokens /
-// max_completion_tokens are removed — the backend rejects them with HTTP 400
+// max_completion_tokens are removed because the backend rejects them with HTTP 400
 // ({"detail":"Unsupported parameter: max_output_tokens"}).
 func TestCodexEncodeStripsUnsupportedOutputParams(t *testing.T) {
 	std := &CodexStandard{}

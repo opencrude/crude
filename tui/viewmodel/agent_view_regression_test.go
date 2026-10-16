@@ -39,7 +39,7 @@ func TestAgentView_LongInputDoesNotOverlapStatus(t *testing.T) {
 // TestAgentView_TextAreaBgDoesNotOverwriteStatus: the TextArea's background
 // fill must not double-count its paint origin. Regression: TextArea.Paint
 // passed the already-translated (ox, oy) to FillRect, which adds r.X/r.Y
-// again — the white PopupBg fill landed at originY+2*r.Y (the status
+// again: the white PopupBg fill landed at originY+2*r.Y (the status
 // separator row) and originX+2*r.X (col SidebarW+2*pad+2), erasing the
 // right portion of the status divider and leaving a white band over the
 // status content. Visible as "input pushes the right half of the bottom
@@ -96,7 +96,7 @@ func rowTextFrom(app *App, y, startX int) string {
 // INSIDE its slot rect. Regression: Host.paintNode paints children at
 // (parent origin + child bounds); shellchat passed its absolute slot rect as
 // child bounds, so the list double-counted the origin and painted content
-// shifted right by SidebarW and down by ChatAreaTop — the shifted rows then
+// shifted right by SidebarW and down by ChatAreaTop; the shifted rows then
 // overwrote the input prompt and the status bar.
 func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	app := newTransitionApp(t)
@@ -166,7 +166,7 @@ func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 
 // TestAgentView_LongChatDoesNotOverflowInputOrStatus: with enough message
 // content to fill the viewport, the chat's bottom rows must stop at the chat
-// slot's bottom — the input prompt row and the status bar rows must show
+// slot's bottom; the input prompt row and the status bar rows must show
 // ONLY their own content. Regression: the double-origin offset pushed the
 // viewport down by ChatAreaTop, so the chat's last rows painted over the
 // input separator, the prompt, and the footer.

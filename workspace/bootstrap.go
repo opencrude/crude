@@ -688,7 +688,7 @@ func (w *Workspace) ResetOrchestratorOverrides(orchID string) {
 
 // adoptCurrentDefaults re-inherits today's effective agent defaults into a
 // live session. Sessions snapshot their agent settings at creation, so this
-// is the only way a running session picks up later workspace edits — and it
+// is the only way a running session picks up later workspace edits, and it
 // runs exclusively from user-invoked resets.
 func (w *Workspace) adoptCurrentDefaults(b *session.Session) {
 	if b == nil {
@@ -775,7 +775,7 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 	if m.Provider == "" {
 		m.Provider = r.Provider
 	}
-	// DB is present — clear any prior missing mark (reversible).
+	// DB is present; clear any prior missing mark (reversible).
 	_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, false)
 	// Write enriched metadata back to workspace_sessions so the registry
 	// stays self-consistent without requiring enrichment on every list.
@@ -868,7 +868,7 @@ func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
 // the session stores the raw argument summary (agent.FormatToolArgs), while the
 // live conversation stores the compact label SummarizeToolArgs derives from that
 // same string. Rows label themselves from the view's ToolArgs, so hydration must
-// run the identical helper — otherwise a resumed session prints raw arguments
+// run the identical helper; otherwise a resumed session prints raw arguments
 // ("pattern: func main path: tui/tools") where the live row printed the label
 // ("func main" in tui/tools).
 func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {

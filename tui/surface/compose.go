@@ -32,13 +32,13 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 
 			srcCell := src.Get(sx, sy)
 
-			// Skip continuation cells (width=0) — they are handled by
+			// Skip continuation cells (width=0); they are handled by
 			// the primary wide cell that wrote them.
 			if srcCell.Width == 0 {
 				continue
 			}
 
-			// Skip transparent cells — don't overwrite the destination
+			// Skip transparent cells: don't overwrite the destination
 			if srcCell.Transparent {
 				continue
 			}
@@ -122,7 +122,7 @@ func BlendAlpha(dst *CellBuffer, dstX, dstY int, src *CellBuffer, alpha float32)
 			if srcCell.Transparent {
 				continue
 			}
-			// Skip continuation cells — handled by primary
+			// Skip continuation cells: handled by primary
 			if srcCell.Width == 0 {
 				continue
 			}
@@ -149,7 +149,7 @@ func BlendAlpha(dst *CellBuffer, dstX, dstY int, src *CellBuffer, alpha float32)
 // MergeDown merges all cells from src into dst at the given offset.
 // Cells marked as transparent in src are skipped, letting dst show through.
 // Non-transparent cells in src overwrite the corresponding dst cells.
-// This implements the "painter's algorithm" — later writes win.
+// This implements the "painter's algorithm": later writes win.
 func MergeDown(dst *CellBuffer, dstX, dstY int, src *CellBuffer) {
 	srcW, srcH := src.Width(), src.Height()
 	dstW, dstH := dst.Width(), dst.Height()
@@ -167,7 +167,7 @@ func MergeDown(dst *CellBuffer, dstX, dstY int, src *CellBuffer) {
 
 			srcCell := src.Get(sx, sy)
 
-			// Skip continuation cells — handled by primary
+			// Skip continuation cells: handled by primary
 			if srcCell.Width == 0 {
 				continue
 			}

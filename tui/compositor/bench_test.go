@@ -9,7 +9,7 @@ import (
 
 func BenchmarkFullRender_80x24(b *testing.B) {
 	c := NewCompositor(80, 24)
-	// The layer surface is created ONCE and re-attached each frame — exactly
+	// The layer surface is created ONCE and re-attached each frame, exactly
 	// how persistent layer surfaces behave in production. BeginFrame detaches
 	// children but does not destroy their buffers.
 	layer := surface.NewSurface("main", 80, 24, cell.BlankCell(cell.NewTrueColor(13, 17, 23)))

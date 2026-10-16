@@ -13,7 +13,7 @@ import (
 )
 
 // noopTeaModel satisfies tea.Model so tests can stand up a Program whose
-// msgs channel (unbuffered) is never drained — exactly the hazard a
+// msgs channel (unbuffered) is never drained, exactly the hazard a
 // synchronous bus.Send from inside Update would hit.
 type noopTeaModel struct{}
 

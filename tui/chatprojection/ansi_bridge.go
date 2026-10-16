@@ -55,7 +55,7 @@ var semanticBgRoles = []ui.SemanticColor{
 }
 
 // BridgeAnsiLine converts one ANSI-styled line into a PaintLine. SGR runs are
-// parsed by rendering.ParseAnsiRuns (the canonical SGR parser — no duplicate
+// parsed by rendering.ParseAnsiRuns (the canonical SGR parser, no duplicate
 // parser here). Known theme colours are mapped back to their SemanticColor
 // role so they follow theme switches; colours with no matching role (e.g.
 // Chroma 24-bit syntax colours) are carried as explicit FGColor/BGColor

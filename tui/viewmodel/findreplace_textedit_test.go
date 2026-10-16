@@ -10,7 +10,7 @@ import (
 )
 
 // TestFindReplace_TypingDrivesTextEditDirectly proves find/replace keys flow
-// through the shared ui.TextEdit engine (ui.HandleTextEditKey) — not through a
+// through the shared ui.TextEdit engine (ui.HandleTextEditKey), not through a
 // find/replace-specific key bridge (Phase 11 #15). The frame TextFields mirror
 // the state TextEdits on each keystroke.
 func TestFindReplace_TypingDrivesTextEditDirectly(t *testing.T) {
@@ -75,7 +75,7 @@ func TestFindReplace_ButtonsMirrorActions(t *testing.T) {
 // TestFindReplace_ActionButtonsFireCallbacks pins the action-row mouse
 // path: clicking a painted button must fire the same editor callback as
 // the keyboard chord. Coordinates resolve from painted button geometry
-// (FindReplaceActionBounds — Host screen rects), never from assumed rows.
+// (FindReplaceActionBounds, the Host screen rects), never from assumed rows.
 // The editor holds real matches so the buttons are enabled and the
 // callbacks observably fire.
 func TestFindReplace_ActionButtonsFireCallbacks(t *testing.T) {

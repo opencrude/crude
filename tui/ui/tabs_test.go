@@ -342,7 +342,7 @@ func TestTabsLabelInsetKeepsUnderlineOnTheRowEdge(t *testing.T) {
 		return tabs, buf
 	}
 
-	// First tab active: the label is inset, the underline is not — it starts
+	// First tab active: the label is inset, the underline is not; it starts
 	// on the bar's own left edge and runs through the tab's cell.
 	_, buf := build("one")
 	if c := buf.Get(0, 0); c.Char != 0 && c.Char != ' ' {

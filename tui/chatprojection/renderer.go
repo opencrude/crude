@@ -59,7 +59,7 @@ type Renderer struct {
 	thinkingBodyOnly bool
 	// expanded records user-expanded messages; the absence of an ID means the
 	// deterministic default applies (see disclosure.go). Disclosure is TUI
-	// presentation state only — never persisted.
+	// presentation state only: never persisted.
 	expanded         map[string]bool
 	activityMessages map[string]*types.ChatMessage   // transient batch children, keyed by stable call ID
 	activityBatches  map[string][]*types.ChatMessage // rebuilt only when the canonical batch changes

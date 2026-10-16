@@ -261,7 +261,7 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	if err := json.Unmarshal(body, &chunk); err != nil {
 		// Gateways that label NDJSON streams "application/json" land whole
 		// chunk sequences here. When the body really is a chunk sequence,
-		// fold it — and surface the fold's own error (a chunk-level parse
+		// fold it and surface the fold's own error (a chunk-level parse
 		// failure or an in-band error chunk) rather than the misleading
 		// "invalid character '{' after top-level value".
 		if looksLikeNDJSON(body) {

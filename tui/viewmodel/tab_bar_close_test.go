@@ -15,7 +15,7 @@ import (
 
 // TestTabBarCloseClickAtProductionGeometry drives the real viewmodel mouse
 // path (classifyShellRegion → root host → tabs action → handleAgentTabClose)
-// with a sidebar + PadLR inset matching live layout — not the isolated
+// with a sidebar + PadLR inset matching live layout, not the isolated
 // shelltabs Host contract.
 func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	dir := t.TempDir()

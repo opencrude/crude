@@ -61,7 +61,7 @@ type GitStatusResolver struct {
 //
 // repoPath should be the absolute path to the git repository root.
 // If the path is not a valid git repository, the resolver operates in no-op
-// mode — all Resolve calls return GitNone and Refresh is a no-op that returns
+// mode: all Resolve calls return GitNone and Refresh is a no-op that returns
 // an error. The initial status scan is performed on creation when the repo
 // is valid.
 func NewGitStatusResolver(repoPath string) *GitStatusResolver {
@@ -72,7 +72,7 @@ func NewGitStatusResolver(repoPath string) *GitStatusResolver {
 
 	repo, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
-		// Not a git repo or cannot open — no-op mode.
+		// Not a git repo or cannot open: no-op mode.
 		return r
 	}
 	wt, err := repo.Worktree()
@@ -175,13 +175,13 @@ func (r *GitStatusResolver) replaceStatuses(statuses map[string]GitStatus) {
 // GitStatus enum. The two-dimensional status (staging × worktree) is collapsed
 // into a single value using the following priority order (highest first):
 //
-//  1. GitConflicted  — merge conflict
-//  2. GitModified    — working tree or staging has modifications
-//  3. GitStaged      — added to staging (clean working tree or also added)
-//  4. GitDeleted     — file is deleted
-//  5. GitRenamed     — file is renamed
-//  6. GitUntracked   — new file not in index
-//  7. GitNone        — unmodified / no status
+//  1. GitConflicted: merge conflict
+//  2. GitModified: working tree or staging has modifications
+//  3. GitStaged: added to staging (clean working tree or also added)
+//  4. GitDeleted: file is deleted
+//  5. GitRenamed: file is renamed
+//  6. GitUntracked: new file not in index
+//  7. GitNone: unmodified / no status
 func mapGitStatus(staging, worktree git.StatusCode) GitStatus {
 	switch {
 	case staging == git.UpdatedButUnmerged || worktree == git.UpdatedButUnmerged:

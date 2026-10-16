@@ -106,7 +106,7 @@ func (m *App) branchMenuItems(branches []workspace.GitBranchSummary, current str
 
 // openBranchSwitcherAtHeader anchors the dropdown under the header's Git
 // segment: the header slot spans the full content width at the frame top, so
-// the menu opens at (frameLeft, frameTop+2) — just below the two-row header
+// the menu opens at (frameLeft, frameTop+2), directly below the two-row header
 // chrome. openContextMenuState clamps the popup inside the shell frame.
 func (m *App) openBranchSwitcherAtHeader(st *ui.ContextMenuState) tea.Cmd {
 	x, y := 0, 2

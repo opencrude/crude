@@ -69,9 +69,9 @@ func TestCompositor_PresentNoDamageEmpty(t *testing.T) {
 	c := NewCompositor(4, 2)
 	// BeginFrame resets damage; Composite without children marks nothing?
 	// BeginFrame clears damage. Composite with only invisible/empty tree:
-	// root is in FlattenZOrder and is Visible — so it marks damage for root rect.
+	// root is in FlattenZOrder and is Visible, so it marks damage for root rect.
 	c.BeginFrame()
-	// Don't composite — Present with no damage
+	// Don't composite; Present with no damage
 	out := c.Present()
 	if out != "" {
 		t.Fatalf("no damage should yield empty present, got %q", out)
@@ -80,10 +80,10 @@ func TestCompositor_PresentNoDamageEmpty(t *testing.T) {
 
 func TestCompositor_FullRender(t *testing.T) {
 	c := NewCompositor(6, 2)
-	// Attach child before FullRender — but FullRender calls BeginFrame which clears children.
+	// Attach child before FullRender; FullRender calls BeginFrame, which clears children.
 	// So FullRender alone on empty root still composites root surface.
 	out := c.FullRender()
-	// Root is transparent blanks — still damages and generates ANSI (spaces)
+	// Root is transparent blanks: it still damages and generates ANSI (spaces)
 	if out == "" {
 		// Transparent blanks still produce characters (spaces) via GenerateANSI
 		// Char is space for TransparentBlank

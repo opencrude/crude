@@ -68,7 +68,7 @@ type LSPLocation = model.LSPLocation
 type LSPSymbol = model.LSPSymbol
 
 // ProjectInsights is the whole-project snapshot rendered in the bottom-left
-// status bar. It is independent of any single file — it reflects the state of
+// status bar. It is independent of any single file; it reflects the state of
 // every file known to the LSPManager.
 type ProjectInsights = model.ProjectInsights
 

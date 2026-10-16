@@ -9,7 +9,7 @@ import (
 )
 
 // SemanticColor is a design-system color role. Feature code may only request
-// these roles — never raw hex — when painting through ui controls.
+// these roles (never raw hex) when painting through ui controls.
 type SemanticColor uint8
 
 const (

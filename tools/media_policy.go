@@ -92,7 +92,7 @@ type MediaReadPolicy struct {
 	// Model is the active model ID used for capability lookup and limits.
 	Model string
 	// Standard is the resolved wire protocol ID (openai, openai-responses,
-	// anthropic, ollama, codex) — attachment encoding differs per protocol.
+	// anthropic, ollama, codex); attachment encoding differs per protocol.
 	Standard string
 	// Modalities is the exact per-turn override. Nil inherits the catalog;
 	// an explicit empty slice disables every media modality.
@@ -118,7 +118,7 @@ func (p *MediaReadPolicy) mediaRefusal(path, modality, mime string, size int64) 
 // modality, reads it (bounded by the per-model size cap) and appends a
 // ContentPart to the policy's attachment list. Returns:
 //   - handled: true when the file was recognised as media (attached or
-//     explicitly refused) — read_file must not fall through to generic
+//     explicitly refused); read_file must not fall through to generic
 //     binary handling.
 //   - result: the user-visible tool result text.
 func (p *MediaReadPolicy) tryMediaAttachment(path string, lg *logger.Logger) (handled bool, result string, attachments []provider.ContentPart) {

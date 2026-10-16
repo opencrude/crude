@@ -118,7 +118,7 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	localY := ctx.LocalY
 	// ctx.LocalY comes from the Host hit tree relative to the tree view's own
 	// screen rect. The shell places that rect BELOW the filter row (treeY=1),
-	// and the filter row is a sibling painted by the Screen above this rect —
+	// and the filter row is a sibling painted by the Screen above this rect;
 	// it is not inside the tree view's bounds. So Host-local Y 0 is already
 	// the first tree row and no filter offset may be applied. Only the
 	// breadcrumb is painted by ui.Tree inside the tree view's own rect (as its
@@ -600,7 +600,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	}
 	bg := s.tokens.Color(ui.ColorBg)
 	if !bg.IsDefault() {
-		// FillRect adds origin — pass bounds in component-local coords.
+		// FillRect adds origin; pass bounds in component-local coords.
 		ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	}
 	s.syncFromModel()

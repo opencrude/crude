@@ -39,7 +39,7 @@ func (f *FilterField) TextEditor() TextClipboardTarget { return f.field }
 
 // OnChanged registers the callback invoked whenever the value changes through
 // editing or Esc-to-clear. Programmatic value replacement via SetValue does
-// not notify — screens restore model state with SetValue and must not re-enter
+// not notify because screens restore model state with SetValue and must not re-enter
 // the filter path.
 func (f *FilterField) OnChanged(fn func(string)) { f.onChange = fn }
 

@@ -185,7 +185,7 @@ func (m *SplitModel) EndDrag() {
 }
 
 // CancelDrag is EndDrag; the last committed size is kept (same as scrollbar
-// thumb cancel — the user already saw the live size).
+// thumb cancel, since the user already saw the live size).
 func (m *SplitModel) CancelDrag() {
 	m.EndDrag()
 }

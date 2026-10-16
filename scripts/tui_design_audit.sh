@@ -124,7 +124,7 @@ else
 fi
 
 # 4c) Raw ANSI SGR outside the raw-ansi-sgr allowlist (manifest rule).
-# Feature code must never emit raw \x1b[ sequences directly — it must paint
+# Feature code must never emit raw \x1b[ sequences directly; it must paint
 # through TokenSet/component cells or the rendering ANSI pipeline. This is
 # the enforcement for the manifest's raw-ansi-sgr rule (previously
 # declarative only; tui/ui/text_area.go raw \x1b[7m was caught by it).

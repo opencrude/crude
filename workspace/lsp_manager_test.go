@@ -347,7 +347,7 @@ func TestLSPManager_UpdateFile_NoClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// UpdateFile with a file that has no client — should not panic.
+	// UpdateFile with a file that has no client must not panic.
 	m.UpdateFile(ctx, "/tmp/test.go", "package main\nfunc main() {}")
 }
 
@@ -425,7 +425,7 @@ func TestLSPManager_CloseFile_NoClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// CloseFile with no client — should not panic.
+	// CloseFile with no client must not panic.
 	m.CloseFile(ctx, "/tmp/test.go")
 }
 
@@ -590,7 +590,7 @@ func TestUpdateFile_WrongClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// UpdateFile for a file whose root has no client — should not panic.
+	// UpdateFile for a file whose root has no client must not panic.
 	m.UpdateFile(ctx, "/tmp/test.go", "content")
 }
 
@@ -600,6 +600,6 @@ func TestCloseFile_WrongClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// CloseFile for a file whose root has no client — should not panic.
+	// CloseFile for a file whose root has no client must not panic.
 	m.CloseFile(ctx, "/tmp/test.go")
 }

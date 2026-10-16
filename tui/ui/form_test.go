@@ -187,7 +187,7 @@ func TestFormFieldPaintsDirtyMarkerOnModifiedLabel(t *testing.T) {
 
 // Spacious rows are never filled: every label stays on the surface while
 // focused, and the focus fill belongs to the control's own box, which starts
-// on the label row in the shared value column — multi-line editors included.
+// on the label row in the shared value column, multi-line editors included.
 func TestSpaciousLabelsStayOnSurfaceWhileControlBoxesTakeFocus(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	for _, tc := range []struct {

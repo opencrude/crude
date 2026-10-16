@@ -38,7 +38,7 @@ import (
 	"crude/workspace"
 )
 
-// App is the IDE shell — the outermost layer of the three-layer architecture.
+// App is the IDE shell: the outermost layer of the three-layer architecture.
 //
 // It owns the app config and workspace lifecycle, but delegates all IDE
 // business logic (sessions, LSP, agents, editor state) to the workspace.
@@ -89,7 +89,7 @@ type Opts struct {
 }
 
 // New creates the IDE shell. Resolves paths and stores config.
-// Does NOT create sessions or start the TUI — that happens in Run().
+// Does NOT create sessions or start the TUI; Run() does that.
 func New(opts Opts) (*App, error) {
 	issues := append([]ttypes.OperationIssue(nil), opts.StartupIssues...)
 	if err := network.ConfigureStartupDefault(FileConfigToAppSettings(opts.FC).Network); err != nil {

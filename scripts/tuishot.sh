@@ -138,7 +138,7 @@ echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT}+${X}+${Y} cell=${CW}x${CH} grid=${COLS
 [ "$CW" -gt 0 ] && [ "$CH" -gt 0 ] || { echo "ERROR: bad cell size"; exit 1; }
 
 # cell -> ABSOLUTE screen pixel at cell centre. xdotool mousemove uses screen
-# coordinates, so the window origin must be added — otherwise clicks only
+# coordinates, so the window origin must be added; otherwise clicks only
 # land when the WM happens to place the window at (0,0) (the historical
 # "clicks silently do nothing on some runs" flake).
 px() { echo $(( X + $1 * CW + CW / 2 )); }

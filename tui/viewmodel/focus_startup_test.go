@@ -63,7 +63,7 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	}
 	help := app.contextualHelpView()
 	// Tree region prefixes its hint with "file tree"; launcher may mention
-	// "Ctrl+1 focus file tree" as a discoverability chord — that is fine.
+	// "Ctrl+1 focus file tree" as a discoverability chord; that is fine.
 	if strings.HasPrefix(strings.TrimSpace(help), "file tree") {
 		t.Fatalf("startup status hint must be launcher region, got %q", help)
 	}
@@ -83,7 +83,7 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	// same way Update would.
 	res := app.rootHandleFocus(launcher.ScreenID, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if res.Cmd == nil {
-		// First Enter already consumed via dispatch — re-select New Session
+		// First Enter already consumed via dispatch; re-select New Session
 		// and activate through dispatch by ensuring selection is on card 0.
 		app.launcherScreen.SyncFocus()
 	}

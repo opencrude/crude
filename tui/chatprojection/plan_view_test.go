@@ -286,7 +286,7 @@ func TestPlanViewFlattensNotepadTextInBothForms(t *testing.T) {
 }
 
 // Expanded is the reading view: a long description and its reason wrap across
-// rows in full — the ellipsis belongs to the compact banner alone. This is the
+// rows in full: the ellipsis belongs to the compact banner alone. This is the
 // contract a long step must not lose text behind.
 func TestPlanViewExpandedRevealsLongStepAndReasonWhole(t *testing.T) {
 	description := "Investigate the projection path and fix the truncation the user reported"

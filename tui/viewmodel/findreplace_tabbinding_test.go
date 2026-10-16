@@ -101,9 +101,9 @@ func TestFindReplaceClosesOnAgentTabSwitch(t *testing.T) {
 }
 
 // TestFindReplaceSurvivesSameTabRederivation is the regression guard for the
-// popup-closing-on-itself defect: handleTabSwitch is called from ~40 sites —
+// popup-closing-on-itself defect: handleTabSwitch is called from ~40 sites for
 // steady-state re-derivations (opening the tab you're already on, tick/agent
-// syncs, tab-bar enter, command-palette switches) — and closing the popup
+// syncs, tab-bar enter, command-palette switches), and closing the popup
 // unconditionally made it vanish the instant it opened. Only a genuine
 // owner change (prev != next) may close it.
 func TestFindReplaceSurvivesSameTabRederivation(t *testing.T) {

@@ -606,7 +606,7 @@ func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
 // current file, sorted by line then column. Used by navigation
 // features (F8/Shift+F8, status-bar "Goto first error") that need
 // to walk the diagnostic list in order. The returned slice is a
-// copy — modifying it does not affect the editor.
+// copy; modifying it does not affect the editor.
 func (e *Editor) Diagnostics() []LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
@@ -620,7 +620,7 @@ func (e *Editor) Diagnostics() []LSPDiagnostic {
 // a diagnostic range after navigating to it (e.g. "Goto first
 // error"). Coordinates are clamped to non-negative values; a
 // backwards single-line range is normalized. Setting a selection is
-// purely visual — it does not move the cursor.
+// purely visual: it does not move the cursor.
 func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
 	if startLine < 0 {
 		startLine = 0
@@ -649,7 +649,7 @@ func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
 // line strictly greater than fromLine (or with line == fromLine and
 // col > fromCol). Returns nil if there is no such error. The
 // returned diagnostic is a pointer into the editor's diagnostic
-// slice — do not retain across edits.
+// slice; do not retain across edits.
 func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()

@@ -1,4 +1,4 @@
-# TUI bench gate ceilings — the machine-readable source of truth for
+# TUI bench gate ceilings: the machine-readable source of truth for
 # scripts/tui_bench_gate.sh. Generic rows use
 # "<Name> <bytes/op> <allocs/op>"; narrow platform overrides use
 # "<Name> <goos> <bytes/op> <allocs/op>".
@@ -11,7 +11,7 @@
 #     machine with -count=3; flaky ceilings rot the gate's credibility.
 #   - Leaf benches catch a function getting fatter. Scenario benches
 #     (IdleTick/TabRederive, gated on tui/perf work counters in tests) catch
-#     call-frequency regressions — a dropped per-tick cache shows up in the
+#     call-frequency regressions: a dropped per-tick cache shows up in the
 #     work-budget tests and as a multi-x alloc jump here, not as a leaf change.
 BenchmarkDemoGalleryPaint_80x24 1300 60
 BenchmarkDemoGalleryPaint_120x40 2000 60
@@ -29,7 +29,7 @@ BenchmarkBufferDirtyCheckLargeFile 0 0
 BenchmarkBufferSavepointManualRoundTripLargeFile 0 0
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
-# Scenario benches (tui/viewmodel) — steady-state work budgets.
+# Scenario benches (tui/viewmodel): steady-state work budgets.
 BenchmarkIdleTick_200Msgs 15000 325
 BenchmarkTabRederive_80Msgs 14000 300
 BenchmarkPointerMotionCoalesced 12000 52

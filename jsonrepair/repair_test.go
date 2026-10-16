@@ -760,7 +760,7 @@ func TestConcurrentRepairStress(t *testing.T) {
 		wg.Wait()
 
 		// Repair spawns no goroutines, but the Go runtime reaps exited goroutine
-		// stacks asynchronously — a one-shot NumGoroutine snapshot is flaky under
+		// stacks asynchronously; a one-shot NumGoroutine snapshot is flaky under
 		// scheduler load. Poll briefly until the count settles back to the
 		// baseline (plus a small tolerance for unrelated test goroutines). A real
 		// leak would never settle and the poll would time out, failing the test.

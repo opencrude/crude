@@ -4,7 +4,7 @@ import "testing"
 
 // The idle launcher previously scheduled the 16 ms streaming tick forever
 // (AgentMgr.Count()==0 && ActiveView==""), repainting full frames at ~60 Hz
-// even with nothing animating — the "floating terminal burns 26% CPU" storm.
+// even with nothing animating: the "floating terminal burns 26% CPU" storm.
 // The fast tick is reserved for real streaming/reveal activity.
 func TestWantsFastTick(t *testing.T) {
 	app := newTestApp(t)

@@ -25,7 +25,7 @@ func twoSessions() []sessiondb.SessionMeta {
 }
 
 // The whole point of the redesign: the search row is visible (and clickable)
-// the moment the picker opens — no hidden "/" shortcut required.
+// the moment the picker opens; no hidden "/" shortcut required.
 func TestSearchRowAlwaysVisibleAndPainted(t *testing.T) {
 	screen, host := pickerHost(t, twoSessions())
 	buf := paintHost(host, 72, 14)

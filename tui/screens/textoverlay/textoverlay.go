@@ -176,7 +176,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	switch action.ID {
 	case "textoverlay.save":
 		if s.readOnly {
-			// Read-only previews never persist — the Save action doesn't
+			// Read-only previews never persist; the Save action doesn't
 			// even render, but a stale chord must stay inert too.
 			return ui.EventResult{Handled: true}
 		}
@@ -274,7 +274,7 @@ func (o *overlayInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 }
 
 // isReadingKey reports whether a key only moves the cursor or extends the
-// selection — the keys a read-only preview still honors.
+// selection: the keys a read-only preview still honors.
 func isReadingKey(key tea.KeyPressMsg) bool {
 	switch key.Code {
 	case tea.KeyLeft, tea.KeyRight, tea.KeyUp, tea.KeyDown,

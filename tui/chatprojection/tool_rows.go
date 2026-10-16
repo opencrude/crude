@@ -122,9 +122,9 @@ func buildToolTruncationLine(remaining, width int) PaintLine {
 // builder instead of the plain prose rows. A patch card must contain a patch
 // from a tool that writes file content: the route needs both the patching tool
 // name and a payload that really is a unified diff. Content sniffing alone
-// misroutes evidence — a read of a fixture that embeds "```diff" in a string
-// literal would be painted in the patch gutter — and a tool name alone
-// misroutes prose — a no-change edit whose body is only the result's own
+// misroutes evidence: a read of a fixture that embeds "```diff" in a string
+// literal would be painted in the patch gutter, and a tool name alone
+// misroutes prose: a no-change edit whose body is only the result's own
 // summary sentence would become a fake hunk row through the lenient parser.
 func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 	if tools.IsPlanTool(msg.ToolName) {
@@ -192,14 +192,14 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 			default:
 				// Search/listing tools lead with a self-describing count line
 				// ("5 matches for X") that the title summary already renders as
-				// "— 5 matches". Drop it from the body so it isn't printed twice.
+				// a count. Drop it from the body so it isn't printed twice.
 				body := stripRedundantResultHeader(msg.ToolName, resultContent)
 				out.appendPlainToolBody(msg.ToolName, body, innerW, height, false, expanded)
 			}
 		}
 	} else if msg.ToolStatus == "error" {
 		// A structured planning failure already explains itself in the title
-		// ("Update plan failed — revision conflict …"); its canonical JSON
+		// ("Update plan failed" plus the reason …"); its canonical JSON
 		// payload addresses the model, not the reader.
 		if msg.ToolName == "apply_patch" && tools.IsDiffContent(msg.Content) {
 			prefix, _, _ := strings.Cut(msg.Content, "```diff")
@@ -242,9 +242,9 @@ func isCompactEvidenceTool(name string) bool {
 
 // stripRedundantResultHeader removes a leading self-describing count line from
 // search/listing tool bodies because the title summary already shows the count
-// (e.g. "— 5 matches"). Only tools that emit such a header participate, and
+// (e.g. "5 matches"). Only tools that emit such a header participate, and
 // only a first line matching the "<n> (match|matches|file|files|entries|result|results)"
-// shape is dropped — a first line with real content is never removed.
+// shape is dropped; a first line with real content is never removed.
 func stripRedundantResultHeader(toolName, content string) string {
 	switch toolName {
 	case "grep_files", "glob_files", "web_search", "arxiv_search", "execute_command":

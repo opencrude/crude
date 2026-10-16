@@ -25,7 +25,7 @@ func TestDiagnostics_ReturnsCopy(t *testing.T) {
 	got := ed.Diagnostics()
 	assert.Len(t, got, 1)
 	got[0].Message = "mutated"
-	// Original must be unchanged — we got a copy.
+	// Original must be unchanged; we got a copy.
 	assert.Equal(t, "e1", ed.Diagnostics()[0].Message)
 }
 

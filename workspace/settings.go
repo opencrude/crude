@@ -74,7 +74,7 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 }
 
 // SaveAppSettings persists application-layer settings to config.json via
-// OnAppSettingsSave. It does not write workspace.db — workspace overrides
+// OnAppSettingsSave. It does not write workspace.db; workspace overrides
 // stay on SaveWorkspaceSettings.
 func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 	ttypes.ApplyAppDefaults(&s)
