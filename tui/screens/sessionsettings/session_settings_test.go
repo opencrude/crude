@@ -36,8 +36,8 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	if result.Action != nil || screen.page != rolePage || screen.role != "default" {
 		t.Fatalf("role open result=%#v page=%d role=%q", result, screen.page, screen.role)
 	}
-	if screen.formModel.FieldCount() != 6 {
-		t.Fatalf("role form fields=%d, want provider/model/thinking/compaction/retention/capabilities", screen.formModel.FieldCount())
+	if screen.formModel.FieldCount() != 5 {
+		t.Fatalf("role form fields=%d, want provider/model/thinking/compaction/retention", screen.formModel.FieldCount())
 	}
 
 	buf := surface.NewCellBuffer(80, 13)
@@ -62,6 +62,46 @@ func TestRoleFormPersistsExplicitCompactionDisable(t *testing.T) {
 	category := settings.SessionOverrides["default"]
 	if category.ContextCompactionPercent == nil || *category.ContextCompactionPercent != 0 {
 		t.Fatalf("session compaction override = %#v", category.ContextCompactionPercent)
+	}
+}
+
+// The Skills and MCP views own per-session capability control, so Session
+// Settings must expose no Capabilities row or page of its own.
+func TestSessionSettingsHasNoCapabilitiesRow(t *testing.T) {
+	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
+	}}}
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
+	if field := screen.formModel.Field("capabilities"); field != nil {
+		t.Fatalf("root form still offers a capabilities row: %#v", field)
+	}
+
+	screen.openRole("default")
+	if field := screen.formModel.Field("capabilities"); field != nil {
+		t.Fatalf("role form still offers a capabilities row: %#v", field)
+	}
+
+	screen.openRoot()
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(90, 17)
+	host.Layout()
+	buf := surface.NewCellBuffer(90, 17)
+	host.Paint(buf)
+	if bufferContains(buf, "Capabilities") {
+		t.Fatal("session settings painted a Capabilities row")
+	}
+
+	// The removed entry points must not open a page any more.
+	for _, action := range []string{
+		"session-settings.capabilities.open",
+		"session-settings.capabilities.apply",
+		"session-settings.capabilities.reset",
+	} {
+		page := screen.page
+		screen.HandleAction(ui.EventContext{}, ui.Action{ID: action})
+		if screen.page != page {
+			t.Fatalf("%s changed the page from %d to %d", action, page, screen.page)
+		}
 	}
 }
 

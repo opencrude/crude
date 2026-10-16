@@ -953,7 +953,6 @@ func (m *App) openSessionSettings() {
 		return
 	}
 	p.settings.ConfigureAccounts(m.ws.AllAccounts())
-	p.settings.SetCapabilities(m.capabilitySnapshot)
 	if lsp := m.ws.LSPMgr(); lsp != nil {
 		p.settings.SetWorkspaceCodeIntelligence(lsp.Settings().Enabled)
 	}

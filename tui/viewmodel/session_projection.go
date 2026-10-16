@@ -206,7 +206,6 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 	}
 	effective, base := sessionSettingsSnapshot(session)
 	projection.settings.ConfigureAccounts(m.ws.AllAccounts())
-	projection.settings.SetCapabilities(m.capabilitySnapshot)
 	projection.settings.SetInheritance(effective, base, sessionSettingsOverrides(session))
 	if projection.deck != nil && projection.deck.Activate(sessionSettingsPanelID) {
 		projection.deck.Open(sessionSettingsPanel(projection.settings))
