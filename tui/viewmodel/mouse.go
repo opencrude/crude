@@ -537,13 +537,13 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case regionInput:
-		if m.Input.InputSelecting() {
+		if m.Input.InputDragging() {
 			return m, tea.Batch(m.routeInputMouse(msg)...)
 		}
 		return m, m.handleShellPointer(msg)
 
 	case regionChat:
-		if m.Input.InputSelecting() {
+		if m.Input.InputDragging() {
 			return m, tea.Batch(m.routeInputMouse(msg)...)
 		}
 		return m, m.handleShellPointer(msg)
@@ -568,9 +568,24 @@ func (m *App) capturingWindow() *wm.FloatingWindow {
 	}
 	windows := m.windowManager.Windows()
 	for i := len(windows) - 1; i >= 0; i-- {
-		if frame, ok := windows[i].Content.(*ui.WindowFrameWidget); ok && frame.Host() != nil && frame.Host().HasPointerCapture() {
+		if host := windowContentHost(windows[i]); host != nil && host.HasPointerCapture() {
 			return windows[i]
 		}
+	}
+	return nil
+}
+
+// windowContentHost returns the component Host behind a floating window's
+// content: a WindowFrame body or a ComponentWidget overlay.
+func windowContentHost(fw *wm.FloatingWindow) *ui.Host {
+	if fw == nil {
+		return nil
+	}
+	switch content := fw.Content.(type) {
+	case *ui.WindowFrameWidget:
+		return content.Host()
+	case *ui.ComponentWidget:
+		return content.Host()
 	}
 	return nil
 }
@@ -596,8 +611,8 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		// early when IsDragging()), so forwarding a stray release would confuse it.
 		if released == nil {
 			if fw := m.pointerReleaseWindow(); fw != nil {
-				frame, _ := fw.Content.(*ui.WindowFrameWidget)
-				owned := frame != nil && frame.Host() != nil && frame.Host().HasPointerCapture()
+				host := windowContentHost(fw)
+				owned := host != nil && host.HasPointerCapture()
 				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -640,7 +655,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 
 	case regionInput:
-		if m.Input.InputSelecting() {
+		if m.Input.InputDragging() {
 			cmds = append(cmds, m.routeInputMouse(msg)...)
 			return m, tea.Batch(cmds...)
 		}
@@ -653,7 +668,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 
 	case regionChat:
-		if m.Input.InputSelecting() {
+		if m.Input.InputDragging() {
 			cmds = append(cmds, m.routeInputMouse(msg)...)
 			return m, tea.Batch(cmds...)
 		}

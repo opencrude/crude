@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
@@ -95,6 +96,11 @@ type Editor struct {
 
 	selecting     bool // keyboard or mouse selection anchor is active
 	mouseDragging bool // true only while a mouse button drag is in progress
+	// Multi-click detection: a second press within multiClickWindow on the
+	// same spot selects the word, a third the line.
+	lastClickAt  time.Time
+	lastClickPos Position
+	clickCount   int
 	selAnchor     Position
 	selEnd        Position
 

@@ -236,72 +236,6 @@ func (m *commandPaletteModel) listItems() []ui.ListItem {
 	return items
 }
 
-func (m *commandPaletteModel) Update(msg tea.Msg) tea.Cmd {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.updateKey(msg)
-	}
-	return nil
-}
-
-func (m *commandPaletteModel) updateKey(keyMsg tea.KeyPressMsg) tea.Cmd {
-	switch keyMsg.Code {
-	case tea.KeyEsc:
-		return nil
-
-	case tea.KeyEnter:
-		if len(m.filtered) > 0 && m.idx >= 0 && m.idx < len(m.filtered) {
-			item := m.filtered[m.idx]
-			if m.callback != nil {
-				return m.callback(item.ID)
-			}
-		}
-		return nil
-
-	case tea.KeyUp:
-		if m.idx > 0 {
-			m.idx--
-		}
-
-	case tea.KeyDown:
-		if m.idx < len(m.filtered)-1 {
-			m.idx++
-		}
-
-	case tea.KeyPgUp:
-		vh := m.visibleHeight()
-		m.idx -= vh
-		if m.idx < 0 {
-			m.idx = 0
-		}
-
-	case tea.KeyPgDown:
-		vh := m.visibleHeight()
-		m.idx += vh
-		if m.idx >= len(m.filtered) {
-			m.idx = len(m.filtered) - 1
-		}
-
-	case tea.KeyBackspace, tea.KeyDelete, tea.KeyHome, tea.KeyEnd:
-		if m.filterEd == nil {
-			m.filterEd = ui.NewTextEdit()
-		}
-		if ui.HandleFilterKey(m.filterEd, keyMsg) {
-			m.applyFilter()
-		}
-
-	default:
-		if m.filterEd == nil {
-			m.filterEd = ui.NewTextEdit()
-		}
-		if ui.HandleFilterKey(m.filterEd, keyMsg) {
-			m.applyFilter()
-		}
-	}
-
-	return nil
-}
-
 func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 	if m.windowManager.Window("command-palette") != nil {
 		m.overlayHost.Close(ui.OverlayCommandPalette)
@@ -351,6 +285,10 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		Width:    palW,
 		Height:   palH,
 	})
+	// The search field edits the model's filter TextEdit directly.
+	if search := ui.CommandPaletteSearch(frame); search != nil {
+		search.BindEdit(model.filterEd)
+	}
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayCommandPalette), "", frame,
 		palW, palH,
@@ -382,11 +320,12 @@ func (m *App) refreshCommandPaletteFrame() {
 	fw.MarkContentDirty()
 }
 
-// handleCommandPaletteKey routes a keypress to the command palette frame.
-// Text-editing keys go to the search TextField; navigation/Enter go to the List.
-// Returns whether the frame should be refreshed and any command emitted by an
-// activated palette action.
-func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+// handleCommandPaletteInput routes a keypress or bracketed paste to the
+// command palette frame. Navigation keys and Enter go to the List; text
+// editing, clipboard chords and pastes go to the search TextField through the
+// shared overlay text path. Returns whether the frame should be refreshed and
+// any command emitted by an activated palette action or a clipboard chord.
+func (m *App) handleCommandPaletteInput(input tea.Msg) (bool, tea.Cmd) {
 	if m.commandPaletteModel == nil {
 		return false, nil
 	}
@@ -404,6 +343,10 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
+	msg, isKey := input.(tea.KeyPressMsg)
+	if !isKey {
+		return m.commandPaletteText(fw, search, list, input)
+	}
 	// Navigation keys → List
 	switch msg.Code {
 	case tea.KeyUp:
@@ -447,16 +390,27 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	// All other keys (text editing, Backspace, etc.) → search field
-	oldVal := search.Value()
-	search.Handle(ui.EventContext{}, ui.KeyEvent(msg))
-	if search.Value() != oldVal {
-		m.commandPaletteModel.setFilter(search.Value())
-		m.commandPaletteModel.applyFilter()
-		list.SetItems(m.commandPaletteModel.listItems())
-		return true, nil
+	return m.commandPaletteText(fw, search, list, msg)
+}
+
+// commandPaletteText edits the palette query through the search TextField
+// (bound to the model's filter TextEdit) and re-filters on change. A Ctrl+V
+// result re-enters here while the same palette is still open.
+func (m *App) commandPaletteText(fw *wm.FloatingWindow, search *ui.TextField, list *ui.List, msg tea.Msg) (bool, tea.Cmd) {
+	model := m.commandPaletteModel
+	deliver := func(content string) tea.Cmd {
+		if m.commandPaletteModel != model {
+			return nil
+		}
+		_, cmd := m.handleCommandPaletteInput(tea.PasteMsg{Content: content})
+		return cmd
 	}
-	return false, nil
+	changed, cmd := m.routeOverlayText(fw, search, msg, deliver)
+	if changed {
+		model.applyFilter()
+		list.SetItems(model.listItems())
+	}
+	return changed, cmd
 }
 
 // syncPaletteModelFromList updates m.idx from the List selection.

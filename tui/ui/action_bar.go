@@ -48,9 +48,13 @@ type ActionBar struct {
 	ruleFullBleed bool
 	ruleBleedX    int
 	ruleBleedW    int
+	// labelGen is the keyboard profile generation the shortcut captions were
+	// resolved for; a profile change re-resolves them before measuring.
+	labelGen uint64
 }
 
 type actionBarBtn struct {
+	title    string // label without the shortcut caption
 	label    string
 	action   string
 	shortcut string
@@ -71,11 +75,9 @@ func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *Ac
 		exitBackward: "actionbar.exit.backward",
 		buttons:      make([]actionBarBtn, len(btns)),
 	}
+	ab.labelGen = KeyboardProfileGeneration()
 	for i, b := range btns {
-		label := b.Label
-		if b.Shortcut != "" {
-			label += " (" + b.Shortcut + ")"
-		}
+		label := actionBarLabel(b.Label, b.Shortcut)
 		bid := b.ID
 		if bid == RootID {
 			bid = NewID(id, b.Label)
@@ -87,6 +89,7 @@ func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *Ac
 		btn.SetDisabled(!b.Enabled)
 		btn.SetVariant(b.Variant)
 		ab.buttons[i] = actionBarBtn{
+			title:    b.Label,
 			label:    label,
 			action:   b.Action,
 			shortcut: b.Shortcut,
@@ -115,15 +118,12 @@ func (ab *ActionBar) SetButtons(btns ...ActionBarButton) {
 		if id == RootID {
 			id = NewID(ab.ID(), spec.Label)
 		}
-		label := spec.Label
-		if spec.Shortcut != "" {
-			label += " (" + spec.Shortcut + ")"
-		}
+		label := actionBarLabel(spec.Label, spec.Shortcut)
 		button, ok := existing[id]
 		if !ok {
 			button.button = NewButton(id, label, spec.Action)
 		}
-		button.label, button.action, button.shortcut = label, spec.Action, spec.Shortcut
+		button.title, button.label, button.action, button.shortcut = spec.Label, label, spec.Action, spec.Shortcut
 		button.variant, button.enabled = spec.Variant, spec.Enabled
 		button.button.SetLabel(label)
 		button.button.SetActionID(spec.Action)
@@ -250,11 +250,12 @@ func (ab *ActionBar) SetLabel(action, label string) bool {
 		if ab.buttons[i].action != action {
 			continue
 		}
-		if ab.buttons[i].label == label {
+		full := actionBarLabel(label, ab.buttons[i].shortcut)
+		if ab.buttons[i].label == full {
 			return true // action exists; callers must not recreate the bar
 		}
-		ab.buttons[i].label = label
-		ab.buttons[i].button.SetLabel(label)
+		ab.buttons[i].title, ab.buttons[i].label = label, full
+		ab.buttons[i].button.SetLabel(full)
 		if !ab.Bounds().Empty() {
 			ab.Layout(LayoutContext{}, ab.Bounds())
 		}
@@ -277,7 +278,38 @@ func (ab *ActionBar) Children() []Component {
 	return nil
 }
 
+// actionBarLabel appends a button's shortcut caption. Modifier chords go
+// through FormatShortcut so "ctrl+s" and "Ctrl+S" read alike and semantic
+// chords name the key this terminal delivers; a bare key ("a", "n") stays as
+// typed so it never reads as Shift+key.
+func actionBarLabel(title, shortcut string) string {
+	if shortcut == "" {
+		return title
+	}
+	caption := shortcut
+	if _, ok := ChordLabel(shortcut); ok || strings.Contains(shortcut, "+") {
+		caption = FormatShortcut(strings.ToLower(shortcut))
+	}
+	return title + " (" + caption + ")"
+}
+
+// syncShortcutLabels re-resolves shortcut captions after a keyboard profile
+// change (the terminal's keyboard-enhancement answer can arrive after the bar
+// was built).
+func (ab *ActionBar) syncShortcutLabels() {
+	gen := KeyboardProfileGeneration()
+	if ab.labelGen == gen {
+		return
+	}
+	ab.labelGen = gen
+	for i := range ab.buttons {
+		ab.buttons[i].label = actionBarLabel(ab.buttons[i].title, ab.buttons[i].shortcut)
+		ab.buttons[i].button.SetLabel(ab.buttons[i].label)
+	}
+}
+
 func (ab *ActionBar) Measure(_ LayoutContext, cs Constraints) Size {
+	ab.syncShortcutLabels()
 	totalW := 0
 	for i := range ab.buttons {
 		totalW += rendering.VisibleWidth(ab.buttons[i].label) + 4
@@ -289,6 +321,7 @@ func (ab *ActionBar) Measure(_ LayoutContext, cs Constraints) Size {
 }
 
 func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
+	ab.syncShortcutLabels()
 	ab.SetBounds(r)
 	if r.Empty() {
 		for i := range ab.buttons {
@@ -313,10 +346,7 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	if totalW > r.W {
 		totalW = max(0, len(widths)-1) * ab.gap
 		for i := range ab.buttons {
-			label := ab.buttons[i].label
-			if shortcut := ab.buttons[i].shortcut; shortcut != "" {
-				label = strings.TrimSuffix(label, " ("+shortcut+")")
-			}
+			label := ab.buttons[i].title
 			ab.buttons[i].button.SetLabel(label)
 			widths[i] = rendering.VisibleWidth(label) + 4
 			totalW += widths[i]
@@ -406,9 +436,7 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true, Action: &Action{ID: ab.cancelAction}, Invalidate: InvalidatePaint}
 		}
 		for i := range ab.buttons {
-			shortcut := ab.buttons[i].shortcut
-			matched := shortcut != "" && key.String() == shortcut || shortcut == CommitChord && IsCommitChord(key)
-			if matched && ab.buttons[i].enabled {
+			if MatchesShortcut(key, ab.buttons[i].shortcut) && ab.buttons[i].enabled {
 				ab.focused = i
 				return EventResult{Handled: true, Action: &Action{ID: ab.buttons[i].action}, Invalidate: InvalidateFocus | InvalidatePaint}
 			}

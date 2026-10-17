@@ -47,7 +47,7 @@ func (box *messageBox) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 func (box *messageBox) TextEditor() ui.TextClipboardTarget { return box.area }
 func (box *messageBox) CancelPointerCapture()              { box.area.CancelPointerCapture() }
 func (box *messageBox) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleTextInput, Label: "Commit message", Value: box.area.Value(), Description: "Ctrl+Enter commits"}
+	return ui.Semantics{Role: ui.RoleTextInput, Label: "Commit message", Value: box.area.Value(), Description: ui.FormatShortcut(ui.CommitChord) + " commits"}
 }
 
 // selectList wraps a ui.List so keyboard movement can request a preview.

@@ -130,9 +130,9 @@ func TestComposerEscClearsSelectionOnly(t *testing.T) {
 	}
 }
 
-// A completed drag copies on release and drops the selection, so the composer
-// never keeps pointer state that the pointer no longer owns.
-func TestComposerDragCopiesOnRelease(t *testing.T) {
+// The draft is editable: a completed drag ends pointer capture but keeps the
+// selection for typing over, Ctrl+X or Ctrl+C, without touching the clipboard.
+func TestComposerDragKeepsSelectionForEditing(t *testing.T) {
 	m, copied := newClipboardModel(t, "hello world")
 	m.LayoutShell(40, 4)
 	click := tea.MouseClickMsg{X: 0, Y: m.textAreaY(), Button: tea.MouseLeft}
@@ -147,11 +147,18 @@ func TestComposerDragCopiesOnRelease(t *testing.T) {
 	}
 	release := tea.MouseReleaseMsg{X: 6, Y: updated.textAreaY(), Button: tea.MouseLeft}
 	released, cmd, _ := updated.Update(release, false, false)
-	if released.input.IsSelecting() || released.HasInputSelection() {
-		t.Fatalf("release kept selection %q selecting=%v", released.SelectedText(), released.input.IsSelecting())
+	if released.input.IsSelecting() || released.SelectedText() != selected {
+		t.Fatalf("release selection %q selecting=%v, want %q kept", released.SelectedText(), released.input.IsSelecting(), selected)
 	}
-	runCopyCmd(t, cmd)
+	if cmd != nil {
+		t.Fatal("release of a composer drag returned a clipboard command")
+	}
+	copiedModel, copyCmd, _ := released.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, false, false)
+	runCopyCmd(t, copyCmd)
 	if len(*copied) != 1 || (*copied)[0] != selected {
 		t.Fatalf("copied=%q want [%s]", *copied, selected)
+	}
+	if copiedModel.Value() != "hello world" {
+		t.Fatalf("copy changed the draft: %q", copiedModel.Value())
 	}
 }

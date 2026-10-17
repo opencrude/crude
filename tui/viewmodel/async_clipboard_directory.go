@@ -16,9 +16,9 @@ import (
 	"crude/sessiondb"
 	"crude/shellport"
 	"crude/tui/editor"
+	"crude/tui/rendering"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
-	"crude/tui/ui/popup"
 	"crude/workspace"
 )
 
@@ -30,7 +30,6 @@ const (
 	clipboardAsyncPasteInputText
 	clipboardAsyncPasteInputImageFirst
 	clipboardAsyncPasteInputImage
-	clipboardAsyncPasteFindReplace
 	clipboardAsyncPasteNative
 )
 
@@ -44,10 +43,12 @@ type clipboardAsyncRequestMsg struct {
 	inputEpoch          uint64
 	overlayEpoch        uint64
 	workspaceGeneration uint64
-	findReplace         *popup.FindReplaceState
-	textEdit            *ui.TextEdit
 	nativePaste         ui.ClipboardPasteTarget
-	overlayID           string
+	// nativeDeliver re-enters the clipboard text through the component that
+	// requested it (owner-keyed; it performs its own liveness checks), so
+	// composite controls observe Ctrl+V exactly like a bracketed paste.
+	nativeDeliver func(string) tea.Cmd
+	overlayID     string
 }
 
 type clipboardAsyncResultMsg struct {
@@ -61,11 +62,9 @@ type clipboardAsyncResultMsg struct {
 }
 
 type clipboardAsyncKey struct {
-	lane        clipboardAsyncOperation
-	editor      *editor.Editor
-	session     *workspace.Session
-	findReplace *popup.FindReplaceState
-	textEdit    *ui.TextEdit
+	lane    clipboardAsyncOperation
+	editor  *editor.Editor
+	session *workspace.Session
 }
 
 type clipboardAsyncBackend struct {
@@ -179,10 +178,6 @@ func (r clipboardAsyncRequestMsg) key() clipboardAsyncKey {
 	switch r.operation {
 	case clipboardAsyncPasteEditor:
 		return clipboardAsyncKey{lane: clipboardAsyncPasteEditor, editor: r.editor}
-	case clipboardAsyncPasteFindReplace:
-		return clipboardAsyncKey{
-			lane: clipboardAsyncPasteFindReplace, findReplace: r.findReplace, textEdit: r.textEdit,
-		}
 	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
 		return clipboardAsyncKey{lane: clipboardAsyncPasteInputText, session: r.session}
 	case clipboardAsyncPasteNative:
@@ -270,10 +265,10 @@ func executeClipboardAsyncRequest(
 	switch request.operation {
 	case clipboardAsyncWriteText:
 		result.operationErr = backend.writeText(request.text)
-	case clipboardAsyncPasteEditor, clipboardAsyncPasteInputText, clipboardAsyncPasteFindReplace, clipboardAsyncPasteNative:
+	case clipboardAsyncPasteEditor, clipboardAsyncPasteInputText, clipboardAsyncPasteNative:
 		data := backend.read(clipboard.FmtText)
 		if len(data) == 0 {
-			result.operationErr = errors.New("clipboard is empty or unavailable")
+			result.operationErr = errors.New(ui.ClipboardReadUnavailable())
 		} else {
 			result.content = string(data)
 		}
@@ -287,7 +282,7 @@ func executeClipboardAsyncRequest(
 			}
 			data = backend.read(clipboard.FmtText)
 			if len(data) == 0 {
-				result.operationErr = errors.New("clipboard is empty or unavailable")
+				result.operationErr = errors.New(ui.ClipboardReadUnavailable())
 			} else {
 				result.content = string(data)
 			}
@@ -314,9 +309,13 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 
 	switch request.operation {
 	case clipboardAsyncWriteText:
-		if result.operationErr != nil {
-			m.setClipboardAsyncError("clipboard error: " + result.operationErr.Error())
-			return nil
+		// An unreachable or remote (SSH) system clipboard falls back to the
+		// OSC 52 terminal clipboard, as rendering.CopyToClipboardCmd does.
+		if result.operationErr != nil || rendering.RemoteTerminalSession() {
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Copied " + strconv.Itoa(len(request.text)) + " chars via the terminal clipboard")
+			}
+			return tea.SetClipboard(request.text)
 		}
 		if m.Feedback != nil {
 			m.Feedback.NotifyInfo("Copied " + strconv.Itoa(len(request.text)) + " chars")
@@ -333,27 +332,12 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 		if m.Feedback != nil {
 			m.Feedback.NotifyInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars")
 		}
-	case clipboardAsyncPasteFindReplace:
-		if !m.ownsClipboardFindReplaceTarget(request.findReplace, request.textEdit) {
-			return nil
-		}
-		if result.operationErr != nil {
-			m.setClipboardAsyncError(result.operationErr.Error())
-			return nil
-		}
-		request.textEdit.Insert(result.content)
-		if request.findReplace.OnChange != nil {
-			request.findReplace.OnChange()
-		}
 	case clipboardAsyncPasteNative:
 		if request.nativePaste == nil || !request.nativePaste.PasteActive() {
 			return nil
 		}
-		if request.overlayID != "" {
-			fw := m.windowManager.Focused()
-			if fw == nil || fw.ID != request.overlayID {
-				return nil
-			}
+		if request.overlayID != "" && m.windowManager.Window(request.overlayID) == nil {
+			return nil
 		}
 		if request.overlayID == string(ui.OverlayTextOverlay) {
 			if screen := m.sessionTextOverlay(); screen == nil || screen.OpenEpoch() != request.overlayEpoch {
@@ -363,6 +347,9 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 		if result.operationErr != nil {
 			m.setClipboardAsyncError(result.operationErr.Error())
 			return nil
+		}
+		if request.nativeDeliver != nil {
+			return request.nativeDeliver(result.content)
 		}
 		request.nativePaste.PasteText(result.content)
 	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
@@ -428,31 +415,61 @@ func (m *App) beginEditorClipboardPaste(target *editor.Editor) tea.Cmd {
 	return m.clipboardAsyncCommand(request)
 }
 
-func (m *App) beginNativeClipboardPaste(target ui.ClipboardPasteTarget, overlayID string) tea.Cmd {
+// beginNativeClipboardPaste starts the Ctrl+V system-clipboard read for a
+// text control. deliver, when set, re-enters the text through the control's
+// owner (see nativePasteDelivery); otherwise the text goes to target itself.
+func (m *App) beginNativeClipboardPaste(target ui.ClipboardPasteTarget, overlayID string, deliver func(string) tea.Cmd) tea.Cmd {
 	if target == nil || !target.PasteActive() {
 		return nil
 	}
 	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
-		operation:   clipboardAsyncPasteNative,
-		nativePaste: target,
-		overlayID:   overlayID,
+		operation:     clipboardAsyncPasteNative,
+		nativePaste:   target,
+		nativeDeliver: deliver,
+		overlayID:     overlayID,
 	})
 	return m.clipboardAsyncCommand(request)
 }
 
-func (m *App) beginFindReplaceClipboardPaste(
-	findReplace *popup.FindReplaceState,
-	textEdit *ui.TextEdit,
-) tea.Cmd {
-	if findReplace == nil || textEdit == nil {
-		return nil
+// nativePasteDelivery binds a Ctrl+V result to the mounted component that
+// requested it: the focused component of one of hosts whose text editor is
+// target (a search field, filter, form, composite write-in). The result is
+// delivered to that exact component as a tea.PasteMsg through its own Handle,
+// so debounced searches, change callbacks and form state all observe it. A
+// replaced or unmounted owner drops the late result. When no composite owner
+// is found the target receives the text directly.
+func nativePasteDelivery(target ui.ClipboardPasteTarget, after func(ui.EventResult) tea.Cmd, hosts ...*ui.Host) func(string) tea.Cmd {
+	for _, host := range hosts {
+		if host == nil {
+			continue
+		}
+		id := host.Focused()
+		owner := host.Component(id)
+		if owner == nil || !pasteTargetOf(owner, target) {
+			continue
+		}
+		return func(content string) tea.Cmd {
+			if host.Component(id) != owner || !pasteTargetOf(owner, target) {
+				return nil
+			}
+			result := host.Deliver(id, tea.PasteMsg{Content: content})
+			if after != nil {
+				return after(result)
+			}
+			return result.Cmd
+		}
 	}
-	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
-		operation:   clipboardAsyncPasteFindReplace,
-		findReplace: findReplace,
-		textEdit:    textEdit,
-	})
-	return m.clipboardAsyncCommand(request)
+	return nil
+}
+
+// pasteTargetOf reports whether component is, or currently edits through,
+// the paste target.
+func pasteTargetOf(component ui.Component, target ui.ClipboardPasteTarget) bool {
+	if any(component) == any(target) {
+		return true
+	}
+	editor := ui.TextClipboardTargetIn(component)
+	return editor != nil && any(editor) == any(target)
 }
 
 func (m *App) consumeClipboardAsyncRequest(request clipboardAsyncRequestMsg) bool {
@@ -530,34 +547,6 @@ func (m *App) ownsClipboardTargetEditor(target *editor.Editor) bool {
 		}
 	}
 	return false
-}
-
-func (m *App) ownsClipboardFindReplaceTarget(
-	findReplace *popup.FindReplaceState,
-	textEdit *ui.TextEdit,
-) bool {
-	if findReplace == nil || textEdit == nil || m.FindReplace != findReplace {
-		return false
-	}
-	if m.windowManager == nil ||
-		m.windowManager.Window(string(ui.OverlayFindReplace)) == nil {
-		return false
-	}
-	return textEdit == findReplace.FindEdit() || textEdit == findReplace.ReplaceEdit()
-}
-
-func (m *App) invalidateClipboardFindReplace(findReplace *popup.FindReplaceState) {
-	if findReplace == nil {
-		return
-	}
-	state := asyncIOStateFor(m)
-	state.mu.Lock()
-	for key := range state.latestClipboard {
-		if key.lane == clipboardAsyncPasteFindReplace && key.findReplace == findReplace {
-			delete(state.latestClipboard, key)
-		}
-	}
-	state.mu.Unlock()
 }
 
 func (m *App) setClipboardAsyncError(message string) {

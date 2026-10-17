@@ -96,7 +96,7 @@ func (s *Screen) rebuildActions() {
 	s.actions = ui.NewActionBar(ActionsID, s.tokens,
 		ui.ActionBarButton{
 			ID: ui.NewID(ActionsID, "submit"), Label: "Submit", Action: "composer.submit",
-			Shortcut: "ctrl+enter", Variant: ui.VariantPrimary, Enabled: true,
+			Shortcut: ui.CommitChord, Variant: ui.VariantPrimary, Enabled: true,
 		},
 		ui.ActionBarButton{
 			ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "composer.cancel",

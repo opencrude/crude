@@ -361,19 +361,19 @@ func (t *TextArea) HandleClipboardKey(m tea.KeyPressMsg) (EventResult, bool) {
 	return res, handled
 }
 
-// EndMouseSelection finishes a pointer drag: a real drag copies the selected
-// text to the clipboard and drops the selection, matching the chat message
-// area and the terminals (copy-on-release). A press that never moved only
-// stops the drag so keyboard-style extending keeps its selection. It returns
-// the clipboard command so both the component tree and the legacy composer
-// pointer path share one implementation.
+// EndMouseSelection finishes a pointer drag. An editable area keeps the
+// dragged selection so it can be typed over, cut, deleted or copied with
+// Ctrl+C. A read-only area is a reading surface like the chat transcript: a
+// real drag copies the selection to the clipboard and drops it
+// (copy-on-release). A press that never moved only stops the drag. Both the
+// component tree and the composer pointer path share this implementation.
 func (t *TextArea) EndMouseSelection() tea.Cmd {
 	if !t.edit.IsSelecting() {
 		return nil
 	}
 	wasDrag := t.edit.takeDragMoved()
 	t.edit.StopSelecting()
-	if !wasDrag {
+	if !wasDrag || t.TextEditable() {
 		return nil
 	}
 	selected, ok := t.TextSelection()
@@ -890,6 +890,14 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 		t.EnsureCursorVisible()
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}
+	// Where Enter submits, the newline chord breaks the line; it outranks the
+	// commit chord they share (Alt+Enter), which would only repeat Enter.
+	if !t.multiLine && IsNewlineChord(m) {
+		t.edit.handleKey(m)
+		t.cursor.MarkActivity()
+		t.EnsureCursorVisible()
+		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	}
 	// The commit chord always submits (even in multi-line mode).
 	if IsCommitChord(m) {
 		if t.submitID != "" {
@@ -981,7 +989,7 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 		if t.readOnly && !t.readOnlyKeyAllowed(key) {
 			return nil
 		}
-		if key.Code == tea.KeyEnter && !t.multiLine && !key.Mod.Contains(tea.ModAlt) {
+		if key.Code == tea.KeyEnter && !t.multiLine && !IsNewlineChord(key) {
 			return func() tea.Msg { return TextAreaSubmitEvent{Text: t.Value()} }
 		}
 		t.edit.handleKey(key)
@@ -1111,6 +1119,11 @@ func (e *textAreaEngine) finishMovementIfNoShift(mod tea.KeyMod) {
 }
 
 func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
+	// Ctrl+J is LF, the line break every terminal delivers distinctly from
+	// Enter's CR; it edits exactly like Enter.
+	if msg.Code == 'j' && msg.Mod == tea.ModCtrl {
+		msg = tea.KeyPressMsg{Code: tea.KeyEnter}
+	}
 	shift := msg.Mod.Contains(tea.ModShift)
 	primary := msg.Mod.Contains(tea.ModCtrl) || msg.Mod.Contains(tea.ModSuper)
 	word := primary || msg.Mod.Contains(tea.ModAlt)
@@ -1328,10 +1341,6 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 				e.selAnchor = 0
 				e.selEnd = 0
 			}
-		} else if msg.Mod.Contains(tea.ModAlt) && msg.Code == '\\' {
-			e.splitLineAt(e.curLine, e.curCol)
-			e.curLine++
-			e.curCol = 0
 		} else {
 			for _, r := range msg.Text {
 				if isEditableRune(r) {

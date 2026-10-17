@@ -258,7 +258,7 @@ func (m *FileTreeModel) handleFilterInputKey(key tea.KeyPressMsg) {
 			return
 		}
 	}
-	if ui.HandleFilterKey(m.filterEd, key) {
+	if editFilterPattern(m.filterEd, key) {
 		m.SetFilter(m.filterEd.Value())
 	}
 }

@@ -54,7 +54,7 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 	if paste, ok := msg.(tea.PasteMsg); ok {
 		return m.handlePaste(paste.Content)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEnter && !key.Mod.Contains(tea.ModAlt) && len(m.pendingPastes) > 0 {
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEnter && !ui.IsNewlineChord(key) && len(m.pendingPastes) > 0 {
 		return m, nil, PastePendingEvent{}
 	}
 
@@ -68,19 +68,15 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			return m, nil, AttachFilesEvent{}
 		}
 
-		// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
-		// where Alt+Enter is intercepted as "toggle fullscreen".
-		if msg.Mod.Contains(tea.ModAlt) && msg.Code == '\\' {
+		// The newline chord (Shift+Enter, Alt+Enter or Ctrl+J; see
+		// ui.NewlineChord) breaks the line; every other Enter sends.
+		if ui.IsNewlineChord(msg) {
 			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 		}
 
 		switch msg.Code {
 		case tea.KeyEnter:
-			if msg.Mod.Contains(tea.ModAlt) {
-				cmd := m.input.Update(msg, false)
-				return m, cmd, nil
-			}
 			text := m.input.Value()
 			if strings.TrimSpace(text) == "" {
 				return m, nil, nil
@@ -344,9 +340,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 		}
 
 	case tea.MouseReleaseMsg:
-		// Copy-on-release, matching the chat message area and docked
-		// terminals: a drag writes the selection to the clipboard and drops
-		// it, so the drag never leaves stale selection state behind.
+		// The draft is editable, so the dragged selection stays for typing,
+		// Ctrl+X or Ctrl+C (ui.TextArea.EndMouseSelection).
 		return m, m.input.EndMouseSelection(), nil
 	}
 

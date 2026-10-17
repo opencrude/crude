@@ -401,8 +401,11 @@ never hand-roll key handling or a selection model for a new screen. Both own one
 shared capability contract (`ui.TextClipboardTarget`, `textClipboardChord` in
 `tui/ui/text_clipboard.go`): Ctrl+C / Ctrl+Shift+C copy the selection, Ctrl+X
 cuts the selection or the whole value, Esc drops the selection and stays
-unhandled when there is none, and a mouse drag copies on release and drops the
-highlight.
+unhandled when there is none, and a mouse drag keeps its selection in an
+editable control (copy-on-release is only for read-only reading surfaces).
+Shortcut captions for modified Enter come from the chord tokens in
+`tui/ui/chords.go` (`ActionBarButton.Shortcut: ui.CommitChord`,
+`ui.FormatShortcut(ui.NewlineChord)`), never a hard-coded "Ctrl+Enter".
 
 - A composite that wraps an editor (form field, filter, search, overlay pane)
   implements `TextEditorProvider` (`TextEditor()`) so context menus reach the

@@ -192,9 +192,14 @@ func (r *ActionRegistry) HintLabelFor(id ActionID) string {
 
 // FormatShortcut returns a human-readable shortcut string from a
 // key string, normalizing for display (e.g. "ctrl+alt+p" → "Ctrl+Alt+P").
-// Capitalisation is rune-correct so multi-byte glyphs (↑↓, emoji) are
-// never split into invalid UTF-8 / U+FFFD replacement characters.
+// Semantic chord tokens (CommitChord, NewlineChord, …) resolve to the key the
+// current terminal actually delivers. Capitalisation is rune-correct so
+// multi-byte glyphs (↑↓, emoji) are never split into invalid UTF-8 / U+FFFD
+// replacement characters.
 func FormatShortcut(key string) string {
+	if label, ok := ChordLabel(key); ok {
+		return label
+	}
 	parts := strings.Split(key, "+")
 	for i, p := range parts {
 		runes := []rune(p)
@@ -787,7 +792,7 @@ var defaultActions = []*ActionDef{
 		Description:  "insert line break in input",
 		Category:     "Chat",
 		FocusContext: "chat",
-		HintKey:      "Alt+Enter",
+		HintKey:      NewlineChord,
 		DisplayOnly:  true,
 	},
 	{
@@ -828,7 +833,7 @@ var defaultActions = []*ActionDef{
 		Label:       "Prev match",
 		Description: "move to the previous match",
 		Category:    "Find",
-		HintKey:     "Shift+Enter",
+		HintKey:     PreviousMatchChord,
 		DisplayOnly: true,
 	},
 	{
@@ -844,7 +849,7 @@ var defaultActions = []*ActionDef{
 		Label:       "Replace all",
 		Description: "replace every match in the file",
 		Category:    "Find",
-		HintKey:     "Ctrl+Alt+Enter",
+		HintKey:     ReplaceAllChord,
 		DisplayOnly: true,
 	},
 	{

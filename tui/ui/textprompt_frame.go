@@ -39,11 +39,12 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	field.SetPrompt("")
 	field.SetPlaceholder(placeholder)
 	field.SetSubmitAction("") // Enter handled by viewmodel
-	field.SetValue(st.ValueText())
-	// Sync cursor from state engine
-	if st.Edit != nil {
-		field.Edit().SetCursor(st.Edit.Cursor(), false)
+	if st.Edit == nil {
+		st.Edit = NewTextEdit()
+		st.Edit.SetValue(st.Value)
 	}
+	// The field edits the prompt's TextEdit itself (value, caret, selection).
+	field.BindEdit(st.Edit)
 
 	hintText := "enter submit · esc cancel"
 	switch st.Kind {
@@ -75,43 +76,12 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	return cw
 }
 
-// SyncTextPromptField copies TextEdit state from the frame field back into st.
-func SyncTextPromptField(cw *ComponentWidget, st *TextPromptState) {
-	if cw == nil || st == nil {
-		return
+// TextPromptField returns the bound name field of a framed tree prompt.
+func TextPromptField(cw *ComponentWidget) *TextField {
+	if cw == nil {
+		return nil
 	}
-	h := cw.Host()
-	if h == nil {
-		return
-	}
-	// Walk registry via Root
-	root := cw.Root()
-	field := findTextField(root, ComponentID(TextPromptFieldID))
-	if field == nil {
-		return
-	}
-	if st.Edit == nil {
-		st.Edit = NewTextEdit()
-	}
-	st.Edit.SetValue(field.Value())
-	st.Edit.SetCursor(field.Edit().Cursor(), false)
-	st.SyncFromEdit()
-}
-
-// ApplyTextPromptEdit pushes st.Edit into the framed TextField for repaint.
-func ApplyTextPromptEdit(cw *ComponentWidget, st *TextPromptState) {
-	if cw == nil || st == nil || st.Edit == nil {
-		return
-	}
-	field := findTextField(cw.Root(), ComponentID(TextPromptFieldID))
-	if field == nil {
-		return
-	}
-	field.SetValue(st.Edit.Value())
-	field.Edit().SetCursor(st.Edit.Cursor(), false)
-	if h := cw.Host(); h != nil {
-		h.MarkPaint()
-	}
+	return findTextField(cw.Root(), ComponentID(TextPromptFieldID))
 }
 
 func findTextField(c Component, id ComponentID) *TextField {

@@ -263,72 +263,68 @@ func (m *App) openTreeTextPrompt(kind ui.TextPromptKind, title, prompt, dir, ini
 	m.TreePrompt = st
 }
 
-func (m *App) handleTreePromptKey(msg tea.KeyPressMsg) tea.Cmd {
+// handleTreePromptInput routes a key or bracketed paste to the tree prompt.
+// Enter submits and Esc cancels (after dropping a selection); everything else
+// edits the name through the shared TextField contract, whose field is bound
+// to the prompt's TextEdit.
+func (m *App) handleTreePromptInput(input tea.Msg) tea.Cmd {
 	if m.TreePrompt == nil || m.windowManager == nil {
 		return nil
 	}
 	st := m.TreePrompt
-	if st.Edit == nil {
-		// Legacy safety: construct engine from Value/Cursor fields.
-		st.Edit = ui.NewTextEdit()
-		st.Edit.SetValue(st.Value)
-		st.Edit.SetCursor(st.Cursor, false)
-	}
-	ed := st.Edit
-
-	switch msg.Code {
-	case tea.KeyEsc:
-		if st.OnCancel != nil {
-			st.OnCancel()
-		}
-		m.closeTreePrompt()
-		return nil
-	case tea.KeyEnter:
-		st.SyncFromEdit()
-		if st.OnSubmit != nil {
-			if err := st.OnSubmit(st.ValueText()); err != nil {
-				m.Feedback.NotifyError(err.Error())
-				return nil
+	if msg, ok := input.(tea.KeyPressMsg); ok {
+		switch msg.Code {
+		case tea.KeyEsc:
+			if st.Edit.HasSelection() {
+				break
 			}
-		}
-		m.closeTreePrompt()
-		return nil
-	default:
-		if !ui.HandleTextEditKey(ed, msg) {
+			if st.OnCancel != nil {
+				st.OnCancel()
+			}
+			m.closeTreePrompt()
+			return nil
+		case tea.KeyEnter:
+			st.SyncFromEdit()
+			if st.OnSubmit != nil {
+				if err := st.OnSubmit(st.ValueText()); err != nil {
+					m.Feedback.NotifyError(err.Error())
+					return nil
+				}
+			}
+			m.closeTreePrompt()
 			return nil
 		}
 	}
+	fw, field := m.treePromptField()
+	if field == nil {
+		return nil
+	}
+	deliver := func(content string) tea.Cmd {
+		if m.TreePrompt != st {
+			return nil
+		}
+		return m.handleTreePromptInput(tea.PasteMsg{Content: content})
+	}
+	_, cmd := m.routeOverlayText(fw, field, input, deliver)
 	st.SyncFromEdit()
-	m.refreshTreePrompt()
-	return nil
+	return cmd
+}
+
+// treePromptField returns the mounted prompt window and its bound field.
+func (m *App) treePromptField() (*wm.FloatingWindow, *ui.TextField) {
+	fw := m.windowManager.Window(string(ui.OverlayTreePrompt))
+	if fw == nil {
+		return nil, nil
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		return nil, nil
+	}
+	return fw, ui.TextPromptField(cw)
 }
 
 func (m *App) closeTreePrompt() {
 	m.overlayHost.Close(ui.OverlayTreePrompt)
-}
-
-func (m *App) refreshTreePrompt() {
-	if m.windowManager == nil || m.TreePrompt == nil {
-		return
-	}
-	fw := m.windowManager.Window("tree-prompt")
-	if fw == nil {
-		return
-	}
-	// Mutate the retained TextField in the existing frame instead of
-	// rebuilding the WindowFrame on each keystroke. The frame is built
-	// once on open; keystrokes push st.Edit into the framed field.
-	if m.TreePrompt.Edit != nil {
-		if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-			ui.ApplyTextPromptEdit(cw, m.TreePrompt)
-			fw.MarkContentDirty()
-			return
-		}
-	}
-	// Fallback: rebuild frame from current edit state.
-	frame := ui.BuildTextPromptFrame(m.Theme, m.TreePrompt)
-	fw.SetContent(frame)
-	fw.MarkContentDirty()
 }
 
 // handleTreeDeleteConfirmKey is the keyboard handler for the

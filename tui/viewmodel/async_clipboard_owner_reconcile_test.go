@@ -115,7 +115,7 @@ func TestFindReplaceAsyncPasteDropsClosedPopupResult(t *testing.T) {
 	})
 	defer restore()
 
-	cmd := app.pasteIntoFindReplace(fr)
+	cmd := app.handleFindReplaceKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("find/replace paste did not return an async command")
 	}

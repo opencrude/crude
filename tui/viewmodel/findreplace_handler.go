@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
 	"crude/tui/wm"
@@ -98,7 +97,6 @@ func (m *App) closeFindReplaceForTab(prev, next string) {
 // but highlights stop rendering because Open is set to false on the
 // editor's SearchState.
 func (m *App) closeFindReplace() {
-	m.invalidateClipboardFindReplace(m.FindReplace)
 	m.overlayHost.Close(ui.OverlayFindReplace)
 }
 
@@ -140,14 +138,7 @@ func (m *App) syncFindReplaceFrame(fw *wm.FloatingWindow) {
 	if !ok || cw == nil {
 		return
 	}
-	if find := ui.FindReplaceFrameFindField(cw); find != nil {
-		find.SyncEditFrom(fr.FindEdit())
-	}
-	if fr.ReplaceMode {
-		if replace := ui.FindReplaceFrameReplaceField(cw); replace != nil {
-			replace.SyncEditFrom(fr.ReplaceEdit())
-		}
-	}
+	m.syncNewFindReplaceFrame(cw, fr)
 	spec := m.findReplaceSpec(fr, 0, 0)
 	ui.SyncFindReplaceFrame(cw, spec.CaseSensitive, spec.WholeWord, spec.Regex, spec.MatchCount, spec.CurrentIdx, spec.Title)
 }
@@ -222,7 +213,6 @@ func (m *App) refreshFindReplacePopup() {
 		if m.EditorState.Editor != nil {
 			m.EditorState.Editor.SetSearchOpen(false)
 		}
-		m.invalidateClipboardFindReplace(fr)
 		m.FindReplace = nil
 	})
 }
@@ -253,75 +243,100 @@ func (m *App) clampFindReplaceOnScreen(fw *wm.FloatingWindow) {
 	fw.SetPosition(x, y)
 }
 
-// syncNewFindReplaceFrame primes a freshly built frame's TextFields with the
-// TextEdit state (values + cursors) before the first paint.
+// syncNewFindReplaceFrame binds a freshly built frame's TextFields to the
+// popup state's TextEdits, so the painted fields ARE the find/replace text
+// (value, cursor, selection, undo) rather than a mirrored copy.
 func (m *App) syncNewFindReplaceFrame(frame *ui.ComponentWidget, fr *popup.FindReplaceState) {
 	if find := ui.FindReplaceFrameFindField(frame); find != nil {
-		find.SyncEditFrom(fr.FindEdit())
+		find.BindEdit(fr.FindEdit())
 	}
 	if fr.ReplaceMode {
 		if replace := ui.FindReplaceFrameReplaceField(frame); replace != nil {
-			replace.SyncEditFrom(fr.ReplaceEdit())
+			replace.BindEdit(fr.ReplaceEdit())
 		}
 	}
 }
 
-// pasteIntoFindReplace captures the exact popup and TextEdit owner before the
-// asynchronous clipboard read starts. The result handler performs the edit.
-func (m *App) pasteIntoFindReplace(fr *popup.FindReplaceState) tea.Cmd {
-	if fr == nil {
-		return nil
+// findReplaceField returns the live frame's TextField bound to the focused
+// field's TextEdit, or nil when the popup is not mounted.
+func (m *App) findReplaceField(fr *popup.FindReplaceState, edit *ui.TextEdit) (*wm.FloatingWindow, *ui.TextField) {
+	if m.windowManager == nil || fr == nil || edit == nil {
+		return nil, nil
 	}
-	ed := fr.ActiveEdit()
-	if ed == nil {
-		return nil
+	fw := m.windowManager.Window(string(ui.OverlayFindReplace))
+	if fw == nil {
+		return nil, nil
 	}
-	return m.beginFindReplaceClipboardPaste(fr, ed)
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		return nil, nil
+	}
+	for _, field := range []*ui.TextField{ui.FindReplaceFrameFindField(cw), ui.FindReplaceFrameReplaceField(cw)} {
+		if field != nil && field.Edit() == edit {
+			return fw, field
+		}
+	}
+	return nil, nil
 }
 
-// handleFindReplaceKey routes keypresses when the find/replace popup
-// is focused. Text-editing keys are delegated to ui.TextEdit via
-// HandleTextEditKey. Popup-level keys (Esc, Tab, Enter, Alt+C/W/R,
-// Ctrl+Alt+Enter, Shift+Enter, Ctrl+C/V/X/A) are handled here.
+// findReplaceText applies a key or paste to one find/replace field through
+// the shared TextField contract (editing, selection, undo/redo, Ctrl+C/X/V,
+// bracketed paste) and re-derives matches when the text changed. Ctrl+V's
+// clipboard text re-enters here for the initiating field even if focus has
+// moved to the other field, and is dropped once that popup closed.
+func (m *App) findReplaceText(fr *popup.FindReplaceState, edit *ui.TextEdit, msg tea.Msg) tea.Cmd {
+	fw, field := m.findReplaceField(fr, edit)
+	if field == nil || m.FindReplace != fr {
+		return nil
+	}
+	deliver := func(content string) tea.Cmd {
+		return m.findReplaceText(fr, edit, tea.PasteMsg{Content: content})
+	}
+	changed, cmd := m.routeOverlayText(fw, field, msg, deliver)
+	if changed && fr.OnChange != nil {
+		fr.OnChange()
+	}
+	return cmd
+}
+
+// pasteFindReplace routes a bracketed paste to the focused find/replace field.
+func (m *App) pasteFindReplace(msg tea.PasteMsg) tea.Cmd {
+	if m.FindReplace == nil {
+		return nil
+	}
+	return m.findReplaceText(m.FindReplace, m.FindReplace.ActiveEdit(), msg)
+}
+
+// handleFindReplaceKey routes keypresses when the find/replace popup is
+// focused. Popup-level keys (Esc, Tab, Enter, F3, the previous-match and
+// replace-all chords, Alt+C/W/R, Ctrl+F/H) are handled here; everything else
+// edits the focused field through the shared TextField contract.
 func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.FindReplace == nil {
 		return nil
 	}
 	fr := m.FindReplace
 
-	// Navigation/modifier keys first.
-	switch msg.Code {
-	case tea.KeyEsc:
-		m.closeFindReplace()
-		return nil
-	case tea.KeyTab:
-		if msg.Mod.Contains(tea.ModShift) {
-			fr.FocusedField = 0
-		} else {
-			fr.FocusedField = 1 - fr.FocusedField
+	// Modified Enter chords first: the plain-Enter case below would swallow
+	// Shift+Enter and Ctrl+Alt+Enter otherwise.
+	if ui.IsReplaceAllChord(msg) {
+		if fr.ReplaceMode && fr.OnReplaceAll != nil {
+			fr.OnReplaceAll()
 		}
-		m.refreshFindReplacePopup()
 		return nil
-	case tea.KeyEnter:
-		if fr.FocusedField == 1 && fr.ReplaceMode {
-			// Replace the current match.
-			if fr.OnReplace != nil {
-				fr.OnReplace()
-			}
-			return nil
+	}
+	if ui.IsPreviousMatchChord(msg) {
+		if fr.OnPrev != nil {
+			fr.OnPrev()
 		}
-		// Default: next match.
+		return nil
+	}
+	switch msg.String() {
+	case "f3":
 		if fr.OnNext != nil {
 			fr.OnNext()
 		}
 		return nil
-	}
-
-	// Toggle shortcuts.
-	if ui.IsPasteChord(msg) {
-		return m.pasteIntoFindReplace(fr)
-	}
-	switch msg.String() {
 	case "alt+c":
 		fr.CaseSensitive = !fr.CaseSensitive
 		if fr.OnChange != nil {
@@ -340,26 +355,10 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 			fr.OnChange()
 		}
 		return nil
-	case "ctrl+alt+enter":
-		if fr.OnReplaceAll != nil {
-			fr.OnReplaceAll()
-		}
-		return nil
-	case "shift+enter":
-		if fr.OnPrev != nil {
-			fr.OnPrev()
-		}
-		return nil
-	}
-
-	// Mode transform while the popup owns focus: Ctrl+H morphs the open
-	// Find popup into the Replace form, Ctrl+F morphs an open Replace form
-	// back to Find in the same window, rebuilt in place (smooth transform,
-	// no close/reopen flicker). openFindReplace pulls the current query
-	// and filter state from the owning editor and rebuilds the window with
-	// the new form height.
-	switch msg.String() {
 	case "ctrl+f":
+		// Mode transform while the popup owns focus: Ctrl+F morphs an open
+		// Replace form back to Find and Ctrl+H morphs Find into Replace, rebuilt
+		// in place in the same window (no close/reopen flicker).
 		if fr.ReplaceMode {
 			m.openFindReplace(false)
 		}
@@ -371,70 +370,35 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	// MS Edit shortcuts.
-	switch msg.String() {
-	case "ctrl+c":
-		ed := fr.ActiveEdit()
-		if ed == nil {
-			return nil
+	switch msg.Code {
+	case tea.KeyEsc:
+		// The field drops an active selection first; Esc then closes.
+		if fr.ActiveEdit().HasSelection() {
+			return m.findReplaceText(fr, fr.ActiveEdit(), msg)
 		}
-		var text string
-		if ed.HasSelection() {
-			text = ed.SelectedText()
+		m.closeFindReplace()
+		return nil
+	case tea.KeyTab:
+		if msg.Mod.Contains(tea.ModShift) {
+			fr.FocusedField = 0
 		} else {
-			text = ed.Value()
+			fr.FocusedField = 1 - fr.FocusedField
 		}
-		if text != "" {
-			return rendering.CopyToClipboardCmd(text)
-		}
+		m.refreshFindReplacePopup()
 		return nil
-	case "ctrl+x":
-		ed := fr.ActiveEdit()
-		if ed == nil {
-			return nil
-		}
-		var text string
-		if ed.HasSelection() {
-			text = ed.SelectedText()
-			ed.Backspace()
-		} else {
-			text = ed.Value()
-			ed.SetValue("")
-		}
-		// Cut always mutates (selection delete, or whole-value clear), so
-		// recompute matches; OnChange rebuilds + resyncs in one path.
-		if fr.OnChange != nil {
-			fr.OnChange()
-		}
-		if text != "" {
-			return rendering.CopyToClipboardCmd(text)
-		}
-		return nil
-	case "ctrl+a":
-		ed := fr.ActiveEdit()
-		if ed != nil {
-			ed.SelectAll()
-		}
-		m.syncFindReplaceFrameFromState()
-		return nil
-	}
-
-	// All other keys: delegate to the focused field's TextEdit,
-	// then resync text + toggles + counter into the frame for paint.
-	ed := fr.ActiveEdit()
-	if ed != nil {
-		oldVal := ed.Value()
-		if ui.HandleTextEditKey(ed, msg) {
-			if ed.Value() != oldVal {
-				if fr.OnChange != nil {
-					fr.OnChange()
-				}
-			} else {
-				m.syncFindReplaceFrameFromState()
+	case tea.KeyEnter:
+		if fr.FocusedField == 1 && fr.ReplaceMode {
+			if fr.OnReplace != nil {
+				fr.OnReplace()
 			}
+			return nil
 		}
+		if fr.OnNext != nil {
+			fr.OnNext()
+		}
+		return nil
 	}
-	return nil
+	return m.findReplaceText(fr, fr.ActiveEdit(), msg)
 }
 
 // syncFindReplaceFrameFromState copies the full FindReplaceState (TextEdit

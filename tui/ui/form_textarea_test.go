@@ -114,7 +114,7 @@ func TestTextAreaSyncReflectsProgrammaticValue(t *testing.T) {
 	}
 }
 
-func TestFormTextAreaDragUsesHostCaptureAndCopiesOnRelease(t *testing.T) {
+func TestFormTextAreaDragUsesHostCaptureAndKeepsSelection(t *testing.T) {
 	form, field := newTextAreaForm(t)
 	form.model.SetValue("body", StringValue("alpha beta"))
 	form.SetForm(form.model, "Form", "Edit")
@@ -145,22 +145,33 @@ func TestFormTextAreaDragUsesHostCaptureAndCopiesOnRelease(t *testing.T) {
 		t.Fatalf("drag selection bg=%v want %v", got, selectedBG)
 	}
 
+	// An editable field keeps the dragged selection for editing: release ends
+	// the capture without touching the clipboard.
 	res := host.Handle(tea.MouseReleaseMsg{X: x + 5, Y: y, Button: tea.MouseLeft})
 	if host.HasPointerCapture() {
 		t.Fatal("release kept pointer capture")
 	}
-	if field.Area().HasActiveSelection() || field.Area().IsSelecting() {
-		t.Fatalf("release kept selection=%q selecting=%v", field.Area().SelectedText(), field.Area().IsSelecting())
+	if field.Area().IsSelecting() || field.Area().SelectedText() != "alpha" {
+		t.Fatalf("release selection=%q selecting=%v, want the dragged 'alpha' kept", field.Area().SelectedText(), field.Area().IsSelecting())
 	}
-	if res.Cmd == nil {
-		t.Fatal("release returned no clipboard command")
+	if res.Cmd != nil {
+		_ = res.Cmd()
 	}
 	if len(copied) != 0 {
-		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+		t.Fatalf("release copied an editable selection: %q", copied)
+	}
+	// The kept selection is what Ctrl+C copies and typing replaces.
+	res = host.Handle(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if res.Cmd == nil {
+		t.Fatal("Ctrl+C on the kept selection returned no clipboard command")
 	}
 	_ = res.Cmd()
 	if len(copied) != 1 || copied[0] != "alpha" {
 		t.Fatalf("copied=%q want [alpha]", copied)
+	}
+	host.Handle(tea.KeyPressMsg{Code: 'Z', Text: "Z"})
+	if got := field.Area().Value(); got != "Z beta" {
+		t.Fatalf("typing over the kept selection = %q, want %q", got, "Z beta")
 	}
 }
 

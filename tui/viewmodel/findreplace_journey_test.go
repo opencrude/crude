@@ -69,7 +69,7 @@ func TestFindReplace_FullUserJourney(t *testing.T) {
 	if !ok {
 		t.Fatal("find.replace.all button has no bounds")
 	}
-	app.clickFindReplace(all.X+all.W/2, all.Y+all.H/2)
+	app.clickFindReplace(all.X+all.W/2, all.Y+all.H/2, nil)
 	got := app.EditorState.Editor.Value()
 	if !strings.Contains(got, "ALPHA beta") || !strings.Contains(got, "gamma ALPHA") {
 		t.Fatalf("Replace All click did not substitute; buffer=%q", got)

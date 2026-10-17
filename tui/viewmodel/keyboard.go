@@ -337,6 +337,12 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.closeCompletionPopup()
 			return m, nil
 		}
+		// A selection is transient editor UI: drag selections persist for
+		// editing, so the first Esc only drops them.
+		if m.EditorState.Editor.HasSelection() {
+			m.EditorState.Editor.ClearSelection()
+			return m, nil
+		}
 		// Esc is contextual "back" in the editor and closes the active tab
 		// after transient editor UI has been dismissed. Ctrl+W reaches this
 		// same dirty-safe close path through the global action registry.
@@ -453,7 +459,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		case "agent-prompt":
 			return m, m.handleAgentPromptKey(msg)
 		case "tree-prompt":
-			return m, m.handleTreePromptKey(msg)
+			return m, m.handleTreePromptInput(msg)
 		case "tree-delete-confirm":
 			return m, m.handleTreeDeleteConfirmKey(msg)
 		case "references-popup":
@@ -475,7 +481,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			if m.commandPaletteModel != nil {
 				// Route text-editing keys to the search field; navigation/enter
 				// to the list. The model handles the filter callback.
-				refresh, cmd := m.handleCommandPaletteKey(msg)
+				refresh, cmd := m.handleCommandPaletteInput(msg)
 				if refresh {
 					m.refreshCommandPaletteFrame()
 				}
@@ -817,15 +823,22 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case FocusFloatingWindow:
-		// A popup is focused. Route to the focused window's
-		// content if it knows how to handle paste. The current
-		// popups that accept paste are the find/replace popup
-		// (via its OnChange callback flow, but the user actually
-		// pastes into the find field via handleFindReplaceKey) and the
-		// text overlay / composer (ui.TextArea). For now, just route to the
-		// content if it implements a Paste handler.
+		// A popup is focused. Text overlays whose fields are bound to
+		// retained state (find/replace, palette filter, tree prompt) take the
+		// paste through the same owner path as their keys; every other
+		// window content handles it itself.
 		if fw := m.windowManager.Focused(); fw != nil {
-			cmd := m.pasteToWindowContent(fw, msg)
+			var cmd tea.Cmd
+			switch fw.ID {
+			case string(ui.OverlayFindReplace):
+				cmd = m.pasteFindReplace(msg)
+			case string(ui.OverlayCommandPalette):
+				_, cmd = m.handleCommandPaletteInput(msg)
+			case string(ui.OverlayTreePrompt):
+				cmd = m.handleTreePromptInput(msg)
+			default:
+				cmd = m.pasteToWindowContent(fw, msg)
+			}
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}

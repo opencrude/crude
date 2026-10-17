@@ -639,7 +639,7 @@ func (s *Screen) openCurrent() {
 		label = "Submit"
 	}
 	buttons = append(buttons,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Shortcut: "ctrl+enter", Variant: ui.VariantPrimary, Enabled: true},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Shortcut: ui.CommitChord, Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
 	)
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)

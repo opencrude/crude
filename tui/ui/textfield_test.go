@@ -51,18 +51,31 @@ func TestTextFieldMouseDragSelectionUsesPointerCapture(t *testing.T) {
 		t.Fatalf("selected text=%q", got)
 	}
 	res := f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
-	if f.IsSelecting() || f.HasSelection() {
-		t.Fatal("release kept the drag selection")
+	if f.IsSelecting() || f.SelectedText() != "bcd" {
+		t.Fatalf("release selection=%q selecting=%v, want 'bcd' kept for editing", f.SelectedText(), f.IsSelecting())
 	}
-	if res.Cmd == nil {
-		t.Fatal("release returned no clipboard command")
+	if res.Cmd != nil {
+		t.Fatal("release of an editable drag returned a clipboard command")
+	}
+	f.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: 'X', Text: "X"}))
+	if f.Value() != "aXef" {
+		t.Fatalf("typing over the kept drag selection = %q, want aXef", f.Value())
 	}
 	if len(copied) != 0 {
-		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+		t.Fatalf("editable drag touched the clipboard: %q", copied)
+	}
+
+	// Read-only fields are reading surfaces and keep copy-on-release.
+	f.SetReadOnly(true)
+	f.Handle(EventContext{LocalX: 0}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	f.Handle(EventContext{LocalX: 2}, MouseMotionEvent(tea.MouseMotionMsg{}))
+	res = f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	if f.HasSelection() || res.Cmd == nil {
+		t.Fatalf("read-only release selection=%v cmd=%v", f.HasSelection(), res.Cmd != nil)
 	}
 	_ = res.Cmd()
-	if len(copied) != 1 || copied[0] != "bcd" {
-		t.Fatalf("copied=%q want [bcd]", copied)
+	if len(copied) != 1 || copied[0] != "aX" {
+		t.Fatalf("copied=%q want [aX]", copied)
 	}
 }
 

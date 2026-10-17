@@ -61,7 +61,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	if strings.Contains(footer, "Enter send") || strings.Contains(footer, "cancel") {
 		t.Fatalf("footer retained obvious composer inventory: %q", footer)
 	}
-	for _, hint := range []string{"Alt+Enter", "Ctrl+O"} {
+	for _, hint := range []string{ui.FormatShortcut(ui.NewlineChord), "Ctrl+O"} {
 		if !strings.Contains(footer, hint) {
 			t.Fatalf("footer missing useful composer hint %q: %q", hint, footer)
 		}
@@ -88,7 +88,7 @@ func TestFooterLeadsWithGuidanceAndTrailsStatus(t *testing.T) {
 	if lastTextColumn(footer) != right-1 {
 		t.Fatalf("footer status does not end on the right rail %d: %q", right-1, footer)
 	}
-	if !strings.HasPrefix(footer[left:], "Alt+Enter new line") {
+	if !strings.HasPrefix(footer[left:], ui.FormatShortcut(ui.NewlineChord)+" new line") {
 		t.Fatalf("footer left rail does not lead with the composer hints: %q", footer)
 	}
 	if !strings.HasSuffix(footer, "Workspace") {
