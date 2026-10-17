@@ -1,6 +1,10 @@
 package editor
 
 import (
+	"strings"
+	"time"
+	"unicode"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
@@ -51,7 +55,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		e.cursorBlink.MarkActivity()
-		e.insertText(msg.Content)
+		e.replacingSelection(func() { e.insertText(msg.Content) })
 	case tea.MouseWheelMsg:
 		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)
@@ -111,7 +115,10 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		if e.mouseDragging {
 			pos, ok := e.mouseToPosition(msg.Mouse().X, msg.Mouse().Y)
 			if ok {
+				// The caret follows the drag end, so the kept selection
+				// continues with Shift+arrows from where the pointer stopped.
 				e.selEnd = pos
+				e.cursor = pos
 			}
 		}
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
@@ -125,12 +132,16 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		if e.mouseDragging {
 			e.mouseDragging = false
-			if e.HasSelection() {
+			// An editable document keeps the dragged selection for typing,
+			// indenting, cutting or Ctrl+C. Only a read-only document is a
+			// reading surface that copies on release like the chat transcript.
+			if !e.HasSelection() {
+				e.ClearSelection()
+			} else if e.readOnly {
 				text := e.SelectedText()
 				e.ClearSelection()
 				return rendering.CopyToClipboardCmd(text)
 			}
-			e.ClearSelection()
 		}
 	}
 	return nil
@@ -251,11 +262,93 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	if !ok {
 		return
 	}
+	now := time.Now()
+	if now.Sub(e.lastClickAt) <= multiClickWindow && pos.Line == e.lastClickPos.Line &&
+		max(pos.Col-e.lastClickPos.Col, e.lastClickPos.Col-pos.Col) <= 1 {
+		e.clickCount++
+	} else {
+		e.clickCount = 1
+	}
+	e.lastClickAt, e.lastClickPos = now, pos
+	switch {
+	case e.clickCount >= 3:
+		e.selectLineAt(pos.Line)
+		e.clickCount = 0
+		return
+	case e.clickCount == 2:
+		e.selectWordAt(pos)
+		return
+	case msg.Mod.Contains(tea.ModShift):
+		// Shift+click extends the existing selection (or one anchored at
+		// the caret) to the pressed position; dragging keeps extending it.
+		if !e.HasSelection() {
+			e.selAnchor = e.cursor
+		}
+	default:
+		e.selAnchor = pos
+	}
 	e.cursor = pos
-	e.selAnchor = pos
 	e.selEnd = pos
 	e.selecting = true
 	e.mouseDragging = true
+	e.ensureCursorVisible()
+}
+
+// multiClickWindow is the press interval that counts as a double/triple click,
+// matching the shared text controls.
+const multiClickWindow = 500 * time.Millisecond
+
+// selectWordAt selects the identifier, whitespace run or punctuation run
+// under pos, leaving the caret at its end.
+func (e *Editor) selectWordAt(pos Position) {
+	line := strings.TrimRight(e.LineText(pos.Line), "\r\n")
+	off := VisualColToByteOffset(line, pos.Col, tabWidth)
+	runes := []rune(line)
+	idx := len([]rune(line[:min(off, len(line))]))
+	if idx >= len(runes) && idx > 0 {
+		idx--
+	}
+	class := func(r rune) int {
+		switch {
+		case unicode.IsSpace(r):
+			return 0
+		case isWordChar(r):
+			return 1
+		}
+		return 2
+	}
+	start, end := idx, idx
+	if idx < len(runes) {
+		kind := class(runes[idx])
+		for start > 0 && class(runes[start-1]) == kind {
+			start--
+		}
+		end = idx + 1
+		for end < len(runes) && class(runes[end]) == kind {
+			end++
+		}
+	}
+	startCol := ByteOffsetToVisualCol(line, len(string(runes[:start])), tabWidth)
+	endCol := ByteOffsetToVisualCol(line, len(string(runes[:end])), tabWidth)
+	e.selAnchor = Position{Line: pos.Line, Col: startCol}
+	e.selEnd = Position{Line: pos.Line, Col: endCol}
+	e.cursor = e.selEnd
+	e.selecting = true
+	e.mouseDragging = false
+	e.ensureCursorVisible()
+}
+
+// selectLineAt selects a whole line including its line break.
+func (e *Editor) selectLineAt(line int) {
+	e.selAnchor = Position{Line: line}
+	if line+1 < e.LineCount() {
+		e.selEnd = Position{Line: line + 1}
+	} else {
+		e.selEnd = Position{Line: line, Col: e.lineVisualWidth(line)}
+	}
+	e.cursor = e.selEnd
+	e.selecting = true
+	e.mouseDragging = false
 	e.ensureCursorVisible()
 }
 
@@ -409,7 +502,7 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.deleteForward()
 		}
 	case tea.KeyEnter:
-		e.insertNewline()
+		e.replacingSelection(e.insertNewline)
 	case tea.KeyTab:
 		if extend {
 			e.outdentLines()
@@ -419,7 +512,11 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.insertTab()
 		}
 	case tea.KeyEsc:
-		e.ClearSelection()
+		// Esc dismisses a selection before it means Back.
+		if e.HasSelection() {
+			e.ClearSelection()
+			return nil
+		}
 		return e.closeCmd()
 	default:
 		if ui.IsPasteChord(key) {
@@ -430,26 +527,33 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			return func() tea.Msg {
 				data := clipboard.Read(clipboard.FmtText)
 				if len(data) == 0 {
-					return rendering.ClipboardErrorMsg("clipboard is empty or unavailable")
+					return rendering.ClipboardErrorMsg(ui.ClipboardReadUnavailable())
 				}
 				return tea.PasteMsg{Content: string(data)}
 			}
 		}
-		switch key.String() {
-		case "ctrl+a":
-			e.selectAll()
-		case "ctrl+x":
+		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut {
 			if e.HasSelection() {
 				text := e.SelectedText()
 				e.DeleteSelection()
 				return rendering.CopyToClipboardCmd(text)
 			}
+			return nil
+		}
+		switch key.String() {
+		case "ctrl+a":
+			e.selectAll()
 		default:
 			if len(key.Text) > 0 {
 				for _, r := range key.Text {
-					if r >= 32 {
-						e.typeRune(r)
+					if r < 32 {
+						continue
 					}
+					if _, opener := autoClosePairs[r]; opener && e.HasSelection() {
+						e.typeRune(r) // an opener wraps the selection
+						continue
+					}
+					e.replacingSelection(func() { e.typeRune(r) })
 				}
 			}
 		}

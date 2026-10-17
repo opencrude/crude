@@ -108,7 +108,7 @@ var _ ui.Component = (*focusGate)(nil)
 // answerInput wraps the shared prompt-area (TextArea) with change detection
 // so typing in the write-in editor updates answer state without polling. It
 // is deliberately the same control as the session chat composer: multi-line,
-// Enter inserts a newline, Ctrl+Enter submits, and it carries no raised form
+// Enter inserts a newline, the commit chord submits, and it carries no raised form
 // background; the deck paints flat ColorBg everywhere.
 type answerInput struct {
 	*ui.TextArea

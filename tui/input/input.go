@@ -243,7 +243,7 @@ func (m *Model) ContextHint() string {
 
 // ContextHelpSegments returns status-bar hint segments for the chat input.
 // The guidance persists while the prompt has text, keeping every chord
-// actionable mid-draft (Enter sends, Alt+Enter breaks the line), and only
+// actionable mid-draft (Enter sends, the newline chord breaks the line), and only
 // hides via DismissHint. Callers with a full ActionRegistry should prefer
 // these ActionSeg values.
 func (m *Model) ContextHelpSegments() []ui.HintSegment {
@@ -296,7 +296,7 @@ func (m *Model) resolvedContextHelp() []ui.HintSegment {
 		case "input.submit":
 			out = append(out, ui.ChordSeg("Enter", "send"))
 		case "input.newline":
-			out = append(out, ui.ChordSeg("Alt+Enter", "new line"))
+			out = append(out, ui.ChordSeg(ui.FormatShortcut(ui.NewlineChord), "new line"))
 		case "file.attach":
 			out = append(out, ui.ChordSeg("Ctrl+O", "attach file"))
 		case "input.history":

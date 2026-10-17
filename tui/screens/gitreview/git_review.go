@@ -381,7 +381,7 @@ func (screen *Screen) status() (string, ui.SemanticColor) {
 	case screen.loading:
 		return "Reading changes…", ui.ColorMuted
 	case screen.findOpen && screen.document.SearchStatus() != "":
-		return "Find · " + screen.document.SearchStatus() + " · Enter next · Shift+Enter previous · Esc close", ui.ColorMuted
+		return "Find · " + screen.document.SearchStatus() + " · Enter next · " + ui.FormatShortcut(ui.PreviousMatchChord) + " previous · Esc close", ui.ColorMuted
 	case screen.source == SourceCommit:
 		return "Read-only · drag to copy · Ctrl+F find · ]/[ files · n/p hunks · double-click opens the line", ui.ColorMuted
 	}

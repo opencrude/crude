@@ -29,7 +29,7 @@ func TestTreePrompt_FramePersistsAcrossKeystrokes(t *testing.T) {
 	}
 
 	for _, r := range "main.go" {
-		app.handleTreePromptKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		app.handleTreePromptInput(tea.KeyPressMsg{Code: r, Text: string(r)})
 		if fw.Content != contentBefore {
 			t.Fatalf("tree prompt frame rebuilt on keystroke %q; frame must persist (mutate field, not rebuild)", string(r))
 		}
@@ -39,15 +39,15 @@ func TestTreePrompt_FramePersistsAcrossKeystrokes(t *testing.T) {
 		t.Fatalf("typed value: got %q, want %q", got, "main.go")
 	}
 
-	// The retained frame's TextField must mirror the typed value: read it
-	// back through the existing sync helper.
+	// The retained frame's TextField is bound to the prompt's TextEdit, so
+	// the painted field is the typed value, not a mirrored copy.
 	cw, ok := fw.Content.(*ui.ComponentWidget)
 	if !ok {
 		t.Fatal("tree prompt content is not a ComponentWidget")
 	}
-	ui.SyncTextPromptField(cw, app.TreePrompt)
-	if got := app.TreePrompt.ValueText(); got != "main.go" {
-		t.Fatalf("retained frame TextField did not reflect typed value; got %q, want %q", got, "main.go")
+	field := ui.TextPromptField(cw)
+	if field == nil || field.Edit() != app.TreePrompt.Edit || field.Value() != "main.go" {
+		t.Fatalf("frame field is not bound to the prompt edit: %+v", field)
 	}
 }
 
@@ -67,11 +67,11 @@ func TestTreePrompt_RenameKeystrokesPreserveFrame(t *testing.T) {
 	}
 	contentBefore := fw.Content
 
-	app.handleTreePromptKey(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	app.handleTreePromptInput(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if fw.Content != contentBefore {
 		t.Fatal("tree prompt frame rebuilt on backspace; frame must persist")
 	}
-	app.handleTreePromptKey(tea.KeyPressMsg{Code: 'w', Text: "w"})
+	app.handleTreePromptInput(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	if fw.Content != contentBefore {
 		t.Fatal("tree prompt frame rebuilt on rune key; frame must persist")
 	}

@@ -115,7 +115,7 @@ func TestFindReplace_ActionButtonsFireCallbacks(t *testing.T) {
 		t.Fatalf("find.next bounds %+v outside popup height %d (offset bug)", next, hh)
 	}
 	cur := app.FindReplace.CurrentIdx
-	app.clickFindReplace(next.X+next.W/2, next.Y+next.H/2)
+	app.clickFindReplace(next.X+next.W/2, next.Y+next.H/2, nil)
 	if app.FindReplace == nil {
 		t.Fatal("popup closed after Down click")
 	}
@@ -128,7 +128,7 @@ func TestFindReplace_ActionButtonsFireCallbacks(t *testing.T) {
 	if !ok {
 		t.Fatal("find.replace.one button has no bounds in replace mode")
 	}
-	app.clickFindReplace(one.X+one.W/2, one.Y+one.H/2)
+	app.clickFindReplace(one.X+one.W/2, one.Y+one.H/2, nil)
 	if got := app.EditorState.Editor.Value(); !strings.Contains(got, "NEEDLE") {
 		t.Fatalf("Replace click did not substitute the match; buffer=%q", got)
 	}

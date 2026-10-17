@@ -41,8 +41,7 @@ type TextField struct {
 	lastClickX    int
 	clickCount    int
 	// dragMoved records that the pointer actually moved during the active
-	// drag, so copy-on-release only fires for a real drag (a click that
-	// extends a keyboard selection keeps its selection).
+	// drag, so a read-only field's copy-on-release only fires for a real drag.
 	dragMoved bool
 	// clipboardCopy builds the command that writes text to the system
 	// clipboard. Hosts may inject their own write path; tests inject a
@@ -123,6 +122,21 @@ func (t *TextField) SetValue(s string) {
 
 // Value returns the field value.
 func (t *TextField) Value() string { return t.edit.Value() }
+
+// BindEdit makes ed this field's editing model. Overlays whose text outlives
+// their rebuilt frames (find/replace, the command palette filter, tree
+// prompts) bind the frame's field to the retained TextEdit, so keys, pastes,
+// clipboard chords and pointer selection all edit that one model through
+// this field's contract instead of a mirrored copy.
+func (t *TextField) BindEdit(ed *TextEdit) {
+	if ed == nil || ed == t.edit {
+		return
+	}
+	t.edit = ed
+	t.selecting, t.dragMoved = false, false
+	t.viewReset = false
+	t.ensureCursorVisible()
+}
 
 // SyncEditFrom copies value, cursor, and selection from ed into this field.
 func (t *TextField) SyncEditFrom(ed *TextEdit) {
@@ -478,10 +492,11 @@ func (t *TextField) DeleteTextSelection() bool {
 	return true
 }
 
-// EndMouseSelection finishes a pointer drag: a real drag copies the selected
-// text to the clipboard and drops the selection (copy-on-release, matching the
-// chat message area and the terminals). A press that never moved only stops
-// the drag so keyboard-style extending keeps its selection.
+// EndMouseSelection finishes a pointer drag. An editable field keeps the
+// dragged selection so it can be typed over, cut, deleted or copied with
+// Ctrl+C. A read-only field is a reading surface like the chat transcript: a
+// real drag copies the selection to the clipboard and drops it
+// (copy-on-release). A press that never moved only stops the drag.
 func (t *TextField) EndMouseSelection() tea.Cmd {
 	if !t.selecting {
 		return nil
@@ -489,7 +504,7 @@ func (t *TextField) EndMouseSelection() tea.Cmd {
 	wasDrag := t.dragMoved
 	t.selecting = false
 	t.dragMoved = false
-	if !wasDrag {
+	if !wasDrag || t.TextEditable() {
 		return nil
 	}
 	selected, ok := t.TextSelection()

@@ -59,7 +59,7 @@ func (e *MessageEditor) syncButtons() {
 	empty := strings.TrimSpace(e.area.Value()) == ""
 	e.actions.SetButtons(
 		ui.ActionBarButton{ID: "git-message-editor/save", Label: "Save", Shortcut: "Ctrl+S", Action: ActionMessageSave, Enabled: true, Variant: ui.VariantPrimary},
-		ui.ActionBarButton{ID: "git-message-editor/commit", Label: "Commit", Shortcut: "Ctrl+Enter", Action: ActionMessageCommit, Enabled: e.canSave && !empty, Variant: ui.VariantSecondary},
+		ui.ActionBarButton{ID: "git-message-editor/commit", Label: "Commit", Shortcut: ui.CommitChord, Action: ActionMessageCommit, Enabled: e.canSave && !empty, Variant: ui.VariantSecondary},
 		ui.ActionBarButton{ID: "git-message-editor/cancel", Label: "Cancel", Action: ActionMessageCancel, Enabled: true, Variant: ui.VariantSecondary},
 	)
 }
@@ -164,5 +164,5 @@ func (e *MessageEditor) HandleAction(_ ui.EventContext, action ui.Action) ui.Eve
 func (e *MessageEditor) TextEditor() ui.TextClipboardTarget { return e.area }
 func (e *MessageEditor) CancelPointerCapture()              { e.area.CancelPointerCapture() }
 func (e *MessageEditor) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleDialog, Label: "Commit message", Description: "Ctrl+S saves, Ctrl+Enter commits, Esc cancels"}
+	return ui.Semantics{Role: ui.RoleDialog, Label: "Commit message", Description: "Ctrl+S saves, " + ui.FormatShortcut(ui.CommitChord) + " commits, Esc cancels"}
 }

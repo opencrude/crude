@@ -13,6 +13,13 @@ shared control, never to one popup.
   Ctrl/Super shortcuts, copy/cut, bracketed paste, owner-keyed async Ctrl+V,
   multi-click selection, and captured outside drag with autoscroll. Add behavior
   there, never to one popup.
+- Overlays whose text outlives their rebuilt frames (editor find/replace, the
+  command palette filter, tree create/rename prompts) bind the frame's field to
+  their retained `TextEdit` with `TextField.BindEdit`; keys and bracketed pastes
+  go through `routeOverlayText` and presses through `overlayFieldPointer`, and
+  `ComponentWidget` hosts keep window pointer capture for the drag. Never mirror
+  overlay text into a frame copy or hand-roll its keys (the removed
+  `HandleTextEditKey` path lost clipboard, undo, selection and paste).
 - TextArea cursor geometry and paint share one logical-to-wrapped-segment mapping.
   A cursor inside continuation whitespace omitted by WordWrap maps to the next
   segment's column zero without changing the draft or cursor offset; never slice
@@ -46,18 +53,34 @@ shared control, never to one popup.
 ## Clipboard
 
 - **Bracketed paste (`tea.PasteMsg`) is the primary paste mechanism.**
-  Ctrl+V (KeyPressMsg) is a fallback that emits a `tea.PasteMsg`.
+  Ctrl+V (KeyPressMsg) is a fallback: the control emits `ActionTextPaste`, the
+  clipboard is read off Update, and `nativePasteDelivery` re-enters the text as
+  a `tea.PasteMsg` through the exact component that asked (dropped when it is
+  unmounted or replaced), so composites observe Ctrl+V exactly like a bracketed
+  paste. Never insert into the leaf directly: wrappers would miss the change.
+- Copies write the system clipboard; when it is unreachable or the session is
+  SSH they also emit an OSC 52 terminal clipboard write
+  (`rendering.CopyToClipboardCmd`, the async write lane). A failed read names
+  the terminal's own paste shortcut (`ui.ClipboardReadUnavailable`).
 - **Ctrl+C is copy, NOT back.** Never reuse Ctrl+C for navigation.
   Esc is the universal back.
 - **One owner for text selection and copy**: `ui.TextClipboardTarget` +
   `textClipboardChord` in `tui/ui/text_clipboard.go`. Every text control
   (TextArea, TextField, and the composites that wrap them) accepts Ctrl+C and
   Ctrl+Shift+C (copy the selection), Ctrl+X (cut the selection, or the whole
-  value when nothing is selected), Esc (drop the selection, then fall through),
-  and copy-on-release after a mouse drag — never keep a pointer-owned selection
-  after the release. Hosts add policy on top: the chat composer clears its
-  draft on an unhandled Ctrl+C, and its Esc ladder is selection → draft →
-  cancel the turn.
+  value when nothing is selected) and Esc (drop the selection, then fall
+  through). A mouse drag ends pointer capture on release; an editable control
+  keeps the selection for editing and never writes the clipboard, while a
+  read-only control is a reading surface that copies on release and drops the
+  highlight (like the chat transcript and terminals). Hosts add policy on top:
+  the chat composer clears its draft on an unhandled Ctrl+C, and its Esc ladder
+  is selection → draft → cancel the turn.
+- **Line breaks and commits use the semantic chords** in `tui/ui/chords.go`:
+  where Enter sends (the composer, single-line areas) the newline chord
+  (Shift+Enter, Alt+Enter, Ctrl+J) breaks the line; in multi-line areas the
+  commit chord (Ctrl+Enter, Alt+Enter) submits. Captions come only from
+  `ui.FormatShortcut(token)`, resolved from the terminal keyboard profile, so a
+  hint never names a key the terminal swallows.
 - **Whole-text Copy/Cut in context menus** comes from
   `App.textClipboardMenuSection` (`tui/viewmodel/text_clipboard_menu.go`): the
   composer menu acts on the draft, and any text control under a right-click

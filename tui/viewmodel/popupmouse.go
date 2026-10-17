@@ -3,9 +3,7 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/tui/ui/popup"
 	"crude/tui/wm"
 )
 
@@ -226,44 +224,12 @@ func (m *App) hoverContextMenu(localX, localY int) {
 // Row N: ╰     ╯
 // =============================================================================
 
-// positionFindReplaceCursor places the popup's TextEdit cursor after a
-// click on its TextField. fieldRect is the field's popup-local rect (the
-// Host screen geometry), so the click lands exactly where the field paints
-// regardless of frame padding. edit is the popup state's TextEdit that
-// mirrors the field.
-func (m *App) positionFindReplaceCursor(fr *popup.FindReplaceState, edit *ui.TextEdit, fieldRect ui.Rect, localX int) {
-	if fr == nil || edit == nil {
-		return
-	}
-	// Bare fields start their value at the field's own origin.
-	relX := localX - fieldRect.X
-	if relX < 0 {
-		edit.SetCursor(0, false)
-	} else {
-		runes := []rune(edit.Value())
-		pos := 0
-		acc := 0
-		for i, r := range runes {
-			w := rendering.PlainWidth(string(r))
-			if acc+w > relX {
-				pos = i
-				goto done
-			}
-			acc += w
-		}
-		pos = len(runes)
-	done:
-		edit.SetCursor(pos, false)
-	}
-	edit.ClearSelection()
-}
-
 // clickFindReplace routes a popup-local click. Toggles and action-row
 // buttons hit-test against the Host's screen-rect registry (the painted
 // geometry); input clicks resolve the target TextField through the Host so
 // focus and cursor positioning track the real layout (including the gap
 // rows between fields), never assumed row indexes.
-func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
+func (m *App) clickFindReplace(localX, localY int, msg tea.Msg) tea.Cmd {
 	if m.FindReplace == nil {
 		return nil
 	}
@@ -307,17 +273,18 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	ww, hh := fw.Size()
 	cw.Host().Resize(ww, hh)
 	cw.Host().Layout()
+	// Field presses go to the bound TextField itself: caret placement,
+	// Shift+click, double/triple click and captured drag selection share the
+	// one text-control contract. The frame is not rebuilt, so the drag keeps
+	// its capture until release.
 	switch id := cw.Host().HitTest(localX, localY); id {
 	case ui.FRFindField, ui.FRReplaceField:
-		fieldRect, _ := cw.Host().ScreenRect(id)
 		if id == ui.FRFindField {
 			fr.FocusedField = 0
-			m.positionFindReplaceCursor(fr, fr.FindEdit(), fieldRect, localX)
 		} else {
 			fr.FocusedField = 1
-			m.positionFindReplaceCursor(fr, fr.ReplaceEdit(), fieldRect, localX)
 		}
-		m.refreshFindReplacePopup()
+		overlayFieldPointer(fw, localX, localY, msg)
 	}
 	return nil
 }
@@ -555,32 +522,22 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 // Row N: ╰    ─╯
 // =============================================================================
 
-func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
-	if m.TreePrompt == nil {
+func (m *App) clickTreePrompt(localX, localY int, msg tea.Msg) tea.Cmd {
+	if m.TreePrompt == nil || m.windowManager == nil {
 		return nil
 	}
-	contentRow := localY - 1
-	if contentRow == 1 {
-		// Click on input field (row 2 in local = content row 1)
-		// Input is rendered without a label, so the value starts at
-		// chrome offset (3 cols) + 0 = col 3.
-		charX := localX - 3
-		if charX < 0 {
-			charX = 0
-		}
-		if m.TreePrompt.Edit != nil {
-			if charX > m.TreePrompt.Edit.Len() {
-				charX = m.TreePrompt.Edit.Len()
-			}
-			m.TreePrompt.Edit.SetCursor(charX, false)
-			m.TreePrompt.SyncFromEdit()
-		} else {
-			if charX > len(m.TreePrompt.Value) {
-				charX = len(m.TreePrompt.Value)
-			}
-			m.TreePrompt.Cursor = charX
-		}
-		m.refreshTreePrompt()
+	// Presses on the name field go to the bound TextField: caret placement,
+	// Shift+click, word/line selection and captured drag selection.
+	fw, field := m.treePromptField()
+	if field == nil {
+		return nil
+	}
+	cw, _ := fw.Content.(*ui.ComponentWidget)
+	w, h := fw.Size()
+	cw.Host().Resize(w, h)
+	cw.Host().Layout()
+	if cw.Host().HitTest(localX, localY) == field.ID() {
+		overlayFieldPointer(fw, localX, localY, msg)
 	}
 	return nil
 }
@@ -865,7 +822,7 @@ func (m *App) hoverOutline(localX, localY int) {
 
 // ─── Command palette mouse ─────────────────────────────────────────────
 
-func (m *App) clickCommandPalette(fw *wm.FloatingWindow, localX, localY int) tea.Cmd {
+func (m *App) clickCommandPalette(fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 	if fw == nil {
 		return nil
 	}
@@ -878,11 +835,11 @@ func (m *App) clickCommandPalette(fw *wm.FloatingWindow, localX, localY int) tea
 	if host == nil {
 		return nil
 	}
-	res := host.Handle(tea.MouseClickMsg{
-		X:      localX,
-		Y:      localY,
-		Button: tea.MouseLeft,
-	})
+	click := tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft}
+	if original, ok := msg.(tea.MouseClickMsg); ok {
+		click.Button, click.Mod = original.Button, original.Mod
+	}
+	res := host.Handle(click)
 	// Check if the click activated a list item.
 	if res.Action != nil && res.Action.ID == ui.CPActivate {
 		if entry, ok := res.Action.Payload.(ui.ListItem); ok {

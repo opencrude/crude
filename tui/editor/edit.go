@@ -204,6 +204,20 @@ func (e *Editor) recordChange(c Change) {
 // beginUndoGroup starts an undo group: every change recorded before the
 // matching endUndoGroup shares one group ID and undoes/redoes atomically.
 // Nested calls join the outermost group.
+// replacingSelection runs insert in place of the active selection: typing,
+// pasting or Enter over a selection replaces it, and the delete plus insert
+// undo as one step.
+func (e *Editor) replacingSelection(insert func()) {
+	if !e.HasSelection() {
+		insert()
+		return
+	}
+	e.beginUndoGroup()
+	e.DeleteSelection()
+	insert()
+	e.endUndoGroup()
+}
+
 func (e *Editor) beginUndoGroup() {
 	e.undoGroupDepth++
 	if e.undoGroupDepth == 1 {

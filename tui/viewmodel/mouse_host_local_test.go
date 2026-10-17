@@ -357,13 +357,13 @@ func TestInputMouseDragUsesHostLocalCoords(t *testing.T) {
 		t.Fatalf("input selection = (%d,%d), want (2,9)", start, end)
 	}
 	app.routeInputMouse(tea.MouseReleaseMsg{X: r.X + padLR + 3, Y: r.Y + 2, Button: tea.MouseLeft})
-	// Copy-on-release: the drag writes the selection and drops it, so no
-	// pointer-owned selection state survives the release.
-	if start, end := app.Input.InputSelectionRange(); start != 0 || end != 0 {
-		t.Fatalf("release must drop the drag selection: (%d,%d)", start, end)
+	// The draft is editable: release ends the drag and keeps the selection
+	// for typing over, Ctrl+X or Ctrl+C.
+	if start, end := app.Input.InputSelectionRange(); start != 2 || end != 9 {
+		t.Fatalf("release must keep the drag selection (2,9): (%d,%d)", start, end)
 	}
-	if app.Input.InputSelecting() {
-		t.Fatal("release left the composer in selecting state")
+	if app.Input.InputDragging() {
+		t.Fatal("release left the composer dragging")
 	}
 }
 

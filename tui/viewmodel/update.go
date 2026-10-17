@@ -335,6 +335,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case types.TickMsg:
 		return m.handleTick(msg)
 
+	case tea.KeyboardEnhancementsMsg:
+		// Shortcut captions name the chord this terminal delivers; the answer
+		// to the keyboard query can arrive after the first frame.
+		ui.NoteKeyboardEnhancements(msg)
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.dispatchKeyPress(msg)
 
@@ -774,8 +780,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case selectedSessionSettingsResult:
 		m.applySelectedSessionSettings(msg)
 	case rendering.ClipboardCopiedMsg:
-		m.ws.Logger().Debug("CLIPBOARD", "copied")
-		m.Feedback.NotifyInfo("copied to clipboard")
+		m.ws.Logger().Debug("CLIPBOARD", "copied", "terminal", msg.Terminal)
+		if msg.Terminal {
+			m.Feedback.NotifyInfo("copied via the terminal clipboard")
+		} else {
+			m.Feedback.NotifyInfo("copied to clipboard")
+		}
 	case rendering.ClipboardErrorMsg:
 		m.ws.Logger().Error("CLIPBOARD", "error", "error", string(msg))
 		m.Feedback.NotifyError(string(msg))
@@ -1291,15 +1301,15 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
 		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X - offX, Y: mouse.Y - offY, Button: mm.Button}
+		return tea.MouseClickMsg{X: mouse.X - offX, Y: mouse.Y - offY, Button: mm.Button, Mod: mm.Mod}
 	case tea.MouseMotionMsg:
 		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X - offX, Y: mouse.Y - offY, Button: mm.Button}
+		return tea.MouseMotionMsg{X: mouse.X - offX, Y: mouse.Y - offY, Button: mm.Button, Mod: mm.Mod}
 	case tea.MouseReleaseMsg:
 		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X - offX, Y: mouse.Y - offY, Button: mm.Button}
+		return tea.MouseReleaseMsg{X: mouse.X - offX, Y: mouse.Y - offY, Button: mm.Button, Mod: mm.Mod}
 	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X - offX, Y: mm.Y - offY, Button: mm.Button}
+		return tea.MouseWheelMsg{X: mm.X - offX, Y: mm.Y - offY, Button: mm.Button, Mod: mm.Mod}
 	}
 	return msg
 }
@@ -1339,11 +1349,35 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 		}
 		if result.Action != nil && result.Action.ID == ui.ActionTextPaste {
 			target, _ := result.Action.Payload.(ui.ClipboardPasteTarget)
-			return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID))
+			deliver := nativePasteDelivery(target, func(pasted ui.EventResult) tea.Cmd {
+				if m.windowManager == nil || m.windowManager.Window(fw.ID) != fw {
+					return nil
+				}
+				fw.MarkContentDirty()
+				return tea.Batch(pasted.Cmd, m.handleHostAction(windowScreenAction(fw, pasted.Action)))
+			}, w.Host())
+			return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID, deliver))
 		}
 		result.Action = windowScreenAction(fw, result.Action)
 		cmd := m.handleHostAction(result.Action)
 		return tea.Batch(result.Cmd, cmd)
+	}
+	// A drag that a ComponentWidget overlay's text field captured (find /
+	// replace, palette filter, tree prompt) keeps its motion and release in
+	// that field until the button is released. Presses and keys keep their
+	// overlay-specific owners.
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
+		switch localMsg.(type) {
+		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		default:
+			return nil
+		}
+		if cw.Host() == nil || !cw.Host().HasPointerCapture() {
+			return nil
+		}
+		result := cw.Host().Handle(localMsg)
+		fw.MarkContentDirty()
+		return result.Cmd
 	}
 	if handler, ok := fw.Content.(interface{ HandleEvent(tea.Msg) tea.Cmd }); ok {
 		cmd := handler.HandleEvent(localMsg)

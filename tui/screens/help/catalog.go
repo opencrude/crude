@@ -59,7 +59,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "chat",
 			Title: "Chat",
-			Body:  "Type in the input at the bottom and press Enter to send. Alt+Enter inserts a newline. Type / to pick a slash command, use @ to reference a file, or press Ctrl+O to open Attach File from any non-terminal view. Ctrl+C copies an active input or chat-message selection. The agent can edit the project; tool confirmations and questions appear in the dock above the input, not as chat spam.",
+			Body:  "Type in the input at the bottom and press Enter to send. " + ui.FormatShortcut(ui.NewlineChord) + " inserts a newline (Ctrl+J works in every terminal). Type / to pick a slash command, use @ to reference a file, or press Ctrl+O to open Attach File from any non-terminal view. Ctrl+C copies an active input or chat-message selection. The agent can edit the project; tool confirmations and questions appear in the dock above the input, not as chat spam.",
 		},
 		{
 			ID:    "palette",

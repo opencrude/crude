@@ -8,7 +8,8 @@ import (
 )
 
 // findBar searches every shown line of the review; typing re-runs the search,
-// Enter/Shift+Enter step through matches, Esc closes and keeps the position.
+// Enter/F3 and the previous-match chord step through matches, Esc closes and
+// keeps the position.
 type findBar struct {
 	ui.Base
 	field *ui.FilterField
@@ -37,12 +38,13 @@ func (bar *findBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.
 
 func (bar *findBar) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.IsKey() {
+		if ui.IsPreviousMatchChord(evt.Key) {
+			bar.owner.document.NextMatch(true)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
 		switch evt.Key.String() {
 		case "enter", "f3":
 			bar.owner.document.NextMatch(false)
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		case "shift+enter", "shift+f3":
-			bar.owner.document.NextMatch(true)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case "esc":
 			bar.owner.closeFind()

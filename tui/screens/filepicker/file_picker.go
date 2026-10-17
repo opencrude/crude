@@ -1107,7 +1107,7 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			}
 			return ui.EventResult{Handled: true}
 		}
-		if key.Code == tea.KeyEnter && key.Mod.Contains(tea.ModCtrl) {
+		if ui.IsCommitChord(key) {
 			return p.owner.confirm()
 		}
 		if key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) && !key.Mod.Contains(tea.ModSuper) {

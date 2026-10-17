@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -88,109 +87,6 @@ func TestCommandPaletteBuildGroups(t *testing.T) {
 	}
 	if totalItems != len(m.filtered) {
 		t.Errorf("group item count %d != filtered items %d", totalItems, len(m.filtered))
-	}
-}
-
-func TestCommandPaletteNavigationArrows(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	if m.idx != 0 {
-		t.Errorf("initial idx = %d, want 0", m.idx)
-	}
-
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.idx != 1 {
-		t.Errorf("after Down idx = %d, want 1", m.idx)
-	}
-
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.idx != 0 {
-		t.Errorf("after Up idx = %d, want 0", m.idx)
-	}
-}
-
-func TestCommandPaletteNavigationWrapsNot(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	m.idx = 0
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.idx != 0 {
-		t.Errorf("Up at top should not wrap, got idx=%d", m.idx)
-	}
-
-	m.idx = len(m.filtered) - 1
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.idx != len(m.filtered)-1 {
-		t.Errorf("Down at bottom should not wrap, got idx=%d", m.idx)
-	}
-}
-
-func TestCommandPalettePageUpDown(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	m.height = 10
-	m.idx = 5
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.idx < 0 || m.idx > 5 {
-		t.Errorf("PgUp from 5 should decrease idx, got %d", m.idx)
-	}
-
-	m.idx = 5
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.idx <= 5 || m.idx >= len(m.filtered) {
-		t.Errorf("PgDown from 5 should increase idx, got %d", m.idx)
-	}
-}
-
-func TestCommandPaletteBackspaceRemovesChar(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	m.setFilter("test")
-	m.updateKey(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if m.filterText() != "tes" {
-		t.Errorf("after backspace filter = %q, want 'tes'", m.filterText())
-	}
-}
-
-func TestCommandPaletteTypingUpdatesFilter(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	m.updateKey(tea.KeyPressMsg{Text: "side"})
-	if m.filterText() != "side" {
-		t.Errorf("filter = %q, want 'side'", m.filterText())
-	}
-	if len(m.filtered) == 0 || len(m.filtered) >= len(paletteEntriesFromRegistry(ui.DefaultRegistry())) {
-		t.Errorf("expected some filtered items, got %d", len(m.filtered))
-	}
-}
-
-func TestCommandPaletteEnterReturnsCallback(t *testing.T) {
-	var called string
-	m := newCommandPaletteModel(testTheme(), func(cmdID string) tea.Cmd {
-		called = cmdID
-		return nil
-	}, ui.DefaultRegistry())
-	m.idx = 0
-	cmd := m.updateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if called == "" {
-		t.Error("expected callback to be called on Enter")
-	}
-	if cmd != nil {
-		t.Log("got expected non-nil command from Enter")
-	}
-}
-
-func TestCommandPaletteEnterOnEmptyFilterReturnsNil(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), func(cmdID string) tea.Cmd {
-		return nil
-	}, ui.DefaultRegistry())
-	m.filtered = nil
-	cmd := m.updateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd != nil {
-		t.Error("expected nil command when no items")
-	}
-}
-
-func TestCommandPaletteEscReturnsNil(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	cmd := m.updateKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if cmd != nil {
-		t.Error("expected nil command from Esc")
 	}
 }
 

@@ -461,6 +461,18 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 	}
 }
 
+// Deliver dispatches a non-pointer message to one mounted component
+// regardless of focus. Owner-keyed asynchronous results (a Ctrl+V clipboard
+// read) re-enter through the exact component that requested them, so
+// composite controls see the paste in their own Handle like a bracketed paste.
+func (h *Host) Deliver(id ComponentID, msg tea.Msg) EventResult {
+	if h.root == nil || h.registry[id] == nil {
+		return EventResult{}
+	}
+	h.Layout()
+	return h.dispatchTo(id, 0, 0, msg)
+}
+
 func (h *Host) pointerDispatchTarget(hit ComponentID, btn tea.MouseButton, isRelease bool) ComponentID {
 	if h.captured != RootID && (!isRelease || btn == h.captureBtn) {
 		if _, ok := h.registry[h.captured]; ok {

@@ -596,7 +596,7 @@ func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	if !ok {
 		t.Fatal("find field not registered in Host")
 	}
-	app.clickFindReplace(r.X+3, r.Y)
+	app.clickFindReplace(r.X+3, r.Y, nil)
 	if app.FindReplace.FocusedField != 0 {
 		t.Fatalf("expected FocusedField=0 after clicking find field, got %d", app.FindReplace.FocusedField)
 	}
@@ -612,7 +612,7 @@ func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	if rr.Y == r.Y {
 		t.Fatalf("replace field painted on same row as find field: %+v vs %+v", rr, r)
 	}
-	app.clickFindReplace(rr.X+3, rr.Y)
+	app.clickFindReplace(rr.X+3, rr.Y, nil)
 	if app.FindReplace.FocusedField != 1 {
 		t.Fatalf("expected FocusedField=1 after clicking replace field, got %d", app.FindReplace.FocusedField)
 	}
@@ -646,13 +646,13 @@ func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 	lx, ly := r.X+r.W/2, r.Y+r.H/2
 
 	// Click the Aa toggle.
-	app.clickFindReplace(lx, ly)
+	app.clickFindReplace(lx, ly, nil)
 	if !app.FindReplace.CaseSensitive {
 		t.Fatal("CaseSensitive should be true after clicking Aa")
 	}
 
 	// Click again to toggle off.
-	app.clickFindReplace(lx, ly)
+	app.clickFindReplace(lx, ly, nil)
 	if app.FindReplace.CaseSensitive {
 		t.Fatal("CaseSensitive should be false after second click on Aa")
 	}

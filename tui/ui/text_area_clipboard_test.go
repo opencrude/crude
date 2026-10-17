@@ -179,9 +179,9 @@ func TestTextAreaReadOnlyCopiesButNeverCuts(t *testing.T) {
 	}
 }
 
-// Dragging writes the selection to the clipboard on release and drops it, the
-// same contract the chat message area and docked terminals already follow.
-func TestTextAreaDragCopiesOnReleaseAndDropsSelection(t *testing.T) {
+// An editable area keeps a dragged selection after release so it can be typed
+// over, cut or deleted; nothing reaches the clipboard until Ctrl+C or Ctrl+X.
+func TestTextAreaDragKeepsEditableSelection(t *testing.T) {
 	area, copied := newClipboardTextArea(t, "hello world")
 	area.Layout(LayoutContext{}, Rect{W: 40, H: 4})
 
@@ -190,6 +190,29 @@ func TestTextAreaDragCopiesOnReleaseAndDropsSelection(t *testing.T) {
 	if got := area.SelectedText(); got != "hello" {
 		t.Fatalf("drag selected %q want 'hello'", got)
 	}
+	res := area.Handle(EventContext{LocalX: 5, LocalY: 0}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	if area.IsSelecting() || area.SelectedText() != "hello" {
+		t.Fatalf("release selection=%q selecting=%v, want 'hello' kept", area.SelectedText(), area.IsSelecting())
+	}
+	if res.Cmd != nil {
+		t.Fatal("release of an editable drag returned a clipboard command")
+	}
+	cut := area.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}))
+	runClipboardCmd(t, cut)
+	if len(*copied) != 1 || (*copied)[0] != "hello" || area.Value() != " world" {
+		t.Fatalf("cut after drag copied=%q value=%q", *copied, area.Value())
+	}
+}
+
+// A read-only area is a reading surface: a drag copies on release and drops
+// the selection, like the chat transcript.
+func TestTextAreaReadOnlyDragCopiesOnRelease(t *testing.T) {
+	area, copied := newClipboardTextArea(t, "hello world")
+	area.SetReadOnly(true)
+	area.Layout(LayoutContext{}, Rect{W: 40, H: 4})
+
+	area.Handle(EventContext{LocalX: 0, LocalY: 0}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	area.Handle(EventContext{LocalX: 5, LocalY: 0}, MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft}))
 	res := area.Handle(EventContext{LocalX: 5, LocalY: 0}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
 	if area.HasActiveSelection() || area.IsSelecting() {
 		t.Fatalf("release kept selection=%q selecting=%v", area.SelectedText(), area.IsSelecting())

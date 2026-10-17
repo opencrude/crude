@@ -62,10 +62,11 @@ func activateMenuItem(t *testing.T, st *ui.ContextMenuState, label string) {
 }
 
 // The real product path for a composer drag: the Host owns pointer capture for
-// the click, so the release arrives through the root Host. It must still copy
-// and drop the selection, and must leave no pointer-owned state behind (the
-// composer used to keep claiming pointer events after the release).
-func TestComposerDragReleaseThroughHostCopiesAndClears(t *testing.T) {
+// the click, so the release arrives through the root Host. The editable draft
+// keeps the selection without touching the clipboard, and no pointer-owned
+// state survives (the composer used to keep claiming pointer events after the
+// release).
+func TestComposerDragReleaseThroughHostKeepsSelection(t *testing.T) {
 	app := setupChatInputApp(t, 80, 24, false)
 	app.Input.SetInput("hello world")
 	rect, ok := app.rootHost.ScreenRect(app.inputScreen.ID())
@@ -85,21 +86,21 @@ func TestComposerDragReleaseThroughHostCopiesAndClears(t *testing.T) {
 		t.Fatal("drag produced no live selection")
 	}
 
-	_, cmd := app.dispatchMouseRelease(tea.MouseReleaseMsg{X: rect.X + padLR + 5, Y: y, Button: tea.MouseLeft})
-	if cmd == nil {
-		t.Fatal("host-path release emitted no clipboard command")
+	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{X: rect.X + padLR + 5, Y: y, Button: tea.MouseLeft})
+	if got := app.Input.SelectedText(); got != selected {
+		t.Fatalf("release selection %q, want the dragged %q kept", got, selected)
 	}
-	if app.Input.HasInputSelection() {
-		t.Fatalf("release kept selection %q", app.Input.SelectedText())
-	}
-	if app.Input.InputSelecting() {
+	if app.Input.InputDragging() {
 		t.Fatal("composer still claims the pointer after release")
 	}
+	if app.rootHost.HasPointerCapture() {
+		t.Fatal("release kept the Host pointer capture")
+	}
 
-	// Hovering afterwards must not resurrect the selection.
+	// Hovering afterwards must not extend the kept selection.
 	_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: rect.X + padLR + 9, Y: y})
-	if app.Input.HasInputSelection() {
-		t.Fatalf("hover re-created a selection: %q", app.Input.SelectedText())
+	if got := app.Input.SelectedText(); got != selected {
+		t.Fatalf("hover changed the kept selection to %q", got)
 	}
 }
 

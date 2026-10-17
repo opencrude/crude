@@ -1016,7 +1016,7 @@ func (m *App) registerOverlayHandlers() {
 	})
 
 	oh.RegisterContentHandler(ui.OverlayFindReplace, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.clickFindReplace(localX, localY)
+		return m.clickFindReplace(localX, localY, msg)
 	})
 	oh.RegisterHoverHandler(ui.OverlayFindReplace, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		m.hoverFindReplace(localX, localY)
@@ -1058,7 +1058,7 @@ func (m *App) registerOverlayHandlers() {
 	})
 
 	oh.RegisterContentHandler(ui.OverlayTreePrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.clickTreePrompt(localX, localY)
+		return m.clickTreePrompt(localX, localY, msg)
 	})
 
 	oh.RegisterContentHandler(ui.OverlayTreeDelete, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
@@ -1138,7 +1138,7 @@ func (m *App) registerOverlayHandlers() {
 	})
 
 	oh.RegisterContentHandler(ui.OverlayCommandPalette, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.clickCommandPalette(fw, localX, localY)
+		return m.clickCommandPalette(fw, localX, localY, msg)
 	})
 	oh.RegisterHoverHandler(ui.OverlayCommandPalette, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		m.hoverCommandPalette(fw, localX, localY)
