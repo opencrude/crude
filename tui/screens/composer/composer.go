@@ -194,19 +194,15 @@ func (c *composerInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult
 	}
 	if evt.IsKey() {
 		key := evt.Key
-		switch {
-		case key.Code == tea.KeyEsc:
+		switch key.Code {
+		case tea.KeyEsc:
 			if c.area.HasActiveSelection() {
 				return c.area.Handle(ctx, evt)
 			}
 			return c.owner.cancel()
-		case key.Code == tea.KeyTab:
+		case tea.KeyTab:
 			c.owner.focusID(ActionsID)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		case key.String() == "ctrl+c" && c.area.HasActiveSelection():
-			// Viewmodel owns clipboard copy; leave unhandled so the host
-			// does not swallow the key before the owner can copy.
-			return ui.EventResult{}
 		}
 	}
 	return c.area.Handle(ctx, evt)

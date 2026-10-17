@@ -13,6 +13,7 @@ import (
 // approval policy, instead of sending the user to Settings. One approval covers
 // the durable change and launching exactly that configuration in the run.
 func TestAgentConfiguredEnvironmentIsOneExactDurableApproval(t *testing.T) {
+	t.Setenv("CRUDE_CONFIGURATION_TEST_TOKEN", "fixture-token")
 	service, settings, _ := capabilityFixture(t)
 	executable, err := os.Executable()
 	if err != nil {
@@ -20,7 +21,7 @@ func TestAgentConfiguredEnvironmentIsOneExactDurableApproval(t *testing.T) {
 	}
 	settings.Connections["helper"] = captypes.ConnectionConfig{ID: "helper", Name: "Helper", Scope: captypes.ScopeApplication, Transport: "stdio",
 		Command: executable, Args: []string{"-test.run=^TestAutonomyStdioHelper$"}, RequiredEnv: []string{"CRUDE_AUTONOMY_STDIO_HELPER"},
-		SecretRefs: map[string]string{"HELPER_TOKEN": "env:HOME"}}
+		SecretRefs: map[string]string{"HELPER_TOKEN": "env:CRUDE_CONFIGURATION_TEST_TOKEN"}}
 	if err := service.Configure(t.Context(), settings); err != nil {
 		t.Fatal(err)
 	}

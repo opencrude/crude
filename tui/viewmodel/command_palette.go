@@ -194,18 +194,6 @@ func (m *commandPaletteModel) buildGroups() {
 	}
 }
 
-func (m *commandPaletteModel) visibleHeight() int {
-	if m.height < 3 {
-		return 3
-	}
-	// Account for search field row + divider + chrome.
-	vh := m.height - 4
-	if vh < 1 {
-		vh = 1
-	}
-	return vh
-}
-
 // listItems converts the filtered commands into ui.ListItem with category headers
 // and section dividers, matching the old buildContentLines layout.
 func (m *commandPaletteModel) listItems() []ui.ListItem {

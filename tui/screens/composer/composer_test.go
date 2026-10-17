@@ -110,7 +110,7 @@ func TestComposerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 	}
 }
 
-func TestComposerDragSelectionCopiesOnRelease(t *testing.T) {
+func TestComposerDragSelectionKeepsSelectionForEditing(t *testing.T) {
 	screen, host := composerHost(t)
 	screen.Open("")
 	result := host.Handle(tea.PasteMsg{Content: "pasted"})
@@ -130,20 +130,32 @@ func TestComposerDragSelectionCopiesOnRelease(t *testing.T) {
 		t.Fatalf("expected a live selection during the drag, got %q selecting=%v", screen.SelectedText(), screen.Selecting())
 	}
 	released := host.Handle(tea.MouseReleaseMsg{X: 7, Y: 0, Button: tea.MouseLeft})
-	// Copy-on-release: the drag writes the selection and drops it, so the composer
-	// never keeps selection state the pointer no longer owns.
-	if screen.HasActiveSelection() || screen.Selecting() {
-		t.Fatalf("release kept selection %q selecting=%v", screen.SelectedText(), screen.Selecting())
+	// Editable text retains the selection after pointer capture ends. Only an
+	// explicit copy chord writes the clipboard; typing replaces the selection.
+	if screen.SelectedText() != "ted" || screen.Selecting() {
+		t.Fatalf("release selection=%q selecting=%v", screen.SelectedText(), screen.Selecting())
 	}
-	if released.Cmd == nil {
-		t.Fatal("release returned no clipboard command")
+	if released.Cmd != nil || len(copied) != 0 {
+		t.Fatalf("release must not copy: command=%v copied=%q", released.Cmd != nil, copied)
+	}
+	copyResult := host.Handle(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if copyResult.Cmd == nil {
+		t.Fatal("Ctrl+C returned no clipboard command")
 	}
 	if len(copied) != 0 {
 		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
 	}
-	_ = released.Cmd()
+	_ = copyResult.Cmd()
 	if len(copied) != 1 || copied[0] != "ted" {
 		t.Fatalf("copied=%q want [ted]", copied)
+	}
+	host.Handle(tea.KeyPressMsg{Code: 'X', Text: "X"})
+	if got := screen.Value(); got != "pasX" {
+		t.Fatalf("typing over selection = %q, want pasX", got)
+	}
+	host.Handle(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+	if got := screen.Value(); got != "pasted" {
+		t.Fatalf("undo after selection replacement = %q, want pasted", got)
 	}
 }
 
