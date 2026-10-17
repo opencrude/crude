@@ -517,8 +517,9 @@ func (m *App) wantsFastTick() bool {
 	if m.launcherScreen != nil && m.launcherScreen.Loading() && m.launcherHostVisible() {
 		return true
 	}
-	// Streaming agents and unfinished sub-panes repaint at frame rate.
-	if m.anyActive() {
+	// Running and stopping agents repaint at frame rate; an idle session
+	// keeps the idle cadence.
+	if m.anyAgentAnimating() {
 		return true
 	}
 	// Aeron drafting a commit message animates its progress rule.

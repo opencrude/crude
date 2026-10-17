@@ -777,8 +777,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "agent.cancel":
-		if id := m.AgentView.ActiveID(); id != "" {
-			m.cancelAgentTurn(id)
+		if !m.cancelAgentTurn(m.AgentView.ActiveID()) {
+			m.Feedback.NotifyInfo("Nothing to stop: the agent is not running")
 		}
 	case "agent.retry":
 		return m.retryAgentRecovery(m.AgentView.ActiveID())

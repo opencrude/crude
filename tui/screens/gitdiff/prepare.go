@@ -177,7 +177,7 @@ func prepareBody(file *File) {
 		file.beforeSyntax = diffview.PrepareSyntax(name, comparison.Before)
 		file.afterSyntax = diffview.PrepareSyntax(name, comparison.After)
 	}
-	file.blocks = buildBlocks(textdiff.Hunks(comparison.Before, comparison.After), len(file.before), len(file.after))
+	file.blocks = buildBlocks(textdiff.ReviewHunks(comparison.Before, comparison.After), len(file.before), len(file.after))
 	for _, block := range file.blocks {
 		for _, line := range block.lines {
 			text := ""

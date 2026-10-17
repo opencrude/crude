@@ -274,12 +274,17 @@ func (m *App) archiveSubAgentTab(agentID string) {
 	m.handleTabSwitch()
 }
 
+// anyActive reports agent work in progress. Agent state is the only owner:
+// every agent has a mirrored pane, and a root agent's pane never collapses,
+// so pane completion is not a liveness signal.
 func (m *App) anyActive() bool {
-	if m.ws.AgentMgr().AnyActive() {
-		return true
-	}
-	for _, sp := range m.ws.PaneMgr().Panes() {
-		if !sp.Done {
+	return m.ws.AgentMgr().AnyActive()
+}
+
+// anyAgentAnimating adds turns that are stopping, whose live status still moves.
+func (m *App) anyAgentAnimating() bool {
+	for _, node := range m.ws.AgentMgr().AllNodes() {
+		if node != nil && node.State != nil && (node.State.IsActive() || node.State.Cancelling) {
 			return true
 		}
 	}

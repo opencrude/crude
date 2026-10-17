@@ -118,6 +118,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `conversation.go` | Canonical live message store (Conversation/Message) |
 | `lsp_manager.go` | LSPManager (connections, diagnostics cache, editor/probe document holders) |
 | `lsp_probe.go` | Agent code-intelligence probes (diagnostics, definition, references, hover, symbols) |
+| `git_status.go` | Git executable boundary: porcelain status, checkout-form reads, clean-filtered blob writes, `ErrGitNotInstalled` |
 | `git_remote.go`, `git_conflicts.go` | Remote Git operations, merge state, conflict parsing and Local-History-backed resolution |
 | `references.go` | ReferenceStore (SQLite-backed @references) |
 | `file_ops.go` | FileOpsService (filesystem mutations) |

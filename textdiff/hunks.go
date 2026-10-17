@@ -22,6 +22,8 @@ func Lines(text string) []string {
 	return lines
 }
 
+// Hunks compares exact bytes, line terminators included. Merges and edit
+// application use it; change presentation uses ContentHunks or ReviewHunks.
 func Hunks(before, after string) []Hunk {
 	if before == after {
 		return nil
@@ -47,4 +49,51 @@ func Hunks(before, after string) []Hunk {
 		hunks = append(hunks, hunk)
 	}
 	return hunks
+}
+
+// ContentHunks matches lines by content, treating CRLF and LF terminators as
+// the same line ending. Git stores text in repository form and checks it out
+// in working-tree form (core.autocrlf, eol attributes), so the two sides of a
+// Git comparison legitimately disagree on terminators; the line-ending policy
+// itself is Git's, reported through status. Hunk lines keep their exact bytes.
+func ContentHunks(before, after string) []Hunk {
+	normalBefore, normalAfter := normalizeLineEndings(before), normalizeLineEndings(after)
+	if normalBefore == before && normalAfter == after {
+		return Hunks(before, after)
+	}
+	hunks := Hunks(normalBefore, normalAfter)
+	if len(hunks) == 0 {
+		return nil
+	}
+	// CRLF -> LF keeps every line boundary, so indices address the originals.
+	oldLines, newLines := Lines(before), Lines(after)
+	for i := range hunks {
+		h := &hunks[i]
+		oldEnd, newEnd := h.OldStart+len(h.OldLines), h.NewStart+len(h.NewLines)
+		h.OldLines, h.NewLines = nil, nil
+		if oldEnd > h.OldStart {
+			h.OldLines = oldLines[h.OldStart:oldEnd:oldEnd]
+		}
+		if newEnd > h.NewStart {
+			h.NewLines = newLines[h.NewStart:newEnd:newEnd]
+		}
+	}
+	return hunks
+}
+
+// ReviewHunks is ContentHunks for a comparison already known to differ: when
+// the only difference is line endings, it reports those exact lines rather
+// than an empty diff, so a real terminator change stays reviewable.
+func ReviewHunks(before, after string) []Hunk {
+	if hunks := ContentHunks(before, after); len(hunks) != 0 || before == after {
+		return hunks
+	}
+	return Hunks(before, after)
+}
+
+func normalizeLineEndings(text string) string {
+	if !strings.Contains(text, "\r\n") {
+		return text
+	}
+	return strings.ReplaceAll(text, "\r\n", "\n")
 }

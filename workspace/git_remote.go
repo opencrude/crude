@@ -78,26 +78,6 @@ func gitRemotes(repo *git.Repository) []string {
 	return names
 }
 
-// markGitConflicts replaces every entry of a conflicted path with one entry
-// in the conflict area, which sorts first.
-func markGitConflicts(root string, changes []GitChange, conflicts []string) []GitChange {
-	if len(conflicts) == 0 {
-		return changes
-	}
-	conflicted := make(map[string]bool, len(conflicts))
-	out := make([]GitChange, 0, len(changes)+len(conflicts))
-	for _, path := range conflicts {
-		conflicted[path] = true
-		out = append(out, GitChange{Path: path, AbsolutePath: filepath.Join(root, filepath.FromSlash(path)), Area: GitAreaConflict, Code: "!", Description: "Conflict"})
-	}
-	for _, change := range changes {
-		if !conflicted[change.Path] {
-			out = append(out, change)
-		}
-	}
-	return out
-}
-
 // ConflictedPaths lists repository paths still marked as conflicted.
 func (s GitSnapshot) ConflictedPaths() []string {
 	var out []string

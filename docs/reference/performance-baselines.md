@@ -514,8 +514,8 @@ compare across power modes without noting it.
 | `BufferDirtyCheckLargeFile` (2026-09-17) | 0.59-0.63 | 0 | 0 |
 | `ChatStreamPaint_80x24` | 106,946-109,622 | 6,747 | 122 |
 | `ChatStreamPaint_120x40` | 231,827-235,747 | 16,412 | 226 |
-| `BenchmarkIdleTick_200Msgs` | 191,188-197,788 | 12,233 | 269 |
-| `BenchmarkTabRederive_80Msgs` | 174,624-179,835 | 11,256-11,257 | 248 |
+| `BenchmarkIdleTick_200Msgs` (2026-10-17) | 142,566-144,123 | 12,664 | 205 |
+| `BenchmarkTabRederive_80Msgs` (2026-10-17) | 136,478-139,346 | 11,709-11,710 | 173 |
 | `BenchmarkPointerMotionCoalesced` | 12,207 | 9,835 | 42 |
 | `BenchmarkAgentSwitchWarm_80Msgs` | 199,537-209,565 | 12,281 | 262 |
 | `BenchmarkSidebarResizePresentedFrame_500Msgs` | 325,690-343,457 | 20,963 | 262 |
@@ -528,6 +528,14 @@ compare across power modes without noting it.
 `handleTick` + shell-frame paint, not a single render call: `IdleTick_200Msgs`
 pumps idle frames against a hydrated 200-message mixed-role session;
 `TabRederive_80Msgs` re-derives the same agent tab per frame.
+
+**Idle frame note (2026-10-17):** both had drifted to 15,049 B / 226 allocs and
+14,094 B / 194 allocs, over their byte ceilings. The profile showed panel
+chrome probing the terminal environment for Nerd Font support on every paint;
+each `os.Getenv` allocates on Windows. The environment is fixed for the process,
+so `filetree.DetectNerdFont` now probes once. A root agent's pane also made
+`wantsFastTick` hold every idle session at the 16 ms streaming tick; the idle
+benches now measure the true idle cadence (bytes are identical on both paths).
 
 **Editor allocation fix note:** the four `EditorPaint`/`EditorScrollRepaint`
 benches used to exceed their old byte ceilings (13,520B at 80x24, 25,152B at

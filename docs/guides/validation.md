@@ -53,7 +53,10 @@ change.
   platform data directories at one temporary profile. Setting only `HOME` is not
   isolation on Windows (`os.UserHomeDir` reads USERPROFILE); it once wrote over
   a thousand test workspaces into a real profile. Add the `TestMain` to any new
-  package that can reach `~/.crude`.
+  package that can reach `~/.crude`. It also sets `GIT_CONFIG_NOSYSTEM` and an
+  empty `GIT_CONFIG_GLOBAL`, so Git fixtures behave identically on every
+  machine (Git for Windows' system config sets `core.autocrlf=true`); tests of
+  line-ending policy set it per repository.
 - `CRUDE_HOME` selects an isolated profile (own core, config, workspaces,
   sessions) for developing Crude inside Crude.
 - `MODELS_DEV_URL` overrides the models.dev catalog endpoint for tests and

@@ -87,6 +87,11 @@ func openTestAgentPrompt(t testing.TB, app *App, projection *sessionProjection, 
 	if app.ws.AgentMgr().Get(req.agentID) == nil {
 		app.ws.AgentMgr().AddOrchestrator(req.agentID, &workspace.AgentState{})
 	}
+	// A prompt is admitted only from a live turn's permission event, which
+	// records its block as pending (AgentState.handleBlocking).
+	if node := app.ws.AgentMgr().Get(req.agentID); node.State != nil {
+		node.State.PendingBlockID = req.blockID
+	}
 	state := &agentPromptState{request: req, projection: projection}
 	if req.kind == agentPromptQuestions {
 		state.question = question.New(app.Theme)

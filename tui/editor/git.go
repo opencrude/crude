@@ -49,7 +49,7 @@ func (e *Editor) SetGitAnnotation(sourceRevision uint64, head string, hunks []Gi
 	if sourceRevision == e.Revision() {
 		e.gitHunks = append([]GitHunk(nil), hunks...)
 	} else {
-		e.gitHunks = textdiff.Hunks(head, string(e.buf.cachedBytes))
+		e.gitHunks = textdiff.ContentHunks(head, string(e.buf.cachedBytes))
 	}
 	e.gitSnapshot = e.buf.snapshotText()
 	e.gitLineOffsets = e.buf.lineOffsets
@@ -126,7 +126,7 @@ func (e *Editor) remapGitProjection() {
 	if headFrom < 0 || headTo < headFrom || headTo > len(e.gitHeadLines) || from < 0 || newTo < from || newTo > newCount {
 		// An externally supplied annotation cannot establish this range. Rebuild
 		// from the authoritative baseline rather than inventing a local marker.
-		e.gitHunks = textdiff.Hunks(e.gitHead, string(e.buf.cachedBytes))
+		e.gitHunks = textdiff.ContentHunks(e.gitHead, string(e.buf.cachedBytes))
 		return
 	}
 	byteAt := func(line int) int {
@@ -135,7 +135,7 @@ func (e *Editor) remapGitProjection() {
 		}
 		return newOffsets[line]
 	}
-	changed := textdiff.Hunks(strings.Join(e.gitHeadLines[headFrom:headTo], ""), string(e.buf.cachedBytes[byteAt(from):byteAt(newTo)]))
+	changed := textdiff.ContentHunks(strings.Join(e.gitHeadLines[headFrom:headTo], ""), string(e.buf.cachedBytes[byteAt(from):byteAt(newTo)]))
 	next := make([]GitHunk, 0, first+len(changed)+len(e.gitHunks)-last)
 	next = append(next, e.gitHunks[:first]...)
 	for _, h := range changed {

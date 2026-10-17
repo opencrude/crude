@@ -159,15 +159,6 @@ func (pm *PaneManager) Remove(id string) {
 	}
 }
 
-func (pm *PaneManager) HasAnyActive() bool {
-	for _, sp := range pm.panes {
-		if !sp.Done {
-			return true
-		}
-	}
-	return false
-}
-
 func (pm *PaneManager) Panes() map[string]*SubPane {
 	return pm.panes
 }

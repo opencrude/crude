@@ -108,7 +108,13 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	if !strings.Contains(result.Content, "a.go:3:6  func y() int { return 1 }") {
 		t.Fatalf("definition result = %q", result.Content)
 	}
-	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "hover", "path": "/etc/hosts", "line": float64(1), "symbol": "x"}); err == nil || !strings.Contains(err.Error(), "outside the workspace") {
+	// An existing absolute file in another directory: only containment, not a
+	// missing file, may reject it on every platform.
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	if err := os.WriteFile(outside, []byte("package outside\nvar x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "hover", "path": outside, "line": float64(2), "symbol": "x"}); err == nil || !strings.Contains(err.Error(), "outside the workspace") {
 		t.Fatalf("outside path = %v", err)
 	}
 	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": float64(2), "symbol": "zz"}); err == nil || !strings.Contains(err.Error(), `symbol "zz" is not on line 2`) {
