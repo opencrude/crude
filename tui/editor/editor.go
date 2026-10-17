@@ -101,8 +101,8 @@ type Editor struct {
 	lastClickAt  time.Time
 	lastClickPos Position
 	clickCount   int
-	selAnchor     Position
-	selEnd        Position
+	selAnchor    Position
+	selEnd       Position
 
 	PadL int // left padding applied by the app layout
 

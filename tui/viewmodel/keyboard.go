@@ -517,11 +517,6 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			if composer == nil {
 				return m, nil
 			}
-			// Copy with a selection: copy (don't close the
-			// composer; matches the chat input's behavior).
-			if ui.IsCopyChord(msg) && composer.HasActiveSelection() {
-				return m, rendering.CopyToClipboardCmd(composer.SelectedText())
-			}
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}

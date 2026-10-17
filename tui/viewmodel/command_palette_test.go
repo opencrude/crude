@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"

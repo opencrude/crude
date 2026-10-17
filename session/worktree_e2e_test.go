@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,6 +75,12 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 	steps := map[string]int{}
 	requests := map[string][]string{}
 	var calls atomic.Int32
+	readFilesCommand := func(paths ...string) string {
+		if runtime.GOOS == "windows" {
+			return "cd & type " + strings.Join(paths, " ")
+		}
+		return "pwd; cat " + strings.Join(paths, " ")
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var body struct {
 			Messages []provider.ChatMessage `json:"messages"`
@@ -109,7 +116,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		case 5:
 			name, params = "apply_patch", map[string]any{"input": "*** Begin Patch\n*** Update File: overlap.txt\n@@\n-" + key + " edited\n+" + key + " patched\n*** End Patch"}
 		case 6:
-			name, params = "execute_command", map[string]any{"command": "pwd; cat dirty.txt accepted.txt overlap.txt"}
+			name, params = "execute_command", map[string]any{"command": readFilesCommand("dirty.txt", "accepted.txt", "overlap.txt")}
 		case 7:
 			name, params = "exec_command", map[string]any{"cmd": "pwd; cat overlap.txt", "yield_time_ms": 1000}
 		case 8, 9:
@@ -133,7 +140,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 				name, params = "edit_file", map[string]any{"path": "overlap.txt", "old_string": "first edited\n", "new_string": "first patched\n"}
 			}
 			if step == 7 {
-				name, params = "execute_command", map[string]any{"command": "pwd; cat overlap.txt"}
+				name, params = "execute_command", map[string]any{"command": readFilesCommand("overlap.txt")}
 			}
 		} else {
 			switch step {

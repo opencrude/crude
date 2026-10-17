@@ -126,23 +126,6 @@ func (m *App) findReplaceSpec(fr *popup.FindReplaceState, w, h int) ui.FindRepla
 	}
 }
 
-// syncFindReplaceFrame pushes text values, filter toggles, the match counter,
-// and the per-tab title into the live frame, marking content dirty so the
-// change reaches the compositor.
-func (m *App) syncFindReplaceFrame(fw *wm.FloatingWindow) {
-	if fw == nil || m.FindReplace == nil {
-		return
-	}
-	fr := m.FindReplace
-	cw, ok := fw.Content.(*ui.ComponentWidget)
-	if !ok || cw == nil {
-		return
-	}
-	m.syncNewFindReplaceFrame(cw, fr)
-	spec := m.findReplaceSpec(fr, 0, 0)
-	ui.SyncFindReplaceFrame(cw, spec.CaseSensitive, spec.WholeWord, spec.Regex, spec.MatchCount, spec.CurrentIdx, spec.Title)
-}
-
 // refreshFindReplacePopup rebuilds the floating window's content
 // using a WindowFrame popover. Called when the user types, toggles,
 // navigates, or transforms between find and replace forms. The transform
@@ -399,14 +382,4 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	return m.findReplaceText(fr, fr.ActiveEdit(), msg)
-}
-
-// syncFindReplaceFrameFromState copies the full FindReplaceState (TextEdit
-// values, filter toggles, match counter, per-tab title) into the live frame
-// for paint. It is the full-sync path used after every keystroke/toggle.
-func (m *App) syncFindReplaceFrameFromState() {
-	if m.windowManager == nil || m.FindReplace == nil {
-		return
-	}
-	m.syncFindReplaceFrame(m.windowManager.Window("find-replace"))
 }
