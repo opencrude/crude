@@ -1,10 +1,12 @@
 // Package filetree provides the file tree sidebar widget.
 //
-// This file implements git status resolution using the go-git library,
-// providing per-file git status information for the file tree sidebar.
+// This file resolves per-file Git status for the local file tree sidebar
+// through workspace.ReadGitStatus, the same authority the core uses, so
+// checkout line-ending conversion never reads as a modification.
 package filetree
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"crude/workspace"
+
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-git/go-git/v5"
 )
+
+// gitStatusScanTimeout bounds one status read on huge or stalled repositories.
+const gitStatusScanTimeout = 30 * time.Second
 
 // ---------------------------------------------------------------------------
 // GitStatus enum
@@ -145,13 +152,11 @@ func (r *GitStatusResolver) scan() (map[string]GitStatus, error) {
 	r.refreshMu.Lock()
 	defer r.refreshMu.Unlock()
 
-	wt, err := r.repo.Worktree()
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusScanTimeout)
+	defer cancel()
+	status, err := workspace.ReadGitStatus(ctx, r.repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get worktree: %w", err)
-	}
-	status, err := wt.Status()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get working tree status: %w", err)
+		return nil, err
 	}
 
 	result := make(map[string]GitStatus, len(status))

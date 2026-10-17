@@ -251,7 +251,22 @@ next tick finally synced.
 The Git **Changes** review (every changed file, or one commit, stacked in one
 `gitdiff.Document`) and local comparison tabs move/split through the same main
 groups as documents and agents. Git keeps its exact reviewed-byte stage/unstage
-policy and its shown-set commit check. Local **Compare With Disk** now opens a complete main-tab comparison,
+policy and its shown-set commit check.
+
+The Git executable is the one authority for Git's two content forms
+(repository form in HEAD/index, working-tree form on disk, translated per path
+by `core.autocrlf`, eol/text attributes and filters). Status for the panel, the
+connected tree and the local tree is `workspace.ReadGitStatus`
+(`git status --porcelain -z`), never go-git's raw-byte worktree status.
+Working-tree comparisons read the index in checkout form; staging writes blobs
+through Git's clean conversion (`hash-object --path`), unstaging writes
+repository bytes unfiltered, discards write checkout bytes, and rewritten index
+entries carry no stat data so Git re-checks content. Review hunks use
+`textdiff.ReviewHunks`: line-ending-insensitive, except that a change consisting
+only of terminators is shown exactly. go-git remains for in-process reads that
+involve no conversion (refs, commits, trees, index entries). Without a Git
+executable, source-control reads fail with `ErrGitNotInstalled` and the rest of
+Crude is unaffected. Local **Compare With Disk** now opens a complete main-tab comparison,
 not the floating one-hunk inspector. **Compare With Saved Version** compares the
 accepted buffer savepoint against unsaved text. Both are available in the editor
 context menu and palette; the small HEAD-relative gutter inspector remains a

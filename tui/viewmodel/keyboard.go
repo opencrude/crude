@@ -641,13 +641,13 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 
-	if m.anyActive() && !m.OverlayState.IsBlocking() {
+	if m.AgentView.ActiveNode() != nil && !m.OverlayState.IsBlocking() {
 		switch msg.Code {
 		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 			if msg.Code == tea.KeyHome || msg.Code == tea.KeyEnd {
 				// Home/End go to the chat input when the input has content
 				// (the user is editing). Only route to the message list when
-				// the input is empty and an agent is active (scroll to top/bottom).
+				// the input is empty and a conversation is shown (scroll to top/bottom).
 				if m.Input.Value() != "" {
 					break // fall through to input.Update below
 				}

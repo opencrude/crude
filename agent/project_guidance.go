@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -279,8 +280,10 @@ func guidanceCallPaths(calls []provider.ToolCall) []string {
 		// A glob operand governs the directories it can reach, which all lie
 		// under its literal prefix. Whether the tool accepts a glob is the
 		// tool's own per-call decision; one call's operand never fails a batch.
+		// SplitGlobPath returns an OS-native base; keep the operand's slash
+		// form so a scope is spelled the same on every platform.
 		if base, _, isGlob := fileio.SplitGlobPath(path); isGlob {
-			path = base
+			path = filepath.ToSlash(base)
 		}
 		paths = append(paths, path)
 	}

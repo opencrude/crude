@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"crude/tui/theme"
 )
@@ -226,8 +227,14 @@ const fallbackFileIcon = "●"
 //  3. Check for explicit NerdFont env vars (NERD_FONT, NERD_ICONS, etc.).
 //  4. Default to true on modern terminals (macOS, most Linux terminals).
 //
-// Returns true if NerdFonts are likely supported.
-func DetectNerdFont() bool {
+// Returns true if NerdFonts are likely supported. The terminal environment is
+// fixed for the process, so it is probed once; panels resolve it every paint
+// and each environment read allocates on Windows.
+func DetectNerdFont() bool { return detectNerdFont() }
+
+var detectNerdFont = sync.OnceValue(probeNerdFont)
+
+func probeNerdFont() bool {
 	termProgram := os.Getenv("TERM_PROGRAM")
 
 	// Known NerdFont-friendly terminal programs.

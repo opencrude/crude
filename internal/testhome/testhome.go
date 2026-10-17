@@ -56,6 +56,14 @@ func isolate() error {
 			return err
 		}
 	}
+	// Git fixtures must behave the same on every developer machine: Git for
+	// Windows' system config sets core.autocrlf=true, which changes checkout
+	// bytes. Tests that exercise line-ending policy set it per repository.
+	for key, value := range map[string]string{"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.DevNull} {
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
 	// A developer's dev profile must not leak in, and per-test HOME overrides
 	// must keep deciding where crude data lives.
 	return os.Unsetenv("CRUDE_HOME")

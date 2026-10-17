@@ -167,7 +167,7 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 	}
 	beforePath := rel
 	if change.Code == "R" || change.Code == "C" {
-		status, err := state.worktreeStatus()
+		status, err := state.worktreeStatus(ctx)
 		if err != nil {
 			return GitComparison{}, err
 		}
@@ -193,7 +193,9 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 			baseLabel = "Empty tree (no commits)"
 		}
 	case GitAreaWorking, GitAreaUntracked:
-		before, err = state.indexFile(ctx, beforePath)
+		// Both sides in working-tree form: disk bytes against the index as Git
+		// would check it out here, never raw repository-form bytes.
+		before, err = state.indexCheckoutFile(ctx, beforePath)
 		if err == nil {
 			after, err = gitReviewDiskFile(ctx, state.root, rel)
 		}
@@ -214,15 +216,11 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 	return comparison, ctx.Err()
 }
 
-func (state *gitReviewState) worktreeStatus() (git.Status, error) {
+func (state *gitReviewState) worktreeStatus(ctx context.Context) (git.Status, error) {
 	if state.status != nil {
 		return state.status, nil
 	}
-	wt, err := state.repo.Worktree()
-	if err != nil {
-		return nil, err
-	}
-	status, err := wt.Status()
+	status, err := ReadGitStatus(ctx, state.root)
 	if err != nil {
 		return nil, err
 	}
@@ -313,23 +311,45 @@ func (state *gitReviewState) treeFile(ctx context.Context, tree *object.Tree, re
 }
 
 func (state *gitReviewState) indexFile(ctx context.Context, rel string) (gitReviewFile, error) {
+	found, err := state.indexEntry(rel)
+	if err != nil || found == nil {
+		return gitReviewFile{}, err
+	}
+	return state.blob(ctx, found.Hash, found.Mode)
+}
+
+// indexCheckoutFile is the index entry in the working-tree form Git would
+// check out at rel. Links and submodules have no content conversion.
+func (state *gitReviewState) indexCheckoutFile(ctx context.Context, rel string) (gitReviewFile, error) {
+	found, err := state.indexEntry(rel)
+	if err != nil || found == nil {
+		return gitReviewFile{}, err
+	}
+	if found.Mode == filemode.Symlink || found.Mode == filemode.Submodule {
+		return state.blob(ctx, found.Hash, found.Mode)
+	}
+	text, err := gitCheckoutText(ctx, state.root, rel, found.Hash.String())
+	if err != nil {
+		return gitReviewFile{}, err
+	}
+	return gitReviewFile{text: text, mode: found.Mode, present: true}, ctx.Err()
+}
+
+func (state *gitReviewState) indexEntry(rel string) (*index.Entry, error) {
 	var found *index.Entry
 	for _, entry := range state.idx.Entries {
 		if entry.Name != rel {
 			continue
 		}
 		if entry.Stage != 0 || found != nil {
-			return gitReviewFile{}, fmt.Errorf("%s has unresolved index stages; resolve the conflict before staging", rel)
+			return nil, fmt.Errorf("%s has unresolved index stages; resolve the conflict before staging", rel)
 		}
 		if entry.IntentToAdd {
-			return gitReviewFile{}, nil
+			return nil, nil
 		}
 		found = entry
 	}
-	if found == nil {
-		return gitReviewFile{}, nil
-	}
-	return state.blob(ctx, found.Hash, found.Mode)
+	return found, nil
 }
 
 func gitReviewDiskFile(ctx context.Context, root, rel string) (gitReviewFile, error) {
@@ -454,26 +474,16 @@ func (s *GitService) mutateReviewed(ctx context.Context, comparison GitCompariso
 		if mode == filemode.Submodule {
 			return errors.New("submodule staging requires a dedicated submodule operation")
 		}
-		encoded := state.repo.Storer.NewEncodedObject()
-		encoded.SetType(plumbing.BlobObject)
-		encoded.SetSize(int64(len(text)))
-		writer, err := encoded.Writer()
+		// Staging carries working-tree text, which takes the same clean
+		// conversion `git add` applies; unstaging restores repository bytes.
+		hash, err := gitWriteBlob(ctx, state.root, comparison.Path, text, stage && mode != filemode.Symlink)
 		if err != nil {
 			return err
 		}
-		_, writeErr := io.WriteString(writer, text)
-		closeErr := writer.Close()
-		if writeErr != nil {
-			return writeErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		hash, err := state.repo.Storer.SetEncodedObject(encoded)
-		if err != nil {
-			return err
-		}
-		entries = append(entries, &index.Entry{Name: comparison.Path, Hash: hash, Mode: mode, Size: uint32(len(text))})
+		// No stat data, exactly like `git reset`/read-tree entries: Git then
+		// compares content through its clean filter instead of trusting a
+		// size that describes the blob, not the checked-out file.
+		entries = append(entries, &index.Entry{Name: comparison.Path, Hash: hash, Mode: mode})
 	}
 	idx.Entries, idx.Cache, idx.ResolveUndo, idx.EndOfIndexEntry = entries, nil, nil, nil
 	if err := index.NewEncoder(lock).Encode(idx); err != nil {

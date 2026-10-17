@@ -76,6 +76,94 @@ func TestAnnotateFileBlameAndLineEdits(t *testing.T) {
 	}
 }
 
+func TestAnnotateFileUsesGitCheckoutRepresentation(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git executable is required")
+	}
+	for _, tc := range []struct {
+		name, autocrlf, attributes, content, stored string
+	}{
+		{"autocrlf", "true", "", "# Committed\r\n\r\nOriginal text.\r\n", "# Committed\n\nOriginal text.\n"},
+		{"attribute_crlf", "false", "*.md text eol=crlf\n", "# Committed\r\n\r\nOriginal text.\r\n", "# Committed\n\nOriginal text.\n"},
+		{"attribute_lf", "true", "*.md text eol=lf\n", "# Committed\n\nOriginal text.\n", "# Committed\n\nOriginal text.\n"},
+		{"no_conversion", "false", "*.md -text\n", "# Committed\r\n\r\nOriginal text.\r\n", "# Committed\r\n\r\nOriginal text.\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			gitRun := func(args ...string) string {
+				t.Helper()
+				cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v: %s", args, err, out)
+				}
+				return string(out)
+			}
+			gitRun("init")
+			gitRun("config", "user.name", "Crude Test")
+			gitRun("config", "user.email", "crude@example.test")
+			gitRun("config", "core.autocrlf", tc.autocrlf)
+			if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte(tc.attributes), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "README.md")
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			gitRun("add", ".")
+			gitRun("-c", "commit.gpgsign=false", "commit", "-m", "committed Markdown")
+			if got := gitRun("status", "--porcelain"); got != "" {
+				t.Fatalf("fixture is not Git-clean: %s", got)
+			}
+			if got := gitRun("show", "HEAD:README.md"); got != tc.stored {
+				t.Fatalf("stored HEAD = %q, want %q", got, tc.stored)
+			}
+
+			service := NewGitService(root)
+			ann, err := service.AnnotateFile(t.Context(), path, tc.content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ann.HeadContent != tc.content || len(ann.Hunks) != 0 {
+				t.Fatalf("Git-clean Markdown is marked changed: HEAD=%q hunks=%#v", ann.HeadContent, ann.Hunks)
+			}
+			if len(ann.Blame) != 3 {
+				t.Fatalf("blame lines = %d, want 3", len(ann.Blame))
+			}
+			for _, line := range ann.Blame {
+				if line.Uncommitted || line.Author != "Crude Test" || line.Subject != "committed Markdown" {
+					t.Fatalf("committed line has incorrect blame: %#v", line)
+				}
+			}
+
+			// Unsaved text must still mark only its real changed line, preserving
+			// whitespace and exact line endings for the change inspector.
+			edited := strings.Replace(tc.content, "Original text.", "Original text. ", 1)
+			ann, err = service.AnnotateFile(t.Context(), path, edited)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ann.Hunks) != 1 || ann.Hunks[0].OldStart != 2 || ann.Hunks[0].NewStart != 2 {
+				t.Fatalf("unsaved edit hunks = %#v, want only line 3", ann.Hunks)
+			}
+			ending := "\n"
+			if strings.Contains(tc.content, "\r\n") {
+				ending = "\r\n"
+			}
+			if strings.Join(ann.Hunks[0].OldLines, "") != "Original text."+ending ||
+				strings.Join(ann.Hunks[0].NewLines, "") != "Original text. "+ending {
+				t.Fatalf("unsaved edit lost exact bytes: %#v", ann.Hunks[0])
+			}
+			if len(ann.Blame) != 3 || !ann.Blame[2].Uncommitted || ann.Blame[0].Uncommitted || ann.Blame[1].Uncommitted {
+				t.Fatalf("unsaved edit blame = %#v", ann.Blame)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != tc.content {
+				t.Fatalf("annotation changed disk bytes: %q, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestAnnotateFileUntrackedIsAllAdded(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git executable is required")

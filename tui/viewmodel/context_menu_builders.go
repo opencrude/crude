@@ -222,7 +222,7 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 			Items: []ui.ContextMenuItem{
 				{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
 				{Label: "Manage sessions…", Action: m.openSessionPicker},
-				{Label: "Cancel active agent", Disabled: activeNode == nil || !activeNode.IsActive(), Action: func() {
+				{Label: "Cancel active agent", Disabled: activeNode == nil || !m.canCancelAgent(activeNode.ID), Action: func() {
 					if node := m.AgentView.ActiveNode(); node != nil {
 						m.cancelAgentTurn(node.ID)
 					}
@@ -337,7 +337,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 				{Label: "Minimize agent", Disabled: m.AgentView.IsHidden(node.ID), Detail: "keeps running", Action: func() {
 					m.minimizeAgent(node.ID)
 				}},
-				{Label: "Cancel agent", Disabled: !node.IsActive() && !m.canRetryAgentRecovery(node.ID), Action: func() {
+				{Label: "Cancel agent", Disabled: !m.canCancelAgent(node.ID), Action: func() {
 					m.cancelAgentTurn(node.ID)
 				}},
 				{Label: "Terminate agent", Detail: "stops work", Action: func() {
@@ -558,7 +558,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(agentID), Detail: "from saved work", Action: func() {
 					m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID))
 				}},
-				{Label: "Cancel agent", Action: func() {
+				{Label: "Cancel agent", Disabled: !m.canCancelAgent(agentID), Action: func() {
 					m.cancelAgentTurn(agentID)
 				}},
 				{Label: "Terminate agent", Detail: "stops work", Action: func() {

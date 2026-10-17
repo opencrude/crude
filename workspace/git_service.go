@@ -97,13 +97,9 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 		return GitSnapshot{}, err
 	}
 	defer closeGitRepository(repo)
-	wt, err := repo.Worktree()
+	status, err := ReadGitStatus(ctx, root)
 	if err != nil {
-		return GitSnapshot{}, fmt.Errorf("open Git worktree: %w", err)
-	}
-	status, err := wt.Status()
-	if err != nil {
-		return GitSnapshot{}, fmt.Errorf("read Git status: %w", err)
+		return GitSnapshot{}, err
 	}
 
 	snapshot := GitSnapshot{RepositoryRoot: root}
@@ -114,12 +110,6 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 	snapshot.Branches = gitBranches(repo, snapshot.Branch)
 	snapshot.Remotes = gitRemotes(repo)
 	snapshot.readOperation(ctx)
-	if snapshot.Operation != "" {
-		// go-git does not report unmerged index stages; Git itself does.
-		if conflicts, err := s.conflictedPaths(ctx); err == nil {
-			snapshot.Changes = markGitConflicts(root, snapshot.Changes, conflicts)
-		}
-	}
 	return snapshot, nil
 }
 
@@ -178,6 +168,9 @@ func (s *GitService) run(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrGitNotInstalled
+		}
 		detail := strings.TrimSpace(string(out))
 		if detail == "" {
 			detail = err.Error()

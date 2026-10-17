@@ -89,7 +89,7 @@ func Prepare(c Comparison) Prepared {
 			next++
 		}
 	}
-	for _, h := range textdiff.Hunks(c.Before, c.After) {
+	for _, h := range textdiff.ReviewHunks(c.Before, c.After) {
 		equal(h.OldStart)
 		p.hunks = append(p.hunks, len(p.rows))
 		p.unifiedHunks = append(p.unifiedHunks, len(p.unified))

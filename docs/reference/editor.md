@@ -37,6 +37,12 @@ engine and its invariants.
   `textdiff` logic. Paint, deletion markers, inspection and navigation all use
   those hunks immediately; never reintroduce paint-only local claims. Same-HEAD
   async refreshes update blame without replacing the live projection.
+- The HEAD baseline is Git's working-tree (checkout) form of the file
+  (`git cat-file --filters`), and every gutter diff matches lines with
+  `textdiff.ContentHunks`, which treats CRLF and LF terminators as one line
+  ending while hunks keep exact bytes. A Windows CRLF checkout of an LF blob, or
+  an LF file under `core.autocrlf`, is never "Not committed yet"; a pure
+  terminator change is reported by Git status, not the gutter.
 - `editor.Buffer` is the one live-text/savepoint authority shared by views.
   `workspace.DocumentSaveService` is the one autosave-deadline and disk-commit
   authority. Editor, PieceTable, watchers, and LSP must never write files or

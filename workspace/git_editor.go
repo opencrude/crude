@@ -2,10 +2,9 @@ package workspace
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -62,9 +61,15 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	}
 
 	annotation := GitFileAnnotation{Path: absPath}
-	head, headErr := s.showHEAD(ctx, root, rel)
+	// HEAD in the working-tree form Git checks out here; the buffer is in that
+	// form too. Matching still ignores CRLF/LF so an LF buffer Git considers
+	// clean under core.autocrlf is not marked changed either.
+	head, headErr := gitCheckoutText(ctx, root, rel, "HEAD:"+rel)
 	if err := ctx.Err(); err != nil {
 		return GitFileAnnotation{}, err
+	}
+	if errors.Is(headErr, ErrGitNotInstalled) {
+		return GitFileAnnotation{}, headErr
 	}
 	if headErr == nil {
 		annotation.HeadContent = head
@@ -88,13 +93,12 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 }
 
 func (s *GitService) hasHEAD(ctx context.Context, root string) bool {
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", "HEAD")
-	return cmd.Run() == nil
+	_, err := gitStdout(ctx, root, nil, "rev-parse", "--verify", "HEAD")
+	return err == nil
 }
 
 func (s *GitService) isConflicted(ctx context.Context, root, rel string) bool {
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-u", "--", rel)
-	out, err := cmd.Output()
+	out, err := gitStdout(ctx, root, nil, "ls-files", "-u", "--", rel)
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
@@ -117,44 +121,14 @@ func repoRelPath(root, absPath string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
-func (s *GitService) showHEAD(ctx context.Context, root, rel string) (string, error) {
-	out, err := s.output(ctx, root, "show", "HEAD:"+rel)
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
+// blameFile blames the buffer; Git applies the path's clean conversion to
+// --contents, so checkout line endings never read as uncommitted lines.
 func (s *GitService) blameFile(ctx context.Context, root, rel, content string) ([]GitBlameLine, error) {
-	out, err := s.outputStdin(ctx, root, []byte(content), "blame", "--line-porcelain", "--contents", "-", "--", rel)
+	out, err := gitStdout(ctx, root, []byte(content), "blame", "--line-porcelain", "--contents", "-", "--", rel)
 	if err != nil {
 		return nil, err
 	}
 	return parseBlamePorcelain(string(out))
-}
-
-func (s *GitService) output(ctx context.Context, root string, args ...string) ([]byte, error) {
-	return s.outputStdin(ctx, root, nil, args...)
-}
-
-func (s *GitService) outputStdin(ctx context.Context, root string, stdin []byte, args ...string) ([]byte, error) {
-	cmdArgs := append([]string{"-C", root}, args...)
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		detail := strings.TrimSpace(string(out))
-		if detail == "" {
-			detail = err.Error()
-		}
-		return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), detail)
-	}
-	return out, nil
 }
 
 func isUntrackedGitError(err error) bool {
@@ -172,9 +146,10 @@ func isUntrackedGitError(err error) bool {
 		strings.Contains(msg, "is outside repository")
 }
 
-// DocumentHunks compares exact immutable text snapshots without Git or disk I/O.
+// DocumentHunks compares immutable text snapshots by line content without Git
+// or disk I/O; CRLF and LF terminators match (see textdiff.ContentHunks).
 func DocumentHunks(before, after string) []GitHunk {
-	return textdiff.Hunks(before, after)
+	return textdiff.ContentHunks(before, after)
 }
 
 func parseBlamePorcelain(text string) ([]GitBlameLine, error) {

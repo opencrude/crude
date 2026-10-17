@@ -626,6 +626,17 @@ func (a *AgentState) IsActive() bool {
 	return a.Running || a.Streaming || a.Thinking
 }
 
+// HasCancellableWork reports a live turn, pending prompt or compaction that a
+// cancel can stop. A turn already stopping or a finished agent has none, so
+// repeated cancels never re-enter the stopping boundary of an idle agent.
+// Recovery parked for retry is decided by its own incident (CanRetry).
+func (a *AgentState) HasCancellableWork() bool {
+	if a == nil || a.Cancelling || a.Completed {
+		return false
+	}
+	return a.IsActive() || a.PendingBlockID != "" || a.ActiveCompaction.OperationID != ""
+}
+
 func finishThinkingBlocks(target *Conversation) {
 	if target != nil {
 		target.MarkAllThinkingDone()
