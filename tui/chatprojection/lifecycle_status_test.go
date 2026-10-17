@@ -68,12 +68,12 @@ func TestHistoryRestoreUsesPermanentContextBoundaryTable(t *testing.T) {
 }
 
 func TestLifecycleAnimationRequiresExplicitActivePhase(t *testing.T) {
-	for _, phase := range []string{"", "history_restored", "compacted", "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted", "unknown_future_state"} {
+	for _, phase := range []string{"", "history_restored", "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted", "unknown_future_state"} {
 		if lifecycleMessageFrameSensitive(types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: phase}) {
 			t.Fatalf("terminal or unknown phase %q animated", phase)
 		}
 	}
-	for _, phase := range []string{"preparing", "waiting_provider", "compacting", "cancelling", "compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling"} {
+	for _, phase := range []string{"preparing", "waiting_provider", "cancelling", "compaction_preparing", "compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling"} {
 		if !lifecycleMessageFrameSensitive(types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: phase}) {
 			t.Fatalf("active phase %q did not animate", phase)
 		}
@@ -115,7 +115,7 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 	renderer.SetChatAreaBounds(0, 12)
 	msg := types.ChatMessage{
 		InternalID: "compact", Role: types.RoleStatus, LifecyclePhase: "compaction_extracting",
-		LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state",
+		LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state", LifecycleTrigger: "manual",
 		LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
 		LifecycleBeforeTokens: 420000, Time: time.Now().Add(-2 * time.Second),
 	}
@@ -163,6 +163,78 @@ func TestCompactionTerminalFormsKeepTableGeometry(t *testing.T) {
 			(!strings.Contains(joined, "original context retained") && phase != "compaction_completed") {
 			t.Fatalf("%s table=%q", phase, joined)
 		}
+	}
+}
+
+// An automatic compaction is maintenance the agent does on its own, so its
+// boundary paints as one ordinary tool row: no model header, stage progress
+// bar, source trailer, context-boundary rules or extra blank rows.
+func TestAutomaticCompactionPaintsAsOneToolRow(t *testing.T) {
+	cases := []struct {
+		phase, trigger, stage, reason string
+		before, after                 int
+		want                          string
+		animate                       bool
+	}{
+		{phase: "compaction_preparing", want: "│ ● Compacting context", animate: true},
+		{phase: "compaction_extracting", stage: "Distilling work", before: 420000, want: "│ ● Compacting context 420K — Distilling work", animate: true},
+		{phase: "compaction_retrying", stage: "Distilling work", want: "│ ● Compacting context — retry 2/3", animate: true},
+		{phase: "compaction_committing", stage: "Preparing continuation", want: "│ ● Compacting context — saving checkpoint", animate: true},
+		{phase: "compaction_cancelling", want: "│ ● Stopping compaction", animate: true},
+		{phase: "compaction_completed", before: 155955, after: 10476, want: "│ ● Compacted context 156.0K → ~10.5K"},
+		{phase: "compaction_completed", trigger: "background", before: 155955, after: 10476, want: "│ ● Compacted context 156.0K → ~10.5K — prepared in background"},
+		{phase: "compaction_completed", trigger: "decay", before: 155955, after: 90000, want: "│ ● Compacted context 156.0K → ~90K — older tool output trimmed"},
+		{phase: "compaction_completed", want: "│ ● Compacted context"},
+		{phase: "compaction_cancelled", want: "│ ○ Compaction cancelled — original context kept"},
+		{phase: "compaction_failed", reason: "download stalled", want: "│ × Compaction failed — download stalled"},
+		{phase: "compaction_failed", want: "│ × Compaction failed — original context kept"},
+		{phase: "compaction_interrupted", want: "│ ○ Compaction interrupted — original context kept"},
+	}
+	for _, test := range cases {
+		trigger := test.trigger
+		if trigger == "" {
+			trigger = "automatic"
+		}
+		msg := types.ChatMessage{
+			InternalID: "auto-compact", Role: types.RoleStatus, LifecyclePhase: test.phase,
+			LifecycleOperationID: "compact-auto", LifecycleTrigger: trigger,
+			LifecycleStageName: test.stage, LifecycleRetryAttempt: 2, LifecycleRetryLimit: 3,
+			LifecycleStageIndex: 2, LifecycleCompleted: 1, LifecycleStageCount: 4,
+			LifecycleBeforeTokens: test.before, LifecycleAfterTokens: test.after,
+			Content: test.reason, ModelID: "aeron/model",
+		}
+		rendered := renderCompactionMessage(msg, renderContext{innerW: 100, contentWidth: 84})
+		if len(rendered.lines) != 1 || rendered.lines[0] != test.want {
+			t.Fatalf("%s/%s lines = %q, want [%q]", test.phase, trigger, rendered.lines, test.want)
+		}
+		if rendered.frameSensitive != test.animate || lifecycleMessageFrameSensitive(msg) != test.animate {
+			t.Fatalf("%s frameSensitive=%v, want %v", test.phase, rendered.frameSensitive, test.animate)
+		}
+	}
+}
+
+// The tool row is painted with the tool-title ink, and through the renderer it
+// keeps only the transcript's ordinary leading spacer: no accent rules above
+// or below it.
+func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
+	renderer := NewRenderer(theme.DefaultDark())
+	renderer.SetSize(100, 20)
+	renderer.SetChatAreaBounds(0, 12)
+	renderer.SyncMessages([]types.ChatMessage{{
+		InternalID: "auto-compact", Role: types.RoleStatus, LifecyclePhase: "compaction_completed",
+		LifecycleOperationID: "compact-auto", LifecycleTrigger: "automatic",
+		LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476, ModelID: "aeron/model",
+	}}, 1)
+	rows, _, _ := renderer.ExportMessageRows(100)
+	if len(rows) != 1 || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || strings.TrimSpace(rows[0].Lines[0]) != "" {
+		t.Fatalf("automatic compaction rows = %+v", rows)
+	}
+	if got := rows[0].Lines[1]; got != "│ ● Compacted context 156.0K → ~10.5K" {
+		t.Fatalf("automatic compaction line = %q", got)
+	}
+	spans := rows[0].Native[1].Spans
+	if len(spans) < 4 || spans[2].Role != ui.ColorToolTitle || spans[3].Role != ui.ColorToolOperand {
+		t.Fatalf("automatic compaction is not painted with tool-title ink: %+v", spans)
 	}
 }
 

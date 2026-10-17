@@ -330,6 +330,17 @@ boundaries and cancelled recovery notices remain canonical evidence but are
 excluded before grouping, spacers and height calculation. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
+**Automatic compaction paints as one ordinary tool row, never the operation
+table.** Automatic, background-prepared and decay boundaries use the shared tool
+title (`paintToolTitle`) with no context-boundary rules and no blank rows beyond
+the item's single leading spacer: `Compacting context <before> — <stage>` while
+it works (`— retry n/m` and `— saving checkpoint` name those phases), `Compacted
+context <before> → ~<after>` when it commits (`— prepared in background` or
+`— older tool output trimmed` for those triggers), and `Compaction
+cancelled/failed/interrupted — …` when it does not. Live events and resumed
+records carry the same trigger, stage and token facts, so hydration paints the
+identical row. Only a manual `/compact` keeps the ruled operation table, because
+the human invoked it and watches it run.
 Manual compaction owns the activity strip while its boundary is current:
 preparing, extraction, retry, and commit show operation progress without
 rotating an unrelated plan. Completion reports "Context compacted · Ready to

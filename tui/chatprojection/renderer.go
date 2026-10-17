@@ -1161,7 +1161,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 		leafToggles = group.leafRows
 	} else if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
-		contextBoundary = msg.LifecyclePhase == "history_restored" || strings.HasPrefix(msg.LifecyclePhase, "compaction_")
+		contextBoundary = msg.LifecyclePhase == "history_restored" || isManualCompaction(*msg)
 		if r.hasDisclosure(msg) {
 			toggleLine = 0
 			toggleAny = r.disclosureState(msg) == DisclosureExpanded

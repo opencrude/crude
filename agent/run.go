@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	rand2 "math/rand/v2"
 	"strings"
 	"sync"
@@ -251,10 +252,6 @@ func (a *Agent) Run(
 	overflowRecoveries := 0
 	continuationWarningSent := false
 	overflowPressure := false
-	// compactionDeferredUntil postpones automatic compaction after a failed or
-	// insufficient attempt while the context still fits. Cheap or unstable
-	// compaction models must never stop a run that can still make requests.
-	compactionDeferredUntil := 0
 	postCompaction := 0
 	slot := a.Precompaction
 	if slot == nil {
@@ -442,6 +439,15 @@ steps:
 				tailTokens = provider.EstimateMessagesTotal(msgs[cut:], a.Model)
 			}
 			plan := planner.evaluate(a, activeTokens, fixed, tailTokens, hardLimit, ctxWindow, overflowPressure)
+			// A failed or insufficient attempt defers the next one while the
+			// context still fits: cheap or unstable compaction models never stop
+			// a run that can still make requests, and deferred attempts coalesce
+			// into one after real growth, also past an explicit percentage. Only
+			// capacity overrides a deferral.
+			deferred := planner.deferred(msgs, activeTokens) && activeTokens < hardLimit && !overflowPressure
+			if deferred {
+				plan.swap, plan.force = false, false
+			}
 			l.Debug("COMPACT", "plan", "active", activeTokens, "hard_limit", hardLimit, "tail", tailTokens, "prepare", plan.prepare, "swap", plan.swap, "force", plan.force,
 				"excess", planner.excess, "units", planner.units, "checkpoint", planner.checkpoint, "growth", planner.maxGrowth,
 				"meter_input", contextUsage.inputTokens, "meter_messages", contextUsage.requestMessages, "messages", len(msgs))
@@ -461,7 +467,7 @@ steps:
 				if overflowPressure || activeTokens >= hardLimit {
 					return false
 				}
-				compactionDeferredUntil = at + max(planner.maxGrowth, ctxWindow/50, 1)
+				planner.deferUntil(msgs, at+max(planner.maxGrowth, ctxWindow/50, 1))
 				return true
 			}
 			// adopt commits a checkpoint of msgs[1:cut] followed by the verbatim
@@ -526,7 +532,13 @@ steps:
 					runtimeNoticesAccepted = true
 				}
 				overflowPressure = false
-				compactionDeferredUntil = 0
+				planner.clearDeferral()
+				if after+max(planner.maxGrowth, 1) >= planner.retrigger(a, hardLimit, ctxWindow) {
+					// The checkpoint cannot absorb one more step below the
+					// boundary that asked for it; compacting again next step
+					// would reclaim almost nothing, so the next attempt waits.
+					planner.deferUntil(msgs, after+max(planner.maxGrowth, ctxWindow/50, 1))
+				}
 				emit(AgentEvent{Type: "context_compacted", Data: commitData})
 				contextUsage.reset()
 				prefix.reset()
@@ -584,7 +596,8 @@ steps:
 					a.RuntimeNoticesAccepted()
 					runtimeNoticesAccepted = true
 				}
-				overflowPressure, compactionDeferredUntil = false, 0
+				overflowPressure = false
+				planner.clearDeferral()
 				emit(AgentEvent{Type: "context_compacted", Data: data})
 				contextUsage.reset()
 				prefix.reset()
@@ -604,22 +617,26 @@ steps:
 				slot.discard(job)
 				job = nil
 			}
+			// finishing is the boundary announced while the run waits for the
+			// background job; it must settle even when the job is not adopted.
+			var finishing map[string]any
 			if job != nil && plan.force && !job.ready() {
-				data := compactionEventData(job.requestID, "background", role, 0, 0, activeTokens, 0, ctxWindow)
-				data["stage_label"] = "Finishing the checkpoint prepared in the background"
-				emit(AgentEvent{Type: "context_compaction_started", Data: data})
+				finishing = compactionEventData(job.requestID, "background", role, 0, 0, activeTokens, 0, ctxWindow)
+				finishing["stage_label"] = "Finishing the checkpoint prepared in the background"
+				emit(AgentEvent{Type: "context_compaction_started", Data: finishing})
 				if err := job.wait(ctx); err != nil {
 					clearUnsentRuntimeNotices()
-					emit(AgentEvent{Type: "context_compaction_cancelled", Data: data})
+					emit(AgentEvent{Type: "context_compaction_cancelled", Data: finishing})
 					emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 					return returnMessages()
 				}
 			}
-			if job != nil && job.ready() && job.err == nil && planner.adoptPrepared(a, activeTokens, postCompaction, hardLimit) {
+			if job != nil && job.ready() && job.err == nil && !deferred && planner.adoptPrepared(a, activeTokens, postCompaction, hardLimit) {
 				plan.swap, plan.reason = true, "a prepared checkpoint now costs less than carrying the older context"
 			}
 			if job != nil && job.ready() && (plan.swap || plan.force) {
 				slot.discard(job)
+				unusable := job.err
 				if job.err == nil {
 					adopted, err := adopt(job.outcome, job.cut, job.requestID, "background", true)
 					if adopted {
@@ -631,13 +648,22 @@ steps:
 						return returnMessages()
 					}
 					l.Warn("COMPACT", "background_checkpoint_discarded", "error", fmt.Sprint(err))
+					unusable = err
+				}
+				if finishing != nil {
+					// The run compacts synchronously next; this boundary records
+					// why the prepared checkpoint was not used.
+					failed := maps.Clone(finishing)
+					failed["deferred"] = true
+					failed["error"] = "background checkpoint unusable: " + compactErrorText(unusable) + "; compacting now"
+					emit(AgentEvent{Type: "context_compaction_failed", Data: failed})
 				}
 				job = nil
 			}
-			if job == nil && plan.prepare && !plan.force && !serial && cut >= 2 && activeTokens >= compactionDeferredUntil {
+			if job == nil && plan.prepare && !plan.force && !serial && cut >= 2 && !deferred {
 				slot.start(a, msgs, allTools, cut, tailHasHuman, checkpointTarget, ctxWindow, activeTokens-tailTokens)
 			}
-			if plan.force || serial && plan.swap && activeTokens >= compactionDeferredUntil {
+			if plan.force || serial && plan.swap {
 				requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
 				compactor := a.backgroundCompactor(ctxWindow, checkpointTarget, tailHasHuman)
 				if a.PrepareCompaction != nil {
@@ -698,7 +724,7 @@ steps:
 					data["deferred"] = true
 					data["error"] = compactErrorText(compactErr) + "; continuing with the full context and retrying later"
 					emit(AgentEvent{Type: "context_compaction_failed", Data: data})
-					l.Warn("COMPACT", "automatic_deferred", "active", activeTokens, "retry_at", compactionDeferredUntil, "hard_limit", hardLimit, "error", compactErr.Error())
+					l.Warn("COMPACT", "automatic_deferred", "active", activeTokens, "retry_at", planner.deferredUntil, "hard_limit", hardLimit, "error", compactErr.Error())
 				} else {
 					if !errors.As(compactErr, &storage) {
 						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
@@ -1031,7 +1057,7 @@ steps:
 		totalCompletionTokens += completionTokens
 		lastPromptTokens = contextPromptTokens
 		contextUsage.observe(contextPromptTokens, completionTokens, len(requestMsgs), estimateCanonicalRequest(requestMsgs[:1], allTools, a.Model))
-		planner.observe(a, completion.Usage, contextPromptTokens, postCompaction, estimated)
+		planner.observe(a, completion.Usage, contextPromptTokens, postCompaction)
 
 		price, costKnown, costSource := a.Provider.RequestPriceKnown(a.Model, completion.Usage.ServiceTier)
 		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)

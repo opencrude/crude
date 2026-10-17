@@ -108,6 +108,54 @@ func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
 	}
 }
 
+// One automatic compaction, two ways in: the live event stream and a restored
+// boundary row. Both must paint the same single tool row, because the
+// projection chooses its form from the boundary's trigger.
+func TestAutomaticCompactionBoundaryPaintsIdenticallyLiveAndResumed(t *testing.T) {
+	live := compactionBoundaryLines(t, func(app *App, id string) {
+		data := map[string]any{
+			"request_id": "compact-auto", "trigger": "automatic", "role": "root",
+			"provider_id": "provider", "model_id": "aeron/model",
+			"stage": 2, "completed_stages": 1, "stage_count": 4, "stage_label": "Distilling work",
+			"before_tokens": 420000,
+		}
+		_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: id, Data: data})
+		_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_stage", AgentID: id, Data: data})
+	})
+	resumed := compactionBoundaryLines(t, func(app *App, id string) {
+		app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(workspace.Message{
+			InternalID: "compact-auto", Role: workspace.MessageRoleStatus, LifecyclePhase: "compaction_extracting",
+			LifecycleOperationID: "compact-auto", LifecycleTrigger: "automatic",
+			LifecycleStageName: "Distilling work", LifecycleStageIndex: 2, LifecycleCompleted: 1, LifecycleStageCount: 4,
+			LifecycleBeforeTokens: 420000, Time: time.Now(),
+		})
+	})
+	if len(live) != 1 || len(resumed) != 1 || live[0] != resumed[0] {
+		t.Fatalf("live=%q resumed=%q", live, resumed)
+	}
+	if live[0] != "\n│ ● Compacting context 420K — Distilling work" {
+		t.Fatalf("automatic compaction row = %q", live[0])
+	}
+}
+
+func compactionBoundaryLines(t *testing.T, seed func(*App, string)) []string {
+	t.Helper()
+	app := newFullTestApp(t)
+	wsOf(app).Logger = stubLogger{}
+	id := addBackendTestOrchestrator(t, app)
+	seed(app, id)
+	app.syncAgentMessages(id, true)
+	renderer := app.activeMessageList()
+	renderer.SetSize(100, 20)
+	renderer.SetChatAreaBounds(0, 20)
+	rows := renderer.ExportMessageRowsSnapshot(100).Rows
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		lines = append(lines, strings.Join(row.Lines, "\n"))
+	}
+	return lines
+}
+
 func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}

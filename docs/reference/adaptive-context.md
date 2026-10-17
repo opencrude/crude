@@ -322,9 +322,15 @@ Responses delta uploads and inline-image replay recovery are specified in
   excess reaches the price of compacting (extraction plus the cold cache of
   the next request): the ski-rental rule, never worse than twice the best
   choice made with hindsight. Learned compaction cost and checkpoint size
-  replace the first estimate. Unknown prices count only uncached tokens, and
-  missing cache reporting is read as cached, so missing data never compacts
-  sooner. The planner lives in the agent's precompaction slot, so short human
+  replace the first estimate. Prices and usage are optional provider data and
+  a general rule covers their absence. Unknown prices use the common relative
+  prices (uncached input 1, cached read 0.1, output 4, both models alike), so a
+  cached context is cheap but never free and still earns a checkpoint past the
+  quality floor instead of riding to the capacity cliff. Missing usage or cache
+  reports read every previously seen token as cached and only the growth since
+  the previous request as new: the cheapest physically possible reading, so
+  missing data never compacts sooner than reported data and never switches the
+  rule off. The planner lives in the agent's precompaction slot, so short human
   turns accumulate across runs.
 - **Quality floor.** A checkpoint is lossy, a cost the spend accounting cannot
   see, so the economic rule never compacts below half of the hard limit
@@ -333,7 +339,8 @@ Responses delta uploads and inline-image replay recovery are specified in
   compacted a 1M-token window at ~90K tokens after a few steps. Below the
   floor only the physical trigger or an explicit percentage compacts.
 - **Explicit.** A user percentage is a boundary: past it the next request
-  waits for a checkpoint. `0` disables automatic compaction.
+  waits for a checkpoint, unless a checkpoint that could not get below it
+  deferred the next attempt (see below). `0` disables automatic compaction.
 - **Preparation leads.** Background preparation starts halfway to the trigger
   (a quarter of the excess once three quarters of the quality floor is
   reached, halfway in tokens for capacity and explicit percentages) and runs while the agent keeps working, at most one job per
@@ -367,7 +374,10 @@ Responses delta uploads and inline-image replay recovery are specified in
 - **Visibility.** Preparation is reported as `context_precompaction`
   (`started`, `progress`, `ready`, `failed`); the agent header shows
   "checkpoint…" or "checkpoint ready". Adoption emits the normal compaction
-  boundary with trigger `background` (or `decay`).
+  boundary with trigger `background` (or `decay`). When the run must wait for an
+  unfinished job, that wait is announced as the job's boundary; if the job then
+  fails or its checkpoint does not fit, the boundary settles as a deferred
+  failure before the run compacts synchronously, so no boundary stays active.
 
 ## Compaction operations
 
@@ -405,12 +415,22 @@ Responses delta uploads and inline-image replay recovery are specified in
   the full context, emits a deferred `context_compaction_failed` boundary, and
   continues; the next attempt waits until the context grows by the largest
   step growth seen since the last checkpoint (at least 2% of the window). A checkpoint that reduces the
-  context but stays above the threshold is committed and defers the next attempt
-  the same way. Only provider context-overflow evidence or reaching the hard
+  context but stays above, or within one step growth of, an explicit threshold is
+  committed and defers the next attempt the same way, so a system prompt and tools
+  that nearly fill the percentage never compact after every step; the same holds
+  in adaptive mode for a checkpoint that lands within one step of capacity. A
+  deferral holds past an explicit percentage and coalesces every attempt it
+  postpones into one after the growth; only the hard limit or overflow overrides
+  it. It lives in the planner, so it survives the end of a run (a new human turn
+  does not compact the same context again), and it belongs to one context
+  generation: a manual compaction or any replaced context voids it.
+  Only provider context-overflow evidence or reaching the hard
   limit makes a compaction failure stop the run.
-- Compaction presentation is one retained, operation-ID-keyed context-boundary
-  table on the normal chat background with full-bleed top/bottom rules using
-  the active-rail accent color. It shows
+- Manual compaction presentation is one retained, operation-ID-keyed
+  context-boundary table on the normal chat background with full-bleed
+  top/bottom rules using the active-rail accent color. Automatic, background and
+  decay compactions keep the same operation-ID-keyed row but paint it as one
+  ordinary tool row (see [chat activity](chat-activity.md)). The table shows
   real stage units, never fabricated completion percentages. Active, retrying,
   completed, cancelled, failed, and resumed-interrupted forms share geometry;
   generic turn cleanup must never consume these durable operation rows.

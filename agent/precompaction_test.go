@@ -85,7 +85,7 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 			swapAt = active
 		}
 		usage := provider.TokenUsage{PromptTokens: active, PromptTokensCached: active - 6_000, CacheReadKnown: true}
-		planner.observe(a, usage, active, fixed+planner.checkpointEstimate()+tail, false)
+		planner.observe(a, usage, active, fixed+planner.checkpointEstimate()+tail)
 	}
 	if swapAt < hardLimit/2 || swapAt > hardLimit*6/10 {
 		t.Fatalf("checkpoint adopted at %d tokens; want just past half of the %d capacity", swapAt, hardLimit)
@@ -102,22 +102,42 @@ func TestAdaptiveCompactionTriggersWhenContextCostsMoreThanACheckpoint(t *testin
 		if plan := unreported.evaluate(a, active, fixed, tail, hardLimit, window, false); plan.swap {
 			unreportedAt = active
 		}
-		unreported.observe(a, provider.TokenUsage{PromptTokens: active}, active, fixed+30_000+tail, false)
+		unreported.observe(a, provider.TokenUsage{PromptTokens: active}, active, fixed+30_000+tail)
 	}
-	if unreportedAt != 0 && unreportedAt < swapAt {
-		t.Fatalf("unreported cache usage compacted at %d, sooner than reported usage at %d", unreportedAt, swapAt)
+	if unreportedAt == 0 || unreportedAt < swapAt {
+		t.Fatalf("unreported cache usage compacted at %d, reported usage at %d; missing data must neither compact sooner nor switch the rule off", unreportedAt, swapAt)
 	}
 
-	// Unknown prices: only uncached tokens count, so a cached context is kept
-	// until the window itself requires a checkpoint.
+	// Unknown prices use the common relative prices: cached context is cheap
+	// but never free, so an unpriced model still compacts past the quality
+	// floor instead of riding to the capacity cliff.
 	unpriced := economicAgent(t, "unpriced-main-model")
 	provider.SetModelPrice("unpriced-main-model", provider.ModelPrice{})
 	tokens := newCompactionPlanner(30_000)
-	for active := 60_000; active < hardLimit-12_000; active += 6_000 {
+	tokensAt := 0
+	for active := 60_000; active < hardLimit && tokensAt == 0; active += 6_000 {
 		if plan := tokens.evaluate(unpriced, active, fixed, tail, hardLimit, window, false); plan.swap {
-			t.Fatalf("unpriced cached context compacted at %d tokens", active)
+			tokensAt = active
 		}
-		tokens.observe(unpriced, provider.TokenUsage{PromptTokens: active, PromptTokensCached: active, CacheReadKnown: true}, active, fixed+30_000+tail, false)
+		tokens.observe(unpriced, provider.TokenUsage{PromptTokens: active, PromptTokensCached: active - 6_000, CacheReadKnown: true}, active, fixed+30_000+tail)
+	}
+	if tokensAt < hardLimit/2 || tokensAt >= hardLimit-12_000 {
+		t.Fatalf("unpriced context compacted at %d tokens; want past the floor %d and before the capacity margin", tokensAt, hardLimit/2)
+	}
+
+	// No price and no usage at all: the general rule still runs. New context
+	// cannot have been cached, so the reading matches the reported one above:
+	// never sooner, and never switched off.
+	blind := newCompactionPlanner(30_000)
+	blindAt := 0
+	for active := 60_000; active < hardLimit && blindAt == 0; active += 6_000 {
+		if plan := blind.evaluate(unpriced, active, fixed, tail, hardLimit, window, false); plan.swap {
+			blindAt = active
+		}
+		blind.observe(unpriced, provider.TokenUsage{}, active, fixed+30_000+tail)
+	}
+	if blindAt == 0 || blindAt < tokensAt {
+		t.Fatalf("without price or usage data a checkpoint was adopted at %d tokens, with usage at %d", blindAt, tokensAt)
 	}
 }
 
@@ -141,7 +161,7 @@ func TestCheapCompactorNeverCompactsAPremiumWindowEarly(t *testing.T) {
 		if plan.swap || plan.force || plan.prepare && active < hardLimit*3/8 {
 			t.Fatalf("checkpoint planned at %d of %d tokens: %+v", active, hardLimit, plan)
 		}
-		planner.observe(a, provider.TokenUsage{PromptTokens: active, PromptTokensCached: previous, CacheReadKnown: true}, active, fixed+40_000+tail, false)
+		planner.observe(a, provider.TokenUsage{PromptTokens: active, PromptTokensCached: previous, CacheReadKnown: true}, active, fixed+40_000+tail)
 		previous = active
 	}
 	if plan := planner.evaluate(a, hardLimit-1_000, fixed, 100_000, hardLimit, window, false); !plan.swap {
@@ -176,6 +196,10 @@ type precompactionServer struct {
 	compactions atomic.Int32
 	rounds      int32
 	finals      []provider.ChatRequest
+	// usage reports provider token usage on main requests, with the previous
+	// request's prompt as the cached prefix, so spend accounting sees real cost.
+	usage  bool
+	cached int
 }
 
 func (server *precompactionServer) handler(t *testing.T) http.HandlerFunc {
@@ -204,7 +228,16 @@ func (server *precompactionServer) handler(t *testing.T) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"round-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"f%d\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", call, call)
+		usage := ""
+		if server.usage {
+			prompt := estimateCanonicalRequest(request.Messages, request.Tools, request.Model)
+			server.mu.Lock()
+			cached := min(server.cached, prompt)
+			server.cached = prompt
+			server.mu.Unlock()
+			usage = fmt.Sprintf(",\"usage\":{\"prompt_tokens\":%d,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":%d}}", prompt, cached)
+		}
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"round-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"f%d\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]%s}\n\ndata: [DONE]\n\n", call, call, usage)
 	}
 }
 
@@ -330,6 +363,216 @@ func TestPreparedCheckpointSurvivesTheEndOfARun(t *testing.T) {
 	}
 }
 
+// A run that must wait for an in-flight background checkpoint announces that
+// wait as a compaction boundary. When the job then fails, the run compacts
+// synchronously; the announced boundary must settle instead of staying active
+// in the transcript (and resuming as an interrupted compaction).
+func TestUnusableBackgroundCheckpointSettlesItsAnnouncedBoundary(t *testing.T) {
+	server := &precompactionServer{rounds: 0}
+	endpoint := httptest.NewServer(server.handler(t))
+	defer endpoint.Close()
+	a := precompactionAgent(t, endpoint.URL, "unusable-background-model")
+	history := []provider.ChatMessage{}
+	for turn := 0; turn < 8; turn++ {
+		user := provider.NewTextMessage("user", fmt.Sprintf("request %d", turn))
+		user.InternalID = fmt.Sprintf("user-%d", turn)
+		reply := provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1_500))
+		reply.InternalID = fmt.Sprintf("reply-%d", turn)
+		history = append(history, user, reply)
+	}
+	history = append(history, provider.NewTextMessage("user", strings.Repeat("more detail ", 25_000)))
+	slot := NewPrecompactionSlot(t.Context(), nil)
+	defer slot.Close()
+	job := &precompactionJob{
+		requestID: "background-job", cut: 3, digest: contextDigest(history[:2]), model: a.Model,
+		cancel: func() {}, done: make(chan struct{}), err: fmt.Errorf("compaction model unavailable"),
+	}
+	slot.job = job
+	a.Precompaction = slot
+
+	settled := map[string]string{}
+	var announced bool
+	a.Run(t.Context(), history, "system", func(event AgentEvent) {
+		data, _ := event.Data.(map[string]any)
+		id, _ := data["request_id"].(string)
+		switch event.Type {
+		case "context_compaction_started":
+			if data["stage_label"] == "Finishing the checkpoint prepared in the background" {
+				announced = true
+				close(job.done)
+			}
+			settled[id] = ""
+		case "context_compacted", "context_compaction_cancelled", "context_compaction_failed":
+			settled[id] = event.Type
+		}
+	}, nil, "", nil)
+
+	if !announced {
+		t.Fatal("the run never waited for the in-flight background checkpoint")
+	}
+	if settled["background-job"] != "context_compaction_failed" {
+		t.Fatalf("announced background boundary settled as %q; boundaries=%v", settled["background-job"], settled)
+	}
+	compacted := false
+	for id, terminal := range settled {
+		if terminal == "" {
+			t.Fatalf("compaction boundary %q never settled: %v", id, settled)
+		}
+		compacted = compacted || id != "background-job" && terminal == "context_compacted"
+	}
+	if !compacted {
+		t.Fatalf("the run did not compact synchronously after the unusable checkpoint: %v", settled)
+	}
+}
+
+// When the system prompt and tools nearly fill an explicit percentage, every
+// checkpoint lands just below it and one more step crosses it again. The next
+// attempt must wait for real growth instead of compacting after every step for
+// a few hundred reclaimed tokens.
+func TestCheckpointNearAnExplicitThresholdDefersTheNextAttempt(t *testing.T) {
+	server := &precompactionServer{rounds: 14}
+	endpoint := httptest.NewServer(server.handler(t))
+	defer endpoint.Close()
+	a := precompactionAgent(t, endpoint.URL, "thrash-threshold-model")
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: strings.Repeat("evidence ", 150)}, nil
+	}
+	if err := provider.RecordConcurrencyRefused(a.Provider, a.Model); err != nil {
+		t.Fatal(err)
+	}
+	system := strings.Repeat("policy ", 1_000)
+	fixed := estimateCanonicalRequest([]provider.ChatMessage{provider.NewTextMessage("system", system)}, nil, a.Model)
+	system = strings.Repeat("policy ", 1_000*56_000/fixed)
+	compactions := 0
+	a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Do the long task")}, system, func(event AgentEvent) {
+		if event.Type == "context_compacted" {
+			compactions++
+		}
+	}, nil, "", nil)
+	if len(server.finals) != 1 {
+		t.Fatalf("the run did not finish its task: final requests=%d", len(server.finals))
+	}
+	if compactions == 0 || compactions > 3 {
+		t.Fatalf("compactions=%d over 14 small steps; want the first and then only after real growth", compactions)
+	}
+}
+
+// A deferral belongs to the agent, not to one run: the next human turn starts
+// a new run over the same context, which must not compact again before the
+// deferred growth arrives. A replaced context is a new generation.
+func TestDeferredCompactionSurvivesTheEndOfARun(t *testing.T) {
+	server := &precompactionServer{rounds: 10}
+	endpoint := httptest.NewServer(server.handler(t))
+	defer endpoint.Close()
+	a := precompactionAgent(t, endpoint.URL, "deferral-across-runs-model")
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: strings.Repeat("evidence ", 150)}, nil
+	}
+	if err := provider.RecordConcurrencyRefused(a.Provider, a.Model); err != nil {
+		t.Fatal(err)
+	}
+	slot := NewPrecompactionSlot(t.Context(), nil)
+	defer slot.Close()
+	a.Precompaction = slot
+	system := strings.Repeat("policy ", 1_000)
+	fixed := estimateCanonicalRequest([]provider.ChatMessage{provider.NewTextMessage("system", system)}, nil, a.Model)
+	system = strings.Repeat("policy ", 1_000*57_000/fixed)
+	counter := func(count *int) func(AgentEvent) {
+		return func(event AgentEvent) {
+			if event.Type == "context_compacted" {
+				*count++
+			}
+		}
+	}
+	first := 0
+	a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Do the long task")}, system, counter(&first), nil, "", nil)
+	if first == 0 {
+		t.Fatal("the first run never reached the 60% boundary")
+	}
+	second := 0
+	next := append(append([]provider.ChatMessage(nil), a.lastActiveContext...), provider.NewTextMessage("user", "and one more thing"))
+	a.Run(t.Context(), next, system, counter(&second), nil, "", nil)
+	if second != 0 {
+		t.Fatalf("a new human turn compacted a deferred context again (%d compactions)", second)
+	}
+}
+
+// Automatic compaction must work for every price tier of the main and the
+// compaction model, and with whatever the provider reports: prices and token
+// usage are optional. Cost optimisation decides when, never whether the agent
+// can keep working: each run finishes its task, never compacts below the
+// quality floor (a user paying for an expensive model keeps exact history up
+// to half of capacity), and compactions stay spaced by real growth.
+func TestAutomaticCompactionWorksForEveryPriceTierAndMissingData(t *testing.T) {
+	type tier struct {
+		name  string
+		input float64 // 0: unknown price
+	}
+	cheap, medium, expensive, premium, unknown := tier{"cheap", 0.05e-6}, tier{"medium", 1e-6}, tier{"expensive", 15e-6}, tier{"very-expensive", 75e-6}, tier{"unpriced", 0}
+	type scenario struct {
+		main, aeron tier
+		usage       bool
+	}
+	var cases []scenario
+	for _, main := range []tier{cheap, medium, expensive, premium} {
+		for _, aeron := range []tier{cheap, premium} {
+			cases = append(cases, scenario{main, aeron, true})
+		}
+	}
+	cases = append(cases, scenario{premium, cheap, false}, scenario{unknown, unknown, true}, scenario{unknown, unknown, false})
+	for _, test := range cases {
+		name := test.main.name + "-main/" + test.aeron.name + "-aeron"
+		if !test.usage {
+			name += "/no-usage"
+		}
+		t.Run(name, func(t *testing.T) {
+			server := &precompactionServer{rounds: 30, usage: test.usage}
+			endpoint := httptest.NewServer(server.handler(t))
+			defer endpoint.Close()
+			model := strings.ReplaceAll("tier-"+name, "/", "-")
+			a := precompactionAgent(t, endpoint.URL, model+"-main")
+			a.ContextCompactionPercent = 0
+			price := func(input float64) provider.ModelPrice {
+				return provider.ModelPrice{InputPricePerToken: input, OutputPricePerToken: 4 * input, InputCachedPricePerToken: input / 10}
+			}
+			provider.SetModelPrice(a.Model, price(test.main.input))
+			compaction := provider.FromPreset("openai-chat", "key", endpoint.URL)
+			compaction.Model = model + "-aeron"
+			provider.SetModelContext(compaction.Model, 100_000)
+			provider.SetModelPrice(compaction.Model, price(test.aeron.input))
+			combinedCompactionFailures.Delete(combinedCompactionKey(compaction, compaction.Model))
+			a.CompactionProvider = compaction
+			window := a.Provider.ContextWindow(a.Model)
+			hardLimit := window - a.outputTokenLimit(window, 0) - contextSafetyReserve(window)
+
+			var befores []int
+			failed := false
+			a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Do the long task")}, "system", func(event AgentEvent) {
+				data, _ := event.Data.(map[string]any)
+				switch event.Type {
+				case "context_compacted":
+					before, _ := data["before_tokens"].(int)
+					befores = append(befores, before)
+				case "error":
+					failed = true
+				}
+			}, nil, "", nil)
+			t.Logf("compacted at %v of a %d-token capacity", befores, hardLimit)
+			if failed || len(server.finals) != 1 {
+				t.Fatalf("the run did not finish its task: failed=%t final requests=%d", failed, len(server.finals))
+			}
+			if len(befores) == 0 || len(befores) > 8 {
+				t.Fatalf("compactions=%d at %v over 30 steps of a %d-token capacity", len(befores), befores, hardLimit)
+			}
+			for _, before := range befores {
+				if before < hardLimit/2 {
+					t.Fatalf("compacted at %d tokens, below the quality floor %d: %v", before, hardLimit/2, befores)
+				}
+			}
+		})
+	}
+}
+
 func TestConnectionThatRefusedConcurrencyCompactsSynchronously(t *testing.T) {
 	server := &precompactionServer{rounds: 14}
 	endpoint := httptest.NewServer(server.handler(t))
@@ -404,7 +647,7 @@ func TestPreparedCheckpointIsAdoptedOnceItsColdCacheIsPaidFor(t *testing.T) {
 	}
 	// A cold 20K-token request costs (2e-6-0.2e-6)*20K = $0.036 more than a cached one.
 	for planner.excess < 0.036 {
-		planner.observe(a, provider.TokenUsage{PromptTokens: 500_000, PromptTokensCached: 499_000, CacheReadKnown: true}, 500_000, 20_000, false)
+		planner.observe(a, provider.TokenUsage{PromptTokens: 500_000, PromptTokensCached: 499_000, CacheReadKnown: true}, 500_000, 20_000)
 		if planner.excess < 0.036 && planner.adoptPrepared(a, 500_000, 20_000, 900_000) {
 			t.Fatalf("adopted at excess %.4f, before the cold cache was paid for", planner.excess)
 		}

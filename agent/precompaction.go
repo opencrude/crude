@@ -26,8 +26,10 @@ import (
 //     cached. When prices are known, Crude compacts once the extra spend paid
 //     for context a checkpoint would remove has reached what compacting costs
 //     (the ski-rental rule: never worse than twice the best choice made with
-//     hindsight). Unknown prices count only uncached tokens, so Crude keeps
-//     context rather than guess.
+//     hindsight). Prices and usage reports are optional: unknown prices use
+//     the common relative prices and missing usage reads only growth as new,
+//     so the rule keeps working without provider data and never compacts
+//     sooner than real data would.
 //   - Explicit: a user-set percent always wins; "off" disables compaction.
 //
 // Preparation starts halfway to the trigger, so a slow or flaky Aeron model has
@@ -53,6 +55,13 @@ type compactionPlanner struct {
 	costPerSource float64 // learned compaction spend per source token, in units
 	maxGrowth     int     // largest single-step growth since the last checkpoint
 	previous      int     // context size at the previous evaluation
+	observed      int     // context size of the previous accepted request
+	// deferredUntil postpones automatic compaction of one context generation
+	// (identified by deferredHead) until it reaches this size. It lives in the
+	// planner so a deferral survives the end of a run: a new human turn must not
+	// compact a context that was just found not to be worth compacting.
+	deferredUntil int
+	deferredHead  [32]byte
 }
 
 func newCompactionPlanner(priorCheckpoint int) *compactionPlanner {
@@ -70,32 +79,45 @@ func (p *compactionPlanner) prices(a *Agent) (main, compaction provider.ModelPri
 	if mainKnown && compactionKnown && main.InputPricePerToken > 0 {
 		return main, compaction, "usd"
 	}
-	// Token units: an uncached token costs one, a cached token is treated as
-	// free because its real price is unknown.
-	one := provider.ModelPrice{InputPricePerToken: 1, OutputPricePerToken: 1}
-	return one, one, "tokens"
+	// Token units for unknown prices: the common relative prices of an
+	// uncached input token (1), a cached read at the deepest usual discount
+	// (0.1) and an output token (4), the same for both models. Cached context
+	// is cheap but never free, so a context that is only reread still earns a
+	// checkpoint past the quality floor instead of riding to the capacity
+	// cliff, and the deepest discount keeps it from compacting sooner than a
+	// known price would.
+	typical := provider.ModelPrice{InputPricePerToken: 1, OutputPricePerToken: 4, InputCachedPricePerToken: 0.1}
+	return typical, typical, "tokens"
 }
 
 // observe records one accepted main request. contextTokens is the request's
-// context; postCompaction is what would remain after a checkpoint now. When the
-// provider does not report cache reads, Crude assumes the prefix was cached
-// (the cheaper reading), so missing data never makes it compact sooner.
-func (p *compactionPlanner) observe(a *Agent, usage provider.TokenUsage, contextTokens, postCompaction int, estimated bool) {
+// context; postCompaction is what would remain after a checkpoint now. Usage
+// and cache reports are optional: without them Crude assumes the provider
+// cached everything it had already seen, so only the growth since the previous
+// request is new. That is the cheapest reading, so missing data never makes it
+// compact sooner than real data would, yet a growing context still accrues the
+// cost it cannot avoid and the general rule keeps working.
+func (p *compactionPlanner) observe(a *Agent, usage provider.TokenUsage, contextTokens, postCompaction int) {
 	main, _, units := p.prices(a)
 	if units != p.units {
 		p.units, p.excess, p.costPerSource = units, 0, 0
 	}
-	if estimated || contextTokens <= 0 || contextTokens <= postCompaction {
+	previous := p.observed
+	p.observed = contextTokens
+	if contextTokens <= 0 || contextTokens <= postCompaction {
 		return
 	}
-	cached := usage.PromptTokensCached
-	if !usage.CacheReadKnown && a.Provider.ProtocolID() != "ollama" {
-		cached = usage.PromptTokens
+	prompt, cached := usage.PromptTokens, usage.PromptTokensCached
+	if prompt <= 0 {
+		prompt = contextTokens
 	}
-	cost := main.CalculateCost(usage.PromptTokens, 0, cached)
-	if units == "tokens" {
-		cost = float64(max(0, usage.PromptTokens-cached))
+	if usage.PromptTokens <= 0 || !usage.CacheReadKnown && a.Provider.ProtocolID() != "ollama" {
+		cached = prompt
+		if previous > 0 {
+			cached = max(0, prompt-max(0, contextTokens-previous))
+		}
 	}
+	cost := main.CalculateCost(prompt, 0, cached)
 	p.excess += cost * float64(contextTokens-postCompaction) / float64(contextTokens)
 }
 
@@ -111,7 +133,7 @@ func (p *compactionPlanner) growth(active int) {
 // buyCost estimates the price of adopting a checkpoint for a source of this
 // size: extraction plus the cold cache of the first request afterwards.
 func (p *compactionPlanner) buyCost(a *Agent, source, post int) float64 {
-	main, compaction, units := p.prices(a)
+	main, compaction, _ := p.prices(a)
 	extraction := p.costPerSource * float64(source)
 	if p.costPerSource <= 0 {
 		// Before the first observed checkpoint: one combined extraction reads
@@ -128,11 +150,7 @@ func (p *compactionPlanner) buyCost(a *Agent, source, post int) float64 {
 		extraction = float64(reads) * compaction.CalculateCost(source, 0, 0)
 		extraction += compaction.CalculateCost(0, p.checkpoint, 0)
 	}
-	cached := main.InputCachedPricePerToken
-	if units == "tokens" || cached <= 0 {
-		cached = 0
-	}
-	return extraction + (main.InputPricePerToken-cached)*float64(post)
+	return extraction + (main.InputPricePerToken-max(0, main.InputCachedPricePerToken))*float64(post)
 }
 
 // adoptPrepared reports whether a checkpoint that is already prepared is worth
@@ -144,21 +162,14 @@ func (p *compactionPlanner) adoptPrepared(a *Agent, active, post, hardLimit int)
 	if a.ContextCompactionPercent != 0 || p.units == "" || active < economicFloor(max(p.floor, 1), hardLimit) {
 		return false
 	}
-	main, _, units := p.prices(a)
-	cached := main.InputCachedPricePerToken
-	if units == "tokens" || cached <= 0 {
-		cached = 0
-	}
-	return p.excess >= (main.InputPricePerToken-cached)*float64(post)
+	main, _, _ := p.prices(a)
+	return p.excess >= (main.InputPricePerToken-max(0, main.InputCachedPricePerToken))*float64(post)
 }
 
 // learn records an adopted checkpoint and resets the accumulated excess.
 func (p *compactionPlanner) learn(a *Agent, source, checkpoint, after int, usage provider.TokenUsage) {
-	_, compaction, units := p.prices(a)
+	_, compaction, _ := p.prices(a)
 	cost := compaction.CalculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptTokensCached)
-	if units == "tokens" {
-		cost = float64(max(0, usage.PromptTokens-usage.PromptTokensCached) + usage.CompletionTokens)
-	}
 	if source > 0 && cost > 0 {
 		p.costPerSource = cost / float64(source)
 	}
@@ -167,7 +178,7 @@ func (p *compactionPlanner) learn(a *Agent, source, checkpoint, after int, usage
 	}
 	// The capacity margin is the largest growth since this checkpoint: one
 	// past jump (a large paste) must not keep the agent near capacity forever.
-	p.excess, p.floor, p.previous, p.maxGrowth = 0, after, after, 0
+	p.excess, p.floor, p.previous, p.maxGrowth, p.observed = 0, after, after, 0, 0
 }
 
 // economicFloor is the smallest context the economic rule may compact. A
@@ -201,10 +212,10 @@ func (p *compactionPlanner) evaluate(a *Agent, active, fixed, tail, hardLimit, w
 	floor := max(fixed, p.floor)
 	near := hardLimit - max(p.maxGrowth, 1)
 	plan := compactionPlan{}
-	if percent := a.ContextCompactionPercent; percent > 0 {
+	if threshold := explicitCompactionThreshold(a, hardLimit, window); threshold > 0 {
 		// An explicit fullness is a promise to the user: past it the next
 		// request waits for a checkpoint rather than carrying the context.
-		threshold := min(hardLimit, max(1, window*percent/100))
+		percent := a.ContextCompactionPercent
 		plan.swap = active >= threshold
 		plan.force = plan.swap
 		plan.prepare = active >= floor+(threshold-floor)/2
@@ -229,6 +240,51 @@ func (p *compactionPlanner) evaluate(a *Agent, active, fixed, tail, hardLimit, w
 	}
 	plan.prepare = plan.prepare || plan.swap
 	return plan
+}
+
+// deferUntil postpones automatic compaction of the context generation msgs
+// begins until it holds at tokens.
+func (p *compactionPlanner) deferUntil(msgs []provider.ChatMessage, at int) {
+	p.deferredUntil, p.deferredHead = at, contextHead(msgs)
+}
+
+func (p *compactionPlanner) clearDeferral() {
+	p.deferredUntil, p.deferredHead = 0, [32]byte{}
+}
+
+// deferred reports whether automatic compaction of msgs waits for growth. A
+// replaced context (another checkpoint, a manual compaction) is a different
+// generation and is never held back by an older deferral.
+func (p *compactionPlanner) deferred(msgs []provider.ChatMessage, active int) bool {
+	return p.deferredUntil > 0 && active < p.deferredUntil && contextHead(msgs) == p.deferredHead
+}
+
+// retrigger is the size at which the next step would ask for a checkpoint
+// again: the explicit boundary, or approaching capacity in adaptive mode. The
+// economic rule needs no guard; its spend restarts from zero at a checkpoint.
+func (p *compactionPlanner) retrigger(a *Agent, hardLimit, window int) int {
+	if threshold := explicitCompactionThreshold(a, hardLimit, window); threshold > 0 {
+		return threshold
+	}
+	return hardLimit - max(p.maxGrowth, 1)
+}
+
+// contextHead identifies a context generation by its first message after the
+// system prompt, which a checkpoint replaces.
+func contextHead(msgs []provider.ChatMessage) [32]byte {
+	if len(msgs) < 2 {
+		return [32]byte{}
+	}
+	return contextDigest(msgs[1:2])
+}
+
+// explicitCompactionThreshold is the token boundary of a user-configured
+// compaction percentage, or 0 in adaptive mode.
+func explicitCompactionThreshold(a *Agent, hardLimit, window int) int {
+	if a.ContextCompactionPercent <= 0 {
+		return 0
+	}
+	return min(hardLimit, max(1, window*a.ContextCompactionPercent/100))
 }
 
 // verbatimTailCut chooses where a checkpoint ends and verbatim recent context

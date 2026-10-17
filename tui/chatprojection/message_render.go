@@ -608,28 +608,6 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 			}
 		}
 		role = ui.ColorAccent
-	case "compacting":
-		marker = ui.ActivityDot(ctx.spinFrame)
-		active = true
-		label = "Compacting conversation"
-		if msg.LifecycleBeforeTokens > 0 {
-			label += " · " + rendering.FormatTokens(msg.LifecycleBeforeTokens)
-		}
-		if !msg.Time.IsZero() {
-			if elapsed := time.Since(msg.Time); elapsed >= time.Second {
-				label += fmt.Sprintf(" · %ds", int(elapsed.Seconds()))
-			}
-		}
-		label += " · esc to cancel"
-		role = ui.ColorAccent
-	case "compacted":
-		label = "Context compacted"
-		if msg.LifecycleBeforeTokens > 0 && msg.LifecycleAfterTokens > 0 {
-			label += " · " + rendering.FormatTokens(msg.LifecycleBeforeTokens) + " → ~" + rendering.FormatTokens(msg.LifecycleAfterTokens)
-		}
-		role = ui.ColorSuccess
-		marker = "✓"
-		active = false
 	case "compaction_failed":
 		label = "Compaction failed · original context retained"
 		role = ui.ColorError
@@ -713,15 +691,107 @@ func shortHistoryID(value string) string {
 
 func lifecycleMessageFrameSensitive(msg types.ChatMessage) bool {
 	switch msg.LifecyclePhase {
-	case "preparing", "waiting_provider", "compacting", "cancelling",
-		"compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling":
+	case "preparing", "waiting_provider", "cancelling",
+		"compaction_preparing", "compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling":
 		return true
 	default:
 		return false
 	}
 }
 
+// renderCompactionMessage projects one context-compaction boundary. A manual
+// /compact keeps its detailed operation table because the human asked for that
+// work and watches it run. Automatic, background-prepared and decay compactions
+// are maintenance the agent does on its own: each paints as one ordinary tool
+// row. Live events and resumed records carry the same trigger, so both paths
+// paint the same form.
 func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	if !isManualCompaction(msg) {
+		return renderAutomaticCompactionMessage(msg, ctx)
+	}
+	return renderManualCompactionMessage(msg, ctx)
+}
+
+func isManualCompaction(msg types.ChatMessage) bool {
+	return strings.HasPrefix(msg.LifecyclePhase, "compaction_") && msg.LifecycleTrigger == "manual"
+}
+
+// renderAutomaticCompactionMessage paints an automatic compaction through the
+// shared tool title, so it reads like any other tool call: verb, token result
+// as the operand, and the stage, retry or reason as metadata.
+func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	title := tools.ToolTitle{Action: "Compacting context"}
+	status, active, detail := types.ToolStatusStreaming, true, ""
+	switch msg.LifecyclePhase {
+	case "compaction_completed":
+		title.Action, status, active = "Compacted context", types.ToolStatusSuccess, false
+		title.Operand = compactionTokenSummary(msg)
+		switch msg.LifecycleTrigger {
+		case "background":
+			detail = "prepared in background"
+		case "decay":
+			detail = "older tool output trimmed"
+		}
+	case "compaction_cancelled":
+		title.Action, detail = "Compaction cancelled", "original context kept"
+		status, active = types.ToolStatusCancelled, false
+	case "compaction_interrupted":
+		title.Action, detail = "Compaction interrupted", "original context kept"
+		status, active = "interrupted", false
+	case "compaction_failed":
+		title.Action, title.Failed = "Compaction failed", true
+		status, active = types.ToolStatusError, false
+		detail = strings.TrimSpace(msg.Content)
+		if detail == "" {
+			detail = "original context kept"
+		}
+	case "compaction_cancelling":
+		title.Action = "Stopping compaction"
+	case "compaction_retrying":
+		limit := msg.LifecycleRetryLimit
+		if limit <= 0 {
+			limit = 3
+		}
+		detail = fmt.Sprintf("retry %d/%d", msg.LifecycleRetryAttempt, limit)
+	case "compaction_committing":
+		detail = "saving checkpoint"
+	default: // preparing, extracting
+		if msg.LifecycleBeforeTokens > 0 {
+			title.Operand = rendering.FormatTokens(msg.LifecycleBeforeTokens)
+		}
+		detail = strings.TrimSpace(msg.LifecycleStageName)
+	}
+	if detail != "" {
+		title.Metadata = "— " + detail
+	}
+	if active && !msg.Time.IsZero() {
+		if elapsed := time.Since(msg.Time); elapsed >= time.Second {
+			title.Metadata = strings.TrimSpace(title.Metadata + " " + rendering.FormatDuration(elapsed))
+		}
+	}
+	out := messageLines{frameSensitive: active}
+	for _, line := range wrapToolTitle(paintToolTitle(title, status, active, !active, ctx.spinFrame, ""), ctx.innerW) {
+		out.lines = append(out.lines, line.PlainText())
+		out.native = append(out.native, line)
+	}
+	return out
+}
+
+// compactionTokenSummary renders the token result of a completed compaction, or
+// "" when the source size is unknown.
+func compactionTokenSummary(msg types.ChatMessage) string {
+	if msg.LifecycleBeforeTokens <= 0 {
+		return ""
+	}
+	tokens := rendering.FormatTokens(msg.LifecycleBeforeTokens)
+	if msg.LifecycleAfterTokens > 0 {
+		tokens += " → ~" + rendering.FormatTokens(msg.LifecycleAfterTokens)
+	}
+	return tokens
+}
+
+// renderManualCompactionMessage is the /compact operation table.
+func renderManualCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 	active := true
 	state, marker, stateRole := "Compaction", ui.ActivityDot(ctx.spinFrame), ui.ColorAccent2
 	stateMeta := "active"
