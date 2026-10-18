@@ -12,7 +12,8 @@ import (
 )
 
 // scripts/tuishot.sh drives the real header and agent disclosure without a
-// provider request. F5 opens ordinary tab details; F7 makes the summary ready.
+// provider request. F5 opens ordinary tab details; F7 makes the summary ready
+// and F8 discards it without reopening the disclosure.
 func TestCheckpointStatusVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_CHECKPOINT") != "1" {
 		t.Skip("dedicated sequential terminal capture")
@@ -48,6 +49,10 @@ func (m *checkpointStatusVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF7:
 			m.ws.ApplyAgentEvent(workspace.AgentEvent{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": "ready", "request_id": "visual-summary"}})
+			m.forceFrame()
+			return m, nil
+		case tea.KeyF8:
+			m.ws.ApplyAgentEvent(workspace.AgentEvent{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": "discarded", "request_id": "visual-summary"}})
 			m.forceFrame()
 			return m, nil
 		case tea.KeyF9:

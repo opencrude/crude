@@ -3,10 +3,14 @@ package viewmodel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
+	"crude/workspace"
 )
 
 func TestOpenTabsUsesVisibleTabInventory(t *testing.T) {
@@ -57,6 +61,50 @@ func TestOpenTabsModalIsWiderAndClamped(t *testing.T) {
 			t.Fatalf("modal width=%d want %d", got, want)
 		}
 		app.overlayHost.Close(ui.OverlayTabStats)
+	}
+}
+
+func TestOpenAgentDetailsFollowBackgroundSummaryLifecycle(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 160, 40
+	app.AddOrchestrator("root")
+	apply := func(phase string) {
+		wsOf(app).ApplyAgentEvent(workspace.AgentEvent{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": phase, "request_id": "summary"}})
+	}
+	apply("started")
+	app.openTabStats("agent:root")
+	win := app.overlayHost.Window(ui.OverlayTabStats)
+	frame := win.Content.(*ui.WindowFrameWidget)
+	screen := frame.Body().(*statusoverview.Surface)
+	frame.Focus(statusoverview.ListID)
+	frame.HandleEvent(tea.KeyPressMsg{Code: tea.KeyRight})
+	if !screen.IsExpanded("agent:root") {
+		t.Fatal("setup: agent details did not expand")
+	}
+	detail := func() string {
+		item, ok := screen.Selected()
+		if !ok {
+			t.Fatal("agent selection was lost")
+		}
+		for _, line := range item.Lines {
+			if line.Label == "Context summary" {
+				return line.Value
+			}
+		}
+		return ""
+	}
+	if !strings.Contains(detail(), "Preparing") {
+		t.Fatal("setup: summary preparation not visible")
+	}
+	apply("ready")
+	app.syncWorkspacePanels()
+	if !screen.IsExpanded("agent:root") || !strings.Contains(detail(), "summary ready") {
+		t.Fatalf("open disclosure stayed stale or collapsed: %q", detail())
+	}
+	apply("discarded")
+	app.syncWorkspacePanels()
+	if !screen.IsExpanded("agent:root") || detail() != "" {
+		t.Fatalf("discarded summary remained in open disclosure: %q", detail())
 	}
 }
 

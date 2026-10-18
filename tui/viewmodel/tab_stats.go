@@ -10,11 +10,7 @@ func (m *App) openTabStats(targetID string) {
 	if m.overlayHost == nil {
 		return
 	}
-	projection := statusoverview.Projection{
-		Active: statusoverview.ViewTabs,
-		Views:  map[statusoverview.ViewID][]statusoverview.Item{statusoverview.ViewTabs: m.openTabItems()},
-	}
-	screen := statusoverview.NewStats(m.Theme, projection)
+	screen := statusoverview.NewStats(m.Theme, m.tabStatsProjection())
 	if targetID != "" {
 		screen.Select(targetID)
 	}
@@ -28,6 +24,36 @@ func (m *App) openTabStats(targetID string) {
 		wm.WithMinSize(minInt(60, w), minInt(12, h)), wm.WithClickOutside(wm.ClickOutsideIgnore))
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayTabStats, win, ui.ModalDialogPolicy(), nil)
+}
+
+func (m *App) tabStatsProjection() statusoverview.Projection {
+	return statusoverview.Projection{
+		Active: statusoverview.ViewTabs,
+		Views:  map[statusoverview.ViewID][]statusoverview.Item{statusoverview.ViewTabs: m.openTabItems()},
+	}
+}
+
+// Refresh the retained disclosure through the same status generation/cadence as
+// the workspace dock. SetProjection preserves selection, filter and expansion.
+func (m *App) syncOpenTabStats() {
+	if m.overlayHost == nil {
+		return
+	}
+	win := m.overlayHost.Window(ui.OverlayTabStats)
+	if win == nil {
+		return
+	}
+	frame, ok := win.Content.(*ui.WindowFrameWidget)
+	if !ok {
+		return
+	}
+	screen, ok := frame.Body().(*statusoverview.Surface)
+	if !ok {
+		return
+	}
+	screen.SetProjection(m.tabStatsProjection())
+	frame.Host().MarkLayout()
+	win.MarkContentDirty()
 }
 
 // openTabItems uses the visible tab strip as its inventory and ordering source,

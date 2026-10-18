@@ -594,6 +594,8 @@ existing aggregate totals.
   Background context-summary preparation/readiness is explained in agent details,
   never an unexplained "checkpoint…" suffix. Its exact job lifecycle settles on
   completion, discard, failure and cancellation without changing the live phase.
+  An open Open Tabs disclosure refreshes on the existing workspace-status cadence,
+  retaining selection, filter and expansion rather than leaving a stale snapshot.
 
 ## Recovery And Stop
 
