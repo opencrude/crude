@@ -24,7 +24,7 @@ func TestEditorSyntaxCompletionFollowsOwnerAcrossTabChange(t *testing.T) {
 	// Complete the real App command path while the other tab owns focus.
 	runAppCommand(t, app, app.drainEditorSyntaxCommands())
 	ed := app.EditorState.Tabs[paths[0]].Editor
-	if ed.SyntaxPending() {
+	if ed.SyntaxDone() != nil {
 		t.Fatal("hidden editor completion was lost to selected tab")
 	}
 	app.activateEditorTab(path)

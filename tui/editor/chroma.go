@@ -156,10 +156,8 @@ func (e *Editor) SyntaxCommand() tea.Cmd {
 	return func() tea.Msg { <-job.done; return SyntaxReadyMsg{editor: e, job: job} }
 }
 
-// SyntaxPending lets retained surfaces repaint the completed asynchronous job
-// even when keyboard focus belongs to a different control.
-func (e *Editor) SyntaxPending() bool { return e != nil && e.open && e.syntaxJob != nil }
-
+// SyntaxDone exposes the exact admitted job for the shell's shutdown barrier.
+// A nil channel means no syntax work is owned by this editor.
 func (e *Editor) SyntaxDone() <-chan struct{} {
 	if e.syntaxJob == nil {
 		return nil
