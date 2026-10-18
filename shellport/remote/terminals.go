@@ -119,10 +119,10 @@ func (t *terminalReplica) Close(id string) {
 	})
 }
 
-func (t *terminalReplica) Rows(id string, start, count int) (workspace.TerminalProjection, error) {
+func (t *terminalReplica) Rows(id string, request terminalvt.RowRequest) (workspace.TerminalProjection, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	return t.w.rpc().TerminalRows(ctx, id, start, count)
+	return t.w.rpc().TerminalRows(ctx, id, request)
 }
 
 // input runs on the shell's existing ordered terminal worker, so its return

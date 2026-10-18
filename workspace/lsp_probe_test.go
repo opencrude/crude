@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,4 +143,201 @@ type failingClient struct{ reapableClient }
 
 func (*failingClient) Start(context.Context) error {
 	return errors.New("exec: \"gopls\": executable file not found in $PATH")
+}
+
+type probeSyncClient struct {
+	reapableClient
+	mu      sync.Mutex
+	text    string
+	opened  bool
+	entered chan string
+	release chan struct{}
+	closed  chan struct{}
+}
+
+func (c *probeSyncClient) send(ctx context.Context, operation, text string) {
+	c.entered <- operation + ":" + text
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return
+	}
+	c.mu.Lock()
+	c.text, c.opened = text, true
+	c.mu.Unlock()
+}
+
+func (c *probeSyncClient) OpenFile(ctx context.Context, _, _, text string) {
+	c.send(ctx, "open", text)
+}
+
+func (c *probeSyncClient) UpdateFile(ctx context.Context, _, text string) {
+	c.send(ctx, "change", text)
+}
+
+func (c *probeSyncClient) CloseFile(context.Context, string) {
+	c.mu.Lock()
+	c.opened = false
+	c.mu.Unlock()
+	if c.closed != nil {
+		c.closed <- struct{}{}
+	}
+}
+
+func (c *probeSyncClient) AwaitDiagnostics(context.Context, string) ([]LSPDiagnostic, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.opened {
+		return nil, false
+	}
+	return []LSPDiagnostic{{Message: c.text}}, true
+}
+
+type probeSyncRuntime struct{ client *probeSyncClient }
+
+func (r probeSyncRuntime) NewClient(model.LSPServerSpec, string) LSPClient { return r.client }
+
+// A connected process is not enough: probes must wait until the transport has
+// installed the document's exact text. Gate sends to reproduce both an absent
+// transport document on open and stale diagnostics during an update. Edits
+// arriving during either send must remain pending, not inherit its readiness.
+func TestProbeWaitsForDocumentSynchronization(t *testing.T) {
+	root := t.TempDir()
+	c := &probeSyncClient{entered: make(chan string, 8), release: make(chan struct{})}
+	m := NewLSPManager(nil, probeSyncRuntime{c})
+	t.Cleanup(m.Close)
+	t.Cleanup(func() { close(c.release) })
+	m.SetWorkspaceRoot(root)
+	path := filepath.Join(root, "main.go")
+	initial := "package main\nvar initial = missing\n"
+	latest := "package main\nvar latest = missing\n"
+	newest := "package main\nvar newest = missing\n"
+	createFile(t, path, initial)
+	m.OpenFile(t.Context(), path, initial)
+	awaitSend := func(want string) {
+		t.Helper()
+		select {
+		case got := <-c.entered:
+			if got != want {
+				t.Fatalf("transport send = %q, want %q", got, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("transport never sent %q", want)
+		}
+	}
+	assertProbeWaits := func() {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+		defer cancel()
+		diags, settled, _, err := m.ProbeDiagnostics(ctx, path)
+		if !errors.Is(err, context.DeadlineExceeded) || settled || len(diags) != 0 {
+			t.Fatalf("probe escaped pending transport send: diagnostics=%+v settled=%v err=%v", diags, settled, err)
+		}
+	}
+	awaitSend("open:" + initial)
+	assertProbeWaits()
+	m.OpenFile(t.Context(), path, latest)
+	c.release <- struct{}{}
+	awaitSend("change:" + latest)
+	assertProbeWaits()
+	m.OpenFile(t.Context(), path, newest)
+	c.release <- struct{}{}
+	awaitSend("change:" + newest)
+	assertProbeWaits()
+	c.release <- struct{}{}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	diags, settled, view, err := m.ProbeDiagnostics(ctx, path)
+	if err != nil || !settled || len(diags) != 1 || diags[0].Message != newest || !view.BufferDiffers {
+		t.Fatalf("probe after transport sync: diagnostics=%+v settled=%v view=%+v err=%v", diags, settled, view, err)
+	}
+}
+
+// Deferring readiness must not lose didClose when the last holder leaves during
+// didOpen. The worker must release the just-opened transport document even
+// though the manager had not yet advertised it as open.
+func TestProbeReleasesDocumentWhenCanceledDuringOpen(t *testing.T) {
+	root := t.TempDir()
+	c := &probeSyncClient{entered: make(chan string, 1), release: make(chan struct{}), closed: make(chan struct{}, 1)}
+	m := NewLSPManager(nil, probeSyncRuntime{c})
+	t.Cleanup(m.Close)
+	t.Cleanup(func() { close(c.release) })
+	m.SetWorkspaceRoot(root)
+	m.SetSettings(editorDisabledSettings())
+	path := filepath.Join(root, "main.go")
+	createFile(t, path, "package main\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := m.ProbeDiagnostics(ctx, path)
+		done <- err
+	}()
+	select {
+	case <-c.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("probe never opened its transport document")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled probe = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("probe ignored cancellation during document open")
+	}
+	c.release <- struct{}{}
+	select {
+	case <-c.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("canceled probe left its in-flight transport document open")
+	}
+	m.mu.Lock()
+	_, retained := m.documents[path]
+	m.mu.Unlock()
+	if retained {
+		t.Fatal("canceled probe retained its document")
+	}
+}
+
+// Reconfiguration during a send must not mark the retained document ready for
+// its replacement client. The replacement still has to receive its own open.
+func TestProbeWaitsForReplacementClientDocument(t *testing.T) {
+	root := t.TempDir()
+	old := &probeSyncClient{entered: make(chan string, 1), release: make(chan struct{})}
+	next := &probeSyncClient{entered: make(chan string, 1), release: make(chan struct{})}
+	m := NewLSPManager(nil, probeSyncRuntime{old})
+	t.Cleanup(m.Close)
+	t.Cleanup(func() { close(old.release); close(next.release) })
+	m.SetWorkspaceRoot(root)
+	path := filepath.Join(root, "main.go")
+	text := "package main\nvar x = missing\n"
+	createFile(t, path, text)
+	m.OpenFile(t.Context(), path, text)
+	select {
+	case <-old.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("original transport never received the document")
+	}
+	m.SetRuntime(probeSyncRuntime{next})
+	old.release <- struct{}{}
+	select {
+	case <-next.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement transport never received the document")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	_, settled, _, err := m.ProbeDiagnostics(ctx, path)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) || settled {
+		t.Fatalf("replacement inherited original send readiness: settled=%v err=%v", settled, err)
+	}
+	next.release <- struct{}{}
+	ctx, cancel = context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	diags, settled, _, err := m.ProbeDiagnostics(ctx, path)
+	if err != nil || !settled || len(diags) != 1 || diags[0].Message != text {
+		t.Fatalf("replacement probe: diagnostics=%+v settled=%v err=%v", diags, settled, err)
+	}
 }

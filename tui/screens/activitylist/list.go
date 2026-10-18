@@ -526,19 +526,18 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, item ui.Lis
 		buf.WriteString(x+1, y, label, tokens.Color(ui.ColorMuted), cell.NoColor, cell.AttrBold)
 		return
 	}
-	fg := tokens.Color(ui.ColorFg)
-	bg := cell.NoColor
-	attr := cell.Attrs(0)
+	state := ui.StateDefault
 	switch {
 	case item.Disabled:
-		fg = tokens.Color(ui.ColorMuted)
+		state = ui.StateDisabled
 	case idx == sel && ctx.Focused:
-		fg, bg, attr = tokens.TreeCursorFg(), tokens.TreeCursorBg(), cell.AttrBold
+		state = ui.StateFocused
 	case idx == sel:
-		bg, attr = tokens.Color(ui.ColorSelection), cell.AttrBold
+		state = ui.StateSelected
 	case idx == l.hoverIdx && ctx.Hovered:
-		bg = tokens.TreeHoverBg()
+		state = ui.StateHovered
 	}
+	fg, bg, attr := panelchrome.RowColors(tokens, state)
 	if !bg.IsDefault() {
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(bg))
 	}

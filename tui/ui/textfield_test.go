@@ -50,7 +50,7 @@ func TestTextFieldMouseDragSelectionUsesPointerCapture(t *testing.T) {
 	if got := f.SelectedText(); got != "bcd" {
 		t.Fatalf("selected text=%q", got)
 	}
-	res := f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	res := f.Handle(EventContext{LocalX: 4}, MouseReleaseEvent(tea.MouseReleaseMsg{X: 4, Button: tea.MouseLeft}))
 	if f.IsSelecting() || f.SelectedText() != "bcd" {
 		t.Fatalf("release selection=%q selecting=%v, want 'bcd' kept for editing", f.SelectedText(), f.IsSelecting())
 	}
@@ -69,7 +69,7 @@ func TestTextFieldMouseDragSelectionUsesPointerCapture(t *testing.T) {
 	f.SetReadOnly(true)
 	f.Handle(EventContext{LocalX: 0}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
 	f.Handle(EventContext{LocalX: 2}, MouseMotionEvent(tea.MouseMotionMsg{}))
-	res = f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	res = f.Handle(EventContext{LocalX: 2}, MouseReleaseEvent(tea.MouseReleaseMsg{X: 2, Button: tea.MouseLeft}))
 	if f.HasSelection() || res.Cmd == nil {
 		t.Fatalf("read-only release selection=%v cmd=%v", f.HasSelection(), res.Cmd != nil)
 	}
@@ -80,7 +80,7 @@ func TestTextFieldMouseDragSelectionUsesPointerCapture(t *testing.T) {
 }
 
 // A press that never drags must not copy: it only ends the drag, so a
-// shift-click or a plain click on an existing keyboard selection keeps it.
+// Shift-click keeps its extended range while a plain click collapses it.
 func TestTextFieldClickWithoutDragKeepsSelection(t *testing.T) {
 	f := NewTextField("q", nil)
 	f.SetValue("abcdef")
@@ -88,10 +88,13 @@ func TestTextFieldClickWithoutDragKeepsSelection(t *testing.T) {
 	f.Edit().SetCursor(1, false)
 	f.Edit().SetCursor(4, true)
 	f.Handle(EventContext{LocalX: 2}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: 0}))
-	// Shift-click re-extends from the anchor instead of collapsing it.
-	res := f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	// A plain click collapses; no physical movement means no copy on release.
+	res := f.Handle(EventContext{LocalX: 2}, MouseReleaseEvent(tea.MouseReleaseMsg{X: 2, Button: tea.MouseLeft}))
 	if res.Cmd != nil {
 		t.Fatal("click without drag returned a clipboard command")
+	}
+	if f.HasSelection() || f.Edit().Cursor() != 2 {
+		t.Fatal("plain click did not collapse at hit boundary")
 	}
 }
 
@@ -254,6 +257,9 @@ func TestTextFieldMatureEditingContract(t *testing.T) {
 	if res := f.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})); !res.Handled || res.Cmd == nil {
 		t.Fatalf("ctrl+c result=%+v", res)
 	}
+	// A keyboard action ends the prior multi-click sequence.
+	f.Handle(EventContext{LocalX: 2}, click)
+	f.Handle(EventContext{LocalX: 2}, click)
 	f.Handle(EventContext{LocalX: 2}, click)
 	if got := f.SelectedText(); got != "alpha beta" {
 		t.Fatalf("triple-click selection=%q", got)

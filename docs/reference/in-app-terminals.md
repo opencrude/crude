@@ -41,11 +41,13 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Shift override | Shift+click/drag bypasses tracking for selection (standard escape hatch) |
 | Selection | Client-local `termview` click/drag, double-click word and triple-click line; theme TextSelection/TextSelectionFg preserves atomic wide glyphs independently of child reverse/faint |
 | Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; client-local extraction uses projected soft-wrap metadata to unwrap and trim text |
+| Control keys | A focused dock/window PTY owns Ctrl+C/D/Z/\\/S/Q and application bindings before shell selection handling. Ctrl+C is always child input; explicit Ctrl+Shift+C is copy-only even without a selection. Exact Shift-only history chords are local; extra modifiers pass through. |
 | OSC 52 clipboard | Child writes become an offer, never an automatic system-clipboard write; the controlling shell exposes **Copy offered text** in the terminal menu. Clipboard reads are ignored |
 | Scrollback | Wheel scrolls viewport; `Shift+PgUp/PgDn/Home/End` on the primary screen; typing/paste snaps to bottom; right-edge scrollbar overlay while scrolled |
 | Alt screen wheel | No tracking + alternate screen → wheel sends arrow keys (3×), like Ghostty's alternate-scroll |
 | Focus reporting | DEC mode 1004 → CSI I/O on real pane-focus transitions (`syncTerminalFocusReports` sweep, idempotent) |
 | Cursor styles | DECSCUSR requests normalize to the shared reverse-video block geometry; embedded applications retain blink/steady timing, and the shell paints the projected cursor |
+| Synchronized output | DEC 2026 holds one completed active-grid render state (cells, wraps, cursor and visual metadata) until reset, resize or a one-second broken-client timeout; parsing and query replies continue |
 | Bell | BEL flags an unfocused dock tab or adds a `•` icon to an unfocused floating `WindowFrame`; focusing the terminal clears it |
 | OSC titles | Collected after Feed, committed by the service and delivered as neutral effects outside the engine lock |
 | OSC 7 pwd | Updates `TerminalInfo.CWD` (file:// URL parsed to a path) |
@@ -54,6 +56,31 @@ without this database: child rc scripts break (`tput colors` returns empty).
 All libghostty effect callbacks (title, bell, pwd, clipboard) are collected
 during `vt_write` and flushed after the C call returns — handlers must never
 re-enter libghostty mid-parse.
+
+The key adapter supplies printable pre-Control UTF-8, logical key and unshifted
+codepoint to Ghostty; it must not erase modified printable text or manufacture
+C0 bytes as a second encoder. Ghostty owns fixterms disambiguation (Ctrl+I/M/[
+are distinct from physical Tab/Enter/Escape), Kitty flags and modifyOtherKeys.
+Shifted ASCII symbols preserve their logical text and map to the matching key.
+
+The PTY/child owns the resulting meaning: Unix ISIG/canonical/IXON modes provide
+interrupt, suspend, quit, EOF and flow control; Windows ConPTY provides console
+interrupts with processed input, while Ctrl+D/Z and other controls remain
+application-specific. Raw-mode children receive bytes, not forced host signals.
+Native re-exec fixtures exercise ConPTY interrupt delivery and raw control bytes
+through real App key dispatch in dock and floating placement. Linux/macOS builds
+share the adapter and have the same native fixture; cross-builds alone are not
+native Unix signal acceptance.
+
+Windows detached-core startup clears the Ctrl+C-ignore policy inherited from
+`CREATE_NEW_PROCESS_GROUP` before creating any PTY children; it does not attach
+to a shell console or sacrifice core independence. A real detached-core RPC
+regression interrupts an unmodified native PowerShell foreground command.
+ConPTY's process waiter closes the pseudoconsole exactly once on natural exit
+while the reader drains final output. Only after EOF and parsing does the
+manager publish exited state. Natural completion and interruption therefore do
+not leave a finished process labelled running. Resize rejects a closing console;
+potentially blocking pseudoconsole close holds neither parser nor resize locks.
 
 ## Shell selection
 
@@ -117,6 +144,66 @@ returned projection, not optimistically committed by Paint. Async results are
 fenced to the service and workspace-switch generation; stale reads cannot
 replace a newer page.
 
+### Completed-frame publication
+
+PTY read boundaries are not application frames: an animated child can erase the
+screen and hide the cursor in one read, then finish its redraw in later reads.
+`terminalvt.Engine` honors DEC 2026 at Ghostty-owned parser-ground/mode
+transitions, including split sequences and end/begin within one read. It retains
+the existing Ghostty render state for the completed active grid, not a second VT
+parser, terminal or full-scrollback snapshot. All bytes still mutate the sole
+terminal immediately; protocol replies and input encoding observe live state.
+Unmarked erase/draw output remains visible as written, rather than guessing
+application frame boundaries or dropping mutations.
+
+During a synchronized update, detached same-history client pages remain usable.
+New uncached historical rows wait for commit; a racing historical page request
+returns the completed active grid instead of exporting mutable history or an
+empty page. Scroll intents into unavailable history leave the last usable
+viewport in place. A history-identity change at commit clears incompatible
+selection once. Read sequences fence asynchronous pages even when timeout
+release changes the visual state without advancing PTY ingress generation.
+
+The normal shell cursor tick queues a fenced asynchronous row read after one
+second while synchronization is outstanding. This releases an abandoned update
+even when no further output arrives; the engine owns the deadline and has no
+timer goroutine. The next ordinary idle tick may add up to its 400 ms cadence to
+that retry. Resize releases synchronization immediately under Ghostty's contract.
+
+`TestHighRateSynchronizedOutputNeverPresentsPartialFrame` exercises 120 split
+alternate-screen redraws through the real engine, terminal screen and ANSI
+generator. It originally exposed 360 partial/erased intermediate frames and 240
+hidden-cursor frames over 480 presentations; the completed-frame contract keeps
+both counts at zero. These deterministic ingress checks are not proof that a
+native PTY transport preserves DEC 2026, or that an unmarked movie workload is
+tear-free on every outer emulator.
+
+The native Windows ConPTY transport preserves DEC 2026 in a paced PowerShell
+child probe, but can emit the reset before its separately buffered cursor
+home/show. The shell coalesces both terminal invalidations **and asynchronous
+projection completions** to the same 16 ms latest-state deadline; every returned
+projection is installed immediately. This avoids making every PTY page response
+an accidental forced presentation. A native 120-update probe observed zero blank
+projected grids with synchronization, versus 235 erased-grid reads when the same
+child omitted DEC 2026. Per-read cursor-hidden observations still occur when
+ConPTY moves show after reset, so parser-only counts are not perceived-host
+cursor acceptance. `TestTerminalSynchronizedServiceJourneyDockFloatResizeAndTimeout`
+covers actual service/App result routing, retained dock/window movement, resize,
+focus, timeout without more output, and adjacent reset/show result coalescing.
+
+`BenchmarkTerminalHighRate` separates mutation from mutation plus detached row
+publication at 80×24 and 160×40. Three 30-iteration Windows/amd64 Go 1.25.8,
+i7-9850H measurements put 160×40 publication at 3.18–3.39 ms before and
+3.21–3.40 ms after the synchronization boundary change. Mutation alone increases
+from 12.8–16.0 µs to 39.6–41.5 µs for marked output (five small allocations,
+176 B); unmarked mutation stays allocation-free and measures 21.9–24.0 µs
+versus 13.0–16.7 µs before. The extra work locates exact Ghostty mode boundaries
+and captures the completed render state; no timing or allocation ceiling is
+relaxed. These measure adapter stages, not complete App/PTY/host latency.
+The later validation run, concurrent with focused tests on this shared host,
+measured 3.90–4.70 ms at 160×40; this is not a settled throughput guarantee or
+evidence of a speedup. Native visual acceptance remains a separate gate.
+
 The neutral engine caps grids at 1000×500, row pages at 512 rows and scrollback
 at 10,000 lines with a 32 MiB byte budget; Settings › Terminal › Scrollback
 lowers the line limit for new terminals.
@@ -127,6 +214,68 @@ servers keep the separate resource lane, so their slow effects never delay a
 keystroke or redraw (`TestTerminalOperationsDoNotWaitBehindDocumentLane`). Client-local history pages retain
 history identity and soft-wrap metadata; selection is cleared on incompatible
 history/grid transitions rather than copied from unrelated rows.
+
+### Streaming scrollback publication
+
+Scroll intent, presented viewport and PTY ingress have independent clocks. The
+shell snapshots `Screen.ViewportRead` on Update and performs one bounded
+`TerminalService.Rows(id, terminalvt.RowRequest)` off Update. Refreshes request
+the desired historical viewport directly, not the active grid followed by a
+second historical read. Count zero means one complete current-grid-height page;
+start `-1` explicitly follows the live tail, including output arriving between
+request admission and execution. Wheel, page, Home, End and thumb gestures do not
+move the presented offset until every requested visible row is available. The
+previous complete viewport remains painted during the asynchronous handoff, with
+the scrollbar bound to the presented offset. No mutation or frame is hidden by
+an additional debounce.
+
+`HistoryEpoch` identifies incompatible reset, screen-switch and reflow boundaries.
+`HistoryBase` counts proven oldest-row eviction within an epoch. Two Ghostty
+tracked grid references establish displacement without comparing text or exporting
+history: the prior oldest coordinate checks consistency, and the prior tail
+coordinate survives ordinary oldest-row pruning. Lost or inconsistent references
+advance the epoch rather than guessing. Each anchored row request carries the
+epoch/base that supplied its coordinates; the engine adjusts its start under the
+same service lock that reads cells and ingress generation. Thus a scrolled row and
+selection retain their identities while other oldest rows are evicted. When their
+own rows leave retention they clamp/clear, respectively. A request whose epoch
+became incompatible returns one whole clamped current viewport with the new
+identity; a selection read includes its recovery viewport, cancels pending copy
+and does not display unrelated partial selection pages or enter a retry loop.
+
+The client cache uses epoch-absolute keys, bounded to 512 plus two grid heights
+for ordinary navigation. Explicit selections may retain the selected interval,
+itself bounded by the service's retained history limit. Only rows already outside
+the **previous** active grid are reusable across ingress generations. Previously
+active rows are invalidated even if new output has since pushed them into history:
+the child could have rewritten them first. A detached complete presented page
+does not make stale mutable rows eligible for copy. Scroll-intent sequence,
+ingress generation and engine read sequence reject independent stale response
+classes; a dirty refresh coalesces to one subsequent current-viewport read.
+
+`TestTerminalStreamingScrollViewportNeverClearsBetweenAsyncPages` originally
+presented an entirely blank PTY immediately after Shift+Home on 2,000 primary
+history rows, before its asynchronous page returned. The regression now retains
+usable rows before the page and preserves the anchored viewport across 24
+unmarked output publications. Related App/engine/screen/connected-RPC tests cover
+delayed competing scroll responses, dirty coalescing, dock/floating acknowledged
+resize, former-active-row rewrites, same-generation response ordering, scrollbar
+capture, viewer/controller behavior, exact eviction displacement, selection/copy
+identity and reset/reflow recovery. The DEC 2026 hold and timeout checks remain
+in force. These are presented-buffer/ANSI and real service/wire checks; native
+desktop/constrained-size scroll capture remains separate acceptance evidence.
+
+`BenchmarkStreamingScrollViewport` measures Feed plus a detached historical
+80×24 page, cache installation and paint with 100 versus 10,000 retained-source
+lines. Before the streaming correction, three 30-iteration Windows/amd64
+Go 1.25.8/i7-9850H runs measured 1.79–2.14 ms versus 1.28–2.78 ms and identical
+166,657 B / 3,125 allocations. Timings vary with concurrent host work and are not
+latency ceilings; this benchmark excludes native PTY and full App presentation.
+After the correction, the final three 30-iteration runs measured 1.49–1.69 ms
+with 100 source lines and 1.56–1.72 ms with 10,000, at 164,040–164,047 B /
+3,112 allocations in both cases. A prior run concurrent with race builds ranged
+from 3.39–7.91 ms, so no speedup or isolated latency-regression claim is inferred
+from these host-dependent times. No allocation ceiling was raised.
 
 Terminal IDs come from one process-wide monotonic sequence, not a
 `TerminalManager`-local counter. Workspace switching replaces the manager while
@@ -216,14 +365,19 @@ and the still-outstanding connected-product cutover.
 ## Focus
 
 While a docked or floating terminal owns keys, Esc, Ctrl+C, and Ctrl+Q go to
-the PTY. Escape hatches: `Ctrl+\`` (toggle/leave), `Ctrl+Shift+\`` (new),
+the PTY. Escape hatches: **Alt+F12** (summon/leave; `Ctrl+\`` and
+`Ctrl+Alt+T` aliases), `Ctrl+Shift+\`` (new),
 and `Ctrl+Alt+P` (command palette).
 
 ## Opening
 
 - Command Palette: New Terminal / Toggle Terminal
-- `Ctrl+Shift+\`` new, `Ctrl+\`` focus last or create (toggles focus off when
-  a terminal already owns keys)
+- **Alt+F12** summons the last-used terminal in its existing placement or creates
+  the first one; repeating returns focus to content without closing the PTY.
+  `Ctrl+\`` and `Ctrl+Alt+T` are aliases, and `Ctrl+Shift+\`` creates a new PTY
+  (including shifted `~` encoding). Alt+F12 avoids layout-specific backtick/AltGr
+  delivery. Modal/dirty decisions keep input ownership; the footer shows summon,
+  new and scrollback keys while a terminal owns input.
 - Terminals activity list: **New Terminal**
 - New terminals dock by default; Settings › Terminal › Open new terminals can
   open them floating instead. Either placement can be changed afterwards.

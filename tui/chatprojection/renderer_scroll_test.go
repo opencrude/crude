@@ -184,10 +184,10 @@ func TestRendererPaneOnlyDisarmedPreservesOffsetOnAppend(t *testing.T) {
 func TestSubPaneLeadingSpacerIsNotPaneOwned(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 4)
-	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
-		return []SubPaneLine{
-			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
-		}
+	r.SetSubPaneContentFn(func(paneID string, _, _, _ int, _ bool) []SubPaneLine {
+		line := NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}})
+		line.PaneInfo = PaneLineInfo{PaneID: paneID, LineIdx: -1}
+		return []SubPaneLine{line}
 	})
 	r.AppendMessage(types.ChatMessage{
 		InternalID: "thought-pane",

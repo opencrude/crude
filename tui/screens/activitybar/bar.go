@@ -61,6 +61,7 @@ type View int
 const (
 	ViewFiles View = iota
 	ViewAgents
+	ViewWorkspaces
 	ViewSkills
 	ViewMCP
 )
@@ -69,6 +70,8 @@ func (view View) ID() string {
 	switch view {
 	case ViewAgents:
 		return "agents"
+	case ViewWorkspaces:
+		return "workspaces"
 	case ViewSkills:
 		return "skills"
 	case ViewMCP:
@@ -82,6 +85,8 @@ func (v View) Label() string {
 	switch v {
 	case ViewAgents:
 		return "Agents"
+	case ViewWorkspaces:
+		return "Recent Workspaces"
 	case ViewSkills:
 		return "Skills"
 	case ViewMCP:
@@ -103,6 +108,8 @@ func (v View) Icon(nerdFont bool) string {
 			return "\uf17b"
 		case ViewSkills:
 			return "\uf02d"
+		case ViewWorkspaces:
+			return "\uf0b1" // nf-fa-briefcase
 		case ViewMCP:
 			return "\uf1e6"
 		default:
@@ -114,6 +121,8 @@ func (v View) Icon(nerdFont bool) string {
 		return "◈"
 	case ViewSkills:
 		return "≡"
+	case ViewWorkspaces:
+		return "▦"
 	case ViewMCP:
 		return "⋈"
 	default:
@@ -135,7 +144,7 @@ func SettingsIcon(nerdFont bool) string {
 	return "⚙"
 }
 
-var views = []View{ViewFiles, ViewAgents, ViewSkills, ViewMCP}
+var views = []View{ViewFiles, ViewAgents, ViewWorkspaces, ViewSkills, ViewMCP}
 
 // Views returns the rail order.
 func Views() []View { return append([]View(nil), views...) }
@@ -184,6 +193,28 @@ func (screen *Screen) SetOrder(ids []string) {
 			}
 		}
 	}
+	// Workspace switching is primary shell navigation, not an optional tool.
+	// Every projection keeps it reachable directly beneath Agents (or Files
+	// when Agents is unpinned), independently of optional shortcut preferences.
+	for i, view := range screen.order {
+		if view == ViewWorkspaces {
+			screen.order = append(screen.order[:i], screen.order[i+1:]...)
+			break
+		}
+	}
+	insert := 0
+	for i, view := range screen.order {
+		if view == ViewFiles && insert == 0 {
+			insert = i + 1
+		}
+		if view == ViewAgents {
+			insert = i + 1
+			break
+		}
+	}
+	screen.order = append(screen.order, ViewWorkspaces)
+	copy(screen.order[insert+1:], screen.order[insert:len(screen.order)-1])
+	screen.order[insert] = ViewWorkspaces
 	screen.hover = -1
 }
 

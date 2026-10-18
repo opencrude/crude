@@ -223,6 +223,15 @@ func (reg *subPaneProjectionRegistry) InvalidateSubPane(parentPaneID, subPaneID 
 	}
 }
 
+// InvalidatePaneChain refreshes each embedding row after a descendant scrolls.
+// IDs are ordered main owner, outermost embedded pane, ..., changed pane. The
+// captured exact chain avoids scanning conversation history for possible parents.
+func (reg *subPaneProjectionRegistry) InvalidatePaneChain(ids []string) {
+	for i := len(ids) - 2; i >= 0; i-- {
+		reg.InvalidateSubPane(ids[i], ids[i+1])
+	}
+}
+
 // InvalidateAllMessages forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) InvalidateAllMessages(paneID string) {
 	for _, child := range reg.owners {
@@ -247,6 +256,14 @@ func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversat
 	}
 	if p.source == conversation && p.renderer.SourceVersion() == conversation.Version() {
 		return
+	}
+	if p.source != nil && p.source != conversation {
+		// The ID can be reused by a new canonical conversation. A fresh model
+		// fences captured gestures/anchors to the old source's exact lifetime.
+		p.scroll = ui.NewScrollModel()
+		p.scroll.SetAutoScroll(true)
+		p.renderer.BindPaneScroll(p.scroll)
+		p.compactToolLines = nil
 	}
 	messages, version := chatMessagesFromConversation(conversation)
 	if p.source != conversation && p.renderer.SourceVersion() == version {
@@ -363,18 +380,24 @@ func (reg *subPaneProjectionRegistry) BuildPaneGutters(paneLineMap []chatproject
 	Get(string) *workspace.SubPane
 }) map[string]shellchat.PaneGutterState {
 	out := make(map[string]shellchat.PaneGutterState)
-	for _, info := range paneLineMap {
-		if info.PaneID == "" {
-			continue
+	add := func(paneID string) {
+		if paneID == "" {
+			return
 		}
-		if _, ok := out[info.PaneID]; ok {
-			continue
+		if _, ok := out[paneID]; ok {
+			return
 		}
-		sp := paneMgr.Get(info.PaneID)
+		sp := paneMgr.Get(paneID)
 		if sp == nil {
-			continue
+			return
 		}
-		out[info.PaneID] = reg.PaneGutterState(info.PaneID, sp)
+		out[paneID] = reg.PaneGutterState(paneID, sp)
+	}
+	for _, info := range paneLineMap {
+		for _, ancestor := range info.Ancestors {
+			add(ancestor.PaneID)
+		}
+		add(info.PaneID)
 	}
 	return out
 }
@@ -399,9 +422,9 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	}
 
 	if sp.Done && !expanded {
-		return []chatprojection.SubPaneLine{
-			chatprojection.BuildSubPaneSummaryLine(view, width),
-		}
+		line := chatprojection.BuildSubPaneSummaryLine(view, width)
+		line.PaneInfo = chatprojection.PaneLineInfo{PaneID: paneID, LineIdx: -1}
+		return []chatprojection.SubPaneLine{line}
 	}
 
 	if sp.Type == workspace.PaneAgent {
@@ -418,6 +441,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	p.renderer.SetPhase("")
 
 	contentLines, contentNative := p.renderer.RenderVisible(width)
+	contentPaneMap := p.renderer.PaneLineMap()
 	actualH := p.renderer.ContentHeight()
 	visibleH := actualH
 	if visibleH > maxH {
@@ -441,22 +465,34 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 		} else {
 			contentNative = nil
 		}
+		if topPad < len(contentPaneMap) {
+			contentPaneMap = contentPaneMap[topPad:]
+		} else {
+			contentPaneMap = nil
+		}
 	}
 
 	headerLine := chatprojection.BuildSubPaneHeaderLine(view.Header, width, spinFrame)
+	headerLine.PaneInfo = chatprojection.PaneLineInfo{PaneID: paneID, LineIdx: -1}
 	lines := make([]chatprojection.SubPaneLine, 0, 1+visibleH)
 	lines = append(lines, headerLine)
 	for i := 0; i < visibleH; i++ {
 		if i < len(contentLines) {
+			var line chatprojection.SubPaneLine
 			if i < len(contentNative) {
-				lines = append(lines, chatprojection.NativeLine(contentNative[i]))
+				line = chatprojection.NativeLine(contentNative[i])
 			} else {
 				// Fallback: thinking content is plain text (never Glamour),
 				// so emit a native plain body line rather than an ANSI row.
-				lines = append(lines, chatprojection.NativeLine(chatprojection.PaintLine{
+				line = chatprojection.NativeLine(chatprojection.PaintLine{
 					Spans: []chatprojection.RowSpan{{Text: contentLines[i], Role: ui.ColorFg}},
-				}))
+				})
 			}
+			if i < len(contentPaneMap) {
+				line.PaneInfo = contentPaneMap[i]
+			}
+			line.PaneInfo = line.PaneInfo.WithinPane(chatprojection.PaneTarget{PaneID: paneID, LineIdx: i})
+			lines = append(lines, line)
 		}
 	}
 	return lines
@@ -508,9 +544,13 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	}
 
 	headerLine := chatprojection.BuildSubPaneHeaderLine(view.Header, width, spinFrame)
+	headerLine.PaneInfo = chatprojection.PaneLineInfo{PaneID: paneID, LineIdx: -1}
 	lines := make([]chatprojection.SubPaneLine, 0, 1+len(toolLines))
 	lines = append(lines, headerLine)
-	lines = append(lines, toolLines...)
+	for i, line := range toolLines {
+		line.PaneInfo = chatprojection.PaneLineInfo{PaneID: paneID, LineIdx: i}
+		lines = append(lines, line)
+	}
 	return lines
 }
 

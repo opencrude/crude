@@ -277,14 +277,14 @@ func (s *TerminalService) Resize(lease TerminalLease, cols, rows int) error {
 }
 
 // Rows returns a detached bounded page; start=-1 requests the active grid.
-func (s *TerminalService) Rows(id string, start, count int) (TerminalProjection, error) {
+func (s *TerminalService) Rows(id string, request terminalvt.RowRequest) (TerminalProjection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.items[id]
 	if r == nil {
 		return TerminalProjection{}, fmt.Errorf("terminal %s not found", id)
 	}
-	grid, err := r.engine.Rows(start, count)
+	grid, err := r.engine.Rows(request)
 	if err != nil {
 		return TerminalProjection{}, err
 	}

@@ -3,6 +3,7 @@ package fileio
 import (
 	"bytes"
 	"context"
+	"crude/textsearch"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 )
 
 const (
@@ -23,6 +23,7 @@ const (
 type ProjectSearchOptions struct {
 	CaseSensitive bool
 	Regex         bool
+	WholeWord     bool
 	IncludeHidden bool
 }
 
@@ -31,11 +32,13 @@ type ProjectSearchMatch struct {
 	Path         string
 	RelativePath string
 	Line         int // 1-based; zero means filename-only
+	EndLine      int // 1-based; zero denotes the same line
 	Column       int // rune index, zero-based
 	EndColumn    int // rune index, exclusive
 	LineText     string
 	NameOnly     bool
 	NameMatched  bool
+	FuzzyOnly    bool  // discovery suggestion, never a replacement target
 	PathMatches  []int // rune positions in RelativePath
 	TextMatches  []int // rune positions in LineText
 	ContextStart int   // 1-based first line in Context
@@ -43,12 +46,11 @@ type ProjectSearchMatch struct {
 	Score        int
 }
 
-// SearchProject recursively fuzzy-searches relative filenames and text lines.
-// Regex mode replaces fuzzy matching with Go regular expressions. The walk is
+// SearchProject searches literal/regex content and fuzzy relative filenames.
+// Every exact source occurrence is a distinct result. The walk is
 // cancellation-aware and skips generated/dependency directories consistently
 // with GlobFiles and GrepFiles.
 func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOptions) ([]ProjectSearchMatch, error) {
-	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, nil
 	}
@@ -58,6 +60,10 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 	}
 
 	var re *regexp.Regexp
+	matcher, err := textsearch.Compile(query, textsearch.Options{CaseSensitive: opts.CaseSensitive, WholeWord: opts.WholeWord, Regex: opts.Regex})
+	if err != nil {
+		return nil, fmt.Errorf("invalid query: %w", err)
+	}
 	if opts.Regex {
 		pattern := query
 		if !opts.CaseSensitive {
@@ -70,6 +76,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 	}
 
 	results := make([]ProjectSearchMatch, 0, 128)
+	suggestions := make([]ProjectSearchMatch, 0, 64)
 	err = filepath.WalkDir(absRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -101,42 +108,55 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 
 		info, statErr := entry.Info()
 		if statErr != nil || info.Size() > maxProjectSearchFileSize {
-			if nameMatched {
-				results = append(results, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+			if nameMatched && len(suggestions) < maxProjectSearchResults {
+				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
 			}
-			return stopProjectSearchIfFull(results)
+			return nil
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil || bytes.IndexByte(data[:min(len(data), 512)], 0) >= 0 {
-			if nameMatched {
-				results = append(results, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+			if nameMatched && len(suggestions) < maxProjectSearchResults {
+				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
 			}
-			return stopProjectSearchIfFull(results)
+			return nil
 		}
 
-		lines := strings.Split(string(data), "\n")
+		text := string(data)
+		lines := strings.Split(text, "\n")
+		starts := make([]int, len(lines))
+		for i := 1; i < len(lines); i++ {
+			starts[i] = starts[i-1] + len(lines[i-1]) + 1
+		}
 		contentMatches := 0
-		for lineIdx, line := range lines {
+		exactLines := make(map[int]bool)
+		for _, hit := range matcher.FindAll(text, maxProjectSearchResults-len(results)) {
 			if len(results) >= maxProjectSearchResults {
 				return fs.SkipAll
 			}
-			if lineIdx%128 == 0 {
+			if contentMatches%128 == 0 {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
 				default:
 				}
 			}
-			positions, score, matched := projectSearchMatch(line, query, opts.CaseSensitive, re)
-			if !matched {
-				continue
+			lineIdx := max(0, sort.Search(len(starts), func(i int) bool { return starts[i] > hit.Start })-1)
+			endLine := max(0, sort.Search(len(starts), func(i int) bool { return starts[i] > hit.End })-1)
+			line := lines[lineIdx]
+			column := len([]rune(text[starts[lineIdx]:hit.Start]))
+			endColumn := len([]rune(text[starts[endLine]:hit.End]))
+			positions := make([]int, 0)
+			firstEnd := min(hit.End, starts[lineIdx]+len(line))
+			for i := column; i < column+len([]rune(text[hit.Start:firstEnd])); i++ {
+				positions = append(positions, i)
 			}
 			start, end := contextBounds(lineIdx, len(lines))
-			column, endColumn := matchColumns(positions)
+			end = max(end, min(len(lines), endLine+2))
 			results = append(results, ProjectSearchMatch{
 				Path:         filepath.ToSlash(path),
 				RelativePath: rel,
 				Line:         lineIdx + 1,
+				EndLine:      endLine + 1,
 				Column:       column,
 				EndColumn:    endColumn,
 				LineText:     line,
@@ -145,12 +165,37 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 				TextMatches:  positions,
 				ContextStart: start + 1,
 				Context:      strings.Join(lines[start:end], "\n"),
-				Score:        score + boolScore(nameMatched, 250),
+				Score:        9000 + boolScore(nameMatched, 250),
 			})
 			contentMatches++
+			exactLines[lineIdx] = true
 		}
-		if nameMatched && contentMatches == 0 && len(results) < maxProjectSearchResults {
-			results = append(results, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+		// Fuzzy content is project discovery only. Exact hits remain authoritative
+		// and every suggestion is explicitly non-replaceable.
+		if !opts.Regex && !opts.WholeWord && !strings.ContainsAny(query, "\r\n\t") {
+			for lineIdx, line := range lines {
+				if len(suggestions) >= maxProjectSearchResults {
+					break
+				}
+				if exactLines[lineIdx] {
+					continue
+				}
+				if lineIdx%128 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				positions, score, ok := textsearch.Fuzzy(line, query, opts.CaseSensitive)
+				if !ok || len(positions) == 0 {
+					continue
+				}
+				start, end := contextBounds(lineIdx, len(lines))
+				suggestions = append(suggestions, ProjectSearchMatch{Path: filepath.ToSlash(path), RelativePath: rel, Line: lineIdx + 1, EndLine: lineIdx + 1, Column: positions[0], EndColumn: positions[len(positions)-1] + 1, LineText: line, FuzzyOnly: true, NameMatched: nameMatched, PathMatches: append([]int(nil), pathPositions...), TextMatches: positions, ContextStart: start + 1, Context: strings.Join(lines[start:end], "\n"), Score: score})
+				contentMatches++
+			}
+		}
+		if nameMatched && contentMatches == 0 && len(suggestions) < maxProjectSearchResults {
+			suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
 		}
 		return stopProjectSearchIfFull(results)
 	})
@@ -158,16 +203,24 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 		return nil, err
 	}
 
+	results = append(results, suggestions...)
 	sort.SliceStable(results, func(i, j int) bool {
+		iExact, jExact := !results[i].NameOnly && !results[i].FuzzyOnly, !results[j].NameOnly && !results[j].FuzzyOnly
+		if iExact != jExact {
+			return iExact
+		}
 		if results[i].Score != results[j].Score {
 			return results[i].Score > results[j].Score
 		}
 		if results[i].RelativePath != results[j].RelativePath {
 			return results[i].RelativePath < results[j].RelativePath
 		}
-		return results[i].Line < results[j].Line
+		if results[i].Line != results[j].Line {
+			return results[i].Line < results[j].Line
+		}
+		return results[i].Column < results[j].Column
 	})
-	return results, nil
+	return results[:min(maxProjectSearchResults, len(results))], nil
 }
 
 func filenameProjectSearchMatch(path, rel string, positions []int, score int) ProjectSearchMatch {
@@ -200,13 +253,6 @@ func contextBounds(lineIdx, lineCount int) (int, int) {
 	return start, end
 }
 
-func matchColumns(positions []int) (int, int) {
-	if len(positions) == 0 {
-		return 0, 0
-	}
-	return positions[0], positions[len(positions)-1] + 1
-}
-
 func boolScore(v bool, score int) int {
 	if v {
 		return score
@@ -232,109 +278,5 @@ func projectSearchMatch(text, query string, caseSensitive bool, re *regexp.Regex
 }
 
 func fuzzyRuneMatch(text, query string, caseSensitive bool) ([]int, int, bool) {
-	textRunes := []rune(text)
-	queryRunes := []rune(query)
-	if len(queryRunes) == 0 {
-		return nil, 0, true
-	}
-	cmpText := append([]rune(nil), textRunes...)
-	cmpQuery := append([]rune(nil), queryRunes...)
-	if !caseSensitive {
-		for i := range cmpText {
-			cmpText[i] = unicode.ToLower(cmpText[i])
-		}
-		for i := range cmpQuery {
-			cmpQuery[i] = unicode.ToLower(cmpQuery[i])
-		}
-	}
-	// Prefer a real contiguous occurrence over the subsequence fallback. A
-	// greedy subsequence can otherwise latch onto an earlier character and
-	// highlight a scattered match even when an exact substring exists later.
-	if byteStart := strings.Index(string(cmpText), string(cmpQuery)); byteStart >= 0 {
-		start := len([]rune(string(cmpText)[:byteStart]))
-		positions := make([]int, len(cmpQuery))
-		for i := range positions {
-			positions[i] = start + i
-		}
-		score := 7000 - start - len(cmpText)
-		if len(cmpText) == len(cmpQuery) {
-			score += 7000
-		}
-		if start == 0 || isSearchBoundary(textRunes[start-1]) {
-			score += 200
-		}
-		return positions, score, true
-	}
-
-	positions := make([]int, 0, len(cmpQuery))
-	qi := 0
-	// Prefer identifier/path initials before a greedy compact abbreviation:
-	// HWE must land on HandleWorkspaceEvent, not the e inside Handle.
-	for i, r := range cmpText {
-		if qi < len(cmpQuery) && r == cmpQuery[qi] && searchRuneBoundary(textRunes, i) {
-			positions = append(positions, i)
-			qi++
-		}
-	}
-	if qi != len(cmpQuery) {
-		positions = positions[:0]
-		qi = 0
-		for i, r := range cmpText {
-			if qi < len(cmpQuery) && r == cmpQuery[qi] {
-				positions = append(positions, i)
-				qi++
-			}
-		}
-	}
-	if qi != len(cmpQuery) {
-		return nil, 0, false
-	}
-	// Scattered letters alone are not useful search evidence. Keep identifier
-	// initials and path segments, plus compact abbreviations, but reject long
-	// accidental subsequences through prose or unrelated filenames.
-	compact := positions[len(positions)-1]-positions[0]+1 <= len(cmpQuery)*2+4
-	for i, pos := range positions {
-		if i == 0 {
-			if pos > 0 && !searchRuneBoundary(textRunes, pos) {
-				return nil, 0, false
-			}
-			continue
-		}
-		gap := pos - positions[i-1] - 1
-		boundary := searchRuneBoundary(textRunes, pos) && !unicode.IsSpace(textRunes[pos-1])
-		if gap > 0 && !boundary && (!compact || gap > 3) {
-			return nil, 0, false
-		}
-	}
-
-	score := 3000 - len(cmpText)
-	if len(cmpText) == len(cmpQuery) {
-		score += 7000
-	}
-	contiguous := true
-	for i, pos := range positions {
-		if i > 0 {
-			if pos == positions[i-1]+1 {
-				score += 120
-			} else {
-				contiguous = false
-			}
-		}
-		if pos == 0 || isSearchBoundary(textRunes[pos-1]) {
-			score += 80
-		}
-	}
-	if contiguous {
-		score += 3000 - positions[0]
-	}
-	return positions, score, true
-}
-
-func isSearchBoundary(r rune) bool {
-	return r == '/' || r == '\\' || r == '_' || r == '-' || r == '.' || unicode.IsSpace(r)
-}
-
-func searchRuneBoundary(runes []rune, pos int) bool {
-	return pos == 0 || isSearchBoundary(runes[pos-1]) ||
-		(unicode.IsUpper(runes[pos]) && unicode.IsLower(runes[pos-1]))
+	return textsearch.Fuzzy(text, query, caseSensitive)
 }

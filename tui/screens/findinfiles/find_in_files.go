@@ -23,6 +23,7 @@ const (
 	QueryID          ui.ComponentID = "find-in-files/query"
 	ReplaceID        ui.ComponentID = "find-in-files/replace"
 	CaseID           ui.ComponentID = "find-in-files/case-sensitive"
+	WordID           ui.ComponentID = "find-in-files/whole-word"
 	RegexID          ui.ComponentID = "find-in-files/regex"
 	StatusID         ui.ComponentID = "find-in-files/status"
 	ListID           ui.ComponentID = "find-in-files/list"
@@ -71,6 +72,7 @@ type CloseMsg struct {
 
 type ReplaceMsg struct {
 	Screen      *Screen
+	Generation  int
 	Match       fileio.ProjectSearchMatch
 	All         bool
 	Query       string
@@ -87,6 +89,7 @@ type Screen struct {
 	queryField     *findQuery
 	replaceField   *replaceQuery
 	caseToggle     *ui.ToggleButton
+	wordToggle     *ui.ToggleButton
 	regexToggle    *ui.ToggleButton
 	status         *ui.Label
 	list           *findList
@@ -114,7 +117,9 @@ type Screen struct {
 	generation    int
 	previewSrc    *editor.Editor
 	caseSensitive bool
+	wholeWord     bool
 	regex         bool
+	replacing     bool
 	resultH       int
 	listY0        int
 	previewSurf   *surface.Surface
@@ -149,9 +154,11 @@ func New(th *theme.Theme) *Screen {
 	replace.SetSubmitAction("find.replace.one")
 	s.replaceField = &replaceQuery{Base: ui.NewBase(ReplaceID), field: replace, owner: s}
 
-	s.caseToggle = ui.NewToggleButton(CaseID, "Cc", "find.toggle-case", tokens)
+	s.caseToggle = ui.NewToggleButton(CaseID, "Aa", "find.toggle-case", tokens)
+	s.wordToggle = ui.NewToggleButton(WordID, "ab", "find.toggle-word", tokens)
 	s.regexToggle = ui.NewToggleButton(RegexID, ".*", "find.toggle-regex", tokens)
 	s.caseToggle.SetCancelAction("find.close")
+	s.wordToggle.SetCancelAction("find.close")
 	s.regexToggle.SetCancelAction("find.close")
 
 	s.status = ui.NewLabel(StatusID, "", th)
@@ -195,22 +202,30 @@ func (s *Screen) SetReplacement(value string) {
 func (s *Screen) Results() []fileio.ProjectSearchMatch {
 	return s.results
 }
-func (s *Screen) Selected() int       { return s.selected }
-func (s *Screen) Generation() int     { return s.generation }
-func (s *Screen) CaseSensitive() bool { return s.caseSensitive }
-func (s *Screen) Regex() bool         { return s.regex }
+func (s *Screen) Selected() int                        { return s.selected }
+func (s *Screen) Generation() int                      { return s.generation }
+func (s *Screen) CaseSensitive() bool                  { return s.caseSensitive }
+func (s *Screen) Regex() bool                          { return s.regex }
+func (s *Screen) WholeWord() bool                      { return s.wholeWord }
+func (s *Screen) Options() fileio.ProjectSearchOptions { return s.searchOptions() }
+func (s *Screen) SelectQuery()                         { s.queryField.field.Edit().SelectAll(); s.FocusQuery() }
+func (s *Screen) SetMode(mode Mode)                    { s.mode = mode; s.rebuildReplaceActions(); s.sync() }
+func (s *Screen) SetReplacing(busy bool)               { s.replacing = busy; s.sync() }
+func (s *Screen) Replacing() bool                      { return s.replacing }
 
 // SetSearchDebounce configures the shared query-field debounce interval.
 func (s *Screen) SetSearchDebounce(delay time.Duration) { s.queryField.field.SetDebounce(delay) }
 
 func (s *Screen) AcceptsSearch(screen *Screen, generation int) bool {
-	return screen == s && generation == s.generation && strings.TrimSpace(s.Query()) != ""
+	return screen == s && generation == s.generation && s.Query() != ""
 }
 
-func (s *Screen) SetOptions(caseSensitive, regex bool) {
+func (s *Screen) SetOptions(caseSensitive, wholeWord, regex bool) {
 	s.caseSensitive = caseSensitive
+	s.wholeWord = wholeWord
 	s.regex = regex
 	s.caseToggle.SetChecked(caseSensitive)
+	s.wordToggle.SetChecked(wholeWord)
 	s.regexToggle.SetChecked(regex)
 }
 
@@ -229,8 +244,10 @@ func (s *Screen) open(root string, mode Mode) {
 	s.queryField.field.SetValue("")
 	s.SetReplacement("")
 	s.caseSensitive = false
+	s.wholeWord = false
 	s.regex = false
 	s.caseToggle.SetChecked(false)
+	s.wordToggle.SetChecked(false)
 	s.regexToggle.SetChecked(false)
 	s.setResults(nil)
 	s.histIdx = -1
@@ -272,7 +289,6 @@ func (s *Screen) ApplySearchResults(generation int, results []fileio.ProjectSear
 	}
 	s.loading = false
 	s.duration = duration
-	s.notice = ""
 	if err != nil {
 		s.errText = err.Error()
 		s.setResults(nil)
@@ -309,6 +325,7 @@ func (s *Screen) SetNotice(text string) {
 func (s *Screen) searchOptions() fileio.ProjectSearchOptions {
 	return fileio.ProjectSearchOptions{
 		CaseSensitive: s.caseSensitive,
+		WholeWord:     s.wholeWord,
 		Regex:         s.regex,
 	}
 }
@@ -316,13 +333,13 @@ func (s *Screen) searchOptions() fileio.ProjectSearchOptions {
 func (s *Screen) queryChanged() tea.Cmd {
 	s.generation++
 	s.notice = ""
-	s.loading = strings.TrimSpace(s.Query()) != ""
+	s.loading = s.Query() != ""
 	s.errText = ""
 	// Rows belong to the query that produced them. Never activate or replace
 	// an old result while a new query is still being debounced/searched.
 	s.setResults(nil)
 	s.sync()
-	if strings.TrimSpace(s.Query()) == "" {
+	if s.Query() == "" {
 		s.setResults(nil)
 		s.loading = false
 		s.sync()
@@ -338,14 +355,13 @@ func (s *Screen) HandleSearchDebounced(msg ui.SearchDebouncedMsg) tea.Cmd {
 	if !s.queryField.field.AcceptsDebounce(msg) || !s.AcceptsSearch(s, s.generation) {
 		return nil
 	}
-	return func() tea.Msg {
-		return SearchRequestMsg{
-			Screen:     s,
-			Generation: s.generation,
-			Query:      s.Query(),
-			Options:    s.searchOptions(),
-		}
+	request := SearchRequestMsg{
+		Screen:     s,
+		Generation: s.generation,
+		Query:      s.Query(),
+		Options:    s.searchOptions(),
 	}
+	return func() tea.Msg { return request }
 }
 
 func (s *Screen) rebuildPreview() {
@@ -364,9 +380,15 @@ func (s *Screen) rebuildPreview() {
 		localLine = 0
 	}
 	startCol := editor.RuneIndexToVisualColumn(result.LineText, result.Column)
-	endCol := editor.RuneIndexToVisualColumn(result.LineText, max(result.EndColumn, result.Column+1))
+	endRune := result.EndColumn
+	if result.EndLine > result.Line {
+		endRune = len([]rune(result.LineText))
+	}
+	endCol := editor.RuneIndexToVisualColumn(result.LineText, max(endRune, result.Column+1))
 	preview.SetCursorPosition(localLine, startCol)
-	preview.SetLandingRange(localLine, startCol, endCol)
+	if !result.FuzzyOnly {
+		preview.SetLandingRange(localLine, startCol, endCol)
+	}
 	preview.ScrollToCursor()
 	s.applyPreviewMatches(preview, result)
 	s.previewSrc = preview
@@ -389,9 +411,28 @@ func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.Pro
 		if local < 0 || local >= lineCount {
 			continue
 		}
+		if r.FuzzyOnly {
+			for _, pos := range r.TextMatches {
+				sc, ec := editor.RuneIndexToVisualColumn(r.LineText, pos), editor.RuneIndexToVisualColumn(r.LineText, pos+1)
+				if i == s.selected && st.CurrentIdx < 0 {
+					st.CurrentIdx = len(st.Matches)
+				}
+				st.Matches = append(st.Matches, editor.SearchMatch{Start: editor.Position{Line: local, Col: sc}, End: editor.Position{Line: local, Col: max(sc+1, ec)}})
+			}
+			continue
+		}
 		sc := editor.RuneIndexToVisualColumn(r.LineText, r.Column)
-		ec := editor.RuneIndexToVisualColumn(r.LineText, max(r.EndColumn, r.Column+1))
-		if ec <= sc {
+		endLocal := local
+		endText := r.LineText
+		if r.EndLine > r.Line {
+			endLocal = r.EndLine - selected.ContextStart
+			if endLocal >= lineCount {
+				continue
+			}
+			endText = strings.Split(selected.Context, "\n")[endLocal]
+		}
+		ec := editor.RuneIndexToVisualColumn(endText, r.EndColumn)
+		if endLocal == local && ec <= sc {
 			ec = sc + 1
 		}
 		if i == s.selected {
@@ -399,7 +440,7 @@ func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.Pro
 		}
 		st.Matches = append(st.Matches, editor.SearchMatch{
 			Start: editor.Position{Line: local, Col: sc},
-			End:   editor.Position{Line: local, Col: ec},
+			End:   editor.Position{Line: endLocal, Col: ec},
 		})
 	}
 	st.Open = len(st.Matches) > 0
@@ -445,6 +486,11 @@ func (s *Screen) syncList() {
 }
 
 func (s *Screen) syncStatus() {
+	if s.replacing {
+		s.status.SetColorRole(ui.ColorAccent)
+		s.status.SetText("Preparing replacement review…")
+		return
+	}
 	if s.notice != "" {
 		s.status.SetColorRole(ui.ColorAccent)
 		s.status.SetText(s.notice)
@@ -457,7 +503,7 @@ func (s *Screen) syncStatus() {
 	}
 	if s.errText != "" {
 		s.status.SetColorRole(ui.ColorError)
-		s.status.SetText("Invalid query")
+		s.status.SetText(s.errText)
 		return
 	}
 	s.status.SetColorRole(ui.ColorMuted)
@@ -490,6 +536,9 @@ func (s *Screen) syncStatus() {
 	if s.duration > 0 {
 		text += fmt.Sprintf(" · %dms", s.duration.Milliseconds())
 	}
+	if len(s.results) >= 1000 {
+		text += " · limit reached; refine search"
+	}
 	s.status.SetText(text)
 }
 
@@ -506,7 +555,7 @@ func (s *Screen) rebuildActions() {
 func (s *Screen) rebuildReplaceActions() {
 	s.replaceActions = ui.NewActionBar(ReplaceActionsID, s.tokens,
 		ui.ActionBarButton{ID: ui.NewID(ReplaceActionsID, "one"), Label: "Replace", Action: "find.replace.one", Variant: ui.VariantPrimary, Enabled: s.canReplaceSelected()},
-		ui.ActionBarButton{ID: ui.NewID(ReplaceActionsID, "all"), Label: "All", Action: "find.replace.all", Variant: ui.VariantSecondary, Enabled: s.replaceableCount() > 0},
+		ui.ActionBarButton{ID: ui.NewID(ReplaceActionsID, "all"), Label: "Replace All…", Action: "find.replace.all", Variant: ui.VariantSecondary, Enabled: s.replaceableCount() > 0},
 	)
 	s.replaceActions.SetAlignEnd(true)
 	s.replaceActions.SetCancelAction("find.close")
@@ -519,12 +568,12 @@ func (s *Screen) syncActionEnabled() {
 	}
 	if s.replaceActions != nil {
 		s.replaceActions.SetEnabled("find.replace.one", s.canReplaceSelected())
-		s.replaceActions.SetEnabled("find.replace.all", s.replaceableCount() > 0)
+		s.replaceActions.SetEnabled("find.replace.all", !s.replacing && !s.loading && s.replaceableCount() > 0)
 	}
 }
 
 func (s *Screen) canReplaceSelected() bool {
-	if s.mode != ModeReplace || s.selected < 0 || s.selected >= len(s.results) {
+	if s.replacing || s.loading || s.mode != ModeReplace || s.selected < 0 || s.selected >= len(s.results) {
 		return false
 	}
 	return fileio.ReplaceableMatch(s.results[s.selected])
@@ -555,35 +604,25 @@ func (s *Screen) replaceSelected() tea.Cmd {
 		return nil
 	}
 	queryHistory.Add(s.Query())
+	request := ReplaceMsg{Screen: s, Generation: s.generation, Match: s.results[s.selected], Query: s.Query(), Replacement: s.Replacement(), Options: s.searchOptions()}
 	return func() tea.Msg {
-		return ReplaceMsg{
-			Screen:      s,
-			Match:       s.results[s.selected],
-			Query:       s.Query(),
-			Replacement: s.Replacement(),
-			Options:     s.searchOptions(),
-		}
+		return request
 	}
 }
 
 func (s *Screen) replaceAll() tea.Cmd {
-	if s.mode != ModeReplace || s.replaceableCount() == 0 {
+	if s.replacing || s.loading || s.mode != ModeReplace || s.replaceableCount() == 0 {
 		return nil
 	}
 	queryHistory.Add(s.Query())
+	request := ReplaceMsg{Screen: s, Generation: s.generation, All: true, Query: s.Query(), Replacement: s.Replacement(), Options: s.searchOptions()}
 	return func() tea.Msg {
-		return ReplaceMsg{
-			Screen:      s,
-			All:         true,
-			Query:       s.Query(),
-			Replacement: s.Replacement(),
-			Options:     s.searchOptions(),
-		}
+		return request
 	}
 }
 
 func (s *Screen) Children() []ui.Component {
-	kids := []ui.Component{s.queryField, s.caseToggle, s.regexToggle, s.status, s.list, s.scrollbar, s.divider, s.preview, s.actions}
+	kids := []ui.Component{s.queryField, s.caseToggle, s.wordToggle, s.regexToggle, s.status, s.list, s.scrollbar, s.divider, s.preview, s.actions}
 	if s.mode == ModeReplace {
 		kids = append([]ui.Component{s.replaceField, s.replaceActions}, kids...)
 	}
@@ -604,6 +643,7 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 		s.replaceField.SetTokens(tokens)
 	}
 	s.caseToggle.SetTokens(tokens)
+	s.wordToggle.SetTokens(tokens)
 	s.regexToggle.SetTokens(tokens)
 	s.status.SetTokens(tokens)
 	s.list.SetTokens(tokens)
@@ -630,21 +670,17 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	caseW := min(2, max(0, r.W))
-	regexW := min(2, max(0, r.W-caseW))
-	innerGap := 0
-	if caseW > 0 && regexW > 0 {
-		innerGap = 1
-	}
-	cluster := caseW + innerGap + regexW
-	lead := 0
-	if r.W >= cluster+10 {
-		lead = 1
-	}
-	queryW := max(1, r.W-cluster-lead)
+	cluster := min(9, max(0, r.W-1))
+	queryW := max(0, r.W-cluster)
 	s.queryField.Layout(ctx, ui.Rect{X: 0, Y: 0, W: queryW, H: 1})
-	s.caseToggle.Layout(ctx, ui.Rect{X: queryW + lead, Y: 0, W: caseW, H: 1})
-	s.regexToggle.Layout(ctx, ui.Rect{X: queryW + lead + caseW + innerGap, Y: 0, W: regexW, H: 1})
+	x := queryW
+	for _, toggle := range []*ui.ToggleButton{s.caseToggle, s.wordToggle, s.regexToggle} {
+		gap := min(1, max(0, r.W-x))
+		x += gap
+		w := min(2, max(0, r.W-x))
+		toggle.Layout(ctx, ui.Rect{X: x, W: w, H: 1})
+		x += w
+	}
 
 	row := 1
 	if s.mode == ModeReplace && s.replaceField != nil && s.replaceActions != nil {
@@ -713,6 +749,25 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 }
 
 func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+
+func (s *Screen) handleSearchKey(ctx ui.EventContext, key tea.KeyPressMsg) (ui.EventResult, bool) {
+	if ui.IsReplaceAllChord(key) && s.mode == ModeReplace {
+		return s.HandleAction(ctx, ui.Action{ID: "find.replace.all"}), true
+	}
+	var action string
+	switch key.String() {
+	case "alt+c":
+		action = "find.toggle-case"
+	case "alt+w":
+		action = "find.toggle-word"
+	case "alt+r", "ctrl+r":
+		action = "find.toggle-regex"
+	}
+	if action != "" {
+		return s.HandleAction(ctx, ui.Action{ID: action}), true
+	}
+	return ui.EventResult{}, false
+}
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
 	case "find.open":
@@ -726,6 +781,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "find.toggle-regex":
 		s.regex = !s.regex
 		s.regexToggle.SetChecked(s.regex)
+		return ui.EventResult{Handled: true, Cmd: s.ScheduleSearch(), Invalidate: ui.InvalidatePaint}
+	case "find.toggle-word":
+		s.wholeWord = !s.wholeWord
+		s.wordToggle.SetChecked(s.wholeWord)
 		return ui.EventResult{Handled: true, Cmd: s.ScheduleSearch(), Invalidate: ui.InvalidatePaint}
 	case "find.replace.one":
 		return ui.EventResult{Handled: true, Cmd: s.replaceSelected(), Invalidate: ui.InvalidatePaint}
@@ -786,6 +845,9 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if evt.IsKey() {
 		key := evt.Key
+		if result, handled := q.owner.handleSearchKey(ctx, key); handled {
+			return result
+		}
 		// Query history: Ctrl+P/Ctrl+N always browse; bare Up/Down join in
 		// only when they cannot mean result navigation (empty field or an
 		// active history browse).
@@ -802,6 +864,9 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		switch key.Code {
 		case tea.KeyEsc:
+			if q.field.Edit().HasSelection() {
+				return q.applyFilter(ctx, evt)
+			}
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
 		case tea.KeyEnter:
 			return ui.EventResult{Handled: true, Cmd: q.owner.openSelected()}
@@ -825,12 +890,6 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 				q.owner.focusID(ActionsID)
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		}
-		if key.String() == "ctrl+r" {
-			return q.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
-		}
-		if ui.IsCommitChord(key) && q.owner.mode == ModeReplace {
-			return q.owner.HandleAction(ctx, ui.Action{ID: "find.replace.all"})
 		}
 	}
 	return q.applyFilter(ctx, evt)
@@ -870,8 +929,14 @@ func (q *replaceQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	}
 	if evt.IsKey() {
 		key := evt.Key
+		if result, handled := q.owner.handleSearchKey(ctx, key); handled {
+			return result
+		}
 		switch key.Code {
 		case tea.KeyEsc:
+			if q.field.Edit().HasSelection() {
+				return q.field.Handle(ctx, evt)
+			}
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
 		case tea.KeyEnter:
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.replace.one"})
@@ -887,12 +952,6 @@ func (q *replaceQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 				q.owner.focusID(ReplaceActionsID)
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		}
-		if key.String() == "ctrl+r" {
-			return q.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
-		}
-		if ui.IsCommitChord(key) {
-			return q.owner.HandleAction(ctx, ui.Action{ID: "find.replace.all"})
 		}
 	}
 	return q.field.Handle(ctx, evt)
@@ -922,11 +981,8 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if evt.IsKey() {
 		key := evt.Key
-		if key.String() == "ctrl+r" {
-			return l.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
-		}
-		if ui.IsCommitChord(key) && l.owner.mode == ModeReplace {
-			return l.owner.HandleAction(ctx, ui.Action{ID: "find.replace.all"})
+		if result, handled := l.owner.handleSearchKey(ctx, key); handled {
+			return result
 		}
 		switch key.Code {
 		case tea.KeyEsc:

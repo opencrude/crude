@@ -291,4 +291,39 @@ static inline bool crude_mode_value(GhosttyTerminal t, GhosttyMode mode) {
 	return cfg.value;
 }
 
+/* Stop at mode transitions, not byte-pattern matches. Ghostty alone owns VT
+ * parsing, including continuations, cancelled CSI and OSC payloads. ASCII text
+ * runs stay bulk writes; non-ground sequences use its shortest-prefix API. */
+static inline size_t crude_write_visual_boundary(GhosttyTerminal t, const uint8_t *data, size_t len) {
+	const bool before = crude_mode_value(t, GHOSTTY_MODE_SYNC_OUTPUT);
+	size_t at = 0;
+	while (at < len) {
+		bool ground = false;
+		ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_VT_GROUND, &ground);
+		if (ground) {
+			size_t end = at;
+			while (end < len && data[end] >= 0x20 && data[end] < 0x7f) end++;
+			if (end > at) {
+				ghostty_terminal_vt_write(t, data + at, end - at);
+				at = end;
+				continue;
+			}
+			ghostty_terminal_vt_write(t, data + at, 1);
+			at++;
+		}
+		size_t consumed = 0;
+		ghostty_terminal_vt_write_until_ground(t, data + at, len - at, &consumed);
+		at += consumed;
+		if (crude_mode_value(t, GHOSTTY_MODE_SYNC_OUTPUT) != before) return at;
+	}
+	return at;
+}
+
+static inline void crude_end_sync_output(GhosttyTerminal t) {
+	GhosttyTerminalModeConfig cfg;
+	cfg.mode = GHOSTTY_MODE_SYNC_OUTPUT;
+	cfg.value = false;
+	ghostty_terminal_set(t, GHOSTTY_TERMINAL_OPT_MODE, &cfg);
+}
+
 #endif /* CRUDE_GHOSTTY_BRIDGE_H */

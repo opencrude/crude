@@ -69,6 +69,21 @@ Supported named keys include arrows, Enter/Return, Escape, Tab, Backspace,
 Delete, Home, End, PageUp/PageDown, Space, Insert, and F1-F12. Chords accept
 `ctrl`, `alt`, `shift`, and `win`/`super`.
 
+Acceptance must verify the received event, not just the requested step. In the
+2026-10-18 native environment, `key:shift+Left` reached a standalone Bubble Tea
+probe as plain Left; a raw console probe already received unmodified `ESC [ D`
+with zero modifier state. Scan-code and paced-chord trials did not change it,
+so those driver changes were removed. This environment does not establish native
+Shift+arrow acceptance. Rendered App/component journeys cover the intended
+modifier, while real pointer captures cover native selection; do not report the
+Shift screenshots as a pass or infer Shift inside individual text controls.
+
+The same environment's standalone probe received no event for injected Escape
+and decoded injected Ctrl+Alt+Enter as Ctrl+Alt+J. Those requested steps do not
+establish product Escape/replace-all acceptance. Use actual pointer controls for
+native review/apply/cancel captures and App key-event journeys for those keys;
+never infer that the modal accepted an Escape the application did not receive.
+
 `type:` uses Unicode `SendInput`; it does not modify the clipboard.
 
 ## Mouse workflow

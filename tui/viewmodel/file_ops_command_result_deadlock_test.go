@@ -27,7 +27,7 @@ func (fileOpsUndrainedProgramModel) Update(tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (fileOpsUndrainedProgramModel) View() tea.View { return tea.View{} }
 
-// Regression: Replace in Files applies disk edits synchronously while handling
+// Regression: Replace in Files formerly applied disk edits synchronously while handling
 // findinfiles.ReplaceMsg in App.Update. FileOpsService used to echo its returned
 // FileOperationResultMsg through EventBus, whose Program.Send waited for the
 // same Update loop and permanently deadlocked the TUI.
@@ -59,19 +59,24 @@ func TestProjectReplaceFileOperationDoesNotReenterEventBus(t *testing.T) {
 		TextMatches:  []int{0, 1, 2, 3, 4},
 	}}, nil, 0)
 
-	done := make(chan struct{})
+	done := make(chan tea.Cmd, 1)
 	go func() {
-		app.Update(findinfiles.ReplaceMsg{
+		_, cmd := app.Update(findinfiles.ReplaceMsg{
 			Screen:      search,
+			Generation:  search.Generation(),
 			All:         true,
 			Query:       "alpha",
 			Replacement: "omega",
 		})
-		close(done)
+		done <- cmd
 	}()
 
 	select {
-	case <-done:
+	case cmd := <-done:
+		if cmd == nil {
+			t.Fatal("replacement planning command missing")
+		}
+		runAppCommand(t, app, cmd)
 	case <-time.After(5 * time.Second):
 		t.Fatal("Update deadlocked by echoing a file operation result through EventBus")
 	}
@@ -80,8 +85,8 @@ func TestProjectReplaceFileOperationDoesNotReenterEventBus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(data); got != "omega\n" {
-		t.Fatalf("disk content=%q, want %q", got, "omega\n")
+	if got := string(data); got != "alpha\n" || app.projectReplace == nil {
+		t.Fatalf("planning must show review without writing; disk=%q review=%v", got, app.projectReplace != nil)
 	}
 	if events := bus.RecentEvents(1); len(events) != 0 {
 		t.Fatalf("file operation result unexpectedly reached EventBus: %v", events)

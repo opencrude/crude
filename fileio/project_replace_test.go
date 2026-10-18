@@ -71,3 +71,23 @@ func TestPlanProjectReplaceSkipsNameOnly(t *testing.T) {
 		t.Fatalf("edits=%d skipped=%d", len(edits), skipped)
 	}
 }
+
+func TestProjectReplacementRejectsWrongQueryAndDeduplicates(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "source.txt")
+	if err := os.WriteFile(path, []byte("alpha alpha"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hit := ProjectSearchMatch{Path: path, RelativePath: "source.txt", Line: 1, Column: 0, EndColumn: 5, LineText: "alpha alpha"}
+	if edits, _, err := PlanProjectReplace([]ProjectSearchMatch{hit}, "bravo", "X", ProjectSearchOptions{}); err == nil || len(edits) != 0 {
+		t.Fatal("same-sized unrelated query allowed")
+	}
+	edits, _, err := PlanProjectReplace([]ProjectSearchMatch{hit, hit}, "alpha", "X", ProjectSearchOptions{})
+	if err != nil || len(edits) != 1 || edits[0].Count != 1 || edits[0].NewContent != "X alpha" {
+		t.Fatalf("duplicate hit=%+v %v", edits, err)
+	}
+	hit.LineText = "alpha omega"
+	if _, _, err = PlanProjectReplace([]ProjectSearchMatch{hit}, "alpha", "X", ProjectSearchOptions{}); err == nil {
+		t.Fatal("stale source accepted")
+	}
+}

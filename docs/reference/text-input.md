@@ -35,6 +35,37 @@ shared control, never to one popup.
   consumers. Programmatic editor jumps reveal only when necessary after actual
   viewport geometry; landing highlights are not destructive edit selections.
 
+### Selection semantics (all editable text)
+
+- A block cursor visualizes an **insertion boundary before** its covered
+  grapheme, not a selected character. At `abc|def`, Shift+Left selects `c`;
+  Shift+Right selects `d`. Extensions retain the original boundary through
+  reversal; returning to it collapses. Plain Left/Right collapses a non-empty
+  selection to its corresponding edge without an extra move. The document
+  editor, TextField, TextArea, composer bridge and popup inputs follow this
+  same rule. Never add the covered character to keyboard selection merely
+  because the caret is drawn as a block.
+- A plain pointer press instead retains the **hit source unit**. Backward
+  dragging includes the originally pressed grapheme; forward dragging starts
+  at its leading edge. Reversal projects from those immutable bounds. Shift
+  pointer gestures extend the existing caret/selection boundary instead.
+  Double/triple-click-hold retains whole-word/line units. Release applies its
+  final coordinate, and only the initiating button can finish the gesture.
+- User character movement, selection and deletion cross complete graphemes
+  (combining sequences, flags and ZWJ emoji), never a partial source rune.
+  Cursor/storage offsets remain rune-based in non-document inputs and
+  document-source-based in the editor. Source units and terminal columns are
+  never interchangeable. Atomic composer references remain indivisible.
+- Pointer capture and a retained keyboard selection are different lifetimes.
+  Hover/release cannot extend or clear a keyboard range; typing/paste, new
+  content, owner replacement and capture cancellation end only the pointer
+  gesture. Every composer mount forwards to TextArea's gesture owner; there
+  is no parallel press/motion implementation in the input model.
+
+The keyboard boundary/collapse model follows established
+[CodeMirror character selection](https://github.com/codemirror/commands/blob/main/src/commands.ts)
+and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/vs/editor/common/cursor/cursorMoveCommands.ts).
+
 ## Cursor
 
 - Every product text cursor is a blinking reverse-video block overlay. Never

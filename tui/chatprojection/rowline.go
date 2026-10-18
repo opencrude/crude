@@ -76,6 +76,9 @@ type SubPaneLine struct {
 	Native         *PaintLine
 	Text           string
 	FrameSensitive bool
+	// PaneInfo is the exact ancestry of this row, including its emitting pane.
+	// Headers/summaries use LineIdx -1 so only ancestors own their wheel input.
+	PaneInfo PaneLineInfo
 }
 
 // PlainText returns selection/plain text for this row.

@@ -1,19 +1,14 @@
 package viewmodel
 
 import (
-	"context"
-	"fmt"
 	"path/filepath"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
-	"crude/shellport"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/workspace"
 )
 
 const findInFilesWindowID = "find-in-files"
@@ -39,30 +34,44 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	overlay := overlayForProjectSearch(mode)
-	if m.overlayHost.IsOpen(overlay) {
-		m.closeFindInFiles()
-		return m, nil
-	}
-	query, replacement, caseSensitive, regex := m.captureProjectSearch()
-	m.closeFindInFiles()
-
 	root := m.ws.RootPath()
 	if root == "" {
 		root = "."
 	}
-	search := findinfiles.New(m.Theme)
-	if mode == findinfiles.ModeReplace {
-		search.OpenReplace(root)
-	} else {
+	search := m.findInFiles
+	inside := false
+	if fw := m.focusedPopup(); fw != nil {
+		inside = fw.ID == findInFilesWindowID || fw.ID == replaceInFilesWindowID
+	}
+	if search == nil {
+		search = findinfiles.New(m.Theme)
 		search.Open(root)
+		search.SetQuery(m.projectSearchDraft.query)
+		search.SetReplacement(m.projectSearchDraft.replacement)
+		opts := m.projectSearchDraft.options
+		search.SetOptions(opts.CaseSensitive, opts.WholeWord, opts.Regex)
 	}
-	if query != "" {
+	seeded := false
+	if !inside && m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.HasSelection() {
+		query, regex := selectedSearchQuery(m.EditorState.Editor.SelectedText(), search.Regex())
 		search.SetQuery(query)
+		search.SetOptions(search.CaseSensitive(), search.WholeWord(), regex)
+		seeded = true
 	}
-	if replacement != "" {
-		search.SetReplacement(replacement)
+	search.SelectQuery()
+	if m.overlayHost.IsOpen(overlay) {
+		m.windowManager.FocusWindow(string(overlay))
+		m.markProjectSearchDirty()
+		if seeded {
+			return m, search.ScheduleSearch()
+		}
+		return m, nil
 	}
-	search.SetOptions(caseSensitive, regex)
+	// A mode transition remounts the same state/edit owners, without running
+	// their close lifecycle or cancelling an otherwise valid search.
+	m.findInFiles = nil
+	m.closeFindInFiles()
+	search.SetMode(mode)
 
 	w := max(68, min(m.width*84/100, 150))
 	h := max(20, min(m.height*78/100, 46))
@@ -98,6 +107,10 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 	search.FocusQuery()
 	searchCopy := search
 	m.overlayHost.Open(overlay, fw, ui.DefaultOverlayPolicy(), func() {
+		if m.findInFiles != searchCopy {
+			return
+		}
+		m.projectSearchDraft = projectSearchDraft{query: searchCopy.Query(), replacement: searchCopy.Replacement(), options: searchCopy.Options()}
 		m.ws.CancelProjectSearch()
 		m.findInFilesRequest = 0
 		m.findInFilesGen = 0
@@ -108,17 +121,15 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 	})
 	m.findInFiles = search
 	var cmd tea.Cmd
-	if query != "" {
+	if search.Query() != "" && (seeded || search.Generation() == 0) {
 		cmd = search.ScheduleSearch()
 	}
 	return m, cmd
 }
 
-func (m *App) captureProjectSearch() (query, replacement string, caseSensitive, regex bool) {
-	if m.findInFiles == nil {
-		return "", "", false, false
-	}
-	return m.findInFiles.Query(), m.findInFiles.Replacement(), m.findInFiles.CaseSensitive(), m.findInFiles.Regex()
+type projectSearchDraft struct {
+	query, replacement string
+	options            fileio.ProjectSearchOptions
 }
 
 func (m *App) closeFindInFiles() {
@@ -162,155 +173,4 @@ func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
 		message.landing = &match
 		return message
 	}
-}
-
-func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
-	if m.findInFiles == nil || msg.Screen != m.findInFiles {
-		return nil
-	}
-	matches := m.findInFiles.Results()
-	if !msg.All {
-		matches = []fileio.ProjectSearchMatch{msg.Match}
-	}
-	if _, remote := m.ws.(shellport.ClientFiles); remote {
-		planner, ok := m.ws.(interface {
-			PlanProjectReplace(context.Context, []fileio.ProjectSearchMatch, string, string, fileio.ProjectSearchOptions) ([]fileio.ProjectFileReplacement, int, error)
-		})
-		if !ok {
-			m.Feedback.NotifyError("Core replace planning is unavailable; no files changed")
-			return nil
-		}
-		generation, screen, port := m.workspaceSwitchGen.Load(), m.findInFiles, m.ws
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			edits, skipped, err := planner.PlanProjectReplace(ctx, matches, msg.Query, msg.Replacement, msg.Options)
-			return clientProjectReplaceMsg{generation: generation, screen: screen, port: port, query: msg.Query, replacement: msg.Replacement, edits: edits, skipped: skipped, err: err}
-		}
-	}
-	edits, skipped, err := fileio.PlanProjectReplace(matches, msg.Query, msg.Replacement, msg.Options)
-	if err != nil {
-		m.findInFiles.SetNotice("Replace failed")
-		if m.Feedback != nil {
-			m.Feedback.NotifyError(err.Error())
-		}
-		m.markProjectSearchDirty()
-		return nil
-	}
-	replaced, files := 0, 0
-	disk := make([]workspace.FileEdit, 0)
-	for _, edit := range edits {
-		if m.applyReplacementToOpenBuffer(edit) {
-			replaced += edit.Count
-			files++
-			continue
-		}
-		disk = append(disk, workspace.FileEdit{
-			Path:       edit.Path,
-			OldContent: edit.OldContent,
-			NewContent: edit.NewContent,
-		})
-		replaced += edit.Count
-		files++
-	}
-	if len(disk) > 0 {
-		result := m.ws.ApplyWorkspaceEdit(disk)
-		if !result.Succeeded() && m.Feedback != nil {
-			m.Feedback.NotifyError(result.Error())
-		}
-	}
-	notice := fmt.Sprintf("Replaced %d in %d files", replaced, files)
-	if skipped > 0 {
-		notice += fmt.Sprintf(" · skipped %d", skipped)
-	}
-	if replaced == 0 && skipped == 0 {
-		notice = "Nothing to replace"
-	}
-	m.findInFiles.SetNotice(notice)
-	if m.Feedback != nil {
-		m.Feedback.NotifyInfo(notice)
-	}
-	m.markProjectSearchDirty()
-	return m.findInFiles.ScheduleSearch()
-}
-
-type clientProjectReplaceMsg struct {
-	generation         uint64
-	screen             *findinfiles.Screen
-	port               shellport.Workspace
-	query, replacement string
-	edits              []fileio.ProjectFileReplacement
-	skipped            int
-	err                error
-	diskApplied        bool
-}
-
-func (m *App) applyClientProjectReplace(msg clientProjectReplaceMsg) tea.Cmd {
-	if msg.screen == nil || msg.generation != m.workspaceSwitchGen.Load() || msg.port != m.ws || msg.screen != m.findInFiles || msg.screen.Query() != msg.query || msg.screen.Replacement() != msg.replacement {
-		return nil
-	}
-	if msg.err != nil {
-		msg.screen.SetNotice("Replace failed")
-		m.Feedback.NotifyError(msg.err.Error())
-		m.markProjectSearchDirty()
-		return nil
-	}
-	// Check every local view before applying anything. A stale plan must never
-	// overwrite newer unsaved text in this shell.
-	for _, edit := range msg.edits {
-		if m.EditorState != nil {
-			if tab := m.EditorState.Tabs[edit.Path]; tab != nil && tab.Editor != nil && tab.Editor.Value() != edit.OldContent {
-				msg.screen.SetNotice("Files changed; search again before replacing")
-				m.markProjectSearchDirty()
-				return nil
-			}
-		}
-	}
-	var disk []workspace.FileEdit
-	count := 0
-	for _, edit := range msg.edits {
-		if m.EditorState.Tabs[edit.Path] == nil {
-			disk = append(disk, workspace.FileEdit{Path: edit.Path, OldContent: edit.OldContent, NewContent: edit.NewContent})
-		}
-		count += edit.Count
-	}
-	if len(disk) > 0 && !msg.diskApplied {
-		owner := m.ws
-		return func() tea.Msg {
-			result := owner.ApplyWorkspaceEdit(disk)
-			msg.diskApplied = true
-			msg.err = result.Err
-			return msg
-		}
-	}
-	// Disk preconditions commit off Update before optimistic editor changes. A
-	// rejected disk transaction must not leave half-applied private live edits.
-	for _, edit := range msg.edits {
-		if m.EditorState.Tabs[edit.Path] != nil {
-			m.applyReplacementToOpenBuffer(edit)
-		}
-	}
-	msg.screen.SetNotice(fmt.Sprintf("Replaced %d in %d files · skipped %d", count, len(msg.edits), msg.skipped))
-	m.markProjectSearchDirty()
-	return msg.screen.ScheduleSearch()
-}
-
-func (m *App) applyReplacementToOpenBuffer(edit fileio.ProjectFileReplacement) bool {
-	path := filepath.Clean(edit.Path)
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
-	if m.EditorState != nil {
-		if tab, ok := m.EditorState.Tabs[path]; ok && tab != nil && tab.Editor != nil {
-			tab.Editor.ReplaceDocument(edit.NewContent)
-			return true
-		}
-	}
-	if m.BufferMgr != nil {
-		if buf := m.BufferMgr.Get(path); buf != nil {
-			buf.ReplaceContents(edit.NewContent)
-			return true
-		}
-	}
-	return false
 }

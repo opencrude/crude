@@ -22,6 +22,7 @@ func (t *TextField) ControlActions() []control.Descriptor {
 	return textControlActions(t.TextEditable(), t.submitID)
 }
 func (t *TextField) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	t.CancelPointerCapture()
 	if t.disabled || t.TextSecret() {
 		return EventResult{}, controlError(control.Unavailable, "field disabled")
 	}
@@ -73,6 +74,7 @@ func (t *TextArea) ControlActions() []control.Descriptor {
 	return textControlActions(t.TextEditable(), t.submitID)
 }
 func (t *TextArea) HandleControl(_ EventContext, op ControlOperation) (EventResult, error) {
+	t.StopSelecting()
 	if op.Verb == "select_range" {
 		n := len([]rune(t.Value()))
 		if op.Start < 0 || op.End < 0 || op.Start > n || op.End > n {

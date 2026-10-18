@@ -4,6 +4,28 @@
 
 The canonical conversation is the audit log. The chat renderer projects it into a compact, reversible activity view; it never deletes, rewrites, or persists presentation-only groups. Both live events and resumed session snapshots enter the same renderer. A group is a run of adjacent eligible calls (or completed thoughts) between visible boundaries; it may contain active calls until they finish. Its stable identity comes from its first message, not from a transient render index. Click its summary to inspect its original calls in chronological order, and click an individual eligible call to inspect its existing full output. The original result, command, input, permission tag, duration, and child identity remain available.
 
+## Nested scroll ownership
+
+One continuous wheel gesture keeps its starting scroll owner even as streaming
+or scrolling moves nested content under a stationary pointer. Direct pane-body
+scrolling remains available without a modifier or a tiny-only hit target: move
+deliberately into that pane or pause for the shared 500 ms gesture boundary.
+The nested gutter remains directly scrollable/draggable. When a pane reaches
+its limit, only the unconsumed rows chain through its exact enclosing panes to
+the main transcript; the gesture then stays with that ancestor instead of
+bouncing between surfaces. Direction reversal retains ownership and resets
+acceleration for precise correction. Keys remain focused-owner navigation.
+
+`PaneLineInfo.Ancestors` preserves actual recursive rendering ancestry and each
+enclosing viewport row, not a hierarchy inferred from current pointer position.
+Headers retain pane identity for paint but do not own their own body scroll.
+The same projected row metadata feeds live/hydrated rendering, wheel arbitration,
+gutters, and bottom-up containing-renderer invalidation. Changing a conversation
+source replaces its per-pane scroll-model lifetime; ordinary appends do not.
+Captured selection and scrollbar drags remain Host-owned and independent of wheel
+transactions. Window routing follows exact z-order hit owners without stealing
+focus or crossing modal boundaries.
+
 ## Classification
 
 | Treatment | Tools |

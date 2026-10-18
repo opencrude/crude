@@ -36,6 +36,7 @@ type FindReplaceState struct {
 	// Match info
 	MatchCount int
 	CurrentIdx int // -1 if no matches
+	Error      string
 
 	// HoveredToggle is the index of the toggle pill currently under the
 	// mouse cursor (-1 for none, 0=Aa, 1=ab, 2=.*). Host hover highlighting
@@ -213,6 +214,7 @@ func FindReplaceFromEditor(st *FindReplaceState, e *editor.Editor) {
 	st.Regex = ss.Options.Regex
 	st.MatchCount = len(ss.Matches)
 	st.CurrentIdx = ss.CurrentIdx
+	st.Error = ss.Error
 	if ss.CurrentIdx < 0 && len(ss.Matches) > 0 {
 		st.CurrentIdx = 0
 	}
@@ -224,18 +226,17 @@ func FindReplaceToEditor(st *FindReplaceState, e *editor.Editor) {
 	if e == nil {
 		return
 	}
-	e.SetOptions(editor.SearchOptions{
+	e.ConfigureSearch(st.Query(), st.Replace(), editor.SearchOptions{
 		CaseSensitive: st.CaseSensitive,
 		WholeWord:     st.WholeWord,
 		Regex:         st.Regex,
 	})
-	e.SetReplace(st.Replace())
-	e.SetQuery(st.Query())
 	// Re-read after the editor computed matches.
 	ss := e.Search()
 	if ss != nil {
 		st.MatchCount = len(ss.Matches)
 		st.CurrentIdx = ss.CurrentIdx
+		st.Error = ss.Error
 	}
 }
 

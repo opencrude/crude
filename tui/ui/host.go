@@ -2,6 +2,7 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"time"
 
 	"crude/tui/cell"
 	"crude/tui/surface"
@@ -37,6 +38,10 @@ type Host struct {
 	needsLay       bool
 	needsPnt       bool
 	frame          int
+	wheel          WheelGesture
+	wheelTarget    Component
+	wheelBounds    Rect
+	wheelModifiers tea.KeyMod
 	controls       map[ComponentID]*controlMount
 	controlScratch map[ComponentID]*controlMount
 	controlEpoch   uint64
@@ -92,6 +97,7 @@ func (h *Host) SetTheme(th *theme.Theme) {
 
 // SetRoot replaces the root component.
 func (h *Host) SetRoot(root Component) {
+	h.ResetWheelGesture()
 	h.CancelPointerCapture()
 	h.controls = nil
 	h.controlScratch = nil
@@ -118,6 +124,7 @@ func (h *Host) Resize(w, hgt int) {
 	if w == h.width && hgt == h.height {
 		return
 	}
+	h.ResetWheelGesture()
 	h.width = w
 	h.height = hgt
 	h.needsLay = true
@@ -272,6 +279,12 @@ func (h *Host) Layout() {
 		}
 	}
 	h.validatePointerCapture(capturedComp)
+	if h.wheelTarget != nil {
+		id := h.wheelTarget.ID()
+		if h.registry[id] != h.wheelTarget || h.screen[id] != h.wheelBounds {
+			h.ResetWheelGesture()
+		}
+	}
 	// Semantic discovery is on demand, never another per-frame tree export.
 	// Once observed, keep its lifetime fences current across unmount/replacement.
 	if h.controls != nil {
@@ -432,6 +445,7 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 		id := h.pointerDispatchTarget(hit, m.Button, false)
 		return h.dispatchTo(id, m.X, m.Y, msg)
 	case tea.MouseClickMsg:
+		h.ResetWheelGesture()
 		hit := h.HitTest(m.X, m.Y)
 		id := h.resolvePointerTarget(hit)
 		if id != RootID {
@@ -449,16 +463,61 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 		h.ReleasePointer(m.Button)
 		return res
 	case tea.MouseWheelMsg:
+		if m.Mod != h.wheelModifiers {
+			h.ResetWheelGesture()
+			h.wheelModifiers = m.Mod
+		}
 		hit := h.HitTest(m.X, m.Y)
 		id := h.resolvePointerTarget(hit)
+		if target, ok := h.registry[id].(WheelTargetProvider); ok {
+			requested := target.WheelTarget()
+			for ancestor := id; ancestor != RootID; ancestor = h.parent[ancestor] {
+				if ancestor == requested {
+					id = requested
+					break
+				}
+			}
+		}
+		if h.FocusScopeModal() && !h.FocusWithinScope(id) {
+			h.ResetWheelGesture()
+			return EventResult{Handled: true}
+		}
+		// Native scroll phase markers are not exposed by terminal protocols.
+		// Keep the first exact mounted target while its content moves under a
+		// stationary pointer; deliberate movement/idle starts a fresh route.
+		owner, fresh := h.wheel.ResolveScope(time.Now(), m.X, m.Y, string(id), string(id), false)
+		if fresh {
+			if target, ok := h.wheelTarget.(WheelTargetResetter); ok {
+				target.ResetWheelGesture()
+			}
+			h.wheelTarget = h.registry[id]
+			h.wheelBounds = h.screen[id]
+		} else {
+			id = ComponentID(owner)
+		}
 		return h.dispatchTo(id, m.X, m.Y, msg)
 	default:
+		switch msg.(type) {
+		case tea.KeyPressMsg, tea.BlurMsg:
+			h.ResetWheelGesture()
+		}
 		id := h.focused
 		if id == RootID {
 			id = h.root.ID()
 		}
 		return h.dispatchTo(id, 0, 0, msg)
 	}
+}
+
+// ResetWheelGesture releases only wheel ownership, never pointer capture.
+func (h *Host) ResetWheelGesture() {
+	if target, ok := h.wheelTarget.(WheelTargetResetter); ok {
+		target.ResetWheelGesture()
+	}
+	h.wheel.Reset()
+	h.wheelTarget = nil
+	h.wheelBounds = Rect{}
+	h.wheelModifiers = 0
 }
 
 // Deliver dispatches a non-pointer message to one mounted component

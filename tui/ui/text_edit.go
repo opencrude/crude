@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"crude/tui/rendering"
 	"unicode"
 	"unicode/utf8"
 )
@@ -81,7 +82,7 @@ func (e *TextEdit) SetCursor(i int, extend bool) {
 	} else {
 		e.ClearSelection()
 	}
-	e.cursor = i
+	e.cursor = rendering.GraphemeBoundary(e.runes, i)
 }
 
 // ClearSelection drops the selection.
@@ -225,12 +226,13 @@ func (e *TextEdit) Backspace() {
 	if e.cursor == 0 {
 		return
 	}
-	collapse := e.backspaceRestoresLatestUndo()
+	start := rendering.PreviousGrapheme(e.runes, e.cursor)
+	collapse := e.cursor-start == 1 && e.backspaceRestoresLatestUndo()
 	if !collapse {
 		e.recordEdit()
 	}
-	e.runes = append(e.runes[:e.cursor-1], e.runes[e.cursor:]...)
-	e.cursor--
+	e.runes = append(e.runes[:start], e.runes[e.cursor:]...)
+	e.cursor = start
 	if collapse {
 		e.undo = e.undo[:len(e.undo)-1]
 		e.redo = nil
@@ -270,7 +272,8 @@ func (e *TextEdit) Delete() {
 		return
 	}
 	e.recordEdit()
-	e.runes = append(e.runes[:e.cursor], e.runes[e.cursor+1:]...)
+	end := rendering.NextGrapheme(e.runes, e.cursor)
+	e.runes = append(e.runes[:e.cursor], e.runes[end:]...)
 }
 
 func (e *TextEdit) deleteSelection() {
@@ -284,14 +287,24 @@ func (e *TextEdit) deleteSelection() {
 	e.ClearSelection()
 }
 
-// MoveLeft moves one rune left.
+// MoveLeft crosses one complete grapheme, or collapses an existing range.
 func (e *TextEdit) MoveLeft(extend bool) {
-	e.SetCursor(e.cursor-1, extend)
+	if !extend && e.HasSelection() {
+		start, _ := e.SelectionRange()
+		e.SetCursor(start, false)
+		return
+	}
+	e.SetCursor(rendering.PreviousGrapheme(e.runes, e.cursor), extend)
 }
 
-// MoveRight moves one rune right.
+// MoveRight crosses one complete grapheme, or collapses an existing range.
 func (e *TextEdit) MoveRight(extend bool) {
-	e.SetCursor(e.cursor+1, extend)
+	if !extend && e.HasSelection() {
+		_, end := e.SelectionRange()
+		e.SetCursor(end, false)
+		return
+	}
+	e.SetCursor(rendering.NextGrapheme(e.runes, e.cursor), extend)
 }
 
 // MoveHome moves to start.
@@ -426,14 +439,7 @@ func (e *TextEdit) SelectWordAt(i int) {
 		return
 	}
 	i = min(max(0, i), len(e.runes)-1)
-	class := runeClass(e.runes[i])
-	start, end := i, i+1
-	for start > 0 && runeClass(e.runes[start-1]) == class {
-		start--
-	}
-	for end < len(e.runes) && runeClass(e.runes[end]) == class {
-		end++
-	}
+	start, end := textWordRange(e.runes, i)
 	e.selAnchor, e.cursor, e.selActive = start, end, true
 }
 

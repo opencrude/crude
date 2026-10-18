@@ -39,6 +39,7 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
+	workspacescreen "crude/tui/screens/workspaces"
 	settingsui "crude/tui/settings"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -101,36 +102,39 @@ type App struct {
 
 	// Composer state changes at session activation, never from Paint. Warm
 	// sessions retain their editor; cold persisted drafts load asynchronously.
-	composerHydratedFor        *workspace.Session
-	composerDraftEpoch         uint64
-	composerDraftClient        *composerDraftClient
-	pendingOrchestrators       map[string]bool
-	workspaceAttachSequence    uint64
-	workspaceAttachCancel      context.CancelFunc
-	workspaceAttachPending     bool
-	sessionLifecycleSequence   uint64
-	sessionLifecyclePending    bool
-	composerDraftErr           error
-	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
-	composerDraftWrites        sync.WaitGroup
-	composerDraftStopping      atomic.Bool
-	pendingInputAdmissions     map[*workspace.InputAdmissionIntent]struct{}
-	referenceOverlay           *referenceOverlayState
-	pastedTextRequests         []pastedTextStoredMsg
-	DirtyPromptPath            string
-	DirtyPromptChoice          int
-	operationIssue             *operationIssueOwner
-	pendingOperationIssues     []roottypes.OperationIssue
-	settingsPrompt             *settingsPromptState
-	capabilityOperations       map[uint64]capabilityOperation
-	capabilityPicker           *capabilityPickerOwner
-	capabilitySnapshotCancel   context.CancelFunc
-	capabilitySnapshotSequence uint64
-	launcherCapabilityCancel   context.CancelFunc
-	launcherCapabilitySequence uint64
-	launcherCapabilityAt       time.Time
-	agentPrompt                *agentPromptState
-	agentPrompts               []*agentPromptState
+	composerHydratedFor         *workspace.Session
+	composerDraftEpoch          uint64
+	composerDraftClient         *composerDraftClient
+	pendingOrchestrators        map[string]bool
+	workspaceAttachSequence     uint64
+	workspaceAttachCancel       context.CancelFunc
+	workspaceAttachPending      bool
+	workspaceSwitchIntent       *remoteWorkspaceSwitchIntent
+	workspaceOpenPrompt         *workspaceOpenPrompt
+	workspaceSwitchPreparations map[*remoteWorkspacePreparation]struct{}
+	sessionLifecycleSequence    uint64
+	sessionLifecyclePending     bool
+	composerDraftErr            error
+	composerDraftOwners         map[*workspace.Session]*composerDraftOwner
+	composerDraftWrites         sync.WaitGroup
+	composerDraftStopping       atomic.Bool
+	pendingInputAdmissions      map[*workspace.InputAdmissionIntent]struct{}
+	referenceOverlay            *referenceOverlayState
+	pastedTextRequests          []pastedTextStoredMsg
+	DirtyPromptPath             string
+	DirtyPromptChoice           int
+	operationIssue              *operationIssueOwner
+	pendingOperationIssues      []roottypes.OperationIssue
+	settingsPrompt              *settingsPromptState
+	capabilityOperations        map[uint64]capabilityOperation
+	capabilityPicker            *capabilityPickerOwner
+	capabilitySnapshotCancel    context.CancelFunc
+	capabilitySnapshotSequence  uint64
+	launcherCapabilityCancel    context.CancelFunc
+	launcherCapabilitySequence  uint64
+	launcherCapabilityAt        time.Time
+	agentPrompt                 *agentPromptState
+	agentPrompts                []*agentPromptState
 	// pendingTabClose holds the tabs still to close after a bulk close
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
@@ -210,6 +214,8 @@ type App struct {
 	activityView          activitybar.View
 	termScreens           map[string]*shellterm.Screen
 	terminalClientID      string
+	lastTerminalID        string
+	wheelHost             *ui.Host
 	terminalLeases        map[string]workspace.TerminalLease
 	terminalReads         map[string]bool
 	terminalDirty         map[string]bool
@@ -232,6 +238,11 @@ type App struct {
 	thinkingLatch          map[*workspace.Session]bool
 	editorScreen           *shelleditor.Screen
 	launcherScreen         *launcher.Screen
+	workspacesScreen       *workspacescreen.Screen
+	workspaceInfos         []workspace.WorkspaceInfo
+	workspaceListLoading   bool
+	workspaceListError     string
+	workspaceListCancel    context.CancelFunc
 	historyScreen          *historyscreen.Screen
 	sessionPicker          *sessionpicker.Screen
 	helpScreen             *helpscreen.Screen
@@ -239,6 +250,8 @@ type App struct {
 	findInFiles            *findinfiles.Screen
 	findInFilesRequest     uint64
 	findInFilesGen         int
+	projectSearchDraft     projectSearchDraft
+	projectReplace         *projectReplaceReview
 	memoryBrowser          *memorybrowser.Screen
 	boardBrowser           *boardbrowser.Screen
 	gitReviews             map[window.TabID]*gitReviewView
@@ -1024,6 +1037,17 @@ func (m *App) registerOverlayHandlers() {
 
 	oh.RegisterContentHandler(ui.OverlayDirtyClose, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.clickDirtyPrompt(localX, localY)
+	})
+	oh.RegisterContentHandler(ui.OverlayWorkspaceSwitch, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		if choice := confirmFrameButtonAt(fw, localX, localY); choice >= 0 {
+			return m.resolveWorkspaceOpenPrompt(choice == 0)
+		}
+		return nil
+	})
+	oh.RegisterHoverHandler(ui.OverlayWorkspaceSwitch, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
+			ui.SetConfirmHover(cw, confirmFrameButtonAt(fw, localX, localY))
+		}
 	})
 	oh.RegisterHoverHandler(ui.OverlayDirtyClose, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		m.hoverDirtyPrompt(localX, localY)

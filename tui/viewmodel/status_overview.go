@@ -107,7 +107,14 @@ func (m *App) configureFooterScreen() {
 	if m.footerScreen == nil {
 		return
 	}
-	m.footerScreen.SetProjection(shellfooter.Projection{Left: m.footerHelpSegments(), Right: m.footerStatusSegments()})
+	left, right := m.footerHelpSegments(), m.footerStatusSegments()
+	if status := m.remoteWorkspaceSwitchStatus(); status != "" {
+		left = []shellfooter.Segment{{Text: status, Role: ui.ColorWarning}}
+		// Switching temporarily owns input. Do not spend the whole constrained
+		// footer on inactive dock controls while hiding its cancel instruction.
+		right = nil
+	}
+	m.footerScreen.SetProjection(shellfooter.Projection{Left: left, Right: right})
 }
 
 func (m *App) statusHeaderRightSegments() []shellheader.Segment {
@@ -390,6 +397,9 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if m.LastSettings.UI.ContextHelp == "expanded" {
 		_, hints := m.contextualHelpSegments()
 		return hints
+	}
+	if m.terminalOwnsKeys() {
+		return []ui.HintSegment{ui.ActionSeg("terminal.toggle"), ui.ChordSeg("Ctrl+C", "interrupt"), ui.ChordSeg("Ctrl+Shift+C", "copy"), ui.ChordSeg("Shift+PgUp/PgDn", "scrollback")}
 	}
 	if m.windowManager != nil {
 		if window := m.windowManager.Focused(); window != nil {

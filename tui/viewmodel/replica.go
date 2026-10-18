@@ -67,9 +67,7 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 
 // CloseWorkspaceAttachment releases this shell only, including after switching.
 func (m *App) CloseWorkspaceAttachment() error {
-	if m.workspaceAttachCancel != nil {
-		m.workspaceAttachCancel()
-	}
+	m.cancelRemoteWorkspaceSwitch(false)
 	if connection, ok := m.ws.(shellport.Connection); ok {
 		return connection.Close()
 	}

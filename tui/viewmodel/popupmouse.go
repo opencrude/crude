@@ -90,6 +90,9 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 // Settings close requests return a pure command; CancelMsg later restores
 // live previews, while PromptMsg keeps the original window mounted.
 func (m *App) closePopupWindowByID(id string) tea.Cmd {
+	if id == string(projectReplaceOverlay) && m.projectReplace != nil && m.projectReplace.busy {
+		return nil
+	}
 	if id == string(lspRenameOverlay) && m.LSPPopup.RenamePreview != nil && m.LSPPopup.RenamePreview.busy {
 		return nil
 	}
@@ -163,8 +166,8 @@ func (m *App) clickContextMenu(localX, localY int) tea.Cmd {
 	if p.FlatIdx >= 0 {
 		st.Cursor = p.FlatIdx
 	}
-	st.Activate()
 	m.closeContextMenu()
+	st.Activate()
 	return nil
 }
 

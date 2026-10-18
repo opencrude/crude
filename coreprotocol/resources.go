@@ -51,9 +51,12 @@ type TerminalIDRequest struct {
 	ID string `json:"id"`
 }
 type TerminalRowsRequest struct {
-	ID    string `json:"id"`
-	Start int    `json:"start"`
-	Count int    `json:"count"`
+	ID            string `json:"id"`
+	Start         int    `json:"start"`
+	Count         int    `json:"count"`
+	ViewportStart int    `json:"viewport_start"`
+	HistoryEpoch  uint64 `json:"history_epoch"`
+	HistoryBase   uint64 `json:"history_base"`
 }
 type TerminalResizeRequest struct {
 	Lease workspace.TerminalLease `json:"lease"`

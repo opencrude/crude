@@ -68,7 +68,7 @@ func TestTerminalServiceHeadlessQueriesAndFinalBytes(t *testing.T) {
 		}
 		sink.mu.Unlock()
 		if exited {
-			p, err := s.Rows(info.ID, -1, 4)
+			p, err := s.Rows(info.ID, terminalvt.RowRequest{Start: -1, Count: 4})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +115,7 @@ func TestTerminalServiceExactLeasesDetachAndReaders(t *testing.T) {
 	if err = s.Resize(lease, 80, 24); !errors.Is(err, ErrTerminalControl) {
 		t.Fatal("detached lease resized")
 	}
-	p, err := s.Rows(info.ID, -1, 6)
+	p, err := s.Rows(info.ID, terminalvt.RowRequest{Start: -1, Count: 6})
 	if err != nil || !p.Info.Alive || p.Grid.Cols != 30 {
 		t.Fatalf("detach killed process/grid: %+v %v", p, err)
 	}
@@ -133,7 +133,7 @@ func TestTerminalServiceExactLeasesDetachAndReaders(t *testing.T) {
 	if err != nil || same.Generation == next.Generation {
 		t.Fatal("ABA lease admitted")
 	}
-	if _, err = s.Rows(info.ID, 0, terminalvt.MaxSnapshotRows+1); !errors.Is(err, terminalvt.ErrBounds) {
+	if _, err = s.Rows(info.ID, terminalvt.RowRequest{Start: 0, Count: terminalvt.MaxSnapshotRows + 1}); !errors.Is(err, terminalvt.ErrBounds) {
 		t.Fatal("snapshot unbounded")
 	}
 	s.Close(info.ID)

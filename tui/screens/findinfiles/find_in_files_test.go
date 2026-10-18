@@ -500,6 +500,28 @@ func TestFindInFilesTogglesSitOnTheRight(t *testing.T) {
 	}
 }
 
+func TestProjectDiscoveryPreviewHighlightsOnlyMatchedRunes(t *testing.T) {
+	s, _ := searchHost(t)
+	s.SetQuery("hwe")
+	s.ScheduleSearch()
+	s.ApplySearchResults(s.Generation(), []fileio.ProjectSearchMatch{{Path: "a.go", RelativePath: "a.go", Line: 1, EndLine: 1, Column: 0, EndColumn: 16, LineText: "HandleWorkspaceEvent", Context: "HandleWorkspaceEvent", ContextStart: 1, FuzzyOnly: true, TextMatches: []int{0, 6, 15}}}, nil, 0)
+	if s.previewSrc == nil {
+		t.Fatal("missing discovery preview")
+	}
+	hits := s.previewSrc.Search().Matches
+	if len(hits) != 3 {
+		t.Fatalf("discovery became one misleading contiguous match: %+v", hits)
+	}
+	for i, pos := range []int{0, 6, 15} {
+		if hits[i].Start.Col != pos || hits[i].End.Col != pos+1 {
+			t.Fatalf("highlight %d=%+v", i, hits[i])
+		}
+	}
+	if s.canReplaceSelected() || s.replaceAll() != nil {
+		t.Fatal("discovery preview enabled replacement")
+	}
+}
+
 func TestReplaceInFilesLayoutShowsReplaceRowAndButtons(t *testing.T) {
 	th := theme.DefaultDark()
 	screen := New(th)

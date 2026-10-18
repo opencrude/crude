@@ -309,43 +309,22 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 }
 
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
-	switch msg := msg.(type) {
-	case tea.MouseClickMsg:
-		switch msg.Button {
-		case tea.MouseLeft:
-			pos, ok := m.MouseToInputPos(msg.X, msg.Y)
-			if ok {
-				m.input.SetSelection(pos, pos)
-				m.input.SetCursorFlat(pos)
-			} else {
-				m.input.ClearSelection()
-			}
-		case tea.MouseWheelUp, tea.MouseWheelDown:
-			if msg.Button == tea.MouseWheelUp {
-				return m, nil, m.browseHistoryUp()
-			}
+	// Older console transports encode wheel as MouseClickMsg. Keep that event's
+	// history contract; actual wheel messages over the text body scroll its viewport.
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		if click.Button == tea.MouseWheelUp {
+			return m, nil, m.browseHistoryUp()
+		}
+		if click.Button == tea.MouseWheelDown {
 			return m, nil, m.browseHistoryDown()
 		}
-
-	case tea.MouseMotionMsg:
-		if m.input.IsSelecting() {
-			pos, ok := m.MouseToInputPos(msg.X, msg.Y)
-			if ok {
-				m.input.UpdateSelectionEnd(pos)
-			} else if msg.Y < m.textAreaY() {
-				m.input.UpdateSelectionEnd(0)
-			} else {
-				m.input.UpdateSelectionEnd(m.input.Len())
-			}
-		}
-
-	case tea.MouseReleaseMsg:
-		// The draft is editable, so the dragged selection stays for typing,
-		// Ctrl+X or Ctrl+C (ui.TextArea.EndMouseSelection).
-		return m, m.input.EndMouseSelection(), nil
 	}
-
-	return m, nil, nil
+	// Both the bridge and the mounted shell delegate gestures to TextArea. A
+	// second press/motion implementation lost Shift, multi-click and unit bounds.
+	mouse := msg.Mouse()
+	pad, _ := m.inputGeometry(m.width)
+	result := m.input.Handle(ui.EventContext{LocalX: mouse.X - pad, LocalY: mouse.Y - m.textAreaY()}, ui.NormalizeEvent(msg))
+	return m, result.Cmd, nil
 }
 
 // applyClipboardChord applies the shared text-control clipboard chords

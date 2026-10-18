@@ -51,6 +51,9 @@ var errCoreOwned = errors.New("another core already serves this data directory")
 // owner of application configuration, accounts, catalogs, prompt history and
 // every retained workspace for this user; shells are clients of it.
 func RunCore(opts CoreOptions) error {
+	if err := initializeCoreSignals(); err != nil {
+		return err
+	}
 	if opts.Home == "" {
 		opts.Home, _ = buildinfo.Home()
 	}

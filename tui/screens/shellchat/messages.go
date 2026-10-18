@@ -12,18 +12,19 @@ type PaintParams struct {
 	// SourceID scopes Generation to one retained chatprojection.Renderer.
 	// A source switch always rebuilds the shared VirtualList, even when the
 	// incoming renderer has the same local generation and row count.
-	SourceID         uint64
-	Generation       uint64
-	ChangedIndices   []int
-	StructureChanged bool
-	Compose          ComposeParams
-	PaneLineMap      []chatprojection.PaneLineInfo
-	HasSelection     bool
-	SelStartLine     int
-	SelStartCol      int
-	SelEndLine       int
-	SelEndCol        int
-	OnPaneScroll     func(string)
+	SourceID          uint64
+	Generation        uint64
+	ChangedIndices    []int
+	StructureChanged  bool
+	Compose           ComposeParams
+	PaneLineMap       []chatprojection.PaneLineInfo
+	HasSelection      bool
+	SelStartLine      int
+	SelStartCol       int
+	SelEndLine        int
+	SelEndCol         int
+	OnPaneScroll      func(string)
+	OnPaneScrollChain func([]string)
 }
 
 type messagePaintState struct {
@@ -49,9 +50,13 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	oldLen := len(s.rows)
 	s.rows = rows
 	s.onPaneScroll = paint.OnPaneScroll
+	s.onPaneScrollChain = paint.OnPaneScrollChain
 	s.layout.padLR = paint.Compose.PadLR
 	s.layout.mainSBVisible = paint.Compose.MainSBVisible
 	sourceChanged := s.rowsSourceID != paint.SourceID
+	if sourceChanged {
+		s.ResetWheelGesture()
+	}
 	sameRows := !sourceChanged && paint.Generation != 0 && s.rowsGeneration == paint.Generation
 	starts := s.paintState.globalStart
 	if sameRows {

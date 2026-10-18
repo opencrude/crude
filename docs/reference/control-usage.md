@@ -15,7 +15,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Category | Current implementations | Target |
 |----------|------------------------|--------|
 | Full input engine | Chat via `shellinput` + `ui.TextArea` (shell `ColorBg`, not popup fill, no leading `❯`); composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |
-| Project search query | native `ui.SearchField` in `tui/screens/findinfiles` (SearchGlyph + PromptStart; Cc/.* toggles on the right) | same |
+| Project search query | native `ui.SearchField` in `tui/screens/findinfiles` (SearchGlyph + PromptStart; Aa/ab/.* case, whole-word and regex toggles on the right) | same |
 | Project replace field | native `ui.TextField` on the Find in Files sibling (Replace in Files) | same |
 | Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); `FieldSelect` paints a bordered overlay dropdown (`PaintOverlay`) so opening it does not grow form height or push later fields; `Form.Paint` clips to the viewport so scrolled fields cannot leak into chrome; docked forms use `SetArrowExitsForm(true)` so Up/Down cycle onto the ActionBar; floating settings also exit to the category rail; Esc emits `form.cancel`; Tab/Shift+Tab still leave the form; spacious settings forms paint one row per field with a breathing row between fields, never fill a row, align every control box on one value column and show the hovered (else focused) field's help in the breathing row above the settings footer (see [Settings design language](settings-design.md)); `FieldCycle` styles are switch (a compact `‹ On ›` box; compact rows read `‹ On ›` too), segmented pill (click selects a segment) and the fixed-width `‹ value ›` stepper whose halves step back/forward and whose ends hold; unit and `Numeric` fields are short boxes with a muted unit; compact `FieldNav`/`FieldCycle` share `planCompactTable`: leftover width becomes space after the label and before the last column (never filler periods), `·` is a separator only, labels/values use `ColorFg`, inherited/meta use `ColorMuted`, focused row uses `ColorHover` + accent label. Lists/menus use the same `TableMinGap` + `MenuInk`. Trailing `TreeCollapsed` (`▸`) on nav only. Never `❯`. `FieldKeyValues` (`ui.KeyValueGrid`) edits a keyed list as a Name/value table below the label — captions from the field's two `Columns` (default `Name`/`Value`), an append row named by its `Placeholder` (default `Add header`), row removal with the shared `Close` glyph, arrows move rows/cells, `MultiLine()` keeps Up/Down inside the table, and `Form.moveFocus` blurs the open cell editor. Row states reuse `ListRowColors`/`MenuInk` (focused accent, selected, hovered). | `ui.Form` / `FormField` over shared TextEdit engine |
 | Hand-built prompt | `tui/ui/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
@@ -50,6 +50,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Session picker | native `ui.List` section headers + `ScrollbarControl` (`tui/screens/sessionpicker`) |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |
+| Recent Workspaces sidebar | Shared `panelchrome` icon/search/count header and row-state palette, retained FilterField + VirtualList name/path pairs, native single-line + New Workspace / ↻ Refresh command rows, Current badge, ScrollbarControl and shared SplitDivider. Resource clicks select first, double-click/Enter requests an exact-path switch; commands activate once. Home and rail share one recent-access catalog and the same Cancel-default navigation confirmation. |
 | LSP popup lists | List |
 | Current plan hover reader | Passive WindowFrame with VirtualList and ScrollbarControl over the plan owner's complete immutable step projection; drag selection uses the shared chat line painter's selection columns and copies on release; no tool-JSON parsing or storage reads on paint | same |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
@@ -178,6 +179,26 @@ and agent-minimize semantics. Palette operations use the shared ActionRegistry.
 | Hand-drawn ╭─╮ in LSP popups | same WindowFrame |
 
 ## Host pointer routing
+
+Wheel routing is a separate, uncaptured gesture. `ui.WheelGesture` retains an
+exact mounted scroll owner through a continuous burst (500 ms idle boundary),
+with two columns or one row of deliberate movement from its origin starting a
+new target. A sibling surface/window boundary immediately chooses that exact
+mounted surface; keyboard focus never changes. A direct scrollbar can name a
+mounted ancestor via `WheelTargetProvider`, so the owning screen arbitrates its
+wheel without replacing the scrollbar's click/drag/capture math. Source/mount
+replacement, resize, click, key, blur, modal and attachment boundaries end stale
+ownership; ordinary content/export revisions do not.
+
+Chat carries exact outermost-to-leaf pane ancestry with each rendered row. An
+ongoing conversation scroll is not stolen by a pane moving under a stationary
+pointer. A fresh gesture or deliberate movement into pane content scrolls it;
+its gutter stays directly draggable. At a boundary only unconsumed signed rows
+chain to logical ancestors, never siblings or windows, and subsequent events
+stay with the ancestor until new intent. Direction reversal resets acceleration,
+not ownership. Acceleration is computed once per physical wheel event; no
+near-tail snap may consume extra rows. Headers/spacers target their enclosing
+content rather than silently scrolling the pane whose title they paint.
 
 Persistent shell screens, including recursive main groups, mount under the
 viewmodel's root `ui.Host`; retained session decks and floating bodies use their

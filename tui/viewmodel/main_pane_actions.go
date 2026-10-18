@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,9 +18,80 @@ import (
 type paneDrop struct {
 	tab       window.TabID
 	group     window.GroupID
+	node      uint64
 	beforeTab window.TabID
 	edge      string
 	rect      ui.Rect
+	scope     string
+}
+
+// The press owns the source; the last motion owns the proposed destination.
+// Release may confirm that exact proposal, never retarget a changed layout.
+type paneDrag struct {
+	owner    paneMenuOwner
+	topology []uint64
+	bounds   ui.Rect
+}
+
+func paneTopology(n *window.PaneNode) []uint64 {
+	var ids []uint64
+	var visit func(*window.PaneNode)
+	visit = func(n *window.PaneNode) {
+		if n == nil {
+			return
+		}
+		ids = append(ids, n.ID, uint64(n.Group))
+		visit(n.First)
+		visit(n.Second)
+	}
+	visit(n)
+	return ids
+}
+
+func (d *paneDrag) valid(m *App, tab window.TabID) bool {
+	return d != nil && d.owner.tab == tab && d.owner.valid(m) &&
+		d.bounds == m.mainPanes.Bounds() && slices.Equal(d.topology, paneTopology(m.Win.PaneRoot()))
+}
+
+func (m *App) cancelMainPaneDrag() {
+	if p := m.mainPanes; p != nil {
+		p.drop, p.drag = nil, nil
+		for _, g := range p.groups {
+			g.tabs.TabsControl().CancelPointerCapture()
+		}
+		for _, pw := range p.windows {
+			pw.frame.Host().CancelPointerCapture()
+		}
+	}
+	if m.rootHost != nil {
+		m.rootHost.CancelPointerCapture()
+	}
+}
+
+// A menu belongs to the clicked tab's original group, not whatever is active
+// when it is used. Moving/closing that tab or switching workspace invalidates it.
+type paneMenuOwner struct {
+	win        *window.Window
+	group      window.GroupID
+	tab        window.TabID
+	generation uint64
+}
+
+func (m *App) paneOwner(tab window.TabID, group window.GroupID) paneMenuOwner {
+	return paneMenuOwner{m.Win, group, tab, m.workspaceSwitchGen.Load()}
+}
+
+func (o paneMenuOwner) valid(m *App) bool {
+	return m.Win == o.win && m.workspaceSwitchGen.Load() == o.generation && m.Win.HasGroup(o.group) &&
+		(o.tab == 0 || m.Win.GroupOf(o.tab) == o.group)
+}
+
+func (o paneMenuOwner) action(m *App, action func()) func() {
+	return func() {
+		if o.valid(m) {
+			action()
+		}
+	}
 }
 
 type paneFilePickerOwner struct {
@@ -45,28 +117,28 @@ func (m *App) mainPaneDragActive() bool {
 
 func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 	group := m.Win.ActiveGroup()
-	menu := &ui.ContextMenuState{Title: "Pane"}
+	owner := m.paneOwner(0, group)
+	menu := &ui.ContextMenuState{Title: "Pane", Sections: []ui.ContextMenuSection{{}}}
 	for _, action := range []struct{ label, id string }{
 		{"New Session", "pane.new-session"}, {"Open File", "pane.open-file"},
-		{"Split Right", "pane.split-right"}, {"Split Down", "pane.split-down"},
+		{"Split Left", "pane.split-left"}, {"Split Right", "pane.split-right"},
+		{"Split Above", "pane.split-up"}, {"Split Down", "pane.split-down"},
+		{"Split Containing Layout…", "pane.split-layout"},
 		{"Close Empty Pane", "pane.close"}, {"Merge All Panes", "pane.merge-all"},
 	} {
 		id := action.id
-		menu.Sections = append(menu.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{{Label: action.label, Action: func() {
-			if !paneHasGroup(m.Win.PaneRoot(), group) {
-				return
-			}
+		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: action.label, Action: owner.action(m, func() {
 			m.focusMainGroup(group)
 			cmd, _ := m.handleMainPaneCommand(id)
 			m.runDetachedAsyncCmd(cmd)
-		}}}})
+		})})
 	}
 	return menu
 }
 
 // openMainPaneMenu keeps compacted groups reachable by mouse as well as keys.
 func (m *App) openMainPaneMenu() tea.Cmd {
-	menu := &ui.ContextMenuState{Title: "Panes"}
+	menu := &ui.ContextMenuState{Title: "Panes", Sections: []ui.ContextMenuSection{{}}}
 	for i, group := range m.Win.GroupIDs() {
 		label := fmt.Sprintf("Pane %d · Empty", i+1)
 		if tab := m.Win.GroupActiveTab(group); tab != nil {
@@ -77,7 +149,7 @@ func (m *App) openMainPaneMenu() tea.Cmd {
 			label = fmt.Sprintf("Pane %d · %s", i+1, title)
 		}
 		id := group
-		menu.Sections = append(menu.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{{Label: label, Action: func() { m.focusMainGroup(id) }}}})
+		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: label, Action: m.paneOwner(0, id).action(m, func() { m.focusMainGroup(id) })})
 	}
 	return m.openContextMenuState(tea.Mouse{X: m.frameLeftCol() + 8, Y: m.shellTopRow()}, menu)
 }
@@ -95,6 +167,61 @@ func (m *App) paneAt(x, y int) *mainPaneGroup {
 		}
 	}
 	return nil
+}
+
+// Context targeting comes from the mounted strip under both coordinates, never
+// the active strip alias (which may belong to another docked or floating pane).
+func (m *App) paneTabAt(x, y int) int {
+	if m.mainPanes == nil {
+		return -1
+	}
+	ids := m.Win.GroupIDs()
+	if m.windowManager != nil {
+		if fw := m.windowManager.WindowAt(x, y); fw != nil {
+			group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID))
+			if !ok {
+				return -1
+			}
+			ids = []window.GroupID{group}
+		}
+	}
+	for _, id := range ids {
+		g := m.mainPanes.groups[id]
+		if g == nil {
+			continue
+		}
+		r, ok := m.screenRectOf(g.tabs.ID())
+		if !ok || !r.Contains(x, y) {
+			continue
+		}
+		i, _ := g.tabs.HitTest(x - r.X)
+		tabs := m.Win.GroupTabs(id)
+		if i >= 0 && i < len(tabs) {
+			return m.Win.IndexOf(tabs[i].ID)
+		}
+	}
+	return -1
+}
+
+func (m *App) closePaneEditorTabs(owner paneMenuOwner, rightOnly bool) {
+	if !owner.valid(m) {
+		return
+	}
+	tabs := m.Win.GroupTabs(owner.group)
+	var paths []string
+	seen := !rightOnly
+	for _, tab := range tabs {
+		if tab.ID == owner.tab {
+			seen = true
+			continue
+		}
+		if seen && m.isEditorTabTitle(tab.Title) {
+			paths = append(paths, m.editorPathFromTabTitle(tab.Title))
+		}
+	}
+	m.releaseTabBarFocus()
+	m.closeEditorTabs(paths)
+	m.syncRootFocus()
 }
 
 // activatePaneAt is input policy, called after floating/modal ownership checks.
@@ -126,20 +253,39 @@ func (m *App) focusMainGroup(id window.GroupID) {
 }
 
 func (m *App) splitMainGroup(dir ui.Direction, before bool, tab window.TabID) {
-	g := m.ensureMainPanes().group(m.Win.ActiveGroup())
-	r := g.Bounds()
-	if (dir == ui.Horizontal && r.W < 49) || (dir == ui.Vertical && r.H < 15) {
-		m.Feedback.NotifyInfo("Not enough room to split this pane; enlarge the terminal or merge a pane")
+	scopes := m.Win.PaneScopes(m.Win.ActiveGroup())
+	if len(scopes) != 0 {
+		m.splitMainPane(scopes[0].ID, dir, before, tab)
+	}
+}
+
+func (m *App) splitMainPane(node uint64, dir ui.Direction, before bool, tab window.TabID) {
+	p := window.TabPlacement{Tab: tab, Node: node, Split: true, Direction: dir, Before: before}
+	var root *window.PaneNode
+	var target window.GroupID
+	if tab == 0 {
+		root, target = m.Win.PreviewSplitPane(node, dir, before)
+	} else {
+		root, target = m.Win.PreviewTabPlacement(p)
+	}
+	if target == 0 {
 		return
 	}
-	group := m.Win.SplitGroup(g.id, dir, before)
-	if group == 0 {
+	w, h := paneMinimum(root)
+	bounds := m.ensureMainPanes().Bounds()
+	if w > bounds.W || h > bounds.H {
+		m.Feedback.NotifyInfo("Not enough room for this layout; enlarge the terminal or merge a pane")
 		return
 	}
-	if tab != 0 {
-		m.Win.MoveTabToGroup(tab, group, 0)
+	if tab == 0 {
+		target = m.Win.SplitPane(node, dir, before)
+	} else {
+		target = m.Win.PlaceTab(p)
 	}
-	m.focusMainGroup(group)
+	if target != 0 {
+		m.focusMainGroup(target)
+		m.syncPaneWindows()
+	}
 }
 
 func (m *App) cycleMainGroup(delta int, move bool) {
@@ -174,18 +320,28 @@ func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
 		return nil, true
 	}
 	switch id {
-	case "pane.split-right":
-		m.splitMainGroup(ui.Horizontal, false, 0)
-	case "pane.split-down":
-		m.splitMainGroup(ui.Vertical, false, 0)
-	case "pane.move-right", "pane.move-down":
-		if tab := m.Win.ActiveTab(); tab != nil {
-			dir := ui.Horizontal
-			if id == "pane.move-down" {
-				dir = ui.Vertical
+	case "pane.split-left", "pane.split-right", "pane.split-up", "pane.split-down",
+		"pane.move-left", "pane.move-right", "pane.move-up", "pane.move-down":
+		dir, before := paneEdge(strings.TrimPrefix(strings.TrimPrefix(id, "pane.split-"), "pane.move-"))
+		tab := window.TabID(0)
+		if strings.HasPrefix(id, "pane.move-") {
+			if active := m.Win.ActiveTab(); active != nil {
+				tab = active.ID
+			} else {
+				return nil, true
 			}
-			m.splitMainGroup(dir, false, tab.ID)
 		}
+		m.splitMainGroup(dir, before, tab)
+	case "pane.arrange", "pane.split-layout":
+		tab := window.TabID(0)
+		if id == "pane.arrange" {
+			if active := m.Win.ActiveTab(); active != nil {
+				tab = active.ID
+			} else {
+				return nil, true
+			}
+		}
+		m.openPaneScopeMenu(m.paneOwner(tab, m.Win.ActiveGroup()), id == "pane.arrange")
 	case "pane.next":
 		m.cycleMainGroup(1, false)
 	case "pane.previous":
@@ -294,6 +450,17 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 		}
 		return m.launcherNewSession(), true
 	case "tabs.activate", "tabs.close", "tabs.enter":
+		if a.ID == "tabs.activate" {
+			if key, ok := a.Payload.(string); ok {
+				id, err := strconv.ParseUint(key, 10, 64)
+				group := m.Win.GroupOf(window.TabID(id))
+				p := m.ensureMainPanes()
+				if g := p.groups[group]; err == nil && g != nil && g.tabs.TabsControl().ActivatedByPointer() {
+					p.drag = &paneDrag{owner: m.paneOwner(window.TabID(id), group), topology: paneTopology(m.Win.PaneRoot()), bounds: p.Bounds()}
+					p.drop = nil
+				}
+			}
+		}
 		return m.handleTabBarHostResult(ui.EventResult{Action: a}), true
 	case "tabs.drag", "tabs.drop":
 		gesture, ok := a.Payload.(ui.TabDrag)
@@ -305,13 +472,21 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 			return nil, true
 		}
 		p := m.ensureMainPanes()
-		drop := m.mainPaneDrop(window.TabID(id), gesture.X, gesture.Y)
-		if a.ID == "tabs.drag" {
-			p.drop = drop
+		if !p.drag.valid(m, window.TabID(id)) {
+			m.cancelMainPaneDrag()
 			return nil, true
 		}
-		p.drop = nil
+		if a.ID == "tabs.drag" {
+			p.drop = m.mainPaneDrop(window.TabID(id), gesture.X, gesture.Y)
+			return nil, true
+		}
+		drop := p.drop
+		p.drop, p.drag = nil, nil
 		if drop == nil {
+			return nil, true
+		}
+		confirmed := m.mainPaneDrop(window.TabID(id), gesture.X, gesture.Y)
+		if confirmed == nil || confirmed.placement() != drop.placement() || confirmed.rect != drop.rect {
 			return nil, true
 		}
 		if target := m.Win.PlaceTab(drop.placement()); target != 0 {
@@ -339,6 +514,7 @@ func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
 	}
 	r := g.screen(ui.Rect{W: g.Bounds().W, H: g.Bounds().H})
 	d := &paneDrop{tab: tab, group: g.id, rect: g.body}
+	// A strip always inserts/reorders, including its outermost columns.
 	if y < g.body.Y {
 		i, _ := g.tabs.HitTest(x - r.X)
 		tabs := m.Win.GroupTabs(g.id)
@@ -346,6 +522,31 @@ func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
 			d.beforeTab = tabs[i].ID
 		}
 		return m.resolvePaneDrop(d)
+	}
+	// A one-cell rim selects a containing layout; the broader interior edge
+	// zones retain ordinary leaf splits. Outermost first makes the complete
+	// layout reachable even where several ancestor edges coincide.
+	if !m.mainPanes.compact {
+		scopes := m.Win.PaneScopes(g.id)
+		for i := len(scopes) - 1; i > 0; i-- {
+			n := scopes[i]
+			scopeRect := paneNodeRect(m.Win.PaneRoot(), n.ID, m.mainPanes.Bounds())
+			edge := ""
+			switch {
+			case x == scopeRect.X:
+				edge = "left"
+			case x == scopeRect.X+scopeRect.W-1:
+				edge = "right"
+			case y == scopeRect.Y+ui.StripHeight:
+				edge = "top"
+			case y == scopeRect.Y+scopeRect.H-1:
+				edge = "bottom"
+			}
+			if edge != "" {
+				d.node, d.edge, d.scope = n.ID, edge, m.paneScopeLabel(n, g.id)
+				return m.resolvePaneDrop(d)
+			}
+		}
 	}
 	// Edges split, middle merges. Preview uses the exact half-cell rounding
 	// of SplitModel, including the reserved divider, before committing anything.
@@ -363,31 +564,20 @@ func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
 	if d.edge == "" {
 		return m.resolvePaneDrop(d)
 	}
-	if m.Win.GroupOf(tab) == g.id && len(m.Win.GroupTabs(g.id)) == 1 {
-		return nil
-	}
-	dir := ui.Horizontal
-	total := r.W
-	if d.edge == "top" || d.edge == "bottom" {
-		dir = ui.Vertical
-		total = r.H
-	}
-	minimum := 49
-	if dir == ui.Vertical {
-		minimum = 15
-	}
-	if total < minimum {
-		return nil
-	}
 	return m.resolvePaneDrop(d)
 }
 
 func (d *paneDrop) placement() window.TabPlacement {
+	dir, before := paneEdge(d.edge)
+	return window.TabPlacement{Tab: d.tab, Group: d.group, Node: d.node, BeforeTab: d.beforeTab, Split: d.edge != "", Direction: dir, Before: before}
+}
+
+func paneEdge(edge string) (ui.Direction, bool) {
 	dir := ui.Horizontal
-	if d.edge == "top" || d.edge == "bottom" {
+	if edge == "top" || edge == "up" || edge == "bottom" || edge == "down" {
 		dir = ui.Vertical
 	}
-	return window.TabPlacement{Tab: d.tab, Group: d.group, BeforeTab: d.beforeTab, Split: d.edge != "", Direction: dir, Before: d.edge == "left" || d.edge == "top"}
+	return dir, edge == "left" || edge == "top" || edge == "up"
 }
 
 func (m *App) resolvePaneDrop(d *paneDrop) *paneDrop {
@@ -412,6 +602,10 @@ func (m *App) paintPaneDropPreview() {
 	if p == nil || p.drop == nil || m.mainSurf == nil {
 		return
 	}
+	if !p.drag.valid(m, p.drop.tab) {
+		m.cancelMainPaneDrag()
+		return
+	}
 	armed := false
 	for _, g := range p.groups {
 		armed = armed || g.tabs.TabsControl().Dragging()
@@ -431,6 +625,9 @@ func (m *App) paintPaneDropPreview() {
 	label := "Move tab here"
 	if p.drop.edge != "" {
 		label = "Split " + p.drop.edge
+		if p.drop.scope != "" {
+			label += " · " + p.drop.scope
+		}
 	}
 	label = rendering.TruncateVisual(label, r.W, "")
 	buf.WriteString(r.X+max(0, (r.W-rendering.VisibleWidth(label))/2), r.Y+r.H/2, label, fg, bg, 0)
@@ -444,46 +641,134 @@ func (m *App) paintPaneDropPreview() {
 
 func (m *App) paneMenuSection(tab window.TabID) ui.ContextMenuSection {
 	items := []ui.ContextMenuItem{}
+	owner := m.paneOwner(tab, m.Win.GroupOf(tab))
 	floating := m.Win.IsFloating(m.Win.GroupOf(tab))
 	if floating {
-		items = append(items, ui.ContextMenuItem{Label: "Move to Main Area", Detail: "dock this tab", Action: func() {
-			if m.Win.IndexOf(tab) < 0 {
-				return
-			}
+		items = append(items, ui.ContextMenuItem{Label: "Move to Main Area", Detail: "dock this tab", Action: owner.action(m, func() {
 			m.Win.MoveTabToGroup(tab, m.Win.DockedGroup(), 0)
 			m.unfocus()
 			m.handleTabSwitch()
 			m.syncPaneWindows()
 			m.forceFrame()
-		}})
+		})})
 		// Several windows can be open at once: a window holding more than one
 		// tab can give any of them its own window.
 		if m.Win.GroupTabCount(m.Win.GroupOf(tab)) > 1 {
-			items = append(items, ui.ContextMenuItem{Label: "Open in New Window", Detail: "separate window", Action: func() {
+			items = append(items, ui.ContextMenuItem{Label: "Open in New Window", Detail: "separate window", Action: owner.action(m, func() {
 				m.openTabInWindow(tab)
-			}})
+			})})
 		}
 		return ui.ContextMenuSection{SectionLabel: "Window", Items: items}
 	}
-	items = append(items, ui.ContextMenuItem{Label: "Open in Window", Detail: "movable, resizable", Action: func() {
+	items = append(items, ui.ContextMenuItem{Label: "Open in Window", Detail: "movable, resizable", Action: owner.action(m, func() {
 		m.openTabInWindow(tab)
-	}})
+	})})
 	for _, a := range []struct{ label, id string }{
-		{"Split Right", "pane.split-right"}, {"Split Down", "pane.split-down"},
+		{"Split Left", "pane.split-left"}, {"Split Right", "pane.split-right"},
+		{"Split Above", "pane.split-up"}, {"Split Down", "pane.split-down"},
+		{"Move Tab to Left Split", "pane.move-left"}, {"Move Tab to Upper Split", "pane.move-up"},
 		{"Move Tab to Right Split", "pane.move-right"}, {"Move Tab to Lower Split", "pane.move-down"},
-		{"Move Tab to Next Pane", "pane.move-next"}, {"Merge All Panes", "pane.merge-all"},
+		{"Arrange Tab…", "pane.arrange"}, {"Split Containing Layout…", "pane.split-layout"},
+		{"Move Tab to Next Pane", "pane.move-next"}, {"Move Tab to Previous Pane", "pane.move-previous"},
+		{"Merge All Panes", "pane.merge-all"},
 	} {
 		id := a.id
-		items = append(items, ui.ContextMenuItem{Label: a.label, Action: func() {
-			if index := m.Win.IndexOf(tab); index >= 0 {
-				m.Win.SwitchTo(index)
-				m.handleTabSwitch()
-			}
+		items = append(items, ui.ContextMenuItem{Label: a.label, Action: owner.action(m, func() {
+			m.Win.SwitchTo(m.Win.IndexOf(tab))
+			m.handleTabSwitch()
 			cmd, _ := m.handleMainPaneCommand(id)
 			m.runDetachedAsyncCmd(cmd)
-		}})
+		})})
 	}
 	return ui.ContextMenuSection{SectionLabel: "Panes", Items: items}
+}
+
+func (m *App) paneScopeLabel(n *window.PaneNode, owner window.GroupID) string {
+	ids := m.Win.GroupIDs()
+	first, last, count := 0, 0, 0
+	for i, id := range ids {
+		if paneHasGroup(n, id) {
+			if count == 0 {
+				first = i + 1
+			}
+			last, count = i+1, count+1
+		}
+	}
+	if n.Split == nil {
+		if n.Group == owner {
+			return "This pane"
+		}
+		label := fmt.Sprintf("Pane %d", first)
+		if tab := m.Win.GroupActiveTab(n.Group); tab != nil {
+			title := tab.DisplayTitle
+			if title == "" {
+				title = tab.Title
+			}
+			label += " · " + rendering.TruncateVisual(title, 24, "…")
+		}
+		return label
+	}
+	if n.ID == m.Win.PaneRoot().ID {
+		return fmt.Sprintf("Entire layout · %d panes", count)
+	}
+	return fmt.Sprintf("Containing layout · panes %d–%d", first, last)
+}
+
+// Native follow-up menus expose exact topology scopes instead of guessing a
+// parent from an axis. Arrange can target any subtree, not only the source path.
+func (m *App) openPaneScopeMenu(owner paneMenuOwner, move bool) {
+	if !owner.valid(m) {
+		return
+	}
+	menu := &ui.ContextMenuState{Title: "Choose layout scope", Sections: []ui.ContextMenuSection{{SectionLabel: "Choose layout scope"}}}
+	var nodes []*window.PaneNode
+	if move {
+		var visit func(*window.PaneNode)
+		visit = func(n *window.PaneNode) {
+			nodes = append(nodes, n)
+			if n.Split != nil {
+				visit(n.First)
+				visit(n.Second)
+			}
+		}
+		visit(m.Win.PaneRoot())
+	} else {
+		nodes = m.Win.PaneScopes(owner.group)
+	}
+	for _, n := range nodes {
+		node, label := n.ID, m.paneScopeLabel(n, owner.group)
+		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: label, Action: owner.action(m, func() {
+			if m.Win.Pane(node) != nil {
+				m.openPaneEdgeMenu(owner, node, label, move)
+			}
+		})})
+	}
+	m.openContextMenuState(tea.Mouse{X: m.mainPanes.Bounds().X + 3, Y: m.mainPanes.Bounds().Y + 2}, menu)
+}
+
+func (m *App) openPaneEdgeMenu(owner paneMenuOwner, node uint64, label string, move bool) {
+	menu := &ui.ContextMenuState{Title: label, Sections: []ui.ContextMenuSection{{SectionLabel: label}}}
+	if n := m.Win.Pane(node); move && n != nil && n.Split == nil {
+		group := n.Group
+		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: "Move into this pane", Action: owner.action(m, func() {
+			if m.Win.Pane(node) != nil && m.Win.MoveTabToGroup(owner.tab, group, 0) {
+				m.focusMainGroup(group)
+				m.syncPaneWindows()
+			}
+		})})
+	}
+	for _, edge := range []struct{ label, edge string }{{"Left", "left"}, {"Right", "right"}, {"Above", "top"}, {"Below", "bottom"}} {
+		dir, before := paneEdge(edge.edge)
+		tab := window.TabID(0)
+		verb := "Split "
+		if move {
+			tab, verb = owner.tab, "Move tab "
+		}
+		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: verb + edge.label, Action: owner.action(m, func() {
+			m.splitMainPane(node, dir, before, tab)
+		})})
+	}
+	m.openContextMenuState(tea.Mouse{X: m.mainPanes.Bounds().X + 3, Y: m.mainPanes.Bounds().Y + 2}, menu)
 }
 
 func (m *App) mainPaneSummary() string {

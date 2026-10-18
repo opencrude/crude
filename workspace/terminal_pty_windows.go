@@ -18,17 +18,19 @@ import (
 // conpty implements terminalIO using the Windows ConPTY API
 // (CreatePseudoConsole + CreateProcess with STARTUPINFOEX).
 type conpty struct {
-	hpc        windows.Handle
-	procInfo   windows.ProcessInformation
-	procHandle windows.Handle
-	readPipe   *os.File
-	writePipe  *os.File
-	tree       *fileio.WindowsProcessTree
-	wait       chan waitResult
-	waitDone   chan struct{}
-	closed     atomic.Bool
-	closeOnce  sync.Once
-	resizeMu   sync.Mutex
+	hpc              windows.Handle
+	procInfo         windows.ProcessInformation
+	procHandle       windows.Handle
+	readPipe         *os.File
+	writePipe        *os.File
+	tree             *fileio.WindowsProcessTree
+	wait             chan waitResult
+	waitDone         chan struct{}
+	closed           atomic.Bool
+	closeOnce        sync.Once
+	consoleCloseOnce sync.Once
+	resizeMu         sync.Mutex
+	consoleClosed    bool // protected by resizeMu
 }
 
 type waitResult struct {
@@ -214,7 +216,22 @@ func (c *conpty) waitLoop() {
 	}
 	_ = c.tree.Terminate()
 	_ = c.tree.Close()
+	// ConPTY keeps its output pipe open after the last client exits. Close
+	// the pseudoconsole while the manager's reader is still draining so its
+	// final bytes flush and that reader observes EOF before exit publication.
+	c.closeConsole()
 	c.wait <- waitResult{code: int(code), err: err}
+}
+
+func (c *conpty) closeConsole() {
+	c.consoleCloseOnce.Do(func() {
+		c.resizeMu.Lock()
+		c.consoleClosed = true
+		c.resizeMu.Unlock()
+		// ClosePseudoConsole can wait for the output consumer. Do not hold a
+		// lock a service Resize might await while owning the parser lock.
+		windows.ClosePseudoConsole(c.hpc)
+	})
 }
 
 func (c *conpty) Read(b []byte) (int, error) {
@@ -237,7 +254,7 @@ func (c *conpty) SetSize(cols, rows int) error {
 	}
 	c.resizeMu.Lock()
 	defer c.resizeMu.Unlock()
-	if c.closed.Load() {
+	if c.closed.Load() || c.consoleClosed {
 		return fmt.Errorf("conpty: closed")
 	}
 	size := windows.Coord{
@@ -259,9 +276,7 @@ func (c *conpty) Close() error {
 		// recycled raw handle can never become another I/O target.
 		_ = c.writePipe.Close()
 		_ = c.readPipe.Close()
-		c.resizeMu.Lock()
-		windows.ClosePseudoConsole(c.hpc)
-		c.resizeMu.Unlock()
+		c.closeConsole()
 		<-c.waitDone
 		_ = windows.CloseHandle(c.procHandle)
 	})

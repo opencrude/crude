@@ -21,16 +21,19 @@ const (
 // Command is an intent, never pre-encoded PTY bytes. The host binds the exact
 // service lease and executes it off the UI thread. Repeat defaults to one.
 type Command struct {
-	ID                   string
-	Kind                 CommandKind
-	Key                  terminalvt.Key
-	Mouse                terminalvt.Mouse
-	Paste                []byte
-	Focused              bool
-	Cols, Rows           int
-	Start, Count         int
-	Sequence, Generation uint64
-	Repeat               int
+	ID                        string
+	Kind                      CommandKind
+	Key                       terminalvt.Key
+	Mouse                     terminalvt.Mouse
+	Paste                     []byte
+	Focused                   bool
+	Cols, Rows                int
+	Start, Count              int
+	ViewportStart             int
+	HistoryEpoch, HistoryBase uint64
+	Sequence, Generation      uint64
+	Viewport                  uint64 // client-local scroll intent, not PTY generation
+	Repeat                    int
 }
 
 func mods(m tea.KeyMod) terminalvt.Modifiers {

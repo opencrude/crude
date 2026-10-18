@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
+	"crude/localhistory"
 	"crude/tui/cell"
 	"crude/tui/editor"
 	findinfiles "crude/tui/screens/findinfiles"
@@ -110,6 +111,12 @@ func TestReplaceInFilesAppliesToDiskAndRefreshes(t *testing.T) {
 	app.height = 36
 	wsOf(app).RootPath = root
 	wsOf(app).FileOps = workspace.NewFileOpsService(root, nil, nil)
+	store, err := localhistory.Open(t.TempDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	wsOf(app).LocalHistory = store
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.toggleReplaceInFiles()
@@ -123,11 +130,21 @@ func TestReplaceInFilesAppliesToDiskAndRefreshes(t *testing.T) {
 	}, nil, 0)
 
 	cmd := app.applyProjectReplace(findinfiles.ReplaceMsg{
-		Screen: search, All: true, Query: "alpha", Replacement: "omega",
+		Screen: search, Generation: search.Generation(), All: true, Query: "alpha", Replacement: "omega",
 	})
 	if cmd == nil {
-		t.Fatal("replace all should reschedule search")
+		t.Fatal("replace all should prepare a review off Update")
 	}
+	before, _ := os.ReadFile(path)
+	if string(before) != "alpha\nalpha beta\n" {
+		t.Fatal("replacement mutated during intent")
+	}
+	runAppCommand(t, app, cmd)
+	if app.projectReplace == nil {
+		t.Fatal("replacement review missing")
+	}
+	p := app.projectReplace
+	runAppCommand(t, app, app.handleProjectReplaceAction(projectReplaceActionMsg{p, "apply"}))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

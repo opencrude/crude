@@ -76,11 +76,13 @@ type TextArea struct {
 	// hoverFlat is the flat rune index under the pointer (-1 = none). It
 	// drives chip hover highlighting; updated on every mouse motion over
 	// the text body, independent of selection drags.
-	hoverFlat     int
-	lastClickTime time.Time
-	lastClickX    int
-	lastClickY    int
-	clickCount    int
+	hoverFlat      int
+	lastClickTime  time.Time
+	lastClickX     int
+	lastClickY     int
+	clickCount     int
+	pressX, pressY int
+	pointer        textSelectionGesture
 	// clipboardCopy builds the command that writes text to the system
 	// clipboard. Hosts may inject their own write path; tests inject a
 	// recorder so copy payloads are asserted without touching the clipboard.
@@ -170,10 +172,15 @@ func (t *TextArea) SetSubmitAction(id string) { t.submitID = id }
 // SetMultiLine controls whether Enter inserts a newline or submits.
 func (t *TextArea) SetMultiLine(v bool) { t.multiLine = v }
 
-// SetReadOnly freezes the editor: keyboard, paste, and mouse edits are
-// ignored while read-only.
-func (t *TextArea) SetReadOnly(v bool) { t.readOnly = v }
+// SetReadOnly freezes mutations, not reading interactions or selection.
+func (t *TextArea) SetReadOnly(v bool) {
+	if t.readOnly != v {
+		t.StopSelecting()
+	}
+	t.readOnly = v
+}
 func (t *TextArea) PasteText(text string) {
+	t.StopSelecting()
 	t.edit.InsertString(text)
 	t.EnsureCursorVisible()
 }
@@ -202,6 +209,7 @@ func (t *TextArea) EditState() TextAreaState {
 
 // SetValue replaces the content and places the cursor at the end.
 func (t *TextArea) SetValue(s string) {
+	t.StopSelecting()
 	t.edit.SetValue(s)
 	t.cursor.MarkActivity()
 	t.EnsureCursorVisible()
@@ -209,6 +217,7 @@ func (t *TextArea) SetValue(s string) {
 
 // Clear empties the buffer and resets the cursor.
 func (t *TextArea) Clear() {
+	t.StopSelecting()
 	t.edit.Clear()
 	t.scroll = 0
 	t.cursor.MarkActivity()
@@ -260,6 +269,7 @@ func (t *TextArea) Lines() [][]rune { return t.edit.Lines() }
 
 // InsertString inserts a string at the cursor, handling newlines.
 func (t *TextArea) InsertString(s string) {
+	t.StopSelecting()
 	t.edit.InsertString(s)
 	t.cursor.MarkActivity()
 	t.EnsureCursorVisible()
@@ -281,29 +291,22 @@ func (t *TextArea) SelectionRange() (int, int) { return t.edit.SelectionRange() 
 func (t *TextArea) HasActiveSelection() bool { return t.edit.HasActiveSelection() }
 
 // IsSelecting reports whether a mouse-drag selection is in progress.
-func (t *TextArea) IsSelecting() bool { return t.edit.IsSelecting() }
+func (t *TextArea) IsSelecting() bool { return t.pointer.active }
 
-// SetSelection sets the selection anchor and end.
-func (t *TextArea) SetSelection(anchor, end int) { t.edit.SetSelection(anchor, end) }
-
-// UpdateSelectionEnd moves the selection end (for drag).
-func (t *TextArea) UpdateSelectionEnd(end int) { t.edit.UpdateSelectionEnd(end) }
+// SetSelection sets half-open insertion boundaries; it never starts capture.
+func (t *TextArea) SetSelection(anchor, end int) { t.StopSelecting(); t.edit.SetSelection(anchor, end) }
 
 // ClearSelection drops the selection.
-func (t *TextArea) ClearSelection() { t.edit.ClearSelection() }
+func (t *TextArea) ClearSelection() { t.StopSelecting(); t.edit.ClearSelection() }
 
 // SelectedText returns the selected substring.
 func (t *TextArea) SelectedText() string { return t.edit.SelectedText() }
-
-// SetSelecting sets the selecting flag directly.
-// SetSelecting sets the selecting flag directly.
-func (t *TextArea) SetSelecting(v bool) { t.edit.SetSelecting(v) }
 
 // StopSelecting clears the drag flag but keeps the selection range, so a
 // cancelled capture (another window claimed the pointer) leaves the text
 // selected for Ctrl+C. A completed drag goes through EndMouseSelection, which
 // copies and drops the selection.
-func (t *TextArea) StopSelecting() { t.edit.StopSelecting() }
+func (t *TextArea) StopSelecting() { t.pointer = textSelectionGesture{} }
 
 // TextValue returns the entire value (TextClipboardTarget).
 func (t *TextArea) TextValue() string { return t.edit.Value() }
@@ -334,11 +337,12 @@ func (t *TextArea) TextSelection() (string, bool) {
 
 // ClearTextSelection drops the selection without touching the text
 // (TextClipboardTarget).
-func (t *TextArea) ClearTextSelection() { t.edit.ClearSelection() }
+func (t *TextArea) ClearTextSelection() { t.ClearSelection() }
 
 // DeleteTextSelection deletes the active selection as one undo step and
 // reports whether anything was deleted (TextClipboardTarget).
 func (t *TextArea) DeleteTextSelection() bool {
+	t.StopSelecting()
 	if !t.edit.deleteActiveSelectionWithHistory() {
 		return false
 	}
@@ -353,6 +357,7 @@ func (t *TextArea) DeleteTextSelection() bool {
 // contract; hosts with a fallback (the chat composer clears its draft on an
 // unhandled Ctrl+C) inspect the handled flag.
 func (t *TextArea) HandleClipboardKey(m tea.KeyPressMsg) (EventResult, bool) {
+	t.StopSelecting()
 	res, handled := textClipboardChord(t, t.clipboardCopyFn(), m)
 	if handled {
 		t.cursor.MarkActivity()
@@ -368,11 +373,11 @@ func (t *TextArea) HandleClipboardKey(m tea.KeyPressMsg) (EventResult, bool) {
 // (copy-on-release). A press that never moved only stops the drag. Both the
 // component tree and the composer pointer path share this implementation.
 func (t *TextArea) EndMouseSelection() tea.Cmd {
-	if !t.edit.IsSelecting() {
+	if !t.IsSelecting() {
 		return nil
 	}
-	wasDrag := t.edit.takeDragMoved()
-	t.edit.StopSelecting()
+	wasDrag := t.pointer.moved
+	t.StopSelecting()
 	if !wasDrag || t.TextEditable() {
 		return nil
 	}
@@ -775,9 +780,13 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 	switch evt.Kind {
 	case EventKey:
+		t.StopSelecting()
+		t.lastClickTime = time.Time{}
 		return t.handleKey(evt.Key)
 	case EventCustom:
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
+			t.StopSelecting()
+			t.lastClickTime = time.Time{}
 			if t.readOnly {
 				return EventResult{Handled: true}
 			}
@@ -792,6 +801,9 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
 		if pos >= 0 {
+			pos = t.edit.pointerPosition(pos)
+		}
+		if pos >= 0 {
 			now := time.Now()
 			if now.Sub(t.lastClickTime) <= 500*time.Millisecond &&
 				intAbs(ctx.LocalX-t.lastClickX) <= 1 && intAbs(ctx.LocalY-t.lastClickY) <= 1 {
@@ -800,28 +812,39 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 				t.clickCount = 1
 			}
 			t.lastClickTime, t.lastClickX, t.lastClickY = now, ctx.LocalX, ctx.LocalY
+			t.pressX, t.pressY = ctx.LocalX, ctx.LocalY
+			unit := textSelectionCharacter
 			switch {
+			case evt.MouseClick.Mod.Contains(tea.ModShift):
+				anchor := t.edit.CursorFlat()
+				if t.edit.selActive {
+					anchor = t.edit.selAnchor
+				}
+				t.edit.SetSelection(anchor, pos)
+				t.edit.SetCursorFlat(pos)
+				unit = textSelectionCaret
 			case t.clickCount >= 3:
 				t.edit.selectLineAt(pos)
 				t.clickCount = 0
+				unit = textSelectionLine
 			case t.clickCount == 2:
 				t.edit.selectWordAt(pos)
-			case evt.MouseClick.Mod.Contains(tea.ModShift):
-				if !t.edit.IsSelecting() {
-					t.edit.SetSelection(t.edit.CursorFlat(), pos)
-				} else {
-					t.edit.UpdateSelectionEnd(pos)
-				}
-				t.edit.SetCursorFlat(pos)
+				unit = textSelectionWord
 			default:
 				t.edit.SetSelection(pos, pos)
 				t.edit.SetCursorFlat(pos)
 			}
-			t.edit.SetSelecting(true)
+			start, end := pos, t.edit.pointerUnitEnd(pos)
+			if unit == textSelectionCaret {
+				start, end = t.edit.selAnchor, t.edit.selAnchor
+			} else if unit != textSelectionCharacter {
+				start, end = t.edit.SelectionRange()
+			}
+			t.pointer = textSelectionGesture{active: true, unit: unit, start: start, end: end}
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateFocus}
 	case EventMouseMotion:
-		if t.edit.IsSelecting() {
+		if t.IsSelecting() {
 			if ctx.LocalY < 0 && t.scroll > 0 {
 				t.scroll--
 				ctx.LocalY = 0
@@ -834,11 +857,18 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		if pos != t.hoverFlat {
 			t.hoverFlat = pos
 		}
-		if pos >= 0 && t.edit.IsSelecting() {
-			t.edit.UpdateSelectionEnd(pos)
+		if pos >= 0 && t.IsSelecting() {
+			t.projectPointer(pos)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case EventMouseRelease:
+		if evt.MouseRelease.Button != tea.MouseLeft || !t.IsSelecting() {
+			return EventResult{}
+		}
+		pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
+		if pos >= 0 && (t.pointer.moved || ctx.LocalX != t.pressX || ctx.LocalY != t.pressY) {
+			t.projectPointer(pos)
+		}
 		return EventResult{
 			Handled:    true,
 			Cmd:        t.EndMouseSelection(),
@@ -859,7 +889,29 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 	return EventResult{}
 }
 
-func (t *TextArea) CancelPointerCapture() { t.edit.StopSelecting() }
+func (t *TextArea) CancelPointerCapture() { t.StopSelecting() }
+
+func (t *TextArea) projectPointer(pos int) {
+	pos = t.edit.pointerPosition(pos)
+	start, end := pos, pos
+	switch t.pointer.unit {
+	case textSelectionWord:
+		line, col := t.edit.flatToLineCol(pos)
+		a, b := textWordRange(t.edit.buf[line], col)
+		start, end = t.edit.lineColToFlat(line, a), t.edit.lineColToFlat(line, b)
+	case textSelectionLine:
+		line, _ := t.edit.flatToLineCol(pos)
+		start = t.edit.lineColToFlat(line, 0)
+		end = t.edit.lineColToFlat(line, len(t.edit.buf[line]))
+		if line < len(t.edit.buf)-1 {
+			end++
+		}
+	}
+	t.edit.selAnchor, t.edit.selEnd = t.pointer.project(start, end)
+	t.edit.selActive = true
+	t.edit.setCursorFlat(t.edit.selEnd)
+	t.pointer.moved = true
+}
 
 func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 	if res, handled := textClipboardChord(t, t.clipboardCopyFn(), m); handled {
@@ -870,6 +922,11 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 	// unhandled so the host owns the next rung of its ladder: the chat
 	// composer clears its draft.
 	if ClipboardChordFor(m) != ClipboardChordNone {
+		return EventResult{}
+	}
+	// Esc is a host-owned back/cancel gesture after selection dismissal,
+	// including read-only readers. It is not a forbidden mutation to swallow.
+	if m.Code == tea.KeyEsc {
 		return EventResult{}
 	}
 	if t.readOnly && !t.readOnlyKeyAllowed(m) {
@@ -907,12 +964,6 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 				Invalidate: InvalidatePaint,
 			}
 		}
-	}
-	// Esc drops an active selection in the shared chord handler above;
-	// otherwise it is left to the host, which owns the next rung of its ladder
-	// (popups close, the chat composer clears its draft, a turn is cancelled).
-	if m.Code == tea.KeyEsc {
-		return EventResult{}
 	}
 	// Single-line Enter submits
 	if m.Code == tea.KeyEnter && !t.multiLine {
@@ -983,6 +1034,8 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 		return nil
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
+		t.StopSelecting()
+		t.lastClickTime = time.Time{}
 		if res, handled := t.HandleClipboardKey(key); handled {
 			return res.Cmd
 		}
@@ -998,6 +1051,8 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 		return nil
 	}
 	if paste, ok := msg.(tea.PasteMsg); ok {
+		t.StopSelecting()
+		t.lastClickTime = time.Time{}
 		if t.readOnly {
 			return nil
 		}
@@ -1052,20 +1107,15 @@ var _ TextClipboardTarget = (*TextArea)(nil)
 //
 // This is the engine from components/text.go, relocated into the foundation
 // package (tui/ui) so TextArea can own it natively without an import cycle.
-// The algorithm is preserved exactly: rune-safe line/col, wrap-aware
-// vertical navigation with goal column, atomic ranges, multi-line selection.
+// Source offsets stay rune-based while user movement/deletion is grapheme-atomic.
+// Pointer capture belongs to TextArea, independently of this selection anchor.
 // ---------------------------------------------------------------------------
 type textAreaEngine struct {
-	buf        [][]rune
-	curLine    int
-	curCol     int
-	lastVisCol int
-	selecting  bool
-	// dragMoved records that pointer motion extended the selection, so
-	// copy-on-release only fires for a real drag: a press (SetSelection) clears
-	// it, motion (UpdateSelectionEnd) sets it. Both the component pointer path
-	// and the legacy composer path funnel through these two calls.
-	dragMoved         bool
+	buf               [][]rune
+	curLine           int
+	curCol            int
+	lastVisCol        int
+	selActive         bool
 	selAnchor         int
 	selEnd            int
 	lastInputTime     time.Time
@@ -1083,7 +1133,7 @@ type textAreaEngine struct {
 type textAreaSnapshot struct {
 	value               string
 	cursor, anchor, end int
-	selecting           bool
+	selActive           bool
 }
 
 func newTextAreaEngine() *textAreaEngine {
@@ -1100,9 +1150,9 @@ func (e *textAreaEngine) beginSelectionIfShift(mod tea.KeyMod) {
 	if !mod.Contains(tea.ModShift) {
 		return
 	}
-	if !e.selecting {
+	if !e.selActive {
 		pos := e.CursorFlat()
-		e.selecting = true
+		e.selActive = true
 		e.selAnchor = pos
 		e.selEnd = pos
 	}
@@ -1111,8 +1161,8 @@ func (e *textAreaEngine) beginSelectionIfShift(mod tea.KeyMod) {
 // finishMovementIfNoShift clears the selection when no Shift modifier is
 // held, so plain arrow movements collapse any active selection.
 func (e *textAreaEngine) finishMovementIfNoShift(mod tea.KeyMod) {
-	if !mod.Contains(tea.ModShift) && e.selecting {
-		e.selecting = false
+	if !mod.Contains(tea.ModShift) && e.selActive {
+		e.selActive = false
 		e.selAnchor = 0
 		e.selEnd = 0
 	}
@@ -1127,6 +1177,17 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 	shift := msg.Mod.Contains(tea.ModShift)
 	primary := msg.Mod.Contains(tea.ModCtrl) || msg.Mod.Contains(tea.ModSuper)
 	word := primary || msg.Mod.Contains(tea.ModAlt)
+	if !shift && !word && e.HasActiveSelection() && (msg.Code == tea.KeyLeft || msg.Code == tea.KeyRight) {
+		start, end := e.SelectionRange()
+		if msg.Code == tea.KeyLeft {
+			e.setCursorFlat(start)
+		} else {
+			e.setCursorFlat(end)
+		}
+		e.ClearSelection()
+		e.lastVisCol = -1
+		return
+	}
 	if primary && msg.Code == 'z' {
 		if shift {
 			e.Redo()
@@ -1157,7 +1218,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 			e.curCol = 0
 			break
 		}
-		e.selecting = false
+		e.selActive = false
 		e.selAnchor = 0
 		e.selEnd = 0
 		e.splitLineAt(e.curLine, e.curCol)
@@ -1171,11 +1232,11 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 			e.setCursorFlat(pos)
 			break
 		}
-		if e.selecting && !shift {
+		if e.HasActiveSelection() {
 			s, end := e.SelectionRange()
 			e.deleteRange(s, end)
 			e.setCursorFlat(s)
-			e.selecting = false
+			e.selActive = false
 			e.selAnchor = 0
 			e.selEnd = 0
 			break
@@ -1187,10 +1248,14 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 				e.setCursorFlat(ar.Start)
 				break
 			}
-			e.deleteRuneAt(pos)
-			e.curLine, e.curCol = e.flatToLineCol(pos - 1)
+			start := pos - 1
+			if e.curCol > 0 {
+				start = e.lineColToFlat(e.curLine, rendering.PreviousGrapheme(e.buf[e.curLine], e.curCol))
+			}
+			e.deleteRange(start, pos)
+			e.setCursorFlat(start)
 		}
-		e.selecting = false
+		e.selActive = false
 		e.selAnchor = 0
 		e.selEnd = 0
 	case tea.KeyDelete:
@@ -1200,11 +1265,11 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 			e.setCursorFlat(pos)
 			break
 		}
-		if e.selecting && !shift {
+		if e.HasActiveSelection() {
 			s, end := e.SelectionRange()
 			e.deleteRange(s, end)
 			e.setCursorFlat(s)
-			e.selecting = false
+			e.selActive = false
 			e.selAnchor = 0
 			e.selEnd = 0
 			break
@@ -1216,9 +1281,13 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 				e.setCursorFlat(ar.Start)
 				break
 			}
-			e.deleteForwardAt(pos)
+			end := pos + 1
+			if e.curCol < len(e.buf[e.curLine]) {
+				end = e.lineColToFlat(e.curLine, rendering.NextGrapheme(e.buf[e.curLine], e.curCol))
+			}
+			e.deleteRange(pos, end)
 		}
-		e.selecting = false
+		e.selActive = false
 		e.selAnchor = 0
 		e.selEnd = 0
 	case tea.KeyUp:
@@ -1226,7 +1295,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.lastVisCol = visCol
 		e.beginSelectionIfShift(msg.Mod)
 		e.cursorUpVisual()
-		if e.selecting {
+		if e.selActive {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
@@ -1235,7 +1304,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.lastVisCol = visCol
 		e.beginSelectionIfShift(msg.Mod)
 		e.cursorDownVisual()
-		if e.selecting {
+		if e.selActive {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
@@ -1244,14 +1313,14 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		if word {
 			e.setCursorFlat(e.cursorPrevWord())
 		} else if e.curCol > 0 {
-			e.curCol--
+			e.curCol = rendering.PreviousGrapheme(e.buf[e.curLine], e.curCol)
 		} else if e.curLine > 0 {
 			e.curLine--
 			e.curCol = len(e.buf[e.curLine])
 		}
 		e.snapCursorAcrossAtomic(false)
 		e.lastVisCol = -1
-		if e.selecting {
+		if e.selActive {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
@@ -1260,14 +1329,14 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		if word {
 			e.setCursorFlat(e.cursorNextWord())
 		} else if e.curCol < len(e.buf[e.curLine]) {
-			e.curCol++
+			e.curCol = rendering.NextGrapheme(e.buf[e.curLine], e.curCol)
 		} else if e.curLine < len(e.buf)-1 {
 			e.curLine++
 			e.curCol = 0
 		}
 		e.snapCursorAcrossAtomic(true)
 		e.lastVisCol = -1
-		if e.selecting {
+		if e.selActive {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
@@ -1278,7 +1347,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		}
 		e.curCol = 0
 		e.lastVisCol = -1
-		if e.selecting {
+		if e.selActive {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
@@ -1292,7 +1361,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		}
 		e.curCol = len(e.buf[e.curLine])
 		e.lastVisCol = -1
-		if e.selecting {
+		if e.selActive {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
@@ -1304,7 +1373,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 				// case the legacy binding to go to line start still
 				// applies, so honour shift+ctrl+a as select-all too).
 				total := e.Len()
-				e.selecting = true
+				e.selActive = true
 				e.selAnchor = 0
 				e.selEnd = total
 				e.setCursorFlat(total)
@@ -1318,7 +1387,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 					e.deleteRange(start, cf)
 					e.setCursorFlat(start)
 				}
-				e.selecting = false
+				e.selActive = false
 				e.selAnchor = 0
 				e.selEnd = 0
 			case 'k':
@@ -1327,7 +1396,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 				if end > cf {
 					e.deleteRange(cf, end)
 				}
-				e.selecting = false
+				e.selActive = false
 				e.selAnchor = 0
 				e.selEnd = 0
 			case 'w':
@@ -1337,7 +1406,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 					e.deleteRange(pos, cf)
 					e.setCursorFlat(pos)
 				}
-				e.selecting = false
+				e.selActive = false
 				e.selAnchor = 0
 				e.selEnd = 0
 			}
@@ -1349,7 +1418,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 					e.curCol++
 				}
 			}
-			e.selecting = false
+			e.selActive = false
 			e.selAnchor = 0
 			e.selEnd = 0
 		}
@@ -1387,7 +1456,7 @@ func (e *textAreaEngine) SetValue(s string) {
 		e.curLine = 0
 	}
 	e.curCol = len(e.buf[e.curLine])
-	e.selecting = false
+	e.selActive = false
 	e.selAnchor, e.selEnd = 0, 0
 	e.undo = nil
 	e.redo = nil
@@ -1428,7 +1497,7 @@ func (e *textAreaEngine) Clear() {
 	e.buf = [][]rune{{}}
 	e.curLine = 0
 	e.curCol = 0
-	e.selecting = false
+	e.selActive = false
 	e.selAnchor = 0
 	e.selEnd = 0
 	e.undo = nil
@@ -1581,35 +1650,15 @@ func (e *textAreaEngine) HasActiveSelection() bool {
 	return s != e2
 }
 
-func (e *textAreaEngine) IsSelecting() bool { return e.selecting }
-
 func (e *textAreaEngine) SetSelection(anchor, end int) {
-	e.selecting = true
-	// A press starts a fresh drag: only pointer motion after it counts as a
-	// drag for copy-on-release.
-	e.dragMoved = false
+	anchor, end = min(e.Len(), max(0, anchor)), min(e.Len(), max(0, end))
+	e.selActive = true
 	e.selAnchor = anchor
 	e.selEnd = end
 }
 
-// UpdateSelectionEnd extends the selection during a pointer drag and records
-// that the pointer actually moved.
-func (e *textAreaEngine) UpdateSelectionEnd(end int) {
-	e.selEnd = end
-	e.dragMoved = true
-}
-
-// takeDragMoved reports whether pointer motion extended the current selection
-// and clears the marker.
-func (e *textAreaEngine) takeDragMoved() bool {
-	moved := e.dragMoved
-	e.dragMoved = false
-	return moved
-}
-
 func (e *textAreaEngine) ClearSelection() {
-	e.selecting = false
-	e.dragMoved = false
+	e.selActive = false
 	e.selAnchor = 0
 	e.selEnd = 0
 }
@@ -1620,6 +1669,7 @@ func (e *textAreaEngine) SelectedText() string {
 		return ""
 	}
 	runes := []rune(e.Value())
+	s = max(0, s)
 	if e2 > len(runes) {
 		e2 = len(runes)
 	}
@@ -1629,12 +1679,10 @@ func (e *textAreaEngine) SelectedText() string {
 	return string(runes[s:e2])
 }
 
-func (e *textAreaEngine) SetSelecting(v bool) { e.selecting = v }
-
 func (e *textAreaEngine) snapshot() textAreaSnapshot {
 	return textAreaSnapshot{
 		value: e.Value(), cursor: e.CursorFlat(), anchor: e.selAnchor,
-		end: e.selEnd, selecting: e.selecting,
+		end: e.selEnd, selActive: e.selActive,
 	}
 }
 
@@ -1648,7 +1696,7 @@ func (e *textAreaEngine) restore(snapshot textAreaSnapshot) {
 		e.buf = [][]rune{{}}
 	}
 	e.setCursorFlat(snapshot.cursor)
-	e.selAnchor, e.selEnd, e.selecting = snapshot.anchor, snapshot.end, snapshot.selecting
+	e.selAnchor, e.selEnd, e.selActive = snapshot.anchor, snapshot.end, snapshot.selActive
 	e.touchContent()
 }
 
@@ -1688,20 +1736,9 @@ func (e *textAreaEngine) deleteActiveSelectionWithHistory() bool {
 }
 
 func (e *textAreaEngine) selectWordAt(pos int) {
-	runes := []rune(e.Value())
-	if len(runes) == 0 {
-		e.SetSelection(0, 0)
-		return
-	}
-	pos = min(max(0, pos), len(runes)-1)
-	class := runeClass(runes[pos])
-	start, end := pos, pos+1
-	for start > 0 && runeClass(runes[start-1]) == class {
-		start--
-	}
-	for end < len(runes) && runeClass(runes[end]) == class {
-		end++
-	}
+	line, col := e.flatToLineCol(pos)
+	a, b := textWordRange(e.buf[line], col)
+	start, end := e.lineColToFlat(line, a), e.lineColToFlat(line, b)
 	e.SetSelection(start, end)
 	e.setCursorFlat(end)
 }
@@ -1721,7 +1758,7 @@ func (e *textAreaEngine) moveVisualRows(delta int, extend bool) {
 	if delta == 0 {
 		return
 	}
-	if extend && !e.selecting {
+	if extend && !e.selActive {
 		pos := e.CursorFlat()
 		e.SetSelection(pos, pos)
 	}
@@ -1734,20 +1771,12 @@ func (e *textAreaEngine) moveVisualRows(delta int, extend bool) {
 			e.cursorDownVisual()
 		}
 	}
-	if e.selecting {
+	if e.selActive {
 		e.selEnd = e.CursorFlat()
 	}
 	if !extend {
 		e.ClearSelection()
 	}
-}
-
-// StopSelecting keeps the selection range but clears the mouse-drag flag and
-// the drag marker, so a cancelled capture keeps the text selectable while the
-// next press starts a fresh drag.
-func (e *textAreaEngine) StopSelecting() {
-	e.selecting = false
-	e.dragMoved = false
 }
 
 func (e *textAreaEngine) FlatToLineCol(pos int) (int, int) { return e.flatToLineCol(pos) }
@@ -1859,50 +1888,32 @@ func (e *textAreaEngine) insertRuneAt(pos int, r rune) {
 	e.touchContent()
 }
 
-func (e *textAreaEngine) deleteRuneAt(pos int) {
-	if pos <= 0 {
-		return
-	}
-	defer e.touchContent()
-	line, col := e.flatToLineCol(pos)
-	if col > 0 {
-		newLine := make([]rune, len(e.buf[line])-1)
-		copy(newLine, e.buf[line][:col-1])
-		copy(newLine[col-1:], e.buf[line][col:])
-		e.buf[line] = newLine
-	} else if line > 0 {
-		prevLen := len(e.buf[line-1])
-		merged := make([]rune, prevLen+len(e.buf[line]))
-		copy(merged, e.buf[line-1])
-		copy(merged[prevLen:], e.buf[line])
-		e.buf = append(e.buf[:line-1], e.buf[line:]...)
-		e.buf[line-1] = merged
-	}
-}
-
-func (e *textAreaEngine) deleteForwardAt(pos int) {
-	line, col := e.flatToLineCol(pos)
-	if line >= len(e.buf) {
-		return
-	}
-	defer e.touchContent()
-	lineLen := len(e.buf[line])
-	if col < lineLen {
-		newLine := make([]rune, lineLen-1)
-		copy(newLine, e.buf[line][:col])
-		copy(newLine[col:], e.buf[line][col+1:])
-		e.buf[line] = newLine
-	} else if line+1 < len(e.buf) {
-		merged := make([]rune, lineLen+len(e.buf[line+1]))
-		copy(merged, e.buf[line])
-		copy(merged[lineLen:], e.buf[line+1])
-		e.buf = append(e.buf[:line], e.buf[line+1:]...)
-		e.buf[line] = merged
-	}
-}
-
 func (e *textAreaEngine) setCursorFlat(pos int) {
 	e.curLine, e.curCol = e.flatToLineCol(pos)
+	e.curCol = rendering.GraphemeBoundary(e.buf[e.curLine], e.curCol)
+}
+
+func (e *textAreaEngine) pointerUnitEnd(pos int) int {
+	line, col := e.flatToLineCol(pos)
+	if col >= len(e.buf[line]) {
+		return pos
+	} // EOL press never silently selects a newline
+	for _, ar := range e.atomicRanges {
+		if pos >= ar.Start && pos < ar.End {
+			return ar.End
+		}
+	}
+	return e.lineColToFlat(line, rendering.NextGrapheme(e.buf[line], col))
+}
+
+func (e *textAreaEngine) pointerPosition(pos int) int {
+	for _, ar := range e.atomicRanges {
+		if pos > ar.Start && pos < ar.End {
+			return ar.Start
+		}
+	}
+	line, col := e.flatToLineCol(pos)
+	return e.lineColToFlat(line, rendering.GraphemeBoundary(e.buf[line], col))
 }
 
 func (e *textAreaEngine) splitLineAt(line, col int) {
@@ -1981,10 +1992,10 @@ func (e *textAreaEngine) cursorDownVisual() {
 
 func (e *textAreaEngine) setCursorFromVisualLine(targetVisLine, targetVisCol int) {
 	if e.textWidth < 1 {
-		if targetVisLine < len(e.buf) {
+		if targetVisLine >= 0 && targetVisLine < len(e.buf) {
 			e.curLine = targetVisLine
 			if targetVisCol < len(e.buf[targetVisLine]) {
-				e.curCol = targetVisCol
+				e.curCol = rendering.GraphemeBoundary(e.buf[targetVisLine], targetVisCol)
 			} else {
 				e.curCol = len(e.buf[targetVisLine])
 			}

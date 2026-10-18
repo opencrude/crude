@@ -132,6 +132,11 @@ func (m *App) markEditorDiskConflict(ed *editor.Editor, message string) {
 }
 
 func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
+	if m.FindReplace != nil && m.EditorState != nil && m.EditorState.Editor == ed {
+		state := ed.Search()
+		m.FindReplace.MatchCount, m.FindReplace.CurrentIdx, m.FindReplace.Error = len(state.Matches), state.CurrentIdx, state.Error
+		m.refreshFindReplacePopup()
+	}
 	if state := m.liveEditors[ed]; state != nil {
 		state.due = time.Now().Add(time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond)
 		m.markEditorGitDirty(time.Now())

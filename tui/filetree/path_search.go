@@ -1,11 +1,11 @@
 package filetree
 
 import (
+	"crude/textsearch"
 	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode"
 
 	"crude/third_party/pathwalk"
 )
@@ -191,89 +191,6 @@ func fuzzyPathScore(value, query string) (int, []int, bool) {
 }
 
 func fuzzySequenceScore(value, query string) (int, []int, bool) {
-	valueRunes := []rune(value)
-	queryRunes := []rune(strings.TrimSpace(query))
-	if len(queryRunes) == 0 {
-		return 0, nil, true
-	}
-	lower := make([]rune, len(valueRunes))
-	for i, r := range valueRunes {
-		lower[i] = unicode.ToLower(r)
-	}
-	queryLower := make([]rune, len(queryRunes))
-	for i, r := range queryRunes {
-		queryLower[i] = unicode.ToLower(r)
-	}
-	// Keep a contiguous fallback for repeated-letter names where greedy fuzzy
-	// scoring can choose a locally better occurrence and strand a later rune.
-	contiguousScore := 0
-	var contiguousPositions []int
-	for start := 0; start+len(queryLower) <= len(lower); start++ {
-		matched := true
-		for i := range queryLower {
-			if lower[start+i] != queryLower[i] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			positions := make([]int, len(queryLower))
-			for i := range positions {
-				positions[i] = start + i
-			}
-			score := 80 + len(queryLower)*32 - start - len(valueRunes)/8
-			if start == 0 || isPathBoundary(valueRunes[start-1]) {
-				score += 48
-			}
-			contiguousScore, contiguousPositions = score, positions
-			break
-		}
-	}
-
-	positions := make([]int, 0, len(queryRunes))
-	vi := 0
-	score := 0
-	for qi, want := range queryLower {
-		best := -1
-		bestScore := -1 << 30
-		for i := vi; i < len(lower); i++ {
-			if lower[i] != want {
-				continue
-			}
-			candidate := 10 - (i - vi)
-			if i == 0 || isPathBoundary(valueRunes[i-1]) {
-				candidate += 28
-			}
-			if i > 0 && unicode.IsUpper(valueRunes[i]) && unicode.IsLower(valueRunes[i-1]) {
-				candidate += 18
-			}
-			if i > 0 && len(positions) > 0 && positions[len(positions)-1]+1 == i {
-				candidate += 22
-			}
-			if qi == 0 && i == 0 {
-				candidate += 20
-			}
-			if candidate > bestScore {
-				best, bestScore = i, candidate
-			}
-		}
-		if best < 0 {
-			if contiguousPositions != nil {
-				return contiguousScore, contiguousPositions, true
-			}
-			return 0, nil, false
-		}
-		positions = append(positions, best)
-		score += bestScore
-		vi = best + 1
-	}
-	if strings.Contains(strings.ToLower(value), strings.ToLower(strings.TrimSpace(query))) {
-		score += 80
-	}
-	score -= len(valueRunes) / 8
-	return score, positions, true
-}
-
-func isPathBoundary(r rune) bool {
-	return r == '/' || r == '\\' || r == '-' || r == '_' || r == ' ' || r == '.'
+	positions, score, ok := textsearch.Fuzzy(value, strings.TrimSpace(query), false)
+	return score, positions, ok
 }

@@ -30,6 +30,29 @@ func TestComposerOpenCloseAndValue(t *testing.T) {
 	}
 }
 
+func TestComposerSelectionMatchesSharedContract(t *testing.T) {
+	s, host := composerHost(t)
+	s.Open("abcdef")
+	r, _ := host.ScreenRect(InputID)
+	host.Handle(tea.MouseClickMsg{X: r.X + 3, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: r.X + 3, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if s.SelectedText() != "c" || s.Selecting() {
+		t.Fatalf("keyboard=%q dragging=%v", s.SelectedText(), s.Selecting())
+	}
+	host.Handle(tea.MouseMotionMsg{X: r.X + 5, Y: r.Y})
+	if s.SelectedText() != "c" {
+		t.Fatal("hover changed keyboard selection")
+	}
+	s.SetValue("abcdef")
+	host.Handle(tea.MouseClickMsg{X: r.X + 3, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+	if s.SelectedText() != "bcd" {
+		t.Fatalf("drag=%q", s.SelectedText())
+	}
+}
+
 func TestComposerCtrlEnterSubmitsAndEnterInsertsNewline(t *testing.T) {
 	screen, host := composerHost(t)
 	screen.Open("line1")

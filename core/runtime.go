@@ -340,6 +340,12 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	if err != nil {
 		return fault(request, "attach_failed", err.Error())
 	}
+	// Attachment is the access boundary, including a return to a retained actor.
+	// Persist off the actor loop; background work and catalog refresh never touch it.
+	if err := a.accessDB.RecordAccess(ctx, time.Now()); err != nil {
+		a.unsubscribe(c)
+		return fault(request, "attach_failed", "record workspace access: "+err.Error())
+	}
 	c.mu.Lock()
 	select {
 	case <-c.done:
@@ -432,6 +438,7 @@ type actor struct {
 	runtime       *Runtime
 	id            string
 	ws            *workspace.Workspace
+	accessDB      *workspace.WorkspaceDB // immutable lifetime handle; sql.DB fences concurrent close
 	receipts      *receiptJournal
 	commands      chan actorCommand
 	ingress       chan workspace.AgentEvent
@@ -472,6 +479,7 @@ type actorCommand struct {
 func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *actor {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &actor{ctx: ctx, cancel: cancel, jobs: make(chan actorJobResult, 16), id: id, ws: ws, receipts: receipts, commands: make(chan actorCommand, 128), ingress: make(chan workspace.AgentEvent, 1024), stop: make(chan struct{}), done: make(chan struct{}), subscribers: make(map[*Connection]struct{}), revision: 1}
+	a.accessDB = ws.WorkspaceDB
 	a.resourceLane = newResourceLane(ctx, 32)
 	a.terminalLane = newResourceLane(ctx, 32)
 	a.lspViews = newLSPViews(ws.LiveDocuments)

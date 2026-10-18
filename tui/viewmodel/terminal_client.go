@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
+	"crude/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"
@@ -68,6 +69,13 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 	generation, owner := m.workspaceSwitchGen.Load(), m.terminalController()
 	lease := m.terminalLeases[command.ID]
 	command.Paste = append([]byte(nil), command.Paste...)
+	viewport := shellterm.Command{Start: -1}
+	if screen := m.termScreens[command.ID]; screen != nil {
+		viewport = screen.ViewportRead()
+	}
+	if command.Kind != shellterm.CommandReadRows {
+		command.Viewport = viewport.Viewport
+	}
 	run := func() tea.Msg {
 		result := terminalProjectionMsg{service: service, generation: generation, command: command}
 		for i := 0; i < max(1, command.Repeat); i++ {
@@ -83,7 +91,7 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 			case shellterm.CommandResize:
 				result.err = service.Resize(lease, command.Cols, command.Rows)
 			case shellterm.CommandReadRows:
-				result.projection, result.err = service.Rows(command.ID, command.Start, command.Count)
+				result.projection, result.err = service.Rows(command.ID, terminalvt.RowRequest{Start: command.Start, Count: command.Count, ViewportStart: command.ViewportStart, HistoryEpoch: command.HistoryEpoch, HistoryBase: command.HistoryBase})
 			case shellterm.CommandTakeControl:
 				result.lease, result.err = service.Acquire(command.ID, owner)
 			default:
@@ -94,7 +102,7 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 			}
 		}
 		if result.err == nil && command.Kind != shellterm.CommandReadRows {
-			result.projection, result.err = service.Rows(command.ID, -1, 0)
+			result.projection, result.err = service.Rows(command.ID, terminalvt.RowRequest{Start: viewport.Start, HistoryEpoch: viewport.HistoryEpoch, HistoryBase: viewport.HistoryBase})
 		}
 		return result
 	}
@@ -132,7 +140,11 @@ func (m *App) terminalRefresh(id string) tea.Cmd {
 		return nil
 	}
 	m.terminalReads[id] = true
-	return m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandReadRows, Start: -1})
+	read := shellterm.Command{ID: id, Kind: shellterm.CommandReadRows, Start: -1}
+	if screen := m.termScreens[id]; screen != nil {
+		read = screen.ViewportRead()
+	}
+	return m.terminalCommand(read)
 }
 
 func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
@@ -203,7 +215,12 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 		m.terminalLeases[id] = msg.lease
 		screen.SetControlled(true)
 	}
-	if msg.command.Sequence != 0 {
+	staleViewport := !screen.AcceptsViewport(msg.command.Viewport)
+	if staleViewport {
+		if msg.command.Sequence != 0 {
+			screen.RowsFailed(msg.command.Sequence)
+		}
+	} else if msg.command.Sequence != 0 {
 		screen.SetRows(msg.command.Sequence, msg.projection)
 	} else {
 		screen.SetProjection(msg.projection)
@@ -213,7 +230,7 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 		fw.MarkContentDirty()
 	}
 	var next tea.Cmd
-	if m.terminalDirty[id] {
+	if m.terminalDirty[id] || staleViewport {
 		delete(m.terminalDirty, id)
 		next = m.terminalRefresh(id)
 	}

@@ -102,8 +102,14 @@ func (m *App) launcherNewSession() tea.Cmd {
 
 // launcherOpenFolder switches to a workspace and refreshes the launcher.
 func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
+	return m.requestWorkspaceOpen(projectDir, "")
+}
+
+// openWorkspaceConfirmed is reached only after an exact shell-owned navigation
+// decision; the connected lifecycle retains all existing dirty/draft checks.
+func (m *App) openWorkspaceConfirmed(projectDir, resumeID string) tea.Cmd {
 	if _, connected := m.ws.(shellport.Connection); connected {
-		return m.attachRemoteWorkspace(projectDir, "")
+		return m.attachRemoteWorkspace(projectDir, resumeID)
 	}
 	if m.ws.Logger() != nil {
 		m.ws.Logger().Info("WORKSPACE", "open_from_launcher", "path", projectDir)
@@ -117,6 +123,9 @@ func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
 	if m.Feedback != nil {
 		m.Feedback.NotifyInfo("Opened " + filepath.Base(projectDir))
 	}
+	if resumeID != "" {
+		return m.launcherResumeSession(resumeID, nil)
+	}
 	return nil
 }
 
@@ -125,22 +134,11 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	if sessionID == "" {
 		return nil
 	}
-	if _, connected := m.ws.(shellport.Connection); connected {
-		if sessionMeta != nil && sessionMeta.ProjectPath != "" && !sameWorkspaceRoot(m.ws.RootPath(), sessionMeta.ProjectPath) {
-			return m.attachRemoteWorkspace(sessionMeta.ProjectPath, sessionID)
-		}
-		return m.remoteSessionCommand(sessionID)
+	if sessionMeta != nil && sessionMeta.ProjectPath != "" && !sameWorkspaceRoot(m.ws.RootPath(), sessionMeta.ProjectPath) {
+		return m.requestWorkspaceOpen(sessionMeta.ProjectPath, sessionID)
 	}
-	// Switch project if the session belongs to another folder.
-	if sessionMeta != nil && sessionMeta.ProjectPath != "" {
-		abs, _ := filepath.Abs(sessionMeta.ProjectPath)
-		cur, _ := filepath.Abs(m.ws.RootPath())
-		if abs != "" && abs != cur {
-			if err := m.SwitchProject(abs); err != nil {
-				m.showOperationFailure("Session workspace could not be opened", err.Error())
-				return nil
-			}
-		}
+	if _, connected := m.ws.(shellport.Connection); connected {
+		return m.remoteSessionCommand(sessionID)
 	}
 	if m.ws.Logger() != nil {
 		m.ws.Logger().Info("SESSION", "resume_selected", "id", sessionID)
@@ -211,25 +209,32 @@ type launcherWorkspacesMsg struct {
 // latest kick may apply, so rapid open/close/open cycles never apply a stale
 // listing for a previous directory.
 func (m *App) refreshLauncherAsync(cwd string) {
+	if m.workspaceListCancel != nil {
+		m.workspaceListCancel()
+	}
 	gen := m.launcherLoadGen.Add(1)
 	screen := m.launcherScreen
-	if screen == nil {
-		return
+	m.workspaceListLoading, m.workspaceListError = true, ""
+	if screen != nil {
+		screen.BeginLoad(cwd)
 	}
-	screen.BeginLoad(cwd)
+	if m.workspacesScreen != nil {
+		m.workspacesScreen.SetStatus(true, "")
+	}
 	if m.eventBus == nil {
 		return
 	}
 	files, remote := m.ws.(shellport.ClientFiles)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.workspaceListCancel = cancel
 	m.runDetachedAsyncCmd(func() tea.Msg {
+		defer cancel()
 		var infos []workspace.WorkspaceInfo
 		var err error
 		if remote {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
 			infos, err = files.ListSavedWorkspaces(ctx)
 		} else {
-			infos, err = workspace.ListWorkspaceInfos()
+			infos, err = workspace.ListWorkspaceInfosContext(ctx)
 		}
 		if m.launcherLoadGen.Load() != gen {
 			return nil

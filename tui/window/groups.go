@@ -21,8 +21,11 @@ type PaneNode struct {
 // TabPlacement is the same operation for preview and commit. The preview
 // changes a detached layout only; resources and tab identities are never copied.
 type TabPlacement struct {
-	Tab       TabID
-	Group     GroupID
+	Tab   TabID
+	Group GroupID
+	// Node targets an exact docked subtree when Split is true. Zero means the
+	// leaf identified by Group; a branch may contain any mix of split axes.
+	Node      uint64
 	BeforeTab TabID
 	Split     bool
 	Direction ui.Direction
@@ -30,16 +33,20 @@ type TabPlacement struct {
 }
 
 func (w *Window) PlaceTab(p TabPlacement) GroupID {
-	if w.IndexOf(p.Tab) < 0 || w.groupNode(p.Group) == nil || p.BeforeTab != 0 && w.GroupOf(p.BeforeTab) != p.Group {
+	if w.IndexOf(p.Tab) < 0 {
 		return 0
 	}
 	target := p.Group
 	if p.Split {
-		if p.Direction != ui.Horizontal && p.Direction != ui.Vertical {
+		n := w.placementNode(p)
+		if n == nil || (p.Direction != ui.Horizontal && p.Direction != ui.Vertical) ||
+			n.Split == nil && n.Group == w.GroupOf(p.Tab) && w.GroupTabCount(n.Group) == 1 {
 			return 0
 		}
-		target = w.SplitGroup(target, p.Direction, p.Before)
+		target = w.SplitPane(n.ID, p.Direction, p.Before)
 		p.BeforeTab = 0
+	} else if p.Node != 0 || w.groupNode(target) == nil || p.BeforeTab != 0 && w.GroupOf(p.BeforeTab) != target {
+		return 0
 	}
 	if !w.MoveTabToGroup(p.Tab, target, p.BeforeTab) {
 		return 0
@@ -50,6 +57,20 @@ func (w *Window) PlaceTab(p TabPlacement) GroupID {
 // PreviewTabPlacement resolves source collapse as well as the target split,
 // using exactly the same operations as release, on a detached presentation copy.
 func (w *Window) PreviewTabPlacement(p TabPlacement) (*PaneNode, GroupID) {
+	copy := w.layoutCopy()
+	target := copy.PlaceTab(p)
+	return copy.paneRoot, target
+}
+
+// PreviewSplitPane uses the same insertion as SplitPane without changing focus,
+// selection or live split models.
+func (w *Window) PreviewSplitPane(node uint64, dir ui.Direction, before bool) (*PaneNode, GroupID) {
+	copy := w.layoutCopy()
+	target := copy.SplitPane(node, dir, before)
+	return copy.paneRoot, target
+}
+
+func (w *Window) layoutCopy() *Window {
 	w.ensureGroups()
 	copy := *w
 	copy.tabs = append([]Tab(nil), w.tabs...)
@@ -70,8 +91,54 @@ func (w *Window) PreviewTabPlacement(p TabPlacement) (*PaneNode, GroupID) {
 	}
 	copy.paneRoot = clone(w.paneRoot)
 	copy.floating = append([]*PaneNode(nil), w.floating...)
-	target := copy.PlaceTab(p)
-	return copy.paneRoot, target
+	return &copy
+}
+
+func (w *Window) placementNode(p TabPlacement) *PaneNode {
+	if p.Node != 0 {
+		return w.Pane(p.Node)
+	}
+	if w.IsFloating(p.Group) {
+		return nil
+	}
+	return w.groupNode(p.Group)
+}
+
+// Pane resolves an exact docked topology identity. Removed/replaced branches do
+// not silently resolve to their former position or the currently focused leaf.
+func (w *Window) Pane(id uint64) *PaneNode {
+	w.ensureGroups()
+	var find func(*PaneNode) *PaneNode
+	find = func(n *PaneNode) *PaneNode {
+		if n == nil || n.ID == id {
+			return n
+		}
+		if found := find(n.First); found != nil {
+			return found
+		}
+		return find(n.Second)
+	}
+	return find(w.paneRoot)
+}
+
+// PaneScopes returns this pane, then each containing layout, up to the entire
+// docked layout. The exact identities are suitable for deferred menu actions.
+func (w *Window) PaneScopes(group GroupID) []*PaneNode {
+	w.ensureGroups()
+	var scopes []*PaneNode
+	var visit func(*PaneNode) bool
+	visit = func(n *PaneNode) bool {
+		if n == nil {
+			return false
+		}
+		if n.Group == group || visit(n.First) || visit(n.Second) {
+			scopes = append(scopes, n)
+			return true
+		}
+		return false
+	}
+	visit(w.paneRoot)
+	return scopes
 }
 
 var nextPaneID, nextGroupID uint64
@@ -277,14 +344,24 @@ func (w *Window) DockGroup(group GroupID) bool {
 // SplitGroup inserts an empty focused leaf before or after the original leaf.
 func (w *Window) SplitGroup(group GroupID, dir ui.Direction, before bool) GroupID {
 	leaf := w.groupNode(group)
-	if leaf == nil || w.IsFloating(group) || (dir != ui.Horizontal && dir != ui.Vertical) {
+	if leaf == nil || w.IsFloating(group) {
 		return 0
 	}
-	old := *leaf
+	return w.SplitPane(leaf.ID, dir, before)
+}
+
+// SplitPane inserts a new focused leaf beside an exact leaf or layout subtree.
+// The original subtree retains all identities, selections and split sizing.
+func (w *Window) SplitPane(node uint64, dir ui.Direction, before bool) GroupID {
+	n := w.Pane(node)
+	if n == nil || (dir != ui.Horizontal && dir != ui.Vertical) {
+		return 0
+	}
+	old := *n
 	added := newLeaf()
-	*leaf = PaneNode{ID: atomic.AddUint64(&nextPaneID, 1), Split: ui.NewSplitModel(dir), First: &old, Second: added}
+	*n = PaneNode{ID: atomic.AddUint64(&nextPaneID, 1), Split: ui.NewSplitModel(dir), First: &old, Second: added}
 	if before {
-		leaf.First, leaf.Second = leaf.Second, leaf.First
+		n.First, n.Second = n.Second, n.First
 	}
 	w.focus(added.Group)
 	return added.Group

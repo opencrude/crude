@@ -2,11 +2,13 @@ package viewmodel
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
+	"crude/tui/editor"
 	"crude/workspace"
 )
 
@@ -59,61 +61,118 @@ type remoteWorkspaceReadyMsg struct {
 	err           error
 	draftRevision uint64
 	draftEpoch    uint64
+	intent        *remoteWorkspaceSwitchIntent
 }
 
 // attachRemoteWorkspace validates and prepares the destination without
 // re-rooting or tearing down shared state. Until acknowledgement the old
-// attachment remains intact. Frozen user input protects the draft snapshot.
+// attachment remains intact. One exact intent survives asynchronous editor
+// publication and each dirty decision without closing any existing views.
 func (m *App) attachRemoteWorkspace(root, resumeID string) tea.Cmd {
+	m.pruneRemoteWorkspacePreparations()
+	if m.workspaceSwitchIntent != nil || m.asyncIOStopped.Load() {
+		return nil
+	}
 	if sameWorkspaceRoot(m.ws.RootPath(), root) {
 		if resumeID != "" {
 			return m.remoteSessionCommand(resumeID)
 		}
 		return nil
 	}
-	connection, ok := m.ws.(shellport.Connection)
+	_, ok := m.ws.(shellport.Connection)
 	if !ok || m.workspaceAttachPending {
 		return nil
 	}
-	for _, tab := range m.EditorState.Tabs {
-		if tab == nil || tab.Editor == nil {
-			continue
-		}
-		if state := m.editorSaves[tab.Editor.BufferID()]; state != nil && state.inFlight {
-			m.showOperationFailure("Workspace could not be opened", "Wait for the file save to finish before switching.")
-			return nil
-		}
-		if tab.Editor.Modified() {
-			m.showDirtyClosePrompt(tab.Path)
-			return nil
-		}
+	if m.DirtyPromptPath != "" {
+		m.showOperationFailure("Workspace could not be opened", "Finish the existing editor close decision before switching.")
+		return nil
 	}
-	flush, err := m.prepareRemoteDraftFlush()
-	if err != nil {
-		m.showOperationFailure("Draft could not be saved", err.Error())
+	if len(m.workspaceSwitchPreparations) >= 4 {
+		m.showOperationFailure("Workspace could not be opened", "Previous cancelled attachments are still finishing. Wait for their cleanup before switching again.")
 		return nil
 	}
 	m.workspaceAttachSequence++
-	sequence, owner := m.workspaceAttachSequence, m.ws
+	m.workspaceSwitchIntent = &remoteWorkspaceSwitchIntent{owner: m.ws, sequence: m.workspaceAttachSequence, root: root, resumeID: resumeID, keepShared: make(map[*editor.Editor]workspaceSwitchEditorSeal)}
+	m.workspaceAttachPending = true
+	if m.rootHost != nil {
+		m.rootHost.CancelPointerCapture()
+	}
+	return m.continueRemoteWorkspaceSwitch()
+}
+
+func (m *App) prepareRemoteWorkspaceAttachment(intent *remoteWorkspaceSwitchIntent) tea.Cmd {
+	flush, err := m.prepareRemoteDraftFlush()
+	if err != nil {
+		m.failRemoteWorkspaceSwitch(err.Error())
+		return nil
+	}
+	intent.editors = make(map[*editor.Editor]workspaceSwitchEditorSeal)
+	for _, tab := range m.EditorState.Tabs {
+		if tab != nil && tab.Editor != nil && tab.Editor.IsOpen() {
+			intent.editors[tab.Editor] = switchEditorSeal(tab.Editor)
+		}
+	}
+	intent.session, intent.draftEpoch = m.ActiveSession, m.composerDraftEpoch
+	intent.drafts = make(map[*workspace.Session]workspaceSwitchDraftSeal)
+	for session, owner := range m.composerDraftOwners {
+		seal := workspaceSwitchDraftSeal{owner: owner}
+		if owner.input != nil {
+			seal.revision, seal.epoch = owner.input.DraftRevision(), owner.input.DraftEpoch()
+		}
+		intent.drafts[session] = seal
+	}
+	intent.attaching = true
+	sequence, owner := intent.sequence, intent.owner
+	connection := owner.(shellport.Connection)
+	root, resumeID := intent.root, intent.resumeID
 	draftRevision, draftEpoch := m.Input.DraftRevision(), m.Input.DraftEpoch()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	preparation := &remoteWorkspacePreparation{ctx: ctx, owner: owner, cancel: cancel, released: make(chan struct{}), done: make(chan struct{})}
+	intent.preparation = preparation
+	if m.workspaceSwitchPreparations == nil {
+		m.workspaceSwitchPreparations = make(map[*remoteWorkspacePreparation]struct{})
+	}
+	m.workspaceSwitchPreparations[preparation] = struct{}{}
+	context.AfterFunc(ctx, preparation.abandon)
 	m.workspaceAttachCancel, m.workspaceAttachPending = cancel, true
-	return func() tea.Msg {
-		defer cancel()
-		next, err := connection.AttachWorkspace(ctx, root)
+	run := func() remoteWorkspaceReadyMsg {
+		defer close(preparation.done)
+		var next shellport.Workspace
+		err := ctx.Err()
+		if err == nil {
+			next, err = connection.AttachWorkspace(ctx, root)
+		}
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err == nil {
 			err = flush()
 		}
-		if err != nil && next != nil {
-			_ = next.(shellport.Connection).Close()
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err == nil && m.asyncIOStopped.Load() {
+			err = context.Canceled
+		}
+		if err == nil && !preparation.publish(next) {
+			err = context.Canceled
+		}
+		if err != nil {
+			cancel()
+			if close := closePreparedWorkspace(next, owner, owner); close != nil {
+				close()
+			}
 			next = nil
 		}
-		if m.asyncIOStopped.Load() && next != nil {
-			_ = next.(shellport.Connection).Close()
-			return nil
-		}
-		return remoteWorkspaceReadyMsg{owner: owner, sequence: sequence, next: next, resumeID: resumeID, err: err, draftRevision: draftRevision, draftEpoch: draftEpoch}
+		return remoteWorkspaceReadyMsg{owner: owner, sequence: sequence, next: next, resumeID: resumeID, err: err, draftRevision: draftRevision, draftEpoch: draftEpoch, intent: intent}
 	}
+	var once sync.Once
+	var result remoteWorkspaceReadyMsg
+	preparation.start = func() tea.Msg {
+		once.Do(func() { result = run() })
+		return result
+	}
+	return preparation.start
 }
 
 // prepareRemoteDraftFlush captures all values on Update. Background work sees
@@ -156,28 +215,29 @@ func (m *App) prepareRemoteDraftFlush() (func() error, error) {
 }
 
 func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
-	if msg.owner != m.ws || msg.sequence != m.workspaceAttachSequence {
-		if msg.next != nil {
-			next := msg.next.(shellport.Connection)
-			return func() tea.Msg { _ = next.Close(); return nil }
-		}
-		return nil
+	if msg.owner != m.ws || msg.sequence != m.workspaceAttachSequence || msg.intent != m.workspaceSwitchIntent || !m.workspaceAttachPending {
+		return m.closeRemoteWorkspaceReady(msg)
 	}
-	m.workspaceAttachPending, m.workspaceAttachCancel = false, nil
 	if msg.err != nil {
+		m.cancelRemoteWorkspaceSwitch(false)
 		m.showOperationFailure("Workspace could not be opened", msg.err.Error())
-		return nil
+		return m.closeRemoteWorkspaceReady(msg)
 	}
-	if msg.draftRevision != m.Input.DraftRevision() || msg.draftEpoch != m.Input.DraftEpoch() {
-		m.showOperationFailure("Workspace switch was not applied", "The composer changed while the destination was opening. Your latest draft is kept; try the switch again.")
-		next := msg.next.(shellport.Connection)
-		return func() tea.Msg { _ = next.Close(); return nil }
+	if msg.draftRevision != m.Input.DraftRevision() || msg.draftEpoch != m.Input.DraftEpoch() || !m.remoteWorkspaceSwitchStillSafe(msg.intent) {
+		m.failRemoteWorkspaceSwitch("An editor, pending operation, or composer changed while the destination was opening. Try the switch again.")
+		return m.closeRemoteWorkspaceReady(msg)
 	}
 	connection, ok := msg.next.(shellport.Connection)
-	if !ok {
-		m.showOperationFailure("Workspace could not be opened", "Destination has no attachment owner.")
-		return nil
+	_, replica := msg.next.(shellport.Replica)
+	if !ok || !replica || msg.next == msg.owner {
+		m.failRemoteWorkspaceSwitch("Destination did not provide the requested independent attachment.")
+		return m.closeRemoteWorkspaceReady(msg)
 	}
+	if msg.intent.preparation == nil || !msg.intent.preparation.claim(msg.next) {
+		m.failRemoteWorkspaceSwitch("Destination preparation expired or was cancelled.")
+		return m.closeRemoteWorkspaceReady(msg)
+	}
+	m.cancelRemoteWorkspaceSwitch(false)
 	state := m.beginWorkspaceSwitch()
 	m.closeWorkspaceBoundOverlays()
 	m.discardTerminalUI()
@@ -197,6 +257,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 	m.finishWorkspaceSwitch(state)
 	m.editorSaves = make(map[string]*editorSaveState)
+	m.liveEditors, m.liveOpenRefs, m.editorCommands = nil, nil, nil
 	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 	m.ws.(shellport.Replica).StartReplica()
 	for _, issue := range m.ws.TakeStartupIssues() {
@@ -207,4 +268,24 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		return tea.Batch(closeOld, m.remoteSessionCommand(msg.resumeID))
 	}
 	return closeOld
+}
+
+func (m *App) closeRemoteWorkspaceReady(msg remoteWorkspaceReadyMsg) tea.Cmd {
+	if msg.intent != nil && msg.intent.preparation != nil {
+		preparation := msg.intent.preparation
+		return func() tea.Msg { preparation.abandon(); return nil }
+	}
+	return closePreparedWorkspace(msg.next, msg.owner, m.ws)
+}
+
+// The prepared attachment is the command's only resource. Never close a live
+// current/origin owner, and never perform connection teardown on Update.
+func closePreparedWorkspace(next, origin, current shellport.Workspace) tea.Cmd {
+	if next == nil || next == origin || next == current {
+		return nil
+	}
+	if connection, ok := next.(shellport.Connection); ok {
+		return func() tea.Msg { _ = connection.Close(); return nil }
+	}
+	return nil
 }

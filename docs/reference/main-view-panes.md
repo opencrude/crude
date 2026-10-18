@@ -64,12 +64,25 @@ editor/chat facts. Workspace status remains workspace-owned.
   group and move the tab into the new leaf. The preview uses theme
   `ColorHover`, shared split rounding and a reserved divider. It changes no
   topology or membership until release.
+- The one-cell outer body rim selects a containing layout rather than only
+  the leaf: left/right/bottom boundaries, and the first body row below that
+  layout's tab strip for above. Where several scopes share a boundary, the
+  outermost layout wins. The preview names its scope. Interior edge zones
+  still split just the pane; tab-strip drops always insert/reorder, even at
+  the strip's outermost columns. **Arrange Tab…** (below) provides every exact
+  subtree when a nested boundary is not independently reachable by pointer.
 - Drop into the body center to move into the existing group. Drop onto a tab
   strip to insert before the hit tab, or append when no tab is hit. This also
   supports reordering within a group; a center drop is a tab move, not Merge All.
 - Esc cancels the preview and captured drag. Release outside a valid main-pane
   target, or over a floating window, leaves membership/topology unchanged.
   A sole tab cannot edge-split its own group through a drag.
+- A drag retains the pressed tab, original group, Window and workspace
+  generation. Source moves/closes, topology replacement and terminal resize
+  invalidate it. Release confirms the last preview's exact destination and
+  rectangle; it never recomputes a different target just because another pane
+  now occupies the released coordinates. Esc cancels root and pane-window
+  Hosts, not merely the docked strip.
 - Group dividers are `ui.SplitDivider` controls over the topology's
   `ui.SplitModel`, captured by the root Host. Motion/release remain owned when
   the pointer leaves the divider; there is no second divider-drag service.
@@ -95,7 +108,10 @@ editor/chat facts. Workspace status remains workspace-owned.
 | New session in focused group | Ctrl+Alt+N; group **+**; Ctrl+T then N or + |
 | Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses, Enter/Space activates |
 | Close an empty group | Ctrl+W, or palette Close Empty Pane; never closes a populated group through this operation |
-| Move active tab to new right/lower split, next/previous group; Merge All | Command palette; tab context menu includes split, move and merge operations |
+| Split an empty pane or move a tab to a new left/right/upper/lower split | Command palette and tab context menu; moving is one preview-validated placement including sole-tab source collapse |
+| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu / palette **Arrange Tab…** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
+| Split a containing subtree, initially empty | **Split Containing Layout…** → this pane / containing layout / entire layout → edge |
+| Move active tab to next/previous group; Merge All | Command palette and tab context menu |
 | Reorder selected tab inside its group | Palette Move Tab Left/Right in Group |
 | Open File in Pane and all pane operations above | Ctrl+Alt+P Command Palette, registry-backed labels |
 
@@ -104,6 +120,30 @@ tabless main area retains workspace home rather than introducing a second
 launcher. Editor closes retain the dirty-safe Save/Don't Save/Cancel path.
 Closing an agent tab minimizes it, not terminates its orchestrator; explicit
 Terminate remains a separate action.
+
+### Exact tab context ownership
+
+Right-click targets the mounted strip under both pointer coordinates, including
+inactive docked panes and raised pane windows. The WM's top visible focusable
+window is authoritative; neither creation order, a retained group map nor the
+focused-strip alias may select an underlying resource. Files, agents, workspace
+surfaces, Git reviews and local comparisons share pane placement actions. Their
+own **Close tab** / **Minimize** actions retain resource-specific lifecycle
+policy (surface returns to dock; comparison closes only its snapshot).
+
+Menu callbacks retain the clicked tab identity, its original group, Window and
+workspace generation. Reordering tabs or changing focus does not retarget an
+action. Closing/moving that tab or changing workspace invalidates the menu.
+Scope follow-ups retain the exact `PaneNode` identity, not a path or split axis;
+a collapsed/replaced scope safely does nothing. Native keyboard and pointer
+activation close the old popup before invoking its action, so the scope→edge
+follow-up remains open. Menus are clamped to shell bounds and use the shared
+List's scrolling, keeping the final scope reachable in large layouts.
+
+File menus explicitly say **Close Other Files in Pane** and **Close Files to
+the Right**. These operate only on editor files in the clicked group, not on
+neighboring panes, agents or comparison/surface tabs. Dirty files retain the
+Save / Don't Save / Cancel sequence; Cancel aborts the remaining file closes.
 
 ## Small grids and modal boundaries
 
@@ -301,8 +341,14 @@ word-diff. Conflict resolution and remote operations live in the Git panel
 See [interaction matrix](interaction-matrix.md),
 [control usage](control-usage.md), and [surface catalog](surface-catalog.md).
 Focused regression entry points include `tui/window/groups_test.go`,
+`tui/window/topology_property_test.go` (independent recursive placement oracle,
+31-leaf mixed-axis trees, eight deterministic randomized sequences),
 `tui/ui/tabs_drag_test.go`, `tui/screens/shelltabs/tabs_new_test.go`, and
-`tui/viewmodel/main_pane_journey_test.go` / `pane_file_open_test.go`.
+`tui/viewmodel/main_pane_journey_test.go` / `pane_topology_test.go` /
+`pane_file_open_test.go`. The topology journeys drive real Update mouse/key
+entry points through scope/edge menus, all resource kinds, stale menu/drop
+fences, every edge of root/ancestor/unrelated scopes, dirty-file/agent safety,
+floating overlap, preview geometry and compact restoration.
 The document picker uses its own Open File intent, not the attachment picker
 labels or multi-selection behavior. Preparation runs off Update; workspace,
 group, manager and request identities fence installation. A newer live buffer
@@ -311,7 +357,9 @@ wins over prepared disk bytes. See the recorded measurements in
 
 ## Rail, Git and Memory destinations
 
-- Rail destinations are Files, Agents, Skills and MCP; Terminals and Git have no
+- Rail destinations are Files, Agents, Recent Workspaces, Skills and MCP; workspace
+  switching stays below Agents and remains available without leaving a nested
+  workflow. Terminals and Git have no
   rail identity. Git is the `gitpanel` bottom-dock destination (footer pill,
   `Ctrl+Alt+G`); its multi-file `gitreview` main tab and the panel preview
   share one `gitdiff.Document` and one prepared change set

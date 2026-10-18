@@ -43,6 +43,7 @@ type Screen struct {
 	readSequence         uint64
 	readStart, readCount int
 	readPending          bool
+	readViewport         uint64
 	copyPending          bool
 	blinkOn              bool
 	floating             bool
@@ -58,6 +59,7 @@ type Screen struct {
 	focused            bool
 	selecting          bool
 	lastCursorActivity time.Time
+	syncRetryAt        time.Time
 	attention          bool
 }
 
@@ -80,7 +82,7 @@ func New(th *theme.Theme, id, title string) *Screen {
 	s.scrollbar = ui.NewScrollbarControl(ui.ComponentID("shellterm/scrollbar/"+id), s.scroll, tokens)
 	s.scrollbar.OnScroll(func(oldOffset, newOffset int) {
 		if oldOffset != newOffset {
-			s.view.ScrollDelta(newOffset - oldOffset)
+			s.view.ScrollTo(newOffset)
 			s.requestRows()
 		}
 	})
@@ -132,19 +134,26 @@ func (s *Screen) SetProjection(p workspace.TerminalProjection) {
 		return
 	}
 	changed := p.Generation != s.view.Generation
+	wasSynchronized := s.view.Grid.Synchronized
 	if !s.view.Install(p.Grid, p.Generation) {
 		return
 	}
-	if changed {
+	if !s.view.HasSelection() {
 		s.copyPending = false
-		s.readPending = false
 	}
+	// A refresh does not cancel an independent scroll/copy intent. Its result
+	// may still supply the requested page, even after another ingress generation.
 	p.Grid = s.view.Grid
 	s.projection = p
 	s.cols, s.rows = p.Grid.Cols, p.Grid.GridRows
 	s.title = p.Info.Title
 	s.exited = !p.Info.Alive
-	if changed {
+	if p.Grid.Synchronized && !wasSynchronized {
+		s.syncRetryAt = time.Now().Add(terminalvt.SynchronizedOutputTimeout)
+	} else if !p.Grid.Synchronized {
+		s.syncRetryAt = time.Time{}
+	}
+	if changed && !p.Grid.Synchronized {
 		s.resetCursorBlink(time.Now())
 	}
 	s.requestRows()
@@ -152,10 +161,26 @@ func (s *Screen) SetProjection(p workspace.TerminalProjection) {
 
 // SetRows fences asynchronous page responses by both request intent and source generation.
 func (s *Screen) SetRows(sequence uint64, p workspace.TerminalProjection) bool {
-	if !s.readPending || sequence != s.readSequence || p.Generation < s.view.Generation || p.Info.ID != s.termID {
+	if !s.readPending || sequence != s.readSequence || p.Info.ID != s.termID {
 		return false
 	}
 	s.readPending = false
+	if s.readViewport != s.view.Intent() {
+		s.requestRows()
+		return false
+	}
+	if p.Generation < s.view.Generation || p.Grid.ReadSequence < s.view.Grid.ReadSequence {
+		// Exact intent completed, but another reader already published newer
+		// state. Retire it so future missing-page/timeout retries can proceed.
+		s.requestRows()
+		return false
+	}
+	if s.readCount > 0 && (p.Grid.HistoryEpoch != s.view.Grid.HistoryEpoch || p.Grid.Cols != s.cols || p.Grid.GridRows != s.rows) {
+		// The engine replaces an incompatible anchored selection read with a
+		// whole clamped viewport. Cancel copy, then atomically install it once.
+		s.copyPending = false
+		s.view.ClearSelection()
+	}
 	s.SetProjection(p)
 	if s.copyPending {
 		s.requestSelectionRows()
@@ -188,7 +213,7 @@ func (s *Screen) requestResize() {
 	}
 }
 func (s *Screen) requestPage(start, count int) {
-	if s.closed || count <= 0 {
+	if s.closed || count < 0 {
 		return
 	}
 	if s.readPending && s.readStart == start && s.readCount == count {
@@ -203,15 +228,34 @@ func (s *Screen) requestPage(start, count int) {
 	}
 	s.pending = kept
 	s.readStart, s.readCount = start, count
+	s.readViewport = s.view.Intent()
 	s.readPending = true
-	s.queue(Command{Kind: CommandReadRows, Start: start, Count: count, Sequence: s.readSequence, Generation: s.view.Generation})
+	s.queue(Command{Kind: CommandReadRows, Start: start, Count: count, ViewportStart: s.view.ViewportStart(), Sequence: s.readSequence, Generation: s.view.Generation, Viewport: s.view.Intent(), HistoryEpoch: s.view.Grid.HistoryEpoch, HistoryBase: s.view.Grid.HistoryBase})
 }
 func (s *Screen) requestRows() {
-	if a, n, ok := s.view.VisibleMissing(); ok {
-		s.requestPage(a, n)
+	if s.view.Grid.Synchronized {
+		return
+	}
+	if _, _, ok := s.view.VisibleMissing(); ok {
+		// A viewport is one bounded atomic read, not a succession of holes from
+		// competing generations. Count zero uses the engine's current grid height.
+		s.requestPage(s.view.ViewportStart(), 0)
 	}
 }
+
+// ViewportRead snapshots presentation intent on Update; the host performs the
+// bounded service read off Update. Every invalidation reads the desired viewport
+// directly rather than installing the active grid and blanking history first.
+func (s *Screen) ViewportRead() Command {
+	return Command{ID: s.termID, Kind: CommandReadRows, Start: s.view.ViewportStart(), Viewport: s.view.Intent(), HistoryEpoch: s.view.Grid.HistoryEpoch, HistoryBase: s.view.Grid.HistoryBase}
+}
+func (s *Screen) AcceptsViewport(intent uint64) bool {
+	return intent == 0 || intent == s.view.Intent()
+}
 func (s *Screen) requestSelectionRows() {
+	if s.view.Grid.Synchronized {
+		return
+	}
 	if a, n, ok := s.view.SelectionMissing(); ok {
 		s.requestPage(a, n)
 	}
@@ -279,6 +323,13 @@ func (s *Screen) resetCursorBlink(now time.Time) bool {
 	return changed
 }
 func (s *Screen) TickCursor(now time.Time) bool {
+	// An abandoned DEC 2026 update may produce no more PTY events. Re-read via
+	// the existing off-Update command lane so the engine can release its bounded
+	// hold. This is owner/sequence fenced like any other row request.
+	if !s.syncRetryAt.IsZero() && !now.Before(s.syncRetryAt) {
+		s.syncRetryAt = now.Add(terminalvt.SynchronizedOutputTimeout)
+		s.requestPage(s.view.ViewportStart(), 0)
+	}
 	on := !s.focused || ui.CursorPhaseVisible(int(now.UnixMilli()), int(s.lastCursorActivity.UnixMilli()), s.view.Grid.Cursor.Blink)
 	changed := on != s.blinkOn
 	s.blinkOn = on
@@ -435,18 +486,15 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 		return ui.EventResult{Handled: true}
 	}
 	s.resetCursorBlink(time.Now())
-	shift := key.Mod.Contains(tea.ModShift)
-	ctrlShift := key.Mod.Contains(tea.ModCtrl) && shift
+	ctrlShift := key.Mod == tea.ModCtrl|tea.ModShift
 	if ctrlShift {
 		switch key.Code {
 		case 'c', 'C':
+			var cmd tea.Cmd
 			if s.view.HasSelection() {
-				return ui.EventResult{
-					Handled:    true,
-					Cmd:        s.copySelection(),
-					Invalidate: ui.InvalidatePaint,
-				}
+				cmd = s.copySelection()
 			}
+			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 		case 'a', 'A':
 			s.view.SelectAll()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -454,7 +502,7 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 	}
 	// Shift+PgUp/PgDn/Home/End drive scrollback while the primary screen is
 	// visible. Full-screen apps (alt screen) get the keys unchanged.
-	if shift && !s.view.Grid.Modes.AltScreen {
+	if key.Mod == tea.ModShift && !s.view.Grid.Modes.AltScreen {
 		page := max(1, s.rows-1)
 		switch key.Code {
 		case tea.KeyPgUp:

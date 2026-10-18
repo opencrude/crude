@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/terminalvt"
 
 	"crude/tui/ui"
 	"crude/workspace"
@@ -72,7 +73,7 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	runTerminalCommand(t, app, result.Cmd)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		projection, err := app.ws.Terminals().Rows(newInfo.ID, -1, 0)
+		projection, err := app.ws.Terminals().Rows(newInfo.ID, terminalvt.RowRequest{Start: -1})
 		if err == nil && strings.Contains(terminalProjectionText(projection), "x") {
 			return
 		}

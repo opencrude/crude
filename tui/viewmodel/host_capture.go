@@ -36,6 +36,9 @@ func (m *App) sidebarContentVisible() bool {
 	if m.activityView == activityFiles {
 		return m.Tree.Model != nil && m.sidebarScreen != nil
 	}
+	if m.activityView == activityWorkspaces {
+		return true
+	}
 	return m.activityList != nil
 }
 

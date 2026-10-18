@@ -197,7 +197,11 @@ func (m *App) configureShell() {
 	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{
 		X: frame.Left + activityW, Y: m.shellTopRow(), W: sidebarW, H: sidebarH,
 	})
-	if m.activityView != activityFiles && m.activityList != nil {
+	if m.activityView == activityWorkspaces {
+		screen := m.ensureWorkspaceSwitcher()
+		screen.SetSwitchStatus(m.remoteWorkspaceSwitchStatus())
+		m.shell.SetScreen(shellSidebarSlot, screen)
+	} else if m.activityView != activityFiles && m.activityList != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.activityList)
 	} else if m.sidebarScreen != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.sidebarScreen)
@@ -277,12 +281,19 @@ func (m *App) syncRootFocus() {
 	var id ui.ComponentID
 	switch m.focusTarget() {
 	case FocusTree:
-		if m.activityView == activityFiles {
+		switch m.activityView {
+		case activityWorkspaces:
+			screen := m.ensureWorkspaceSwitcher()
+			id = screen.PreferredFocus()
+			if current := m.rootHost.Focused(); screen.OwnsFocus(current) {
+				id = current
+			}
+		case activityFiles:
 			id = shelltree.TreeID
 			if current := m.rootHost.Focused(); current == shelltree.FilterID || current == shelltree.TreeID {
 				id = current
 			}
-		} else {
+		default:
 			id = activitylist.ListID
 			if current := m.rootHost.Focused(); current == activitylist.FilterID || current == activitylist.ListID {
 				id = current
@@ -384,6 +395,11 @@ func (m *App) syncTerminalFocusReports() {
 	if focusedFloating == "" && !wmFocused && m.terminalDockOwnsKeys() && m.termDock != nil {
 		dockActive = m.termDock.ActiveID()
 	}
+	if focusedFloating != "" {
+		m.lastTerminalID = focusedFloating
+	} else if dockActive != "" {
+		m.lastTerminalID = dockActive
+	}
 	for id, s := range m.termScreens {
 		if s == nil {
 			continue
@@ -426,6 +442,9 @@ func (m *App) configureSidebarScreen() {
 			maxW = 12
 		}
 		m.activityList.SetSplitMaxFirst(maxW)
+	}
+	if m.workspacesScreen != nil {
+		m.workspacesScreen.SetSplitMaxFirst(max(12, m.width/2))
 	}
 }
 
@@ -555,7 +574,12 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		PaneGutters:   paneGutters,
 	}
 
-	paint := shellchat.PaintParams{SourceID: snapshot.SourceID, Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }}
+	paint := shellchat.PaintParams{SourceID: snapshot.SourceID, Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }, OnPaneScrollChain: func(ids []string) {
+		chain := make([]string, 0, len(ids)+1)
+		chain = append(chain, activeAgentID)
+		chain = append(chain, ids...)
+		view.embedded.InvalidatePaneChain(chain)
+	}}
 	if screen.HasActiveSelection() {
 		paint.HasSelection = true
 		paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol = screen.SelectionRange()

@@ -41,8 +41,31 @@ func TestClickEmitsSelect(t *testing.T) {
 		t.Fatalf("result=%+v", res)
 	}
 	view, ok := res.Action.Payload.(View)
-	if !ok || view != ViewSkills {
+	if !ok || view != ViewWorkspaces {
 		t.Fatalf("payload=%v", res.Action.Payload)
+	}
+}
+
+func TestWorkspaceSwitcherRemainsBelowAgentsInEveryProjection(t *testing.T) {
+	for _, ids := range [][]string{{"files", "agents", "skills", "mcp"}, {"mcp", "agents", "files"}, {"skills"}, {"workspaces", "files", "agents"}, {}} {
+		s := New(theme.DefaultDark())
+		s.SetOrder(ids)
+		want := 0
+		count := 0
+		for i, v := range s.order {
+			if v == ViewAgents {
+				want = i + 1
+			}
+			if v == ViewWorkspaces {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%v switcher count=%d", ids, count)
+		}
+		if want > 0 && s.order[want] != ViewWorkspaces {
+			t.Fatalf("%v misplaced switcher: %v", ids, s.order)
+		}
 	}
 }
 
@@ -196,11 +219,12 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 	}{
 		{"agents raised", ViewAgents, 2, '2', 3},
 		{"files raised", ViewFiles, 1, '1', 0},
-		{"skills raised", ViewSkills, 8, '8', 6},
-		{"mcp raised", ViewMCP, 9, '9', 9},
+		{"workspaces raised", ViewWorkspaces, 4, '4', 6},
+		{"skills raised", ViewSkills, 8, '8', 9},
+		{"mcp raised", ViewMCP, 9, '9', 12},
 		{"agents overflow raised", ViewAgents, 10, '+', 3},
 		{"zero absent", ViewAgents, 0, ' ', 3},
-		{"negative absent", ViewSkills, -1, ' ', 6},
+		{"negative absent", ViewSkills, -1, ' ', 9},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := New(theme.DefaultDark())

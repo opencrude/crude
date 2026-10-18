@@ -45,6 +45,10 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseClickMsg, tea.BlurMsg:
+		m.setWheelHost(nil)
+	}
 	m.syncMemoryBrowserLifecycle()
 	m.captureToolView()
 	previousView := m.toolLayout.Views[m.activityView.ID()]
@@ -52,6 +56,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
 	command = tea.Batch(command, m.drainTerminalCommands())
+	command = tea.Batch(command, m.continueRemoteWorkspaceSwitch())
 	command = tea.Batch(command, m.drainLiveEditorCommands())
 	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
@@ -75,25 +80,20 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.handleWorkspaceOpenPromptInput(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.handleEditorRecoveryBrowserMessage(msg); handled {
 		return m, cmd
 	}
-	if m.workspaceAttachPending {
-		switch event := msg.(type) {
-		case tea.KeyPressMsg:
-			if event.Code == tea.KeyEsc && m.workspaceAttachCancel != nil {
-				m.workspaceAttachCancel()
-			}
-			return m, nil
-		case tea.PasteMsg, tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
-			return m, nil
-		}
+	if handled, cmd := m.handleWorkspaceSwitchInput(msg); handled {
+		return m, cmd
 	}
 	var cmds []tea.Cmd
 	coalescePresentation := false
 	switch msg.(type) {
 	case tea.MouseMotionMsg, interactiveFrameMsg:
-	case types.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg:
+	case types.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg, terminalProjectionMsg:
 		coalescePresentation = true
 	default:
 		m.forceFrame()
@@ -131,6 +131,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case clientProjectReplaceMsg:
 		return m, m.applyClientProjectReplace(msg)
+	case projectReplaceActionMsg:
+		return m, m.handleProjectReplaceAction(msg)
+	case projectReplaceAppliedMsg:
+		return m, m.handleProjectReplaceApplied(msg)
 	case liveEditorResult:
 		m.applyLiveEditorResult(msg)
 		return m, nil
@@ -616,10 +620,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		// the launcher is still mounted (a session may have opened in the
 		// meantime). Applying keeps the user's filter/selection: SetData
 		// rebuilds items without resetting filter state.
-		if msg.Gen != m.launcherLoadGen.Load() || m.launcherScreen == nil || msg.Screen != m.launcherScreen {
+		if msg.Gen != m.launcherLoadGen.Load() {
 			break
 		}
-		m.launcherScreen.FinishLoad(msg.Cwd, msg.Infos, msg.Err)
+		m.applyWorkspaceListing(msg)
 		m.rootHost.MarkLayout()
 		m.rootHost.Layout()
 	case workspaceTreeReadyMsg:
@@ -836,17 +840,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.paneFilePicker = nil
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
-			if _, connected := m.ws.(shellport.Connection); connected {
-				cmds = append(cmds, m.attachRemoteWorkspace(msg.Path, ""))
-			} else if m.launcherScreen != nil {
-				cmds = append(cmds, m.launcherOpenFolder(msg.Path))
-			} else if err := m.SwitchProject(msg.Path); err != nil {
-				if m.Feedback != nil {
-					m.Feedback.NotifyError("Failed to open workspace: " + err.Error())
-				}
-			} else if m.Feedback != nil {
-				m.Feedback.NotifyInfo("Opened " + msg.Path)
-			}
+			cmds = append(cmds, m.launcherOpenFolder(msg.Path))
 		} else {
 			paths := msg.Paths
 			if len(paths) == 0 && msg.Path != "" {
@@ -1369,6 +1363,16 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 	// overlay-specific owners.
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
 		switch localMsg.(type) {
+		case tea.MouseWheelMsg:
+			// Scrollable native popovers (including long pane-scope menus)
+			// receive wheel by exact window hit, without pointer capture or
+			// changing the focused shell owner.
+			if cw.Host() == nil {
+				return nil
+			}
+			result := cw.Host().Handle(localMsg)
+			fw.MarkContentDirty()
+			return result.Cmd
 		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
 		default:
 			return nil

@@ -1,9 +1,9 @@
 package fileio
 
 import (
+	"crude/textsearch"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -21,7 +21,7 @@ type ProjectFileReplacement struct {
 // that project replace can rewrite. Filename-only and fuzzy subsequence hits
 // are skipped so replace cannot scatter characters across a line.
 func ReplaceableMatch(m ProjectSearchMatch) bool {
-	if m.NameOnly || m.Line < 1 || m.EndColumn <= m.Column {
+	if m.NameOnly || m.FuzzyOnly || m.Line < 1 || (m.EndLine > 0 && m.EndLine < m.Line) || m.Column < 0 || m.EndColumn < 0 || ((m.EndLine == 0 || m.EndLine == m.Line) && m.EndColumn < m.Column) {
 		return false
 	}
 	if len(m.TextMatches) >= 2 {
@@ -45,21 +45,12 @@ func PlanProjectReplace(matches []ProjectSearchMatch, query, replacement string,
 // canonical live documents. The caller supplies an immutable bounded read; a
 // stale match never edits a different range just because its coordinates fit.
 func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replacement string, opts ProjectSearchOptions, read func(string) ([]byte, error)) ([]ProjectFileReplacement, int, error) {
-	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, 0, nil
 	}
-	var re *regexp.Regexp
-	if opts.Regex {
-		pattern := query
-		if !opts.CaseSensitive {
-			pattern = "(?i)" + pattern
-		}
-		compiled, err := regexp.Compile(pattern)
-		if err != nil {
-			return nil, 0, fmt.Errorf("invalid regex: %w", err)
-		}
-		re = compiled
+	matcher, err := textsearch.Compile(query, textsearch.Options{CaseSensitive: opts.CaseSensitive, WholeWord: opts.WholeWord, Regex: opts.Regex})
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid query: %w", err)
 	}
 
 	type fileHits struct {
@@ -84,6 +75,7 @@ func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replaceme
 	}
 
 	out := make([]ProjectFileReplacement, 0, len(order))
+	total := 0
 	for _, path := range order {
 		g := byPath[path]
 		data, err := read(path)
@@ -91,7 +83,11 @@ func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replaceme
 			return out, skipped, fmt.Errorf("read %s: %w", g.rel, err)
 		}
 		old := string(data)
-		next, n, err := applyReplacements(old, g.hits, replacement, re)
+		total += len(data)
+		if total > 16<<20 {
+			return nil, skipped, fmt.Errorf("replacement review exceeds 16 MiB; narrow the search")
+		}
+		next, n, err := applyReplacements(old, g.hits, replacement, matcher)
 		if err != nil {
 			return out, skipped, err
 		}
@@ -111,17 +107,31 @@ func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replaceme
 
 type byteSpan struct {
 	start, end int
-	match      ProjectSearchMatch
+	match      textsearch.Match
 }
 
-func applyReplacements(content string, hits []ProjectSearchMatch, replacement string, re *regexp.Regexp) (string, int, error) {
+func applyReplacements(content string, hits []ProjectSearchMatch, replacement string, matcher *textsearch.Matcher) (string, int, error) {
+	exact := make(map[[2]int]textsearch.Match)
+	for _, m := range matcher.FindAll(content, 0) {
+		exact[[2]int{m.Start, m.End}] = m
+	}
+	seen := make(map[[2]int]bool)
 	spans := make([]byteSpan, 0, len(hits))
 	for _, m := range hits {
 		start, end, ok := matchByteSpan(content, m)
 		if !ok {
+			return "", 0, fmt.Errorf("%s changed; search again before replacing", m.RelativePath)
+		}
+		key := [2]int{start, end}
+		match, ok := exact[key]
+		if !ok {
+			return "", 0, fmt.Errorf("%s no longer matches the exact query", m.RelativePath)
+		}
+		if seen[key] {
 			continue
 		}
-		spans = append(spans, byteSpan{start: start, end: end, match: m})
+		seen[key] = true
+		spans = append(spans, byteSpan{start: start, end: end, match: match})
 	}
 	if len(spans) == 0 {
 		return content, 0, nil
@@ -138,11 +148,7 @@ func applyReplacements(content string, hits []ProjectSearchMatch, replacement st
 		if sp.start < 0 || sp.end > len(next) || sp.start > sp.end {
 			continue
 		}
-		old := next[sp.start:sp.end]
-		seg := replacement
-		if re != nil {
-			seg = re.ReplaceAllString(old, replacement)
-		}
+		seg := matcher.Expand(content, sp.match, replacement)
 		next = next[:sp.start] + seg + next[sp.end:]
 		count++
 	}
@@ -168,12 +174,33 @@ func matchByteSpan(content string, m ProjectSearchMatch) (int, int, bool) {
 		return 0, 0, false
 	}
 	runes := []rune(lineText)
-	if m.Column < 0 || m.EndColumn > len(runes) || m.Column > m.EndColumn {
+	if m.Column < 0 || m.Column > len(runes) {
 		return 0, 0, false
 	}
 	start := off + len(string(runes[:m.Column]))
-	end := off + len(string(runes[:m.EndColumn]))
-	if start < 0 || end > off+len(lineText) || start > end {
+	endLine := m.EndLine
+	if endLine == 0 {
+		endLine = m.Line
+	}
+	endOff := off
+	for line < endLine {
+		i := strings.IndexByte(content[endOff:], '\n')
+		if i < 0 {
+			return 0, 0, false
+		}
+		endOff += i + 1
+		line++
+	}
+	endText := content[endOff:]
+	if j := strings.IndexByte(endText, '\n'); j >= 0 {
+		endText = endText[:j]
+	}
+	endRunes := []rune(endText)
+	if m.EndColumn > len(endRunes) {
+		return 0, 0, false
+	}
+	end := endOff + len(string(endRunes[:m.EndColumn]))
+	if start < 0 || end > len(content) || start > end {
 		return 0, 0, false
 	}
 	return start, end, true

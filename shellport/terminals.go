@@ -27,7 +27,7 @@ type TerminalService interface {
 	Paste(lease workspace.TerminalLease, data []byte) error
 	Resize(lease workspace.TerminalLease, cols, rows int) error
 	// Rows returns a detached bounded page; start=-1 requests the active grid.
-	Rows(id string, start, count int) (workspace.TerminalProjection, error)
+	Rows(id string, request terminalvt.RowRequest) (workspace.TerminalProjection, error)
 }
 
 // TerminalManager owns the PTY sessions.

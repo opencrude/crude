@@ -1083,7 +1083,6 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	// Width-only virtualization materializes the visible range plus overscan;
 	// offscreen dirty items retain previous/estimated heights until exposed.
 	heightChanged := false
-	paneChanged := false
 	renderedDirty := dirty[:0]
 	for _, i := range dirty {
 		item := r.vl.Item(i)
@@ -1093,9 +1092,6 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 		renderedDirty = append(renderedDirty, i)
 		if oldHeights[i] != item.Height {
 			heightChanged = true
-		}
-		if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil && msg.SubPaneID != "" {
-			paneChanged = true
 		}
 	}
 	r.vl.BuildIndex()
@@ -1108,7 +1104,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	} else {
 		r.vl.ClampScroll()
 	}
-	structureChanged = structureChanged || heightChanged || paneChanged
+	structureChanged = structureChanged || heightChanged
 	rows := r.exportSnapshot.Rows
 	changedIndices := renderedDirty
 	if structureChanged {
@@ -1128,6 +1124,25 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	paneMap := r.exportSnapshot.PaneLineMap
 	if structureChanged {
 		paneMap = r.buildGlobalPaneLineMap()
+	} else {
+		// Same-height updates retain global geometry. Replace only their exact
+		// row ranges; recursive pane animation/scroll must not walk all history.
+		for _, i := range changedIndices {
+			item := r.vl.Item(i)
+			if item == nil {
+				continue
+			}
+			if len(paneMap) == 0 {
+				if len(item.PaneLines) == 0 {
+					continue
+				}
+				paneMap = make([]PaneLineInfo, r.vl.TotalHeight())
+			}
+			start := r.vl.LineOfItem(i)
+			end := min(start+item.Height, len(paneMap))
+			clear(paneMap[start:end])
+			copy(paneMap[start:end], item.PaneLines)
+		}
 	}
 	r.exportGeneration++
 	r.exportRevision = r.vl.Revision()
@@ -1267,8 +1282,8 @@ func (r *Renderer) invalidateStreamingCursorOwner() {
 
 func (r *Renderer) buildGlobalPaneLineMap() []PaneLineInfo {
 	hasPane := false
-	for _, msg := range r.sync.Messages {
-		if msg != nil && msg.SubPaneID != "" {
+	for i := range r.vl.items {
+		if len(r.vl.items[i].PaneLines) != 0 {
 			hasPane = true
 			break
 		}
@@ -1279,25 +1294,13 @@ func (r *Renderer) buildGlobalPaneLineMap() []PaneLineInfo {
 	r.vl.BuildIndex()
 	total := r.vl.TotalHeight()
 	paneMap := make([]PaneLineInfo, total)
-	if len(r.sync.Messages) == 0 || total == 0 {
-		return paneMap
-	}
-	for _, msg := range r.sync.Messages {
-		if msg == nil || msg.SubPaneID == "" {
-			continue
-		}
-		itemIdx, found := r.vl.byID[msg.InternalID]
-		if !found {
-			continue
-		}
-		item := r.vl.Item(itemIdx)
-		if item == nil {
+	for itemIdx := range r.vl.items {
+		item := &r.vl.items[itemIdx]
+		if len(item.PaneLines) == 0 {
 			continue
 		}
 		start := r.vl.LineOfItem(itemIdx)
-		for localLine := 1; localLine <= item.PaneRows && start+localLine < len(paneMap); localLine++ {
-			paneMap[start+localLine] = PaneLineInfo{PaneID: msg.SubPaneID, LineIdx: localLine - 2}
-		}
+		copy(paneMap[start:], item.PaneLines)
 	}
 	return paneMap
 }
@@ -1332,18 +1335,8 @@ func (r *Renderer) buildPaneLineMap(visible []string) {
 		if item == nil {
 			continue
 		}
-		msg, ok := item.Data.(*types.ChatMessage)
-		if !ok || msg.SubPaneID == "" {
-			continue
-		}
-
-		// localLine 0 is the transcript-owned leading spacer. It never
-		// inherits pane background, scrollbar paint, or nested wheel ownership.
-		if localLine >= 1 && localLine <= item.PaneRows {
-			r.paneLineMap[i] = PaneLineInfo{
-				PaneID:  msg.SubPaneID,
-				LineIdx: localLine - 2,
-			}
+		if localLine >= 0 && localLine < len(item.PaneLines) {
+			r.paneLineMap[i] = item.PaneLines[localLine]
 		}
 	}
 }
@@ -1382,17 +1375,16 @@ func (r *Renderer) PaneScrollMaxOffset() int {
 }
 
 func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
+	item.PaneLines = nil
 	if group, ok := item.Data.(*activityGroup); ok {
 		lines, native := r.renderActivity(group)
 		item.Native = native
-		item.PaneRows = 0
 		r.setFrameSensitive(group.id, group.active)
 		return lines
 	}
 	msg, ok := item.Data.(*types.ChatMessage)
 	if !ok {
 		item.Native = nil
-		item.PaneRows = 0
 		return []string{""}
 	}
 
@@ -1408,12 +1400,12 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		frameSensitive := false
 		result := make([]string, 0, len(paneLines)+1)
 		native := make([]PaintLine, 0, len(paneLines)+1)
-		item.PaneRows = 0
+		paneLinesInfo := make([]PaneLineInfo, 1, len(paneLines)+1)
 		result = append(result, "")
 		native = append(native, buildPlainBodyLine(""))
 		for _, sl := range paneLines {
 			frameSensitive = frameSensitive || sl.FrameSensitive
-			item.PaneRows++
+			paneLinesInfo = append(paneLinesInfo, sl.PaneInfo)
 			var pl PaintLine
 			if sl.Native != nil {
 				result = append(result, sl.PlainText())
@@ -1428,10 +1420,10 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 			native = append(native, pl)
 		}
 		item.Native = native
+		item.PaneLines = paneLinesInfo
 		r.setFrameSensitive(msg.InternalID, frameSensitive)
 		return result
 	}
-	item.PaneRows = 0
 
 	isStreamingCursor := r.isStreamingCursor(msg)
 

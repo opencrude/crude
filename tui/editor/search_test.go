@@ -220,3 +220,34 @@ func TestSearch_MultilineMatches(t *testing.T) {
 		t.Errorf("second match line: got %v, want {2 0}", got)
 	}
 }
+
+func TestSearchVerbatimAndRegexReplacementTransactions(t *testing.T) {
+	ed := opsEditor(t, "search.txt", "HandleWorkspaceEvent hwe\nfoo12 foo34\n foo ")
+	require.Equal(t, 1, ed.SetQuery("hwe"), "document Find must never use fuzzy discovery")
+	require.Equal(t, 1, ed.SetQuery(" foo "), "whitespace is source text")
+	ed.ConfigureSearch(`(?P<word>foo)(\d+)`, `${word}:$2:$$`, SearchOptions{Regex: true})
+	require.Equal(t, 2, ed.ReplaceAll())
+	require.Equal(t, "HandleWorkspaceEvent hwe\nfoo:12:$ foo:34:$\n foo ", ed.Value())
+	ed.Undo()
+	require.Equal(t, "HandleWorkspaceEvent hwe\nfoo12 foo34\n foo ", ed.Value())
+	ed.ConfigureSearch("[", "bad", SearchOptions{Regex: true})
+	require.NotEmpty(t, ed.Search().Error)
+	require.Zero(t, ed.ReplaceAll())
+	ed.ConfigureSearch("^", "> ", SearchOptions{Regex: true})
+	require.Empty(t, ed.Search().Error)
+	require.Equal(t, 3, ed.ReplaceAll())
+	require.Equal(t, "> HandleWorkspaceEvent hwe\n> foo12 foo34\n>  foo ", ed.Value())
+}
+
+func TestSearchReplaceCurrentAdvancesFromChosenHit(t *testing.T) {
+	ed := opsEditor(t, "replace.txt", "x x x")
+	ed.ConfigureSearch("x", "xx", SearchOptions{})
+	ed.Search().CurrentIdx = 1
+	ed.ReplaceCurrent()
+	require.Equal(t, "x xx x", ed.Value())
+	m, ok := ed.Search().CurrentMatch()
+	require.True(t, ok)
+	require.Equal(t, 5, m.startOffset, "must advance beyond the replacement, not reset or match its own output")
+	ed.Undo()
+	require.Equal(t, "x x x", ed.Value())
+}

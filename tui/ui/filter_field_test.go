@@ -40,12 +40,12 @@ func TestFilterFieldUnicodeEmojiZWJWideEditing(t *testing.T) {
 		t.Fatalf("Cursor=%d want %d (rune index)", f.Edit().Cursor(), wantLen)
 	}
 
-	// Backspace removes exactly one rune at a time, never a byte.
+	// Backspace removes a complete visible grapheme, never an encoding fragment.
 	for _, step := range []string{
 		"a" + family + combining + wide, // drop 🚀
 		"a" + family + combining,        // drop 日
-		"a" + family + "e",              // drop combining acute, base stays
-		"a" + family,                    // drop e
+		"a" + family,                    // drop the complete accented e
+		"a",                             // drop the complete ZWJ family
 	} {
 		f.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyBackspace}))
 		if f.Value() != step {

@@ -540,6 +540,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleActivity(activityFiles)
 	case "view.activity.agents":
 		m.toggleActivity(activityAgents)
+	case "view.activity.workspaces":
+		return m.toggleActivity(activityWorkspaces)
 	case "terminal.picker":
 		m.openTerminalPicker()
 	case "view.activity.skills":

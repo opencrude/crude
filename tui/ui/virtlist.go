@@ -210,6 +210,15 @@ func (v *VirtualList) ItemIndexAtRow(absRow int) int {
 	return v.itemAtRow(absRow)
 }
 
+// ItemStartRow returns the content-row origin used by painting and hit testing.
+// Invalid indices have no content row.
+func (v *VirtualList) ItemStartRow(index int) int {
+	if index < 0 || index >= len(v.items) {
+		return -1
+	}
+	return v.prefix[index]
+}
+
 func (v *VirtualList) ItemAtViewportRow(row int) (VirtItem, bool) {
 	if row < 0 || row >= v.scroll.Viewport() {
 		return VirtItem{}, false
