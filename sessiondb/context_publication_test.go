@@ -49,6 +49,75 @@ func TestPublishContextCASAppendAndIdempotence(t *testing.T) {
 	}
 }
 
+func TestRecoveryOnlyPublicationDoesNotRewriteImmutableContext(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	defer db.Close()
+	if err := CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	message := provider.NewMultiPartMessage("user", []provider.ContentPart{{Type: "text", Text: "inspect image"}, {Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64," + strings.Repeat("YWJj", 1024)}}})
+	message.InternalID = "image-input"
+	state, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", Mutation: ContextMutation{Replace: &ContextReplacement{Generation: 1, Reason: "input", Messages: []provider.ChatMessage{message}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_context_payload_rewrite BEFORE UPDATE OF messages_json ON agent_context_state BEGIN SELECT RAISE(ABORT,'immutable payload rewritten'); END`); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := RecoveryCheckpoint{Status: recovery.Status{ID: "incident", AgentID: "root", Generation: 1}, PendingInput: provider.PlainInput("inspect image"), InputAdmitted: true, Archive: state.Messages, ActiveContext: state.Messages}
+	next, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", RuntimeAgentID: "root", ExpectedRevision: state.Revision, Recovery: &checkpoint})
+	if err != nil {
+		t.Fatalf("status-only recovery rewrote unchanged image context: %v", err)
+	}
+	loaded, found, err := LoadRecoveryCheckpoint(db, "session", "root")
+	if err != nil || !found || loaded.ContextRevision != next.Revision || !reflect.DeepEqual(loaded.ActiveContext, state.Messages) || !reflect.DeepEqual(loaded.Archive, state.Messages) {
+		t.Fatalf("recovery lost image bytes or exact context revision: found=%v error=%v", found, err)
+	}
+	_, err = PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", RuntimeAgentID: "root", ExpectedRevision: state.Revision, Recovery: &checkpoint})
+	var conflict *ContextRevisionConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("status-only publication bypassed revision fence: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_recovery_bookkeeping BEFORE INSERT ON agent_recoveries BEGIN SELECT RAISE(ABORT,'recovery unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.Status.ID = "failed-incident"
+	if _, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", RuntimeAgentID: "root", ExpectedRevision: next.Revision, Recovery: &checkpoint}); err == nil {
+		t.Fatal("status-only publication acknowledged a failed recovery commit")
+	}
+	current, found, err := LoadContextState(db, "session", "root")
+	if err != nil || !found || current.Revision != next.Revision || !reflect.DeepEqual(current.Messages, state.Messages) {
+		t.Fatalf("failed recovery changed context revision or bytes: found=%v error=%v", found, err)
+	}
+}
+
+func BenchmarkPublishContextRecoveryImage(b *testing.B) {
+	for _, size := range []int{1024, 4 << 20} {
+		b.Run(fmt.Sprintf("bytes_%d", size), func(b *testing.B) {
+			db := OpenAndMigrateAt(b.TempDir())
+			defer db.Close()
+			if err := CreateSessionRow(db, "session"); err != nil {
+				b.Fatal(err)
+			}
+			message := provider.NewMultiPartMessage("user", []provider.ContentPart{{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64," + strings.Repeat("YWJj", size/4)}}})
+			message.InternalID = "image-input"
+			state, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", Mutation: ContextMutation{Replace: &ContextReplacement{Generation: 1, Reason: "input", Messages: []provider.ChatMessage{message}}}})
+			if err != nil {
+				b.Fatal(err)
+			}
+			checkpoint := RecoveryCheckpoint{Status: recovery.Status{ID: "incident", AgentID: "root", Generation: 1}, PendingInput: provider.PlainInput("inspect image"), InputAdmitted: true, Archive: state.Messages, ActiveContext: state.Messages}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				state, err = PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", RuntimeAgentID: "root", ExpectedRevision: state.Revision, Recovery: &checkpoint})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestPublishContextCommitsHumanPromptMetadataWithInput(t *testing.T) {
 	db := OpenAndMigrateAt(t.TempDir())
 	defer db.Close()

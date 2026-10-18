@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/clipboard"
@@ -23,7 +25,17 @@ import (
 // inline/chunked transport boundaries must preserve the same binary image.
 func TestConnectedClipboardImageReachesProviderExactly(t *testing.T) {
 	for _, size := range []int{2, 1100} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) { connectedClipboardJourney(t, size, false) })
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			for _, gesture := range []struct {
+				name string
+				msg  tea.Msg
+			}{
+				{"CtrlV", tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}},
+				{"Bracketed", tea.PasteMsg{Content: ""}},
+			} {
+				t.Run(gesture.name, func(t *testing.T) { connectedClipboardJourney(t, size, false, gesture.msg) })
+			}
+		})
 	}
 }
 
@@ -32,10 +44,10 @@ func TestConnectedNativeClipboardImage(t *testing.T) {
 	if os.Getenv("CRUDE_SYNTHETIC_CLIPBOARD") != "1" {
 		t.Skip("requires an owned synthetic system clipboard")
 	}
-	connectedClipboardJourney(t, 2, true)
+	connectedClipboardJourney(t, 2, true, tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
 }
 
-func connectedClipboardJourney(t *testing.T, size int, native bool) {
+func connectedClipboardJourney(t *testing.T, size int, native bool, gesture tea.Msg) {
 	var encoded bytes.Buffer
 	encoder := png.Encoder{CompressionLevel: png.NoCompression}
 	if err := encoder.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, size, size))); err != nil {
@@ -50,13 +62,19 @@ func connectedClipboardJourney(t *testing.T, size int, native bool) {
 		}
 	}
 	requests := make(chan []byte, 1)
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		var request json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 			return
 		}
-		requests <- request
+		select {
+		case requests <- request:
+		default:
+			t.Error("clipboard input issued a duplicate provider request")
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"clipboard accepted\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
@@ -80,12 +98,10 @@ func connectedClipboardJourney(t *testing.T, size int, native bool) {
 		}, writeText: func(string) error { return nil },
 	})
 	defer restore()
-	var gesture tea.Msg = tea.PasteMsg{Content: ""}
-	if size == 2 {
-		gesture = tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}
-	}
+	captureStart := time.Now()
 	_, cmd := app.Update(gesture)
 	runAppCommand(t, app, cmd)
+	captureElapsed := time.Since(captureStart)
 	refs := app.ActiveSession.RefStore.ListReferences()
 	if len(refs) != 1 {
 		t.Fatalf("clipboard refs = %+v", refs)
@@ -100,12 +116,15 @@ func connectedClipboardJourney(t *testing.T, size int, native bool) {
 	if !strings.Contains(app.Input.Value(), refs[0].Label) {
 		t.Fatal("missing composer chip")
 	}
+	sendStart := time.Now()
 	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, app, cmd)
+	admissionElapsed := time.Since(sendStart)
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return strings.Contains(app.View().Content, "clipboard accepted") })
+	t.Logf("image=%d bytes capture=%v admission=%v send-to-visible=%v", len(data), captureElapsed, admissionElapsed, time.Since(sendStart))
 	request := <-requests
 	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
-	if bytes.Count(request, []byte(want)) != 1 {
+	if calls.Load() != 1 || bytes.Count(request, []byte(want)) != 1 {
 		t.Fatal("provider did not receive the exact image once")
 	}
 }

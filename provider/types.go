@@ -171,13 +171,17 @@ func (c MessageContent) String() string {
 	if err := json.Unmarshal([]byte(raw), &parts); err != nil {
 		return s
 	}
+	return contentPartsText(parts)
+}
+
+func contentPartsText(parts []ContentPart) string {
 	var b strings.Builder
-	for _, p := range parts {
-		if p.Type == "text" && p.Text != "" {
+	for _, part := range parts {
+		if part.Type == "text" && part.Text != "" {
 			if b.Len() > 0 {
-				b.WriteString("\n")
+				b.WriteByte('\n')
 			}
-			b.WriteString(p.Text)
+			b.WriteString(part.Text)
 		}
 	}
 	return b.String()

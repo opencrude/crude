@@ -460,10 +460,17 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		request.recovery.Archive, request.recovery.ActiveContext = recoveryState.contexts()
 	}
-	if !recoverStep(agent.RecoveryFailureStorage, func() error {
-		return s.persistPendingRecovery(supervisor)
-	}) {
-		return
+	if !locallyAdmitted && !request.retry {
+		// The connected admission receipt already committed this exact input,
+		// preparation and initial recovery envelope atomically. Retry likewise
+		// published its continuation above. Direct execution, which just
+		// admitted the submitted row here, still needs its first
+		// envelope; never rewrite an unchanged image snapshot before every run.
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			return s.persistPendingRecovery(supervisor)
+		}) {
+			return
+		}
 	}
 	s.msgsMu.Lock()
 	s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()

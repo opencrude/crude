@@ -135,6 +135,56 @@ func TestCommitInputAdmissionDuplicateReturnsSameReceipt(t *testing.T) {
 	}
 }
 
+func TestAcceptedInputStartsFromItsDurableAdmissionCheckpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"accepted\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	s, err := NewWithSessionDir("admission-checkpoint", modelAttributionConfig(server.URL, "admission-checkpoint"), t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	s.SetBeforeTurnHook(func(ctx context.Context, _ string) error {
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	sender := newMockEventSender()
+	o, err := s.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := s.PrepareInputAdmission(o.ID, provider.PlainInput("reuse the committed input"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := s.CommitInputAdmission(t.Context(), intent)
+	if result.Status != InputAdmissionAccepted {
+		t.Fatalf("admission failed: %+v", result)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn never reached the preflight boundary")
+	}
+	state, found, err := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
+	if err != nil || !found || state.Revision != result.Receipt.ContextRevision {
+		t.Fatalf("starting the turn rewrote unchanged admitted context: revision=%d receipt=%d found=%v error=%v", state.Revision, result.Receipt.ContextRevision, found, err)
+	}
+	checkpoint, found, err := sessiondb.LoadRecoveryCheckpoint(s.db, s.sessionID, o.ID)
+	if err != nil || !found || !checkpoint.InputAdmitted || checkpoint.ContextRevision != state.Revision || checkpoint.PendingInput.InternalID != intent.InputID {
+		t.Fatalf("admission did not retain its exact durable recovery envelope: found=%v error=%v", found, err)
+	}
+}
+
 func TestAdmittedInputMirrorsItsOwningTurnBeforeCompletion(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
