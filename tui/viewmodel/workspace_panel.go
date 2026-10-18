@@ -55,6 +55,7 @@ func (m *App) syncWorkspacePanels() {
 		return
 	}
 	m.workspacePanelLastVersion, m.workspacePanelLastSecond = version, second
+	m.syncOpenTabStats()
 	if m.panelShown(termdock.PanelWorkspace) {
 		m.refreshWorkspaceSessions(false)
 	}
