@@ -79,6 +79,92 @@ func TestDocumentDurableRestartAuthorHistoryAndReceipts(t *testing.T) {
 	}
 }
 
+func TestDocumentRestartMissingParentDoesNotDisableWorkspace(t *testing.T) {
+	for _, dirty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dirty=%v", dirty), func(t *testing.T) {
+			root := t.TempDir()
+			removedDir := filepath.Join(root, "removed")
+			removedPath := filepath.Join(removedDir, "retained.txt")
+			healthyPath := filepath.Join(root, "healthy.txt")
+			if err := os.Mkdir(removedDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{removedPath, healthyPath} {
+				if err := os.WriteFile(path, []byte("saved text"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			db, err := openWorkspaceDBAt(filepath.Join(t.TempDir(), "workspace.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			owner := document.Owner{ClientID: "author", Epoch: 1}
+			s := NewDocumentService(root, nil, nil, db.DB)
+			t.Cleanup(s.Close)
+			removed, err := s.Open(owner, removedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Open(owner, healthyPath); err != nil {
+				t.Fatal(err)
+			}
+			want := "saved text"
+			if dirty {
+				documentEdit(t, s, owner, removed.ID, "typing", 1, 0, len(want), "unsaved text")
+				want = "unsaved text"
+			}
+			s.Close()
+			if err := os.Remove(removedPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(removedDir); err != nil {
+				t.Fatal(err)
+			}
+
+			for restart := 0; restart < 2; restart++ {
+				s = NewDocumentService(root, nil, nil, db.DB)
+				t.Cleanup(s.Close)
+				if _, err := s.Open(owner, healthyPath); err != nil {
+					t.Fatalf("one removed parent disabled an unrelated editor: %v", err)
+				}
+				fresh, err := s.Open(owner, filepath.Join(root, "new.txt"))
+				if err != nil || fresh.ID == "" {
+					t.Fatalf("new document could not open: %v", err)
+				}
+				retained := documentText(t, s, removed.ID, want)
+				if retained.ID != removed.ID || retained.Path != removedPath || !retained.Conflict || retained.Dirty != dirty || string(retained.Saved) != "saved text" {
+					t.Fatalf("removed document lost its recovery evidence: %+v", retained)
+				}
+				if _, err := s.Open(owner, removedPath); err != nil {
+					t.Fatalf("retained document cannot be opened for recovery: %v", err)
+				}
+				if _, err := s.Open(owner, filepath.Join(removedDir, "unretained.txt")); err == nil {
+					t.Fatal("opening an unretained file accepted a missing parent")
+				}
+				called := false
+				result := s.MutateFiles(t.Context(), FileOpCreate, []string{filepath.Join(root, "created.txt")}, nil, func() FileOperationResultMsg {
+					called = true
+					return FileOperationResultMsg{}
+				})
+				if result.Err != nil || !called {
+					t.Fatalf("removed document disabled unrelated file actions: %+v", result)
+				}
+				if restart == 1 && dirty {
+					if _, err := s.Undo(owner, removed.ID, "undo", retained.Revision); err != nil {
+						t.Fatal(err)
+					}
+					documentText(t, s, removed.ID, "saved text")
+				}
+				s.Close()
+			}
+			if _, err := os.Stat(removedDir); !os.IsNotExist(err) {
+				t.Fatalf("recovery recreated the removed directory: %v", err)
+			}
+		})
+	}
+}
+
 func TestDocumentStorageFailureDoesNotInstallMutation(t *testing.T) {
 	s, snap, a, _ := documentFixture(t, "original")
 	db, err := openWorkspaceDBAt(filepath.Join(t.TempDir(), "workspace.db"))

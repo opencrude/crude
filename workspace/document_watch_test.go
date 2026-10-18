@@ -4,8 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
+
+	"crude/document"
 )
 
 func TestDocumentWatchCleanAtomicReplacementDirtyConflictAndJoin(t *testing.T) {
@@ -50,6 +53,81 @@ func TestDocumentWatchCleanAtomicReplacementDirtyConflictAndJoin(t *testing.T) {
 	case <-s.watch.done:
 	default:
 		t.Fatal("close did not join watcher")
+	}
+}
+
+func TestDocumentWatchRemovedDirectoryReleasesAndReopens(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(map[bool]string{false: "remove", true: "rename"}[rename], func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "folder")
+			path := filepath.Join(dir, "text.txt")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s := NewDocumentService(root, nil, nil)
+			t.Cleanup(s.Close)
+			owner := document.Owner{ClientID: "author", Epoch: 1}
+			snap, err := s.Open(owner, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rename {
+				if err := os.Rename(dir, filepath.Join(root, "moved")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				current := documentText(t, s, snap.ID, "original")
+				s.watch.mu.Lock()
+				watching := slices.Contains(s.watch.watcher.WatchList(), dir)
+				s.watch.mu.Unlock()
+				if !watching && current.Conflict {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("removed directory retained a stale watch or healthy descendant: watching=%v conflict=%v", watching, current.Conflict)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Open(owner, path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("fresh watcher content"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			deadline = time.Now().Add(3 * time.Second)
+			for {
+				current, err := s.Snapshot(snap.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(current.Text) == "fresh watcher content" && !current.Conflict {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("reopened directory did not regain a working watch: %+v", current)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
 	}
 }
 

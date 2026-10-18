@@ -16,8 +16,6 @@ import (
 type documentWatch struct {
 	s          *DocumentService
 	watcher    *fsnotify.Watcher
-	err        error
-	dirs       map[string]bool
 	mu         sync.Mutex
 	pending    map[string]bool
 	wake       chan struct{}
@@ -26,7 +24,7 @@ type documentWatch struct {
 }
 
 func newDocumentWatch(s *DocumentService) *documentWatch {
-	w := &documentWatch{s: s, dirs: make(map[string]bool), pending: make(map[string]bool), wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	w := &documentWatch{s: s, pending: make(map[string]bool), wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	go w.run()
 	return w
 }
@@ -39,24 +37,36 @@ func (w *documentWatch) add(dir string) error {
 	default:
 	}
 	if w.watcher == nil {
-		w.watcher, w.err = fsnotify.NewWatcher()
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			return err
+		}
+		w.watcher = watcher
 		select {
 		case w.wake <- struct{}{}:
 		default:
 		}
 	}
-	if w.err != nil {
-		return w.err
-	}
-	if w.dirs[dir] {
-		return nil
-	}
-	if err := w.watcher.Add(dir); err != nil {
-		return err
-	}
-	w.dirs[dir] = true
-	return nil
+	// fsnotify owns registration identity and makes repeated Add idempotent.
+	// A second directory cache would outlive watches removed by the OS.
+	return w.watcher.Add(dir)
 }
+
+// Removed/renamed directories no longer own a watch, even on platforms that
+// silently remove it. Reopening a recreated path must register a fresh watch.
+func (w *documentWatch) forget(path string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.watcher == nil {
+		return
+	}
+	for _, dir := range w.watcher.WatchList() {
+		if documentUnder(path, dir) {
+			_ = w.watcher.Remove(dir)
+		}
+	}
+}
+
 func (w *documentWatch) changed(id string) {
 	w.mu.Lock()
 	w.pending[id] = true
@@ -91,7 +101,11 @@ func (w *documentWatch) run() {
 				continue
 			}
 			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
-				w.s.reconcilePath(filepath.Clean(event.Name))
+				path := filepath.Clean(event.Name)
+				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+					w.forget(path)
+				}
+				w.s.reconcilePath(path)
 			}
 		case _, ok := <-failures:
 			if !ok {
@@ -227,14 +241,17 @@ func (s *DocumentService) ReconcileDisk(ctx context.Context, id string) error {
 
 func (s *DocumentService) reconcilePath(path string) {
 	s.mu.Lock()
-	d := s.documentAtPath(path)
-	id := ""
-	if d != nil {
-		id = d.snapshot.ID
-		s.reconcileLocked(id)
+	var changed []string
+	for id, d := range s.docs {
+		// A directory event invalidates every retained descendant, not just a
+		// document whose exact path happens to equal the event's name.
+		if documentUnder(path, d.snapshot.Path) {
+			s.reconcileLocked(id)
+			changed = append(changed, id)
+		}
 	}
 	s.mu.Unlock()
-	if id != "" {
+	for _, id := range changed {
 		s.changed(id)
 	}
 }
