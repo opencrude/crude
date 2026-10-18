@@ -103,12 +103,28 @@ Before any public launch:
    artifacts to make the source tree look tidy. Source archives contain tracked
    files, not ignored build directories.
 5. Commit and push every reviewed change. Check git status is empty and HEAD is
-   exactly origin/master. Inspect successful GitHub Linux **and** Windows runs.
+   exactly origin/master. The audited source may become public at this point to
+   use free standard GitHub-hosted Linux/Windows runners; that is **not** a binary
+   release or certification. Inspect successful GitHub Linux **and** Windows runs
+   before proceeding to release publication.
 6. Choose the version and release notes. Tag only that reviewed commit; inspect
    the resulting draft, archive notices, installer risk/setup output and native
    install/update results. Verify no newer local/remote changes appeared.
-7. Make the repository public and publish the reviewed draft only after those
-   gates are met. This preparation does not itself attest that they have passed.
+7. Publish the reviewed draft only after those gates are met. Source visibility
+   and release publication are separate actions; never relax a gate to get a
+   binary out. This preparation does not attest that native gates have passed.
+
+### No-payment public CI
+
+[GitHub's billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+provides free standard GitHub-hosted runner usage for public repositories. Private
+repositories have an included quota; reaching it without a payment method blocks
+usage. These workflows use only standard ubuntu-22.04/windows-2022 runners, never
+paid larger runners, and do not change billing, payment methods or budgets.
+Artifact/cache storage has separate allowances; release artifacts are short-lived
+(14 days) and no increased storage limit is configured. Do not enable paid
+overages to make this project build. GitHub-side/account startup failures still
+need explicit resolution; source visibility alone is not proof that CI ran.
 
 Useful human-operated commands (substitute the reviewed tag/commit):
 
@@ -117,8 +133,9 @@ gh run list --workflow tui.yml
 gh run view <run-id> --log-failed
 gh workflow run release.yml --ref <tag> -f tag=<tag>
 gh release view <tag>
-# Only after the complete checklist and review:
+# After source/history audit, finished agents and a clean pushed checkout:
 gh repo edit uoosef403/crude --visibility public --accept-visibility-change-consequences
+# Before binary publication, all native and release gates must also pass:
 gh release edit <tag> --draft=false
 ```
 
