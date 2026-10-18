@@ -82,6 +82,31 @@ glyphs; an ambiguous-width measurement generalizes to that Unicode class; a
 measured multi-cell ZWJ sequence enables legacy codepoint-sum fallback. The
 calibration result is logged as `TERM width_calibrated` for diagnosis.
 
+Every valid grapheme measurement is retained, even when it matches the initial
+guess. Publishing the same profile can enable ambiguous-width or legacy class
+fallbacks; those must never replace the terminal's exact measured width. The
+logged correction count includes these retained exact measurements.
+
+### Multiplexer limitation
+
+Matching the multiplexer's CPR does not prove its physical output matches the
+outer terminal. Live checks with tmux 3.4 and Kitty 0.32.2 found `👩‍💻` reported
+as two cells inside tmux but four directly in Kitty, and `👨‍👩‍👧‍👦` reported as
+four versus eight. Plain terminal output without Crude reproduces the mismatch;
+tmux also has a fixed-size combined-character buffer and can lose parts of long
+ZWJ sequences. More application probes cannot repair that output layer.
+
+This pairing is not visually accepted for those clusters. Running without the
+multiplexer avoids this extra translation layer; terminal/multiplexer upgrades
+need the same real-output checks, not a blanket promise based on version or CPR.
+
+Upstream tmux 3.8 paired with Kitty 0.49.2 was checked with the same emoji-filled
+chat diff, collapse/reopen, scrolling and theme repaint. The reproduced emoji
+drift and long-ZWJ truncation are absent with that pair; upgrading tmux alone
+while retaining Kitty 0.32.2 was not sufficient. This does not establish support
+for every complex-script cluster: tmux's combining rules can still differ from
+the terminal. Version and isolated CPR checks do not replace visual acceptance.
+
 ## Width Rules
 
 `x/ansi.FirstGraphemeCluster` segments UAX #29 extended grapheme clusters.
@@ -162,6 +187,7 @@ Key coverage:
 |------|----------|
 | `tui/rendering/TestEmojiGraphemeWidth` | basic grapheme widths |
 | `third_party/bubbletea/TestTerminalWidthProbeBuildsMeasuredProfile` | CPR measurements become one shared profile |
+| `third_party/bubbletea/TestTerminalWidthProbePreservesMeasurementsAfterClassFallback` | class fallbacks cannot override exact measurements or shift rendered row sentinels |
 | `third_party/xansi/TestTrigramWidthUsesModernGuessThenTerminalMeasurement` | runtime correction replaces OS policy |
 | `tui/compositor/TestEndToEndWidthAgreement` | compositor and UV agreement |
 | `tui/compositor/TestFloatingBorderOccludesEmojiWithoutHalfGrapheme` | floating borders cannot expose half an underlying emoji |

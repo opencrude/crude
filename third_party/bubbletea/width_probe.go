@@ -128,8 +128,11 @@ func (p *terminalWidthProbe) profile() (ansi.TerminalWidthProfile, bool) {
 			continue
 		}
 		guessed := ansi.GraphemeWidth.StringWidth(cluster)
+		// Keep every measurement, including those matching the initial guess.
+		// The class fallbacks below can change that guess when this profile is
+		// installed; a measured grapheme must always take precedence over them.
+		profile.Exact[cluster] = measured
 		if guessed != measured {
-			profile.Exact[cluster] = measured
 			changed = true
 		}
 	}
