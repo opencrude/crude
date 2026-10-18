@@ -28,7 +28,7 @@ func NeedsInteractiveConsole(args []string) bool {
 		}
 		name, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		switch name {
-		case "mcp", "core", "core-stdio", "core-status", "core-stop":
+		case "version", "help", "h", "mcp", "core", "core-stdio", "core-status", "core-stop":
 			if !hasValue {
 				return false
 			}

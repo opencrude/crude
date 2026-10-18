@@ -5,53 +5,13 @@ on:
     branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  tui:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: System headers for libghostty-vt
-        run: sudo apt-get update -qq && sudo apt-get install -y linux-libc-dev gcc ncurses-bin
-
-      - name: Install Zig 0.16.0
-        run: |
-          mkdir -p "$HOME/tools"
-          curl -fL "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz" \
-            | tar -xJ -C "$HOME/tools"
-          mv "$HOME/tools/zig-x86_64-linux-0.16.0" "$HOME/tools/zig-0.16.0"
-          echo "$HOME/tools/zig-0.16.0" >> "$GITHUB_PATH"
-
-      - name: Bootstrap libghostty-vt
-        run: ./scripts/bootstrap_libghostty.sh
-
-      - name: Lint (full repo)
-        run: |
-          . scripts/libghostty_env.sh
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.4.0
-          golangci-lint run ./...
-
-      - name: Design audit
-        run: ./scripts/tui_design_audit.sh
-
-      - name: Docs gate
-        run: make docs-check
-
-      - name: Bench allocation gate
-        run: ./scripts/tui_bench_gate.sh
-
-      - name: Build
-        run: make build
-
-      - name: TUI unit tests
-        run: make test-tui
-
-      - name: TUI race tests
-        run: make test-race-tui
-
-      - name: Full test suite
-        run: . scripts/libghostty_env.sh && go test ./...
+  verify:
+    uses: ./.github/workflows/verify.yml

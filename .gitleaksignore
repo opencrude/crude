@@ -1,0 +1,8 @@
+# Reviewed source-only false positives, not a broad secret allowlist.
+# Go receiver fields (HTTP2 and certificate settings), not Vault service tokens.
+6c467129f4d4205d10d113b6e098482164c237c1:network/settings.go:vault-service-token:114
+6c467129f4d4205d10d113b6e098482164c237c1:network/settings.go:vault-service-token:115
+5f82830b4e333825e4326c2558d91f513dfbef7c:network/settings.go:vault-service-token:105
+5f82830b4e333825e4326c2558d91f513dfbef7c:network/settings.go:vault-service-token:190
+# Old capture documentation's keyboard chord, not an API key.
+33cbed93d5e6ab0a25ad45f2d4199fff7ff59877:docs/tui/TERMINAL_INTEGRATION_PLAN.md:generic-api-key:427

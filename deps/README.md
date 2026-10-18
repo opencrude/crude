@@ -26,6 +26,10 @@ This clones Ghostty at the commit in `GHOSTTY_PIN` (default source dir
 `$HOME/tools/src/ghostty`) and installs headers + `libghostty-vt.a` into
 `deps/libghostty-vt/`.
 
+Both bootstrap scripts use `-Dcpu=baseline` and stamp `.crude-cpu` alongside
+the revision. Release packages must not inherit a builder's native CPU features;
+the release packager refuses an unstamped/native-CPU dependency install.
+
 ### Windows
 
 ```powershell

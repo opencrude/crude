@@ -9,8 +9,12 @@ passing.
 
 ## Gates
 
-CI (`.github/workflows/tui.yml`) runs, in order: full-repo lint, design audit,
-docs gate, bench allocation gate, build, TUI tests, race tests, full suite.
+CI (`.github/workflows/tui.yml`, reusable `.github/workflows/verify.yml`) runs
+Linux workflow/installer checks, full-repo lint, design/docs/performance gates,
+build, full tests and full race tests. A native Windows job builds/tests with
+cgo and exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these
+checks; see [releases](releases.md). Native CI configuration is not proof that
+the corresponding run has passed.
 Locally:
 
 ```bash

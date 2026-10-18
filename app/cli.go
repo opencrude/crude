@@ -16,6 +16,7 @@ import (
 
 // CLIFlags holds parsed command-line flags.
 type CLIFlags struct {
+	Version       bool
 	APIKey        string
 	Account       string
 	Model         string
@@ -49,6 +50,7 @@ type CLIFlags struct {
 
 // ParseFlags parses os.Args flags into CLIFlags.
 func ParseFlags() CLIFlags {
+	versionFlag := flag.Bool("version", false, "Print version and exit (no core or profile access)")
 	apiKeyFlag := flag.String("key", "", "API key for the selected provider account")
 	accountFlag := flag.String("account", "", "Explicit account ID for the selected provider")
 	modelFlag := flag.String("model", "", "Model to use")
@@ -79,6 +81,7 @@ func ParseFlags() CLIFlags {
 	flag.Parse()
 
 	return CLIFlags{
+		Version:       *versionFlag,
 		APIKey:        *apiKeyFlag,
 		Account:       *accountFlag,
 		Model:         *modelFlag,
@@ -256,6 +259,10 @@ func ResolveResume(flags CLIFlags) (string, error) {
 // Main is the app-layer entry point: parse flags, resolve config, run IDE.
 func Main() int {
 	flags := ParseFlags()
+	if flags.Version {
+		fmt.Println(buildinfo.VersionString())
+		return 0
+	}
 	if err := validateMCPInvocation(flags); err != nil {
 		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
 		return 1

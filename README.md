@@ -1,133 +1,123 @@
-# Crude
+# Crude — the hackable Agentic Development Environment
 
-Crude is a terminal-native IDE for working with AI agents: a three-layer Go
-application with a custom TUI component system, an embedded terminal, editor
-with LSP integration, and pluggable model providers.
+**An ADE for humans and agents. Both first-class. Neither in the other's way.**
 
-## Architecture
+Our ambition: the first environment built around agentic development, not an
+agent bolted onto an editor. Humans and agents deserve equal respect.
 
-Three layers, strictly separated (no callbacks across boundaries — method
-calls down, event bus up):
+Crude is an opinionated, open-source **Agentic Development Environment (ADE)**
+written in Go. It brings AI coding agents, your editor, terminals and review tools
+into one terminal-native workspace on Linux and Windows. Use your **mouse or
+keyboard**: click, drag, browse menus, or take a shortcut when it helps. It's 2026;
+you shouldn't need to memorize a thousand keybindings to get work done.
 
-```
-app/        IDE shell: config, workspace lifecycle, CLI startup
-workspace/  Per-project state machine: sessions, agents, LSP, file ops
-tui/        Dumb renderer + input router: surfaces, components, input routing
-```
+[Documentation](docs/README.md) · [Releases](https://github.com/uoosef403/crude/releases) ·
+[Report a bug](https://github.com/uoosef403/crude/issues) · [Apache-2.0](LICENSE-APACHE)
 
-`workspace/` never imports `tui/`; presentation-neutral contracts live in
-`types/`. The full rules live in [`AGENTS.md`](AGENTS.md) — read it before
-changing architecture or terminal UI code.
+![Crude editing its own Go source with syntax highlighting, file navigation and an embedded terminal](assets/crude-source.png)
 
-## Build
+> **Active development / beta testing.** Crude and its agents can change files and
+> execute commands. Bugs, incompatible changes, or agent mistakes can damage or
+> lose work. Commit your changes, keep independent backups, review actions, and
+> do not rely on Crude as your only copy. Installers require explicit acceptance.
 
-Building the embedded terminal requires the pinned `libghostty-vt` C library
-(Zig 0.16.x and `tic` are needed once to bootstrap it):
+## Less configuring. More developing.
 
-```bash
-make libghostty     # one-time bootstrap of the pinned libghostty-vt
-make build          # validate all packages and rebuild ./crude with libghostty
-```
+Crude gets out of your way — and your agents' way. Useful defaults, discoverable
+controls, one coherent workspace. No endless editor-plugin configuration.
 
-## Test
+- **Agents with a workspace:** multi-agent delegation, plans, reports, shared
+  project memory, and recoverable interrupted work.
+- **An IDE you can stay in:** editor, LSP integration, file search, split panes,
+  floating windows, and native Linux PTY / Windows ConPTY terminals.
+- **Review before trust:** Git diffs, staging and history, permission controls,
+  managed worktrees, and Local History previews/undo. Not a security sandbox.
+- **Your models and tools:** configurable provider accounts, local models,
+  Skills and MCP integrations. Bring your own account; provider charges may apply.
+- **A retained core:** shells attach to long-lived workspace actors. Closing a
+  shell detaches it; it does not deliberately terminate running agent work.
 
-```bash
-make test-tui       # full TUI suite
-make test-race-tui  # race detector, full repo
-go test ./...       # plain full-repo run
-```
+**Deliberately no editor plugin system.** Want a different workflow? Fork or
+clone Crude, run it from source, and ask Crude itself to implement the change.
+Skills and MCP connect your agents to tools; they aren't an editor-plugin treadmill.
 
-## Gates
+<details>
+<summary>See the agent workspace</summary>
 
-CI (`.github/workflows/tui.yml`) and the Makefile enforce:
+![Crude's agent conversation beside the Crude source tree](assets/crude-agents.png)
 
-| Gate | Command | Enforces |
-|------|---------|----------|
-| Lint | `golangci-lint run ./...` | govet, ineffassign, misspell, staticcheck, unused, errcheck, gofmt — zero issues |
-| Design audit | `make design-audit` | three-layer boundary, theme-token discipline, no raw ANSI in feature code |
-| Bench gate | `make bench-gate` | allocation ceilings from `docs/reference/performance-baselines.md` |
-| Docs gate | `make docs-check` | documentation naming, status headers, working links, no orphans |
+Real product captures of this repository. The example conversation is served by
+a local screenshot fixture, not a claim of a live model's output.
+</details>
 
-All of them must stay green; a red gate is a broken build, not a warning.
+## Install or update
 
-## Documentation
+**Release preparation:** the commands below become available after the first
+public release is published. Until then, [build from source](#build-from-source).
 
-The documentation set lives in [`docs/`](docs/README.md) with its own index
-and rules:
-
-- `docs/architecture/` — how the system is built and why
-- `docs/reference/` — durable contracts: surfaces, interactions, settings,
-  width rules, performance baselines
-- `docs/guides/` — how to build TUI screens with the component system
-- `docs/plans/` — historical plans, handoffs, and checklists (check the
-  status header before acting on them)
-
-## Install
+**Linux x86-64** — glibc 2.35+ (Ubuntu 22.04+ or equivalent), Bash, curl, GNU tar:
 
 ```bash
-./install.sh        # Linux/macOS
-install.bat         # Windows
+installer=$(mktemp) &&
+  curl -fsSL https://github.com/uoosef403/crude/releases/latest/download/install.sh -o "$installer" &&
+  bash "$installer" --accept-beta-risk
 ```
 
-## Windows terminal setup
-
-Crude uses patched Nerd Font glyphs for its activity rail, file tree, source
-control, Skills, MCP, and Settings icons. On Windows, install JetBrainsMono Nerd
-Font system-wide and configure the terminal that launches Crude.
-
-### 1. Install the font
-
-Run PowerShell as Administrator:
+**Windows x64** — Windows 10 1809+ / Windows 11, PowerShell 5.1+:
 
 ```powershell
-winget install --id DEVCOM.JetBrainsMonoNerdFont --exact `
-  --accept-source-agreements --accept-package-agreements
+$installer = Join-Path $env:TEMP ('crude-install-' + [guid]::NewGuid() + '.ps1')
+Invoke-WebRequest https://github.com/uoosef403/crude/releases/latest/download/install.ps1 -OutFile $installer -ErrorAction Stop
+& $installer -AcceptBetaRisk
 ```
 
-### 2. Configure Windows Terminal
+Read the script before running it if you prefer. No Go, Zig or administrator
+rights are needed for the binary install. The same command updates Crude, verifies
+the release archive's SHA-256, and preserves application data. Latest selects a
+non-prerelease release; use `--version vX.Y.Z-beta.1` / `-Version vX.Y.Z-beta.1`
+for a specific beta. macOS, ARM64 and Alpine/musl release packages are not offered.
 
-Open **Windows Terminal → Settings → Defaults → Appearance** and set:
+Open a fresh terminal, run `crude` in your project, and add a provider account in
+**Tools → Settings → Accounts**. Select its model under **Agents**. Use
+the menus and bottom panels to explore — **Ctrl+Alt+P** opens commands and
+**Alt+F12** opens the terminal if you prefer shortcuts.
 
-```text
-Font face: JetBrainsMono NF
-Font size: 12
+### Opinionated by design
+
+For the intended look: current **Kitty or Alacritty** on Linux, **Windows Terminal**
+on Windows, truecolor, and **JetBrainsMono Nerd Font NF** — not NFM. Install the
+[font](https://www.nerdfonts.com/font-downloads), select it in your terminal, then
+enable **Nerd font** and **Show file icons** under **Settings → IDE → Interface**.
+The installers warn about missing or unverifiable setup, but never change fonts
+or terminal settings for you. Ask Crude: **“Help me set up the ideal Crude terminal;
+explain each change and ask before making it.”**
+
+## Build from source
+
+Use the Go version in `go.mod`, Zig 0.16.0 and Git. Linux also needs a C compiler,
+libc headers and `tic` (ncurses). The terminal library is pinned and linked with cgo.
+
+```bash
+make libghostty
+. scripts/libghostty_env.sh
+go run .
 ```
 
-Alternatively, add this under `profiles.defaults` in Windows Terminal's
-`settings.json`:
+Windows: run `scripts/bootstrap_libghostty.ps1`, dot-source
+`scripts/libghostty_env.ps1`, then `go run .` in PowerShell. `make build` produces
+a standalone Linux binary. When hacking on Crude inside Crude, use a separate
+`CRUDE_HOME` profile so your development core doesn't disturb your working one.
 
-```json
-{
-  "profiles": {
-    "defaults": {
-      "font": {
-        "face": "JetBrainsMono NF",
-        "size": 12
-      }
-    }
-  }
-}
-```
+## Humans and agents welcome
 
-Use **`JetBrainsMono NF`**, not **`JetBrainsMono NFM`**. Both variants have the
-same text metrics, but `NFM` compresses patched icons into a single text-cell
-ink box, making navigation and sidebar icons look like tiny dots. `NF` preserves
-their intended outlines.
+The source is documented for **agents to hack on as readily as humans**.
+Start with [AGENTS.md](AGENTS.md) for repository rules, the
+[documentation index](docs/README.md) for architecture and contracts, and
+[validation](docs/guides/validation.md) for test/lint/design/performance gates.
+[Release requirements](docs/guides/releases.md) describe the native build matrix,
+installer options and publication checklist. A green build is not a safety guarantee.
 
-If you do not want to change every Windows Terminal profile, apply the same
-font settings only to the profile used to launch Crude.
-
-### 3. Enable icons in Crude
-
-Open **Tools → Settings → IDE → Interface** and enable:
-
-- **Show file icons**
-- **Nerd font**
-
-Close every Windows Terminal window and reopen Crude after installing or
-changing the font. Color emoji are rendered by Windows Terminal's system emoji
-fallback and may still look different from Kitty or Alacritty on Linux; Crude's
-patched interface icons should remain clear and consistently sized.
-
-For native Windows visual testing, see
-[`docs/guides/windows-visual-capture.md`](docs/guides/windows-visual-capture.md).
+**License:** Crude's original code is **Apache-2.0**. Third-party code retains its
+own licenses; see [NOTICE](NOTICE), [Codex attribution](codexio/NOTICE) and the
+notices bundled with releases. `LICENSE-MIT` is retained for upstream material,
+not an alternative license for Crude.

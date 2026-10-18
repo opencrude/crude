@@ -50,6 +50,7 @@ need_zig() {
 
 lib_ok() {
   [ -f "${STAMP}" ] && [ "$(cat "${STAMP}")" = "${GHOSTTY_COMMIT}" ] &&
+    [ -f "${PREFIX}/.crude-cpu" ] && [ "$(cat "${PREFIX}/.crude-cpu")" = baseline ] &&
     [ -f "${PREFIX}/lib/libghostty-vt.a" ] &&
     [ -f "${PREFIX}/include/ghostty/vt.h" ]
 }
@@ -89,7 +90,7 @@ if ! lib_ok; then
   echo "building libghostty-vt into ${PREFIX}"
   (
     cd "${SRC}"
-    zig build -Demit-lib-vt -Doptimize=ReleaseFast --prefix "${PREFIX}"
+    zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dcpu=baseline --prefix "${PREFIX}"
   )
 
   if [ ! -f "${PREFIX}/lib/libghostty-vt.a" ]; then
@@ -98,6 +99,7 @@ if ! lib_ok; then
     exit 1
   fi
   printf '%s\n' "${GHOSTTY_COMMIT}" > "${STAMP}"
+  printf '%s\n' baseline > "${PREFIX}/.crude-cpu"
   echo "installed libghostty-vt ${GHOSTTY_VERSION} @ ${GHOSTTY_COMMIT}"
 fi
 

@@ -1,0 +1,68 @@
+name: Verify
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux quality and tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-native
+      - name: Install pinned lint tools
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.4.0
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Workflow and installer checks
+        run: |
+          actionlint
+          bash -n install.sh
+          shellcheck -x install.sh scripts/bootstrap_libghostty.sh
+          python scripts/test_install.py -v
+          python -m unittest discover -s scripts -p test_release.py -v
+      - name: Lint (full repo)
+        run: . scripts/libghostty_env.sh && golangci-lint run ./...
+      - name: Design, documentation and performance gates
+        run: make design-audit docs-check bench-gate
+      - name: Build
+        run: make build
+      - name: Full test suite
+        run: . scripts/libghostty_env.sh && go test ./... -count=1 -timeout=180s
+      - name: Full race suite
+        run: . scripts/libghostty_env.sh && go test -race ./... -count=1 -timeout=300s
+  windows:
+    name: Windows native build and tests
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-native
+      - name: Native build
+        shell: pwsh
+        run: |
+          . ./scripts/libghostty_env.ps1
+          go build ./...
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+      - name: Full native test suite
+        shell: pwsh
+        run: |
+          . ./scripts/libghostty_env.ps1
+          go test ./... -count=1 -timeout=300s
+          if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
+      - name: Windows PowerShell 5.1 installer fixtures
+        shell: powershell
+        run: ./scripts/test_install.ps1
+      - name: PowerShell 7 installer fixtures
+        shell: pwsh
+        run: ./scripts/test_install.ps1
+      - name: Package contract tests
+        run: python -m unittest discover -s scripts -p test_release.py -v
