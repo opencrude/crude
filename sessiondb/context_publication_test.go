@@ -662,6 +662,33 @@ func TestPublishContextImmutableIdentityUsesContextOwnerNotProducer(t *testing.T
 	}
 }
 
+func TestHydrateMessageIdentitiesRestoresProviderFactsAndEmptyShapes(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	defer db.Close()
+	if err := CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	message := provider.ChatMessage{InternalID: "complete", Role: "assistant", Content: provider.TextContent("accepted"),
+		ReplayScope: "provider-scope", ReplaySourceModel: "original-model", ReplayPrefixHash: "original-prefix",
+		ToolCalls: []provider.ToolCall{}, ReasoningDetails: []json.RawMessage{}, ProviderItems: []provider.ProviderItem{},
+	}
+	if _, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "session", Mutation: ContextMutation{Append: []ContextMessageDelta{{Message: message, CreatedAt: 1, Meta: DisplayMeta{DisplayRole: "assistant", DisplayContent: "display remains independent"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := LoadMessagesWithMeta(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := HydrateMessageIdentities(db, "session", rows); err != nil {
+		t.Fatal(err)
+	}
+	message = canonicalPersistedMessage(persistedMessage{Message: message}).Message
+	message.DisplayContent = "display remains independent"
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0].Msg, message) {
+		t.Fatal("resume lost immutable provider metadata, nil shape, or authored display")
+	}
+}
+
 func BenchmarkPublishContextReplaceUnrelatedArchiveHistory(b *testing.B) {
 	for _, unrelated := range []int{0, 2000} {
 		b.Run(fmt.Sprintf("unrelated_%d", unrelated), func(b *testing.B) {

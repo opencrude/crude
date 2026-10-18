@@ -141,13 +141,22 @@ func TestDocumentProjectionAllMutationProducersAndDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.ReplaceDocument("new")
-	if n < 3 || e.DocumentState().PendingEdits != 1 {
+	if n < 3 || e.DocumentState().PendingEdits == 0 {
 		t.Fatalf("missed producers %d %+v", n, e.DocumentState())
 	}
+	replacement, err := e.CaptureDocumentEdits(projectionOwner, "replace", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = document.Apply([]byte("two\n界"), replacement.Edits)
+	if err != nil || string(got) != "new" {
+		t.Fatalf("replacement not captured exactly: %q %v", got, err)
+	}
+	beforeClose := n
 	old := e.buf
 	e.Close()
 	old.ReplaceAll("detached")
-	if n != 3 || old.mutationObserver != nil || e.DocumentState().DocumentID != "" {
+	if n != beforeClose || old.mutationObserver != nil || e.DocumentState().DocumentID != "" {
 		t.Fatalf("detached callback remains %d", n)
 	}
 	if err = e.AcceptDocumentReceipt(document.Receipt{DocumentID: c.DocumentID, RequestID: c.RequestID, Before: 1, Revision: 2, Accepted: true}); !errors.Is(err, document.ErrRequest) {
@@ -174,15 +183,19 @@ func TestDocumentProjectionUndoIntentAndSavepoint(t *testing.T) {
 	if err = e.AcceptDocumentReceipt(document.Receipt{DocumentID: c.DocumentID, RequestID: c.RequestID, Before: 1, Revision: 2, Accepted: true}); err != nil {
 		t.Fatal(err)
 	}
-	e.Undo()
+	e.DrainDocumentUndo()
 	if !e.DocumentState().UndoPending || intent.ExpectedRevision != 2 || intent.Owner != projectionOwner || intent.Redo {
 		t.Fatalf("bad undo intent %+v", intent)
 	}
 	undo := document.Change{DocumentID: s.ID, BaseRevision: 2, Edits: []document.Edit{{Start: 0, End: 1}}}
 	s.Revision = 3
+	if err := e.CompleteDocumentUndo(intent, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err = e.ApplyDocumentDelta(undo, s); err != nil {
 		t.Fatal(err)
 	}
+	e.CompleteDocumentHistorySync()
 	if e.Value() != "abc" || e.Modified() || e.DocumentState().UndoPending {
 		t.Fatal("undo did not settle")
 	}
@@ -193,6 +206,7 @@ func TestDocumentProjectionUndoIntentAndSavepoint(t *testing.T) {
 	if err := e.CompleteDocumentUndo(intent, document.ErrOverlap); err != nil {
 		t.Fatal(err)
 	}
+	e.CompleteDocumentHistorySync()
 	if e.DocumentState().Conflict != nil || e.Value() != "abc" {
 		t.Fatal("failed undo changed bytes")
 	}

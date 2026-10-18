@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,6 +121,24 @@ type SubAgentHandle struct {
 	reportID          string
 	reportRevision    int
 	reportDone        bool
+	steeringSealed    bool
+}
+
+// WithSteeringAdmission holds the same fence as terminal sealing and checks
+// the exact attempt before its caller durably publishes a human note.
+func (h *SubAgentHandle) WithSteeringAdmission(runID string, publish func() error) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.RunID != runID || h.steeringSealed || h.Agent == nil || h.Agent.Ctx == nil || h.Agent.Ctx.Err() != nil {
+		return fmt.Errorf("child run is no longer accepting steering")
+	}
+	return publish()
+}
+
+func (h *SubAgentHandle) SealSteering(sealed bool) {
+	h.mu.Lock()
+	h.steeringSealed = sealed
+	h.mu.Unlock()
 }
 
 func (h *SubAgentHandle) AddUsage(promptT, compT int) {

@@ -143,6 +143,12 @@ normal turns and compaction; receipts retain the exact runtime agent identity.
 
 Human steering targets an exact active run and retains genuine human origin.
 Peer/runtime content is never wrapped as a human interruption.
+Publication transactionally rejects a stopped, pausing, stale or terminal run;
+the execution owner additionally fences the interval between cancellation or
+terminal sealing and durable settlement. Already accepted duplicate receipts
+remain observable after that fence. Natural completion seals admission and drains
+previously accepted notes before it can finish, so a last-moment note cannot be
+acknowledged into an inbox whose consumer has already ended.
 
 ## Rare running-agent broadcast
 

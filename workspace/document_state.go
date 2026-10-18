@@ -18,6 +18,7 @@ const documentTotalBytes = 256 << 20
 
 type durableDocumentOperation struct {
 	Revision       uint64
+	InverseOf      uint64
 	Edits, Inverse []document.Edit
 	Owner          document.Owner
 	Group          string
@@ -131,7 +132,7 @@ func (s *DocumentService) attachState(db *sql.DB) error {
 		}
 		d := &liveDocument{snapshot: saved.Snapshot, owners: make(map[document.Owner]bool), undo: make(map[document.Owner][]documentUndoUnit), redo: make(map[document.Owner][]documentUndoUnit), requests: make(map[string]documentRequest), diskIntent: saved.DiskIntent, relocation: saved.Relocation}
 		for _, op := range saved.Journal {
-			d.journal = append(d.journal, documentOperation{revision: op.Revision, edits: op.Edits, inverse: op.Inverse, owner: op.Owner, group: op.Group, change: op.Change})
+			d.journal = append(d.journal, documentOperation{revision: op.Revision, inverseOf: op.InverseOf, edits: op.Edits, inverse: op.Inverse, owner: op.Owner, group: op.Group, change: op.Change})
 			for _, edit := range op.Edits {
 				d.historyBytes += len(edit.Text)
 			}
@@ -196,7 +197,7 @@ func (s *DocumentService) persistDocument(d *liveDocument) error {
 func encodeDocument(d *liveDocument) ([]byte, error) {
 	state := durableDocument{Version: documentStateVersion, Snapshot: d.snapshot, Undo: make(map[string][]documentUndoUnit), Redo: make(map[string][]documentUndoUnit), DiskIntent: d.diskIntent, Relocation: d.relocation}
 	for _, op := range d.journal {
-		state.Journal = append(state.Journal, durableDocumentOperation{op.revision, op.edits, op.inverse, op.owner, op.group, op.change})
+		state.Journal = append(state.Journal, durableDocumentOperation{op.revision, op.inverseOf, op.edits, op.inverse, op.owner, op.group, op.change})
 	}
 	for key, stack := range d.undo {
 		state.Undo[key.ClientID] = stack

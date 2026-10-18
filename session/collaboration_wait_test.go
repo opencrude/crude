@@ -228,6 +228,12 @@ func TestCollaborationWaitDirectedEventDoesNotAdmitOrMarkRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	childRun, err := store.StartRun(t.Context(), collaboration.StartRunRequest{
+		AgentID: child.ID, RuntimeEpoch: child.RuntimeEpoch, Origin: collaboration.OriginHuman,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	actorCtx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: child.ID})
 	done := make(chan any, 1)
 	errs := make(chan error, 1)
@@ -242,7 +248,7 @@ func TestCollaborationWaitDirectedEventDoesNotAdmitOrMarkRead(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	published, err := store.Publish(t.Context(), collaboration.PublishRequest{
 		SenderID: parent.ID, IdempotencyKey: "wait-human-steer", RecipientIDs: []string{child.ID},
-		Origin: collaboration.OriginHuman, Kind: collaboration.EventHumanSteering, Body: "Change direction now.",
+		Origin: collaboration.OriginHuman, Kind: collaboration.EventHumanSteering, Body: "Change direction now.", RunID: childRun.ID,
 	})
 	if err != nil {
 		t.Fatal(err)

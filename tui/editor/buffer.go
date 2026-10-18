@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"unicode/utf8"
 
 	"crude/document"
 )
@@ -171,6 +170,11 @@ func (pt *PieceTable) lineView(index int) ([]byte, error) {
 	var end int
 	if index+1 < len(pt.lineOffsets) {
 		end = pt.lineOffsets[index+1] - 1
+		// CRLF is one source terminator, not a visible carriage-return cell.
+		// Keep both bytes in the piece table; line content excludes both.
+		if end > start && pt.cachedBytes[end-1] == '\r' {
+			end--
+		}
 	} else {
 		end = len(pt.cachedBytes)
 	}
@@ -187,36 +191,12 @@ func (pt *PieceTable) LineCount() int {
 
 func (pt *PieceTable) positionToOffset(pos Position) int {
 	pt.ensureCache()
-	offsets := pt.lineOffsets
-	if pos.Line >= len(offsets) {
+	if pos.Line >= len(pt.lineOffsets) {
 		return len(pt.cachedBytes)
 	}
-
-	lineStart := offsets[pos.Line]
-	var lineEnd int
-	if pos.Line+1 < len(offsets) {
-		lineEnd = offsets[pos.Line+1] - 1
-	} else {
-		lineEnd = len(pt.cachedBytes)
-	}
-	lineBytes := pt.cachedBytes[lineStart:lineEnd]
-
-	runes := []rune(string(lineBytes))
-	ri := colToRuneIdx(runes, pos.Col)
-	if ri > len(runes) {
-		ri = len(runes)
-	}
-
-	byteOffInLine := 0
-	for i := 0; i < ri; i++ {
-		_, size := utf8.DecodeRune(lineBytes[byteOffInLine:])
-		if size == 0 {
-			break
-		}
-		byteOffInLine += size
-	}
-
-	return lineStart + byteOffInLine
+	line := max(0, pos.Line)
+	content, _ := pt.lineView(line)
+	return pt.lineOffsets[line] + VisualColToByteOffset(string(content), pos.Col, tabWidth)
 }
 
 func (pt *PieceTable) findPiece(offset int) (int, int) {
@@ -253,17 +233,27 @@ func (pt *PieceTable) GetText(start, end Position) string {
 }
 
 func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
+	return pt.insertAtOffset(pt.positionToOffset(pos), text)
+}
+
+// insertAtOffset is the exact-byte mutation primitive used by edit history.
+// Unlike visual positions, offsets can express the inverse of an insertion
+// that joined an existing grapheme (for example, an appended combining mark).
+func (pt *PieceTable) insertAtOffset(offset int, text []byte) (EditInfo, error) {
 	if len(text) == 0 {
 		return EditInfo{}, nil
 	}
 
-	offset := pt.positionToOffset(pos)
+	pt.ensureCache()
+	offset = min(len(pt.cachedBytes), max(0, offset))
+	line := pt.positionAtOffset(offset).Line
 
-	if len(pt.pieces) == 1 && pt.pieces[0].length == 0 {
+	if len(pt.pieces) == 0 || (len(pt.pieces) == 1 && pt.pieces[0].length == 0) {
+		addStart := len(pt.add)
 		pt.add = append(pt.add, text...)
-		pt.pieces = []piece{{buffer: addBuffer, start: 0, length: len(text)}}
+		pt.pieces = []piece{{buffer: addBuffer, start: addStart, length: len(text)}}
 		pt.revision++
-		pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
+		pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}))
 		pt.invalidateCache()
 		pt.observeMutation(document.Edit{Start: offset, End: offset, Text: string(text)})
 		return EditInfo{}, nil
@@ -305,7 +295,7 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 
 	pt.pieces = newPieces
 	pt.revision++
-	pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
+	pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}))
 	pt.invalidateCache()
 	pt.observeMutation(document.Edit{Start: offset, End: offset, Text: string(text)})
 
@@ -313,12 +303,21 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 }
 
 func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
-	startOff := pt.positionToOffset(start)
-	endOff := pt.positionToOffset(end)
+	return pt.deleteOffsets(pt.positionToOffset(start), pt.positionToOffset(end))
+}
+
+// deleteOffsets intentionally preserves exact source byte spans, including
+// spans inside a grapheme when applying a recorded inverse operation.
+func (pt *PieceTable) deleteOffsets(startOff, endOff int) (EditInfo, error) {
+	pt.ensureCache()
+	startOff = min(len(pt.cachedBytes), max(0, startOff))
+	endOff = min(len(pt.cachedBytes), max(0, endOff))
 
 	if startOff >= endOff {
 		return EditInfo{}, nil
 	}
+	startLine := pt.positionAtOffset(startOff).Line
+	endLine := pt.positionAtOffset(endOff).Line
 
 	startPieceIdx, startPieceOffset := pt.findPiece(startOff)
 	endPieceIdx, endPieceOffset := pt.findPiece(endOff)
@@ -351,7 +350,7 @@ func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
 
 	pt.pieces = newPieces
 	pt.revision++
-	pt.recordLineChange(start.Line, end.Line, start.Line-end.Line)
+	pt.recordLineChange(startLine, endLine, startLine-endLine)
 	pt.invalidateCache()
 	pt.observeMutation(document.Edit{Start: startOff, End: endOff})
 

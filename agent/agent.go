@@ -106,6 +106,11 @@ type Agent struct {
 	// FlushRuntimeMessages fences the durable inbox before an empty lane can
 	// end a turn. Async delivery alone cannot prove there is no pending input.
 	FlushRuntimeMessages func(context.Context) error
+	// SealRuntimeMessages atomically closes human steering admission and flushes
+	// every input accepted before that fence. Resume reopens it only if those
+	// inputs require another model step.
+	SealRuntimeMessages   func(context.Context) error
+	ResumeRuntimeMessages func()
 	// Runtime notices are admitted at model-request boundaries; human steering
 	// uses the separately fenced runtime-message lane.
 	PrepareRuntimeNotices  func() []provider.ChatMessage

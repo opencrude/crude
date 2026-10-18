@@ -597,15 +597,15 @@ func TestDeleteSelection_IsUndoable(t *testing.T) {
 	assert.Equal(t, "hello world", e.Value())
 }
 
-func TestUndoGroup_UngroupedChangesStayIndividual(t *testing.T) {
+func TestUndoGroup_AdjacentTypingIsOneGesture(t *testing.T) {
 	e := opsEditor(t, "test.go", "")
 	typeChar(e, 'a')
 	typeChar(e, 'b')
 	assert.Equal(t, "ab", e.Value())
 	e.Undo()
-	assert.Equal(t, "a", e.Value())
-	e.Undo()
 	assert.Equal(t, "", e.Value())
+	e.Redo()
+	assert.Equal(t, "ab", e.Value())
 }
 
 func TestUndoGroup_GroupUndoneAndRedoneAtomically(t *testing.T) {

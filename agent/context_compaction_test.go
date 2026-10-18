@@ -159,6 +159,7 @@ func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
 	human := provider.NewTextMessage("user", "inspect the parser")
+	human.InternalID = "original-human-identity"
 	history := compactionTestHistory(human)
 	result, err := a.Compact(context.Background(), history, "<system>stable</system>", nil)
 	if err != nil {
@@ -177,6 +178,9 @@ func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
 	if len(result.Messages) != 3 || result.Messages[0].EffectiveOrigin() != provider.OriginCheckpoint ||
 		result.Messages[1].ContentString() != human.ContentString() || result.Messages[2].EffectiveOrigin() != provider.OriginRuntimeContext {
 		t.Fatalf("compacted messages = %#v", result.Messages)
+	}
+	if result.Messages[0].InternalID == "" || result.Messages[2].InternalID == "" || result.Messages[1].InternalID != human.InternalID {
+		t.Fatal("compaction minted anonymous messages or changed retained human identity")
 	}
 	if !strings.Contains(result.Messages[0].ContentString(), `version="3"`) ||
 		!strings.Contains(result.Messages[0].ContentString(), "<intent>") {

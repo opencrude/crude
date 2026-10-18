@@ -32,8 +32,8 @@ func (e *Editor) SetLSPCursorPosition(line, col int) error {
 	if err != nil {
 		return err
 	}
-	l, c := ByteOffsetToLineCol(text, off, tabWidth)
-	e.SetCursorPosition(l, c)
+	pos := e.buf.positionAtOffset(off)
+	e.SetCursorPosition(pos.Line, pos.Col)
 	return nil
 }
 
@@ -49,6 +49,9 @@ type completionEdit struct {
 func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 	if e.buf == nil || !e.open || e.readOnly {
 		return fmt.Errorf("completion: document is not editable")
+	}
+	if state := e.DocumentState(); state.UndoPending || state.HistoryQueued {
+		return ErrDocumentPending // these ranges describe the pre-undo snapshot
 	}
 	before := e.Value()
 	if !utf8.ValidString(before) {
@@ -118,12 +121,11 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 	// grapheme, which the PieceTable's visual-position edit API cannot express.
 	cursorBefore := e.cursor
 	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	lastLine := e.LineCount() - 1
 	e.deleteRecorded(Position{}, Position{Line: lastLine, Col: e.lineVisualWidth(lastLine)}, cursorBefore)
 	e.insertRecorded(Position{}, after, cursorBefore)
-	e.endUndoGroup()
-	line, col := ByteOffsetToLineCol(after, cursorOffset, tabWidth)
-	e.cursor = Position{Line: line, Col: col}
+	e.cursor = e.buf.positionAtOffset(cursorOffset)
 	e.ClearSelection()
 	e.finishEdit()
 	return nil

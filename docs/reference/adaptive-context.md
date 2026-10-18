@@ -58,6 +58,17 @@ late acknowledgement from overwriting a newer snapshot. Runtime-notice admission
 commits its receipts first, then checkpoints the entire admitted batch together.
 Rejected reservations are never prematurely checkpointed and subsequently removed.
 
+Active request order and accepted archive order are different projections. Late
+steering, its hidden preparation, controls and compaction can legitimately place
+shared identities differently. Active-context reconciliation preserves committed
+request order; archive reconciliation preserves its own existing chronology and
+validates shared identities by exact bytes and uniqueness, not relative position.
+Neither projection may reorder the other or turn a valid Stop into a storage
+incident. Resume hydrates provider facts from full immutable identities, never
+rebuilds canonical recovery input from the lossy display projection. Compaction
+mints identities for new checkpoint/history/continuity messages at creation;
+retained human messages keep their original identities.
+
 Compaction retains the revision captured when its immutable source is published.
 Installation fails closed if that source changed during extraction. Stopped
 children use authoritative current context, retain newer facts and original

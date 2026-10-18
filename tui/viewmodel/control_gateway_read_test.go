@@ -73,7 +73,9 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 	peer := newRemoteJourneyShell(t, runtime, root)
 	shells := []remoteJourneyShell{one, peer}
 	remoteJourneyUntil(t, shells, func() bool {
-		return peer.app.ws.AgentMgr().Get(id) != nil && one.app.composerHydratedFor == one.app.ActiveSession && !one.app.draftOwner(one.app.ActiveSession).loading
+		return peer.app.AgentView.ActiveID() == id && peer.app.ActiveSession != nil &&
+			peer.app.composerHydratedFor == peer.app.ActiveSession && !peer.app.draftOwner(peer.app.ActiveSession).loading &&
+			one.app.composerHydratedFor == one.app.ActiveSession && !one.app.draftOwner(one.app.ActiveSession).loading
 	})
 	one.app.ws.(shellport.ShellControl).StartShellControl()
 	peer.app.ws.(shellport.ShellControl).StartShellControl()
@@ -114,7 +116,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 		t.Fatal("unapproved generic Read did not complete through the actual core gateway", applied)
 	}
 	if !one.app.memoryBrowserVisible() || peer.app.memoryBrowserVisible() || peer.app.Input.Value() != "peer private work" {
-		t.Fatal("read retargeted the shell or consumed peer work")
+		t.Fatalf("read retargeted the shell or consumed peer work: submitting_memory=%v peer_memory=%v peer_draft=%q", one.app.memoryBrowserVisible(), peer.app.memoryBrowserVisible(), peer.app.Input.Value())
 	}
 	if one.app.termDock.ActivePanel() != termdock.PanelMemory {
 		t.Fatal("read changed original panel")

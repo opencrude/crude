@@ -126,7 +126,9 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 			m.EditorState.Editor.SetDiagnostics(msg.Diagnostics)
 		}
 	}
-
+	if m.EditorState.Editor != nil && msg.FilePath == m.EditorState.Editor.FilePath() {
+		m.clearDiagHoverPopup()
+	}
 }
 
 // Each shell consumes its own versioned replica; no callback or shared drain.

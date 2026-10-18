@@ -345,7 +345,7 @@ var defaultActions = []*ActionDef{
 		Icon:         "↩",
 		Category:     "Edit",
 		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+z"}},
+		Bindings:     []KeyBinding{{Key: "ctrl+z"}, {Key: "super+z"}},
 		HintKey:      "Ctrl+Z",
 	},
 	{
@@ -355,7 +355,7 @@ var defaultActions = []*ActionDef{
 		Icon:         "↪",
 		Category:     "Edit",
 		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+y"}},
+		Bindings:     []KeyBinding{{Key: "ctrl+y"}, {Key: "ctrl+shift+z"}, {Key: "ctrl+shift+Z"}, {Key: "super+shift+z"}, {Key: "super+shift+Z"}},
 		HintKey:      "Ctrl+Y",
 	},
 	{

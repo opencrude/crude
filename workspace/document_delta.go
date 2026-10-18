@@ -155,7 +155,7 @@ func (s *DocumentService) persistDocumentCommand(before, after *liveDocument, ow
 	} else if after.snapshot.Revision != before.snapshot.Revision {
 		delta := durableDocumentDelta{Before: before.snapshot.Revision, Revision: after.snapshot.Revision, Author: owner.ClientID, Undo: historyDelta(before.undo[owner], after.undo[owner]), Redo: historyDelta(before.redo[owner], after.redo[owner])}
 		for _, op := range after.journal[len(before.journal):] {
-			delta.Operations = append(delta.Operations, durableDocumentOperation{op.revision, op.edits, op.inverse, op.owner, op.group, op.change})
+			delta.Operations = append(delta.Operations, durableDocumentOperation{op.revision, op.inverseOf, op.edits, op.inverse, op.owner, op.group, op.change})
 		}
 		data, err = documentEncode(delta)
 	}
@@ -273,7 +273,7 @@ func (s *DocumentService) loadDocumentDeltas() error {
 			// Inverse payload is derived from the canonical base, not trusted replay.
 			d.snapshot.Text = text
 			d.snapshot.Revision = op.Revision
-			d.journal = append(d.journal, documentOperation{op.Revision, op.Edits, inverse, op.Owner, op.Group, op.Change})
+			d.journal = append(d.journal, documentOperation{op.Revision, op.InverseOf, op.Edits, inverse, op.Owner, op.Group, op.Change})
 			for _, e := range op.Edits {
 				d.historyBytes += len(e.Text)
 			}

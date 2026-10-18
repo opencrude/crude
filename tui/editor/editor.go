@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,16 @@ type Change struct {
 	// Group links changes that undo/redo as one step. Zero means the
 	// change stands alone; equal non-zero values form one atomic group.
 	Group int
+	// Offsets retain exact source spans, including an inverse inside a newly
+	// combined grapheme. Display positions cannot express such an inverse.
+	Offset        int
+	Before, After editorViewState
+}
+
+type editorViewState struct {
+	Cursor, Anchor, End Position
+	Selecting           bool
+	ScrollX, ScrollY    int
 }
 
 type Editor struct {
@@ -86,16 +97,23 @@ type Editor struct {
 	// undoGroupSeq/undoGroupDepth/undoGroupID implement undo grouping:
 	// changes recorded between beginUndoGroup and endUndoGroup share one
 	// group ID and undo/redo together as a single step.
-	undoGroupSeq   int
-	undoGroupDepth int
-	undoGroupID    int
+	undoGroupSeq    int
+	undoGroupDepth  int
+	undoGroupID     int
+	undoGroupStart  int
+	undoGroupBefore editorViewState
+	historyID       uint64
+	typingGroup     int
+	typingAt        time.Time
+	typingCursor    Position
 
 	open bool
 
 	cursorBlink ui.CursorBlinkState
 
-	selecting     bool // keyboard or mouse selection anchor is active
-	mouseDragging bool // true only while a mouse button drag is in progress
+	selecting bool // keyboard or mouse selection anchor is active
+	drag      pointerSelection
+	dragEpoch uint64
 	// Multi-click detection: a second press within multiClickWindow on the
 	// same spot selects the word, a third the line.
 	lastClickAt  time.Time
@@ -131,9 +149,10 @@ type Editor struct {
 	watchDone    chan struct{}
 	watchMu      sync.Mutex
 
-	diagMu      sync.RWMutex
-	diagnostics []LSPDiagnostic
-	diagByLine  map[int][]diagSpan
+	diagMu              sync.RWMutex
+	diagnostics         []LSPDiagnostic
+	diagnosticsRevision uint64
+	diagByLine          map[int][]diagSpan
 
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
@@ -152,8 +171,6 @@ type Editor struct {
 	gitRevision     uint64
 	readOnly        bool
 	hideLineNumbers bool
-	gutterDrag      bool
-	gutterAnchor    int
 
 	// hover state for diagnostic tooltip popup.
 	hoverMessages []string
@@ -167,7 +184,8 @@ type Editor struct {
 	// Editor (not the tab wrapper) so the renderer can read it
 	// directly when drawing highlights. Each tab has its own Editor
 	// so this is automatically per-tab.
-	search *SearchState
+	search         *SearchState
+	searchRevision uint64
 }
 
 func (e *Editor) SetPadding(padL int) {
@@ -198,6 +216,7 @@ func New(th *theme.Theme) *Editor {
 		scrollModel: ui.NewScrollModel(),
 		tokens:      ui.NewTokenSet(th),
 		maxHistory:  500,
+		historyID:   rand.Uint64(),
 		diagnostics: make([]LSPDiagnostic, 0),
 		diagByLine:  make(map[int][]diagSpan),
 		search:      NewSearchState(),
@@ -313,29 +332,32 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 // ReplaceDocument replaces the whole buffer text (shared Buffer or local
 // PieceTable), invalidates caches, and notifies listeners. Cursor is clamped.
 func (e *Editor) ReplaceDocument(text string) {
-	if e.buffer != nil {
+	if e.readOnly {
+		// Preview refresh is an owner-installed replacement, not a user edit.
 		e.buffer.ReplaceContents(text)
-	} else if e.buf != nil {
-		e.buf.ReplaceAll(text)
+		e.invalidateEditorCaches()
+		e.markDocumentWidthAll()
+		e.clampCursorToLine()
+		e.notifyContentChanged()
+		return
 	}
-	e.invalidateEditorCaches()
-	e.markDocumentWidthAll()
-	if e.cursor.Line >= e.LineCount() {
-		e.cursor.Line = max(0, e.LineCount()-1)
-	}
-	e.notifyContentChanged()
+	e.ApplyFormatted(text)
 }
 
 func (e *Editor) ApplyFormatted(text string) {
-	if e.Value() == text {
+	if e.readOnly || e.Value() == text {
 		return
 	}
+	if e.DeferDocumentEdit(func() { e.ApplyFormatted(text) }) {
+		return
+	}
+	e.stopPointerSelection()
 	cursor, x, y := e.cursor, e.scrollX, e.scrollY
 	last := e.LineCount() - 1
 	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	e.deleteRecorded(Position{}, Position{Line: last, Col: e.lineVisualWidth(last)}, cursor)
 	e.insertRecorded(Position{}, text, cursor)
-	e.endUndoGroup()
 	e.cursor = cursor
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
@@ -380,6 +402,7 @@ func (e *Editor) ApplyDisk(data []byte) {
 	if e.buffer == nil {
 		return
 	}
+	e.CancelPointerCapture()
 	e.buffer.ApplyDisk(data)
 	e.changes = nil
 	e.changeIndex = 0
@@ -547,6 +570,8 @@ func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 		}
 	}
 	e.diagnostics = converted
+	e.diagnosticsRevision = e.Revision()
+	e.ClearHover()
 
 	byLine := make(map[int][]diagSpan, len(converted))
 	for _, d := range converted {
@@ -595,7 +620,7 @@ func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
 func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagByLine == nil {
+	if e.diagByLine == nil || e.diagnosticsRevision != e.Revision() {
 		return nil
 	}
 	return e.diagByLine[lineIdx]
@@ -628,6 +653,7 @@ func (e *Editor) Diagnostics() []LSPDiagnostic {
 // backwards single-line range is normalized. Setting a selection is
 // purely visual: it does not move the cursor.
 func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
+	e.stopPointerSelection()
 	if startLine < 0 {
 		startLine = 0
 	}
@@ -708,23 +734,20 @@ func (e *Editor) FirstError() *LSPDiagnostic {
 // returns true if anything was deleted. The deletion is recorded as
 // a single undo step and the cursor moves to the selection start.
 func (e *Editor) DeleteSelection() bool {
-	if !e.HasSelection() {
+	if e.readOnly || !e.HasSelection() {
 		return false
 	}
+	if e.DeferDocumentEdit(func() { e.DeleteSelection() }) {
+		return false
+	}
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	sLine, sCol, eLine, eCol := e.SelectionRange()
 	start := Position{Line: sLine, Col: sCol}
 	end := Position{Line: eLine, Col: eCol}
 	cursorBefore := e.cursor
-	text := e.buf.GetText(start, end)
-	_, _ = e.buf.Delete(start, end)
-	e.recordChange(Change{
-		Type:         ActDelete,
-		Text:         []byte(text),
-		StartPos:     start,
-		EndPos:       end,
-		CursorBefore: cursorBefore,
-	})
-	e.cursor = start
+	e.deleteRecorded(start, end, cursorBefore)
+	e.cursor = e.buf.snapPosition(start)
 	e.invalidateEditorCaches()
 	e.ClearSelection()
 	e.notifyContentChanged()
@@ -735,6 +758,9 @@ func (e *Editor) DeleteSelection() bool {
 func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
+	if e.diagnosticsRevision != e.Revision() {
+		return nil
+	}
 	var result []LSPDiagnostic
 	lineEnd := -1
 	for _, d := range e.diagnostics {
@@ -853,6 +879,8 @@ func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
 // reference", "find symbol") so the cursor lands precisely where the server
 // pointed.
 func (e *Editor) SetCursorPosition(line, col int) {
+	e.BreakUndoGroup()
+	e.clearGoal()
 	lc := e.buf.LineCount()
 	if lc <= 0 {
 		e.cursor.Line = 0
@@ -874,7 +902,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 	if col > maxCol {
 		col = maxCol
 	}
-	e.cursor.Col = col
+	e.cursor = e.buf.snapPosition(Position{Line: line, Col: col})
 	e.ClearSelection()
 	e.landing = &SearchMatch{Start: e.cursor, End: Position{Line: line, Col: col + 1}}
 	e.landingRevision = e.Revision()

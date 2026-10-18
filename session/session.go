@@ -2,9 +2,7 @@ package session
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -34,6 +32,10 @@ import (
 )
 
 var ErrHistoryDisabled = errors.New("local history disabled")
+
+// ErrHistoryRecorded means Continue reuses an existing immutable message scope
+// instead of capturing a second before-image under the same human input ID.
+var ErrHistoryRecorded = errors.New("local history message already recorded")
 
 type EventSender interface {
 	SendAgentEvent(typ string, data any)
@@ -288,13 +290,7 @@ func (s *Session) HasActiveTurns() bool {
 		(s.SubAgentRunner() != nil && s.SubAgentRunner().Running()) || (s.asyncMgr != nil && s.asyncMgr.Running())
 }
 
-func newMessageID() string {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		panic(fmt.Sprintf("session: generate message ID: %v", err))
-	}
-	return "msg-" + hex.EncodeToString(value[:])
-}
+func newMessageID() string { return provider.NewMessageID() }
 
 func (s *Session) historyHooks() (func(context.Context, string, string) error, func(context.Context, string, string) error) {
 	s.historyMu.RLock()

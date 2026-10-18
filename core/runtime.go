@@ -855,7 +855,10 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 		if strings.TrimSpace(input.Text) == "" {
 			return fault(request, "invalid_input", "only nonempty human input is accepted")
 		}
-		accepted := a.ws.SteerAgent(input.AgentID, humanInput(request, input))
+		_, accepted, err := a.ws.AdmitAgentSteering(input.AgentID, humanInput(request, input))
+		if err != nil {
+			return fault(request, "steering_failed", err.Error())
+		}
 		if accepted {
 			a.changed([]string{input.AgentID})
 		}
@@ -1129,6 +1132,19 @@ func (a *actor) startJob(command actorCommand) bool {
 		}
 		value := humanInput(request, input)
 		a.bindInputExecution(&value, input.AgentID)
+		// Enter has one authoritative route. Shell activity is a lagging mirror,
+		// so only the execution owner decides whether this input steers its live
+		// run or goes through fresh/queued admission. A storage error is never a
+		// confirmed refusal and cannot fall through to another publication.
+		steering, steered, err := a.ws.AdmitAgentSteering(input.AgentID, value)
+		if err != nil {
+			return fail(fault(request, "steering_failed", err.Error()))
+		}
+		if steered {
+			steering.DraftRevision = input.DraftRevision
+			a.changed([]string{input.AgentID})
+			return fail(response(request, coreprotocol.InputResult{Status: workspace.InputAdmissionSteered, Receipt: steering}))
+		}
 		intent, err := a.ws.PrepareAgentInputAdmission(input.AgentID, value, input.DraftRevision)
 		if err != nil {
 			return fail(fault(request, "input_rejected", err.Error()))

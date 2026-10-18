@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSearch_LiteralSubstring(t *testing.T) {
@@ -24,6 +25,57 @@ func TestSearch_LiteralSubstring(t *testing.T) {
 	if got := ed.Search().Matches[1].Start; got != (Position{Line: 0, Col: 12}) {
 		t.Errorf("second match start = %v, want {0 12}", got)
 	}
+}
+
+func TestSearchUnicodeCaseFoldKeepsOriginalByteOffsets(t *testing.T) {
+	ed := opsEditor(t, "unicode.txt", "Kelvin İST x éx")
+	require.Equal(t, 1, ed.SetQuery("kelvin"))
+	require.Equal(t, "Kelvin", ed.Search().Matches[0].Matched)
+	ed.SetReplace("temperature")
+	ed.ReplaceCurrent()
+	require.Equal(t, "temperature İST x éx", ed.Value())
+	ed.Undo()
+	require.Equal(t, "Kelvin İST x éx", ed.Value())
+	require.Equal(t, 2, ed.SetQuery("x"), "a preceding UTF-8 case fold must not shift later matches")
+	ed.SetReplace("z")
+	ed.ReplaceAll()
+	require.Equal(t, "Kelvin İST z éz", ed.Value())
+}
+
+func TestSearchReplaceCombiningMarkUsesSourceOffsets(t *testing.T) {
+	ed := opsEditor(t, "unicode.txt", "éx éx")
+	require.Equal(t, 2, ed.SetQuery("́"))
+	ed.SetReplace("!")
+	require.Equal(t, 2, ed.ReplaceAll())
+	require.Equal(t, "e!x e!x", ed.Value())
+	ed.Undo()
+	require.Equal(t, "éx éx", ed.Value())
+	ed.Redo()
+	require.Equal(t, "e!x e!x", ed.Value())
+}
+
+func TestSearchReplaceAfterEditUndoDoesNotUseStaleRanges(t *testing.T) {
+	ed := opsEditor(t, "search.txt", "foo end")
+	ed.SetQuery("foo")
+	ed.SetReplace("bar")
+	ed.SetCursorPosition(0, 0)
+	ed.InsertRune('X')
+	ed.ReplaceCurrent()
+	require.Equal(t, "Xbar end", ed.Value())
+	ed.Undo()
+	require.Equal(t, "Xfoo end", ed.Value())
+	ed.Undo()
+	require.Equal(t, "foo end", ed.Value())
+	ed.ReplaceAll()
+	require.Equal(t, "bar end", ed.Value())
+}
+
+func TestSearchWholeWordUsesUnicodeAndCombiningCharacters(t *testing.T) {
+	ed := opsEditor(t, "search.txt", "é xé éx x")
+	ed.SetQuery("x")
+	ed.SetOptions(SearchOptions{WholeWord: true})
+	require.Len(t, ed.Search().Matches, 1)
+	require.Equal(t, Position{Col: 8}, ed.Search().Matches[0].Start)
 }
 
 func TestSearch_CaseSensitive(t *testing.T) {

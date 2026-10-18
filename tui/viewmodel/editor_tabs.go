@@ -284,7 +284,7 @@ func (m *App) closeEditorTabForce(path string) {
 	if tab := m.EditorState.Tabs[path]; tab != nil {
 		if state := m.liveEditors[tab.Editor]; state != nil {
 			ds := tab.Editor.DocumentState()
-			if state.busy || state.uncertain != nil || state.err != nil || ds.PendingEdits > 0 || ds.InFlight || ds.UndoPending || state.undo != nil || ds.Conflict != nil {
+			if state.busy || state.uncertain != nil || state.err != nil || ds.PendingEdits > 0 || ds.InFlight || ds.UndoPending || ds.HistoryQueued || state.undo != nil || ds.Conflict != nil {
 				state.closeView = true
 				return
 			}

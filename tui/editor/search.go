@@ -2,8 +2,9 @@ package editor
 
 import (
 	"regexp"
-	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // SearchOptions controls how a query is matched. Defaults are case-
@@ -17,9 +18,10 @@ type SearchOptions struct {
 // SearchMatch is a single hit within the buffer. Start and End are
 // line/col positions; the match is the half-open range [Start, End).
 type SearchMatch struct {
-	Start   Position
-	End     Position
-	Matched string
+	Start                  Position
+	End                    Position
+	Matched                string
+	startOffset, endOffset int
 }
 
 // SearchState holds the live find/replace UI state for one tab. The
@@ -95,108 +97,41 @@ func (s *SearchState) Reset() {
 // computeMatches populates Matches for the given buffer text. Returns
 // the matches in source order.
 //
-// Matching rules:
-//   - Regex: compile the query as a Go regexp. \b is honored for whole
-//     word, but if WholeWord is true we wrap the pattern in \b…\b.
-//   - Literal: scan the text with strings.Index repeatedly. Case-
-//     insensitive uses strings.ToLower of both sides (the buffer is
-//     scanned once on each call; the buffer is typically <1MB so this
-//     is acceptable). WholeWord wraps the query with \b when used in
-//     non-regex mode (re2 syntax for word boundaries).
-//
-// Returns nil if the query is empty or fails to compile.
+// Literal queries are escaped before the same source-offset regexp scan.
+// Unicode case folding must never change the byte offsets in the source.
+// Whole-word boundaries classify original runes, including combining marks.
 func (s *SearchState) computeMatches(bufText string) {
 	s.Reset()
 	if s.Query == "" {
 		return
 	}
 
-	if s.Options.Regex {
-		pattern := s.Query
-		if s.Options.WholeWord {
-			pattern = `\b` + pattern + `\b`
-		}
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			return
-		}
-		if !s.Options.CaseSensitive {
-			re, err = regexp.Compile("(?i)" + pattern)
-			if err != nil {
-				return
-			}
-		}
-		s.scanRegexMatches(re, bufText)
-		return
+	pattern := s.Query
+	if !s.Options.Regex {
+		pattern = regexp.QuoteMeta(pattern)
 	}
-
-	// Literal substring.
-	needle := s.Query
-	hay := bufText
 	if !s.Options.CaseSensitive {
-		needle = strings.ToLower(needle)
-		hay = strings.ToLower(bufText)
+		pattern = "(?i)" + pattern
 	}
-
-	if s.Options.WholeWord {
-		s.scanWholeWordLiteral(needle, bufText, hay)
-		return
-	}
-
-	// Plain substring scan. O(n*m) worst case, but Go's strings.Index
-	// is highly optimized and our buffers are small.
-	from := 0
-	for {
-		idx := strings.Index(hay[from:], needle)
-		if idx < 0 {
-			return
-		}
-		abs := from + idx
-		// matched text comes from the original (case-preserved) buffer
-		matched := bufText[abs : abs+len(needle)]
-		start, end := offsetToLineCol(bufText, abs, abs+len(needle))
-		s.Matches = append(s.Matches, SearchMatch{Start: start, End: end, Matched: matched})
-		from = abs + len(needle)
-		if from > len(bufText) {
-			return
-		}
+	re, err := regexp.Compile(pattern)
+	if err == nil {
+		s.scanRegexMatches(re, bufText)
 	}
 }
 
 func (s *SearchState) scanRegexMatches(re *regexp.Regexp, bufText string) {
 	locs := re.FindAllStringIndex(bufText, -1)
 	for _, loc := range locs {
+		if s.Options.WholeWord && (!isWordBoundary(bufText, loc[0]) || !isWordBoundary(bufText, loc[1])) {
+			continue
+		}
 		start, end := offsetToLineCol(bufText, loc[0], loc[1])
 		s.Matches = append(s.Matches, SearchMatch{
-			Start:   start,
-			End:     end,
-			Matched: bufText[loc[0]:loc[1]],
+			Start:       start,
+			End:         end,
+			Matched:     bufText[loc[0]:loc[1]],
+			startOffset: loc[0], endOffset: loc[1],
 		})
-	}
-}
-
-func (s *SearchState) scanWholeWordLiteral(needle, orig, lowered string) {
-	from := 0
-	for {
-		idx := strings.Index(lowered[from:], needle)
-		if idx < 0 {
-			return
-		}
-		abs := from + idx
-		// Word boundary: char before (if any) and after (if any) must
-		// not be a letter/digit/underscore.
-		if isWordBoundary(lowered, abs) && isWordBoundary(lowered, abs+len(needle)) {
-			start, end := offsetToLineCol(orig, abs, abs+len(needle))
-			s.Matches = append(s.Matches, SearchMatch{
-				Start:   start,
-				End:     end,
-				Matched: orig[abs : abs+len(needle)],
-			})
-		}
-		from = abs + 1
-		if from > len(lowered) {
-			return
-		}
 	}
 }
 
@@ -204,20 +139,10 @@ func isWordBoundary(s string, idx int) bool {
 	if idx <= 0 || idx >= len(s) {
 		return true
 	}
-	if idx == 0 {
-		return true
-	}
-	c := s[idx]
-	prev := s[idx-1]
-	return !isSearchWordChar(c) || !isSearchWordChar(prev)
-}
-
-// isSearchWordChar reports whether the byte is a word character for
-// whole-word matching. Distinct from movement.go's isWordChar (which
-// takes a rune) because search scans byte-by-byte for speed on the
-// hot path of repeated substring scans.
-func isSearchWordChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+	next, _ := utf8.DecodeRuneInString(s[idx:])
+	prev, _ := utf8.DecodeLastRuneInString(s[:idx])
+	word := func(r rune) bool { return isWordChar(r) || unicode.IsMark(r) }
+	return !word(next) || !word(prev)
 }
 
 // offsetToLineCol converts a byte offset pair (start, end) into
@@ -283,6 +208,7 @@ func (e *Editor) SetSearchOpen(open bool) {
 // it into view). Wraps around. Returns the match count and whether
 // we found one.
 func (e *Editor) NextMatch() (int, bool) {
+	e.ensureSearchCurrent()
 	if e.search == nil || !e.search.HasMatches() {
 		return 0, false
 	}
@@ -297,6 +223,7 @@ func (e *Editor) NextMatch() (int, bool) {
 
 // PrevMatch jumps the editor cursor to the previous match.
 func (e *Editor) PrevMatch() (int, bool) {
+	e.ensureSearchCurrent()
 	if e.search == nil || !e.search.HasMatches() {
 		return 0, false
 	}
@@ -313,6 +240,10 @@ func (e *Editor) PrevMatch() (int, bool) {
 // replace string and re-runs the search. The cursor stays near the
 // replacement. Returns the new match count.
 func (e *Editor) ReplaceCurrent() int {
+	if e.readOnly || e.DeferDocumentEdit(func() { e.ReplaceCurrent() }) {
+		return 0
+	}
+	e.ensureSearchCurrent()
 	if e.search == nil || e.search.CurrentIdx < 0 {
 		return 0
 	}
@@ -322,12 +253,11 @@ func (e *Editor) ReplaceCurrent() int {
 	m := e.search.Matches[e.search.CurrentIdx]
 	repl := e.search.Replace
 
-	// Delete the matched range, insert the replacement. We use
-	// buf.Delete + buf.Insert which both fire undo/redo entries.
-	_, _ = e.buf.Delete(m.Start, m.End)
-	if repl != "" {
-		_, _ = e.buf.Insert(m.Start, []byte(repl))
-	}
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
+	cursor := e.cursor
+	e.replaceSearchMatch(m, repl, cursor)
+	e.cursor = e.buf.positionAtOffset(m.startOffset + len(repl))
 	e.notifyContentChanged()
 	e.markDocumentWidthAll()
 	e.invalidateEditorCaches()
@@ -352,24 +282,29 @@ func (e *Editor) ReplaceCurrent() int {
 // ReplaceAll replaces every match in the buffer. Returns the number
 // of replacements actually made.
 func (e *Editor) ReplaceAll() int {
+	if e.readOnly || e.DeferDocumentEdit(func() { e.ReplaceAll() }) {
+		return 0
+	}
+	e.ensureSearchCurrent()
 	if e.search == nil || !e.search.HasMatches() {
 		return 0
 	}
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
+	cursor := e.cursor
 	count := 0
 	// Iterate from the end so earlier offsets stay valid as we
 	// mutate the buffer.
 	for i := len(e.search.Matches) - 1; i >= 0; i-- {
 		m := e.search.Matches[i]
 		repl := e.search.Replace
-		_, _ = e.buf.Delete(m.Start, m.End)
-		if repl != "" {
-			_, _ = e.buf.Insert(m.Start, []byte(repl))
-		}
+		e.replaceSearchMatch(m, repl, cursor)
 		count++
 	}
 	e.notifyContentChanged()
 	e.markDocumentWidthAll()
 	e.invalidateEditorCaches()
+	e.clampCursorToLine()
 	e.recomputeMatches()
 	return count
 }
@@ -382,6 +317,7 @@ func (e *Editor) recomputeMatches() {
 	prevIdx := e.search.CurrentIdx
 	text := string(e.buf.Bytes())
 	e.search.computeMatches(text)
+	e.searchRevision = e.Revision()
 	e.search.LastCompute = time.Now()
 	// Try to preserve the cursor position. If the new list is
 	// shorter, clamp.
@@ -392,4 +328,24 @@ func (e *Editor) recomputeMatches() {
 		prevIdx = 0
 	}
 	e.search.CurrentIdx = prevIdx
+}
+
+func (e *Editor) ensureSearchCurrent() {
+	if e.search != nil && e.search.Query != "" && e.searchRevision != e.Revision() {
+		e.recomputeMatches()
+	}
+}
+
+func (e *Editor) replaceSearchMatch(m SearchMatch, replacement string, cursor Position) {
+	if m.Matched == replacement {
+		return
+	}
+	if m.startOffset != m.endOffset {
+		_, _ = e.buf.deleteOffsets(m.startOffset, m.endOffset)
+		e.recordChange(Change{Type: ActDelete, Text: []byte(m.Matched), Offset: m.startOffset, CursorBefore: cursor})
+	}
+	if replacement != "" {
+		_, _ = e.buf.insertAtOffset(m.startOffset, []byte(replacement))
+		e.recordChange(Change{Type: ActInsert, Text: []byte(replacement), Offset: m.startOffset, CursorBefore: cursor})
+	}
 }

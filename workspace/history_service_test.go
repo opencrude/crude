@@ -155,6 +155,12 @@ func TestHistoryServiceMessageAttributionAndCollision(t *testing.T) {
 	if err != nil || !ok || len(scope.ChangedPaths) != 1 || len(scope.CollisionPaths) != 0 {
 		t.Fatalf("scope=%+v ok=%v err=%v", scope, ok, err)
 	}
+	if err := service.BeginMessage(ctx, "s", "m1"); !errors.Is(err, session.ErrHistoryRecorded) {
+		t.Fatalf("Continue attempted a duplicate immutable history scope: %v", err)
+	}
+	if retained, _, err := store.MessageScope("s", "m1"); err != nil || retained.BeforeSnapshot != scope.BeforeSnapshot || retained.AfterSnapshot != scope.AfterSnapshot {
+		t.Fatal("Continue replaced the original message safety snapshots")
+	}
 
 	if err := service.BeginMessage(ctx, "s", "m2"); err != nil {
 		t.Fatal(err)

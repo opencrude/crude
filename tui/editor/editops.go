@@ -32,16 +32,23 @@ func isPairCloser(r rune) bool {
 // insertRecorded inserts text at pos and records the change with an exact
 // end position derived from byte offsets (safe for tab-containing text).
 func (e *Editor) insertRecorded(pos Position, text string, cursorBefore Position) Position {
+	pos = e.buf.snapPosition(pos)
+	if text == "" {
+		return pos
+	}
 	startOff := e.buf.positionToOffset(pos)
 	_, _ = e.buf.Insert(pos, []byte(text))
-	endLine, endCol := ByteOffsetToLineCol(string(e.buf.Bytes()), startOff+len(text), tabWidth)
-	end := Position{Line: endLine, Col: endCol}
+	end := e.buf.positionAtOffset(startOff + len(text))
+	if e.buf.positionToOffset(end) < startOff+len(text) {
+		end = e.buf.nextPosition(end) // insertion caret has trailing affinity
+	}
 	e.recordChange(Change{
 		Type:         ActInsert,
 		Text:         []byte(text),
 		StartPos:     pos,
 		EndPos:       end,
 		CursorBefore: cursorBefore,
+		Offset:       startOff,
 	})
 	return end
 }
@@ -49,6 +56,7 @@ func (e *Editor) insertRecorded(pos Position, text string, cursorBefore Position
 // deleteRecorded deletes [start, end) and records the change. Returns the
 // deleted text ("" when the range was empty and nothing was recorded).
 func (e *Editor) deleteRecorded(start, end Position, cursorBefore Position) string {
+	startOff := e.buf.positionToOffset(start)
 	text := e.buf.GetText(start, end)
 	if text == "" {
 		return ""
@@ -60,6 +68,7 @@ func (e *Editor) deleteRecorded(start, end Position, cursorBefore Position) stri
 		StartPos:     start,
 		EndPos:       end,
 		CursorBefore: cursorBefore,
+		Offset:       startOff,
 	})
 	return text
 }
@@ -88,27 +97,31 @@ func (e *Editor) clampCursorToLine() {
 	if e.cursor.Col < 0 {
 		e.cursor.Col = 0
 	}
+	e.cursor = e.buf.snapPosition(e.cursor)
 }
 
 func (e *Editor) runeAtCursor() rune {
-	runes := e.lineRunes(e.cursor.Line)
-	ri := colToRuneIdx(runes, e.cursor.Col)
-	if ri < 0 || ri >= len(runes) {
+	line := e.LineText(e.cursor.Line)
+	off := VisualColToByteOffset(line, e.cursor.Col, tabWidth)
+	if off >= len(line) {
 		return 0
 	}
-	return runes[ri]
+	return []rune(line[off:])[0]
 }
 
 func (e *Editor) runeBeforeCursor() rune {
 	if e.cursor.Col <= 0 {
 		return 0
 	}
-	runes := e.lineRunes(e.cursor.Line)
-	ri := colToRuneIdx(runes, e.cursor.Col)
-	if ri <= 0 || ri > len(runes) {
+	start := e.buf.previousPosition(e.cursor)
+	if start.Line != e.cursor.Line {
 		return 0
 	}
-	return runes[ri-1]
+	text := e.buf.GetText(start, e.cursor)
+	if text == "" {
+		return 0
+	}
+	return []rune(text)[0]
 }
 
 // ── auto-indent helpers ──────────────────────────────────────────────
@@ -145,6 +158,8 @@ func lastRune(s string) (rune, bool) {
 // an opener is typed over one, types over an already-present closer,
 // auto-inserts closing pairs, and otherwise inserts the rune as-is.
 func (e *Editor) typeRune(r rune) {
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	closer, isOpener := autoClosePairs[r]
 	if isOpener && e.HasSelection() {
 		e.wrapSelection(r, closer)
@@ -192,9 +207,9 @@ func (e *Editor) wrapSelection(opener, closer rune) {
 	ow := runeVisualWidth(opener)
 
 	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	e.insertRecorded(end, string(closer), cursorBefore)
 	e.insertRecorded(start, string(opener), cursorBefore)
-	e.endUndoGroup()
 
 	newStart := Position{Line: sLine, Col: sCol + ow}
 	newEnd := Position{Line: eLine, Col: eCol}
@@ -212,6 +227,8 @@ func (e *Editor) wrapSelection(opener, closer rune) {
 // both characters of an empty auto-close pair when the cursor sits
 // between them, and otherwise falls back to a plain backward delete.
 func (e *Editor) deleteBackwardSmart() {
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	if e.HasSelection() {
 		e.DeleteSelection()
 		return
@@ -230,14 +247,6 @@ func (e *Editor) deleteBackwardSmart() {
 }
 
 // ── line-range helpers ───────────────────────────────────────────────
-
-func (e *Editor) selectionSpansLines() bool {
-	if !e.HasSelection() {
-		return false
-	}
-	sLine, _, eLine, _ := e.SelectionRange()
-	return eLine > sLine
-}
 
 // selectedLineRange returns the inclusive line range covered by the
 // selection (or just the cursor line). A multi-line selection ending at
@@ -264,6 +273,7 @@ func (e *Editor) indentLines() {
 	indented := make(map[int]bool, last-first+1)
 
 	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	for line := first; line <= last; line++ {
 		if e.LineText(line) == "" {
 			continue
@@ -271,7 +281,6 @@ func (e *Editor) indentLines() {
 		e.insertRecorded(Position{Line: line}, indent, cursorBefore)
 		indented[line] = true
 	}
-	e.endUndoGroup()
 	if len(indented) == 0 {
 		return
 	}
@@ -299,6 +308,7 @@ func (e *Editor) outdentLines() {
 	removed := make(map[int]int, last-first+1)
 
 	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	for line := first; line <= last; line++ {
 		raw := e.LineText(line)
 		if raw == "" {
@@ -320,7 +330,6 @@ func (e *Editor) outdentLines() {
 		e.deleteRecorded(Position{Line: line}, Position{Line: line, Col: cols}, cursorBefore)
 		removed[line] = cols
 	}
-	e.endUndoGroup()
 	if len(removed) == 0 {
 		return
 	}
@@ -381,13 +390,15 @@ func (e *Editor) swapLineBlock(swapIdx, first, last, dir int) {
 	}
 	start := Position{Line: regionFirst}
 	end := Position{Line: regionLast, Col: e.lineVisualWidth(regionLast)}
-	replacement := strings.Join(newLines, "\n")
+	replacement := strings.Join(newLines, e.lineEnding())
 	cursorBefore := e.cursor
 
 	e.beginUndoGroup()
-	e.deleteRecorded(start, end, cursorBefore)
-	e.insertRecorded(start, replacement, cursorBefore)
-	e.endUndoGroup()
+	defer e.endUndoGroup()
+	if e.buf.GetText(start, end) != replacement {
+		e.deleteRecorded(start, end, cursorBefore)
+		e.insertRecorded(start, replacement, cursorBefore)
+	}
 
 	e.cursor.Line += dir
 	if e.HasSelection() {
@@ -404,6 +415,8 @@ func (e *Editor) swapLineBlock(swapIdx, first, last, dir int) {
 // selection (selecting the copy), or duplicates the current line below
 // when nothing is selected. One undo step.
 func (e *Editor) duplicateLineOrSelection() {
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	cursorBefore := e.cursor
 	if e.HasSelection() {
 		_, _, eLine, eCol := e.SelectionRange()
@@ -422,7 +435,7 @@ func (e *Editor) duplicateLineOrSelection() {
 	}
 	line := e.cursor.Line
 	text := e.LineText(line)
-	e.insertRecorded(Position{Line: line, Col: e.lineVisualWidth(line)}, "\n"+text, cursorBefore)
+	e.insertRecorded(Position{Line: line, Col: e.lineVisualWidth(line)}, e.lineEnding()+text, cursorBefore)
 	e.cursor.Line = line + 1
 	e.clampCursorToLine()
 	e.finishEdit()
@@ -435,6 +448,8 @@ func (e *Editor) duplicateLineOrSelection() {
 // cursor keeps its column on the line that takes the deleted lines'
 // place. One undo step.
 func (e *Editor) deleteLines() {
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	first, last := e.selectedLineRange()
 	lc := e.LineCount()
 	cursorBefore := e.cursor
@@ -568,6 +583,7 @@ func (e *Editor) toggleLineComment() {
 	shifts := make(map[int]lineShift, last-first+1)
 
 	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	for line := first; line <= last; line++ {
 		raw := e.LineText(line)
 		wsLen := len(raw) - len(strings.TrimLeft(raw, " \t"))
@@ -591,7 +607,6 @@ func (e *Editor) toggleLineComment() {
 			shifts[line] = lineShift{at: insCol, delta: len(ins)}
 		}
 	}
-	e.endUndoGroup()
 	if len(shifts) == 0 {
 		return
 	}

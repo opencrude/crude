@@ -56,6 +56,9 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 
 // Bind attaches the live editor for the next layout/paint pass.
 func (s *Screen) Bind(ed *editor.Editor) {
+	if s.ed != ed && s.ed != nil {
+		s.ed.CancelPointerCapture()
+	}
 	s.ed = ed
 	if ed != nil {
 		ed.SetTokens(s.tokens)
@@ -99,6 +102,9 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 }
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
+	if s.Bounds() != r && s.ed != nil {
+		s.ed.CancelPointerCapture()
+	}
 	s.SetBounds(r)
 	s.width = r.W
 	s.height = r.H
@@ -143,6 +149,11 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	var msg tea.Msg
 	switch evt.Kind {
+	case ui.EventCustom:
+		if _, ok := evt.Custom.(editor.PointerScrollMsg); !ok {
+			return ui.EventResult{}
+		}
+		msg = evt.Custom
 	case ui.EventKey:
 		if !s.ed.ReadOnly() {
 			return ui.EventResult{}

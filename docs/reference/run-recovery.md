@@ -264,6 +264,18 @@ the earlier incident lookup. New human/peer turn admission cannot overwrite a
 parked task. The composer refuses an ordinary send before consuming that draft;
 Retry now/Stop and slash remediation remain available.
 
+Human steering admission shares the execution owner's Stop and terminal-seal
+fence, not just the collaboration run's still-nonterminal record. At natural
+completion the owner seals new notes, flushes all previously accepted notes,
+and takes another model step if any remain. Only then may it publish completion.
+A note refused after sealing or Stop leaves the exact composer draft intact.
+Ordinary connected Enter always goes to the same core admission owner, which
+chooses live steering, a fresh turn or a durable queue behind terminal sealing.
+It never treats a stale shell's routing hint as a second lifecycle authority.
+Continue reuses an already-recorded Local History message scope and its original
+safety snapshots through a continuation lease, rather than inserting a duplicate
+scope under the same accepted human-input identity.
+
 No supervisor automatically reruns a historical tool call, relaunches an existing
 command, advances an async output cursor, or treats a running process as exit zero.
 Already accepted results remain evidence. Opaque commands/MCP effects that may
@@ -445,6 +457,17 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
 - `tui/viewmodel/run_recovery_lifecycle_test.go` submits through the composer and
   checks painted deadlines, manual repair for authentication, automatic HTTP 408
   continuation, retained draft, and removal of stale recovery actions.
+- `tui/viewmodel/remote_stop_lifecycle_test.go` completes automatic compaction,
+  repeats Stop/follow-up across two connected shells, proves steering reaches
+  the next provider request, stops an authentication failure and passively
+  reopens before a fresh turn. Existing connected manual-compaction journeys
+  cover queued prompts and cancelled extraction. `stop_lifecycle_visual_test.go`
+  runs Stop, steering and manual-compaction cancellation through the repository
+  capture workflow at desktop and constrained sizes.
+- `session/retained_session_lifecycle_test.go` optionally accepts SQLite backup
+  images through `CRUDE_LIFECYCLE_SESSION_FIXTURES`; it touches only temporary
+  copies and a local provider, checks exact Stop, three fresh turns, passive
+  reopen and unchanged pre-existing transcript metadata/provenance.
 
 These are deterministic local failure simulations, not a guarantee that every
 remote gateway reports trustworthy status codes or that an unavailable service

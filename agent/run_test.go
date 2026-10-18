@@ -1254,3 +1254,42 @@ func TestBeforeFinishAddsOneStepPerRun(t *testing.T) {
 		t.Fatal("the BeforeFinish notice did not reach the model context")
 	}
 }
+
+func TestTerminalSteeringSealDrainsLastAcceptedInputBeforeDone(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeChatSSE(w, "accepted answer", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "terminal-steering-model"
+	a := newTestAgent(t, p, p.Model)
+	inbox := make(chan RuntimeMessage, 1)
+	seals, reopened := 0, 0
+	a.SealRuntimeMessages = func(context.Context) error {
+		seals++
+		if seals == 1 {
+			note := provider.NewTextMessage("user", "last accepted human correction")
+			note.InternalID = "last-note"
+			inbox <- RuntimeMessage{Message: note}
+		}
+		return nil
+	}
+	a.ResumeRuntimeMessages = func() { reopened++ }
+	done := 0
+	messages := a.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		if event.Type == "done" {
+			done++
+		}
+	}, nil, "", inbox)
+	count := 0
+	for _, message := range messages {
+		if message.InternalID == "last-note" {
+			count++
+		}
+	}
+	if requests.Load() != 2 || done != 1 || seals != 2 || reopened != 1 || count != 1 {
+		t.Fatalf("terminal admission stranded/replayed steering: requests=%d done=%d seals=%d reopened=%d notes=%d", requests.Load(), done, seals, reopened, count)
+	}
+}

@@ -2,6 +2,7 @@ package editor
 
 import (
 	"crude/tui/rendering"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -149,7 +150,14 @@ func ByteOffsetToLineCol(text string, off, tabW int) (line, col int) {
 			lineStart = i + 1
 		}
 	}
-	return line, ByteOffsetToVisualCol(text[lineStart:off], off-lineStart, tabW)
+	lineEnd := len(text)
+	if next := strings.IndexByte(text[lineStart:], '\n'); next >= 0 {
+		lineEnd = lineStart + next
+		if lineEnd > lineStart && text[lineEnd-1] == '\r' {
+			lineEnd--
+		}
+	}
+	return line, ByteOffsetToVisualCol(text[lineStart:lineEnd], off-lineStart, tabW)
 }
 
 // UTF16ColToVisualCol converts an LSP UTF-16 code-unit offset from the

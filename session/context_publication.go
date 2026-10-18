@@ -121,7 +121,7 @@ func retainChildCheckpointSource(run *recoveryRunState, archive, active []provid
 	if err != nil {
 		return err
 	}
-	archive, err = mergeCommittedContextMessages(archive, controls)
+	archive, err = retainCommittedArchiveMessages(archive, controls)
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func (s *Session) reconcileRootRecoveryLocked(run *recoveryRunState) error {
 		// and transcript metadata is not a full provider-message projection. Adopt
 		// only the immutable controls; do not reproject the rest of the archive.
 		var err error
-		archive, err = mergeCommittedContextMessages(archive, controls)
+		archive, err = retainCommittedArchiveMessages(archive, controls)
 		if err != nil {
 			return err
 		}
@@ -237,7 +237,7 @@ func reconcileCommittedRecoveryContext(run *recoveryRunState, committed sessiond
 	if err != nil {
 		return err
 	}
-	archive, err := mergeCommittedContextMessages(run.archive, source)
+	archive, err := retainCommittedArchiveMessages(run.archive, source)
 	if err != nil {
 		return err
 	}
@@ -251,6 +251,77 @@ func reconcileCommittedRecoveryContext(run *recoveryRunState, committed sessiond
 		run.publishedRevision = run.sourceRevision
 	}
 	return nil
+}
+
+// The archive owns accepted-history order; the active context owns request
+// order. They share immutable message identities, not sequence positions:
+// compaction and independently admitted steering/control facts can place the
+// same identity differently in each. Validate bytes and uniqueness, retain the
+// archive's order, and append only facts it has not yet observed.
+func retainCommittedArchiveMessages(archive, source []provider.ChatMessage) ([]provider.ChatMessage, error) {
+	key := func(message provider.ChatMessage) (string, error) {
+		if message.InternalID != "" {
+			return "id:" + message.InternalID, nil
+		}
+		raw, err := json.Marshal(canonicalContextMessage(message))
+		return "anonymous:" + string(raw), err
+	}
+	identities := make(map[string]provider.ChatMessage, len(archive))
+	remaining := make(map[string]int, len(archive))
+	for _, message := range archive {
+		identity, err := key(message)
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicate := identities[identity]; duplicate && message.InternalID != "" {
+			return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "duplicate recovery archive"}
+		}
+		identities[identity] = canonicalContextMessage(message)
+		remaining[identity]++
+	}
+	// Missing facts keep their next shared archive anchor, but a source anchor
+	// never reorders an identity already present in the archive.
+	before := make(map[string][]provider.ChatMessage)
+	anchor := ""
+	seen := make(map[string]bool, len(source))
+	for i := len(source) - 1; i >= 0; i-- {
+		message := source[i]
+		identity, err := key(message)
+		if err != nil {
+			return nil, err
+		}
+		if seen[identity] && message.InternalID != "" {
+			return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "duplicate committed archive source"}
+		}
+		seen[identity] = true
+		if earlier, exists := identities[identity]; exists && remaining[identity] > 0 {
+			if !reflect.DeepEqual(earlier, canonicalContextMessage(message)) {
+				return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "recovery archive bytes"}
+			}
+			anchor = identity
+			remaining[identity]--
+			continue
+		}
+		before[anchor] = append(before[anchor], message)
+	}
+	result := make([]provider.ChatMessage, 0, len(archive)+len(source))
+	appendBefore := func(anchor string) {
+		pending := before[anchor]
+		for i := len(pending) - 1; i >= 0; i-- {
+			result = append(result, pending[i])
+		}
+		delete(before, anchor)
+	}
+	for _, message := range archive {
+		identity, err := key(message)
+		if err != nil {
+			return nil, err
+		}
+		appendBefore(identity)
+		result = append(result, message)
+	}
+	appendBefore("")
+	return result, nil
 }
 
 func mergeCommittedContextMessages(snapshot, source []provider.ChatMessage) ([]provider.ChatMessage, error) {

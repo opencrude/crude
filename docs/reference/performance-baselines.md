@@ -7,6 +7,39 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Editor pointer acceptance (2026-10-17)
+
+Stationary selection scrolling uses one owner/tick-fenced 50 ms repeat, not a
+motion-event-sized scroll. `BenchmarkPointerScrollMutation` isolates warm
+gesture/viewport mutation from paint. Three 1,000-iteration Linux/amd64 runs
+(`GOMAXPROCS=2`, Go 1.25.9, i7-10750H) measured 2.90–5.70 µs / 265 B / five
+allocations for 200 lines and 2.86–3.08 µs / 326 B / six allocations for 100,000
+lines. These include scheduling the next command, not waiting for its timer or
+terminal transport. They are local acceptance measurements, not timing ceilings.
+
+The unchanged `make bench-gate` passes: editor paint/scroll repaint remains
+3,936 B / 546 allocations at 80×24 and 7,360 B / 993 allocations at 120×40;
+large-file 120×40 paint is 7,488 B / 993 allocations. Real Linux captures at
+160×40 and 80×24 exercise held edge scrolling, release stop, gutter/thumb drags,
+horizontal scrolling and selection replacement with Undo/Redo.
+
+## Editor transaction acceptance (2026-10-17)
+
+The source-boundary/history correction keeps existing allocation ceilings.
+`make bench-gate` on Linux/amd64, Go 1.25.9, i7-10750H reports 3,936 B / 546
+allocations for 80×24 editor paint and 7,360 B / 993 allocations for 120×40
+paint and scroll repaint. Large-file 120×40 paint reports 7,488 B / 993
+allocations. These measure component paint, not terminal transport latency.
+
+Three ten-iteration runs of
+`GOMAXPROCS=2 go test ./workspace -run '^$' -bench '^BenchmarkDocumentDurableEditAfterHundredOps$' -benchtime=10x -count=3`
+include SQLite publication after 100 accepted edits. The 4 MiB case measures
+2.99–4.85 ms / 4.236 MB / 135–137 allocations per edit, within its unchanged
+16 ms gate; SQLite page growth is 1,638 B/op. Other repository checks were
+running concurrently, so these are acceptance measurements, not an isolated
+before/after speedup. Undo suffix normalization is bounded by retained history
+but can be quadratic; these ordinary-edit numbers do not measure its worst case.
+
 ## Semantic control acceptance (2026-10-12)
 
 The initial control integration failed existing allocation gates: idle tick

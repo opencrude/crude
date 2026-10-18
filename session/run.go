@@ -561,7 +561,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	historyCtx := ctx
 	if historyStart != nil && humanTurn {
 		if err := historyStart(ctx, s.sessionID, currentMsgID); err != nil {
-			if errors.Is(err, ErrHistoryDisabled) {
+			if errors.Is(err, ErrHistoryDisabled) || errors.Is(err, ErrHistoryRecorded) {
 				l.Debug("HISTORY", "message_scope_disabled", "msg_id", currentMsgID)
 				if historyContinue != nil {
 					if !recoverStep(agent.RecoveryFailureStorage, func() error {
@@ -571,6 +571,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 					}
 					historyContinuationStarted = true
 					historyContinuationID = currentMsgID
+				}
+				if errors.Is(err, ErrHistoryRecorded) {
+					historyCtx = withHistoryScope(ctx, s.sessionID, currentMsgID, o.ID)
 				}
 			} else {
 				if !recoverStep(agent.RecoveryFailureStorage, func() error {
@@ -921,6 +924,20 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		activeCfg.Model, sender,
 	)
 	ag.FlushRuntimeMessages = flushRuntime
+	ag.SealRuntimeMessages = func(ctx context.Context) error {
+		o.turnMu.Lock()
+		o.turnSealed = true
+		o.turnMu.Unlock()
+		if flushRuntime != nil {
+			return flushRuntime(ctx)
+		}
+		return nil
+	}
+	ag.ResumeRuntimeMessages = func() {
+		o.turnMu.Lock()
+		o.turnSealed = false
+		o.turnMu.Unlock()
+	}
 
 	var emitActive atomic.Bool
 	emitActive.Store(true)
@@ -980,6 +997,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	ag.Emit = emit
 	prepareAttempt := func() (string, error) {
+		o.turnMu.Lock()
+		o.turnSealed = false
+		o.turnMu.Unlock()
 		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
 		if current == nil {
 			return "", errors.New("session configuration is unavailable")

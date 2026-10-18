@@ -18,6 +18,10 @@ const (
 	InputAdmissionAccepted            InputAdmissionStatus = "accepted"
 	InputAdmissionRejected            InputAdmissionStatus = "rejected"
 	InputAdmissionPreservationPending InputAdmissionStatus = "preservation_pending"
+	// InputAdmissionSteered binds the input to a durable event on one live run.
+	// Context admission follows at a safe boundary; the journal receipt owns
+	// acceptance in the meantime.
+	InputAdmissionSteered InputAdmissionStatus = "steered"
 )
 
 type InputAdmissionErrorKind string
@@ -37,6 +41,8 @@ type InputAdmissionReceipt struct {
 	OwnerEpoch      uint64
 	DraftRevision   uint64
 	AcceptedAt      time.Time
+	EventID         string
+	RunID           string
 }
 
 type InputAdmissionResult struct {

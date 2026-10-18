@@ -17,6 +17,9 @@ type DocumentRecovery struct {
 	Canonical                             document.Snapshot
 	OptimisticText                        []byte
 	Pending                               []document.Edit
+	PendingGroups                         []string
+	HistoryQueue                          []DocumentHistoryIntent
+	HistorySync                           bool
 	InFlight                              *document.Change
 	Owner                                 document.Owner
 	Cursor, SelectionAnchor, SelectionEnd Position
@@ -45,6 +48,20 @@ func (e *Editor) ExportDocumentRecovery() (DocumentRecovery, bool) {
 		return DocumentRecovery{}, false
 	}
 	r := DocumentRecovery{Version: 1, Path: e.filePath, Canonical: e.DocumentSnapshot(), OptimisticText: []byte(e.Value()), Pending: append([]document.Edit(nil), p.pending...), Owner: p.owner, Cursor: e.cursor, SelectionAnchor: e.selAnchor, SelectionEnd: e.selEnd, ScrollX: e.scrollX, ScrollY: e.scrollY, Selecting: e.selecting, UndoPending: p.undoPending}
+	r.PendingGroups = append([]string(nil), p.pendingGroups...)
+	r.HistorySync = p.historySync
+	for _, action := range p.historyQueue {
+		intent := action.evidence
+		if intent.Key != nil {
+			key := *intent.Key
+			intent.Key = &key
+		}
+		if intent.Paste != nil {
+			paste := *intent.Paste
+			intent.Paste = &paste
+		}
+		r.HistoryQueue = append(r.HistoryQueue, intent)
+	}
 	if p.inflight != nil {
 		c := *p.inflight
 		c.Edits = append([]document.Edit(nil), c.Edits...)
@@ -53,10 +70,24 @@ func (e *Editor) ExportDocumentRecovery() (DocumentRecovery, bool) {
 	if p.conflict != nil {
 		r.Conflict = p.conflict.Error()
 	}
-	return r, len(p.pending) > 0 || p.inflight != nil || p.undoPending || p.conflict != nil
+	return r, len(p.pending) > 0 || p.inflight != nil || p.undoPending || p.historySync || len(p.historyQueue) > 0 || p.conflict != nil
 }
 
 func (r DocumentRecovery) Validate() error {
+	if len(r.PendingGroups) != 0 && len(r.PendingGroups) != len(r.Pending) {
+		return document.ErrRevision
+	}
+	for _, intent := range r.HistoryQueue {
+		if intent.Key != nil && intent.Paste != nil {
+			return document.ErrRequest
+		}
+		if intent.Key != nil && (len(intent.Key.Text) > document.MaxBytes || !utf8.ValidString(intent.Key.Text)) {
+			return document.ErrLimit
+		}
+		if intent.Paste != nil && (len(intent.Paste.Content) > document.MaxBytes || !utf8.ValidString(intent.Paste.Content)) {
+			return document.ErrLimit
+		}
+	}
 	if r.Version != 1 || r.Path == "" || r.Path != r.Canonical.Path || r.Canonical.ID == "" || r.Canonical.Revision == 0 || r.ScrollX < 0 || r.ScrollY < 0 {
 		return document.ErrRevision
 	}
@@ -101,6 +132,11 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
+	for _, intent := range r.HistoryQueue {
+		if intent.Unrecoverable {
+			return errors.New("recovered editor contains an unavailable deferred API edit; retain the recovery evidence")
+		}
+	}
 	p := e.documentProjection
 	if p == nil || p.snapshot.Path != r.Path || p.snapshot.ID != r.Canonical.ID || len(p.pending) != 0 || p.inflight != nil {
 		return ErrDocumentPending
@@ -112,6 +148,23 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 	p.snapshot = r.Canonical
 	p.snapshot.Text, p.snapshot.Saved = bytes.Clone(r.Canonical.Text), bytes.Clone(r.Canonical.Saved)
 	p.pending = append([]document.Edit(nil), r.Pending...)
+	p.pendingGroups = append([]string(nil), r.PendingGroups...)
+	p.historySync = r.HistorySync
+	p.historyQueue = nil
+	for _, intent := range r.HistoryQueue {
+		action := documentHistoryAction{redo: intent.Redo, evidence: intent}
+		switch {
+		case intent.Key != nil:
+			key := *intent.Key
+			action.evidence.Key = &key
+			action.edit = func() { e.HandleEvent(key) }
+		case intent.Paste != nil:
+			paste := *intent.Paste
+			action.evidence.Paste = &paste
+			action.edit = func() { e.HandleEvent(paste) }
+		}
+		p.historyQueue = append(p.historyQueue, action)
+	}
 	p.owner, p.undoPending = r.Owner, r.UndoPending
 	if r.InFlight != nil {
 		c := *r.InFlight

@@ -9,12 +9,90 @@ engine and its invariants.
 
 ## Motion
 
+- Display geometry is never source text. PieceTable positions resolve through
+  the shared grapheme/tab conversion; arrow motion, pointer landing, selections
+  and deletion use complete source units. A tab is one unit, not its expanded
+  spaces; a combining/ZWJ/modifier cluster is never split by a visible edit.
+  Exact inverse edits use byte offsets, including inside a newly joined cluster.
+- Backspace within leading whitespace removes to the previous indentation stop,
+  never into following words. At line start it joins the previous line; Delete
+  at a line end (including an empty line) removes the complete terminator. CRLF
+  is one terminator, excluded from line content. Enter follows the document's
+  first terminator, inherits indentation and opens a matching bracket pair onto
+  separate lines. Paste retains exact bytes.
+- Left/Right without Shift collapse an existing selection to its directional
+  edge. Tab indents every selected line, including a single-line selection;
+  Shift+Tab outdents. Vertical motion retains its desired column while snapping
+  each landing to a valid source boundary.
 - **`Editor.moveWordLeft` must keep climbing across blank lines**: word-left
   from a line start must skip whitespace-only lines and land on the previous
   line's last word start (guarded by `TestMoveWordLeft_CrossesLines`). A
   b323a3b rewrite once replaced the climb loop's `continue` with `return`,
   parking the cursor on blank lines — and SA4004 flagged it as a dead loop.
   When a "dead loop" warning appears, check for a swallowed `continue` first.
+
+## Pointer selection and scrolling
+
+- One gesture owns character, whole-word, or whole-line selection, including
+  line-number drags. Double/triple-click-hold extends by its original unit in
+  either direction; Shift+gutter uses the current selection/caret anchor.
+- Dragging to a viewport edge continues scrolling with a stationary pointer,
+  vertically and horizontally. A 50 ms repeat uses bounded distance-based speed,
+  not the number of terminal motion events. Endpoints clamp to the text viewport
+  and stay on source boundaries even while crossing gutters or scrollbar chrome.
+  Document bounds stop the repeat; returning inside stops it immediately.
+- Motion, wheel, repeat, and final release project through the same selection
+  logic. Editable release keeps the range without copying; read-only release
+  copies it and drops the highlight. Shared scrollbar thumbs also apply their
+  final release coordinate, only for the button that began the gesture.
+- Repeat delivery goes through the mounted capture owner, including floating
+  editors and Find in Files previews, never keyboard focus. Exact editor and
+  monotonic tick epochs fence late/duplicate callbacks after release, cancellation,
+  replacement, unmount, close, resize, terminal blur, or a modal taking over.
+  Peer deltas transform the gesture's original unit boundaries with view anchors.
+- This follows the established captured-gesture/repeating-edge-scroll model in
+  [CodeMirror mouse selection](https://github.com/codemirror/view/blob/main/src/input.ts),
+  rather than separate one-off behavior for each kind of drag.
+
+## Edit transactions and history
+
+- Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo (Super equivalents when delivered
+  by the terminal). Navigation/focus changes separate typing. Adjacent plain
+  typing within 500 ms is one logical group; Enter, indentation, pair operations,
+  line moves/duplicate/delete, cut/paste, completion, formatting and replacement
+  are atomic commands. Replace All is one transaction, not one step per match.
+- Logical groups originate at the editing command, never the network drain.
+  Core history is author-specific and follows the same group across paced or
+  burst RPCs. A new edit after Undo invalidates Redo. Whole groups are retained
+  or retired; pruning cannot leave half a command.
+- Every Undo/Redo gesture is ordered. Input arriving behind pending history
+  waits for its exact receipt and full canonical sync, then runs at the resulting
+  caret. Save/close wait too. Ordinary queued key/paste input is retained in private
+  recovery evidence; restored evidence is not automatic permission to replay.
+- Standalone views restore pre/post caret and selection with exact source bytes.
+  Connected views restore private pre/post state only for an exact matching undo
+  request/group. Peer or formatter changes invalidate historical coordinates;
+  current anchors transform through deltas instead of jumping to guessed places.
+- Core undo records explicit inverse provenance and normalizes cancelled pairs
+  before rebasing. Disjoint peer edits survive; genuine overlap or ambiguous
+  touching boundaries fail closed. Previously stored operations without inverse
+  provenance remain opaque and can still refuse overlapping history traversal.
+  History remains bounded, not unlimited.
+- Find/replace stores original source byte spans, not case-folded byte offsets
+  or display-column ranges. Unicode case folding cannot shift a match, and a
+  match inside a grapheme can be replaced and undone exactly. Search projections
+  refresh by buffer revision before navigation/replacement or visible paint.
+- Diagnostic spans belong to the editor revision at installation. Editing or
+  Undo/Redo cannot keep painting/hovering spans from the previous text, and
+  history keys and new diagnostic publications dismiss the old tooltip.
+- Regression journeys exercise literal expected bytes and views, randomized
+  command sequences followed by repeated full Undo/Redo, Unicode/CRLF, delayed
+  acknowledgements, peers, restart, recovery and history rolling. The transaction
+  and selection design follows established
+  [CodeMirror history](https://github.com/codemirror/commands/blob/main/src/history.ts)
+  and source-range deletion principles from
+  [VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/editor/common/cursor/cursorDeleteOperations.ts),
+  not terminal display-rune reconstruction.
 
 ## Horizontal geometry
 

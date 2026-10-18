@@ -127,6 +127,9 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 		t.Fatalf("original submission was not committed: rows=%+v err=%v", original, err)
 	}
 	ws.CancelAgent(root.ID)
+	if ws.SteerAgent(root.ID, provider.UserInput{InternalID: "after-stop", Text: "must remain a new draft"}) {
+		t.Fatal("Stop still accepted steering into the cancelled execution")
+	}
 	settle("cancelled")
 	releaseOnce.Do(func() { close(releaseFirst) })
 	deadline := time.Now().Add(5 * time.Second)

@@ -205,7 +205,7 @@ func TestDocumentServiceGroupedUndoAtomic(t *testing.T) {
 	documentText(t, s, snap.ID, "finish")
 }
 
-func TestDocumentServiceGroupedUndoAfterPeerFailsWithoutLoss(t *testing.T) {
+func TestDocumentServiceGroupedUndoAfterDisjointPeer(t *testing.T) {
 	s, snap, a, b := documentFixture(t, "aaa bbb ccc")
 	for i, e := range []document.Edit{{Start: 0, End: 3, Text: "AAAA"}, {Start: 0, End: 4, Text: "AAAAA"}} {
 		_, err := s.Apply(document.Change{Owner: a, DocumentID: snap.ID, RequestID: string(rune('a' + i)), BaseRevision: uint64(i + 1), GroupID: "group", Edits: []document.Edit{e}})
@@ -214,12 +214,12 @@ func TestDocumentServiceGroupedUndoAfterPeerFailsWithoutLoss(t *testing.T) {
 		}
 	}
 	r := documentEdit(t, s, b, snap.ID, "peer", 3, 10, 13, "CCC")
-	if _, err := s.Undo(a, snap.ID, "undo", r.Revision); !errors.Is(err, document.ErrOverlap) {
+	if _, err := s.Undo(a, snap.ID, "undo", r.Revision); err != nil {
 		t.Fatal(err)
 	}
-	final := documentText(t, s, snap.ID, "AAAAA bbb CCC")
-	if final.Revision != r.Revision {
-		t.Fatal("partial grouped undo")
+	final := documentText(t, s, snap.ID, "aaa bbb CCC")
+	if final.Revision != r.Revision+2 {
+		t.Fatal("missing grouped revisions")
 	}
 }
 

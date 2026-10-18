@@ -66,6 +66,10 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		db.Close()
 		return nil, fmt.Errorf("resume: load messages with meta: %w", err)
 	}
+	if err := sessiondb.HydrateMessageIdentities(db, meta.ID, msgsWithMeta); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load message identities: %w", err)
+	}
 
 	maxTurn := 0
 	for _, t := range msgTurns {
