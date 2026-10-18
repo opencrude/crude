@@ -192,9 +192,12 @@ func TestPointerScrollUpHorizontalAndBounds(t *testing.T) {
 		if ed.scrollY != 18 || ed.cursor != (Position{Line: 18, Col: 4}) {
 			t.Fatalf("upward drag scroll=%d caret=%v", ed.scrollY, ed.cursor)
 		}
-		if ed.selAnchor != (Position{Line: 23, Col: 4}) {
-			t.Fatalf("anchor moved: %v", ed.selAnchor)
+		if ed.selAnchor != (Position{Line: 23, Col: 5}) {
+			t.Fatalf("backward anchor must include originally pressed 0: %v", ed.selAnchor)
 		}
+		requirePointerSelectionPaint(t, ed, "018 alpha beta gamma\nrow 019 alpha beta gamma\nrow 020 alpha beta gamma\nrow 021 alpha beta gamma\nrow 022 alpha beta gamma\nrow 0",
+			pointerPaintSpan{18, 4, 33}, pointerPaintSpan{19, 0, 33}, pointerPaintSpan{20, 0, 33},
+			pointerPaintSpan{21, 0, 33}, pointerPaintSpan{22, 0, 33}, pointerPaintSpan{23, 0, 5})
 	})
 	t.Run("horizontal scrollbar crossing", func(t *testing.T) {
 		ed := newPointerTestEditor(t, strings.Repeat("abcdefghij", 20), 40, 8)

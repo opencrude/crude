@@ -19,12 +19,14 @@ import (
 func TestScreenSelectionThemeSwitchPreservesChildInk(t *testing.T) {
 	s, _ := newTestScreen(t)
 	fixture(s, "abc", 11, terminalvt.Modes{})
+	p := s.projection
 	for i := 0; i < 3; i++ {
-		s.view.Grid.Cells[0][i].FG = terminalvt.Color{Explicit: true, R: 200, G: 10, B: 20}
-		s.view.Grid.Cells[0][i].BG = terminalvt.Color{Explicit: true, R: 30, G: 40, B: 50}
-		s.view.Grid.Cells[0][i].Style = terminalvt.Style{Faint: true, Inverse: true}
+		p.Grid.Cells[0][i].FG = terminalvt.Color{Explicit: true, R: 200, G: 10, B: 20}
+		p.Grid.Cells[0][i].BG = terminalvt.Color{Explicit: true, R: 30, G: 40, B: 50}
+		p.Grid.Cells[0][i].Style = terminalvt.Style{Faint: true, Inverse: true}
 	}
-	s.view.Grid.Cursor.Visible = false
+	p.Grid.Cursor.Visible = false
+	s.SetProjection(p)
 	buf := surface.NewCellBuffer(40, 11)
 	s.Paint(buf, 0, 0, ui.PaintContext{})
 	original := buf.Get(2, 0)
@@ -268,6 +270,26 @@ func TestScreenCtrlShiftCCopiesWithoutWriting(t *testing.T) {
 	}
 	if len(*writes) != 0 {
 		t.Fatalf("Ctrl+Shift+C leaked %q to the PTY", joined(writes))
+	}
+}
+
+func TestScreenExplicitCopyWithoutSelectionNeverInterrupts(t *testing.T) {
+	s, writes := newTestScreen(t)
+	s.Handle(ui.EventContext{}, keyEvent('c', tea.ModCtrl|tea.ModShift, ""))
+	if len(*writes) != 0 {
+		t.Fatal("empty explicit copy leaked a control-C to child")
+	}
+}
+
+func TestScreenControlKeysAreNotEditingShortcuts(t *testing.T) {
+	for _, code := range []rune{'c', 'd', 'z', 's', 'q', '\\', 'l', 'u', 'w', 'a', 'e', 'k', 'r'} {
+		s, writes := newTestScreen(t)
+		fixture(s, "selection", 11, terminalvt.Modes{})
+		s.view.SelectAll()
+		s.Handle(ui.EventContext{}, keyEvent(code, tea.ModCtrl, ""))
+		if len(*writes) != 1 || (*writes)[0].Kind != CommandKey || (*writes)[0].Key.Code != code || (*writes)[0].Key.Mod != terminalvt.ModCtrl {
+			t.Fatalf("Ctrl+%c stolen by UI: %+v", code, *writes)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package shellchat
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"time"
 
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
@@ -186,51 +187,117 @@ func (s *Screen) handlePaneGutterRelease(ctx ui.EventContext, msg tea.MouseRelea
 	return res
 }
 
-func (s *Screen) handlePaneWheel(ctx ui.EventContext, msg tea.MouseWheelMsg) ui.EventResult {
-	info, ok := s.viewportPaneInfo(ctx.LocalY)
-	if !ok {
-		return ui.EventResult{}
-	}
-	gx := s.nestedGutterX()
-	if gx >= 0 && ctx.LocalX >= gx+ui.ScrollbarWidth {
-		// The blank separator and main scrollbar belong to the outer chat.
-		return ui.EventResult{}
-	}
-	if s.isNestedGutterHit(ctx.LocalX) {
-		return s.handlePaneGutterWheel(info.PaneID, msg)
-	}
-	// Wheel over pane content scrolls that pane only.
-	if _, ok := s.paneGutterState(info.PaneID); !ok {
-		return ui.EventResult{}
-	}
-	return s.handlePaneGutterWheel(info.PaneID, msg)
+// ResetWheelGesture ends retained scroll ownership at a mount/input boundary.
+func (s *Screen) ResetWheelGesture() {
+	s.wheelGesture.Reset()
+	s.wheel = ui.WheelAccelState{}
+	s.wheelDirection = 0
+	s.wheelModifiers = 0
+	s.wheelChain = nil
+	s.wheelModels = nil
 }
 
-func (s *Screen) handlePaneGutterWheel(paneID string, msg tea.MouseWheelMsg) ui.EventResult {
-	st, ok := s.paneGutterState(paneID)
-	if !ok {
-		return ui.EventResult{}
+func (s *Screen) handleNestedWheel(ctx ui.EventContext, msg tea.MouseWheelMsg) ui.EventResult {
+	if msg.Mod != s.wheelModifiers {
+		s.ResetWheelGesture()
+		s.wheelModifiers = msg.Mod
 	}
-	scroll := st.Scroll
+	sign := 0
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		n := s.paneWheel.WheelUp()
-		if n > 0 {
-			n = -n
-		}
-		scroll.ScrollBy(n)
-		scroll.SetAutoScroll(false)
+		sign = -1
 	case tea.MouseWheelDown:
-		n := s.paneWheel.WheelDown()
-		scroll.ScrollBy(n)
-		if scroll.ShouldAutoScroll() {
-			scroll.StickToBottom()
-		}
+		sign = 1
 	default:
 		return ui.EventResult{}
 	}
-	s.syncPaneScrollAfterUser(paneID)
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	const main = "chat"
+	candidate := main
+	var chain []string
+	explicit := false
+	gx := s.nestedGutterX()
+	if info, ok := s.viewportPaneInfo(ctx.LocalY); ok && (gx < 0 || ctx.LocalX < gx+ui.ScrollbarWidth) {
+		for _, target := range info.Ancestors {
+			if target.LineIdx >= 0 {
+				chain = append(chain, target.PaneID)
+			}
+		}
+		if info.LineIdx >= 0 {
+			chain = append(chain, info.PaneID)
+		}
+		for i := len(chain) - 1; i >= 0; i-- {
+			if _, visible := s.paneGutterState(chain[i]); visible {
+				candidate = "pane/" + chain[i]
+				explicit = s.isNestedGutterHit(ctx.LocalX)
+				break
+			}
+		}
+	} else if gx >= 0 && ctx.LocalX >= gx+ui.ScrollbarWidth {
+		explicit = true
+	}
+	now := time.Now()
+	if s.wheelNow != nil {
+		now = s.wheelNow()
+	}
+	owner, fresh := s.wheelGesture.Resolve(now, ctx.ScreenX, ctx.ScreenY, candidate, explicit)
+	if fresh {
+		s.wheel = ui.WheelAccelState{}
+		s.wheelChain = chain
+		s.wheelModels = make(map[string]*ui.ScrollModel, len(chain))
+		for _, id := range chain {
+			s.wheelModels[id] = s.paintState.compose.PaneGutters[id].Scroll
+		}
+	}
+	if sign != s.wheelDirection {
+		s.wheel = ui.WheelAccelState{}
+	}
+	s.wheelDirection = sign
+	delta := s.wheel.WheelLines(sign)
+	if owner != main {
+		paneID := owner[len("pane/"):]
+		start := -1
+		for i, id := range s.wheelChain {
+			if id == paneID {
+				start = i
+				break
+			}
+		}
+		for i := start; i >= 0 && delta != 0; i-- {
+			id := s.wheelChain[i]
+			if st, ok := s.paneGutterState(id); ok && s.wheelModels[id] == st.Scroll && s.paneScrollVisible(id) {
+				before := st.Scroll.Offset()
+				delta = ui.ScrollWheelDelta(st.Scroll, delta)
+				if st.Scroll.Offset() != before {
+					s.syncPaneScrollAfterUser(id)
+				}
+				if delta == 0 {
+					s.wheelGesture.Transfer("pane/" + id)
+				}
+			}
+		}
+		if delta != 0 {
+			s.wheelGesture.Transfer(main)
+		}
+	}
+	if delta != 0 {
+		ui.ScrollWheelDelta(s.list.Scroll(), delta)
+		s.syncScrollAfterUserScroll()
+	}
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+}
+
+func (s *Screen) paneScrollVisible(id string) bool {
+	for _, info := range s.ViewportPaneLineMap() {
+		if info.PaneID == id {
+			return true
+		}
+		for _, ancestor := range info.Ancestors {
+			if ancestor.PaneID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Screen) syncPaneScrollAfterUser(paneID string) {
@@ -245,6 +312,29 @@ func (s *Screen) syncPaneScrollAfterUser(paneID string) {
 	}
 	if s.onPaneScroll != nil {
 		s.onPaneScroll(paneID)
+	}
+	if s.onPaneScrollChain != nil {
+		// The same exact ancestry invalidation serves wheel, track clicks and
+		// captured thumb drags. Non-scrollable ancestors still own rendered rows.
+		for _, info := range s.ViewportPaneLineMap() {
+			chain := make([]string, 0, len(info.Ancestors)+1)
+			found := false
+			for _, target := range info.Ancestors {
+				chain = append(chain, target.PaneID)
+				if target.PaneID == paneID {
+					found = true
+					break
+				}
+			}
+			if !found && info.PaneID == paneID {
+				chain = append(chain, paneID)
+				found = true
+			}
+			if found {
+				s.onPaneScrollChain(chain)
+				break
+			}
+		}
 	}
 }
 

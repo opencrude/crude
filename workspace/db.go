@@ -56,6 +56,21 @@ func OpenWorkspaceDB(projectDir string) (*WorkspaceDB, error) {
 	return wdb, nil
 }
 
+// RecordAccess is the durable workspace-recency owner. Session creation,
+// background agents, metadata scans and ordinary DB opens are not access.
+// Concurrent attachments cannot rewind a more recent timestamp.
+func (wdb *WorkspaceDB) RecordAccess(ctx context.Context, at time.Time) error {
+	if wdb == nil || wdb.DB == nil {
+		return nil
+	}
+	ns := at.UnixNano()
+	_, err := wdb.DB.ExecContext(ctx, `INSERT INTO workspace_metadata(key, value, updated_at)
+		VALUES ('last_accessed_at', ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+		WHERE CAST(workspace_metadata.value AS INTEGER) < CAST(excluded.value AS INTEGER)`, fmt.Sprint(ns), ns)
+	return err
+}
+
 // openWorkspaceDBAt opens a workspace DB at an explicit path.
 func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 	dir := filepath.Dir(dbPath)

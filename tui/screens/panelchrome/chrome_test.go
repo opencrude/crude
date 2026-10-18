@@ -85,6 +85,16 @@ func TestBodyWidthLeavesScrollbarTrack(t *testing.T) {
 	}
 }
 
+func TestNarrowChromeNeverFabricatesWidth(t *testing.T) {
+	for w := 0; w < 20; w++ {
+		body := BodyWidth(w)
+		r := (Title{Icon: "▦", Badge: "100"}).FieldRect(body)
+		if body < 0 || body > w || r.X < 0 || r.W < 0 || r.X+r.W > body {
+			t.Fatalf("width %d: body=%d field=%+v", w, body, r)
+		}
+	}
+}
+
 func rowText(buf *surface.CellBuffer, y int) string {
 	var b strings.Builder
 	for x := 0; x < buf.Width(); x++ {

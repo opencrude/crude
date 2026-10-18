@@ -35,24 +35,6 @@ func (s *Screen) handleScrollInput(evt ui.Event) bool {
 			scroll.StickToBottom()
 			return true
 		}
-	case ui.EventMouseWheel:
-		switch evt.MouseWheel.Button {
-		case tea.MouseWheelUp:
-			n := s.wheel.WheelUp()
-			if n > 0 {
-				n = -n
-			}
-			scroll.ScrollBy(n)
-			scroll.SetAutoScroll(false)
-			return true
-		case tea.MouseWheelDown:
-			n := s.wheel.WheelDown()
-			scroll.ScrollBy(n)
-			if scroll.ShouldAutoScroll() {
-				scroll.StickToBottom()
-			}
-			return true
-		}
 	}
 	return false
 }

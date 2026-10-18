@@ -43,10 +43,17 @@ func (app *App) captureToolView() {
 		list := app.activityList.ViewState()
 		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
 	}
+	if app.activityView == activityWorkspaces && app.workspacesScreen != nil {
+		list := app.workspacesScreen.ViewState()
+		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
+	}
 	app.toolLayout.Views[app.activityView.ID()] = state
 }
 
 func (app *App) navigationActions(view activitybar.View) ui.ContextMenuSection {
+	if view == activityWorkspaces {
+		return ui.ContextMenuSection{SectionLabel: "Navigation", Items: []ui.ContextMenuItem{{Label: "Reset navigation", Action: app.resetToolLayout}}}
+	}
 	pinned := slices.Contains(app.toolLayout.Rail, view.ID())
 	if app.toolLayout.Rail == nil {
 		pinned = true

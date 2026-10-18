@@ -10,6 +10,19 @@ import (
 	"crude/tui/theme"
 )
 
+func TestReadOnlyTextAreaEscapeRemainsHostOwned(t *testing.T) {
+	area := NewTextArea("reader", NewTokenSet(theme.DefaultDark()), true)
+	area.SetReadOnly(true)
+	area.SetValue("immutable preview")
+	res := area.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEsc}))
+	if res.Handled {
+		t.Fatal("read-only reader swallowed host cancel")
+	}
+	if area.Value() != "immutable preview" {
+		t.Fatal("Escape mutated reader")
+	}
+}
+
 func TestTextAreaVisualLineCountCacheInvalidatesOnContentChanges(t *testing.T) {
 	engine := newTextAreaEngine()
 	engine.SetValue("abcd")
@@ -746,9 +759,10 @@ func TestTextArea_CtrlASelectsAll(t *testing.T) {
 func TestTextArea_SelectionPersistsAfterStopSelecting(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello")
-	ta.SetSelection(1, 4)
-	ta.SetSelecting(true)
-	// Simulate mouse release
+	ta.Layout(LayoutContext{}, Rect{W: 20, H: 2})
+	ta.Handle(EventContext{LocalX: 1}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	ta.Handle(EventContext{LocalX: 4}, MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft}))
+	// Cancel capture without a matching release.
 	ta.StopSelecting()
 	if !ta.HasActiveSelection() {
 		t.Fatal("selection should persist after stop-selecting")
@@ -809,6 +823,9 @@ func TestTextAreaMatureEditingContract(t *testing.T) {
 	if res := ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})); !res.Handled || res.Cmd == nil {
 		t.Fatalf("ctrl+c result=%+v", res)
 	}
+	// A keyboard action ends the prior multi-click sequence.
+	ta.Handle(EventContext{LocalX: 2, LocalY: 0}, click)
+	ta.Handle(EventContext{LocalX: 2, LocalY: 0}, click)
 	ta.Handle(EventContext{LocalX: 2, LocalY: 0}, click)
 	if got := ta.SelectedText(); got != "alpha beta\n" {
 		t.Fatalf("triple-click selection=%q", got)

@@ -4,12 +4,59 @@ package workspace
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
+	"crude/terminalvt"
+
 	"golang.org/x/sys/windows"
 )
+
+func TestConPTYNaturalExitDrainsFinalOutputBeforePublishingExit(t *testing.T) {
+	manager := NewTerminalManager(t.TempDir())
+	service, err := NewTerminalService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.CloseAll)
+	sink := &terminalTestSink{}
+	bus := NewEventBus()
+	bus.SetSink(sink)
+	manager.SetEventBus(bus)
+	info, err := service.Create(TerminalCreateOpts{
+		Command: "cmd.exe", Args: []string{"/d", "/c", "echo FIRST_OUTPUT&echo FINAL_OUTPUT"},
+		CWD: t.TempDir(), Cols: 80, Rows: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		exited := false
+		for _, msg := range sink.msgs {
+			if event, ok := msg.(TerminalExitedMsg); ok && event.ID == info.ID {
+				exited = true
+			}
+		}
+		sink.mu.Unlock()
+		if exited {
+			projection, err := service.Rows(info.ID, terminalvt.RowRequest{Start: -1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := terminalText(projection)
+			if projection.Info.Alive || projection.Info.ExitCode != 0 || !strings.Contains(text, "FIRST_OUTPUT") || !strings.Contains(text, "FINAL_OUTPUT") {
+				t.Fatalf("exit preceded final parsed output: %+v text=%q", projection.Info, text)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("native child exited but ConPTY never published EOF/exit")
+}
 
 func TestBuildWindowsEnvBlockIsDoubleNullTerminated(t *testing.T) {
 	block, err := buildWindowsEnvBlock([]string{"A=1", "B=2"})

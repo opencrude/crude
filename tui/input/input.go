@@ -667,6 +667,9 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 // HandleShell routes mouse/key events that target the shell surface locally.
 func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	defer m.recordDraftEdit(m.input.EditState())
+	if m.input != nil && m.input.IsSelecting() && (evt.Kind == ui.EventMouseMotion || evt.Kind == ui.EventMouseRelease) {
+		return m.input.Handle(ui.ChildEventContext(ctx, m.input.Bounds()), evt)
+	}
 	if ctx.LocalY == 1 && len(m.activePromptRefs()) > 0 {
 		if evt.Kind == ui.EventMouseWheel {
 			delta := 1

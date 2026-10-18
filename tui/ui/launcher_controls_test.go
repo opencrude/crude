@@ -20,6 +20,19 @@ func TestActionLinkSharesButtonActivation(t *testing.T) {
 		link.SetDisabled(false)
 	}
 }
+
+func TestActionLinkIdleInkIsVisibleOnShellSurface(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	link := NewActionLink("link", "New Workspace…", "new")
+	link.SetTokens(tokens)
+	link.Layout(LayoutContext{}, Rect{W: 20, H: 1})
+	buf := surface.NewCellBuffer(20, 1)
+	link.Paint(buf, 0, 0, PaintContext{})
+	ink := buf.Get(1, 0)
+	if ink.Char != 'N' || ink.FG.Equal(ink.BG) || !ink.FG.Equal(tokens.Color(ColorAccent)) {
+		t.Fatalf("idle command link invisible or wrong ink: %#v", ink)
+	}
+}
 func TestProgressRuleMovesInkNotGeometryAndStops(t *testing.T) {
 	rule := NewProgressRule("rule", NewTokenSet(theme.DefaultDark()))
 	rule.Layout(LayoutContext{}, Rect{X: 2, Y: 1, W: 80, H: 1})

@@ -124,6 +124,9 @@ func (m *App) ApplyThemePreset(preset string) {
 	if m == nil {
 		return
 	}
+	// wheelHost borrows an existing mounted Host; it owns no theme. End its
+	// gesture before the actual root/window owners republish themed geometry.
+	m.setWheelHost(nil)
 	th := ui.ThemeFromPreset(preset)
 	m.applyThemeFrame(th)
 	for _, c := range m.themeConsumers() {
@@ -225,6 +228,9 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 				if m.activityList != nil {
 					m.activityList.SetTheme(th)
+				}
+				if m.workspacesScreen != nil {
+					m.workspacesScreen.SetTheme(th)
 				}
 				if m.gitPanel != nil {
 					m.gitPanel.SetTheme(th)

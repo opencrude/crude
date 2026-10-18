@@ -5,6 +5,7 @@ package shellchat
 
 import (
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -33,28 +34,34 @@ type chatLayout struct {
 // text selection live here; chatprojection.Renderer exports message rows.
 type Screen struct {
 	ui.Base
-	th             *theme.Theme
-	tokens         *ui.TokenSet
-	list           *ui.VirtualList
-	scrollbar      *ui.ScrollbarControl
-	jumpLatest     *latestButton
-	selection      textSelection
-	wheel          ui.WheelAccelState
-	paneWheel      ui.WheelAccelState
-	paneDrag       *paneGutterDrag
-	paneHover      string
-	rowsSourceID   uint64
-	rowsGeneration uint64
-	onPaneScroll   func(string)
-	rows           []chatprojection.MessageRow
-	layout         chatLayout
-	paintState     messagePaintState
-	width          int
-	height         int
-	activity       ctypes.AgentActivityView
-	activitySet    bool
-	activityStrip  chatprojection.ActivityStrip
-	stripLineWidth int
+	th                *theme.Theme
+	tokens            *ui.TokenSet
+	list              *ui.VirtualList
+	scrollbar         *chatScrollbar
+	jumpLatest        *latestButton
+	selection         textSelection
+	wheel             ui.WheelAccelState
+	wheelGesture      ui.WheelGesture
+	wheelNow          func() time.Time
+	wheelDirection    int
+	wheelModifiers    tea.KeyMod
+	wheelModels       map[string]*ui.ScrollModel
+	wheelChain        []string
+	paneDrag          *paneGutterDrag
+	paneHover         string
+	rowsSourceID      uint64
+	rowsGeneration    uint64
+	onPaneScroll      func(string)
+	onPaneScrollChain func([]string)
+	rows              []chatprojection.MessageRow
+	layout            chatLayout
+	paintState        messagePaintState
+	width             int
+	height            int
+	activity          ctypes.AgentActivityView
+	activitySet       bool
+	activityStrip     chatprojection.ActivityStrip
+	stripLineWidth    int
 }
 
 func (s *Screen) SetActivity(activity ctypes.AgentActivityView) {
@@ -105,13 +112,20 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	s.jumpLatest.SetTokens(tokens)
 	s.jumpLatest.SetSurfaceBackground(tokens.Color(ui.ColorBg))
 	list.SetRowPainter(s.paintMessageRow)
-	s.scrollbar = ui.NewScrollbarControl(ui.NewID(id, "scrollbar"), list.Scroll(), tokens)
+	s.scrollbar = &chatScrollbar{ScrollbarControl: ui.NewScrollbarControl(ui.NewID(id, "scrollbar"), list.Scroll(), tokens), owner: s}
 	// The nested pane gutter sits two columns left of the main track. Claim the
 	// separator, but never expand across it and steal nested-pane interaction.
 	s.scrollbar.SetPointerTargetSize(2)
 	s.scrollbar.OnScroll(func(_, _ int) { s.syncScrollAfterUserScroll() })
 	return s
 }
+
+type chatScrollbar struct {
+	*ui.ScrollbarControl
+	owner *Screen
+}
+
+func (bar *chatScrollbar) WheelTarget() ui.ComponentID { return bar.owner.ID() }
 
 // SetTheme replaces the active theme.
 func (s *Screen) SetTheme(th *theme.Theme) {
@@ -160,6 +174,7 @@ func (s *Screen) ClearSelection() { s.selection.Clear() }
 
 // CancelPointerCapture ends selection and scrollbar drag without copying text.
 func (s *Screen) CancelPointerCapture() {
+	s.ResetWheelGesture()
 	s.ClearSelection()
 	s.CancelPaneGutterCapture()
 	if s.scrollbar != nil {
@@ -339,6 +354,9 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s == nil {
 		return ui.EventResult{}
 	}
+	if evt.IsKey() || evt.Kind == ui.EventMouseClick {
+		s.ResetWheelGesture()
+	}
 	if s.activitySet && ctx.LocalY >= s.height-ActivityRows(s.height) && (evt.Kind == ui.EventMouseClick || evt.Kind == ui.EventMouseMotion) && !s.selection.selecting && s.paneDrag == nil {
 		if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == s.height-1 &&
 			s.activity.ThinkingID != "" && s.activity.ThinkingDisplay.Kind.HasCompactPreview() &&
@@ -387,9 +405,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 
 	if evt.Kind == ui.EventMouseWheel {
-		if res := s.handlePaneWheel(ctx, evt.MouseWheel); res.Handled {
-			return res
-		}
+		return s.handleNestedWheel(ctx, evt.MouseWheel)
 	}
 
 	if s.handleScrollInput(evt) {

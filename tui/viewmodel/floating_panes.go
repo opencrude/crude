@@ -373,13 +373,19 @@ func (m *App) screenRectOf(id ui.ComponentID) (ui.Rect, bool) {
 
 // paneWindowGroupAt is the floating group whose window content is at (x, y).
 func (m *App) paneWindowGroupAt(x, y int) *mainPaneGroup {
-	if m.mainPanes == nil {
+	if m.mainPanes == nil || m.windowManager == nil {
 		return nil
 	}
-	for group := range m.mainPanes.windows {
-		if g := m.mainPanes.groups[group]; g != nil && g.screen(ui.Rect{W: g.Bounds().W, H: g.Bounds().H}).Contains(x, y) {
-			return g
-		}
+	fw := m.windowManager.WindowAt(x, y)
+	if fw == nil {
+		return nil
+	}
+	group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID))
+	if !ok {
+		return nil
+	}
+	if g := m.mainPanes.groups[group]; g != nil && g.screen(ui.Rect{W: g.Bounds().W, H: g.Bounds().H}).Contains(x, y) {
+		return g
 	}
 	return nil
 }

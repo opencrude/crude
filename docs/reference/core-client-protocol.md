@@ -39,6 +39,13 @@ close owns final shutdown. Connected workspace switches prepare the destination 
 teardown of client-local resources, then replace only that shell attachment. A
 failed destination leaves the old attachment usable; peers keep the old workspace.
 
+Successful attachments record durable workspace access time off the actor loop,
+including returns to retained actors. Both recent-workspace views sort this
+metadata newest-first; session creation and background activity never reorder it.
+Different-workspace UI navigation requires an exact-destination Cancel-default
+confirmation before attachment preparation, followed by the existing dirty/draft
+checks. A cancelled confirmation performs no destination I/O.
+
 Snapshots are detached values, not service pointers, SQL handles, callbacks or
 reflected Workspace calls. `coreclient.WorkspaceView` installs snapshots and
 conversation deltas on the client's serialized UI thread, retaining surviving
@@ -101,6 +108,11 @@ mutable Workspace.
   reply-capable output feed. Input/resize use exact controller leases and ordered
   queues; OSC clipboard text is an explicit controller-local copy offer. Placement
   is shell-local. Detach revokes authority, not the PTY.
+  Historical row requests carry the exact history epoch/base and desired recovery
+  viewport through the same typed method; eviction displacement and the complete
+  detached page are resolved under the terminal service's serialization. Shells
+  atomically commit complete desired viewports, not an active-grid clear followed
+  by a competing history refill. See [in-app terminals](in-app-terminals.md).
 - `workspace.DocumentService` and the editor's shared-document adapter provide
   revision-fenced live text, safe pending edits and author-specific undo. The
   connected product editors use that authority for every open/edit/undo/save;
@@ -163,7 +175,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Documents | `document.open`, `.read`, `.sync`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; separate `.snapshot_save` checked disk commit |
 | Response transfer | `payload.read`, `payload.release` (connection-private immutable responses) |
 | Terminals | `terminal.list`, `.create`, `.rows`, `.control`, `.release`, `.input`, `.resize`, `.close` |
-| Files | browse/catalog, chunked reads, create/folder/rename/delete/edit/search and saved workspace listing |
+| Files | browse/catalog, chunked reads, create/folder/rename/delete/edit/search, canonical `files.replace_plan` and saved workspace listing |
 | Local History | timeline/file/stats, operation/path/message/agent plans, apply/verify/prune/capture |
 | References | create/import/list, content/media reads, exact content save, rename/delete |
 | Prompt history | `history.list`, `.record`, `.restore`, `.read-media` |

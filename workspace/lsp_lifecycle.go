@@ -463,8 +463,7 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 		return
 	}
 	client, text, language, opened := state.client, doc.text, doc.language, doc.opened
-	doc.opened = true
-	doc.syncedRevision = doc.revision
+	key, revision := doc.key, doc.revision
 	state.lastUsed = time.Now()
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -475,8 +474,25 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 		client.OpenFile(ctx, path, language, text)
 	}
 	m.mu.Lock()
+	closeOpened := false
+	// Readiness belongs to the completed transport send, not its intent. A
+	// probe can otherwise observe an open/current document before OpenFile has
+	// installed it in the client and return unsettled immediately. Retain the
+	// sent revision so an edit made during the send still needs another sync.
+	if m.documents[path] == doc && doc.key == key && m.states[key] == state && state.client == client &&
+		!state.closing && !state.stopped && !m.closed && !m.paused && m.wantedLocked(doc) && len(doc.text) <= m.settings.MaxDocumentBytes {
+		doc.opened, doc.syncedRevision = true, revision
+	} else if !opened && m.states[key] == state && state.client == client && !state.closing {
+		// The last holder may have left while didOpen was in flight. It could
+		// not queue didClose before this send completed. Release the server
+		// view under documentSend before a replacement document can be sent.
+		closeOpened = true
+	}
 	m.broadcastLocked()
 	m.mu.Unlock()
+	if closeOpened {
+		client.CloseFile(ctx, path)
+	}
 }
 
 func (m *LSPManager) CloseFile(_ context.Context, path string) {

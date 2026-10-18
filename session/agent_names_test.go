@@ -2,12 +2,16 @@ package session
 
 import (
 	"database/sql"
+	"fmt"
 	"math/big"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"crude/provider"
 	"crude/sessiondb"
@@ -142,6 +146,210 @@ func TestAgentNameAllocatorIsDurableConcurrentAndShuffled(t *testing.T) {
 	reopened, err := allocateAgentName(home)
 	if err != nil || reopened != shuffledAgentName(big.NewInt(82), key) {
 		t.Fatalf("reopened sequence: %q, err=%v", reopened, err)
+	}
+}
+
+func TestAgentNameAllocatorConcurrentInitialization(t *testing.T) {
+	home := t.TempDir()
+	const allocations = 320
+	names := make(chan string, allocations)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range allocations {
+		workers.Go(func() {
+			<-start
+			name, err := allocateAgentName(home)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			names <- name
+		})
+	}
+	began := time.Now()
+	close(start)
+	workers.Wait()
+	close(names)
+	allocated := make([]string, 0, allocations)
+	for name := range names {
+		allocated = append(allocated, name)
+	}
+	t.Logf("%d cold-start allocations in %s", len(allocated), time.Since(began))
+	checkAgentNameSequence(t, home, allocations, allocated)
+}
+
+func TestAgentNameAllocatorConcurrentProcesses(t *testing.T) {
+	home := t.TempDir()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const processes, allocationsPerProcess = 4, 10
+	names := make(chan string, processes*allocationsPerProcess)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range processes {
+		workers.Go(func() {
+			<-start
+			cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestAgentNameAllocatorProcessHelper$", "-test.timeout=30s")
+			cmd.Env = append(os.Environ(), "CRUDE_AGENT_NAME_HELPER_HOME="+home)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Errorf("allocator process: %v\n%s", err, out)
+				return
+			}
+			for line := range strings.SplitSeq(string(out), "\n") {
+				if name, ok := strings.CutPrefix(strings.TrimSpace(line), "allocated name: "); ok {
+					names <- name
+				}
+			}
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(names)
+	allocated := make([]string, 0, processes*allocationsPerProcess)
+	for name := range names {
+		allocated = append(allocated, name)
+	}
+	checkAgentNameSequence(t, home, processes*allocationsPerProcess, allocated)
+}
+
+func TestAgentNameAllocatorProcessHelper(t *testing.T) {
+	home := os.Getenv("CRUDE_AGENT_NAME_HELPER_HOME")
+	if home == "" {
+		t.Skip("subprocess helper")
+	}
+	for range 10 {
+		name, err := allocateAgentName(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("allocated name:", name)
+	}
+}
+
+// Check the durable counter as well as returned names: a lost allocation or
+// partial schema initialization must not be hidden by another process/reopen.
+func checkAgentNameSequence(t *testing.T, home string, count int, names []string) {
+	t.Helper()
+	if len(names) != count {
+		t.Fatalf("allocated %d names, want %d", len(names), count)
+	}
+	seen := make(map[string]bool, count)
+	for _, name := range names {
+		if name == "" || seen[name] {
+			t.Fatalf("empty or reused agent name %q", name)
+		}
+		seen[name] = true
+	}
+	db, err := sql.Open("sqlite", filepath.Join(home, ".crude", "agent-names.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var next string
+	if err := db.QueryRow("SELECT next FROM name_sequence WHERE id=1").Scan(&next); err != nil || next != fmt.Sprint(count) {
+		t.Fatalf("durable sequence=%q, want %d: %v", next, count, err)
+	}
+	var key []byte
+	if err := db.QueryRow("SELECT key FROM name_key WHERE id=1").Scan(&key); err != nil || len(key) != 32 {
+		t.Fatalf("installation key=%x: %v", key, err)
+	}
+	for position := range count {
+		if name := shuffledAgentName(big.NewInt(int64(position)), key); !seen[name] {
+			t.Fatalf("durable sequence skipped allocation %d (%q)", position, name)
+		}
+	}
+	name, err := allocateAgentName(home)
+	if err != nil || name == "" || seen[name] {
+		t.Fatalf("reopened sequence=%q: %v", name, err)
+	}
+}
+
+func TestAgentNameAllocatorRollsBackInvalidSequence(t *testing.T) {
+	home := t.TempDir()
+	directory := filepath.Join(home, ".crude")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(directory, "agent-names.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec("CREATE TABLE name_sequence (id INTEGER PRIMARY KEY, next TEXT NOT NULL); INSERT INTO name_sequence VALUES(1,'invalid'); CREATE TABLE name_key (id INTEGER PRIMARY KEY, key BLOB NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if name, err := allocateAgentName(home); name != "" || err == nil || !strings.Contains(err.Error(), "invalid agent name sequence") {
+		t.Fatalf("invalid sequence allocated %q: %v", name, err)
+	}
+	var keys int
+	if err := db.QueryRow("SELECT COUNT(*) FROM name_key").Scan(&keys); err != nil || keys != 0 {
+		t.Fatalf("failed allocation retained installation key: %d, %v", keys, err)
+	}
+	var next string
+	if err := db.QueryRow("SELECT next FROM name_sequence WHERE id=1").Scan(&next); err != nil || next != "invalid" {
+		t.Fatalf("failed allocation changed sequence: %q, %v", next, err)
+	}
+	if _, err := db.Exec("UPDATE name_sequence SET next='0' WHERE id=1"); err != nil {
+		t.Fatal(err)
+	}
+	name, err := allocateAgentName(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAgentNameSequence(t, home, 1, []string{name})
+}
+
+func TestAgentNameAllocatorWaitsForExternalWriter(t *testing.T) {
+	home := t.TempDir()
+	first, err := allocateAgentName(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(home, ".crude", "agent-names.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	conn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = conn.ExecContext(t.Context(), "ROLLBACK") }()
+	type allocation struct {
+		name string
+		err  error
+	}
+	result := make(chan allocation, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		name, err := allocateAgentName(home)
+		result <- allocation{name, err}
+	}()
+	<-started
+	select {
+	case got := <-result:
+		t.Fatalf("returned before external writer released: %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := conn.ExecContext(t.Context(), "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		checkAgentNameSequence(t, home, 2, []string{first, got.name})
+	case <-t.Context().Done():
+		t.Fatal("allocator did not finish after writer released")
 	}
 }
 

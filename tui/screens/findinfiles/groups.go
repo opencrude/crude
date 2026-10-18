@@ -273,6 +273,9 @@ func (s *Screen) paintResultRow(buf *surface.CellBuffer, x, y, width int, item u
 		lineNo = " " + lineNo
 	}
 	cx := writeClipped(buf, x, xMax, y, lineNo+": ", muted, bg, 0)
+	if r.FuzzyOnly {
+		cx = writeClipped(buf, cx, xMax, y, "≈ ", muted, bg, 0)
+	}
 	text, positions := trimLeadingWhitespace(strings.TrimRight(r.LineText, "\r\n"), r.TextMatches)
 	writeHighlightedClipped(buf, cx, xMax, y, text, positions, fg, matchFG, bg, 0, matchAttr)
 }

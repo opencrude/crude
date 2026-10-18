@@ -9,13 +9,13 @@ import (
 )
 
 type renderItem struct {
-	ID       string
-	Height   int
-	Dirty    bool
-	Rendered []string
-	Native   []PaintLine
-	PaneRows int
-	Data     interface{}
+	ID        string
+	Height    int
+	Dirty     bool
+	Rendered  []string
+	Native    []PaintLine
+	PaneLines []PaneLineInfo // exact per-row scroll metadata, parallel to Rendered
+	Data      interface{}
 	// ToggleRow is the row index within Rendered (including any leading
 	// spacer) that owns the disclosure affordance; -1 means none.
 	ToggleRow int

@@ -42,10 +42,42 @@ func TestInteractiveCancellationRetainsPartialEvidenceAndUnknownExit(t *testing.
 	mgr := NewAsyncCommandManager()
 	defer mgr.CloseAndWait()
 	command, shell := interactiveContractCommand("partial-block")
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	result, err := mgr.StartInteractive(ctx, InteractiveOptions{Command: command, Shell: shell}, 5*time.Second, 1000)
-	if !errors.Is(err, context.DeadlineExceeded) {
+	// Cancel only after the real child has produced both streams. A fixed
+	// 200ms wall clock could kill a race-instrumented Windows child before its
+	// process startup, testing empty output rather than evidence retention.
+	ready := make(chan error, 1)
+	go func() {
+		deadline := time.NewTimer(10 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			page, readErr := mgr.ReadOutputPage("auto-1", 0, 4096)
+			if readErr == nil && strings.Contains(page.Output, "partial stdout before cancellation") && strings.Contains(page.Output, "partial stderr before cancellation") {
+				ready <- nil
+				cancel()
+				return
+			}
+			select {
+			case <-tick.C:
+			case <-deadline.C:
+				ready <- errors.New("child did not publish partial output")
+				cancel()
+				return
+			case <-t.Context().Done():
+				ready <- t.Context().Err()
+				cancel()
+				return
+			}
+		}
+	}()
+	result, err := mgr.StartInteractive(ctx, InteractiveOptions{Command: command, Shell: shell}, 15*time.Second, 1000)
+	if readyErr := <-ready; readyErr != nil {
+		t.Fatal(readyErr)
+	}
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v result=%+v", err, result)
 	}
 	if result.ExitCode != nil || result.OutputDescriptor.Status != AsyncKilled || result.OutputDescriptor.Handle == "" {

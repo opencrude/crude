@@ -51,6 +51,8 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayDiagHover, policy: ui.PopoverPolicy(false)},
 
 	{id: ui.OverlayDirtyClose, policy: ui.ModalDialogPolicy(), wantSuppress: true},
+	{id: ui.OverlayWorkspaceSwitch, policy: ui.ModalDialogPolicy(), wantSuppress: true},
+	{id: projectReplaceOverlay, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayOperationIssue, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayTreePrompt, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayTreeDelete, policy: ui.ModalDialogPolicy(), wantSuppress: true},
@@ -214,8 +216,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 22 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 22", got)
+	if got := len(overlayOutsideContractMatrix); got != 24 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 24", got)
 	}
 }
 
@@ -237,6 +239,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayReplaceInFiles:    ui.OutsideKeepAndRoute,
 		ui.OverlayDiagHover:         ui.OutsideKeepAndRoute,
 		ui.OverlayDirtyClose:        ui.OutsideIgnoreAndConsume,
+		ui.OverlayWorkspaceSwitch:   ui.OutsideIgnoreAndConsume,
+		projectReplaceOverlay:       ui.OutsideIgnoreAndConsume,
 		ui.OverlayOperationIssue:    ui.OutsideIgnoreAndConsume,
 		ui.OverlayTreePrompt:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayTreeDelete:        ui.OutsideIgnoreAndConsume,
@@ -246,8 +250,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 		ui.OverlayHelp:              ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 22 {
-		t.Fatalf("expected opener registry len=%d want 22", len(expected))
+	if len(expected) != 24 {
+		t.Fatalf("expected opener registry len=%d want 24", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

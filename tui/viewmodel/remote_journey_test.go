@@ -281,6 +281,7 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
 	root := t.TempDir()
 	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)
+	configureComposerDraftTest(t, one.app)
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool { return len(one.fifo) == 0 && len(two.fifo) == 0 })
 	path := filepath.Join(root, "notes.txt")
 	if err := os.WriteFile(path, []byte("editor must retain focus"), 0600); err != nil {
@@ -306,14 +307,14 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 		t.Fatal("peer-created root stole editor focus")
 	}
 	old := one.app.ws
-	runAppCommand(t, one.app, one.app.launcherOpenFolder(filepath.Join(t.TempDir(), "missing")))
+	runAppCommand(t, one.app, confirmWorkspaceSwitchTest(t, one.app, filepath.Join(t.TempDir(), "missing")))
 	if one.app.ws != old {
 		t.Fatal("failed destination replaced old attachment")
 	}
 	// Dismiss the operational failure before the next explicit action.
 	one.app.closeWorkspaceBoundOverlays()
 	next := t.TempDir()
-	preparedSwitch := one.app.launcherOpenFolder(next)
+	preparedSwitch := confirmWorkspaceSwitchTest(t, one.app, next)
 	result := preparedSwitch().(remoteWorkspaceReadyMsg)
 	one.app.Input.SetInput("asynchronous newer draft")
 	_, closePrepared := one.app.Update(result)
@@ -322,7 +323,7 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 		t.Fatal("late attach consumed newer draft")
 	}
 	one.app.closeWorkspaceBoundOverlays()
-	runAppCommand(t, one.app, one.app.launcherOpenFolder(next))
+	runAppCommand(t, one.app, confirmWorkspaceSwitchTest(t, one.app, next))
 	if one.app.ws == old || one.app.ws.RootPath() != next {
 		t.Fatal("switch did not attach destination")
 	}
@@ -330,7 +331,7 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 		t.Fatal("switch destroyed peer workspace/root")
 	}
 	assertEditorStillPainted(t, two.app, path)
-	runAppCommand(t, one.app, one.app.launcherOpenFolder(root))
+	runAppCommand(t, one.app, confirmWorkspaceSwitchTest(t, one.app, root))
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool { return one.app.AgentView.ActiveID() == id })
 	assertAgentIsPaintedView(t, one.app, id)
 }

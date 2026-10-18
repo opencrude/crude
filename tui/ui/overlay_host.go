@@ -24,6 +24,7 @@ const (
 	OverlayTreePrompt        OverlayID = "tree-prompt"
 	OverlayTreeDelete        OverlayID = "tree-delete-confirm"
 	OverlayWorkspaceDelete   OverlayID = "workspace-delete"
+	OverlayWorkspaceSwitch   OverlayID = "workspace-switch"
 	OverlayFilePicker        OverlayID = "filepicker"
 	OverlayWorkspaceSettings OverlayID = "workspace-settings"
 	OverlaySettingsPrompt    OverlayID = "settings-prompt"

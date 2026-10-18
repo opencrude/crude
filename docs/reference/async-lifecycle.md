@@ -84,6 +84,13 @@ architecture. Terminal and network lifetimes are specified in
   Publish one closed candidate by no-replace hard link; concurrent losers reuse
   the immutable winner, never rename another writable inode over it (ETXTBSY).
   Invalid type/size/mode or unsupported hard-link filesystems fail explicitly.
+- **Windows process control retains both signal and output ownership.** The
+  detached core clears the inherited `CREATE_NEW_PROCESS_GROUP` Ctrl+C-ignore
+  policy before spawning terminal children, without joining a shell console.
+  On child exit, ConPTY closes its pseudoconsole exactly once while the parser
+  drains final output; the manager publishes exited state only after EOF.
+  Resize refuses a closing console, and pseudoconsole close never holds a lock
+  required by the parser/output consumer.
 - **Session retention has one owner.** `session.Close` prunes an empty session
   only when its DB holds no messages/queue/recovery and
   `collaboration.RetireUnreferencedSession` proves no run/event/delivery/
@@ -97,4 +104,23 @@ architecture. Terminal and network lifetimes are specified in
   `workspace.db` locked on Windows). It closes its `Rows` before the count query:
   the pool holds one connection, and an open `Rows` made the count wait on
   itself until the bound expired for every workspace.
+
+- **Workspace navigation has one catalog and one switch intent.** Home and the
+  Recent Workspaces rail consume one generation-owned, cancelable catalog read;
+  home unmount does not discard navigation. Durable `last_accessed_at` metadata is
+  recorded on successful core attachments (including returns to retained actors),
+  never session creation, background work, catalog reads or DB initialization.
+  Unknown access times sort deterministically after known visits; no inferred
+  session-time fallback. Every different-workspace UI route first shows the same
+  exact-destination confirmation with Cancel focused, then starts the switch
+  lifecycle. A tabless destination recreates home even if a session unmounted it.
+  Cancel flows through the core resource
+  lane and bounded metadata workers. A connected switch retains old editor views
+  through dirty decisions and waits for pending edits/history/saves asynchronously.
+  Exact editor/draft seals reject changed work before adoption. Esc advances the
+  attachment sequence, so a context-ignoring backend cannot apply a cancelled
+  result. Prepared attachments are command-owned until a validated Update claims
+  them; context cancellation/timeout closes unclaimed candidates off Update even
+  if the ready message was not delivered. Post-program teardown joins these exact
+  preparations before flushing and detaching the old workspace.
 

@@ -90,6 +90,16 @@ only through `TokenSet` semantic roles — never raw theme hex.
   mirrored in the hint row when present.
 - **Safe default focus**: destructive dialogs land on the non-destructive
   choice (Cancel / No) so accidental Enter cannot destroy work.
+- Workspace navigation uses the same question-severity confirm, with the exact
+  destination and **Open workspace / Cancel**, Cancel focused. It owns consent
+  only: no destination attachment starts until approval; dirty-file and draft
+  checks follow. Its owner/generation fences reject late decisions, and direct
+  input invalidates both the dialog surface and the shell presentation gate.
+  Project replacement uses a scrollable, read-only exact diff review in the
+  same modal frame, **Apply replacements / Cancel**, Cancel focused. Outside
+  clicks never dismiss it; accepted execution disables actions until its exact
+  result arrives. Local History safety capture and unchanged-source validation
+  precede commit. Error results replace Apply with Close, not an unsafe replay.
 
 ## Compositor contract (for any in-place visual change)
 

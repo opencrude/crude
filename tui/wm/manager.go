@@ -115,6 +115,25 @@ func (wm *WindowManager) Windows() []*FloatingWindow {
 	return result
 }
 
+// WindowAt resolves the current pointer owner without focusing or raising it.
+// Input policy and tab menus must use the same z-order and modal boundary as
+// normal mouse dispatch, never creation order or a consumer's window map.
+func (wm *WindowManager) WindowAt(x, y int) *FloatingWindow {
+	for i := len(wm.zOrder) - 1; i >= 0; i-- {
+		fw := wm.zOrder[i]
+		if !fw.Visible() {
+			continue
+		}
+		if fw.focusable && fw.ContainsPoint(x, y) {
+			return fw
+		}
+		if fw.Modal() {
+			return nil
+		}
+	}
+	return nil
+}
+
 // TopWindow returns the topmost (focused) window, or nil if no windows exist.
 func (wm *WindowManager) TopWindow() *FloatingWindow {
 	if len(wm.zOrder) == 0 {
@@ -269,58 +288,28 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 		return wm.focused
 	}
 
-	// Iterate windows top-to-bottom (reverse zOrder) to find the hit.
-	for i := len(wm.zOrder) - 1; i >= 0; i-- {
-		fw := wm.zOrder[i]
-		if !fw.Visible() || !fw.focusable {
-			continue
-		}
-
-		if fw.ContainsPoint(m.X, m.Y) {
-			// If a modal window is above this one, skip non-modal windows.
-			if wm.isBlockedByModal(fw) {
-				// But if the click is on the modal window itself, allow it.
-				continue
-			}
-
-			// Focus this window.
-			wm.FocusWindow(fw.ID)
-
-			// Check close button.
-			if fw.IsOnCloseButton(m.X, m.Y) {
-				return fw // Caller should handle removal.
-			}
-
-			// Reserved title-action cells belong to the window content:
-			// they must start neither a title drag nor a top-edge resize.
-			onTitleAction := fw.IsOnTitleAction(m.X, m.Y)
-
-			// Check title bar for drag (before edge check, because title bar is
-			// a more specific hit target than the resize edge).
-			if fw.Movable() && fw.IsOnTitleBar(m.X, m.Y) && !onTitleAction {
-				wm.activeDrag = fw
-				fw.SetDragging(true)
-				fw.SetDragStart(m.X, m.Y)
-				wm.lastMouseX = m.X
-				wm.lastMouseY = m.Y
-				return fw
-			}
-
-			// Check edge for resize.
-			if fw.Resizable() && !onTitleAction {
-				edge := fw.HitTestEdge(m.X, m.Y)
-				if edge != EdgeNone {
-					wm.activeResize = fw
-					fw.SetResizing(true, edge)
-					wm.lastMouseX = m.X
-					wm.lastMouseY = m.Y
-					return fw
-				}
-			}
-
-			// Click inside the window content area.
+	if fw := wm.WindowAt(m.X, m.Y); fw != nil {
+		wm.FocusWindow(fw.ID)
+		if fw.IsOnCloseButton(m.X, m.Y) {
 			return fw
 		}
+		// Content-owned title actions must start neither title drag nor resize.
+		onTitleAction := fw.IsOnTitleAction(m.X, m.Y)
+		if fw.Movable() && fw.IsOnTitleBar(m.X, m.Y) && !onTitleAction {
+			wm.activeDrag = fw
+			fw.SetDragging(true)
+			fw.SetDragStart(m.X, m.Y)
+			wm.lastMouseX, wm.lastMouseY = m.X, m.Y
+			return fw
+		}
+		if fw.Resizable() && !onTitleAction {
+			if edge := fw.HitTestEdge(m.X, m.Y); edge != EdgeNone {
+				wm.activeResize = fw
+				fw.SetResizing(true, edge)
+				wm.lastMouseX, wm.lastMouseY = m.X, m.Y
+			}
+		}
+		return fw
 	}
 
 	// Click outside all windows: unfocus.
@@ -401,17 +390,7 @@ func (wm *WindowManager) HandleMouseRelease(msg tea.MouseMsg) *FloatingWindow {
 // floating windows top-to-bottom. Returns the window under the cursor,
 // or nil if no window was hit.
 func (wm *WindowManager) HandleMouseWheel(msg tea.MouseWheelMsg) *FloatingWindow {
-	// Iterate windows top-to-bottom (reverse zOrder).
-	for i := len(wm.zOrder) - 1; i >= 0; i-- {
-		fw := wm.zOrder[i]
-		if !fw.Visible() || !fw.focusable {
-			continue
-		}
-		if fw.ContainsPoint(msg.X, msg.Y) {
-			return fw
-		}
-	}
-	return nil
+	return wm.WindowAt(msg.X, msg.Y)
 }
 
 // isBlockedByModal reports whether a window is blocked by a modal window

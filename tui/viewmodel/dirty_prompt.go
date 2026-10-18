@@ -37,6 +37,14 @@ func (m *App) showDirtyClosePrompt(path string) {
 			Buttons: []ui.ConfirmButtonSpec{{Label: "Save", ActionID: ui.ConfirmActionSave}, {Label: "Close view", ActionID: ui.ConfirmActionDiscard}, {Label: "Cancel", ActionID: ui.ConfirmActionCancel}},
 		})
 	}
+	if intent := m.workspaceSwitchIntent; intent != nil && intent.owner == m.ws && intent.prompt == tab.Editor {
+		frame = ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
+			Title: "Switch workspace", Question: "Save changes before switching?",
+			Detail:   filename + " — Close view keeps shared unsaved text in this workspace. Current views stay open if switching fails.",
+			Severity: ui.ConfirmPromptWarning, Width: 68, FocusedIndex: m.DirtyPromptChoice,
+			Buttons: []ui.ConfirmButtonSpec{{Label: "Save", ActionID: ui.ConfirmActionSave}, {Label: "Close view", ActionID: ui.ConfirmActionDiscard}, {Label: "Cancel", ActionID: ui.ConfirmActionCancel}},
+		})
+	}
 	w, h := frame.Measure(80, 40)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
@@ -70,12 +78,26 @@ func (m *App) dirtyPromptSave() tea.Cmd {
 		m.overlayHost.Close(ui.OverlayDirtyClose)
 		return nil
 	}
+	if intent, ed := m.workspaceSwitchPrompt(); intent != nil {
+		intent.saving = true
+		// This is a switch decision, not a request to destroy this tab. A
+		// failed/cancelled destination must leave the old view intact.
+		return m.requestEditorSave(ed, workspace.DocumentSaveManual, false)
+	}
 	return m.requestEditorSave(tab.Editor, workspace.DocumentSaveManual, true)
 }
 
 // dirtyPromptDiscard is called when the user picks "Don't Save" in
 // the dirty-close prompt. Closes the tab without saving.
 func (m *App) dirtyPromptDiscard() {
+	if intent, ed := m.workspaceSwitchPrompt(); intent != nil {
+		intent.keepShared[ed] = switchEditorSeal(ed)
+		intent.prompt, intent.saving = nil, false
+		m.overlayHost.Close(ui.OverlayDirtyClose)
+		// Existing void entry points enqueue continuation; Update drains it.
+		m.editorCommands = append(m.editorCommands, m.continueRemoteWorkspaceSwitch())
+		return
+	}
 	path := m.DirtyPromptPath
 	m.overlayHost.Close(ui.OverlayDirtyClose)
 	m.openNextAgentPrompt()
@@ -93,6 +115,11 @@ func (m *App) dirtyPromptDiscard() {
 // dirtyPromptCancel is called when the user picks "Cancel" in
 // the dirty-close prompt. Dismisses the popup and keeps the tab open.
 func (m *App) dirtyPromptCancel() {
+	if intent, _ := m.workspaceSwitchPrompt(); intent != nil {
+		m.cancelRemoteWorkspaceSwitch(true)
+		m.openNextAgentPrompt()
+		return
+	}
 	path := m.DirtyPromptPath
 	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
 		if state := m.liveEditors[tab.Editor]; state != nil {

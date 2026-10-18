@@ -269,7 +269,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 		if err := decode(request.Payload, &struct{}{}); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(context.Context) (any, error) { return workspace.ListWorkspaceInfos() })
+		return work(func(ctx context.Context) (any, error) { return workspace.ListWorkspaceInfosContext(ctx) })
 	case coreprotocol.HistoryTimeline, coreprotocol.HistoryFile:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")

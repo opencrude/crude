@@ -287,6 +287,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
 		return m, nil
 	}
+	previousSession := m.ActiveSession
 	m.activatePaneAt(mouse.X, mouse.Y)
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
 		return m, nil
@@ -329,7 +330,14 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// dispatching, then the selected content takes focus back.
 		m.unfocus()
 		defer m.syncRootFocus()
-	case regionChat, regionInput:
+	case regionChat:
+		// Click-away dismisses the current draft's range, not a different
+		// session's saved range just restored by activating its pane.
+		if m.ActiveSession == previousSession {
+			m.Input.ClearInputSelection()
+		}
+		m.unfocus()
+	case regionInput:
 		m.unfocus()
 	case regionLauncher:
 		m.setSessionDeckFocused(false)
@@ -340,14 +348,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// filter. Clear that stale policy owner before Host pointer routing.
 		m.FocusStack.Clear()
 		m.LastInteractionTime = time.Now()
-	}
-
-	// Legacy input-model selection: while the chat input is drag-selecting,
-	// a click outside the input must reach the input model so it cancels
-	// the selection (click-away contract).
-	if region == regionChat && m.Input.InputDragging() {
-		cmds = append(cmds, m.routeInputMouse(msg)...)
-		return m, tea.Batch(cmds...)
 	}
 
 	res := m.rootHost.Handle(msg)
@@ -376,13 +376,21 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouseWheel(msg); hitWin != nil {
+			m.setWheelHost(windowContentHost(hitWin))
 			if cmd := m.forwardEventToWindowContent(hitWin, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			hitWin.MarkContentDirty()
 			return m, tea.Batch(cmds...)
 		}
+		for _, fw := range m.windowManager.Windows() {
+			if fw.Visible() && fw.Modal() {
+				m.setWheelHost(nil)
+				return m, nil
+			}
+		}
 	}
+	m.setWheelHost(m.rootHost)
 	region := m.classifyShellRegion(msg.X, msg.Y, true)
 	// A blocking deck still shields clicks/selection, but wheel-over-chat is a
 	// read-only navigation action and remains available behind the deck.
@@ -412,6 +420,19 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m *App) setWheelHost(host *ui.Host) {
+	if m.wheelHost == host {
+		return
+	}
+	if m.wheelHost != nil {
+		m.wheelHost.ResetWheelGesture()
+	}
+	if host != nil {
+		host.ResetWheelGesture()
+	}
+	m.wheelHost = host
+}
+
 func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	mouse := msg.Mouse()
@@ -424,12 +445,12 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		// Track the resize-edge hover so the frame chrome can highlight
 		// exactly which border a press will drag. Clear the highlight when
 		// the pointer leaves a window or its edges.
-		for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
-			fw := m.windowManager.Windows()[i]
+		hit := m.windowManager.WindowAt(mouse.X, mouse.Y)
+		for _, fw := range m.windowManager.Windows() {
 			if !fw.Visible() || !fw.Focusable() {
 				continue
 			}
-			if fw.ContainsPoint(mouse.X, mouse.Y) && fw.Resizable() {
+			if fw == hit && fw.Resizable() {
 				fw.SetHoverEdge(fw.HitTestEdge(mouse.X, mouse.Y))
 			} else if fw.HoverEdge() != wm.EdgeNone {
 				fw.SetHoverEdge(wm.EdgeNone)
@@ -468,21 +489,14 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 	if m.windowManager != nil {
-		// Popup hover pre-selection: if the mouse is over a focusable
-		// popup, update its hover state and return (don't route motion
-		// to the underlying editor/tree). Iterate top-to-bottom.
-		for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
-			fw := m.windowManager.Windows()[i]
-			if !fw.Visible() || !fw.Focusable() {
-				continue
+		// Hover uses the same z-order authority as click and wheel; creation
+		// order can differ after a user raises an older pane window.
+		if fw := m.windowManager.WindowAt(mouse.X, mouse.Y); fw != nil {
+			if m.chatScreen != nil {
+				m.chatScreen.ClearPaneGutterHover()
 			}
-			if fw.ContainsPoint(mouse.X, mouse.Y) {
-				if m.chatScreen != nil {
-					m.chatScreen.ClearPaneGutterHover()
-				}
-				m.handlePopupContentHover(fw, mouse.X, mouse.Y, mouse.Button)
-				return m, tea.Batch(cmds...)
-			}
+			m.handlePopupContentHover(fw, mouse.X, mouse.Y, mouse.Button)
+			return m, tea.Batch(cmds...)
 		}
 	}
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
@@ -965,6 +979,7 @@ func (m *App) openContextMenuState(mouse tea.Mouse, st *ui.ContextMenuState) tea
 	if ch := ui.ContextMenuPopupHeight(st); ch > 0 {
 		h = ch
 	}
+	w, h = m.contextMenuSize(w, h)
 	x, y := m.clampShellPopupPosition(mouse.X, mouse.Y, w, h)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayContextMenu), "", frame, w, h,
@@ -985,6 +1000,13 @@ func (m *App) openContextMenuState(mouse tea.Mouse, st *ui.ContextMenuState) tea
 	// path does not animate reveal.
 	m.ContextMenuOpenedAt = time.Now()
 	return nil
+}
+
+// Lists scroll inside the shell; a large layout's scope menu must not extend
+// offscreen or leave its final actions unreachable by pointer.
+func (m *App) contextMenuSize(w, h int) (int, int) {
+	insets := m.frameInsets()
+	return min(w, max(1, m.width-insets.Left-insets.Right)), min(h, max(1, m.height-insets.Top-insets.Bottom))
 }
 
 // clampPopupPosition returns a (x, y) for the popup that anchors at

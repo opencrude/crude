@@ -13,7 +13,12 @@ type ActionLink struct {
 }
 
 func NewActionLink(id ComponentID, label, action string) *ActionLink {
-	return &ActionLink{Button: *NewButton(id, label, action)}
+	link := &ActionLink{Button: *NewButton(id, label, action)}
+	// Links live on ColorBg, not a popup button fill. PopupButtonFg may
+	// intentionally match the shell background and make a text-only action
+	// invisible; command links use the shared accent/ghost treatment instead.
+	link.SetVariant(VariantGhost)
+	return link
 }
 
 func (l *ActionLink) Measure(_ LayoutContext, cs Constraints) Size {

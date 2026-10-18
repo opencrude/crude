@@ -2,6 +2,8 @@ package viewmodel
 
 import (
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,6 +43,9 @@ func sameWorkspaceRoot(current, candidate string) bool {
 	if currentErr != nil || candidateErr != nil {
 		return filepath.Clean(current) == filepath.Clean(candidate)
 	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(currentAbs), filepath.Clean(candidateAbs))
+	}
 	return filepath.Clean(currentAbs) == filepath.Clean(candidateAbs)
 }
 
@@ -48,6 +53,7 @@ func sameWorkspaceRoot(current, candidate string) bool {
 // domain starts tearing down. The old tree watcher is stopped synchronously,
 // while git and launcher work already in flight becomes stale immediately.
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
+	m.setWheelHost(nil)
 	m.cancelLocalDiffs()
 	m.overlayHost.Close(ui.OverlayCapabilityPicker)
 	m.cancelCapabilityOperations()
@@ -192,6 +198,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.pendingOperationIssues = nil
 	m.capabilitySnapshot = captypes.Snapshot{}
 	m.workspacePanelHeights = nil
+	m.resetWorkspaceNavigation()
 	m.toolLayout = workspace.DefaultToolLayout()
 	m.toolLayoutVersion, m.toolLayoutSavedVersion = 0, 0
 	m.toolLayoutSaving, m.toolLayoutSaveQueued = false, false
@@ -205,10 +212,10 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.syncPendingSteeringCount()
 	m.refreshActivityList()
 
-	if m.launcherScreen != nil {
-		m.refreshLauncherAsync(m.ws.RootPath())
-		m.launcherScreen.SyncFocus()
-	}
+	// A session may have unmounted home. A new tabless workspace must recreate
+	// the launcher, not accidentally fall through to a split-pane empty state.
+	m.openLauncher()
+	m.launcherScreen.SyncFocus()
 	m.cachedOutput = ""
 	m.treeGitRefreshAt = time.Time{}
 	// The header identity belongs to the new project: drop the old pacing and
@@ -392,6 +399,7 @@ func (m *App) closeWorkspaceBoundOverlays() {
 	m.findInFiles = nil
 	m.findInFilesRequest = 0
 	m.findInFilesGen = 0
+	m.projectSearchDraft = projectSearchDraft{}
 
 	m.FindReplace = nil
 	m.LastContextMenu = nil

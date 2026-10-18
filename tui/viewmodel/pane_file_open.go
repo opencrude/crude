@@ -249,6 +249,9 @@ func (m *App) queueLiveNavigation(path string, position editor.LSPDiagnostic, ls
 
 func searchLandingColumns(match fileio.ProjectSearchMatch, current string) (start, end int, valid bool) {
 	from, to := match.Column, match.EndColumn
+	if match.EndLine > match.Line {
+		to = len([]rune(match.LineText))
+	}
 	if current != match.LineText {
 		old := []rune(match.LineText)
 		if from < 0 || to <= from || to > len(old) {

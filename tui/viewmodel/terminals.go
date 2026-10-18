@@ -154,6 +154,9 @@ func (m *App) dropTermScreen(id string) {
 }
 
 func (m *App) openNewTerminal() tea.Cmd {
+	if !m.terminalSummonAllowed() {
+		return nil
+	}
 	service := m.terminalService()
 	if service == nil {
 		if m.Feedback != nil {
@@ -192,6 +195,7 @@ func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 	}
 	id := info.ID
 	screen := m.ensureTermScreen(id, info.Title)
+	m.lastTerminalID = id
 	screen.SetFloating(false)
 	screen.SetAttention(false)
 	if m.overlayHost != nil {
@@ -223,6 +227,7 @@ func (m *App) promoteTerminal(id string) {
 // a create receipt whose inventory replica has not arrived yet.
 func (m *App) floatTerminalInfo(info workspace.TerminalInfo) {
 	id := info.ID
+	m.lastTerminalID = id
 	screen := m.ensureTermScreen(id, info.Title)
 	if m.termDock != nil {
 		m.termDock.Unmount(id)
@@ -324,6 +329,9 @@ func (m *App) focusTerminal(id string) {
 func (m *App) closeTerminal(id string) {
 	if id == "" {
 		return
+	}
+	if m.lastTerminalID == id {
+		m.lastTerminalID = ""
 	}
 	if m.terminalClosed == nil {
 		m.terminalClosed = make(map[string]bool)
@@ -442,6 +450,9 @@ func (m *App) handleTerminalAction(action ui.Action) bool {
 }
 
 func (m *App) toggleTerminalFocus() tea.Cmd {
+	if !m.terminalSummonAllowed() {
+		return nil
+	}
 	if m.terminalOwnsKeys() {
 		if m.windowManager != nil {
 			if fw := m.windowManager.Focused(); fw != nil && ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
@@ -459,9 +470,23 @@ func (m *App) toggleTerminalFocus() tea.Cmd {
 	if len(list) == 0 {
 		return m.openNewTerminal()
 	}
+	if _, ok := mgr.Get(m.lastTerminalID); ok {
+		m.focusTerminal(m.lastTerminalID)
+		return nil
+	}
 	last := list[len(list)-1]
 	m.focusTerminal(last.ID)
 	return nil
+}
+
+func (m *App) terminalSummonAllowed() bool {
+	if m.workspaceAttachPending || m.sessionDeckBlocking() {
+		return false
+	}
+	if popup := m.focusedPopup(); popup != nil && !ui.IsTerminalOverlay(ui.OverlayID(popup.ID)) {
+		return false
+	}
+	return true
 }
 
 func (m *App) applyTerminalTitle(id, title string) {
@@ -516,6 +541,7 @@ func (m *App) discardTerminalUI() {
 	m.terminalReads = nil
 	m.terminalDirty = nil
 	m.terminalPlacements = nil
+	m.lastTerminalID = ""
 	m.terminalQueue = nil
 	m.terminalBusy = false
 	m.terminalClipboard = nil

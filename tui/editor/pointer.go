@@ -17,7 +17,8 @@ const (
 	pointerLine
 )
 
-// A gesture owns its original unit, latest local pointer and at most one tick.
+// A gesture owns its original source-unit bounds, latest local pointer and at
+// most one tick. A caret-anchored Shift gesture has identical start/end bounds.
 // Selection projection is identical for motion, wheel, repeat and final release.
 type pointerSelection struct {
 	kind        pointerUnit
@@ -45,7 +46,6 @@ func (e *Editor) beginPointerSelection(kind pointerUnit, start, end Position, x,
 	e.stopPointerSelection()
 	e.drag = pointerSelection{kind: kind, start: start, end: end, x: x, y: y}
 	e.selecting = true
-	e.selAnchor = start
 	e.projectPointerSelection()
 }
 
@@ -68,6 +68,16 @@ func (e *Editor) projectPointerSelection() {
 	}
 	pos := e.pointerPosition()
 	if e.drag.kind == pointerCharacter {
+		// A plain press places the insertion caret before the hit source unit.
+		// When dragging backward that unit must be inside the half-open range,
+		// so its trailing boundary is the anchor. Recompute from the original
+		// bounds on every projection: reversing or returning to the pressed
+		// unit must not accumulate an extra character. Shift gestures retain
+		// their collapsed caret anchor, as does a press at an empty line/EOL.
+		e.selAnchor = e.drag.start
+		if positionBefore(pos, e.drag.start) {
+			e.selAnchor = e.drag.end
+		}
 		e.selEnd = pos
 	} else {
 		start, end := e.pointerUnitRange(e.drag.kind, pos)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/terminalvt"
 	"crude/workspace"
 )
 
@@ -28,7 +29,7 @@ func TestTerminalReplyStormDoesNotDeadlockOrReenterBus(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var projection workspace.TerminalProjection
 	for time.Now().Before(deadline) {
-		projection, err = service.Rows(info.ID, -1, 0)
+		projection, err = service.Rows(info.ID, terminalvt.RowRequest{Start: -1, Count: 0})
 		if err != nil {
 			t.Fatal(err)
 		}

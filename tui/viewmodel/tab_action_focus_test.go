@@ -147,14 +147,14 @@ func TestKeyboardTabCloseReleasesStripFocus(t *testing.T) {
 }
 
 func TestTabContextCloseReleasesStripFocus(t *testing.T) {
-	for _, action := range []string{"Close tab", "Close others", "Close to the right", "Minimize", "Terminate agent"} {
+	for _, action := range []string{"Close tab", "Close Other Files in Pane", "Close Files to the Right", "Minimize", "Terminate agent"} {
 		t.Run(action, func(t *testing.T) {
 			app, ws := newRealShellApp(t)
 			defer ws.Close()
 			app.AddOrchestrator("alpha")
 			paths := openEditorTabs(t, app, "main.go", "notes.txt")
 			target := app.editorTabTitle(paths[1])
-			if action == "Close to the right" {
+			if action == "Close Files to the Right" {
 				target = app.editorTabTitle(paths[0])
 			}
 			if action == "Minimize" || action == "Terminate agent" {

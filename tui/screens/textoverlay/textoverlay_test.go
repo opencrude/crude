@@ -26,6 +26,25 @@ func TestTextOverlayOpenCloseAndValue(t *testing.T) {
 	}
 }
 
+func TestTextOverlaySelectionMatchesSharedContract(t *testing.T) {
+	s, host := overlayHost(t)
+	s.Open("id", "Title", "abcdef")
+	r, _ := host.ScreenRect(InputID)
+	host.Handle(tea.MouseClickMsg{X: r.X + 3, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: r.X + 3, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if s.SelectedText() != "c" || s.Selecting() {
+		t.Fatalf("keyboard=%q dragging=%v", s.SelectedText(), s.Selecting())
+	}
+	s.Open("id", "Title", "abcdef")
+	host.Handle(tea.MouseClickMsg{X: r.X + 3, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: r.X + 1, Y: r.Y, Button: tea.MouseLeft})
+	if s.SelectedText() != "bcd" {
+		t.Fatalf("drag=%q", s.SelectedText())
+	}
+}
+
 func TestTextOverlayCtrlSSavesAndEscCancels(t *testing.T) {
 	screen, host := overlayHost(t)
 	screen.Open("id", "Title", "body")

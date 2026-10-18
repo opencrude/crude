@@ -36,6 +36,17 @@ engine and its invariants.
 - One gesture owns character, whole-word, or whole-line selection, including
   line-number drags. Double/triple-click-hold extends by its original unit in
   either direction; Shift+gutter uses the current selection/caret anchor.
+- A plain text press places the insertion caret at the hit source unit's leading
+  boundary, without selecting. A backward drag anchors at that unit's trailing
+  boundary so the initially pressed character is included; forward drags retain
+  the leading anchor and exclude the endpoint caret's character. Reversing uses
+  the original unit bounds, and returning to that unit collapses the range.
+  Wide/combining graphemes and tabs remain whole source units. Empty-line/EOL
+  presses, Shift+click/drag, keyboard and programmatic selections retain ordinary
+  half-open caret boundaries; a backward drag must not add an EOL terminator.
+  The block caret denotes the insertion boundary before its covered grapheme:
+  at `abc|def`, Shift+Left selects `c`, not `cd`. This is the shared text-control
+  contract, not an editor-only exception; see [text input](text-input.md#selection-semantics-all-editable-text).
 - Dragging to a viewport edge continues scrolling with a stationary pointer,
   vertically and horizontally. A 50 ms repeat uses bounded distance-based speed,
   not the number of terminal motion events. Endpoints clamp to the text viewport
@@ -82,6 +93,15 @@ engine and its invariants.
   or display-column ranges. Unicode case folding cannot shift a match, and a
   match inside a grapheme can be replaced and undone exactly. Search projections
   refresh by buffer revision before navigation/replacement or visible paint.
+- Document Find is verbatim (case-insensitive by default); whole-word and regex
+  are explicit options. It never uses fuzzy discovery. Ctrl+F/H seeds the
+  selected source, quoting it when regex is retained; tabs/newlines use escaped
+  literal regex text. The query field is selected for immediate replacement.
+  Query changes preserve the document selection/caret. Find/Replace transforms
+  retain query/replacement edits, options and navigation; invalid regex is shown
+  in the actual popup status and cannot mutate text. Replace advances beyond
+  the replaced source rather than matching its own output. Replace All is one
+  exact-source undo group, including capture expansion and zero-width matches.
 - Diagnostic spans belong to the editor revision at installation. Editing or
   Undo/Redo cannot keep painting/hovering spans from the previous text, and
   history keys and new diagnostic publications dismiss the old tooltip.
@@ -93,6 +113,32 @@ engine and its invariants.
   and source-range deletion principles from
   [VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/editor/common/cursor/cursorDeleteOperations.ts),
   not terminal display-rune reconstruction.
+
+## Project search and replacement
+
+Find in Files and Replace in Files share one retained workspace draft, result
+owner, exact matcher (`textsearch`) and case/whole-word/regex controls. Selected
+editor source seeds either command. Re-invocation focuses/selects the query;
+mode changes preserve results and replacement text. Every exact occurrence is
+separate, with source-byte ownership through planning and multiline end ranges.
+
+Project discovery additionally uses fzf V2 (bounded V1 path for large inputs),
+requiring every query rune in order. Weak scattered matches are rejected by its
+score; a single-word query cannot assemble an abbreviation across unrelated
+prose words. Exact hits rank before discovery suggestions. Filename-only and
+fuzzy-only results are not replacement spans; regex/whole-word modes do not
+introduce fuzzy content hits. The editor Find path never uses fzf.
+
+Replacement plans are computed off Update from the canonical source, reject
+stale/invalid spans, and deduplicate identical hits. Planning is bounded
+to 16 MiB of source; preview is bounded to 1 MiB. An immutable, Cancel-default
+review shows exact changes, file/replacement counts and skipped discovery hits.
+Apply requires a Local History safety snapshot, unchanged preimages and no
+dirty/pending/shared-document conflict. The workspace-edit transaction is the
+only commit owner; a conflict aborts the complete operation. Cancel writes
+nothing. Accepted execution is exactly once, owner/generation fenced, and joined
+at shutdown; recovery uses the recorded Local History safety snapshot. Results
+refresh after success without dropping the query/replacement draft.
 
 ## Horizontal geometry
 
@@ -172,6 +218,11 @@ Tea's update goroutine (the tab-close hang).
   when no holder remains. Probes are allowed when the session's agent code
   intelligence is on even if editor LSP is off; a user-paused server refuses
   both. Probe results are plain data (`types.LSPProbeView`), never editor state.
+  Probe readiness is published only after the transport has installed the exact
+  captured document revision. An edit during the send remains pending; replaced
+  document/server/client owners cannot publish a stale ready state. Releasing the
+  last holder during an in-flight didOpen still closes that exact server view
+  before a replacement at the same path opens.
 - Language settings, resource limits and lifecycle are specified in
   [settings](settings.md#lsp); merely constructing a manager launches no server.
 

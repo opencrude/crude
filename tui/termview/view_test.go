@@ -44,7 +44,7 @@ func TestEngineWrappedCopyPreservesSource(t *testing.T) {
 			}
 			defer e.Close()
 			e.Feed([]byte(source))
-			g, err := e.Rows(-1, 0)
+			g, err := e.Rows(terminalvt.RowRequest{Start: -1, Count: 0})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +75,7 @@ func TestEngineOutputPreservesScrolledSelectionAndInvalidatesEviction(t *testing
 	}
 	defer e.Close()
 	e.Feed([]byte("selected\r\nother\r\nnew\r\n"))
-	g, err := e.Rows(0, 5)
+	g, err := e.Rows(terminalvt.RowRequest{Start: 0, Count: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestEngineOutputPreservesScrolledSelectionAndInvalidatesEviction(t *testing
 	a.SelectionPress(0, 0, 1)
 	a.SelectionDrag(7, 0)
 	e.Feed([]byte("more\r\n"))
-	g, err = e.Rows(-1, 0)
+	g, err = e.Rows(terminalvt.RowRequest{Start: -1, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,10 +95,10 @@ func TestEngineOutputPreservesScrolledSelectionAndInvalidatesEviction(t *testing
 	if !a.HasSelection() || a.Offset != 0 || !b.Pinned() || b.HasSelection() {
 		t.Fatal("output changed independent scroll/selection state")
 	}
-	if _, ok := a.SelectionText(); ok {
-		t.Fatal("copied absent generation rows")
+	if got, ok := a.SelectionText(); !ok || got != "selected" {
+		t.Fatal("immutable selected history was discarded on ingress", got, ok)
 	}
-	g, err = e.Rows(0, 2)
+	g, err = e.Rows(terminalvt.RowRequest{Start: 0, Count: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestEngineOutputPreservesScrolledSelectionAndInvalidatesEviction(t *testing
 	for i := 0; i < 800; i++ {
 		e.Feed([]byte("more\r\n"))
 	}
-	g, err = e.Rows(-1, 0)
+	g, err = e.Rows(terminalvt.RowRequest{Start: -1, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestEngineOutputPreservesScrolledSelectionAndInvalidatesEviction(t *testing
 	if err := e.Resize(12, 2); err != nil {
 		t.Fatal(err)
 	}
-	g, err = e.Rows(-1, 0)
+	g, err = e.Rows(terminalvt.RowRequest{Start: -1, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,5 +159,50 @@ func TestIndependentViewsAndSourceGeneration(t *testing.T) {
 	a.SelectAll()
 	if text, ok := a.SelectionText(); ok || text != "" {
 		t.Fatal("missing history copied")
+	}
+}
+
+func TestSynchronizedHistoryRetainsUsableRowsAndRejectsLateRead(t *testing.T) {
+	var v View
+	rows := make([][]terminalvt.Cell, 6)
+	for i := range rows {
+		rows[i] = []terminalvt.Cell{{Text: string(rune('a' + i)), Width: 1}}
+	}
+	g := terminalvt.Projection{Cols: 8, GridRows: 2, Total: 6, Cells: rows, HistoryEpoch: 1, ReadSequence: 1}
+	v.Install(g, 1)
+	v.ScrollTop()
+	v.SelectionPress(0, 0, 1)
+	v.SelectionDrag(0, 0)
+	g.Start, g.Cells, g.Synchronized, g.ReadSequence = 4, rows[4:], true, 2
+	v.Install(g, 2)
+	if v.Offset != 0 || !v.HasSelection() {
+		t.Fatal("pending synchronized update displaced scroll/selection")
+	}
+	buf := surface.NewCellBuffer(8, 2)
+	v.Paint(buf, 0, 0, 8, 2, ui.NewTokenSet(theme.DefaultDark()), true, true)
+	if buf.Get(0, 0).Char != 'a' || buf.Get(0, 1).Char != 'b' {
+		t.Fatal("synchronized invalidation blanked cached history")
+	}
+	var viewer View
+	viewer.Install(g, 2)
+	viewer.ScrollTop()
+	if !viewer.Pinned() {
+		t.Fatal("new viewer scrolled from usable active grid into unavailable rows")
+	}
+	// Timeout releases without new PTY ingress, so only read ordering separates
+	// the completed response from a delayed pre-timeout page of the same gen.
+	completed := g
+	completed.Synchronized, completed.ReadSequence = false, 3
+	completed.Cells = [][]terminalvt.Cell{{{Text: "new", Width: 1}}, {}}
+	v.ScrollBottom()
+	v.Install(completed, 2)
+	if v.Install(g, 2) || v.Grid.Synchronized {
+		t.Fatal("late same-generation synchronized page replaced completed grid")
+	}
+	completed.HistoryEpoch++
+	completed.ReadSequence++
+	v.Install(completed, 2)
+	if v.HasSelection() {
+		t.Fatal("identity-changing commit retained stale selection")
 	}
 }

@@ -2,6 +2,8 @@ package viewmodel
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -14,59 +16,96 @@ func (m *App) openFindReplace(replaceMode bool) {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 		return
 	}
-	if m.FindReplace == nil {
+	ed := m.EditorState.Editor
+	wasOpen := m.FindReplace != nil
+	inside := m.focusedPopup() != nil && m.focusedPopup().ID == string(ui.OverlayFindReplace)
+	if !wasOpen {
 		m.FindReplace = &popup.FindReplaceState{}
+		popup.FindReplaceFromEditor(m.FindReplace, ed)
 	}
+	previousMode := m.FindReplace.ReplaceMode
 	m.FindReplace.ReplaceMode = replaceMode
-	// Pull current search state from the editor so the popup opens
-	// with the existing query if the user already had one typed.
-	popup.FindReplaceFromEditor(m.FindReplace, m.EditorState.Editor)
 	m.FindReplace.FocusedField = 0
-	// Move the find input cursor to the end of the query (the
-	// standard "open the popup, ready to append" UX). The replace
-	// input's cursor is wherever it was last left.
+	if !inside && ed.HasSelection() {
+		query, regex := selectedSearchQuery(ed.SelectedText(), m.FindReplace.Regex)
+		m.FindReplace.SetQuery(query)
+		m.FindReplace.Regex = regex
+	}
+	if !wasOpen || !inside || previousMode == replaceMode {
+		m.FindReplace.FindEdit().SelectAll()
+	}
 
 	// Wire callbacks to mutate the editor.
 	fr := m.FindReplace
+	valid := func() bool { return m.FindReplace == fr && m.EditorState.Editor == ed && ed.IsOpen() }
 	fr.OnChange = func() {
-		popup.FindReplaceToEditor(fr, m.EditorState.Editor)
-		fr.MatchCount = len(m.EditorState.Editor.Search().Matches)
-		fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
+		if !valid() {
+			return
+		}
+		popup.FindReplaceToEditor(fr, ed)
 		m.refreshFindReplacePopup()
 	}
 	fr.OnNext = func() {
-		if n, ok := m.EditorState.Editor.NextMatch(); ok {
+		if !valid() {
+			return
+		}
+		if n, ok := ed.NextMatch(); ok {
 			fr.MatchCount = n
-			fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
+			fr.CurrentIdx = ed.Search().CurrentIdx
 			m.refreshFindReplacePopup()
 		}
 	}
 	fr.OnPrev = func() {
-		if n, ok := m.EditorState.Editor.PrevMatch(); ok {
+		if !valid() {
+			return
+		}
+		if n, ok := ed.PrevMatch(); ok {
 			fr.MatchCount = n
-			fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
+			fr.CurrentIdx = ed.Search().CurrentIdx
 			m.refreshFindReplacePopup()
 		}
 	}
 	fr.OnReplace = func() {
-		if n := m.EditorState.Editor.ReplaceCurrent(); n >= 0 {
+		if !valid() {
+			return
+		}
+		if n := ed.ReplaceCurrent(); n >= 0 {
 			fr.MatchCount = n
-			fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
+			fr.CurrentIdx = ed.Search().CurrentIdx
 			m.refreshFindReplacePopup()
 		}
 	}
 	fr.OnReplaceAll = func() {
-		count := m.EditorState.Editor.ReplaceAll()
+		if !valid() {
+			return
+		}
+		count := ed.ReplaceAll()
 		m.Feedback.NotifyInfo(fmt.Sprintf("Replaced %d occurrences", count))
-		fr.MatchCount = len(m.EditorState.Editor.Search().Matches)
-		fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
+		fr.MatchCount = len(ed.Search().Matches)
+		fr.CurrentIdx = ed.Search().CurrentIdx
 		m.refreshFindReplacePopup()
 	}
 	fr.OnClose = func() {
 		m.closeFindReplace()
 	}
 
-	m.refreshFindReplacePopup()
+	fr.OnChange()
+	if fw := m.windowManager.Window(string(ui.OverlayFindReplace)); fw != nil {
+		m.windowManager.FocusWindow(fw.ID)
+	}
+}
+
+// Selected source is always literal, even while the retained search is in
+// regex mode. Multiline/tab selections are represented losslessly in one field.
+func selectedSearchQuery(text string, regex bool) (string, bool) {
+	if strings.ContainsAny(text, "\r\n\t") {
+		regex = true
+	}
+	if regex {
+		text = regexp.QuoteMeta(text)
+		text = strings.NewReplacer("\r", `\r`, "\n", `\n`, "\t", `\t`).Replace(text)
+	}
+	return text, regex
 }
 
 // closeFindReplaceForTab closes the find/replace popover when the active
@@ -123,6 +162,7 @@ func (m *App) findReplaceSpec(fr *popup.FindReplaceState, w, h int) ui.FindRepla
 		Regex:         fr.Regex,
 		MatchCount:    fr.MatchCount,
 		CurrentIdx:    fr.CurrentIdx,
+		Error:         fr.Error,
 	}
 }
 
@@ -192,11 +232,14 @@ func (m *App) refreshFindReplacePopup() {
 	y := layout.ChatAreaTop + 1
 	fw.SetPosition(x, y)
 	m.clampFindReplaceOnScreen(fw)
+	owner := m.EditorState.Editor
 	m.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), func() {
-		if m.EditorState.Editor != nil {
-			m.EditorState.Editor.SetSearchOpen(false)
+		if owner != nil {
+			owner.SetSearchOpen(false)
 		}
-		m.FindReplace = nil
+		if m.FindReplace == fr {
+			m.FindReplace = nil
+		}
 	})
 }
 
@@ -342,14 +385,10 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		// Mode transform while the popup owns focus: Ctrl+F morphs an open
 		// Replace form back to Find and Ctrl+H morphs Find into Replace, rebuilt
 		// in place in the same window (no close/reopen flicker).
-		if fr.ReplaceMode {
-			m.openFindReplace(false)
-		}
+		m.openFindReplace(false)
 		return nil
 	case "ctrl+h":
-		if !fr.ReplaceMode {
-			m.openFindReplace(true)
-		}
+		m.openFindReplace(true)
 		return nil
 	}
 
@@ -362,6 +401,10 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.closeFindReplace()
 		return nil
 	case tea.KeyTab:
+		if !fr.ReplaceMode {
+			fr.FocusedField = 0
+			return nil
+		}
 		if msg.Mod.Contains(tea.ModShift) {
 			fr.FocusedField = 0
 		} else {

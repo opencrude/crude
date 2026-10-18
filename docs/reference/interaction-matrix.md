@@ -14,10 +14,11 @@ preserve or intentionally improve.
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 8-col activity rail (outer gutter plus padding before the panel left border) stays |
 | Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U, Ctrl+Alt+G | Files and Agents are rail destinations; Terminals and Git are bottom-dock destinations (footer pills). Rail and panel bodies expose destination-aware context menus |
+| Recent Workspaces | Rail below Agents; palette **Recent Workspaces** | Shared sidebar icon/search/count chrome and command rows. Most recently accessed first (successful core attachment, not session creation or background activity). First click selects, double-click/Enter requests opening; every different-workspace route (home, rail/context menu, folder picker, cross-workspace session resume) previews the exact destination with Open workspace / Cancel and Cancel focused. Approval proceeds through dirty-file/draft safety; Esc or outside clicks never silently switch. Current is a no-op. New Workspace opens the folder picker; Refresh retains usable rows on failure. Short rails keep it reachable through More and the palette. |
 | Application Settings | activity-bar gear | Bottom rail gear opens Application Settings (VS Code manage control); right-click also offers Workspace Settings |
 | Rail counts | Upper/lower-right of destination icons | Normal-size bold digits keep the script-like placement without tiny Unicode glyphs: Every destination uses the top row of its three-row band. Counts above nine use `+` at the same level. Badges sit diagonally beyond the measured icon, never widen the rail or overwrite the panel rule, and remain inside their destination's whole-band click/hover target. Zero counts disappear. |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
-| Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
+| Summon / leave terminal | Alt+F12; Ctrl+` and Ctrl+Alt+T aliases | Focuses the last-used PTY in its existing dock/window placement, creates one if none exists, and returns focus to content on repeat. The function-key chord avoids layout-specific backtick/AltGr encoding. Never bypasses modal/dirty decisions. Shifted `~` encoding also activates Ctrl+Shift+` New Terminal. |
 | Notices → Terminals | Bottom-row pills | Changes the painted panel even when a new terminal's create receipt arrives before its inventory. Notices restore on cold core start and new workspace notices reach all connected shells |
 | Composer | Alt+C | |
 | Modified Enter | Semantic chords, captions resolved per terminal | Ctrl+Enter / Shift+Enter exist only where the terminal disambiguates them (Windows console, kitty keyboard protocol); tmux and legacy terminals send plain Enter, and Windows Terminal takes Alt+Enter for fullscreen. Every caption comes from `ui.FormatShortcut` of a chord token and every matcher from the same token: **commit** (`CommitChord`) accepts Ctrl+Enter and Alt+Enter; **new line** (`NewlineChord`) accepts Shift+Enter, Alt+Enter and Ctrl+J (LF, delivered everywhere); **previous match** accepts Shift+Enter and Shift+F3; **replace all** accepts Ctrl+Alt+Enter and Alt+Enter. A caption always names a key this terminal delivers; `TestNoHardCodedModifiedEnterCaptions` rejects hard-coded ones. |
@@ -27,9 +28,11 @@ preserve or intentionally improve.
 | Previous / next tab | Ctrl+[ / Ctrl+] | Within the focused main group, outside terminal key ownership, including editor focus |
 | Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Don't Save / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
 | Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
-| Copy | Ctrl+C / Ctrl+Shift+C | Copies the selection of the chat input, chat messages, editor, overlay editors, terminals, and every inline text control. Ctrl+Shift+C is the explicit copy chord (terminals already used it); unhandled Ctrl+C clears the chat draft, and Ctrl+C never navigates back. |
+| Copy | Ctrl+C / Ctrl+Shift+C | Copies the selection of the chat input, chat messages, editor, overlay editors and every inline text control. A focused terminal is the deliberate exception: Ctrl+C always belongs to the child, even with a retained selection; Ctrl+Shift+C copies and never falls through to interrupt when nothing is selected. Unhandled Ctrl+C clears the chat draft, and Ctrl+C never navigates back. |
+| Terminal controls | Ctrl+C/D/Z/\\/S/Q and application key bindings | The focused PTY owns these before shell/editor selection handling. Ctrl+C interrupts when the child enables processed input/ISIG; Ctrl+D is EOF under Unix canonical input, Ctrl+Z is Unix suspend or Windows child-specific EOF, Ctrl+\\ is Unix quit, Ctrl+S/Q are child/TTY flow control. Crude forwards keys, never guesses Unix signals on Windows or kills unrelated processes. Raw/extended-keyboard children receive their negotiated key encoding. Only exact Shift+PgUp/PgDn/Home/End scroll local primary-screen history. |
 | Cut | Ctrl+X | Text controls: cuts the selection, or the whole value when nothing is selected (masked fields refuse it) |
 | Drag selection | drag over text | Editable text (composer, fields, filters, overlay inputs, editor) keeps the dragged selection after release for typing over, Ctrl+X, Delete or Ctrl+C; release never writes the clipboard. Reading surfaces (chat transcript, read-only areas and documents, Git review, plan reader, terminals) copy on release and drop the highlight. Double-click selects a word, triple-click the line, Shift+click extends, in text controls and the editor alike. |
+| Keyboard text selection | Shift+arrows / Home / End | Insertion-boundary semantics everywhere: at `abc` then caret then `def`, Shift+Left selects `c`, Shift+Right selects `d`, despite the block cursor covering `d`. Whole graphemes, stable anchor through reversal, plain Left/Right collapse to directional edge. Pointer hits retain their complete original source unit for backward drags; keyboard ranges never acquire pointer capture. |
 | Whole-text Copy/Cut | right-click on a text control | Context menu Copy/Cut act on the entire value; the composer menu (Paste / Copy / Cut / Clear input) acts on the draft. Cut runs through the owning control so composite models stay in sync. |
 | Paste | Bracketed paste primary (the terminal's own paste: Ctrl+V on Windows Terminal, Ctrl+Shift+V on Linux terminals, Cmd+V on macOS); Ctrl+V / Ctrl+Shift+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input. Overlay text fields (find/replace, palette, tree prompt) take it through the same owner path as their keys. A Ctrl+V clipboard read re-enters through the exact control that asked (its composite sees it like a bracketed paste: searches run, forms track it) and is dropped if that owner is gone. Where the system clipboard is unreadable (SSH, headless tmux) the error names the terminal paste shortcut. Windows Terminal image-only clipboard pastes arrive as empty bracketed pastes: only the chat composer asynchronously reads and attaches the clipboard image. Non-empty text remains exact; an empty paste without an image is a silent no-op, never a read of unrelated clipboard text. |
 | Copy target | System clipboard; OSC 52 fallback | When the system clipboard is unreachable (no wl-copy/xclip/pbcopy) or the session is SSH, copies also go out as an OSC 52 terminal clipboard write, which local terminals and tmux (`set-clipboard`) deliver to the user's clipboard. |
@@ -301,7 +304,7 @@ tab attention until the panel is activated or closed.
 |----------|----------|
 | CloseAndRoute | context menu, LSP popups, diagnostics |
 | KeepAndRoute | find/replace, find-in-files, replace-in-files, composer, palette, textoverlay, floating terminals |
-| IgnoreAndConsume | dirty prompt, tree prompt, tree delete, filepicker, workspace settings |
+| IgnoreAndConsume | dirty prompt, workspace-switch confirmation, tree prompt, tree delete, filepicker, workspace settings |
 
 ## Collection navigation baseline
 
@@ -316,6 +319,27 @@ tab attention until the panel is activated or closed.
 | Launcher | Up/Down | viewport | yes outside the search editor | clamp | open exact resource; Tab/Shift+Tab visit original action controls, Skills, MCP, search, resources and Retry; hover never redirects keyboard activation |
 
 ### Workspace home
+
+The Recent Workspaces rail is an independent navigation surface, not a route
+back to home. Its two-row resource targets and shared list/scrollbar remain
+available while any main-pane topology or floating editor is open. Both views
+consume one asynchronous, cancelable catalog, including after home unmounts.
+Search, selected identity, scroll and width survive sidebar destination changes.
+Right-click offers exact-path Open/Copy and New Workspace/Refresh; old-menu
+callbacks cannot switch a replacement attachment. Home keeps its existing
+recoverable Delete operation separately.
+
+Connected switching keeps the old attachment, tabs and processes until the
+destination is ready. Unsaved shared editors offer Save / Close view / Cancel;
+Close view retains shared unsaved bytes and authorizes only that exact revision.
+Save completes before the same switch intent continues. Cancel, failed saves,
+peer/local edits during preparation and failed attachments keep the current
+workspace and drafts. Pending local edits and history settle through the existing
+document coordinator, never a blocking UI-thread flush. Opening/preparing status
+and Esc-to-cancel remain visible; cancellation invalidates the exact sequence even
+when the backend ignores its context. Prepared but unadopted attachments have a
+single cleanup owner through cancellation, timeout and shutdown. Switching away
+does not terminate the old core's agents or PTYs.
 
 - Failed New Session/Resume opens a native recovery modal with exact reason,
   useful repair guidance, and explicit Settings/account repair action. Notices

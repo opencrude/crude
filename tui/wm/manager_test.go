@@ -28,6 +28,43 @@ func TestNewWindowManager(t *testing.T) {
 	}
 }
 
+func TestWindowAtSharesZOrderAndModalAuthorityWithoutMutation(t *testing.T) {
+	mgr := NewWindowManager()
+	a := NewFloatingWindow("a", "", testWidget{}, 20, 10)
+	b := NewFloatingWindow("b", "", testWidget{}, 20, 10)
+	mgr.AddWindow(a)
+	mgr.AddWindow(b)
+	if mgr.WindowAt(2, 2) != b {
+		t.Fatal("new top window not hit")
+	}
+	mgr.FocusWindow(a.ID)
+	if mgr.WindowAt(2, 2) != a || mgr.Focused() != a || mgr.TopWindow() != a {
+		t.Fatal("hit did not follow raised order")
+	}
+	a.SetVisible(false)
+	if mgr.WindowAt(2, 2) != b || mgr.Focused() != a {
+		t.Fatal("hidden hit or read changed focus")
+	}
+	passive := NewFloatingWindow("passive", "", testWidget{}, 20, 10, WithFocusable(false))
+	mgr.AddWindowPassive(passive)
+	if mgr.WindowAt(2, 2) != b {
+		t.Fatal("non-focusable surface took input")
+	}
+	modal := NewFloatingWindow("modal", "", testWidget{}, 10, 5, WithModal(true))
+	modal.SetPosition(30, 15)
+	mgr.AddWindow(modal)
+	if mgr.WindowAt(2, 2) != nil || mgr.HandleMouseWheel(tea.MouseWheelMsg{X: 2, Y: 2}) != nil {
+		t.Fatal("input crossed modal boundary")
+	}
+	if mgr.WindowAt(32, 16) != modal {
+		t.Fatal("modal itself not reachable")
+	}
+	modal.SetVisible(false)
+	if mgr.WindowAt(2, 2) != b {
+		t.Fatal("hidden modal kept input shield")
+	}
+}
+
 func TestAddWindow(t *testing.T) {
 	mgr := NewWindowManager()
 	fw := NewFloatingWindow("a", "A", testWidget{}, 20, 10)

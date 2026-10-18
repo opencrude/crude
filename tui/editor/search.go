@@ -1,10 +1,8 @@
 package editor
 
 import (
-	"regexp"
+	"crude/textsearch"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 // SearchOptions controls how a query is matched. Defaults are case-
@@ -22,6 +20,7 @@ type SearchMatch struct {
 	End                    Position
 	Matched                string
 	startOffset, endOffset int
+	sourceMatch            textsearch.Match
 }
 
 // SearchState holds the live find/replace UI state for one tab. The
@@ -43,7 +42,9 @@ type SearchState struct {
 
 	// True when the search UI is open (Ctrl+F or Ctrl+H pressed).
 	// The editor render path checks this to draw highlights.
-	Open bool
+	Open    bool
+	Error   string
+	matcher *textsearch.Matcher
 }
 
 // NewSearchState returns a fresh search state.
@@ -102,47 +103,21 @@ func (s *SearchState) Reset() {
 // Whole-word boundaries classify original runes, including combining marks.
 func (s *SearchState) computeMatches(bufText string) {
 	s.Reset()
+	s.Error = ""
 	if s.Query == "" {
 		return
 	}
 
-	pattern := s.Query
-	if !s.Options.Regex {
-		pattern = regexp.QuoteMeta(pattern)
+	matcher, err := textsearch.Compile(s.Query, textsearch.Options{CaseSensitive: s.Options.CaseSensitive, WholeWord: s.Options.WholeWord, Regex: s.Options.Regex})
+	s.matcher = matcher
+	if err != nil {
+		s.Error = err.Error()
+		return
 	}
-	if !s.Options.CaseSensitive {
-		pattern = "(?i)" + pattern
+	for _, hit := range matcher.FindAll(bufText, 0) {
+		start, end := offsetToLineCol(bufText, hit.Start, hit.End)
+		s.Matches = append(s.Matches, SearchMatch{Start: start, End: end, Matched: bufText[hit.Start:hit.End], startOffset: hit.Start, endOffset: hit.End, sourceMatch: hit})
 	}
-	re, err := regexp.Compile(pattern)
-	if err == nil {
-		s.scanRegexMatches(re, bufText)
-	}
-}
-
-func (s *SearchState) scanRegexMatches(re *regexp.Regexp, bufText string) {
-	locs := re.FindAllStringIndex(bufText, -1)
-	for _, loc := range locs {
-		if s.Options.WholeWord && (!isWordBoundary(bufText, loc[0]) || !isWordBoundary(bufText, loc[1])) {
-			continue
-		}
-		start, end := offsetToLineCol(bufText, loc[0], loc[1])
-		s.Matches = append(s.Matches, SearchMatch{
-			Start:       start,
-			End:         end,
-			Matched:     bufText[loc[0]:loc[1]],
-			startOffset: loc[0], endOffset: loc[1],
-		})
-	}
-}
-
-func isWordBoundary(s string, idx int) bool {
-	if idx <= 0 || idx >= len(s) {
-		return true
-	}
-	next, _ := utf8.DecodeRuneInString(s[idx:])
-	prev, _ := utf8.DecodeLastRuneInString(s[:idx])
-	word := func(r rune) bool { return isWordChar(r) || unicode.IsMark(r) }
-	return !word(next) || !word(prev)
 }
 
 // offsetToLineCol converts a byte offset pair (start, end) into
@@ -157,6 +132,7 @@ func offsetToLineCol(text string, startOff, endOff int) (Position, Position) {
 // Options, Matches, CurrentIdx, etc. and call SetQuery/SetOptions to
 // trigger a recompute.
 func (e *Editor) Search() *SearchState {
+	e.ensureSearchCurrent()
 	return e.search
 }
 
@@ -190,6 +166,29 @@ func (e *Editor) SetReplace(r string) {
 		e.search = NewSearchState()
 	}
 	e.search.Replace = r
+}
+
+// ConfigureSearch publishes one query/options generation. Replacement edits do
+// not re-scan or reset navigation. Opening selects the hit at/after the caret;
+// typing never moves the document's insertion point or destroys its selection.
+func (e *Editor) ConfigureSearch(query, replacement string, options SearchOptions) {
+	if e.search == nil {
+		e.search = NewSearchState()
+	}
+	changed := e.search.Query != query || e.search.Options != options || !e.search.Open
+	e.search.Query, e.search.Replace, e.search.Options, e.search.Open = query, replacement, options, true
+	if changed || e.searchRevision != e.Revision() {
+		e.recomputeMatches()
+		if changed && len(e.search.Matches) > 0 {
+			e.search.CurrentIdx = 0
+			for i, m := range e.search.Matches {
+				if !positionBefore(m.End, e.cursor) {
+					e.search.CurrentIdx = i
+					break
+				}
+			}
+		}
+	}
 }
 
 // SetSearchOpen toggles whether the search UI is visible. When
@@ -251,7 +250,7 @@ func (e *Editor) ReplaceCurrent() int {
 		return 0
 	}
 	m := e.search.Matches[e.search.CurrentIdx]
-	repl := e.search.Replace
+	repl := e.search.matcher.Expand(e.Value(), m.sourceMatch, e.search.Replace)
 
 	e.beginUndoGroup()
 	defer e.endUndoGroup()
@@ -262,15 +261,18 @@ func (e *Editor) ReplaceCurrent() int {
 	e.markDocumentWidthAll()
 	e.invalidateEditorCaches()
 
-	// Recompute matches and try to keep the cursor near the same
-	// position. Since buffer text changed, we just keep CurrentIdx
-	// clamped to the new list size and let the caller re-jump.
+	// Advance past the replaced source, not back to match zero. In particular,
+	// replacement text that itself matches must not trap repeated Replace.
+	after := m.startOffset + len(repl)
 	e.recomputeMatches()
-	if e.search.CurrentIdx >= len(e.search.Matches) {
-		e.search.CurrentIdx = len(e.search.Matches) - 1
-	}
-	if e.search.CurrentIdx < 0 {
+	if len(e.search.Matches) > 0 {
 		e.search.CurrentIdx = 0
+		for i, hit := range e.search.Matches {
+			if hit.startOffset >= after && (m.startOffset != m.endOffset || hit.startOffset > after) {
+				e.search.CurrentIdx = i
+				break
+			}
+		}
 	}
 	if m, ok := e.search.CurrentMatch(); ok {
 		e.SetCursorPosition(m.Start.Line, m.Start.Col)
@@ -293,11 +295,12 @@ func (e *Editor) ReplaceAll() int {
 	defer e.endUndoGroup()
 	cursor := e.cursor
 	count := 0
+	source := e.Value()
 	// Iterate from the end so earlier offsets stay valid as we
 	// mutate the buffer.
 	for i := len(e.search.Matches) - 1; i >= 0; i-- {
 		m := e.search.Matches[i]
-		repl := e.search.Replace
+		repl := e.search.matcher.Expand(source, m.sourceMatch, e.search.Replace)
 		e.replaceSearchMatch(m, repl, cursor)
 		count++
 	}

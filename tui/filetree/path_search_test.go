@@ -17,8 +17,8 @@ func TestRankPathEntriesPrefersBasenameAndBoundaries(t *testing.T) {
 		{Path: filepath.Join(root, "src", "other.go"), Relative: "src/other.go", Name: "other.go"},
 	}
 	matches := RankPathEntries(entries, "tr")
-	if len(matches) != 3 {
-		t.Fatalf("matches=%d, want three", len(matches))
+	if len(matches) != 2 {
+		t.Fatalf("matches=%d, want two meaningful matches (not other.go)", len(matches))
 	}
 	if matches[0].Entry.Name != "tree_rows.go" {
 		t.Fatalf("first match=%q, want tree_rows.go", matches[0].Entry.Name)

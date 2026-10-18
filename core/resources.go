@@ -8,6 +8,7 @@ import (
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/document"
+	"crude/terminalvt"
 	"crude/workspace"
 )
 
@@ -117,7 +118,7 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
-			value, err := terminals.Rows(input.ID, input.Start, input.Count)
+			value, err := terminals.Rows(input.ID, terminalvt.RowRequest{Start: input.Start, Count: input.Count, ViewportStart: input.ViewportStart, HistoryEpoch: input.HistoryEpoch, HistoryBase: input.HistoryBase})
 			return ok(value, err)
 		}, true
 	case coreprotocol.TerminalControl, coreprotocol.TerminalClose:

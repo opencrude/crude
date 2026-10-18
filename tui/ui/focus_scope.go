@@ -30,6 +30,7 @@ func (h *Host) PushFocusScope(boundary ComponentID, modal bool) {
 	if h == nil {
 		return
 	}
+	h.ResetWheelGesture()
 	h.scopes = append(h.scopes, FocusScope{boundary: boundary, saved: h.focused, modal: modal})
 	if boundary != RootID {
 		h.Focus(boundary)
@@ -44,6 +45,7 @@ func (h *Host) PopFocusScope() ComponentID {
 	if h == nil || len(h.scopes) == 0 {
 		return RootID
 	}
+	h.ResetWheelGesture()
 	top := h.scopes[len(h.scopes)-1]
 	h.scopes = h.scopes[:len(h.scopes)-1]
 	h.restoreFocus(top.saved)

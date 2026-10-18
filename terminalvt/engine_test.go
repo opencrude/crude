@@ -40,7 +40,7 @@ func TestEngineNeutralEffectsAndGrid(t *testing.T) {
 	if len(fx.Replies) != 1 || string(fx.Replies[0]) != "\x1b[1;5R" {
 		t.Fatalf("replies=%q", fx.Replies)
 	}
-	p, err := e.Rows(-1, 4)
+	p, err := e.Rows(RowRequest{Start: -1, Count: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestEngineNeutralEffectsAndGrid(t *testing.T) {
 		t.Fatalf("cells=%+v", row[:5])
 	}
 	row[0].Text = "mutated"
-	again, _ := e.Rows(-1, 4)
+	again, _ := e.Rows(RowRequest{Start: -1, Count: 4})
 	if again.Cells[0][0].Text != "A" {
 		t.Fatal("snapshot aliases engine")
 	}
@@ -75,11 +75,11 @@ func TestEngineBoundedHistoryReadersAreIsolated(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		e.Feed([]byte(fmt.Sprintf("row%02d\r\n", i)))
 	}
-	active, err := e.Rows(-1, 3)
+	active, err := e.Rows(RowRequest{Start: -1, Count: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := e.Rows(0, 3)
+	old, err := e.Rows(RowRequest{Start: 0, Count: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,11 +89,11 @@ func TestEngineBoundedHistoryReadersAreIsolated(t *testing.T) {
 	if text(old) == text(active) {
 		t.Fatal("history reader returned active grid")
 	}
-	page, err := e.Rows(0, old.Total)
+	page, err := e.Rows(RowRequest{Start: 0, Count: old.Total})
 	if err != nil || len(page.Cells) != old.Total {
 		t.Fatalf("page=%d total=%d err=%v", len(page.Cells), old.Total, err)
 	}
-	again, _ := e.Rows(-1, 3)
+	again, _ := e.Rows(RowRequest{Start: -1, Count: 3})
 	if text(again) != text(active) {
 		t.Fatal("history reader changed active viewport")
 	}
@@ -101,14 +101,14 @@ func TestEngineBoundedHistoryReadersAreIsolated(t *testing.T) {
 	if len(fx.Replies) != 1 {
 		t.Fatal("reader disturbed query reply")
 	}
-	if _, err = e.Rows(0, MaxSnapshotRows+1); !errors.Is(err, ErrBounds) {
+	if _, err = e.Rows(RowRequest{Start: 0, Count: MaxSnapshotRows + 1}); !errors.Is(err, ErrBounds) {
 		t.Fatal("snapshot cap")
 	}
 	if err = e.Resize(MaxCols+1, 3); !errors.Is(err, ErrBounds) {
 		t.Fatal("grid cap")
 	}
 	e.Close()
-	if _, err = e.Rows(-1, 1); !errors.Is(err, ErrClosed) {
+	if _, err = e.Rows(RowRequest{Start: -1, Count: 1}); !errors.Is(err, ErrClosed) {
 		t.Fatal("closed reader")
 	}
 }
@@ -116,7 +116,7 @@ func TestEngineBoundedHistoryReadersAreIsolated(t *testing.T) {
 func TestHistoryIdentityTracksEvictionNotIdenticalText(t *testing.T) {
 	e := newTestEngine(t, Options{Cols: 8, Rows: 2, ScrollbackLines: 3})
 	e.Feed([]byte("same\r\nsame\r\n"))
-	p, err := e.Rows(0, 0)
+	p, err := e.Rows(RowRequest{Start: 0, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestHistoryIdentityTracksEvictionNotIdenticalText(t *testing.T) {
 		t.Fatal("zero count must default to grid height")
 	}
 	e.Feed([]byte("same\r\n"))
-	q, err := e.Rows(0, 0)
+	q, err := e.Rows(RowRequest{Start: 0, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,24 +134,24 @@ func TestHistoryIdentityTracksEvictionNotIdenticalText(t *testing.T) {
 	if err := e.Resize(8, 2); err != nil {
 		t.Fatal(err)
 	}
-	unchanged, err := e.Rows(0, 0)
+	unchanged, err := e.Rows(RowRequest{Start: 0, Count: 0})
 	if err != nil || unchanged.HistoryEpoch != q.HistoryEpoch {
 		t.Fatal("same-size resize changed identity", err)
 	}
 	for i := 0; i < 800; i++ {
 		e.Feed([]byte("same\r\n"))
 	}
-	r, err := e.Rows(0, 0)
+	r, err := e.Rows(RowRequest{Start: 0, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.HistoryEpoch == q.HistoryEpoch {
-		t.Fatal("identical-text eviction did not invalidate row identity")
+	if r.HistoryEpoch == q.HistoryEpoch && r.HistoryBase <= q.HistoryBase {
+		t.Fatal("identical-text eviction did not advance row identity")
 	}
 	if err := e.Resize(12, 2); err != nil {
 		t.Fatal(err)
 	}
-	s, err := e.Rows(0, 0)
+	s, err := e.Rows(RowRequest{Start: 0, Count: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,12 +159,12 @@ func TestHistoryIdentityTracksEvictionNotIdenticalText(t *testing.T) {
 		t.Fatal("reflow kept old identity")
 	}
 	e.Feed([]byte("\x1b[?1049h"))
-	alt, err := e.Rows(-1, 0)
+	alt, err := e.Rows(RowRequest{Start: -1, Count: 0})
 	if err != nil || alt.HistoryEpoch == s.HistoryEpoch {
 		t.Fatal("screen switch kept old identity", err)
 	}
 	e.Feed([]byte("\x1b[?1049l\x1bc"))
-	reset, err := e.Rows(-1, 0)
+	reset, err := e.Rows(RowRequest{Start: -1, Count: 0})
 	if err != nil || reset.HistoryEpoch == alt.HistoryEpoch {
 		t.Fatal("reset kept old identity", err)
 	}

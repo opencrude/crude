@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crude/terminalvt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -71,7 +72,7 @@ func TestTerminalSettingsStartConfiguredShellAndEnvironment(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		projection, err := service.Rows(info.ID, -1, 6)
+		projection, err := service.Rows(info.ID, terminalvt.RowRequest{Start: -1, Count: 6})
 		if err != nil {
 			t.Fatal(err)
 		}

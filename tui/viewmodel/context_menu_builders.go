@@ -157,6 +157,8 @@ func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuSta
 	switch m.activityView {
 	case activityAgents:
 		return m.buildAgentSidebarContextMenu(mouse)
+	case activityWorkspaces:
+		return m.buildWorkspaceSidebarContextMenu(mouse)
 	case activitySkills, activityMCP:
 		return m.buildActivityRailContextMenu(m.activityView)
 	default:
@@ -229,6 +231,8 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 				}},
 			},
 		})
+	case activitybar.ViewWorkspaces:
+		st.Sections = append(st.Sections, m.workspaceNavigationActions())
 	case activitybar.ViewSkills, activitybar.ViewMCP:
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: view.Label(),
@@ -296,7 +300,7 @@ func (m *App) buildLauncherContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// closures below must not alias the live list.
 	entry := *ws
 	st := ui.QuickMenu("",
-		ui.ContextMenuItem{Label: "Open", Action: func() { m.launcherOpenFolder(entry.Path) }},
+		ui.ContextMenuItem{Label: "Open", Action: func() { m.runDetachedAsyncCmd(m.launcherOpenFolder(entry.Path)) }},
 		ui.ContextMenuItem{Label: "Copy path", Action: func() { m.copyToClipboard(entry.Path) }},
 	)
 	st.Sections = append(st.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{
@@ -498,13 +502,13 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.Win == nil || m.Win.TabCount() == 0 {
 		return nil
 	}
-	hitIndex, _ := m.tabBarHitTest(mouse.X)
+	hitIndex := m.paneTabAt(mouse.X, mouse.Y)
 	if hitIndex < 0 || hitIndex >= m.Win.TabCount() {
 		return nil
 	}
-	hit := window.TabHitResult{TabIndex: hitIndex}
 	tabs := m.Win.Tabs()
-	tab := tabs[hit.TabIndex]
+	tab := tabs[hitIndex]
+	owner := m.paneOwner(tab.ID, tab.Group)
 
 	st := &ui.ContextMenuState{Title: "Tab"}
 	st.Sections = append(st.Sections, m.paneMenuSection(tab.ID))
@@ -528,14 +532,13 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			SectionLabel: "Tab",
 			Items: []ui.ContextMenuItem{
 				{Label: "Close tab", Detail: closeDetail, Action: func() {
-					m.EditorState.ActiveView = path
-					_ = m.handleAgentTabClose(hit.TabIndex)
+					m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
 				}},
-				{Label: "Close others", Action: func() {
-					m.closeAllEditorTabsExcept(path)
+				{Label: "Close Other Files in Pane", Action: func() {
+					m.closePaneEditorTabs(owner, false)
 				}},
-				{Label: "Close to the right", Action: func() {
-					m.closeEditorTabsToRightOf(hit.TabIndex)
+				{Label: "Close Files to the Right", Action: func() {
+					m.closePaneEditorTabs(owner, true)
 				}},
 				{Label: "Copy path", Action: func() {
 					m.copyToClipboard(path)
@@ -553,7 +556,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			SectionLabel: "Tab",
 			Items: []ui.ContextMenuItem{
 				{Label: "Minimize", Detail: "keeps running", Action: func() {
-					_ = m.handleAgentTabClose(hit.TabIndex)
+					m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
 				}},
 				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(agentID), Detail: "from saved work", Action: func() {
 					m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID))
@@ -574,11 +577,25 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			Items: []ui.ContextMenuItem{
 				{Label: "Open as window", Action: func() { m.openPanelAsWindow(id) }},
 				{Label: "Move to dock", Action: func() { m.dockPanel(id) }},
-				{Label: "Close tab", Detail: "returns it to the dock", Action: func() { _ = m.handleAgentTabClose(hit.TabIndex) }},
+				{Label: "Close tab", Detail: "returns it to the dock", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
 			},
 		})
 	}
+	if tab.Resource.Kind == window.ResourceGitReview || tab.Resource.Kind == window.ResourceLocalDiff {
+		st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Tab", Items: []ui.ContextMenuItem{
+			{Label: "Close tab", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
+		}})
+	}
 
+	// Resource callbacks use the same exact owner fence as pane operations.
+	for si := range st.Sections {
+		for ii := range st.Sections[si].Items {
+			item := &st.Sections[si].Items[ii]
+			if item.Action != nil {
+				item.Action = owner.action(m, item.Action)
+			}
+		}
+	}
 	return st
 }
 
@@ -868,48 +885,24 @@ func (m *App) handleContextMenuKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.closeContextMenu()
 		return nil
 	case tea.KeyEnter:
-		st.Activate()
 		m.closeContextMenu()
+		st.Activate()
 		return nil
-	case tea.KeyDown:
-		st.Next()
-		m.refreshContextMenu()
-		return nil
-	case tea.KeyUp:
-		st.Prev()
-		m.refreshContextMenu()
-		return nil
+	case tea.KeyDown, tea.KeyUp, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown:
+		// The mounted native List owns navigation, disabled-row skipping and
+		// scrolling. A second state-only key switch used to ignore Home/End
+		// and paging, making large layout scopes effectively unreachable.
+		if frame, ok := fw.Content.(*ui.ComponentWidget); ok && frame.Host() != nil {
+			w, h := fw.Size()
+			frame.Host().Resize(w, h)
+			frame.Host().Layout()
+			result := frame.Host().Handle(msg)
+			ui.SyncContextMenuCursor(frame, st)
+			fw.MarkContentDirty()
+			return result.Cmd
+		}
 	}
 	return nil
-}
-
-// refreshContextMenu re-renders the context menu popup after the
-// cursor moved (WindowFrame + ui.List).
-func (m *App) refreshContextMenu() {
-	if m.windowManager == nil {
-		return
-	}
-	fw := m.windowManager.Window("context-menu")
-	if fw == nil || m.LastContextMenu == nil {
-		return
-	}
-	// Prefer mutating selection on the existing frame when possible.
-	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		ui.ApplyContextMenuCursor(cw, m.LastContextMenu)
-		fw.MarkContentDirty()
-		return
-	}
-	frame := ui.BuildContextMenuFrame(m.Theme, m.LastContextMenu)
-	w, h := frame.Measure(60, 40)
-	if cw := ui.ContextMenuPopupWidth(m.LastContextMenu); cw > 0 {
-		w = cw
-	}
-	if ch := ui.ContextMenuPopupHeight(m.LastContextMenu); ch > 0 {
-		h = ch
-	}
-	fw.SetSize(w, h)
-	fw.SetContent(frame)
-	fw.MarkContentDirty()
 }
 
 func (m *App) showContextMenuAt(x, y int) {

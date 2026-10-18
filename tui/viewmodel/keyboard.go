@@ -17,6 +17,7 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shelltree"
+	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
 	"crude/types/recovery"
@@ -25,6 +26,16 @@ import (
 
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	if m.projectReplace != nil && m.overlayHost != nil && m.overlayHost.Window(projectReplaceOverlay) != nil {
+		// Review is a modal decision, including global shortcuts. While the
+		// accepted transaction runs, no second action may retarget or replay it.
+		if m.projectReplace.busy {
+			return m, nil
+		}
+		if fw := m.overlayHost.Window(projectReplaceOverlay); fw != nil {
+			return m, m.forwardEventToWindowContent(fw, msg)
+		}
+	}
 	// Hover is passive: typing still belongs to the composer. Explicit click
 	// focuses the reading surface, while Esc dismisses it without stopping work.
 	if m.planHover != nil && (m.windowManager.Focused() == nil || m.windowManager.Focused().ID != string(ui.OverlayPlanHover)) {
@@ -34,8 +45,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.mainPaneDragActive() && msg.Code == tea.KeyEsc {
-		m.mainPanes.drop = nil
-		m.rootHost.CancelPointerCapture()
+		m.cancelMainPaneDrag()
 		m.forceFrame()
 		return m, nil
 	}
@@ -63,7 +73,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				// open the composer and steal focus from the popup, killing
 				// every subsequent key.
 				if fw := m.windowManager.Focused(); fw != nil &&
-					fw.ID == string(ui.OverlayFindReplace) &&
+					(fw.ID == string(ui.OverlayFindReplace) || fw.ID == findInFilesWindowID || fw.ID == replaceInFilesWindowID) &&
 					msg.String() == "alt+c" {
 					match = nil
 				}
@@ -150,6 +160,15 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	// Terminal ownership precedes shell/editor selections and pointer teardown.
+	// A retained selection in another pane must never turn Ctrl+C into copy or
+	// eat EOF, suspend, flow control, or ordinary application key bindings.
+	if m.terminalOwnsKeys() {
+		if m.terminalDockOwnsKeys() {
+			return m.dispatchTermDockKey(msg)
+		}
+		return m.dispatchFloatingWindowKey(msg)
+	}
 
 	// A chat-message selection owns copy before keyboard activity tears down
 	// pointer capture. CancelPointerCapture clears the selection, so reading it
@@ -194,6 +213,16 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// close them with the window X / Close action, not Esc.
 	if msg.Code == tea.KeyEsc && m.windowManager != nil {
 		if topWin := m.windowManager.TopWindow(); topWin != nil && topWin.Focusable() {
+			// Search text controls own selection dismissal before close, exactly
+			// like other editable controls. Don't bypass them in the shell ladder.
+			if focused := m.windowManager.Focused(); focused == topWin {
+				switch topWin.ID {
+				case string(ui.OverlayFindReplace):
+					return m, m.handleFindReplaceKey(msg)
+				case findInFilesWindowID, replaceInFilesWindowID:
+					return m, m.forwardEventToWindowContent(topWin, msg)
+				}
+			}
 			_, pane := paneGroupFromOverlay(ui.OverlayID(topWin.ID))
 			if !pane && !ui.IsTerminalOverlay(ui.OverlayID(topWin.ID)) && topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
 				m.closePopupWindowByID(topWin.ID)
@@ -260,7 +289,12 @@ func (m *App) focusTreeHostControl() bool {
 	if m.rootHost == nil {
 		return false
 	}
-	if m.activityView == activityFiles {
+	if m.activityView == activityWorkspaces {
+		screen := m.ensureWorkspaceSwitcher()
+		if !screen.OwnsFocus(m.rootHost.Focused()) {
+			m.rootHost.Focus(workspacescreen.SearchID)
+		}
+	} else if m.activityView == activityFiles {
 		if m.rootHost.Focused() != shelltree.FilterID {
 			m.rootHost.Focus(shelltree.TreeID)
 		}
@@ -275,6 +309,9 @@ func (m *App) focusTreeHostControl() bool {
 // treeFilterBlocksEscPop reports whether Esc should clear the tree filter
 // (via sidebarHost/model) instead of popping FocusTree from the stack.
 func (m *App) treeFilterBlocksEscPop() bool {
+	if m.activityView == activityWorkspaces && m.workspacesScreen != nil {
+		return m.workspacesScreen.Query() != ""
+	}
 	if m.activityView != activityFiles && m.activityList != nil {
 		return m.activityList.Query() != ""
 	}

@@ -158,6 +158,9 @@ type namedHost struct {
 func appHostHolders(app *App) []namedHost {
 	return []namedHost{
 		{"rootHost", app.rootHost},
+		// Borrowed routing alias; ApplyThemePreset clears it before updating
+		// the owning root/window Host, never writes a second copy of theme state.
+		{"wheelHost", app.wheelHost},
 	}
 }
 

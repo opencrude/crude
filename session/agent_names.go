@@ -12,12 +12,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
 	"crude/buildinfo"
 	"crude/collaboration"
 )
+
+// SQLite owns the durable sequence across processes. Queue this process's
+// allocations before opening connections, rather than making a burst of agents
+// compete with each other for the same database's busy timeout.
+var agentNameAllocationMu sync.Mutex
 
 // Agent names come from a durable app-wide arbitrary-precision counter, so the
 // namespace is never exhausted and no name is ever handed out twice across
@@ -34,6 +40,8 @@ func allocateAgentName(home string) (string, error) {
 			return "", err
 		}
 	}
+	agentNameAllocationMu.Lock()
+	defer agentNameAllocationMu.Unlock()
 	directory := filepath.Join(home, buildinfo.DataDir())
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return "", err
@@ -44,42 +52,53 @@ func allocateAgentName(home string) (string, error) {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if _, err = db.Exec("PRAGMA busy_timeout=10000; CREATE TABLE IF NOT EXISTS name_sequence (id INTEGER PRIMARY KEY CHECK(id=1), next TEXT NOT NULL); INSERT OR IGNORE INTO name_sequence(id,next) VALUES(1,'0'); CREATE TABLE IF NOT EXISTS name_key (id INTEGER PRIMARY KEY CHECK(id=1), key BLOB NOT NULL);"); err != nil {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
 		return "", err
 	}
-	if _, err = db.Exec("BEGIN IMMEDIATE"); err != nil {
+	defer func() { _ = conn.Close() }()
+	// The busy handler and the entire transaction belong to this connection.
+	// Reserve the writer before schema initialization too: even an ignored
+	// INSERT outside the transaction would create another contending writer.
+	if _, err = conn.ExecContext(ctx, "PRAGMA busy_timeout=10000"); err != nil {
 		return "", err
 	}
-	defer func() { _, _ = db.Exec("ROLLBACK") }()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return "", fmt.Errorf("reserve agent name sequence: %w", err)
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "ROLLBACK") }()
+	if _, err = conn.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS name_sequence (id INTEGER PRIMARY KEY CHECK(id=1), next TEXT NOT NULL); INSERT OR IGNORE INTO name_sequence(id,next) VALUES(1,'0'); CREATE TABLE IF NOT EXISTS name_key (id INTEGER PRIMARY KEY CHECK(id=1), key BLOB NOT NULL);"); err != nil {
+		return "", fmt.Errorf("initialize agent name allocator: %w", err)
+	}
 	var key []byte
-	if err = db.QueryRow("SELECT key FROM name_key WHERE id=1").Scan(&key); errors.Is(err, sql.ErrNoRows) {
+	if err = conn.QueryRowContext(ctx, "SELECT key FROM name_key WHERE id=1").Scan(&key); errors.Is(err, sql.ErrNoRows) {
 		key = make([]byte, 32)
 		if _, err = rand.Read(key); err != nil {
 			return "", err
 		}
-		if _, err = db.Exec("INSERT INTO name_key(id,key) VALUES(1,?)", key); err != nil {
+		if _, err = conn.ExecContext(ctx, "INSERT INTO name_key(id,key) VALUES(1,?)", key); err != nil {
 			return "", err
 		}
 	} else if err != nil {
 		return "", err
 	}
 	var raw string
-	if err = db.QueryRow("SELECT next FROM name_sequence WHERE id=1").Scan(&raw); err != nil {
+	if err = conn.QueryRowContext(ctx, "SELECT next FROM name_sequence WHERE id=1").Scan(&raw); err != nil {
 		return "", err
 	}
 	index, ok := new(big.Int).SetString(raw, 10)
 	if !ok || index.Sign() < 0 {
 		return "", fmt.Errorf("invalid agent name sequence")
 	}
-	name := shuffledAgentName(index, key)
 	next := new(big.Int).Add(index, big.NewInt(1))
-	if _, err = db.Exec("UPDATE name_sequence SET next=? WHERE id=1", next.String()); err != nil {
+	if _, err = conn.ExecContext(ctx, "UPDATE name_sequence SET next=? WHERE id=1", next.String()); err != nil {
 		return "", err
 	}
-	if _, err = db.Exec("COMMIT"); err != nil {
-		return "", err
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return "", fmt.Errorf("commit agent name sequence: %w", err)
 	}
-	return name, nil
+	return shuffledAgentName(index, key), nil
 }
 
 // agentNameTier locates index within its tier: tier 0 holds single given

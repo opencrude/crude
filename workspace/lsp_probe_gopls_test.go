@@ -33,6 +33,7 @@ func TestProbeAgainstRealGopls(t *testing.T) {
 	lib := write("lib.go", "package probe\n\nfunc Answer() int { return 42 }\n")
 	main := write("main.go", "package probe\n\nvar x int = Answer() + missing\n")
 	m := NewLSPManager(nil)
+	t.Cleanup(m.Close)
 	m.SetWorkspaceRoot(root)
 	settings := editorDisabledSettings()
 	m.SetSettings(settings)

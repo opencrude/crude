@@ -21,7 +21,7 @@ type ToolLayout struct {
 }
 
 func DefaultToolLayout() ToolLayout {
-	return ToolLayout{Rail: []string{"files", "agents", "skills", "mcp"}, Views: make(map[string]ToolViewState), PanelHeights: make(map[string]int)}
+	return ToolLayout{Rail: []string{"files", "agents", "workspaces", "skills", "mcp"}, Views: make(map[string]ToolViewState), PanelHeights: make(map[string]int)}
 }
 
 func (workspace *Workspace) LoadToolLayout() (ToolLayout, error) {

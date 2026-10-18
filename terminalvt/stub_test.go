@@ -13,7 +13,7 @@ func TestNoCGOAPIUnavailable(t *testing.T) {
 		t.Fatalf("new=%v %v", e, err)
 	}
 	e.Close()
-	if _, err = e.Rows(0, 1); !errors.Is(err, ErrNoCGO) {
+	if _, err = e.Rows(RowRequest{Start: 0, Count: 1}); !errors.Is(err, ErrNoCGO) {
 		t.Fatal(err)
 	}
 	if err = e.Resize(80, 24); !errors.Is(err, ErrNoCGO) {

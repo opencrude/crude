@@ -35,14 +35,12 @@ type TextField struct {
 	bg            cell.Color
 	bgSet         bool
 	tokens        *TokenSet
-	selecting     bool
 	cursor        CursorBlinkState
 	lastClickTime time.Time
 	lastClickX    int
+	pressX        int
 	clickCount    int
-	// dragMoved records that the pointer actually moved during the active
-	// drag, so a read-only field's copy-on-release only fires for a real drag.
-	dragMoved bool
+	pointer       textSelectionGesture
 	// clipboardCopy builds the command that writes text to the system
 	// clipboard. Hosts may inject their own write path; tests inject a
 	// recorder so copy payloads are asserted without touching the clipboard.
@@ -99,6 +97,9 @@ func (t *TextField) SetSubmitAction(id string) { t.submitID = id }
 // SetReadOnly toggles read-only mode. Read-only values display from their
 // beginning rather than tracking the editing cursor at end-of-value.
 func (t *TextField) SetReadOnly(v bool) {
+	if t.readOnly != v {
+		t.CancelPointerCapture()
+	}
 	t.readOnly = v
 	if v {
 		t.viewStart = 0
@@ -106,7 +107,12 @@ func (t *TextField) SetReadOnly(v bool) {
 }
 
 // SetDisabled toggles disabled mode.
-func (t *TextField) SetDisabled(v bool) { t.disabled = v }
+func (t *TextField) SetDisabled(v bool) {
+	if t.disabled != v {
+		t.CancelPointerCapture()
+	}
+	t.disabled = v
+}
 
 // SetPassword masks painted characters.
 func (t *TextField) SetPassword(v bool) { t.password = v }
@@ -114,6 +120,7 @@ func (t *TextField) SetPassword(v bool) { t.password = v }
 // SetValue replaces the field value and shows its start until the user
 // interacts (typing, cursor motion, or click take over the viewport).
 func (t *TextField) SetValue(s string) {
+	t.CancelPointerCapture()
 	t.edit.SetValue(s)
 	t.viewStart = 0
 	t.viewReset = true
@@ -133,7 +140,7 @@ func (t *TextField) BindEdit(ed *TextEdit) {
 		return
 	}
 	t.edit = ed
-	t.selecting, t.dragMoved = false, false
+	t.CancelPointerCapture()
 	t.viewReset = false
 	t.ensureCursorVisible()
 }
@@ -143,6 +150,7 @@ func (t *TextField) SyncEditFrom(ed *TextEdit) {
 	if ed == nil {
 		return
 	}
+	t.CancelPointerCapture()
 	ed.CopyStateTo(t.edit)
 	t.ensureCursorVisible()
 }
@@ -151,14 +159,17 @@ func (t *TextField) SyncEditFrom(ed *TextEdit) {
 func (t *TextField) Edit() *TextEdit      { return t.edit }
 func (t *TextField) HasSelection() bool   { return t.edit.HasSelection() }
 func (t *TextField) SelectedText() string { return t.edit.SelectedText() }
-func (t *TextField) IsSelecting() bool    { return t.selecting }
+func (t *TextField) IsSelecting() bool    { return t.pointer.active }
 func (t *TextField) CancelPointerCapture() {
-	t.selecting = false
-	t.dragMoved = false
+	t.pointer = textSelectionGesture{}
 }
-func (t *TextField) PasteText(text string) { t.edit.InsertRunes(text); t.ensureCursorVisible() }
-func (t *TextField) PasteActive() bool     { return !t.disabled && !t.readOnly }
-func (t *TextField) NeedsFrame() bool      { return !t.disabled }
+func (t *TextField) PasteText(text string) {
+	t.CancelPointerCapture()
+	t.edit.InsertRunes(text)
+	t.ensureCursorVisible()
+}
+func (t *TextField) PasteActive() bool { return !t.disabled && !t.readOnly }
+func (t *TextField) NeedsFrame() bool  { return !t.disabled }
 
 // ViewStart returns the horizontal viewport offset (visible runes).
 func (t *TextField) ViewStart() int { return t.viewStart }
@@ -239,7 +250,7 @@ func (t *TextField) ensureCursorVisible() {
 	runes := t.displayRunes()
 	cur = min(cur, len(runes))
 	for t.viewStart < cur && rendering.VisibleWidth(string(runes[t.viewStart:cur])) >= cw {
-		t.viewStart++
+		t.viewStart = rendering.NextGrapheme(runes, t.viewStart)
 	}
 	if t.viewStart < 0 {
 		t.viewStart = 0
@@ -370,6 +381,8 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 	t.viewReset = false
 	switch evt.Kind {
 	case EventKey:
+		t.CancelPointerCapture()
+		t.lastClickTime = time.Time{}
 		result := t.handleKey(evt.Key)
 		if result.Handled {
 			t.cursor.MarkActivity()
@@ -377,6 +390,8 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		return result
 	case EventCustom:
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
+			t.CancelPointerCapture()
+			t.lastClickTime = time.Time{}
 			if t.readOnly {
 				return EventResult{Handled: true}
 			}
@@ -404,42 +419,59 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 			t.clickCount = 1
 		}
 		t.lastClickTime, t.lastClickX = now, ctx.LocalX
+		t.pressX = ctx.LocalX
+		unit := textSelectionCharacter
 		switch {
+		case evt.MouseClick.Mod.Contains(tea.ModShift):
+			t.edit.SetCursor(idx, true)
+			unit = textSelectionCaret
 		case t.clickCount >= 3:
 			t.edit.SelectAll()
 			t.clickCount = 0
+			unit = textSelectionLine
 		case t.clickCount == 2:
 			t.edit.SelectWordAt(idx)
-		case evt.MouseClick.Mod.Contains(tea.ModShift):
-			t.edit.SetCursor(idx, true)
+			unit = textSelectionWord
 		default:
 			t.edit.SetCursor(idx, false)
 			t.edit.SetCursor(idx, true)
 		}
-		t.selecting = true
-		t.dragMoved = false
+		start, end := idx, rendering.NextGrapheme(t.edit.runes, idx)
+		if unit == textSelectionCaret {
+			start, end = t.edit.selAnchor, t.edit.selAnchor
+		} else if unit != textSelectionCharacter {
+			start, end = t.edit.SelectionRange()
+		}
+		t.pointer = textSelectionGesture{active: true, unit: unit, start: start, end: end}
 		t.cursor.MarkActivity()
 		t.ensureCursorVisible()
 		return EventResult{Handled: true, Action: &Action{ID: "ui.capture"}, Invalidate: InvalidatePaint | InvalidateFocus}
 	case EventMouseMotion:
-		if !t.selecting {
+		if !t.IsSelecting() {
 			return EventResult{}
 		}
-		t.dragMoved = true
+		t.pointer.moved = true
 		lx := ctx.LocalX - t.contentX()
 		if lx < 0 && t.viewStart > 0 {
-			t.viewStart--
+			t.viewStart = rendering.PreviousGrapheme(t.displayRunes(), t.viewStart)
 			lx = 0
 		} else if lx >= t.contentWidth() && t.viewStart < t.edit.Len() {
-			t.viewStart++
+			t.viewStart = rendering.NextGrapheme(t.displayRunes(), t.viewStart)
 			lx = max(0, t.contentWidth()-1)
 		}
-		t.edit.SetCursor(t.indexAtContentX(lx), true)
+		t.projectPointer(t.indexAtContentX(lx))
 		t.ensureCursorVisible()
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case EventMouseRelease:
-		if !t.selecting {
+		if evt.MouseRelease.Button != tea.MouseLeft {
 			return EventResult{}
+		}
+		if !t.IsSelecting() {
+			return EventResult{}
+		}
+		if t.pointer.moved || ctx.LocalX != t.pressX {
+			t.projectPointer(t.indexAtContentX(max(0, ctx.LocalX-t.contentX())))
+			t.pointer.moved = true
 		}
 		return EventResult{
 			Handled:    true,
@@ -448,6 +480,18 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		}
 	}
 	return EventResult{}
+}
+
+func (t *TextField) projectPointer(pos int) {
+	start, end := pos, pos
+	switch t.pointer.unit {
+	case textSelectionWord:
+		start, end = textWordRange(t.edit.runes, pos)
+	case textSelectionLine:
+		start, end = 0, t.edit.Len()
+	}
+	t.edit.selAnchor, t.edit.cursor = t.pointer.project(start, end)
+	t.edit.selActive = true
 }
 
 // TextValue returns the entire value (TextClipboardTarget).
@@ -480,11 +524,12 @@ func (t *TextField) TextSelection() (string, bool) {
 
 // ClearTextSelection drops the selection without touching the text
 // (TextClipboardTarget).
-func (t *TextField) ClearTextSelection() { t.edit.ClearSelection() }
+func (t *TextField) ClearTextSelection() { t.CancelPointerCapture(); t.edit.ClearSelection() }
 
 // DeleteTextSelection deletes the active selection and reports whether
 // anything was deleted (TextClipboardTarget).
 func (t *TextField) DeleteTextSelection() bool {
+	t.CancelPointerCapture()
 	if !t.TextEditable() || !t.edit.DeleteSelection() {
 		return false
 	}
@@ -498,12 +543,11 @@ func (t *TextField) DeleteTextSelection() bool {
 // real drag copies the selection to the clipboard and drops it
 // (copy-on-release). A press that never moved only stops the drag.
 func (t *TextField) EndMouseSelection() tea.Cmd {
-	if !t.selecting {
+	if !t.IsSelecting() {
 		return nil
 	}
-	wasDrag := t.dragMoved
-	t.selecting = false
-	t.dragMoved = false
+	wasDrag := t.pointer.moved
+	t.CancelPointerCapture()
 	if !wasDrag || t.TextEditable() {
 		return nil
 	}

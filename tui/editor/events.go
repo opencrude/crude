@@ -306,6 +306,10 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	}
 	if kind != pointerCharacter {
 		start, end = e.pointerUnitRange(kind, pos)
+	} else if msg.Mod.Contains(tea.ModShift) {
+		end = start // Extending a caret/selection is not a new source-unit hit.
+	} else if pos.Col < e.lineVisualWidth(pos.Line) {
+		end = e.buf.nextPosition(pos)
 	}
 	e.beginPointerSelection(kind, start, end, mouse.X, mouse.Y)
 }

@@ -53,14 +53,32 @@ type Title struct {
 // thumb). Header fields must use this so they share a right edge with
 // list/tree rows instead of running into the scrollbar column.
 func BodyWidth(innerW int) int {
-	return filetree.SidebarContentWidth(innerW)
+	return min(max(0, innerW), filetree.SidebarContentWidth(innerW))
+}
+
+// RowColors is the sidebar collection dialect shared by resource and command
+// rows. It is deliberately distinct from popup-list focus colors.
+func RowColors(tokens *ui.TokenSet, state ui.ControlState) (fg, bg cell.Color, attr cell.Attrs) {
+	fg, bg = tokens.Color(ui.ColorFg), tokens.Color(ui.ColorBg)
+	switch state {
+	case ui.StateDisabled:
+		fg = tokens.Color(ui.ColorMuted)
+	case ui.StateFocused:
+		fg, bg, attr = tokens.TreeCursorFg(), tokens.TreeCursorBg(), cell.AttrBold
+	case ui.StateSelected:
+		bg, attr = tokens.Color(ui.ColorSelection), cell.AttrBold
+	case ui.StateHovered:
+		bg = tokens.TreeHoverBg()
+	}
+	return
 }
 
 // FieldRect is the search/commit field on the header row, immediately after
 // the icon and before any right-aligned badge. contentW is BodyWidth: the
 // same right edge as the panel's scrollable rows.
 func (t Title) FieldRect(contentW int) ui.Rect {
-	start := PadLeft + t.iconCols()
+	contentW = max(0, contentW)
+	start := min(contentW, PadLeft+t.iconCols())
 	endReserve := 0
 	if b := t.badgeCols(); b > 0 {
 		endReserve = b
@@ -68,7 +86,7 @@ func (t Title) FieldRect(contentW int) ui.Rect {
 	return ui.Rect{
 		X: start,
 		Y: 0,
-		W: max(1, contentW-start-endReserve),
+		W: max(0, contentW-start-endReserve),
 		H: SearchRows,
 	}
 }

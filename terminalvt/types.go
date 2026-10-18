@@ -2,7 +2,10 @@
 // Engine methods require serialization; returned projections own their memory.
 package terminalvt
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var (
 	ErrNoCGO       = errors.New("libghostty-vt requires cgo; rebuild with CGO_ENABLED=1")
@@ -20,6 +23,8 @@ const (
 	MaxScrollbackLines = 10000
 	// Backing history is additionally byte-bounded (Ghostty page granularity).
 	MaxScrollbackBytes = 32 << 20
+	// A broken child cannot indefinitely retain an uncommitted visual update.
+	SynchronizedOutputTimeout = time.Second
 )
 
 type Options struct{ Cols, Rows, ScrollbackLines int }
@@ -63,6 +68,19 @@ type Cursor struct {
 	Visible, Blink bool
 }
 type Modes struct{ BracketedPaste, MouseTracking, AltScreen, FocusReporting bool }
+
+// RowRequest binds relative history coordinates to the publication that supplied
+// them. Count zero requests a complete viewport at the current grid height;
+// Start -1 explicitly follows the live active grid without an historical anchor.
+type RowRequest struct {
+	Start, Count int
+	// ViewportStart is the recovery viewport if a selection page's epoch became
+	// incompatible; -1 follows the active grid. It shares the same history clock.
+	ViewportStart int
+	HistoryEpoch  uint64
+	HistoryBase   uint64
+}
+
 type Projection struct {
 	Cols, GridRows int
 	// Start and Total address current screen history from its oldest retained row.
@@ -70,11 +88,19 @@ type Projection struct {
 	Cells        [][]Cell
 	// Wrapped marks rows that continue onto the next physical row.
 	Wrapped []bool
-	// HistoryEpoch changes when retained row coordinates lose their identity
-	// (eviction, reset, screen switch or reflow), not for ordinary output.
+	// HistoryEpoch changes on incompatible reset, screen switch or reflow.
+	// HistoryBase advances by exact oldest-row eviction within the same epoch.
 	HistoryEpoch uint64
+	HistoryBase  uint64
 	Cursor       Cursor
 	Modes        Modes
+	// Synchronized publishes the completed active grid during DEC 2026. New
+	// historical pages wait until commit; previously detached history stays valid
+	// only while HistoryEpoch is unchanged.
+	Synchronized bool
+	// ReadSequence orders detached pages even when a timeout publishes new
+	// visual state without any additional PTY ingress generation.
+	ReadSequence uint64
 }
 type Modifiers uint8
 

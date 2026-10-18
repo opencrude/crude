@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -142,7 +143,7 @@ type WorkspaceInfo struct {
 	ProjectDir   string // absolute project path (best-effort)
 	ProjectName  string // display name (basename of project dir); never the raw hash
 	SessionCount int
-	LastActive   int64 // unix nano of most recent session, 0 if unknown
+	LastAccessed int64 // unix nano of most recent successful shell attachment, 0 if unknown
 }
 
 // WorkspaceDisplayName returns a human-readable label for a workspace row.
@@ -192,6 +193,17 @@ func ListWorkspaces() ([]string, error) {
 // and never block the UI for long. Display names are always human-readable
 // (path basename or "unnamed workspace"), never the raw hash id.
 func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return ListWorkspaceInfosContext(ctx)
+}
+
+// ListWorkspaceInfosContext is the cancelable catalog read shared by shell
+// home, workspace navigation and the core resource lane.
+func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ids, err := ListWorkspaces()
 	if err != nil {
 		return nil, err
@@ -216,22 +228,35 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 		go func() {
 			defer workers.Done()
 			for id := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
 				dbPath := filepath.Join(root, id, "workspace.db")
-				results <- workspaceResult{id: id, info: readWorkspaceMetaBounded(dbPath, 150*time.Millisecond)}
+				info := readWorkspaceMetaBounded(ctx, dbPath, 150*time.Millisecond)
+				select {
+				case results <- workspaceResult{id: id, info: info}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
 	go func() {
+		defer func() { close(jobs); workers.Wait(); close(results) }()
 		for _, id := range ids {
-			jobs <- id
+			select {
+			case jobs <- id:
+			case <-ctx.Done():
+				return
+			}
 		}
-		close(jobs)
-		workers.Wait()
-		close(results)
 	}()
 
 	byPath := make(map[string]WorkspaceInfo, len(ids))
 	for result := range results {
+		if ctx.Err() != nil {
+			continue
+		}
 		info := WorkspaceInfo{ID: result.id}
 		if result.info != nil {
 			info = *result.info
@@ -249,19 +274,25 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 		}
 		info.ProjectDir = projectDir
 		info.ProjectName = WorkspaceDisplayName(info)
-		if existing, ok := byPath[projectDir]; !ok || info.LastActive > existing.LastActive {
+		if existing, ok := byPath[projectDir]; !ok || info.LastAccessed > existing.LastAccessed {
 			byPath[projectDir] = info
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	infos := make([]WorkspaceInfo, 0, len(byPath))
 	for _, info := range byPath {
 		infos = append(infos, info)
 	}
 	sort.SliceStable(infos, func(i, j int) bool {
-		if infos[i].LastActive != infos[j].LastActive {
-			return infos[i].LastActive > infos[j].LastActive
+		if infos[i].LastAccessed != infos[j].LastAccessed {
+			return infos[i].LastAccessed > infos[j].LastAccessed
 		}
-		return infos[i].ProjectName < infos[j].ProjectName
+		if infos[i].ProjectName != infos[j].ProjectName {
+			return infos[i].ProjectName < infos[j].ProjectName
+		}
+		return infos[i].ProjectDir < infos[j].ProjectDir
 	})
 	return infos, nil
 }
@@ -274,8 +305,8 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 // the DB handle), the send aborts, and the goroutine exits; it can never
 // leak an open sqlite handle (which would keep the DB file locked on
 // Windows) past the timeout.
-func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo {
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+func readWorkspaceMetaBounded(parent context.Context, dbPath string, limit time.Duration) *WorkspaceInfo {
+	ctx, cancel := context.WithTimeout(parent, limit)
 	defer cancel()
 
 	type result struct{ info *WorkspaceInfo }
@@ -290,15 +321,20 @@ func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo
 	case r := <-ch:
 		return r.info
 	case <-ctx.Done():
+		if parent.Err() != nil {
+			return nil
+		}
 		// Timed out: try a metadata-only fast path that avoids scanning
 		// workspace_sessions (the usual stall under a live writer lock).
-		return readWorkspaceMetaLight(dbPath)
+		lightCtx, stop := context.WithTimeout(parent, limit)
+		defer stop()
+		return readWorkspaceMetaLight(lightCtx, dbPath)
 	}
 }
 
 // readWorkspaceMetaLight reads only workspace_metadata.project_dir so the
 // launcher can still show a path-derived name when the full meta read stalls.
-func readWorkspaceMetaLight(dbPath string) *WorkspaceInfo {
+func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
@@ -311,13 +347,17 @@ func readWorkspaceMetaLight(dbPath string) *WorkspaceInfo {
 	defer func() { _ = db.Close() }()
 
 	var dir string
-	if err := db.QueryRow(`SELECT value FROM workspace_metadata WHERE key = 'project_dir'`).Scan(&dir); err != nil || dir == "" {
+	if err := db.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key = 'project_dir'`).Scan(&dir); err != nil || dir == "" {
 		return nil
 	}
-	return &WorkspaceInfo{
+	info := &WorkspaceInfo{
 		ProjectDir:  dir,
 		ProjectName: filepath.Base(dir),
 	}
+	var accessed string
+	_ = db.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key = 'last_accessed_at'`).Scan(&accessed)
+	info.LastAccessed, _ = strconv.ParseInt(accessed, 10, 64)
+	return info
 }
 
 // readWorkspaceMeta opens a workspace.db read-only and extracts project info.
@@ -343,6 +383,7 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	wdb := &WorkspaceDB{DB: db, Path: dbPath, Dir: filepath.Dir(dbPath)}
 
 	info := &WorkspaceInfo{}
+	info.LastAccessed, _ = strconv.ParseInt(wdb.GetSettingContext(ctx, "last_accessed_at"), 10, 64)
 	// Prefer an explicit metadata key if present.
 	if p := wdb.GetSettingContext(ctx, "project_dir"); p != "" {
 		info.ProjectDir = p
@@ -351,7 +392,7 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	// Fall back to the most recent session's project_dir. A locked or corrupt
 	// DB still yields a stub entry from the folder name.
 	rows, qerr := db.QueryContext(ctx, `
-		SELECT project_dir, project_name, created_at
+		SELECT project_dir, project_name
 		FROM workspace_sessions
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -359,8 +400,7 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	if qerr == nil {
 		if rows.Next() {
 			var dir, name string
-			var created int64
-			if rows.Scan(&dir, &name, &created) == nil {
+			if rows.Scan(&dir, &name) == nil {
 				if info.ProjectDir == "" {
 					info.ProjectDir = dir
 				}
@@ -371,7 +411,6 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 						info.ProjectName = filepath.Base(dir)
 					}
 				}
-				info.LastActive = created
 			}
 		}
 		// Close BEFORE the count query: the pool is capped at one

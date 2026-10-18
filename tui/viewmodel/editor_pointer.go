@@ -51,12 +51,15 @@ func (m *App) deliverPointerScroll(msg editor.PointerScrollMsg) tea.Cmd {
 }
 
 func (m *App) cancelPointerCaptures() {
+	m.setWheelHost(nil)
 	if m.rootHost != nil {
+		m.rootHost.ResetWheelGesture()
 		m.rootHost.CancelPointerCapture()
 	}
 	if m.windowManager != nil {
 		for _, fw := range m.windowManager.Windows() {
 			if host := windowContentHost(fw); host != nil {
+				host.ResetWheelGesture()
 				host.CancelPointerCapture()
 			}
 		}

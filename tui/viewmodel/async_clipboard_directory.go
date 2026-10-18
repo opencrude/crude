@@ -771,6 +771,20 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	m.stopRemoteWorkspaceSwitch()
+	if m.projectReplace != nil && m.projectReplace.cancel != nil {
+		m.projectReplace.cancel()
+		if m.projectReplace.start != nil {
+			m.projectReplace.start()
+		}
+		if m.projectReplace.done != nil {
+			<-m.projectReplace.done
+		}
+	}
+	if m.workspaceListCancel != nil {
+		m.workspaceListCancel()
+		m.workspaceListCancel = nil
+	}
 	if port, ok := m.ws.(shellport.CapabilityHost); ok {
 		port.StopCapabilityHost()
 	}

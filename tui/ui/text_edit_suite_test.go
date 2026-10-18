@@ -260,20 +260,17 @@ func TestSuiteUnicode_RuneSafety(t *testing.T) {
 	})
 
 	t.Run("ZWJ sequence treated as multiple runes", func(t *testing.T) {
-		// TextEdit works at rune level, not grapheme cluster level.
-		// ZWJ sequences are multiple runes. Document this behavior.
+		// Storage/selection offsets count runes; user edits cross graphemes.
 		e := NewTextEdit()
 		e.Insert("👨‍👩‍👧") // family ZWJ: 5 runes (man, ZWJ, woman, ZWJ, girl)
 		// Len should be 5 (runes), not 1 (grapheme)
 		if e.Len() != 5 {
 			t.Logf("ZWJ family Len=%d (rune-level, not grapheme-level)", e.Len())
 		}
-		// Backspace removes last rune (girl), not the whole grapheme
+		// Backspace removes the whole visible family, not its last rune.
 		e.Backspace()
-		// This is the expected behavior for a rune-level engine.
-		// A grapheme-aware TextArea would need to handle this differently.
-		if e.Len() != 4 {
-			t.Logf("after backspace Len=%d (rune-level backspace)", e.Len())
+		if e.Len() != 0 {
+			t.Fatalf("after backspace Len=%d want 0", e.Len())
 		}
 	})
 
@@ -284,9 +281,9 @@ func TestSuiteUnicode_RuneSafety(t *testing.T) {
 		if e.Len() != 2 {
 			t.Fatalf("combining mark Len=%d want 2", e.Len())
 		}
-		e.Backspace() // removes combining mark
-		if e.Value() != "e" {
-			t.Fatalf("after backspace: %q want 'e'", e.Value())
+		e.Backspace() // source offsets are runes, but user edits are grapheme-atomic
+		if e.Value() != "" {
+			t.Fatalf("after backspace: %q want empty", e.Value())
 		}
 	})
 
@@ -437,8 +434,8 @@ func TestSuiteCursor_NavigationAndClamping(t *testing.T) {
 		if e.HasSelection() {
 			t.Fatal("selection should be cleared by non-extending move")
 		}
-		if e.Cursor() != 5 {
-			t.Fatalf("cursor=%d want 5", e.Cursor())
+		if e.Cursor() != 4 {
+			t.Fatalf("cursor=%d want 4 (range end)", e.Cursor())
 		}
 	})
 }
@@ -1820,8 +1817,8 @@ func TestSuiteSelection_DirectionAndExtension(t *testing.T) {
 		if e.HasSelection() {
 			t.Fatal("selection should be cleared")
 		}
-		if e.Cursor() != 2 {
-			t.Fatalf("cursor=%d want 2", e.Cursor())
+		if e.Cursor() != 0 {
+			t.Fatalf("cursor=%d want 0 (range start)", e.Cursor())
 		}
 	})
 

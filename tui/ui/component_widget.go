@@ -330,13 +330,13 @@ func (w *WindowFrameWidget) HandleEvent(msg tea.Msg) tea.Cmd {
 func translateFrameEvent(msg tea.Msg, content Rect) tea.Msg {
 	switch m := msg.(type) {
 	case tea.MouseClickMsg:
-		return tea.MouseClickMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button}
+		return tea.MouseClickMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button, Mod: m.Mod}
 	case tea.MouseMotionMsg:
-		return tea.MouseMotionMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button}
+		return tea.MouseMotionMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button, Mod: m.Mod}
 	case tea.MouseReleaseMsg:
-		return tea.MouseReleaseMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button}
+		return tea.MouseReleaseMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button, Mod: m.Mod}
 	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button}
+		return tea.MouseWheelMsg{X: m.X - content.X, Y: m.Y - content.Y, Button: m.Button, Mod: m.Mod}
 	default:
 		return msg
 	}

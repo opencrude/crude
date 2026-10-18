@@ -225,7 +225,7 @@ var commandCatalog = func() []Descriptor {
 	add("terminal.close", Domain, Delete, "Close the exact retained terminal and its PTY by id (from terminal.open/terminal.create resource_ids or terminal.list); every shell unmounts it.", `{"id":{"type":"string"}}`, "id")
 	add("files.list", Domain, Read, "List one workspace directory; rejects symlink/escaping paths.", `{"new_path":{"type":"string"},"path":{"type":"string"}}`, "path")
 	add("files.read", Domain, Read, "Read a file chunk; continuation must echo the exact digest.", `{"digest":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":32768},"offset":{"type":"integer"},"path":{"type":"string"}}`, "path", "offset", "limit")
-	add("files.search", Domain, Read, "Search workspace files with the typed project search options.", `{"options":{"additionalProperties":false,"properties":{"CaseSensitive":{"type":"boolean"},"IncludeHidden":{"type":"boolean"},"Regex":{"type":"boolean"}},"required":["CaseSensitive","Regex","IncludeHidden"],"type":"object"},"query":{"type":"string"}}`, "query", "options")
+	add("files.search", Domain, Read, "Search workspace files with the typed project search options.", `{"options":{"additionalProperties":false,"properties":{"CaseSensitive":{"type":"boolean"},"IncludeHidden":{"type":"boolean"},"Regex":{"type":"boolean"},"WholeWord":{"type":"boolean"}},"required":["CaseSensitive","Regex","WholeWord","IncludeHidden"],"type":"object"},"query":{"type":"string"}}`, "query", "options")
 	for _, id := range []string{"files.create", "files.rename", "files.delete"} {
 		effect := Write
 		if id == "files.delete" {

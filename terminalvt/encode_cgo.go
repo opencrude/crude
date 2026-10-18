@@ -58,8 +58,27 @@ func (e *Engine) encodeKeyAction(msg Key, action C.GhosttyKeyAction) []byte {
 	C.ghostty_key_event_set_action(e.keyEv, action)
 	C.ghostty_key_event_set_key(e.keyEv, mapGhosttyKey(msg.Code))
 	C.ghostty_key_event_set_mods(e.keyEv, mapGhosttyMods(msg.Mod))
+	var codepoint C.uint32_t
+	if msg.Code >= 0x20 && msg.Code <= 0x10ffff {
+		codepoint = C.uint32_t(unshiftedKeyCode(msg.Code))
+	}
+	C.ghostty_key_event_set_unshifted_codepoint(e.keyEv, codepoint)
 	text := msg.Text
-	if action != C.GHOSTTY_KEY_ACTION_PRESS || msg.Mod.Contains(ModCtrl) || containsC0(text) {
+	if containsC0(text) {
+		text = ""
+	}
+	// Terminal protocols often provide only Code for modified printable keys.
+	// Ghostty requires their pre-Control text, not the resulting C0 byte. In
+	// particular Ctrl+I/M/[ are ambiguous without it. Keep encoding with the
+	// terminal-aware owner (including Kitty/modifyOtherKeys), not a C0 fallback.
+	if text == "" && msg.Code >= 0x20 && msg.Code <= 0x7e {
+		logical := msg.Code
+		if msg.Mod.Contains(ModShift) && logical >= 'a' && logical <= 'z' {
+			logical = logical - 'a' + 'A'
+		}
+		text = string(logical)
+	}
+	if action != C.GHOSTTY_KEY_ACTION_PRESS {
 		text = ""
 	}
 	var utf8 []byte
@@ -112,6 +131,7 @@ func mapGhosttyMods(mod Modifiers) C.GhosttyMods {
 }
 
 func mapGhosttyKey(code rune) C.GhosttyKey {
+	code = unshiftedKeyCode(code)
 	switch code {
 	case KeyEnter:
 		return C.GHOSTTY_KEY_ENTER
@@ -200,6 +220,23 @@ func mapGhosttyKey(code rune) C.GhosttyKey {
 		return C.GHOSTTY_KEY_A + C.GhosttyKey(code-'A')
 	}
 	return C.GHOSTTY_KEY_UNIDENTIFIED
+}
+
+// Logical shifted ASCII key values arrive from terminal protocols without a
+// physical key. Map that value back to its key; the modifier and UTF-8 payload
+// above retain the original logical symbol for Ghostty's protocol decisions.
+func unshiftedKeyCode(code rune) rune {
+	if code >= 'A' && code <= 'Z' {
+		return code - 'A' + 'a'
+	}
+	const shifted = "~!@#$%^&*()_+{}|:\"<>?"
+	const base = "`1234567890-=[]\\;',./"
+	for i, c := range shifted {
+		if code == c {
+			return rune(base[i])
+		}
+	}
+	return code
 }
 
 // EncodeFocus encodes a focus in/out report (CSI I / CSI O) when the child

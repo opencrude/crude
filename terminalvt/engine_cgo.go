@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"runtime/cgo"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -34,8 +35,16 @@ type Engine struct {
 	closed       bool
 	effects      Effects
 	historyRef   C.GhosttyTrackedGridRef
+	historyTail  C.GhosttyTrackedGridRef
+	historyBase  uint64
+	historyTotal int
 	historyAlt   bool
 	historyEpoch uint64
+	// render holds exactly the completed active grid while DEC 2026 is set.
+	synchronized *Projection
+	syncStarted  time.Time
+	now          func() time.Time
+	readSequence uint64
 }
 
 func New(opts Options) (*Engine, error) {
@@ -82,6 +91,7 @@ func New(opts Options) (*Engine, error) {
 		return nil, fmt.Errorf("%w: mouse_event_new: %d", ErrUnavailable, int(rc))
 	}
 	e.handle = cgo.NewHandle(e)
+	e.historyEpoch = 1 // zero identifies a reader without a history publication
 	C.crude_set_userdata(e.term, C.uintptr_t(e.handle))
 	C.crude_set_write_pty(e.term)
 	C.crude_set_title_changed(e.term)
@@ -108,7 +118,9 @@ func (e *Engine) Close() {
 	}
 	e.closed = true
 	C.ghostty_tracked_grid_ref_free(e.historyRef)
+	C.ghostty_tracked_grid_ref_free(e.historyTail)
 	e.historyRef = nil
+	e.historyTail = nil
 	if e.mouseEv != nil {
 		C.ghostty_mouse_event_free(e.mouseEv)
 		e.mouseEv = nil
@@ -230,7 +242,26 @@ func (e *Engine) Feed(data []byte) Effects {
 		return Effects{}
 	}
 	e.effects = Effects{}
-	C.ghostty_terminal_vt_write(e.term, (*C.uint8_t)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
+	e.expireSynchronizedOutput()
+	for at := 0; at < len(data); {
+		at += int(C.crude_write_visual_boundary(e.term, (*C.uint8_t)(unsafe.Pointer(&data[at])), C.size_t(len(data)-at)))
+		if bool(C.crude_mode_value(e.term, C.GHOSTTY_MODE_SYNC_OUTPUT)) {
+			if e.synchronized == nil {
+				// A transition is observed before any following bytes are fed,
+				// even when end/begin and another erase share one PTY chunk.
+				p, err := e.rowMetadata(-1)
+				if err == nil && C.ghostty_render_state_update(e.render, e.term) == C.GHOSTTY_SUCCESS {
+					p.Synchronized = true
+					e.synchronized = &p
+					e.syncStarted = e.clock()
+				} else {
+					C.crude_end_sync_output(e.term)
+				}
+			}
+		} else {
+			e.synchronized = nil
+		}
+	}
 	runtime.KeepAlive(data)
 	out := e.effects
 	e.effects = Effects{}
@@ -252,10 +283,28 @@ func (e *Engine) Resize(cols, rows int) error {
 		return fmt.Errorf("resize: %d", rc)
 	}
 	e.cols, e.rows = cols, rows
+	e.synchronized = nil // Ghostty resize releases DEC 2026 as specified.
 	C.ghostty_tracked_grid_ref_free(e.historyRef)
+	C.ghostty_tracked_grid_ref_free(e.historyTail)
 	e.historyRef = nil
+	e.historyTail = nil
+	e.historyBase = 0
 	e.historyEpoch++
 	return nil
+}
+
+func (e *Engine) clock() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
+}
+
+func (e *Engine) expireSynchronizedOutput() {
+	if e.synchronized != nil && e.clock().Sub(e.syncStarted) >= SynchronizedOutputTimeout {
+		C.crude_end_sync_output(e.term)
+		e.synchronized = nil
+	}
 }
 
 // BracketedPaste reports DEC mode 2004.

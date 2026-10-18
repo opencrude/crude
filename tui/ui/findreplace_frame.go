@@ -57,6 +57,7 @@ type FindReplaceFrameSpec struct {
 	// Match counter; CurrentIdx is 0-based, -1 when there are no matches.
 	MatchCount int
 	CurrentIdx int
+	Error      string
 }
 
 // frGapRow is a fixed-height vertical spacer between find/replace content
@@ -158,6 +159,10 @@ func BuildFindReplaceFrame(th *theme.Theme, spec FindReplaceFrameSpec) *Componen
 	statusLabel := NewLabel(FRStatus, "", th)
 	statusLabel.SetColorRole(ColorMuted)
 	statusLabel.SetText(matchCountText(spec.MatchCount, spec.CurrentIdx))
+	if spec.Error != "" {
+		statusLabel.SetText("Invalid regex: " + spec.Error)
+		statusLabel.SetColorRole(ColorError)
+	}
 
 	navBar := NewActionBar(FRActions, tokens, findNavButtons(spec)...)
 	navBar.SetAlignEnd(true)

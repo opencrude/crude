@@ -14,16 +14,18 @@ import (
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
+	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 	"crude/workspace"
 )
 
 const (
-	activityFiles  = activitybar.ViewFiles
-	activityAgents = activitybar.ViewAgents
-	activitySkills = activitybar.ViewSkills
-	activityMCP    = activitybar.ViewMCP
+	activityFiles      = activitybar.ViewFiles
+	activityAgents     = activitybar.ViewAgents
+	activityWorkspaces = activitybar.ViewWorkspaces
+	activitySkills     = activitybar.ViewSkills
+	activityMCP        = activitybar.ViewMCP
 
 	sidebarItemNewAgent = "agent.new"
 )
@@ -75,6 +77,9 @@ func (m *App) setActivity(view activitybar.View, showContent bool) {
 		if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
 			m.activityList.RestoreViewState(activitylist.ViewState{Filter: state.Filter, Selection: state.Selection, Offset: state.Offset})
 		}
+		if view == activityWorkspaces {
+			m.ensureWorkspaceSwitcher().RestoreViewState(workspacescreen.State{Filter: state.Filter, Selection: state.Selection, Offset: state.Offset})
+		}
 	} else if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
 		m.activityList.RestoreViewState(activitylist.ViewState{})
 	}
@@ -95,6 +100,9 @@ func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 	}
 	if view == activitySkills || view == activityMCP {
 		return m.capabilitySnapshotCmd()
+	}
+	if view == activityWorkspaces && !m.workspaceListLoading {
+		m.refreshLauncherAsync(m.ws.RootPath())
 	}
 	return nil
 }
@@ -240,6 +248,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if cmd, handled := m.handleMainPaneAction(action); handled {
 		return cmd
 	}
+	if cmd, handled := m.handleWorkspaceSwitcherAction(*action); handled {
+		return cmd
+	}
 	if m.handleTerminalAction(*action) {
 		return nil
 	}
@@ -378,7 +389,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID {
+		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID || payload.ID == workspacescreen.DividerID {
 			m.setSidebarWidth(payload.First)
 			m.captureToolView()
 			m.toolLayoutVersion++

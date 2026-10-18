@@ -32,6 +32,7 @@ type mainPaneLayout struct {
 	dividerRects    map[uint64]ui.Rect
 	dividerFirst    map[uint64]int
 	drop            *paneDrop
+	drag            *paneDrag
 	windows         map[window.GroupID]*paneWindow
 	compact         bool
 	initialChatUsed bool
@@ -244,6 +245,23 @@ func paneGroupRect(n *window.PaneNode, group window.GroupID, r ui.Rect) ui.Rect 
 		return found
 	}
 	return paneGroupRect(n.Second, group, b)
+}
+
+func paneNodeRect(n *window.PaneNode, id uint64, r ui.Rect) ui.Rect {
+	if n == nil {
+		return ui.Rect{}
+	}
+	if n.ID == id {
+		return r
+	}
+	if n.Split == nil {
+		return ui.Rect{}
+	}
+	a, b, _, _ := paneSplitGeometry(n, r)
+	if found := paneNodeRect(n.First, id, a); !found.Empty() {
+		return found
+	}
+	return paneNodeRect(n.Second, id, b)
 }
 
 func paneMinimum(n *window.PaneNode) (int, int) {

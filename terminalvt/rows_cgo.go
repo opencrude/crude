@@ -10,33 +10,80 @@ import "unsafe"
 
 // Rows returns a bounded page starting at the oldest retained history row.
 // start=-1 requests the active grid. A reader never leaves the engine scrolled.
-func (e *Engine) Rows(start, count int) (Projection, error) {
+func (e *Engine) Rows(request RowRequest) (result Projection, err error) {
+	start, count := request.Start, request.Count
 	if e == nil || e.closed {
 		return Projection{}, ErrClosed
 	}
-	if count < 0 || count > MaxSnapshotRows || start < -1 {
+	if count < 0 || count > MaxSnapshotRows || start < -1 || request.ViewportStart < -1 {
 		return Projection{}, ErrBounds
 	}
-	C.crude_scroll_bottom(e.term)
-	_, retained, _ := e.Scrollbar()
-	total := min(retained, e.scrollback+e.rows)
-	base := retained - total
-	if err := e.syncHistoryIdentity(base); err != nil {
+	e.readSequence++
+	defer func() { result.ReadSequence = e.readSequence }()
+	e.expireSynchronizedOutput()
+	if frozen := e.synchronized; frozen != nil {
+		p := *frozen
+		start = requestStart(request, p)
+		if request.HistoryEpoch != 0 && request.HistoryEpoch != p.HistoryEpoch {
+			start, count = p.Start, p.GridRows
+		}
+		if start == -1 {
+			start = p.Start
+		}
+		start = min(start, p.Total)
+		if count == 0 {
+			count = p.GridRows
+		}
+		end := min(start+count, p.Total, p.Start+p.GridRows)
+		start = max(start, p.Start)
+		if end <= start {
+			// A historical request can race the begin boundary. Return the
+			// usable completed grid, not an empty page that would blank a new
+			// viewer. Detached cached history remains client-owned until commit.
+			start, end = p.Start, p.Start+p.GridRows
+		}
+		p.Start = start
+		if end > start {
+			page, wrapped, err := e.viewportRows()
+			if err != nil {
+				return Projection{}, err
+			}
+			p.Cells = page[start-frozen.Start : end-frozen.Start]
+			p.Wrapped = wrapped[start-frozen.Start : end-frozen.Start]
+		}
+		return p, nil
+	}
+	p, err := e.rowMetadata(start)
+	if err != nil {
 		return Projection{}, err
 	}
+	start = requestStart(request, p)
 	if start == -1 {
-		start = max(0, total-e.rows)
+		start = max(0, p.Total-p.GridRows)
 	}
-	if start > total {
-		return Projection{}, ErrBounds
+	start = min(start, p.Total)
+	p.Start = start
+	if request.Start >= 0 && request.HistoryEpoch != 0 && request.HistoryEpoch != p.HistoryEpoch {
+		// An old selection/page request cannot publish unrelated new history.
+		// Recover once with a complete clamped viewport and explicit new identity.
+		count = 0
+		if request.Count > 0 {
+			start = request.ViewportStart
+			if start < 0 {
+				start = max(0, p.Total-p.GridRows)
+			}
+		}
 	}
 	if count == 0 {
 		count = e.rows
+		// A viewport request can race a reset/reflow that shortens history.
+		// Return a complete clamped viewport, never an empty/partial bottom page.
+		start = min(start, max(0, p.Total-e.rows))
+		p.Start = start
 	}
-	count = min(count, total-start)
-	x, y, v := e.Cursor()
-	p := Projection{Cols: e.cols, GridRows: e.rows, Start: start, Total: total, Cursor: Cursor{x, y, v, e.CursorBlink()}, Modes: Modes{e.BracketedPaste(), e.MouseTracking(), e.AltScreen(), e.FocusReporting()}}
-	p.HistoryEpoch = e.historyEpoch
+	count = min(count, p.Total-start)
+	_, retained, _ := e.Scrollbar()
+	base := retained - p.Total
 	defer C.crude_scroll_bottom(e.term)
 	for len(p.Cells) < count {
 		at := base + start + len(p.Cells)
@@ -61,17 +108,58 @@ func (e *Engine) Rows(start, count int) (Projection, error) {
 	return p, nil
 }
 
+func requestStart(request RowRequest, p Projection) int {
+	if request.Start < 0 {
+		return -1
+	}
+	if request.HistoryEpoch == p.HistoryEpoch && request.HistoryBase <= p.HistoryBase {
+		shift := p.HistoryBase - request.HistoryBase
+		if shift >= uint64(request.Start) {
+			return 0
+		}
+		return request.Start - int(shift)
+	}
+	return request.Start
+}
+
+func (e *Engine) rowMetadata(start int) (Projection, error) {
+	C.crude_scroll_bottom(e.term)
+	_, retained, _ := e.Scrollbar()
+	total := min(retained, e.scrollback+e.rows)
+	base := retained - total
+	if err := e.syncHistoryIdentity(base, total); err != nil {
+		return Projection{}, err
+	}
+	if start == -1 {
+		start = max(0, total-e.rows)
+	}
+	start = min(start, total)
+	x, y, v := e.Cursor()
+	p := Projection{Cols: e.cols, GridRows: e.rows, Start: start, Total: total, Cursor: Cursor{x, y, v, e.CursorBlink()}, Modes: Modes{e.BracketedPaste(), e.MouseTracking(), e.AltScreen(), e.FocusReporting()}}
+	p.HistoryEpoch = e.historyEpoch
+	p.HistoryBase = e.historyBase
+	return p, nil
+}
+
 // Track the oldest published row through Ghostty page-list mutations. Unlike
 // text comparisons or total-row deltas, this detects page recycling and resets.
-func (e *Engine) syncHistoryIdentity(base int) error {
+func (e *Engine) syncHistoryIdentity(base, total int) error {
 	alt := e.AltScreen()
 	if e.historyRef != nil {
-		var at C.GhosttyPointCoordinate
-		if alt != e.historyAlt || C.ghostty_tracked_grid_ref_point(e.historyRef, C.GHOSTTY_POINT_TAG_SCREEN, &at) != C.GHOSTTY_SUCCESS || int(at.y) != base || int(at.x) != 0 {
+		var at, tail C.GhosttyPointCoordinate
+		oldestOK := C.ghostty_tracked_grid_ref_point(e.historyRef, C.GHOSTTY_POINT_TAG_SCREEN, &at) == C.GHOSTTY_SUCCESS && int(at.x) == 0
+		tailOK := e.historyTail != nil && C.ghostty_tracked_grid_ref_point(e.historyTail, C.GHOSTTY_POINT_TAG_SCREEN, &tail) == C.GHOSTTY_SUCCESS && int(tail.x) == 0
+		shift := e.historyTotal - 1 - int(tail.y) + base
+		if alt != e.historyAlt || !tailOK || shift < 0 || oldestOK && shift != base-int(at.y) || !oldestOK && shift == 0 {
 			e.historyEpoch++
+			e.historyBase = 0
+		} else if shift > 0 {
+			e.historyBase += uint64(shift)
 		}
 		C.ghostty_tracked_grid_ref_free(e.historyRef)
+		C.ghostty_tracked_grid_ref_free(e.historyTail)
 		e.historyRef = nil
+		e.historyTail = nil
 	}
 	// GhosttyPoint contains a C union; resolve its coordinate layout in C memory.
 	var point C.GhosttyPoint
@@ -81,7 +169,12 @@ func (e *Engine) syncHistoryIdentity(base int) error {
 	if C.ghostty_terminal_grid_ref_track(e.term, point, &e.historyRef) != C.GHOSTTY_SUCCESS {
 		return ErrUnavailable
 	}
+	coord.y = C.uint32_t(base + total - 1)
+	if C.ghostty_terminal_grid_ref_track(e.term, point, &e.historyTail) != C.GHOSTTY_SUCCESS {
+		return ErrUnavailable
+	}
 	e.historyAlt = alt
+	e.historyTotal = total
 	return nil
 }
 func (e *Engine) viewportRows() ([][]Cell, []bool, error) {
