@@ -101,6 +101,9 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		snapshot.Phase, snapshot.Detail = ttypes.AgentOpening, "Opening"
 		snapshot.StartedAt = snapshot.UpdatedAt
 	case "sub_agent_completed":
+		// A child owns its preparation slot only for this assignment. Unlike a
+		// root between human turns, it cannot adopt a retained summary later.
+		snapshot.Checkpoint, snapshot.CheckpointDetail = "", ""
 		result := "completed"
 		if values, ok := evt.Data.(map[string]string); ok {
 			result = values["status"]

@@ -114,6 +114,20 @@ func TestBackgroundSummaryStatusSettlesAndRejectsStaleProgress(t *testing.T) {
 	}
 }
 
+func TestCompletedChildDoesNotRetainBackgroundSummaryDetails(t *testing.T) {
+	w := newIngressWorkspace(t)
+	w.ApplyAgentEvent(AgentEvent{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{"agent_id": "child", "parent_id": "root"}})
+	w.ApplyAgentEvent(AgentEvent{AgentID: "child", Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": "summary"}})
+	if state, _ := w.Status.Agent("child"); state.Checkpoint != "preparing" {
+		t.Fatal("setup: child summary never started")
+	}
+	w.ApplyAgentEvent(AgentEvent{AgentID: "child", Type: "sub_agent_completed", Data: map[string]string{"agent_id": "child", "status": "completed"}})
+	w.ApplyAgentEvent(AgentEvent{AgentID: "child", Type: "context_precompaction", Data: map[string]any{"phase": "progress", "request_id": "summary"}})
+	if state, _ := w.Status.Agent("child"); state.Checkpoint != "" || state.CheckpointDetail != "" || state.Phase != ttypes.AgentCompleted {
+		t.Fatalf("terminal child retained or reopened background work: %+v", state)
+	}
+}
+
 func TestApplyAgentStatusEventPermissionsUseFamilyPolicy(t *testing.T) {
 	w, root := newAgentStatusEventWorkspace(t)
 	child := w.AgentMgr.AddSubAgent("child", root.ID, "Edward", "model", "crafter", NewAgentState("child", NewConversation(), nil))

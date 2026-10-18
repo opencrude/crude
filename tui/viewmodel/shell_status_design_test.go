@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/editor"
+	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	types "crude/types"
 	"crude/workspace"
@@ -165,6 +169,23 @@ func TestBackgroundContextSummaryIsExplainedInDetailsNotHeader(t *testing.T) {
 	}
 	if !strings.Contains(detail, "background") || !strings.Contains(detail, "not blocked") {
 		t.Fatalf("details do not explain the operation: %q", detail)
+	}
+	// Check the ordinary Workspace disclosure, not only its projection data.
+	app.toggleWorkspacePanel(termdock.PanelWorkspace)
+	app.paintShellFrame()
+	screen := app.termDock.Panel(termdock.PanelWorkspace).(*statusoverview.Surface)
+	list, dock := screen.ListBounds(), app.termDockRect
+	for y := dock.Y + 1 + list.Y; y < dock.Y+1+list.Y+4 && !screen.IsExpanded("agent:root"); y++ {
+		app.rootHost.Handle(tea.MouseClickMsg{X: dock.X + list.X + 4, Y: y, Button: tea.MouseLeft})
+	}
+	app.paintShellFrame()
+	var rendered strings.Builder
+	for y := 0; y < app.height; y++ {
+		rendered.WriteString(rowText(app, y))
+		rendered.WriteByte('\n')
+	}
+	if !screen.IsExpanded("agent:root") || !strings.Contains(rendered.String(), "Context summary") || !strings.Contains(rendered.String(), "not blocked") {
+		t.Fatalf("ordinary agent disclosure did not render the explanation:\n%s", rendered.String())
 	}
 }
 
