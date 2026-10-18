@@ -400,6 +400,7 @@ func (a *Agent) compactWithModel(
 	}
 
 	checkpointMsg := provider.NewTextMessage("user", checkpoint)
+	checkpointMsg.InternalID = provider.NewMessageID()
 	checkpointMsg.Origin = provider.OriginCheckpoint
 	checkpointMsg.Visibility = provider.VisibilityContextOnly
 	// Jobs and plans may settle while extraction runs. Refresh their real owners
@@ -442,6 +443,7 @@ func (a *Agent) compactWithModel(
 				requests = append(requests, human.ContentString())
 			}
 			history := provider.NewTextMessage("user", rootprompt.AnsweredHumanRequests(requests))
+			history.InternalID = provider.NewMessageID()
 			history.Origin, history.Visibility = provider.OriginCheckpoint, provider.VisibilityContextOnly
 			if provider.EstimateMessageTokens(history, targetModel) <= available {
 				compacted = append(compacted, history)

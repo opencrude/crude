@@ -351,6 +351,55 @@ func immutableMessagePayload(message provider.ChatMessage) ([]byte, error) {
 	return json.Marshal(identity)
 }
 
+// HydrateMessageIdentities replaces each transcript row's message with its full
+// immutable identity. The messages table is a presentation projection that omits
+// provider replay facts; resumed state must not be rebuilt from it, or later
+// recovery checkpoints conflict with the identities they are verified against.
+// Display content and reference labels stay owned by the transcript row.
+func HydrateMessageIdentities(db *sql.DB, sessionID string, messages []MessageWithMeta) error {
+	rows, err := db.Query(`SELECT internal_id,message_json FROM immutable_message_identities WHERE session_id=?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("sessiondb: load message identities: %w", err)
+	}
+	defer rows.Close()
+	identities := make(map[string]provider.ChatMessage)
+	for rows.Next() {
+		var id string
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return fmt.Errorf("sessiondb: load message identities scan: %w", err)
+		}
+		var identity immutableMessageIdentity
+		if err := json.Unmarshal(raw, &identity); err != nil {
+			return fmt.Errorf("sessiondb: decode message identity %q: %w", id, err)
+		}
+		if !identity.NilToolCalls && identity.Message.ToolCalls == nil {
+			identity.Message.ToolCalls = []provider.ToolCall{}
+		}
+		if !identity.NilReasoningDetails && identity.Message.ReasoningDetails == nil {
+			identity.Message.ReasoningDetails = []json.RawMessage{}
+		}
+		if !identity.NilProviderItems && identity.Message.ProviderItems == nil {
+			identity.Message.ProviderItems = []provider.ProviderItem{}
+		}
+		identities[id] = identity.Message
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sessiondb: load message identities rows: %w", err)
+	}
+	for i := range messages {
+		row := messages[i].Msg
+		identity, ok := identities[row.InternalID]
+		if row.InternalID == "" || !ok {
+			continue
+		}
+		identity.DisplayContent = row.DisplayContent
+		identity.ReferenceLabels = row.ReferenceLabels
+		messages[i].Msg = identity
+	}
+	return nil
+}
+
 func registerImmutableMessagesTx(tx *sql.Tx, sessionID, agentID string, messages []provider.ChatMessage, location string) error {
 	for _, message := range messages {
 		if message.InternalID == "" {

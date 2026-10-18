@@ -120,6 +120,31 @@ func TestPreviewScrollSelectionAndResizeAreInteractive(t *testing.T) {
 	}
 }
 
+func TestPreviewStationaryDragRepeatsThroughMountedOwner(t *testing.T) {
+	s, host := searchHost(t)
+	s.SetQuery("target")
+	s.ScheduleSearch()
+	text := "target\n" + strings.Repeat("preview source line\n", 80)
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, EndColumn: 6, LineText: "target", Context: text, ContextStart: 1}}, nil, 0)
+	host.Paint(surface.NewCellBuffer(80, 24))
+	r, ok := host.ScreenRect(PreviewID)
+	if !ok || r.H < 4 {
+		t.Fatal("preview not mounted")
+	}
+	host.Handle(tea.MouseClickMsg{X: r.X + 14, Y: r.Y + 2, Button: tea.MouseLeft})
+	res := host.Handle(tea.MouseMotionMsg{X: r.X + 14, Y: r.Y + r.H + 2, Button: tea.MouseLeft})
+	if res.Cmd == nil {
+		t.Fatal("preview edge selection emitted no repeat timer")
+	}
+	before := s.previewSrc.ScrollY()
+	msg := res.Cmd()
+	res = host.Deliver(PreviewID, msg)
+	if s.previewSrc.ScrollY() <= before || res.Cmd == nil {
+		t.Fatal("preview did not handle stationary captured drag")
+	}
+	host.CancelPointerCapture()
+}
+
 func countNonEmptyCells(buf *surface.CellBuffer) int {
 	n := 0
 	for y := 0; y < buf.Height(); y++ {

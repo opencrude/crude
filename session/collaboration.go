@@ -60,6 +60,43 @@ func (s *Session) CollaborationStore() *collaboration.Store {
 	return s.collaborationStore
 }
 
+// PublishHumanSteering shares the execution owner's cancellation fence. The
+// journal's run record can still be running while an explicitly stopped turn
+// settles persistence; it must not accept new input on that turn's behalf.
+func (s *Session) PublishHumanSteering(ctx context.Context, agentID string, request collaboration.PublishRequest) (collaboration.PublishResult, error) {
+	store := s.CollaborationStore()
+	if store == nil {
+		return collaboration.PublishResult{}, collaboration.ErrUnavailable
+	}
+	s.orchMu.Lock()
+	orchestrator := s.orchestrators[agentID]
+	s.orchMu.Unlock()
+	if orchestrator != nil {
+		orchestrator.turnMu.Lock()
+		defer orchestrator.turnMu.Unlock()
+		if orchestrator.closing.Load() || orchestrator.turnCancel == nil || orchestrator.turnCancelling || orchestrator.turnSealed || orchestrator.RunID != request.RunID {
+			return collaboration.PublishResult{}, collaboration.ErrUnavailable
+		}
+	} else {
+		runner := s.SubAgentRunner()
+		if runner == nil {
+			return collaboration.PublishResult{}, collaboration.ErrUnavailable
+		}
+		handle, ok := runner.Manager().GetActive(agent.AgentID(agentID))
+		if !ok {
+			return collaboration.PublishResult{}, collaboration.ErrUnavailable
+		}
+		var result collaboration.PublishResult
+		err := handle.WithSteeringAdmission(request.RunID, func() error {
+			var err error
+			result, err = store.Publish(ctx, request)
+			return err
+		})
+		return result, err
+	}
+	return store.Publish(ctx, request)
+}
+
 func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID, parentID, category string, db *sql.DB) (collaboration.Agent, error) {
 	if s == nil {
 		return collaboration.Agent{}, fmt.Errorf("session is nil")

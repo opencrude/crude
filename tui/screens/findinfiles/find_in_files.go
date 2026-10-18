@@ -1017,8 +1017,13 @@ type previewPane struct {
 func (p *previewPane) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
-func (p *previewPane) Layout(_ ui.LayoutContext, r ui.Rect) { p.SetBounds(r) }
-func (p *previewPane) SetTokens(*ui.TokenSet)               {}
+func (p *previewPane) Layout(_ ui.LayoutContext, r ui.Rect) {
+	if p.Bounds() != r {
+		p.CancelPointerCapture()
+	}
+	p.SetBounds(r)
+}
+func (p *previewPane) SetTokens(*ui.TokenSet) {}
 func (p *previewPane) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
 	r := p.Bounds()
 	if r.Empty() {
@@ -1044,6 +1049,11 @@ func (p *previewPane) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	var msg tea.Msg
 	switch evt.Kind {
+	case ui.EventCustom:
+		if _, ok := evt.Custom.(editor.PointerScrollMsg); !ok {
+			return ui.EventResult{}
+		}
+		msg = evt.Custom
 	case ui.EventKey:
 		if evt.Key.Code == tea.KeyTab {
 			if evt.Key.Mod.Contains(tea.ModShift) {

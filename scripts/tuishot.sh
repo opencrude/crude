@@ -9,6 +9,8 @@
 #   type:<literal text>       type:main.go
 #   click:<col>,<row>[,<btn>] cell coords, btn 1=left 2=mid 3=right 4=whlup 5=whldn
 #   move:<col>,<row>          move pointer only (hover test)
+#   down:<col>,<row>          hold left button (stationary drag acceptance)
+#   up:<col>,<row>            release left button at the final endpoint
 #   drag:<c1>,<r1>,<c2>,<r2>  press, move, shot mid-drag, release, shot
 #   dragburst:<c1>,<r1>,<c2>,<r2>,<steps> flood motion without sleeps
 #   wheel:<col>,<row>,<n>     n wheel-down clicks (negative = up) at cell
@@ -62,7 +64,9 @@ export DISPLAY="${DISPLAY:-:0}"
 
 WIN_ID=""
 CAPTURE_PID=""
+POINTER_DOWN=0
 cleanup() {
+  [ "$POINTER_DOWN" = "1" ] && xdotool mouseup 1 2>/dev/null
   [ "$KEEP_OPEN" = "1" ] && return 0
   [ -n "$WIN_ID" ] && xdotool windowkill "$WIN_ID" 2>/dev/null
   if [ -n "$CAPTURE_PID" ]; then
@@ -191,6 +195,18 @@ for step in "$@"; do
       IFS=',' read -r c r <<<"${step#move:}"
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
       sleep "$STEP_WAIT"; shot "move-${c}_${r}" ;;
+    down:*)
+      IFS=',' read -r c r <<<"${step#down:}"
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" mousedown 1
+      POINTER_DOWN=1
+      sleep "$STEP_WAIT"; shot "down-${c}_${r}" ;;
+    up:*)
+      IFS=',' read -r c r <<<"${step#up:}"
+      # --sync waits for motion even when this is the already-held coordinate;
+      # do not delay release until an unrelated desktop pointer event arrives.
+      xdotool mousemove "$(px "$c")" "$(py "$r")" mouseup 1
+      POINTER_DOWN=0
+      sleep "$STEP_WAIT"; shot "up-${c}_${r}" ;;
     wheel:*)
       IFS=',' read -r c r n <<<"${step#wheel:}"
       btn=5; [ "${n:-1}" -lt 0 ] && { btn=4; n=$(( -n )); }

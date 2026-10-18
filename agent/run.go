@@ -1197,6 +1197,24 @@ steps:
 				}})
 				return returnMessages()
 			}
+			if a.SealRuntimeMessages != nil {
+				if err := a.SealRuntimeMessages(ctx); err != nil {
+					a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
+					a.emitError(emit, err)
+					return returnMessages()
+				}
+				queued, err := drainRuntime()
+				if err != nil {
+					a.emitError(emit, err)
+					return returnMessages()
+				}
+				if queued > 0 {
+					if a.ResumeRuntimeMessages != nil {
+						a.ResumeRuntimeMessages()
+					}
+					continue
+				}
+			}
 			doneReason := "completed"
 			if finishReason != "" && finishReason != "stop" && finishReason != "end_turn" {
 				doneReason = finishReason

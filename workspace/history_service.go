@@ -330,6 +330,11 @@ func (s *LocalHistoryService) BeginMessage(ctx context.Context, sessionID, messa
 	if !enabled {
 		return session.ErrHistoryDisabled
 	}
+	if _, exists, err := s.store.MessageScope(sessionID, messageID); err != nil {
+		return err
+	} else if exists {
+		return session.ErrHistoryRecorded
+	}
 	s.activityMu.RLock()
 	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "before_message", "Before message "+messageID, ""))
 	if err != nil {

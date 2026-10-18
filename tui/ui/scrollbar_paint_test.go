@@ -10,6 +10,32 @@ import (
 	"crude/tui/theme"
 )
 
+func TestScrollbarReleaseUsesFinalCoordinateAndMatchingButton(t *testing.T) {
+	for _, direction := range []Direction{Vertical, Horizontal} {
+		t.Run(map[Direction]string{Vertical: "vertical", Horizontal: "horizontal"}[direction], func(t *testing.T) {
+			scroll := NewScrollModel()
+			scroll.SetContent(100)
+			scroll.SetViewport(10)
+			bar := NewScrollbarControl("scroll", scroll, nil)
+			bar.SetDirection(direction)
+			r := Rect{W: 1, H: 10}
+			if direction == Horizontal {
+				r = Rect{W: 10, H: 1}
+			}
+			bar.Layout(LayoutContext{}, r)
+			bar.Handle(EventContext{}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+			bar.Handle(EventContext{LocalX: 9, LocalY: 9}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseRight}))
+			if !bar.IsDragging() || scroll.Offset() != 0 {
+				t.Fatal("unrelated release ended thumb drag")
+			}
+			res := bar.Handle(EventContext{LocalX: 9, LocalY: 9}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+			if bar.IsDragging() || scroll.Offset() != 90 || res.Invalidate&InvalidateLayout == 0 {
+				t.Fatalf("final thumb coordinate not applied: dragging=%v offset=%d invalidation=%v", bar.IsDragging(), scroll.Offset(), res.Invalidate)
+			}
+		})
+	}
+}
+
 func TestScrollbarCellThumbMath(t *testing.T) {
 	scroll := NewScrollModel()
 	scroll.SetContent(20)

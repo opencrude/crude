@@ -24,6 +24,59 @@ func TestTerminalWidthProbeCoversPresentationSensitiveClasses(t *testing.T) {
 	}
 }
 
+func TestTerminalWidthProbeCoversSourceTextFamilies(t *testing.T) {
+	corpus := TerminalWidthProbeCorpus()
+	families := map[string][]string{
+		"pictured source":      {"e\u0301", "👩‍💻", "界"},
+		"combining marks":      {"n\u0303", "a\u0308", "o\u0304", "a\u0323\u0301"},
+		"CJK and fullwidth":    {"中", "文", "あ", "한", "Ａ"},
+		"emoji bases":          {"😀", "🙂", "👩", "👨", "🧑", "💻"},
+		"ZWJ professions":      {"👩‍💻", "👨‍💻", "🧑‍💻", "👩‍🔬", "👨‍🚀", "🧑‍⚕️"},
+		"skin tones":           {"👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿", "👩🏽‍💻", "👨🏿‍🚀", "🧑🏻‍⚕️"},
+		"families and couples": {"👨‍👩‍👧‍👦", "👩‍👩‍👦", "👨‍👨‍👧", "👩‍❤️‍👨", "👩‍❤️‍💋‍👩"},
+		"flags":                {"🇺🇸", "🇨🇦", "🇺🇳", "🏴‍☠️", "🏳️‍⚧️", "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"},
+		"keycaps":              {"1️⃣", "9️⃣", "1⃣", "2⃣"},
+		"presentation pairs":   {"❤", "❤️", "♥", "♥️", "☺", "☺️", "☀", "☀️", "✈", "✈️"},
+		"Indic clusters":       {"क्ष", "कि", "நி"},
+	}
+	for family, samples := range families {
+		t.Run(family, func(t *testing.T) {
+			for _, cluster := range samples {
+				if !slices.Contains(corpus, cluster) {
+					t.Errorf("startup probe lacks %q (%U)", cluster, []rune(cluster))
+				}
+			}
+		})
+	}
+}
+
+func TestTerminalWidthProbeCorpusIsBoundedAndAtomic(t *testing.T) {
+	corpus := TerminalWidthProbeCorpus()
+	// This is a curated startup sample, not an exhaustive Unicode scan. Keep the
+	// one-time request burst bounded; nothing is added to the render hot path.
+	if len(corpus) > 208 {
+		t.Fatalf("product probe grew to %d graphemes (budget 208)", len(corpus))
+	}
+	seen := make(map[string]bool, len(corpus))
+	bytes := 0
+	for _, sample := range corpus {
+		cluster, _ := FirstGrapheme(sample)
+		if sample == "" || cluster != sample || seen[sample] {
+			t.Errorf("probe must be one distinct grapheme: %q", sample)
+		}
+		for _, r := range sample {
+			if r < 32 || r >= 0x7f && r < 0xa0 {
+				t.Errorf("probe contains terminal control: %q", sample)
+			}
+		}
+		seen[sample] = true
+		bytes += len(sample)
+	}
+	if bytes > 1536 {
+		t.Fatalf("probe source bytes=%d exceed 1536-byte budget", bytes)
+	}
+}
+
 func TestMeasuredRecordSymbolWidthOverridesEmojiGuess(t *testing.T) {
 	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{})
 	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })

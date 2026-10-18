@@ -2,7 +2,7 @@ package editor
 
 func (e *Editor) ClearSelection() {
 	e.selecting = false
-	e.mouseDragging = false
+	e.stopPointerSelection()
 	e.selAnchor = Position{Line: 0, Col: 0}
 	e.selEnd = Position{Line: 0, Col: 0}
 }
@@ -17,19 +17,17 @@ func (e *Editor) HasSelection() bool {
 func (e *Editor) IsSelecting() bool { return e.selecting }
 
 // IsMouseDragging reports whether a mouse-button selection drag is in progress.
-// Keyboard Shift+Arrow selections set selecting without mouseDragging.
-func (e *Editor) IsMouseDragging() bool { return e.mouseDragging }
+// Keyboard Shift+Arrow selections do not start a pointer gesture.
+func (e *Editor) IsMouseDragging() bool { return e.drag.kind != pointerNone }
 
 // CancelPointerCapture ends an in-progress mouse drag (and scrollbar thumb
 // drag) without copying text. Keyboard-created selections are left intact
-// because they never set mouseDragging.
+// because they never start a pointer gesture.
 func (e *Editor) CancelPointerCapture() {
-	if e.mouseDragging {
-		e.mouseDragging = false
-		e.selecting = false
-		e.selAnchor = Position{Line: 0, Col: 0}
-		e.selEnd = Position{Line: 0, Col: 0}
+	if e.IsMouseDragging() {
+		e.ClearSelection()
 	}
+	e.stopPointerSelection()
 	if e.sbCtrl != nil {
 		e.sbCtrl.CancelPointerCapture()
 	}

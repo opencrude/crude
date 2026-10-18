@@ -157,8 +157,6 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case remotePromptHistoryMsg:
 		m.applyRemotePromptHistory(msg)
 		return m, nil
-	case remoteSteeringAdmittedMsg:
-		return m, m.applyRemoteSteering(msg)
 	case shellport.SettingsChangedMsg:
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
@@ -321,6 +319,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyLocalDiffPrepared(msg)
 		return m, nil
 	case tea.BlurMsg:
+		m.cancelPointerCaptures()
 		if m.editorSettings.AutoSave == types.AutoSaveTerminalFocusLoss && m.DirtyPromptPath == "" {
 			var saves []tea.Cmd
 			for _, tab := range m.EditorState.Tabs {
@@ -334,6 +333,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case types.TickMsg:
 		return m.handleTick(msg)
+	case editor.PointerScrollMsg:
+		return m, m.deliverPointerScroll(msg)
 
 	case tea.KeyboardEnhancementsMsg:
 		// Shortcut captions name the chord this terminal delivers; the answer
@@ -1470,6 +1471,14 @@ func (m *App) handleTabSwitch() {
 	prevAgentID := m.AgentView.ActiveID()
 	defer m.bindMainPaneFocus()
 	defer func() {
+		if prevEditorPath != m.EditorState.ActiveView || prevEditor != m.EditorState.Editor {
+			if prevEditor != nil {
+				prevEditor.BreakUndoGroup()
+			}
+			if m.EditorState.Editor != nil {
+				m.EditorState.Editor.BreakUndoGroup()
+			}
+		}
 		if prevEditorPath != m.EditorState.ActiveView && m.ws.LSPMgr() != nil {
 			m.ws.LSPMgr().SetActiveFile(m.EditorState.ActiveView)
 		}

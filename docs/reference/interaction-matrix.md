@@ -176,6 +176,8 @@ window derive from current bytes, not replayed change guesses.
 
 | Action | Binding | Notes |
 |--------|---------|-------|
+| Undo / redo | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z | Atomic editing commands, adjacent typing groups; exact bytes and private caret/selection where valid. Pending shared history preserves every gesture and subsequent input order |
+| Drag to scroll | Hold text/word/line selection at a viewport edge | Repeats with a stationary pointer in both axes; whole-line gutter drag works too. Release stops immediately and retains editable selection. Cancel, tab unmount, resize, terminal blur and modal takeover stop stale repeats |
 | Move line/selection | Alt+Up / Alt+Down | One undo step each |
 | Duplicate line/selection | Ctrl+Shift+D | Kitty/CSI-u terminals |
 | Delete line(s) | Ctrl+Shift+K | Kitty/CSI-u terminals |

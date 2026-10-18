@@ -160,6 +160,41 @@ func registerTestAgents(t *testing.T, store *Store) (Agent, Agent) {
 	return root, child
 }
 
+func TestHumanSteeringRejectsStoppingAndReplacedRuns(t *testing.T) {
+	store, _ := openTestStore(t)
+	root, _ := registerTestAgents(t, store)
+	run, err := store.StartRun(t.Context(), StartRunRequest{AgentID: root.ID, RuntimeEpoch: root.RuntimeEpoch, Origin: OriginHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := PublishRequest{SenderID: "human", Origin: OriginHuman, Kind: EventHumanSteering, RecipientIDs: []string{root.ID}, RunID: run.ID, Body: "accepted before Stop", IdempotencyKey: "before-stop"}
+	first, err := store.Publish(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopping, err := store.ApplyControl(t.Context(), ControlRequest{AgentID: root.ID, RuntimeEpoch: root.RuntimeEpoch, RunID: run.ID, ExpectedVersion: run.Version, Operation: "cancel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated, err := store.Publish(t.Context(), request); err != nil || !repeated.Duplicate || repeated.Event.ID != first.Event.ID {
+		t.Fatalf("Stop lost an already accepted steering receipt: %+v %v", repeated, err)
+	}
+	request.IdempotencyKey = "after-stop"
+	if _, err := store.Publish(t.Context(), request); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("stopping run accepted steering: %v", err)
+	}
+	if _, err := store.FinishRun(t.Context(), FinishRunRequest{AgentID: root.ID, RuntimeEpoch: root.RuntimeEpoch, RunID: run.ID, ExpectedVersion: stopping.Version, State: RunCancelled}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartRun(t.Context(), StartRunRequest{AgentID: root.ID, RuntimeEpoch: root.RuntimeEpoch, Origin: OriginHuman}); err != nil {
+		t.Fatal(err)
+	}
+	request.IdempotencyKey = "replacement"
+	if _, err := store.Publish(t.Context(), request); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("old steering targeted replacement run: %v", err)
+	}
+}
+
 func TestWorkspaceAgentsUseStableEpochsAndOneRuntimeOwner(t *testing.T) {
 	store, database := openTestStore(t)
 	root, child := registerTestAgents(t, store)

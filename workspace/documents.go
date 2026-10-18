@@ -24,6 +24,7 @@ const documentRequestLimit = 16384
 
 type documentOperation struct {
 	revision       uint64
+	inverseOf      uint64
 	edits, inverse []document.Edit
 	owner          document.Owner
 	group          string
@@ -360,7 +361,7 @@ func (s *DocumentService) Apply(c document.Change) (document.Receipt, error) {
 			return d.snapshot.Revision, err
 		}
 		stack := d.undo[author(c.Owner)]
-		if c.GroupID != "" && index > 0 && author(d.journal[index-1].owner) == author(c.Owner) && d.journal[index-1].group == c.GroupID && len(stack) > 0 && stack[len(stack)-1][len(stack[len(stack)-1])-1] == index-1 {
+		if c.GroupID != "" && len(stack) > 0 && len(d.redo[author(c.Owner)]) == 0 && d.journal[stack[len(stack)-1][len(stack[len(stack)-1])-1]].inverseOf == 0 && d.journal[stack[len(stack)-1][len(stack[len(stack)-1])-1]].group == c.GroupID {
 			stack[len(stack)-1] = append(stack[len(stack)-1], index)
 		} else {
 			stack = append(stack, documentUndoUnit{index})
@@ -394,26 +395,19 @@ func (s *DocumentService) history(redo bool, owner document.Owner, id, requestID
 			return d.snapshot.Revision, errors.New("document history is empty")
 		}
 		unit := stack[len(stack)-1]
-		// Cancelling a contiguous group is exact only before later work changes
-		// its coordinate space. Single operations support disjoint rebase; groups
-		// with later work conservatively fail rather than guess transformed spans.
-		if len(unit) > 1 && unit[len(unit)-1] != len(d.journal)-1 {
-			return d.snapshot.Revision, document.ErrOverlap
-		}
 		// Prepare the whole group on a detached document, so a later conflict or
 		// capacity failure cannot partially undo a group.
 		trial := &liveDocument{snapshot: d.snapshot, journal: append([]documentOperation(nil), d.journal...), historyBytes: d.historyBytes}
 		result := documentUndoUnit{}
-		cancelled := make(map[int]bool)
 		for i := len(unit) - 1; i >= 0; i-- {
 			index := unit[i]
 			edits := trial.journal[index].inverse
-			var err error
-			for j := index + 1; j < len(trial.journal); j++ {
-				if cancelled[j] {
-					continue
-				}
-				edits, err = document.Rebase(edits, trial.journal[j].edits)
+			later, err := effectiveDocumentHistory(trial.journal[index+1:])
+			if err != nil {
+				return d.snapshot.Revision, err
+			}
+			for _, op := range later {
+				edits, err = document.Rebase(edits, op.edits)
 				if err != nil {
 					return d.snapshot.Revision, err
 				}
@@ -429,17 +423,12 @@ func (s *DocumentService) history(redo bool, owner document.Owner, id, requestID
 			for _, e := range inverse {
 				weight += len(e.Text)
 			}
-			if len(trial.journal) >= documentHistoryLimit || trial.historyBytes+weight > documentHistoryBytes {
-				return d.snapshot.Revision, document.ErrLimit
-			}
 			trial.snapshot.Text = text
 			trial.snapshot.Revision++
 			trial.historyBytes += weight
-			trial.journal = append(trial.journal, documentOperation{revision: trial.snapshot.Revision, edits: edits, inverse: inverse, owner: owner, change: document.Change{DocumentID: id, RequestID: requestID, Owner: owner, BaseRevision: trial.snapshot.Revision - 1, Edits: append([]document.Edit(nil), edits...)}})
+			group := trial.journal[index].group
+			trial.journal = append(trial.journal, documentOperation{revision: trial.snapshot.Revision, inverseOf: trial.journal[index].revision, edits: edits, inverse: inverse, owner: owner, group: group, change: document.Change{DocumentID: id, RequestID: requestID, Owner: owner, BaseRevision: trial.snapshot.Revision - 1, GroupID: group, Edits: append([]document.Edit(nil), edits...)}})
 			result = append(result, len(trial.journal)-1)
-			// These exact operation/inverse pairs cancel for the remaining group.
-			cancelled[index] = true
-			cancelled[len(trial.journal)-1] = true
 		}
 		d.snapshot = trial.snapshot
 		d.snapshot.Dirty = !bytes.Equal(d.snapshot.Text, d.snapshot.Saved)
@@ -447,8 +436,57 @@ func (s *DocumentService) history(redo bool, owner document.Owner, id, requestID
 		d.historyBytes = trial.historyBytes
 		from[author(owner)] = stack[:len(stack)-1]
 		to[author(owner)] = append(to[author(owner)], result)
+		// Retire whole units only after their indices have been consumed. Undo
+		// and redo must roll history too, rather than permanently filling it.
+		for len(d.journal) >= documentHistoryLimit || d.historyBytes >= documentHistoryBytes/2 {
+			rollDocumentHistory(d)
+		}
 		return d.snapshot.Revision, nil
 	})
+}
+
+// effectiveDocumentHistory reduces explicit operation/inverse pairs in a suffix.
+// Simply skipping their indices is wrong: intervening edits are expressed in the
+// post-operation coordinates. Commute the inverse through those disjoint edits
+// and move both their forward and inverse spans back to the pre-operation space.
+// Revision provenance, not equal text or author identity, authorizes cancellation.
+func effectiveDocumentHistory(journal []documentOperation) ([]documentOperation, error) {
+	effective := make([]documentOperation, 0, len(journal))
+	for _, op := range journal {
+		index := -1
+		if op.inverseOf != 0 {
+			for i := len(effective) - 1; i >= 0; i-- {
+				if effective[i].revision == op.inverseOf {
+					index = i
+					break
+				}
+			}
+		}
+		if index < 0 {
+			effective = append(effective, op)
+			continue
+		}
+		inverse := effective[index].inverse
+		for i := index + 1; i < len(effective); i++ {
+			later := &effective[i]
+			movedInverse, err := document.Rebase(inverse, later.edits)
+			if err != nil {
+				return nil, err
+			}
+			edits, err := document.Rebase(later.edits, inverse)
+			if err != nil {
+				return nil, err
+			}
+			undo, err := document.Rebase(later.inverse, movedInverse)
+			if err != nil {
+				return nil, err
+			}
+			later.edits, later.inverse = edits, undo
+			inverse = movedInverse
+		}
+		effective = append(effective[:index], effective[index+1:]...)
+	}
+	return effective, nil
 }
 
 // Save requires an owner separately from the document ID and exact revision.

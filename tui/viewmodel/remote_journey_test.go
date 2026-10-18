@@ -97,7 +97,11 @@ func remoteJourneyUntil(t *testing.T, shells []remoteJourneyShell, condition fun
 				for _, node := range shell.app.ws.AgentMgr().AllNodes() {
 					t.Logf("node=%s phase=%+v status=%s", node.ID, shell.app.ws.AgentActivity(node.ID), node.State.Status)
 					for _, message := range node.State.Messages.Messages() {
-						t.Logf("message=%+v", message)
+						text := message.Content
+						if len(text) > 500 {
+							text = text[:500] + " (remaining content omitted)"
+						}
+						t.Logf("message id=%s role=%s pending=%v content=%q", message.InternalID, message.Role, message.PendingSteering, text)
 					}
 				}
 				t.Logf("paint=%s", ansi.Strip(shell.app.View().Content))
@@ -111,6 +115,10 @@ func remoteJourneyUntil(t *testing.T, shells []remoteJourneyShell, condition fun
 var remoteJourneyAmbientHome = os.Getenv("HOME")
 
 func remoteJourneyRuntime(t *testing.T, endpoint string, configure ...func(*workspace.Workspace)) *core.Runtime {
+	return remoteJourneyRuntimeConfig(t, endpoint, nil, configure...)
+}
+
+func remoteJourneyRuntimeConfig(t *testing.T, endpoint string, configureConfig func(*session.Config), configure ...func(*workspace.Workspace)) *core.Runtime {
 	t.Helper()
 	home := os.Getenv("HOME")
 	if home == "" || home == remoteJourneyAmbientHome {
@@ -134,7 +142,11 @@ func remoteJourneyRuntime(t *testing.T, endpoint string, configure ...func(*work
 		for _, apply := range configure {
 			apply(ws)
 		}
-		ws.SetBackendConfig(&session.Config{Agents: agents, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}, home)
+		cfg := &session.Config{Agents: agents, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
+		if configureConfig != nil {
+			configureConfig(cfg)
+		}
+		ws.SetBackendConfig(cfg, home)
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {

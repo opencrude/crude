@@ -1531,6 +1531,14 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	)
 	defer func() { stopSteering(); <-runtimeMessagesDone }()
 	handle.Agent.FlushRuntimeMessages = flushRuntime
+	handle.Agent.SealRuntimeMessages = func(ctx context.Context) error {
+		handle.SealSteering(true)
+		if flushRuntime != nil {
+			return flushRuntime(ctx)
+		}
+		return nil
+	}
+	handle.Agent.ResumeRuntimeMessages = func() { handle.SealSteering(false) }
 	handle.Agent.Checkpoint = func(archive, active []provider.ChatMessage) error {
 		current, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, string(handle.Spec.ID))
 		if err != nil {
@@ -1614,6 +1622,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 	}
 	prepareAttempt := func() (string, error) {
+		handle.SealSteering(false)
 		var cfg *Config
 		if r.session.runtimeProfile != nil {
 			cfg = r.session.runtimeProfile.GetEffectiveConfig(r.orchestratorID)

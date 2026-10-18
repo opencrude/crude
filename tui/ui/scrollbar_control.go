@@ -220,12 +220,18 @@ func (s *ScrollbarControl) Handle(ctx EventContext, evt Event) EventResult {
 		s.dragTo(coordinate)
 		return EventResult{Handled: true, Invalidate: s.scrollInvalidation(old)}
 	case EventMouseRelease:
-		if !s.dragging {
+		if !s.dragging || evt.MouseRelease.Button != tea.MouseLeft {
 			return EventResult{}
 		}
+		coordinate := ctx.LocalY
+		if s.direction == Horizontal {
+			coordinate = ctx.LocalX
+		}
+		old := s.scroll.Offset()
+		s.dragTo(coordinate)
 		s.dragging = false
 		s.dragOffset = 0
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		return EventResult{Handled: true, Invalidate: s.scrollInvalidation(old)}
 	case EventMouseWheel:
 		if s.scroll == nil {
 			return EventResult{}

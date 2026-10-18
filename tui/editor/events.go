@@ -1,9 +1,7 @@
 package editor
 
 import (
-	"strings"
 	"time"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -28,7 +26,10 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case PointerScrollMsg:
+		return e.handlePointerScroll(msg)
 	case tea.KeyPressMsg:
+		e.stopPointerSelection()
 		e.landing = nil
 		if e.readOnly {
 			if ui.IsCopyChord(msg) {
@@ -49,18 +50,57 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			}
 		}
 		e.cursorBlink.MarkActivity()
+		if !e.readOnly && !isHistoryKey(msg) && msg.Code != tea.KeyEsc && !ui.IsCopyChord(msg) && !ui.IsPasteChord(msg) {
+			if e.DeferDocumentEvent(msg) {
+				return nil
+			}
+			typing := msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 && !e.HasSelection()
+			for _, r := range msg.Text {
+				if _, pair := autoClosePairs[r]; pair || isPairCloser(r) || r < 32 {
+					typing = false
+				}
+			}
+			if typing && e.typingGroup != 0 && time.Since(e.typingAt) < 500*time.Millisecond && e.typingCursor == e.cursor {
+				e.undoGroupDepth = 1
+				e.undoGroupID = e.typingGroup
+				e.startUndoGroup()
+			} else {
+				e.typingGroup = 0
+				e.beginUndoGroup()
+			}
+			defer func() {
+				if typing {
+					e.typingGroup, e.typingAt, e.typingCursor = e.undoGroupID, time.Now(), e.cursor
+				}
+				e.endUndoGroup()
+			}()
+		}
 		return e.handleKey(msg)
 	case tea.PasteMsg:
+		e.stopPointerSelection()
 		if e.readOnly {
 			return nil
 		}
+		if e.DeferDocumentEvent(msg) {
+			return nil
+		}
+		e.typingGroup = 0
 		e.cursorBlink.MarkActivity()
 		e.replacingSelection(func() { e.insertText(msg.Content) })
 	case tea.MouseWheelMsg:
 		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)
+		if e.IsMouseDragging() {
+			return e.movePointerSelection(msg.X, msg.Y)
+		}
 	case tea.MouseClickMsg:
+		e.typingGroup = 0
 		e.landing = nil
+		if msg.Button == tea.MouseLeft {
+			e.stopPointerSelection()
+			e.sbCtrl.CancelPointerCapture()
+			e.hSbCtrl.CancelPointerCapture()
+		}
 		if msg.Button == tea.MouseLeft && msg.Y >= 0 && msg.Y < e.bodyHeight() {
 			gutter := e.gutterGeometry()
 			line := e.scrollY + msg.Y
@@ -76,11 +116,15 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 				return nil
 			}
 			if msg.X >= gutter.numberX && msg.X < gutter.numberX+gutter.numberW && line < e.LineCount() {
-				if !msg.Mod.Contains(tea.ModShift) || !e.HasSelection() {
-					e.gutterAnchor = line
+				anchor := Position{Line: line}
+				if msg.Mod.Contains(tea.ModShift) {
+					anchor = e.cursor
+					if e.HasSelection() {
+						anchor = e.selAnchor
+					}
 				}
-				e.gutterDrag, e.mouseDragging = true, true
-				e.selectGutterLines(line)
+				start, end := e.pointerUnitRange(pointerLine, anchor)
+				e.beginPointerSelection(pointerLine, start, end, msg.X, msg.Y)
 				return nil
 			}
 		}
@@ -89,16 +133,6 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.handleMouseClick(msg)
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseMotionMsg:
-		if e.gutterDrag && e.mouseDragging {
-			if msg.Y < 0 {
-				e.scrollY = max(0, e.scrollY-1)
-			}
-			if msg.Y >= e.bodyHeight() {
-				e.scrollY = min(max(0, e.LineCount()-e.bodyHeight()), e.scrollY+1)
-			}
-			e.selectGutterLines(min(e.LineCount()-1, max(0, e.scrollY+msg.Y)))
-			return nil
-		}
 		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		if e.IsScrollbarDragging() {
 			if e.IsHorizontalScrollbarDragging() {
@@ -109,29 +143,25 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 			return nil
 		}
-		// Only extend selection during an active mouse-button drag.
-		// Keyboard Shift+Arrow sets selecting without mouseDragging, so bare
-		// motion must not treat that as a drag (phantom-drag bug).
-		if e.mouseDragging {
-			pos, ok := e.mouseToPosition(msg.Mouse().X, msg.Mouse().Y)
-			if ok {
-				// The caret follows the drag end, so the kept selection
-				// continues with Shift+arrows from where the pointer stopped.
-				e.selEnd = pos
-				e.cursor = pos
-			}
+		if e.IsMouseDragging() {
+			e.ClearHover()
+			return e.movePointerSelection(msg.X, msg.Y)
 		}
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseReleaseMsg:
-		e.gutterDrag = false
+		if msg.Button != tea.MouseLeft {
+			return nil
+		}
 		if e.IsHorizontalScrollbarDragging() && e.handleHorizontalScrollbarEvent(msg, msg.Mouse().X-e.gutterWidth()) {
 			return nil
 		}
 		if e.handleScrollbarEvent(msg, msg.Mouse().Y) {
 			return nil
 		}
-		if e.mouseDragging {
-			e.mouseDragging = false
+		if e.IsMouseDragging() {
+			e.drag.x, e.drag.y = msg.X, msg.Y
+			e.projectPointerSelection()
+			e.stopPointerSelection()
 			// An editable document keeps the dragged selection for typing,
 			// indenting, cutting or Ctrl+C. Only a read-only document is a
 			// reading surface that copies on release like the chat transcript.
@@ -145,18 +175,6 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 	}
 	return nil
-}
-
-func (e *Editor) selectGutterLines(line int) {
-	first, last := min(line, e.gutterAnchor), max(line, e.gutterAnchor)
-	e.selAnchor = Position{Line: first}
-	if last+1 < e.LineCount() {
-		e.selEnd = Position{Line: last + 1}
-	} else {
-		e.selEnd = Position{Line: last, Col: e.lineVisualWidth(last)}
-	}
-	e.cursor = Position{Line: line}
-	e.selecting = true
 }
 
 func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
@@ -228,7 +246,7 @@ func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 	if col > lineVisW {
 		col = lineVisW
 	}
-	return Position{Line: lineIdx, Col: col}, true
+	return e.buf.snapPosition(Position{Line: lineIdx, Col: col}), true
 }
 
 func (e *Editor) PositionAt(mouseX, mouseY int) (Position, bool) {
@@ -270,87 +288,31 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 		e.clickCount = 1
 	}
 	e.lastClickAt, e.lastClickPos = now, pos
+	kind := pointerCharacter
+	start, end := pos, pos
 	switch {
 	case e.clickCount >= 3:
-		e.selectLineAt(pos.Line)
+		kind = pointerLine
 		e.clickCount = 0
-		return
 	case e.clickCount == 2:
-		e.selectWordAt(pos)
-		return
+		kind = pointerWord
 	case msg.Mod.Contains(tea.ModShift):
 		// Shift+click extends the existing selection (or one anchored at
 		// the caret) to the pressed position; dragging keeps extending it.
 		if !e.HasSelection() {
 			e.selAnchor = e.cursor
 		}
-	default:
-		e.selAnchor = pos
+		start = e.selAnchor
 	}
-	e.cursor = pos
-	e.selEnd = pos
-	e.selecting = true
-	e.mouseDragging = true
-	e.ensureCursorVisible()
+	if kind != pointerCharacter {
+		start, end = e.pointerUnitRange(kind, pos)
+	}
+	e.beginPointerSelection(kind, start, end, mouse.X, mouse.Y)
 }
 
 // multiClickWindow is the press interval that counts as a double/triple click,
 // matching the shared text controls.
 const multiClickWindow = 500 * time.Millisecond
-
-// selectWordAt selects the identifier, whitespace run or punctuation run
-// under pos, leaving the caret at its end.
-func (e *Editor) selectWordAt(pos Position) {
-	line := strings.TrimRight(e.LineText(pos.Line), "\r\n")
-	off := VisualColToByteOffset(line, pos.Col, tabWidth)
-	runes := []rune(line)
-	idx := len([]rune(line[:min(off, len(line))]))
-	if idx >= len(runes) && idx > 0 {
-		idx--
-	}
-	class := func(r rune) int {
-		switch {
-		case unicode.IsSpace(r):
-			return 0
-		case isWordChar(r):
-			return 1
-		}
-		return 2
-	}
-	start, end := idx, idx
-	if idx < len(runes) {
-		kind := class(runes[idx])
-		for start > 0 && class(runes[start-1]) == kind {
-			start--
-		}
-		end = idx + 1
-		for end < len(runes) && class(runes[end]) == kind {
-			end++
-		}
-	}
-	startCol := ByteOffsetToVisualCol(line, len(string(runes[:start])), tabWidth)
-	endCol := ByteOffsetToVisualCol(line, len(string(runes[:end])), tabWidth)
-	e.selAnchor = Position{Line: pos.Line, Col: startCol}
-	e.selEnd = Position{Line: pos.Line, Col: endCol}
-	e.cursor = e.selEnd
-	e.selecting = true
-	e.mouseDragging = false
-	e.ensureCursorVisible()
-}
-
-// selectLineAt selects a whole line including its line break.
-func (e *Editor) selectLineAt(line int) {
-	e.selAnchor = Position{Line: line}
-	if line+1 < e.LineCount() {
-		e.selEnd = Position{Line: line + 1}
-	} else {
-		e.selEnd = Position{Line: line, Col: e.lineVisualWidth(line)}
-	}
-	e.cursor = e.selEnd
-	e.selecting = true
-	e.mouseDragging = false
-	e.ensureCursorVisible()
-}
 
 func (e *Editor) verticalScrollbarHit(mouseX, mouseY, sbX int) bool {
 	if e.sbCtrl == nil || e.scrollModel == nil || e.scrollModel.MaxOffset() <= 0 {
@@ -372,6 +334,12 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	ctrl := key.Mod&tea.ModCtrl != 0
 
 	switch key.String() {
+	case "ctrl+z", "super+z":
+		e.Undo()
+		return nil
+	case "ctrl+y", "ctrl+shift+z", "ctrl+shift+Z", "super+shift+z", "super+shift+Z":
+		e.Redo()
+		return nil
 	case "alt+up":
 		e.moveLinesUp()
 		return nil
@@ -410,6 +378,14 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.selEnd = e.cursor
 		}
 	case tea.KeyLeft:
+		if !extend && !ctrl && e.HasSelection() {
+			line, col, _, _ := e.SelectionRange()
+			e.cursor = Position{Line: line, Col: col}
+			e.ClearSelection()
+			e.clearGoal()
+			e.ensureCursorVisible()
+			break
+		}
 		if ctrl {
 			e.clearSelectionIfNotExtending(extend)
 			if extend {
@@ -430,6 +406,14 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 	case tea.KeyRight:
+		if !extend && !ctrl && e.HasSelection() {
+			_, _, line, col := e.SelectionRange()
+			e.cursor = Position{Line: line, Col: col}
+			e.ClearSelection()
+			e.clearGoal()
+			e.ensureCursorVisible()
+			break
+		}
 		if ctrl {
 			e.clearSelectionIfNotExtending(extend)
 			if extend {
@@ -494,10 +478,25 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.selEnd = e.cursor
 		}
 	case tea.KeyBackspace:
-		e.deleteBackwardSmart()
+		if ctrl && !e.HasSelection() {
+			end := e.cursor
+			e.moveWordLeft()
+			start := e.cursor
+			e.deleteRecorded(start, end, end)
+			e.finishEdit()
+		} else {
+			e.deleteBackwardSmart()
+		}
 	case tea.KeyDelete:
 		if e.HasSelection() {
 			e.DeleteSelection()
+		} else if ctrl {
+			start := e.cursor
+			e.moveWordRight()
+			end := e.cursor
+			e.deleteRecorded(start, end, start)
+			e.cursor = start
+			e.finishEdit()
 		} else {
 			e.deleteForward()
 		}
@@ -506,7 +505,7 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	case tea.KeyTab:
 		if extend {
 			e.outdentLines()
-		} else if e.selectionSpansLines() {
+		} else if e.HasSelection() {
 			e.indentLines()
 		} else {
 			e.insertTab()
@@ -559,6 +558,14 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func isHistoryKey(key tea.KeyPressMsg) bool {
+	switch key.String() {
+	case "ctrl+z", "super+z", "ctrl+y", "ctrl+shift+z", "ctrl+shift+Z", "super+shift+z", "super+shift+Z":
+		return true
+	}
+	return false
 }
 
 func (e *Editor) closeCmd() tea.Cmd {

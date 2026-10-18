@@ -147,13 +147,16 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 		return nil
 	}
 	switch msg.result.Status {
-	case workspace.InputAdmissionAccepted, workspace.InputAdmissionPreservationPending, workspace.InputAdmissionQueued:
+	case workspace.InputAdmissionAccepted, workspace.InputAdmissionPreservationPending, workspace.InputAdmissionQueued, workspace.InputAdmissionSteered:
 		receipt := msg.result.Receipt
 		queued := msg.result.Status == workspace.InputAdmissionQueued
+		steered := msg.result.Status == workspace.InputAdmissionSteered
 		if receipt.SessionID != msg.session.SessionID || receipt.AgentID != msg.agentID || receipt.InputID != msg.intent.InputID ||
 			receipt.DraftRevision != msg.draftRevision || receipt.OwnerEpoch != msg.intent.OwnerEpoch || receipt.AcceptedAt.IsZero() ||
-			// A queued prompt has no turn or context revision until it is admitted.
-			!queued && (receipt.TurnGeneration != msg.intent.TurnGeneration || receipt.ContextRevision == 0) {
+			// Queued input has no context revision yet; steering instead carries
+			// the immutable journal event and exact run that accepted it.
+			steered && (receipt.EventID == "" || receipt.RunID == "" || receipt.OwnerEpoch == 0) ||
+			!queued && !steered && (receipt.TurnGeneration != msg.intent.TurnGeneration || receipt.ContextRevision == 0) {
 			return nil
 		}
 		delete(m.pendingInputAdmissions, msg.intent)
@@ -191,16 +194,18 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	if n == nil || n.State == nil {
 		return nil
 	}
+	if _, connected := m.ws.(shellport.Connection); connected {
+		// This explicit helper still refuses an already-idle target. An Enter
+		// gesture on a running replica uses the same admission as ordinary Send;
+		// only the core can decide whether that run is still accepting notes.
+		if (!n.State.IsActive() || n.State.Completed || n.State.Cancelling) && !m.agentCompacting(sessionID) {
+			m.Feedback.NotifyError("Note was not accepted; your draft is kept")
+			return nil
+		}
+		return m.submitPreparedInput(sessionID, provider.InputWithRefs(text, refIDs), m.Input.DraftRevision())
+	}
 	input := provider.InputWithRefs(text, refIDs)
 	input.InternalID = fmt.Sprintf("steering-%016x", rand.Uint64())
-	if service, connected := m.ws.(shellport.SteeringAdmission); connected {
-		owner, session, generation := m.ws, m.ActiveSession, m.workspaceSwitchGen.Load()
-		revision, epoch := m.Input.DraftRevision(), m.Input.DraftEpoch()
-		return func() tea.Msg {
-			accepted, err := service.AdmitSteering(context.Background(), sessionID, input)
-			return remoteSteeringAdmittedMsg{owner: owner, session: session, generation: generation, agentID: sessionID, revision: revision, epoch: epoch, input: input, accepted: accepted, err: err}
-		}
-	}
 	if m.ws == nil {
 		return nil
 	}
@@ -221,40 +226,6 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	m.syncPendingSteeringCount()
 	m.syncAgentMessages(sessionID, true)
 	return m.recordPrompt(text, refIDs...)
-}
-
-type remoteSteeringAdmittedMsg struct {
-	owner                       shellport.Workspace
-	session                     *workspace.Session
-	generation, revision, epoch uint64
-	agentID                     string
-	input                       provider.UserInput
-	accepted                    bool
-	err                         error
-}
-
-func (m *App) applyRemoteSteering(msg remoteSteeringAdmittedMsg) tea.Cmd {
-	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
-		return nil
-	}
-	if msg.err != nil {
-		m.Feedback.NotifyError("Note was not accepted; your draft is kept")
-		return nil
-	}
-	if !msg.accepted {
-		// A manual compaction has no run to take notes: admit it as input,
-		// which the core queues durably until compaction finishes.
-		if !m.agentCompacting(msg.agentID) || msg.session != m.ActiveSession || m.AgentView.ActiveID() != msg.agentID ||
-			m.Input.DraftEpoch() != msg.epoch || m.Input.DraftRevision() != msg.revision {
-			m.Feedback.NotifyError("Note was not accepted; your draft is kept")
-			return nil
-		}
-		return m.submitPreparedInput(msg.agentID, provider.InputWithRefs(msg.input.Text, msg.input.ReferenceIDs), msg.revision)
-	}
-	if msg.session == m.ActiveSession && msg.agentID == m.AgentView.ActiveID() && m.Input.DraftEpoch() == msg.epoch && m.Input.ClearInputAtRevision(msg.revision) {
-		m.persistComposerDraftIfChanged()
-	}
-	return m.recordPrompt(msg.input.Text, msg.input.ReferenceIDs...)
 }
 
 func (m *App) referenceLabels(refIDs []string) []string {

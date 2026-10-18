@@ -76,6 +76,9 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if match != nil {
+				if m.EditorState != nil && m.EditorState.Editor != nil {
+					m.EditorState.Editor.BreakUndoGroup()
+				}
 				if cmd, handled := m.handleMainPaneCommand(string(match.ID)); handled {
 					return m, cmd
 				}
@@ -282,6 +285,7 @@ func (m *App) treeFilterBlocksEscPop() bool {
 }
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.clearDiagHoverPopup()
 	if ui.IsCopyChord(msg) {
 		if m.EditorState.Editor.HasSelection() {
 			selected := m.EditorState.Editor.SelectedText()

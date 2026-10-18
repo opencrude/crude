@@ -236,7 +236,7 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 			operation = func(ctx context.Context) {
 				msg.receipt, msg.err = live.UndoDocument(ctx, ds.DocumentID, id, intent.ExpectedRevision, intent.Redo)
 			}
-		case state.save && state.format && !ds.InFlight && !ds.UndoPending:
+		case state.save && state.format && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			formatter, ok := m.ws.(shellport.LiveDocumentFormatter)
 			if !ok {
 				m.liveEditorFailure(state, errors.New("core formatter unavailable"))
@@ -253,7 +253,7 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 					msg.snapshot, msg.err = formatter.FormatDocument(ctx, ds.DocumentID, ds.Revision)
 				}
 			}
-		case state.save && !ds.InFlight && !ds.UndoPending:
+		case state.save && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			state.save = false
 			msg.kind = "save"
 			msg.requestID = fmt.Sprintf("save-%x", rand.Uint64())
@@ -266,7 +266,7 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 					msg.snapshot, msg.err = live.SaveDocument(ctx, ds.DocumentID, ds.Revision, reason)
 				}
 			}
-		case state.closeView && !ds.InFlight && !ds.UndoPending:
+		case state.closeView && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			m.closeEditorTabForce(ed.FilePath())
 			m.continuePendingTabClose()
 			continue
@@ -366,7 +366,7 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 		if !msg.receipt.Accepted {
 			err = errors.New(msg.receipt.Error)
 		}
-		if complete := ed.CompleteDocumentUndo(*msg.undo, err); complete != nil {
+		if complete := ed.CompleteDocumentUndoReceipt(*msg.undo, msg.receipt, err); complete != nil {
 			err = complete
 		}
 		if err != nil {
@@ -406,6 +406,7 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 		if err != nil {
 			m.liveEditorFailure(state, err)
 		} else {
+			ed.CompleteDocumentHistorySync()
 			if err := m.retargetLiveEditor(ed); err != nil {
 				m.liveEditorFailure(state, err)
 			}
@@ -491,7 +492,7 @@ func (m *App) FlushLiveEditors() error {
 			if ds.Conflict != nil && !errors.Is(ds.Conflict, editor.ErrDocumentPending) {
 				return ds.Conflict
 			}
-			pending = pending || ds.PendingEdits > 0 || ds.InFlight || ds.UndoPending || state.sync || state.uncertain != nil || state.undo != nil || state.save
+			pending = pending || ds.PendingEdits > 0 || ds.InFlight || ds.UndoPending || ds.HistoryQueued || state.sync || state.uncertain != nil || state.undo != nil || state.save
 		}
 		if !pending {
 			return nil

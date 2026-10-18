@@ -36,12 +36,7 @@ func (e *Editor) moveDown() {
 }
 
 func (e *Editor) applyGoalCol() {
-	lineVisW := e.lineVisualWidth(e.cursor.Line)
-	if e.goalCol > lineVisW {
-		e.cursor.Col = lineVisW
-	} else {
-		e.cursor.Col = e.goalCol
-	}
+	e.cursor = e.buf.snapPosition(Position{Line: e.cursor.Line, Col: e.goalCol})
 }
 
 func (e *Editor) clearGoal() {
@@ -51,62 +46,28 @@ func (e *Editor) clearGoal() {
 
 func (e *Editor) moveLeft() {
 	e.clearGoal()
-	if e.cursor.Col > 0 {
-		runes := e.lineRunes(e.cursor.Line)
-		if len(runes) > 0 {
-			ri := colToRuneIdx(runes, e.cursor.Col)
-			if ri > 0 {
-				prevChW := runeVisualWidth(runes[ri-1])
-				e.cursor.Col -= prevChW
-			} else {
-				e.cursor.Col = 0
-			}
-		} else {
-			e.cursor.Col--
-		}
-	} else if e.cursor.Line > 0 {
-		e.cursor.Line--
-		e.cursor.Col = e.lineVisualWidth(e.cursor.Line)
-	}
+	e.cursor = e.buf.previousPosition(e.cursor)
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) moveRight() {
 	e.clearGoal()
-	lineVisW := e.lineVisualWidth(e.cursor.Line)
-	if e.cursor.Col < lineVisW {
-		runes := e.lineRunes(e.cursor.Line)
-		if len(runes) > 0 {
-			ri := colToRuneIdx(runes, e.cursor.Col)
-			if ri < len(runes) {
-				chW := runeVisualWidth(runes[ri])
-				e.cursor.Col += chW
-				if e.cursor.Col > lineVisW {
-					e.cursor.Col = lineVisW
-				}
-			}
-		} else {
-			e.cursor.Col++
-		}
-	} else if e.cursor.Line < e.buf.LineCount()-1 {
-		e.cursor.Line++
-		e.cursor.Col = 0
-	}
+	e.cursor = e.buf.nextPosition(e.cursor)
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) moveWordLeft() {
 	e.clearGoal()
+	e.cursor = e.buf.snapPosition(e.cursor)
 	if e.cursor.Col <= 0 && e.cursor.Line == 0 {
 		return
 	}
-	runes := e.lineRunes(e.cursor.Line)
-	ri := colToRuneIdx(runes, e.cursor.Col)
+	runes, columns, ri := e.wordGeometry(e.cursor.Line, e.cursor.Col)
 	for {
 		if ri <= 0 {
 			if e.cursor.Line > 0 {
 				e.cursor.Line--
-				runes = e.lineRunes(e.cursor.Line)
+				runes, columns, _ = e.wordGeometry(e.cursor.Line, 0)
 				ri = len(runes)
 			} else {
 				e.cursor.Col = 0
@@ -139,7 +100,7 @@ func (e *Editor) moveWordLeft() {
 				ri--
 			}
 		}
-		e.cursor.Col = runesToVisualCol(runes, ri)
+		e.cursor.Col = columns[ri]
 		e.ensureCursorVisible()
 		return
 	}
@@ -147,8 +108,8 @@ func (e *Editor) moveWordLeft() {
 
 func (e *Editor) moveWordRight() {
 	e.clearGoal()
-	runes := e.lineRunes(e.cursor.Line)
-	ri := colToRuneIdx(runes, e.cursor.Col)
+	e.cursor = e.buf.snapPosition(e.cursor)
+	runes, columns, ri := e.wordGeometry(e.cursor.Line, e.cursor.Col)
 	maxLine := e.buf.LineCount() - 1
 	for {
 		if ri >= len(runes) {
@@ -187,7 +148,7 @@ func (e *Editor) moveWordRight() {
 				ri++
 			}
 		}
-		e.cursor.Col = runesToVisualCol(runes, ri)
+		e.cursor.Col = columns[ri]
 		e.ensureCursorVisible()
 		return
 	}
@@ -207,55 +168,23 @@ func runeVisualWidth(r rune) int {
 }
 
 func lineVisualWidthFromRunes(runes []rune) int {
-	col := 0
-	for _, r := range runes {
-		if r == '\t' {
-			col += TabStopAdvance(col, tabWidth)
-		} else {
-			col += rendering.VisibleWidth(string(r))
-		}
-	}
-	return col
+	return LineVisualWidth(string(runes), tabWidth)
 }
 
 func runesToVisualCol(runes []rune, ri int) int {
-	col := 0
-	for i := 0; i < ri && i < len(runes); i++ {
-		if runes[i] == '\t' {
-			col += TabStopAdvance(col, tabWidth)
-		} else {
-			col += rendering.VisibleWidth(string(runes[i]))
-		}
-	}
-	return col
+	ri = min(len(runes), max(0, ri))
+	return ByteOffsetToVisualCol(string(runes), len(string(runes[:ri])), tabWidth)
 }
 
 // RuneIndexToVisualColumn maps source rune offsets to editor columns, including
 // tab stops and complete graphemes. Search/LSP adapters must use source geometry.
 func RuneIndexToVisualColumn(text string, index int) int {
-	runes := []rune(text)
-	index = min(len(runes), max(0, index))
-	return LineVisualWidth(string(runes[:index]), tabWidth)
+	return runesToVisualCol([]rune(text), index)
 }
 
 func colToRuneIdx(runes []rune, col int) int {
-	visCol := 0
-	for i, r := range runes {
-		var cw int
-		if r == '\t' {
-			cw = TabStopAdvance(visCol, tabWidth)
-		} else {
-			cw = rendering.VisibleWidth(string(r))
-		}
-		if visCol+cw > col {
-			return i
-		}
-		if visCol+cw == col {
-			return i + 1
-		}
-		visCol += cw
-	}
-	return len(runes)
+	text := string(runes)
+	return len([]rune(text[:VisualColToByteOffset(text, col, tabWidth)]))
 }
 
 // moveToLineStart implements Smart Home: the cursor toggles between the
@@ -268,13 +197,15 @@ func (e *Editor) moveToLineStart() {
 		e.ensureCursorVisible()
 		return
 	}
-	expLine := ExpandTabs(string(b), tabWidth)
+	text := string(b)
 	firstNonWS := 0
-	for _, r := range expLine {
-		if r != ' ' {
+	for len(text) > 0 {
+		if text[0] != ' ' && text[0] != '\t' {
 			break
 		}
-		firstNonWS++
+		size, width := firstSourceUnit(text, firstNonWS)
+		firstNonWS += width
+		text = text[size:]
 	}
 	if e.cursor.Col == firstNonWS {
 		e.cursor.Col = 0

@@ -144,3 +144,8 @@ shared control, never to one popup.
   and context, never in the composer. Exact-owner late semantic evidence remains
   static after terminal acknowledgement; only a new runtime generation reactivates
   work. See `docs/reference/interaction-matrix.md`.
+- Connected Enter uses one core admission path for both normal input and steering.
+  The execution owner chooses steering, queued input or a fresh turn; a lagging
+  shell cannot send to an already-completed inbox. Steering acceptance requires
+  the exact immutable event/run/epoch receipt, and storage/transport uncertainty
+  never causes an alternate send or consumes a newer draft.

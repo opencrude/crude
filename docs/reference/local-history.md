@@ -17,6 +17,9 @@
   metadata. `workspace.LocalHistoryService` owns watcher lifecycle, settings,
   message scopes, reconciliation, and restore suppression. TUI only calls
   workspace methods and renders neutral plans.
+- Continuing an accepted human input reuses its existing message scope and
+  original safety snapshots through a continuation lease. It never inserts a
+  second scope with the same identity or rewrites its before/after snapshots.
 - Never write history inside the project, follow a symlink parent, or apply a
   plan whose current hash/mode/type differs from preview. Safety snapshots are
   mandatory; every failure after mutation rolls back before returning.

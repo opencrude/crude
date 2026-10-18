@@ -137,13 +137,6 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 	return true
 }
 
-func (w *Workspace) AdmitSteering(ctx context.Context, agentID string, input provider.UserInput) (bool, error) {
-	request := coreprotocol.InputRequest{AgentID: agentID, Text: input.Text, ReferenceIDs: append([]string(nil), input.ReferenceIDs...), ActivePaths: append([]string(nil), input.ActivePaths...), DisplayText: input.DisplayText, ContextParts: append([]string(nil), input.ContextParts...)}
-	var out coreprotocol.DecisionResult
-	err := w.call(ctx, coreprotocol.SteerInput, request, &out)
-	return out.Accepted, err
-}
-
 func (w *Workspace) decide(request coreprotocol.DecisionRequest) bool {
 	node := w.view.AgentMgr.Get(request.AgentID)
 	if node == nil || node.State == nil || request.BlockID == "" {
@@ -312,12 +305,16 @@ func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *works
 // conversation delta; this only confirms the exact receipt for draft release.
 func (w *Workspace) ApplyAgentInputAdmission(intent *workspace.InputAdmissionIntent, result workspace.InputAdmissionResult, _ provider.UserInput, _ []string) bool {
 	queued := result.Status == workspace.InputAdmissionQueued
-	if intent == nil || (result.Status != workspace.InputAdmissionAccepted && result.Status != workspace.InputAdmissionPreservationPending && !queued) {
+	steered := result.Status == workspace.InputAdmissionSteered
+	if intent == nil || (result.Status != workspace.InputAdmissionAccepted && result.Status != workspace.InputAdmissionPreservationPending && !queued && !steered) {
 		return false
 	}
 	receipt := result.Receipt
+	if steered && (receipt.EventID == "" || receipt.RunID == "" || receipt.OwnerEpoch == 0) {
+		return false
+	}
 	return receipt.InputID == intent.InputID && receipt.AgentID == intent.AgentID && receipt.SessionID == intent.SessionID &&
-		receipt.DraftRevision == intent.DraftRevision && (queued || receipt.ContextRevision != 0) && !receipt.AcceptedAt.IsZero()
+		receipt.DraftRevision == intent.DraftRevision && (queued || steered || receipt.ContextRevision != 0) && !receipt.AcceptedAt.IsZero()
 }
 
 func (w *Workspace) ResetOrchestratorOverrides(orchID string) {

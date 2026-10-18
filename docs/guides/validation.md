@@ -114,3 +114,9 @@ before input: a capture driver finishing is not product success.
 After every capture, close the dedicated Crude window. Keep `KEEP_OPEN=0` for
 normal captures; after an explicit `KEEP_OPEN=1` review, close it and verify no
 `CrudeShot`/`CrudeShot-*` window remains (`xdotool search --class CrudeShot`).
+
+For stationary pointer acceptance, `down:col,row`, `move:col,row`, `sleep:1`,
+`shot:held`, and `up:col,row` keep the same button down across steps. Compare the
+held viewport with a later stationary shot and verify it stops after release;
+a burst drag alone does not establish timer-driven edge scrolling. Cleanup
+releases a held button even if capture fails.

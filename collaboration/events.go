@@ -92,6 +92,24 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 		}
 		return PublishResult{}, fmt.Errorf("%w: no recipients", ErrInvalid)
 	}
+	if request.Kind == EventHumanSteering {
+		if request.Origin != OriginHuman || len(recipients) != 1 || request.RunID == "" {
+			return PublishResult{}, fmt.Errorf("%w: human steering requires one exact active run", ErrInvalid)
+		}
+		target, err := loadAgent(ctx, tx, recipients[0].ID)
+		if err != nil {
+			return PublishResult{}, err
+		}
+		run, err := loadRun(ctx, tx, request.RunID)
+		if err != nil {
+			return PublishResult{}, err
+		}
+		if target.State != AgentAvailable || target.Presence != RuntimeAttached || target.CurrentRunID != run.ID ||
+			run.AgentID != target.ID || run.RuntimeEpoch != target.RuntimeEpoch ||
+			(run.State != RunRunning && run.State != RunWaitingHuman && run.State != RunWaitingEvent) {
+			return PublishResult{}, fmt.Errorf("%w: this run is no longer accepting steering", ErrUnavailable)
+		}
+	}
 
 	var last int64
 	if err := tx.QueryRowContext(ctx, `SELECT last_sequence FROM collaboration_state WHERE singleton=1`).Scan(&last); err != nil {

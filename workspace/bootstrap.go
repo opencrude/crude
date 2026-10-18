@@ -14,6 +14,7 @@ package workspace
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -440,6 +441,7 @@ const (
 	InputAdmissionRejected            = session.InputAdmissionRejected
 	InputAdmissionPreservationPending = session.InputAdmissionPreservationPending
 	InputAdmissionQueued              = session.InputAdmissionQueued
+	InputAdmissionSteered             = session.InputAdmissionSteered
 )
 
 // PrepareAgentInputAdmission reserves an exact owner/generation without I/O.
@@ -473,18 +475,35 @@ func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *Input
 // SteerAgent publishes genuine human steering to one exact active run. Durable
 // delivery, epoch fencing and context admission are owned by Collaboration.
 func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
+	_, accepted, _ := w.AdmitAgentSteering(agentID, input)
+	return accepted
+}
+
+// AdmitAgentSteering distinguishes a confirmed no-effect refusal from an
+// unavailable/uncertain persistence result. Only the former permits the shell
+// to route an unchanged send gesture through ordinary input admission.
+func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput) (InputAdmissionReceipt, bool, error) {
 	if w == nil || w.Collaboration == nil || agentID == "" || input.InternalID == "" {
-		return false
+		return InputAdmissionReceipt{}, false, nil
 	}
 	participant, err := w.Collaboration.Agent(context.Background(), agentID)
-	if err != nil || participant.State != collaboration.AgentAvailable ||
+	if err != nil {
+		if errors.Is(err, collaboration.ErrNotFound) {
+			return InputAdmissionReceipt{}, false, nil
+		}
+		return InputAdmissionReceipt{}, false, err
+	}
+	if participant.State != collaboration.AgentAvailable ||
 		participant.Presence != collaboration.RuntimeAttached ||
 		participant.CurrentRunID == "" {
-		return false
+		return InputAdmissionReceipt{}, false, nil
 	}
 	run, err := w.Collaboration.Run(context.Background(), participant.CurrentRunID)
-	if err != nil || run.AgentID != agentID || run.RuntimeEpoch != participant.RuntimeEpoch || run.State.Terminal() {
-		return false
+	if err != nil {
+		return InputAdmissionReceipt{}, false, err
+	}
+	if run.AgentID != agentID || run.RuntimeEpoch != participant.RuntimeEpoch || run.State.Terminal() {
+		return InputAdmissionReceipt{}, false, nil
 	}
 	references := []collaboration.Reference{{Kind: "history_message", ID: input.InternalID}}
 	for _, id := range input.ReferenceIDs {
@@ -492,7 +511,11 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 			references = append(references, collaboration.Reference{Kind: "prompt_reference", ID: id})
 		}
 	}
-	_, err = w.Collaboration.Publish(context.Background(), collaboration.PublishRequest{
+	owner := w.sessionForAgent(agentID)
+	if owner == nil || owner.backend == nil {
+		return InputAdmissionReceipt{}, false, nil
+	}
+	published, err := owner.backend.PublishHumanSteering(context.Background(), agentID, collaboration.PublishRequest{
 		SenderID:       "human",
 		SenderName:     "Human",
 		IdempotencyKey: "human-steering:" + agentID + ":" + input.InternalID,
@@ -505,7 +528,10 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 		References:     references,
 	})
 	if err != nil {
-		return false
+		if errors.Is(err, collaboration.ErrUnavailable) {
+			return InputAdmissionReceipt{}, false, nil
+		}
+		return InputAdmissionReceipt{}, false, err
 	}
 	if node := w.AgentMgr.Get(agentID); node != nil && node.State != nil {
 		var labels []string
@@ -521,7 +547,9 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 			ReferenceLabels: labels, Time: time.Now(), PendingSteering: true})
 		w.agentRevision++
 	}
-	return true
+	return InputAdmissionReceipt{SessionID: owner.SessionID, AgentID: agentID, InputID: input.InternalID,
+		OwnerEpoch: participant.RuntimeEpoch, AcceptedAt: published.Event.CreatedAt,
+		EventID: published.Event.ID, RunID: published.Event.RunID}, true, nil
 }
 
 // CloseAgent stops backend work for agentID before the TUI removes its state.

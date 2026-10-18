@@ -193,6 +193,16 @@ also returns its domain receipt; a late acknowledgement cannot consume another
 draft. Permission/question decisions resolve the exact pending block once;
 disconnect never implies approval.
 
+Connected composer input has one authoritative route: `agent.submit`. The core
+asks the execution owner whether that input can steer its exact live run,
+otherwise reserves a fresh turn or durably queues input behind compaction or
+terminal sealing. A shell's lagging running/idle projection never decides the
+publication path. A `steered` receipt names its immutable event, run and runtime
+epoch; queued input has no context revision until dequeued; a fresh turn has its
+exact generation/context receipt. All consume only the submitting shell's
+unchanged draft. Unknown storage/transport results never fall through to another
+send, and explicitly stopped/unfinished work is never silently resumed.
+
 Manual compaction has an operation identity independent of the last model-turn
 generation. `agent.cancel` carries that exact operation ID when present, rejecting
 late Stop requests against replacement work. Compaction jobs observe exact request
@@ -224,6 +234,16 @@ immutable snapshots/deltas, retains optimistic edits and orders off-UI commands.
 Edits, undo, formatting and saves fence exact revisions; a lost response is
 observed through its original receipt, not resent as a new mutation. Reconnect
 reopens client views before sync. Cursors, selection and scrolling stay private.
+
+Document GroupID identifies a logical editing transaction, not an RPC batch.
+The shell retains group boundaries while publishing ordered optimistic edits;
+Undo/Redo gestures and later input wait for exact command completion and complete
+sync. History deltas preserve the reversed group ID. Core operations retain
+explicit inverse-of revisions in checkpoints/deltas, allowing cancelled history
+pairs to normalize before safe disjoint rebase; equality of text never proves
+cancellation. Undo/redo also roll bounded history by whole units. Old operations
+without provenance stay opaque, not inferred. See the
+[editor transaction contract](editor.md#edit-transactions-and-history).
 
 Accepted unsaved text, savepoints, history and exact receipts persist in the
 workspace SQLite store. Structural checkpoints and append-only command deltas

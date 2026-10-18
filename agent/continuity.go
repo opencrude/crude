@@ -54,6 +54,7 @@ func (a *Agent) continuityMessage(ctx context.Context, compacted bool) (provider
 		}
 	}
 	message := provider.NewTextMessage("user", rootprompt.RuntimeContinuity(string(data), compacted, session))
+	message.InternalID = provider.NewMessageID()
 	message.Origin, message.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
 	return message, ctx.Err()
 }

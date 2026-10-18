@@ -226,6 +226,7 @@ func TestDocumentWidthIndexIsIncrementalForOrdinaryEdit(t *testing.T) {
 
 func TestDocumentWidthIndexReducesFormerMaximum(t *testing.T) {
 	ed := NewPreview(theme.DefaultDark(), "width.txt", "12345678901234567890\n1234567890", 1)
+	ed.readOnly = false
 	if got := ed.documentVisualWidth(); got != 20 {
 		t.Fatalf("initial width=%d", got)
 	}

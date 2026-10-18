@@ -325,3 +325,113 @@ func TestChildCheckpointAdoptsLateControlWithoutDroppingAcceptedOutput(t *testin
 		})
 	}
 }
+
+// Transcript chronology is not context chronology. Steering can be recorded
+// before older output is mirrored, while its preparation and Stop are admitted
+// in a different order. Compaction preserves that distinction, not an order
+// constraint between the two projections.
+func TestRecoveryArchiveKeepsChronologyIndependentOfActiveContext(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		t.Run(fmt.Sprint(child), func(t *testing.T) {
+			db := sessiondb.OpenAndMigrateAt(t.TempDir())
+			defer db.Close()
+			if err := sessiondb.CreateSessionRow(db, "owner"); err != nil {
+				t.Fatal(err)
+			}
+			original := provider.NewTextMessage("user", "accepted human request")
+			original.InternalID = "original"
+			note := collaborationMessage(collaboration.PendingDelivery{Event: collaboration.Event{
+				ID: "note", Origin: collaboration.OriginHuman, Kind: collaboration.EventHumanSteering, RunID: "run", Body: "keep my correction",
+			}})
+			note.Origin = provider.OriginHumanSteering
+			preparation := provider.NewTextMessage("user", "immutable note preparation")
+			preparation.InternalID, preparation.Origin, preparation.Visibility = "note-context", provider.OriginRuntimeContext, provider.VisibilityContextOnly
+			stop := collaborationMessage(collaboration.PendingDelivery{Event: collaboration.Event{
+				ID: "stop", Origin: collaboration.OriginHuman, Kind: collaboration.EventLifecycleControl, RunID: "run", Body: "Stop",
+			}})
+			checkpoint := provider.NewTextMessage("user", "compacted older context")
+			checkpoint.InternalID, checkpoint.Origin, checkpoint.Visibility = "checkpoint", provider.OriginCheckpoint, provider.VisibilityContextOnly
+			archive := canonicalContextMessages([]provider.ChatMessage{original, note, stop, preparation})
+			active := canonicalContextMessages([]provider.ChatMessage{checkpoint, original, stop, note, preparation})
+			current, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{
+				SessionID: "owner", AgentID: "owner", Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 2, Reason: "automatic_compaction", Messages: active}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := newRecoveryRunState(provider.UserInput{InternalID: "original", Text: original.ContentString()}, &sessiondb.RecoveryCheckpoint{
+				InputAdmitted: true, Archive: archive, ActiveContext: active, ContextOwnerID: "owner", ContextRevision: current.Revision, ContextGeneration: current.Generation, ContextReason: current.Reason,
+			})
+			status := recoverytypes.Status{ID: "incident", AgentID: "root", Generation: 1, State: recoverytypes.Cancelled}
+			if child {
+				err = reconcileCommittedRecoveryContext(run, current)
+				if err == nil {
+					err = publishChildRecovery(db, "owner", run, status)
+				}
+			} else {
+				s := &Session{db: db, sessionID: "owner", activeContext: current.Messages, contextRevision: current.Revision, contextGeneration: current.Generation, contextReason: current.Reason}
+				err = s.publishRootRecovery(run, status)
+			}
+			if err != nil {
+				t.Fatalf("legitimate transcript/context chronology blocked Stop: %v", err)
+			}
+			gotArchive, gotActive := run.contexts()
+			if child {
+				archive = append([]provider.ChatMessage{canonicalContextMessage(checkpoint)}, archive...)
+			}
+			if !reflect.DeepEqual(gotArchive, archive) || !reflect.DeepEqual(gotActive, active) {
+				t.Fatal("settlement reordered accepted archive or active context")
+			}
+			if _, open, err := sessiondb.LoadRecoveryCheckpoint(db, "owner", "root"); err != nil || open {
+				t.Fatalf("Stop left a blocking recovery: open=%v err=%v", open, err)
+			}
+		})
+	}
+}
+
+func TestArchiveReconciliationAcceptsEveryIndependentAdmissionOrder(t *testing.T) {
+	message := func(id string) provider.ChatMessage {
+		m := canonicalContextMessage(provider.NewTextMessage("user", id))
+		m.InternalID = id
+		return m
+	}
+	facts := []provider.ChatMessage{message("steering"), message("steering-context"), message("stop")}
+	orders := [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
+	for _, historyOrder := range orders {
+		archive := []provider.ChatMessage{message("input"), message("accepted-output")}
+		for _, i := range historyOrder {
+			archive = append(archive, facts[i])
+		}
+		for _, activeOrder := range orders {
+			for missing := -1; missing < len(facts); missing++ {
+				snapshot := make([]provider.ChatMessage, 0, len(archive))
+				for _, m := range archive {
+					if missing < 0 || m.InternalID != facts[missing].InternalID {
+						snapshot = append(snapshot, m)
+					}
+				}
+				source := make([]provider.ChatMessage, 0, len(facts))
+				for _, i := range activeOrder {
+					source = append(source, facts[i])
+				}
+				got, err := retainCommittedArchiveMessages(snapshot, source)
+				if err != nil || !retainsContextSource(got, snapshot) {
+					t.Fatalf("valid chronology rejected/reordered: archive=%v active=%v missing=%d err=%v", historyOrder, activeOrder, missing, err)
+				}
+				counts := make(map[string]int)
+				for _, m := range got {
+					counts[m.InternalID]++
+				}
+				for _, m := range archive {
+					if counts[m.InternalID] != 1 {
+						t.Fatalf("independent admission lost or duplicated %s", m.InternalID)
+					}
+				}
+				again, err := retainCommittedArchiveMessages(got, source)
+				if err != nil || !reflect.DeepEqual(again, got) {
+					t.Fatal("status retry changed an accepted archive")
+				}
+			}
+		}
+	}
+}

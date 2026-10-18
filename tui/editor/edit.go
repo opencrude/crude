@@ -1,42 +1,23 @@
 package editor
 
 import (
+	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func (e *Editor) insertRune(r rune) {
-	e.clearGoal()
-	cursorBefore := e.cursor
-	runeBytes := make([]byte, utf8.RuneLen(r))
-	utf8.EncodeRune(runeBytes, r)
-
-	_, _ = e.buf.Insert(e.cursor, runeBytes)
-	e.invalidateEditorCaches()
-	cursorAfter := e.cursor
-	if r == '\n' {
-		cursorAfter.Line++
-		cursorAfter.Col = 0
-	} else {
-		cursorAfter.Col += runeVisualWidth(r)
-	}
-	e.cursor = cursorAfter
-
-	e.recordChange(Change{
-		Type:         ActInsert,
-		Text:         runeBytes,
-		StartPos:     cursorBefore,
-		EndPos:       cursorAfter,
-		CursorBefore: cursorBefore,
-	})
-	e.ensureCursorVisible()
-	e.notifyContentChanged()
+	e.insertText(string(r))
 }
 
 // InsertRune inserts a single rune at the cursor and advances the cursor.
 // Public surface used by the LSP completion popup to apply the selected
 // completion's text.
 func (e *Editor) InsertRune(r rune) {
+	if e.readOnly || e.DeferDocumentEvent(tea.KeyPressMsg{Code: r, Text: string(r)}) {
+		return
+	}
 	e.insertRune(r)
 }
 
@@ -45,29 +26,11 @@ func (e *Editor) insertText(s string) {
 		return
 	}
 
-	cursorBefore := e.cursor
-	cursorAfter := cursorBefore
-	for _, r := range s {
-		if r == '\n' {
-			cursorAfter.Line++
-			cursorAfter.Col = 0
-		} else {
-			cursorAfter.Col += runeVisualWidth(r)
-		}
-	}
-
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	e.clearGoal()
-	_, _ = e.buf.Insert(cursorBefore, []byte(s))
+	e.cursor = e.insertRecorded(e.buf.snapPosition(e.cursor), s, e.cursor)
 	e.invalidateEditorCaches()
-	e.cursor = cursorAfter
-
-	e.recordChange(Change{
-		Type:         ActInsert,
-		Text:         []byte(s),
-		StartPos:     cursorBefore,
-		EndPos:       cursorAfter,
-		CursorBefore: cursorBefore,
-	})
 	e.ensureCursorVisible()
 	e.notifyContentChanged()
 }
@@ -77,15 +40,40 @@ func (e *Editor) insertText(s string) {
 // one extra indent level when the text before the cursor ends with an
 // opening brace/bracket/paren. Recorded as a single undo step.
 func (e *Editor) insertNewline() {
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
 	line := e.LineText(e.cursor.Line)
 	byteOff := VisualColToByteOffset(line, e.cursor.Col, tabWidth)
 	before := line[:byteOff]
 	indent := leadingWhitespace(before)
+	baseIndent := indent
 	trimmed := strings.TrimRight(before, " \t")
 	if r, ok := lastRune(trimmed); ok && (r == '(' || r == '[' || r == '{') {
 		indent += indentUnit(indent)
+		if closer := autoClosePairs[r]; strings.TrimSpace(line[byteOff:]) == string(closer) {
+			e.insertText(e.lineEnding() + indent + e.lineEnding() + baseIndent)
+			e.cursor.Line--
+			e.cursor.Col = LineVisualWidth(indent, tabWidth)
+			e.ensureCursorVisible()
+			return
+		}
 	}
-	e.insertText("\n" + indent)
+	e.insertText(e.lineEnding() + indent)
+}
+
+// Newly inserted line breaks follow the source document's first terminator;
+// paste remains byte-exact. No save or background normalization is involved.
+func (e *Editor) lineEnding() string {
+	e.buf.ensureCache()
+	for i, b := range e.buf.cachedBytes {
+		if b == '\n' {
+			if i > 0 && e.buf.cachedBytes[i-1] == '\r' {
+				return "\r\n"
+			}
+			break
+		}
+	}
+	return "\n"
 }
 
 func (e *Editor) insertTab() {
@@ -93,111 +81,54 @@ func (e *Editor) insertTab() {
 }
 
 func (e *Editor) deleteBackward() {
-	e.clearGoal()
-	if e.cursor.Col > 0 {
-		cursorBefore := e.cursor
-		runes := e.lineRunes(e.cursor.Line)
-		ri := colToRuneIdx(runes, e.cursor.Col)
-		if ri > 0 {
-			ch := runes[ri-1]
-			chVisW := runeVisualWidth(ch)
-			start := Position{Line: e.cursor.Line, Col: e.cursor.Col - chVisW}
-			end := e.cursor
-
-			_, _ = e.buf.Delete(start, end)
-			e.invalidateEditorCaches()
-			e.cursor.Col -= chVisW
-
-			e.recordChange(Change{
-				Type:         ActDelete,
-				Text:         []byte(string(ch)),
-				StartPos:     start,
-				EndPos:       end,
-				CursorBefore: cursorBefore,
-			})
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
+	end := e.buf.snapPosition(e.cursor)
+	start := e.buf.previousPosition(end)
+	// Within leading whitespace, Backspace removes one indentation stop. It
+	// never extends into words, even when the indent contains tabs.
+	if end.Col > 0 {
+		raw := e.LineText(end.Line)
+		off := VisualColToByteOffset(raw, end.Col, tabWidth)
+		if strings.Trim(raw[:off], " \t") == "" {
+			start = e.buf.snapPosition(Position{Line: end.Line, Col: ((end.Col - 1) / tabWidth) * tabWidth})
 		}
-	} else if e.cursor.Line > 0 {
-		cursorBefore := e.cursor
-		prevLine := e.cursor.Line - 1
-		prevLineVisW := e.lineVisualWidth(prevLine)
-
-		start := Position{Line: prevLine, Col: prevLineVisW}
-		end := Position{Line: e.cursor.Line, Col: 0}
-
-		_, _ = e.buf.Delete(start, end)
-		e.invalidateEditorCaches()
-		e.cursor.Line = prevLine
-		e.cursor.Col = prevLineVisW
-
-		e.recordChange(Change{
-			Type:         ActDelete,
-			Text:         []byte("\n"),
-			StartPos:     start,
-			EndPos:       end,
-			CursorBefore: cursorBefore,
-		})
 	}
-	e.ensureCursorVisible()
-	e.notifyContentChanged()
+	if e.deleteRecorded(start, end, e.cursor) != "" {
+		e.cursor = start
+		e.finishSimpleEdit()
+	}
 }
 
 func (e *Editor) deleteForward() {
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
+	start := e.buf.snapPosition(e.cursor)
+	if e.deleteRecorded(start, e.buf.nextPosition(start), e.cursor) != "" {
+		e.cursor = start
+		e.finishSimpleEdit()
+	}
+}
+
+func (e *Editor) finishSimpleEdit() {
 	e.clearGoal()
-	runes := e.lineRunes(e.cursor.Line)
-	if len(runes) == 0 {
-		return
-	}
-	lineVisW := lineVisualWidthFromRunes(runes)
-
-	if e.cursor.Col < lineVisW {
-		cursorBefore := e.cursor
-		ri := colToRuneIdx(runes, e.cursor.Col)
-		if ri < len(runes) {
-			ch := runes[ri]
-			chVisW := runeVisualWidth(ch)
-			start := e.cursor
-			end := Position{Line: e.cursor.Line, Col: e.cursor.Col + chVisW}
-
-			_, _ = e.buf.Delete(start, end)
-			e.invalidateEditorCaches()
-
-			e.recordChange(Change{
-				Type:         ActDelete,
-				Text:         []byte(string(ch)),
-				StartPos:     start,
-				EndPos:       end,
-				CursorBefore: cursorBefore,
-			})
-		}
-	} else if e.cursor.Line < e.buf.LineCount()-1 {
-		cursorBefore := e.cursor
-		start := e.cursor
-		end := Position{Line: e.cursor.Line + 1, Col: 0}
-
-		_, _ = e.buf.Delete(start, end)
-		e.invalidateEditorCaches()
-
-		e.recordChange(Change{
-			Type:         ActDelete,
-			Text:         []byte("\n"),
-			StartPos:     start,
-			EndPos:       end,
-			CursorBefore: cursorBefore,
-		})
-	}
+	e.invalidateEditorCaches()
 	e.ensureCursorVisible()
 	e.notifyContentChanged()
 }
 
 func (e *Editor) recordChange(c Change) {
+	if e.documentProjection != nil {
+		return // the core owns connected history; do not retain a competing log
+	}
 	c.Group = e.undoGroupID
+	c.Before = e.captureViewState()
+	c.Before.Cursor = c.CursorBefore
+	c.After = e.captureViewState()
 	if e.changeIndex < len(e.changes) {
 		e.changes = e.changes[:e.changeIndex]
 	}
 	e.changes = append(e.changes, c)
-	if len(e.changes) > e.maxHistory {
-		e.changes = e.changes[len(e.changes)-e.maxHistory:]
-	}
 	e.changeIndex = len(e.changes)
 }
 
@@ -223,8 +154,19 @@ func (e *Editor) beginUndoGroup() {
 	if e.undoGroupDepth == 1 {
 		e.undoGroupSeq++
 		e.undoGroupID = e.undoGroupSeq
+		e.startUndoGroup()
 	}
 }
+
+func (e *Editor) startUndoGroup() {
+	e.undoGroupBefore = e.captureViewState()
+	e.undoGroupStart = e.changeIndex
+	e.beginDocumentEditGroup(fmt.Sprintf("editor-%x-%d", e.historyID, e.undoGroupID))
+}
+
+// BreakUndoGroup separates typing across explicit navigation or focus changes
+// without changing text, selection or retained undo/redo transactions.
+func (e *Editor) BreakUndoGroup() { e.typingGroup = 0 }
 
 func (e *Editor) endUndoGroup() {
 	if e.undoGroupDepth == 0 {
@@ -232,11 +174,43 @@ func (e *Editor) endUndoGroup() {
 	}
 	e.undoGroupDepth--
 	if e.undoGroupDepth == 0 {
+		after := e.captureViewState()
+		for i := e.undoGroupStart; i < e.changeIndex; i++ {
+			e.changes[i].Before = e.undoGroupBefore
+			e.changes[i].After = after
+		}
+		e.endDocumentEditGroup()
 		e.undoGroupID = 0
+		// Prune complete transactions only; a large replacement must never be
+		// cut in half just because it crosses the retained-history bound.
+		if len(e.changes) > e.maxHistory {
+			cut := len(e.changes) - e.maxHistory
+			for cut < len(e.changes) && e.changes[cut].Group == e.changes[cut-1].Group {
+				cut++
+			}
+			if cut < len(e.changes) {
+				e.changes = append([]Change(nil), e.changes[cut:]...)
+				e.changeIndex = len(e.changes)
+			}
+		}
 	}
 }
 
+func (e *Editor) captureViewState() editorViewState {
+	return editorViewState{Cursor: e.cursor, Anchor: e.selAnchor, End: e.selEnd, Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY}
+}
+
+func (e *Editor) restoreViewState(s editorViewState) {
+	e.cursor = e.buf.snapPosition(s.Cursor)
+	e.selAnchor, e.selEnd = e.buf.snapPosition(s.Anchor), e.buf.snapPosition(s.End)
+	e.stopPointerSelection()
+	e.selecting = s.Selecting
+	e.scrollX, e.scrollY = s.ScrollX, s.ScrollY
+	e.clearGoal()
+}
+
 func (e *Editor) undo() {
+	e.typingGroup = 0
 	if e.documentProjection != nil {
 		e.requestDocumentUndo(false)
 		return
@@ -254,12 +228,11 @@ func (e *Editor) undo() {
 
 		switch c.Type {
 		case ActInsert:
-			_, _ = e.buf.Delete(c.StartPos, c.EndPos)
-			e.cursor = c.CursorBefore
+			_, _ = e.buf.deleteOffsets(c.Offset, c.Offset+len(c.Text))
 		case ActDelete:
-			_, _ = e.buf.Insert(c.StartPos, c.Text)
-			e.cursor = c.CursorBefore
+			_, _ = e.buf.insertAtOffset(c.Offset, c.Text)
 		}
+		e.restoreViewState(c.Before)
 		if group == 0 {
 			break
 		}
@@ -273,9 +246,14 @@ func (e *Editor) undo() {
 	e.emitContentChanged()
 }
 
-func (e *Editor) Undo() { e.undo() }
+func (e *Editor) Undo() {
+	if !e.readOnly {
+		e.undo()
+	}
+}
 
 func (e *Editor) redo() {
+	e.typingGroup = 0
 	if e.documentProjection != nil {
 		e.requestDocumentUndo(true)
 		return
@@ -293,12 +271,11 @@ func (e *Editor) redo() {
 
 		switch c.Type {
 		case ActInsert:
-			_, _ = e.buf.Insert(c.StartPos, c.Text)
-			e.cursor = c.EndPos
+			_, _ = e.buf.insertAtOffset(c.Offset, c.Text)
 		case ActDelete:
-			_, _ = e.buf.Delete(c.StartPos, c.EndPos)
-			e.cursor = c.EndPos
+			_, _ = e.buf.deleteOffsets(c.Offset, c.Offset+len(c.Text))
 		}
+		e.restoreViewState(c.After)
 		if group == 0 {
 			break
 		}
@@ -313,4 +290,8 @@ func (e *Editor) redo() {
 	e.emitContentChanged()
 }
 
-func (e *Editor) Redo() { e.redo() }
+func (e *Editor) Redo() {
+	if !e.readOnly {
+		e.redo()
+	}
+}

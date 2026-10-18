@@ -49,6 +49,11 @@ func (m *App) installEditorRecovery(ed *editor.Editor, record clientstate.Editor
 	if err := ed.RestoreDocumentRecovery(recovery); err != nil {
 		return err
 	}
+	if recovery.HistorySync {
+		if live := m.liveEditors[ed]; live != nil {
+			live.sync = true
+		}
+	}
 	if recovery.InFlight != nil {
 		if live := m.liveEditors[ed]; live != nil {
 			live.uncertain = &liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: live, kind: "edit", requestID: recovery.InFlight.RequestID}

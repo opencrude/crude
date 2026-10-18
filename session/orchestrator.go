@@ -27,6 +27,7 @@ type Orchestrator struct {
 	turnGeneration uint64
 	turnCancel     context.CancelFunc
 	turnCancelling bool
+	turnSealed     bool
 	inputCh        chan turnRequest
 }
 
@@ -66,6 +67,7 @@ func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collab
 	}
 	o.turnGeneration++
 	o.turnCancel, o.turnCancelling = cancel, false
+	o.turnSealed = false
 	return turnRequest{input: input, ctx: ctx, generation: o.turnGeneration, deliveries: append([]collaboration.PendingDelivery(nil), deliveries...), recovery: recovery}, true
 }
 
@@ -101,6 +103,7 @@ func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) b
 	o.turnGeneration = checkpoint.Status.Generation
 	o.turnCancel = cancel
 	o.turnCancelling = false
+	o.turnSealed = false
 	copy := checkpoint
 	request := turnRequest{
 		input: cloneUserInput(checkpoint.PendingInput), ctx: ctx,
@@ -176,6 +179,7 @@ func (o *Orchestrator) endTurn(generation uint64) []string {
 	cancel := o.turnCancel
 	o.turnCancel = nil
 	o.turnCancelling = false
+	o.turnSealed = false
 	o.RunID = ""
 	o.RunVersion = 0
 	o.turnMu.Unlock()

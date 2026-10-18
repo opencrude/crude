@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/document"
 )
 
@@ -15,17 +17,119 @@ var ErrDocumentPending = errors.New("document command pending; retain edits and 
 // Pending mutations use sequential byte coordinates; wire commands use one
 // immutable pre-change coordinate system.
 type DocumentProjection struct {
-	snapshot     document.Snapshot
-	pending      []document.Edit
-	inflight     *document.Change
-	owner        document.Owner
-	conflict     error
-	onEdited     func()
-	onUndo       func(DocumentUndoIntent)
-	undoPending  bool
-	undoSequence uint64
-	queuedUndo   *bool
-	suppressed   bool
+	snapshot         document.Snapshot
+	pending          []document.Edit
+	pendingGroups    []string
+	editGroup        string
+	editGroupBefore  editorViewState
+	editor           *Editor
+	views            map[string]documentGroupView
+	viewOrder        []string
+	inflight         *document.Change
+	owner            document.Owner
+	conflict         error
+	onEdited         func()
+	onUndo           func(DocumentUndoIntent)
+	undoPending      bool
+	undoSequence     uint64
+	historyQueue     []documentHistoryAction
+	historySync      bool
+	historyRedo      bool
+	historyRequestID string
+	replaying        bool
+	restoreView      *editorViewState
+	suppressed       bool
+}
+
+type documentGroupView struct{ before, after editorViewState }
+type documentHistoryAction struct {
+	edit     func()
+	redo     bool
+	evidence DocumentHistoryIntent
+}
+
+// DocumentHistoryIntent is private recovery evidence for ordered UI input, not
+// permission to publish it against a different canonical document.
+type DocumentHistoryIntent struct {
+	Key           *tea.KeyPressMsg
+	Paste         *tea.PasteMsg
+	Redo          bool
+	Unrecoverable bool
+}
+
+func (e *Editor) beginDocumentEditGroup(id string) {
+	if p := e.documentProjection; p != nil {
+		p.beginEditGroup(id)
+	}
+}
+
+func (e *Editor) endDocumentEditGroup() {
+	if p := e.documentProjection; p != nil {
+		p.endEditGroup()
+	}
+}
+
+func (p *DocumentProjection) beginEditGroup(id string) {
+	p.editGroup = id
+	p.editGroupBefore = p.editor.captureViewState()
+}
+
+func (p *DocumentProjection) noteEditGroup() {
+	id := p.editGroup
+	if id == "" {
+		return
+	}
+	if p.views == nil {
+		p.views = make(map[string]documentGroupView)
+	}
+	if _, exists := p.views[id]; !exists {
+		if len(p.viewOrder) >= p.editor.maxHistory && len(p.viewOrder) > 0 {
+			delete(p.views, p.viewOrder[0])
+			p.viewOrder = p.viewOrder[1:]
+		}
+		p.viewOrder = append(p.viewOrder, id)
+		p.views[id] = documentGroupView{before: p.editGroupBefore}
+	}
+}
+
+func (p *DocumentProjection) endEditGroup() {
+	if view, ok := p.views[p.editGroup]; p.editGroup != "" && ok {
+		view.after = p.editor.captureViewState()
+		p.views[p.editGroup] = view
+	}
+	p.editGroup = ""
+}
+
+// DeferDocumentEdit retains an editing intent behind earlier history gestures.
+// Replay happens on Update after canonical sync, at the resulting caret rather
+// than at coordinates from the text that is about to be undone.
+func (e *Editor) DeferDocumentEdit(edit func()) bool {
+	p := e.documentProjection
+	if p == nil || p.replaying || (!p.undoPending && !p.historySync && len(p.historyQueue) == 0) || (p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending)) {
+		return false
+	}
+	p.historyQueue = append(p.historyQueue, documentHistoryAction{edit: edit, evidence: DocumentHistoryIntent{Unrecoverable: true}})
+	return true
+}
+
+// DeferDocumentEvent preserves the event payload as well as its live replay, so
+// a crash cannot silently discard typing queued behind an undo acknowledgement.
+func (e *Editor) DeferDocumentEvent(msg tea.Msg) bool {
+	if !e.DeferDocumentEdit(func() { e.HandleEvent(msg) }) {
+		return false
+	}
+	p := e.documentProjection
+	intent := DocumentHistoryIntent{}
+	switch v := msg.(type) {
+	case tea.KeyPressMsg:
+		intent.Key = &v
+	case tea.PasteMsg:
+		intent.Paste = &v
+	default:
+		intent.Unrecoverable = true
+	}
+	p.historyQueue[len(p.historyQueue)-1].evidence = intent
+	return true
 }
 
 type DocumentUndoIntent struct {
@@ -42,6 +146,7 @@ type DocumentState struct {
 	Revision              uint64
 	PendingEdits          int
 	InFlight, UndoPending bool
+	HistoryQueued         bool
 	Conflict              error
 }
 
@@ -55,7 +160,7 @@ func (e *Editor) detachDocument() {
 // InstallDocument is a watcher-free open, not a reload or a save acknowledgement.
 // Callers must explicitly resolve any existing local edits before replacing it.
 func (e *Editor) InstallDocument(s document.Snapshot) error {
-	if e.documentProjection != nil && (len(e.documentProjection.pending) > 0 || e.documentProjection.inflight != nil || e.documentProjection.undoPending) {
+	if e.documentProjection != nil && (len(e.documentProjection.pending) > 0 || e.documentProjection.inflight != nil || e.documentProjection.undoPending || e.documentProjection.historySync || len(e.documentProjection.historyQueue) > 0) {
 		return ErrDocumentPending
 	}
 	if s.ID == "" || s.Revision == 0 {
@@ -76,13 +181,19 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 	e.installDocumentBaseline(s)
 	s.Text = bytes.Clone(s.Text)
 	s.Saved = bytes.Clone(s.Saved)
-	p := &DocumentProjection{snapshot: s}
+	p := &DocumentProjection{snapshot: s, editor: e}
 	e.documentProjection = p
 	pt.mutationObserver = func(edit document.Edit) {
 		if p.suppressed {
 			return
 		}
+		p.noteEditGroup()
 		p.pending = append(p.pending, edit)
+		// Recovered evidence may lack grouping for its original pending edits.
+		for len(p.pendingGroups) < len(p.pending)-1 {
+			p.pendingGroups = append(p.pendingGroups, "")
+		}
+		p.pendingGroups = append(p.pendingGroups, p.editGroup)
 		e.buffer.NoteEdit()
 		if p.onEdited != nil {
 			p.onEdited()
@@ -122,7 +233,7 @@ func (e *Editor) DocumentState() DocumentState {
 	if p == nil {
 		return DocumentState{}
 	}
-	return DocumentState{p.snapshot.ID, p.snapshot.Revision, len(p.pending), p.inflight != nil, p.undoPending, p.conflict}
+	return DocumentState{DocumentID: p.snapshot.ID, Revision: p.snapshot.Revision, PendingEdits: len(p.pending), InFlight: p.inflight != nil, UndoPending: p.undoPending, HistoryQueued: p.historySync || len(p.historyQueue) > 0, Conflict: p.conflict}
 }
 
 // DocumentSnapshot is the detached canonical baseline, excluding optimistic edits.
@@ -158,11 +269,13 @@ func (e *Editor) ResetDocument(s document.Snapshot) error {
 	}
 	// Keep the managed buffer and mutation observer: all existing consumers
 	// must continue to see the same live text authority after a history gap.
+	e.CancelPointerCapture()
 	p.suppressed = true
 	e.buf.ReplaceAll(string(s.Text))
 	p.suppressed = false
 	s.Text, s.Saved = bytes.Clone(s.Text), bytes.Clone(s.Saved)
 	p.snapshot, p.conflict = s, nil
+	p.views, p.viewOrder, p.restoreView = nil, nil, nil
 	e.installDocumentBaseline(s)
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
@@ -180,7 +293,8 @@ func (e *Editor) UseSharedDocument(s document.Snapshot, localRevision uint64) er
 	if s.ID != p.snapshot.ID || s.Revision == 0 || !utf8.Valid(s.Text) || !utf8.Valid(s.Saved) || len(s.Text) > document.MaxBytes || len(s.Saved) > document.MaxBytes {
 		return document.ErrRevision
 	}
-	p.pending, p.queuedUndo = nil, nil
+	p.pending, p.pendingGroups, p.historyQueue = nil, nil, nil
+	p.historySync, p.restoreView = false, nil
 	if err := e.ResetDocument(s); err != nil {
 		return err
 	}
@@ -265,15 +379,31 @@ func (e *Editor) CaptureDocumentEdits(owner document.Owner, requestID, groupID s
 	if p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending) {
 		return document.Change{}, p.conflict
 	}
-	if p.inflight != nil || p.undoPending {
+	if p.inflight != nil || p.undoPending || p.historySync {
 		return document.Change{}, ErrDocumentPending
 	}
 	if owner.ClientID == "" || owner.Epoch == 0 || requestID == "" || (p.owner.ClientID != "" && p.owner != owner) {
 		return document.Change{}, document.ErrOwner
 	}
-	edits := composeDocumentEdits(len(p.snapshot.Text), p.pending)
+	for len(p.pendingGroups) < len(p.pending) {
+		p.pendingGroups = append(p.pendingGroups, "")
+	}
+	n := len(p.pending)
+	if n > 0 {
+		logicalGroup := p.pendingGroups[0]
+		for i := 1; i < n; i++ {
+			if p.pendingGroups[i] != logicalGroup {
+				n = i
+				break
+			}
+		}
+		if logicalGroup != "" {
+			groupID = logicalGroup
+		}
+	}
+	edits := composeDocumentEdits(len(p.snapshot.Text), p.pending[:n])
 	if len(edits) == 0 {
-		p.pending = nil
+		p.pending, p.pendingGroups = p.pending[n:], p.pendingGroups[n:]
 		return document.Change{}, nil
 	}
 	if len(edits) > document.MaxEdits {
@@ -281,7 +411,7 @@ func (e *Editor) CaptureDocumentEdits(owner document.Owner, requestID, groupID s
 	}
 	c := document.Change{DocumentID: p.snapshot.ID, Owner: owner, RequestID: requestID, BaseRevision: p.snapshot.Revision, GroupID: groupID, Edits: edits}
 	p.owner = owner
-	p.pending = nil
+	p.pending, p.pendingGroups = p.pending[n:], p.pendingGroups[n:]
 	stored := c
 	stored.Edits = append([]document.Edit(nil), edits...)
 	p.inflight = &stored
@@ -298,6 +428,11 @@ func (e *Editor) AcceptDocumentReceipt(r document.Receipt) error {
 		return document.ErrRequest
 	}
 	if !r.Accepted {
+		groups := make([]string, len(c.Edits))
+		for i := range groups {
+			groups[i] = c.GroupID
+		}
+		p.pendingGroups = append(groups, p.pendingGroups...)
 		p.pending = append(append([]document.Edit(nil), c.Edits...), p.pending...)
 		// Captured edits have simultaneous coordinates; restore as sequential.
 		delta := 0
@@ -334,29 +469,54 @@ func (e *Editor) requestDocumentUndo(redo bool) {
 	if p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending) {
 		return
 	}
-	if len(p.pending) > 0 || p.inflight != nil || p.undoPending || p.onUndo == nil || p.owner.ClientID == "" {
-		if p.onUndo != nil && p.owner.ClientID != "" && !p.undoPending {
-			p.queuedUndo = &redo
-		}
+	p.historyQueue = append(p.historyQueue, documentHistoryAction{redo: redo, evidence: DocumentHistoryIntent{Redo: redo}})
+	e.DrainDocumentUndo()
+	if len(p.historyQueue) > 0 {
 		p.conflict = ErrDocumentPending
-		return
 	}
-	p.undoPending = true
-	p.undoSequence++
-	p.conflict = nil
-	p.onUndo(DocumentUndoIntent{p.snapshot.ID, p.owner, p.snapshot.Revision, redo, p.undoSequence, p})
 }
 
 // DrainDocumentUndo admits a queued keyboard gesture only after its preceding
 // local edits have been acknowledged and the canonical revision is current.
 func (e *Editor) DrainDocumentUndo() {
 	p := e.documentProjection
-	if p == nil || p.queuedUndo == nil || len(p.pending) != 0 || p.inflight != nil || p.undoPending {
+	if p == nil || p.inflight != nil || p.undoPending || p.historySync || (p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending)) {
 		return
 	}
-	redo := *p.queuedUndo
-	p.queuedUndo = nil
-	e.requestDocumentUndo(redo)
+	for len(p.historyQueue) > 0 {
+		action := p.historyQueue[0]
+		if action.edit != nil {
+			p.historyQueue = p.historyQueue[1:]
+			p.replaying = true
+			action.edit()
+			p.replaying = false
+			continue
+		}
+		if len(p.pending) > 0 || p.onUndo == nil || p.owner.ClientID == "" {
+			return
+		}
+		p.historyQueue = p.historyQueue[1:]
+		p.undoPending = true
+		p.undoSequence++
+		p.conflict = nil
+		p.onUndo(DocumentUndoIntent{p.snapshot.ID, p.owner, p.snapshot.Revision, action.redo, p.undoSequence, p})
+		return
+	}
+}
+
+// CompleteDocumentHistorySync is called only after the entire canonical sync,
+// not after individual deltas of a multi-operation undo group.
+func (e *Editor) CompleteDocumentHistorySync() {
+	p := e.documentProjection
+	if p == nil || !p.historySync {
+		return
+	}
+	p.historySync = false
+	if p.restoreView != nil {
+		e.restoreViewState(*p.restoreView)
+		p.restoreView = nil
+	}
+	e.DrainDocumentUndo()
 }
 
 // BindDocumentOwner enables undo even before this view's first edit.
@@ -377,12 +537,27 @@ func (e *Editor) CompleteDocumentUndo(intent DocumentUndoIntent, err error) erro
 			return document.ErrRequest
 		}
 		p.undoPending = false
+		p.historySync = true
+		p.historyRedo = intent.Redo
+		p.historyRequestID = ""
 		// A definitive refusal is not a projection conflict. Sync must remain
 		// available so another author's newer revision can be installed.
 		p.conflict = nil
 		return nil
 	}
 	return document.ErrOwner
+}
+
+// CompleteDocumentUndoReceipt retains exact command correlation for private
+// caret restoration while the authoritative deltas are fetched.
+func (e *Editor) CompleteDocumentUndoReceipt(intent DocumentUndoIntent, receipt document.Receipt, err error) error {
+	if complete := e.CompleteDocumentUndo(intent, err); complete != nil {
+		return complete
+	}
+	if err == nil {
+		e.documentProjection.historyRequestID = receipt.RequestID
+	}
+	return nil
 }
 
 // AcceptDocumentSnapshot advances only the saved/disk metadata for a current
@@ -423,6 +598,21 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 	if !bytes.Equal(canonical, s.Text) {
 		return document.ErrRevision
 	}
+	if c.Owner != p.owner || !p.historySync || c.RequestID != p.historyRequestID {
+		// Historical view positions are private, not canonical anchors. Do not
+		// restore stale coordinates after a collaborator or formatter changes it.
+		p.views = nil
+		p.viewOrder = nil
+		p.restoreView = nil
+	} else {
+		if view, ok := p.views[c.GroupID]; ok {
+			state := view.before
+			if p.historyRedo {
+				state = view.after
+			}
+			p.restoreView = &state
+		}
+	}
 	remote := append([]document.Edit(nil), c.Edits...)
 	pending := make([]document.Edit, 0, len(p.pending))
 	for _, local := range p.pending {
@@ -442,6 +632,9 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 	// Preserve logical view anchors by transforming their byte offsets across
 	// precisely the remote edits applied to the optimistic local buffer.
 	anchors := []Position{e.cursor, e.selAnchor, e.selEnd, {Line: e.scrollY}}
+	if e.IsMouseDragging() {
+		anchors = append(anchors, e.drag.start, e.drag.end)
+	}
 	offsets := make([]int, len(anchors))
 	for i, a := range anchors {
 		offsets[i] = e.buf.positionToOffset(a)
@@ -449,11 +642,8 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 	p.suppressed = true
 	for i := len(remote) - 1; i >= 0; i-- {
 		r := remote[i]
-		e.buf.ensureCache()
-		text := string(e.buf.cachedBytes)
-		a, b := offsetToLineCol(text, r.Start, r.End)
-		_, _ = e.buf.Delete(a, b)
-		_, _ = e.buf.Insert(a, []byte(r.Text))
+		_, _ = e.buf.deleteOffsets(r.Start, r.End)
+		_, _ = e.buf.insertAtOffset(r.Start, []byte(r.Text))
 	}
 	p.suppressed = false
 	for i, off := range offsets {
@@ -468,14 +658,14 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 		}
 		offsets[i] = off + delta
 	}
-	e.buf.ensureCache()
-	text := string(e.buf.cachedBytes)
 	for i, off := range offsets {
-		line, col := ByteOffsetToLineCol(text, off, tabWidth)
-		anchors[i] = Position{Line: line, Col: col}
+		anchors[i] = e.buf.positionAtOffset(off)
 	}
 	e.cursor, e.selAnchor, e.selEnd = anchors[0], anchors[1], anchors[2]
 	e.scrollY = anchors[3].Line
+	if e.IsMouseDragging() {
+		e.drag.start, e.drag.end = anchors[4], anchors[5]
+	}
 	p.pending = pending
 	s.Text = bytes.Clone(s.Text)
 	s.Saved = bytes.Clone(s.Saved)

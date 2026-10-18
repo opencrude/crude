@@ -16,7 +16,13 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	if !e.open {
 		return
 	}
+	if e.search != nil && e.search.Open {
+		e.ensureSearchCurrent()
+	}
 	w, h := surf.Width(), surf.Height()
+	if w != e.viewW || h != e.viewH {
+		e.CancelPointerCapture()
+	}
 	if (w != e.viewW || h != e.viewH) && e.cursor.Line >= e.scrollY && e.cursor.Line < e.scrollY+e.bodyHeight() {
 		e.pendingReveal = true
 	}
@@ -527,11 +533,6 @@ func (e *Editor) searchHighlightBg(isCurrent bool) cell.Color {
 func (e *Editor) lineVisualWidth(lineIdx int) int {
 	_, width, _ := e.lineGeomInfo(lineIdx)
 	return width
-}
-
-func (e *Editor) lineRunes(lineIdx int) []rune {
-	runes, _, _ := e.lineGeomInfo(lineIdx)
-	return runes
 }
 
 func (e *Editor) ensureCursorVisible() {

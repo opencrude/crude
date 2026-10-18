@@ -3,7 +3,6 @@ package shellport
 import (
 	"context"
 
-	"crude/provider"
 	"crude/workspace"
 )
 
@@ -24,12 +23,6 @@ type Connection interface {
 	WorkspaceID() string
 	AttachWorkspace(context.Context, string) (Workspace, error)
 	Close() error
-}
-
-// SteeringAdmission awaits exact core admission off Update. A bool from the
-// synchronous port means queue admission, not permission to consume a draft.
-type SteeringAdmission interface {
-	AdmitSteering(context.Context, string, provider.UserInput) (bool, error)
 }
 
 // ReplicaChangesMsg is posted into the shell's FIFO by a connected workspace.

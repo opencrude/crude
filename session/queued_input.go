@@ -80,10 +80,23 @@ func (s *Session) persistQueuedInputsLocked(items []QueuedInput) error {
 }
 
 // shouldQueueInput reports whether new input must wait: its owner is
-// compacting, or earlier input is still queued and order must be kept.
+// compacting, has sealed its inbox for completion, or earlier input is still
+// queued and order must be kept. A sealed execution cannot accept steering;
+// its next input belongs to the durable queue, not that terminal snapshot.
 func (s *Session) shouldQueueInput(agentID string) bool {
 	if s.compactionActive(agentID) {
 		return true
+	}
+	s.orchMu.Lock()
+	orchestrator := s.orchestrators[agentID]
+	s.orchMu.Unlock()
+	if orchestrator != nil {
+		orchestrator.turnMu.Lock()
+		sealed := orchestrator.turnCancel != nil && orchestrator.turnSealed && !orchestrator.turnCancelling
+		orchestrator.turnMu.Unlock()
+		if sealed {
+			return true
+		}
 	}
 	s.queueMu.Lock()
 	defer s.queueMu.Unlock()

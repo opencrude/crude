@@ -197,3 +197,43 @@ func TestInputDuringCompactionIsQueuedDurablyAndAdmittedAfter(t *testing.T) {
 		t.Fatalf("queue after head admission: %+v", queue)
 	}
 }
+
+func TestInputDuringTerminalSealIsQueuedWithoutChangingTheSettlingContext(t *testing.T) {
+	s, err := NewWithSessionDir("terminal-sealed-input", testConfig(), t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	sender := newMockEventSender()
+	o, err := s.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, ok := o.reserveTurn(provider.PlainInput("finishing accepted work"), nil, nil)
+	if !ok {
+		t.Fatal("could not reserve finishing turn")
+	}
+	o.turnMu.Lock()
+	o.turnSealed = true
+	o.turnMu.Unlock()
+	input := provider.UserInput{InternalID: "after-terminal-seal", Text: "new explicit work"}
+	intent, err := s.PrepareInputAdmission(o.ID, input, 5)
+	if err != nil {
+		t.Fatalf("sealed owner rejected an unchanged send: %v", err)
+	}
+	result := s.CommitInputAdmission(t.Context(), intent)
+	if result.Status != InputAdmissionQueued || len(s.QueuedInputs()) != 1 || s.HasMessages() || o.turnGeneration != request.generation {
+		t.Fatalf("terminal send contaminated the settling snapshot or lost input: %+v", result)
+	}
+	// Stop never dispatches this new input. Its queue identity is still intact
+	// when the already-reserved execution acknowledges cancellation.
+	o.CancelTurn()
+	if _, err := s.prepareReservedAdmission(o.ID, provider.PlainInput("must not overlap"), 6); err == nil {
+		t.Fatal("a new turn overlapped cancelled settlement")
+	}
+	o.endTurn(request.generation)
+	queue := s.QueuedInputs()
+	if len(queue) != 1 || queue[0].Input.InternalID != input.InternalID || queue[0].Input.Text != input.Text {
+		t.Fatal("Stop lost or replayed queued post-seal input")
+	}
+}
