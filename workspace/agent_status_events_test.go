@@ -72,6 +72,48 @@ func TestApplyAgentStatusEventLifecycleAndRequestDetails(t *testing.T) {
 	}
 }
 
+func TestBackgroundSummaryStatusSettlesAndRejectsStaleProgress(t *testing.T) {
+	w, node := newAgentStatusEventWorkspace(t)
+	node.State.Running = true
+	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "thinking"})
+	apply := func(id, phase string) {
+		w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "context_precompaction", Data: map[string]any{"phase": phase, "request_id": id, "stage_label": "Summarizing prior work"}})
+	}
+	apply("old", "started")
+	apply("old", "discarded")
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "" || state.Phase != ttypes.AgentThinking {
+		t.Fatalf("discarded background work remained active: %+v", state)
+	}
+	apply("new", "started")
+	apply("old", "progress")
+	apply("old", "ready")
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "preparing" {
+		t.Fatalf("stale completion changed replacement job: %+v", state)
+	}
+	apply("new", "cancelled")
+	apply("new", "progress")
+	apply("new", "started")
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "" || state.CheckpointDetail != "" {
+		t.Fatalf("late progress resurrected cancelled work: %+v", state)
+	}
+	apply("ready", "started")
+	apply("ready", "ready")
+	apply("ready", "progress")
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "ready" || state.Phase != ttypes.AgentThinking {
+		t.Fatalf("late progress replaced readiness or changed agent work: %+v", state)
+	}
+	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "context_compacted", Data: map[string]any{"request_id": "ready"}})
+	apply("ready", "ready")
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "" || state.CheckpointDetail != "" {
+		t.Fatalf("adopted summary remained in details: %+v", state)
+	}
+	apply("failed", "started")
+	apply("failed", "failed")
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "" || state.CheckpointDetail != "" {
+		t.Fatalf("failed background work remained active: %+v", state)
+	}
+}
+
 func TestApplyAgentStatusEventPermissionsUseFamilyPolicy(t *testing.T) {
 	w, root := newAgentStatusEventWorkspace(t)
 	child := w.AgentMgr.AddSubAgent("child", root.ID, "Edward", "model", "crafter", NewAgentState("child", NewConversation(), nil))

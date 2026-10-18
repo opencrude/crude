@@ -1,20 +1,26 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"crude/docconv"
 	"crude/logger"
 	"crude/network"
 
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/PuerkitoBio/goquery"
 )
 
@@ -34,25 +40,20 @@ type WebPage struct {
 // refuses direct requests, a configured reader (Exa contents or Jina Reader)
 // fetches it instead.
 func (client *Client) Fetch(ctx context.Context, rawURL string, offset, limit int) (string, error) {
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return "", fmt.Errorf("fetch: url is empty; pass the http(s) URL to read")
-	}
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		rawURL = "https://" + rawURL
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	var err error
+	rawURL, err = normalizeFetchURL(rawURL)
+	if err != nil {
+		return "", err
 	}
 	start := time.Now()
-	page, cached := client.pages.get(rawURL)
-	if !cached {
-		var err error
-		page, err = client.fetchPage(ctx, rawURL)
-		if err != nil {
-			logIf(func(lg *logger.Logger) {
-				lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error())
-			})
-			return "", err
-		}
-		client.pages.put(rawURL, page)
+	page, cached, err := client.loadPage(ctx, rawURL)
+	if err != nil {
+		logIf(func(lg *logger.Logger) {
+			lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error())
+		})
+		return "", err
 	}
 	logIf(func(lg *logger.Logger) {
 		lg.Info("SEARCH", "fetch_ok", "url", rawURL, "total_chars", page.TotalChars, "cached", cached, "latency_ms", time.Since(start).Milliseconds())
@@ -70,7 +71,75 @@ func (client *Client) Fetch(ctx context.Context, rawURL string, offset, limit in
 		content = string(runes[:max(0, min(keep, len(runes)-1))])
 		result = formatPage(page, offset, content)
 	}
+	if client.resultBudget > 0 && encodedLen(result) > client.resultBudget {
+		return "", errors.New("fetch: page metadata exceeds the result budget")
+	}
 	return result, nil
+}
+
+func normalizeFetchURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("fetch: url is empty; pass the http(s) URL to read")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Scheme != "https" && u.Scheme != "http" {
+		return "", errors.New("fetch: URL must be HTTP(S), with a hostname and no embedded credentials")
+	}
+	u.Scheme, u.Host = strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	u.Fragment, u.RawFragment = "", ""
+	return u.String(), nil
+}
+
+type pageFlight struct {
+	done chan struct{}
+	page WebPage
+	err  error
+}
+
+// Cache lookup and in-flight admission share one lock. Concurrent reads of the
+// same URL join one request; cancellation never leaves an orphaned fetch worker.
+func (client *Client) loadPage(ctx context.Context, rawURL string) (WebPage, bool, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return WebPage{}, false, err
+		}
+		client.fetchMu.Lock()
+		if page, ok := client.pages.get(rawURL); ok {
+			client.fetchMu.Unlock()
+			return page, true, nil
+		}
+		if flight := client.fetching[rawURL]; flight != nil {
+			client.fetchMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return WebPage{}, false, ctx.Err()
+			case <-flight.done:
+				if errors.Is(flight.err, context.Canceled) && ctx.Err() == nil {
+					continue
+				}
+				return flight.page, true, flight.err
+			}
+		}
+		flight := &pageFlight{done: make(chan struct{})}
+		if client.fetching == nil {
+			client.fetching = make(map[string]*pageFlight)
+		}
+		client.fetching[rawURL] = flight
+		client.fetchMu.Unlock()
+		flight.page, flight.err = client.fetchPage(ctx, rawURL)
+		client.fetchMu.Lock()
+		if flight.err == nil {
+			client.pages.put(rawURL, flight.page)
+		}
+		delete(client.fetching, rawURL)
+		close(flight.done)
+		client.fetchMu.Unlock()
+		return flight.page, false, flight.err
+	}
 }
 
 func formatPage(page WebPage, offset int, content string) string {
@@ -84,8 +153,12 @@ func formatPage(page WebPage, offset int, content string) string {
 	}
 	first := max(1, offset)
 	last := first + len([]rune(content)) - 1
-	if first > 1 || last < page.TotalChars {
+	if first > page.TotalChars {
+		fmt.Fprintf(&sb, "End of document (%d characters); offset=%d is past the end.\n\n", page.TotalChars, first)
+	} else if last < page.TotalChars {
 		fmt.Fprintf(&sb, "Characters %d–%d of %d; pass offset=%d to continue.\n\n", first, max(first-1, last), page.TotalChars, last+1)
+	} else if first > 1 {
+		fmt.Fprintf(&sb, "Characters %d–%d of %d; end of document.\n\n", first, last, page.TotalChars)
 	} else {
 		fmt.Fprintf(&sb, "Total characters: %d\n\n", page.TotalChars)
 	}
@@ -102,7 +175,14 @@ func encodedLen(text string) int {
 // fetchPage reads one document directly, falling back to a configured reader
 // when the site refuses automated requests or yields no readable text.
 func (client *Client) fetchPage(ctx context.Context, rawURL string) (WebPage, error) {
-	page, err := fetchWebContent(ctx, rawURL)
+	keyExa, keyJina := client.lookup("EXA_API_KEY"), client.lookup("JINA_API_KEY")
+	direct := ctx
+	stop := func() {}
+	if keyExa != "" || keyJina != "" {
+		direct, stop = context.WithTimeout(ctx, 12*time.Second)
+	}
+	page, err := fetchWebContent(direct, rawURL)
+	stop()
 	if err == nil && strings.TrimSpace(page.Content) != "" {
 		return *page, nil
 	}
@@ -110,8 +190,10 @@ func (client *Client) fetchPage(ctx context.Context, rawURL string) (WebPage, er
 		return WebPage{}, ctx.Err()
 	}
 	var readerErrs []string
-	if key := client.lookup("EXA_API_KEY"); key != "" {
-		read, readErr := exaContents(ctx, client.endpoints.exa, key, rawURL)
+	if keyExa != "" {
+		attempt, cancel := context.WithTimeout(ctx, 6*time.Second)
+		read, readErr := exaContents(attempt, client.endpoints.exa, keyExa, rawURL)
+		cancel()
 		if readErr == nil && strings.TrimSpace(read.Content) != "" {
 			return read, nil
 		}
@@ -119,8 +201,8 @@ func (client *Client) fetchPage(ctx context.Context, rawURL string) (WebPage, er
 			readerErrs = append(readerErrs, readErr.Error())
 		}
 	}
-	if key := client.lookup("JINA_API_KEY"); key != "" {
-		read, readErr := jinaRead(ctx, client.endpoints.jina, key, rawURL)
+	if keyJina != "" {
+		read, readErr := jinaRead(ctx, client.endpoints.jina, keyJina, rawURL)
 		if readErr == nil && strings.TrimSpace(read.Content) != "" {
 			return read, nil
 		}
@@ -187,7 +269,7 @@ func jinaRead(ctx context.Context, base, key, rawURL string) (WebPage, error) {
 	if resp.StatusCode/100 != 2 {
 		return WebPage{}, fmt.Errorf("jina reader returned HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err := readResponse(resp.Body, maxResponseBytes)
 	if err != nil {
 		return WebPage{}, err
 	}
@@ -239,19 +321,35 @@ func fetchWebContent(ctx context.Context, fetchURL string) (*WebPage, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("HTTP %d for %s", resp.StatusCode, fetchURL)
 	}
 
 	finalURL := resp.Request.URL.String()
 
-	contentType := resp.Header.Get("Content-Type")
-
-	if !strings.Contains(contentType, "text/html") && !strings.Contains(contentType, "application/xhtml") {
-		if strings.Contains(contentType, "text/plain") || strings.Contains(contentType, "application/json") || strings.Contains(contentType, "application/xml") || strings.Contains(contentType, "text/xml") {
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-			if err != nil {
-				return nil, err
+	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	ext := mimeToExt[contentType]
+	if ext == "" && !strings.HasPrefix(contentType, "text/") && contentType != "application/json" {
+		ext = docExtFromURL(finalURL)
+	}
+	maxBytes := maxResponseBytes
+	if ext != "" {
+		maxBytes = 25 << 20
+	}
+	body, err := readResponse(resp.Body, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType, _, _ = mime.ParseMediaType(http.DetectContentType(body))
+		if ext == "" {
+			ext = mimeToExt[contentType]
+		}
+	}
+	if contentType != "text/html" && contentType != "application/xhtml+xml" {
+		if ext == "" && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || strings.HasSuffix(contentType, "+json") || contentType == "application/xml" || strings.HasSuffix(contentType, "+xml") || utf8.Valid(body) && !bytes.ContainsRune(body, 0) && contentType == "application/octet-stream") {
+			if !utf8.Valid(body) {
+				return nil, errors.New("fetch: text is not valid UTF-8")
 			}
 			content := string(body)
 			content = strings.ReplaceAll(content, "\r\n", "\n")
@@ -266,26 +364,10 @@ func fetchWebContent(ctx context.Context, fetchURL string) (*WebPage, error) {
 		}
 
 		// Try document conversion (PDF, DOCX, PPTX, XLSX, etc.)
-		// Parse the media type from Content-Type (strip parameters like charset)
-		mediaType := strings.TrimSpace(contentType)
-		if idx := strings.IndexAny(mediaType, ";"); idx >= 0 {
-			mediaType = strings.TrimSpace(mediaType[:idx])
-		}
-		ext := mimeToExt[mediaType]
-		if ext == "" {
-			ext = docExtFromURL(finalURL)
-		}
 		if ext != "" {
 			logIf(func(lg *logger.Logger) {
 				lg.Info("SEARCH", "fetch_doc", "url", finalURL, "mime", contentType, "ext", ext)
 			})
-			if resp.ContentLength > 25*1024*1024 {
-				return nil, fmt.Errorf("fetch: document too large (%d MB, limit 25 MB) — use execute_command to download and convert locally", resp.ContentLength/(1024*1024))
-			}
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 25*1024*1024))
-			if err != nil {
-				return nil, fmt.Errorf("fetch: reading document: %w", err)
-			}
 			md, meta, err := docconv.ConvertBytes(body, ext)
 			if err != nil {
 				return nil, fmt.Errorf("fetch: could not convert %s document: %w — try downloading it directly", docconv.FormatName(ext), err)
@@ -304,12 +386,7 @@ func fetchWebContent(ctx context.Context, fetchURL string) (*WebPage, error) {
 			}, nil
 		}
 
-		return nil, fmt.Errorf("unsupported content type %q — this appears to be a binary file (PDF, image, etc.). Try accessing the URL directly in a browser", contentType)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch: unsupported binary content type %q; use read_file after downloading it for native media inspection", contentType)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
@@ -326,22 +403,31 @@ func fetchWebContent(ctx context.Context, fetchURL string) (*WebPage, error) {
 		s.Remove()
 	})
 
-	var content strings.Builder
-
-	selections := doc.Find("article, main, .content, .main-content, #content, .post-content, .article-content, .entry-content, .post-body")
-	if selections.Length() > 0 {
-		selections.Each(func(i int, s *goquery.Selection) {
-			content.WriteString(s.Text())
-		})
-	} else {
-		doc.Find("body").Each(func(i int, s *goquery.Selection) {
-			content.WriteString(s.Text())
-		})
+	// Select only outer roots: <main><article class=content> is one document,
+	// not three copies of the same text. Markdown retains code, paragraphs/links.
+	selector := "article, main, .content, .main-content, #content, .post-content, .article-content, .entry-content, .post-body"
+	selections := doc.Find(selector).FilterFunction(func(_ int, s *goquery.Selection) bool { return s.ParentsFiltered(selector).Length() == 0 })
+	if selections.Length() == 0 {
+		selections = doc.Find("body")
 	}
-
-	rawContent := content.String()
-
-	rawContent = strings.Join(strings.Fields(rawContent), " ")
+	var content strings.Builder
+	var conversionErr error
+	selections.Each(func(_ int, s *goquery.Selection) {
+		if conversionErr != nil {
+			return
+		}
+		md, err := htmltomarkdown.ConvertNode(s.Get(0), converter.WithContext(ctx), converter.WithDomain(finalURL))
+		if err != nil {
+			conversionErr = err
+			return
+		}
+		content.Write(md)
+		content.WriteString("\n\n")
+	})
+	if conversionErr != nil {
+		return nil, fmt.Errorf("fetch: converting HTML: %w", conversionErr)
+	}
+	rawContent := strings.TrimSpace(content.String())
 
 	totalChars := len([]rune(rawContent))
 
@@ -371,9 +457,17 @@ func sliceContent(content string, offset, limit int) string {
 		return string(runes[start:])
 	}
 
-	end := start + limit
-	if end > total {
-		end = total
-	}
+	end := start + min(limit, total-start)
 	return string(runes[start:end])
+}
+
+func readResponse(reader io.Reader, limit int) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
+	if err != nil {
+		return nil, redactRequestURL(err)
+	}
+	if len(body) > limit {
+		return nil, fmt.Errorf("fetch: response too large (limit %d bytes); content was not silently truncated", limit)
+	}
+	return body, nil
 }

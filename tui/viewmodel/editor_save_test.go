@@ -300,7 +300,7 @@ func TestTerminalBlurAutosavesDirtyBuffers(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("terminal blur did not schedule save")
 	}
-	finishSaveCommand(t, app, cmd)
+	runAppCommand(t, app, cmd)
 	if ed.Modified() {
 		t.Fatal("terminal blur save did not acknowledge buffer")
 	}

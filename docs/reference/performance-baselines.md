@@ -7,6 +7,34 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Document-owned syntax acceptance (2026-10-18)
+
+The former 256-line viewport restart inverted Python docstring/code and long
+block-comment boundaries. Lexing now runs once per document revision off the UI
+thread; visible cell maps project compact source spans without re-lexing on scroll.
+Three Linux/amd64, Go 1.25.9, i7-10750H runs (`GOMAXPROCS=2`, ten iterations,
+`go test ./tui/editor -run '^$' -bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation)' -benchmem -benchtime=10x -count=3`)
+measured 376–404 ns / 0 B / 0 allocations for a warm 40-line viewport inside a
+20,000-line Python string. The old, incorrect warm path measured 1.60–2.17 µs /
+640 B / 40 allocations (1,000 iterations, GOMAXPROCS=12); timings are not an
+isolated same-configuration speedup claim.
+
+Complete source preparation is separate: 200 lines measured 0.72–0.75 ms /
+369,072–369,073 B / 5,878 allocations; 20,000 lines measured 60.1–62.1 ms /
+35,525,028–35,525,046 B / 560,290 allocations. These are cumulative allocation,
+not retained heap or input-to-terminal latency. Chroma's regex machinery remains
+allocation-heavy. Removing its repeated string coalescing reduced the 20,000-line
+preparation from 209.9 MB to 35.5 MB; two concurrent workers bound active parses,
+and superseded revisions cancel before replacement admission. New allocation
+ceilings retain roughly 20% headroom; no existing ceiling is raised.
+
+Real shell captures at 160×40 and 80×24 cover direct jumps deep into the string,
+the far-away closing delimiter and subsequent executable code, plus dark/light
+themes. Regression journeys cover offscreen delimiter deletion/undo, tab changes,
+CRLF/Unicode, pending navigation and stale close/replacement results. Existing
+paint goldens remain unchanged; cold source work is not hidden in warm-paint
+benchmarks.
+
 ## Editor pointer acceptance (2026-10-17)
 
 Stationary selection scrolling uses one owner/tick-fenced 50 ms repeat, not a

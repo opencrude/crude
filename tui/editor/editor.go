@@ -130,12 +130,15 @@ type Editor struct {
 
 	chromaStyle *chroma.Style
 	chromaLexer chroma.Lexer
-	// chromaLineCache is per-line colour maps from windowed (state-carrying)
-	// tokenisation. Keyed by line index; invalidated from an edit line onward.
-	chromaLineCache map[int]*chromaLineEntry
-	// chromaDirtyFrom is the lowest line whose chroma cache may be stale
-	// after an edit. -1 means nothing is dirty.
-	chromaDirtyFrom int
+	// Document-owned syntax is prepared off-UI; only visible cell maps are cached.
+	chromaLineCache                  map[int][]string
+	syntaxDocument                   *syntaxDocument
+	syntaxBuffer                     *PieceTable
+	syntaxRevision, syntaxGeneration uint64
+	syntaxJob                        *syntaxJob
+	syntaxFailed                     bool
+	syntaxStopped                    bool
+	syntaxPlain                      bool
 
 	lineRunesCacheValid bool
 	lineRunesCacheLine  int
@@ -367,6 +370,7 @@ func (e *Editor) ApplyFormatted(text string) {
 }
 
 func (e *Editor) Close() {
+	e.StopSyntax()
 	e.detachDocument()
 	e.stopWatching()
 	e.open = false
@@ -395,6 +399,7 @@ func (e *Editor) Retarget(path string) error {
 		e.buffer.buf.filePath = abs
 	}
 	e.startWatching()
+	e.initChroma()
 	return nil
 }
 
@@ -408,8 +413,6 @@ func (e *Editor) ApplyDisk(data []byte) {
 	e.changeIndex = 0
 	e.cursor.Line = min(e.cursor.Line, max(0, e.LineCount()-1))
 	e.clampCursorToLine()
-	e.chromaLineCache = nil
-	e.chromaDirtyFrom = 0
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
 	e.ClearHover()
@@ -439,8 +442,14 @@ func (e *Editor) invalidateEditorCaches() {
 	e.lineRunesCache = nil
 	e.lineRunesCacheWidth = 0
 	e.lineGeomCache = nil
-	e.chromaLineCache = nil
-	e.chromaDirtyFrom = 0
+	// Geometry-only invalidation (navigation and resize) preserves source syntax.
+	currentSyntax := e.syntaxBuffer == e.buf && e.syntaxRevision == e.buf.Revision()
+	if job := e.syntaxJob; job != nil && job.buffer == e.buf && job.revision == e.buf.Revision() && job.generation == e.syntaxGeneration {
+		currentSyntax = true
+	}
+	if !currentSyntax {
+		e.invalidateSyntax()
+	}
 }
 
 // InvalidateWidthProfile clears all geometry derived from terminal cell widths.
@@ -451,6 +460,7 @@ func (e *Editor) InvalidateWidthProfile() {
 	e.lineRunesCache = nil
 	e.lineRunesCacheWidth = 0
 	e.lineGeomCache = nil
+	e.chromaLineCache = nil
 	e.markDocumentWidthAll()
 }
 

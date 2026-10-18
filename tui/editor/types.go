@@ -20,12 +20,6 @@ type lineGeomCache struct {
 	totalW   int
 }
 
-// chromaLineEntry holds the syntax colour map for one line.
-type chromaLineEntry struct {
-	raw      string
-	colorMap []string
-}
-
 type EditInfo struct {
 	StartLine int
 	StartCol  int

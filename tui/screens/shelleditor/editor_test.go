@@ -24,6 +24,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
+	settleEditorSyntax(t, ed)
 
 	th := theme.DefaultDark()
 	screen := shelleditor.New(th)
@@ -48,6 +49,13 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	// color on one token, or a moved cursor that property checks cannot see.
 	// Deterministic: editor cursor is a static inverted cell (no blink clock).
 	uitest.CheckGolden(t, "shelleditor_dark_48x10", buf)
+}
+
+func settleEditorSyntax(tb testing.TB, ed *editor.Editor) {
+	tb.Helper()
+	if command := ed.SyntaxCommand(); command != nil {
+		command().(editor.SyntaxReadyMsg).Apply()
+	}
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

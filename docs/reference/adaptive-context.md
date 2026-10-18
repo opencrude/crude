@@ -383,8 +383,13 @@ Responses delta uploads and inline-image replay recovery are specified in
   of the whole context frees room. Only when none of these fits does the run
   stop, recoverably.
 - **Visibility.** Preparation is reported as `context_precompaction`
-  (`started`, `progress`, `ready`, `failed`); the agent header shows
-  "checkpoint…" or "checkpoint ready". Adoption emits the normal compaction
+  (`started`, `progress`, `ready`, `failed`, `cancelled`, `discarded`). The
+  owning slot publishes lifecycle directly; extractor progress uses one adapter,
+  never an event filter that drops the slot's own terminal state. Exact job IDs
+  fence stale progress and completion after discard, replacement or shutdown.
+  Agent details explain **Context summary** preparation/readiness and that agent
+  work is not blocked; the telemetry-only header shows no maintenance label.
+  Adoption emits the normal compaction
   boundary with trigger `background` (or `decay`). When the run must wait for an
   unfinished job, that wait is announced as the job's boundary; if the job then
   fails or its checkpoint does not fit, the boundary settles as a deferred

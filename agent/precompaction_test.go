@@ -363,6 +363,81 @@ func TestPreparedCheckpointSurvivesTheEndOfARun(t *testing.T) {
 	}
 }
 
+func TestDiscardedBackgroundSummaryEmitsTerminalAndNoLateProgress(t *testing.T) {
+	server := &precompactionServer{rounds: 0}
+	endpoint := httptest.NewServer(server.handler(t))
+	defer endpoint.Close()
+	var mu sync.Mutex
+	var events []AgentEvent
+	slot := NewPrecompactionSlot(t.Context(), func(event AgentEvent) { mu.Lock(); events = append(events, event); mu.Unlock() })
+	defer slot.Close()
+	a := precompactionAgent(t, endpoint.URL, "summary-discard-model")
+	source := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", strings.Repeat("prior work ", 1000))}
+	if !slot.start(a, source, nil, 2, false, 20_000, 100_000, 5000) {
+		t.Fatal("job did not start")
+	}
+	job := slot.current()
+	if err := job.wait(t.Context()); err != nil || job.err != nil {
+		t.Fatalf("job=%v wait=%v", job.err, err)
+	}
+	slot.discard(job)
+	slot.backgroundEmit(job.requestID)(AgentEvent{Type: "context_compaction_stage", Data: map[string]any{"stage_label": "late stage"}})
+	mu.Lock()
+	defer mu.Unlock()
+	var phases []string
+	for _, event := range events {
+		if event.Type == "context_precompaction" {
+			data, _ := event.Data.(map[string]any)
+			phases = append(phases, fmt.Sprint(data["phase"]))
+		}
+	}
+	if len(phases) < 3 || phases[0] != "started" || phases[len(phases)-2] != "ready" || phases[len(phases)-1] != "discarded" {
+		t.Fatalf("discard did not settle status or allowed stale progress: %v", phases)
+	}
+}
+
+func TestClosingBackgroundSummaryPublishesCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer endpoint.Close()
+	defer close(release)
+	var mu sync.Mutex
+	var phases []string
+	slot := NewPrecompactionSlot(t.Context(), func(event AgentEvent) {
+		if event.Type == "context_precompaction" {
+			data, _ := event.Data.(map[string]any)
+			mu.Lock()
+			phases = append(phases, fmt.Sprint(data["phase"]))
+			mu.Unlock()
+		}
+	})
+	defer slot.Close()
+	a := precompactionAgent(t, endpoint.URL, "summary-close-model")
+	source := []provider.ChatMessage{provider.NewTextMessage("system", "system"), provider.NewTextMessage("user", "prior work")}
+	if !slot.start(a, source, nil, 2, false, 20_000, 100_000, 1000) {
+		t.Fatal("job did not start")
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("extraction did not start")
+	}
+	slot.Close()
+	slot.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(phases) < 2 || phases[0] != "started" || phases[len(phases)-1] != "cancelled" {
+		t.Fatalf("shutdown left background work active: %v", phases)
+	}
+}
+
 // A run that must wait for an in-flight background checkpoint announces that
 // wait as a compaction boundary. When the job then fails, the run compacts
 // synchronously; the announced boundary must settle instead of staying active

@@ -19,5 +19,6 @@ func (e *Editor) RetargetDocumentPath(path string) error {
 	e.buffer.Path, e.buffer.Title = path, e.title
 	e.buf.filePath = path
 	e.documentProjection.snapshot.Path = path
+	e.initChroma()
 	return nil
 }

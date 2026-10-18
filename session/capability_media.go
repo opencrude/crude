@@ -83,6 +83,8 @@ func capabilityMediaResult(result captypes.Result, original error, policy *tools
 		blockText.WriteString("\nMCP server reported a tool failure.")
 		if original == nil {
 			original = errors.New("MCP server reported a tool failure")
+		} else {
+			fmt.Fprintf(&blockText, "\nMCP operation failed: %v", original)
 		}
 	} else if original != nil {
 		fmt.Fprintf(&blockText, "\nMCP operation failed: %v", original)

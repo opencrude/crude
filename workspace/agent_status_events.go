@@ -47,13 +47,37 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 	// Background checkpoint preparation outlives runs and never changes the
 	// agent's lifecycle phase.
 	if evt.Type == "context_precompaction" {
-		switch agentEventString(evt.Data, "phase") {
-		case "started", "progress":
+		id := agentEventString(evt.Data, "request_id")
+		phase := agentEventString(evt.Data, "phase")
+		if id == "" {
+			return
+		}
+		if phase != "started" && (id != snapshot.CheckpointRequestID || snapshot.Checkpoint == "") {
+			return
+		}
+		switch phase {
+		case "started":
+			if id == snapshot.CheckpointRequestID {
+				return
+			}
+			snapshot.CheckpointRequestID = id
 			snapshot.Checkpoint = "preparing"
+			snapshot.CheckpointDetail = "Preparing a context summary in the background; agent work is not blocked."
+		case "progress":
+			if snapshot.Checkpoint != "preparing" {
+				return
+			}
+			if stage := agentEventString(evt.Data, "stage_label"); stage != "" {
+				snapshot.CheckpointDetail = "Preparing a context summary in the background: " + stage + ". Agent work is not blocked."
+			}
 		case "ready":
 			snapshot.Checkpoint = "ready"
-		default:
+			snapshot.CheckpointDetail = "Context summary ready; it will be used when compaction is needed. Agent work is not blocked."
+		case "failed", "cancelled", "discarded":
 			snapshot.Checkpoint = ""
+			snapshot.CheckpointDetail = ""
+		default:
+			return
 		}
 		center.SetAgent(snapshot)
 		return
@@ -231,6 +255,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		snapshot.NeedsAction = false
 		if evt.Type == "context_compacted" {
 			snapshot.Checkpoint = ""
+			snapshot.CheckpointDetail = ""
 		}
 		if values, ok := evt.Data.(map[string]any); ok {
 			if id, _ := values["request_id"].(string); id != "" {

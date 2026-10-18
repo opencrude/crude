@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"crude/network"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var (
@@ -43,153 +43,105 @@ type SearchResult struct {
 	Title       string
 	URL         string
 	Description string
-	Engine      string
 }
 
-// engineTracker tracks engine reliability and reorders preference based on success/failure.
-type engineTracker struct {
-	mu     sync.RWMutex
-	scores map[string]int
-}
-
-var tracker = &engineTracker{
-	scores: map[string]int{
-		"brave":      0,
-		"duckduckgo": 0,
-		"startpage":  0,
-	},
-}
-
-func (t *engineTracker) success(engine string) {
-	t.mu.Lock()
-	t.scores[engine]++
-	scores := t.scores[engine]
-	t.mu.Unlock()
-	logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_success", "engine", engine, "score", scores) })
-}
-
-func (t *engineTracker) failure(engine string) {
-	t.mu.Lock()
-	t.scores[engine]--
-	scores := t.scores[engine]
-	t.mu.Unlock()
-	logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_failure", "engine", engine, "score", scores) })
-}
-
-func (t *engineTracker) engines() []string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	all := []string{"brave", "duckduckgo", "startpage", "exa"}
-
-	for i := 0; i < len(all); i++ {
-		for j := i + 1; j < len(all); j++ {
-			if t.scores[all[j]] > t.scores[all[i]] {
-				all[i], all[j] = all[j], all[i]
-			}
-		}
-	}
-
-	return all
-}
-
-func searchWithEngine(ctx context.Context, engine, query string, limit int) ([]SearchResult, error) {
-	logIf(func(lg *logger.Logger) {
-		lg.Debug("SEARCH", "engine_start", "engine", engine, "query", query, "limit", limit)
-	})
-	start := time.Now()
-	results, err := func() ([]SearchResult, error) {
-		switch strings.ToLower(engine) {
-		case "brave":
-			return searchBrave(ctx, query, limit)
-		case "duckduckgo":
-			return searchDuckDuckGo(ctx, query, limit)
-		case "startpage":
-			return searchStartpage(ctx, query, limit)
-		case "exa":
-			return searchExaPublic(ctx, query, limit)
-		default:
-			return nil, fmt.Errorf("unknown search engine %q", engine)
-		}
-	}()
-	dur := time.Since(start).Milliseconds()
-	if err != nil {
-		logIf(func(lg *logger.Logger) {
-			lg.Warn("SEARCH", "engine_failed", "engine", engine, "latency_ms", dur, "error", err.Error())
-		})
-	} else {
-		logIf(func(lg *logger.Logger) {
-			lg.Debug("SEARCH", "engine_ok", "engine", engine, "results", len(results), "latency_ms", dur)
-		})
-	}
-	return results, err
-}
-
-// keylessSearch queries the keyless engines concurrently, deduplicates results,
-// and tracks engine health. Returns deduplicated results, succeeded engines,
-// and failed engines with their error messages.
+// keylessSearch races independent providers. A stalled provider cannot hold
+// usable results hostage until the enclosing MCP call times out.
 func keylessSearch(ctx context.Context, query string, limit int) ([]SearchResult, []string, map[string]string) {
-	engines := tracker.engines()
-	logIf(func(lg *logger.Logger) {
-		lg.Info("SEARCH", "super_start", "query", query, "limit", limit, "engines", engines)
-	})
+	engines := []keyedEngine{
+		{"brave", searchBrave},
+		{"duckduckgo", searchDuckDuckGo},
+		{"startpage", searchStartpage},
+		{"exa", func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+			return searchExaMCP(ctx, "https://mcp.exa.ai/mcp", query, limit)
+		}},
+	}
+	return runKeylessSearch(ctx, engines, query, limit)
+}
 
+func runKeylessSearch(ctx context.Context, engines []keyedEngine, query string, limit int) ([]SearchResult, []string, map[string]string) {
+	ctx, cancel := context.WithCancel(ctx)
 	type engineResult struct {
-		engine  string
+		index   int
 		results []SearchResult
 		err     error
 	}
-
 	ch := make(chan engineResult, len(engines))
-
-	for _, eng := range engines {
-		go func(e string) {
-			results, err := searchWithEngine(ctx, e, query, limit)
-			ch <- engineResult{engine: e, results: results, err: err}
-		}(eng)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	for index, engine := range engines {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			start := time.Now()
+			results, err := engine.search(ctx, query, limit)
+			logIf(func(lg *logger.Logger) {
+				if err != nil {
+					lg.Debug("SEARCH", "engine_failed", "engine", engine.name, "latency_ms", time.Since(start).Milliseconds(), "error", redactRequestURL(err).Error())
+				} else {
+					lg.Debug("SEARCH", "engine_ok", "engine", engine.name, "results", len(results), "latency_ms", time.Since(start).Milliseconds())
+				}
+			})
+			ch <- engineResult{index: index, results: results, err: err}
+		}()
 	}
-
-	var allResults []SearchResult
+	answers := make([][]SearchResult, len(engines))
 	var succeeded []string
 	failed := make(map[string]string)
-
-	for i := 0; i < len(engines); i++ {
-		r := <-ch
-		if r.err != nil {
-			tracker.failure(r.engine)
-			failed[r.engine] = r.err.Error()
-			continue
+	var grace <-chan time.Time
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
 		}
-		tracker.success(r.engine)
-		succeeded = append(succeeded, r.engine)
-		allResults = append(allResults, r.results...)
+	}()
+	collect := func() []SearchResult {
+		var all []SearchResult
+		for _, answer := range answers {
+			all = append(all, answer...)
+		}
+		return deduplicateResults(all, limit)
 	}
-
-	deduped := deduplicateResults(allResults, limit)
-	logIf(func(lg *logger.Logger) {
-		lg.Info("SEARCH", "super_done", "query", query, "raw", len(allResults), "deduped", len(deduped), "succeeded", len(succeeded), "failed_engines", len(failed))
-	})
-	return deduped, succeeded, failed
+	for range engines {
+		select {
+		case <-ctx.Done():
+			return collect(), succeeded, failed
+		case <-grace:
+			return collect(), succeeded, failed
+		case r := <-ch:
+			name := engines[r.index].name
+			if r.err != nil {
+				failed[name] = redactRequestURL(r.err).Error()
+				continue
+			}
+			succeeded = append(succeeded, name)
+			answers[r.index] = r.results
+			if results := collect(); len(results) >= limit {
+				return results, succeeded, failed
+			} else if len(results) > 0 && timer == nil {
+				// Briefly collect other ready results, never wait a full provider
+				// deadline just to fill the requested maximum.
+				timer = time.NewTimer(150 * time.Millisecond)
+				grace = timer.C
+			}
+		}
+	}
+	return collect(), succeeded, failed
 }
 
 func deduplicateResults(results []SearchResult, limit int) []SearchResult {
-	type key struct {
-		title string
-		url   string
-	}
-
-	seen := make(map[key]bool)
+	seen := make(map[string]bool)
 	var deduped []SearchResult
 
 	for _, r := range results {
 		normalizedTitle := strings.ToLower(strings.TrimSpace(r.Title))
-		normalizedURL := strings.ToLower(strings.TrimSpace(r.URL))
-
-		if normalizedTitle == "" || normalizedURL == "" {
+		parsed, err := url.Parse(strings.TrimSpace(r.URL))
+		if normalizedTitle == "" || err != nil || parsed.Host == "" || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.User != nil {
 			continue
 		}
-
-		k := key{title: normalizedTitle, url: normalizedURL}
+		parsed.Fragment, parsed.RawFragment = "", ""
+		parsed.Host = strings.ToLower(parsed.Host)
+		k := parsed.String()
 		if !seen[k] {
 			seen[k] = true
 			deduped = append(deduped, r)
@@ -230,7 +182,7 @@ func searchBrave(ctx context.Context, query string, limit int) ([]SearchResult, 
 		return nil, fmt.Errorf("brave returned status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +214,6 @@ func searchBrave(ctx context.Context, query string, limit int) ([]SearchResult, 
 			Title:       title,
 			URL:         href,
 			Description: description,
-			Engine:      "brave",
 		})
 	})
 
@@ -292,7 +243,7 @@ func searchDuckDuckGo(ctx context.Context, query string, limit int) ([]SearchRes
 		return nil, fmt.Errorf("duckduckgo returned status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +270,6 @@ func searchDuckDuckGo(ctx context.Context, query string, limit int) ([]SearchRes
 			Title:       title,
 			URL:         href,
 			Description: description,
-			Engine:      "duckduckgo",
 		})
 	})
 
@@ -365,7 +315,7 @@ func searchStartpage(ctx context.Context, query string, limit int) ([]SearchResu
 		return nil, fmt.Errorf("startpage returned status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +348,6 @@ func searchStartpage(ctx context.Context, query string, limit int) ([]SearchResu
 			Title:       title,
 			URL:         href,
 			Description: description,
-			Engine:      "startpage",
 		})
 	})
 
@@ -423,7 +372,6 @@ func searchStartpage(ctx context.Context, query string, limit int) ([]SearchResu
 				Title:       title,
 				URL:         href,
 				Description: description,
-				Engine:      "startpage",
 			})
 		})
 	}
@@ -431,72 +379,31 @@ func searchStartpage(ctx context.Context, query string, limit int) ([]SearchResu
 	return results, nil
 }
 
-// searchExaPublic uses Exa's hosted MCP endpoint, which serves a keyless free
-// tier. Configured keys use the Exa API instead (see exaSearch).
-func searchExaPublic(ctx context.Context, query string, limit int) ([]SearchResult, error) {
-	type exaSearchRequest struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      int    `json:"id"`
-		Method  string `json:"method"`
-		Params  struct {
-			Name      string `json:"name"`
-			Arguments struct {
-				Query      string `json:"query"`
-				Type       string `json:"type"`
-				NumResults int    `json:"numResults"`
-				LiveCrawl  string `json:"livecrawl"`
-			} `json:"arguments"`
-		} `json:"params"`
-	}
-	type exaSearchResponse struct {
-		Result struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"result"`
-	}
-	request := exaSearchRequest{JSONRPC: "2.0", ID: 1, Method: "tools/call"}
-	request.Params.Name = "web_search_exa"
-	request.Params.Arguments.Query = query
-	request.Params.Arguments.Type = "auto"
-	request.Params.Arguments.NumResults = limit
-	request.Params.Arguments.LiveCrawl = "fallback"
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://mcp.exa.ai/mcp", strings.NewReader(string(body)))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("accept", "application/json, text/event-stream")
-	req.Header.Set("content-type", "application/json")
-	client := network.NewClient(30 * time.Second)
-	defer client.CloseIdleConnections()
-	resp, err := client.Do(req)
+// Exa's hosted keyless service uses the SDK; configured keys use exaSearch.
+func searchExaMCP(ctx context.Context, endpoint, query string, limit int) ([]SearchResult, error) {
+	httpClient := network.NewClient(15 * time.Second)
+	defer httpClient.CloseIdleConnections()
+	client := mcp.NewClient(&mcp.Implementation{Name: "crude-web", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: httpClient, DisableStandaloneSSE: true, MaxRetries: -1, MaxEventSize: maxResponseBytes}, nil)
 	if err != nil {
 		return nil, redactRequestURL(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exa: HTTP %d", resp.StatusCode)
-	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	defer func() { _ = session.Close() }()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "web_search_exa", Arguments: map[string]any{"query": query, "type": "auto", "numResults": limit, "livecrawl": "fallback"}})
 	if err != nil {
 		return nil, redactRequestURL(err)
 	}
-	for _, line := range strings.Split(string(respBody), "\n") {
-		data, found := strings.CutPrefix(line, "data: ")
-		if !found {
-			continue
-		}
-		var decoded exaSearchResponse
-		if json.Unmarshal([]byte(data), &decoded) == nil && len(decoded.Result.Content) > 0 {
-			return parseExaResults(decoded.Result.Content[0].Text, limit)
+	var text strings.Builder
+	for _, content := range result.Content {
+		if block, ok := content.(*mcp.TextContent); ok {
+			text.WriteString(block.Text)
+			text.WriteByte('\n')
 		}
 	}
-	return []SearchResult{}, nil
+	if result.IsError {
+		return nil, fmt.Errorf("exa: %s", strings.TrimSpace(text.String()))
+	}
+	return parseExaResults(text.String(), limit)
 }
 
 func parseExaResults(text string, limit int) ([]SearchResult, error) {
@@ -510,7 +417,7 @@ func parseExaResults(text string, limit int) ([]SearchResult, error) {
 			if currentResult != nil && currentResult.Title != "" {
 				results = append(results, *currentResult)
 			}
-			currentResult = &SearchResult{Engine: "exa"}
+			currentResult = &SearchResult{}
 			currentResult.Title = strings.TrimSpace(strings.TrimPrefix(line, "Title:"))
 		} else if strings.HasPrefix(line, "URL:") && currentResult != nil {
 			currentResult.URL = strings.TrimSpace(strings.TrimPrefix(line, "URL:"))

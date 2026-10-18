@@ -591,6 +591,9 @@ existing aggregate totals.
   changes `↑` into upload bytes or adds lifecycle/status text. Request age,
   serialized payload and lifecycle belong in agent/tab details and Activity;
   existing permission/question/safety surfaces remain authoritative.
+  Background context-summary preparation/readiness is explained in agent details,
+  never an unexplained "checkpoint…" suffix. Its exact job lifecycle settles on
+  completion, discard, failure and cancellation without changing the live phase.
 
 ## Recovery And Stop
 

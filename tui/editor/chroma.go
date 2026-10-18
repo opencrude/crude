@@ -1,22 +1,66 @@
 package editor
 
 import (
+	"context"
+	"fmt"
+	"sort"
 	"strings"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 
 	"crude/tui/rendering"
 )
 
-// chromaBackscanCap / chromaForwardCap bound how far we may look above or
-// below the viewport when tokenising so multi-line constructs (block
-// comments, raw strings) whose opener or closer is off-screen still
-// highlight correctly. Whole-file tokenisation is forbidden on the UI thread.
-const (
-	chromaBackscanCap = 256
-	chromaForwardCap  = 256
-)
+// Syntax is source-sized work, never frame-sized work. Only two documents lex
+// concurrently across all editor views; a superseded job cancels before the next
+// snapshot is admitted. Colour maps are built lazily for the visible lines.
+var syntaxWorkers = make(chan struct{}, 2)
+
+type syntaxSpan struct {
+	end  int // exclusive source byte offset
+	kind chroma.TokenType
+}
+
+type syntaxDocument struct {
+	text  string
+	lines []int
+	spans []syntaxSpan
+}
+
+type syntaxJob struct {
+	done                 chan struct{}
+	cancel               context.CancelFunc
+	buffer               *PieceTable
+	revision, generation uint64
+	delivering           bool
+	document             *syntaxDocument
+	err                  error
+}
+
+// SyntaxReadyMsg is exact-editor/exact-job completion, not keyboard-focus input.
+// Apply is safe after a close, theme change, replacement or newer source edit.
+type SyntaxReadyMsg struct {
+	editor *Editor
+	job    *syntaxJob
+}
+
+func (msg SyntaxReadyMsg) Apply() {
+	if msg.editor != nil && msg.editor.syntaxJob == msg.job {
+		msg.editor.finishSyntax()
+	}
+}
+
+func (msg SyntaxReadyMsg) Editor() *Editor { return msg.editor }
+
+func (msg SyntaxReadyMsg) Failure() string {
+	if msg.editor == nil || !msg.editor.open || msg.job.generation != msg.editor.syntaxGeneration || msg.job.revision != msg.editor.Revision() || msg.job.err == nil {
+		return ""
+	}
+	return fmt.Sprintf("Syntax highlighting unavailable for %s; showing plain text: %v", msg.editor.BaseTitle(), msg.job.err)
+}
 
 func (e *Editor) initChroma() {
 	e.chromaStyle = rendering.SourceStyle(e.th)
@@ -28,203 +72,209 @@ func (e *Editor) initChroma() {
 	if l == nil || l.Config().Name == "fallback" {
 		l = lexers.Fallback
 	}
-	e.chromaLexer = chroma.Coalesce(l)
-	e.chromaLineCache = nil
-	e.chromaDirtyFrom = 0
+	// Chroma's coalescer repeatedly concatenates strings. Retain the original
+	// iterator and merge adjacent token spans by offsets instead (linear memory).
+	e.chromaLexer = l
+	e.syntaxPlain = l.Config().Name == lexers.Fallback.Config().Name
+	e.invalidateSyntax()
+	e.syntaxStopped = false
+	e.startSyntax()
 }
 
-// ensureChromaColors tokenises a bounded window covering [fromLine, toLine]
-// (inclusive-exclusive), backscanning up to chromaBackscanCap lines so
-// constructs that open above the viewport are still recognised. Results are
-// cached per line; an edit on line N drops caches from N onward.
-func (e *Editor) ensureChromaColors(fromLine, toLine int) {
-	if e.chromaLexer == nil || e.chromaStyle == nil {
-		return
+func (e *Editor) invalidateSyntax() {
+	e.syntaxGeneration++
+	if e.syntaxJob != nil {
+		e.syntaxJob.cancel()
 	}
-	lc := e.buf.LineCount()
-	if lc <= 0 {
-		return
-	}
-	if fromLine < 0 {
-		fromLine = 0
-	}
-	if toLine > lc {
-		toLine = lc
-	}
-	if fromLine >= toLine {
-		return
-	}
+	e.syntaxDocument = nil
+	e.chromaLineCache = nil
+	e.syntaxFailed = false
+}
 
-	need := false
-	for i := fromLine; i < toLine; i++ {
-		raw, err := e.buf.Line(i)
-		if err != nil {
-			continue
-		}
-		rawStr := string(raw)
-		if e.chromaLineCache != nil {
-			if ent := e.chromaLineCache[i]; ent != nil && ent.raw == rawStr {
-				continue
-			}
-		}
-		need = true
-		break
-	}
-	if !need {
+func (e *Editor) startSyntax() {
+	if !e.open || e.syntaxStopped || e.syntaxPlain || e.chromaLexer == nil || e.chromaStyle == nil || e.syntaxJob != nil || e.syntaxFailed {
 		return
 	}
-
-	start := fromLine - chromaBackscanCap
-	if start < 0 {
-		start = 0
+	if e.syntaxBuffer == e.buf && e.syntaxRevision == e.buf.Revision() && e.syntaxDocument != nil {
+		return
 	}
-	if e.chromaDirtyFrom >= 0 && e.chromaDirtyFrom < fromLine {
-		if fromLine-e.chromaDirtyFrom <= chromaBackscanCap && e.chromaDirtyFrom < start {
-			start = e.chromaDirtyFrom
+	snapshot := e.buf.snapshotText()
+	lexer := e.chromaLexer
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &syntaxJob{done: make(chan struct{}), cancel: cancel, buffer: e.buf, revision: e.buf.Revision(), generation: e.syntaxGeneration}
+	e.syntaxJob = job
+	go func() {
+		defer close(job.done)
+		defer cancel()
+		select {
+		case syntaxWorkers <- struct{}{}:
+			defer func() { <-syntaxWorkers }()
+		case <-ctx.Done():
+			job.err = ctx.Err()
+			return
+		}
+		// Queueing behind another document is not time spent preparing this
+		// source. Keep the execution budget independent of scheduler contention.
+		work, stop := context.WithTimeout(ctx, 5*time.Second)
+		defer stop()
+		job.document, job.err = lexSyntax(work, lexer, snapshot)
+	}()
+}
+
+func (e *Editor) finishSyntax() {
+	job := e.syntaxJob
+	if job == nil {
+		return
+	}
+	select {
+	case <-job.done:
+	default:
+		return
+	}
+	e.syntaxJob = nil
+	if !e.open || job.buffer != e.buf || job.revision != e.buf.Revision() || job.generation != e.syntaxGeneration {
+		return
+	}
+	e.chromaLineCache = nil
+	e.syntaxBuffer, e.syntaxRevision = job.buffer, job.revision
+	e.syntaxDocument = job.document
+	e.syntaxFailed = job.err != nil
+	if job.err != nil {
+		e.syntaxDocument = nil
+	}
+}
+
+// SyntaxCommand admits or joins one owned parse and delivers its completion to
+// Update. It never exports or lexes the document on the caller/UI goroutine.
+func (e *Editor) SyntaxCommand() tea.Cmd {
+	e.startSyntax()
+	job := e.syntaxJob
+	if job == nil || job.delivering {
+		return nil
+	}
+	job.delivering = true
+	return func() tea.Msg { <-job.done; return SyntaxReadyMsg{editor: e, job: job} }
+}
+
+// SyntaxPending lets retained surfaces repaint the completed asynchronous job
+// even when keyboard focus belongs to a different control.
+func (e *Editor) SyntaxPending() bool { return e != nil && e.open && e.syntaxJob != nil }
+
+func (e *Editor) SyntaxDone() <-chan struct{} {
+	if e.syntaxJob == nil {
+		return nil
+	}
+	return e.syntaxJob.done
+}
+
+func (e *Editor) StopSyntax() { e.invalidateSyntax(); e.syntaxStopped = true }
+
+func lexSyntax(ctx context.Context, lexer chroma.Lexer, source textSnapshot) (document *syntaxDocument, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			document = nil
+			err = fmt.Errorf("syntax lexer failed: %v", recovered)
+		}
+	}()
+	var text strings.Builder
+	text.Grow(source.size)
+	cursor := source.cursor(false)
+	for span := cursor.span(); len(span) > 0; span = cursor.span() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		text.Write(span)
+		cursor.offset += len(span)
+	}
+	document = &syntaxDocument{text: text.String(), lines: []int{0}}
+	for index := range document.text {
+		if document.text[index] == '\n' {
+			document.lines = append(document.lines, index+1)
 		}
 	}
-	// Extend forward so closers (*/ , closing backticks) that sit just
-	// below the viewport are still visible to chroma's single-pass regex.
-	end := toLine + chromaForwardCap
-	if end > lc {
-		end = lc
-	}
-
-	var b strings.Builder
-	for i := start; i < end; i++ {
-		raw, err := e.buf.Line(i)
-		if err != nil {
-			b.WriteByte('\n')
-			continue
-		}
-		b.Write(raw)
-		b.WriteByte('\n')
-	}
-	text := b.String()
-	it, err := e.chromaLexer.Tokenise(nil, text)
+	iterator, err := lexer.Tokenise(&chroma.TokeniseOptions{State: "root"}, document.text)
 	if err != nil {
+		return nil, err
+	}
+	offset := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		token := iterator()
+		if token == chroma.EOF {
+			break
+		}
+		offset = min(len(document.text), offset+len(token.Value))
+		if n := len(document.spans); n > 0 && document.spans[n-1].kind == token.Type {
+			document.spans[n-1].end = offset
+		} else {
+			document.spans = append(document.spans, syntaxSpan{end: offset, kind: token.Type})
+		}
+	}
+	return document, ctx.Err()
+}
+
+// Lexical context is always the full immutable document. The viewport selects
+// only which compact source spans to project into grapheme/tab cell colours.
+func (e *Editor) ensureChromaColors(fromLine, toLine int) {
+	e.finishSyntax()
+	e.startSyntax()
+	doc := e.syntaxDocument
+	if doc == nil || e.syntaxBuffer != e.buf || e.syntaxRevision != e.buf.Revision() {
 		return
 	}
-
+	fromLine, toLine = max(0, fromLine), min(len(doc.lines), toLine)
 	if e.chromaLineCache == nil {
-		e.chromaLineCache = make(map[int]*chromaLineEntry, end-start+8)
+		e.chromaLineCache = make(map[int][]string)
 	}
-
-	type lineAcc struct {
-		raw string
-		cm  []string
+	if len(e.chromaLineCache) > max(512, (toLine-fromLine)*2) {
+		clear(e.chromaLineCache)
 	}
-	accs := make([]*lineAcc, end-start)
-	for i := start; i < end; i++ {
-		raw, _ := e.buf.Line(i)
-		rawStr := string(raw)
-		visW := LineVisualWidth(rawStr, tabWidth)
-		var cm []string
-		if visW > 0 {
-			cm = make([]string, visW)
+	for line := fromLine; line < toLine; line++ {
+		if e.chromaLineCache[line] != nil {
+			continue
 		}
-		accs[i-start] = &lineAcc{raw: rawStr, cm: cm}
-	}
-
-	absCol := 0
-	lineIdx := start
-	for tk := it(); tk != chroma.EOF; tk = it() {
-		clr := e.chromaTokenColor(tk.Type)
-		val := tk.Value
-		for len(val) > 0 {
-			if val[0] == '\n' {
-				lineIdx++
-				absCol = 0
-				val = val[1:]
-				continue
+		start, end := doc.lines[line], len(doc.text)
+		if line+1 < len(doc.lines) {
+			end = doc.lines[line+1] - 1
+			if end > start && doc.text[end-1] == '\r' {
+				end--
 			}
-			if lineIdx < start || lineIdx >= end {
-				nl := strings.IndexByte(val, '\n')
-				if nl < 0 {
-					val = ""
-				} else {
-					val = val[nl:]
-				}
-				continue
+		}
+		raw := doc.text[start:end]
+		cm := make([]string, LineVisualWidth(raw, tabWidth))
+		spanIndex := sort.Search(len(doc.spans), func(i int) bool { return doc.spans[i].end > start })
+		col, offset := 0, start
+		for rest := raw; rest != ""; {
+			for spanIndex < len(doc.spans) && doc.spans[spanIndex].end <= offset {
+				spanIndex++
 			}
-			acc := accs[lineIdx-start]
-			if val[0] == '\t' {
-				adv := TabStopAdvance(absCol, tabWidth)
-				if clr != "" && acc.cm != nil {
-					for c := absCol; c < absCol+adv && c < len(acc.cm); c++ {
-						acc.cm[c] = clr
-					}
-				}
-				absCol += adv
-				val = val[1:]
-				continue
+			colour := ""
+			if spanIndex < len(doc.spans) {
+				colour = e.chromaTokenColor(doc.spans[spanIndex].kind)
 			}
-			cluster, w := rendering.FirstGrapheme(val)
+			cluster, width := rendering.FirstGrapheme(rest)
+			if rest[0] == '\t' {
+				cluster, width = rest[:1], TabStopAdvance(col, tabWidth)
+			}
 			if len(cluster) == 0 {
 				break
 			}
-			if clr != "" && acc.cm != nil {
-				for c := absCol; c < absCol+w && c < len(acc.cm); c++ {
-					acc.cm[c] = clr
-				}
+			for c := col; c < col+width; c++ {
+				cm[c] = colour
 			}
-			absCol += w
-			val = val[len(cluster):]
+			col, offset, rest = col+width, offset+len(cluster), rest[len(cluster):]
 		}
-	}
-
-	for i, acc := range accs {
-		e.chromaLineCache[start+i] = &chromaLineEntry{raw: acc.raw, colorMap: acc.cm}
-	}
-	if e.chromaDirtyFrom >= 0 && e.chromaDirtyFrom < end {
-		if e.chromaDirtyFrom < start {
-			// Still dirty above the window; leave the watermark.
-		} else {
-			e.chromaDirtyFrom = end
-			if e.chromaDirtyFrom >= e.buf.LineCount() {
-				e.chromaDirtyFrom = -1
-			}
-		}
+		e.chromaLineCache[line] = cm
 	}
 }
 
 func (e *Editor) lineColorMap(lineIdx int) []string {
-	if e.chromaLineCache == nil {
+	if e.syntaxBuffer != e.buf || e.syntaxRevision != e.buf.Revision() {
 		return nil
 	}
-	ent := e.chromaLineCache[lineIdx]
-	if ent == nil {
-		return nil
-	}
-	raw, err := e.buf.Line(lineIdx)
-	if err != nil || ent.raw != string(raw) {
-		return nil
-	}
-	return ent.colorMap
-}
-
-// buildLineColorMap tokenises a single standalone line for tests and
-// simple callers. Production rendering uses ensureChromaColors so
-// multi-line constructs keep lexer context across lines.
-func (e *Editor) buildLineColorMap(lineStr string, lineVisW int) []string {
-	if e.chromaLexer == nil || e.chromaStyle == nil || lineStr == "" || lineVisW <= 0 {
-		return nil
-	}
-	e.buf.ReplaceAll(lineStr)
-	e.chromaLineCache = nil
-	e.chromaDirtyFrom = 0
-	e.ensureChromaColors(0, 1)
-	cm := e.lineColorMap(0)
-	if cm == nil {
-		cm = make([]string, lineVisW)
-	}
-	return cm
-}
-
-// buildLineColorMapWithRunes is kept for call-site compatibility; geometry
-// is derived from the line string via the coords module.
-func (e *Editor) buildLineColorMapWithRunes(lineStr string, lineVisW int, _ []rune, _ []int) []string {
-	return e.buildLineColorMap(lineStr, lineVisW)
+	return e.chromaLineCache[lineIdx]
 }
 
 func (e *Editor) chromaTokenColor(tt chroma.TokenType) string {

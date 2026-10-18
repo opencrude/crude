@@ -68,8 +68,10 @@ func (s *Screen) SetHunk(hunk editor.GitHunk) {
 	s.area.Bind(s.preview)
 }
 
-func (s *Screen) Close()                   { s.preview.Close() }
-func (s *Screen) Children() []ui.Component { return []ui.Component{s.area, s.actions} }
+func (s *Screen) Close() { s.preview.Close() }
+
+func (s *Screen) SyntaxEditor() *editor.Editor { return s.preview }
+func (s *Screen) Children() []ui.Component     { return []ui.Component{s.area, s.actions} }
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.area.SetTokens(tokens)
 	s.actions.SetTokens(tokens)

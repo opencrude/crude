@@ -75,7 +75,9 @@ var serverTools = []tool{
 // are cut to fit it with a continuation offset.
 func New(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[string]captypes.Effect) {
 	client := search.New(lookup)
-	client.SetResultBudget(maxResultBytes)
+	// Reserve the enclosing MCP and neutral result fields, not just the JSON
+	// string. The ordinary MCP projection applies to built-ins too.
+	client.SetResultBudget(max(1, maxResultBytes-4096))
 	server := mcp.NewServer(&mcp.Implementation{Name: "crude-web", Version: "1"}, nil)
 	effects := make(map[string]captypes.Effect, len(serverTools))
 	for _, definition := range serverTools {

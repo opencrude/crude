@@ -236,6 +236,23 @@ Tea's update goroutine (the tab-close hang).
 
 ## Source projections and comparisons
 
+- Syntax comes from one complete immutable document revision, never a lexical
+  restart above/below the viewport. Long Python triple-quoted strings/docstrings,
+  raw strings and block comments retain their original delimiters regardless of
+  scroll order or terminal size. A source edit invalidates downstream context even
+  when the visible bytes did not change; pending revisions paint plain text rather
+  than wrong stale colours. Undo/redo, disk/peer replacement, path/language and
+  theme changes fence older completions. Terminal-width changes reproject cell
+  maps without re-lexing source.
+- Document lexing runs off Update/Paint on append-only piece snapshots, with two
+  concurrent workers, cancellation, a five-second preparation budget and exact
+  editor/buffer/revision/generation completion. The shell delivers to its owner,
+  including hidden tabs and read-only overlay previews; close cancels immediately
+  and shutdown joins pending work. Lexer failure retains usable plain text and
+  reports the unavailable highlighting. Chroma regex matching itself is not
+  preemptible mid-token; cancellation is checked between tokens. Compact byte
+  spans are source-owned; cell colour maps are lazily retained for visible lines
+  in a bounded cache. Geometry/navigation never invokes the lexer.
 - Source-code projections expand tabs at tab stops before width, wrapping,
   syntax coloring, and paint. Raw tab cells have no stable terminal geometry.
 - Editor and comparison syntax share `rendering.SourceStyle`; never add a second

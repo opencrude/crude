@@ -202,7 +202,9 @@ func (s *Screen) SetReplacement(value string) {
 func (s *Screen) Results() []fileio.ProjectSearchMatch {
 	return s.results
 }
-func (s *Screen) Selected() int                        { return s.selected }
+func (s *Screen) Selected() int { return s.selected }
+
+func (s *Screen) SyntaxEditor() *editor.Editor         { return s.previewSrc }
 func (s *Screen) Generation() int                      { return s.generation }
 func (s *Screen) CaseSensitive() bool                  { return s.caseSensitive }
 func (s *Screen) Regex() bool                          { return s.regex }
@@ -268,6 +270,9 @@ func (s *Screen) open(root string, mode Mode) {
 }
 
 func (s *Screen) Close() {
+	if s.previewSrc != nil {
+		s.previewSrc.Close()
+	}
 	s.generation++
 	s.loading = false
 	s.queryField.field.Cancel()
@@ -365,6 +370,9 @@ func (s *Screen) HandleSearchDebounced(msg ui.SearchDebouncedMsg) tea.Cmd {
 }
 
 func (s *Screen) rebuildPreview() {
+	if s.previewSrc != nil {
+		s.previewSrc.Close()
+	}
 	if s.selected < 0 || s.selected >= len(s.results) || s.results[s.selected].NameOnly {
 		s.previewSrc = nil
 		return

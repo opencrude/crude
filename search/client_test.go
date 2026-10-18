@@ -65,10 +65,11 @@ func TestSearchWithoutKeysUsesKeylessEnginesAndExplainsTotalFailure(t *testing.T
 	client.keyless = func(context.Context, string, int) ([]SearchResult, []string, map[string]string) {
 		return nil, nil, map[string]string{"duckduckgo": "HTTP 503"}
 	}
-	text, err := client.Search(t.Context(), "anything", 3)
-	if err != nil {
-		t.Fatal(err)
+	_, err := client.Search(t.Context(), "anything", 3)
+	if err == nil {
+		t.Fatal("provider outage must be a tool failure, not a successful empty search")
 	}
+	text := err.Error()
 	if !strings.Contains(text, "Every search provider failed") || !strings.Contains(text, "duckduckgo: HTTP 503") {
 		t.Fatalf("failure text=%s", text)
 	}
