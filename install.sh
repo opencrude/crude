@@ -158,9 +158,15 @@ EOF
     # Retain the redistribution notices next to the installed binary, not in the
     # application profile. All fallible preparation precedes the atomic rename.
     local notices="$install_dir/.crude-licenses/${version}-${actual:0:12}"
-    mkdir -p -- "$notices"
-    cp -R -- "$stage/licenses/." "$notices/"
-    cp -- "$stage/LICENSE-MIT" "$stage/LICENSE-APACHE" "$stage/README.md" "$notices/"
+    # Module-cache license files can be read-only. Publish their content-addressed
+    # directory once; a repeat must not try to overwrite those immutable files.
+    if [[ ! -d "$notices" ]]; then
+        mkdir -- "$stage/notices"
+        cp -R -- "$stage/licenses/." "$stage/notices/"
+        cp -- "$stage/LICENSE-MIT" "$stage/LICENSE-APACHE" "$stage/README.md" "$stage/notices/"
+        mkdir -p -- "$install_dir/.crude-licenses"
+        mv -T -- "$stage/notices" "$notices"
+    fi
     if ((add_path)); then
         local path_line rc
         # Persist a literal expansion for the user's next shell, not this one.

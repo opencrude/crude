@@ -66,7 +66,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
             for path, text in members.items():
                 data = text.encode()
                 member = tarfile.TarInfo(path)
-                member.mode = 0o755 if path == "crude" else 0o644
+                member.mode = 0o755 if path == "crude" else (0o444 if path.startswith("licenses/") else 0o644)
                 member.size = len(data)
                 archive.addfile(member, io.BytesIO(data))
             if extra:
