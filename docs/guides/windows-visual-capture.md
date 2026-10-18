@@ -65,7 +65,7 @@ pwsh scripts/tuishot.ps1 -Cols 160 -Rows 40 .\tmp\settings `
   'key:Return'
 ```
 
-Supported named keys include arrows, Enter/Return, Escape, Tab, Backspace,
+Supported named keys include arrows, Enter/Return, Escape, CapsLock, Tab, Backspace,
 Delete, Home, End, PageUp/PageDown, Space, Insert, and F1-F12. Chords accept
 `ctrl`, `alt`, `shift`, and `win`/`super`.
 
@@ -78,11 +78,15 @@ Shift+arrow acceptance. Rendered App/component journeys cover the intended
 modifier, while real pointer captures cover native selection; do not report the
 Shift screenshots as a pass or infer Shift inside individual text controls.
 
-The same environment's standalone probe received no event for injected Escape
-and decoded injected Ctrl+Alt+Enter as Ctrl+Alt+J. Those requested steps do not
-establish product Escape/replace-all acceptance. Use actual pointer controls for
-native review/apply/cancel captures and App key-event journeys for those keys;
-never infer that the modal accepted an Escape the application did not receive.
+Key names identify the injected Windows virtual key, not the action after the
+user's keyboard remapping. The 2026-10-18 environment swaps Caps Lock and Esc:
+inject `key:capslock` to exercise the application's Escape action there. An
+earlier standalone probe received no Escape from `key:Escape`; that was not a
+product failure or a general capture-driver limitation. Do not change the user's
+mapping to run acceptance. The same probe decoded Ctrl+Alt+Enter as Ctrl+Alt+J;
+that injected chord does not establish replace-all acceptance. Use the pointer
+replace-all control and real App key-event journeys rather than inferring that
+the modal received a key it did not receive.
 
 `type:` uses Unicode `SendInput`; it does not modify the clipboard.
 
