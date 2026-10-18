@@ -414,6 +414,8 @@ func (slot *PrecompactionSlot) Close() {
 	slot.closed = true
 	if slot.job != nil {
 		slot.job.cancel()
+		slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "cancelled", "request_id": slot.job.requestID}})
+		slot.job = nil
 	}
 	slot.mu.Unlock()
 	slot.tasks.Wait()
@@ -430,6 +432,7 @@ func (slot *PrecompactionSlot) discard(job *precompactionJob) {
 	defer slot.mu.Unlock()
 	if slot.job == job {
 		job.cancel()
+		slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "discarded", "request_id": job.requestID}})
 		slot.job = nil
 	}
 }
@@ -466,26 +469,30 @@ func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tool
 		model:        a.Model, cancel: cancel, done: make(chan struct{}),
 	}
 	slot.job = job
+	// Lifecycle is published by the slot itself; the progress adapter below
+	// deliberately translates only extractor events, not slot lifecycle events.
+	slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": job.requestID, "before_tokens": job.sourceTokens}})
 	slot.tasks.Add(1)
 	emit := slot.backgroundEmit(job.requestID)
 	go func() {
 		defer slot.tasks.Done()
 		defer close(job.done)
 		defer cancel()
-		emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": job.requestID, "before_tokens": job.sourceTokens}})
 		job.outcome, job.err = compactor.compactWithModel(ctx, source, tools, job.requestID, job.sourceTokens, "background", emit)
 
 		slot.mu.Lock()
 		defer slot.mu.Unlock()
-		if job.err == nil {
-			slot.failures, slot.retryAt = 0, time.Time{}
-			emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "ready", "request_id": job.requestID, "before_tokens": job.sourceTokens, "after_tokens": job.outcome.AfterTokens}})
+		if slot.job != job {
 			return
 		}
-		if slot.job == job {
-			slot.job = nil
+		if job.err == nil {
+			slot.failures, slot.retryAt = 0, time.Time{}
+			slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "ready", "request_id": job.requestID, "before_tokens": job.sourceTokens, "after_tokens": job.outcome.AfterTokens}})
+			return
 		}
+		slot.job = nil
 		if ctx.Err() != nil {
+			slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "cancelled", "request_id": job.requestID}})
 			return
 		}
 		slot.failures++
@@ -493,7 +500,7 @@ func (slot *PrecompactionSlot) start(a *Agent, msgs []provider.ChatMessage, tool
 		if concurrencyRefusal(job.err) && provider.SameConnection(compactor.Provider, a.Provider) {
 			_ = provider.RecordConcurrencyRefused(compactor.Provider, compactor.Model)
 		}
-		emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "failed", "request_id": job.requestID, "error": compactErrorText(job.err), "retry_in_seconds": time.Until(slot.retryAt).Seconds()}})
+		slot.emit(AgentEvent{Type: "context_precompaction", Data: map[string]any{"phase": "failed", "request_id": job.requestID, "error": compactErrorText(job.err), "retry_in_seconds": time.Until(slot.retryAt).Seconds()}})
 	}()
 	return true
 }
@@ -506,6 +513,11 @@ func (slot *PrecompactionSlot) backgroundEmit(requestID string) func(AgentEvent)
 		case "usage":
 			slot.emit(event)
 		case "context_compaction_stage", "context_compaction_retrying":
+			slot.mu.Lock()
+			defer slot.mu.Unlock()
+			if slot.closed || slot.job == nil || slot.job.requestID != requestID || slot.job.ready() {
+				return
+			}
 			data := map[string]any{"phase": "progress", "request_id": requestID}
 			if values, ok := event.Data.(map[string]any); ok {
 				data["stage_label"] = values["stage_label"]

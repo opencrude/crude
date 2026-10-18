@@ -58,6 +58,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainTerminalCommands())
 	command = tea.Batch(command, m.continueRemoteWorkspaceSwitch())
 	command = tea.Batch(command, m.drainLiveEditorCommands())
+	command = tea.Batch(command, m.drainEditorSyntaxCommands())
 	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -112,6 +113,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case editor.SyntaxReadyMsg:
+		m.applyEditorSyntax(msg)
+		return m, nil
 	case shellport.ControlRequestMsg:
 		return m, m.handleShellControl(msg)
 	case shellControlDoneMsg:

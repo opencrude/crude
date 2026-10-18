@@ -771,6 +771,7 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	m.stopEditorSyntax()
 	m.stopRemoteWorkspaceSwitch()
 	if m.projectReplace != nil && m.projectReplace.cancel != nil {
 		m.projectReplace.cancel()

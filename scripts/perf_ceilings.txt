@@ -27,6 +27,9 @@ BenchmarkEditorPaint_LargeFile_120x40 9600 1380
 BenchmarkEditorScrollRepaint_120x40 9600 1380
 BenchmarkBufferDirtyCheckLargeFile 0 0
 BenchmarkBufferSavepointManualRoundTripLargeFile 0 0
+BenchmarkSyntaxLongPythonViewport 0 0
+BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
+BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
 # Scenario benches (tui/viewmodel): steady-state work budgets.

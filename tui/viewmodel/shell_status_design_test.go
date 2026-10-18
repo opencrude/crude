@@ -144,6 +144,30 @@ func TestAgentHeaderKeepsLifecycleAndPayloadInDetails(t *testing.T) {
 	}
 }
 
+func TestBackgroundContextSummaryIsExplainedInDetailsNotHeader(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 160, 40
+	app.AddOrchestrator("root")
+	app.syncAgentStatusEvent(types.AgentEventMsg{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": "summary-1"}})
+	app.paintShellFrame()
+	if header := rowText(app, 0); strings.Contains(header, "checkpoint") || strings.Contains(header, "summary") {
+		t.Fatalf("background maintenance leaked into telemetry header: %q", header)
+	}
+	var detail string
+	for _, item := range app.statusTabItems() {
+		if item.ID == "agent:root" {
+			for _, line := range item.Lines {
+				if line.Label == "Context summary" {
+					detail = line.Value
+				}
+			}
+		}
+	}
+	if !strings.Contains(detail, "background") || !strings.Contains(detail, "not blocked") {
+		t.Fatalf("details do not explain the operation: %q", detail)
+	}
+}
+
 func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28

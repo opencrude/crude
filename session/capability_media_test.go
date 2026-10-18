@@ -19,6 +19,18 @@ type mediaTypedError struct{}
 
 func (*mediaTypedError) Error() string { return "approval required" }
 
+func TestCapabilityTransportFailureKeepsActionableCause(t *testing.T) {
+	cause := errors.New("request timed out while waiting for provider")
+	result, err := capabilityMediaResult(captypes.Result{IsError: true}, cause, nil)
+	if !errors.Is(err, cause) || !strings.Contains(result.Content, cause.Error()) {
+		t.Fatalf("transport diagnostic replaced by generic failure: result=%q err=%v", result.Content, err)
+	}
+	parts := tools.ResultContentParts(result)
+	if len(parts) != 1 || !strings.Contains(parts[0].Text, cause.Error()) {
+		t.Fatalf("model-facing evidence lost the actual failure: %+v", parts)
+	}
+}
+
 func TestCapabilityMediaAdmissionEvidenceAndErrors(t *testing.T) {
 	var imageBytes bytes.Buffer
 	if err := png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {

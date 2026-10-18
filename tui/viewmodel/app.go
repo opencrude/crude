@@ -174,15 +174,16 @@ type App struct {
 	// surfaces are deleted; the per-session PanelDeck Hosts survive inside
 	// shellRoot's deckMount adapter. Terminals use a workspace termDock slot,
 	// not the session PanelDeck.
-	mainSurf        *surface.Surface // full-screen shell surface (replaces all layer surfaces)
-	shell           *shellRoot
-	rootHost        *ui.Host
-	mainPanes       *mainPaneLayout
-	paneFilePicker  *paneFilePickerOwner
-	paneFileOpenSeq uint64
-	liveEditors     map[*editor.Editor]*liveEditorState
-	liveOpenRefs    *liveDocumentRefs
-	editorCommands  []tea.Cmd
+	mainSurf         *surface.Surface // full-screen shell surface (replaces all layer surfaces)
+	shell            *shellRoot
+	rootHost         *ui.Host
+	mainPanes        *mainPaneLayout
+	paneFilePicker   *paneFilePickerOwner
+	paneFileOpenSeq  uint64
+	liveEditors      map[*editor.Editor]*liveEditorState
+	liveOpenRefs     *liveDocumentRefs
+	editorCommands   []tea.Cmd
+	editorSyntaxJobs map[<-chan struct{}]*editor.Editor
 	// Rectangles computed by computeContentLayout each frame; they drive
 	// shell slot geometry AND viewmodel policy (mouse region classification
 	// for editor/divider/status and focus-stack updates).

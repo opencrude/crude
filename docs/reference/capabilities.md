@@ -98,11 +98,30 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   (`Disabled`). Built-ins can be disabled but not removed.
 - Search tries configured providers one at a time in quality order (Exa,
   Brave Search API, Tavily, SearXNG), then the keyless engines in parallel, so
-  a missing, revoked or rate-limited key never stops search. `web_fetch` pages
+  a missing, revoked or rate-limited key never stops search. Provider attempts
+  share a 24-second operation budget inside the ordinary MCP call, reserving
+  fallback time. Keyless search returns once enough unique destinations arrive
+  (or 150 ms after its first partial answer), cancelling and joining remaining
+  requests; a stalled provider cannot hold useful results hostage. Exa's public
+  endpoint uses the shared MCP SDK rather than a second JSON/SSE parser.
+  Total provider failure is an error, distinct from a completed empty search.
+  Generic MCP failure projection retains the actual transport/error cause for
+  every connection, not a web-only exception. `web_fetch` pages
   results (32,768 characters by default, the `read_async_output` page) with an
   offset to continue, serves later pages from a bounded per-connection cache,
   never exceeds the MCP result budget, and falls back to Exa contents or Jina
   Reader only when those keys are configured.
+- Fetch accepts text media (including Markdown, source and JSON/XML variants),
+  sniffs missing/generic media types, and converts HTML to structured Markdown
+  with links and code preserved. Nested content containers are read once.
+  Concurrent reads of one normalized URL join one request; cached pagination is
+  Unicode-character based and ends explicitly, without a repeating continuation.
+  Responses over 8 MiB (25 MiB for convertible documents) fail explicitly rather
+  than silently truncating source. Site refusals remain ordinary tool errors and
+  do not disconnect the built-in server. There is one built-in tool registration
+  and the same MCP result path as external connections, not duplicate native web
+  tools or special execution bypasses. External outages, bot protection and
+  authenticated/JavaScript-only sites remain external constraints.
 - Provider keys (`EXA_API_KEY`, `BRAVE_SEARCH_API_KEY`, `TAVILY_API_KEY`,
   `SEARXNG_URL`, `JINA_API_KEY`) come from Crude's secret store, then the core's
   environment.

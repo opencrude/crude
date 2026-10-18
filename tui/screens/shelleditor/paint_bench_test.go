@@ -44,6 +44,7 @@ func benchEditorPaint(b *testing.B, w, h, funcCount int) {
 		b.Fatal(err)
 	}
 	defer ed.Close()
+	settleEditorSyntax(b, ed)
 
 	screen := shelleditor.New(th)
 	screen.Bind(ed)
@@ -95,6 +96,7 @@ func BenchmarkEditorScrollRepaint_120x40(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer ed.Close()
+	settleEditorSyntax(b, ed)
 
 	screen := shelleditor.New(th)
 	screen.Bind(ed)

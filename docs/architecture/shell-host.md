@@ -239,10 +239,11 @@ Rules:
 
 The `m.contentDirty` flag and the main-content ANSI cache were deleted.
 `View()` rebuilds the main content surface every frame. This is safe because
-the editor's expensive chroma work is **internally cached by line**
-(`chromaLineCache` + `chromaDirtyFrom` + `lineGeomCache` in `tui/editor`),
-so an editor repaint is a cell fill plus a cached-color walk:
-~180-250µs at 120x40 (see `BenchmarkEditorPaint_*` in `tui/screens/shelleditor/`).
+the editor's expensive syntax work is **prepared once per source revision off
+the UI thread**, with compact document spans and lazy per-line cell maps.
+Geometry has its own cache; scroll/resize never restarts the lexer. A warm editor
+repaint is a cell fill plus a cached-color walk (see `BenchmarkEditorPaint_*`
+in `tui/screens/shelleditor/` and [performance baselines](../reference/performance-baselines.md)).
 
 **RULES:**
 - Never reintroduce a frame-level dirty flag for the main content. If a

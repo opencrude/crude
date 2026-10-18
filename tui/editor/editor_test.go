@@ -94,7 +94,7 @@ func TestChromaTokenColor_DifferentTokens(t *testing.T) {
 	assert.NotEqual(t, kw, cm, "Keyword and Comment should have different colours")
 }
 
-// buildLineColorMap tests       ──
+// Source-to-cell syntax projections.
 
 func editorWithTheme() *Editor {
 	e := New(theme.DefaultDark())
@@ -105,7 +105,7 @@ func editorWithTheme() *Editor {
 
 func TestBuildLineColorMap_EmptyLine(t *testing.T) {
 	e := editorWithTheme()
-	cm := e.buildLineColorMap("", 0)
+	cm := lineColors(t, e, "", 0)
 	assert.Nil(t, cm)
 }
 
@@ -113,7 +113,7 @@ func TestBuildLineColorMap_PlainText(t *testing.T) {
 	e := editorWithTheme()
 	e.filePath = "test.go"
 	e.initChroma()
-	cm := e.buildLineColorMap("hello world", 11)
+	cm := lineColors(t, e, "hello world", 11)
 	assert.NotNil(t, cm)
 	assert.Equal(t, 11, len(cm))
 	// All entries should be empty (plain text has no tokens with colour)
@@ -123,7 +123,7 @@ func TestBuildLineColorMap_GoComment(t *testing.T) {
 	e := editorWithTheme()
 	e.filePath = "test.go"
 	e.initChroma()
-	cm := e.buildLineColorMap("// this is a comment", 20)
+	cm := lineColors(t, e, "// this is a comment", 20)
 	assert.NotNil(t, cm)
 	hasColor := false
 	for _, c := range cm {
@@ -139,7 +139,7 @@ func TestBuildLineColorMap_GoKeyword(t *testing.T) {
 	e := editorWithTheme()
 	e.filePath = "test.go"
 	e.initChroma()
-	cm := e.buildLineColorMap("func main() {", 13)
+	cm := lineColors(t, e, "func main() {", 13)
 	assert.NotNil(t, cm)
 	// "func" should be colored as a keyword
 	assert.NotEmpty(t, cm[0], "first char of 'func' should be coloured")
@@ -149,9 +149,9 @@ func TestBuildLineColorMap_CacheHit(t *testing.T) {
 	e := editorWithTheme()
 	e.filePath = "test.go"
 	e.initChroma()
-	cm1 := e.buildLineColorMap("var x = 1", 9)
+	cm1 := lineColors(t, e, "var x = 1", 9)
 	assert.NotNil(t, cm1)
-	cm2 := e.buildLineColorMap("var x = 1", 9)
+	cm2 := lineColors(t, e, "var x = 1", 9)
 	assert.Equal(t, cm1, cm2, "cached result should match")
 }
 
@@ -160,8 +160,8 @@ func TestBuildLineColorMap_CacheMiss(t *testing.T) {
 	e.filePath = "test.go"
 	e.initChroma()
 	// "var x = 1" -> "var" keyword, rest text; "func foo()" -> "func" keyword, "foo" NameFunction
-	cm1 := e.buildLineColorMap("var x = 1", 9)
-	cm2 := e.buildLineColorMap("func foo()", 9)
+	cm1 := lineColors(t, e, "var x = 1", 9)
+	cm2 := lineColors(t, e, "func foo()", 9)
 	if len(cm1) == len(cm2) {
 		allEqual := true
 		for i := range cm1 {
@@ -177,47 +177,7 @@ func TestBuildLineColorMap_CacheMiss(t *testing.T) {
 func TestBuildLineColorMap_NilLexer(t *testing.T) {
 	e := editorWithTheme()
 	e.chromaLexer = nil
-	cm := e.buildLineColorMap("hello", 5)
-	assert.Nil(t, cm)
-}
-
-// ── buildLineColorMapWithRunes tests ─
-
-func TestBuildLineColorMapWithRunes(t *testing.T) {
-	e := editorWithTheme()
-	e.filePath = "test.go"
-	e.initChroma()
-	line := "var x = 1"
-	runes := []rune(line)
-	widths := make([]int, len(runes))
-	for i, r := range runes {
-		widths[i] = runeVisualWidth(r)
-	}
-	cm := e.buildLineColorMapWithRunes(line, len(runes), runes, widths)
-	assert.NotNil(t, cm)
-	assert.Equal(t, len(runes), len(cm))
-}
-
-func TestBuildLineColorMapWithRunes_MatchesStandard(t *testing.T) {
-	e := editorWithTheme()
-	e.filePath = "test.go"
-	e.initChroma()
-	line := "func main() { return 42; }"
-	runes := []rune(line)
-	widths := make([]int, len(runes))
-	visW := 0
-	for i, r := range runes {
-		widths[i] = runeVisualWidth(r)
-		visW += widths[i]
-	}
-	cm1 := e.buildLineColorMap(line, visW)
-	cm2 := e.buildLineColorMapWithRunes(line, visW, runes, widths)
-	assert.Equal(t, cm2, cm1, "both colour map builders should produce identical results")
-}
-
-func TestBuildLineColorMapWithRunes_Empty(t *testing.T) {
-	e := editorWithTheme()
-	cm := e.buildLineColorMapWithRunes("", 0, nil, nil)
+	cm := lineColors(t, e, "hello", 5)
 	assert.Nil(t, cm)
 }
 
@@ -230,7 +190,7 @@ func TestBuildLineColorMap_MarkdownHeading(t *testing.T) {
 	e.initChroma()
 	// chroma v2.20.0 markdown lexer does NOT produce heading tokens for
 	// single-line input; verify it at least returns a non-nil map.
-	cm := e.buildLineColorMap("# Hello World", 13)
+	cm := lineColors(t, e, "# Hello World", 13)
 	assert.NotNil(t, cm)
 }
 
@@ -239,7 +199,7 @@ func TestBuildLineColorMap_MarkdownCode(t *testing.T) {
 	e.filePath = "test.md"
 	e.open = true
 	e.initChroma()
-	cm := e.buildLineColorMap("`code` here", 11)
+	cm := lineColors(t, e, "`code` here", 11)
 	assert.NotNil(t, cm)
 	hasColor := false
 	for _, c := range cm {
@@ -256,7 +216,7 @@ func TestBuildLineColorMap_MarkdownBold(t *testing.T) {
 	e.filePath = "test.md"
 	e.open = true
 	e.initChroma()
-	cm := e.buildLineColorMap("**bold** text", 12)
+	cm := lineColors(t, e, "**bold** text", 12)
 	assert.NotNil(t, cm)
 }
 
@@ -577,7 +537,7 @@ func TestBuildLineColorMap_MultipleFileTypes(t *testing.T) {
 			e.filePath = tt.filePath
 			e.open = true
 			e.initChroma()
-			cm := e.buildLineColorMap(tt.line, len([]rune(tt.line)))
+			cm := lineColors(t, e, tt.line, len([]rune(tt.line)))
 			assert.NotNil(t, cm)
 		})
 	}

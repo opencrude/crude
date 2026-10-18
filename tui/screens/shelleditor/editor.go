@@ -75,6 +75,8 @@ func (s *Screen) SetPadding(padL, padR int) {
 // SetFocused marks whether the editor should paint a focused cursor.
 func (s *Screen) SetFocused(v bool) { s.focused = v }
 
+func (s *Screen) SyntaxEditor() *editor.Editor { return s.ed }
+
 // SetTokens updates runtime theme tokens.
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens

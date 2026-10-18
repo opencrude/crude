@@ -24,6 +24,9 @@ const maxResponseBytes = 8 << 20
 // pageCacheBytes bounds the fetched documents one client keeps for pagination.
 const pageCacheBytes = 32 << 20
 
+// Leave time for transport projection inside the ordinary 30-second MCP call.
+const operationTimeout = 24 * time.Second
+
 // Lookup resolves an optional provider setting such as an API key or instance
 // URL. An empty result means the provider is not configured.
 type Lookup func(name string) string
@@ -40,6 +43,8 @@ type Client struct {
 	pages        *pageCache
 	endpoints    endpoints
 	keyless      func(context.Context, string, int) ([]SearchResult, []string, map[string]string)
+	fetchMu      sync.Mutex
+	fetching     map[string]*pageFlight
 }
 
 // endpoints are the keyed providers' API roots; tests point them at fakes.
@@ -96,6 +101,11 @@ func (client *Client) keyedEngines() []keyedEngine {
 
 // Search returns formatted results for query.
 func (client *Client) Search(ctx context.Context, query string, limit int) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", errors.New("search: query is empty; pass the words to search for")
@@ -105,8 +115,18 @@ func (client *Client) Search(ctx context.Context, query string, limit int) (stri
 	}
 	start := time.Now()
 	failed := make(map[string]string)
-	for _, engine := range client.keyedEngines() {
-		results, err := engine.search(ctx, query, limit)
+	engines := client.keyedEngines()
+	deadline, _ := ctx.Deadline()
+	// Preserve a keyless fallback even when every configured key is unusable.
+	keyedDeadline := deadline.Add(-min(8*time.Second, time.Until(deadline)/2))
+	for index, engine := range engines {
+		budget := time.Until(keyedDeadline) / time.Duration(len(engines)-index)
+		if budget <= 0 {
+			break
+		}
+		attempt, stop := context.WithTimeout(ctx, min(8*time.Second, budget))
+		results, err := engine.search(attempt, query, limit)
+		stop()
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -125,7 +145,9 @@ func (client *Client) Search(ctx context.Context, query string, limit int) (stri
 		}
 		failed[engine.name] = "no results"
 	}
-	results, succeeded, keylessFailed := client.keyless(ctx, query, limit)
+	fallback, stop := context.WithTimeout(ctx, 8*time.Second)
+	results, succeeded, keylessFailed := client.keyless(fallback, query, limit)
+	stop()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
@@ -136,6 +158,12 @@ func (client *Client) Search(ctx context.Context, query string, limit int) (stri
 		lg.Info("SEARCH", "search_done", "results", len(results), "engines", len(succeeded), "latency_ms", time.Since(start).Milliseconds())
 	})
 	if len(results) == 0 {
+		if len(succeeded) == 0 {
+			if len(failed) == 0 {
+				failed["search"] = "provider requests did not complete before the search deadline"
+			}
+			return "", errors.New(noResults(query, succeeded, failed))
+		}
 		return noResults(query, succeeded, failed), nil
 	}
 	return formatResults(query, results, succeeded, failed), nil
@@ -218,7 +246,7 @@ func postJSON(ctx context.Context, provider, method, endpoint string, headers ma
 		return redactRequestURL(err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	data, err := readResponse(resp.Body, maxResponseBytes)
 	if err != nil {
 		return redactRequestURL(err)
 	}
@@ -259,7 +287,7 @@ func exaSearch(ctx context.Context, base, key, query string, limit int) ([]Searc
 		if description == "" {
 			description = item.Text
 		}
-		results = append(results, SearchResult{Title: firstNonEmpty(item.Title, item.URL), URL: item.URL, Description: description, Engine: "exa"})
+		results = append(results, SearchResult{Title: firstNonEmpty(item.Title, item.URL), URL: item.URL, Description: description})
 	}
 	return results, nil
 }
@@ -280,7 +308,7 @@ func braveAPISearch(ctx context.Context, base, key, query string, limit int) ([]
 	}
 	results := make([]SearchResult, 0, len(response.Web.Results))
 	for _, item := range response.Web.Results {
-		results = append(results, SearchResult{Title: item.Title, URL: item.URL, Description: stripTags(item.Description), Engine: "brave-api"})
+		results = append(results, SearchResult{Title: item.Title, URL: item.URL, Description: stripTags(item.Description)})
 	}
 	return results, nil
 }
@@ -299,7 +327,7 @@ func tavilySearch(ctx context.Context, base, key, query string, limit int) ([]Se
 	}
 	results := make([]SearchResult, 0, len(response.Results))
 	for _, item := range response.Results {
-		results = append(results, SearchResult{Title: item.Title, URL: item.URL, Description: item.Content, Engine: "tavily"})
+		results = append(results, SearchResult{Title: item.Title, URL: item.URL, Description: item.Content})
 	}
 	return results, nil
 }
@@ -325,7 +353,7 @@ func searxngSearch(ctx context.Context, base, query string, limit int) ([]Search
 		if len(results) == limit {
 			break
 		}
-		results = append(results, SearchResult{Title: item.Title, URL: item.URL, Description: item.Content, Engine: "searxng"})
+		results = append(results, SearchResult{Title: item.Title, URL: item.URL, Description: item.Content})
 	}
 	return results, nil
 }

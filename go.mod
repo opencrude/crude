@@ -39,7 +39,7 @@ require (
 require (
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect
-	github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.3 // indirect
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.3
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect

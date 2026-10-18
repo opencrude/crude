@@ -136,16 +136,6 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 				usage.ContextUsed.Known, usage.ContextLimit.Known = false, false
 			}
 			segments = append(segments, agentHeaderUsageSegments(usage, target)...)
-			// Background context preparation never blocks the agent; show
-			// it so a later checkpoint is not a surprise.
-			if status, ok := m.ws.Status().Agent(node.ID); ok {
-				switch status.Checkpoint {
-				case "preparing":
-					segments = append(segments, shellheader.Segment{Text: "checkpoint…", Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
-				case "ready":
-					segments = append(segments, shellheader.Segment{Text: "checkpoint ready", Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
-				}
-			}
 		}
 	} else {
 		if context != "" {
@@ -532,6 +522,9 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			subtitle = displayProvider(provider) + " / " + model
 		}
 		lines := []statusoverview.DetailLine{{Label: "Activity", Value: firstNonempty(state.Detail, string(state.Phase)), Role: ui.ColorMuted}}
+		if state.CheckpointDetail != "" {
+			lines = append(lines, statusoverview.DetailLine{Label: "Context summary", Value: state.CheckpointDetail, Role: ui.ColorMuted})
+		}
 		if activity := m.ws.AgentActivity(node.ID); activity.Summary != "" {
 			lines = append(lines, statusoverview.DetailLine{Label: "Session", Value: activity.Summary, Role: ui.ColorMuted})
 		}

@@ -136,6 +136,7 @@ func TestLineVisualWidth_MotionDoesNotTokenise(t *testing.T) {
 	ed := loadEditorText(t, "big.go", b.String())
 	ed.viewW = 100
 	ed.viewH = 40
+	doc, generation := ed.syntaxDocument, ed.syntaxGeneration
 	_ = ed.lineVisualWidth(10)
 	if len(ed.chromaLineCache) > 0 {
 		t.Fatal("lineVisualWidth must not populate chroma cache")
@@ -149,6 +150,9 @@ func TestLineVisualWidth_MotionDoesNotTokenise(t *testing.T) {
 	elapsed := time.Since(start)
 	if len(ed.chromaLineCache) > 0 {
 		t.Fatal("cursor motion populated chroma cache — geometry is not split from colour")
+	}
+	if ed.syntaxDocument != doc || ed.syntaxGeneration != generation || ed.syntaxJob != nil {
+		t.Fatal("cursor geometry invalidated or restarted syntax work")
 	}
 	if elapsed > 200*time.Millisecond {
 		t.Fatalf("400 vertical motions took %v — suspiciously slow (possible tokenisation)", elapsed)

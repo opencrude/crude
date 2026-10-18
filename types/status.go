@@ -181,7 +181,9 @@ type AgentStatusSnapshot struct {
 	ActiveChildren int
 	// Checkpoint is background context preparation: "preparing", "ready" or
 	// empty. It never blocks the agent and is not part of Phase.
-	Checkpoint string
+	Checkpoint          string
+	CheckpointRequestID string
+	CheckpointDetail    string
 }
 
 type OperationState string

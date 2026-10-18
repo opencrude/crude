@@ -22,6 +22,7 @@ func loadEditorText(t *testing.T, name, text string) *Editor {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ed.Close() })
+	settleSyntax(t, ed)
 	return ed
 }
 
