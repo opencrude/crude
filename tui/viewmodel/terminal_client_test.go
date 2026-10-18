@@ -212,6 +212,11 @@ func createAppTerminal(t *testing.T, app *App, opts workspace.TerminalCreateOpts
 	}
 	screen := app.ensureTermScreen(info.ID, info.Title)
 	screen.SetProjection(projection)
+	// Standalone fixtures have no mounted Host layout yet. Establish the real
+	// created grid before enabling screen control can queue a zero-bounds resize;
+	// otherwise the first key's acknowledgement shrinks it and can move its echo
+	// into history instead of testing whether the child accepted the input.
+	screen.Layout(ui.LayoutContext{}, ui.Rect{W: info.Cols, H: info.Rows})
 	screen.SetControlled(true)
 	return info, nil
 }

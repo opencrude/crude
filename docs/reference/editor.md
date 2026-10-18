@@ -188,6 +188,14 @@ refresh after success without dropping the query/replacement draft.
 - Every Crude-owned writer, file operation, and Local History restore shares
   `fileio`'s cancellable mutation lease. This prevents autosave, agent tools,
   rename/delete, workspace edits, and restore from racing each other.
+- Retained document checkpoints outlive files and folders. A missing/inaccessible
+  path or failed watch is resource-local, never a workspace storage failure that
+  disables unrelated editors or file actions. Startup reconciles every retained
+  document. Deleted paths keep their exact text, savepoint, identity and history
+  as conflicted recovery evidence; opening a retained document with a missing
+  parent never recreates it or authorizes a save. Directory removal/rename drops
+  its stale watches and reconciles descendants; reopening a recreated directory
+  registers a fresh watch. Invalid durable storage still fails closed.
 
 ## Language server transport
 

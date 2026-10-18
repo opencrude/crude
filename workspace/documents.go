@@ -85,10 +85,10 @@ func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager
 				// when its old parent directory no longer exists.
 				continue
 			}
-			if err := s.watch.add(filepath.Dir(d.snapshot.Path)); err != nil {
-				s.stateErr = err
-				break
-			}
+			// Inactive checkpoints outlive their disk paths. A lost directory or
+			// unavailable watch is not a failure of the workspace's durable state;
+			// reconcile every document and require its watch when a view opens.
+			_ = s.watch.add(filepath.Dir(d.snapshot.Path))
 			s.reconcile(id)
 		}
 	}
@@ -117,12 +117,15 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 	if err != nil {
 		return document.Snapshot{}, err
 	}
+	d := s.documentAtPath(path)
 	// Refuse symlink aliases, matching the checked disk writer's path contract.
+	// A retained document whose parent was removed remains readable for recovery;
+	// this never authorizes creating the missing path or following a new alias.
 	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-	if err != nil || parent != filepath.Dir(path) {
+	missingParent := errors.Is(err, os.ErrNotExist)
+	if (err != nil || parent != filepath.Dir(path)) && (d == nil || !missingParent) {
 		return document.Snapshot{}, errors.New("document parent must be an existing non-symlink directory")
 	}
-	d := s.documentAtPath(path)
 	if d == nil {
 		if s.docs[path] != nil {
 			return document.Snapshot{}, errors.New("document identity is retained at another path")
@@ -140,7 +143,14 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 		}
 		s.docs[path] = d
 	}
-	if err := s.watch.add(filepath.Dir(path)); err != nil {
+	if missingParent {
+		trial := stageDocument(d)
+		trial.snapshot.Conflict = true
+		if err := s.persistDocument(trial); err != nil {
+			return document.Snapshot{}, err
+		}
+		*d = *trial
+	} else if err := s.watch.add(filepath.Dir(path)); err != nil {
 		return document.Snapshot{}, err
 	}
 	if owner.Epoch > s.ownerEpoch(owner.ClientID) {

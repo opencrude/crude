@@ -55,6 +55,9 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	}
 
 	newScreen := app.ensureTermScreen(newInfo.ID, newInfo.Title)
+	if bounds := newScreen.Bounds(); bounds.W != newInfo.Cols || bounds.H != newInfo.Rows {
+		t.Fatalf("replacement fixture has no matching native grid: bounds=%+v created=%dx%d", bounds, newInfo.Cols, newInfo.Rows)
+	}
 
 	// These represent messages already queued by the old manager when the
 	// workspace replacement happened. None may materialize an old screen or
@@ -74,6 +77,9 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		projection, err := app.ws.Terminals().Rows(newInfo.ID, terminalvt.RowRequest{Start: -1})
+		if err == nil && (projection.Info.Cols != newInfo.Cols || projection.Info.Rows != newInfo.Rows) {
+			t.Fatalf("fixture resized the native grid while checking stale-message input: got=%dx%d want=%dx%d", projection.Info.Cols, projection.Info.Rows, newInfo.Cols, newInfo.Rows)
+		}
 		if err == nil && strings.Contains(terminalProjectionText(projection), "x") {
 			return
 		}

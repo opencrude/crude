@@ -2,14 +2,116 @@ package core
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"crude/coreprotocol"
+	"crude/types"
+	"crude/types/control"
 	"crude/workspace"
 )
+
+// The real PTY child deliberately produces no output: lifecycle publication must
+// not depend on a prompt, title, first read or natural exit waking subscribers.
+func TestResourceEventsSilentTerminalChild(t *testing.T) {
+	if os.Getenv("CRUDE_TEST_SILENT_TERMINAL_CHILD") != "1" {
+		t.Skip("native silent-PTY subprocess fixture")
+	}
+	time.Sleep(5 * time.Minute)
+	os.Exit(0)
+}
+
+func TestResourceEventsSilentTerminalCreateAndCloseReachAllSubscribers(t *testing.T) {
+	for _, route := range []string{"RPC", "semantic control"} {
+		t.Run(route, func(t *testing.T) { testSilentTerminalLifecycle(t, route == "semantic control") })
+	}
+}
+
+func testSilentTerminalLifecycle(t *testing.T, semantic bool) {
+	t.Helper()
+	setCoreTestHome(t, t.TempDir())
+	t.Setenv("CRUDE_TEST_SILENT_TERMINAL_CHILD", "1")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(func(root string) (*workspace.Workspace, error) {
+		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+	}, filepath.Join(t.TempDir(), "receipts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	root := t.TempDir()
+	creator, ws := resourceConnection(t, r, root, "silent-creator")
+	peer, _ := resourceConnection(t, r, root, "silent-peer")
+	if semantic {
+		callCore(t, creator, "control-grant", ws, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Execute, control.Delete}})
+	}
+	lifecycle := func(id, method string, input, out any) {
+		t.Helper()
+		result := callCore(t, creator, id, ws, method, input)
+		if out != nil {
+			decodeResource(t, result, out)
+		}
+	}
+	if semantic {
+		lifecycle = func(id, method string, input, out any) {
+			t.Helper()
+			raw, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result control.Result
+			decodeResource(t, callCore(t, creator, id, ws, coreprotocol.ControlExecute, control.Request{ID: id, CommandID: method, Input: raw}), &result)
+			if result.Fault != nil || result.State != control.Committed {
+				t.Fatalf("%s did not commit: %+v", method, result)
+			}
+			if out != nil {
+				if err := json.Unmarshal(result.Output, out); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	var info workspace.TerminalInfo
+	lifecycle("silent-create", coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{
+		Command: executable, Args: []string{"-test.run=^TestResourceEventsSilentTerminalChild$"}, CWD: root, Cols: 40, Rows: 4,
+	}, &info)
+	if info.ID == "" || info.PID <= 0 || !info.Alive {
+		t.Fatalf("silent child was not created alive: %+v", info)
+	}
+	for _, subscriber := range []*Connection{creator, peer} {
+		nextResourceChange(t, subscriber, ws, func(ch coreprotocol.Change) bool { return slices.Contains(ch.Terminals, info.ID) })
+		var inventory []workspace.TerminalInfo
+		decodeResource(t, callCore(t, subscriber, "silent-inventory", ws, coreprotocol.TerminalList, struct{}{}), &inventory)
+		if len(inventory) != 1 || inventory[0].ID != info.ID || inventory[0].PID != info.PID || !inventory[0].Alive {
+			t.Fatalf("subscriber did not discover the same silent PTY: %+v", inventory)
+		}
+	}
+	var projection workspace.TerminalProjection
+	decodeResource(t, callCore(t, peer, "silent-rows", ws, coreprotocol.TerminalRows, coreprotocol.TerminalRowsRequest{ID: info.ID, Start: -1, Count: 4}), &projection)
+	if !projection.Info.Alive || projection.Info.PID != info.PID || strings.TrimSpace(projectionText(projection)) != "" {
+		t.Fatalf("fixture must remain alive and silent: %+v text=%q", projection.Info, projectionText(projection))
+	}
+	lifecycle("silent-close", coreprotocol.TerminalClose, coreprotocol.TerminalIDRequest{ID: info.ID}, nil)
+	for _, subscriber := range []*Connection{creator, peer} {
+		nextResourceChange(t, subscriber, ws, func(ch coreprotocol.Change) bool { return slices.Contains(ch.Terminals, info.ID) })
+		var inventory []workspace.TerminalInfo
+		decodeResource(t, callCore(t, subscriber, "closed-inventory", ws, coreprotocol.TerminalList, struct{}{}), &inventory)
+		if len(inventory) != 0 {
+			t.Fatalf("subscriber retained closed PTY: %+v", inventory)
+		}
+	}
+}
 
 func resourceConnection(t *testing.T, r *Runtime, root, id string) (*Connection, string) {
 	t.Helper()
