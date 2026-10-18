@@ -158,6 +158,10 @@ an attention state that never scheduled an automatic wait.
   writer remains. Original input, successful immutable preparation and the
   initial supervisor checkpoint commit before a receipt. Closing rejects new
   reservations and preserves prepared input without enqueueing execution.
+  Starting an already-admitted turn reuses that durable envelope rather than
+  republishing the unchanged source. Related-only publications still advance the
+  revision under CAS and commit their recovery/receipts transactionally, but do
+  not re-encode or update unchanged `messages_json` payloads.
   Stopped children use current authoritative context and retain newer facts;
   parent mirrors/results are separately checked, never silently acknowledged.
   Root and child checkpoints reconcile exact late lifecycle controls and

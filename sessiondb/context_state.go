@@ -152,11 +152,19 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 	if !semanticChanged && !transcriptChanged && !p.ArchivePrevious && p.Recovery == nil && len(p.Admissions) == 0 && p.Compaction == nil && p.RuntimeState == nil {
 		return current, nil
 	}
-	payload, err := json.Marshal(next.Messages)
-	if err != nil {
-		return ContextState{}, err
+	var result sql.Result
+	if exists && !semanticChanged {
+		// Related receipts/recovery still advance the exact publication revision,
+		// but the immutable source payload did not change. Do not re-encode and
+		// rewrite every captured image merely to publish lifecycle bookkeeping.
+		result, err = tx.Exec(`UPDATE agent_context_state SET revision=?,updated_at=? WHERE session_id=? AND agent_id=? AND revision=?`, next.Revision, time.Now().UnixNano(), p.SessionID, p.AgentID, actual)
+	} else {
+		payload, encodeErr := json.Marshal(next.Messages)
+		if encodeErr != nil {
+			return ContextState{}, encodeErr
+		}
+		result, err = tx.Exec(`INSERT INTO agent_context_state(session_id,agent_id,revision,generation,reason,messages_json,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,agent_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,reason=excluded.reason,messages_json=excluded.messages_json,updated_at=excluded.updated_at WHERE agent_context_state.revision=?`, p.SessionID, p.AgentID, next.Revision, next.Generation, next.Reason, payload, time.Now().UnixNano(), actual)
 	}
-	result, err := tx.Exec(`INSERT INTO agent_context_state(session_id,agent_id,revision,generation,reason,messages_json,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,agent_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,reason=excluded.reason,messages_json=excluded.messages_json,updated_at=excluded.updated_at WHERE agent_context_state.revision=?`, p.SessionID, p.AgentID, next.Revision, next.Generation, next.Reason, payload, time.Now().UnixNano(), actual)
 	if err != nil {
 		return ContextState{}, err
 	}

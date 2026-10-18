@@ -19,7 +19,16 @@ func EstimateTokens(text string, _ string) int {
 // EstimateMessageTokens estimates one canonical message. Protocol replay data
 // is counted only when no protocol-neutral content represents it.
 func EstimateMessageTokens(msg ChatMessage, model string) int {
-	tokens := EstimateTokens(msg.ContentString(), model)
+	// Decode multipart once. Its encoded image bytes are transport data, not
+	// text; repeatedly calling ContentString and Parts decoded megabytes three
+	// times for every context estimate before a screenshot could be sent.
+	text := string(msg.Content)
+	var parts []ContentPart
+	if !msg.Content.IsText() {
+		parts = msg.Content.Parts()
+		text = contentPartsText(parts)
+	}
+	tokens := EstimateTokens(text, model)
 	hasReasoning := msg.ReasoningContent != "" || msg.Reasoning != ""
 	if msg.ReasoningContent != "" {
 		tokens += EstimateTokens(msg.ReasoningContent, model)
@@ -27,7 +36,7 @@ func EstimateMessageTokens(msg ChatMessage, model string) int {
 	if msg.Reasoning != "" && msg.Reasoning != msg.ReasoningContent {
 		tokens += EstimateTokens(msg.Reasoning, model)
 	}
-	if msg.Refusal != "" && msg.Refusal != msg.ContentString() {
+	if msg.Refusal != "" && msg.Refusal != text {
 		tokens += EstimateTokens(msg.Refusal, model)
 	}
 	if !hasReasoning {
@@ -35,7 +44,7 @@ func EstimateMessageTokens(msg ChatMessage, model string) int {
 			tokens += estimateJSONText(detail, model)
 		}
 	}
-	for _, part := range msg.Content.Parts() {
+	for _, part := range parts {
 		if part.Type == "image_url" && part.ImageURL != nil {
 			// Image tokenization varies by dimensions/detail and provider.
 			tokens += 1024
@@ -45,7 +54,7 @@ func EstimateMessageTokens(msg ChatMessage, model string) int {
 		tokens += EstimateTokens(call.Function.Name, model)
 		tokens += EstimateTokens(call.Function.Arguments, model)
 	}
-	if msg.ContentString() == "" && !hasReasoning && len(msg.ToolCalls) == 0 {
+	if text == "" && !hasReasoning && len(msg.ToolCalls) == 0 {
 		for _, item := range CanonicalizeProviderItems(msg.ProviderItems) {
 			tokens += estimateJSONText(item.Data, model)
 		}

@@ -7,6 +7,35 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Connected clipboard image preparation (2026-10-18)
+
+The real connected clipboard journey with an uncompressed 1100×1100 PNG failed
+its unchanged eight-second post-admission response wait under `-race`. A CPU profile located
+repeated large context/recovery writes and repeated multipart JSON decoding before
+the provider request, not a detected memory race or corrupted clipboard bytes.
+Starting a committed input no longer republishes its initial recovery envelope;
+receipt-only publications update the revision without rewriting unchanged context
+payloads; token estimation decodes multipart once instead of three times.
+Three repeated race runs pass all twelve combinations of Ctrl+V/bracketed paste
+and 91-byte/4,843,302-byte images, checking exact bytes and one provider request.
+For the large image, capture takes 3.16–3.28 s and admission 3.33–3.48 s; Enter to
+visible response takes 9.70–10.16 s, including admission. The remaining response
+wait is 6.31–6.69 s, within the unchanged eight-second bound. Race instrumentation
+is deliberately included here; these are not normal-build latency claims.
+
+Three Linux/amd64, Go 1.25.9, i7-10750H runs (`GOMAXPROCS=2`, `-benchtime=3x`,
+`-count=3`) measure the leaf costs separately from the connected user journey:
+
+| Benchmark | Before | After |
+|---|---|---|
+| `BenchmarkEstimateMultipartImage/bytes_4194304` | 63.1–64.9 ms; 25,217,048–25,217,080 B; 50 allocations | 21.6–23.0 ms; 8,405,688–8,405,720 B; 17 allocations |
+| `BenchmarkPublishContextRecoveryImage/bytes_4194304` | 170.0–175.2 ms; 43.4–46.2 MB; 156–162 allocations | 162.4–169.0 ms; 33.6–37.8 MB; 143–153 allocations |
+
+SQLite still retains the complete archive and recovery context; this is not a
+claim that large-media persistence is constant-cost. Trigger-based tests prohibit
+rewriting unchanged source payloads while checking exact recovery bytes, rollback
+and stale-revision rejection. No timeout or existing allocation ceiling was raised.
+
 ## Document-owned syntax acceptance (2026-10-18)
 
 The former 256-line viewport restart inverted Python docstring/code and long

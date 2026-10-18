@@ -147,6 +147,11 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   preparation with durable context evidence and a user warning, preserving the
   original input, good attachments and files while work continues. Ownership,
   permissions and storage failures remain fail-closed; never replay old effects.
+  Connected image admission reuses its already-committed recovery envelope at run
+  start. Token estimation decodes each multipart message once and never counts
+  Base64 payload as text. Ctrl+V and bracketed paste are exercised with both inline
+  and multi-megabyte chunked images under the race detector, retaining exact bytes
+  once in the provider request and the existing user-visible completion deadline.
 - Attachment paint and hit testing share `ReferenceChips` geometry. Filename
   bodies open; separate three-cell remove targets only detach the draft.
   External opens run off the UI thread through `fileio.OpenDesktopPath` (native

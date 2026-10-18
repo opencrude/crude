@@ -2,6 +2,8 @@ package provider
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +98,33 @@ func TestEstimateTokensUsesSemanticRunesOverFour(t *testing.T) {
 	}
 	if got := EstimateTokens("世界世界", "deepseek"); got != 1 {
 		t.Fatalf("unicode estimate = %d, want 1", got)
+	}
+}
+
+func TestEstimateMultipartTokensCountsTextAndImagesOnce(t *testing.T) {
+	message := NewMultiPartMessage("user", []ContentPart{
+		{Type: "text", Text: "first"},
+		{Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64," + strings.Repeat("YWJj", 1024)}},
+		{Type: "text", Text: "second"},
+	})
+	message.Refusal = "first\nsecond"
+	if got, want := EstimateMessageTokens(message, "test"), 1027; got != want {
+		t.Fatalf("multipart estimate=%d want=%d; encoded image bytes are not text tokens", got, want)
+	}
+}
+
+func BenchmarkEstimateMultipartImage(b *testing.B) {
+	for _, size := range []int{1024, 4 << 20} {
+		b.Run(fmt.Sprintf("bytes_%d", size), func(b *testing.B) {
+			message := NewMultiPartMessage("user", []ContentPart{{Type: "text", Text: "inspect image"}, {Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64," + strings.Repeat("YWJj", size/4)}}})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if EstimateMessageTokens(message, "test") != 1028 {
+					b.Fatal("image token estimate changed")
+				}
+			}
+		})
 	}
 }
 
