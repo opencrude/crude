@@ -429,7 +429,7 @@ function Get-VirtualKey {
     param([string]$Name)
     $named = @{
         "backspace" = 0x08; "tab" = 0x09; "return" = 0x0D; "enter" = 0x0D
-        "escape" = 0x1B; "esc" = 0x1B; "space" = 0x20; "pageup" = 0x21
+        "escape" = 0x1B; "esc" = 0x1B; "capslock" = 0x14; "space" = 0x20; "pageup" = 0x21
         "pagedown" = 0x22; "end" = 0x23; "home" = 0x24; "left" = 0x25
         "up" = 0x26; "right" = 0x27; "down" = 0x28; "insert" = 0x2D
         "delete" = 0x2E; "f1" = 0x70; "f2" = 0x71; "f3" = 0x72

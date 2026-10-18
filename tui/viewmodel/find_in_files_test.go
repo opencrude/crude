@@ -243,7 +243,8 @@ func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 	prompt := openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	app.toggleFindInFiles()
 
-	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	_, closeSearch := app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	runAppCommand(t, app, closeSearch)
 	if app.windowManager.Window(findInFilesWindowID) != nil || app.findInFiles != nil {
 		t.Fatal("Esc should close and clean up Find in Files")
 	}
