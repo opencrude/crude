@@ -52,6 +52,8 @@ debug.test
 dist/
 build/
 tmp/
+temp/
+__pycache__/
 
 # Pinned libghostty-vt install prefix (see deps/README.md)
 deps/libghostty-vt/

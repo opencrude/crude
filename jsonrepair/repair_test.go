@@ -85,7 +85,7 @@ func TestUnicodeApocalypse(t *testing.T) {
 		}
 	})
 
-	t.Run("emoji_zalgo_clusterfuck", func(t *testing.T) {
+	t.Run("emoji_zalgo_combining_cluster", func(t *testing.T) {
 		t.Parallel()
 		combining := []rune{
 			0x0300, 0x0301, 0x0302, 0x0303, 0x0308, 0x030A,

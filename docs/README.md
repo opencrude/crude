@@ -109,6 +109,8 @@ documents to read before changing each area.
 
 - [Validation and visual capture](guides/validation.md) — gates, test isolation,
   helper ownership and the Linux capture workflow.
+- [Releases and installation](guides/releases.md) — native Linux/Windows packages,
+  beta-risk consent, setup advice, and public-launch requirements.
 - [Component authoring](guides/component-authoring.md) — building TUI screens
   with the native `tui/ui` component system.
 - [Core and shell workflows](guides/core-shell-workflows.md) — local/SSH

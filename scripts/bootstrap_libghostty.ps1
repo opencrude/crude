@@ -37,6 +37,7 @@ function Test-Zig {
         exit 1
     }
     $ver = & zig version
+    if ($LASTEXITCODE -ne 0) { throw 'zig version failed' }
     if ($ver -notlike "$ZIG_VERSION*") {
         Write-Error "zig $ver found; need $ZIG_VERSION"
         exit 1
@@ -47,6 +48,7 @@ function Test-Zig {
 function Test-LibOk {
     (Test-Path $Stamp) -and
     ((Get-Content $Stamp -ErrorAction SilentlyContinue) -eq $GHOSTTY_COMMIT) -and
+    ((Get-Content (Join-Path $Prefix '.crude-cpu') -ErrorAction SilentlyContinue) -eq 'baseline') -and
     (Test-Path (Join-Path $Prefix "lib/ghostty-vt-static.lib")) -and
     (Test-Path (Join-Path $Prefix "include/ghostty/vt.h"))
 }
@@ -58,13 +60,17 @@ function Ensure-Src {
     }
     if (-not (Test-Path (Join-Path $Src ".git"))) {
         git clone --filter=blob:none https://github.com/ghostty-org/ghostty.git $Src
+        if ($LASTEXITCODE -ne 0) { throw 'Ghostty clone failed' }
     }
     git -C $Src fetch --depth 1 origin $GHOSTTY_COMMIT 2>$null
     if ($LASTEXITCODE -ne 0) {
         git -C $Src fetch origin $GHOSTTY_COMMIT
+        if ($LASTEXITCODE -ne 0) { throw 'Ghostty fetch failed' }
     }
     git -C $Src checkout --detach $GHOSTTY_COMMIT
+    if ($LASTEXITCODE -ne 0) { throw 'Ghostty checkout failed' }
     $got = git -C $Src rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Ghostty revision check failed' }
     if ($got -ne $GHOSTTY_COMMIT) {
         Write-Error "ghostty HEAD $got != pin $GHOSTTY_COMMIT"
         exit 1
@@ -86,8 +92,10 @@ if (-not (Test-LibOk)) {
     }
     Write-Host "building libghostty-vt into $Prefix"
     Push-Location $Src
-    zig build -Demit-lib-vt -Doptimize=ReleaseFast --prefix $Prefix
-    Pop-Location
+    try {
+        zig build -Demit-lib-vt -Doptimize=ReleaseFast -Dcpu=baseline --prefix $Prefix
+        if ($LASTEXITCODE -ne 0) { throw 'Ghostty native build failed' }
+    } finally { Pop-Location }
 
     if (-not (Test-Path (Join-Path $Prefix "lib/ghostty-vt-static.lib"))) {
         Write-Error "expected $Prefix/lib/ghostty-vt-static.lib"
@@ -95,5 +103,6 @@ if (-not (Test-LibOk)) {
         exit 1
     }
     Set-Content -Path $Stamp -Value $GHOSTTY_COMMIT
+    Set-Content -Path (Join-Path $Prefix '.crude-cpu') -Value 'baseline'
     Write-Host "installed libghostty-vt $GHOSTTY_VERSION @ $GHOSTTY_COMMIT"
 }

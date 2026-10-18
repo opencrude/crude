@@ -36,7 +36,7 @@ func TestMCPLaunchGrantAndValidation(t *testing.T) {
 }
 
 func TestProtocolRoutesDoNotInitializeConsole(t *testing.T) {
-	for _, args := range [][]string{{"--mcp"}, {"-mcp=true"}, {"--core"}, {"--core-stdio"}, {"--core-status"}, {"--core-stop"}, {"--mcp=invalid"}} {
+	for _, args := range [][]string{{"--version"}, {"-version=true"}, {"--help"}, {"-h"}, {"--mcp"}, {"-mcp=true"}, {"--core"}, {"--core-stdio"}, {"--core-status"}, {"--core-stop"}, {"--mcp=invalid"}} {
 		if NeedsInteractiveConsole(args) {
 			t.Fatalf("noninteractive route changes console: %v", args)
 		}
