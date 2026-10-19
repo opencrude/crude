@@ -1,6 +1,6 @@
 # Releases and installation
 
-> Status: Current guide — full native Linux/Windows verification passed for commit `984affa35c527db0020637af38e92558878e1f92`; public package acceptance remains a per-release gate.
+> Status: Current guide — v0.1.0 is published for Linux/Windows amd64; native verification, actual package installation/reinstallation, and archive inspection passed for its exact source commit.
 
 ## Supported packages
 
@@ -118,6 +118,20 @@ skip annotation such as `[skip ci]`. In that case explicitly dispatch the releas
 workflow with the immutable tag selected as the ref; do not move the tag, select
 master instead, or bypass source validation.
 
+### v0.1.0 acceptance (2026-10-19)
+
+[Crude v0.1.0](https://github.com/agenticcrude/crude/releases/tag/v0.1.0) is
+published from commit `984affa35c527db0020637af38e92558878e1f92`.
+[Release run 39319066535](https://github.com/agenticcrude/crude/actions/runs/39319066535)
+passed all six source, native verification, native package build, and draft jobs.
+The actual Windows ZIP passed installation/reinstallation (29 installer checks),
+and the actual Linux archive passed all ten installer checks. Both downloaded
+archives match SHA256SUMS and GitHub's recorded digests; their build stamps and
+native cgo/amd64 binaries identify the same source commit. Archive paths, notices,
+Linux runtime dependencies and Windows DLL imports were inspected before the
+reviewed draft was published. An anonymous latest-release lookup resolves all
+six assets. No macOS/ARM64/musl package or publisher-signature claim is implied.
+
 Before any public launch:
 
 1. All contributing agents must have finished, their exact final reports reviewed,
@@ -142,7 +156,8 @@ Before any public launch:
    install/update results. Verify no newer local/remote changes appeared.
 7. Publish the reviewed draft only after those gates are met. Source visibility
    and release publication are separate actions; never relax a gate to get a
-   binary out. This preparation does not attest that native gates have passed.
+   binary out. A successful earlier release does not attest that a later source
+   commit or package has passed those gates.
 
 ### No-payment public CI
 
