@@ -275,7 +275,9 @@ try {
 
     Test-Case 'preferred setup warnings are actionable, non-mutating, and license identity is Apache' {
         With-Fixture (New-Fixture) {
-            $output = (Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath *>&1 | Out-String)
+            # PowerShell 5.1 formats WarningRecords at the host width. Check
+            # the actual warning text, not line wraps inserted by Out-String.
+            $output = ((Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
             foreach ($required in @('beta-testing', 'lose or corrupt work', 'Back up important data and commit', 'cannot guarantee', 'Windows Terminal', '24-bit truecolor', 'JetBrainsMono Nerd Font NF \(not NFM\)', 'DEVCOM.JetBrainsMonoNerdFont --exact', 'Without admin rights', 'Appearance > Font face', 'ask Crude itself', 'Apache-2.0 \(LICENSE-APACHE\)')) {
                 Assert-True ($output -match $required) "Installer output must explain '$required'"
             }
