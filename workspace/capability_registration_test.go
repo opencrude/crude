@@ -120,7 +120,7 @@ func TestPreferenceDraftCannotEraseLaterAgentCapabilityInstall(t *testing.T) {
 	draft := owner.LoadAppSettings()
 	draft.Editor.TabSize = 8
 	draft.Capabilities.Acquisition.Mode = "manual"
-	save := owner.PreparePreferencesSave(types.SettingsScopeWorkspace, draft, types.OverridesFromDiff(owner.AppDefaults(), draft))
+	save := owner.PreparePreferencesSave(types.SettingsScopeWorkspace, types.SettingsEdits(owner.LoadAppSettings(), draft))
 	current := owner.LoadAppSettings()
 	current.Capabilities.Skills["later-install"] = captypes.SkillConfig{ID: "later-install", Name: "Later skill", Path: "later", Scope: captypes.ScopeWorkspace}
 	current.Capabilities.Connections["later-mcp"] = captypes.ConnectionConfig{

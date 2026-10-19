@@ -17,7 +17,6 @@ const (
 	AgentRecoverReject    = "agent.recover_reject"
 	AgentStopCommand      = "agent.stop_command"
 	AgentCompact          = "agent.compact"
-	AgentResetOverrides   = "agent.reset_overrides"
 	WorkspaceStartup      = "workspace.startup"
 	WorkspaceOverrides    = "workspace.overrides"
 	WorkspaceOverridesSet = "workspace.overrides_save"

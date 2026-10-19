@@ -93,7 +93,7 @@ func TestSettingsCancel_RevertsLiveThemePreview(t *testing.T) {
 	app.ApplyThemePreset("dark")
 	saved := app.ws.LoadAppSettings()
 	saved.Theme.Preset = "dark"
-	_ = app.ws.SaveAppSettings(saved)
+	_ = wsOf(app).SaveAppSettings(saved)
 
 	app.openWorkspaceSettings()
 	app.ApplyThemePreset("light") // simulate ThemePreviewMsg live cycle
@@ -117,7 +117,7 @@ func TestSettingsEsc_ForwardsThroughFloatingWindow(t *testing.T) {
 	app := newPaintableThemeApp(t)
 	saved := app.ws.LoadAppSettings()
 	saved.Theme.Preset = "dark"
-	_ = app.ws.SaveAppSettings(saved)
+	_ = wsOf(app).SaveAppSettings(saved)
 	app.ApplyThemePreset("dark")
 	app.openWorkspaceSettings()
 	app.ApplyThemePreset("midnight")

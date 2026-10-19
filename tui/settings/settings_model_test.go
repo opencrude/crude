@@ -237,7 +237,14 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 		t.Fatal("native action bar save did not emit a command")
 	}
 	msg, ok := result.Cmd().(SaveMsg)
-	if !ok || msg.AppSettings.Editor.TabSize != 8 {
+	settings := modeltypes.CloneAppSettings(m.layerBase)
+	if !ok {
+		t.Fatalf("save message=%#v", msg)
+	}
+	if err := modeltypes.ApplySettingsEdits(&settings, msg.Edits); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Editor.TabSize != 8 {
 		t.Fatalf("save message=%#v, want tab size 8", msg)
 	}
 }

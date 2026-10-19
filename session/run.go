@@ -489,17 +489,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}) {
 		return
 	}
-	if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
-		s.mu.Lock()
-		unpinned := s.accountUnpinned
-		s.mu.Unlock()
-		if unpinned {
-			return ErrAccountRequired
-		}
-		return nil
-	}) {
-		return
-	}
 	if !recoverStep(agent.RecoveryFailureStorage, func() error {
 		if s.db == nil {
 			return errors.New("session database is unavailable")

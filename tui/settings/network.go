@@ -268,6 +268,16 @@ func (m *Model) validateNetworkSettings() (int, string, bool) {
 	if m == nil || m.Scope() != types.SettingsScopeApplication {
 		return 0, "", true
 	}
+	changed := false
+	for _, edit := range m.Edits() {
+		if len(edit.Path) != 0 && edit.Path[0] == "network" {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return 0, "", true
+	}
 	for _, category := range []int{catNetworkConnection, catNetworkProxy, catNetworkCertificates} {
 		form := m.categories[category].Form
 		form.ValidateAll()

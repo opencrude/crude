@@ -2,19 +2,20 @@
 
 > Status: Current reference for the three-level settings model (app → workspace → session).
 
-Crude settings follow the JetBrains three-level model. Each layer stores only
-what it owns. Lower layers overlay the ones above; an absent field means
-inherit.
+Crude has three settings layers. Each stores only its explicit choices. A value
+not configured at that scope inherits from its parent. The last explicit write
+to a field wins; ordinary settings saves have no configuration revision,
+preimage or conflict gate. Users and agents use the same rule.
 
 ```
 Application  (~/.crude/config.json)
     ↓ MergeAppWorkspace
 Workspace    (workspace.db / workspace_settings)
-    ↓ session dock overlays agent provider/model/protocol/thinking
-Session      (session.db / session_agent_settings)
+    ↓ explicit agent choices and session flags
+Session      (session DB / session_agent_settings + session_flags)
 ```
 
-## Two different inheritance rules, on purpose
+## Explicit choices and live inheritance
 
 **Workspaces inherit live.** `WorkspaceOverrides` stores a partial JSON object
 per category holding only the individual leaves the workspace changed. Every
@@ -27,19 +28,41 @@ shell attachment is detached; peer work in that project is retained. Its effecti
 editors, tree, and session projections are constructed, so no frame is built
 with the previous workspace palette.
 
-Overriding a whole category is what made a workspace behave like a hard copy:
-changing one editor field froze every other editor field at whatever the
-application held that day. `OverridesFromDiff` recurses into nested objects,
-so a workspace that disables one language server keeps inheriting the other
-ten, and explicit `false` is a real override rather than an absent key
-(`omitempty` elides it, so the diff re-adds the zero).
+**Sessions also inherit.** A new session does not pin the parent's account,
+model or thinking effort. Only an explicit session edit creates a local choice;
+Reset removes it. Session metadata and historical request attribution do not
+select a future account. Agent definitions and session overrides store account
+IDs, not credentials or copied endpoints. Missing required configuration leaves
+the connection unavailable and guides the user to configure it; Crude does not
+choose another account, migrate a renamed field, or repair the configuration.
 
-**Sessions snapshot.** A session captures the selected account ID, model, and
-thinking effort when it starts. There is no provider/account default and no
-silent account choice. Agent profiles and session overrides store account IDs,
-not credentials. The account owns its complete connection configuration;
-model selection remains on the agent. `AdoptWorkspaceDefaults` is the deliberate
-re-inherit action; normal settings edits affect later turns only.
+Forms compare their draft with its initial values to produce `SettingEdit`
+entries: an exact path plus the new value, or removal to inherit. The storage
+owner applies those entries to its latest file/row. Untouched siblings are not
+replayed. An explicit `false`, zero, empty collection or parent-equal value stays
+stored according to the field's declared semantics; it is not re-diffed away
+against the parent. Arrays are one field, not separately merged items.
+
+Application commits patch the original config JSON under its existing lock;
+workspace commits patch the sparse overlay in one SQLite transaction. Session
+edits apply to the current explicit session layer under its existing owner lock.
+Read/request snapshots and publication generations are detached projections, not
+extra configuration authorities. Parent changes affect later requests without
+relabeling old output or scanning and rewriting closed sessions.
+
+**Save as Workspace** patches only explicit eligible session role choices,
+including Memory, delegation and the sub-agent limit. It preserves unrelated
+workspace settings and the source session's choices. Session-only root identity,
+Code Intelligence, log preferences, invocation secrets and capability opt-outs
+are not promoted. **Reset section** removes only that workspace section and
+preserves unrelated unsaved preferences. Role Reset previews its corresponding
+parent role; session Reset removes the session preference layer, not history,
+work or separate capability opt-outs. All wait for persistence before success.
+
+Turn logging is also an explicit session flag. It is saved with the other
+session flags in one transaction, under `session_runtime_state` key
+`settings.turn_logs/<sessionID>`. Reset removes it and updates the running
+logger; no workspace log flag is written.
 
 **Accounts own complete connections.** Application Settings → Accounts is the
 single catalog for credentials and request configuration. There is no separate
@@ -53,9 +76,10 @@ draft. The copy is independent immediately. Existing account edits expose endpoi
 authentication/key header, additional headers, wire protocol and options,
 connection tuning, and extra JSON request fields together. Models and capability
 limits stay on Agents. **Clone** copies the selected connection into a fresh ID,
-never copying API-key or OAuth credentials. Every account save is an exact
-preimage-checked entity transaction; unrelated preferences never replay a stale
-account map. Accounts remain application-only.
+never copying API-key or OAuth credentials. Account Save writes that identity's
+explicit changes; unrelated preferences never replay the account map. Ordinary
+account edits do not require a configuration revision. Credential rotation still
+cannot revive a removed/reconnected account. Accounts remain application-only.
 
 Additional request headers use a native **key/value table**
 (`ui.KeyValuesFieldState`): Name/Value captions, Add header, row removal, and normal
@@ -83,8 +107,11 @@ users to inspect Notices to find the reason. The launcher remains intact beneath
 the modal. Failed registration releases unstarted backend workers and leaves
 saved conversations/pending inputs with their session owner.
 
-Configuration loading accepts only the current structure; removed fields are a
-repair issue, not a migration trigger. Malformed files remain byte-exact and can
+Configuration loading understands only current-schema fields. Unknown or
+wrong-type ordinary leaves are ignored independently; valid neighbors remain
+usable. This is not a legacy translator, automatic migration or repair write.
+If a removed field was needed, the user must configure its current replacement.
+Malformed files remain byte-exact and can
 be opened in the native editor; repairing JSON requires save and restart. Invalid
 or unknown network policy blocks outbound requests until an explicitly validated
 repair; keeping the UI accessible never bypasses a proxy or trust policy. Genuine
@@ -157,8 +184,13 @@ never a directory on the core host. The pinned archive is validated before
 registration. Connected capability failures retain the actionable reason with
 private connection/source/proxy values redacted rather than reporting a generic
 settings failure.
-Captured settings preimages are normalized after detachment: JSON's omission
-of empty registration maps must never be mistaken for a concurrent edit.
+Ordinary capability registration edits have no whole-settings revision gate.
+Immutable install/update reviews and tool grants retain their exact security
+preconditions; changing an unrelated preference does not invalidate a toggle.
+Workspace capability commits patch only their addressed registration fields;
+unrelated agent, IDE and capability choices stay untouched. Redacted sparse read
+projections preserve field presence, including explicit false and entity
+deletions, without inventing zero-valued acquisition or connection settings.
 
 Agent acquisitions publish through the same sparse registration maps as manual
 installs, but the binding follows the target scope: **Application Settings** by
@@ -241,7 +273,7 @@ and search marks them off. Instructions already loaded stay in context. The
 palette's **Session Skills** and **Session MCP Servers** actions open the same
 views; the composer has no
 **+ Capability** control and `/skill` and `/mcp` are removed. Toggle receipts are
-session-revision fenced; refreshes are modal-lifetime/workspace-fenced and
+session-owned explicit sets, without a configuration revision; refreshes are modal-lifetime/workspace-fenced and
 preserve search, focus and scroll.
 
 Sources supports local directories, commit-pinned repositories and registries.
@@ -470,10 +502,9 @@ roles and enabled named agents (but not background-only Memory Agent). Choosing
 the shared navigation row opens the same filtered picker page as Account and
 Model, with the shared navigation chevron, breadcrumb, and Back/Esc behavior;
 it is not an inline dropdown. Selection updates the root model/account
-immediately. Save persists a
-session-only identity plus that agent's independent account pin. Prior turns
-retain their original identity. Future turns resolve the live profile, so later
-agent edits update the model/instructions while keeping the account pinned.
+immediately. Save persists the session-only identity. Selecting it does not copy
+or pin its account/model; only explicitly edited role fields override its live
+definition. Prior turns retain their original identity.
 Root overrides remain separate for each choice; switching back to Main Agent
 restores its settings. A disabled/removed selected profile reports an error and
 cannot start another turn until replaced; it never silently falls back. Session
@@ -625,14 +656,15 @@ Core actors own semantic ingress, decisions and usage. Remote settings, sessions
 status and LSP are detached replicas installed only on Update; account reads are
 redacted and unchanged stored-secret markers mean Keep, never credential replay.
 Application defaults are republished to retained workspaces after core commit.
-Connected account and preference forms retain their original opaque preimages;
-a background refresh cannot authorize an older draft against newer credentials
-or settings. Sparse workspace saves serialize with the settings lane and publish
+Connected preference forms retain their original draft values only to identify
+which fields were edited. They require no configuration revision. Untouched
+stored-secret markers mean Keep. Sparse workspace saves serialize with the
+existing settings lane and publish
 live session/LSP projections only on the core actor after off-actor persistence.
 
-Small queued application/workspace settings writes acknowledge local admission
-before durable completion and report failures later; full preference Save awaits
-the typed core result. Connected startup admits `--account`, `--model`,
+Preference Save, section/session Reset, Save as Workspace, theme/autosave and
+session shortcuts await the typed durable result. There is no fire-and-forget
+settings writer reporting admission as Save. Connected startup admits `--account`, `--model`,
 `--provider`, `--key` and `--system` through immutable write-only invocation
 selection on session create/open. All explicit selectors refuse already-live
 sessions. Keys use ephemeral accounts, never application persistence; `--system`
@@ -654,10 +686,10 @@ overrides, root choice, model/account pins or tool restrictions. Repeating the
 same prepared operation returns its prior result instead of toggling again;
 late/out-of-order completions cannot replace another owner or newer projection.
 
-Saves store only the leaves that differ from the application layer, and the
-stored overlay is loaded as is. **Reset section**
-returns a workspace category to full inheritance. New format alignment must be
-backed up and performed manually outside product code.
+Saves store only explicitly edited leaves, even when equal to the parent. The
+stored overlay is loaded as is. **Reset section** returns that category to full
+inheritance. New format alignment is manual outside product code, never an
+automatic migration or guessed configuration repair.
 
 The selected account's `connection` supplies endpoint, authentication mode,
 wire protocol, headers, request options and transport budgets directly. Embedded
@@ -681,9 +713,9 @@ automatic format migration or silent transcript rewrite occurs.
 
 | Action | Persistence | Must not write |
 |--------|-------------|----------------|
-| Application Settings → Save | `config.json` via `SaveAppSettings` | `workspace.db`, API keys on agent profiles |
+| Application Settings → Save | scoped edits via `PreparePreferencesSave` → app-owned config transaction | `workspace.db`, API keys on agent profiles |
 | Workspace Settings → Save | field-level `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys, untouched fields |
-| Workspace Settings → Reset section | `ClearCategory` then `SaveWorkspaceSettings` | other categories, app config |
+| Workspace Settings → Reset section | remove the addressed section via the same awaited scoped save | other categories, app config, unrelated draft edits |
 | `/settings` or `/model` dock | session agent connection/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
@@ -750,6 +782,12 @@ entries:
 - `settings.open` — Application Settings
 - `settings.workspace` — Workspace Settings
 
+Normal Settings opens **Application** scope. A muted `◇` at the rail's right
+edge marks a section with workspace choices; the existing subtitle explains
+“Workspace overrides some values · switch scope to review.” It never substitutes
+workspace values into the Application form, changes geometry or opens a prompt.
+The unsaved `●` takes precedence. Workspace scope does not repeat the marker.
+
 Session settings stay on the per-session Panel Deck (`/settings` or
 `/model`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
 for any depth. The root page is a compact agent table (model, then
@@ -781,8 +819,8 @@ Recent turns always stay verbatim after a checkpoint. Each agent's **Keep older
 input** setting bounds older verbatim human requests; blank (Auto) keeps them up
 to the checkpoint's own size, and an explicit value is 1,000 to 200,000 estimated
 tokens. Application values
-flow into workspace defaults field by field, and a session snapshots/overrides the
-resolved agent value like its compaction threshold. The checkpoint, current runtime
+flow into workspace defaults field by field, and a session inherits them unless
+explicitly overridden, like its compaction threshold. The checkpoint, current runtime
 handoff, tool/system envelope, and real continuation capacity remain hard bounds;
 raising the preference cannot overflow them. Answered human requirements use the
 same budget in their marked context-only history block. A child's latest assignment
@@ -795,7 +833,7 @@ Each agent's **Speed** chooses its processing tier: Account (the connection's ow
 setting), Standard, Fast, Priority or Flex (`service_tier`). The tier applies only
 where the connection's protocol offers it and is otherwise ignored, so a choice
 never breaks a backend without tiers. Children use their role's tier. `/fast`
-toggles the fast tier for the session's main agent as an ordinary revision-fenced
+toggles the fast tier for the session's main agent as an ordinary explicit
 session override. Requests served at a premium tier report their cost as unknown
 rather than at the standard rate. See [adaptive context handling](adaptive-context.md).
 Leftover width is distributed as space after the label and before
@@ -899,8 +937,9 @@ control API but cannot change what runs.
 ## Semantic settings control and authority
 
 The [control API](control-contract.md) discovers redacted settings, exact field
-paths/types and revisions; ordinary set/reset operations use the authoritative
-app/workspace/session owner and exact preimages. Generic native form Save resolves
+paths/types and observation revisions; ordinary set/reset operations use the
+authoritative app/workspace/session owner with last explicit write wins. No
+expected configuration revision is required. Generic native form Save resolves
 the effect of **all pending drafts**, including off-page account/capability/agent
 editors, not merely the currently visible ordinary field. Open epochs and edit
 generations reject close/reopen and edit/undo ABA; modal decision policy is not
@@ -976,8 +1015,9 @@ UI remains a limitation, not a promised automatic host selection.
   row. Separators never navigate.
 - `/settings` persists a session-only `SessionMainAgent`. A named profile or
   built-in role resolves the root connection/model/instructions at the next
-  request boundary; its account pin lives under a distinct `root/<choice>`
-  session override. Never collapse those overrides into workspace Main Agent
+  request boundary; explicit root edits live under a distinct `root/<choice>`
+  session override. Selection alone never pins an account. Never collapse those
+  overrides into workspace Main Agent
   or silently fall back if a selected agent is removed or disabled. The root
   selector excludes Memory. Save as Workspace must not promote this session-only
   choice into workspace defaults.
@@ -992,7 +1032,17 @@ Layer coverage lives next to the code:
   fields, explicit `false` overrides, round-trip stability, credential
   stripping, LSP language/severity
 - `workspace/settings_test.go` — overlay persistence vs app defaults, live
-  inheritance of untouched fields, explicit autosave Off, legacy whole-category migration
+  inheritance of untouched fields and explicit autosave Off
+- `types/settings_edits_test.go` — addressed writes, last-write-wins and inert
+  wrong-type stored leaves
+- `app/settings_layers_acceptance_test.go` and `app/settings_mixed_journey_test.go`
+  — real file owner, framed core RPC, SQLite, interleaved session/agent/delegation/
+  proxy/MCP/IDE preferences, restart, scope isolation and invalid trust rejection
+- `tui/settings/explicit_layers_test.go` — one-field collectors across page
+  families, quiet marker at desktop/constrained sizes and parent-relative reset
+- `tui/viewmodel/save_workspace_test.go`, `session/explicit_layers_test.go` and
+  `sessiondb/flags_test.go` — promotion with retained draft, reset/removal,
+  live parent changes, stored-leaf tolerance and atomic session flags
 - `tui/settings/autosave_test.go` and `tui/viewmodel/editor_save_test.go` —
   autosave defaults/round-trip, stale revisions, formatting separation,
   conflicts, disable, discard, watcher reconciliation, and committed save

@@ -21,8 +21,7 @@ func TestCapabilityFailurePreservesReasonWithoutPublishing(t *testing.T) {
 	}
 	a := &actor{ws: ws}
 	fetched := fetchSettingsForTest(t, a)
-	in := coreprotocol.CapabilityActionRequest{ExpectedRevision: fetched.CapabilitiesRevision,
-		Action: captypes.Action{Operation: "preview-install", ID: "missing:skill", Kind: captypes.KindSkill, Scope: captypes.ScopeApplication}}
+	in := coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "preview-install", ID: "missing:skill", Kind: captypes.KindSkill, Scope: captypes.ScopeApplication}}
 	raw, _ := json.Marshal(in)
 	run, apply, _ := a.prepareApplicationSettings(coreprotocol.Request{Method: coreprotocol.CapabilityAction, Payload: raw})
 	out := run(context.Background())

@@ -215,7 +215,13 @@ func TestNetworkDirtyDiscardAndAsyncSaveLifecycle(t *testing.T) {
 		t.Fatal("valid Network save did not enter the retained saving state")
 	}
 	message, ok := result.Cmd().(SaveMsg)
-	if !ok || message.Target != model || message.AppSettings.Network.ProxyURL != "socks5h://user:password@proxy.example:1080" {
+	settings := types.CloneAppSettings(model.layerBase)
+	if ok {
+		if err := types.ApplySettingsEdits(&settings, message.Edits); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !ok || message.Target != model || settings.Network.ProxyURL != "socks5h://user:password@proxy.example:1080" {
 		t.Fatalf("save message lost target or Network values: %#v", message)
 	}
 	before := model.value(catNetworkConnection, fieldNetworkConnectTimeout)

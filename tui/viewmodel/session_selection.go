@@ -39,6 +39,7 @@ type selectedSessionSettingsResult struct {
 	generation uint64
 	owner      *workspace.Session
 	result     workspace.SessionSettingsResult
+	label      string
 }
 
 func (m *App) applySelectedSessionSettings(result selectedSessionSettingsResult) {
@@ -58,5 +59,9 @@ func (m *App) applySelectedSessionSettings(result selectedSessionSettingsResult)
 		m.ModelName = result.result.Snapshot.Effective.Model
 		m.LastSettings = result.result.Snapshot.Effective
 	}
-	m.Feedback.NotifyInfo("settings saved")
+	label := result.label
+	if label == "" {
+		label = "settings saved"
+	}
+	m.Feedback.NotifyInfo(label)
 }

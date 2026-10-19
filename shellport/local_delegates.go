@@ -106,14 +106,6 @@ func (l *local) WorkspaceAgentDefaults() types.AgentsSettings {
 	return l.ws.WorkspaceAgentDefaults()
 }
 
-func (l *local) SaveAppSettings(s types.AppSettings) error {
-	return l.ws.SaveAppSettings(s)
-}
-
-func (l *local) SaveWorkspaceSettings(overrides types.WorkspaceOverrides) error {
-	return l.ws.SaveWorkspaceSettings(overrides)
-}
-
 func (l *local) SaveAccountChange(change types.AccountChange) error {
 	return l.ws.SaveAccountChange(change)
 }
@@ -122,8 +114,8 @@ func (l *local) AllAccounts() map[string]provider.Account {
 	return l.ws.AllAccounts()
 }
 
-func (l *local) PreparePreferencesSave(scope types.SettingsScope, settings types.AppSettings, overrides types.WorkspaceOverrides) func() workspace.PreferencesSaveResult {
-	return l.ws.PreparePreferencesSave(scope, settings, overrides)
+func (l *local) PreparePreferencesSave(scope types.SettingsScope, edits []types.SettingEdit) func() workspace.PreferencesSaveResult {
+	return l.ws.PreparePreferencesSave(scope, edits)
 }
 
 func (l *local) ApplyPreferencesSave(result workspace.PreferencesSaveResult) {
@@ -262,10 +254,6 @@ func (l *local) ApplyAgentInputAdmission(intent *workspace.InputAdmissionIntent,
 	return l.ws.ApplyAgentInputAdmission(intent, result, input, labels)
 }
 
-func (l *local) ResetOrchestratorOverrides(orchID string) {
-	l.ws.ResetOrchestratorOverrides(orchID)
-}
-
 func (l *local) PrepareSkillInput(ctx context.Context, agentID, id, arguments string) (provider.UserInput, error) {
 	return l.ws.PrepareSkillInput(ctx, agentID, id, arguments)
 }
@@ -334,12 +322,12 @@ func (l *local) PrepareSessionSettingsSave(sessionID string, settings types.Sett
 	return l.ws.PrepareSessionSettingsSave(sessionID, settings)
 }
 
-func (l *local) ApplySessionSettingsResult(result workspace.SessionSettingsResult) bool {
-	return l.ws.ApplySessionSettingsResult(result)
+func (l *local) PrepareSessionSettingsReset(sessionID string) (*workspace.SessionSettingsOperation, error) {
+	return l.ws.PrepareSessionSettingsReset(sessionID)
 }
 
-func (l *local) ResetSessionSettingsForSession(sessionID string) error {
-	return l.ws.ResetSessionSettingsForSession(sessionID)
+func (l *local) ApplySessionSettingsResult(result workspace.SessionSettingsResult) bool {
+	return l.ws.ApplySessionSettingsResult(result)
 }
 
 func (l *local) SearchMemoryEpisodes(ctx context.Context, query string, limit int) ([]memory.Episode, error) {

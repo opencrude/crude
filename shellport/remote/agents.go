@@ -317,12 +317,6 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *workspace.InputAdmissionInt
 		receipt.DraftRevision == intent.DraftRevision && (queued || steered || receipt.ContextRevision != 0) && !receipt.AcceptedAt.IsZero()
 }
 
-func (w *Workspace) ResetOrchestratorOverrides(orchID string) {
-	w.commands.push(func(ctx context.Context) {
-		_ = w.call(ctx, coreprotocol.AgentResetOverrides, coreprotocol.AgentIDRequest{AgentID: orchID}, &coreprotocol.BoolResult{})
-	})
-}
-
 func (w *Workspace) PrepareSkillInput(ctx context.Context, agentID, id, arguments string) (provider.UserInput, error) {
 	result, err := w.rpc().PrepareSkillInput(ctx, coreprotocol.SkillInputRequest{AgentID: agentID, ID: id, Arguments: arguments})
 	return result.Input, err

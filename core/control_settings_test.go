@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"crude/coreprotocol"
@@ -18,15 +17,19 @@ func TestControlSettingsApplicationCaptureCommitApply(t *testing.T) {
 	before := types.AppSettings{Editor: types.EditorSettings{WordWrap: true, TabSize: 4}}
 	ws.SetAppDefaults(before)
 	commits := 0
-	ws.OnAppPreferencesCommit = func(old, next types.AppSettings) (types.AppSettings, error) {
+	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		next := ws.AppDefaults()
+		if err := types.ApplySettingsEdits(&next, edits); err != nil {
+			return next, err
+		}
 		commits++
-		if !old.Editor.WordWrap || next.Editor.WordWrap || next.Editor.TabSize != 4 {
+		if next.Editor.WordWrap || next.Editor.TabSize != 4 {
 			t.Fatal("not a single-field change")
 		}
 		return next, nil
 	}
 	a := &actor{ws: ws}
-	raw, _ := json.Marshal(map[string]any{"scope": "application", "path": "editor.word_wrap", "value": false, "expected_revision": entityRevision(ws.AppDefaults())})
+	raw, _ := json.Marshal(map[string]any{"scope": "application", "path": "editor.word_wrap", "value": false})
 	in := control.Request{ID: "patch", CommandID: "settings.set", Input: raw}
 	run, apply, handled := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 	if !handled || commits != 0 {
@@ -48,9 +51,9 @@ func TestControlSettingsApplicationCaptureCommitApply(t *testing.T) {
 	if commits != 1 {
 		t.Fatal("replayed mutation")
 	}
-	stale, _, _ := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
-	if out := stale(context.Background()); out.Fault == nil || out.Fault.Code != control.Stale {
-		t.Fatal("stale preimage accepted")
+	again, _, _ := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
+	if out := again(context.Background()); out.Fault != nil {
+		t.Fatal("explicit set required a revision", out.Fault)
 	}
 }
 
@@ -59,7 +62,7 @@ func TestControlSettingsRejectAuthorityAndInvalidLeaves(t *testing.T) {
 	defer ws.Close()
 	a := &actor{ws: ws}
 	for _, path := range []string{"accounts.one", "network.proxy_url", "agents", "safety.confirm_at", "capabilities", "terminal.environment", "value.APIKey"} {
-		raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": path, "value": false, "expected_revision": "old"})
+		raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": path, "value": false})
 		run, _, _ := a.prepareControlDomain(control.Request{ID: "denied", CommandID: "settings.set", Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 		if out := run(context.Background()); out.Fault == nil || out.Fault.Code != control.Denied {
 			t.Fatalf("authority %s accepted: %#v", path, out)
@@ -74,20 +77,6 @@ func TestControlSettingsRejectAuthorityAndInvalidLeaves(t *testing.T) {
 	value := types.AppSettings{}
 	if err := controlSetField(&value, "editor.WordWrap", json.RawMessage(`false`)); err == nil {
 		t.Fatal("case alias accepted")
-	}
-}
-
-func TestControlSparseFalseAndResetPreserveNeighbors(t *testing.T) {
-	tree := map[string]any{"editor": map[string]any{"tab_size": float64(8)}, "theme": map[string]any{"preset": "dark"}}
-	controlPatch(tree, []string{"editor", "word_wrap"}, false, false)
-	raw, _ := json.Marshal(tree)
-	if !strings.Contains(string(raw), `"word_wrap":false`) {
-		t.Fatal("false became inheritance")
-	}
-	controlPatch(tree, []string{"editor", "word_wrap"}, nil, true)
-	raw, _ = json.Marshal(tree)
-	if strings.Contains(string(raw), "word_wrap") || !strings.Contains(string(raw), "tab_size") || !strings.Contains(string(raw), "dark") {
-		t.Fatal("reset removed neighbors")
 	}
 }
 
@@ -106,11 +95,11 @@ func TestControlSessionRootPinResetPreservesOtherRoleFields(t *testing.T) {
 		"default":      {AccountID: "one", Model: "neighbor"},
 		"root/crafter": {AccountID: "one", Model: "pinned", ThinkingEffort: "high"},
 	}
-	if _, err := backend.SaveSettingsSnapshotAtRevision(value, initial.Revision); err != nil {
+	if _, err := backend.SaveSettingsSnapshot(value); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"Model", "ThinkingEffort", "account_id"} {
-		raw, _ := json.Marshal(map[string]any{"scope": "session", "path": "value." + field, "session_revision": backend.SettingsSnapshots().Revision})
+		raw, _ := json.Marshal(map[string]any{"scope": "session", "path": "value." + field})
 		run, apply, _ := a.prepareControlDomain(control.Request{ID: "reset-" + field, CommandID: "settings.reset", Target: control.Target{SessionID: sessionID}, Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 		out := run(context.Background())
 		if out.Fault != nil {
@@ -148,7 +137,7 @@ func TestControlSessionCodeIntelligenceSetAndReset(t *testing.T) {
 	backend := a.ws.BackendSession(sessionID)
 	call := func(command string, input map[string]any) control.Result {
 		t.Helper()
-		input["scope"], input["path"], input["session_revision"] = "session", "code_intelligence", backend.SettingsSnapshots().Revision
+		input["scope"], input["path"] = "session", "code_intelligence"
 		raw, _ := json.Marshal(input)
 		run, apply, _ := a.prepareControlDomain(control.Request{ID: command, CommandID: command, Target: control.Target{SessionID: sessionID}, Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 		out := run(context.Background())
@@ -169,7 +158,7 @@ func TestControlSessionCodeIntelligenceSetAndReset(t *testing.T) {
 	if got := backend.SettingsSnapshots().Effective.SessionCodeIntelligence; got != nil {
 		t.Fatalf("session override after reset = %v", *got)
 	}
-	raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": "lsp.languages.go.command", "value": "/tmp/evil", "expected_revision": "old"})
+	raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": "lsp.languages.go.command", "value": "/tmp/evil"})
 	run, _, _ := a.prepareControlDomain(control.Request{ID: "server", CommandID: "settings.set", Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 	if out := run(context.Background()); out.Fault == nil || out.Fault.Code != control.Denied {
 		t.Fatalf("server command change accepted: %#v", out)

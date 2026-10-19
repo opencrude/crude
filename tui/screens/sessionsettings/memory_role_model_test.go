@@ -62,6 +62,11 @@ func applyOverrides(base *session.Config, overrides map[string]types.CategorySet
 	}
 	for category, ov := range overrides {
 		current := profile.Categories[category]
+		if category == memoryRole {
+			current.AccountID = base.Memory.MemoryCategory.AccountID
+			current.Model = base.Memory.MemoryCategory.Model
+			current.ThinkingEffort = base.Memory.MemoryCategory.ThinkingEffort
+		}
 		if ov.Inherit != "" {
 			profile.Categories[category] = session.CategoryConfig{Inherit: ov.Inherit}
 			continue

@@ -1,6 +1,7 @@
 package sessiondb
 
 import (
+	"crude/types"
 	"database/sql"
 	"encoding/json"
 )
@@ -63,12 +64,27 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 			ContextRetentionTokens *int   `json:"context_retention_tokens,omitempty"`
 			ServiceTier            string `json:"service_tier,omitempty"`
 		}
-		if err := json.Unmarshal([]byte(selection), &capabilities); err != nil {
-			return nil, err
-		}
+		_ = types.DecodeStoredSettings([]byte(selection), &capabilities)
 		override.AllowedTools, override.DeniedTools, override.SkillModes = capabilities.AllowedTools, capabilities.DeniedTools, capabilities.SkillModes
 		override.ContextRetentionTokens = capabilities.ContextRetentionTokens
 		override.ServiceTier = capabilities.ServiceTier
+		if !types.ValidThinkingLevel(override.ThinkingEffort) {
+			override.ThinkingEffort = ""
+		}
+		if override.Inherit != "main" && override.Inherit != "workspace" {
+			override.Inherit = ""
+		}
+		if override.ContextCompactionPercent != nil && (*override.ContextCompactionPercent < 0 || *override.ContextCompactionPercent > 100) {
+			override.ContextCompactionPercent = nil
+		}
+		if override.ContextRetentionTokens != nil && (*override.ContextRetentionTokens < types.MinContextRetentionTokens || *override.ContextRetentionTokens > types.MaxContextRetentionTokens) {
+			override.ContextRetentionTokens = nil
+		}
+		switch override.ServiceTier {
+		case "", "standard", "fast", "priority", "flex":
+		default:
+			override.ServiceTier = ""
+		}
 		overrides[category] = override
 	}
 	return overrides, rows.Err()

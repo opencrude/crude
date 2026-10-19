@@ -88,7 +88,7 @@ func TestSettingsSnapshotRevisionTracksDefaultsAndReset(t *testing.T) {
 	if updated.Revision <= before.Revision {
 		t.Fatal("workspace update did not advance settings revision")
 	}
-	s.AdoptWorkspaceDefaults(types.AppSettings{Accounts: s.cfg.Accounts, Agents: updated.Base.Agents})
+	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: s.cfg.Accounts, Agents: updated.Base.Agents})
 	adopted := s.SettingsSnapshots()
 	if adopted.Revision <= updated.Revision {
 		t.Fatal("workspace adoption did not advance settings revision")
@@ -101,7 +101,7 @@ func TestSettingsSnapshotRevisionTracksDefaultsAndReset(t *testing.T) {
 	}
 }
 
-func TestSettingsCASOneWinner(t *testing.T) {
+func TestSettingsConcurrentOperationsBothApply(t *testing.T) {
 	for _, method := range []string{"save", "toggle", "reset"} {
 		t.Run(method, func(t *testing.T) {
 			s := newSettingsOperationSession(t, true)
@@ -114,35 +114,29 @@ func TestSettingsCASOneWinner(t *testing.T) {
 					var err error
 					switch method {
 					case "save":
-						_, err = s.SaveSettingsSnapshotAtRevision(before.Effective, before.Revision)
+						_, err = s.SaveSettingsSnapshot(before.Effective)
 					case "toggle":
-						_, err = s.ToggleMultiAgentAtRevision(before.Revision)
+						_, err = s.ToggleMultiAgent()
 					case "reset":
-						_, err = s.ResetSettingsSnapshotAtRevision(before.Revision)
+						_, err = s.ResetSettingsSnapshot()
 					}
 					results <- err
 				}()
 			}
 			close(start)
-			wins, conflicts := 0, 0
 			for i := 0; i < 2; i++ {
-				err := <-results
-				if err == nil {
-					wins++
-				} else if errors.Is(err, ErrSettingsRevisionConflict) {
-					conflicts++
-				} else {
+				if err := <-results; err != nil {
 					t.Fatal(err)
 				}
 			}
-			if wins != 1 || conflicts != 1 || s.SettingsSnapshots().Revision != before.Revision+1 {
-				t.Fatal("CAS did not admit exactly one mutation")
+			if s.SettingsSnapshots().Revision != before.Revision+2 {
+				t.Fatal("both writes must commit in order")
 			}
 		})
 	}
 }
 
-func TestSettingsCASPersistenceFailureAndCloseLeaveSnapshotUnchanged(t *testing.T) {
+func TestSettingsPersistenceFailureAndCloseLeaveSnapshotUnchanged(t *testing.T) {
 	s := newSettingsOperationSession(t, true)
 	before := s.SettingsSnapshots()
 	if err := s.db.Close(); err != nil {
@@ -150,11 +144,11 @@ func TestSettingsCASPersistenceFailureAndCloseLeaveSnapshotUnchanged(t *testing.
 	}
 	operations := []func() error{
 		func() error {
-			_, err := s.SaveSettingsSnapshotAtRevision(before.Effective, before.Revision)
+			_, err := s.SaveSettingsSnapshot(before.Effective)
 			return err
 		},
-		func() error { _, err := s.ToggleMultiAgentAtRevision(before.Revision); return err },
-		func() error { _, err := s.ResetSettingsSnapshotAtRevision(before.Revision); return err },
+		func() error { _, err := s.ToggleMultiAgent(); return err },
+		func() error { _, err := s.ResetSettingsSnapshot(); return err },
 	}
 	for _, operation := range operations {
 		if err := operation(); err == nil {
@@ -167,12 +161,12 @@ func TestSettingsCASPersistenceFailureAndCloseLeaveSnapshotUnchanged(t *testing.
 	s.Close()
 	for _, operation := range operations {
 		if err := operation(); !errors.Is(err, ErrSettingsSessionClosing) {
-			t.Fatalf("closed CAS: %v", err)
+			t.Fatalf("closed settings: %v", err)
 		}
 	}
 }
 
-func TestSettingsCASResetRetainsPinsAndRestoresDefaults(t *testing.T) {
+func TestSettingsResetRemovesOverridesAndRestoresDefaults(t *testing.T) {
 	s := newSettingsOperationSession(t, true)
 	settings := s.SettingsSnapshot()
 	disabled := false
@@ -182,19 +176,19 @@ func TestSettingsCASResetRetainsPinsAndRestoresDefaults(t *testing.T) {
 		CategoryCrafter:         {AccountID: "account", Model: "edited-crafter"},
 		"root/profile/reviewer": {AccountID: "account"},
 	}
-	saved, err := s.SaveSettingsSnapshotAtRevision(settings, s.SettingsSnapshots().Revision)
+	saved, err := s.SaveSettingsSnapshot(settings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reset, err := s.ResetSettingsSnapshotAtRevision(saved.Revision)
+	reset, err := s.ResetSettingsSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reset.Effective.SessionMainAgent != "" || reset.Effective.SessionMultiAgent != nil || !reset.Effective.Agents.Enabled || reset.Effective.Model == "edited" {
 		t.Fatal("reset failed to restore workspace policy")
 	}
-	if reset.Overrides[CategoryDefault].AccountID != "account" || reset.Overrides[CategoryCrafter].AccountID != "account" || len(reset.Overrides) != 2 {
-		t.Fatal("reset lost pins or kept root override")
+	if len(reset.Overrides) != 0 {
+		t.Fatal("reset kept implicit pins or root override")
 	}
 	if !reflect.DeepEqual(saved.Base, reset.Base) {
 		t.Fatal("reset changed baseline")

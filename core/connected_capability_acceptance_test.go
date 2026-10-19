@@ -32,7 +32,11 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 			ws.Close()
 			return nil, err
 		}
-		ws.OnAppPreferencesCommit = func(_, next types.AppSettings) (types.AppSettings, error) { return next, nil }
+		ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+			next := ws.AppDefaults()
+			err := types.ApplySettingsEdits(&next, edits)
+			return next, err
+		}
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -58,8 +62,7 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 		}
 		return value
 	}
-	initial := fetch("initial")
-	search := callCore(t, client, "discover", wsID, coreprotocol.CapabilityAction, coreprotocol.CapabilityActionRequest{ExpectedRevision: initial.CapabilitiesRevision, Action: captypes.Action{Operation: "discover", Kind: captypes.KindSkill, Query: "guide", Scope: captypes.ScopeApplication, Arguments: map[string]string{"source_id": "local"}}})
+	search := callCore(t, client, "discover", wsID, coreprotocol.CapabilityAction, coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "discover", Kind: captypes.KindSkill, Query: "guide", Scope: captypes.ScopeApplication, Arguments: map[string]string{"source_id": "local"}}})
 	var discovered coreprotocol.CapabilityResult
 	if err := json.Unmarshal(search.Payload, &discovered); err != nil {
 		t.Fatal(err)
@@ -78,14 +81,13 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 		t.Fatal("preview lacked exact token or published binding")
 	}
 	action.Preview = &preview.Preview
-	callCore(t, client, "approve", wsID, coreprotocol.CapabilityAction, coreprotocol.CapabilityActionRequest{ExpectedRevision: passive.CapabilitiesRevision, Action: action})
+	callCore(t, client, "approve", wsID, coreprotocol.CapabilityAction, coreprotocol.CapabilityActionRequest{Action: action})
 	installed := fetch("installed")
 	if !installed.Application.Capabilities.Skills[action.ID].Managed {
 		t.Fatal("approved exact binding did not publish")
 	}
-	// Supply the current settings revision but the old exact review. It must not
-	// authorize a replacement of the now-installed binding.
-	raw, _ := json.Marshal(coreprotocol.CapabilityActionRequest{ExpectedRevision: installed.CapabilitiesRevision, Action: action})
+	// The old exact installation review cannot authorize a replacement binding.
+	raw, _ := json.Marshal(coreprotocol.CapabilityActionRequest{Action: action})
 	refused := client.Call(t.Context(), coreprotocol.Request{ID: "old-preview", Owner: client.Owner, WorkspaceID: wsID, Method: coreprotocol.CapabilityAction, Payload: raw})
 	if refused.Error == nil {
 		t.Fatal("changed binding accepted old preview")

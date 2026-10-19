@@ -126,7 +126,7 @@ func TestMutationCancellationEvidenceTiming(t *testing.T) {
 			}
 			done := make(chan answer, 1)
 			go func() {
-				value, _, err := a.invoke(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "crude_control", Arguments: json.RawMessage(`{"command":"settings.set","arguments":{"scope":"application","path":"editor.word_wrap","value":true,"expected_revision":"original"}}`)}})
+				value, _, err := a.invoke(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "crude_control", Arguments: json.RawMessage(`{"command":"settings.set","arguments":{"scope":"application","path":"editor.word_wrap","value":true}}`)}})
 				done <- answer{value, err}
 			}()
 			var id string
@@ -210,7 +210,11 @@ func TestSDKCoreDomainAndExactShell(t *testing.T) {
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, logger{})
 		ws.SetAppDefaults(types.AppSettings{Editor: types.EditorSettings{WordWrap: true, TabSize: 4}})
-		ws.OnAppPreferencesCommit = func(_, next types.AppSettings) (types.AppSettings, error) { return next, nil }
+		ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+			next := ws.AppDefaults()
+			err := types.ApplySettingsEdits(&next, edits)
+			return next, err
+		}
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -256,7 +260,7 @@ func TestSDKCoreDomainAndExactShell(t *testing.T) {
 	if settings.Revision == "" {
 		t.Fatalf("missing preimage: %s", get.Output)
 	}
-	args := map[string]any{"command": "settings.set", "arguments": map[string]any{"scope": "application", "path": "editor.word_wrap", "value": false, "expected_revision": settings.Revision}}
+	args := map[string]any{"command": "settings.set", "arguments": map[string]any{"scope": "application", "path": "editor.word_wrap", "value": false}}
 	if out := call(t, c, "crude_control", args); !out.IsError {
 		t.Fatal("read launch admitted write")
 	}
@@ -302,7 +306,7 @@ func TestSDKCoreDomainAndExactShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered := outcome(t, call(t, sdk(t, lostServer), "crude_control", map[string]any{"command": "settings.set", "arguments": map[string]any{"scope": "application", "path": "editor.word_wrap", "value": true, "expected_revision": settings.Revision}}))
+	recovered := outcome(t, call(t, sdk(t, lostServer), "crude_control", map[string]any{"command": "settings.set", "arguments": map[string]any{"scope": "application", "path": "editor.word_wrap", "value": true}}))
 	if recovered.State != control.Committed || lost.executions != 1 {
 		t.Fatalf("lost outcome replayed/not recovered: %#v executions=%d", recovered, lost.executions)
 	}

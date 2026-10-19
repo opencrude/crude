@@ -748,6 +748,23 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			return m.failShellControl(msg, control.OperationFailed, err.Error())
 		}
 		return m.awaitShellControl(msg, cmd, nil)
+	case sessionsettings.ResetMsg, sessionsettings.SaveAsWorkspaceMsg, settingsui.ResetSectionMsg:
+		if !valid {
+			return m.failShellControl(msg, control.Stale, "settings owner changed")
+		}
+		_, cmd := m.Update(completion)
+		if cmd == nil {
+			return m.failShellControl(msg, control.Unavailable, "settings operation unavailable")
+		}
+		return m.awaitShellControl(msg, cmd, nil)
+	case settingsShortcutResultMsg:
+		if !valid || completion.owner != m.ws || completion.generation != m.workspaceSwitchGen.Load() {
+			return m.failShellControl(msg, control.Stale, "settings owner changed during save")
+		}
+		m.applySettingsShortcut(completion)
+		if completion.result.Err != nil {
+			return m.failShellControl(msg, control.OperationFailed, completion.result.Err.Error())
+		}
 	case sessionSettingsSaveResultMsg:
 		if !valid || completion.target != done.deckOwner || completion.workspace != m.ws || completion.generation != done.generation {
 			return m.failShellControl(msg, control.Stale, "session settings owner changed during save")

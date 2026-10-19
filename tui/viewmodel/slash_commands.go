@@ -182,6 +182,8 @@ func (m *App) toggleSessionFastTier() tea.Cmd {
 		return nil
 	}
 	settings := owner.Settings.Effective
+	before := ttypes.SessionPreferencesOf(settings)
+	before.Overrides = owner.Settings.Overrides
 	overrides := make(map[string]ttypes.CategorySettings, len(owner.Settings.Overrides)+1)
 	for key, value := range owner.Settings.Overrides {
 		overrides[key] = value
@@ -198,18 +200,18 @@ func (m *App) toggleSessionFastTier() tea.Cmd {
 	}
 	overrides[key] = current
 	settings.SessionOverrides = overrides
+	settings.SessionEdits = ttypes.SettingsEdits(before, ttypes.SessionPreferencesOf(settings))
 	operation, err := runtime.PrepareSessionSettingsSave(owner.SessionID, settings)
 	if err != nil {
 		m.Feedback.NotifyError(err.Error())
 		return nil
 	}
+	label := "Fast tier off; the account's tier applies from the next request"
 	if enable {
-		m.Feedback.NotifyInfo("Fast tier on for this session's main agent from its next request; it bills at the provider's fast rate where offered")
-	} else {
-		m.Feedback.NotifyInfo("Fast tier off; the account's tier applies from the next request")
+		label = "Fast tier on for this session's main agent from its next request; it bills at the provider's fast rate where offered"
 	}
 	generation := m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
-		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: operation.Run()}
+		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: operation.Run(), label: label}
 	}
 }

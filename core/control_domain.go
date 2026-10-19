@@ -177,8 +177,6 @@ func wrapControlOperation(in control.Request, run func(context.Context) coreprot
 				code = control.Denied
 			case "invalid_request":
 				code = control.Invalid
-			case "stale_preimage":
-				code = control.Stale
 			case "session_missing", "settings_unavailable", "unavailable":
 				code = control.Unavailable
 			}

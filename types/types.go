@@ -191,19 +191,11 @@ type CategorySettings struct {
 	ServiceTier string `json:"service_tier,omitempty"`
 }
 
-type ProfileSettings struct {
-	Name       string
-	Categories map[string]CategorySettings
-	MultiAgent string
-	TurnLogs   string
-}
-
 type AgentsSettings struct {
 	Enabled       bool
 	ActiveProfile string
 	MaxConcurrent int
 	Categories    map[string]CategorySettings
-	Profiles      []ProfileSettings
 	AgentProfiles map[string]AgentProfileSettings `json:"agent_profiles,omitempty"`
 }
 
@@ -287,6 +279,8 @@ func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]Agent
 }
 
 type Settings struct {
+	// SessionEdits are addressed stored edits from the form's original layer.
+	SessionEdits []SettingEdit `json:"-"`
 	// SessionMainAgent selects a built-in role or a named profile for root turns.
 	// Empty selects the ordinary Main Agent; this is a session-only setting.
 	SessionMainAgent string `json:"-"`
@@ -313,7 +307,8 @@ type Settings struct {
 	SessionCodeIntelligence *bool `json:"-"`
 	// SessionMaxSubAgents caps this session's concurrently running sub-agents;
 	// nil follows the workspace setting.
-	SessionMaxSubAgents *int `json:"-"`
+	SessionMaxSubAgents *int  `json:"-"`
+	SessionTurnLogs     *bool `json:"-"`
 	// SessionDisabledCapabilities lists installed skill/MCP IDs this session
 	// and every agent it runs have turned off. Sorted; nil means none.
 	SessionDisabledCapabilities []string       `json:"-"`
@@ -323,22 +318,33 @@ type Settings struct {
 	UI                          UISettings     `json:"ui,omitempty"`
 }
 
+// SessionPreferences is the session's explicit layer, never its resolved view.
+type SessionPreferences struct {
+	MainAgent        string                      `json:"main_agent"`
+	Overrides        map[string]CategorySettings `json:"overrides"`
+	MultiAgent       *bool                       `json:"multi_agent"`
+	CodeIntelligence *bool                       `json:"code_intelligence"`
+	MaxSubAgents     *int                        `json:"max_sub_agents"`
+	TurnLogs         *bool                       `json:"turn_logs"`
+}
+
+func SessionPreferencesOf(s Settings) SessionPreferences {
+	return SessionPreferences{MainAgent: s.SessionMainAgent, Overrides: s.SessionOverrides, MultiAgent: s.SessionMultiAgent,
+		CodeIntelligence: s.SessionCodeIntelligence, MaxSubAgents: s.SessionMaxSubAgents, TurnLogs: s.SessionTurnLogs}
+}
+
 type AppSettings struct {
-	// Observation revisions fence a connected form's original application and
-	// workspace preimages. They are client metadata, never persisted settings.
-	ApplicationRevision string                      `json:"-"`
-	WorkspaceRevision   string                      `json:"-"`
-	Theme               ThemeSettings               `json:"theme,omitempty"`
-	Editor              EditorSettings              `json:"editor,omitempty"`
-	LSP                 LSPSettings                 `json:"lsp,omitempty"`
-	UI                  UISettings                  `json:"ui,omitempty"`
-	Accounts            map[string]provider.Account `json:"accounts,omitempty"`
-	Agents              AgentsSettings              `json:"agents,omitempty"`
-	Memory              MemorySettings              `json:"memory,omitempty"`
-	Capabilities        captypes.Settings           `json:"capabilities,omitempty"`
-	Safety              SafetySettings              `json:"safety,omitempty"`
-	LocalHistory        LocalHistorySettings        `json:"local_history,omitempty"`
-	Terminal            TerminalSettings            `json:"terminal,omitempty"`
+	Theme        ThemeSettings               `json:"theme,omitempty"`
+	Editor       EditorSettings              `json:"editor,omitempty"`
+	LSP          LSPSettings                 `json:"lsp,omitempty"`
+	UI           UISettings                  `json:"ui,omitempty"`
+	Accounts     map[string]provider.Account `json:"accounts,omitempty"`
+	Agents       AgentsSettings              `json:"agents,omitempty"`
+	Memory       MemorySettings              `json:"memory,omitempty"`
+	Capabilities captypes.Settings           `json:"capabilities,omitempty"`
+	Safety       SafetySettings              `json:"safety,omitempty"`
+	LocalHistory LocalHistorySettings        `json:"local_history,omitempty"`
+	Terminal     TerminalSettings            `json:"terminal,omitempty"`
 	// TerminalShells are the shells installed on the core's machine. They are
 	// observation metadata for the settings form, never persisted settings.
 	TerminalShells []TerminalShell `json:"-"`

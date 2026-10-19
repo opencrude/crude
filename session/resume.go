@@ -155,26 +155,14 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		pin := overrides["root/"+flags.MainAgent]
 		cfg.selectedMainOverride = &pin
 	}
-	// Session metadata is authoritative for the main account pin. An empty pin
-	// remains disconnected even if a workspace or application now has accounts.
-	prof, name := activeProfileCfg(cfg)
-	if prof.Categories == nil {
-		prof.Categories = make(map[string]CategoryConfig)
-	}
-	main := prof.Categories[CategoryDefault]
-	// The account ID is the connection identity. Its current connection supplies
-	// transport settings; the old provider column is retained only as history.
-	main.Inherit = ""
-	main.AccountID = meta.AccountID
-	prof.Categories[CategoryDefault] = main
-	cfg.Agents.Profiles[name] = prof
-	if cfg.selectedMainOverride != nil {
-		cfg.selectedMainOverride.AccountID = meta.AccountID
+	// Metadata records historical attribution, not an extra settings owner.
+	if flags.TurnLogs != nil {
+		cfg.TurnLogsEnabled = *flags.TurnLogs
 	}
 	activeCfg := cfg.GetActiveDefaultCategory()
 	var p *provider.Provider
-	if _, accountErr := cfg.resolveAccount(meta.AccountID); accountErr != nil {
-		lg.Warn("SESSION", "pinned_account_unavailable", "account", meta.AccountID, "error", accountErr.Error())
+	if _, accountErr := cfg.resolveAccount(activeCfg.AccountID); accountErr != nil {
+		lg.Warn("SESSION", "selected_account_unavailable", "account", activeCfg.AccountID, "error", accountErr.Error())
 	} else {
 		p, err = cfg.providerForCategory(activeCfg)
 		if err != nil {
@@ -244,7 +232,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		ID:                   meta.ID,
 		cfg:                  cfg,
 		provider:             p,
-		accountUnpinned:      meta.AccountID == "",
 		selectedMainAgent:    flags.MainAgent,
 		exec:                 exec,
 		editor:               editor,
@@ -272,6 +259,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		multiAgentOverride:   cloneBoolPtr(flags.MultiAgent),
 		codeIntelOverride:    cloneBoolPtr(flags.CodeIntelligence),
 		maxSubAgentsOverride: cloneIntPtr(flags.MaxSubAgents),
+		turnLogsOverride:     cloneBoolPtr(flags.TurnLogs),
 		activeContext:        activeContext,
 		contextRevision:      contextRevision,
 		contextGeneration:    contextGeneration,

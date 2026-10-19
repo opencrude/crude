@@ -17,10 +17,12 @@ func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
-		w.OnAppPreferencesCommit = func(_, next types.AppSettings) (types.AppSettings, error) {
+		w.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
 			close(entered)
 			<-release
-			return next, nil
+			next := w.AppDefaults()
+			err := types.ApplySettingsEdits(&next, edits)
+			return next, err
 		}
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -42,7 +44,7 @@ func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings.Application.Accounts = nil
-	raw, err := json.Marshal(coreprotocol.ApplicationPreferencesRequest{ExpectedRevision: settings.ApplicationRevision, Value: settings.Application})
+	raw, err := json.Marshal(coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{}, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

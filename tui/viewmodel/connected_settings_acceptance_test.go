@@ -37,7 +37,7 @@ func TestConnectedSettingsAccountKeepAndFailedPreferenceDraft(t *testing.T) {
 			baseline.Accounts = map[string]provider.Account{"one": *change.After}
 			return baseline, nil
 		}
-		ws.OnAppPreferencesCommit = func(_, _ types.AppSettings) (types.AppSettings, error) {
+		ws.OnAppPreferencesCommit = func([]types.SettingEdit) (types.AppSettings, error) {
 			return types.AppSettings{}, errors.New("durable acceptance write failed")
 		}
 		return ws, nil
@@ -76,12 +76,12 @@ func TestConnectedSettingsAccountKeepAndFailedPreferenceDraft(t *testing.T) {
 	if strings.Contains(ansi.Strip(app.View().Content), secret) {
 		t.Fatal("paint exposed credential")
 	}
-	// Replay the old entity preimage through the actual remote account owner.
-	if err := app.ws.SaveAccountChange(message.Change); err == nil {
-		t.Fatal("stale account preimage was accepted")
+	// A later deliberate Save is valid without a configuration revision.
+	if err := app.ws.SaveAccountChange(message.Change); err != nil {
+		t.Fatal("repeated explicit account edit was rejected", err)
 	}
-	if commits.Load() != 1 {
-		t.Fatal("stale account repeated durable effect")
+	if commits.Load() != 2 {
+		t.Fatal("second explicit save did not reach its owner")
 	}
 
 	// Start from a fresh retained form; real Save emits the owner-fenced message.

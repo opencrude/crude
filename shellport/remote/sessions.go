@@ -73,17 +73,16 @@ func (w *Workspace) SessionConnectionIssue(sessionID string) error {
 	return nil
 }
 
-func (w *Workspace) settingsOperation(sessionID string, run func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error)) (*workspace.SessionSettingsOperation, error) {
+func (w *Workspace) settingsOperation(sessionID string, run func(ctx context.Context, rpc *coreclient.WorkspaceView) (coreprotocol.SessionSettingsResult, error)) (*workspace.SessionSettingsOperation, error) {
 	owner := w.view.SessionsByID[sessionID]
 	if owner == nil {
 		return nil, errors.New("session is not open")
 	}
-	revision := w.view.SessionSettingsRevision(sessionID)
 	rpc := w.rpc()
 	return workspace.NewReplicaSessionSettingsOperation(owner, func() (session.SettingsSnapshotSet, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 		defer cancel()
-		result, err := run(ctx, rpc, revision)
+		result, err := run(ctx, rpc)
 		if err != nil {
 			return session.SettingsSnapshotSet{}, err
 		}
@@ -92,21 +91,26 @@ func (w *Workspace) settingsOperation(sessionID string, run func(ctx context.Con
 }
 
 func (w *Workspace) PrepareMultiAgentToggle(sessionID string) (*workspace.SessionSettingsOperation, error) {
-	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error) {
-		return rpc.ToggleSessionMultiAgent(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, ExpectedRevision: revision})
+	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView) (coreprotocol.SessionSettingsResult, error) {
+		return rpc.ToggleSessionMultiAgent(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID})
 	})
 }
 
 func (w *Workspace) PrepareSessionCapabilityToggle(sessionID, id string, enabled bool) (*workspace.SessionSettingsOperation, error) {
-	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error) {
-		return rpc.ToggleSessionCapability(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, ExpectedRevision: revision, Capability: &coreprotocol.SessionCapabilityChange{ID: id, Enabled: enabled}})
+	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView) (coreprotocol.SessionSettingsResult, error) {
+		return rpc.ToggleSessionCapability(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, Capability: &coreprotocol.SessionCapabilityChange{ID: id, Enabled: enabled}})
 	})
 }
 
 func (w *Workspace) PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*workspace.SessionSettingsOperation, error) {
-	dto := coreprotocol.SessionSettingsDTO{Value: settings, MainAgent: settings.SessionMainAgent, Overrides: settings.SessionOverrides, MultiAgent: settings.SessionMultiAgent, CodeIntelligence: settings.SessionCodeIntelligence, MaxSubAgents: settings.SessionMaxSubAgents}
-	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView, revision uint64) (coreprotocol.SessionSettingsResult, error) {
-		return rpc.SaveSessionSettings(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, ExpectedRevision: revision, Settings: dto})
+	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView) (coreprotocol.SessionSettingsResult, error) {
+		return rpc.SaveSessionSettings(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, Edits: settings.SessionEdits})
+	})
+}
+
+func (w *Workspace) PrepareSessionSettingsReset(sessionID string) (*workspace.SessionSettingsOperation, error) {
+	return w.settingsOperation(sessionID, func(ctx context.Context, rpc *coreclient.WorkspaceView) (coreprotocol.SessionSettingsResult, error) {
+		return rpc.ResetSessionSettings(ctx, coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID})
 	})
 }
 
@@ -124,14 +128,4 @@ func (w *Workspace) ApplySessionSettingsResult(result workspace.SessionSettingsR
 		}
 	}
 	return true
-}
-
-func (w *Workspace) ResetSessionSettingsForSession(sessionID string) error {
-	request := coreprotocol.SessionSettingsMutationRequest{SessionID: sessionID, ExpectedRevision: w.view.SessionSettingsRevision(sessionID)}
-	w.commands.push(func(ctx context.Context) {
-		if _, err := w.rpc().ResetSessionSettings(ctx, request); err != nil {
-			w.reportFailure("Reset session settings", err)
-		}
-	})
-	return nil
 }

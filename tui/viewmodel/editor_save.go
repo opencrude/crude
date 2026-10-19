@@ -380,13 +380,14 @@ func (m *App) logicalEditorFocus() *editor.Editor {
 	return nil
 }
 
-func (m *App) setWorkspaceAutosave(enabled bool) {
+func (m *App) setWorkspaceAutosave(enabled bool) tea.Cmd {
 	overrides := m.ws.LoadWorkspaceOverrides()
+	before := overrides
 	fields := make(map[string]any)
 	if len(overrides.Editor) != 0 {
 		if err := json.Unmarshal(overrides.Editor, &fields); err != nil {
 			m.Feedback.NotifyError("Cannot change invalid editor settings")
-			return
+			return nil
 		}
 	}
 	mode := types.AutoSaveOff
@@ -397,13 +398,8 @@ func (m *App) setWorkspaceAutosave(enabled bool) {
 	data, err := json.Marshal(fields)
 	if err != nil {
 		m.Feedback.NotifyError(err.Error())
-		return
+		return nil
 	}
 	overrides.Editor = data
-	if err := m.ws.SaveWorkspaceSettings(overrides); err != nil {
-		m.Feedback.NotifyError(err.Error())
-		return
-	}
-	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
-	m.Feedback.NotifyInfo("Workspace auto save: " + string(mode))
+	return m.saveSettingsShortcut(types.SettingsScopeWorkspace, types.SettingsEdits(before, overrides), "Workspace auto save: "+string(mode), nil)
 }

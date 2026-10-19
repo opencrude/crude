@@ -133,7 +133,6 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 | `PrepareAgentInputAdmission` | 1 | mutates | no: returns *InputAdmissionIntent (opaque handle consumed by Commit/Apply) | agent.submit (intent/commit/apply collapse into one submit + request.receipt) |
 | `CommitAgentInputAdmission` | 1 | mutates | partial: takes the opaque intent handle | agent.submit |
 | `ApplyAgentInputAdmission` | 1 | mutates | partial: takes the opaque intent handle | agent.submit (client-side reducer on the receipt) |
-| `ResetOrchestratorOverrides` | 1 | mutates | yes | agent.reset_overrides |
 | `PrepareSkillInput` | 1 | reads | yes | settings.capability.skill_input |
 
 ### `Sessions`
@@ -154,8 +153,8 @@ Sessions is the session registry, lifecycle and per-session settings surface.
 | `PrepareMultiAgentToggle` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.toggle_multi_agent |
 | `PrepareSessionCapabilityToggle` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.toggle_capability |
 | `PrepareSessionSettingsSave` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.save |
+| `PrepareSessionSettingsReset` | 1 | mutates | no: returns *SessionSettingsOperation capturing the current session layer, never a draft | settings.session.reset |
 | `ApplySessionSettingsResult` | 2 | mutates | partial: result embeds owner pointers | settings.session.save (result applied to replica) |
-| `ResetSessionSettingsForSession` | 1 | mutates | yes | settings.session.reset |
 
 ### `Settings`
 
@@ -168,11 +167,9 @@ Settings loads, previews and persists application and workspace settings.
 | `AppDefaults` | 3 | reads | yes | settings.fetch (replica: WorkspaceView.AppDefaults) |
 | `LoadWorkspaceOverrides` | 3 | reads | yes | settings.fetch (overrides field) |
 | `WorkspaceAgentDefaults` | 1 | reads | yes | settings.fetch (derived from overrides) |
-| `SaveAppSettings` | 1 | mutates | yes | settings.application.save |
-| `SaveWorkspaceSettings` | 3 | mutates | yes | workspace.overrides_save |
 | `SaveAccountChange` | 1 | mutates | yes | settings.account.change |
 | `AllAccounts` | 6 | reads | yes | settings.fetch (accounts are redacted, no credentials) |
-| `PreparePreferencesSave` | 1 | mutates | no: returns closure | settings.application.save |
+| `PreparePreferencesSave` | 1 | mutates | no: returns closure capturing scope and explicit field edits | settings.application.save / workspace.overrides_save |
 | `ApplyPreferencesSave` | 1 | mutates | yes (data) | settings.application.save (result applied to replica) |
 | `PrepareAccountModels` | 1 | mutates | no: returns closure | settings.account.models |
 | `PrepareDraftAccountModels` | 1 | mutates | no: returns closure | settings.account.models |
@@ -448,9 +445,9 @@ These signatures are local port contracts, not wire payloads. The connected adap
 | `Sessions.Sessions*` / `SessionForAgent` | Replica sessions without backend/database ownership. |
 | `Sessions.NewAgentSession` / `OpenAgentSession` | `session.create/open` identities; replica materializes their state later. |
 | `Sessions.BackendSession` | Always unavailable in connected shells. |
-| `Sessions.PrepareMultiAgentToggle` / `PrepareSessionCapabilityToggle` / `PrepareSessionSettingsSave` / `ApplySessionSettingsResult` | Captured typed settings RPC/result; local owner pointers stay client-side. |
+| `Sessions.PrepareMultiAgentToggle` / `PrepareSessionCapabilityToggle` / `PrepareSessionSettingsSave` / `PrepareSessionSettingsReset` / `ApplySessionSettingsResult` | Captured typed settings RPC/result; local owner pointers stay client-side. |
 | `Settings.BindToolLayout` | Attachment-bound RPC service, not a database object. |
-| `Settings.PreparePreferencesSave` | Off-UI typed revision-fenced preference command. |
+| `Settings.PreparePreferencesSave` | Off-UI typed scoped set/remove edits; awaits durability, last explicit write wins. |
 | `Settings.PrepareAccountModels` / `PrepareDraftAccountModels` | Captured `settings.account.models` request with write-only secret semantics. |
 | `Files.EnsureDocuments` | Client-local timer facade over the core disk-save authority. |
 | `DocumentService.AcceptDue` | Consumes only that shell's exact timer epoch. |
@@ -494,9 +491,10 @@ These signatures are local port contracts, not wire payloads. The connected adap
   prompt history uses core RPC and `history.InstallReplica` for local reads.
   Existing development drafts require manual backed-up alignment, not a legacy
   product reader. References/media use typed transfer and exact owner fences.
-- Small queued settings writes return admission before durability; full preference
-  commands await results. Settings/account/capability end-to-end failure and
-  approval acceptance remains a release gate, despite mapped protocol methods.
+- Settings saves, Reset, promotion and palette shortcuts await typed durable
+  results. They carry scoped set/remove edits, not a full resolved preference
+  snapshot or configuration revision. Exact consent/grant and resource-lifetime
+  safeguards remain separate from ordinary last-write-wins configuration.
 - Replica `*workspace.Session` objects have no backend. `BackendSession` must not
   expose a remote execution owner. `WorkspaceDB` is an identity token, not a
   client-accessible SQL handle. `Local` does not add locking and is not a second

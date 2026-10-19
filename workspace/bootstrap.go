@@ -697,53 +697,6 @@ func (w *Workspace) AgentUsage(agentID string) (ttypes.UsageSummary, bool) {
 	return w.UsageSummary(agentID, ttypes.UsageThisAgent)
 }
 
-// ResetOrchestratorOverrides clears runtime overrides for an orchestrator.
-func (w *Workspace) ResetOrchestratorOverrides(orchID string) {
-	frontend := w.sessionForAgent(orchID)
-	if frontend == nil || frontend.backend == nil {
-		return
-	}
-	b := frontend.backend
-	b.RuntimeProfile().RemoveOverride(orchID)
-	w.adoptCurrentDefaults(b)
-	if err := b.ResetSessionSettings(); err != nil {
-		w.Logger.Warn("RUNTIME", "session_settings_reset_failed", "error", err.Error())
-	} else {
-		frontend.installSettings(b.SettingsSnapshots())
-	}
-	w.Logger.Info("RUNTIME", "orchestrator_reset", "id", orchID)
-}
-
-// adoptCurrentDefaults re-inherits today's effective agent defaults into a
-// live session. Sessions snapshot their agent settings at creation, so this
-// is the only way a running session picks up later workspace edits, and it
-// runs exclusively from user-invoked resets.
-func (w *Workspace) adoptCurrentDefaults(b *session.Session) {
-	if b == nil {
-		return
-	}
-	effective := w.EffectiveAppSettings()
-	b.AdoptWorkspaceDefaults(ttypes.AppSettings{
-		Agents:   effective.Agents,
-		Accounts: effective.Accounts,
-	})
-}
-
-// ResetSessionSettingsForSession clears the persisted overrides owned by a
-// specific frontend session without depending on which tab is currently active.
-func (w *Workspace) ResetSessionSettingsForSession(sessionID string) error {
-	frontendSession := w.SessionsByID[sessionID]
-	if frontendSession == nil || frontendSession.backend == nil {
-		return fmt.Errorf("session %q is not active", sessionID)
-	}
-	w.adoptCurrentDefaults(frontendSession.backend)
-	if err := frontendSession.backend.ResetSessionSettings(); err != nil {
-		return err
-	}
-	frontendSession.installSettings(frontendSession.backend.SettingsSnapshots())
-	return nil
-}
-
 // ── Session List / Delete (workspace-scoped)
 
 // ListSessions returns session metadata for this workspace only.

@@ -69,7 +69,6 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		return controlFailure(in, control.Invalid, err.Error())
 	}
 	current := a.ws.LoadAppSettings().Capabilities
-	revision := entityRevision(current)
 	action := captypes.Action{Kind: captypes.KindMCP, ID: input.ID, Scope: captypes.ScopeApplication}
 	var secrets *coreprotocol.ConnectionSecretUpdates
 	switch in.CommandID {
@@ -130,7 +129,7 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 	default:
 		return nil, nil, false
 	}
-	request := coreprotocol.CapabilityActionRequest{Action: action, ExpectedRevision: revision}
+	request := coreprotocol.CapabilityActionRequest{Action: action}
 	method := coreprotocol.CapabilityAction
 	if action.Operation == "snapshot" {
 		method = coreprotocol.CapabilitySnapshot

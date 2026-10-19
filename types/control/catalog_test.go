@@ -46,7 +46,7 @@ func TestCatalogExactDetachedDescriptors(t *testing.T) {
 }
 
 func TestCatalogRelevantQuery(t *testing.T) {
-	got := Catalog("revision-fenced single-field")
+	got := Catalog("explicit single-field settings")
 	if len(got) != 2 || got[0].ID != "settings.set" || got[1].ID != "settings.reset" {
 		t.Fatalf("irrelevant catalog: %#v", got)
 	}

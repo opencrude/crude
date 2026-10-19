@@ -61,6 +61,10 @@ format. The reference implementation is `tui/settings/surface.go` (anatomy),
   (Read file, Connect, Disable, …) stay in the body above the footer.
 - **Rail**: categories grouped under quiet headings. A page holding unsaved edits
   shows a warning-ink `●` at its right edge, so work is never lost off-screen.
+  In the default Application scope, a muted `◇` instead marks sections with
+  workspace choices. One existing subtitle line explains switching scope to
+  review them; no extra row, banner, dialog or automatic navigation is added.
+  Unsaved `●` wins, and Workspace scope does not repeat the marker.
 - **Navigation** has one path, `openCategory`, shared by rail clicks and search
   Enter: a clean editor closes, a dirty one asks first and the navigation resumes
   after the decision. Hover and wheel over the rail never navigate.

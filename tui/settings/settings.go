@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"math"
@@ -15,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/coreprotocol"
 	"crude/provider"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -25,10 +27,9 @@ import (
 
 // SaveMsg is returned as a tea.Msg on save.
 type SaveMsg struct {
-	Target      *Model
-	Scope       types.SettingsScope
-	AppSettings types.AppSettings
-	Overrides   types.WorkspaceOverrides
+	Target *Model
+	Scope  types.SettingsScope
+	Edits  []types.SettingEdit
 }
 
 // CancelMsg is returned as a tea.Msg on cancel.
@@ -115,7 +116,10 @@ type ModelsErrorMsg struct {
 }
 
 // ResetSectionMsg clears the workspace override for one settings page.
-type ResetSectionMsg struct{ Key string }
+type ResetSectionMsg struct {
+	Target *Model
+	Key    string
+}
 
 // ScopeMsg switches the settings dialog between application and workspace.
 type ScopeMsg struct{ Scope types.SettingsScope }
@@ -159,36 +163,38 @@ type modelSnapshot struct {
 // Model is the workspace settings screen state.
 type Model struct {
 	// terminalShells are detected on the core's machine; Auto resolves to the first.
-	terminalShells      []types.TerminalShell
-	th                  *theme.Theme
-	categories          []Category
-	selected            int
-	pane                int // 0: category rail, 1: form
-	snapshot            *modelSnapshot
-	presets             []types.ProviderPreset
-	accounts            map[string]provider.Account
-	accountID           string // account being browsed, never an active connection
-	saving              bool
-	saveError           string
-	saveDisabled        map[*ui.FieldState]bool
-	authGeneration      map[string]uint64
-	authErrors          map[string]string
-	authWaitingID       string
-	fetchGeneration     map[string]uint64
-	accountEditor       *accountEdit
-	accountBusy         bool
-	accountError        string
-	nextCategory        int
-	nextScope           types.SettingsScope
-	preferencesBase     []byte
-	models              map[string][]types.ModelEntry
-	searchEd            *ui.TextEdit
-	searchActive        bool
-	accountQuery        string
-	scope               types.SettingsScope
-	appDefaults         types.AppSettings
-	applicationRevision string
-	workspaceRevision   string
+	terminalShells  []types.TerminalShell
+	th              *theme.Theme
+	categories      []Category
+	selected        int
+	pane            int // 0: category rail, 1: form
+	snapshot        *modelSnapshot
+	presets         []types.ProviderPreset
+	accounts        map[string]provider.Account
+	accountID       string // account being browsed, never an active connection
+	saving          bool
+	saveError       string
+	saveDisabled    map[*ui.FieldState]bool
+	authGeneration  map[string]uint64
+	authErrors      map[string]string
+	authWaitingID   string
+	fetchGeneration map[string]uint64
+	accountEditor   *accountEdit
+	accountBusy     bool
+	accountError    string
+	nextCategory    int
+	nextScope       types.SettingsScope
+	preferencesBase []byte
+	models          map[string][]types.ModelEntry
+	searchEd        *ui.TextEdit
+	searchActive    bool
+	accountQuery    string
+	scope           types.SettingsScope
+	appDefaults     types.AppSettings
+	storedOverrides types.WorkspaceOverrides
+	collectedBase   types.AppSettings
+	layerBase       types.AppSettings
+	resetPaths      [][]string
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents                   *types.AgentsSettings
@@ -274,7 +280,8 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 }
 
 // NewScoped creates a settings model for application or workspace scope.
-func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset, scope types.SettingsScope, appDefaults types.AppSettings, _ types.WorkspaceOverrides) *Model {
+func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset, scope types.SettingsScope, appDefaults types.AppSettings, overrides types.WorkspaceOverrides) *Model {
+	current = types.CloneAppSettings(current)
 	types.ApplyAppDefaults(&current)
 	current.Agents.AgentProfiles = types.CloneAgentProfiles(current.Agents.AgentProfiles)
 	categories := make(map[string]types.CategorySettings, len(current.Agents.Categories))
@@ -298,8 +305,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		th: th, presets: presets,
 		accounts: cloneAccounts(current.Accounts), authGeneration: map[string]uint64{}, authErrors: map[string]string{}, fetchGeneration: map[string]uint64{},
 		models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
-		applicationRevision: current.ApplicationRevision,
-		workspaceRevision:   current.WorkspaceRevision,
+		storedOverrides:     overrides,
+		layerBase:           types.CloneAppSettings(current),
 		agents:              &current.Agents,
 		memoryAgent:         current.Memory.MemoryCategory,
 		autoReviewer:        current.Safety.AutoPermission.Normalized(),
@@ -392,6 +399,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 	}
 	m.ensureVisibleSelection()
 	m.preferencesBase = m.preferenceBytes()
+	m.collectedBase = m.AppSettings()
 	m.nextCategory = -1
 	return m
 }
@@ -405,7 +413,7 @@ func (m *Model) preferenceBytes() []byte {
 }
 
 func (m *Model) hasUnsavedPreferences() bool {
-	return !bytes.Equal(m.preferencesBase, m.preferenceBytes())
+	return len(m.resetPaths) != 0 || !bytes.Equal(m.preferencesBase, m.preferenceBytes())
 }
 
 // BeginSave claims the retained settings draft for one asynchronous
@@ -415,7 +423,7 @@ func (m *Model) BeginSave() bool {
 	if m == nil || m.saving || m.accountBusy {
 		return false
 	}
-	if form := m.categories[catLSP].Form; form != nil {
+	if form := m.categories[catLSP].Form; form != nil && form.AnyDirty() {
 		form.ValidateAll()
 		if form.AnyErrors() {
 			m.saveError = "Correct the highlighted Code Intelligence fields before saving."
@@ -424,7 +432,7 @@ func (m *Model) BeginSave() bool {
 			return false
 		}
 	}
-	if err := (types.LSPSettings{Languages: m.lspLanguages}).Validate(); err != nil {
+	if err := (types.LSPSettings{Languages: m.lspLanguages}).Validate(); m.lspLanguagesDirty() && err != nil {
 		m.saveError = "Language Servers: " + err.Error()
 		m.SelectCategory(catLanguageServers)
 		m.EnterForm()
@@ -458,7 +466,12 @@ func (m *Model) FinishSave(err error) {
 	m.saveDisabled = nil
 	m.saving = false
 	if err != nil {
-		m.saveError = err.Error()
+		var fault *coreprotocol.Fault
+		if errors.As(err, &fault) {
+			m.saveError = fault.Message
+		} else {
+			m.saveError = err.Error()
+		}
 		return
 	}
 	m.saveError = ""
@@ -2132,7 +2145,73 @@ func (m *Model) Overrides() types.WorkspaceOverrides {
 	if m.Scope() != types.SettingsScopeWorkspace {
 		return types.WorkspaceOverrides{}
 	}
-	return types.WorkspaceOverridesFromDiff(m.appDefaults, m.AppSettings())
+	out := m.storedOverrides
+	_ = types.ApplySettingsEdits(&out, m.Edits())
+	return out
+}
+
+// Edits carries only actual changes within this draft. Comparing against the
+// initial collectors excludes display-derived account/provider/catalog facts.
+func (m *Model) Edits() []types.SettingEdit {
+	edits := types.SettingsEdits(m.collectedBase, m.AppSettings())
+	filtered := edits[:0]
+	for _, edit := range edits {
+		if len(edit.Path) == 0 || edit.Path[0] == "accounts" || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
+			continue
+		}
+		leaf := edit.Path[len(edit.Path)-1]
+		if edit.Path[0] == "agents" && (leaf == "Provider" || leaf == "ProviderURL" || leaf == "APIStandard" || leaf == "ModelInputPrice" || leaf == "ModelOutputPrice" || leaf == "ModelCachePrice" || leaf == "ModelSupportsTools") {
+			continue
+		}
+		filtered = append(filtered, edit)
+	}
+	if m.Scope() == types.SettingsScopeWorkspace {
+		for _, path := range m.resetPaths {
+			filtered = slices.DeleteFunc(filtered, func(e types.SettingEdit) bool {
+				return len(e.Path) >= len(path) && slices.Equal(e.Path[:len(path)], path)
+			})
+			filtered = append(filtered, types.SettingEdit{Path: path})
+			for _, edit := range types.SettingsEdits(m.appDefaults, m.AppSettings()) {
+				if len(edit.Path) >= len(path) && slices.Equal(edit.Path[:len(path)], path) {
+					if edit.Path[0] == "agents" && edit.Path[len(edit.Path)-1] == "Provider" {
+						continue
+					}
+					filtered = append(filtered, edit)
+				}
+			}
+		}
+	}
+	return filtered
+}
+
+func (m *Model) resetWorkspacePath(path ...string) {
+	if m.Scope() == types.SettingsScopeWorkspace {
+		if !slices.ContainsFunc(m.resetPaths, func(p []string) bool { return slices.Equal(p, path) }) {
+			m.resetPaths = append(m.resetPaths, slices.Clone(path))
+		}
+	}
+}
+
+// SectionResetModel installs the committed parent-relative section while
+// retaining unrelated unsaved preferences in this same editor.
+func (m *Model) SectionResetModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides, section string) *Model {
+	pending := m.Edits()
+	key := section
+	switch key {
+	case "appearance":
+		key = "theme"
+	case "interface":
+		key = "ui"
+	}
+	pending = slices.DeleteFunc(pending, func(e types.SettingEdit) bool { return len(e.Path) > 0 && e.Path[0] == key })
+	baseline := NewScoped(m.th, effective, m.presets, m.Scope(), application, overrides)
+	draft := types.CloneAppSettings(effective)
+	_ = types.ApplySettingsEdits(&draft, pending)
+	next := NewScoped(m.th, draft, m.presets, m.Scope(), application, overrides)
+	next.collectedBase, next.layerBase, next.preferencesBase = baseline.collectedBase, baseline.layerBase, baseline.preferencesBase
+	next.selected, next.pane = m.selected, m.pane
+	next.SetSearchQuery(m.searchText())
+	return next
 }
 
 func (m *Model) SelectCategory(index int) {
@@ -2198,6 +2277,8 @@ func (m *Model) CategoryItems() []ui.ListItem {
 		item := ui.ListItem{ID: fmt.Sprintf("settings/category/%d", index), Label: category.Name, Payload: index}
 		if m.categoryDirty(index) {
 			item.Detail = railModifiedMarker
+		} else if m.Scope() == types.SettingsScopeApplication && m.workspaceOverridesPage(index) {
+			item.Detail = railWorkspaceMarker
 		}
 		items = append(items, item)
 	}
@@ -2206,6 +2287,42 @@ func (m *Model) CategoryItems() []ui.ListItem {
 
 // railModifiedMarker tags a rail row whose page holds unsaved edits.
 const railModifiedMarker = "●"
+const railWorkspaceMarker = "◇"
+
+func (m *Model) workspaceOverridesPage(index int) bool {
+	switch index {
+	case catAgents, catMain, catResearcher, catCrafter, catAeron:
+		if m.storedOverrides.CategoryOverridden("agents") {
+			return true
+		}
+		if index == catAgents {
+			return bytes.Contains(m.storedOverrides.Memory, []byte(`"memory_category"`)) || bytes.Contains(m.storedOverrides.Safety, []byte(`"auto_permission"`))
+		}
+		return false
+	case catLSP, catLanguageServers:
+		return m.storedOverrides.CategoryOverridden("lsp")
+	case catAppearance:
+		return m.storedOverrides.CategoryOverridden("appearance")
+	case catEditor:
+		return m.storedOverrides.CategoryOverridden("editor")
+	case catUI:
+		return m.storedOverrides.CategoryOverridden("interface")
+	case catMemory:
+		return m.storedOverrides.CategoryOverridden("memory")
+	case catSafety, catAutoReviewPolicy:
+		return m.storedOverrides.CategoryOverridden("safety")
+	case catHistory:
+		return m.storedOverrides.CategoryOverridden("local_history")
+	case catTerminal:
+		return m.storedOverrides.CategoryOverridden("terminal")
+	case catSkills, catMCP, catSources, catAcquisition:
+		var groups map[string]json.RawMessage
+		_ = json.Unmarshal(m.storedOverrides.Capabilities, &groups)
+		key := map[int]string{catSkills: "skills", catMCP: "connections", catSources: "sources", catAcquisition: "acquisition"}[index]
+		return len(groups[key]) > 0
+	}
+	return false
+}
 
 // categoryDirty reports unsaved edits on one preference page.
 func (m *Model) categoryDirty(index int) bool {
@@ -2388,7 +2505,6 @@ func (m *Model) currentOverrideKey() string {
 // AppSettings returns the values held by the shared form models.
 func (m *Model) AppSettings() types.AppSettings {
 	var settings types.AppSettings
-	settings.ApplicationRevision, settings.WorkspaceRevision = m.applicationRevision, m.workspaceRevision
 	m.collectAccounts(&settings)
 	m.collectAgents(&settings.Agents)
 	m.collectMemory(&settings.Memory)

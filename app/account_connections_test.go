@@ -4,7 +4,6 @@ import (
 	"crude/provider"
 	"crude/types"
 	"crude/workspace"
-	"os"
 	"reflect"
 	"testing"
 )
@@ -37,15 +36,12 @@ func TestAccountConnectionChangesAreAtomicAndIndependent(t *testing.T) {
 	if !reflect.DeepEqual(loaded.Accounts["work"], after) || !reflect.DeepEqual(loaded.Accounts["home"], fc.Accounts["home"]) {
 		t.Fatal("preference save or connection edit affected another owner")
 	}
-	bytesBefore, err := os.ReadFile(ConfigPath())
-	if err != nil {
+	latest := provider.CloneAccount(before)
+	latest.Connection.ProviderURL = "https://last-explicit.example/v1"
+	if err := ws.SaveAccountChange(types.AccountChange{ID: latest.ID, ProviderID: latest.ProviderID, Before: &before, After: &latest}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ws.SaveAccountChange(types.AccountChange{ID: after.ID, ProviderID: after.ProviderID, Before: &before, After: &before}); err == nil {
-		t.Fatal("stale account edit was accepted")
-	}
-	bytesAfter, err := os.ReadFile(ConfigPath())
-	if err != nil || string(bytesAfter) != string(bytesBefore) {
-		t.Fatal("rejected stale edit changed config bytes")
+	if got := LoadFileConfig().Accounts["work"]; got.Connection.ProviderURL != latest.Connection.ProviderURL || !reflect.DeepEqual(got.Connection.Protocol, after.Connection.Protocol) {
+		t.Fatal("last explicit account field lost or neighbor replayed")
 	}
 }

@@ -745,7 +745,7 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 		working = m.ws.LoadAppSettings()
 		title = "Workspace Settings"
 	}
-	if len(working.Agents.Categories) == 0 {
+	if len(working.Agents.Categories) == 0 && scope == roottypes.SettingsScopeWorkspace {
 		working.Agents = m.ws.WorkspaceAgentDefaults()
 	}
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
@@ -975,6 +975,16 @@ func (m *App) openSessionSettings() {
 	if p == nil || p.settings == nil {
 		return
 	}
+	open := false
+	if p.deck != nil {
+		for _, panel := range p.deck.Panels() {
+			open = open || panel.ID == sessionSettingsPanelID
+		}
+	}
+	if !open {
+		effective, base := sessionSettingsSnapshot(m.ActiveSession)
+		p.settings.SetInheritance(effective, base, sessionSettingsOverrides(m.ActiveSession))
+	}
 	p.settings.ConfigureAccounts(m.ws.AllAccounts())
 	if lsp := m.ws.LSPMgr(); lsp != nil {
 		p.settings.SetWorkspaceCodeIntelligence(lsp.Settings().Enabled)
@@ -984,18 +994,28 @@ func (m *App) openSessionSettings() {
 }
 
 // resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.
-func (m *App) resetOrchestratorOverrides() {
+func (m *App) resetOrchestratorOverrides() tea.Cmd {
 	id := m.AgentView.ActiveID()
 	if id == "" {
 		id = m.EditorState.ActiveView
 		if id == "" {
 			m.Feedback.NotifyInfo("No active orchestrator to reset")
-			return
+			return nil
 		}
 	}
-	m.ws.ResetOrchestratorOverrides(id)
-	m.refreshSessionSettingsProjection(m.ActiveSession)
-	m.Feedback.NotifyInfo("Session overrides reset to workspace defaults")
+	owner := m.ws.SessionForAgent(id)
+	if owner == nil || owner.Settings == nil {
+		return nil
+	}
+	op, err := m.ws.PrepareSessionSettingsReset(owner.SessionID)
+	if err != nil {
+		m.Feedback.NotifyError(err.Error())
+		return nil
+	}
+	runtime, generation := m.ws, m.workspaceSwitchGen.Load()
+	return func() tea.Msg {
+		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: op.Run()}
+	}
 }
 
 // registerOverlayHandlers registers per-overlay content-click and hover

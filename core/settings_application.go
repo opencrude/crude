@@ -6,9 +6,10 @@ import (
 	"crude/provider"
 	"crude/types"
 	captypes "crude/types/capability"
-	"crude/workspace"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"sync"
 )
 
@@ -28,8 +29,8 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			return bad("invalid_request", err.Error())
 		}
 		before, exists := a.ws.AllAccounts()[in.ID]
-		if in.ID == "" || (exists && in.ExpectedRevision != entityRevision(before)) || (!exists && in.ExpectedRevision != "") {
-			return bad("stale_preimage", "account changed; fetch current revision")
+		if in.ID == "" {
+			return bad("invalid_request", "account identity is required")
 		}
 		change := types.AccountChange{ID: in.ID, ProviderID: before.ProviderID}
 		if exists {
@@ -65,42 +66,46 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			return bad("invalid_request", err.Error())
 		}
 		before := a.ws.AppDefaults()
-		if in.ExpectedRevision != entityRevision(before) {
-			return bad("stale_preimage", "preferences changed; fetch current revision")
+		if err := types.ValidateSettingEdits(types.AppSettings{}, in.Edits); err != nil {
+			return bad("invalid_request", err.Error())
 		}
-		if len(in.Value.Accounts) != 0 || entityRevision(publicCapabilities(in.Value.Capabilities)) != entityRevision(publicCapabilities(before.Capabilities)) {
-			return bad("invalid_request", "accounts and capabilities require entity operations")
+		for _, edit := range in.Edits {
+			if len(edit.Path) == 0 || edit.Path[0] == "accounts" || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
+				return bad("invalid_request", "accounts and capabilities require entity operations")
+			}
 		}
-		after := in.Value
-		after.Capabilities = captypes.Clone(before.Capabilities)
+		// Secrets never enter the ordinary projection. Keep leaves the stored
+		// proxy untouched, even if another preference form was opened earlier.
+		privateEdits := slices.Clone(in.Edits)
+		privateEdits = slices.DeleteFunc(privateEdits, func(e types.SettingEdit) bool { return slices.Equal(e.Path, []string{"network", "proxy_url"}) })
 		proxy, err := resolveSecret(in.ProxyURL, before.Network.ProxyURL)
 		if err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		after.Network.ProxyURL = proxy
+		if !in.ProxyURL.Keep {
+			raw, _ := json.Marshal(proxy)
+			privateEdits = append(privateEdits, types.SettingEdit{Path: []string{"network", "proxy_url"}, After: raw})
+		}
 		commit := a.ws.OnAppPreferencesCommit
 		if commit == nil {
 			return bad("settings_unavailable", "application persistence unavailable")
 		}
 		operation = func(ctx context.Context) (types.AppSettings, any, error) {
-			s, err := commit(before, after)
+			s, err := commit(privateEdits)
 			return s, coreprotocol.ApplicationPreferencesResult{Value: publicApp(s), Revision: entityRevision(s)}, err
 		}
 		publishApp = true
 	case coreprotocol.CapabilitySnapshot, coreprotocol.CapabilityAcquisitionPreview, coreprotocol.CapabilityAction:
 		appBefore := a.ws.AppDefaults()
 		appCommit := a.ws.OnAppPreferencesCommit
-		overlayCommit := a.ws.PrepareCapabilityOverlayCommit()
 		var in coreprotocol.CapabilityActionRequest
 		if err := decode(request.Payload, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
+		overlayCommit := a.ws.PrepareCapabilityOverlayCommit(in.Action)
 		effectiveBefore := a.ws.LoadAppSettings()
 		capabilityFailure = func(err error) string {
 			return publicCapabilityFailure(err, effectiveBefore, in.Action)
-		}
-		if request.Method == coreprotocol.CapabilityAction && in.ExpectedRevision != entityRevision(effectiveBefore.Capabilities) {
-			return bad("stale_preimage", "capability settings changed; fetch current revision")
 		}
 		secretBefore := effectiveBefore.Capabilities
 		if in.Action.Scope == captypes.ScopeApplication {
@@ -127,7 +132,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 				if appCommit == nil {
 					return types.AppSettings{}, errors.New("application persistence unavailable")
 				}
-				return appCommit(before, after)
+				return appCommit(types.SettingsEdits(before, after))
 			}
 			return overlayCommit(ctx, before, after, scope)
 		})
@@ -187,15 +192,11 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			var value any
 			var err error
 			retained, value, err = operation(ctx)
-			if errors.Is(err, workspace.ErrApplicationSettingsConflict) {
-				out = fault(request, "stale_preimage", "settings changed; fetch current revision")
-				return
-			}
 			if err != nil {
 				if capabilityFailure != nil {
 					out = fault(request, "capability_failed", capabilityFailure(err))
 				} else {
-					out = fault(request, "settings_failed", "settings operation failed; refresh the exact owner and retry")
+					out = fault(request, "settings_failed", err.Error())
 				}
 				return
 			}

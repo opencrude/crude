@@ -12,35 +12,42 @@ type PreferencesSaveResult struct {
 	Scope       types.SettingsScope
 	AppSettings types.AppSettings
 	Effective   types.AppSettings
+	Overrides   types.WorkspaceOverrides
 	Err         error
 }
 
 // PreparePreferencesSave captures the exact persistence owners before a command
 // runs. A project switch cannot redirect a late save into its replacement DB.
 // The returned work performs no live workspace/session mutation.
-func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, settings types.AppSettings, overrides types.WorkspaceOverrides) func() PreferencesSaveResult {
+func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []types.SettingEdit) func() PreferencesSaveResult {
 	database := w.WorkspaceDB
-	persistApplication := w.OnAppSettingsSave
+	persistApplication := w.OnAppPreferencesCommit
 	defaults := w.AppDefaults()
 	return func() PreferencesSaveResult {
 		result := PreferencesSaveResult{Scope: scope, AppSettings: defaults}
 		if scope == types.SettingsScopeWorkspace {
 			if database != nil {
-				effective, err := saveWorkspacePreferences(database, defaults, overrides)
+				overrides, err := saveWorkspacePreferences(database, defaults, edits)
 				if err != nil {
 					result.Err = err
 					return result
 				}
-				result.Effective = effective
+				result.Overrides = overrides
+				result.Effective = types.MergeAppWorkspace(defaults, overrides)
 				return result
 			}
-			result.Effective = types.MergeAppWorkspace(defaults, overrides)
+			result.Err = types.ApplySettingsEdits(&result.Overrides, edits)
+			result.Effective = types.MergeAppWorkspace(defaults, result.Overrides)
 			return result
 		}
-		types.ApplyAppDefaults(&settings)
+		settings := types.CloneAppSettings(defaults)
+		if err := types.ApplySettingsEdits(&settings, edits); err != nil {
+			result.Err = err
+			return result
+		}
 		result.AppSettings = settings
 		if persistApplication != nil {
-			persisted, err := persistApplication(settings)
+			persisted, err := persistApplication(edits)
 			if err != nil {
 				result.Err = err
 				return result
@@ -60,36 +67,34 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, settings t
 
 // Capability cards have independent entity commits. A preference draft opened
 // before an agent install must not replace those authoritative registration maps.
-func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, overrides types.WorkspaceOverrides) (types.AppSettings, error) {
+func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, edits []types.SettingEdit) (types.WorkspaceOverrides, error) {
 	ctx := context.Background()
 	tx, err := database.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return types.AppSettings{}, err
+		return types.WorkspaceOverrides{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	currentOverrides, err := loadWorkspaceOverridesTx(ctx, tx, defaults)
 	if err != nil {
-		return types.AppSettings{}, err
+		return types.WorkspaceOverrides{}, err
 	}
-	current := types.MergeAppWorkspace(defaults, currentOverrides)
-	desired := types.MergeAppWorkspace(defaults, overrides)
-	desired.Capabilities.Skills = current.Capabilities.Skills
-	desired.Capabilities.Connections = current.Capabilities.Connections
-	desired.Capabilities.Sources = current.Capabilities.Sources
-	encoded, err := json.Marshal(types.OverridesFromDiff(defaults, desired))
+	if err := types.ApplySettingsEdits(&currentOverrides, edits); err != nil {
+		return types.WorkspaceOverrides{}, err
+	}
+	encoded, err := json.Marshal(currentOverrides)
 	if err != nil {
-		return types.AppSettings{}, err
+		return types.WorkspaceOverrides{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO workspace_metadata(key,value,updated_at) VALUES(?,?,unixepoch()*1000000000)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
 	`, workspaceSettingsKey, string(encoded)); err != nil {
-		return types.AppSettings{}, err
+		return types.WorkspaceOverrides{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return types.AppSettings{}, err
+		return types.WorkspaceOverrides{}, err
 	}
-	return desired, nil
+	return currentOverrides, nil
 }
 
 // ApplyPreferencesSave publishes a successful command snapshot, with no file or

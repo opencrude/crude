@@ -183,7 +183,7 @@ most often broken there.
 | Network, timeouts, TLS | [network](docs/reference/network.md) | Proxy failure never falls back to direct |
 | Core/shell protocol, shared documents | [core client protocol](docs/reference/core-client-protocol.md), [shell port](docs/reference/shell-port.md) | Shells are detached mirrors, never a second authority |
 | Async I/O, workspace switch, shutdown | [async lifecycle](docs/reference/async-lifecycle.md) | Owner + generation on every async result |
-| Settings model and persistence | [settings](docs/reference/settings.md) | Workspace overrides are field-level; sessions snapshot |
+| Settings model and persistence | [settings](docs/reference/settings.md) | Only explicit choices are stored; absent fields inherit live |
 | Settings pages | [settings design](docs/reference/settings-design.md) | One page anatomy and control dialect |
 | Shell layout, Host, overlays, frames | [shell host](docs/architecture/shell-host.md), [compositing engine](docs/architecture/compositing-engine.md) | No frame-level dirty flag; parent-local rects |
 | New screens and components | [component authoring](docs/guides/component-authoring.md), [control usage](docs/reference/control-usage.md), [surface catalog](docs/reference/surface-catalog.md) | One shared `ui.Tabs` look; no bespoke controls |

@@ -36,13 +36,10 @@ type Sessions interface {
 	// off for the session and every agent it runs.
 	PrepareSessionCapabilityToggle(sessionID, id string, enabled bool) (*workspace.SessionSettingsOperation, error)
 	PrepareSessionSettingsSave(sessionID string, settings types.Settings) (*workspace.SessionSettingsOperation, error)
+	PrepareSessionSettingsReset(sessionID string) (*workspace.SessionSettingsOperation, error)
 	// ApplySessionSettingsResult runs only on the workspace owner, after its
 	// caller checks the attachment generation. Replacement owners and old
 	// revisions are rejected; the background operation never writes this
 	// projection.
 	ApplySessionSettingsResult(result workspace.SessionSettingsResult) bool
-	// ResetSessionSettingsForSession clears the persisted overrides owned by
-	// a specific frontend session without depending on which tab is currently
-	// active.
-	ResetSessionSettingsForSession(sessionID string) error
 }

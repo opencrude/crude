@@ -756,21 +756,33 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		}
 	case "agents.reset-confirm":
 		if c.confirm == "reset" {
+			workspaceScope := c.model.Scope() == types.SettingsScopeWorkspace
 			if key := strings.TrimPrefix(c.id, "role/"); key != c.id {
 				switch key {
 				case "memory":
 					c.model.memoryAgent = types.DefaultAgentRoleCategories()["memory"]
+					if workspaceScope {
+						c.model.memoryAgent = c.model.appDefaults.Memory.MemoryCategory
+						c.model.resetWorkspacePath("memory", "memory_category")
+					}
 				case "auto-review":
 					c.model.autoReviewer.Enabled = "off"
 					c.model.autoReviewer.Provider = ""
 					c.model.autoReviewer.AccountID = ""
 					c.model.autoReviewer.Model = ""
 					c.model.autoReviewer.Instructions = ""
+					if workspaceScope {
+						parent := c.model.appDefaults.Safety.AutoPermission
+						c.model.autoReviewer.Enabled, c.model.autoReviewer.AccountID, c.model.autoReviewer.Model, c.model.autoReviewer.Provider, c.model.autoReviewer.Instructions = parent.Enabled, parent.AccountID, parent.Model, parent.Provider, parent.Instructions
+						for _, field := range []string{"enabled", "account_id", "model", "provider", "instructions"} {
+							c.model.resetWorkspacePath("safety", "auto_permission", field)
+						}
+					}
 				default:
 					cfg := types.DefaultAgentRoleCategories()[key]
-					if key == "default" {
-						current := c.model.AppSettings().Agents.Categories[key]
-						cfg.AccountID, cfg.Provider, cfg.Model, cfg.ThinkingEffort = current.AccountID, current.Provider, current.Model, current.ThinkingEffort
+					if workspaceScope {
+						cfg = c.model.appDefaults.Agents.Categories[key]
+						c.model.resetWorkspacePath("agents", "Categories", key)
 					}
 					c.model.agents.Categories[key] = cfg
 					for _, role := range agentRoles {
@@ -783,16 +795,24 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 					}
 					if key == "default" {
 						c.model.agents.Enabled = true
+						if workspaceScope {
+							c.model.agents.Enabled = c.model.appDefaults.Agents.Enabled
+							c.model.resetWorkspacePath("agents", "Enabled")
+						}
 					}
 				}
 			} else if key := strings.TrimPrefix(c.id, "profile/"); key != c.id {
 				// Named agents are user-created; reset keeps identity and role only.
 				if current, exists := c.model.agents.AgentProfiles[key]; exists {
 					c.model.agents.AgentProfiles[key] = types.AgentProfileSettings{Category: current.Category, Description: current.Description}
+					if workspaceScope {
+						c.model.agents.AgentProfiles[key] = c.model.appDefaults.Agents.AgentProfiles[key]
+						c.model.resetWorkspacePath("agents", "agent_profiles", key)
+					}
 				}
 			}
 			c.confirm = ""
-			c.notice = "Shipped defaults restored in this draft. Save to persist."
+			c.notice = "Default settings restored in this draft. Save to persist."
 			c.refreshRows()
 		}
 	case "tabs.activate", "tabs.enter":

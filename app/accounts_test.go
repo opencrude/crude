@@ -179,8 +179,8 @@ func TestAppSettingsSaveAfterRotationAndReconnect(t *testing.T) {
 	old := stale.Accounts["one"]
 	changed := old
 	changed.Label = "Trying to overwrite"
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "one", ProviderID: "chatgpt", Before: &old, After: &changed}); err == nil {
-		t.Fatal("external reconnect was silently overwritten by stale account edit")
+	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "one", ProviderID: "chatgpt", Before: &old, After: &changed}); err != nil {
+		t.Fatal("label edit was blocked by an unrelated reconnect", err)
 	}
 	if err := ws.SaveAppSettings(stale); err != nil {
 		t.Fatalf("preferences save unexpectedly refused external account change: %v", err)

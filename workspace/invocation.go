@@ -160,7 +160,22 @@ func (op *InvocationLifecycleOperation) Run(ctx context.Context) SessionLifecycl
 
 func (op *InvocationLifecycleOperation) run(ctx context.Context) SessionLifecycleResult {
 	if op.op.sessionID == "" || op.selection.Empty() {
-		return op.op.Run(ctx)
+		result := op.op.Run(ctx)
+		if result.Err == nil && result.owner != nil && op.op.sessionID == "" && (op.selection.AccountID != "" || op.selection.Model != "" || op.selection.APIKey != "") {
+			backend := result.owner.backend
+			settings := backend.SettingsSnapshot()
+			main := op.op.cfg.GetActiveDefaultCategory()
+			override := types.CategorySettings{}
+			if op.selection.AccountID != "" || op.selection.APIKey != "" {
+				override.AccountID = main.AccountID
+			}
+			if op.selection.Model != "" {
+				override.Model = main.Model
+			}
+			settings.SessionOverrides = map[string]types.CategorySettings{session.CategoryDefault: override}
+			_, result.Err = backend.SaveSettingsSnapshot(settings)
+		}
+		return result
 	}
 	// Resume first reads retained settings. Apply this explicit selection before
 	// creating the orchestrator, never to an already-live backend.
@@ -170,19 +185,24 @@ func (op *InvocationLifecycleOperation) run(ctx context.Context) SessionLifecycl
 		return result
 	}
 	backend := result.owner.backend
-	settings := backend.SettingsSnapshot()
+	snapshot := backend.SettingsSnapshots()
+	settings := snapshot.Effective
+	settings.SessionOverrides = snapshot.Overrides
 	main := op.op.cfg.GetActiveDefaultCategory()
 	cat := settings.SessionOverrides[session.CategoryDefault]
 	// Preserve the resumed root's exact model/account when only instructions or
 	// provider validation were requested; workspace defaults are not resume truth.
-	cat.AccountID, cat.Model = settings.AccountID, settings.Model
 	if op.selection.AccountID != "" || op.selection.APIKey != "" {
 		cat.AccountID = main.AccountID
 	}
 	if op.selection.Model != "" {
 		cat.Model = main.Model
 	}
-	validation := InvocationSelection{AccountID: cat.AccountID, ProviderID: op.selection.ProviderID}
+	account := cat.AccountID
+	if account == "" {
+		account = settings.AccountID
+	}
+	validation := InvocationSelection{AccountID: account, ProviderID: op.selection.ProviderID}
 	if _, err := invocationConfig(op.op.cfg, validation); err != nil {
 		backend.Close()
 		result.Err = fmt.Errorf("invocation resume failed: %w", err)
