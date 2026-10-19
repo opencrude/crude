@@ -52,8 +52,9 @@ a local screenshot fixture, not a claim of a live model's output.
 
 ## Install or update
 
-**Release preparation:** the commands below become available after the first
-public release is published. Until then, [build from source](#build-from-source).
+**[Crude v0.1.0 is available](https://github.com/agenticcrude/crude/releases/tag/v0.1.0)**
+for Linux x86-64 and Windows x64. The commands below install the latest published
+release; [building from source](#build-from-source) remains available.
 
 **Linux x86-64** — glibc 2.35+ (Ubuntu 22.04+ or equivalent), Bash, curl, GNU tar:
 
