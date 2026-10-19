@@ -25,6 +25,7 @@ func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
 	// this barrier together before the renderer's forced clean redraw.
 	m.cachedOutput = ""
 	if m.rootHost != nil {
+		m.rootHost.CancelPointerCapture()
 		m.rootHost.MarkLayout()
 	}
 	m.subPaneProjections.InvalidateWidthProfile()
@@ -55,6 +56,7 @@ func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
 			}
 			if content, ok := window.Content.(interface{ Host() *ui.Host }); ok {
 				if host := content.Host(); host != nil {
+					host.CancelPointerCapture()
 					host.MarkLayout()
 				}
 			}

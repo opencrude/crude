@@ -110,6 +110,12 @@ releases transient channel accounting; the **256 retained shell mutation receipt
 cap is not a read-call budget**. Current outstanding/queued-byte limits still
 apply. Pending/partial/uncertain receipts require explicit reconciliation.
 
+Generic control authorization and effect-time admission each perform their own
+read-only contextual resolution. These inspections have distinct transport/reply
+identities, because the first result can reach its waiter before the shell's reply
+acknowledgement releases client accounting. They never reuse a mutation-derived
+read ID, replay an effect, or change the original mutation/receipt identity.
+
 Original mutation receipt observation precedes new contextual resolution, so an
 acknowledged Save/Close remains recoverable after its component unmounts. The
 same ID with different input fails; recovering a receipt never creates another

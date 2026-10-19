@@ -71,11 +71,11 @@ echo "== TUI bench regression gate ($BENCH_GOOS) =="
 run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' ./tui/ui ./tui/surface ./tui/compositor
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFile)$' ./tui/editor
-run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation)$' ./tui/editor
+run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation|MapInlineDecorations)$' ./tui/editor
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
 run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview
-run_bench '^BenchmarkGitDiffLongLinePaint$' ./tui/screens/gitdiff
+run_bench '^BenchmarkGitDiffLongLine(Paint|FarRightPaint)$' ./tui/screens/gitdiff
 run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory
 run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./sessiondb
 run_bench '^BenchmarkEstimateMultipartImage$' ./provider

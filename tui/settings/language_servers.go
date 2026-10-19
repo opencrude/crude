@@ -54,8 +54,8 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 	}, lsp.MinSeverity, "Lowest level shown: Hints includes all; Errors includes errors only.")
 	return formModel(
 		ui.SeparatorFieldState("language-intelligence", "General"),
-		ui.BoolFieldState("enabled", "Language intelligence", lsp.Enabled, "Master switch for language servers in this scope. Off stops every server."),
-		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose built-in servers by file type; explicit servers work even when off."),
+		ui.BoolFieldState("enabled", "Language intelligence", lsp.Enabled, "Enable services for open source files; this does not scan the workspace."),
+		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose configured servers by file type; install their executables separately."),
 		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Start a language server when its first document opens, not at startup."),
 		lspNumberField("debounce", "Update delay", "ms", lsp.UpdateDebounceMS, 60000, "Pause after typing before the server re-analyzes the document."),
 		&ui.FieldState{ID: "servers-nav", Label: "Language servers", Type: ui.FieldNav, Target: "settings.lsp.servers", Columns: []string{lspServerSummary(lsp.Languages)}, Description: "Commands, arguments and environment for each language server."},

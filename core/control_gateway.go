@@ -232,7 +232,12 @@ func (a *actor) resolveControlAsync(command *actorControlCommand, descriptor con
 		return
 	}
 	read, _ := control.Lookup("shell.describe_control")
-	request.ID += "-resolve"
+	// Execute resolves twice (authorization, then effect-time admission). Each
+	// contextual read needs its own reply lifetime: the first read's waiter can
+	// finish before its shell acknowledgement has released client accounting.
+	// Reusing <mutation>-resolve can race that cleanup and disconnect the shell.
+	// This never changes the original mutation or its durable receipt identity.
+	request.ID = "resolve-" + NewClientID()
 	request.CommandID = read.ID
 	request.Preconditions = control.Preconditions{}
 	request.Target.ResourceID = ""

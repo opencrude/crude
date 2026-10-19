@@ -182,6 +182,9 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			{Label: "Uptime", Value: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted},
 		},
 	}}
+	if insights.IdleReason != "" && !insights.ServerReady && !insights.ServerStarting && !insights.ServerFailed {
+		items[0].Lines = append([]statusoverview.DetailLine{{Label: "Language services", Value: insights.IdleReason, Role: ui.ColorMuted}}, items[0].Lines...)
+	}
 	servers := m.ws.LSPMgr().ServerHealthSnapshots()
 	if len(servers) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-lsp", Label: "Language Servers", Header: true})

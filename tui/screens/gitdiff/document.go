@@ -86,31 +86,32 @@ type headerAction struct {
 // Document is the scrollable multi-file comparison.
 type Document struct {
 	ui.Base
-	tokens       *ui.TokenSet
-	ink          diffview.SyntaxInk
-	files        []File
-	rows         rowIndex
-	headerRows   []int // file index → row of its header
-	scroll       *ui.ScrollModel
-	scrollbar    *ui.ScrollbarControl
-	hscroll      int
-	textWidth    int
-	maxWidth     int
-	preferred    Presentation
-	presented    Presentation
-	readOnly     bool
-	collapsed    map[string]bool
-	expanded     map[string]bool
-	empty        string
-	numberW      int
-	hoverRow     int
-	hoverX       int
-	hovered      bool
-	lastClickRow int
-	lastClickAt  time.Time
-	body         ui.Rect
-	selection    selection
-	search       diffview.SearchProjection
+	tokens        *ui.TokenSet
+	ink           diffview.SyntaxInk
+	files         []File
+	rows          rowIndex
+	headerRows    []int // file index → row of its header
+	scroll        *ui.ScrollModel
+	scrollbar     *ui.ScrollbarControl
+	hscroll       int
+	textWidth     int
+	maxWidth      int
+	preferred     Presentation
+	presented     Presentation
+	readOnly      bool
+	collapsed     map[string]bool
+	expanded      map[string]bool
+	empty         string
+	numberW       int
+	hoverRow      int
+	hoverX        int
+	hovered       bool
+	lastClickRow  int
+	lastClickAt   time.Time
+	body          ui.Rect
+	selection     selection
+	search        diffview.SearchProjection
+	geometryState string
 }
 
 // New creates an empty document.
@@ -147,6 +148,14 @@ func (document *Document) SetFiles(files []File) {
 		// A re-read that found identical comparisons keeps the reading
 		// position, selection and find state untouched.
 		document.files = files
+		state, width := document.sourceGeometryStatus(), 0
+		for _, file := range files {
+			width = max(width, file.beforeSource.Width(), file.afterSource.Width())
+		}
+		if width != document.maxWidth || state != document.geometryState {
+			document.geometryState, document.maxWidth = state, width
+			document.rebuildMatches()
+		}
 		return
 	}
 	anchorKey, anchorDelta := "", 0
@@ -155,6 +164,7 @@ func (document *Document) SetFiles(files []File) {
 		anchorDelta = document.scroll.Offset() - document.headerRows[current]
 	}
 	document.files = files
+	document.geometryState = document.sourceGeometryStatus()
 	document.maxWidth, document.numberW = 0, 3
 	for index := range files {
 		document.maxWidth = max(document.maxWidth, files[index].beforeSource.Width(), files[index].afterSource.Width())
@@ -180,11 +190,30 @@ func (document *Document) SourceGeometry() []diffview.SourceLines {
 }
 
 func (document *Document) InvalidateWidthProfile() {
+	document.geometryState = document.sourceGeometryStatus()
 	document.maxWidth = 0
 	for _, file := range document.files {
 		document.maxWidth = max(document.maxWidth, file.beforeSource.Width(), file.afterSource.Width())
 	}
 	document.rebuildMatches()
+}
+
+func (document *Document) BeginGeometryReflow() {
+	document.geometryState = "Calibrating comparison geometry…"
+	document.clearSelection()
+	document.search.Suspend()
+}
+
+func (document *Document) sourceGeometryStatus() string {
+	for _, file := range document.files {
+		if status := file.beforeSource.GeometryStatus(); status != "" {
+			return status
+		}
+		if status := file.afterSource.GeometryStatus(); status != "" {
+			return status
+		}
+	}
+	return ""
 }
 
 func sameFiles(a, b []File) bool {
@@ -486,6 +515,10 @@ func (document *Document) Paint(buf *surface.CellBuffer, originX, originY int, c
 	bg := tokens.Color(ui.ColorBg)
 	ui.FillRect(buf, originX, originY, bounds, cell.BlankCell(bg))
 	x, y := originX+bounds.X, originY+bounds.Y
+	if status := document.geometryState; status != "" {
+		buf.WriteString(x+1, y, rendering.TruncateVisual(status, max(0, document.body.W-2), "…"), tokens.Color(ui.ColorMuted), bg, 0)
+		return
+	}
 	document.hovered = ctx.Hovered
 	if len(document.files) == 0 {
 		if bounds.H > 0 {
@@ -708,7 +741,8 @@ func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, 
 	}
 	base := document.tokens.Color(ui.ColorFg)
 	spanIndex := 0
-	for unit := range source.Range(number, document.hscroll, document.hscroll+width) {
+	cursor := source.Iterator(number, document.hscroll, document.hscroll+width)
+	for unit, ok := cursor.Next(); ok; unit, ok = cursor.Next() {
 		left := unit.Column - document.hscroll
 		if left < 0 {
 			continue
@@ -795,6 +829,9 @@ func (document *Document) toggleFile(fileIndex int) {
 }
 
 func (document *Document) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if document.geometryState != "" {
+		return ui.EventResult{Handled: true}
+	}
 	paint := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	if evt.IsKey() {
 		return document.handleKey(evt.Key)

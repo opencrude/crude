@@ -19,13 +19,14 @@ import (
 // workspaceSwitchState retains only the old projections needed to finish a
 // successful switch or restore the old file watcher after validation fails.
 type workspaceSwitchState struct {
-	tree         *filetree.FileTreeModel
-	workspaceGen uint64
-	gitGen       uint64
-	editorGitGen uint64
-	launcherGen  uint64
-	gitReads     int
-	gitBoundary  uint64
+	tree             *filetree.FileTreeModel
+	workspaceGen     uint64
+	gitGen           uint64
+	editorGitGen     uint64
+	launcherGen      uint64
+	gitReads         int
+	gitBoundary      uint64
+	comparisonReflow bool
 }
 
 type workspaceTreeReadyMsg struct {
@@ -54,6 +55,7 @@ func sameWorkspaceRoot(current, candidate string) bool {
 // while git and launcher work already in flight becomes stale immediately.
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.setWheelHost(nil)
+	comparisonReflow := m.comparisonReflow || m.comparisonReflowCancel != nil
 	m.cancelLocalDiffs()
 	m.cancelGitPreparation()
 	m.cancelComparisonGeometry()
@@ -63,12 +65,13 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.closeMemoryBrowser()
 	m.invalidateTreePathSearch()
 	state := workspaceSwitchState{
-		workspaceGen: m.workspaceSwitchGen.Load(),
-		gitGen:       m.gitRefreshGen.Load(),
-		editorGitGen: m.editorGitGen.Load(),
-		launcherGen:  m.launcherLoadGen.Load(),
-		gitReads:     m.gitReadsInFlight,
-		gitBoundary:  m.gitReadsBoundary,
+		workspaceGen:     m.workspaceSwitchGen.Load(),
+		gitGen:           m.gitRefreshGen.Load(),
+		editorGitGen:     m.editorGitGen.Load(),
+		launcherGen:      m.launcherLoadGen.Load(),
+		gitReads:         m.gitReadsInFlight,
+		gitBoundary:      m.gitReadsBoundary,
+		comparisonReflow: comparisonReflow,
 	}
 	if m.Tree != nil {
 		state.tree = m.Tree.Model
@@ -115,6 +118,10 @@ func (state workspaceSwitchState) restore(m *App) {
 	// again, so their slots come back with it.
 	m.gitReadsInFlight = state.gitReads
 	m.gitReadsBoundary = state.gitBoundary
+	// The abandoned comparison pass was cancelled, not paused. The retained
+	// readers may still have pending calibration geometry, so restart only that
+	// derivation when a failed switch restores the same workspace.
+	m.comparisonReflow = state.comparisonReflow
 	m.wireLSPDiagnostics()
 	if state.tree != nil {
 		m.wireAndStartWorkspaceTreeWatcher(state.tree)

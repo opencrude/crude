@@ -671,9 +671,6 @@ func (m *App) applyGitEvidence(msg gitEvidenceMsg) {
 	if msg.workspace != m.workspaceSwitchGen.Load() {
 		return
 	}
-	if msg.err == nil && msg.widthGen != m.comparisonWidthGen {
-		m.comparisonReflow = true
-	}
 	if msg.tab != 0 {
 		view := m.gitReviews[msg.tab]
 		if view == nil || view.evidenceSequence != msg.sequence {
@@ -685,6 +682,9 @@ func (m *App) applyGitEvidence(msg gitEvidenceMsg) {
 			return
 		}
 		view.screen.ShowCommit(msg.evidence, msg.files)
+		if msg.widthGen != m.comparisonWidthGen {
+			m.comparisonReflow = true
+		}
 		return
 	}
 	if msg.sequence != m.gitPreviewSequence || m.gitPanel == nil {
@@ -696,6 +696,9 @@ func (m *App) applyGitEvidence(msg gitEvidenceMsg) {
 		return
 	}
 	m.gitPanel.SetCommitEvidence(msg.evidence, msg.files)
+	if msg.widthGen != m.comparisonWidthGen {
+		m.comparisonReflow = true
+	}
 }
 
 // handleGitPanelAction routes intents from the Git dock and the review.

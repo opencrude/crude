@@ -131,6 +131,13 @@ func (s *SearchProjection) Cancel() {
 	s.job = nil
 }
 
+// Suspend invalidates column-based highlights until new source geometry is
+// published. Keep the query for the owner's subsequent background rescan.
+func (s *SearchProjection) Suspend() {
+	s.Cancel()
+	s.Matches, s.ByRow, s.Active, s.Error = nil, nil, -1, ""
+}
+
 func (s *SearchProjection) Wait() {
 	s.Cancel()
 	for job := range s.jobs {

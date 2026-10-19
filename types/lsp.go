@@ -162,13 +162,17 @@ type ProjectInsights struct {
 	ServerSyncing  bool
 	ServerFailed   bool
 	ServerError    string
-	Errors         int
-	Warnings       int
-	Info           int
-	Hints          int
-	FilesAffected  int
-	FilesTracked   int
-	SymbolsCount   int
-	TopIssue       string
-	LastSync       int64
+	// IdleStatus/IdleReason explain why enabled language services have not
+	// launched. They are owner-derived observations, not a second startup policy.
+	IdleStatus    string
+	IdleReason    string
+	Errors        int
+	Warnings      int
+	Info          int
+	Hints         int
+	FilesAffected int
+	FilesTracked  int
+	SymbolsCount  int
+	TopIssue      string
+	LastSync      int64
 }

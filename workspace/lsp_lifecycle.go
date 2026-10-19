@@ -59,6 +59,7 @@ func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 	if len(runtimes) > 0 {
 		m.runtime = runtimes[0]
 	}
+	m.recomputeActiveStatusLocked()
 	return m
 }
 
@@ -141,6 +142,7 @@ func (m *LSPManager) StartForWorkspace(root string) {
 			m.retireLocked(state)
 		}
 	}
+	m.recomputeActiveStatusLocked()
 	if len(m.documents) > 0 || len(m.states) > 0 {
 		m.signalLocked()
 	}
@@ -681,6 +683,7 @@ func (m *LSPManager) Stop() {
 	m.activeConnected, m.activeStatus, m.activeError, m.syncing, m.inflight = false, LSPIdle, "", false, 0
 	m.version++
 	m.clearDiagnosticsLocked()
+	m.recomputeIdleReasonLocked()
 	if len(m.states) > 0 {
 		m.signalLocked()
 	}

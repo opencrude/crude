@@ -144,6 +144,14 @@ func TestEmptyComparisonSelectionAndWidthProfile(t *testing.T) {
 	before := s.after.horizontal.Content()
 	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
 	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	s.BeginGeometryReflow()
+	for _, source := range s.SourceGeometry() {
+		if cmd := source.ReflowCommand(t.Context()); cmd != nil {
+			if applied, err := cmd().(SourceGeometryReadyMsg).Apply(); !applied || err != nil {
+				t.Fatalf("geometry completion: applied=%t err=%v", applied, err)
+			}
+		}
+	}
 	s.InvalidateWidthProfile()
 	h.MarkLayout()
 	h.Layout()

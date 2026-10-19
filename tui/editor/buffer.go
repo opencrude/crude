@@ -38,12 +38,25 @@ type PieceTable struct {
 }
 
 type bufferLineChange struct {
-	revision          uint64
-	start, end, delta int
+	revision           uint64
+	start, end, delta  int
+	byteStart, byteEnd int // relative to the pre-edit start line
+	text               string
+	inline             bool
 }
 
-func (pt *PieceTable) recordLineChange(start, end, delta int) {
-	pt.lineChanges[pt.revision%uint64(len(pt.lineChanges))] = bufferLineChange{pt.revision, start, end, delta}
+func (pt *PieceTable) recordLineChange(start, end, delta int, edit document.Edit) {
+	// Only inline edits need provisional colour mapping within a line. Do not
+	// retain large paste payloads in this bounded geometry/decorations journal.
+	inline := start == end && delta == 0 && len(edit.Text) <= 4096
+	text := ""
+	if inline {
+		text = edit.Text
+	}
+	pt.lineChanges[pt.revision%uint64(len(pt.lineChanges))] = bufferLineChange{
+		revision: pt.revision, start: start, end: end, delta: delta,
+		byteStart: edit.Start - pt.lineOffsets[start], byteEnd: edit.End - pt.lineOffsets[start], text: text, inline: inline,
+	}
 }
 
 func NewPieceTable() *PieceTable {
@@ -253,9 +266,10 @@ func (pt *PieceTable) insertAtOffset(offset int, text []byte) (EditInfo, error) 
 		pt.add = append(pt.add, text...)
 		pt.pieces = []piece{{buffer: addBuffer, start: addStart, length: len(text)}}
 		pt.revision++
-		pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}))
+		edit := document.Edit{Start: offset, End: offset, Text: string(text)}
+		pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}), edit)
 		pt.invalidateCache()
-		pt.observeMutation(document.Edit{Start: offset, End: offset, Text: string(text)})
+		pt.observeMutation(edit)
 		return EditInfo{}, nil
 	}
 
@@ -295,9 +309,10 @@ func (pt *PieceTable) insertAtOffset(offset int, text []byte) (EditInfo, error) 
 
 	pt.pieces = newPieces
 	pt.revision++
-	pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}))
+	edit := document.Edit{Start: offset, End: offset, Text: string(text)}
+	pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}), edit)
 	pt.invalidateCache()
-	pt.observeMutation(document.Edit{Start: offset, End: offset, Text: string(text)})
+	pt.observeMutation(edit)
 
 	return EditInfo{}, nil
 }
@@ -350,9 +365,10 @@ func (pt *PieceTable) deleteOffsets(startOff, endOff int) (EditInfo, error) {
 
 	pt.pieces = newPieces
 	pt.revision++
-	pt.recordLineChange(startLine, endLine, startLine-endLine)
+	edit := document.Edit{Start: startOff, End: endOff}
+	pt.recordLineChange(startLine, endLine, startLine-endLine, edit)
 	pt.invalidateCache()
-	pt.observeMutation(document.Edit{Start: startOff, End: endOff})
+	pt.observeMutation(edit)
 
 	return EditInfo{}, nil
 }
