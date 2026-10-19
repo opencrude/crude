@@ -158,9 +158,21 @@ func (s *Session) retryTerminalSettlement(checkpoint sessiondb.RecoveryCheckpoin
 		}
 		return false
 	}
-	sender := s.sender
+	var sender EventSender
+	var orchestrator *Orchestrator
 	if intent.Child != nil {
 		sender = s.SubAgentRunner().sender
+	} else {
+		s.orchMu.Lock()
+		orchestrator = s.orchestrators[intent.AgentID]
+		s.orchMu.Unlock()
+		if orchestrator == nil {
+			return false
+		}
+		// NewOrchestrator publishes this owner before starting its run loop.
+		// A retry immediately after passive resume cannot depend on that loop
+		// having asynchronously installed the session-wide sender already.
+		sender = orchestrator.sender
 	}
 	supervisor, err := s.newRecoverySupervisor(db, intent.SessionID, intent.AgentID, intent.Generation, run, &checkpoint.Status, sender)
 	if err != nil {
@@ -198,12 +210,6 @@ func (s *Session) retryTerminalSettlement(checkpoint sessiondb.RecoveryCheckpoin
 		}
 		s.SubAgentRunner().wg.Add(1)
 	} else {
-		s.orchMu.Lock()
-		orchestrator := s.orchestrators[intent.AgentID]
-		s.orchMu.Unlock()
-		if orchestrator == nil {
-			return false
-		}
 		stop = orchestrator.stopCh
 		s.orchWg.Add(1)
 	}

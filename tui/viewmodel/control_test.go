@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+var shellControlTestSequence atomic.Uint64
+
 func requestShellForTest(t *testing.T, runtime *core.Runtime, shells []remoteJourneyShell, shell remoteJourneyShell, id string, input any, adjust func(*coreprotocol.ControlEnvelope)) control.Result {
 	t.Helper()
 	port := shell.app.ws.(shellport.ShellControl)
@@ -30,7 +33,7 @@ func requestShellForTest(t *testing.T, runtime *core.Runtime, shells []remoteJou
 	if err != nil {
 		t.Fatal(err)
 	}
-	seq := shell.app.paneFileOpenSeq + uint64(time.Now().UnixNano())
+	seq := shellControlTestSequence.Add(1)
 	e := coreprotocol.ControlEnvelope{Descriptor: d, Request: control.Request{ID: fmt.Sprintf("test-%d", seq), CommandID: id, Target: port.ControlIdentity(), Caller: control.Caller{Kind: control.ExternalCaller, ClientID: "test-controller"}, Input: raw}}
 	if adjust != nil {
 		adjust(&e)

@@ -4,17 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 const schema = `
-PRAGMA busy_timeout = 5000;
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     project_path    TEXT NOT NULL,
@@ -28,7 +23,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     turn_count      INTEGER DEFAULT 0,
     first_prompt    TEXT,
     last_prompt     TEXT,
-    summary         TEXT
+    summary         TEXT,
+    parent_session_id TEXT,
+    agent_category  TEXT,
+    agent_name      TEXT,
+    depth           INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -95,6 +94,8 @@ CREATE TABLE IF NOT EXISTS usage_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_requests_agent ON usage_requests(agent_id, turn_generation, created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_requests_context_baseline
+    ON usage_requests(session_id, agent_id, request_kind, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS sub_agent_results (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -386,56 +387,48 @@ func Migrate(db *sql.DB) error {
 	if hasSessions && !hasMessageIdentities {
 		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually")
 	}
-	_, err := db.Exec(schema)
+	// Initialize one schema atomically. Autocommit used to durably commit every
+	// table/index separately, making native Windows/race fixture
+	// startup dominate the full suite and leaving partial schemas on failure.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("sessiondb: begin schema initialization: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("sessiondb: migrate: %w", err)
 	}
-	if _, err := db.Exec(`SELECT capability_selection FROM session_agent_settings LIMIT 0`); err != nil {
+	if _, err := tx.Exec(`SELECT capability_selection FROM session_agent_settings LIMIT 0`); err != nil {
 		return fmt.Errorf("sessiondb: current capability schema required; align local data manually: %w", err)
 	}
-	if _, err := db.Exec(`SELECT internal_id,collaboration_json FROM messages LIMIT 0`); err != nil {
+	if _, err := tx.Exec(`SELECT internal_id,collaboration_json FROM messages LIMIT 0`); err != nil {
 		return fmt.Errorf("sessiondb: current message provenance schema required; align local data manually: %w", err)
 	}
-	if _, err := db.Exec(`SELECT internal_id,session_id,agent_id,message_json FROM immutable_message_identities LIMIT 0`); err != nil {
+	if _, err := tx.Exec(`SELECT internal_id,session_id,agent_id,message_json FROM immutable_message_identities LIMIT 0`); err != nil {
 		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually: %w", err)
 	}
-	migrations := []string{
-		"ALTER TABLE messages ADD COLUMN display_meta TEXT",
-		"ALTER TABLE messages ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'",
-		"ALTER TABLE sessions ADD COLUMN parent_session_id TEXT",
-		"ALTER TABLE sessions ADD COLUMN agent_category TEXT",
-		"ALTER TABLE sessions ADD COLUMN agent_name TEXT",
-		"ALTER TABLE sessions ADD COLUMN depth INTEGER DEFAULT 0",
-		"ALTER TABLE messages ADD COLUMN tool_error INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE messages ADD COLUMN provider_items TEXT",
-		"ALTER TABLE session_agent_settings ADD COLUMN api_standard TEXT",
-		"ALTER TABLE session_agent_settings ADD COLUMN inherit_source TEXT",
-		"ALTER TABLE session_agent_settings ADD COLUMN context_compaction_percent INTEGER",
-		"ALTER TABLE context_compactions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE context_compactions ADD COLUMN model_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE context_compactions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE usage_requests ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'normal'",
-		"ALTER TABLE usage_requests ADD COLUMN request_outcome TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE session_agent_settings ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE usage_requests ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE session_flags ADD COLUMN code_intelligence INTEGER",
-		"ALTER TABLE session_flags ADD COLUMN max_sub_agents INTEGER",
+	// Current-format databases already contain every column. Re-parsing the
+	// entire schema for 21 mostly failing ALTERs on each open was both a legacy
+	// upgrade path and a dominant cost under the race detector. Never upgrade
+	// an outdated database implicitly; validate it without changing its data.
+	checks := []string{
+		`SELECT display_meta,content_type,tool_error,provider_items FROM messages LIMIT 0`,
+		`SELECT parent_session_id,agent_category,agent_name,depth,account_id FROM sessions LIMIT 0`,
+		`SELECT api_standard,inherit_source,context_compaction_percent,account_id FROM session_agent_settings LIMIT 0`,
+		`SELECT provider_id,model_id,account_id FROM context_compactions LIMIT 0`,
+		`SELECT request_kind,request_outcome,account_id FROM usage_requests LIMIT 0`,
+		`SELECT code_intelligence,max_sub_agents FROM session_flags LIMIT 0`,
 	}
-	for _, m := range migrations {
-		if _, err := db.Exec(m); err != nil &&
-			!strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-			return fmt.Errorf("sessiondb: migration %q: %w", m, err)
+	for _, query := range checks {
+		if _, err := tx.Exec(query); err != nil {
+			return fmt.Errorf("sessiondb: current schema required; align local data manually: %w", err)
 		}
 	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_usage_requests_context_baseline
-		ON usage_requests(session_id, agent_id, request_kind, updated_at DESC)`); err != nil {
-		return fmt.Errorf("sessiondb: context baseline index: %w", err)
-	}
-	if _, err := db.Exec(`SELECT report_id,report_revision FROM sub_agent_results LIMIT 0`); err != nil {
+	if _, err := tx.Exec(`SELECT report_id,report_revision FROM sub_agent_results LIMIT 0`); err != nil {
 		return fmt.Errorf("sessiondb: current sub-agent result schema required; align local data manually: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func OpenAndMigrate(dbPath string) (*sql.DB, error) {

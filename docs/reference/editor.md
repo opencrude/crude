@@ -196,6 +196,8 @@ refresh after success without dropping the query/replacement draft.
   parent never recreates it or authorizes a save. Directory removal/rename drops
   its stale watches and reconciles descendants; reopening a recreated directory
   registers a fresh watch. Invalid durable storage still fails closed.
+  Directory watches include their ancestors up to the workspace root because
+  Windows reports a directory's rename to its parent, not to the watched contents.
 
 ## Language server transport
 

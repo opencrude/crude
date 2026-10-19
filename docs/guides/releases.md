@@ -93,6 +93,17 @@ suite also limits package parallelism to two to avoid concurrent instrumented
 SQLite suites exhausting their existing time budgets. No durability or test gate
 is disabled or raised.
 
+Session database initialization creates the complete current schema in one
+transaction, with rollback on validation failure. It no longer reparses the
+schema through repeated legacy `ALTER TABLE` attempts on every open. Existing
+current-format databases retain their schema and content; outdated databases
+require backed-up manual alignment, never an automatic upgrade.
+
+`native-preflight.yml` is a manual Linux/Windows regression check for release
+repairs. Run it on a repair branch before rerunning the complete verification;
+it exercises the failing path/watch/control/recovery cases three times and both
+native Windows installer shells. It does not replace the full publication gate.
+
 `.github/workflows/release.yml` accepts v-prefixed tags (or an existing tag through
 workflow_dispatch with **that tag selected as the ref**). Tag and verification
 commit must match, and be reachable from master. It runs the same verification,

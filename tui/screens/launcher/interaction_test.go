@@ -20,7 +20,7 @@ import (
 
 func TestRecentLoadingPaintsAnimationThenSettles(t *testing.T) {
 	s, h, buf := testScreen(t, 120, 32, nil)
-	s.BeginLoad("/projects/current")
+	s.BeginLoad(s.cwd)
 	paint := func(frame int) string {
 		s.SetAnimation(frame, 0)
 		h.MarkLayout()
@@ -44,7 +44,7 @@ func TestRecentLoadingPaintsAnimationThenSettles(t *testing.T) {
 	if res.Cmd == nil || res.Cmd().(ActivateMsg).Kind != ItemNewSession {
 		t.Fatal("loading blocked the primary action")
 	}
-	s.FinishLoad("/projects/current", manyWorkspaces(2), nil)
+	s.FinishLoad(s.cwd, manyWorkspaces(2), nil)
 	settled := paint(800)
 	if strings.Contains(settled, "Loading") || !strings.Contains(settled, "ws-00") {
 		t.Fatalf("load did not settle into real rows:\n%s", settled)
@@ -76,7 +76,7 @@ func TestRecentRefreshPreservesQuerySelectionViewportAndFocus(t *testing.T) {
 		h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	path, offset, focus := s.SelectedWorkspacePath(), s.ListScrollOffset(), h.Focused()
-	s.BeginLoad("/projects/current")
+	s.BeginLoad(s.cwd)
 	h.MarkLayout()
 	h.Paint(buf)
 	if !strings.Contains(bufferText(buf), "ws-12") {
@@ -85,13 +85,13 @@ func TestRecentRefreshPreservesQuerySelectionViewportAndFocus(t *testing.T) {
 	// Move two earlier rows without changing the selected resource's identity.
 	data := manyWorkspaces(40)
 	data[0], data[1] = data[1], data[0]
-	s.FinishLoad("/projects/current", data, nil)
+	s.FinishLoad(s.cwd, data, nil)
 	h.MarkLayout()
 	h.Layout()
 	if s.Query() != "ws-" || s.SelectedWorkspacePath() != path || s.ListScrollOffset() != offset || h.Focused() != focus {
 		t.Fatalf("refresh disturbed input: query=%q path=%q offset=%d focus=%q", s.Query(), s.SelectedWorkspacePath(), s.ListScrollOffset(), h.Focused())
 	}
-	s.FinishLoad("/projects/current", nil, errors.New("storage unavailable"))
+	s.FinishLoad(s.cwd, nil, errors.New("storage unavailable"))
 	if s.Loading() || s.TotalItems() != 42 || s.Query() != "ws-" {
 		t.Fatal("failed refresh discarded retained state")
 	}

@@ -62,3 +62,4 @@ BenchmarkPublishContextRecoveryImage/bytes_1024 21000 165
 BenchmarkPublishContextRecoveryImage/bytes_4194304 46000000 190
 BenchmarkEstimateMultipartImage/bytes_1024 3800 21
 BenchmarkEstimateMultipartImage/bytes_4194304 10100000 21
+BenchmarkSessionDatabaseStartup 9000 215
