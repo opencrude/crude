@@ -218,6 +218,7 @@ function Assert-CrudeChecksum([string] $Archive, [string] $Checksums, [string] $
 }
 
 function Expand-CrudeArchive([string] $Archive, [string] $Destination) {
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
     $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
     try {

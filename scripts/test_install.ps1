@@ -58,6 +58,9 @@ function Test-Case([string] $Name, [scriptblock] $Action) {
 }
 
 function New-TestZip([string] $Path, [object[]] $Entries) {
+    # Windows PowerShell 5.1 does not autoload enum types from FileSystem's
+    # referenced assembly before binding the Open overload.
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::Open($Path, [IO.Compression.ZipArchiveMode]::Create)
     try {
