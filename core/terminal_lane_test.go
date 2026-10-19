@@ -86,7 +86,13 @@ func TestTerminalOperationsDoNotWaitBehindDocumentLane(t *testing.T) {
 		}
 	}
 	waitFor("READY")
-	for i, ch := range "zzmark" {
+	input := "zzmark"
+	if runtime.GOOS == "windows" {
+		// Print a short successful result rather than a long error that scrolls
+		// the typed marker out of this deliberately four-row terminal.
+		input = "echo zzmark"
+	}
+	for i, ch := range input {
 		call(fmt.Sprintf("key-%d", i), coreprotocol.TerminalInput, coreprotocol.TerminalInputRequest{Lease: lease, Kind: "key", Key: terminalvt.Key{Code: ch, Text: string(ch)}}, nil)
 	}
 	call("enter", coreprotocol.TerminalInput, coreprotocol.TerminalInputRequest{Lease: lease, Kind: "key", Key: terminalvt.Key{Code: terminalvt.KeyEnter}}, nil)

@@ -27,6 +27,7 @@ jobs:
           shellcheck -x install.sh scripts/bootstrap_libghostty.sh
           python scripts/test_install.py -v
           python -m unittest discover -s scripts -p test_release.py -v
+          python -m unittest discover -s scripts -p test_race_test.py -v
       - name: Lint (full repo)
         run: . scripts/libghostty_env.sh && golangci-lint run ./...
       - name: Design, documentation and performance gates
@@ -36,7 +37,7 @@ jobs:
       - name: Full test suite
         run: . scripts/libghostty_env.sh && go test ./... -count=1 -timeout=180s
       - name: Full race suite
-        run: . scripts/libghostty_env.sh && go test -race -p 2 ./... -count=1 -timeout=300s
+        run: . scripts/libghostty_env.sh && python scripts/test_race.py
   windows:
     name: Windows native build and tests
     runs-on: windows-2022

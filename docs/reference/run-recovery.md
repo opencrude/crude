@@ -104,6 +104,11 @@ an attention state that never scheduled an automatic wait.
 
 ## Runtime invariants
 
+Terminal-only root retries use the published orchestrator's event sender, not a
+session-wide sender installed later by its run loop. A Continue immediately
+after passive resume must deliver completion even before that loop is scheduled;
+it still retries only the captured persistence intent, never provider work.
+
 - `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
   exhaustion, deadlines, truncation, loop guards, missing reports and panics are
   not natural completion or permission to kill a task. Recover transient outages;

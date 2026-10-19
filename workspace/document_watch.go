@@ -47,9 +47,23 @@ func (w *documentWatch) add(dir string) error {
 		default:
 		}
 	}
-	// fsnotify owns registration identity and makes repeated Add idempotent.
-	// A second directory cache would outlive watches removed by the OS.
-	return w.watcher.Add(dir)
+	// Watch ancestors as well: ReadDirectoryChangesW reports a directory rename
+	// to its parent, not to a handle watching only the directory's contents.
+	// fsnotify owns registration identity and repeated Add is idempotent.
+	root := w.s.root
+	if !documentUnder(root, dir) {
+		root = filepath.Dir(dir)
+	}
+	for {
+		if err := w.watcher.Add(dir); err != nil {
+			return err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || dir == root {
+			return nil
+		}
+		dir = parent
+	}
 }
 
 // Removed/renamed directories no longer own a watch, even on platforms that

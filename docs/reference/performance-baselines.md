@@ -7,6 +7,25 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Native release schema startup (2026-10-19)
+
+The full race suite exhausted the existing five-minute session-package budget
+inside repeated schema initialization, not a deadlocked test. The initializer
+autocommitted every table/index and reparsed the schema for 21 mostly failing
+legacy column additions on every open. Current schemas now initialize in one
+transaction; failed validation rolls back without changing existing rows.
+Outdated schemas require manual alignment, not automatic upgrades.
+
+`BenchmarkSessionDatabaseStartup` measures fresh on-disk session creation and
+close with WAL and durability enabled. Three Linux/amd64 Go 1.25.9 i7-10750H
+samples, running alongside validation, measured 44.7–61.9 ms and 289 allocations
+before, versus 9.89–10.05 ms and 172–174 allocations after (ten iterations).
+Five-iteration race samples measured 308–609 ms before versus 119–131 ms after.
+These are startup costs, not frame latency or portable timing guarantees.
+The Linux allocation gate is 9,000 B / 215 allocations; no existing ceiling or
+test timeout was raised. `TestMigrateFailureDoesNotLeavePartialSchema` also
+guards rollback and preservation of preexisting data.
+
 ## Git comparison reliability (2026-10-19)
 
 The long-line reproduction uses the real Git dock and review with one 2,000,000-

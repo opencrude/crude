@@ -758,7 +758,7 @@ func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 	}
 }
 
-func TestMigrateLegacyUsageAddsRequestKindBeforeContextIndex(t *testing.T) {
+func TestMigrateRejectsLegacyUsageWithoutChangingWork(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "legacy-usage.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -787,11 +787,16 @@ func TestMigrateLegacyUsageAddsRequestKindBeforeContextIndex(t *testing.T) {
 		VALUES ('legacy', 'session', 'agent', 'model', 43000, 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db); err != nil {
-		t.Fatal(err)
+	if err := Migrate(db); err == nil {
+		t.Fatal("outdated usage schema silently upgraded")
 	}
-	record, ok, err := LatestNormalUsageRecord(db, "session", "agent")
-	if err != nil || !ok || record.RequestKind != "normal" || record.ContextUsed != 43000 {
-		t.Fatalf("migrated usage=%+v ok=%v err=%v", record, ok, err)
+	var request string
+	var used int
+	if err := db.QueryRow(`SELECT request_id,context_used FROM usage_requests`).Scan(&request, &used); err != nil || request != "legacy" || used != 43000 {
+		t.Fatalf("failed validation changed usage: %q %d %v", request, used, err)
+	}
+	var columns int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('usage_requests') WHERE name='request_kind'`).Scan(&columns); err != nil || columns != 0 {
+		t.Fatalf("legacy database was modified: %d %v", columns, err)
 	}
 }

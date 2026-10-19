@@ -29,6 +29,13 @@ make bench-gate                       # allocation ceilings and work budgets
 make test-race-tui                    # race-clean full repo (go test -race ./...)
 ```
 
+CI uses `python scripts/test_race.py` for the full race suite. It runs every
+package; the large session/viewmodel packages are exhaustively partitioned by
+discovered top-level test/example/fuzz name, each exactly once. The multi-megabyte
+upload recovery stress case runs separately with the same five-minute limit.
+No workload size, individual assertion or timeout is relaxed to fit the sum of
+hundreds of cases into one package-wide budget.
+
 - **Lint** (`.golangci.yml`, golangci-lint v2) enables `govet`, `ineffassign`,
   `misspell`, `staticcheck`, `unused` and `errcheck` plus `gofmt`, with zero
   issues allowed. Do not reintroduce dead code or unchecked errors.
