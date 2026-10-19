@@ -35,38 +35,44 @@ func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 		}
 	}
 	if workspacePath := shortWorkspacePath(m.ws.RootPath()); workspacePath != "" {
-		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Priority: 1})
+		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Action: "workspace-path", Priority: 1})
 	}
 	if m.gitPanel != nil {
 		snapshot := m.gitPanel.Snapshot()
 		if branch := snapshot.Branch; branch != "" {
 			branchIcon := gitdiff.BranchIcon(panelchrome.NerdFont(m.Theme))
-			segments = append(segments, shellheader.Segment{Text: headerGitIdentity(branchIcon, gitChangesIcon(), snapshot), Role: ui.ColorMuted, Action: "git-branch", Priority: 2})
+			segments = append(segments, shellheader.Segment{Text: branchIcon + " " + branch, Role: ui.ColorMuted, Action: "git-branch", Priority: 2})
+			if changes := headerGitChanges(gitChangesIcon(), snapshot); changes != "" {
+				segments = append(segments, shellheader.Segment{Text: changes, Role: ui.ColorMuted, Action: "git-changes", Priority: 2})
+			}
 		}
 	}
 	return segments
 }
 
 // gitChangesIcon is the header's changed-file marker. It deliberately differs
-// from the branch glyph and matches the dirty-tab pencil, so
-// "⑂ master · ✎ 9" never reads as two branch icons. A BMP glyph keeps it
+// from the branch glyph and matches the dirty-tab pencil, so the branch and
+// the change count never read as two branch icons. A BMP glyph keeps it
 // font-independent (already in the terminal-width probe corpus).
 func gitChangesIcon() string { return "✎" }
 
-// headerGitIdentity renders the header's Git identity: the current branch
-// plus the working-tree counts that used to live in the footer (changed file
-// count and ahead/behind tracking). Keeping demand (M files) and direction
-// (↑/↓) on one clickable segment puts the whole repo state next to the branch
-// picker without growing the segment count.
-func headerGitIdentity(branchIcon, changesIcon string, snapshot workspace.GitSnapshot) string {
-	identity := branchIcon + " " + snapshot.Branch
+// headerGitChanges renders the working-tree counts that used to share the
+// branch segment: changed files plus ahead/behind tracking. It is its own
+// header segment so clicking the counts opens Git while clicking the branch
+// keeps the branch picker.
+func headerGitChanges(changesIcon string, snapshot workspace.GitSnapshot) string {
+	changes := ""
 	if count := len(snapshot.Changes); count > 0 {
-		identity += fmt.Sprintf(" · %s %d", changesIcon, count)
+		changes = fmt.Sprintf("%s %d", changesIcon, count)
 	}
 	if snapshot.Ahead > 0 || snapshot.Behind > 0 {
-		identity += fmt.Sprintf(" ↑%d ↓%d", snapshot.Ahead, snapshot.Behind)
+		tracking := fmt.Sprintf("↑%d ↓%d", snapshot.Ahead, snapshot.Behind)
+		if changes == "" {
+			return tracking
+		}
+		changes += " " + tracking
 	}
-	return identity
+	return changes
 }
 
 // shortWorkspacePath renders the active workspace root for the header identity

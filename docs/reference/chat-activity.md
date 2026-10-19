@@ -576,8 +576,8 @@ existing aggregate totals.
   blame identity and Copy blame commit stay available in Status Overview and
   the editor context menu. Footer-right carries meaningful workspace-scoped LSP
   health, project Problems, and background work (Git identity and tracking stay in
-  the header branch segment); it omits zero counts but must not collapse to a
-  placeholder when those facts exist.
+  the header branch and change segments); it omits zero counts but must not
+  collapse to a placeholder when those facts exist.
 - Editor position uses compact `line:column` header geometry in the same muted
   treatment as blame/uptime. Footer-left is the guidance group: unread Notices,
   then a small ranked navigation set (find, next tab, focus tree), then Help.

@@ -335,6 +335,21 @@ func (m *App) toggleGitPanel() tea.Cmd {
 	return m.refreshSourceControl()
 }
 
+// openGitChangesWindow shows the Git panel's change review in its own movable
+// window. The header's change count opens it; the branch segment keeps the
+// branch picker.
+func (m *App) openGitChangesWindow() tea.Cmd {
+	if m.gitPanel == nil {
+		return nil
+	}
+	m.gitPanel.SetMode(gitpanel.ModeChanges)
+	if m.placementOf(termdock.PanelGit) == placeTab && m.revealPlacedPanel(termdock.PanelGit) {
+		return m.refreshSourceControl()
+	}
+	m.openPanelAsWindow(termdock.PanelGit)
+	return nil
+}
+
 // openGitPanel shows the Git dock on mode without toggling it closed.
 func (m *App) openGitPanel(mode gitpanel.Mode) tea.Cmd {
 	if m.gitPanel == nil {

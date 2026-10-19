@@ -264,6 +264,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.toggleGitPanel()
 		case "git-branch":
 			return m, m.openBranchSwitcher()
+		case "git-changes":
+			return m, m.openGitChangesWindow()
+		case "workspace-path":
+			return m, m.openWorkspacePathSwitcher()
 		}
 		return m, nil
 	case shellfooter.ActionMsg:

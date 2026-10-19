@@ -66,16 +66,17 @@ func readGitSnapshotNow(t *testing.T, app *App) workspace.GitSnapshot {
 	return app.gitPanel.Snapshot()
 }
 
-// headerGitSegment returns the painted header's Git identity segment (the
-// clickable branch segment that owns the branch, counts, and tracking).
+// headerGitSegment returns the painted header's Git identity: the branch
+// segment plus the separate change/tracking segment.
 func headerGitSegment(t *testing.T, app *App) string {
 	t.Helper()
+	identity := ""
 	for _, segment := range app.statusHeaderLeftSegments() {
-		if segment.Action == "git-branch" {
-			return segment.Text
+		if segment.Action == "git-branch" || segment.Action == "git-changes" {
+			identity += segment.Text
 		}
 	}
-	return ""
+	return identity
 }
 
 // The header identity must follow the repository on its own: an event burst

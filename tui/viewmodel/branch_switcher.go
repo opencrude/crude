@@ -64,7 +64,7 @@ func (m *App) openBranchSwitcher() tea.Cmd {
 		// No branches listed: fall back to the panel instead of a dead menu.
 		return m.openGitPanel(gitpanel.ModeChanges)
 	}
-	return m.openBranchSwitcherAtHeader(st)
+	return m.openHeaderPopup(st)
 }
 
 // branchMenuItems renders one branch group, deduplicated and sorted. The
@@ -104,11 +104,11 @@ func (m *App) branchMenuItems(branches []workspace.GitBranchSummary, current str
 	return items
 }
 
-// openBranchSwitcherAtHeader anchors the dropdown under the header's Git
-// segment: the header slot spans the full content width at the frame top, so
-// the menu opens at (frameLeft, frameTop+2), directly below the two-row header
-// chrome. openContextMenuState clamps the popup inside the shell frame.
-func (m *App) openBranchSwitcherAtHeader(st *ui.ContextMenuState) tea.Cmd {
+// openHeaderPopup anchors a header identity dropdown under the header: the
+// header slot spans the full content width at the frame top, so the menu opens
+// at (frameLeft, frameTop+2), directly below the two-row header chrome.
+// openContextMenuState clamps the popup inside the shell frame.
+func (m *App) openHeaderPopup(st *ui.ContextMenuState) tea.Cmd {
 	x, y := 0, 2
 	if m.rootHost != nil {
 		if rect, ok := m.rootHost.ScreenRect(shellheader.ScreenID); ok && !rect.Empty() {
