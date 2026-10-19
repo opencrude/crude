@@ -132,6 +132,13 @@ Linux runtime dependencies and Windows DLL imports were inspected before the
 reviewed draft was published. An anonymous latest-release lookup resolves all
 six assets. No macOS/ARM64/musl package or publisher-signature claim is implied.
 
+`public-install-smoke.yml` performs post-publication checks on standard Linux and
+Windows runners, including Windows PowerShell 5.1 and PowerShell 7. It downloads
+the real latest installers anonymously, installs with the beta-risk opt-in, and
+repeats with the explicit tag. It verifies source identity, retained application
+data, redistribution notices and user-local PATH. No mocked transport, checkout,
+credential or product timeout change is used.
+
 Before any public launch:
 
 1. All contributing agents must have finished, their exact final reports reviewed,
