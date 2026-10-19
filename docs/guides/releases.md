@@ -1,6 +1,6 @@
 # Releases and installation
 
-> Status: Current guide — release preparation is implemented; first native GitHub CI and public release acceptance are still required.
+> Status: Current guide — full native Linux/Windows verification passed for commit `984affa35c527db0020637af38e92558878e1f92`; public package acceptance remains a per-release gate.
 
 ## Supported packages
 
@@ -110,6 +110,13 @@ commit must match, and be reachable from master. It runs the same verification,
 builds/tests native archives, and creates a **draft only** with both packages,
 checksums and the installer scripts. Only the final draft job has contents:write.
 It never overwrites an existing release or silently promotes a prerelease.
+
+The first complete native verification is [run 39313929845](https://github.com/agenticcrude/crude/actions/runs/39313929845).
+Its successful checks apply to that exact commit, not to untested later source.
+GitHub suppresses tag-push workflows when the source commit message contains a
+skip annotation such as `[skip ci]`. In that case explicitly dispatch the release
+workflow with the immutable tag selected as the ref; do not move the tag, select
+master instead, or bypass source validation.
 
 Before any public launch:
 
