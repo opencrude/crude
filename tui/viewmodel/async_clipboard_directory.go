@@ -802,6 +802,10 @@ func (m *App) stopAsyncIO() {
 	}
 	m.cancelCapabilityOperations()
 	m.cancelLocalDiffs()
+	m.cancelGitPreparation()
+	m.cancelComparisonGeometry()
+	m.stopComparisonWork()
+	m.stopComparisonSearch()
 	// The UI, not Workspace, owns editor and tree watcher lifetimes. Closing
 	// only the domain leaves fsnotify handles alive across another shell/test.
 	// Reject new starts before joining accepted recursive watcher construction.

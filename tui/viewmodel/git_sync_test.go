@@ -81,7 +81,7 @@ func pumpGit(t *testing.T, app *App, cmd tea.Cmd) {
 		switch msg := msg.(type) {
 		case tea.BatchMsg:
 			queue = append(queue, msg...)
-		case sourceControlResultMsg, gitConflictLoadedMsg, gitConflictSavedMsg, gitMergeDecisionMsg, gitMessageEditorMsg:
+		case sourceControlResultMsg, gitChangesPreparedMsg, gitEvidenceMsg, gitConflictLoadedMsg, gitConflictSavedMsg, gitMergeDecisionMsg, gitMessageEditorMsg:
 			_, follow := app.Update(msg)
 			queue = append(queue, follow)
 		}

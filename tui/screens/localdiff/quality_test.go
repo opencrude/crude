@@ -58,6 +58,10 @@ func TestFindNoMatchFeedbackAndF3Focus(t *testing.T) {
 	for _, r := range "missing" {
 		h.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
+	if command := s.viewer.SearchCommand(); command != nil {
+		command().(diffview.SearchReadyMsg).Apply()
+	}
+	t.Cleanup(s.viewer.WaitSearch)
 	buf := surface.NewCellBuffer(70, 20)
 	h.Paint(buf)
 	if !strings.Contains(paintedText(buf), "No matches") {

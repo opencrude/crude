@@ -259,10 +259,19 @@ type App struct {
 	gitPrepareGen          uint64
 	gitPrepareInFlight     bool
 	gitPrepareDirty        bool
+	gitPrepareCancel       context.CancelFunc
+	gitEvidenceCancel      map[window.TabID]context.CancelFunc
 	gitEvidenceSequence    uint64
+	gitPreviewSequence     uint64
 	gitCommitWriteSequence uint64
 	gitCommitWriteCancel   context.CancelFunc
 	localDiffs             map[window.TabID]*localDiffView
+	comparisonWork         map[*comparisonWork]struct{}
+	comparisonSearchJobs   map[<-chan struct{}]comparisonSearchSurface
+	comparisonWidthGen     uint64
+	comparisonGeometryGen  uint64
+	comparisonReflow       bool
+	comparisonReflowCancel context.CancelFunc
 	workspacePanelHeights  map[string]int
 	toolLayout             workspace.ToolLayout
 	toolLayoutVersion      uint64

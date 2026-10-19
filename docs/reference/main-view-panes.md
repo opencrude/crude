@@ -319,7 +319,11 @@ horizontal scrollbars. Unified presentation preserves complete context; below
 60 columns it replaces side-by-side temporarily without losing split preference
 or ratio. Ctrl+F, Enter/F3/Shift+F3 and Alt+Up/Down find text and visit changes.
 Search highlights exact grapheme-aligned occurrences and reveals horizontal
-targets. Selection/copy excludes painted line numbers and absent alignment rows;
+targets. Git and local comparisons share a cancellable background search
+projection: query, source, folding and split changes invalidate old results.
+Pending/error feedback is explicit; at most the first 10,000 matches are retained,
+with a narrow-query notice at that limit. Selection/copy excludes painted line
+numbers and absent alignment rows;
 full-side copies retain source tabs, CRLF and missing final newline.
 
 `local_diff.go` captures source bytes/savepoint on the UI owner and prepares the
@@ -328,9 +332,12 @@ and commands fence tab owner, request and workspace generations. Late results do
 not steal focus. Source changes mark retained evidence stale; only **Refresh**
 replaces it. Closing a source retains its read-only snapshot but cannot refresh
 or silently bind it to a replacement editor. Closing a diff never closes/saves
-the source. Disk reads are regular-file-only and each version is capped at 64 MiB.
-Derivation is off-UI but is not interruptible inside the pure diff/lexer call;
-cancelled/stale results are rejected on return. Comparisons are process-local,
+the source. Disk reads are regular-file-only and each version is capped at 64 MiB
+and 250,000 source lines. Two shared comparison workers check cancellation between
+files, tokens and width scans; superseded and closed owners reject late results.
+The bounded-depth line-diff library itself does not accept a context, so a running
+call settles before releasing its worker. Sources above 256 KiB paint without
+syntax instead of lexing unbounded content. Comparisons are process-local,
 not persisted across restart. Local narrow chrome uses **More**, preserving all
 actions rather than shrinking seven labels into unreadable fragments.
 
@@ -373,6 +380,20 @@ wins over prepared disk bytes. See the recorded measurements in
   mutations require reviewed bytes; sidebar context actions open review instead
   of bypassing it. Discard requires exact preview + mandatory Local History
   safety recovery and never deletes untracked data.
+- Diff preparation has a separate pending/success/error lifecycle from repository
+  status. Failures settle the dock preview and every working review with a retry
+  hint while retaining prior evidence; empty results settle as clean, never as an
+  outstanding calculation. One current preparation plus a coalesced replacement
+  prevents overlapping change-set scans. History previews and commit tabs fence
+  their own requests independently. Shutdown cancels and joins owned comparison
+  and search work; workspace switches invalidate it. All repository consumers
+  share one context-aware serialization lane, including queue time in deadlines.
+  A batched review loads up to 400 files and 64 MiB in total and returns an explicit
+  per-file reason for every omitted path. Commit review has the same byte bound.
+  Paint streams visible graphemes without materializing entire minified lines;
+  Git presentation indexes hunk/gap spans rather than copying every source row
+  on install, fold or split. Source evidence and exact-byte mutation checks remain
+  unchanged.
 - Git panel sync and merge: the status row offers Fetch, Pull (`--no-rebase`),
   Push (never forced; publishes an upstream when missing), and during a merge
   Resolve n / Abort / Complete. A branch row's menu offers Switch and Merge into

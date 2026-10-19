@@ -75,6 +75,7 @@ run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation)$' ./tui/edit
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
 run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview
+run_bench '^BenchmarkGitDiffLongLinePaint$' ./tui/screens/gitdiff
 run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory
 run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./sessiondb
 run_bench '^BenchmarkEstimateMultipartImage$' ./provider

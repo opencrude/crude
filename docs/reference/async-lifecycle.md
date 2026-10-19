@@ -46,6 +46,17 @@ architecture. Terminal and network lifetimes are specified in
   in-flight read slots and `restore` gives them back, so an old project's
   result can never occupy the replacement project's slot.
 
+- **Comparison preparation and search have explicit owners.** Git change sets,
+  historical commits, disk/saved and shared/private snapshots carry tab/request
+  and workspace generations. Superseding or closing cancels their contexts;
+  shutdown also joins queued and running commands. Repository reads wait on a
+  cancellable serialization lane, not an uninterruptible mutex behind a remote
+  operation. Diff failure settles every affected surface, and an empty successful
+  set is a completed clean state. Find scans immutable presentation snapshots off
+  Update through one shared Git/local search projection; late results cannot
+  change a closed reader or a newer query. See the bounds and pure-library
+  cancellation limitation in [main view panes](main-view-panes.md#git-and-local-comparisons).
+
 ## Generation boundaries and shutdown
 
 - **A workspace switch is an explicit generation boundary.** Stop the old tree

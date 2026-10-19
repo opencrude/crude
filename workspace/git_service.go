@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -77,20 +76,45 @@ type GitSnapshot struct {
 // displays snapshots and emits intents; it never shells out to Git itself.
 type GitService struct {
 	root string
-	mu   sync.Mutex
+	gate chan struct{}
 }
 
 func NewGitService(root string) *GitService {
-	return &GitService{root: root}
+	return &GitService{root: root, gate: make(chan struct{}, 1)}
 }
+
+// The repository lane includes queue time in the caller's deadline. A fetch,
+// hook or filter cannot keep cancelled status/review requests stuck on a mutex.
+func (s *GitService) lock(ctx context.Context) error {
+	if s == nil {
+		return errors.New("git service is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			s.unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *GitService) unlock() { <-s.gate }
 
 // Snapshot reads status, branch, and recent history without mutating the repo.
 func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 	if s == nil {
 		return GitSnapshot{}, errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitSnapshot{}, err
+	}
+	defer s.unlock()
 
 	repo, root, err := s.open()
 	if err != nil {
@@ -202,8 +226,10 @@ func (s *GitService) Unstage(ctx context.Context, paths ...string) error {
 		return nil
 	}
 	args := append([]string{"restore", "--staged", "--"}, clean...)
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	if err := s.run(ctx, args...); err == nil {
 		return nil
 	}
@@ -267,8 +293,10 @@ func (s *GitService) mutate(ctx context.Context, args ...string) error {
 	if s == nil {
 		return errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	return s.run(ctx, args...)
 }
 

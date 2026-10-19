@@ -72,10 +72,11 @@ func (s *Screen) SetError(err error) {
 		s.errText = err.Error()
 	}
 }
-func (s *Screen) SetNotice(n string)              { s.notice = n }
-func (s *Screen) Comparison() diffview.Comparison { return s.viewer.Comparison() }
-func (s *Screen) DocumentID() ui.ComponentID      { return s.viewer.DocumentID() }
-func (s *Screen) InvalidateWidthProfile()         { s.viewer.InvalidateWidthProfile() }
+func (s *Screen) SetNotice(n string)                 { s.notice = n }
+func (s *Screen) Comparison() diffview.Comparison    { return s.viewer.Comparison() }
+func (s *Screen) DocumentID() ui.ComponentID         { return s.viewer.DocumentID() }
+func (s *Screen) InvalidateWidthProfile()            { s.viewer.InvalidateWidthProfile() }
+func (s *Screen) ComparisonReader() *diffview.Screen { return s.viewer }
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID) bool) {
 	s.focus = fn
 	s.viewer.SetFocusHandler(fn)

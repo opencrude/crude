@@ -135,6 +135,8 @@ type Panel struct {
 	files           map[string]gitdiff.File
 	ordered         []gitdiff.File
 	preparedOnce    bool
+	preparing       bool
+	prepareError    string
 	evidence        workspace.GitCommitEvidence
 	evidenceLoading string
 	loading         bool
@@ -365,8 +367,30 @@ func (panel *Panel) SetPrepared(files []gitdiff.File) {
 	for _, file := range files {
 		panel.files[file.Key] = file
 	}
-	panel.preparedOnce = files != nil
+	panel.preparedOnce, panel.preparing, panel.prepareError = true, false, ""
 	panel.syncPreview()
+}
+
+// BeginPreparation and SetPreparationError settle the diff independently of
+// repository status and mutations. Retained evidence stays readable on failure.
+func (panel *Panel) BeginPreparation() {
+	panel.preparing, panel.prepareError = true, ""
+	panel.syncPreview()
+}
+
+func (panel *Panel) SetPreparationError(err error) {
+	panel.preparedOnce, panel.preparing, panel.prepareError = true, false, ""
+	if err != nil {
+		panel.prepareError = "Diff unavailable: " + err.Error() + " · Ctrl+R to retry"
+	}
+	panel.syncPreview()
+}
+
+func (panel *Panel) PreparationPending() bool { return panel.preparing }
+func (panel *Panel) PreparationError() string { return panel.prepareError }
+
+func (panel *Panel) ComparisonDocuments() []*gitdiff.Document {
+	return []*gitdiff.Document{panel.preview, panel.commitDoc}
 }
 
 // PreparedFiles returns the prepared set keyed by change identity.
@@ -392,6 +416,7 @@ func (panel *Panel) SetCommitEvidence(evidence workspace.GitCommitEvidence, file
 		return
 	}
 	panel.evidence, panel.evidenceLoading = evidence, ""
+	panel.commitDoc.SetEmptyText("This commit changes no files")
 	panel.commitDoc.SetFiles(files)
 }
 
@@ -406,7 +431,17 @@ func (panel *Panel) SelectedCommit() (workspace.GitCommitSummary, bool) {
 }
 
 // RequestEvidence marks hash as the History preview being loaded.
-func (panel *Panel) RequestEvidence(hash string) { panel.evidenceLoading = hash }
+func (panel *Panel) RequestEvidence(hash string) {
+	panel.evidenceLoading = hash
+	panel.commitDoc.SetFiles(nil)
+	panel.commitDoc.SetEmptyText("Reading commit changes…")
+}
+
+func (panel *Panel) SetEvidenceError(err error) {
+	panel.evidenceLoading = ""
+	panel.commitDoc.SetFiles(nil)
+	panel.commitDoc.SetEmptyText("Commit diff unavailable: " + err.Error() + " · select the commit to retry")
+}
 
 func (panel *Panel) stagedCount() int { return len(panel.snapshot.StagedPaths()) }
 
@@ -592,15 +627,21 @@ func (panel *Panel) commitRequest() (CommitRequest, bool) {
 func (panel *Panel) syncPreview() {
 	change, ok := panel.list.selectedChange()
 	if !ok {
+		text, _ := panel.emptyChangesText()
+		panel.preview.SetEmptyText(text)
 		panel.preview.SetFiles(nil)
 		return
 	}
 	file, ok := panel.files[gitdiff.ChangeKey(change)]
 	if !ok {
-		panel.preview.SetEmptyText("Preparing diff…")
-		if panel.preparedOnce {
-			panel.preview.SetEmptyText("Diff unavailable · refresh with Ctrl+R")
+		empty := "Diff unavailable · refresh with Ctrl+R"
+		if panel.preparing || !panel.preparedOnce {
+			empty = "Preparing diff…"
 		}
+		if panel.prepareError != "" {
+			empty = panel.prepareError
+		}
+		panel.preview.SetEmptyText(empty)
 		panel.preview.SetFiles(nil)
 		return
 	}
@@ -805,6 +846,10 @@ func (panel *Panel) paintStatus(buf *surface.CellBuffer, x, y int) {
 	}
 	if panel.errText != "" {
 		write("✕ "+panel.errText, ui.ColorError, 0)
+		return
+	}
+	if panel.prepareError != "" {
+		write("✕ "+panel.prepareError, ui.ColorError, 0)
 		return
 	}
 	branch := panel.snapshot.Branch

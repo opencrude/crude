@@ -17,6 +17,7 @@ func TestFindRevealsExactPaintedSubstringAndClearsStaleQuery(t *testing.T) {
 	s.SetPrepared(Prepare(Comparison{After: strings.Repeat("x", 90) + " needle needle tail"}))
 	h := host(s, 70, 12)
 	s.SetQuery("needle")
+	settleSearch(t, s)
 	buf := surface.NewCellBuffer(70, 12)
 	h.Paint(buf)
 	if !strings.Contains(text(buf), "needle") || s.after.horizontal.Offset() == 0 {
@@ -41,6 +42,7 @@ func TestFindRevealsExactPaintedSubstringAndClearsStaleQuery(t *testing.T) {
 		t.Fatal("inactive occurrence not distinguished")
 	}
 	s.SetQuery("absent")
+	settleSearch(t, s)
 	if s.NextMatch(false) || s.matchIndex != -1 || s.SearchStatus() != "No matches" {
 		t.Fatal("stale target survived changed query")
 	}
@@ -49,7 +51,8 @@ func TestFindRevealsExactPaintedSubstringAndClearsStaleQuery(t *testing.T) {
 		t.Fatal("stale highlight survived")
 	}
 	s.SetQuery("tail")
-	if s.activeMatch != 0 || s.matchIndex != 0 {
+	settleSearch(t, s)
+	if s.search.Active != 0 || s.matchIndex != 0 {
 		t.Fatal("query did not choose first result")
 	}
 }

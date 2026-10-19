@@ -5,6 +5,7 @@
 package gitdiff
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"sort"
@@ -61,8 +62,8 @@ type File struct {
 
 	before, after             []string
 	beforeSyntax, afterSyntax [][]diffview.SyntaxSpan
+	beforeSource, afterSource diffview.SourceLines
 	blocks                    []block
-	width                     int // widest displayed source line
 }
 
 // Path is the repository-relative path shown for the file.
@@ -89,6 +90,10 @@ func (file *File) Code() string {
 	return "M"
 }
 
+func (file *File) SourceGeometry() []diffview.SourceLines {
+	return []diffview.SourceLines{file.beforeSource, file.afterSource}
+}
+
 // FirstChangedLine is the one-based new-side line of the first change, for
 // opening the file where the change is.
 func (file *File) FirstChangedLine() int {
@@ -110,8 +115,26 @@ func ChangeKey(change workspace.GitChange) string {
 // PrepareChanges derives presentation for a batched comparison. Call it off
 // the UI goroutine: it diffs and lexes every file.
 func PrepareChanges(items []workspace.GitChangeComparison) []File {
-	files := make([]File, 0, len(items))
+	files, _ := PrepareChangesContext(context.Background(), items)
+	return files
+}
+
+func PrepareChangesContext(ctx context.Context, items []workspace.GitChangeComparison) (files []File, err error) {
+	release, err := diffview.AcquirePreparation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			files, err = nil, fmt.Errorf("git diff preparation failed: %v", recovered)
+		}
+	}()
+	files = make([]File, 0, len(items))
 	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		file := File{Key: ChangeKey(item.Change), Change: item.Change}
 		switch {
 		case item.Change.Area == workspace.GitAreaConflict:
@@ -120,13 +143,15 @@ func PrepareChanges(items []workspace.GitChangeComparison) []File {
 			file.Note = "No comparison: " + item.Err.Error()
 		default:
 			file.Comparison = item.Comparison
-			prepareBody(&file)
+			if err := prepareBody(ctx, &file); err != nil {
+				return nil, err
+			}
 		}
 		files = append(files, file)
 	}
 	// Display order matches the Git panel: conflicts, staged, then changes.
 	sort.SliceStable(files, func(a, b int) bool { return areaRank(files[a].Change.Area) < areaRank(files[b].Change.Area) })
-	return files
+	return files, ctx.Err()
 }
 
 func areaRank(area workspace.GitChangeArea) int {
@@ -142,25 +167,53 @@ func areaRank(area workspace.GitChangeArea) int {
 // PrepareComparisons derives presentation for historical comparisons (a
 // commit's files). They are read-only: no stage, unstage or discard.
 func PrepareComparisons(comparisons []workspace.GitComparison) []File {
-	files := make([]File, 0, len(comparisons))
-	for _, comparison := range comparisons {
-		file := File{Key: "commit:" + comparison.Path, Comparison: comparison, Historical: true}
-		file.Change = workspace.GitChange{Path: comparison.Path, AbsolutePath: comparison.AbsolutePath, Area: comparison.Area}
-		prepareBody(&file)
-		files = append(files, file)
-	}
+	files, _ := PrepareComparisonsContext(context.Background(), comparisons)
 	return files
 }
 
-func prepareBody(file *File) {
+func PrepareComparisonsContext(ctx context.Context, comparisons []workspace.GitComparison) (files []File, err error) {
+	release, err := diffview.AcquirePreparation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			files, err = nil, fmt.Errorf("commit diff preparation failed: %v", recovered)
+		}
+	}()
+	files = make([]File, 0, len(comparisons))
+	for _, comparison := range comparisons {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file := File{Key: "commit:" + comparison.Path, Comparison: comparison, Historical: true}
+		file.Change = workspace.GitChange{Path: comparison.Path, AbsolutePath: comparison.AbsolutePath, Area: comparison.Area}
+		if err := prepareBody(ctx, &file); err != nil {
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	return files, ctx.Err()
+}
+
+func prepareBody(ctx context.Context, file *File) error {
 	comparison := file.Comparison
 	if comparison.Binary {
 		file.Note = fmt.Sprintf("Binary file · %s → %s", byteSize(len(comparison.Before)), byteSize(len(comparison.After)))
-		return
+		return nil
+	}
+	if err := diffview.ValidateComparison(comparison.Before, comparison.After); err != nil {
+		file.Note = err.Error()
+		return nil
 	}
 	file.before, file.after = textdiff.Lines(comparison.Before), textdiff.Lines(comparison.After)
 	if comparison.Before == comparison.After {
 		switch {
+		case !comparison.BeforePresent && comparison.AfterPresent:
+			file.Note = "New empty file"
+		case comparison.BeforePresent && !comparison.AfterPresent:
+			file.Note = "Deleted empty file"
 		case comparison.BeforeMode != comparison.AfterMode:
 			file.Note = fmt.Sprintf("File mode changed %06o → %06o · contents identical", comparison.BeforeMode, comparison.AfterMode)
 		case len(file.after) == 0 && comparison.Untracked:
@@ -170,30 +223,40 @@ func prepareBody(file *File) {
 		default:
 			file.Note = "No textual changes"
 		}
-		return
+		return nil
+	}
+	var err error
+	if file.beforeSource, err = diffview.PrepareSourceLinesContext(ctx, file.before); err != nil {
+		return err
+	}
+	if file.afterSource, err = diffview.PrepareSourceLinesContext(ctx, file.after); err != nil {
+		return err
 	}
 	if len(comparison.Before)+len(comparison.After) <= syntaxByteLimit {
 		name := comparison.Path
-		file.beforeSyntax = diffview.PrepareSyntax(name, comparison.Before)
-		file.afterSyntax = diffview.PrepareSyntax(name, comparison.After)
+		var err error
+		if file.beforeSyntax, err = diffview.PrepareSyntaxContext(ctx, name, comparison.Before); err != nil {
+			return err
+		}
+		if file.afterSyntax, err = diffview.PrepareSyntaxContext(ctx, name, comparison.After); err != nil {
+			return err
+		}
 	}
 	file.blocks = buildBlocks(textdiff.ReviewHunks(comparison.Before, comparison.After), len(file.before), len(file.after))
 	for _, block := range file.blocks {
 		for _, line := range block.lines {
-			text := ""
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			switch line.kind {
 			case lineAdded:
 				file.Added++
-				text = file.after[line.new-1]
 			case lineDeleted:
 				file.Removed++
-				text = file.before[line.old-1]
-			default:
-				text = file.after[line.new-1]
 			}
-			file.width = max(file.width, diffview.SourceWidth(text))
 		}
 	}
+	return ctx.Err()
 }
 
 // buildBlocks groups raw change hunks whose context would touch into display

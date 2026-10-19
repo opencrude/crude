@@ -118,8 +118,10 @@ func (workspace *Workspace) DiscardGitHunk(ctx context.Context, comparison GitCo
 	}
 	defer unlock()
 	service := workspace.Git
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	if err := service.lock(ctx); err != nil {
+		return "", err
+	}
+	defer service.unlock()
 	verify := func() error {
 		state, err := service.readReviewState(ctx)
 		if err != nil {

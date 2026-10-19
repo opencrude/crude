@@ -3,8 +3,10 @@
 package diffview
 
 import (
+	"context"
 	"crude/textdiff"
 	"crude/tui/ui"
+	"fmt"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -25,6 +27,7 @@ type Prepared struct {
 	hunks, unifiedHunks       []int
 	beforeWidth, afterWidth   int
 	beforeSyntax, afterSyntax [][]syntaxSpan
+	beforeSource, afterSource SourceLines
 }
 
 type syntaxSpan struct {
@@ -34,18 +37,62 @@ type syntaxSpan struct {
 
 // Keep lexer context across the immutable source, but retain token identities,
 // not palette bytes. Theme changes therefore need neither diffing nor lexing.
-func prepareSyntax(path, source string) [][]syntaxSpan {
+const SyntaxByteLimit = 256 << 10
+
+const ComparisonLineLimit = 250_000
+
+// Bound derived row memory before SplitAfter allocates source-sized slices.
+// Oversized evidence remains owned by the caller; it is never silently clipped.
+func ValidateComparison(before, after string) error {
+	for _, source := range []string{before, after} {
+		lines := strings.Count(source, "\n")
+		if source != "" && !strings.HasSuffix(source, "\n") {
+			lines++
+		}
+		if lines > ComparisonLineLimit {
+			return fmt.Errorf("comparison exceeds the %d-line per-version display limit", ComparisonLineLimit)
+		}
+	}
+	return nil
+}
+
+// Preparation workers are shared by Git, commit and local comparisons. A
+// cancelled queued request never admits source-sized work.
+var preparationWorkers = make(chan struct{}, 2)
+
+func AcquirePreparation(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case preparationWorkers <- struct{}{}:
+		return func() { <-preparationWorkers }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func prepareSyntax(ctx context.Context, path, source string) ([][]syntaxSpan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(source) > SyntaxByteLimit {
+		return nil, nil
+	}
 	l := lexers.Match(path)
 	if l == nil || l.Config().Name == "fallback" {
-		return nil // Plain source needs no per-character fallback token projection.
+		return nil, nil // Plain source needs no per-character fallback token projection.
 	}
-	it, err := chroma.Coalesce(l).Tokenise(&chroma.TokeniseOptions{State: "root", EnsureLF: false}, source)
+	it, err := l.Tokenise(&chroma.TokeniseOptions{State: "root", EnsureLF: false}, source)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	lines := make([][]syntaxSpan, len(textdiff.Lines(source)))
 	line, offset := 0, 0
 	for token := it(); token != chroma.EOF; token = it() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		parts := strings.SplitAfter(token.Value, "\n")
 		for _, part := range parts {
 			if line >= len(lines) {
@@ -61,7 +108,7 @@ func prepareSyntax(path, source string) [][]syntaxSpan {
 			}
 		}
 	}
-	return lines
+	return lines, ctx.Err()
 }
 
 func (p Prepared) Rows() []Row    { return append([]Row(nil), p.rows...) }
@@ -69,16 +116,39 @@ func (p Prepared) HunkCount() int { return len(p.hunks) }
 
 // Prepare performs diffing and width derivation. Call it off the UI goroutine.
 func Prepare(c Comparison) Prepared {
-	p := Prepared{Comparison: c}
-	p.beforeSyntax = prepareSyntax(c.Path, c.Before)
-	p.afterSyntax = prepareSyntax(c.Path, c.After)
+	p, _ := PrepareContext(context.Background(), c)
+	return p
+}
+
+func PrepareContext(ctx context.Context, c Comparison) (p Prepared, err error) {
+	release, err := AcquirePreparation(ctx)
+	if err != nil {
+		return Prepared{}, err
+	}
+	defer release()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			p, err = Prepared{}, fmt.Errorf("comparison preparation failed: %v", recovered)
+		}
+	}()
+	p = Prepared{Comparison: c}
+	if err := ValidateComparison(c.Before, c.After); err != nil {
+		return Prepared{}, err
+	}
+	if p.beforeSyntax, err = prepareSyntax(ctx, c.Path, c.Before); err != nil {
+		return Prepared{}, err
+	}
+	if p.afterSyntax, err = prepareSyntax(ctx, c.Path, c.After); err != nil {
+		return Prepared{}, err
+	}
 	before, after := textdiff.Lines(c.Before), textdiff.Lines(c.After)
-	for _, line := range before {
-		p.beforeWidth = max(p.beforeWidth, sourceWidth(line))
+	if p.beforeSource, err = PrepareSourceLinesContext(ctx, before); err != nil {
+		return Prepared{}, err
 	}
-	for _, line := range after {
-		p.afterWidth = max(p.afterWidth, sourceWidth(line))
+	if p.afterSource, err = PrepareSourceLinesContext(ctx, after); err != nil {
+		return Prepared{}, err
 	}
+	p.beforeWidth, p.afterWidth = p.beforeSource.Width(), p.afterSource.Width()
 	old, next := 0, 0
 	equal := func(end int) {
 		for old < end {
@@ -90,6 +160,9 @@ func Prepare(c Comparison) Prepared {
 		}
 	}
 	for _, h := range textdiff.ReviewHunks(c.Before, c.After) {
+		if err := ctx.Err(); err != nil {
+			return Prepared{}, err
+		}
 		equal(h.OldStart)
 		p.hunks = append(p.hunks, len(p.rows))
 		p.unifiedHunks = append(p.unifiedHunks, len(p.unified))
@@ -115,5 +188,5 @@ func Prepare(c Comparison) Prepared {
 		next += len(h.NewLines)
 	}
 	equal(len(before))
-	return p
+	return p, ctx.Err()
 }

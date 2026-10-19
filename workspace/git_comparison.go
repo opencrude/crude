@@ -87,8 +87,10 @@ func (s *GitService) Compare(ctx context.Context, change GitChange) (GitComparis
 	if err := ctx.Err(); err != nil {
 		return GitComparison{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitComparison{}, err
+	}
+	defer s.unlock()
 	state, err := s.readReviewState(ctx)
 	if err != nil {
 		return GitComparison{}, err
@@ -429,8 +431,10 @@ func (s *GitService) mutateReviewed(ctx context.Context, comparison GitCompariso
 		return err
 	}
 	defer unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	state, err := s.readReviewState(ctx)
 	if err != nil {
 		return err
@@ -518,8 +522,10 @@ func (s *GitService) ReviewCommit(ctx context.Context) (GitCommitReview, error) 
 	if s == nil {
 		return GitCommitReview{}, errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitCommitReview{}, err
+	}
+	defer s.unlock()
 	state, err := s.readReviewState(ctx)
 	if err != nil {
 		return GitCommitReview{}, err
@@ -605,8 +611,10 @@ func (s *GitService) InspectCommit(ctx context.Context, hash string) (GitCommitE
 	if _, err := hex.DecodeString(hash); err != nil {
 		return GitCommitEvidence{}, errors.New("invalid commit hash")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitCommitEvidence{}, err
+	}
+	defer s.unlock()
 	state, err := s.readReviewState(ctx)
 	if err != nil {
 		return GitCommitEvidence{}, err
@@ -641,7 +649,11 @@ func (s *GitService) InspectCommit(ctx context.Context, hash string) (GitCommitE
 		Commit:  GitCommitSummary{Hash: hash, ShortHash: shortGitHash(hash), Subject: strings.SplitN(commit.Message, "\n", 2)[0], Author: commit.Author.Name, When: commit.Author.When},
 		Message: commit.Message,
 	}
+	var total int64
 	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return GitCommitEvidence{}, err
+		}
 		name := change.To.Name
 		if name == "" {
 			name = change.From.Name
@@ -655,6 +667,10 @@ func (s *GitService) InspectCommit(ctx context.Context, hash string) (GitCommitE
 		}
 		if err != nil {
 			return GitCommitEvidence{}, err
+		}
+		total += int64(len(before.text) + len(after.text))
+		if total > gitComparisonLimit {
+			return GitCommitEvidence{}, errors.New("commit review exceeds the 64 MiB review limit")
 		}
 		comparison := gitReviewComparison(state.root, name, GitAreaStaged, before, after, baseLabel, "Commit "+shortGitHash(hash))
 		comparison.Historical = true

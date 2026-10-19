@@ -138,8 +138,10 @@ func (s *GitService) Fetch(ctx context.Context) error {
 	if s == nil {
 		return errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	_, err := s.runRemote(ctx, "fetch", "--all", "--prune")
 	return err
 }
@@ -151,8 +153,10 @@ func (s *GitService) Pull(ctx context.Context) (GitSyncResult, error) {
 	if s == nil {
 		return GitSyncResult{}, errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitSyncResult{}, err
+	}
+	defer s.unlock()
 	out, err := s.runRemote(ctx, "pull", "--no-rebase", "--no-edit")
 	return s.syncResult(ctx, out, err)
 }
@@ -166,8 +170,10 @@ func (s *GitService) Merge(ctx context.Context, ref string) (GitSyncResult, erro
 	if ref == "" || strings.HasPrefix(ref, "-") {
 		return GitSyncResult{}, errors.New("merge needs a branch name")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitSyncResult{}, err
+	}
+	defer s.unlock()
 	out, err := s.runRemote(ctx, "merge", "--no-edit", ref)
 	return s.syncResult(ctx, out, err)
 }
@@ -210,8 +216,10 @@ func (s *GitService) Push(ctx context.Context) error {
 	if s == nil {
 		return errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	repo, _, err := s.open()
 	if err != nil {
 		return err
@@ -274,8 +282,10 @@ func (s *GitService) ContinueOperation(ctx context.Context) error {
 	if operation == "" {
 		return errors.New("no merge is in progress")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	conflicts, err := s.conflictedPaths(ctx)
 	if err != nil {
 		return err
@@ -319,8 +329,10 @@ func (s *GitService) ConflictFile(ctx context.Context, path string) (GitConflict
 	if s == nil {
 		return GitConflictFile{}, errors.New("git service is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitConflictFile{}, err
+	}
+	defer s.unlock()
 	repo, root, err := s.open()
 	if err != nil {
 		return GitConflictFile{}, err
@@ -376,8 +388,10 @@ func (workspace *Workspace) ResolveGitConflict(ctx context.Context, path, finger
 	}
 	defer unlock()
 	service := workspace.Git
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	if err := service.lock(ctx); err != nil {
+		return "", err
+	}
+	defer service.unlock()
 	verify := func() error {
 		data, err := os.ReadFile(file.AbsolutePath)
 		if err != nil {

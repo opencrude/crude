@@ -42,6 +42,7 @@ type localDiffView struct {
 }
 
 type localDiffPreparedMsg struct {
+	widthGen                 uint64
 	owner                    *localDiffView
 	generation, sequence     uint64
 	revision, diskGeneration uint64
@@ -124,7 +125,7 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 		view.cancel()
 	}
 	view.sequence++
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := m.sourceControlContext()
 	view.cancel = cancel
 	view.screen.SetLoading(true)
 	snapshot := view.source.BufferSnapshot() // owned bytes, captured on Update
@@ -140,9 +141,9 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 		}
 		saved = buffer.SavedBytes()
 	}
-	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), revision: snapshot.Revision, diskGeneration: view.source.DiskGeneration()}
+	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), widthGen: m.comparisonWidthGen, revision: snapshot.Revision, diskGeneration: view.source.DiskGeneration()}
 	files, remote := m.ws.(shellport.ClientFiles)
-	return func() tea.Msg {
+	return m.comparisonCommand(cancel, func() tea.Msg {
 		defer cancel()
 		before, err := saved, ctx.Err()
 		label := "Saved version"
@@ -158,12 +159,11 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 			err = errors.New("comparison exceeds the 64 MiB per-version limit")
 		}
 		if err == nil {
-			msg.prepared = diffview.Prepare(diffview.Comparison{Path: snapshot.Path, BeforeLabel: label, AfterLabel: fmt.Sprintf("Editor snapshot · revision %d", snapshot.Revision), Before: string(before), After: string(snapshot.Data)})
-			err = ctx.Err()
+			msg.prepared, err = diffview.PrepareContext(ctx, diffview.Comparison{Path: snapshot.Path, BeforeLabel: label, AfterLabel: fmt.Sprintf("Editor snapshot · revision %d", snapshot.Revision), Before: string(before), After: string(snapshot.Data)})
 		}
 		msg.err = err
 		return msg
-	}
+	})
 }
 
 func readLocalDiffDisk(ctx context.Context, path string) ([]byte, error) {
@@ -216,6 +216,9 @@ func (m *App) applyLocalDiffPrepared(msg localDiffPreparedMsg) {
 	}
 	view.revision, view.diskGeneration = msg.revision, msg.diskGeneration
 	view.screen.SetPrepared(msg.prepared)
+	if msg.widthGen != m.comparisonWidthGen {
+		m.comparisonReflow = true
+	}
 	m.syncLocalDiffFreshness()
 	m.forceFrame()
 }
@@ -250,6 +253,7 @@ func (m *App) closeLocalDiff(id window.TabID) {
 		view.cancel()
 	}
 	delete(m.localDiffs, id)
+	view.screen.ComparisonReader().StopSearch()
 	m.Win.CloseTabByID(id)
 	m.handleTabSwitch()
 	m.forceFrame()

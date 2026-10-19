@@ -7,6 +7,36 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Git comparison reliability (2026-10-19)
+
+The long-line reproduction uses the real Git dock and review with one 2,000,000-
+character line, plus an empty untracked file. The old painter materialized two
+complete grapheme arrays on every visible row before clipping, making the shell
+unresponsive despite preparation running in a command. Three Linux/amd64,
+Go 1.25.9, i7-10750H runs (`GOMAXPROCS=2`, `-benchtime=3x`, `-count=3`) of
+`BenchmarkGitDiffLongLinePaint` at 120×12 measured:
+
+| Source line | Before | After |
+|---|---|---|
+| 128 characters | 32.8–33.5 µs; 25,613 B; 30 allocations | 30.9–49.4 µs; 637 B; 17 allocations |
+| 2,000,000 characters | 338–356 ms; 725,698,080 B; 70 allocations | 44.8–48.4 µs; 637 B; 17 allocations |
+
+Other checks were running during the after measurement; this is component paint,
+not isolated terminal latency. All source bytes remain available for copy and
+reviewed mutation. A 100,000-line addition uses three presentation spans instead
+of a second 100,002-row array during install and split. Preparation, I/O and
+source search remain distinct background costs. Live typing found another UI
+stall in synchronous Find; search now runs on immutable snapshots, cancels old
+queries and visibly bounds match storage. Existing allocation gates are unchanged.
+
+Sequential real shell captures at 160×40 and 80×24 cover large-line Find, split,
+empty files, a clean repository and historical read-only previews. A separate
+100,000-line replacement preserves complete +100,000/−100,000 stats and shows
+the explicit first-10,000 search-match limit. A deliberately stalled Git smudge
+filter leaves input responsive, settles the preview's timeout, and recovers via
+Ctrl+R after the filter is removed. That journey also caught a missing exact
+screen payload on the review's keyboard Refresh path.
+
 ## Connected clipboard image preparation (2026-10-18)
 
 The real connected clipboard journey with an uncompressed 1100×1100 PNG failed
