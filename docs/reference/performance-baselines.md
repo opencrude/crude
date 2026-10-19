@@ -37,6 +37,58 @@ filter leaves input responsive, settles the preview's timeout, and recovers via
 Ctrl+R after the filter is removed. That journey also caught a missing exact
 screen payload on the review's keyboard Refresh path.
 
+### Sparse geometry completion on native Windows
+
+The final sparse iterator uses a value cursor instead of escaping nested iterator
+closures. Three Windows/amd64, Go 1.25.8, i7-9850H runs at 120×12
+(`go test ./tui/screens/gitdiff -run '^$' -bench 'BenchmarkGitDiffLongLine' -benchmem -benchtime=100x -count=3`, default GOMAXPROCS=12) measured:
+
+| Workload | WIP sparse iterator | Completed value cursor |
+|---|---|---|
+| 128-character line, left edge | 23.3–27.6 µs; 1,145 B; 27 allocations | 25.4–29.5 µs; 632 B; 17 allocations |
+| 2,000,000-character line, left edge | 22.4–23.0 µs; 1,145 B; 27 allocations | 23.5–25.4 µs; 632 B; 17 allocations |
+| 2,000,000-character line, far right | 20.9–21.1 µs; 1,145 B; 27 allocations | 21.5–22.3 µs; 632 B; 17 allocations |
+
+The WIP sample used ten iterations; the completed sample used 100. These small
+timing differences are not a speedup claim. The removed ten allocations bring
+all three workloads below the unchanged 800 B / 22-allocation ceilings; far-right
+paint now has its own gate. A later run during integrated checks measured up to
+36.6 µs and 634 B, still 17 allocations. Component paint is not full-shell or
+terminal latency, and source preparation/search remain separate background costs.
+
+Native sequential 160×40 and 80×24 captures exercise far-right Find in real Git
+reviews and local disk comparisons of the 2 MB line, including an empty untracked
+file and local split/unified fallback. Explicit fixture-oracle tests cover sparse
+grapheme/tab/control/CRLF boundaries, exact partial copy, recalibration, in-flight
+preparation, replacement, close, workspace switch/failed-switch restoration and
+shutdown. The original horizontal-content assertion remains and now goes through
+the owned reflow command/result lifecycle rather than expecting a synchronous scan.
+
+This is not an all-repository-gates-passing baseline. The native full bench gate
+passes the comparison and frame workloads but fails the unchanged large-image
+recovery publication allocation ceiling (8,693 allocations versus 190). A separate
+three-iteration sample reproduces roughly 10,456–10,462 allocations; short samples
+include additional database startup costs. No recovery-publication implementation
+or ceiling was changed by the comparison completion. An allocation profile locates
+the dominant object count in modernc's Windows ReadFile/WriteFile adapters during
+SQLite page I/O, not in comparison traversal. The native normal suite also
+reproduces the directory-watch rename failure in
+`TestDocumentWatchRemovedDirectoryReleasesAndReopens`; core/session journey timeouts
+in the concurrent full run passed when rerun in isolation. These failures remain
+open, not hidden by skipped tests or relaxed limits.
+
+The full native race run (`CC=gcc`, `go test -race -p=2 ./... -count=1 -timeout=600s`)
+completed without a data-race warning, but failed the existing 1100×1100 clipboard
+image response wait, one temporary-directory cleanup in
+`TestEditorAgentSwitchWorkBounded`, and the same directory-watch rename test. The
+control visual harness did not fail. After the final cancellation hardening,
+complete normal core/viewmodel packages pass, all five comparison screen packages
+pass normally and under race, and three repeated focused App/control race runs
+pass. Build, whole-repo lint, design/docs and non-cgo Linux/macOS cross-builds pass.
+Native Windows capture covers the selected comparison journeys, not every lifecycle
+or another platform's terminal. Zig's Windows race executable failed before tests
+with a ThreadSanitizer allocation error; the successful native race checks use GCC.
+
 ## Connected clipboard image preparation (2026-10-18)
 
 The real connected clipboard journey with an uncompressed 1100×1100 PNG failed
@@ -93,6 +145,61 @@ themes. Regression journeys cover offscreen delimiter deletion/undo, tab changes
 CRLF/Unicode, pending navigation and stale close/replacement results. Existing
 paint goldens remain unchanged; cold source work is not hidden in warm-paint
 benchmarks.
+
+### Typing presentation regression (2026-10-19, native Windows)
+
+The first async-syntax implementation cleared every visible colour map on each
+source edit. A deliberately blocked replacement lexer reproduces 678 unchanged
+visible cells changing to plain ink after a single identifier character. Waiting
+for completion before painting hid this regression in the original acceptance.
+The same pending-frame assertion now observes zero unrelated colour changes.
+
+Visible decorations now map through the existing 32-revision line journal. Inline
+edits retain current grapheme/tab geometry; line insertion/deletion shifts surviving
+rows. New parse results atomically replace this provisional ink, so an offscreen
+delimiter edit still updates the complete downstream context. Missing history,
+whole-source replacement, theme and width changes do not reuse unrelated maps.
+The journal retains at most 4 KiB per inline edit, never large paste payloads.
+The native capture additionally caught diagnostics dropping underlines on
+unchanged lines after every edit. Diagnostic paint now retains only mapped
+unchanged rows; touched rows discard old ranges, and hover/navigation still
+refuse prior-revision diagnostics. The connected presentation test includes
+diagnostic ink and checks complete cell attributes, not just syntax colours.
+
+`TestConnectedEditorTypingKeepsUnchangedPresentation` exercises real framed editor
+edits and paints before and after their commands at 160×40 and 80×24. It checks
+unchanged source/sidebar cells and replays the exact views through Bubble Tea's
+real terminal renderer. One sample emits 40–83 bytes for character frames and 19
+bytes for acknowledgement-only frames (including a test title marker), without
+clear-screen or alternate-screen resets. Key-to-View measured roughly 0.6–1.8 ms
+for this 2,000-line fixture; that is not physical terminal latency. Sequential
+native captures cover paced individual characters at both sizes with real gopls
+diagnostics; static screenshots alone do not establish transient-frame behavior.
+Final before/after captures have zero changed pixels in the untouched source-body
+regions at both sizes. The narrow stable-geometry check types inside a comment:
+typing past the right edge legitimately scrolls the viewport, and changing Go
+syntax can legitimately replace the server's diagnostic set.
+
+Three Windows/amd64, Go 1.25.8, i7-9850H runs (`GOMAXPROCS=2`) measured
+`BenchmarkSyntaxMapInlineDecorations` at 3.14–3.20 µs, 688 B and two allocations.
+Its new allocation gate is 830 B / three allocations; no existing ceiling changes.
+`BenchmarkSyntaxTypingPendingPaint` separately includes source mutation, buffer
+cache rebuild and viewport paint with the parser blocked: about 0.32–0.36 ms /
+204–206 KB for 200 lines and 1.08–1.23 ms / 1.89 MB for 20,000 lines. Both are about
+943–956 allocations, not a constant-cost editing claim; piece-table rebuilding and
+history still contribute. These are repeated steady samples, not a direct timing
+comparison with the shorter ten-iteration reproduction.
+
+Mapping preserves coloured cells that were previously blanked; converting their
+existing hex colours directly through the shared rendering conversion avoids a
+per-cell boxed colour allocation. Warm editor paint remains below all unchanged
+ceilings (about 754 B / 84 allocations at 80×24 and 1,378 B / 146 at 120×40).
+Final affected editor/shell/viewmodel packages, repeated focused race checks,
+build, lint, design/docs and affected Linux/macOS cross-builds pass. The full
+normal run before the diagnostic-paint refinement fails only the already-recorded
+directory-watch rename test; the full bench gate fails only the unchanged large
+recovery-image allocation ceiling (8,693 versus 190 allocations). Those repository
+failures remain open; they are not evidence of an all-green full-suite result.
 
 ## Editor pointer acceptance (2026-10-17)
 

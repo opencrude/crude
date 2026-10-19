@@ -239,9 +239,20 @@ Tea's update goroutine (the tab-close hang).
 - Syntax comes from one complete immutable document revision, never a lexical
   restart above/below the viewport. Long Python triple-quoted strings/docstrings,
   raw strings and block comments retain their original delimiters regardless of
-  scroll order or terminal size. A source edit invalidates downstream context even
-  when the visible bytes did not change; pending revisions paint plain text rather
-  than wrong stale colours. Undo/redo, disk/peer replacement, path/language and
+  scroll order or terminal size. A source edit invalidates downstream parse context
+  even when visible bytes did not change. While that revision is prepared,
+  retained visible decorations map through the bounded exact line-edit journal:
+  unchanged rows keep their ink, inline source edits reproject graphemes/tabs,
+  and inserted/deleted lines shift surviving rows. These provisional colours are
+  presentation only, replaced atomically by the complete new parse (including
+  offscreen delimiter changes); they are never a viewport-rooted lexer result.
+  Missing edit history, whole-source replacement and changed lines without a
+  bounded mapping paint plain text rather than reuse unrelated offsets.
+  Diagnostic paint follows the same source-line mapping: unchanged rows keep
+  their underlines while LSP analyses, touched rows drop old ranges. Provisional
+  decorations never authorize diagnostic hover or navigation; those require an
+  exact current source revision and resume with the next server publication.
+  Undo/redo, disk/peer replacement, path/language and
   theme changes fence older completions. Terminal-width changes reproject cell
   maps without re-lexing source.
 - Document lexing runs off Update/Paint on append-only piece snapshots, with two

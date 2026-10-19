@@ -323,6 +323,10 @@ func (document *Document) SetQuery(query string) {
 func (document *Document) Query() string { return document.search.Query }
 
 func (document *Document) rebuildMatches() {
+	if document.geometryState != "" {
+		document.search.Suspend()
+		return
+	}
 	if document.search.Query == "" {
 		document.search.Reset("", nil)
 		return

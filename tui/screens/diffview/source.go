@@ -41,6 +41,9 @@ type sourceOwner struct {
 	lines      []string
 	geometry   sourceGeometry
 	generation uint64
+	pending    bool
+	err        error
+	cancel     context.CancelFunc
 }
 
 func PrepareSourceLinesContext(ctx context.Context, lines []string) (SourceLines, error) {
@@ -96,8 +99,19 @@ func (source SourceLines) LineWidth(number int) int {
 }
 
 func (source SourceLines) rangeUnits(number, from, to int) iter.Seq[sourceUnit] {
+	return func(yield func(sourceUnit) bool) {
+		cursor := source.cursor(number, from, to)
+		for unit, ok := cursor.next(); ok; unit, ok = cursor.next() {
+			if !yield(unit) {
+				return
+			}
+		}
+	}
+}
+
+func (source SourceLines) cursor(number, from, to int) sourceCursor {
 	if source.owner == nil || number <= 0 || number > len(source.owner.lines) {
-		return func(func(sourceUnit) bool) {}
+		return sourceCursor{}
 	}
 	point := sourcePoint{}
 	if index, ok := source.owner.geometry.indexes[number]; ok {
@@ -106,17 +120,31 @@ func (source SourceLines) rangeUnits(number, from, to int) iter.Seq[sourceUnit] 
 			point = index.points[i]
 		}
 	}
-	return sourceRangeAt(source.owner.lines[number-1], from, to, point)
+	return newSourceCursor(source.owner.lines[number-1], from, to, point)
 }
 
 func (source SourceLines) Range(number, from, to int) iter.Seq[SourceUnit] {
 	return func(yield func(SourceUnit) bool) {
-		for unit := range source.rangeUnits(number, from, to) {
-			if !yield(SourceUnit{Raw: unit.raw, Display: unit.display, Offset: unit.offset, Column: unit.column, Width: unit.width}) {
+		cursor := source.Iterator(number, from, to)
+		for unit, ok := cursor.Next(); ok; unit, ok = cursor.Next() {
+			if !yield(unit) {
 				return
 			}
 		}
 	}
+}
+
+// SourceIterator is a value cursor over visible graphemes. Unlike nested iterator
+// closures it does not escape on the cross-package paint path.
+type SourceIterator struct{ cursor sourceCursor }
+
+func (source SourceLines) Iterator(number, from, to int) SourceIterator {
+	return SourceIterator{cursor: source.cursor(number, from, to)}
+}
+
+func (it *SourceIterator) Next() (SourceUnit, bool) {
+	u, ok := it.cursor.next()
+	return SourceUnit{Raw: u.raw, Display: u.display, Offset: u.offset, Column: u.column, Width: u.width}, ok
 }
 
 // sourceRange streams only the requested display columns. Painting and pointer
@@ -127,43 +155,59 @@ func sourceRange(text string, from, to int) iter.Seq[sourceUnit] {
 
 func sourceRangeAt(text string, from, to int, start sourcePoint) iter.Seq[sourceUnit] {
 	return func(yield func(sourceUnit) bool) {
-		text := text
-		if strings.HasSuffix(text, "\r\n") {
-			text = strings.TrimSuffix(text, "\r\n")
-		} else {
-			text = strings.TrimSuffix(text, "\n")
-		}
-		if start.offset >= len(text) {
-			return
-		}
-		text = text[start.offset:]
-		column, offset := start.column, start.offset
-		for text != "" && column < to {
-			cluster, width := rendering.FirstGrapheme(text)
-			if cluster == "" {
-				break
-			}
-			display := cluster
-			if cluster == "\t" {
-				width = 4 - column%4
-				display = strings.Repeat(" ", width)
-			} else {
-				for _, r := range cluster {
-					if unicode.IsControl(r) {
-						display = "�"
-						width = 1
-						break
-					}
-				}
-			}
-			if column+width > from && !yield(sourceUnit{cluster, display, offset, column, width}) {
+		cursor := newSourceCursor(text, from, to, start)
+		for unit, ok := cursor.next(); ok; unit, ok = cursor.next() {
+			if !yield(unit) {
 				return
 			}
-			column += width
-			offset += len(cluster)
-			text = text[len(cluster):]
 		}
 	}
+}
+
+type sourceCursor struct {
+	text                     string
+	column, offset, from, to int
+}
+
+func newSourceCursor(text string, from, to int, start sourcePoint) sourceCursor {
+	if strings.HasSuffix(text, "\r\n") {
+		text = strings.TrimSuffix(text, "\r\n")
+	} else {
+		text = strings.TrimSuffix(text, "\n")
+	}
+	if start.offset >= len(text) {
+		return sourceCursor{}
+	}
+	return sourceCursor{text: text[start.offset:], column: start.column, offset: start.offset, from: from, to: to}
+}
+
+func (it *sourceCursor) next() (sourceUnit, bool) {
+	for it.text != "" && it.column < it.to {
+		cluster, width := rendering.FirstGrapheme(it.text)
+		if cluster == "" {
+			break
+		}
+		display := cluster
+		if cluster == "\t" {
+			width = 4 - it.column%4
+			display = "    "[:width]
+		} else {
+			for _, r := range cluster {
+				if unicode.IsControl(r) {
+					display, width = "�", 1
+					break
+				}
+			}
+		}
+		unit := sourceUnit{cluster, display, it.offset, it.column, width}
+		it.column += width
+		it.offset += len(cluster)
+		it.text = it.text[len(cluster):]
+		if it.column > it.from {
+			return unit, true
+		}
+	}
+	return sourceUnit{}, false
 }
 
 func sourceWidth(text string) int {

@@ -215,7 +215,9 @@ func (m *App) applyLocalDiffPrepared(msg localDiffPreparedMsg) {
 		return
 	}
 	view.revision, view.diskGeneration = msg.revision, msg.diskGeneration
+	previous := view.screen.ComparisonReader().SourceGeometry()
 	view.screen.SetPrepared(msg.prepared)
+	m.cancelOrphanedComparisonGeometry(previous)
 	if msg.widthGen != m.comparisonWidthGen {
 		m.comparisonReflow = true
 	}
@@ -253,6 +255,7 @@ func (m *App) closeLocalDiff(id window.TabID) {
 		view.cancel()
 	}
 	delete(m.localDiffs, id)
+	m.cancelOrphanedComparisonGeometry(view.screen.ComparisonReader().SourceGeometry())
 	view.screen.ComparisonReader().StopSearch()
 	m.Win.CloseTabByID(id)
 	m.handleTabSwitch()

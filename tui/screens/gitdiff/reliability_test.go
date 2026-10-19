@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"crude/tui/screens/diffview"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -114,5 +117,59 @@ func TestGitDiffLongLinePaintIsViewportBounded(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	if bytes := after.TotalAlloc - before.TotalAlloc; bytes > 1<<20 {
 		t.Fatalf("one visible line allocated %d bytes; offscreen source was materialized during paint", bytes)
+	}
+}
+
+func TestGitSparseFarRightFindCopyAndCalibration(t *testing.T) {
+	doc := New("sparse", ui.NewTokenSet(theme.DefaultDark()))
+	doc.SetFiles(PrepareChanges([]workspace.GitChangeComparison{comparisonItem("large.txt", "old\n", strings.Repeat("☰", 4096)+"\t界é👩‍💻\x1b tail-marker\r\n", workspace.GitAreaWorking)}))
+	paint(doc, 120, 12)
+	doc.SetQuery("tail-marker")
+	settleDocumentSearch(t, doc)
+	if text := paint(doc, 120, 12); !strings.Contains(text, "tail-marker") || doc.hscroll < 8000 {
+		t.Fatalf("far-right Find not revealed:\n%s", text)
+	}
+	row := rowOf(t, doc, strings.Repeat("☰", 4096)+"\t界é👩‍💻\x1b tail-marker")
+	doc.selection = selection{anchor: point{row: row, column: 8192}, end: point{row: row, column: 8202}, side: sideUnified, active: true}
+	if got := doc.SelectedText(); got != "\t界é👩‍💻\x1b" {
+		t.Fatalf("far-right exact source copy=%q", got)
+	}
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	doc.BeginGeometryReflow()
+	var commands []tea.Cmd
+	for _, source := range doc.SourceGeometry() {
+		commands = append(commands, source.ReflowCommand(t.Context()))
+	}
+	if text := paint(doc, 120, 12); !strings.Contains(text, "Calibrating") || strings.Contains(text, "☰") || doc.selection.active {
+		t.Fatalf("old columns used while pending:\n%s", text)
+	}
+	for _, command := range commands {
+		if applied, err := command().(diffview.SourceGeometryReadyMsg).Apply(); !applied || err != nil {
+			t.Fatalf("geometry applied=%t err=%v", applied, err)
+		}
+	}
+	doc.InvalidateWidthProfile()
+	paint(doc, 120, 12) // Layout clamps the old far-right scroll to the new width.
+	settleDocumentSearch(t, doc)
+	if text := paint(doc, 120, 12); !strings.Contains(text, "tail-marker") || doc.hscroll > 4200 || strings.Contains(text, "Calibrating") {
+		t.Fatalf("new calibrated checkpoint mapping not painted:\n%s", text)
+	}
+}
+
+func TestIdenticalGitEvidenceRefreshesReplacedGeometry(t *testing.T) {
+	doc := New("refresh-geometry", ui.NewTokenSet(theme.DefaultDark()))
+	item := comparisonItem("large.txt", "old\n", strings.Repeat("☰", 4096)+" tail-marker\n", workspace.GitAreaWorking)
+	doc.SetFiles(PrepareChanges([]workspace.GitChangeComparison{item}))
+	paint(doc, 120, 12)
+	doc.SetQuery("tail-marker")
+	settleDocumentSearch(t, doc)
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	doc.SetFiles(PrepareChanges([]workspace.GitChangeComparison{item}))
+	paint(doc, 120, 12)
+	settleDocumentSearch(t, doc)
+	if text := paint(doc, 120, 12); doc.maxWidth != 4108 || !strings.Contains(text, "tail-marker") {
+		t.Fatalf("identical evidence kept obsolete geometry: width=%d\n%s", doc.maxWidth, text)
 	}
 }

@@ -190,6 +190,9 @@ func (app *App) closeGitReview(id window.TabID) {
 	}
 	wasActive := app.Win.ActiveTab() != nil && app.Win.ActiveTab().ID == id
 	delete(app.gitReviews, id)
+	if view != nil {
+		app.cancelOrphanedComparisonGeometry(view.screen.Document().SourceGeometry())
+	}
 	app.Win.CloseTabByID(id)
 	if wasActive && view != nil {
 		if index := app.Win.IndexOf(view.returnTab); index >= 0 {

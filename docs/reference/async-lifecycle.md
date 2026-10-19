@@ -56,6 +56,13 @@ architecture. Terminal and network lifetimes are specified in
   Update through one shared Git/local search projection; late results cannot
   change a closed reader or a newer query. See the bounds and pure-library
   cancellation limitation in [main view panes](main-view-panes.md#git-and-local-comparisons).
+  Width-calibration reflow uses the same joined command owner, with one new
+  geometry value per exact immutable source. Only Update installs it; pending
+  readers suppress old-column paint and pointer selection. Replacement, repeated
+  calibration, closed views, workspace boundaries and shutdown fence publication.
+  Restoring a failed workspace switch schedules a fresh pass, never revives the
+  cancelled command. Search highlights are discarded and re-derived with the
+  retained query after geometry publication.
 
 ## Generation boundaries and shutdown
 

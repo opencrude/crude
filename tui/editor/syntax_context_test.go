@@ -74,15 +74,14 @@ func TestSyntaxOffscreenDelimiterEditAndStaleCompletion(t *testing.T) {
 		t.Fatal("fixture not inside string")
 	}
 	// Change only an offscreen delimiter. Identical visible bytes must change
-	// lexical meaning, and stale colour maps must disappear immediately.
+	// lexical meaning. Mapped unchanged-line decorations may remain visible
+	// during preparation, but the replacement full-document parse must update
+	// them even though their visible source bytes did not change.
 	ed.SetSelection(0, 0, 0, 3)
 	if !ed.DeleteSelection() {
 		t.Fatal("delete opener")
 	}
 	ed.scrollY = 600
-	if ed.lineColorMap(600) != nil {
-		t.Fatal("old source colour map survived edit")
-	}
 	settleSyntax(t, ed)
 	buf := paintEditor(ed, 80, 12)
 	if got := buf.Get(x, 0); got.Char != '#' || !got.FG.Equal(ed.cellColor(ed.th.Colors.Code.Comment)) {

@@ -131,7 +131,8 @@ type Editor struct {
 	chromaStyle *chroma.Style
 	chromaLexer chroma.Lexer
 	// Document-owned syntax is prepared off-UI; only visible cell maps are cached.
-	chromaLineCache                  map[int][]string
+	chromaLineCache                  map[int]syntaxLine
+	chromaLineScratch                map[int]syntaxLine
 	syntaxDocument                   *syntaxDocument
 	syntaxBuffer                     *PieceTable
 	syntaxRevision, syntaxGeneration uint64
@@ -156,6 +157,9 @@ type Editor struct {
 	diagnostics         []LSPDiagnostic
 	diagnosticsRevision uint64
 	diagByLine          map[int][]diagSpan
+	diagPaintBuffer     *PieceTable
+	diagPaintRevision   uint64
+	diagPaintScratch    map[int][]diagSpan
 
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
@@ -437,6 +441,7 @@ func (e *Editor) NoteDiskMissing() {
 }
 
 func (e *Editor) invalidateEditorCaches() {
+	e.remapDiagnosticPaint()
 	e.lineRunesCacheValid = false
 	e.lineRunesCacheLine = -1
 	e.lineRunesCache = nil
@@ -448,7 +453,7 @@ func (e *Editor) invalidateEditorCaches() {
 		currentSyntax = true
 	}
 	if !currentSyntax {
-		e.invalidateSyntax()
+		e.invalidateEditedSyntax()
 	}
 }
 
@@ -581,6 +586,7 @@ func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 	}
 	e.diagnostics = converted
 	e.diagnosticsRevision = e.Revision()
+	e.diagPaintBuffer, e.diagPaintRevision = e.buf, e.Revision()
 	e.ClearHover()
 
 	byLine := make(map[int][]diagSpan, len(converted))
@@ -630,7 +636,7 @@ func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
 func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagByLine == nil || e.diagnosticsRevision != e.Revision() {
+	if e.diagByLine == nil || e.diagPaintBuffer != e.buf || e.diagPaintRevision != e.Revision() {
 		return nil
 	}
 	return e.diagByLine[lineIdx]
@@ -651,6 +657,9 @@ func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
 func (e *Editor) Diagnostics() []LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
+	if e.diagnosticsRevision != e.Revision() {
+		return nil
+	}
 	out := make([]LSPDiagnostic, len(e.diagnostics))
 	copy(out, e.diagnostics)
 	return out
@@ -695,6 +704,9 @@ func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
 func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
+	if e.diagnosticsRevision != e.Revision() {
+		return nil
+	}
 	for i := range e.diagnostics {
 		d := &e.diagnostics[i]
 		if d.Severity != DiagError {
@@ -713,6 +725,9 @@ func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
+	if e.diagnosticsRevision != e.Revision() {
+		return nil
+	}
 	for i := len(e.diagnostics) - 1; i >= 0; i-- {
 		d := &e.diagnostics[i]
 		if d.Severity != DiagError {
@@ -731,6 +746,9 @@ func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
 func (e *Editor) FirstError() *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
+	if e.diagnosticsRevision != e.Revision() {
+		return nil
+	}
 	for i := range e.diagnostics {
 		d := &e.diagnostics[i]
 		if d.Severity == DiagError {

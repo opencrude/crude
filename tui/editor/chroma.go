@@ -30,6 +30,11 @@ type syntaxDocument struct {
 	spans []syntaxSpan
 }
 
+type syntaxLine struct {
+	text    string
+	colours []string
+}
+
 type syntaxJob struct {
 	done                 chan struct{}
 	cancel               context.CancelFunc
@@ -82,13 +87,108 @@ func (e *Editor) initChroma() {
 }
 
 func (e *Editor) invalidateSyntax() {
+	e.cancelSyntax()
+	e.syntaxBuffer = nil
+	e.syntaxRevision = 0
+	e.chromaLineCache = nil
+	e.chromaLineScratch = nil
+}
+
+func (e *Editor) cancelSyntax() {
 	e.syntaxGeneration++
 	if e.syntaxJob != nil {
 		e.syntaxJob.cancel()
 	}
 	e.syntaxDocument = nil
-	e.chromaLineCache = nil
 	e.syntaxFailed = false
+}
+
+// Map retained decorations through exact source edits while the replacement
+// document is prepared. They are provisional presentation, not a parse of the
+// new revision. Geometry is always current; parsing never restarts from a
+// viewport-dependent lexical state.
+func (e *Editor) invalidateEditedSyntax() {
+	previous, revision := e.syntaxRevision, e.buf.Revision()
+	if e.syntaxBuffer != e.buf || revision < previous || revision-previous > uint64(len(e.buf.lineChanges)) {
+		clear(e.chromaLineCache)
+	} else {
+		for next := previous + 1; next <= revision; next++ {
+			change := e.buf.lineChanges[next%uint64(len(e.buf.lineChanges))]
+			if change.revision != next {
+				// Whole-source replacement has no line-preserving mutation.
+				clear(e.chromaLineCache)
+				break
+			}
+			if change.delta == 0 {
+				if line, ok := e.chromaLineCache[change.start]; ok && change.start == change.end && change.inline {
+					e.chromaLineCache[change.start] = mapSyntaxLine(line, change)
+					continue
+				}
+				for line := range e.chromaLineCache {
+					if line >= change.start && line <= change.end {
+						delete(e.chromaLineCache, line)
+					}
+				}
+				continue
+			}
+			if e.chromaLineScratch == nil {
+				e.chromaLineScratch = make(map[int]syntaxLine, len(e.chromaLineCache))
+			}
+			clear(e.chromaLineScratch)
+			for line, colours := range e.chromaLineCache {
+				switch {
+				case line < change.start:
+					e.chromaLineScratch[line] = colours
+				case line > change.end:
+					e.chromaLineScratch[line+change.delta] = colours
+				}
+			}
+			e.chromaLineCache, e.chromaLineScratch = e.chromaLineScratch, e.chromaLineCache
+			clear(e.chromaLineScratch)
+		}
+	}
+	e.cancelSyntax()
+	e.syntaxBuffer, e.syntaxRevision = e.buf, revision
+}
+
+func mapSyntaxLine(line syntaxLine, edit bufferLineChange) syntaxLine {
+	start, end := edit.byteStart, edit.byteEnd
+	if start < 0 || end < start || end > len(line.text) {
+		return syntaxLine{}
+	}
+	raw := line.text[:start] + edit.text + line.text[end:]
+	colours := make([]string, LineVisualWidth(raw, tabWidth))
+	oldOffset, oldCol, offset, col := 0, 0, 0, 0
+	for rest := raw; rest != ""; {
+		size, width := firstSourceUnit(rest, col)
+		if size == 0 {
+			break
+		}
+		original := offset
+		if offset >= start+len(edit.text) {
+			original += end - start - len(edit.text)
+		} else if offset >= start {
+			original = start
+		}
+		for oldOffset < len(line.text) {
+			n, w := firstSourceUnit(line.text[oldOffset:], oldCol)
+			if n == 0 || oldOffset+n > original {
+				break
+			}
+			oldOffset, oldCol = oldOffset+n, oldCol+w
+		}
+		styleCol := oldCol
+		if styleCol == len(line.colours) && styleCol > 0 {
+			styleCol--
+		}
+		if styleCol < len(line.colours) {
+			for x := col; x < col+width; x++ {
+				colours[x] = line.colours[styleCol]
+			}
+		}
+		offset, col, rest = offset+size, col+width, rest[size:]
+	}
+	return syntaxLine{text: raw, colours: colours}
 }
 
 func (e *Editor) startSyntax() {
@@ -224,13 +324,13 @@ func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 	}
 	fromLine, toLine = max(0, fromLine), min(len(doc.lines), toLine)
 	if e.chromaLineCache == nil {
-		e.chromaLineCache = make(map[int][]string)
+		e.chromaLineCache = make(map[int]syntaxLine)
 	}
 	if len(e.chromaLineCache) > max(512, (toLine-fromLine)*2) {
 		clear(e.chromaLineCache)
 	}
 	for line := fromLine; line < toLine; line++ {
-		if e.chromaLineCache[line] != nil {
+		if e.chromaLineCache[line].colours != nil {
 			continue
 		}
 		start, end := doc.lines[line], len(doc.text)
@@ -264,7 +364,7 @@ func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 			}
 			col, offset, rest = col+width, offset+len(cluster), rest[len(cluster):]
 		}
-		e.chromaLineCache[line] = cm
+		e.chromaLineCache[line] = syntaxLine{text: raw, colours: cm}
 	}
 }
 
@@ -272,7 +372,7 @@ func (e *Editor) lineColorMap(lineIdx int) []string {
 	if e.syntaxBuffer != e.buf || e.syntaxRevision != e.buf.Revision() {
 		return nil
 	}
-	return e.chromaLineCache[lineIdx]
+	return e.chromaLineCache[lineIdx].colours
 }
 
 func (e *Editor) chromaTokenColor(tt chroma.TokenType) string {

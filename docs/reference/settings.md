@@ -855,6 +855,17 @@ project markers, environment table, and the JSON `settings`/`initializationOptio
 objects. Per-language `Languages` entries are the only server authority. `workspace.LSPManager` reads the **effective**
 `LSPSettings` and refuses to start or request gated features.
 
+Enabling is lazy, not a workspace scan: with **Start on open** enabled, opening
+a supported source file starts its configured server. Saving enable also starts
+services for already-open source buffers without reopening or discarding their
+unsaved text. With no source open, Problems / Workspace health says **Waiting for
+source file** and its expanded details explain the next step. Disabled, paused,
+manual-start, unsupported-file and document-limit states have distinct owner-derived
+explanations; actual startup failures remain failures with their original reason.
+**Detect servers** selects configured commands by file type; it does not install
+their executables. The server must already be installed on the core host and
+available to its process environment.
+
 The default subprocess transport is `lspclient/`, independent of the editor/TUI.
 The workspace supplies it by default; merely constructing a manager launches no
 server. Test transports may override that factory. Connected LSP has typed worker requests, replicated diagnostics/health and

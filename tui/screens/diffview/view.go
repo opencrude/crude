@@ -91,8 +91,8 @@ func (s *Screen) SetPresentation(p Presentation) {
 func (s *Screen) PreferredPresentation() Presentation { return s.preferred }
 func (s *Screen) Presentation() Presentation          { return s.presented }
 
-// InvalidateWidthProfile crosses the effective-terminal geometry boundary once,
-// without rerunning diffing or lexing or replacing source selection identities.
+// InvalidateWidthProfile publishes already-reflowed source geometry. The owner
+// must run SourceGeometry ReflowCommands off Update before calling this method.
 func (s *Screen) InvalidateWidthProfile() {
 	s.prepared.beforeWidth, s.prepared.afterWidth = s.prepared.beforeSource.Width(), s.prepared.afterSource.Width()
 	s.rebuildMatches()
@@ -251,6 +251,10 @@ func (s *Screen) SearchStatus() string {
 }
 func (s *Screen) rebuildMatches() {
 	s.matchIndex = -1
+	if s.geometryStatus() != "" {
+		s.search.Suspend()
+		return
+	}
 	if s.query == "" {
 		s.search.Reset("", nil)
 		return
@@ -392,6 +396,10 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	t := s.tokens
 	bg := t.Color(ui.ColorBg)
 	x, y := ox+r.X, oy+r.Y
+	if status := s.geometryStatus(); status != "" {
+		buf.WriteString(x, y, rendering.TruncateVisual(status, r.W, "…"), t.Color(ui.ColorMuted), bg, 0)
+		return
+	}
 	label := s.prepared.Comparison.AfterLabel
 	if p.before {
 		label = s.prepared.Comparison.BeforeLabel
@@ -459,7 +467,8 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		}
 		spanIndex := 0
 		source, sourceNumber := p.sourceLines(row)
-		for unit := range source.rangeUnits(sourceNumber, p.horizontal.Offset(), p.horizontal.Offset()+r.W-g) {
+		cursor := source.cursor(sourceNumber, p.horizontal.Offset(), p.horizontal.Offset()+r.W-g)
+		for unit, ok := cursor.next(); ok; unit, ok = cursor.next() {
 			left := unit.column - p.horizontal.Offset()
 			if left >= 0 && left+unit.width <= r.W-g {
 				fg, fill := t.Color(role), rowBG
@@ -618,6 +627,9 @@ func (p *pane) CancelPointerCapture() {
 }
 func (p *pane) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 	s := p.owner
+	if s.geometryStatus() != "" {
+		return ui.EventResult{Handled: true}
+	}
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	if e.IsKey() {
 		if ui.IsCopyChord(e.Key) {

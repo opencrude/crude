@@ -4,8 +4,6 @@ import (
 	"image/color"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -92,6 +90,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	// is mounted on, such as a window's popup fill.
 	buf.Fill(blankCell)
 	sbX := sw + textW
+	e.remapDiagnosticPaint()
 	e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
 	for y := 0; y < bodyH; y++ {
 		bufY := y
@@ -203,7 +202,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						case e.isSelected(lineIdx, vCol):
 							fg := e.cellColor(e.th.Colors.Fg)
 							if vCol < len(colorMap) && colorMap[vCol] != "" {
-								fg = e.cellColor(lipgloss.Color(colorMap[vCol]))
+								fg = rendering.LipglossColorToCell(colorMap[vCol])
 							}
 							fg, bg := e.tokens.TextSelectionColors(fg)
 							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bg, 0, blankCell)
@@ -211,7 +210,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
 							if vCol < len(colorMap) && colorMap[vCol] != "" {
-								fg = e.cellColor(lipgloss.Color(colorMap[vCol]))
+								fg = rendering.LipglossColorToCell(colorMap[vCol])
 							}
 							if sev > 0 {
 								fg = diagFg
@@ -223,7 +222,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						default:
 							fg := e.cellColor(e.th.Colors.Fg)
 							if vCol < len(colorMap) && colorMap[vCol] != "" {
-								fg = e.cellColor(lipgloss.Color(colorMap[vCol]))
+								fg = rendering.LipglossColorToCell(colorMap[vCol])
 							}
 							if sev > 0 {
 								fg = diagFg

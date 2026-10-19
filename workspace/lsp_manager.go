@@ -32,6 +32,7 @@ type LSPManager struct {
 	activeConnected                                                       bool
 	activeError                                                           string
 	activeStatus                                                          LSPStatus
+	idleStatus, idleReason                                                string
 	paused, manualStart, closed                                           bool
 	workerRunning                                                         bool
 	wake                                                                  chan struct{}
@@ -66,6 +67,7 @@ func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) 
 }
 
 func (m *LSPManager) recomputeActiveStatusLocked() {
+	defer m.recomputeIdleReasonLocked()
 	m.version++
 	m.broadcastLocked()
 	if m.paused || m.closed || !m.settings.Enabled {
@@ -112,6 +114,37 @@ func (m *LSPManager) recomputeActiveStatusLocked() {
 		return
 	}
 	m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
+}
+
+func (m *LSPManager) recomputeIdleReasonLocked() {
+	m.idleStatus, m.idleReason = "", ""
+	if m.activeStatus != LSPIdle {
+		return
+	}
+	switch {
+	case !m.settings.Enabled:
+		m.idleStatus, m.idleReason = "Language intelligence off", "Enable Language intelligence in Settings → Code Intelligence."
+	case m.paused || m.closed:
+		m.idleStatus, m.idleReason = "Language servers paused", "Use Start Language Servers to resume services for open source files."
+	case !m.settings.StartOnOpen && !m.manualStart:
+		m.idleStatus, m.idleReason = "Automatic start off", "Enable Start on open in Settings → Code Intelligence, or use Start Language Servers."
+	case m.activeError != "":
+		m.idleStatus, m.idleReason = "Language services unavailable", m.activeError
+	case len(m.documents) == 0:
+		m.idleStatus, m.idleReason = "Waiting for source file", "Open a supported source file (for example, .go) to start its server. Enabling does not scan the workspace."
+	default:
+		if doc := m.documents[m.activeFilePath]; doc != nil {
+			if state := m.states[doc.key]; state != nil && state.stopped {
+				m.idleStatus, m.idleReason = "Language server stopped", "Restart the stopped server to resume services for this file."
+				return
+			}
+			if _, ok := m.resolveServerLocked(m.activeFilePath); !ok {
+				m.idleStatus, m.idleReason = "No matching language server", "No enabled server matches the open file. Check Settings → Language Servers; server executables must be installed separately."
+				return
+			}
+		}
+		m.idleStatus, m.idleReason = "Language services idle", "Services start only for supported open source files, not every file in the workspace."
+	}
 }
 
 func (m *LSPManager) activeFileStateLocked() (*lspClientState, bool) {
@@ -260,6 +293,8 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 		ServerSyncing:  m.syncing,
 		ServerFailed:   m.isFailedLocked(),
 		ServerError:    m.activeError,
+		IdleStatus:     m.idleStatus,
+		IdleReason:     m.idleReason,
 		FilesTracked:   len(m.fileDiagnostics),
 		FilesAffected:  m.filesAffected,
 		Errors:         m.diagnosticErrors,

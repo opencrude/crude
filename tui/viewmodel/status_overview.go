@@ -1060,6 +1060,9 @@ func workspaceHealthSummary(insights ttypes.ProjectInsights) string {
 	if insights.ServerReady {
 		return "Language services ready"
 	}
+	if insights.IdleStatus != "" {
+		return insights.IdleStatus
+	}
 	return "No language server"
 }
 

@@ -28,6 +28,7 @@ BenchmarkEditorScrollRepaint_120x40 9600 1380
 BenchmarkBufferDirtyCheckLargeFile 0 0
 BenchmarkBufferSavepointManualRoundTripLargeFile 0 0
 BenchmarkSyntaxLongPythonViewport 0 0
+BenchmarkSyntaxMapInlineDecorations 830 3
 BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
 BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
 BenchmarkChatStreamPaint_80x24 9000 300
@@ -50,6 +51,7 @@ BenchmarkDenseSyntaxDiffPaint 180000 375
 BenchmarkDenseDiffPaint 173000 650
 BenchmarkGitDiffLongLinePaint/short 800 22
 BenchmarkGitDiffLongLinePaint/two_megabytes 800 22
+BenchmarkGitDiffLongLineFarRightPaint 800 22
 BenchmarkOpenIndexedHistory 460000 11000
 BenchmarkOpenIndexedHistory windows 600000 14000
 BenchmarkProjectInsightsCached10kDiagnostics 0 0
