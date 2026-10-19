@@ -1,0 +1,96 @@
+name: Public install smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published latest release to install and reinstall anonymously
+        required: true
+        default: v0.1.0
+        type: string
+      commit:
+        description: Expected full source commit reported by the installed binary
+        required: true
+        default: 984affa35c527db0020637af38e92558878e1f92
+        type: string
+
+# No checkout, token, compiled fixtures or substituted download transport: these
+# jobs exercise only the actual public release assets on disposable runners.
+permissions: {}
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+    steps:
+      - name: Public latest Linux installation and explicit repeat
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          unset GH_TOKEN GITHUB_TOKEN CRUDE_INSTALL_DIR ZDOTDIR
+          export HOME="$RUNNER_TEMP/crude public install/home"
+          export CRUDE_HOME="$HOME"
+          export SHELL=/bin/bash
+          mkdir -p "$HOME/.crude"
+          printf 'retained work\n' > "$HOME/.crude/preserved.txt"
+          installer="$RUNNER_TEMP/crude-public-install.sh"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --retry 3 --connect-timeout 15 --max-time 180 \
+            https://github.com/agenticcrude/crude/releases/latest/download/install.sh -o "$installer"
+          bash "$installer" --accept-beta-risk
+          binary="$HOME/.local/bin/crude"
+          version=$("$binary" --version)
+          [[ "$version" == "crude $RELEASE_TAG ($RELEASE_COMMIT; "*'; linux/amd64)' ]]
+          hash=$(sha256sum "$binary")
+          bash "$installer" --accept-beta-risk --version "$RELEASE_TAG"
+          test "$(sha256sum "$binary")" = "$hash"
+          test "$(cat "$HOME/.crude/preserved.txt")" = 'retained work'
+          test "$(grep -c '^export PATH=' "$HOME/.profile")" -eq 1
+          test "$(grep -c '^export PATH=' "$HOME/.bashrc")" -eq 1
+          test -n "$(find "$HOME/.local/bin/.crude-licenses" -name LICENSE-APACHE -print -quit)"
+          "$binary" --version
+          echo PUBLIC_LINUX_INSTALL_AND_REPEAT_PASSED
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    runs-on: windows-2022
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+    steps:
+      - name: Public latest Windows installation and explicit repeat
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:RELEASE_COMMIT -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid release preconditions' }
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'crude public install/local app data'
+          $env:CRUDE_HOME = Join-Path $env:RUNNER_TEMP 'crude public install/profile'
+          New-Item -ItemType Directory -Force (Join-Path $env:CRUDE_HOME '.crude') | Out-Null
+          $marker = Join-Path $env:CRUDE_HOME '.crude/preserved.txt'
+          [IO.File]::WriteAllText($marker, 'retained work')
+          $installer = Join-Path $env:RUNNER_TEMP 'crude-public-install.ps1'
+          Invoke-WebRequest https://github.com/agenticcrude/crude/releases/latest/download/install.ps1 -OutFile $installer -UseBasicParsing -ErrorAction Stop
+          & $installer -AcceptBetaRisk
+          $binary = Join-Path $env:LOCALAPPDATA 'Crude/bin/crude.exe'
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0 -or $version -cnotmatch ('^crude ' + [Regex]::Escape($env:RELEASE_TAG) + ' \(' + $env:RELEASE_COMMIT + '; [0-9TZ:-]+; windows/amd64\)$')) { throw "Wrong public binary: $version" }
+          $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+          $stamp = [DateTime]::UtcNow.AddDays(-2)
+          [IO.File]::SetLastWriteTimeUtc($binary, $stamp)
+          & $installer -AcceptBetaRisk -Version $env:RELEASE_TAG
+          if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne $hash -or [IO.File]::GetLastWriteTimeUtc($binary) -ne $stamp) { throw 'Repeat replaced an identical verified binary' }
+          if ([IO.File]::ReadAllText($marker) -cne 'retained work') { throw 'Install changed application data' }
+          if (-not (Test-Path -LiteralPath (Join-Path (Split-Path $binary) 'LICENSE-APACHE'))) { throw 'Redistribution license missing' }
+          if (-not (Get-Command crude -ErrorAction Stop).Source.Equals($binary, [StringComparison]::OrdinalIgnoreCase)) { throw 'User-local installation is not on PATH' }
+          & $binary --version
+          Write-Output PUBLIC_WINDOWS_INSTALL_AND_REPEAT_PASSED
