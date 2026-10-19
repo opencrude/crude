@@ -132,6 +132,13 @@ Linux runtime dependencies and Windows DLL imports were inspected before the
 reviewed draft was published. An anonymous latest-release lookup resolves all
 six assets. No macOS/ARM64/musl package or publisher-signature claim is implied.
 
+[Public install run 39327570783](https://github.com/agenticcrude/crude/actions/runs/39327570783)
+also passed real anonymous latest installation and explicit-tag reinstallation
+on Linux, Windows PowerShell 5.1 and PowerShell 7. The first PowerShell 5.1 runner
+received HTTP 403 from GitHub's release-metadata API before installation; the
+unchanged smoke check passed on recheck. No token, release replacement, network
+bypass or product timeout change was used to make that check pass.
+
 `public-install-smoke.yml` performs post-publication checks on standard Linux and
 Windows runners, including Windows PowerShell 5.1 and PowerShell 7. It downloads
 the real latest installers anonymously, installs with the beta-risk opt-in, and
