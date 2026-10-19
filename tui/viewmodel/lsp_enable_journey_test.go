@@ -33,8 +33,11 @@ func TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource(t *testing.T) {
 				s := w.AppDefaults()
 				s.LSP.Enabled = false
 				w.SetAppDefaults(s)
-				w.OnAppPreferencesCommit = func(before, after types.AppSettings) (types.AppSettings, error) {
-					after.Accounts = before.Accounts
+				w.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+					after := w.AppDefaults()
+					if err := types.ApplySettingsEdits(&after, edits); err != nil {
+						return after, err
+					}
 					raw, err := json.Marshal(after)
 					if err == nil {
 						err = os.WriteFile(saved, raw, 0600)

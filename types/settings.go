@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
 	"slices"
 
@@ -16,7 +17,7 @@ const (
 	MaxContextRetentionTokens = 200_000
 )
 
-// AccountChange is one revision-checked application credential mutation.
+// AccountChange is one identity-scoped application account mutation.
 // Other app preferences are never included in the write.
 type AccountChange struct {
 	ID         string
@@ -38,7 +39,7 @@ const (
 // changes, down to the individual FIELD.
 //
 // Each category holds a partial JSON object carrying just the leaf values
-// the workspace overrides; an absent key inherits from the application
+// the workspace explicitly set; an absent key inherits from the application
 // layer forever, including later application-level edits. Whole-category
 // snapshots are what made a workspace behave like a hard copy: changing
 // one editor field used to freeze every other editor field at whatever the
@@ -257,6 +258,7 @@ func NormalizeLSP(s LSPSettings) LSPSettings {
 // applied field by field. Any leaf the workspace does not name inherits from
 // the application layer, so later app-level edits keep flowing through.
 func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
+	app = cloneAppSettings(app)
 	ApplyAppDefaults(&app)
 	out := cloneAppSettings(app)
 	applySparse(&out.Theme, ws.Theme)
@@ -380,25 +382,9 @@ func sparseDiff(base, working any) json.RawMessage {
 // applySparse deep-merges a partial JSON object onto dst, which must already
 // hold the inherited value.
 func applySparse(dst any, overlay json.RawMessage) {
-	if len(overlay) == 0 {
-		return
+	if len(overlay) != 0 {
+		_ = DecodeStoredSettings(overlay, dst)
 	}
-	var overlayMap map[string]any
-	if err := json.Unmarshal(overlay, &overlayMap); err != nil || len(overlayMap) == 0 {
-		return
-	}
-	baseMap, ok := jsonObject(dst)
-	if !ok {
-		return
-	}
-	mergeObjects(baseMap, overlayMap)
-	data, err := json.Marshal(baseMap)
-	if err != nil {
-		return
-	}
-	// Merging onto the marshalled form means absent keys keep the inherited
-	// value; unmarshalling the whole object back is therefore lossless.
-	_ = json.Unmarshal(data, dst)
 }
 
 func jsonObject(v any) (map[string]any, bool) {
@@ -466,19 +452,6 @@ func jsonZero(v any) (any, bool) {
 	return nil, false
 }
 
-func mergeObjects(dst, overlay map[string]any) {
-	for key, ov := range overlay {
-		dv, present := dst[key]
-		dm, dIsObj := dv.(map[string]any)
-		om, oIsObj := ov.(map[string]any)
-		if present && dIsObj && oIsObj {
-			mergeObjects(dm, om)
-			continue
-		}
-		dst[key] = ov
-	}
-}
-
 // WorkspaceOverridesFromDiff is OverridesFromDiff for the workspace layer:
 // API keys never leave the application config, so credential-only edits do
 // not create a workspace provider overlay.
@@ -501,23 +474,6 @@ func stripAgentAPIKeys(agents *AgentsSettings) {
 		cat.APIKey = ""
 		agents.Categories[id] = cat
 	}
-	if len(agents.Profiles) == 0 {
-		return
-	}
-	profiles := make([]ProfileSettings, len(agents.Profiles))
-	for i, profile := range agents.Profiles {
-		profiles[i] = profile
-		if profile.Categories == nil {
-			continue
-		}
-		cats := make(map[string]CategorySettings, len(profile.Categories))
-		for id, cat := range profile.Categories {
-			cat.APIKey = ""
-			cats[id] = cat
-		}
-		profiles[i].Categories = cats
-	}
-	agents.Profiles = profiles
 }
 
 // CategoryOverridden reports whether a settings page is stored as a workspace
@@ -540,6 +496,8 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.Capabilities) > 0
 	case "safety":
 		return len(o.Safety) > 0
+	case "local_history", "local history", "history":
+		return len(o.LocalHistory) > 0
 	case "terminal":
 		return len(o.Terminal) > 0
 	}
@@ -580,8 +538,11 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out.Capabilities = captypes.Clone(s.Capabilities)
 	out.Accounts = provider.CloneAccounts(s.Accounts)
 	out.Agents = cloneAgents(s.Agents)
-	out.Memory.MemoryCategory.ContextCompactionPercent = cloneIntSetting(s.Memory.MemoryCategory.ContextCompactionPercent)
-	out.Memory.MemoryCategory.ContextRetentionTokens = cloneIntSetting(s.Memory.MemoryCategory.ContextRetentionTokens)
+	out.Memory.MemoryCategory = CloneCategorySettings(s.Memory.MemoryCategory)
+	out.Theme.PadTop = cloneIntSetting(s.Theme.PadTop)
+	out.Theme.PadBottom = cloneIntSetting(s.Theme.PadBottom)
+	out.Theme.PadLeft = cloneIntSetting(s.Theme.PadLeft)
+	out.Theme.PadRight = cloneIntSetting(s.Theme.PadRight)
 	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
 	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
 	out.LSP = CloneLSPSettings(s.LSP)
@@ -590,31 +551,41 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	return out
 }
 
+// CloneAppSettings detaches a read projection; no mutable child can modify its parent.
+func CloneAppSettings(s AppSettings) AppSettings { return cloneAppSettings(s) }
+
 func cloneAgents(src AgentsSettings) AgentsSettings {
 	out := src
+	out.AgentProfiles = CloneAgentProfiles(src.AgentProfiles)
 	if src.Categories != nil {
 		out.Categories = make(map[string]CategorySettings, len(src.Categories))
 		for k, v := range src.Categories {
-			v.ContextCompactionPercent = cloneIntSetting(v.ContextCompactionPercent)
-			v.ContextRetentionTokens = cloneIntSetting(v.ContextRetentionTokens)
-			out.Categories[k] = v
-		}
-	}
-	if src.Profiles != nil {
-		out.Profiles = make([]ProfileSettings, len(src.Profiles))
-		for i, profile := range src.Profiles {
-			out.Profiles[i] = profile
-			if profile.Categories != nil {
-				out.Profiles[i].Categories = make(map[string]CategorySettings, len(profile.Categories))
-				for key, value := range profile.Categories {
-					value.ContextCompactionPercent = cloneIntSetting(value.ContextCompactionPercent)
-					value.ContextRetentionTokens = cloneIntSetting(value.ContextRetentionTokens)
-					out.Profiles[i].Categories[key] = value
-				}
-			}
+			out.Categories[k] = CloneCategorySettings(v)
 		}
 	}
 	return out
+}
+
+func CloneCategorySettings(v CategorySettings) CategorySettings {
+	v.ContextCompactionPercent = cloneIntSetting(v.ContextCompactionPercent)
+	v.ContextRetentionTokens = cloneIntSetting(v.ContextRetentionTokens)
+	v.AllowedTools = slices.Clone(v.AllowedTools)
+	v.DeniedTools = slices.Clone(v.DeniedTools)
+	v.SkillModes = maps.Clone(v.SkillModes)
+	v.ModelModalities = slices.Clone(v.ModelModalities)
+	if v.Enabled != nil {
+		value := *v.Enabled
+		v.Enabled = &value
+	}
+	if v.ModelTemperature != nil {
+		value := *v.ModelTemperature
+		v.ModelTemperature = &value
+	}
+	if v.ModelTopP != nil {
+		value := *v.ModelTopP
+		v.ModelTopP = &value
+	}
+	return v
 }
 
 func cloneIntSetting(src *int) *int {

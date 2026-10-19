@@ -12,11 +12,10 @@ import (
 // is serialized. Run performs I/O without reading workspace maps or mutating
 // frontend state. A repeated Run returns the same result, never a second toggle.
 type SessionSettingsOperation struct {
-	owner    *Session
-	backend  *session.Session
-	form     *types.Settings
-	expected *uint64
-	reset    bool
+	owner   *Session
+	backend *session.Session
+	form    *types.Settings
+	reset   bool
 	// capability turns one skill/MCP server on or off for the session.
 	capability *sessionCapabilityChange
 	// remote performs the operation in a core when the owner is a replica.
@@ -61,26 +60,10 @@ func (w *Workspace) PrepareSessionCapabilityToggle(sessionID, id string, enabled
 	return op, err
 }
 
-func (w *Workspace) PrepareSessionSettingsSaveAtRevision(sessionID string, settings types.Settings, expected uint64) (*SessionSettingsOperation, error) {
-	op, err := w.PrepareSessionSettingsSave(sessionID, settings)
-	if err == nil {
-		op.expected = &expected
-	}
-	return op, err
-}
-
-func (w *Workspace) PrepareSessionSettingsToggleAtRevision(sessionID string, expected uint64) (*SessionSettingsOperation, error) {
+func (w *Workspace) PrepareSessionSettingsReset(sessionID string) (*SessionSettingsOperation, error) {
 	op, err := w.prepareSessionSettings(sessionID)
 	if err == nil {
-		op.expected = &expected
-	}
-	return op, err
-}
-
-func (w *Workspace) PrepareSessionSettingsResetAtRevision(sessionID string, expected uint64) (*SessionSettingsOperation, error) {
-	op, err := w.prepareSessionSettings(sessionID)
-	if err == nil {
-		op.expected, op.reset = &expected, true
+		op.reset = true
 	}
 	return op, err
 }
@@ -107,11 +90,7 @@ func (operation *SessionSettingsOperation) Run() SessionSettingsResult {
 		} else if operation.capability != nil {
 			operation.result.Snapshot, operation.result.Err = operation.backend.SetCapabilityEnabled(operation.capability.id, operation.capability.enabled)
 		} else if operation.reset {
-			operation.result.Snapshot, operation.result.Err = operation.backend.ResetSettingsSnapshotAtRevision(*operation.expected)
-		} else if operation.expected != nil && operation.form == nil {
-			operation.result.Snapshot, operation.result.Err = operation.backend.ToggleMultiAgentAtRevision(*operation.expected)
-		} else if operation.expected != nil {
-			operation.result.Snapshot, operation.result.Err = operation.backend.SaveSettingsSnapshotAtRevision(*operation.form, *operation.expected)
+			operation.result.Snapshot, operation.result.Err = operation.backend.ResetSettingsSnapshot()
 		} else if operation.form == nil {
 			operation.result.Snapshot, operation.result.Err = operation.backend.ToggleMultiAgent()
 		} else {
@@ -171,7 +150,7 @@ func (owner *Session) InstallSettingsSnapshot(snapshot session.SettingsSnapshotS
 	return owner.installSettings(snapshot)
 }
 
-// SettingsRevision is the installed settings revision that fences the next save.
+// SettingsRevision is an observation generation for replica publication.
 func (owner *Session) SettingsRevision() uint64 {
 	if owner == nil {
 		return 0

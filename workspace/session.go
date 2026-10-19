@@ -140,11 +140,8 @@ func cloneSettings(src types.Settings) types.Settings {
 	dst := src
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.Agents.AgentProfiles = types.CloneAgentProfiles(src.Agents.AgentProfiles)
-	dst.Agents.Profiles = slices.Clone(src.Agents.Profiles)
-	for i := range dst.Agents.Profiles {
-		dst.Agents.Profiles[i].Categories = copyCategoryMap(src.Agents.Profiles[i].Categories)
-	}
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
+	dst.SessionEdits = slices.Clone(src.SessionEdits)
 	dst.Capabilities = captypes.Clone(src.Capabilities)
 	dst.Memory.MemoryCategory = cloneCategorySettings(src.Memory.MemoryCategory)
 	dst.Safety.CommandRules = slices.Clone(src.Safety.CommandRules)
@@ -161,6 +158,10 @@ func cloneSettings(src types.Settings) types.Settings {
 	if src.SessionMaxSubAgents != nil {
 		value := *src.SessionMaxSubAgents
 		dst.SessionMaxSubAgents = &value
+	}
+	if src.SessionTurnLogs != nil {
+		value := *src.SessionTurnLogs
+		dst.SessionTurnLogs = &value
 	}
 	return dst
 }

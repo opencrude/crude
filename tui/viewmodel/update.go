@@ -882,6 +882,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.savePreferences(msg))
 	case preferencesSavedMsg:
 		m.applyPreferencesSaved(msg)
+	case settingsShortcutResultMsg:
+		m.applySettingsShortcut(msg)
 	case recoveryRetryResultMsg:
 		m.applyRecoveryRetryResult(msg)
 	case recoveryCancelResultMsg:
@@ -1005,16 +1007,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case settingsui.ScopeMsg:
 		m.openSettings(msg.Scope)
 	case settingsui.ResetSectionMsg:
-		overrides := m.ws.LoadWorkspaceOverrides()
-		overrides.ClearCategory(msg.Key)
-		if err := m.ws.SaveWorkspaceSettings(overrides); err != nil {
-			m.Feedback.NotifyError("Failed to reset section: " + err.Error())
-		} else {
-			m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
-			m.refreshAllSessionSettingsProjections()
-			m.openSettings(types.SettingsScopeWorkspace)
-			m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+		if m.overlayHost == nil {
+			break
 		}
+		body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings))
+		if body == nil || body.Model() != msg.Target {
+			break
+		}
+		overrides := m.ws.LoadWorkspaceOverrides()
+		before := overrides
+		overrides.ClearCategory(msg.Key)
+		if !msg.Target.BeginSave() {
+			break
+		}
+		cmds = append(cmds, m.saveSettingsShortcut(types.SettingsScopeWorkspace, types.SettingsEdits(before, overrides), "Section now inherits Application settings", msg.Target, msg.Key))
 	case settingsui.CancelMsg:
 		// Live preset cycling previews via ThemePreviewMsg without persisting.
 		// Cancel must restore the last saved palette across the whole UI.
@@ -1110,6 +1116,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		cmds = append(cmds, cmd)
 	case sessionsettings.SaveAsWorkspaceMsg:
+		if owner, _ := m.sessionProjections.projectionForSettings(msg.Target); owner == nil {
+			m.Feedback.NotifyError("Session settings owner is no longer available")
+			break
+		}
 		if msg.Settings.SessionMainAgent != "" {
 			m.Feedback.NotifyError("Choose Main Agent before saving agent settings as workspace defaults")
 			break
@@ -1117,16 +1127,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		// Promote the current agent settings to workspace defaults so every
 		// future agent (and new session) inherits them.
 		m.ws.Logger().Info("CONFIG", "session_settings_save_as_workspace")
-		appDefaults := m.ws.AppDefaults()
-		working := appDefaults
-		working.Agents = msg.Settings.Agents
-		overrides := types.WorkspaceOverridesFromDiff(appDefaults, working)
-		if err := m.ws.SaveWorkspaceSettings(overrides); err != nil {
-			m.Feedback.NotifyError("Failed to save as workspace settings: " + err.Error())
-		} else {
-			m.refreshAllSessionSettingsProjections()
-			m.Feedback.NotifyInfo("Agent settings saved as workspace defaults")
-		}
+		edits := promotedSessionEdits(msg.Settings)
+		cmds = append(cmds, m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Agent settings saved as workspace defaults", nil))
 	case sessionSettingsSaveResultMsg:
 		if msg.workspace != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 			break
@@ -1157,17 +1159,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		m.closeProjectionPanel(projection, sessionSettingsPanelID)
 	case sessionsettings.ResetMsg:
-		session, projection := m.sessionProjections.projectionForSettings(msg.Target)
+		session, _ := m.sessionProjections.projectionForSettings(msg.Target)
 		if session == nil {
 			m.Feedback.NotifyError("Session settings owner is no longer available")
-		} else if err := m.ws.ResetSessionSettingsForSession(session.SessionID); err != nil {
-			m.Feedback.NotifyError("Failed to reset session settings: " + err.Error())
 		} else {
-			m.refreshSessionSettingsProjection(session)
-			m.clearThinkingOverflowLatch(session)
-			m.Feedback.NotifyInfo("Session settings now inherit workspace defaults")
+			owner, generation := m.ws, m.workspaceSwitchGen.Load()
+			op, err := owner.PrepareSessionSettingsReset(session.SessionID)
+			if err != nil {
+				m.Feedback.NotifyError(err.Error())
+			} else {
+				cmds = append(cmds, func() tea.Msg {
+					return sessionSettingsSaveResultMsg{target: msg.Target, workspace: owner, generation: generation, result: op.Run()}
+				})
+			}
 		}
-		m.closeProjectionPanel(projection, sessionSettingsPanelID)
 	case sessionsettings.FetchModelsMsg:
 		request := msg
 		target := request.Target

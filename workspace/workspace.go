@@ -183,7 +183,7 @@ type Workspace struct {
 	// Core commits return an immutable durable snapshot. Only the serialized
 	// workspace owner publishes it; workers must never call SetAppDefaults.
 	OnAppAccountCommit     func(ttypes.AccountChange) (ttypes.AppSettings, error)
-	OnAppPreferencesCommit func(before, after ttypes.AppSettings) (ttypes.AppSettings, error)
+	OnAppPreferencesCommit func(edits []ttypes.SettingEdit) (ttypes.AppSettings, error)
 	// OnAppCapabilityRegistration persists one service-initiated application
 	// capability registration. The app layer owns config.json, so it applies the
 	// shared registration owner under its config lock rather than replacing

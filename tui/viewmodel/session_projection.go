@@ -216,6 +216,17 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 
 func (m *App) refreshAllSessionSettingsProjections() {
 	for _, session := range m.ws.Sessions() {
+		if m.sessionProjections != nil {
+			if projection := m.sessionProjections.items[session]; projection != nil && projection.deck != nil {
+				editing := false
+				for _, panel := range projection.deck.Panels() {
+					editing = editing || panel.ID == sessionSettingsPanelID
+				}
+				if editing {
+					continue
+				} // parent publication never consumes an open draft
+			}
+		}
 		m.refreshSessionSettingsProjection(session)
 	}
 }

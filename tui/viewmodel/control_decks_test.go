@@ -117,6 +117,18 @@ func TestConnectedSessionDeckThinkingSaveReceipt(t *testing.T) {
 	if in.ComponentID == "" || !d.HumanOnly || d.Effect != control.Authority {
 		t.Fatal("delegation authority not preserved")
 	}
+	// Reset can remove delegation/permission choices, so its generic agent
+	// control remains human-owned. Drive the native human action for this check.
+	reset := one.app.sessionSettings().HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.reset"})
+	_, cmd := one.app.Update(reset.Cmd())
+	runAppCommand(t, one.app, cmd)
+	one.app.openSessionSettings()
+	if got := one.app.sessionSettings().ToSettings(); len(got.SessionOverrides) != 0 || len(got.SessionEdits) != 0 || got.SessionMultiAgent != nil {
+		t.Fatalf("Reset repinned the effective view or reopened a dirty draft: %+v", got.SessionOverrides)
+	}
+	if one.app.Input.Value() != "owner draft" || two.app.Input.Value() != "peer draft" {
+		t.Fatal("reset consumed a composer")
+	}
 }
 
 func admitDeckController(t *testing.T, runtime *core.Runtime, root string) {

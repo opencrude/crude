@@ -34,7 +34,8 @@ type SessionSettingsDTO struct {
 	CodeIntelligence *bool `json:"code_intelligence"`
 	// MaxSubAgents caps the session's running children; null follows the
 	// workspace setting.
-	MaxSubAgents *int `json:"max_sub_agents"`
+	MaxSubAgents *int  `json:"max_sub_agents"`
+	TurnLogs     *bool `json:"turn_logs"`
 	// DisabledCapabilities is the session-wide skill/MCP gate.
 	DisabledCapabilities []string `json:"disabled_capabilities,omitempty"`
 }
@@ -49,9 +50,8 @@ type SessionSettingsRequest struct {
 	SessionID string `json:"session_id"`
 }
 type SessionSettingsMutationRequest struct {
-	SessionID        string             `json:"session_id"`
-	ExpectedRevision uint64             `json:"expected_revision"`
-	Settings         SessionSettingsDTO `json:"settings"`
+	Edits     []types.SettingEdit `json:"edits"`
+	SessionID string              `json:"session_id"`
 	// Capability turns one installed skill/MCP server on or off for the
 	// session and all its agents (SessionCapabilityToggle only).
 	Capability *SessionCapabilityChange `json:"capability,omitempty"`
@@ -91,14 +91,12 @@ type AccountDraft struct {
 	ExtraBody  SecretUpdate[map[string]any]            `json:"extra_body"`
 }
 type AccountChangeRequest struct {
-	ID               string        `json:"id"`
-	ExpectedRevision string        `json:"expected_revision"`
-	After            *AccountDraft `json:"after"`
+	ID    string        `json:"id"`
+	After *AccountDraft `json:"after"`
 }
 type AccountModelsRequest struct {
-	AccountID        string        `json:"account_id"`
-	ExpectedRevision string        `json:"expected_revision"`
-	Draft            *AccountDraft `json:"draft,omitempty"`
+	AccountID string        `json:"account_id"`
+	Draft     *AccountDraft `json:"draft,omitempty"`
 }
 type AccountModelsResult struct {
 	Models []types.ModelEntry `json:"models"`
@@ -132,7 +130,6 @@ type CapabilityActionRequest struct {
 	Action            captypes.Action         `json:"action"`
 	ConnectionSecrets ConnectionSecretUpdates `json:"connection_secrets"`
 	SourceLocation    SecretUpdate[string]    `json:"source_location"`
-	ExpectedRevision  string                  `json:"expected_revision"`
 }
 type ConnectionSecretUpdates struct {
 	Endpoint      SecretUpdate[string]            `json:"endpoint"`

@@ -156,7 +156,7 @@ func TestSessionDefaultAgentSwitchKeepsOtherRolesAndAccountPin(t *testing.T) {
 		t.Fatalf("root row did not react to selection: %+v", row)
 	}
 	settings := s.ToSettings()
-	if settings.SessionMainAgent != "profile/reviewer" || settings.Model != "review-model" || settings.AccountID != "work" || settings.SessionOverrides["root/profile/reviewer"].AccountID != "work" || settings.SessionOverrides["default"].AccountID != "home" {
+	if settings.SessionMainAgent != "profile/reviewer" || settings.Model != "review-model" || settings.AccountID != "work" || settings.SessionOverrides["root/profile/reviewer"].AccountID != "" || settings.SessionOverrides["default"].AccountID != "home" {
 		t.Fatalf("selected root rewrote another role or failed to pin account: %+v", settings)
 	}
 	s.formModel.SetValue(fieldMainAgent, ui.StringValue(""))
@@ -251,8 +251,8 @@ func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 	// A sub-agent reset returns to inheriting the session main agent live:
 	// no stale copy, no explicit provider/model.
 	got := settings.Agents.Categories["crafter"]
-	if got.Inherit != "main" || got.Model != "" || got.Provider != "" {
-		t.Fatalf("crafter after reset = %+v, want inherit-main reference", got)
+	if got.Model != "workspace-main" || len(settings.SessionOverrides) != 0 {
+		t.Fatalf("crafter reset must show its parent without storing a copy: %+v", got)
 	}
 }
 
@@ -286,8 +286,8 @@ func TestInheritWorkspaceIsLiveReference(t *testing.T) {
 	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
 	screen.inheritWorkspace("default")
 	settings := screen.ToSettings()
-	if got := settings.Agents.Categories["default"].Inherit; got != "workspace" {
-		t.Fatalf("default inherit marker = %q, want workspace", got)
+	if got := settings.Agents.Categories["default"].Model; got != "gpt-5.6" || len(settings.SessionOverrides) != 0 {
+		t.Fatalf("workspace inheritance stored a copied override: %q", got)
 	}
 }
 
@@ -318,8 +318,8 @@ func TestRoleResetPointsAtWorkspace(t *testing.T) {
 		t.Fatal("reset main should remove the session override")
 	}
 	// The main agent's reset points back at the live workspace main.
-	if got := settings.Agents.Categories["default"].Inherit; got != "workspace" {
-		t.Fatalf("default after reset inherit = %q, want workspace", got)
+	if got := settings.Agents.Categories["default"].Model; got != "workspace-main" || len(settings.SessionOverrides) != 0 {
+		t.Fatalf("reset must follow workspace without a stored copy: %q", got)
 	}
 }
 

@@ -21,13 +21,6 @@ type Settings interface {
 	// WorkspaceAgentDefaults returns the effective defaults shown by the
 	// persistent settings dialog.
 	WorkspaceAgentDefaults() types.AgentsSettings
-	// SaveAppSettings persists application-layer settings to config.json via
-	// OnAppSettingsSave. It does not write workspace.db; workspace overrides stay
-	// on SaveWorkspaceSettings.
-	SaveAppSettings(s types.AppSettings) error
-	// SaveWorkspaceSettings persists sparse workspace overrides and reapplies the
-	// effective layer to live sessions and the LSP manager.
-	SaveWorkspaceSettings(overrides types.WorkspaceOverrides) error
 	// SaveAccountChange writes one explicit account operation through the app's
 	// atomic config owner. An unwired workspace must fail, never claim success.
 	SaveAccountChange(change types.AccountChange) error
@@ -38,7 +31,7 @@ type Settings interface {
 	// a command runs. A project switch cannot redirect a late save into its
 	// replacement DB. The returned work performs no live workspace/session
 	// mutation.
-	PreparePreferencesSave(scope types.SettingsScope, settings types.AppSettings, overrides types.WorkspaceOverrides) func() workspace.PreferencesSaveResult
+	PreparePreferencesSave(scope types.SettingsScope, edits []types.SettingEdit) func() workspace.PreferencesSaveResult
 	// ApplyPreferencesSave publishes a successful command snapshot, with no file
 	// or database reads. The frontend rejects stale workspace/overlay generations
 	// first.

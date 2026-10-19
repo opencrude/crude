@@ -22,13 +22,13 @@ const workspaceSettingsKey = "workspace_settings"
 // SetAppDefaults stores the application-layer snapshot from config.json.
 func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 	ttypes.ApplyAppDefaults(&s)
-	w.appDefaults = s
+	w.appDefaults = ttypes.CloneAppSettings(s)
 	w.applyEffectiveSettings()
 }
 
 // AppDefaults returns the application-layer settings (no workspace overlay).
 func (w *Workspace) AppDefaults() ttypes.AppSettings {
-	s := w.appDefaults
+	s := ttypes.CloneAppSettings(w.appDefaults)
 	s.Accounts = w.AllAccounts()
 	ttypes.ApplyAppDefaults(&s)
 	return s
@@ -40,8 +40,8 @@ func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 }
 
 // LoadWorkspaceOverrides reads the sparse workspace overlay from workspace.db.
-// Saves store only leaves that differ from the application layer, so the
-// stored overlay is used as is.
+// Saves store only explicit choices; the stored overlay is used as is,
+// including explicit values equal to their parent.
 func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 	if w == nil || w.WorkspaceDB == nil {
 		return ttypes.WorkspaceOverrides{}

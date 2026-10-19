@@ -54,18 +54,15 @@ type Session struct {
 	cfg        *Config
 	mu         sync.Mutex
 
-	provider *provider.Provider
-	// An older transcript without a connection pin stays disconnected until
-	// the user explicitly saves a session connection.
-	accountUnpinned bool
-	exec            fileio.Executer
-	editor          *fileio.Editor
-	logger          *logger.Logger
-	permStore       *safety.PermissionStore
-	asyncMgr        *fileio.AsyncCommandManager
-	memoryStore     *memory.Store
-	capabilities    captypes.Runtime
-	execution       ExecutionService
+	provider     *provider.Provider
+	exec         fileio.Executer
+	editor       *fileio.Editor
+	logger       *logger.Logger
+	permStore    *safety.PermissionStore
+	asyncMgr     *fileio.AsyncCommandManager
+	memoryStore  *memory.Store
+	capabilities captypes.Runtime
+	execution    ExecutionService
 	// executionSelection is the next-input checkout, not a mutable working
 	// directory. Already admitted input and live runs retain their own binding.
 	executionSelection    string
@@ -193,6 +190,7 @@ type Session struct {
 	// maxSubAgentsOverride caps this session's running children; nil
 	// follows the workspace setting.
 	maxSubAgentsOverride *int
+	turnLogsOverride     *bool
 	// disabledCapabilities is the session-wide capability gate. Every agent
 	// of this session (root and children) reads it live at each request and
 	// tool call; settings operations replace it atomically.
@@ -349,9 +347,6 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Session, error) {
 	workspaceCfg := copyConfig(cfg)
 	cfg = copyConfig(cfg)
-	if err := cfg.pinAccounts(); err != nil {
-		return nil, err
-	}
 	mainCat := cfg.GetActiveDefaultCategory()
 	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
@@ -464,11 +459,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 				_ = lg.Close()
 				return nil, fmt.Errorf("create session metadata: %w", sErr)
 			}
-			if err := sessiondb.SaveAgentSettingOverrides(db, sessionID, pinnedAccountOverrides(cfg)); err != nil {
-				_ = db.Close()
-				_ = lg.Close()
-				return nil, fmt.Errorf("persist account connections: %w", err)
-			}
 		}
 	}
 
@@ -496,7 +486,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		pendingRecoveries:   make(map[string]sessiondb.RecoveryCheckpoint),
 		runtimeProfile:      NewRuntimeProfile(cfg),
 		workspaceCfg:        workspaceCfg,
-		sessionOverrides:    pinnedAccountOverrides(cfg),
+		sessionOverrides:    make(map[string]sessiondb.AgentSettingOverride),
 	}
 
 	if err := sess.loadQueuedInputs(); err != nil {

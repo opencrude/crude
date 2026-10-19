@@ -50,6 +50,29 @@ func TestSettingsFetchRedactsAllCredentialContainers(t *testing.T) {
 	}
 }
 
+func TestSettingsFetchKeepsCapabilityOverridePresenceWhileRedacting(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	stored := `{"capabilities":{"removed_group":"private","connections":{"one":{"disabled":false,"url":"http://user:private@example.test/?token=private","headers":{"Authorization":"private"},"args":["private"],"removed_token":"private","timeout_seconds":"obsolete"},"removed":null},"sources":{"local":{"location":"https://user:private@example.test/?token=private"}}}}`
+	if err := ws.WorkspaceDB.SetSetting("workspace_settings", stored); err != nil {
+		t.Fatal(err)
+	}
+	got := fetchSettingsForTest(t, &actor{ws: ws})
+	var have, want any
+	if err := json.Unmarshal(got.Overrides.Capabilities, &have); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"connections":{"one":{"disabled":false,"url":"http://example.test/"},"removed":null},"sources":{"local":{"location":"https://example.test/"}}}`), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(have, want) {
+		t.Fatalf("redaction invented explicit fields or leaked secrets: %s", got.Overrides.Capabilities)
+	}
+	if ws.WorkspaceDB.GetSetting("workspace_settings") != stored {
+		t.Fatal("reading settings rewrote the layer")
+	}
+}
+
 func TestSessionSettingsDTOCarriesOmittedFields(t *testing.T) {
 	disabled := false
 	value := publicSession(types.Settings{SessionMainAgent: "crafter", SessionMultiAgent: &disabled, SessionOverrides: map[string]types.CategorySettings{"root/crafter": {Model: "specific"}}, APIKey: "secret"})
@@ -93,19 +116,19 @@ func TestAccountDraftSecretKeepIsExplicitAndDetached(t *testing.T) {
 	}
 }
 
-func TestDraftModelsRejectStalePreimageWithoutQuery(t *testing.T) {
+func TestDraftModelsChecksIdentityWithoutConfigRevision(t *testing.T) {
 	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one", APIKey: "secret"}}})
 	a := &actor{ws: ws}
-	raw, err := json.Marshal(coreprotocol.AccountModelsRequest{AccountID: "one", ExpectedRevision: "old", Draft: &coreprotocol.AccountDraft{ID: "one"}})
+	raw, err := json.Marshal(coreprotocol.AccountModelsRequest{AccountID: "one", Draft: &coreprotocol.AccountDraft{ID: "another"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	run, _, _ := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.AccountModels, Payload: raw})
 	got := run(context.Background())
-	if got.Error == nil || got.Error.Code != "stale_preimage" {
-		t.Fatal("stale query was admitted")
+	if got.Error == nil || got.Error.Code != "invalid_request" {
+		t.Fatal("wrong query owner was admitted")
 	}
 }
 
@@ -134,7 +157,7 @@ func TestConfigProfilesProduceStableSettingsRevision(t *testing.T) {
 	first := entityRevision(session.ConfigToSettings(cfg))
 	for i := 0; i < 100; i++ {
 		value := session.ConfigToSettings(cfg)
-		if len(value.Agents.Profiles) != 3 || value.Agents.Profiles[0].Name != "alpha" || value.Agents.Profiles[1].Name != "middle" || value.Agents.Profiles[2].Name != "zeta" || entityRevision(value) != first {
+		if value.Agents.ActiveProfile != "alpha" || entityRevision(value) != first {
 			t.Fatal("profile order or revision unstable")
 		}
 	}

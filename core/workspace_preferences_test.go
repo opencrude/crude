@@ -16,7 +16,7 @@ func TestWorkspacePreferencesWorkerPersistsBeforeActorPublishes(t *testing.T) {
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(types.AppSettings{})
 	a := &actor{ws: ws}
-	request := coreprotocol.WorkspacePreferencesRequest{ExpectedRevision: entityRevision(ws.LoadWorkspaceOverrides()), Overrides: types.WorkspaceOverrides{LSP: json.RawMessage(`{"enabled":false}`)}}
+	request := coreprotocol.WorkspacePreferencesRequest{Edits: types.SettingsEdits(ws.LoadWorkspaceOverrides(), types.WorkspaceOverrides{LSP: json.RawMessage(`{"enabled":false}`)})}
 	payload, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestWorkspacePreferencesWorkerPersistsBeforeActorPublishes(t *testing.T) {
 		t.Fatal("actor failed to install committed preferences")
 	}
 	stale, _, _ := a.prepareWorkspacePreferences(coreprotocol.Request{Method: coreprotocol.WorkspaceOverridesSet, Payload: payload})
-	if out := stale(context.Background()); out.Error == nil || out.Error.Code != "stale_preimage" {
-		t.Fatal("old sparse overlay could overwrite later settings", out.Error)
+	if out := stale(context.Background()); out.Error != nil {
+		t.Fatal("repeating the already-committed desired value must succeed", out.Error)
 	}
 }

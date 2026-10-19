@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"reflect"
@@ -59,7 +60,7 @@ func (s *settingsReplica) install(snapshot settingsSnapshot) bool {
 func (s *settingsReplica) accounts() map[string]provider.Account {
 	out := make(map[string]provider.Account, len(s.current.fetch.Accounts))
 	for id, view := range s.current.fetch.Accounts {
-		account := provider.Account{ID: view.ID, ProviderID: view.ProviderID, Label: view.Label, Connection: provider.CloneTemplate(view.Connection), ObservationRevision: view.Revision}
+		account := provider.Account{ID: view.ID, ProviderID: view.ProviderID, Label: view.Label, Connection: provider.CloneTemplate(view.Connection)}
 		if view.APIKeyPresent {
 			account.APIKey = StoredSecret
 		}
@@ -89,7 +90,6 @@ func (w *Workspace) AppDefaults() types.AppSettings {
 	value := types.MergeAppWorkspace(w.settings.current.fetch.Application, types.WorkspaceOverrides{})
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
-	value.ApplicationRevision, value.WorkspaceRevision = w.settings.current.fetch.ApplicationRevision, w.settings.current.fetch.WorkspaceRevision
 	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)
 	return value
 }
@@ -100,7 +100,6 @@ func (w *Workspace) LoadAppSettings() types.AppSettings {
 	value := types.MergeAppWorkspace(w.settings.current.fetch.Effective, types.WorkspaceOverrides{})
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
-	value.ApplicationRevision, value.WorkspaceRevision = w.settings.current.fetch.ApplicationRevision, w.settings.current.fetch.WorkspaceRevision
 	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)
 	return value
 }
@@ -124,52 +123,6 @@ func (w *Workspace) settingsBase() coreprotocol.SettingsFetchResult {
 }
 
 func (w *Workspace) refreshSettings() { w.pending.add(coreprotocol.Change{Settings: true}) }
-
-// proxyUpdate keeps the stored proxy unless the shell changed its public form.
-func proxyUpdate(base coreprotocol.SettingsFetchResult, next string) coreprotocol.SecretUpdate[string] {
-	if next == base.Application.Network.ProxyURL {
-		return coreprotocol.SecretUpdate[string]{Keep: true}
-	}
-	return coreprotocol.SecretUpdate[string]{Value: &next}
-}
-
-// saveApplication commits preferences against the replica captured on the
-// Update goroutine; it runs on any goroutine.
-func (w *Workspace) saveApplication(ctx context.Context, base coreprotocol.SettingsFetchResult, value types.AppSettings) (types.AppSettings, error) {
-	value.Accounts = nil
-	// Capabilities change through their own exact operations.
-	value.Capabilities = base.Application.Capabilities
-	request := coreprotocol.ApplicationPreferencesRequest{ExpectedRevision: base.ApplicationRevision,
-		Value: value, ProxyURL: proxyUpdate(base, value.Network.ProxyURL)}
-	result, err := w.rpc().SaveApplicationPreferences(ctx, request)
-	if err != nil {
-		return types.AppSettings{}, err
-	}
-	w.refreshSettings()
-	return result.Value, nil
-}
-
-func (w *Workspace) SaveAppSettings(s types.AppSettings) error {
-	base := w.settingsBase()
-	w.commands.push(func(ctx context.Context) {
-		if _, err := w.saveApplication(ctx, base, s); err != nil {
-			w.reportFailure("Save application settings", err)
-		}
-	})
-	return nil
-}
-
-func (w *Workspace) SaveWorkspaceSettings(overrides types.WorkspaceOverrides) error {
-	request := coreprotocol.WorkspacePreferencesRequest{ExpectedRevision: w.settingsBase().WorkspaceRevision, Overrides: overrides}
-	w.commands.push(func(ctx context.Context) {
-		if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, request, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
-			w.reportFailure("Save workspace settings", err)
-			return
-		}
-		w.refreshSettings()
-	})
-	return nil
-}
 
 // draft converts an edited account into a write-only draft. Unchanged stored
 // markers keep the core's credentials; anything else replaces or clears them.
@@ -217,13 +170,7 @@ func draft(after provider.Account, before coreprotocol.AccountView, exists bool)
 
 func (w *Workspace) SaveAccountChange(change types.AccountChange) error {
 	before, exists := w.settingsBase().Accounts[change.ID]
-	if exists && (change.Before == nil || change.Before.ID != change.ID || change.Before.ObservationRevision == "" || change.Before.ObservationRevision != before.Revision) || !exists && change.Before != nil {
-		return errors.New("account changed since this editor opened; reopen it before saving")
-	}
 	request := coreprotocol.AccountChangeRequest{ID: change.ID}
-	if exists {
-		request.ExpectedRevision = change.Before.ObservationRevision
-	}
 	if change.After != nil {
 		value := draft(*change.After, before, exists)
 		request.After = &value
@@ -237,34 +184,42 @@ func (w *Workspace) SaveAccountChange(change types.AccountChange) error {
 	return nil
 }
 
-func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, settings types.AppSettings, overrides types.WorkspaceOverrides) func() workspace.PreferencesSaveResult {
+func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []types.SettingEdit) func() workspace.PreferencesSaveResult {
 	base := w.settingsBase()
 	application := base.Application
 	return func() workspace.PreferencesSaveResult {
 		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 		defer cancel()
 		result := workspace.PreferencesSaveResult{Scope: scope, AppSettings: application}
-		if settings.ApplicationRevision != base.ApplicationRevision || scope == types.SettingsScopeWorkspace && settings.WorkspaceRevision != base.WorkspaceRevision {
-			result.Err = errors.New("preferences changed since this editor opened; reopen it before saving")
-			return result
-		}
 		if scope == types.SettingsScopeWorkspace {
 			var out coreprotocol.WorkspacePreferencesResult
-			if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{ExpectedRevision: base.WorkspaceRevision, Overrides: overrides}, &out); err != nil {
+			if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: edits}, &out); err != nil {
 				result.Err = err
 				return result
 			}
 			result.Effective = out.Effective
+			result.Overrides = out.Overrides
 			w.refreshSettings()
 			return result
 		}
-		saved, err := w.saveApplication(ctx, base, settings)
+		var out coreprotocol.ApplicationPreferencesResult
+		proxy := coreprotocol.SecretUpdate[string]{Keep: true}
+		for _, edit := range edits {
+			if slices.Equal(edit.Path, []string{"network", "proxy_url"}) {
+				var url string
+				if json.Unmarshal(edit.After, &url) == nil {
+					proxy = coreprotocol.SecretUpdate[string]{Value: &url}
+				}
+			}
+		}
+		err := w.call(ctx, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: edits, ProxyURL: proxy}, &out)
 		if err != nil {
 			result.Err = err
 			return result
 		}
-		result.AppSettings = saved
-		result.Effective = types.MergeAppWorkspace(saved, base.Overrides)
+		result.AppSettings = out.Value
+		result.Effective = types.MergeAppWorkspace(out.Value, base.Overrides)
+		w.refreshSettings()
 		return result
 	}
 }
@@ -279,6 +234,8 @@ func (w *Workspace) ApplyPreferencesSave(result workspace.PreferencesSaveResult)
 	defer w.settingsMu.Unlock()
 	if result.Scope == types.SettingsScopeApplication {
 		w.settings.current.fetch.Application = result.AppSettings
+	} else {
+		w.settings.current.fetch.Overrides = result.Overrides
 	}
 	w.settings.current.fetch.Effective = result.Effective
 }
@@ -303,7 +260,7 @@ func (w *Workspace) PrepareAccountModels(templateID string, accountID, baseURL, 
 			return nil, errors.New("account does not belong to the selected connection")
 		}
 	}
-	request := coreprotocol.AccountModelsRequest{AccountID: accountID, ExpectedRevision: before.Revision}
+	request := coreprotocol.AccountModelsRequest{AccountID: accountID}
 	if baseURL != "" || standardID != "" {
 		account := w.AllAccounts()[accountID]
 		if baseURL != "" {
@@ -331,9 +288,6 @@ func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL,
 	}
 	value := draft(account, before, exists)
 	request := coreprotocol.AccountModelsRequest{AccountID: account.ID, Draft: &value}
-	if exists {
-		request.ExpectedRevision = before.Revision
-	}
 	return w.models(request)
 }
 

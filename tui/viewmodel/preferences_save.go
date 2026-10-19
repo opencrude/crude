@@ -26,7 +26,7 @@ func (m *App) savePreferences(request settingsui.SaveMsg) tea.Cmd {
 		return nil
 	}
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
-	run := owner.PreparePreferencesSave(request.Scope, request.AppSettings, request.Overrides)
+	run := owner.PreparePreferencesSave(request.Scope, request.Edits)
 	return func() tea.Msg {
 		return preferencesSavedMsg{target: request.Target, generation: generation, owner: owner, result: run()}
 	}

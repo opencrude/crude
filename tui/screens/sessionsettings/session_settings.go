@@ -99,6 +99,7 @@ type Screen struct {
 
 	base      types.Settings
 	effective types.Settings
+	localBase types.SessionPreferences
 	// workspaceCodeIntel is the workspace LSP switch a session without its
 	// own code-intelligence override follows.
 	workspaceCodeIntel bool
@@ -130,6 +131,8 @@ func New(th *theme.Theme, effective, base types.Settings, overrides map[string]t
 		models: make(map[string][]types.ModelEntry),
 	}
 	s.form = ui.NewDockedForm(FormID, nil, "", "", s.tokens)
+	s.localBase = types.SessionPreferencesOf(s.effective)
+	s.localBase.Overrides = copyCategoryMap(overrides)
 	s.modelFilter = ui.NewFilterField(FilterID, s.tokens)
 	s.modelFilter.SetPrompt(ui.SearchGlyphEnd(s.tokens))
 	s.modelFilter.SetPromptPlacement(ui.PromptEnd)
@@ -351,6 +354,14 @@ func (s *Screen) applyModelToEffective(id string) {
 	cfg.Inherit = ""
 	cfg.Model = id
 	setCategory(&s.effective, s.role, cfg)
+	key := s.role
+	if key == "default" && s.effective.SessionMainAgent != "" {
+		key = "root/" + s.effective.SessionMainAgent
+	}
+	over := s.overrides[key]
+	over.Model = id
+	over.Inherit = ""
+	s.overrides[key] = over
 }
 
 // applyProviderToEffective stages a provider picker selection into the
@@ -371,6 +382,15 @@ func (s *Screen) applyProviderToEffective(id string) {
 	cfg.Provider = account.ProviderID
 	cfg.AccountID = id
 	setCategory(&s.effective, s.role, cfg)
+	key := s.role
+	if key == "default" && s.effective.SessionMainAgent != "" {
+		key = "root/" + s.effective.SessionMainAgent
+	}
+	over := s.overrides[key]
+	over.AccountID = id
+	over.Model = ""
+	over.Inherit = ""
+	s.overrides[key] = over
 }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
@@ -443,7 +463,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "session-settings.cancel":
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg { return CancelMsg{Target: s} }, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "session-settings.reset":
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg { return ResetMsg{Target: s} }, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetMsg{Target: s} }, Invalidate: ui.InvalidatePaint}
 	case "session-settings.role.apply":
 		s.applyRoleForm()
 		s.openRoot()
@@ -653,6 +673,7 @@ func (s *Screen) openRole(role string) {
 		return nil
 	}
 	model.AddField(retentionField)
+	model.Commit()
 	s.formModel = model
 	s.form.SetForm(model, s.title(name), "")
 	buttons := []ui.ActionBarButton{
@@ -1070,11 +1091,12 @@ func (s *Screen) applyRootForm() {
 	if field == nil {
 		return
 	}
-	enabled := ui.BoolFieldValue(field)
-	s.effective.Agents.Enabled = enabled
-	s.effective.SessionMultiAgent = boolPtr(enabled)
-	field.Inherited = false
-	field.InheritedFrom = ""
+	if !field.Value.Equal(field.Initial) {
+		enabled := ui.BoolFieldValue(field)
+		s.effective.Agents.Enabled = enabled
+		s.effective.SessionMultiAgent = boolPtr(enabled)
+		field.Inherited, field.InheritedFrom = false, ""
+	}
 }
 
 func (s *Screen) selectMainAgent(id string) {
@@ -1139,8 +1161,6 @@ func (s *Screen) selectMainAgent(id string) {
 			if pin.ThinkingEffort != "" {
 				selected.ThinkingEffort = pin.ThinkingEffort
 			}
-		} else {
-			s.overrides["root/"+id] = types.CategorySettings{AccountID: selected.AccountID}
 		}
 	}
 	s.effective.SessionMainAgent = id
@@ -1205,23 +1225,24 @@ func (s *Screen) applyRoleForm() {
 		key = "root/" + s.effective.SessionMainAgent
 	}
 	override := s.overrides[key]
-	override.AccountID = cfg.AccountID
-	if key == "default" || s.role != "default" || !s.formModel.Field(fieldModel).Value.Equal(s.formModel.Field(fieldModel).Initial) {
+	if !s.formModel.Field(fieldProvider).Value.Equal(s.formModel.Field(fieldProvider).Initial) {
+		override.AccountID = cfg.AccountID
+	}
+	if !s.formModel.Field(fieldModel).Value.Equal(s.formModel.Field(fieldModel).Initial) {
 		override.Model = cfg.Model
 	}
-	if key == "default" || s.role != "default" || !s.formModel.Field(fieldThinking).Value.Equal(s.formModel.Field(fieldThinking).Initial) {
+	if !s.formModel.Field(fieldThinking).Value.Equal(s.formModel.Field(fieldThinking).Initial) {
 		override.ThinkingEffort = cfg.ThinkingEffort
 	}
-	if key == "default" || s.role != "default" || !s.formModel.Field(fieldContextCompaction).Value.Equal(s.formModel.Field(fieldContextCompaction).Initial) {
+	if !s.formModel.Field(fieldContextCompaction).Value.Equal(s.formModel.Field(fieldContextCompaction).Initial) {
 		override.ContextCompactionPercent = cloneIntPtr(cfg.ContextCompactionPercent)
 	}
-	if key == "default" || s.role != "default" || !s.formModel.Field(fieldContextRetention).Value.Equal(s.formModel.Field(fieldContextRetention).Initial) {
+	if !s.formModel.Field(fieldContextRetention).Value.Equal(s.formModel.Field(fieldContextRetention).Initial) {
 		override.ContextRetentionTokens = cloneIntPtr(cfg.ContextRetentionTokens)
 	}
-	if key == "default" {
-		override.Provider = cfg.Provider
+	if len(types.SettingsEdits(types.CategorySettings{}, override)) != 0 {
+		s.overrides[key] = override
 	}
-	s.overrides[key] = override
 }
 
 func (s *Screen) resetRole(role string) {
@@ -1230,23 +1251,15 @@ func (s *Screen) resetRole(role string) {
 		s.selectMainAgent(s.effective.SessionMainAgent)
 		return
 	}
-	// Point the role back at its live inheritance source rather than restoring
-	// a snapshot copy. The main agent's "reset" means no override at all
-	// (inherit workspace by default). A sub-agent's reset means inherit the
-	// session main agent, which is the default for roles without an override.
+	// Remove this role's local choice. The preview matches the corresponding
+	// parent role; only explicit Inherit from Main follows the session root.
 	delete(s.overrides, role)
 	if role == memoryRole {
-		// The memory agent's workspace-level source is Memory.MemoryCategory,
-		// not the workspace main agent. Dropping the session override lets the
-		// backend fall through to that setting again.
 		clearCategory(&s.effective, role)
+		s.effective.Memory.MemoryCategory = s.base.Memory.MemoryCategory
 		return
 	}
-	if role == "default" {
-		setCategory(&s.effective, role, inheritCategory("workspace"))
-		return
-	}
-	setCategory(&s.effective, role, inheritCategory("main"))
+	setCategory(&s.effective, role, categoryFor(s.base, s.base, role))
 }
 
 // inheritMain points a sub-agent at the live session main agent. No values are
@@ -1260,19 +1273,12 @@ func (s *Screen) inheritMain(role string) {
 	s.overrides[role] = types.CategorySettings{Inherit: "main"}
 }
 
-// inheritWorkspace points any agent at the live workspace main agent. The
-// memory agent instead re-inherits its own workspace-level memory setting.
+// inheritWorkspace removes a role's local choices to follow its own parent.
 func (s *Screen) inheritWorkspace(role string) {
 	if role == "default" && s.effective.SessionMainAgent != "" {
 		s.selectMainAgent("")
 	}
-	delete(s.overrides, role)
-	if role == memoryRole {
-		clearCategory(&s.effective, role)
-		return
-	}
-	setCategory(&s.effective, role, inheritCategory("workspace"))
-	s.overrides[role] = types.CategorySettings{Inherit: "workspace"}
+	s.resetRole(role)
 }
 
 func inheritCategory(inherit string) types.CategorySettings {
@@ -1282,9 +1288,6 @@ func inheritCategory(inherit string) types.CategorySettings {
 func (s *Screen) ToSettings() types.Settings {
 	s.applyRootForm()
 	settings := cloneSettings(s.effective)
-	for role, over := range copyCategoryMap(s.overrides) {
-		settings.SessionOverrides[role] = over
-	}
 	settings.Agents.Enabled = s.effective.Agents.Enabled
 	settings.SessionMultiAgent = cloneBoolPtr(s.effective.SessionMultiAgent)
 	settings.SessionCodeIntelligence = cloneBoolPtr(s.effective.SessionCodeIntelligence)
@@ -1307,6 +1310,11 @@ func (s *Screen) ToSettings() types.Settings {
 		settings.APIStandard = account.Connection.APIStandard
 	}
 	settings.APIKey, settings.ProviderAPIKey = "", ""
+	settings.SessionOverrides = copyCategoryMap(s.overrides)
+	settings.SessionEdits = types.SettingsEdits(s.localBase, types.SessionPreferencesOf(settings))
+	if settings.SessionEdits == nil {
+		settings.SessionEdits = []types.SettingEdit{}
+	}
 	return settings
 }
 
@@ -1324,6 +1332,8 @@ func (s *Screen) RestoreSnapshot() {
 
 func (s *Screen) ResetToWorkspace(base types.Settings) {
 	s.base, s.effective, s.overrides = cloneSettings(base), cloneSettings(base), make(map[string]types.CategorySettings)
+	s.localBase = types.SessionPreferencesOf(s.effective)
+	s.localBase.Overrides = copyCategoryMap(s.overrides)
 	s.effective.SessionMultiAgent = nil
 	s.effective.SessionCodeIntelligence = nil
 	s.effective.SessionMaxSubAgents = nil
@@ -1332,6 +1342,8 @@ func (s *Screen) ResetToWorkspace(base types.Settings) {
 
 func (s *Screen) SetInheritance(effective, base types.Settings, overrides map[string]types.CategorySettings) {
 	s.base, s.effective, s.overrides = cloneSettings(base), cloneSettings(effective), copyCategoryMap(overrides)
+	s.localBase = types.SessionPreferencesOf(s.effective)
+	s.localBase.Overrides = copyCategoryMap(overrides)
 	s.openRoot()
 }
 
@@ -1372,7 +1384,7 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 		case InheritMainMarker:
 			return categoryFor(settings, base, "default")
 		case InheritWorkspaceMarker:
-			return categoryFor(base, base, "default")
+			return categoryFor(base, base, role)
 		}
 		return cfg
 	}
@@ -1433,6 +1445,7 @@ func cloneSettings(src types.Settings) types.Settings {
 	dst.SessionMultiAgent = cloneBoolPtr(src.SessionMultiAgent)
 	dst.SessionCodeIntelligence = cloneBoolPtr(src.SessionCodeIntelligence)
 	dst.SessionMaxSubAgents = cloneIntPtr(src.SessionMaxSubAgents)
+	dst.SessionTurnLogs = cloneBoolPtr(src.SessionTurnLogs)
 	// Memory.MemoryCategory is the memory role's workspace-level source; clone
 	// its pointer so the base and effective layers never share one int.
 	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)

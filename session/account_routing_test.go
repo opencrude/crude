@@ -27,7 +27,7 @@ func accountRoutingConfig() *Config {
 	return cfg
 }
 
-func TestAccountPinnedAcrossDefaultChangeAndResume(t *testing.T) {
+func TestInheritedAccountFollowsDefaultChangeAndResume(t *testing.T) {
 	cfg := accountRoutingConfig()
 	home, dir := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 	s, err := NewWithSessionDir("pinned", cfg, home, dir)
@@ -42,13 +42,13 @@ func TestAccountPinnedAcrossDefaultChangeAndResume(t *testing.T) {
 	profile.Categories[CategoryDefault] = main
 	cfg.Agents.Profiles["default"] = profile
 	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}})
-	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "work" {
+	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("live session redirected to %q", got)
 	}
 	if err := s.ResetSessionSettings(); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "work" {
+	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("reset redirected session to %q", got)
 	}
 	if err := s.AppendWorkspaceHistoryEvent("account-pin", "account pin"); err != nil {
@@ -59,11 +59,11 @@ func TestAccountPinnedAcrossDefaultChangeAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := resumed.cfg.GetActiveDefaultCategory().AccountID; got != "work" {
+	if got := resumed.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("resume redirected to %q", got)
 	}
 	meta, err := sessiondb.GetMeta(resumed.DB())
-	if err != nil || meta.AccountID != "work" || meta.ID != oldID {
+	if err != nil || meta.AccountID != "personal" || meta.ID != oldID {
 		t.Fatalf("durable pin %+v err=%v", meta, err)
 	}
 	resumed.Close()
@@ -118,9 +118,6 @@ func TestAccountRemovedResumesWithoutBindingOrFallback(t *testing.T) {
 
 func TestAccountProfileDoesNotSerializeSecrets(t *testing.T) {
 	cfg := accountRoutingConfig()
-	if err := cfg.pinAccounts(); err != nil {
-		t.Fatal(err)
-	}
 	profile, _ := activeProfileCfg(cfg)
 	profile.Categories[CategoryCrafter] = CategoryConfig{AccountID: "personal", Model: "m"}
 	cfg.Agents.Profiles["default"] = profile

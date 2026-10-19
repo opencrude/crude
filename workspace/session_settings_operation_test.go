@@ -133,14 +133,13 @@ func TestSessionSettingsProjectionDetachesNamedProfilePolicy(t *testing.T) {
 	}
 }
 
-func TestPreparedSettingsCASRejectsStaleAndReplacementPublication(t *testing.T) {
+func TestPreparedSettingsRunInOrderWithoutRejectingOlderDraft(t *testing.T) {
 	w, owner := newSettingsOperationWorkspace(t)
-	before := owner.backend.SettingsSnapshots()
-	first, err := w.PrepareSessionSettingsToggleAtRevision(owner.SessionID, before.Revision)
+	first, err := w.PrepareMultiAgentToggle(owner.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := w.PrepareSessionSettingsResetAtRevision(owner.SessionID, before.Revision)
+	second, err := w.PrepareSessionSettingsReset(owner.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +147,11 @@ func TestPreparedSettingsCASRejectsStaleAndReplacementPublication(t *testing.T) 
 	if winner.Err != nil {
 		t.Fatal(winner.Err)
 	}
-	loser := second.Run()
-	if !errors.Is(loser.Err, session.ErrSettingsRevisionConflict) || w.ApplySessionSettingsResult(loser) {
-		t.Fatal("stale prepared operation applied")
+	latest := second.Run()
+	if latest.Err != nil || !w.ApplySessionSettingsResult(latest) {
+		t.Fatal("later reset was rejected", latest.Err)
 	}
-	if !w.ApplySessionSettingsResult(winner) {
-		t.Fatal("winning prepared operation not published")
+	if w.ApplySessionSettingsResult(winner) {
+		t.Fatal("older publication rewound the committed reset")
 	}
 }

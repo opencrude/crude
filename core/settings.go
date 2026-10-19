@@ -21,7 +21,7 @@ import (
 )
 
 // A keyed entity digest is opaque even for low-entropy credentials. Revisions
-// are process-local preconditions, not portable credential hashes.
+// are process-local observation identities, not portable credential hashes.
 var settingsRevisionKey = func() []byte {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -70,6 +70,71 @@ func publicCapabilities(value captypes.Settings) captypes.Settings {
 	return value
 }
 
+// Redact the sparse layer without round-tripping through the resolved structs:
+// their required fields and zero-valued Acquisition would invent overrides.
+func publicCapabilityOverrides(raw json.RawMessage) json.RawMessage {
+	var groups map[string]json.RawMessage
+	if json.Unmarshal(raw, &groups) != nil {
+		return nil
+	}
+	for group, raw := range groups {
+		if group == "acquisition" {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) != nil {
+				delete(groups, group)
+				continue
+			}
+			publicCapabilityFields([]string{group}, fields)
+			groups[group], _ = json.Marshal(fields)
+			continue
+		}
+		if group != "connections" && group != "skills" && group != "sources" {
+			delete(groups, group)
+			continue
+		}
+		var entries map[string]json.RawMessage
+		if json.Unmarshal(raw, &entries) != nil {
+			delete(groups, group)
+			continue
+		}
+		for id, entry := range entries {
+			if string(entry) == "null" {
+				continue // retain explicit entity deletions
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(entry, &fields) != nil {
+				delete(entries, id)
+				continue
+			}
+			publicCapabilityFields([]string{group, id}, fields)
+			entries[id], _ = json.Marshal(fields)
+		}
+		groups[group], _ = json.Marshal(entries)
+	}
+	redacted, _ := json.Marshal(groups)
+	return redacted
+}
+
+func publicCapabilityFields(path []string, fields map[string]json.RawMessage) {
+	for key, value := range fields {
+		switch key {
+		case "args", "environment", "headers", "secret_refs", "credential_ref":
+			delete(fields, key)
+			continue
+		}
+		if types.ValidateSettingEdits(captypes.Settings{}, []types.SettingEdit{{Path: append(slices.Clone(path), key), After: value}}) != nil {
+			delete(fields, key)
+			continue
+		}
+		switch key {
+		case "url", "repository_url", "website_url", "location":
+			var url string
+			_ = json.Unmarshal(value, &url)
+			fields[key], _ = json.Marshal(publicURL(url))
+		}
+	}
+}
+
 func publicApp(value types.AppSettings) types.AppSettings {
 	// Detach nested maps before any projection transformation.
 	raw, _ := json.Marshal(value)
@@ -107,7 +172,7 @@ func publicSession(value types.Settings) coreprotocol.SessionSettingsDTO {
 		copy := *value.SessionMaxSubAgents
 		maxAgents = &copy
 	}
-	return coreprotocol.SessionSettingsDTO{Value: out, MainAgent: main, Overrides: detachedOverrides, MultiAgent: multi, CodeIntelligence: code, MaxSubAgents: maxAgents, DisabledCapabilities: slices.Clone(value.SessionDisabledCapabilities)}
+	return coreprotocol.SessionSettingsDTO{Value: out, MainAgent: main, Overrides: detachedOverrides, MultiAgent: multi, CodeIntelligence: code, MaxSubAgents: maxAgents, TurnLogs: value.SessionTurnLogs, DisabledCapabilities: slices.Clone(value.SessionDisabledCapabilities)}
 }
 
 func publicSessionSet(value session.SettingsSnapshotSet) coreprotocol.SessionSettingsResult {
@@ -190,11 +255,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 		// Sparse raw JSON must be sanitized independently; never send the raw DB overlay.
 		publicOverrides := overrides
 		if len(overrides.Capabilities) != 0 {
-			var caps captypes.Settings
-			if err := json.Unmarshal(overrides.Capabilities, &caps); err != nil {
-				return bad("settings_invalid", "invalid capability overlay")
-			}
-			publicOverrides.Capabilities, _ = json.Marshal(publicCapabilities(caps))
+			publicOverrides.Capabilities = publicCapabilityOverrides(overrides.Capabilities)
 		}
 		out := coreprotocol.SettingsFetchResult{ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(types.MergeAppWorkspace(app, overrides).Capabilities), Application: publicApp(app), Effective: publicApp(types.MergeAppWorkspace(app, overrides)), Overrides: publicOverrides, Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool)}
 		if u, err := url.Parse(app.Network.ProxyURL); err == nil {
@@ -228,9 +289,6 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			return bad("invalid_request", err.Error())
 		}
 		before, exists := a.ws.AllAccounts()[in.AccountID]
-		if in.ExpectedRevision != "" && (!exists || in.ExpectedRevision != entityRevision(before)) {
-			return bad("stale_preimage", "account changed; fetch its current revision")
-		}
 		var operation func() ([]types.ModelEntry, error)
 		if in.Draft == nil {
 			if !exists {
@@ -238,9 +296,6 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			}
 			operation = a.ws.PrepareAccountModels("", in.AccountID, "", "")
 		} else {
-			if exists && in.ExpectedRevision == "" {
-				return bad("stale_preimage", "draft queries require the exact saved account revision")
-			}
 			if in.Draft.ID != in.AccountID {
 				return bad("invalid_request", "draft account identity differs from query owner")
 			}

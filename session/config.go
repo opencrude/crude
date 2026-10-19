@@ -6,7 +6,6 @@ import (
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -550,6 +549,25 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	}
 }
 
+// AgentDefaultsSettings exposes stored definitions, not resolved role selections.
+// Only ConfigToSettings resolves inheritance for a running session.
+func AgentDefaultsSettings(agents AgentsConfig) ttypes.AgentsSettings {
+	cfg := copyConfig(&Config{Agents: agents})
+	EnsureAgentsDefaults(&cfg.Agents)
+	prof, name := activeProfileCfg(cfg)
+	out := ttypes.AgentsSettings{ActiveProfile: name, Enabled: cfg.IsMultiAgentEnabled(), MaxConcurrent: cfg.Agents.MaxConcurrent,
+		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles)}
+	for role, cat := range prof.Categories {
+		out.Categories[role] = catConfigToSettings(cat)
+	}
+	return out
+}
+
+// CloneAgentsConfig isolates stored definitions from workspace/session mutations.
+func CloneAgentsConfig(agents AgentsConfig) AgentsConfig {
+	return copyConfig(&Config{Agents: agents}).Agents
+}
+
 func cloneIntPtr(src *int) *int {
 	if src == nil {
 		return nil
@@ -597,33 +615,6 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		agentsSettings.Categories[CategoryDefault] = categoryToSettings(cfg, mainCat)
 	}
 
-	profileNames := make([]string, 0, len(cfg.Agents.Profiles))
-	for name := range cfg.Agents.Profiles {
-		profileNames = append(profileNames, name)
-	}
-	slices.Sort(profileNames)
-	for _, name := range profileNames {
-		p := cfg.Agents.Profiles[name]
-		ps := ttypes.ProfileSettings{Name: name, Categories: make(map[string]ttypes.CategorySettings)}
-		for k := range p.Categories {
-			ps.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
-		}
-		if p.MultiAgent != nil {
-			if *p.MultiAgent {
-				ps.MultiAgent = "on"
-			} else {
-				ps.MultiAgent = "off"
-			}
-		}
-		if p.TurnLogs != nil {
-			if *p.TurnLogs {
-				ps.TurnLogs = "on"
-			} else {
-				ps.TurnLogs = "off"
-			}
-		}
-		agentsSettings.Profiles = append(agentsSettings.Profiles, ps)
-	}
 	safetySettings := cfg.Safety
 	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), cfg.Safety.CommandRules...)
 
@@ -666,7 +657,7 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 		cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
 	}
 	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
-		agents.MaxConcurrent == 0 && len(agents.Profiles) == 0 {
+		agents.MaxConcurrent == 0 {
 		return
 	}
 	if cfg.Agents.Profiles == nil {
@@ -690,32 +681,11 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	profile := cfg.Agents.Profiles[profileName]
 	enabled := agents.Enabled
 	profile.MultiAgent = &enabled
-	if profile.Categories == nil {
-		profile.Categories = make(map[string]CategoryConfig)
-	}
+	// This is a complete layer projection, never a non-zero merge over a stale
+	// profile. Missing roles and cleared values must not resurrect old settings.
+	profile.Categories = make(map[string]CategoryConfig, len(agents.Categories))
 	for category, value := range agents.Categories {
-		existing := profile.Categories[category]
-		merged := mergeCategoryConfig(existing, catSettingsToConfig(value))
-		// Workspace agent settings publish complete account selections. An empty
-		// ID clears this layer rather than inheriting a prior account.
-		merged.AccountID = value.AccountID
-		merged.Enabled = cloneBoolPtr(value.Enabled)
-		merged.Model = value.Model
-		merged.ThinkingEffort = value.ThinkingEffort
-		merged.Description = value.Description
-		merged.Policy = value.Policy
-		merged.ModelContextWindow = value.ModelContextWindow
-		merged.ModelMaxOutput = value.ModelMaxOutput
-		merged.ModelModalities = slices.Clone(value.ModelModalities)
-		merged.ModelTemperature = cloneFloatPtr(value.ModelTemperature)
-		merged.ModelTopP = cloneFloatPtr(value.ModelTopP)
-		merged.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
-		merged.ContextRetentionTokens = cloneIntPtr(value.ContextRetentionTokens)
-		merged.ServiceTier = value.ServiceTier
-		merged.Instructions = value.Instructions
-		merged.AllowedTools = append([]string(nil), value.AllowedTools...)
-		merged.DeniedTools = append([]string(nil), value.DeniedTools...)
-		profile.Categories[category] = merged
+		profile.Categories[category] = catSettingsToConfig(value)
 	}
 	cfg.Agents.Profiles[profileName] = profile
 }

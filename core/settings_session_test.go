@@ -28,9 +28,10 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 	dto := publicSession(initial.Effective)
 	dto.MainAgent, dto.MultiAgent = "crafter", &disabled
 	dto.Overrides = map[string]types.CategorySettings{"default": {AccountID: "one", Model: "saved"}, "root/crafter": {AccountID: "one", DeniedTools: []string{"execute_command"}}}
-	prepare := func(method string, revision uint64) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response)) {
+	prepare := func(method string) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response)) {
 		t.Helper()
-		raw, err := json.Marshal(coreprotocol.SessionSettingsMutationRequest{SessionID: owner.SessionID, ExpectedRevision: revision, Settings: dto})
+		local := types.SessionPreferences{MainAgent: dto.MainAgent, Overrides: dto.Overrides, MultiAgent: dto.MultiAgent}
+		raw, err := json.Marshal(coreprotocol.SessionSettingsMutationRequest{SessionID: owner.SessionID, Edits: types.SettingsEdits(types.SessionPreferencesOf(initial.Effective), local)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,7 +42,7 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 		return run, apply
 	}
 	beforeProjection := owner.Settings
-	save, applySave := prepare(coreprotocol.SessionSettingsSave, initial.Revision)
+	save, applySave := prepare(coreprotocol.SessionSettingsSave)
 	out := save(context.Background())
 	if out.Error != nil {
 		t.Fatal(out.Error)
@@ -60,14 +61,8 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 	if owner.Settings == beforeProjection {
 		t.Fatal("actor failed to publish")
 	}
-	stale, applyStale := prepare(coreprotocol.SessionMultiAgentToggle, initial.Revision)
-	staleOut := stale(context.Background())
-	if staleOut.Error == nil || staleOut.Error.Code != "stale_preimage" {
-		t.Fatal("stale mutation was not rejected")
-	}
-	applyStale(staleOut)
 	for _, method := range []string{coreprotocol.SessionMultiAgentToggle, coreprotocol.SessionSettingsReset} {
-		run, apply := prepare(method, backend.SettingsSnapshots().Revision)
+		run, apply := prepare(method)
 		out := run(context.Background())
 		if out.Error != nil {
 			t.Fatal(out.Error)
@@ -75,7 +70,7 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 		apply(out)
 	}
 	final := backend.SettingsSnapshots()
-	if final.Effective.SessionMainAgent != "" || final.Effective.SessionMultiAgent != nil || final.Overrides["default"].AccountID != "one" {
+	if final.Effective.SessionMainAgent != "" || final.Effective.SessionMultiAgent != nil || len(final.Overrides) != 0 {
 		t.Fatal("reset failed current contract")
 	}
 }

@@ -126,8 +126,8 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 
 	// Save via the app Update (the same path the Save button uses).
 	_, cmd = app.Update(settingsui.SaveMsg{
-		Scope:       coretypes.SettingsScopeApplication,
-		AppSettings: ws.ModelForTest().AppSettings(),
+		Scope: coretypes.SettingsScopeApplication,
+		Edits: ws.ModelForTest().Edits(),
 	})
 	if cmd != nil {
 		t.Fatalf("unexpected cmd from save: %v", cmd)

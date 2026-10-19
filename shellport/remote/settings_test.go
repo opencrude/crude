@@ -10,19 +10,20 @@ import (
 	"crude/types"
 )
 
-func TestRemoteAccountStaleFormFailsBeforeRPC(t *testing.T) {
+func TestRemoteAccountDraftKeepsStoredSecretsAfterRefresh(t *testing.T) {
 	w := &Workspace{}
 	w.settings = &settingsReplica{w: w}
 	w.settings.install(settingsSnapshot{fetch: coreprotocol.SettingsFetchResult{Accounts: map[string]coreprotocol.AccountView{"work": {ID: "work", Revision: "original", APIKeyPresent: true, HeadersPresent: true}}}})
 	before := w.AllAccounts()["work"]
-	if before.ObservationRevision != "original" || before.APIKey != StoredSecret {
+	if before.APIKey != StoredSecret {
 		t.Fatal("redacted account lost its exact preimage")
 	}
 	w.settings.install(settingsSnapshot{fetch: coreprotocol.SettingsFetchResult{Accounts: map[string]coreprotocol.AccountView{"work": {ID: "work", Revision: "replacement"}}}})
 	after := provider.CloneAccount(before)
 	after.Label = "changed"
-	if err := w.SaveAccountChange(types.AccountChange{ID: "work", Before: &before, After: &after}); err == nil || !strings.Contains(err.Error(), "changed") {
-		t.Fatal("stale editor reached RPC or accepted replacement account", err)
+	value := draft(after, w.settingsBase().Accounts["work"], true)
+	if value.Label != "changed" || !value.APIKey.Keep || !value.Headers.Keep {
+		t.Fatal("independent refresh changed explicit label or replayed secret", value)
 	}
 	raw, err := json.Marshal(before)
 	if err != nil || strings.Contains(string(raw), "original") {

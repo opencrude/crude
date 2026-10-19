@@ -44,7 +44,11 @@ func TestControlCapabilitiesManageSecretsAndConnectionsWithoutRevealingValues(t 
 	if err := service.Configure(context.Background(), ws.LoadAppSettings().Capabilities); err != nil {
 		t.Fatal(err)
 	}
-	ws.OnAppPreferencesCommit = func(_, next types.AppSettings) (types.AppSettings, error) { return next, nil }
+	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		next := ws.AppDefaults()
+		err := types.ApplySettingsEdits(&next, edits)
+		return next, err
+	}
 	a := &actor{ws: ws}
 
 	stored := runCapabilityControl(t, a, "secret", "capabilities.set_secret", map[string]any{"name": "EXA_API_KEY", "secret": "exa-live-value"})

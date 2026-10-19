@@ -88,8 +88,11 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	}
 	current.Capabilities = updatedCapabilities
 	merged := captypes.Clone(current.Capabilities)
-	updated := ttypes.OverridesFromDiff(defaults, current)
-	encoded, err := json.Marshal(updated)
+	overrides.Capabilities, err = patchCapabilityOverrides(overrides.Capabilities, ttypes.SettingsEdits(ttypes.MergeAppWorkspace(defaults, overrides).Capabilities, current.Capabilities))
+	if err != nil {
+		return captypes.Settings{}, err
+	}
+	encoded, err := json.Marshal(overrides)
 	if err != nil {
 		return captypes.Settings{}, fmt.Errorf("encode capability registration settings: %w", err)
 	}
@@ -183,8 +186,7 @@ func loadWorkspaceOverridesTx(ctx context.Context, tx *sql.Tx, defaults ttypes.A
 		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
 			return ttypes.WorkspaceOverrides{}, fmt.Errorf("decode workspace capability settings: %w", err)
 		}
-		effective := ttypes.MergeAppWorkspace(defaults, overrides)
-		return ttypes.OverridesFromDiff(defaults, effective), nil
+		return overrides, nil
 	}
 	return ttypes.WorkspaceOverrides{}, nil
 }

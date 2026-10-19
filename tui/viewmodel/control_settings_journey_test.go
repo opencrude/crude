@@ -41,8 +41,11 @@ func settingsJourneyRuntime(t *testing.T) *core.Runtime {
 			LocalHistory: types.LocalHistorySettings{Enabled: "off"},
 			Memory:       types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
 		})
-		ws.OnAppPreferencesCommit = func(before, after types.AppSettings) (types.AppSettings, error) {
-			after.Accounts = before.Accounts
+		ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+			after := ws.AppDefaults()
+			if err := types.ApplySettingsEdits(&after, edits); err != nil {
+				return after, err
+			}
 			raw, err := json.Marshal(after)
 			if err == nil {
 				err = os.WriteFile(path, raw, 0600)

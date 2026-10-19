@@ -156,50 +156,9 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 	ws.SetBackendConfig(sessCfg, a.home)
 
 	ws.OnAppSettingsSave = func(s ttypes.AppSettings) (ttypes.AppSettings, error) {
-		if err := s.Network.Validate(); err != nil {
-			return ttypes.AppSettings{}, fmt.Errorf("network settings were not saved: %w", err)
-		}
-		// Lock order is manager -> app config -> interprocess file lock, the
-		// same order as refresh persistence. Installation is atomic with disk.
-		var updated FileConfig
-		err := a.accounts.Commit(func(live map[string]provider.Account) (map[string]provider.Account, error) {
-			a.configMu.Lock()
-			defer a.configMu.Unlock()
-			// Certificate reads belong to the off-UI preferences command, and
-			// only to an actual network edit, not an unrelated theme save.
-			if network.Normalize(s.Network) != FileConfigToAppSettings(a.fc).Network || network.StartupPolicyError() != nil {
-				if err := s.Network.ValidateFiles(); err != nil {
-					return nil, fmt.Errorf("network settings were not saved: %w", err)
-				}
-			}
-			var saveErr error
-			updated, saveErr = updateFileConfig(func(current *FileConfig) error {
-				// Account and provider-template writes have explicit owners. A
-				// preferences save must never replay either from a stale settings
-				// snapshot, including provider defaults.
-				s.Accounts = nil
-
-				ApplyAppSettingsToFileConfig(current, s)
-				return nil
-			})
-			if saveErr != nil {
-				return nil, saveErr
-			}
-			a.fc = updated
-			a.persistedAccounts = cloneAccounts(updated.Accounts)
-			a.rotationPredecessors = make(map[string][]provider.Account)
-			return updated.Accounts, nil
-		})
-		if err != nil {
-			return ttypes.AppSettings{}, err
-		}
-		if err := network.ConfigureDefault(FileConfigToAppSettings(updated).Network); err != nil {
-			return ttypes.AppSettings{}, err
-		}
-		a.notifyDefaultsChanged()
-		// Persistence returns a snapshot. The workspace/UI owner publishes it
-		// only after its generation-bound command result arrives.
-		return FileConfigToAppSettings(updated), nil
+		before := a.committedDefaults()
+		s.Accounts = nil
+		return a.commitCorePreferences(ttypes.SettingsEdits(before, s))
 	}
 	ws.OnAppAccountCommit = a.commitCoreAccount
 	ws.OnAppPreferencesCommit = a.commitCorePreferences

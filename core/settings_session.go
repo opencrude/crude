@@ -7,6 +7,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/session"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -25,19 +26,22 @@ func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(conte
 	if err := decode(request.Payload, &in); err != nil {
 		return bad("invalid_request", err.Error())
 	}
+	if err := types.ValidateSettingEdits(types.SessionPreferences{}, in.Edits); err != nil {
+		return bad("invalid_request", err.Error())
+	}
 	var op *workspace.SessionSettingsOperation
 	var err error
 	switch request.Method {
 	case coreprotocol.SessionSettingsSave:
-		value := in.Settings.Value
-		value.SessionMainAgent, value.SessionOverrides, value.SessionMultiAgent = in.Settings.MainAgent, in.Settings.Overrides, in.Settings.MultiAgent
-		value.SessionCodeIntelligence = in.Settings.CodeIntelligence
-		value.SessionMaxSubAgents = in.Settings.MaxSubAgents
-		op, err = a.ws.PrepareSessionSettingsSaveAtRevision(in.SessionID, value, in.ExpectedRevision)
+		value := types.Settings{SessionEdits: in.Edits}
+		if value.SessionEdits == nil {
+			value.SessionEdits = []types.SettingEdit{}
+		}
+		op, err = a.ws.PrepareSessionSettingsSave(in.SessionID, value)
 	case coreprotocol.SessionSettingsReset:
-		op, err = a.ws.PrepareSessionSettingsResetAtRevision(in.SessionID, in.ExpectedRevision)
+		op, err = a.ws.PrepareSessionSettingsReset(in.SessionID)
 	case coreprotocol.SessionMultiAgentToggle:
-		op, err = a.ws.PrepareSessionSettingsToggleAtRevision(in.SessionID, in.ExpectedRevision)
+		op, err = a.ws.PrepareMultiAgentToggle(in.SessionID)
 	case coreprotocol.SessionCapabilityToggle:
 		if in.Capability == nil || in.Capability.ID == "" {
 			return bad("invalid_request", "capability id is required")
@@ -58,14 +62,11 @@ func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(conte
 		}
 		retained = op.Run()
 		completed = true
-		if errors.Is(retained.Err, session.ErrSettingsRevisionConflict) {
-			return fault(request, "stale_preimage", "session settings changed; fetch the current revision")
-		}
 		if errors.Is(retained.Err, session.ErrSettingsSessionClosing) {
 			return fault(request, "session_closing", "session is closing")
 		}
 		if retained.Err != nil {
-			return fault(request, "settings_failed", "session settings could not be saved; repair the selected configuration")
+			return fault(request, "settings_failed", retained.Err.Error())
 		}
 		return response(request, publicSessionSet(retained.Snapshot))
 	}

@@ -13,6 +13,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"
 )
@@ -430,10 +431,10 @@ func (m *App) syncPaletteModelFromList(list *ui.List) {
 // applyThemePreset path also rewrites all chrome/host tokens and
 // invalidates content caches, so the UI repaints with the new palette
 // on the very next frame.
-func (m *App) cycleNextThemePreset() {
+func (m *App) cycleNextThemePreset() tea.Cmd {
 	names := theme.AllPresetNames
 	if len(names) == 0 {
-		return
+		return nil
 	}
 	current := theme.PresetName(m.Theme)
 	idx := 0
@@ -444,16 +445,10 @@ func (m *App) cycleNextThemePreset() {
 		}
 	}
 	next := names[(idx+1)%len(names)]
-	m.applyThemePreset(next)
-	// Persist the choice so the next launch uses the same preset.
-	s := m.ws.LoadAppSettings()
+	before := m.ws.AppDefaults()
+	s := types.CloneAppSettings(before)
 	s.Theme.Preset = next
-	if err := m.ws.SaveAppSettings(s); err != nil && m.Feedback != nil {
-		m.Feedback.NotifyError("theme save failed: " + err.Error())
-	}
-	if m.Feedback != nil {
-		m.Feedback.NotifyInfo("Theme: " + next)
-	}
+	return m.saveSettingsShortcut(types.SettingsScopeApplication, types.SettingsEdits(before, s), "Theme: "+next, nil)
 }
 
 func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
@@ -487,7 +482,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleWorkspacePanel(termdock.PanelProblems)
 
 	case "agent.orchestrator.reset":
-		m.resetOrchestratorOverrides()
+		cmds = append(cmds, m.resetOrchestratorOverrides())
 
 	case "app.sessions":
 		m.openSessionPicker()
@@ -624,7 +619,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "editor.change.previous":
 		m.jumpEditorChange(-1)
 	case "editor.autosave.enable", "editor.autosave.disable":
-		m.setWorkspaceAutosave(cmdID == "editor.autosave.enable")
+		cmds = append(cmds, m.setWorkspaceAutosave(cmdID == "editor.autosave.enable"))
 
 	case "file.close":
 		if m.hostTabActive() {
@@ -756,7 +751,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		})
 
 	case "app.toggleTheme":
-		m.cycleNextThemePreset()
+		cmds = append(cmds, m.cycleNextThemePreset())
 
 	case "app.copyLastAssistant":
 		ml := m.activeMsgList()

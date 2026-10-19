@@ -266,7 +266,7 @@ func (w *Workspace) CapabilitySnapshot(ctx context.Context) (captypes.Snapshot, 
 // updates against the replica the edit started from.
 func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, error) {
 	base := w.capabilityBase()
-	request := coreprotocol.CapabilityActionRequest{Action: action, ExpectedRevision: base.revision}
+	request := coreprotocol.CapabilityActionRequest{Action: action}
 	if action.Connection != nil && (action.Operation == "save-connection" || action.Operation == "test") {
 		conn := *action.Connection
 		request.ConnectionSecrets = connectionSecrets(conn, base.connections[conn.ID], base.presence[conn.ID])
@@ -296,7 +296,6 @@ func (w *Workspace) CapabilityAction(ctx context.Context, action captypes.Action
 // capabilityState is captured when an action is issued; Capability actions
 // run on command goroutines, so the replica is read under the settings lock.
 type capabilityState struct {
-	revision    string
 	connections map[string]captypes.ConnectionConfig
 	sources     map[string]captypes.SourceConfig
 	presence    map[string]coreprotocol.ConnectionSecretPresence
@@ -307,7 +306,7 @@ func (w *Workspace) capabilityBase() capabilityState {
 	defer w.settingsMu.RUnlock()
 	fetch := w.settings.current.fetch
 	caps := fetch.Effective.Capabilities
-	return capabilityState{revision: fetch.CapabilitiesRevision, connections: maps.Clone(caps.Connections),
+	return capabilityState{connections: maps.Clone(caps.Connections),
 		sources: maps.Clone(caps.Sources), presence: maps.Clone(fetch.ConnectionSecretFields)}
 }
 

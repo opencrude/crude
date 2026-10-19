@@ -1,10 +1,8 @@
 package app
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -19,6 +17,7 @@ import (
 )
 
 type FileConfig struct {
+	raw             json.RawMessage
 	Accounts        map[string]provider.Account  `json:"accounts,omitempty"`
 	TurnLogsEnabled *bool                        `json:"turn_logs_enabled,omitempty"`
 	Agents          *session.AgentsConfig        `json:"agents,omitempty"`
@@ -61,16 +60,32 @@ func loadFileConfigFrom(path string) (FileConfig, error) {
 	if err != nil {
 		return FileConfig{}, err
 	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || object == nil {
+		return FileConfig{}, fmt.Errorf("configuration must contain one JSON object")
+	}
 	cfg := DefaultFileConfig()
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := ttypes.DecodeStoredSettings(data, &cfg); err != nil {
 		return FileConfig{}, err
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return FileConfig{}, fmt.Errorf("configuration must contain exactly one JSON object")
+	// Transport and credentials are atomic security groups: tolerant ordinary
+	// preferences must never convert a malformed proxy/account to direct access.
+	var groups map[string]json.RawMessage
+	_ = json.Unmarshal(data, &groups)
+	if raw := groups["network"]; len(raw) != 0 && string(raw) != "null" {
+		var policy network.Settings
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			policy.ProxyMode = "invalid"
+		}
+		cfg.Network = &policy
 	}
+	if raw := groups["accounts"]; len(raw) != 0 {
+		cfg.Accounts = nil
+		if err := json.Unmarshal(raw, &cfg.Accounts); err != nil {
+			return FileConfig{}, fmt.Errorf("accounts need repair: %w", err)
+		}
+	}
+	cfg.raw = append(json.RawMessage(nil), data...)
 	return cfg, nil
 }
 
@@ -106,12 +121,26 @@ func updateFileConfigWithFallback(update func(*FileConfig) error, overwriteInval
 	} else if err != nil {
 		return FileConfig{}, err
 	}
+	beforeData, _ := json.Marshal(cfg)
+	var before FileConfig
+	_ = json.Unmarshal(beforeData, &before)
+	originalRaw := append(json.RawMessage(nil), cfg.raw...)
 	if err := update(&cfg); err != nil {
 		return FileConfig{}, err
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return FileConfig{}, err
+	}
+	if len(cfg.raw) != 0 && string(cfg.raw) != string(originalRaw) {
+		// Preference commits already addressed exact stored leaves. Do not
+		// re-encode their sparse groups through zero-valued Go structs.
+		data = cfg.raw
+	} else if len(originalRaw) != 0 {
+		data, err = ttypes.PatchStoredSettings(originalRaw, ttypes.SettingsEdits(before, cfg))
+		if err != nil {
+			return FileConfig{}, err
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*")
 	if err != nil {
@@ -134,10 +163,12 @@ func updateFileConfigWithFallback(update func(*FileConfig) error, overwriteInval
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return FileConfig{}, err
 	}
+	cfg.raw = append(json.RawMessage(nil), data...)
 	return cfg, nil
 }
 
 func SaveFileConfig(cfg FileConfig) error {
+	cfg.raw = nil // an explicit full-file save, not an addressed preference patch
 	_, err := updateFileConfigWithFallback(func(current *FileConfig) error {
 		*current = cfg
 		return nil
@@ -188,12 +219,20 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	}
 	if fc.LSP != nil {
 		s.LSP = *fc.LSP
+		if len(fc.raw) != 0 {
+			var groups map[string]json.RawMessage
+			_ = json.Unmarshal(fc.raw, &groups)
+			s.LSP = ttypes.DefaultLSPSettings()
+			_ = ttypes.DecodeStoredSettings(groups["lsp"], &s.LSP)
+		}
 	}
 	if fc.UI != nil {
 		s.UI = *fc.UI
 	}
 	if fc.Agents != nil {
-		s.Agents = session.ConfigToSettings(&session.Config{Agents: *fc.Agents}).Agents
+		s.Agents = session.AgentDefaultsSettings(*fc.Agents)
+	} else {
+		s.Agents = session.AgentDefaultsSettings(session.DefaultAgentsConfig())
 	}
 	if fc.Memory != nil {
 		s.Memory = *fc.Memory
@@ -216,7 +255,7 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 		s.Terminal = ttypes.CloneTerminalSettings(*fc.Terminal)
 	}
 	ttypes.ApplyAppDefaults(&s)
-	return s
+	return ttypes.CloneAppSettings(s)
 }
 
 func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
@@ -242,10 +281,10 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 		fc.Accounts = cloneAccounts(s.Accounts)
 	}
 	if len(s.Agents.Categories) > 0 || s.Agents.ActiveProfile != "" ||
-		s.Agents.MaxConcurrent > 0 || len(s.Agents.Profiles) > 0 {
+		s.Agents.MaxConcurrent > 0 {
 		agents := session.DefaultAgentsConfig()
 		if fc.Agents != nil {
-			agents = *fc.Agents
+			agents = session.CloneAgentsConfig(*fc.Agents)
 		}
 		if s.Agents.ActiveProfile == "" {
 			s.Agents.ActiveProfile = agents.ActiveProfile
@@ -262,7 +301,7 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 		TurnLogsEnabled: fc.IsTurnLogsEnabled(),
 	}
 	if fc.Agents != nil {
-		cfg.Agents = *fc.Agents
+		cfg.Agents = session.CloneAgentsConfig(*fc.Agents)
 		session.EnsureAgentsDefaults(&cfg.Agents)
 	} else {
 		cfg.Agents = session.DefaultAgentsConfig()

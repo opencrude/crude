@@ -339,8 +339,8 @@ func TestLoadFileConfigRejectsRemovedProviderFormatWithoutWriting(t *testing.T) 
 		t.Fatal(err)
 	}
 	prepared := PrepareStartup(CLIFlags{})
-	if len(prepared.Issues) == 0 || prepared.Issues[0].Target != typesmodel.RepairConfigFile {
-		t.Fatal("removed format was silently accepted")
+	if len(prepared.Config.Accounts) != 0 {
+		t.Fatal("removed credential format was revived")
 	}
 	after, err := os.ReadFile(ConfigPath())
 	if err != nil || string(after) != raw {

@@ -1116,7 +1116,11 @@ func (s *WorkspaceSettingsSurface) paintRailRow(buf *surface.CellBuffer, x, y, w
 	markerW := 0
 	if item.Detail != "" {
 		markerW = rendering.VisibleWidth(item.Detail) + 1
-		buf.WriteString(x+width-markerW, y, item.Detail, tokens.Color(ui.ColorWarning), bg, 0)
+		ink := ui.ColorWarning
+		if item.Detail == railWorkspaceMarker {
+			ink = ui.ColorMuted
+		}
+		buf.WriteString(x+width-markerW, y, item.Detail, tokens.Color(ink), bg, 0)
 	}
 	buf.WriteString(x+indent, y, rendering.TruncateVisual(item.Label, max(1, width-indent-markerW-1), "…"), fg, bg, attr)
 }
@@ -1171,6 +1175,9 @@ func (s *WorkspaceSettingsSurface) paintPageHeader(buf *surface.CellBuffer, ox, 
 		buf.WriteString(x+used+2, y, rendering.TruncateVisual(count, w-used-2, ""), muted, bg, 0)
 	}
 	if subtitle := s.pageSubtitle(); subtitle != "" {
+		if s.model.Scope() == ttypes.SettingsScopeApplication && s.model.workspaceOverridesPage(s.model.selected) {
+			subtitle = "◇ Workspace overrides some values · switch scope to review"
+		}
 		buf.WriteString(x, y+1, rendering.TruncateVisual(subtitle, w, "…"), muted, bg, 0)
 	}
 }
@@ -1532,10 +1539,9 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.syncAccountControls()
 		target := s.model
 		scope := target.Scope()
-		appSettings := target.AppSettings()
-		overrides := target.Overrides()
+		edits := target.Edits()
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg {
-			return SaveMsg{Target: target, Scope: scope, AppSettings: appSettings, Overrides: overrides}
+			return SaveMsg{Target: target, Scope: scope, Edits: edits}
 		}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "settings.reset":
 		if !s.showReset() {
@@ -1544,7 +1550,8 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		if s.agents.draft != nil {
 			return s.agents.back()
 		}
-		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetSectionMsg{Key: s.model.currentOverrideKey()} }}
+		target, key := s.model, s.model.currentOverrideKey()
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetSectionMsg{Target: target, Key: key} }}
 	case "settings.scope":
 		id, _ := action.Payload.(string)
 		next := ttypes.SettingsScopeApplication

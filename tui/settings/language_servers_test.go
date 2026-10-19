@@ -80,11 +80,15 @@ func TestCodeIntelligencePaintsResourcesWithUnitsAndScopedSave(t *testing.T) {
 		t.Fatal("valid scoped LSP save blocked")
 	}
 	msg, ok := result.Cmd().(SaveMsg)
-	if !ok || msg.Scope != types.SettingsScopeWorkspace || msg.AppSettings.LSP.ServerThreads != 4 {
+	if !ok || msg.Scope != types.SettingsScopeWorkspace {
 		t.Fatalf("bad save %+v", msg)
 	}
-	if string(msg.Overrides.LSP) != `{"server_threads":4}` {
-		t.Fatalf("unrelated LSP leaves overridden: %s", msg.Overrides.LSP)
+	overrides := types.WorkspaceOverrides{}
+	if err := types.ApplySettingsEdits(&overrides, msg.Edits); err != nil {
+		t.Fatal(err)
+	}
+	if string(overrides.LSP) != `{"server_threads":4}` {
+		t.Fatalf("unrelated LSP leaves overridden: %s", overrides.LSP)
 	}
 }
 

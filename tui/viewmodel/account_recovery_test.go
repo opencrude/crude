@@ -159,7 +159,7 @@ func TestResumeUnpinnedSessionKeepsHistoryAndOpensConnectionPicker(t *testing.T)
 	if err := original.AppendWorkspaceHistoryEvent("previous work", "Prior work"); err != nil {
 		t.Fatal(err)
 	}
-	if err := sessiondb.UpdateConnection(original.DB(), id, "openai", ""); err != nil {
+	if err := sessiondb.SaveAgentSettingOverrides(original.DB(), id, map[string]sessiondb.AgentSettingOverride{"default": {AccountID: "removed-account"}}); err != nil {
 		t.Fatal(err)
 	}
 	original.Close()

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"crude/types"
@@ -26,7 +25,7 @@ func TestPreparedCapabilityCommitAcceptsUnchangedDurableSettings(t *testing.T) {
 	var captured types.AppSettings
 	prepared, err := ws.PrepareCapabilities(func(_ context.Context, before, after types.AppSettings, scope captypes.Scope) (types.AppSettings, error) {
 		captured = before
-		return application.commitCorePreferences(before, after)
+		return application.commitCorePreferences(types.SettingsEdits(before, after))
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,10 +39,13 @@ func TestPreparedCapabilityCommitAcceptsUnchangedDurableSettings(t *testing.T) {
 	if published.Capabilities.Sources[source.ID].Name != source.Name || FileConfigToAppSettings(LoadFileConfig()).Capabilities.Sources[source.ID].Name != source.Name {
 		t.Fatal("capability commit did not persist the selected source")
 	}
-	// Actual concurrent preference changes must still refuse the old preimage.
+	// A source edit is independent of theme, even from the earlier snapshot.
 	after := captured
 	after.Theme.Preset = "light"
-	if _, err := application.commitCorePreferences(captured, after); !errors.Is(err, workspace.ErrApplicationSettingsConflict) {
-		t.Fatalf("changed durable preimage was accepted: %v", err)
+	if _, err := application.commitCorePreferences(types.SettingsEdits(captured, after)); err != nil {
+		t.Fatalf("independent theme edit refused: %v", err)
+	}
+	if FileConfigToAppSettings(LoadFileConfig()).Capabilities.Sources[source.ID].Name != source.Name {
+		t.Fatal("theme save erased source edit")
 	}
 }

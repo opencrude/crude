@@ -15,9 +15,6 @@ import (
 // ErrSettingsSessionClosing rejects settings operations after shutdown starts.
 var ErrSettingsSessionClosing = errors.New("session is closing")
 
-// ErrSettingsRevisionConflict means the exact settings preimage changed.
-var ErrSettingsRevisionConflict = errors.New("session settings revision changed")
-
 // SettingsSnapshotSet is one detached, atomically captured session projection.
 type SettingsSnapshotSet struct {
 	Revision  uint64
@@ -77,15 +74,10 @@ func (s *Session) SettingsSnapshots() SettingsSnapshotSet {
 // SaveSettingsSnapshot saves a form and captures all projections before another
 // settings mutation can intervene. Failed saves return no success projection.
 func (s *Session) SaveSettingsSnapshot(settings types.Settings) (SettingsSnapshotSet, error) {
-	return s.saveSettingsSnapshot(settings, nil)
+	return s.saveSettingsSnapshot(settings)
 }
 
-// SaveSettingsSnapshotAtRevision atomically checks the preimage and commits it.
-func (s *Session) SaveSettingsSnapshotAtRevision(settings types.Settings, expected uint64) (SettingsSnapshotSet, error) {
-	return s.saveSettingsSnapshot(settings, &expected)
-}
-
-func (s *Session) withSettingsSnapshot(expected *uint64, mutate func() error) (SettingsSnapshotSet, error) {
+func (s *Session) withSettingsSnapshot(mutate func() error) (SettingsSnapshotSet, error) {
 	if err := s.beginSettingsOperation(); err != nil {
 		return SettingsSnapshotSet{}, err
 	}
@@ -94,37 +86,39 @@ func (s *Session) withSettingsSnapshot(expected *uint64, mutate func() error) (S
 	defer s.delegationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if expected != nil && s.settingsRevision != *expected {
-		return SettingsSnapshotSet{}, ErrSettingsRevisionConflict
-	}
 	if err := mutate(); err != nil {
 		return SettingsSnapshotSet{}, err
 	}
 	return s.settingsSnapshotSetLocked(), nil
 }
 
-func (s *Session) saveSettingsSnapshot(settings types.Settings, expected *uint64) (SettingsSnapshotSet, error) {
-	return s.withSettingsSnapshot(expected, func() error { return s.saveSettingsLocked(settings) })
+func (s *Session) saveSettingsSnapshot(settings types.Settings) (SettingsSnapshotSet, error) {
+	if settings.SessionEdits != nil {
+		return s.withSettingsSnapshot(func() error {
+			current := s.settingsSnapshotLocked()
+			current.SessionOverrides = s.sessionOverridesSnapshotLocked()
+			local := types.SessionPreferencesOf(current)
+			if err := types.ApplySettingsEdits(&local, settings.SessionEdits); err != nil {
+				return err
+			}
+			current.SessionMainAgent, current.SessionOverrides, current.SessionMultiAgent = local.MainAgent, local.Overrides, local.MultiAgent
+			current.SessionCodeIntelligence, current.SessionMaxSubAgents, current.SessionTurnLogs = local.CodeIntelligence, local.MaxSubAgents, local.TurnLogs
+			return s.saveSettingsLocked(current)
+		})
+	}
+	return s.withSettingsSnapshot(func() error { return s.saveSettingsLocked(settings) })
 }
 
 // ToggleMultiAgent changes only the current session's delegation flag.
 func (s *Session) ToggleMultiAgent() (SettingsSnapshotSet, error) {
-	return s.toggleMultiAgent(nil)
-}
-
-func (s *Session) ToggleMultiAgentAtRevision(expected uint64) (SettingsSnapshotSet, error) {
-	return s.toggleMultiAgent(&expected)
-}
-
-func (s *Session) toggleMultiAgent(expected *uint64) (SettingsSnapshotSet, error) {
-	return s.withSettingsSnapshot(expected, s.toggleMultiAgentLocked)
+	return s.withSettingsSnapshot(s.toggleMultiAgentLocked)
 }
 
 func (s *Session) toggleMultiAgentLocked() error {
 	before := s.cfg.IsMultiAgentEnabled()
 	enabled := !before
 	if s.db != nil {
-		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: &enabled, MainAgent: s.selectedMainAgent, CodeIntelligence: s.codeIntelOverride, MaxSubAgents: s.maxSubAgentsOverride}); err != nil {
+		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: &enabled, MainAgent: s.selectedMainAgent, CodeIntelligence: s.codeIntelOverride, MaxSubAgents: s.maxSubAgentsOverride, TurnLogs: s.turnLogsOverride}); err != nil {
 			return fmt.Errorf("save session delegation: %w", err)
 		}
 	}
@@ -140,42 +134,20 @@ func (s *Session) toggleMultiAgentLocked() error {
 	return nil
 }
 
-// ResetSettingsSnapshotAtRevision restores workspace defaults while retaining
-// connection pins, exactly like the explicit session reset.
-func (s *Session) ResetSettingsSnapshotAtRevision(expected uint64) (SettingsSnapshotSet, error) {
-	return s.withSettingsSnapshot(&expected, s.resetSessionSettingsLocked)
-}
-
 // ResetSettingsSnapshot is the unconditioned reset entry point.
 func (s *Session) ResetSettingsSnapshot() (SettingsSnapshotSet, error) {
-	return s.withSettingsSnapshot(nil, s.resetSessionSettingsLocked)
+	return s.withSettingsSnapshot(s.resetSessionSettingsLocked)
 }
 
 // resetSessionSettingsLocked requires settingsOperationMu, delegationMu and mu.
 func (s *Session) resetSessionSettingsLocked() error {
-	if s.accountUnpinned {
-		return fmt.Errorf("select a connection for this session before resetting: %w", ErrAccountRequired)
-	}
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	pins := make(map[string]sessiondb.AgentSettingOverride)
-	for role, override := range s.sessionOverrides {
-		if strings.HasPrefix(role, "root/") {
-			continue
-		}
-		if override.AccountID != "" {
-			pins[role] = sessiondb.AgentSettingOverride{AccountID: override.AccountID}
-		}
-	}
-	if _, ok := pins[CategoryDefault]; !ok {
-		main := s.cfg.GetActiveDefaultCategory()
-		pins[CategoryDefault] = sessiondb.AgentSettingOverride{AccountID: main.AccountID}
-	}
 	newCfg := configWithSessionOverrides(s.workspaceCfg, pins)
 	main := newCfg.GetActiveDefaultCategory()
 	configuredProvider, err := newCfg.providerForCategory(main)
-	if err != nil {
-		return err
-	}
+	// Reset remains possible while the parent connection needs repair.
+	_ = err
 	if s.db != nil {
 		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newCfg.providerIDForAccount(main.AccountID), main.AccountID, pins, sessiondb.SessionFlags{}); err != nil {
 			return err
@@ -189,11 +161,13 @@ func (s *Session) resetSessionSettingsLocked() error {
 	s.multiAgentOverride = nil
 	s.codeIntelOverride = nil
 	s.maxSubAgentsOverride = nil
+	s.turnLogsOverride = nil
 	s.applySubAgentLimitLocked()
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	s.provider = configuredProvider
+	s.logger.SetTurnEnabled(s.cfg.TurnLogsEnabled)
 	s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled())
 	s.wakeAllRecoveries()
 	return nil
@@ -219,7 +193,7 @@ func (s *Session) SetCapabilityEnabled(id string, enabled bool) (SettingsSnapsho
 	if id == "" {
 		return SettingsSnapshotSet{}, errors.New("capability id is required")
 	}
-	return s.withSettingsSnapshot(nil, func() error {
+	return s.withSettingsSnapshot(func() error {
 		current := s.DisabledCapabilities()
 		next := slices.DeleteFunc(slices.Clone(current), func(value string) bool { return value == id })
 		if !enabled {

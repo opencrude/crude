@@ -467,7 +467,7 @@ func TestExecutePaletteCommandRoutesCycleTheme(t *testing.T) {
 	app := newFullTestApp(t)
 	startPreset := theme.PresetName(app.Theme)
 
-	app.executePaletteCommand("app.toggleTheme")
+	runAppCommand(t, app, app.executePaletteCommand("app.toggleTheme"))
 
 	// If we were on the last preset, the cycle should wrap to the
 	// first. Otherwise we should be on the next preset.

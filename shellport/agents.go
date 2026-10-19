@@ -110,7 +110,5 @@ type Agents interface {
 	// owner as runtime output. Only the originating client consumes its draft
 	// afterward.
 	ApplyAgentInputAdmission(intent *workspace.InputAdmissionIntent, result workspace.InputAdmissionResult, input provider.UserInput, labels []string) bool
-	// ResetOrchestratorOverrides clears runtime overrides for an orchestrator.
-	ResetOrchestratorOverrides(orchID string)
 	PrepareSkillInput(ctx context.Context, agentID, id, arguments string) (provider.UserInput, error)
 }

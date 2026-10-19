@@ -199,13 +199,13 @@ var commandCatalog = func() []Descriptor {
 		add(id, Domain, effect, "Managed execution through accepted documents and Local History. Exact resource target must match id, plan.context_id or operation_id. Owner is gateway attribution, never input authority.", props, required...)
 	}
 	for _, id := range []string{"settings.set", "settings.reset"} {
-		props := `{"scope":{"type":"string","enum":["application","workspace","session"]},"path":{"type":"string","description":"Exact dot-separated JSON field path. Reset removes only this field's override; application reset uses shipped defaults."},"expected_revision":{"type":"string","description":"Required opaque application/workspace revision from settings.get."},"session_revision":{"type":"integer","minimum":0,"description":"Required session revision from settings.get for session scope."}`
+		props := `{"scope":{"type":"string","enum":["application","workspace","session"]},"path":{"type":"string","description":"Exact dot-separated JSON field path. Reset removes only this field's override; application reset uses shipped defaults."}`
 		required := []string{"scope", "path"}
 		if id == "settings.set" {
 			props += `,"value":{"description":"JSON value of the field's exact current Go JSON type; unknown nested fields are rejected."}`
 			required = append(required, "value")
 		}
-		add(id, Domain, Write, "Revision-fenced single-field settings operation. Authority and account entities require human-owned operations; MCP connections and their secrets use the capabilities.* commands.", props+`}`, required...)
+		add(id, Domain, Write, "Explicit single-field settings operation: last write wins; unspecified fields inherit. Authority and account entities require human-owned operations; MCP connections and their secrets use the capabilities.* commands.", props+`}`, required...)
 	}
 	add("session.list", Domain, Read, "List saved sessions without starting model work.", `{}`)
 	add("operation.receipt", Domain, Read, "Observe the original domain or shell mutation receipt owned by this exact caller. Never replay uncertain effects.", `{"request_id":{"type":"string"}}`, "request_id")

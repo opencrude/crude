@@ -1,7 +1,6 @@
 package session
 
 import (
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,7 +21,7 @@ func TestResumeUnpinnedHistoryNeedsExplicitConnectionEvenAfterWorkspaceUpdate(t 
 	if err := original.AppendWorkspaceHistoryEvent("keep prior work", "Prior work"); err != nil {
 		t.Fatal(err)
 	}
-	if err := sessiondb.UpdateConnection(original.DB(), id, "openrouter", ""); err != nil {
+	if err := sessiondb.SaveAgentSettingOverrides(original.DB(), id, map[string]sessiondb.AgentSettingOverride{CategoryDefault: {AccountID: "removed-account"}}); err != nil {
 		t.Fatal(err)
 	}
 	original.Close()
@@ -31,15 +30,18 @@ func TestResumeUnpinnedHistoryNeedsExplicitConnectionEvenAfterWorkspaceUpdate(t 
 		t.Fatalf("old transcript should open for recovery: %v", err)
 	}
 	defer resumed.Close()
-	if len(resumed.MessagesWithMeta()) != 1 || resumed.provider != nil || !errors.Is(resumed.ConnectionIssue(), ErrAccountRequired) {
+	if len(resumed.MessagesWithMeta()) != 1 || resumed.provider != nil || resumed.ConnectionIssue() == nil {
 		t.Fatalf("history or disconnected state lost: provider=%v issue=%v", resumed.provider, resumed.ConnectionIssue())
 	}
-	if err := resumed.HandleSettingsSave(resumed.SettingsSnapshot()); !errors.Is(err, ErrAccountRequired) {
-		t.Fatalf("ordinary save silently adopted current default: %v", err)
+	if err := resumed.HandleSettingsSave(resumed.SettingsSnapshot()); err != nil {
+		t.Fatal("unchanged preferences must remain saveable while connection needs repair", err)
+	}
+	if resumed.ConnectionIssue() == nil {
+		t.Fatal("ordinary save silently selected another connection")
 	}
 	settings := types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}}
 	resumed.UpdateWorkspaceDefaults(settings)
-	if resumed.provider != nil || !errors.Is(resumed.ConnectionIssue(), ErrAccountRequired) || resumed.SettingsSnapshot().AccountID != "" {
+	if resumed.provider != nil || resumed.ConnectionIssue() == nil || resumed.SettingsSnapshot().AccountID != "removed-account" {
 		t.Fatalf("workspace account update rebound old session: provider=%v issue=%v settings=%+v", resumed.provider, resumed.ConnectionIssue(), resumed.SettingsSnapshot())
 	}
 	chosen := resumed.SettingsSnapshot()
@@ -62,6 +64,9 @@ func TestResumeRemovedAccountRetainsHistoryAndRecoversByExplicitSelection(t *tes
 		t.Fatal(err)
 	}
 	id := original.SessionID()
+	if err := sessiondb.SaveAgentSettingOverrides(original.DB(), id, map[string]sessiondb.AgentSettingOverride{CategoryDefault: {AccountID: "work"}}); err != nil {
+		t.Fatal(err)
+	}
 	original.msgs = []provider.ChatMessage{provider.NewTextMessage("user", "keep this conversation")}
 	if _, err := sessiondb.ReplaceMessagesWithMeta(original.DB(), id, original.msgs, []int{1}, []sessiondb.DisplayMeta{{DisplayRole: "user", DisplayContent: "keep this conversation"}}); err != nil {
 		t.Fatal(err)
@@ -140,6 +145,9 @@ func TestResumeIgnoresWorkspaceMainAgentAccountChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := original.SessionID()
+	if err := sessiondb.SaveAgentSettingOverrides(original.DB(), id, map[string]sessiondb.AgentSettingOverride{CategoryDefault: {AccountID: "work"}}); err != nil {
+		t.Fatal(err)
+	}
 	original.msgs = []provider.ChatMessage{provider.NewTextMessage("user", "keep pin")}
 	if _, err := sessiondb.ReplaceMessagesWithMeta(original.DB(), id, original.msgs, []int{1}, nil); err != nil {
 		t.Fatal(err)

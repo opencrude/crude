@@ -25,8 +25,7 @@ func TestControlSessionExactRoleModelPersists(t *testing.T) {
 	}
 	backend := ws.BackendSession(owner.SessionID)
 	a := &actor{ws: ws}
-	snap := backend.SettingsSnapshots()
-	raw, _ := json.Marshal(map[string]any{"scope": "session", "path": "value.Agents.Categories.crafter.Model", "value": "crafter-new", "session_revision": snap.Revision})
+	raw, _ := json.Marshal(map[string]any{"scope": "session", "path": "value.Agents.Categories.crafter.Model", "value": "crafter-new"})
 	in := control.Request{ID: "role-model", CommandID: "settings.set", Target: control.Target{SessionID: owner.SessionID}, Input: raw}
 	run, apply, _ := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "test", Epoch: 1})
 	out := run(context.Background())
@@ -35,15 +34,15 @@ func TestControlSessionExactRoleModelPersists(t *testing.T) {
 	}
 	apply(out)
 	next := backend.SettingsSnapshots()
-	if next.Effective.Agents.Categories["crafter"].Model != "crafter-new" || next.Effective.Agents.Categories["default"].Model != "initial" || next.Overrides["crafter"].AccountID != "one" {
+	if next.Effective.Agents.Categories["crafter"].Model != "crafter-new" || next.Effective.Agents.Categories["default"].Model != "initial" || next.Overrides["crafter"].AccountID != "" {
 		t.Fatal("wrong role or lost account", next)
 	}
 	if strings.Contains(string(out.Output), "retained-secret") {
 		t.Fatal("secret leaked")
 	}
 	run, _, _ = a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "test", Epoch: 1})
-	if got := run(context.Background()); got.Fault == nil || got.Fault.Code != control.Stale {
-		t.Fatal("stale session accepted")
+	if got := run(context.Background()); got.Fault != nil {
+		t.Fatal("repeated explicit session set rejected", got.Fault)
 	}
 }
 
@@ -119,7 +118,7 @@ func TestControlWorkspaceFalseResetSQLiteAndMap(t *testing.T) {
 	a := &actor{ws: ws}
 	mutate := func(cmd, path string, value any) {
 		t.Helper()
-		input := map[string]any{"scope": "workspace", "path": path, "expected_revision": entityRevision(ws.LoadWorkspaceOverrides())}
+		input := map[string]any{"scope": "workspace", "path": path}
 		if cmd == "settings.set" {
 			input["value"] = value
 		}

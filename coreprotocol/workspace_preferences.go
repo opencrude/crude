@@ -2,13 +2,12 @@ package coreprotocol
 
 import "crude/types"
 
-// WorkspacePreferencesRequest fences the sparse overlay originally observed by
-// this shell; its opaque revision includes redacted capability containers.
+// WorkspacePreferencesRequest changes only explicitly edited stored fields.
 type WorkspacePreferencesRequest struct {
-	ExpectedRevision string                   `json:"expected_revision"`
-	Overrides        types.WorkspaceOverrides `json:"overrides"`
+	Edits []types.SettingEdit `json:"edits"`
 }
 
 type WorkspacePreferencesResult struct {
-	Effective types.AppSettings `json:"effective"`
+	Effective types.AppSettings        `json:"effective"`
+	Overrides types.WorkspaceOverrides `json:"overrides"`
 }

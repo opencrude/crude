@@ -70,13 +70,6 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		a.ws.RejectAgentRecoveryCancellation(in.AgentID, in.IncidentID)
 		a.changed([]string{in.AgentID})
 		return response(request, coreprotocol.BoolResult{OK: true}), true
-	case coreprotocol.AgentResetOverrides:
-		var in coreprotocol.AgentIDRequest
-		if err := decode(request.Payload, &in); err != nil {
-			return fault(request, "invalid_request", err.Error()), true
-		}
-		a.ws.ResetOrchestratorOverrides(in.AgentID)
-		return response(request, coreprotocol.BoolResult{OK: true}), true
 	case coreprotocol.WorkspaceStartup:
 		out := coreprotocol.StartupResult{Issues: a.ws.TakeStartupIssues()}
 		if err := a.ws.LastRegistryError(); err != nil {

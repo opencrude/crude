@@ -340,7 +340,13 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 			}
 		}
 		if builtinLSP(id) {
-			c.mutate(func(m *Model) { m.lspLanguages[id] = types.DefaultLSPSettings().Languages[id] })
+			c.mutate(func(m *Model) {
+				m.lspLanguages[id] = types.DefaultLSPSettings().Languages[id]
+				if m.Scope() == types.SettingsScopeWorkspace {
+					m.lspLanguages[id] = m.appDefaults.LSP.Languages[id]
+					m.resetWorkspacePath("lsp", "languages", id)
+				}
+			})
 			if c.draft != nil {
 				c.begin(id)
 			}

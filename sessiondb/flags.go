@@ -9,6 +9,7 @@ type SessionFlags struct {
 	MainAgent        string
 	CodeIntelligence *bool
 	MaxSubAgents     *int
+	TurnLogs         *bool
 }
 
 func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
@@ -18,10 +19,7 @@ func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
 	err := db.QueryRow(`
 		SELECT multi_agent, main_agent, code_intelligence, max_sub_agents FROM session_flags WHERE session_id = ?
 	`, sessionID).Scan(&multi, &mainAgent, &code, &maxAgents)
-	if err == sql.ErrNoRows {
-		return flags, nil
-	}
-	if err != nil {
+	if err != nil && err != sql.ErrNoRows {
 		return flags, err
 	}
 	if multi.Valid {
@@ -34,20 +32,52 @@ func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
 	}
 	if maxAgents.Valid {
 		value := int(maxAgents.Int64)
-		flags.MaxSubAgents = &value
+		if value >= 0 && value <= 32 {
+			flags.MaxSubAgents = &value
+		}
 	}
 	flags.MainAgent = mainAgent
+	var logs string
+	err = db.QueryRow(`SELECT value FROM session_runtime_state WHERE key=?`, "settings.turn_logs/"+sessionID).Scan(&logs)
+	if err != nil && err != sql.ErrNoRows {
+		return flags, err
+	}
+	if logs == "true" || logs == "false" {
+		enabled := logs == "true"
+		flags.TurnLogs = &enabled
+	}
 	return flags, nil
 }
 
 func SaveSessionFlags(db *sql.DB, sessionID string, flags SessionFlags) error {
-	return saveSessionFlags(db, sessionID, flags)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := saveSessionFlags(tx, sessionID, flags); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func saveSessionFlags(db interface {
 	Exec(string, ...any) (sql.Result, error)
 }, sessionID string, flags SessionFlags) error {
-	if flags.MultiAgent == nil && flags.MainAgent == "" && flags.CodeIntelligence == nil && flags.MaxSubAgents == nil {
+	if flags.TurnLogs == nil {
+		if _, err := db.Exec(`DELETE FROM session_runtime_state WHERE key=?`, "settings.turn_logs/"+sessionID); err != nil {
+			return err
+		}
+	} else {
+		value := "false"
+		if *flags.TurnLogs {
+			value = "true"
+		}
+		if _, err := db.Exec(`INSERT INTO session_runtime_state(key,value,updated_at) VALUES(?,?,unixepoch()*1000000000) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, "settings.turn_logs/"+sessionID, value); err != nil {
+			return err
+		}
+	}
+	if flags.MultiAgent == nil && flags.MainAgent == "" && flags.CodeIntelligence == nil && flags.MaxSubAgents == nil && flags.TurnLogs == nil {
 		_, err := db.Exec(`DELETE FROM session_flags WHERE session_id = ?`, sessionID)
 		return err
 	}
@@ -79,8 +109,7 @@ func nullableFlag(value *bool) any {
 }
 
 func ClearSessionFlags(db *sql.DB, sessionID string) error {
-	_, err := db.Exec(`DELETE FROM session_flags WHERE session_id = ?`, sessionID)
-	return err
+	return SaveSessionFlags(db, sessionID, SessionFlags{})
 }
 
 // LoadDisabledCapabilities returns the sorted capability IDs this session has

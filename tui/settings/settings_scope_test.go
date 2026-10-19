@@ -43,7 +43,7 @@ func TestWorkspaceScopeSaveEmitsOverridesWithoutAPIKeys(t *testing.T) {
 	working := app
 	working.Editor.TabSize = 8
 	working.Agents = types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "ws-model"}}}
-	model := NewScoped(th, working, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverrides{})
+	model := NewScoped(th, working, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverridesFromDiff(app, working))
 	got := model.Overrides()
 	if !strings.Contains(string(got.Editor), `"tab_size":8`) {
 		t.Fatalf("editor override missing: %s", got.Editor)

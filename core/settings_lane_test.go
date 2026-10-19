@@ -55,7 +55,7 @@ func TestSettingsLaneCapturesOnlyAfterPriorPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	draft := coreprotocol.AccountDraft{ID: "one", ProviderID: "p", Label: "after", Endpoint: coreprotocol.SecretUpdate[string]{Keep: true}}
-	body, _ := json.Marshal(coreprotocol.AccountChangeRequest{ID: "one", ExpectedRevision: fetched.Accounts["one"].Revision, After: &draft})
+	body, _ := json.Marshal(coreprotocol.AccountChangeRequest{ID: "one", After: &draft})
 	changed := c.Dispatch(context.Background(), coreprotocol.Request{ID: "change", Owner: c.Owner, WorkspaceID: owner.WorkspaceID, Method: coreprotocol.AccountChange, Payload: body})
 	select {
 	case <-entered:

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"crude/provider"
-	"crude/sessiondb"
 )
 
 // ErrAccountRequired marks a connection that needs explicit user selection or
@@ -79,54 +78,4 @@ func (c *Config) bindAccount(p *provider.Provider, accountID string) error {
 // window) so no request setting can be silently dropped.
 func (c *Config) ConnectionProvider(accountID string) (*provider.Provider, error) {
 	return c.providerForCategory(CategoryConfig{AccountID: accountID})
-}
-
-// pinAccounts captures effective role connections for a NEW session. A later
-// default change only changes future sessions, not any of these IDs.
-func (c *Config) pinAccounts() error {
-	profile, name := activeProfileCfg(c)
-	if profile.Categories == nil {
-		profile.Categories = make(map[string]CategoryConfig)
-	}
-	if c.Agents.Profiles == nil {
-		c.Agents.Profiles = make(map[string]ProfileConfig)
-	}
-	main := c.GetActiveDefaultCategory()
-	account, err := c.resolveAccount(main.AccountID)
-	if err != nil {
-		return fmt.Errorf("main agent: %w", err)
-	}
-	main.AccountID = account.ID
-	// Pin the workspace-backed main category without replacing its other settings.
-	cat := profile.Categories[CategoryDefault]
-	cat.AccountID = account.ID
-	profile.Categories[CategoryDefault] = cat
-	c.Agents.Profiles[name] = profile
-	for role, cat := range profile.Categories {
-		if role == CategoryDefault || cat.AccountID == "" {
-			continue
-		}
-		selected, resolveErr := c.resolveAccount(cat.AccountID)
-		if resolveErr != nil {
-			return fmt.Errorf("%s account: %w", role, resolveErr)
-		}
-		cat.AccountID = selected.ID
-		profile.Categories[role] = cat
-	}
-	c.Agents.Profiles[name] = profile
-	return nil
-}
-
-// pinnedAccountOverrides records only connection pins; the remaining category
-// fields keep their configured inheritance semantics in workspace settings.
-func pinnedAccountOverrides(c *Config) map[string]sessiondb.AgentSettingOverride {
-	profile, _ := activeProfileCfg(c)
-	out := make(map[string]sessiondb.AgentSettingOverride)
-	for role, cat := range profile.Categories {
-		if cat.AccountID == "" {
-			continue
-		}
-		out[role] = sessiondb.AgentSettingOverride{AccountID: cat.AccountID}
-	}
-	return out
 }

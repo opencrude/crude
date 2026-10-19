@@ -39,12 +39,12 @@ type controlSettingsFieldsPage struct {
 
 func controlSessionOwned(path string) bool {
 	switch path {
-	case "value.Model", "value.account_id", "value.ThinkingEffort", "value.TurnLogsEnabled", "main_agent", "multi_agent", "code_intelligence", "max_sub_agents":
+	case "value.Model", "value.account_id", "value.ThinkingEffort", "value.TurnLogsEnabled", "main_agent", "multi_agent", "code_intelligence", "max_sub_agents", "turn_logs":
 		return true
 	}
 	if strings.HasPrefix(path, "overrides.") || strings.HasPrefix(path, "value.Agents.Categories.") {
 		switch path[strings.LastIndex(path, ".")+1:] {
-		case "Model", "account_id", "ThinkingEffort", "context_compaction_percent":
+		case "Model", "account_id", "ThinkingEffort", "context_compaction_percent", "context_retention_tokens", "service_tier":
 			return true
 		}
 	}

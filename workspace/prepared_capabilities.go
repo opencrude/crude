@@ -15,22 +15,19 @@ import (
 	"crude/skills"
 	"crude/types"
 	captypes "crude/types/capability"
-	"reflect"
 	"sync"
 )
 
 // PreparedCapabilities is captured on the domain owner. Its workers never read
-// workspace configuration or session maps. Commit must durably compare the
-// supplied private preimage; publication belongs to the caller's apply phase.
+// workspace configuration or session maps. Commit applies the action's changed
+// fields; publication belongs to the caller's apply phase.
 type PreparedCapabilities struct {
 	service             *capability.Service
-	generation          uint64
 	defaults, effective types.AppSettings
+	overrides           types.WorkspaceOverrides
 	root                string
 	commit              func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error)
 }
-
-var ErrApplicationSettingsConflict = errors.New("application settings preimage changed")
 
 func (w *Workspace) PrepareCapabilities(commit func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error)) (*PreparedCapabilities, error) {
 	if w.Capabilities == nil {
@@ -46,7 +43,7 @@ func (w *Workspace) PrepareCapabilities(commit func(context.Context, types.AppSe
 		types.ApplyAppDefaults(&out)
 		return out
 	}
-	return &PreparedCapabilities{service: w.Capabilities, generation: w.Capabilities.Snapshot().Generation, defaults: clone(w.AppDefaults()), effective: clone(w.LoadAppSettings()), root: w.RootPath, commit: commit}, nil
+	return &PreparedCapabilities{service: w.Capabilities, defaults: clone(w.AppDefaults()), effective: clone(w.LoadAppSettings()), overrides: w.LoadWorkspaceOverrides(), root: w.RootPath, commit: commit}, nil
 }
 func (p *PreparedCapabilities) Snapshot(ctx context.Context) (captypes.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
@@ -58,7 +55,7 @@ func (p *PreparedCapabilities) Preview(ctx context.Context, action captypes.Acti
 	if action.Operation != "install" && action.Operation != "update" {
 		return captypes.AcquisitionPreview{}, errors.New("preview requires install or update")
 	}
-	if err := p.checkCurrent(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return captypes.AcquisitionPreview{}, err
 	}
 	return p.service.PreviewAcquisition(ctx, action.ID, action.Scope, action.Operation)
@@ -81,7 +78,7 @@ func (p *PreparedCapabilities) PrepareAction(action captypes.Action) func(contex
 }
 func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, types.AppSettings, error) {
 	service := p.service
-	if err := p.checkCurrent(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return captypes.Snapshot{}, nil, "", types.AppSettings{}, err
 	}
 	working := p.effective
@@ -358,38 +355,13 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 			if err == nil {
 				effective := published
 				if action.Scope == captypes.ScopeApplication {
-					effective = types.MergeAppWorkspace(published, types.OverridesFromDiff(p.defaults, p.effective))
+					effective = types.MergeAppWorkspace(published, p.overrides)
 				}
 				err = service.Configure(ctx, effective.Capabilities)
 			}
 		}
 	}
 	return service.Snapshot(), entries, content, published, err
-}
-
-// checkCurrent rejects a stale captured configuration before any runtime effect.
-// The caller must serialize prepare/run/apply with other settings writers; this
-// precondition is not a lock spanning external effects or application publication.
-func (p *PreparedCapabilities) checkCurrent(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	snapshot := p.service.Snapshot()
-	if snapshot.Generation != p.generation {
-		return ErrApplicationSettingsConflict
-	}
-	current, err := json.Marshal(captypes.Normalize(snapshot.Settings))
-	if err != nil {
-		return err
-	}
-	expected, err := json.Marshal(captypes.Normalize(p.effective.Capabilities))
-	if err != nil {
-		return err
-	}
-	if string(current) != string(expected) {
-		return ErrApplicationSettingsConflict
-	}
-	return nil
 }
 
 func applyAcquiredRegistration(current, policy, acquired captypes.Settings, action captypes.Action) (captypes.Settings, error) {
@@ -444,9 +416,9 @@ func (w *Workspace) PrepareSkillActivation(agentID, id, arguments string) (func(
 	}, nil
 }
 
-// CommitPreparedCapabilityOverlay CASes the exact persisted sparse overlay in a
-// transaction. It uses only the captured database and defaults, never live maps.
-func (w *Workspace) PrepareCapabilityOverlayCommit() func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error) {
+// PrepareCapabilityOverlayCommit changes only explicit capability fields in
+// the latest stored overlay, preserving every other section.
+func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error) {
 	db, defaults := w.WorkspaceDB, w.AppDefaults()
 	return func(ctx context.Context, before, after types.AppSettings, scope captypes.Scope) (types.AppSettings, error) {
 		if scope != captypes.ScopeWorkspace || db == nil {
@@ -461,12 +433,31 @@ func (w *Workspace) PrepareCapabilityOverlayCommit() func(context.Context, types
 		if err != nil {
 			return types.AppSettings{}, err
 		}
-		if !reflect.DeepEqual(types.MergeAppWorkspace(defaults, current).Capabilities, before.Capabilities) {
-			return types.AppSettings{}, ErrApplicationSettingsConflict
+		edits := types.SettingsEdits(before.Capabilities, after.Capabilities)
+		collection := "connections"
+		switch action.Kind {
+		case captypes.KindSkill:
+			collection = "skills"
+		case "source":
+			collection = "sources"
+		}
+		if action.Operation == "reset-inherited" {
+			edits = []types.SettingEdit{{Path: []string{collection, action.ID}}}
+		}
+		if action.Operation == "enable" || action.Operation == "disable" {
+			value, _ := json.Marshal(action.Operation == "disable")
+			edits = []types.SettingEdit{{Path: []string{collection, action.ID, "disabled"}, After: value}}
+		}
+		if action.Operation == "reset-inherited" {
+			current.Capabilities, err = types.PatchStoredSettings(current.Capabilities, edits)
+		} else {
+			current.Capabilities, err = patchCapabilityOverrides(current.Capabilities, edits)
+		}
+		if err != nil {
+			return types.AppSettings{}, err
 		}
 		effective := types.MergeAppWorkspace(defaults, current)
-		effective.Capabilities = captypes.Clone(after.Capabilities)
-		raw, err := json.Marshal(types.OverridesFromDiff(defaults, effective))
+		raw, err := json.Marshal(current)
 		if err != nil {
 			return types.AppSettings{}, err
 		}
@@ -479,4 +470,15 @@ func (w *Workspace) PrepareCapabilityOverlayCommit() func(context.Context, types
 		}
 		return effective, nil
 	}
+}
+
+// Removing a registered entity hides its inherited definition. Removing an
+// override (Reset inherited) instead deletes the stored entry.
+func patchCapabilityOverrides(raw json.RawMessage, edits []types.SettingEdit) (json.RawMessage, error) {
+	for i := range edits {
+		if len(edits[i].Path) == 2 && edits[i].After == nil {
+			edits[i].After = json.RawMessage("null")
+		}
+	}
+	return types.PatchStoredSettings(raw, edits)
 }

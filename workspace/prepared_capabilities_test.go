@@ -4,6 +4,7 @@ import (
 	"context"
 	"crude/types"
 	captypes "crude/types/capability"
+	"encoding/json"
 	"testing"
 )
 
@@ -36,14 +37,21 @@ func TestPreparedCapabilitiesDetachesActionAndRejectsUnreviewedAcquisition(t *te
 	}
 }
 
-func TestPreparedCapabilityOverlayPreservesNeighborsAndConflicts(t *testing.T) {
+func TestPreparedCapabilityOverlayPreservesNeighborsAndAcceptsRepeatedSet(t *testing.T) {
 	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
 	defer w.Close()
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)
 	}
 	before := w.LoadAppSettings()
-	commit := w.PrepareCapabilityOverlayCommit()
+	// Parent-equal and schema-stale neighbors are stored intent/data, not a
+	// reason for a capability edit to rewrite other categories.
+	neighbors := types.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":4,"removed_editor_field":"kept"}`), Agents: json.RawMessage(`{"Enabled":false}`)}
+	if err := w.SaveWorkspaceSettings(neighbors); err != nil {
+		t.Fatal(err)
+	}
+	before = w.LoadAppSettings()
+	commit := w.PrepareCapabilityOverlayCommit(captypes.Action{})
 	after := before
 	after.Capabilities = captypes.Clone(before.Capabilities)
 	after.Capabilities.Sources["local"] = captypes.SourceConfig{ID: "local", Location: t.TempDir(), Scope: captypes.ScopeWorkspace}
@@ -54,11 +62,15 @@ func TestPreparedCapabilityOverlayPreservesNeighborsAndConflicts(t *testing.T) {
 	if _, ok := published.Capabilities.Sources["local"]; !ok {
 		t.Fatal("source not persisted")
 	}
-	if _, err := commit(context.Background(), before, after, captypes.ScopeWorkspace); err != ErrApplicationSettingsConflict {
-		t.Fatalf("stale overlay accepted: %v", err)
+	stored := w.LoadWorkspaceOverrides()
+	if string(stored.Editor) != string(neighbors.Editor) || string(stored.Agents) != string(neighbors.Agents) {
+		t.Fatal("capability save rewrote unrelated explicit/stale neighbors")
+	}
+	if _, err := commit(context.Background(), before, after, captypes.ScopeWorkspace); err != nil {
+		t.Fatalf("repeated explicit set rejected: %v", err)
 	}
 	if w.LoadAppSettings().Capabilities.Sources["local"].ID != "local" {
-		t.Fatal("conflict lost committed registration")
+		t.Fatal("repeated set lost committed registration")
 	}
 }
 
@@ -89,8 +101,8 @@ func TestPreparedOldSnapshotCannotRewindCapabilityService(t *testing.T) {
 		t.Fatal("passive old snapshot rewound service")
 	}
 	run := old.PrepareAction(captypes.Action{Operation: "disconnect", ID: "new"})
-	if _, _, _, _, err := run(context.Background()); err != ErrApplicationSettingsConflict {
-		t.Fatalf("stale runtime action admitted: %v", err)
+	if _, _, _, _, err := run(context.Background()); err != nil {
+		t.Fatalf("explicit runtime action rejected after unrelated change: %v", err)
 	}
 }
 

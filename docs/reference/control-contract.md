@@ -39,8 +39,9 @@ still uses `mcp_request_access`.
 Session settings are session-owned fields of the same settings catalog. Besides
 model, thinking and permission fields they include `multi_agent`,
 `code_intelligence` (the agent `lsp` tool) and `max_sub_agents` (0 = inherit the
-app/workspace value). Each set is fenced by the session's settings revision and
-applied live through the session owner; it never rewrites application or
+app/workspace value). Each explicit set/remove is applied live through the
+session owner, with last write wins and no expected configuration revision;
+it never rewrites application or
 workspace layers. Language-server launch and resource fields
 (`lsp.languages.<id>.command`, arguments, environment, settings, initialization
 options and resource limits) are human-owned: an agent may toggle a configured
@@ -86,7 +87,7 @@ exact arguments as readable `path: value` lines. Chat rows project
 receipts by state, fault, identities and output, never a raw JSON envelope.
 Settings Save considers **all dirty drafts**, including off-page editors; an
 ordinary page does not sanitize an authority-bearing pending draft. Field-level
-settings paths, schema and revisions are discoverable; account entities and
+settings paths, schema and observation revisions are discoverable; account entities and
 security authority use their human-owned paths, and MCP connections and secrets
 use the `capabilities.*` commands. Questions retain
 agent versus external-client answer provenance, never fabricated human input.

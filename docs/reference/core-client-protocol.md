@@ -98,7 +98,7 @@ mutable Workspace.
 - Retained core creation hydrates Notices and initializes capability metadata on
   its factory worker before actor publication, never from shell startup or a
   model session. Passive capability observations bypass long settings operations;
-  editable settings reads retain ordered preimages. Explicit refresh sequence plus
+  editable settings reads remain ordered after preceding saves. Explicit refresh sequence plus
   workspace generation fences stale cancellations. Terminal create receipts mount
   exact returned identity before inventory; Notices→Terminals must repaint.
 - `workspace.TerminalService` now owns the one `terminalvt` parser and reply source
@@ -168,7 +168,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Family | Operations |
 |---|---|
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`; `agent.changes` |
-| Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.reset_overrides`, `.append_messages` |
+| Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
 | LSP | `lsp.snapshot`, `.open_file`, `.close_file`, `.queue_file_update`, `.notify_file_save`, `.notify_watched_files_changed`, `.set_active_file`, `.clear_diagnostics`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.rename` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
@@ -223,12 +223,16 @@ receipt checks; receipt replay must not reserve another operation. Queued input
 receipts have no turn/context revision until their atomic dequeue/admission, and
 pending message flags survive conversation reset/delta JSON projection.
 
-Connected account forms retain their opaque original account revision; a newer
-replica cannot silently authorize an old form. Application/workspace forms retain
-the corresponding original preference revisions. Sparse workspace saves are
-revision-fenced and serialize with other settings jobs: workers commit storage,
-then the actor alone installs session/LSP projections. Stored-secret markers mean
-explicit Keep, never a credential read or an empty replacement.
+Connected preference saves carry exact path/value edits, not resolved form
+snapshots or expected configuration revisions. Last explicit write wins;
+untouched fields keep inheriting. Session saves likewise carry only edits to
+their explicit local layer, never a second whole-settings wire writer. Account
+and capability changes remain identity-scoped and preserve write-only secret
+Keep/Replace/Clear. They do not have whole-settings conflict gates. Existing
+settings jobs serialize persistence, then the actor alone publishes session/LSP
+projections. Observation revisions prevent out-of-order replica installation;
+they never reject an ordinary configuration write. Immutable install/grant
+reviews and actual attachment/session lifetimes retain their own safeguards.
 
 Passive `settings.capability.runtime` and `.snapshot` reads bypass the serialized
 settings lane so a pending Connect/Sign in cannot starve home polling. Editable
@@ -354,9 +358,9 @@ they never update application configuration or appear in snapshots/receipts.
 Prefer configured Accounts over command-line keys, which can leak through shell
 history/process arguments even though the core read models are redacted.
 
-Small queued `SaveAppSettings` / `SaveWorkspaceSettings` calls return local
-admission, not durable completion; the full preference-save command awaits its
-core result. Capability previews retain exact approval/preimage authority;
+All settings saves and shortcuts await their typed durable core result; the
+queued application/workspace shell writers are removed. Capability previews
+retain exact approval/preimage authority;
 a zero-action preview result cannot publish application defaults.
 
 Large response JSON uses connection-owned `payload.read` / `payload.release`

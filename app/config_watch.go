@@ -16,6 +16,19 @@ const configWatchDebounce = 150 * time.Millisecond
 // WatchConfig watches the app config file and notifies the TUI when it
 // changes so theme (and future live settings) can hot-reload without restart.
 func WatchConfig(send func(tea.Msg)) (stop func(), err error) {
+	return watchFileConfig(func(cfg FileConfig) {
+		preset := "dark"
+		if cfg.Theme != nil && cfg.Theme.Preset != "" {
+			preset = cfg.Theme.Preset
+		}
+		if send != nil {
+			send(types.ConfigReloadedMsg{ThemePreset: preset})
+		}
+	})
+}
+
+// The core owns file reload; the shell never becomes another settings writer.
+func watchFileConfig(loaded func(FileConfig)) (stop func(), err error) {
 	path := ConfigPath()
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -28,8 +41,10 @@ func WatchConfig(send func(tea.Msg)) (stop func(), err error) {
 	}
 
 	done := make(chan struct{})
+	joined := make(chan struct{})
 	var stopOnce sync.Once
 	go func() {
+		defer close(joined)
 		defer func() { _ = watcher.Close() }()
 		base := filepath.Base(path)
 		var debounce *time.Timer
@@ -70,12 +85,8 @@ func WatchConfig(send func(tea.Msg)) (stop func(), err error) {
 				return
 			default:
 			}
-			preset := "dark"
-			if cfg.Theme != nil && cfg.Theme.Preset != "" {
-				preset = cfg.Theme.Preset
-			}
-			if send != nil {
-				send(types.ConfigReloadedMsg{ThemePreset: preset})
+			if loaded != nil {
+				loaded(cfg)
 			}
 		}
 
@@ -111,5 +122,6 @@ func WatchConfig(send func(tea.Msg)) (stop func(), err error) {
 
 	return func() {
 		stopOnce.Do(func() { close(done) })
+		<-joined
 	}, nil
 }

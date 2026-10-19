@@ -17,11 +17,9 @@ import (
 )
 
 type controlSettingsInput struct {
-	Scope            string          `json:"scope"`
-	Path             string          `json:"path"`
-	Value            json.RawMessage `json:"value"`
-	ExpectedRevision string          `json:"expected_revision"`
-	SessionRevision  *uint64         `json:"session_revision"`
+	Scope string          `json:"scope"`
+	Path  string          `json:"path"`
+	Value json.RawMessage `json:"value"`
 }
 
 // ControlSettingsAuthority is shared with gateway descriptor resolution. This
@@ -60,7 +58,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		return controlFailure(in, control.Invalid, "scope must be application, workspace or session")
 	}
 	if in.CommandID == "settings.get" {
-		if input.Path != "" || len(input.Value) != 0 || input.ExpectedRevision != "" || input.SessionRevision != nil {
+		if input.Path != "" || len(input.Value) != 0 {
 			return controlFailure(in, control.Invalid, "settings.get accepts scope only")
 		}
 		if input.Scope == "session" {
@@ -85,17 +83,14 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		return controlFailure(in, control.Invalid, "reset does not accept a value")
 	}
 	if input.Scope == "session" {
-		if in.Target.SessionID == "" || input.SessionRevision == nil || input.ExpectedRevision != "" {
-			return controlFailure(in, control.Invalid, "exact session target and session_revision are required")
+		if in.Target.SessionID == "" {
+			return controlFailure(in, control.Invalid, "exact session target is required")
 		}
 		backend := a.ws.BackendSession(in.Target.SessionID)
 		if backend == nil {
 			return controlFailure(in, control.Unavailable, "exact session is not open")
 		}
 		snap := backend.SettingsSnapshots()
-		if snap.Revision != *input.SessionRevision {
-			return controlFailure(in, control.Stale, "session settings changed; fetch current revision")
-		}
 		// Session settings use the actual DTO JSON names. Only model/account/
 		// thinking/log fields belong to a session; IDE values are live inherited.
 		if !controlSessionOwned(input.Path) {
@@ -104,12 +99,25 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		// Private exact state, not the redacted read projection: replaying that
 		// projection would clear write-only invocation credentials on save.
 		value := coreprotocol.SessionSettingsDTO{Value: snap.Effective, MainAgent: snap.Effective.SessionMainAgent, Overrides: snap.Effective.SessionOverrides, MultiAgent: snap.Effective.SessionMultiAgent, CodeIntelligence: snap.Effective.SessionCodeIntelligence, MaxSubAgents: snap.Effective.SessionMaxSubAgents}
+		value.TurnLogs = snap.Effective.SessionTurnLogs
 		// The session persists exact role pins, not the effective display fields.
 		value.Overrides = make(map[string]types.CategorySettings, len(snap.Overrides)+1)
 		for id, cfg := range snap.Overrides {
 			value.Overrides[id] = cfg
 		}
 		path := input.Path
+		if path == "value.TurnLogsEnabled" {
+			path = "turn_logs"
+			if reset {
+				input.Value = json.RawMessage("null")
+			} else {
+				var text string
+				if json.Unmarshal(input.Value, &text) != nil || text != "on" && text != "off" {
+					return controlFailure(in, control.Invalid, "turn logs must be on or off")
+				}
+				input.Value, _ = json.Marshal(text == "on")
+			}
+		}
 		role := "default"
 		if value.MainAgent != "" {
 			role = "root/" + value.MainAgent
@@ -159,21 +167,13 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		if err := controlValidateField(value, path); err != nil {
 			return controlFailure(in, control.Invalid, err.Error())
 		}
-		return prepare(coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsMutationRequest{SessionID: in.Target.SessionID, ExpectedRevision: *input.SessionRevision, Settings: value})
-	}
-	if input.ExpectedRevision == "" || input.SessionRevision != nil {
-		return controlFailure(in, control.Invalid, "opaque expected_revision is required")
+		return prepare(coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsMutationRequest{SessionID: in.Target.SessionID, Edits: []types.SettingEdit{{Path: strings.Split(path, "."), After: input.Value}}})
 	}
 	app := a.ws.AppDefaults()
 	overrides := a.ws.LoadWorkspaceOverrides()
 	before := app
-	revision := entityRevision(app)
 	if input.Scope == "workspace" {
 		before = types.MergeAppWorkspace(app, overrides)
-		revision = entityRevision(overrides)
-	}
-	if revision != input.ExpectedRevision {
-		return controlFailure(in, control.Stale, "settings changed; fetch the exact current revision")
 	}
 	// Resolve exact JSON metadata, including absent omitempty leaves, before
 	// touching the sparse overlay. No case-insensitive encoding/json aliases.
@@ -226,23 +226,15 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	}
 	if input.Scope == "application" {
 		// Entity containers remain server-owned and secrets are explicit Keep.
-		after = publicApp(after)
-		return prepare(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{ExpectedRevision: input.ExpectedRevision, Value: after, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}})
+		return prepare(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{{Path: strings.Split(input.Path, "."), After: input.Value}}, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}})
 	}
 	// Patch only the selected sparse leaf, preserving explicit false and all
 	// neighboring overrides. Reset removes exactly this leaf, not its section.
-	raw, _ := json.Marshal(overrides)
-	var tree map[string]any
-	_ = json.Unmarshal(raw, &tree)
-	var leaf any
-	_ = json.Unmarshal(input.Value, &leaf)
-	controlPatch(tree, strings.Split(input.Path, "."), leaf, reset)
-	raw, _ = json.Marshal(tree)
-	var next types.WorkspaceOverrides
-	if err := controlDecode(raw, &next); err != nil {
-		return controlFailure(in, control.Invalid, "category cannot be overridden at workspace scope")
+	edit := types.SettingEdit{Path: strings.Split(input.Path, "."), After: input.Value}
+	if reset {
+		edit.After = nil
 	}
-	return prepare(coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{ExpectedRevision: input.ExpectedRevision, Overrides: next})
+	return prepare(coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{edit}})
 }
 
 func controlDecode(raw []byte, value any) error {
@@ -403,27 +395,6 @@ func controlExactJSONKeys(t reflect.Type, value any) error {
 		}
 	}
 	return nil
-}
-
-func controlPatch(tree map[string]any, parts []string, value any, reset bool) {
-	if len(parts) == 1 {
-		if reset {
-			delete(tree, parts[0])
-		} else {
-			tree[parts[0]] = value
-		}
-		return
-	}
-	child, _ := tree[parts[0]].(map[string]any)
-	if child == nil {
-		child = map[string]any{}
-	}
-	controlPatch(child, parts[1:], value, reset)
-	if len(child) == 0 {
-		delete(tree, parts[0])
-	} else {
-		tree[parts[0]] = child
-	}
 }
 
 func controlValidatePreferences(value types.AppSettings, path string) error {

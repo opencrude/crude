@@ -17,9 +17,6 @@ type Account struct {
 	APIKey     string            `json:"api_key,omitempty"`
 	OAuth      *OAuthCredentials `json:"oauth,omitempty"`
 	Connection Template          `json:"connection"`
-	// ObservationRevision is a client-only opaque preimage supplied by a core
-	// projection. It is never a credential, routing input or persisted field.
-	ObservationRevision string `json:"-"`
 }
 
 // NewAccountID produces an unpredictable stable identity for a new account.

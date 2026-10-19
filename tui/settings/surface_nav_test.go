@@ -381,7 +381,11 @@ func TestSettingsSave_PersistsPresetThroughHost(t *testing.T) {
 	if !ok {
 		t.Fatalf("cmd type=%T want SaveMsg", msg)
 	}
-	if save.AppSettings.Theme.Preset != "warm" {
-		t.Fatalf("SaveMsg preset=%q want warm", save.AppSettings.Theme.Preset)
+	settings := types.CloneAppSettings(model.layerBase)
+	if err := types.ApplySettingsEdits(&settings, save.Edits); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Theme.Preset != "warm" {
+		t.Fatalf("SaveMsg preset=%q want warm", settings.Theme.Preset)
 	}
 }

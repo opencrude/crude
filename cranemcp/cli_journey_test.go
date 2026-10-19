@@ -254,7 +254,7 @@ func TestCLIProtocolJourney(t *testing.T) {
 		t.Fatalf("settings preimage: %s %v", get.Output, err)
 	}
 	originalWrap, originalTab := settings.Application.Editor.WordWrap, settings.Application.Editor.TabSize
-	setArgs := map[string]any{"command": "settings.set", "arguments": map[string]any{"scope": "application", "path": "editor.word_wrap", "value": !originalWrap, "expected_revision": settings.Revision}}
+	setArgs := map[string]any{"command": "settings.set", "arguments": map[string]any{"scope": "application", "path": "editor.word_wrap", "value": !originalWrap}}
 	if out := cliCall(t, reader, "crude_control", setArgs); !out.IsError {
 		t.Fatal("read-only subprocess admitted write")
 	}
@@ -263,8 +263,8 @@ func TestCLIProtocolJourney(t *testing.T) {
 	if changed.State != control.Committed || changed.RequestID == "" {
 		t.Fatalf("mutation: %#v", changed)
 	}
-	if out := cliCall(t, writer, "crude_control", setArgs); !out.IsError {
-		t.Fatal("stale settings revision admitted")
+	if out := cliCall(t, writer, "crude_control", setArgs); out.IsError {
+		t.Fatal("repeated explicit settings set rejected")
 	}
 	if out := cliCall(t, writer, "crude_receipt", map[string]any{"request_id": changed.RequestID}); out.IsError || !strings.Contains(fmt.Sprint(out.StructuredContent), changed.RequestID) {
 		t.Fatal(out)

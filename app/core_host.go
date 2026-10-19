@@ -131,6 +131,18 @@ func RunCore(opts CoreOptions) error {
 	// workspace actor. A commit never waits for it, so an actor can never block
 	// on itself, and successive commits cannot be applied out of order.
 	defaultsChanged := make(chan struct{}, 1)
+	fileChanged := make(chan struct{}, 1)
+	stopConfigWatch, watchErr := watchFileConfig(func(FileConfig) {
+		select {
+		case fileChanged <- struct{}{}:
+		default:
+		}
+	})
+	if watchErr != nil {
+		lg.Warn("CONFIG", "watch_failed", "error", watchErr.Error())
+	} else {
+		defer stopConfigWatch()
+	}
 	application.defaultsChanged = func() {
 		select {
 		case defaultsChanged <- struct{}{}:
@@ -144,6 +156,14 @@ func RunCore(opts CoreOptions) error {
 			select {
 			case <-ctx.Done():
 				return
+			case <-fileChanged:
+				if err := application.reloadFileConfiguration(); err != nil {
+					lg.Warn("CONFIG", "reload_rejected", "error", err.Error())
+					continue
+				}
+				if err := runtime.ApplyAppDefaults(ctx, application.committedDefaults()); err != nil {
+					lg.Warn("CONFIG", "defaults_publish_failed", "error", err.Error())
+				}
 			case <-defaultsChanged:
 				settings := application.committedDefaults()
 				if err := runtime.ApplyAppDefaults(ctx, settings); err != nil {
