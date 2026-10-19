@@ -1,7 +1,9 @@
 package diffview
 
 import (
+	"context"
 	"github.com/alecthomas/chroma/v2"
+	"iter"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
@@ -14,13 +16,15 @@ type SyntaxSpan struct {
 	Kind       chroma.TokenType
 }
 
-// PrepareSyntax lexes a whole source once (keeping multi-line lexer context)
-// and returns per-line token spans. Call it off the UI goroutine. Nil means
-// the path has no specific lexer and paints as plain text.
-func PrepareSyntax(path, source string) [][]SyntaxSpan {
-	lines := prepareSyntax(path, source)
+// PrepareSyntaxContext preserves whole-source lexer context and returns token
+// spans, never palette bytes. It must run off Update under a comparison worker.
+func PrepareSyntaxContext(ctx context.Context, path, source string) ([][]SyntaxSpan, error) {
+	lines, err := prepareSyntax(ctx, path, source)
+	if err != nil {
+		return nil, err
+	}
 	if lines == nil {
-		return nil
+		return nil, nil
 	}
 	out := make([][]SyntaxSpan, len(lines))
 	for index, spans := range lines {
@@ -33,7 +37,7 @@ func PrepareSyntax(path, source string) [][]SyntaxSpan {
 		}
 		out[index] = converted
 	}
-	return out
+	return out, ctx.Err()
 }
 
 // SourceUnit is one painted grapheme: its source bytes, display text (tabs
@@ -43,14 +47,15 @@ type SourceUnit struct {
 	Offset, Column, Width int
 }
 
-// SourceUnits is the shared byte/column mapping every comparison painter uses.
-func SourceUnits(text string) []SourceUnit {
-	units := sourceUnits(text)
-	out := make([]SourceUnit, len(units))
-	for index, unit := range units {
-		out[index] = SourceUnit{Raw: unit.raw, Display: unit.display, Offset: unit.offset, Column: unit.column, Width: unit.width}
+// SourceRange is the streaming byte/column mapping for comparison paint and copy.
+func SourceRange(text string, from, to int) iter.Seq[SourceUnit] {
+	return func(yield func(SourceUnit) bool) {
+		for unit := range sourceRange(text, from, to) {
+			if !yield(SourceUnit{Raw: unit.raw, Display: unit.display, Offset: unit.offset, Column: unit.column, Width: unit.width}) {
+				return
+			}
+		}
 	}
-	return out
 }
 
 // SourceWidth is the display width of one source line.

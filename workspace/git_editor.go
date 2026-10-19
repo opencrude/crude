@@ -47,8 +47,10 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	if err := ctx.Err(); err != nil {
 		return GitFileAnnotation{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return GitFileAnnotation{}, err
+	}
+	defer s.unlock()
 
 	repo, root, err := s.open()
 	if err != nil {

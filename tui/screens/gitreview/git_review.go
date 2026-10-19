@@ -241,9 +241,7 @@ func (screen *Screen) Presentation() gitdiff.Presentation { return screen.docume
 
 func (screen *Screen) Document() *gitdiff.Document { return screen.document }
 
-// InvalidateWidthProfile is a geometry boundary; the document re-derives
-// widths on its next layout, so nothing is cached here.
-func (screen *Screen) InvalidateWidthProfile() {}
+func (screen *Screen) InvalidateWidthProfile() { screen.document.InvalidateWidthProfile() }
 
 func (screen *Screen) syncLinks() {
 	if screen.document.Presentation() == gitdiff.Split {
@@ -403,7 +401,7 @@ func (screen *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionReturn, Payload: screen}}
 	case "ctrl+r":
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionRefresh}}
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionRefresh, Payload: screen}}
 	case "v":
 		return screen.HandleAction(ui.EventContext{}, ui.Action{ID: actionPresentation})
 	case "tab", "shift+tab":

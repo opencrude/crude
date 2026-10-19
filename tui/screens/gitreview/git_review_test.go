@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/diffview"
 	"crude/tui/screens/gitdiff"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -166,6 +167,10 @@ func TestReviewFindBarSearchesAndClosesWithEsc(t *testing.T) {
 	for _, r := range "changed" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
+	if command := screen.document.SearchCommand(); command != nil {
+		command().(diffview.SearchReadyMsg).Apply()
+	}
+	t.Cleanup(screen.document.WaitSearch)
 	host.Layout()
 	buf := surface.NewCellBuffer(160, 40)
 	host.Paint(buf)
@@ -175,5 +180,15 @@ func TestReviewFindBarSearchesAndClosesWithEsc(t *testing.T) {
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if screen.FindOpen() || screen.Document().Query() != "" || host.Focused() != screen.DocumentID() {
 		t.Fatal("Esc must close find and return to the document")
+	}
+}
+
+func TestReviewKeyboardRefreshRetainsExactScreenOwner(t *testing.T) {
+	screen := NewWithID(nil, "gitreview/exact")
+	host, _ := render(t, screen, 140, 30)
+	host.Focus(screen.DocumentID())
+	result := host.Handle(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if result.Action == nil || result.Action.ID != ActionRefresh || result.Action.Payload != screen {
+		t.Fatalf("refresh lost owner: %+v", result.Action)
 	}
 }

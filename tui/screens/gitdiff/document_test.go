@@ -91,7 +91,7 @@ func TestDocumentFoldsUnchangedRunsAndExpandsOnClick(t *testing.T) {
 		t.Fatal("unchanged line outside context was painted")
 	}
 	gapRow := -1
-	for index, r := range document.rows {
+	for index, r := range document.rows.All() {
 		if r.kind == rowGap {
 			gapRow = index
 			break
@@ -134,7 +134,7 @@ func TestDoubleClickOpensTheExactLine(t *testing.T) {
 	}))
 	paint(document, 100, 30)
 	target := -1
-	for index, r := range document.rows {
+	for index, r := range document.rows.All() {
 		if r.kind == rowLine && r.lk == lineAdded {
 			target = index
 		}
@@ -205,9 +205,9 @@ func twoHunkDocument(t *testing.T, area workspace.GitChangeArea) *Document {
 
 func rowOf(t *testing.T, document *Document, text string) int {
 	t.Helper()
-	for index := range document.rows {
+	for index := range document.rows.All() {
 		if line, ok := document.lineText(index, sideUnified); ok && strings.TrimSpace(line) == text {
-			if document.rows[index].lk != lineDeleted {
+			if document.rows.At(index).lk != lineDeleted {
 				return index
 			}
 		}
@@ -252,21 +252,24 @@ func TestKeyboardSelectionAndCopyChord(t *testing.T) {
 func TestFindMatchesAcrossHunksAndSteps(t *testing.T) {
 	document := twoHunkDocument(t, workspace.GitAreaWorking)
 	document.SetQuery("FORTY")
+	settleDocumentSearch(t, document)
 	if document.SearchStatus() != "1 / 1 matches" {
 		t.Fatalf("status=%q", document.SearchStatus())
 	}
 	document.SetQuery("line 1")
-	total := len(document.search.matches)
+	settleDocumentSearch(t, document)
+	total := len(document.search.Matches)
 	if total < 3 {
 		t.Fatalf("matches=%d", total)
 	}
 	document.NextMatch(false)
 	document.NextMatch(true)
 	document.NextMatch(true)
-	if document.search.active != total-1 {
-		t.Fatalf("previous wrapped to %d, want %d", document.search.active, total-1)
+	if document.search.Active != total-1 {
+		t.Fatalf("previous wrapped to %d, want %d", document.search.Active, total-1)
 	}
 	document.SetQuery("nothing here")
+	settleDocumentSearch(t, document)
 	if !strings.HasPrefix(document.SearchStatus(), "No matches") {
 		t.Fatalf("status=%q", document.SearchStatus())
 	}

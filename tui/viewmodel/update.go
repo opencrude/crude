@@ -19,6 +19,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/diffview"
 	"crude/tui/screens/editorchanges"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
@@ -59,6 +60,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.continueRemoteWorkspaceSwitch())
 	command = tea.Batch(command, m.drainLiveEditorCommands())
 	command = tea.Batch(command, m.drainEditorSyntaxCommands())
+	command = tea.Batch(command, m.drainComparisonGeometry())
+	command = tea.Batch(command, m.drainComparisonSearch())
 	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -115,6 +118,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case editor.SyntaxReadyMsg:
 		m.applyEditorSyntax(msg)
+		return m, nil
+	case diffview.SearchReadyMsg:
+		m.applyComparisonSearch(msg)
+		return m, nil
+	case comparisonGeometryMsg:
+		m.applyComparisonGeometry(msg)
 		return m, nil
 	case shellport.ControlRequestMsg:
 		return m, m.handleShellControl(msg)

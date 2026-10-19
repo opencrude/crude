@@ -150,6 +150,7 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		m.finishGitOperation(msg.gen, types.OperationFailed, msg.err.Error())
 		m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
 		m.gitPanel.SetError(msg.err)
+		m.setGitChangesError(msg.err)
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Source control: " + msg.err.Error())
 		}
@@ -291,6 +292,7 @@ func (m *App) buildGitDiscardFrame(change workspace.GitChange) *ui.ComponentWidg
 // gitChangesPreparedMsg carries one batched comparison of every listed change,
 // prepared (diffed and lexed) off the update goroutine.
 type gitChangesPreparedMsg struct {
+	widthGen   uint64
 	workspace  uint64
 	generation uint64
 	files      []gitdiff.File
@@ -300,6 +302,7 @@ type gitChangesPreparedMsg struct {
 // gitEvidenceMsg carries one inspected commit for the panel preview or the
 // main review.
 type gitEvidenceMsg struct {
+	widthGen  uint64
 	workspace uint64
 	sequence  uint64
 	tab       window.TabID // review tab; zero targets the panel preview
@@ -373,25 +376,39 @@ func (m *App) prepareGitChanges() tea.Cmd {
 	}
 	if m.gitPrepareInFlight {
 		m.gitPrepareDirty = true
+		if m.gitPrepareCancel != nil {
+			m.gitPrepareCancel()
+		}
 		return nil
 	}
 	m.ws.EnsureGit()
 	changes := append([]workspace.GitChange(nil), m.gitPanel.Snapshot().Changes...)
+	if len(changes) == 0 {
+		m.gitPanel.SetPrepared(nil)
+		m.showPreparedGitChanges(nil, m.gitPanel.Snapshot().Branch)
+		return nil
+	}
 	m.gitPrepareInFlight = true
+	m.gitPanel.BeginPreparation()
+	for _, view := range m.gitReviews {
+		if view.commit == "" {
+			view.screen.SetLoading(true)
+		}
+	}
 	m.gitPrepareGen++
 	generation, owner, service := m.gitPrepareGen, m.workspaceSwitchGen.Load(), m.ws.Git()
-	return func() tea.Msg {
-		if len(changes) == 0 {
-			return gitChangesPreparedMsg{workspace: owner, generation: generation}
-		}
-		ctx, cancel := m.sourceControlContext()
+	widthGen := m.comparisonWidthGen
+	ctx, cancel := m.sourceControlContext()
+	m.gitPrepareCancel = cancel
+	return m.comparisonCommand(cancel, func() tea.Msg {
 		defer cancel()
 		items, err := service.CompareChanges(ctx, changes)
 		if err != nil {
 			return gitChangesPreparedMsg{workspace: owner, generation: generation, err: err}
 		}
-		return gitChangesPreparedMsg{workspace: owner, generation: generation, files: gitdiff.PrepareChanges(items)}
-	}
+		files, err := gitdiff.PrepareChangesContext(ctx, items)
+		return gitChangesPreparedMsg{workspace: owner, generation: generation, widthGen: widthGen, files: files, err: err}
+	})
 }
 
 func (m *App) applyGitChangesPrepared(msg gitChangesPreparedMsg) tea.Cmd {
@@ -399,19 +416,46 @@ func (m *App) applyGitChangesPrepared(msg gitChangesPreparedMsg) tea.Cmd {
 		return nil
 	}
 	m.gitPrepareInFlight = false
+	m.gitPrepareCancel = nil
+	if m.gitPrepareDirty {
+		m.gitPrepareDirty = false
+		return m.prepareGitChangesIfVisible()
+	}
 	if msg.err != nil {
+		m.setGitChangesError(msg.err)
 		if m.ws.Logger() != nil {
 			m.ws.Logger().Debug("GIT", "prepare_changes_failed", "error", msg.err.Error())
 		}
 	} else {
 		m.gitPanel.SetPrepared(msg.files)
 		m.showPreparedGitChanges(msg.files, m.gitPanel.Snapshot().Branch)
-	}
-	if m.gitPrepareDirty {
-		m.gitPrepareDirty = false
-		return m.prepareGitChanges()
+		if msg.widthGen != m.comparisonWidthGen {
+			m.comparisonReflow = true
+		}
 	}
 	return nil
+}
+
+func (m *App) setGitChangesError(err error) {
+	m.gitPanel.SetPreparationError(err)
+	for _, view := range m.gitReviews {
+		if view.commit == "" {
+			view.screen.SetError(err)
+		}
+	}
+}
+
+func (m *App) cancelGitPreparation() {
+	if m.gitPrepareCancel != nil {
+		m.gitPrepareCancel()
+		m.gitPrepareCancel = nil
+	}
+	m.gitPrepareGen++
+	m.gitPrepareInFlight, m.gitPrepareDirty = false, false
+	for _, cancel := range m.gitEvidenceCancel {
+		cancel()
+	}
+	clear(m.gitEvidenceCancel)
 }
 
 // gitDirtyEditor names the first change whose open editor holds unsaved bytes.
@@ -588,6 +632,7 @@ func (m *App) openFileAtLine(path string, line int) {
 // inspectGitCommit loads a commit for the panel's History preview.
 func (m *App) inspectGitCommit(commit workspace.GitCommitSummary) tea.Cmd {
 	m.gitEvidenceSequence++
+	m.gitPreviewSequence = m.gitEvidenceSequence
 	m.gitPanel.RequestEvidence(commit.Hash)
 	return m.loadGitEvidence(commit.Hash, 0, m.gitEvidenceSequence)
 }
@@ -602,26 +647,39 @@ func (m *App) inspectGitCommitInto(commit workspace.GitCommitSummary, view *gitR
 func (m *App) loadGitEvidence(hash string, tab window.TabID, sequence uint64) tea.Cmd {
 	m.ws.EnsureGit()
 	owner, service := m.workspaceSwitchGen.Load(), m.ws.Git()
-	return func() tea.Msg {
-		ctx, cancel := m.sourceControlContext()
+	widthGen := m.comparisonWidthGen
+	if m.gitEvidenceCancel == nil {
+		m.gitEvidenceCancel = make(map[window.TabID]context.CancelFunc)
+	}
+	if cancel := m.gitEvidenceCancel[tab]; cancel != nil {
+		cancel()
+	}
+	ctx, cancel := m.sourceControlContext()
+	m.gitEvidenceCancel[tab] = cancel
+	return m.comparisonCommand(cancel, func() tea.Msg {
 		defer cancel()
 		evidence, err := service.InspectCommit(ctx, hash)
 		if err != nil {
 			return gitEvidenceMsg{workspace: owner, sequence: sequence, tab: tab, err: err}
 		}
-		return gitEvidenceMsg{workspace: owner, sequence: sequence, tab: tab, evidence: evidence, files: gitdiff.PrepareComparisons(evidence.Comparisons)}
-	}
+		files, err := gitdiff.PrepareComparisonsContext(ctx, evidence.Comparisons)
+		return gitEvidenceMsg{workspace: owner, sequence: sequence, widthGen: widthGen, tab: tab, evidence: evidence, files: files, err: err}
+	})
 }
 
 func (m *App) applyGitEvidence(msg gitEvidenceMsg) {
 	if msg.workspace != m.workspaceSwitchGen.Load() {
 		return
 	}
+	if msg.err == nil && msg.widthGen != m.comparisonWidthGen {
+		m.comparisonReflow = true
+	}
 	if msg.tab != 0 {
 		view := m.gitReviews[msg.tab]
 		if view == nil || view.evidenceSequence != msg.sequence {
 			return
 		}
+		delete(m.gitEvidenceCancel, msg.tab)
 		if msg.err != nil {
 			view.screen.SetError(msg.err)
 			return
@@ -629,11 +687,12 @@ func (m *App) applyGitEvidence(msg gitEvidenceMsg) {
 		view.screen.ShowCommit(msg.evidence, msg.files)
 		return
 	}
-	if msg.sequence != m.gitEvidenceSequence || m.gitPanel == nil {
+	if msg.sequence != m.gitPreviewSequence || m.gitPanel == nil {
 		return
 	}
+	delete(m.gitEvidenceCancel, 0)
 	if msg.err != nil {
-		m.gitPanel.SetError(msg.err)
+		m.gitPanel.SetEvidenceError(msg.err)
 		return
 	}
 	m.gitPanel.SetCommitEvidence(msg.evidence, msg.files)

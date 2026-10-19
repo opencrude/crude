@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"github.com/alecthomas/chroma/v2"
 	"strings"
-	"unicode/utf8"
 )
 
 type Presentation string
@@ -34,9 +33,7 @@ type Screen struct {
 	focus                  func(ui.ComponentID) bool
 	query                  string
 	hunkIndex, matchIndex  int
-	matches                []match
-	rowMatches             map[int][]int
-	activeMatch            int
+	search                 SearchProjection
 	syntaxStyle            *chroma.Style
 	syntaxInk              map[chroma.TokenType]cell.Color
 }
@@ -97,17 +94,8 @@ func (s *Screen) Presentation() Presentation          { return s.presented }
 // InvalidateWidthProfile crosses the effective-terminal geometry boundary once,
 // without rerunning diffing or lexing or replacing source selection identities.
 func (s *Screen) InvalidateWidthProfile() {
-	active := s.activeMatch
-	s.prepared.beforeWidth, s.prepared.afterWidth = 0, 0
-	for _, row := range s.prepared.rows {
-		s.prepared.beforeWidth = max(s.prepared.beforeWidth, sourceWidth(row.Before))
-		s.prepared.afterWidth = max(s.prepared.afterWidth, sourceWidth(row.After))
-	}
+	s.prepared.beforeWidth, s.prepared.afterWidth = s.prepared.beforeSource.Width(), s.prepared.afterSource.Width()
 	s.rebuildMatches()
-	if len(s.matches) > 0 {
-		s.activeMatch = max(0, min(active, len(s.matches)-1))
-		s.matchIndex = s.matches[s.activeMatch].row
-	}
 }
 func (s *Screen) SetTokens(t *ui.TokenSet) {
 	if t == nil {
@@ -189,8 +177,8 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	if previous != s.presented {
 		s.rebuildMatches()
-		if len(s.matches) > 0 {
-			s.activeMatch = 0
+		if len(s.search.Matches) > 0 {
+			s.search.Active = 0
 			s.revealMatch()
 		}
 	}
@@ -250,102 +238,87 @@ func (s *Screen) NavigateHunk(direction int) bool {
 	return true
 }
 
-type match struct {
-	row, start, end int
-	pane            *pane
-}
-
 func (s *Screen) SetQuery(q string) {
 	s.query = q
 	s.rebuildMatches()
-	if len(s.matches) > 0 {
-		s.activeMatch = 0
+	if len(s.search.Matches) > 0 {
+		s.search.Active = 0
 		s.revealMatch()
 	}
 }
 func (s *Screen) SearchStatus() string {
-	if s.query == "" {
-		return ""
-	}
-	if len(s.matches) == 0 {
-		return "No matches"
-	}
-	return fmt.Sprintf("%d / %d matches", s.activeMatch+1, len(s.matches))
+	return s.search.Status()
 }
 func (s *Screen) rebuildMatches() {
-	s.matches = nil
-	s.rowMatches = make(map[int][]int)
-	s.activeMatch = -1
 	s.matchIndex = -1
 	if s.query == "" {
+		s.search.Reset("", nil)
 		return
 	}
-	// EqualFold preserves source-byte offsets even when lowercase encodings
-	// have different byte lengths. Search boundaries remain grapheme atomic.
-	queryRunes := utf8.RuneCountInString(s.query)
-	for i, row := range s.rows() {
-		panes := []*pane{s.unified}
-		if s.presented == SideBySide {
-			panes = []*pane{s.before, s.after}
-		}
-		for _, p := range panes {
-			text, line, _ := p.source(row)
-			if line == 0 {
-				continue
+	rows, presented := s.rows(), s.presented
+	s.search.Reset(s.query, func(yield func(SearchLine) bool) {
+		for i, row := range rows {
+			if presented == SideBySide && row.BeforeLine > 0 {
+				if !yield(SearchLine{Row: i, Side: 1, Text: row.Before}) {
+					return
+				}
 			}
-			units := sourceUnits(text)
-			for start := range units {
-				runes := 0
-				for end := start; end < len(units); end++ {
-					runes += utf8.RuneCountInString(units[end].raw)
-					if runes > queryRunes {
-						break
-					}
-					if runes < queryRunes {
-						continue
-					}
-					raw := text[units[start].offset : units[end].offset+len(units[end].raw)]
-					if strings.EqualFold(raw, s.query) {
-						s.rowMatches[i] = append(s.rowMatches[i], len(s.matches))
-						s.matches = append(s.matches, match{i, units[start].column, units[end].column + units[end].width, p})
-						break
-					}
-					break
+			if row.AfterLine > 0 {
+				if !yield(SearchLine{Row: i, Side: 2, Text: row.After}) {
+					return
+				}
+			} else if presented != SideBySide && row.BeforeLine > 0 {
+				if !yield(SearchLine{Row: i, Side: 0, Text: row.Before}) {
+					return
 				}
 			}
 		}
+	})
+}
+
+func (s *Screen) SearchCommand() tea.Cmd      { return s.search.Command(s.revealMatch) }
+func (s *Screen) SearchDone() <-chan struct{} { return s.search.Done() }
+func (s *Screen) StopSearch()                 { s.search.Cancel() }
+func (s *Screen) WaitSearch()                 { s.search.Wait() }
+func (s *Screen) matchPane(m SearchHit) *pane {
+	if s.presented != SideBySide {
+		return s.unified
 	}
+	if m.Side == 1 {
+		return s.before
+	}
+	return s.after
 }
 func (s *Screen) revealMatch() {
-	if s.activeMatch < 0 || s.activeMatch >= len(s.matches) {
+	if s.search.Active < 0 || s.search.Active >= len(s.search.Matches) {
 		return
 	}
-	m := s.matches[s.activeMatch]
-	s.matchIndex = m.row
-	s.scroll.EnsureVisible(m.row)
-	m.pane.horizontal.EnsureVisible(m.end - 1)
-	if m.end > m.pane.horizontal.Offset()+m.pane.horizontal.Viewport() || m.start > m.pane.horizontal.Offset()+m.pane.horizontal.Viewport()/2 {
-		m.pane.horizontal.ScrollTo(max(0, m.start-1))
+	m := s.search.Matches[s.search.Active]
+	s.matchIndex = m.Row
+	s.scroll.EnsureVisible(m.Row)
+	s.matchPane(m).horizontal.EnsureVisible(m.End - 1)
+	if m.End > s.matchPane(m).horizontal.Offset()+s.matchPane(m).horizontal.Viewport() || m.Start > s.matchPane(m).horizontal.Offset()+s.matchPane(m).horizontal.Viewport()/2 {
+		s.matchPane(m).horizontal.ScrollTo(max(0, m.Start-1))
 	}
-	if m.start < m.pane.horizontal.Offset() {
-		m.pane.horizontal.ScrollTo(m.start)
+	if m.Start < s.matchPane(m).horizontal.Offset() {
+		s.matchPane(m).horizontal.ScrollTo(m.Start)
 	}
 }
 func (s *Screen) NextMatch(previous bool) bool {
-	if len(s.matches) == 0 {
+	if len(s.search.Matches) == 0 {
 		return false
 	}
 	direction := 1
 	if previous {
 		direction = -1
 	}
-	if s.activeMatch < 0 {
-		s.activeMatch = 0
+	if s.search.Active < 0 {
+		s.search.Active = 0
 		if previous {
-			s.activeMatch = len(s.matches) - 1
+			s.search.Active = len(s.search.Matches) - 1
 		}
 	} else {
-		s.activeMatch = (s.activeMatch + direction + len(s.matches)) % len(s.matches)
+		s.search.Active = (s.search.Active + direction + len(s.search.Matches)) % len(s.search.Matches)
 	}
 	s.revealMatch()
 	return true
@@ -403,6 +376,13 @@ func (p *pane) source(r Row) (string, int, ui.SemanticColor) {
 	}
 	return r.After, r.AfterLine, role
 }
+
+func (p *pane) sourceLines(r Row) (SourceLines, int) {
+	if p.before || p.unified && r.AfterLine == 0 {
+		return p.owner.prepared.beforeSource, r.BeforeLine
+	}
+	return p.owner.prepared.afterSource, r.AfterLine
+}
 func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	r := p.Bounds()
 	if r.Empty() {
@@ -428,7 +408,7 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 			break
 		}
 		row := rows[index]
-		text, line, role := p.source(row)
+		_, line, role := p.source(row)
 		rowBG := bg
 		if line != 0 && role == ui.ColorDiffAddition {
 			rowBG = t.Color(ui.ColorDiffAdditionBg)
@@ -478,7 +458,8 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 			spans = syntax[line-1]
 		}
 		spanIndex := 0
-		for _, unit := range sourceUnits(text) {
+		source, sourceNumber := p.sourceLines(row)
+		for unit := range source.rangeUnits(sourceNumber, p.horizontal.Offset(), p.horizontal.Offset()+r.W-g) {
 			left := unit.column - p.horizontal.Offset()
 			if left >= 0 && left+unit.width <= r.W-g {
 				fg, fill := t.Color(role), rowBG
@@ -490,11 +471,11 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 						fg = ink
 					}
 				}
-				for _, j := range s.rowMatches[index] {
-					m := s.matches[j]
-					if m.pane == p && m.row == index && unit.column < m.end && unit.column+unit.width > m.start {
+				for _, j := range s.search.ByRow[index] {
+					m := s.search.Matches[j]
+					if s.matchPane(m) == p && m.Row == index && unit.column < m.End && unit.column+unit.width > m.Start {
 						fill = t.Color(ui.ColorWarning)
-						if j == s.activeMatch {
+						if j == s.search.Active {
 							fill = t.Color(ui.ColorAccent)
 						}
 						fg = cell.ContrastInk(fill)
@@ -561,7 +542,8 @@ func (p *pane) SelectedText() string {
 		if i == b.row {
 			to = b.column
 		}
-		for _, unit := range sourceUnits(text) {
+		source, number := p.sourceLines(p.owner.rows()[i])
+		for unit := range source.rangeUnits(number, from, to) {
 			if unit.column+unit.width > from && unit.column < to {
 				out.WriteString(unit.raw)
 			}
@@ -586,15 +568,14 @@ func (p *pane) snap(target point) point {
 		return point{}
 	}
 	target.row = max(0, min(len(rows)-1, target.row))
-	text, _, _ := p.source(rows[target.row])
-	units := sourceUnits(text)
-	for _, u := range units {
+	source, number := p.sourceLines(rows[target.row])
+	for u := range source.rangeUnits(number, target.column, target.column+1) {
 		if target.column < u.column+u.width {
 			target.column = u.column
 			return target
 		}
 	}
-	target.column = sourceWidth(text)
+	target.column = source.LineWidth(number)
 	return target
 }
 func (p *pane) extend(key string) {
@@ -616,8 +597,8 @@ func (p *pane) extend(key string) {
 	case "shift+left":
 		next.column--
 	case "shift+right":
-		text, _, _ := p.source(p.owner.rows()[next.row])
-		for _, u := range sourceUnits(text) {
+		source, number := p.sourceLines(p.owner.rows()[next.row])
+		for u := range source.rangeUnits(number, next.column, int(^uint(0)>>1)) {
 			if u.column >= next.column {
 				next.column = u.column + u.width
 				break

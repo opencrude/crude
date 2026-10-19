@@ -66,6 +66,7 @@ func TestAlignedSourceMappingAndExactCopy(t *testing.T) {
 		t.Fatal("hunk nav")
 	}
 	s.SetQuery("extra")
+	settleSearch(t, s)
 	if !s.NextMatch(false) || s.matchIndex != 2 {
 		t.Fatal("search aligned insertion")
 	}

@@ -33,32 +33,39 @@ func (s *GitService) CompareChanges(ctx context.Context, changes []GitChange) ([
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer s.unlock()
 	state, err := s.readReviewState(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer state.close()
-	out := make([]GitChangeComparison, 0, min(len(changes), GitChangesLimit))
+	out := make([]GitChangeComparison, 0, len(changes))
 	var total int64
 	for index, change := range changes {
-		if index >= GitChangesLimit {
-			break
-		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		item := GitChangeComparison{Change: change}
-		if total > gitComparisonLimit {
-			item.Err = errors.New("review size limit reached; open this file on its own")
+		if index >= GitChangesLimit {
+			item.Err = errors.New("review file limit reached; content not loaded")
+		} else if total >= gitComparisonLimit {
+			item.Err = errors.New("review size limit reached; content not loaded")
 		} else {
 			item.Comparison, item.Err = state.compare(ctx, change)
-			total += int64(len(item.Comparison.Before) + len(item.Comparison.After))
+			size := int64(len(item.Comparison.Before) + len(item.Comparison.After))
+			if total+size > gitComparisonLimit {
+				item.Comparison = GitComparison{}
+				item.Err = errors.New("review size limit reached; content not loaded")
+			} else {
+				total += size
+			}
 		}
 		out = append(out, item)
 	}
-	return out, nil
+	return out, ctx.Err()
 }
 
 // StagedPaths is the exact set of repository paths a commit would record,
@@ -94,8 +101,10 @@ func (s *GitService) CommitStaged(ctx context.Context, expected []string, messag
 		return err
 	}
 	defer unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 	state, err := s.readReviewState(ctx)
 	if err != nil {
 		return err

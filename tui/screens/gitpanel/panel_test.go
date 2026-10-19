@@ -267,3 +267,40 @@ func TestSplitSidesCollapseAndRestore(t *testing.T) {
 		t.Fatal("split view not restored")
 	}
 }
+
+func TestPreparationAndHistoryFailureNeverLeaveLoadingText(t *testing.T) {
+	panel := New(nil)
+	panel.SetSnapshot(snapshot(working("a.txt")))
+	panel.BeginPreparation()
+	panel.SetPreparationError(context.DeadlineExceeded)
+	h, text := mount(t, panel, 140, 20)
+	if strings.Contains(text, "Preparing diff") || !strings.Contains(text, "deadline exceeded") {
+		t.Fatalf("failed diff:\n%s", text)
+	}
+	panel.SetSnapshot(snapshot())
+	panel.SetPrepared(nil)
+	text = repaint(h, 140, 20)
+	if strings.Contains(text, "Preparing diff") || !strings.Contains(text, "Working tree clean") {
+		t.Fatalf("clean diff:\n%s", text)
+	}
+	panel.SetMode(ModeHistory)
+	state := snapshot()
+	state.RecentCommits = []workspace.GitCommitSummary{{Hash: "commit", ShortHash: "abc", Subject: "a commit"}}
+	panel.SetSnapshot(state)
+	panel.RequestEvidence("commit")
+	panel.SetEvidenceError(context.DeadlineExceeded)
+	_, text = mount(t, panel, 140, 20)
+	if panel.evidenceLoading != "" || strings.Contains(text, "loading…") || !strings.Contains(text, "Commit diff unavailable") {
+		t.Fatalf("history failure:\n%s", text)
+	}
+}
+
+func TestNonRepositoryPreviewDoesNotClaimCleanOrPending(t *testing.T) {
+	panel := New(nil)
+	panel.SetSnapshot(workspace.GitSnapshot{})
+	panel.SetPrepared(nil)
+	_, text := mount(t, panel, 140, 20)
+	if strings.Contains(text, "Preparing diff") || strings.Contains(text, "Working tree clean") || !strings.Contains(text, "not a Git repository") {
+		t.Fatalf("non-repository state:\n%s", text)
+	}
+}

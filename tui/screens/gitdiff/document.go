@@ -89,7 +89,7 @@ type Document struct {
 	tokens       *ui.TokenSet
 	ink          diffview.SyntaxInk
 	files        []File
-	rows         []row
+	rows         rowIndex
 	headerRows   []int // file index → row of its header
 	scroll       *ui.ScrollModel
 	scrollbar    *ui.ScrollbarControl
@@ -110,7 +110,7 @@ type Document struct {
 	lastClickAt  time.Time
 	body         ui.Rect
 	selection    selection
-	search       search
+	search       diffview.SearchProjection
 }
 
 // New creates an empty document.
@@ -157,7 +157,7 @@ func (document *Document) SetFiles(files []File) {
 	document.files = files
 	document.maxWidth, document.numberW = 0, 3
 	for index := range files {
-		document.maxWidth = max(document.maxWidth, files[index].width)
+		document.maxWidth = max(document.maxWidth, files[index].beforeSource.Width(), files[index].afterSource.Width())
 		document.numberW = max(document.numberW, len(fmt.Sprint(max(len(files[index].before), len(files[index].after)))))
 	}
 	document.rebuild()
@@ -169,6 +169,22 @@ func (document *Document) SetFiles(files []File) {
 			}
 		}
 	}
+}
+
+func (document *Document) SourceGeometry() []diffview.SourceLines {
+	sources := make([]diffview.SourceLines, 0, 2*len(document.files))
+	for _, file := range document.files {
+		sources = append(sources, file.beforeSource, file.afterSource)
+	}
+	return sources
+}
+
+func (document *Document) InvalidateWidthProfile() {
+	document.maxWidth = 0
+	for _, file := range document.files {
+		document.maxWidth = max(document.maxWidth, file.beforeSource.Width(), file.afterSource.Width())
+	}
+	document.rebuildMatches()
 }
 
 func sameFiles(a, b []File) bool {
@@ -244,11 +260,11 @@ func (document *Document) CurrentFile() (File, bool) {
 }
 
 func (document *Document) currentFileIndex() int {
-	if len(document.rows) == 0 || len(document.files) == 0 {
+	if document.rows.Len() == 0 || len(document.files) == 0 {
 		return -1
 	}
-	offset := min(document.scroll.Offset(), len(document.rows)-1)
-	return document.rows[offset].file
+	offset := min(document.scroll.Offset(), document.rows.Len()-1)
+	return document.rows.At(offset).file
 }
 
 // NavigateFile moves the next/previous file header to the top.
@@ -271,8 +287,8 @@ func (document *Document) NavigateFile(direction int) bool {
 func (document *Document) NavigateHunk(direction int) bool {
 	offset := document.scroll.Offset() + 1
 	if direction > 0 {
-		for index := offset + 1; index < len(document.rows); index++ {
-			if document.rows[index].kind == rowHunk {
+		for index := offset + 1; index < document.rows.Len(); index++ {
+			if document.rows.At(index).kind == rowHunk {
 				document.scroll.ScrollTo(index - 1)
 				return true
 			}
@@ -280,7 +296,7 @@ func (document *Document) NavigateHunk(direction int) bool {
 		return false
 	}
 	for index := offset - 1; index >= 0; index-- {
-		if document.rows[index].kind == rowHunk {
+		if document.rows.At(index).kind == rowHunk {
 			document.scroll.ScrollTo(max(0, index-1))
 			return true
 		}
@@ -294,39 +310,31 @@ func (document *Document) gapKey(file, gap int) string {
 
 // rebuild derives the flat row index from files, fold state and presentation.
 func (document *Document) rebuild() {
-	document.rows = document.rows[:0]
+	document.rows.reset()
 	document.headerRows = document.headerRows[:0]
 	split := document.presented == Split
 	for fileIndex := range document.files {
 		file := &document.files[fileIndex]
 		if fileIndex > 0 {
-			document.rows = append(document.rows, row{kind: rowSpacer, file: fileIndex - 1})
+			document.rows.single(row{kind: rowSpacer, file: fileIndex - 1})
 		}
-		document.headerRows = append(document.headerRows, len(document.rows))
-		document.rows = append(document.rows, row{kind: rowHeader, file: fileIndex})
+		document.headerRows = append(document.headerRows, document.rows.Len())
+		document.rows.single(row{kind: rowHeader, file: fileIndex})
 		if document.collapsed[file.Key] {
 			continue
 		}
 		if file.Note != "" {
-			document.rows = append(document.rows, row{kind: rowNote, file: fileIndex})
+			document.rows.single(row{kind: rowNote, file: fileIndex})
 			continue
 		}
 		oldCursor, newCursor := 0, 0
 		for blockIndex, b := range file.blocks {
 			document.appendGap(fileIndex, blockIndex, oldCursor, newCursor, b.oldStart)
-			document.rows = append(document.rows, row{kind: rowHunk, file: fileIndex, block: blockIndex})
+			document.rows.single(row{kind: rowHunk, file: fileIndex, block: blockIndex})
 			if split {
-				for _, p := range b.pairs {
-					kind := lineContext
-					if p.changed {
-						kind = lineAdded
-					}
-					document.rows = append(document.rows, row{kind: rowLine, file: fileIndex, block: blockIndex, old: p.old, new: p.new, lk: kind})
-				}
+				document.rows.add(rowSpan{count: len(b.pairs), base: row{kind: rowLine, file: fileIndex, block: blockIndex}, pairs: b.pairs})
 			} else {
-				for _, l := range b.lines {
-					document.rows = append(document.rows, row{kind: rowLine, file: fileIndex, block: blockIndex, old: l.old, new: l.new, lk: l.kind})
-				}
+				document.rows.add(rowSpan{count: len(b.lines), base: row{kind: rowLine, file: fileIndex, block: blockIndex}, lines: b.lines})
 			}
 			oldCursor, newCursor = b.oldEnd, b.newEnd
 		}
@@ -334,7 +342,7 @@ func (document *Document) rebuild() {
 			document.appendGap(fileIndex, len(file.blocks), oldCursor, newCursor, len(file.before))
 		}
 	}
-	document.scroll.SetContent(len(document.rows))
+	document.scroll.SetContent(document.rows.Len())
 	document.scroll.Clamp()
 	if !document.selection.dragging {
 		document.clearSelection()
@@ -349,12 +357,10 @@ func (document *Document) appendGap(fileIndex, gap, oldFrom, newFrom, oldTo int)
 	}
 	file := &document.files[fileIndex]
 	if !document.expanded[document.gapKey(fileIndex, gap)] {
-		document.rows = append(document.rows, row{kind: rowGap, file: fileIndex, block: gap, count: count})
+		document.rows.single(row{kind: rowGap, file: fileIndex, block: gap, count: count})
 		return
 	}
-	for offset := 0; offset < count && newFrom+offset < len(file.after); offset++ {
-		document.rows = append(document.rows, row{kind: rowLine, file: fileIndex, block: gap, old: oldFrom + offset + 1, new: newFrom + offset + 1, lk: lineContext, inGap: true})
-	}
+	document.rows.add(rowSpan{count: min(count, max(0, len(file.after)-newFrom)), base: row{kind: rowLine, file: fileIndex, block: gap, old: oldFrom + 1, new: newFrom + 1, lk: lineContext, inGap: true}, gap: true})
 }
 
 func (document *Document) Children() []ui.Component {
@@ -379,7 +385,7 @@ func (document *Document) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 		document.rebuild()
 	}
 	document.scroll.SetViewport(bounds.H)
-	document.scroll.SetContent(len(document.rows))
+	document.scroll.SetContent(document.rows.Len())
 	barW := 0
 	if document.scrollbar.NeededForViewport(bounds.H) {
 		barW = min(ui.ScrollbarWidth, bounds.W)
@@ -399,10 +405,10 @@ func (document *Document) splitGutter() int   { return document.numberW + 3 }
 // stickyFile is the file whose header pins to the first row, or -1.
 func (document *Document) stickyFile() int {
 	offset := document.scroll.Offset()
-	if offset >= len(document.rows) || document.body.H < 3 {
+	if offset >= document.rows.Len() || document.body.H < 3 {
 		return -1
 	}
-	r := document.rows[offset]
+	r := document.rows.At(offset)
 	if r.kind == rowHeader || r.kind == rowSpacer {
 		return -1
 	}
@@ -420,7 +426,7 @@ func (document *Document) rowAt(localY int) (index int, sticky bool) {
 		}
 	}
 	index = document.scroll.Offset() + localY
-	if index >= len(document.rows) {
+	if index >= document.rows.Len() {
 		return -1, false
 	}
 	return index, false
@@ -494,7 +500,7 @@ func (document *Document) Paint(buf *surface.CellBuffer, originX, originY int, c
 			document.paintHeader(buf, x, y, sticky, document.headerRows[sticky], true)
 			continue
 		}
-		if index >= len(document.rows) {
+		if index >= document.rows.Len() {
 			break
 		}
 		document.paintRow(buf, x, y+local, index)
@@ -502,7 +508,7 @@ func (document *Document) Paint(buf *surface.CellBuffer, originX, originY int, c
 }
 
 func (document *Document) paintRow(buf *surface.CellBuffer, x, y, index int) {
-	r := document.rows[index]
+	r := document.rows.At(index)
 	tokens := document.tokens
 	bg := tokens.Color(ui.ColorBg)
 	width := document.body.W
@@ -642,7 +648,7 @@ func (document *Document) lineColors(kind lineKind) (cell.Color, ui.SemanticColo
 }
 
 func (document *Document) paintUnifiedLine(buf *surface.CellBuffer, x, y, index int) {
-	r := document.rows[index]
+	r := document.rows.At(index)
 	file := &document.files[r.file]
 	fill, markRole, mark := document.lineColors(r.lk)
 	buf.FillRect(surface.Rect{X: x, Y: y, W: document.body.W, H: 1}, cell.BlankCell(fill))
@@ -656,20 +662,20 @@ func (document *Document) paintUnifiedLine(buf *surface.CellBuffer, x, y, index 
 	muted := document.tokens.Color(ui.ColorMuted)
 	buf.WriteString(x, y, fmt.Sprintf("%*s %*s ", document.numberW, old, document.numberW, next), muted, fill, 0)
 	buf.WriteString(x+2*document.numberW+2, y, mark, document.tokens.Color(markRole), fill, cell.AttrBold)
-	text, spans := file.after, file.afterSyntax
+	text, spans, source := file.after, file.afterSyntax, file.afterSource
 	number := r.new
 	if r.lk == lineDeleted {
-		text, spans, number = file.before, file.beforeSyntax, r.old
+		text, spans, source, number = file.before, file.beforeSyntax, file.beforeSource, r.old
 	}
-	document.paintSource(buf, x+document.unifiedGutter(), y, document.textWidth, text, spans, number, fill, index, sideUnified)
+	document.paintSource(buf, x+document.unifiedGutter(), y, document.textWidth, text, source, spans, number, fill, index, sideUnified)
 }
 
 func (document *Document) paintSplitLine(buf *surface.CellBuffer, x, y, index int) {
-	r := document.rows[index]
+	r := document.rows.At(index)
 	file := &document.files[r.file]
 	half := (document.body.W - 1) / 2
 	muted := document.tokens.Color(ui.ColorMuted)
-	side := func(left int, number int, lines []string, spans [][]diffview.SyntaxSpan, kind lineKind, which int) {
+	side := func(left int, number int, lines []string, source diffview.SourceLines, spans [][]diffview.SyntaxSpan, kind lineKind, which int) {
 		fill, markRole, mark := document.lineColors(kind)
 		if number == 0 {
 			fill = document.tokens.Color(ui.ColorSubPaneBg)
@@ -681,18 +687,18 @@ func (document *Document) paintSplitLine(buf *surface.CellBuffer, x, y, index in
 		}
 		buf.WriteString(left, y, fmt.Sprintf("%*d ", document.numberW, number), muted, fill, 0)
 		buf.WriteString(left+document.numberW+1, y, mark, document.tokens.Color(markRole), fill, cell.AttrBold)
-		document.paintSource(buf, left+document.splitGutter(), y, max(0, half-document.splitGutter()), lines, spans, number, fill, index, which)
+		document.paintSource(buf, left+document.splitGutter(), y, max(0, half-document.splitGutter()), lines, source, spans, number, fill, index, which)
 	}
 	oldKind, newKind := lineContext, lineContext
 	if r.lk != lineContext {
 		oldKind, newKind = lineDeleted, lineAdded
 	}
-	side(x, r.old, file.before, file.beforeSyntax, oldKind, sideOld)
+	side(x, r.old, file.before, file.beforeSource, file.beforeSyntax, oldKind, sideOld)
 	buf.WriteString(x+half, y, "│", document.tokens.Color(ui.ColorBorder), document.tokens.Color(ui.ColorBg), 0)
-	side(x+half+1, r.new, file.after, file.afterSyntax, newKind, sideNew)
+	side(x+half+1, r.new, file.after, file.afterSource, file.afterSyntax, newKind, sideNew)
 }
 
-func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, lines []string, syntax [][]diffview.SyntaxSpan, number int, fill cell.Color, rowIndex, side int) {
+func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, lines []string, source diffview.SourceLines, syntax [][]diffview.SyntaxSpan, number int, fill cell.Color, rowIndex, side int) {
 	if number <= 0 || number > len(lines) || width <= 0 {
 		return
 	}
@@ -702,7 +708,7 @@ func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, 
 	}
 	base := document.tokens.Color(ui.ColorFg)
 	spanIndex := 0
-	for _, unit := range diffview.SourceUnits(lines[number-1]) {
+	for unit := range source.Range(number, document.hscroll, document.hscroll+width) {
 		left := unit.Column - document.hscroll
 		if left < 0 {
 			continue
@@ -734,15 +740,15 @@ func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, 
 }
 
 func (document *Document) actionAt(rowIndex, localX int) Op {
-	if rowIndex < 0 || rowIndex >= len(document.rows) {
+	if rowIndex < 0 || rowIndex >= document.rows.Len() {
 		return ""
 	}
 	var actions []headerAction
-	switch document.rows[rowIndex].kind {
+	switch document.rows.At(rowIndex).kind {
 	case rowHeader:
-		actions, _ = document.headerLayout(&document.files[document.rows[rowIndex].file], document.body.W)
+		actions, _ = document.headerLayout(&document.files[document.rows.At(rowIndex).file], document.body.W)
 	case rowHunk:
-		actions = document.hunkLayout(&document.files[document.rows[rowIndex].file], document.body.W)
+		actions = document.hunkLayout(&document.files[document.rows.At(rowIndex).file], document.body.W)
 	default:
 		return ""
 	}
@@ -836,7 +842,7 @@ func (document *Document) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResu
 		now := time.Now()
 		double := index == document.lastClickRow && now.Sub(document.lastClickAt) <= 400*time.Millisecond
 		document.lastClickRow, document.lastClickAt = index, now
-		r := document.rows[index]
+		r := document.rows.At(index)
 		document.clearSelection()
 		switch r.kind {
 		case rowHunk:

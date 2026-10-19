@@ -270,11 +270,15 @@ func (m *App) compareLiveEditorSnapshot(ed *editor.Editor, s document.Snapshot, 
 		view.cancel = nil
 	}
 	view.sequence++
-	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), revision: revision, diskGeneration: ed.DiskGeneration()}
+	ctx, cancel := m.sourceControlContext()
+	view.cancel = cancel
+	view.screen.SetLoading(true)
+	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), widthGen: m.comparisonWidthGen, revision: revision, diskGeneration: ed.DiskGeneration()}
 	path := ed.FilePath()
 	before, after := string(s.Text), string(draft)
-	return func() tea.Msg {
-		msg.prepared = diffview.Prepare(diffview.Comparison{Path: path, BeforeLabel: fmt.Sprintf("Shared snapshot · revision %d", s.Revision), AfterLabel: fmt.Sprintf("Private draft · revision %d", revision), Before: before, After: after})
+	return m.comparisonCommand(cancel, func() tea.Msg {
+		defer cancel()
+		msg.prepared, msg.err = diffview.PrepareContext(ctx, diffview.Comparison{Path: path, BeforeLabel: fmt.Sprintf("Shared snapshot · revision %d", s.Revision), AfterLabel: fmt.Sprintf("Private draft · revision %d", revision), Before: before, After: after})
 		return msg
-	}
+	})
 }

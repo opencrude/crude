@@ -65,8 +65,10 @@ func discardGitReviewedDisk(ctx context.Context, service *GitService, store *loc
 		return "", err
 	}
 	defer unlock()
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	if err := service.lock(ctx); err != nil {
+		return "", err
+	}
+	defer service.unlock()
 	comparison := preview.Comparison
 	verify := func() error {
 		if comparison.RepositoryRoot != service.root {

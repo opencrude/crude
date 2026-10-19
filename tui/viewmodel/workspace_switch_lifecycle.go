@@ -55,6 +55,9 @@ func sameWorkspaceRoot(current, candidate string) bool {
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.setWheelHost(nil)
 	m.cancelLocalDiffs()
+	m.cancelGitPreparation()
+	m.cancelComparisonGeometry()
+	m.cancelComparisonSearch()
 	m.overlayHost.Close(ui.OverlayCapabilityPicker)
 	m.cancelCapabilityOperations()
 	m.closeMemoryBrowser()

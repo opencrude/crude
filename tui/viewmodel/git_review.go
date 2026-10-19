@@ -126,8 +126,11 @@ func (app *App) openGitReview(scope, reveal string) tea.Cmd {
 	if reveal != "" && view.screen.Reveal(reveal) {
 		view.reveal = ""
 	}
-	if len(files) == 0 {
-		view.screen.SetLoading(true)
+	if app.gitPanel != nil {
+		view.screen.SetLoading(app.gitPanel.PreparationPending())
+		if err := app.gitPanel.PreparationError(); err != "" {
+			view.screen.SetError(fmt.Errorf("%s", err))
+		}
 	}
 	app.activateGitReviewTab(view)
 	return app.refreshSourceControl()
@@ -177,7 +180,14 @@ func (app *App) gitChangeReviewOpen() bool {
 
 // closeGitReview closes one review tab and returns to the tab it came from.
 func (app *App) closeGitReview(id window.TabID) {
+	if cancel := app.gitEvidenceCancel[id]; cancel != nil {
+		cancel()
+		delete(app.gitEvidenceCancel, id)
+	}
 	view := app.gitReviews[id]
+	if view != nil {
+		view.screen.Document().StopSearch()
+	}
 	wasActive := app.Win.ActiveTab() != nil && app.Win.ActiveTab().ID == id
 	delete(app.gitReviews, id)
 	app.Win.CloseTabByID(id)

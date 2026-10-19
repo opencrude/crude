@@ -1,6 +1,7 @@
 package gitdiff
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"fmt"
 	"strings"
 
@@ -28,15 +29,6 @@ type selection struct {
 	side        int
 	active      bool
 	dragging    bool
-}
-
-type match struct{ row, side, start, end int }
-
-type search struct {
-	query   string
-	matches []match
-	byRow   map[int][]int
-	active  int
 }
 
 // ---- hunks ----------------------------------------------------------------
@@ -88,7 +80,7 @@ func (document *Document) hunkLayout(file *File, width int) []headerAction {
 
 func (document *Document) paintHunk(buf *surface.CellBuffer, x, y, index int) {
 	tokens := document.tokens
-	r := document.rows[index]
+	r := document.rows.At(index)
 	b := document.files[r.file].blocks[r.block]
 	bg := tokens.Color(ui.ColorBg)
 	hovered := document.hovered && document.hoverRow == index
@@ -121,8 +113,8 @@ func (document *Document) currentHunk() (int, int, bool) {
 	if document.stickyFile() >= 0 {
 		start++
 	}
-	for index := start; index < len(document.rows) && index < start+max(1, document.body.H); index++ {
-		r := document.rows[index]
+	for index := start; index < document.rows.Len() && index < start+max(1, document.body.H); index++ {
+		r := document.rows.At(index)
 		if r.kind == rowHunk || r.kind == rowLine && !r.inGap {
 			return r.file, r.block, true
 		}
@@ -133,10 +125,10 @@ func (document *Document) currentHunk() (int, int, bool) {
 // ---- selection --------------------------------------------------------------
 
 func (document *Document) lineText(rowIndex, side int) (string, bool) {
-	if rowIndex < 0 || rowIndex >= len(document.rows) || document.rows[rowIndex].kind != rowLine {
+	if rowIndex < 0 || rowIndex >= document.rows.Len() || document.rows.At(rowIndex).kind != rowLine {
 		return "", false
 	}
-	r := document.rows[rowIndex]
+	r := document.rows.At(rowIndex)
 	file := &document.files[r.file]
 	switch {
 	case side == sideOld || side == sideUnified && r.lk == lineDeleted:
@@ -147,6 +139,18 @@ func (document *Document) lineText(rowIndex, side int) (string, bool) {
 		return file.after[r.new-1], true
 	}
 	return "", false
+}
+
+func (document *Document) sourceLine(rowIndex, side int) (diffview.SourceLines, int) {
+	if rowIndex < 0 || rowIndex >= document.rows.Len() || document.rows.At(rowIndex).kind != rowLine {
+		return diffview.SourceLines{}, 0
+	}
+	r := document.rows.At(rowIndex)
+	file := &document.files[r.file]
+	if side == sideOld || side == sideUnified && r.lk == lineDeleted {
+		return file.beforeSource, r.old
+	}
+	return file.afterSource, r.new
 }
 
 func (document *Document) sideAt(localX int) int {
@@ -181,7 +185,7 @@ func (document *Document) dragTo(ctx ui.EventContext) {
 	} else if ctx.LocalY >= document.body.H-1 {
 		document.scroll.ScrollBy(1)
 	}
-	rowIndex := max(0, min(len(document.rows)-1, document.scroll.Offset()+max(0, ctx.LocalY)))
+	rowIndex := max(0, min(document.rows.Len()-1, document.scroll.Offset()+max(0, ctx.LocalY)))
 	document.selection.end = point{row: rowIndex, column: document.columnAt(ctx.LocalX, document.selection.side)}
 }
 
@@ -214,8 +218,8 @@ func (document *Document) SelectedText() string {
 	}
 	a, b := document.ordered()
 	var parts []string
-	for rowIndex := a.row; rowIndex <= b.row && rowIndex < len(document.rows); rowIndex++ {
-		text, ok := document.lineText(rowIndex, document.selection.side)
+	for rowIndex := a.row; rowIndex <= b.row && rowIndex < document.rows.Len(); rowIndex++ {
+		_, ok := document.lineText(rowIndex, document.selection.side)
 		if !ok {
 			continue
 		}
@@ -227,7 +231,8 @@ func (document *Document) SelectedText() string {
 			to = b.column
 		}
 		var line strings.Builder
-		for _, unit := range diffview.SourceUnits(text) {
+		source, number := document.sourceLine(rowIndex, document.selection.side)
+		for unit := range source.Range(number, from, to) {
 			if unit.Column+unit.Width > from && unit.Column < to {
 				line.WriteString(unit.Raw)
 			}
@@ -241,8 +246,8 @@ func (document *Document) SelectedText() string {
 }
 
 func (document *Document) nextLineRow(from, direction int) int {
-	for index := from; index >= 0 && index < len(document.rows); index += direction {
-		if document.rows[index].kind == rowLine {
+	for index := from; index >= 0 && index < document.rows.Len(); index += direction {
+		if document.rows.At(index).kind == rowLine {
 			return index
 		}
 	}
@@ -284,7 +289,7 @@ func (document *Document) selectCurrentFile() {
 		return
 	}
 	first, last := -1, -1
-	for index, r := range document.rows {
+	for index, r := range document.rows.All() {
 		if r.file == current && r.kind == rowLine {
 			if first < 0 {
 				first = index
@@ -307,65 +312,59 @@ func (document *Document) selectCurrentFile() {
 // SetQuery finds every case-insensitive occurrence in the shown lines and
 // reveals the first.
 func (document *Document) SetQuery(query string) {
-	document.search.query = query
+	document.search.Query = query
 	document.rebuildMatches()
-	if len(document.search.matches) > 0 {
-		document.search.active = 0
+	if len(document.search.Matches) > 0 {
+		document.search.Active = 0
 		document.revealMatch()
 	}
 }
 
-func (document *Document) Query() string { return document.search.query }
+func (document *Document) Query() string { return document.search.Query }
 
 func (document *Document) rebuildMatches() {
-	document.search.matches = document.search.matches[:0]
-	document.search.byRow = make(map[int][]int)
-	document.search.active = -1
-	query := strings.ToLower(document.search.query)
-	if query == "" {
+	if document.search.Query == "" {
+		document.search.Reset("", nil)
 		return
 	}
+	rows := document.rows
+	rows.spans = append([]rowSpan(nil), rows.spans...)
+	files := document.files
 	sides := []int{sideUnified}
 	if document.presented == Split {
 		sides = []int{sideOld, sideNew}
 	}
-	for rowIndex, r := range document.rows {
-		if r.kind != rowLine {
-			continue
-		}
-		for _, side := range sides {
-			text, ok := document.lineText(rowIndex, side)
-			if !ok {
+	document.search.Reset(document.search.Query, func(yield func(diffview.SearchLine) bool) {
+		for rowIndex, r := range rows.All() {
+			if r.kind != rowLine {
 				continue
 			}
-			units := diffview.SourceUnits(text)
-			for start := 0; start < len(units); start++ {
-				var accumulated strings.Builder
-				for end := start; end < len(units); end++ {
-					accumulated.WriteString(strings.ToLower(units[end].Raw))
-					if accumulated.Len() < len(query) {
-						continue
+			for _, side := range sides {
+				file := &files[r.file]
+				text, ok := "", false
+				if side == sideOld || side == sideUnified && r.lk == lineDeleted {
+					if r.old > 0 && r.old <= len(file.before) {
+						text, ok = file.before[r.old-1], true
 					}
-					if accumulated.String() == query {
-						document.search.byRow[rowIndex] = append(document.search.byRow[rowIndex], len(document.search.matches))
-						document.search.matches = append(document.search.matches, match{row: rowIndex, side: side, start: units[start].Column, end: units[end].Column + units[end].Width})
-						start = end
-					}
-					break
+				} else if r.new > 0 && r.new <= len(file.after) {
+					text, ok = file.after[r.new-1], true
+				}
+				if !ok {
+					continue
+				}
+				if !yield(diffview.SearchLine{Row: rowIndex, Side: side, Text: text}) {
+					return
 				}
 			}
 		}
-	}
-	if len(document.search.matches) > 0 {
-		document.search.active = 0
-	}
+	})
 }
 
 func (document *Document) matchAt(rowIndex, side, start, end int) (cell.Color, bool, bool) {
-	for _, index := range document.search.byRow[rowIndex] {
-		m := document.search.matches[index]
-		if m.side == side && start < m.end && end > m.start {
-			if index == document.search.active {
+	for _, index := range document.search.ByRow[rowIndex] {
+		m := document.search.Matches[index]
+		if m.Side == side && start < m.End && end > m.Start {
+			if index == document.search.Active {
 				return document.tokens.Color(ui.ColorAccent), true, true
 			}
 			return document.tokens.Color(ui.ColorWarning), false, true
@@ -376,7 +375,7 @@ func (document *Document) matchAt(rowIndex, side, start, end int) (cell.Color, b
 
 // NextMatch cycles through matches and reveals the active one.
 func (document *Document) NextMatch(previous bool) bool {
-	count := len(document.search.matches)
+	count := len(document.search.Matches)
 	if count == 0 {
 		return false
 	}
@@ -384,32 +383,33 @@ func (document *Document) NextMatch(previous bool) bool {
 	if previous {
 		step = -1
 	}
-	document.search.active = (document.search.active + step + count) % count
+	document.search.Active = (document.search.Active + step + count) % count
 	document.revealMatch()
 	return true
 }
 
 func (document *Document) revealMatch() {
-	if document.search.active < 0 || document.search.active >= len(document.search.matches) {
+	if document.search.Active < 0 || document.search.Active >= len(document.search.Matches) {
 		return
 	}
-	m := document.search.matches[document.search.active]
+	m := document.search.Matches[document.search.Active]
 	offset := document.scroll.Offset()
-	if m.row <= offset || m.row >= offset+document.body.H {
-		document.scroll.ScrollTo(max(0, m.row-2))
+	if m.Row <= offset || m.Row >= offset+document.body.H {
+		document.scroll.ScrollTo(max(0, m.Row-2))
 	}
-	if m.start < document.hscroll || m.end > document.hscroll+document.textWidth {
-		document.hscroll = max(0, min(m.start-4, document.maxWidth-document.textWidth))
+	if m.Start < document.hscroll || m.End > document.hscroll+document.textWidth {
+		document.hscroll = max(0, min(m.Start-4, document.maxWidth-document.textWidth))
 	}
 }
 
 // SearchStatus summarizes the find state for the owner's status line.
 func (document *Document) SearchStatus() string {
-	switch {
-	case document.search.query == "":
-		return ""
-	case len(document.search.matches) == 0:
-		return "No matches in the shown changes"
-	}
-	return fmt.Sprintf("%d / %d matches", document.search.active+1, len(document.search.matches))
+	return document.search.Status()
 }
+
+func (document *Document) SearchCommand() tea.Cmd {
+	return document.search.Command(document.revealMatch)
+}
+func (document *Document) SearchDone() <-chan struct{} { return document.search.Done() }
+func (document *Document) StopSearch()                 { document.search.Cancel() }
+func (document *Document) WaitSearch()                 { document.search.Wait() }
