@@ -74,7 +74,7 @@ function New-TestZip([string] $Path, [object[]] $Entries) {
     } finally { $zip.Dispose() }
 }
 
-function New-Fixture([string] $Tag = 'v1.2.3', [string] $Repository = 'uoosef403/crude', [object[]] $ExtraEntries = @()) {
+function New-Fixture([string] $Tag = 'v1.2.3', [string] $Repository = 'agenticcrude/crude', [object[]] $ExtraEntries = @()) {
     $directory = Join-Path $root ([Guid]::NewGuid().ToString('N'))
     [void] [IO.Directory]::CreateDirectory($directory)
     $asset = "crude_${Tag}_windows_amd64.zip"
@@ -187,9 +187,9 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
     function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes) {
         $url = $Uri.AbsoluteUri
         switch -CaseSensitive ($url) {
-            "https://api.github.com/repos/uoosef403/crude/releases/tags/$Tag" { $name = 'release.json' }
-            "https://github.com/uoosef403/crude/releases/download/$Tag/SHA256SUMS" { $name = 'SHA256SUMS' }
-            "https://github.com/uoosef403/crude/releases/download/$Tag/$($fixture.Asset)" { $name = $fixture.Asset }
+            "https://api.github.com/repos/agenticcrude/crude/releases/tags/$Tag" { $name = 'release.json' }
+            "https://github.com/agenticcrude/crude/releases/download/$Tag/SHA256SUMS" { $name = 'SHA256SUMS' }
+            "https://github.com/agenticcrude/crude/releases/download/$Tag/$($fixture.Asset)" { $name = $fixture.Asset }
             default { throw "Unexpected real-release fixture request: $url" }
         }
         $source = Join-Path $fixture.Directory $name
@@ -305,7 +305,7 @@ try {
             $oldUser = $fixtureState.UserPath
             $oldProcess = $env:Path
             Install-Crude -AcceptBetaRisk -InstallDir $install
-            Assert-Equal $fixtureState.Calls[0] 'https://api.github.com/repos/uoosef403/crude/releases/latest' 'Stable must resolve GitHub latest'
+            Assert-Equal $fixtureState.Calls[0] 'https://api.github.com/repos/agenticcrude/crude/releases/latest' 'Stable must resolve GitHub latest'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'The release executable must be installed'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'licenses/third-party/NOTICE.txt'))) 'third-party notice v1.2.3' 'Third-party notices must be installed'
             Assert-Equal $fixtureState.UserPath ($oldUser + ';' + $install) 'User PATH must preserve its original value'

@@ -10,13 +10,13 @@ main() (
         cat <<'EOF'
 Usage: bash install.sh --accept-beta-risk [--version vX.Y.Z] [--install-dir DIR] [--no-path]
                       [--repository OWNER/REPO]
-Defaults: latest stable release, ~/.local/bin, uoosef403/crude.
+Defaults: latest stable release, ~/.local/bin, agenticcrude/crude.
 Run the same command again to update. Explicit versions also allow prereleases.
 The installer never stops Crude or modifies its configuration/session data.
 EOF
     }
 
-    local version='' repository='uoosef403/crude' install_dir="${CRUDE_INSTALL_DIR:-$HOME/.local/bin}" add_path=1 accept_beta_risk=0
+    local version='' repository='agenticcrude/crude' install_dir="${CRUDE_INSTALL_DIR:-$HOME/.local/bin}" add_path=1 accept_beta_risk=0
     while (($#)); do
         case "$1" in
             --version|--install-dir|--repository)

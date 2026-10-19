@@ -134,7 +134,7 @@ gh run view <run-id> --log-failed
 gh workflow run release.yml --ref <tag> -f tag=<tag>
 gh release view <tag>
 # After source/history audit, finished agents and a clean pushed checkout:
-gh repo edit uoosef403/crude --visibility public --accept-visibility-change-consequences
+gh repo edit agenticcrude/crude --visibility public --accept-visibility-change-consequences
 # Before binary publication, all native and release gates must also pass:
 gh release edit <tag> --draft=false
 ```

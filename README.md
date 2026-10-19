@@ -11,8 +11,8 @@ into one terminal-native workspace on Linux and Windows. Use your **mouse or
 keyboard**: click, drag, browse menus, or take a shortcut when it helps. It's 2026;
 you shouldn't need to memorize a thousand keybindings to get work done.
 
-[Documentation](docs/README.md) · [Releases](https://github.com/uoosef403/crude/releases) ·
-[Report a bug](https://github.com/uoosef403/crude/issues) · [Apache-2.0](LICENSE-APACHE)
+[Documentation](docs/README.md) · [Releases](https://github.com/agenticcrude/crude/releases) ·
+[Report a bug](https://github.com/agenticcrude/crude/issues) · [Apache-2.0](LICENSE-APACHE)
 
 ![Crude editing its own Go source with syntax highlighting, file navigation and an embedded terminal](assets/crude-source.png)
 
@@ -59,7 +59,7 @@ public release is published. Until then, [build from source](#build-from-source)
 
 ```bash
 installer=$(mktemp) &&
-  curl -fsSL https://github.com/uoosef403/crude/releases/latest/download/install.sh -o "$installer" &&
+  curl -fsSL https://github.com/agenticcrude/crude/releases/latest/download/install.sh -o "$installer" &&
   bash "$installer" --accept-beta-risk
 ```
 
@@ -67,7 +67,7 @@ installer=$(mktemp) &&
 
 ```powershell
 $installer = Join-Path $env:TEMP ('crude-install-' + [guid]::NewGuid() + '.ps1')
-Invoke-WebRequest https://github.com/uoosef403/crude/releases/latest/download/install.ps1 -OutFile $installer -ErrorAction Stop
+Invoke-WebRequest https://github.com/agenticcrude/crude/releases/latest/download/install.ps1 -OutFile $installer -ErrorAction Stop
 & $installer -AcceptBetaRisk
 ```
 
