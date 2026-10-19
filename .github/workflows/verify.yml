@@ -46,6 +46,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-native
+      - name: Windows regression preflight
+        shell: pwsh
+        run: |
+          . ./scripts/libghostty_env.ps1
+          go test ./fileio ./skills ./workspace ./core ./app ./sessiondb -count=1 -timeout=90s -run 'Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|WindowsShortPath|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|CreateDoesNotOverwriteAuthoredWork|ControlExecutionSelectionExactSessionAndRevision|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows regression preflight failed' }
       - name: Native build
         shell: pwsh
         run: |
@@ -56,7 +62,7 @@ jobs:
         shell: pwsh
         run: |
           . ./scripts/libghostty_env.ps1
-          go test ./... -count=1 -timeout=300s
+          go test -p 2 ./... -count=1 -timeout=300s
           if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
       - name: Windows PowerShell 5.1 installer fixtures
         shell: powershell

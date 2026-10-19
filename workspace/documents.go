@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"crude/document"
+	"crude/fileio"
 )
 
 const documentHistoryLimit = 1024
@@ -121,9 +122,9 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 	// Refuse symlink aliases, matching the checked disk writer's path contract.
 	// A retained document whose parent was removed remains readable for recovery;
 	// this never authorizes creating the missing path or following a new alias.
-	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	err = fileio.CheckDirectoryNoSymlinks(filepath.Dir(path))
 	missingParent := errors.Is(err, os.ErrNotExist)
-	if (err != nil || parent != filepath.Dir(path)) && (d == nil || !missingParent) {
+	if err != nil && (d == nil || !missingParent) {
 		return document.Snapshot{}, errors.New("document parent must be an existing non-symlink directory")
 	}
 	if d == nil {

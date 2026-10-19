@@ -213,9 +213,14 @@ func (s *DocumentSaveService) Save(ctx context.Context, request DocumentSaveRequ
 	}
 	request.Path = path
 	result.Request.Path = path
-	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-	if err != nil || filepath.Clean(parent) != filepath.Dir(path) {
+	parent := filepath.Dir(path)
+	if err := fileio.CheckDirectoryNoSymlinks(parent); err != nil {
 		result.Err = fmt.Errorf("save document: parent must be an existing non-symlink directory")
+		return result
+	}
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		result.Err = err
 		return result
 	}
 	unlock, err := fileio.LockMutationContext(ctx)
@@ -251,8 +256,11 @@ func (s *DocumentSaveService) Save(ctx context.Context, request DocumentSaveRequ
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		parentNow, err := filepath.EvalSymlinks(filepath.Dir(path))
-		if err != nil || parentNow != parent {
+		if err := fileio.CheckDirectoryNoSymlinks(parent); err != nil {
+			return ErrDocumentConflict
+		}
+		parentNow, err := os.Stat(parent)
+		if err != nil || !os.SameFile(parentInfo, parentNow) {
 			return ErrDocumentConflict
 		}
 		latest, latestMode, latestExists, err := readDocument(path)
