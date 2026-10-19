@@ -7,6 +7,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Missing tools must never turn an unexecuted search into a passing check.
+command -v rg >/dev/null 2>&1 || {
+  echo "error: ripgrep (rg) is required for the design audit" >&2
+  exit 1
+}
+
 fail=0
 
 echo "== TUI design audit =="

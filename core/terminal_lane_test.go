@@ -60,7 +60,9 @@ func TestTerminalOperationsDoNotWaitBehindDocumentLane(t *testing.T) {
 	}
 	opts := workspace.TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "stty -echo; printf READY; cat"}, Cols: 40, Rows: 4}
 	if runtime.GOOS == "windows" {
-		opts = workspace.TerminalCreateOpts{Command: "cmd.exe", Args: []string{"/q", "/k", "echo READY"}, Cols: 40, Rows: 4}
+		// A long Windows fixture CWD wraps the prompt across more than four
+		// rows, hiding READY above the active grid before the first read.
+		opts = workspace.TerminalCreateOpts{Command: "cmd.exe", Args: []string{"/d", "/q", "/k", "prompt $G&echo READY"}, Cols: 40, Rows: 4}
 	}
 	var info workspace.TerminalInfo
 	call("create", coreprotocol.TerminalCreate, opts, &info)

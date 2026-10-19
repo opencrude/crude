@@ -29,6 +29,9 @@ func Run(m *testing.M) int {
 }
 
 func isolate() error {
+	if err := normalizeTempDir(); err != nil {
+		return err
+	}
 	pinned := map[string]string{}
 	if realHome, err := os.UserHomeDir(); err == nil {
 		pinned["GOPATH"] = filepath.Join(realHome, "go")

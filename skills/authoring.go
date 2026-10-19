@@ -155,7 +155,7 @@ func publishSkill(ctx context.Context, destination, name string, populate func(*
 	if err != nil {
 		return Skill{}, err
 	}
-	if canonicalParent != parentPath {
+	if err := fileio.CheckDirectoryNoSymlinks(parentPath); err != nil {
 		return Skill{}, fmt.Errorf("%w: destination parents must not be symlinks", ErrUnsafePath)
 	}
 	unlock, err := fileio.LockMutationContext(ctx)

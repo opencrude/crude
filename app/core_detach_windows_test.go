@@ -57,7 +57,9 @@ func TestDetachedCorePTYInterruptsNativeForegroundCommand(t *testing.T) {
 	defer func() { _ = client.Close() }()
 	attached := attach(t, client, root)
 	var info workspace.TerminalInfo
-	opts := workspace.TerminalCreateOpts{Command: "powershell.exe", Args: []string{"-NoLogo", "-NoProfile", "-Command", `Write-Output DETACHED_CONTROL_READY; Start-Sleep -Seconds 30; Write-Output MUST_NOT_COMPLETE`}, CWD: root, Cols: 100, Rows: 10}
+	// This automated foreground-command fixture must not request interactive
+	// PowerShell input from a headless runner.
+	opts := workspace.TerminalCreateOpts{Command: "powershell.exe", Args: []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `Write-Output DETACHED_CONTROL_READY; Start-Sleep -Seconds 30; Write-Output MUST_NOT_COMPLETE`}, CWD: root, Cols: 100, Rows: 10}
 	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalCreate, opts, &info); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +91,8 @@ func TestDetachedCorePTYInterruptsNativeForegroundCommand(t *testing.T) {
 	deadline := time.Now().Add(8 * time.Second)
 	for !strings.Contains(text(read()), "DETACHED_CONTROL_READY") {
 		if time.Now().After(deadline) {
-			t.Fatal("native foreground command never became ready")
+			p := read()
+			t.Fatalf("native foreground command never became ready: info=%+v text=%q", p.Info, text(p))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

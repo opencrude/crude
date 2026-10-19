@@ -703,7 +703,8 @@ func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
 	if err := CreateSessionRow(db, "session"); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().Round(0)
+	// JSON preserves the instant/offset, not a platform's Local location object.
+	now := time.Now().UTC().Round(0)
 	want := ttypes.ConversationMessage{
 		InternalID: "message-1", Role: "tool", Content: "result", ReferenceLabels: []string{"@one"}, Time: now,
 		ToolName: "agent_start", ToolArgs: "description: inspect", ToolCommand: "go test ./...",

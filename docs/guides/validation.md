@@ -61,6 +61,11 @@ change.
   empty `GIT_CONFIG_GLOBAL`, so Git fixtures behave identically on every
   machine (Git for Windows' system config sets `core.autocrlf=true`); tests of
   line-ending policy set it per repository.
+- Windows fixtures normalize the inherited temporary root to its long name;
+  Git and core attachment already return that spelling. CI places temporary
+  databases on the runner work disk, keeping real durability checks enabled.
+  Explicit 8.3-name regressions still exercise document open/edit/save and
+  directory safety without treating short-name expansion as a symlink.
 - `CRUDE_HOME` selects an isolated profile (own core, config, workspaces,
   sessions) for developing Crude inside Crude.
 - `MODELS_DEV_URL` overrides the models.dev catalog endpoint for tests and

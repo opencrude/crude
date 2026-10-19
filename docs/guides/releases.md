@@ -81,6 +81,15 @@ tests. Windows builds/tests with native cgo and runs installer fixtures on both
 Windows PowerShell 5.1 and PowerShell 7. Actions are pinned by SHA; Zig downloads
 have pinned SHA-256 checksums. No pull_request_target or inherited secrets.
 
+Native Zig/Ghostty dependencies are cached by platform, architecture, exact pins
+and bootstrap/action source. Bootstrap still validates the installed pin and
+baseline CPU stamp. Its cache is saved before tests, including on runs where a
+later test fails. Linux explicitly installs ripgrep and ShellCheck; the design
+audit fails immediately if ripgrep is unavailable. Windows runs a targeted
+path/PTY/persistence preflight before the full suite, limits package-level test
+parallelism to two to avoid saturating durable database I/O, and keeps temporary
+databases on the runner work disk. No durability or test gate is disabled.
+
 `.github/workflows/release.yml` accepts v-prefixed tags (or an existing tag through
 workflow_dispatch with **that tag selected as the ref**). Tag and verification
 commit must match, and be reachable from master. It runs the same verification,
