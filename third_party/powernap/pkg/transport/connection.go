@@ -15,7 +15,8 @@ import (
 
 // Connection represents a managed connection to a language server.
 type Connection struct {
-	conn      jsonrpc2.JSONRPC2
+	conn      *jsonrpc2.Conn
+	stream    io.ReadWriteCloser
 	transport *Transport
 	router    *Router
 	logger    *slog.Logger
@@ -33,6 +34,7 @@ type Connection struct {
 // NewConnection creates a new managed connection.
 func NewConnection(ctx context.Context, stream io.ReadWriteCloser, logger *slog.Logger) (*Connection, error) {
 	c := &Connection{
+		stream:   stream,
 		router:   NewRouter(),
 		logger:   logger,
 		requests: make(map[jsonrpc2.ID]chan *Message),
@@ -108,9 +110,16 @@ func (c *Connection) Close() error {
 
 	c.closed.Store(true)
 
-	// Close the JSON-RPC connection
+	// The upstream reader must be the sole pending-call completion owner.
+	// Conn.Close closes pending channels without clearing the map: a response
+	// already read when Close races can then send on one of those channels.
+	// Closing the stream interrupts I/O and lets the reader finish that response
+	// before its EOF path closes the remaining calls. Join that reader boundary.
+	if c.stream != nil {
+		c.closeErr = c.stream.Close()
+	}
 	if c.conn != nil {
-		c.closeErr = c.conn.Close()
+		<-c.conn.DisconnectNotify()
 	}
 
 	// Close any pending requests

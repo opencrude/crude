@@ -43,6 +43,15 @@ runs:
         # Keep SQLite fixtures on the runner work disk and avoid TEMP's 8.3 alias.
         $testTemp = Join-Path $env:RUNNER_TEMP 'crude-tests'
         New-Item -ItemType Directory -Force $testTemp | Out-Null
+        # The work disk inherits BUILTIN\Users access. These fixtures exercise
+        # private receipt journals, so give their root an owner-only DACL first.
+        $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+        $acl.SetOwner($sid)
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $testTemp -AclObject $acl
         "TEMP=$testTemp" >> $env:GITHUB_ENV
         "TMP=$testTemp" >> $env:GITHUB_ENV
         $tools = Join-Path $HOME 'tools'
