@@ -83,6 +83,43 @@ func (m *App) workspaceNavigationActions() ui.ContextMenuSection {
 	}}
 }
 
+// openWorkspacePathSwitcher is the header workspace-root dropdown: the same
+// recent-workspace catalog the sidebar lists, plus its New Workspace and
+// Refresh commands. It anchors under the header like the branch picker, so
+// the three identity segments behave alike.
+func (m *App) openWorkspacePathSwitcher() tea.Cmd {
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
+	valid := func() bool { return m.ws == owner && generation == m.workspaceSwitchGen.Load() }
+	items := make([]ui.ContextMenuItem, 0, len(m.workspaceInfos))
+	for _, info := range m.workspaceInfos {
+		path := info.ProjectDir
+		if path == "" {
+			continue
+		}
+		current := sameWorkspaceRoot(m.ws.RootPath(), path)
+		detail := shortWorkspacePath(path)
+		if current {
+			detail = "current"
+		}
+		items = append(items, ui.ContextMenuItem{
+			Label: workspace.WorkspaceDisplayName(info), Detail: detail, Disabled: current,
+			Action: func() {
+				if valid() {
+					m.runDetachedAsyncCmd(m.launcherOpenFolder(path))
+				}
+			},
+		})
+	}
+	if len(items) == 0 {
+		items = append(items, ui.ContextMenuItem{Label: "No recent workspaces", Disabled: true})
+	}
+	st := &ui.ContextMenuState{Title: "Workspaces", Sections: []ui.ContextMenuSection{
+		{SectionLabel: "Recent", Items: items},
+		m.workspaceNavigationActions(),
+	}}
+	return m.openHeaderPopup(st)
+}
+
 func (m *App) buildWorkspaceSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	menu := &ui.ContextMenuState{Title: "Recent Workspaces"}
 	screen := m.workspacesScreen

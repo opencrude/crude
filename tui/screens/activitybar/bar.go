@@ -1,6 +1,8 @@
 package activitybar
 
 import (
+	"strconv"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
@@ -103,9 +105,10 @@ func (v View) Icon(nerdFont bool) string {
 	if nerdFont {
 		switch v {
 		case ViewAgents:
-			// nf-fa-android. nf-fa-robot (U+F544) is a down-arrow in Nerd
-			// Fonts 2.x, where that cell is still Material Design Icons.
-			return "\uf17b"
+			// nf-md-robot: a neutral agent glyph instead of one operating
+			// system's logo. Present in both the 2.x and 3.x glyph sets;
+			// nf-fa-robot (U+F544) is a down-arrow there.
+			return "\U000f06a9"
 		case ViewSkills:
 			return "\uf02d"
 		case ViewWorkspaces:
@@ -235,7 +238,7 @@ func (s *Screen) SetPanelOpen(open bool) { s.panelOpen = open }
 func (s *Screen) PanelOpen() bool { return s.panelOpen }
 
 // SetBadge sets the pending-item count shown beside a view's icon. Counts
-// above 9 collapse to "+" so the rail never widens.
+// above 99 collapse to "99+" so the rail never widens past two digits.
 func (s *Screen) SetBadge(v View, n int) {
 	if s.badges == nil {
 		s.badges = map[View]int{}
@@ -343,10 +346,18 @@ func (s *Screen) paintBand(buf *surface.CellBuffer, left, bandTop, bandH, bottom
 	if badge.text == "" || badge.row >= bandH || badgeY >= bottom {
 		return
 	}
-	_, badgeWidth := rendering.FirstGrapheme(badge.text)
-	if badgeX+badgeWidth <= min(r.W, ruleCol) {
-		buf.WriteString(left+badgeX, badgeY, badge.text, accent, rowBG, cell.AttrBold)
+	badgeWidth := rendering.VisibleWidth(badge.text)
+	limit := min(r.W, ruleCol)
+	// A three-glyph count ("99+") backs up into the icon's breathing-room
+	// column so it still ends at the panel rule; one- and two-digit counts
+	// keep their upper-right column.
+	if badgeWidth > 1 && badgeX+badgeWidth > limit {
+		badgeX = limit - badgeWidth
 	}
+	if badgeX < badgeCol-1 || badgeX+badgeWidth > limit {
+		return
+	}
+	buf.WriteString(left+badgeX, badgeY, badge.text, accent, rowBG, cell.AttrBold)
 }
 
 type countBadge struct {
@@ -355,16 +366,17 @@ type countBadge struct {
 }
 
 // badgeFor uses ordinary digits, with placement supplying the script-like look:
-// every destination's count sits upper-right.
+// every destination's count sits upper-right. Two digits still read at rail
+// size, so only 100 and above collapse to "99+".
 func badgeFor(v View, n int) countBadge {
 	if n <= 0 {
 		return countBadge{}
 	}
-	badge := countBadge{text: "+"}
-	if n <= 9 {
-		badge.text = string(rune('0' + n))
+	text := strconv.Itoa(n)
+	if n > 99 {
+		text = "99+"
 	}
-	return badge
+	return countBadge{text: text}
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {

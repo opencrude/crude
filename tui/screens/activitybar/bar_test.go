@@ -1,6 +1,7 @@
 package activitybar
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -201,8 +202,9 @@ func TestHoverPaintsOnlyWhileHostHoversRail(t *testing.T) {
 }
 
 func TestAgentsIconIsRobotNotCogs(t *testing.T) {
-	if got := ViewAgents.Icon(true); got != "\uf17b" {
-		t.Fatalf("nerd-font agents icon=%q want nf-fa-android", got)
+	// nf-md-robot, not the Android logo or the cogs this rail used to carry.
+	if got := ViewAgents.Icon(true); got != "\U000f06a9" {
+		t.Fatalf("nerd-font agents icon=%q want nf-md-robot", got)
 	}
 	if got := SettingsIcon(true); got != "\uf085" {
 		t.Fatalf("nerd-font settings icon=%q want nf-fa-cogs", got)
@@ -214,17 +216,19 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 		name string
 		view View
 		n    int
-		want rune
+		want string
 		y    int
 	}{
-		{"agents raised", ViewAgents, 2, '2', 3},
-		{"files raised", ViewFiles, 1, '1', 0},
-		{"workspaces raised", ViewWorkspaces, 4, '4', 6},
-		{"skills raised", ViewSkills, 8, '8', 9},
-		{"mcp raised", ViewMCP, 9, '9', 12},
-		{"agents overflow raised", ViewAgents, 10, '+', 3},
-		{"zero absent", ViewAgents, 0, ' ', 3},
-		{"negative absent", ViewSkills, -1, ' ', 9},
+		{"agents raised", ViewAgents, 2, "2", 3},
+		{"files raised", ViewFiles, 1, "1", 0},
+		{"workspaces raised", ViewWorkspaces, 4, "4", 6},
+		{"skills raised", ViewSkills, 8, "8", 9},
+		{"mcp raised", ViewMCP, 9, "9", 12},
+		{"agents two digits", ViewAgents, 10, "10", 3},
+		{"agents largest two digits", ViewAgents, 99, "99", 3},
+		{"agents overflow", ViewAgents, 100, "99+", 3},
+		{"zero absent", ViewAgents, 0, "", 3},
+		{"negative absent", ViewSkills, -1, "", 9},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := New(theme.DefaultDark())
@@ -232,7 +236,7 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 			s.Layout(ui.LayoutContext{}, ui.Rect{W: Width, H: 24})
 			buf := surface.NewCellBuffer(Width, 24)
 			s.Paint(buf, 0, 0, ui.PaintContext{})
-			if got := buf.Get(5, test.y).Char; got != test.want {
+			if got := badgeLane(buf, test.y); got != test.want {
 				t.Fatalf("badge=%q want %q", got, test.want)
 			}
 			y := int(test.view)*3 + 1
@@ -240,16 +244,14 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 				t.Fatalf("badge replaced the %s icon: %q", test.view.Label(), got)
 			}
 			// No tiny script glyph or baseline duplicate may remain anywhere
-			// in the badge lane. Placement, not font glyph size, sets its level.
+			// else in the badge lane. Placement, not font glyph size, sets
+			// its level.
 			for row := int(test.view) * 3; row < (int(test.view)+1)*3; row++ {
-				for x := 4; x <= 6; x++ {
-					want := ' '
-					if x == 5 && row == test.y {
-						want = test.want
-					}
-					if got := buf.Get(x, row).Char; got != want {
-						t.Fatalf("badge lane (%d,%d)=%q want %q", x, row, got, want)
-					}
+				if row == test.y {
+					continue
+				}
+				if got := badgeLane(buf, row); got != "" {
+					t.Fatalf("badge lane on row %d=%q want empty", row, got)
 				}
 			}
 			res := s.Handle(ui.EventContext{LocalX: 5, LocalY: test.y}, ui.Event{
@@ -261,15 +263,24 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 			}
 			s.SetBadge(test.view, 0)
 			s.Paint(buf, 0, 0, ui.PaintContext{})
-			if got := buf.Get(5, test.y).Char; got != ' ' {
+			if got := badgeLane(buf, test.y); got != "" {
 				t.Fatalf("cleared count left stale badge %q", got)
 			}
 		})
 	}
 }
 
+// badgeLane returns the painted count cells on one row of an entry band.
+func badgeLane(buf *surface.CellBuffer, y int) string {
+	var lane []rune
+	for x := 4; x <= 6; x++ {
+		lane = append(lane, buf.Get(x, y).Char)
+	}
+	return strings.TrimSpace(string(lane))
+}
+
 func TestCountBadgeNeverOverwritesWideIconOrPanelRule(t *testing.T) {
-	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"\uf17b": 2}})
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"\U000f06a9": 2}})
 	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
 	s := New(theme.DefaultDark())
 	s.nerdFont = true
@@ -279,7 +290,7 @@ func TestCountBadgeNeverOverwritesWideIconOrPanelRule(t *testing.T) {
 		buf := surface.NewCellBuffer(width, 24)
 		s.Paint(buf, 0, 0, ui.PaintContext{})
 		if width >= 5 {
-			if got := buf.Get(3, 4); got.Char != '\uf17b' || got.Width != 2 {
+			if got := buf.Get(3, 4); got.Char != '\U000f06a9' || got.Width != 2 {
 				t.Fatalf("width=%d badge erased the wide icon: %+v", width, got)
 			}
 			if got := buf.Get(4, 4).Width; got != 0 {
@@ -296,6 +307,22 @@ func TestCountBadgeNeverOverwritesWideIconOrPanelRule(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// "99+" is three glyphs wide, so it backs up one column instead of hitting the
+// panel rule or disappearing.
+func TestOverflowCountKeepsThreeGlyphLane(t *testing.T) {
+	s := New(theme.DefaultDark())
+	s.SetBadge(ViewAgents, 120)
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: Width, H: 24})
+	buf := surface.NewCellBuffer(Width, 24)
+	s.Paint(buf, 0, 0, ui.PaintContext{})
+	if got := badgeLane(buf, 3); got != "99+" {
+		t.Fatalf("overflow badge=%q want 99+", got)
+	}
+	if got := buf.Get(7, 3).Char; got == ' ' {
+		t.Fatalf("overflow badge damaged the panel rule: %q", got)
 	}
 }
 
