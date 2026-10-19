@@ -199,6 +199,12 @@ refresh after success without dropping the query/replacement draft.
 
 ## Language server transport
 
+The Powernap transport closes the subprocess stream and joins JSON-RPC reader
+disconnect instead of concurrently calling `Conn.Close`. The reader is the sole
+owner of pending-call completion: an already-read response must settle before
+EOF closes the other waiters. This prevents shutdown from sending a response
+on a channel already closed by another goroutine.
+
 LSP subprocess pipes must never block a caller goroutine. A synchronous,
 context-unaware jsonrpc2 flush on a back-pressured server pipe once froze Bubble
 Tea's update goroutine (the tab-close hang).

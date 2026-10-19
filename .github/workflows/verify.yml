@@ -36,7 +36,7 @@ jobs:
       - name: Full test suite
         run: . scripts/libghostty_env.sh && go test ./... -count=1 -timeout=180s
       - name: Full race suite
-        run: . scripts/libghostty_env.sh && go test -race ./... -count=1 -timeout=300s
+        run: . scripts/libghostty_env.sh && go test -race -p 2 ./... -count=1 -timeout=300s
   windows:
     name: Windows native build and tests
     runs-on: windows-2022

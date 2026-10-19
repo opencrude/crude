@@ -88,7 +88,10 @@ later test fails. Linux explicitly installs ripgrep and ShellCheck; the design
 audit fails immediately if ripgrep is unavailable. Windows runs a targeted
 path/PTY/persistence preflight before the full suite, limits package-level test
 parallelism to two to avoid saturating durable database I/O, and keeps temporary
-databases on the runner work disk. No durability or test gate is disabled.
+databases under an owner-only directory on the runner work disk. The Linux race
+suite also limits package parallelism to two to avoid concurrent instrumented
+SQLite suites exhausting their existing time budgets. No durability or test gate
+is disabled or raised.
 
 `.github/workflows/release.yml` accepts v-prefixed tags (or an existing tag through
 workflow_dispatch with **that tag selected as the ref**). Tag and verification
