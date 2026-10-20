@@ -10,41 +10,42 @@ import (
 	"time"
 
 	"crude/fileio"
+	"crude/tools"
 )
 
 func TestCommandFormattersDirectModelToRetainedContent(t *testing.T) {
 	start := FormatCommandStart(fileio.AsyncCmdInfo{Handle: "build", PID: 42, Status: fileio.AsyncRunning, OutputBytes: 900})
-	for _, want := range []string{"promoted to async command [build]", "retained_bytes=900", "exit=unknown", "read_async_output", "kill_async_command", "Do not rerun"} {
+	for _, want := range []string{"promoted to async command [build]", `"total_bytes":900`, `"status":"running"`, "read_async_output", "kill_async_command", "Do not rerun"} {
 		if !strings.Contains(start, want) {
 			t.Fatalf("start %q lacks %q", start, want)
 		}
 	}
 	running := FormatCommandStatus(fileio.AsyncCmdInfo{Handle: "build", PID: 42, Status: fileio.AsyncRunning, OutputBytes: 900})
-	if strings.Contains(running, "exit_code") || !strings.Contains(running, "exit unknown") || !strings.Contains(running, "read_async_output") {
+	if strings.Contains(running, "exit_code") || !strings.Contains(running, "Exit unknown") || !strings.Contains(running, "read_async_output") {
 		t.Fatalf("running status misleads model: %q", running)
 	}
 	failed := FormatCommandStatus(fileio.AsyncCmdInfo{Handle: "build", PID: 42, Status: fileio.AsyncFailed, ExitCode: 7, Error: "exit status 7", OutputBytes: 900})
-	for _, want := range []string{"status=failed", "exit_code=7", `error="exit status 7"`, "output_bytes=900"} {
+	for _, want := range []string{`"status":"failed"`, `"exit_code":7`, `"error":"exit status 7"`, `"total_bytes":900`} {
 		if !strings.Contains(failed, want) {
 			t.Fatalf("failed status %q lacks %q", failed, want)
 		}
 	}
 	page := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "build", Status: fileio.AsyncRunning, TotalBytes: 900}, SinceByte: 0, NextByte: 100, HasMore: true, Output: "chunk"})
-	for _, want := range []string{"bytes=0-100 of 900", "since_byte=100", "do not rerun", "chunk"} {
+	for _, want := range []string{`"since_byte":0`, `"next_byte":100`, "since_byte=100", "do not rerun", "chunk"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page %q lacks %q", page, want)
 		}
 	}
 	emptyRunning := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "build", Status: fileio.AsyncRunning}})
 	emptyFinished := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "build", Status: fileio.AsyncCompleted}})
-	if !strings.Contains(emptyRunning, "no new bytes yet") || !strings.Contains(emptyRunning, "still running") {
+	if !strings.Contains(emptyRunning, "No new bytes yet") || !strings.Contains(emptyRunning, "still running") {
 		t.Fatalf("running empty page=%q", emptyRunning)
 	}
-	if !strings.Contains(emptyFinished, "output is complete") || strings.Contains(emptyFinished, "still running") {
+	if !strings.Contains(emptyFinished, "Output is complete") || strings.Contains(emptyFinished, "still running") {
 		t.Fatalf("finished empty page=%q", emptyFinished)
 	}
 	binary := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "binary", Status: fileio.AsyncCompleted, TotalBytes: 1}, SinceByte: 0, NextByte: 1, OutputEncoding: "base64", Output: "/w=="})
-	for _, want := range []string{"output_encoding=base64", "decode this returned page", "continue from next byte", "/w=="} {
+	for _, want := range []string{`"output_encoding":"base64"`, "Decode this returned page", "continue from next byte", "/w=="} {
 		if !strings.Contains(binary, want) {
 			t.Fatalf("binary page %q lacks %q", binary, want)
 		}
@@ -86,10 +87,13 @@ func TestCancelledCommandOutcomePreservesPartialOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancel result: %v", err)
 	}
-	for _, want := range []string{"Command cancelled.", "preserved the captured evidence", "status=killed", "partial stdout evidence", "partial stderr evidence", "retained_handle=none"} {
+	for _, want := range []string{"Command cancelled.", "preserved the captured evidence", `"status":"killed"`, "partial stdout evidence", "partial stderr evidence"} {
 		if !strings.Contains(result.Content, want) {
 			t.Fatalf("cancel content %q lacks %q", result.Content, want)
 		}
+	}
+	if evidence, ok := tools.ParseCommandResult("execute_command", result.Content); !ok || !evidence.Cancelled || evidence.Failed() || evidence.ExitCode != nil || evidence.OutputDescriptor.Handle != "" {
+		t.Fatal("cancellation invented an exit or retained handle")
 	}
 }
 
@@ -105,8 +109,9 @@ func TestCommandOutcomeRetentionFailureIsExplicitAndDoesNotInventHandle(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Content, "retained_handle=none") || !strings.Contains(result.Content, "retention_error=") {
-		t.Fatalf("retention failure not explicit: %q", result.Content)
+	evidence, ok := tools.ParseCommandResult("execute_command", result.Content)
+	if !ok || evidence.OutputDescriptor.Handle != "" || evidence.OutputDescriptor.RetentionError == "" {
+		t.Fatal("retention failure not explicit or a handle was invented")
 	}
 	if strings.Contains(result.Content, "read_async_output(") {
 		t.Fatalf("failed retention advertised a fake retrieval handle: %q", result.Content)

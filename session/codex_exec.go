@@ -2,7 +2,7 @@ package session
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -49,12 +49,12 @@ func executeCodexCommand(ctx context.Context, mgr *fileio.AsyncCommandManager, r
 		wait := max(250, min(tools.GetIntArgAny(params, "yield_time_ms", 10000), 30000))
 		result, err = mgr.StartInteractive(ctx, fileio.InteractiveOptions{Command: command, CWD: cwd, Shell: getStrParam(params, "shell"), Login: tools.GetBoolArgAny(params, "login", true), TTY: tools.GetBoolArgAny(params, "tty", false)}, time.Duration(wait)*time.Millisecond, maxTokens)
 	}
-	body, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		return tools.ToolResult{}, marshalErr
+	if err != nil && result.OutputDescriptor.Status == "" {
+		return tools.ToolResult{Content: "Error: " + err.Error()}, err
 	}
+	result.Cancelled = errors.Is(err, context.Canceled)
 	if err == nil && result.ExitCode != nil && *result.ExitCode != 0 {
 		err = fmt.Errorf("command exited with code %d", *result.ExitCode)
 	}
-	return tools.ToolResult{Content: string(body)}, err
+	return tools.ToolResult{Content: tools.CommandResultContent(result)}, err
 }

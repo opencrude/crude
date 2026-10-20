@@ -415,6 +415,13 @@ external changes. Failure keeps the draft and actionable reason visible.
 
 ## File tree filter and guide geometry
 
+- File glyphs come from the pinned `go-devicons` catalogue, generated from
+  nvim-web-devicons, rather than a private extension/codepoint table. Nerd Fonts 3
+  JSON, PowerShell (including modules/manifests), Lua, Vue/Svelte, C and common
+  config/build/document formats keep their actual glyphs. Resolution uses the
+  existing filename/entry identity without a filesystem stat during paint.
+  Upstream icon colors are not imported: theme file/directory/symlink colors and
+  the existing non-Nerd-Font fallback remain authoritative.
 - Connected trees project the header/panel's one core Git snapshot and retained
   diagnostics, including unloaded descendants and filtered search matches. Both
   ordinary file and Git metadata changes arm reconciliation. Directory response

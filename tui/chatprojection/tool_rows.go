@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	toolargs "crude/tools"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -134,11 +135,16 @@ func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 }
 
 func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState) messageLines {
-	if _, exit, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok && exit != nil && *exit != 0 {
-		msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
-	}
 	// A failure's trailing hint addresses the model's next call, not the reader.
 	msg.Content = types.StripToolHint(msg.Content)
+	commandResult, commandOK := toolargs.ParseCommandResult(msg.ToolName, msg.Content)
+	if commandOK {
+		if commandResult.Cancelled {
+			msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusCancelled, types.ToolPreviewDone
+		} else if commandResult.Failed() {
+			msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
+		}
+	}
 	titlePhase := msg.ToolPreviewPhase
 	if titlePhase == "" {
 		titlePhase = phase
@@ -169,8 +175,38 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		}
 		return out
 	}
-	if output, _, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok {
-		msg.Content = rendering.SanitizeForTerminal(output)
+	if commandOK {
+		if expanded {
+			out.appendPlainToolBody("", tools.CommandDetails(commandResult), innerW, height, false, true)
+		}
+		if commandResult.Error != "" {
+			out.appendPlainToolBody("", commandResult.Error, innerW, height, false, true)
+		}
+		output := tools.CommandOutput(commandResult)
+		output = rendering.CommandOutputText(output)
+		if output == "" {
+			output = "(no output captured)"
+			switch {
+			case msg.ToolName == "check_async_command":
+				output = "(status only; output is not included in this result)"
+			case commandResult.Page != nil:
+				output = "(no bytes in this output range)"
+			case commandResult.Output != "":
+				output = "(no printable output; control sequences only)"
+			case commandResult.OutputDescriptor.TotalBytes > 0:
+				output = "(output retained under this handle; not included in this result)"
+			case commandResult.OutputDescriptor.Status == "running":
+				output = "(no output captured yet; command is running)"
+			}
+		}
+		out.appendPlainToolBody(msg.ToolName, output, innerW, height, false, expanded)
+		return out
+	}
+	if isCommandEvidenceTool(msg.ToolName) && (msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || expanded && msg.ToolStatus == types.ToolStatusCancelled) {
+		// Plain failures and retained historical output use the same literal
+		// body, without guessing headers, stripping paths or trimming indentation.
+		out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, false, expanded)
+		return out
 	}
 
 	// Completed tools render a budgeted preview by default; full output only
@@ -234,8 +270,7 @@ func toolSupportsDisclosure(toolName string) bool {
 
 func isCompactEvidenceTool(name string) bool {
 	switch name {
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command",
-		"read_file", "grep_files", "glob_files", "list_directory", "web_search", "web_fetch", "arxiv_search":
+	case "read_file", "grep_files", "glob_files", "list_directory", "web_search", "web_fetch", "arxiv_search":
 		return true
 	default:
 		return false
@@ -299,6 +334,9 @@ func isCountHeader(line string) bool {
 const toolBodyGutterWidth = 4
 
 func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, width, height int, errorStyle, expanded bool) {
+	if resultContent == "" {
+		return
+	}
 	// Wrap at the real painted content width (not the full terminal width)
 	// so every wrapped segment stays inside the LayoutRow band. The 4-col
 	// margin mirrors the "│   " gutter in buildToolPlainResultLine.
@@ -308,13 +346,17 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 	// line ("/home/u/proj/tui/file.go:12: ..."). Stripping that shared prefix
 	// fits far more matches per line; a short header shows what was stripped.
 	var nonBlank []string
-	rawLines := strings.Split(resultContent, "\n")
+	resultContent = rendering.CommandOutputText(resultContent)
+	rawLines := strings.Split(strings.TrimSuffix(resultContent, "\n"), "\n")
 	for _, rl := range rawLines {
 		if strings.TrimSpace(rl) != "" {
 			nonBlank = append(nonBlank, strings.TrimSpace(rl))
 		}
 	}
-	prefix := commonDirPrefix(nonBlank)
+	prefix := ""
+	if !isCommandEvidenceTool(toolName) {
+		prefix = commonDirPrefix(nonBlank)
+	}
 	if prefix != "" {
 		header := buildPlainToolResultLine(prefixHeader(prefix))
 		ml.lines = append(ml.lines, header.PlainText())
@@ -335,7 +377,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 		if prefix != "" {
 			display = strings.TrimPrefix(strings.TrimSpace(display), prefix)
 		}
-		sanitized := rendering.SanitizeForTerminal(display)
+		sanitized := rendering.ExpandTabs(display, 8)
 		// Word-wrap rather than character-wrap: breaking mid-token used to
 		// strand 1–2 characters at the right edge of the preview band (e.g.
 		// inside column-aligned Go identifiers). WordWrap falls back to a
@@ -356,6 +398,9 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 		}
 		seg := wrapped[i]
 		pl := buildToolPlainResultLine("│   ", seg, errorStyle)
+		if isCommandEvidenceTool(toolName) {
+			pl.Spans[1].Role = ui.ColorFg
+		}
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
@@ -369,7 +414,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 func toolPreviewHeight(toolName string, height int) int {
 	switch toolName {
 	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command":
-		return tools.TerminalResultHeight(height)
+		return min(6, tools.TerminalResultHeight(height))
 	case "grep_files", "web_search", "web_fetch", "arxiv_search":
 		return min(4, tools.TerminalResultHeight(height))
 	case "glob_files", "list_directory":

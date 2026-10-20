@@ -3,7 +3,6 @@ package fileio
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -16,15 +15,16 @@ import (
 	"unicode/utf8"
 
 	"crude/logger"
+	"crude/types/command"
 )
 
-type AsyncStatus string
+type AsyncStatus = command.Status
 
 const (
-	AsyncRunning   AsyncStatus = "running"
-	AsyncCompleted AsyncStatus = "completed"
-	AsyncFailed    AsyncStatus = "failed"
-	AsyncKilled    AsyncStatus = "killed"
+	AsyncRunning   = command.Running
+	AsyncCompleted = command.Completed
+	AsyncFailed    = command.Failed
+	AsyncKilled    = command.Killed
 
 	// DefaultOutputChunkBytes bounds one model-visible async output read.
 	// Commands retain their complete captured output; callers page explicitly.
@@ -37,6 +37,7 @@ const (
 type AsyncCmdInfo struct {
 	Handle    string
 	Command   string
+	CWD       string
 	PID       int
 	Status    AsyncStatus
 	StartedAt time.Time
@@ -47,29 +48,24 @@ type AsyncCmdInfo struct {
 	// OutputBytes is the complete number of raw stdout+stderr bytes retained
 	// under Handle at the instant this snapshot was taken.
 	OutputBytes int
+	// Captured once at settlement for durable human audit, without advancing
+	// either model output cursor. Never included in ordinary status snapshots.
+	SettledOutput *command.Result
 }
 
 // OutputRange identifies one half-open raw byte range included in a bounded
 // command result. Multiple ranges mean the middle was omitted from the model-
 // visible excerpt; the complete bytes remain addressable through Handle.
-type OutputRange struct {
-	StartByte int `json:"start_byte"`
-	EndByte   int `json:"end_byte"`
-}
+type OutputRange = command.OutputRange
 
 // OutputDescriptor is the shared, presentation-neutral contract describing a
 // bounded command result and the retained bytes behind it.
-type OutputDescriptor struct {
-	Handle         string        `json:"handle,omitempty"`
-	Status         AsyncStatus   `json:"status"`
-	TotalBytes     int           `json:"total_bytes"`
-	ShownRanges    []OutputRange `json:"shown_ranges,omitempty"`
-	OmittedBytes   int           `json:"omitted_bytes,omitempty"`
-	RetentionError string        `json:"retention_error,omitempty"`
-}
+type OutputDescriptor = command.OutputDescriptor
 
 // OutputPage is one contiguous bounded read from retained command output.
 type OutputPage struct {
+	Command    string           `json:"command,omitempty"`
+	CWD        string           `json:"cwd,omitempty"`
 	Descriptor OutputDescriptor `json:"descriptor"`
 	SinceByte  int              `json:"since_byte"`
 	NextByte   int              `json:"next_byte"`
@@ -207,9 +203,41 @@ func (m *AsyncCommandManager) notifySettled(state *asyncCmdState) {
 			info.OutputBytes = state.output.Len()
 			state.outputMu.Unlock()
 			info.computeDuration()
+			result := state.outputExcerpt(info)
+			info.SettledOutput = &result
 			observe(info)
 		})
 	}()
+}
+
+func (state *asyncCmdState) outputExcerpt(info AsyncCmdInfo) command.Result {
+	state.outputMu.Lock()
+	defer state.outputMu.Unlock()
+	raw := state.output.Bytes()
+	d := command.OutputDescriptor{Handle: info.Handle, Status: info.Status, TotalBytes: len(raw)}
+	var output string
+	if len(raw) > 0 {
+		d.ShownRanges = []command.OutputRange{{StartByte: 0, EndByte: len(raw)}}
+	}
+	if len(raw) > DefaultOutputChunkBytes {
+		head := utf8PrefixBoundary(string(raw[:DefaultOutputChunkBytes/2+utf8.UTFMax]), DefaultOutputChunkBytes/2)
+		tail := len(raw) - DefaultOutputChunkBytes/2
+		for tail < len(raw) && !utf8.RuneStart(raw[tail]) {
+			tail++
+		}
+		d.OmittedBytes = tail - head
+		d.ShownRanges = []command.OutputRange{{StartByte: 0, EndByte: head}, {StartByte: tail, EndByte: len(raw)}}
+		output = string(raw[:head]) + fmt.Sprintf("\n\n... %d output bytes omitted ...\n\n", d.OmittedBytes) + string(raw[tail:])
+	} else {
+		output = string(raw)
+	}
+	result := command.Result{Command: info.Command, CWD: info.CWD, PID: info.PID, WallTimeSeconds: info.Duration.Seconds(), Error: info.Error, OutputDescriptor: d, Output: output}
+	if info.Status == AsyncCompleted || info.Status == AsyncFailed {
+		code := info.ExitCode
+		result.ExitCode = &code
+	}
+	result.Output, result.OutputEncoding = commandOutputPayload(output)
+	return result
 }
 
 // markSettleObserved records that a caller already returned this command's
@@ -365,6 +393,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		info: AsyncCmdInfo{
 			Handle:    handle,
 			Command:   command,
+			CWD:       c.Dir,
 			Status:    AsyncRunning,
 			StartedAt: time.Now(),
 		},
@@ -527,11 +556,6 @@ func normalizeOutputLimit(maxBytes int) int {
 	return min(maxBytes, MaxOutputChunkBytes)
 }
 
-func normalizeCommandOutput(out string) string {
-	out = strings.ReplaceAll(out, "\r\n", "\n")
-	return strings.ReplaceAll(out, "\r", "")
-}
-
 // ReadOutput reads one bounded output page. nextByte advances only through the
 // returned raw byte range; totalBytes reports the complete captured size.
 func (m *AsyncCommandManager) ReadOutputPage(handle string, sinceByte, maxBytes int) (OutputPage, error) {
@@ -562,23 +586,17 @@ func (m *AsyncCommandManager) ReadOutputPage(handle string, sinceByte, maxBytes 
 		state.readCursor = max(state.readCursor, end)
 	}
 	state.outputMu.Unlock()
-	var out, encoding string
-	if utf8.Valid(raw) {
-		out = normalizeCommandOutput(string(raw))
-	} else {
-		out = base64.StdEncoding.EncodeToString(raw)
-		encoding = "base64"
-	}
+	out, encoding := commandOutputPayload(string(raw))
 	state.mu.Lock()
-	status := state.info.Status
+	info := state.info
 	state.mu.Unlock()
-	descriptor := OutputDescriptor{Handle: handle, Status: status, TotalBytes: total}
+	descriptor := OutputDescriptor{Handle: handle, Status: info.Status, TotalBytes: total}
 	if end > sinceByte && sinceByte < total {
 		descriptor.ShownRanges = []OutputRange{{StartByte: sinceByte, EndByte: end}}
 	}
-	page := OutputPage{Descriptor: descriptor, SinceByte: sinceByte, NextByte: end, HasMore: end < total, OutputEncoding: encoding, Output: out}
+	page := OutputPage{Command: info.Command, CWD: info.CWD, Descriptor: descriptor, SinceByte: sinceByte, NextByte: end, HasMore: end < total, OutputEncoding: encoding, Output: out}
 	if m.logger != nil {
-		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", end, "status", status)
+		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", end, "status", info.Status)
 	}
 	return page, nil
 
@@ -614,7 +632,7 @@ func (m *AsyncCommandManager) OutputTail(handle string, maxBytes int) string {
 		maxBytes = 250
 	}
 	start := n - min(n, maxBytes)
-	return normalizeCommandOutput(string(state.output.Bytes()[start:n]))
+	return string(state.output.Bytes()[start:n])
 }
 
 func (m *AsyncCommandManager) List() []AsyncCmdInfo {
@@ -698,6 +716,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 		cleanup: cleanup,
 		info: AsyncCmdInfo{
 			Command:   command,
+			CWD:       c.Dir,
 			Status:    AsyncRunning,
 			StartedAt: time.Now(),
 		},
@@ -814,6 +833,11 @@ func (uc *UntrackedCmd) Kill() {
 
 func (uc *UntrackedCmd) Done() <-chan struct{} { return uc.state.done }
 
+// OutputResult returns bounded immutable evidence without advancing a cursor.
+func (uc *UntrackedCmd) OutputResult() command.Result {
+	return uc.state.outputExcerpt(uc.Info())
+}
+
 func (uc *UntrackedCmd) ReadOutputLimit(sinceByte, maxBytes int) (out string, nextByte, totalBytes int) {
 	if sinceByte < 0 {
 		sinceByte = 0
@@ -828,7 +852,7 @@ func (uc *UntrackedCmd) ReadOutputLimit(sinceByte, maxBytes int) (out string, ne
 	end := min(total, sinceByte+maxBytes)
 	out = string(uc.state.output.Bytes()[sinceByte:end])
 	uc.state.outputMu.Unlock()
-	return normalizeCommandOutput(out), end, total
+	return out, end, total
 }
 
 func (uc *UntrackedCmd) ReadOutput(sinceByte int) (string, int) {

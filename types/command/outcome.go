@@ -16,6 +16,9 @@ type Outcome struct {
 	ExitKnown   bool          `json:"exit_known"`
 	OutputBytes int           `json:"output_bytes"`
 	Error       string        `json:"error,omitempty"`
+	// Output is a bounded immutable excerpt captured at settlement. It survives
+	// session/core restart even when the live process manager no longer exists.
+	Output *Result `json:"output,omitempty"`
 }
 
 func Clone(value *Outcome) *Outcome {
@@ -23,5 +26,18 @@ func Clone(value *Outcome) *Outcome {
 		return nil
 	}
 	out := *value
+	if value.Output != nil {
+		result := *value.Output
+		result.OutputDescriptor.ShownRanges = append([]OutputRange(nil), result.OutputDescriptor.ShownRanges...)
+		if result.ExitCode != nil {
+			code := *result.ExitCode
+			result.ExitCode = &code
+		}
+		if result.Page != nil {
+			page := *result.Page
+			result.Page = &page
+		}
+		out.Output = &result
+	}
 	return &out
 }

@@ -32,8 +32,12 @@
   `RetainSettled` output retention are not reported again.
 - Command outcomes carry typed immutable command evidence through the journal,
   live conversation and SQLite display snapshots. Their chat projection shares
-  ordinary tool title ink/disclosure and normal background, defaults to one static
-  row, and reveals exact command/exit/time/output evidence only on expansion.
+  ordinary tool title ink/disclosure and normal background, with a static title
+  and bounded output preview. Settlement captures the same head/tail byte-bounded
+  excerpt as synchronous execution without consuming either model output cursor.
+  It survives journal/SQLite hydration even if the agent never reads the job.
+  Expansion exposes every retained excerpt row and exact command/exit/time/range
+  evidence; omitted bytes are explicit, not invented empty output.
   Never paint model-facing completion guidance as an oversized peer-message card
   or recover status by parsing its prose.
 - Every session publishes one stable session-owned cross-platform
@@ -42,3 +46,13 @@
   raw-byte pages (32 KiB default, 64 KiB maximum) with an explicit next/total
   cursor; large completed synchronous output is a bounded head/tail excerpt plus
   a retained handle. Never restore an unbounded model-visible output read.
+- `types/command.Result` is the shared command-tool result envelope, consumed by
+  one tool-layer decoder for live, batch-child and resumed display. Captured bytes
+  are not normalized at process read time: byte cursors address raw bytes, while
+  display consumes ANSI sequences and projects progress/whitespace safely. Binary
+  pages retain exact base64 bytes on the wire and render as labelled hex evidence.
+  Control-heavy text also uses transport base64 when JSON escaping would inflate
+  it beyond the bounded journal; the display decodes it through the same path.
+  Retained handles address the current process manager only; after a core restart,
+  the journalled bounded excerpts remain, but omitted bytes are not recoverable
+  through a former live handle. No unbounded log is silently persisted.

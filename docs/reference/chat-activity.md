@@ -37,12 +37,35 @@ Unknown tools stay visible until intentionally classified. A failed or cancelled
 
 Background-command settle notifications are runtime evidence, not peer-message
 cards. The journal retains typed handle, command, status, duration, exit
-availability, PID and retained-output bytes. Their default projection is one
-ordinary-tool-styled row (`Completed command build 4s`); failures/timeouts keep
-their failure indicator. Native disclosure exposes complete command evidence
-without painting model-facing polling guidance. Live events and SQLite hydration
+availability, PID and a bounded immutable stdout/stderr excerpt, even when the
+agent never called an output-read tool. Their default projection is an
+ordinary-tool-styled title (`Completed command build 4s`) and a short head/tail
+preview; failures/timeouts keep their failure indicator. Native disclosure exposes
+retained command evidence without painting model-facing polling guidance. Live events and SQLite hydration
 share that builder, normal chat background and static settled geometry; no body
 text parsing supplies lifecycle facts.
+
+All command tools (`execute_command`, background start/status/output reads,
+`exec_command` and `write_stdin`) share `types/command.Result`. Process status,
+exit availability, command, directory, handle/session, raw byte ranges, omissions
+and paging cursors are facts, not values recovered from prose. Cancellation keeps
+partial output under a neutral stopped title, distinct from timeout/failure. The tool transport
+can succeed while the process is running or failed; grouping and title treatment
+must use those facts. Native exec's documented output/exit/session envelope is
+decoded by the same tool-layer reader.
+
+Command bodies are literal audit logs, never Markdown or search-result parsers.
+The existing x/ansi decoder strips CSI/OSC/DCS metadata before text hygiene;
+CRLF is one line break and bare carriage-return progress updates become separate
+lines so evidence is not concatenated or overwritten. Tabs use eight-column stops,
+indentation and absolute paths remain intact, and body ink is normal foreground,
+not muted or failure-red. Transport base64 is decoded; binary/non-UTF-8 bytes use
+the standard-library hex dump instead of opaque base64 text. Empty capture,
+running-with-no-bytes and status-only reads are explicit. The default preview
+shows at most six rows including elision, retaining both setup and tail; disclosure
+reveals every captured row plus exact multiline command/directory/PID/range/retention evidence. Full-screen
+interactive programs belong in the embedded terminal; chat does not implement a
+second terminal emulator. Original command-result bytes remain canonical.
 
 ## Capabilities and Peer Data
 

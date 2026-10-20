@@ -8,6 +8,7 @@ import (
 	"crude/tui/tools"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/types/command"
 )
 
 func isCommandOutcome(msg *types.ChatMessage) bool {
@@ -44,6 +45,9 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 		out.native = append(out.native, line)
 	}
 	if ctx.disclosure != DisclosureExpanded {
+		if info != nil && info.Output != nil {
+			out.appendPlainToolBody("execute_command", commandOutcomeOutput(*info.Output), ctx.innerW, ctx.height, false, false)
+		}
 		return out
 	}
 	if info == nil {
@@ -52,7 +56,7 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 		out.appendPlainToolBody("", msg.Content, ctx.innerW, ctx.height, false, true)
 		return out
 	}
-	text := fmt.Sprintf("Command: %s\nHandle: %s\nStatus: %s\nPID: %d\nOutput: %s retained",
+	text := fmt.Sprintf("Command: %s\nHandle: %s\nStatus: %s\nPID: %d\nCaptured output: %s",
 		info.Command, info.Handle, info.Status, info.PID, rendering.FormatBytes(int64(info.OutputBytes)))
 	if info.ExitKnown {
 		text += fmt.Sprintf("\nExit code: %d", info.ExitCode)
@@ -68,6 +72,17 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 	if info.Error != "" {
 		text += "\nReason: " + info.Error
 	}
-	out.appendPlainToolBody("", rendering.SanitizeForTerminal(text), ctx.innerW, ctx.height, false, true)
+	out.appendPlainToolBody("", text, ctx.innerW, ctx.height, false, true)
+	if info.Output != nil {
+		out.appendPlainToolBody("", tools.CommandDetails(*info.Output), ctx.innerW, ctx.height, false, true)
+		out.appendPlainToolBody("execute_command", commandOutcomeOutput(*info.Output), ctx.innerW, ctx.height, false, true)
+	}
 	return out
+}
+
+func commandOutcomeOutput(result command.Result) string {
+	if result.Output == "" {
+		return "(no output captured)"
+	}
+	return tools.CommandOutput(result)
 }

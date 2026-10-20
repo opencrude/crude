@@ -76,16 +76,8 @@ func resultSummary(tool, content, target, dur string) string {
 		return webSearchResultSummary(content, target, dur)
 	case "arxiv_search":
 		return arxivResultSummary(content, target, dur)
-	case "execute_command":
-		return execResultSummary(content, target, dur)
 	case "web_fetch":
 		return webFetchResultSummary(content, target, dur)
-	case "async_execute_command":
-		return asyncExecResultSummary(content, target, dur)
-	case "check_async_command":
-		return checkAsyncResultSummary(content, target, dur)
-	case "read_async_output":
-		return readAsyncResultSummary(content, target, dur)
 	case "kill_async_command":
 		return killAsyncResultSummary(content, target, dur)
 	case "wait":
@@ -322,26 +314,6 @@ func arxivResultSummary(content, target, duration string) string {
 	return label
 }
 
-// ── execute_command ─────────────────────────────────────────
-
-func execResultSummary(content, target, duration string) string {
-	if strings.HasPrefix(content, "Command failed") {
-		return "" // let default handle error
-	}
-
-	lineCount := strings.Count(content, "\n") + 1
-	label := "Ran " + rendering.TruncateLine(target, 50)
-	if content == "(command completed with no output)" {
-		label += " — no output"
-	} else {
-		label += fmt.Sprintf(" — %s lines", rendering.FormatCount(lineCount))
-	}
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
-}
-
 // ── web_fetch ───────────────────────────────────────────────
 
 func webFetchResultSummary(content, target, duration string) string {
@@ -360,48 +332,6 @@ func webFetchResultSummary(content, target, duration string) string {
 	charCount := utf8.RuneCountInString(content)
 	label := "Fetched " + rendering.TruncateLine(target, 50)
 	label += fmt.Sprintf(" — %s chars", rendering.FormatCount(charCount))
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
-}
-
-// ── async_execute_command ──────────────────────────────────
-
-func asyncExecResultSummary(content, target, duration string) string {
-	label := "Started " + rendering.TruncateLine(target, 50)
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
-}
-
-// ── check_async_command ─────────────────────────────────────
-
-func checkAsyncResultSummary(content, target, duration string) string {
-	// Content looks like: "Handle: X\nPID: Y\nStatus: running/completed/failed/killed\n..."
-	status := "unknown"
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "Status:") {
-			status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-			break
-		}
-	}
-	label := "Checked " + target + " — " + status
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
-}
-
-// ── read_async_output ───────────────────────────────────────
-
-func readAsyncResultSummary(content, target, duration string) string {
-	label := "Read output " + target
-	lineCount := strings.Count(content, "\n") + 1
-	if content != "" {
-		label += fmt.Sprintf(" — %s lines", rendering.FormatCount(lineCount))
-	}
 	if duration != "" {
 		label += " " + duration
 	}

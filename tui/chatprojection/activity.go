@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	toolargs "crude/tools"
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"
@@ -81,7 +82,7 @@ func activityEligible(msg *types.ChatMessage) bool {
 	// Tool errors are boundaries, even if the transport reported success but
 	// returned an explicit failure in its payload.
 	if msg.ToolStatus == types.ToolStatusSuccess {
-		if _, exit, session, ok := tools.CommandResult(msg.ToolName, msg.Content); ok && ((exit != nil && *exit != 0) || (exit == nil && session > 0)) {
+		if result, ok := toolargs.ParseCommandResult(msg.ToolName, types.StripToolHint(msg.Content)); ok && (result.Cancelled || result.Failed() || result.OutputDescriptor.Status == "running" && msg.ToolName != "read_async_output") {
 			return false
 		}
 		content := strings.TrimSpace(msg.Content)
@@ -114,7 +115,10 @@ func activitySuccessfulResult(msg *types.ChatMessage) bool {
 		return true // output is evidence, not an assertion that the job succeeded
 	}
 	if msg.ToolName == "check_async_command" {
-		return strings.Contains(msg.Content, "\nStatus: completed\n") && strings.Contains(msg.Content, "\nExit code: 0\n")
+		if result, ok := toolargs.ParseCommandResult(msg.ToolName, msg.Content); ok {
+			return result.OutputDescriptor.Status == "completed" && result.ExitCode != nil && *result.ExitCode == 0
+		}
+		return false
 	}
 	if msg.ToolName == "agent_wait" {
 		known, success := tools.CollaborationResultSucceeded(msg.ToolName, msg.Content)

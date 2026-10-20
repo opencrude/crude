@@ -85,3 +85,32 @@ func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandOutcomeOutputSurvivesHydrationWithoutAnAgentRead(t *testing.T) {
+	msg := types.ChatMessage{InternalID: "settled", Role: types.RoleUser, Collaboration: &provider.CollaborationAttribution{Kind: "command_outcome", Command: &command.Outcome{
+		Handle: "tests", Command: "go test ./...", Status: "failed", ExitCode: 7, ExitKnown: true, OutputBytes: 40,
+		Output: &command.Result{OutputDescriptor: command.OutputDescriptor{Handle: "tests", Status: command.Failed, TotalBytes: 40}, Output: "\x1b[31mFAIL\x1b[0m\r\n    retained stderr\n"},
+	}}}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored types.ChatMessage
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []types.ChatMessage{msg, restored} {
+		r := newActivityRenderer()
+		r.SyncMessages([]types.ChatMessage{message}, 1)
+		rows, _, _ := r.ExportMessageRows(100)
+		text := strings.Join(rows[0].Lines, "\n")
+		if !strings.Contains(text, "FAIL") || !strings.Contains(text, "    retained stderr") || strings.Contains(text, "[31m") {
+			t.Fatalf("completion evidence is missing or unreadable: %s", text)
+		}
+	}
+	clone := types.CloneConversationMessage(types.ConversationMessage{Collaboration: msg.Collaboration})
+	clone.Collaboration.Command.Output.OutputDescriptor.Handle = "changed"
+	if msg.Collaboration.Command.Output.OutputDescriptor.Handle != "tests" {
+		t.Fatal("completion evidence aliases the source")
+	}
+}

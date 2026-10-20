@@ -194,10 +194,8 @@ func TestSearchHistoryRealBackendShape(t *testing.T) {
 	}
 }
 
-// TestCommandResultPathPrefixStripped covers grep/find-style output where every
-// line repeats the same long absolute path. The projection strips the shared
-// directory prefix so far more matches fit per line.
-func TestCommandResultPathPrefixStripped(t *testing.T) {
+// Command output is literal audit evidence, not a second search-result parser.
+func TestCommandResultKeepsExactPathPrefixes(t *testing.T) {
 	var sb strings.Builder
 	for i := 0; i < 5; i++ {
 		sb.WriteString("/home/u/ocd/crude/tui/ui/panel_" + string(rune('0'+i)) + ".go:28" + string(rune('0'+i)) + ":applyRuleBleed(args)\n")
@@ -205,10 +203,8 @@ func TestCommandResultPathPrefixStripped(t *testing.T) {
 	rows := exportForLayout(t, []types.ChatMessage{
 		{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", ToolArgs: "grep applyRuleBleed", Content: sb.String()},
 	})
-	for _, l := range rows[0].Lines {
-		if strings.Contains(l, "panel_0.go") && strings.Contains(l, "/home/u/ocd") {
-			t.Fatalf("per-line absolute path not stripped: %q", l)
-		}
+	if !strings.Contains(strings.Join(rows[0].Lines, "\n"), "/home/u/ocd/crude/tui/ui/panel_0.go") {
+		t.Fatal("command preview lost its exact path")
 	}
 }
 
