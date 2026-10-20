@@ -27,8 +27,19 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 		return a.prepareControlExecutionSelection(in)
 	}
 	service := a.ws.Executions
+	retention := a.executionRetentionCheck()
 	var id string
 	var plan worktree.PlanDelta
+	var cleanup worktree.CleanupOptions
+	var settle struct {
+		ID         string `json:"id"`
+		SessionID  string `json:"session_id"`
+		AgentID    string `json:"agent_id"`
+		RecoveryID string `json:"recovery_id"`
+		Generation uint64 `json:"recovery_generation"`
+	}
+	keep := true
+	sourceReview := false
 	var create struct {
 		Mode           worktree.Mode `json:"mode"`
 		BaseCommit     string        `json:"base_commit,omitempty"`
@@ -63,7 +74,7 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			return controlFailure(in, control.Invalid, err.Error())
 		}
 		id = input.OperationID
-	case "execution.inspect", "execution.review", "execution.keep", "execution.cleanup":
+	case "execution.inspect", "execution.reconcile":
 		var input struct {
 			ID string `json:"id"`
 		}
@@ -71,9 +82,35 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			return controlFailure(in, control.Invalid, err.Error())
 		}
 		id = input.ID
+	case "execution.settle":
+		if err := controlDecode(in.Input, &settle); err != nil || settle.SessionID == "" || settle.AgentID == "" || settle.RecoveryID == "" || settle.Generation == 0 {
+			return controlFailure(in, control.Invalid, "id, session_id, agent_id and exact recovery incident/generation required")
+		}
+		id = settle.ID
+	case "execution.keep":
+		var input struct {
+			ID   string `json:"id"`
+			Keep *bool  `json:"keep"`
+		}
+		if err := controlDecode(in.Input, &input); err != nil || input.Keep == nil {
+			return controlFailure(in, control.Invalid, "id and keep boolean are required")
+		}
+		id, keep = input.ID, *input.Keep
+	case "execution.review", "execution.cleanup":
+		var input struct {
+			ID      string `json:"id"`
+			Discard bool   `json:"discard,omitempty"`
+			Digest  string `json:"digest,omitempty"`
+		}
+		if err := controlDecode(in.Input, &input); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		id, sourceReview = input.ID, input.Discard
+		cleanup = worktree.CleanupOptions{Discard: input.Discard, Digest: input.Digest}
 	default:
 		return nil, nil, false
 	}
+	settlementOwner := a.ws.BackendSession(settle.SessionID)
 	discovery := in.CommandID == "execution.list" || in.CommandID == "execution.integrations" || in.CommandID == "execution.create"
 	if discovery && in.Target.ResourceID != "" || !discovery && (id == "" || in.Target.ResourceID != id) {
 		return controlFailure(in, control.Invalid, "exact resource target must match input identity")
@@ -135,11 +172,32 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			var err error
 			switch in.CommandID {
 			case "execution.list":
-				output = service.List()
+				entries := service.List()
+				active := []worktree.Context{}
+				for _, entry := range entries {
+					if !entry.Removed {
+						active = append(active, entry)
+					}
+				}
+				output = active
 			case "execution.integrations":
 				output, err = service.Integrations()
 			case "execution.inspect":
-				output, err = service.Inspect(id)
+				var c worktree.Context
+				c, err = service.Inspect(id)
+				c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
+				output = c
+			case "execution.reconcile":
+				output, err = reconcileExecution(ctx, service.Service, id, retention)
+			case "execution.settle":
+				if settlementOwner == nil {
+					err = fmt.Errorf("owner session %s is not open; use session.open then execution.settle with the same exact incident", settle.SessionID)
+					break
+				}
+				err = settlementOwner.CancelExecutionRecovery(id, settle.AgentID, settle.RecoveryID, settle.Generation)
+				if err == nil {
+					output = map[string]string{"id": id, "agent_id": settle.AgentID, "recovery_id": settle.RecoveryID, "outcome": "cancelled parked task; review retained work before cleanup"}
+				}
 			case "execution.create":
 				var c worktree.Context
 				c, err = service.Create(ctx, worktree.Request{Owner: trusted, Mode: create.Mode, BaseCommit: create.BaseCommit, Independent: create.Independent, IncludeIgnored: create.IncludeIgnored})
@@ -156,7 +214,11 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 					result.ResourceIDs = []string{c.ID}
 				}
 			case "execution.review":
-				output, err = service.Review(ctx, id)
+				if sourceReview {
+					output, err = service.ReviewDiscard(ctx, id)
+				} else {
+					output, err = service.Review(ctx, id)
+				}
 			case "execution.apply":
 				// An exact committed owner receipt outranks current destination
 				// state. A lost reply must not re-review/replay the original effect.
@@ -183,10 +245,16 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 				}
 				output, err = service.Apply(ctx, plan)
 			case "execution.keep":
-				err = service.Keep(id, trusted)
+				err = service.Keep(id, trusted, keep)
 				output = map[string]string{"id": id}
 			case "execution.cleanup":
-				err = service.Cleanup(ctx, id, trusted)
+				var c worktree.Context
+				c, err = service.Inspect(id)
+				if err != nil {
+					break
+				}
+				cleanup.Check = func(ctx context.Context) error { return retention(ctx, trusted, id, c.Root) }
+				err = service.Cleanup(ctx, id, trusted, cleanup)
 				output = map[string]string{"id": id}
 			case "execution.undo":
 				output, err = service.Undo(ctx, id)
@@ -214,13 +282,33 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 // descendant is derived from the durable parent chain, not inventory labels or
 // a caller-supplied owner. The gateway separately fences the caller's live run.
 func (a *actor) controlExecutionOwner(ctx context.Context, in control.Request, actual worktree.Owner) error {
-	mutation := in.CommandID == "execution.apply" || in.CommandID == "execution.undo" || in.CommandID == "execution.recover" || in.CommandID == "execution.keep" || in.CommandID == "execution.cleanup"
+	mutation := in.CommandID == "execution.apply" || in.CommandID == "execution.undo" || in.CommandID == "execution.recover" || in.CommandID == "execution.keep" || in.CommandID == "execution.cleanup" || in.CommandID == "execution.settle"
 	if in.Caller.Kind != control.AgentCaller && (!mutation || strings.HasPrefix(actual.AgentID, "client:")) {
 		return nil
 	}
 	store := a.ws.Collaboration
 	if store == nil {
 		return errors.New("execution ancestry authority unavailable")
+	}
+	// Janitorial inspection and cleanup are workspace collaboration, not an
+	// ancestor privilege. Exact settled runs, pins and recovery still govern effects.
+	if in.CommandID == "execution.inspect" || in.CommandID == "execution.review" || in.CommandID == "execution.cleanup" || in.CommandID == "execution.reconcile" || in.CommandID == "execution.keep" || in.CommandID == "execution.apply" || in.CommandID == "execution.settle" {
+		if in.Caller.Kind == control.AgentCaller {
+			if _, err := store.Agent(ctx, in.Caller.AgentID); err != nil {
+				return errors.New("workspace janitor identity unavailable")
+			}
+		}
+		if strings.HasPrefix(actual.AgentID, "client:") {
+			return nil
+		}
+		run, err := store.Run(ctx, actual.RunID)
+		if err != nil || run.AgentID != actual.AgentID {
+			return errors.New("execution owner run unavailable")
+		}
+		if mutation && !run.State.Terminal() {
+			return errors.New("execution owner run is still active")
+		}
+		return nil
 	}
 	run, err := store.Run(ctx, actual.RunID)
 	if err != nil || run.AgentID != actual.AgentID || mutation && !run.State.Terminal() {

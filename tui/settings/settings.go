@@ -1262,6 +1262,7 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 			optionalNumberField(fieldMaxSubAgents, "Concurrent sub-agents", m.maxSubAgents(), "agents",
 				"How many sub-agents may run at once; more wait for a free slot. Auto is 4.", 1, types.MaxConcurrentSubAgents),
 		)
+		fields = append(fields, m.executionHygieneFields()...)
 	}
 	return formModel(fields...)
 }
@@ -2643,6 +2644,7 @@ func extraBodyFromForm(value string) map[string]any {
 
 func (m *Model) collectAgents(agents *types.AgentsSettings) {
 	*agents = *m.agents
+	agents.ExecutionHygiene = executionHygieneFromForm(m.categories[catMain].Form, m.agents.ExecutionHygiene)
 	agents.AgentProfiles = types.CloneAgentProfiles(m.agents.AgentProfiles)
 	agents.Categories = make(map[string]types.CategorySettings)
 	for _, entry := range []struct {

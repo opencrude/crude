@@ -574,6 +574,11 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
+	return s.cancelRecoveryFor(agentID, recoveryID, generation)
+}
+
+// Caller holds lifecycleMu so parked-task disposition cannot overtake Continue.
+func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint64) error {
 	s.recoveryMu.Lock()
 	if slot := s.recoverySlots[agentID]; slot != nil {
 		if slot.id != recoveryID || slot.generation != generation {

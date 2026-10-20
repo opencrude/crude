@@ -90,8 +90,8 @@ func TestCommandOutputLiveEventsAndSQLiteHydration(t *testing.T) {
 					assertSameRows(t, "command evidence", l[0], r[0])
 					text := strings.Join(l[0].Lines, "\n")
 					for _, want := range []string{"FAIL", "    retained stderr", "actual false", `{"answer":42}`} {
-						if !strings.Contains(text, want) {
-							t.Fatalf("width %d missing %q: %s", width, want, text)
+						if strings.Contains(text, want) != expanded {
+							t.Fatalf("width %d expanded=%t incorrectly exposes/hides %q: %s", width, expanded, want, text)
 						}
 					}
 					if strings.Contains(text, "MODEL-ONLY") || strings.Contains(text, "[31m") || strings.Contains(text, "output_descriptor") {

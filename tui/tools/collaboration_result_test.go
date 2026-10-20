@@ -89,3 +89,17 @@ func structuredPlain(result StructuredResult) string {
 	}
 	return text.String()
 }
+
+func TestAgentInspectionDisclosureKeepsCurrentLatestAndTriggerDistinct(t *testing.T) {
+	content := `{"agent":{"id":"mara","name":"Mara","state":"available","presence":"offline"},"run":null,"latest_run":{"id":"finished-run","agent_id":"mara","state":"succeeded","outcome":"completed","origin":"peer","version":2},"trigger":{"available":true,"event_id":"wake-event","origin":"runtime","sender_id":"child","preview":"Child cancelled during cleanup"},"recent_work":{"available":true,"scope":"latest_persisted_turn","turn":9,"messages":[{"message_id":"answer","role":"assistant","text":"No coding task resumed."},{"message_id":"tool","role":"tool","tool_name":"execution.inspect","status":"success"}],"truncated":false},"reports":[{"id":"report-1","revision":3,"author_id":"mara","run_id":"finished-run","kind":"answer","summary":"Checked cancellation"}]}`
+	result := BuildStructuredResult("agent_inspect", content, `{"agent_id":"mara"}`)
+	plain := structuredPlain(result)
+	for _, want := range []string{"Mara · no current run", "Current run", "None recorded", "Latest run", "finished-run", "succeeded", "Trigger", "wake-event", "runtime", "Child cancelled during cleanup", "Recent work", "No coding task resumed", "execution.inspect", "success", "report-1", "revision 3"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("inspection disclosure lost %q: %s", want, plain)
+		}
+	}
+	if strings.Contains(plain, `{"`) {
+		t.Fatal("inspection rendered raw JSON", plain)
+	}
+}

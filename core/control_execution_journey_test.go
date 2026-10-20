@@ -289,12 +289,13 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 		t.Fatal("live root moved with selection", artifact, err)
 	}
 	release.Do(func() { close(rootRelease) })
-	// A different root in the same workspace is not ancestry authority.
+	// Workspace peers may review settled work for janitorial cleanup, even
+	// though they did not launch that child. The gateway still fences callers.
 	other, err := ws.Collaboration.RegisterAgent(ctx, collaboration.AgentRegistration{ID: "foreign-root", Name: "Foreign", SessionID: "foreign-session", OwnerInstance: "foreign-owner"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.controlExecutionOwner(ctx, control.Request{CommandID: "execution.review", Caller: control.Caller{Kind: control.AgentCaller, AgentID: other.ID, RunID: "foreign-run"}}, children[0].Owner); err == nil {
-		t.Fatal("foreign root accepted descendant artifact")
+	if err := a.controlExecutionOwner(ctx, control.Request{CommandID: "execution.review", Caller: control.Caller{Kind: control.AgentCaller, AgentID: other.ID, RunID: "foreign-run"}}, children[0].Owner); err != nil {
+		t.Fatal("workspace janitor could not review settled work", err)
 	}
 }

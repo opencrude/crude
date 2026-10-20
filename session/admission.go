@@ -185,6 +185,13 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 			return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionPreLocalRejection, Err: errors.New("queued input admission intent is invalid")}
 		}
 		defer s.finishInputAdmission(intent)
+		unlock, err := s.lockInputExecution(intent.request.input)
+		if err != nil {
+			intent.committed = true
+			intent.result = InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionPreLocalRejection, Err: err}
+			return intent.result
+		}
+		defer unlock()
 		receipt, err := s.queueInput(intent.AgentID, intent.request.input, intent.DraftRevision)
 		intent.committed = true
 		if err != nil {
@@ -206,6 +213,14 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		return intent.result
 	}
 	defer s.finishInputAdmission(intent)
+	unlock, executionErr := s.lockInputExecution(intent.request.input)
+	if executionErr != nil {
+		intent.orchestrator.endTurn(intent.TurnGeneration)
+		intent.committed = true
+		intent.result = InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionPreLocalRejection, Err: executionErr}
+		return intent.result
+	}
+	defer unlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}

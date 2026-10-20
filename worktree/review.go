@@ -22,6 +22,8 @@ func equal(a, b *File) bool {
 
 func planDigest(p PlanDelta) string {
 	p.Digest = ""
+	p.DiscardDigest = ""
+	p.HeadCommit, p.IgnoredPaths = "", nil
 	data, _ := json.Marshal(p)
 	return hash(data)
 }
@@ -50,6 +52,10 @@ func (s *Service) review(ctx context.Context, id string) (PlanDelta, error) {
 	if err != nil {
 		return PlanDelta{}, err
 	}
+	return sourceDelta(c, current), nil
+}
+
+func sourceDelta(c Context, current map[string]File) PlanDelta {
 	paths := map[string]bool{}
 	for p := range c.Baseline {
 		paths[p] = true
@@ -62,7 +68,7 @@ func (s *Service) review(ctx context.Context, id string) (PlanDelta, error) {
 		ordered = append(ordered, p)
 	}
 	sort.Strings(ordered)
-	plan := PlanDelta{ContextID: id, Owner: c.Owner, Changes: []Change{}}
+	plan := PlanDelta{ContextID: c.ID, Owner: c.Owner, Changes: []Change{}}
 	for _, p := range ordered {
 		var before, after *File
 		if f, ok := c.Baseline[p]; ok {
@@ -78,6 +84,74 @@ func (s *Service) review(ctx context.Context, id string) (PlanDelta, error) {
 		}
 	}
 	plan.Digest = planDigest(plan)
+	return plan
+}
+
+// ReviewDiscard includes ignored bytes and commit identity only for explicit
+// discard review. Ordinary integration never scans disposable build output.
+func (s *Service) ReviewDiscard(ctx context.Context, id string) (PlanDelta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reviewDiscard(ctx, id)
+}
+
+func (s *Service) reviewDiscard(ctx context.Context, id string) (PlanDelta, error) {
+	c, ok := s.contexts[id]
+	if !ok || c.Removed {
+		return PlanDelta{}, errors.New("execution context unavailable")
+	}
+	if !c.Ready {
+		files, err := s.preparationRemnants(ctx, c)
+		if err != nil {
+			return PlanDelta{}, err
+		}
+		plan := sourceDelta(c, files)
+		data, err := json.Marshal(struct {
+			ID                 string
+			Baseline, Remnants map[string]File
+		}{c.ID, c.Baseline, files})
+		if err != nil {
+			return PlanDelta{}, err
+		}
+		plan.DiscardDigest = hash(data)
+		return plan, nil
+	}
+	plan, err := s.review(ctx, id)
+	if err != nil {
+		return plan, err
+	}
+	if c.Mode == Isolated {
+		head, err := s.git(ctx, c.Root, "rev-parse", "HEAD")
+		if err != nil {
+			return PlanDelta{}, err
+		}
+		plan.HeadCommit = strings.TrimSpace(string(head))
+		ignored, err := s.git(ctx, c.Root, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+		if err != nil {
+			return PlanDelta{}, err
+		}
+		if len(ignored) != 0 {
+			plan.IgnoredPaths = nulPaths(ignored)
+		}
+		sort.Strings(plan.IgnoredPaths)
+		ignoredFiles := make(map[string]*File, len(plan.IgnoredPaths))
+		for _, path := range plan.IgnoredPaths {
+			file, err := s.read(c.Root, c.CommonGitDir, path)
+			if err != nil {
+				return PlanDelta{}, err
+			}
+			ignoredFiles[path] = file
+		}
+		plan.Digest = planDigest(plan)
+		data, err := json.Marshal(struct {
+			ID, Digest, Head string
+			Ignored          map[string]*File
+		}{c.ID, plan.Digest, plan.HeadCommit, ignoredFiles})
+		if err != nil {
+			return PlanDelta{}, err
+		}
+		plan.DiscardDigest = hash(data)
+	}
 	return plan, nil
 }
 
@@ -230,14 +304,14 @@ func (s *Service) Unpin(id string, owner Owner) error {
 	c.Pins = pins
 	return s.save(c)
 }
-func (s *Service) Keep(id string, owner Owner) error {
+func (s *Service) Keep(id string, owner Owner, keep ...bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.contexts[id]
 	if !ok || c.Owner != owner {
 		return errors.New("context owner mismatch")
 	}
-	c.Kept = true
+	c.Kept = len(keep) == 0 || keep[0]
 	return s.save(c)
 }
 
@@ -291,16 +365,24 @@ func (s *Service) RecordIntegration(ctx context.Context, plan PlanDelta, receipt
 	return s.save(c)
 }
 
-// Cleanup never forces Git removal. Pins, Keep, ignored files and unintegrated
-// changes retain artifacts. Integrated results and inherited dirty bytes are
-// archived and verified, then explicitly committed under a retained archive ref
-// before ordinary Git removal. The logical index and branch remain untouched.
-func (s *Service) Cleanup(ctx context.Context, id string, owner Owner) error {
+// Cleanup is parent-managed, never a side effect of child completion. A reviewed
+// discard archives unwanted results without merging them. Shared records retire
+// only their metadata; the shared project directory is never removed.
+func (s *Service) Cleanup(ctx context.Context, id string, owner Owner, options ...CleanupOptions) error {
 	unlock, err := fileio.LockMutationContext(ctx)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	option := CleanupOptions{}
+	if len(options) > 0 {
+		option = options[0]
+	}
+	if option.Check != nil {
+		if err := option.Check(ctx); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.contexts[id]
@@ -310,45 +392,82 @@ func (s *Service) Cleanup(ctx context.Context, id string, owner Owner) error {
 	if c.Removed {
 		return nil
 	}
-	if c.Mode != Isolated || !c.Ready || c.Kept || len(c.Pins) > 0 {
+	if c.Kept || len(c.Pins) > 0 {
 		return errors.New("context retained or pinned")
+	}
+	if c.Mode == Shared {
+		c.Removed = true
+		return s.save(c)
+	}
+	if !c.Ready {
+		if !option.Discard {
+			return errors.New("preparation incomplete; review with discard=true, then cleanup using discard_digest")
+		}
+		plan, err := s.reviewDiscard(ctx, id)
+		if err != nil {
+			return err
+		}
+		if option.Digest == "" || option.Digest != plan.DiscardDigest {
+			return errors.New("preparation remnants changed; review discard again")
+		}
+		return s.cleanupPreparation(ctx, c)
 	}
 	for _, other := range s.contexts {
 		if other.ID != c.ID && !other.Removed && other.Root == c.Root && len(other.Pins) > 0 {
 			return errors.New("checkout retained by shared execution pins")
 		}
 	}
-	plan, err := s.review(ctx, id)
+	var plan PlanDelta
+	if option.Discard {
+		plan, err = s.reviewDiscard(ctx, id)
+	} else {
+		plan, err = s.review(ctx, id)
+	}
 	if err != nil {
 		return err
 	}
-	if len(plan.Changes) > 0 && (c.Integration == nil || c.IntegratedSource != plan.Digest) {
+	if option.Discard && (option.Digest == "" || option.Digest != plan.DiscardDigest) {
+		return errors.New("discard requires the current execution.review discard_digest; review again")
+	}
+	if len(plan.Changes) > 0 && !option.Discard && (c.Integration == nil || c.IntegratedSource != plan.Digest) {
 		return errors.New("unintegrated or newer dirty result retained")
 	}
 	head, err := s.git(ctx, c.Root, "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(head)) != c.BaseCommit && c.Integration == nil {
+	if strings.TrimSpace(string(head)) != c.BaseCommit && c.Integration == nil && !option.Discard {
 		return errors.New("new commits retained")
+	}
+	// Even status may run a tracked file's clean/process filter while comparing
+	// it with the index. Refuse before that read, not only before staging.
+	paths := append([]string(nil), plan.IgnoredPaths...)
+	for _, change := range plan.Changes {
+		paths = append(paths, change.Path)
+	}
+	if err := s.rejectAppliedFilters(ctx, c.Root, paths); err != nil {
+		return err
 	}
 	status, err := s.git(ctx, c.Root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored")
 	if err != nil {
 		return err
 	}
-	if len(status) > 0 || (c.Integration != nil && strings.TrimSpace(string(head)) != c.BaseCommit) {
-		if c.Integration == nil {
+	if len(status) > 0 || strings.TrimSpace(string(head)) != c.BaseCommit {
+		if c.Integration == nil && !option.Discard && len(plan.Changes) != 0 {
 			return errors.New("git dirty or ignored bytes retained")
-		}
-		for _, line := range strings.Split(string(status), "\n") {
-			if strings.HasPrefix(line, "!! ") {
-				return errors.New("ignored artifacts retained")
-			}
 		}
 		include := make([]string, 0, len(c.Baseline))
 		for p := range c.Baseline {
 			include = append(include, p)
 		}
+		ignored, err := s.git(ctx, c.Root, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+		if err != nil {
+			return err
+		}
+		if len(ignored) != 0 && !option.Discard {
+			return errors.New("ignored artifacts retained; review and explicitly discard to archive them")
+		}
+		include = append(include, nulPaths(ignored)...)
 		archived, err := s.capture(ctx, c.Root, c.CommonGitDir, nil, include, true)
 		if err != nil {
 			return err
@@ -370,8 +489,23 @@ func (s *Service) Cleanup(ctx context.Context, id string, owner Owner) error {
 			return errors.New("archive verification failed")
 		}
 		if len(status) > 0 {
+			archivePaths := make([]string, 0, len(archived))
+			for path := range archived {
+				archivePaths = append(archivePaths, path)
+			}
+			if err := s.rejectAppliedFilters(ctx, c.Root, archivePaths); err != nil {
+				return err
+			}
 			if _, err = s.git(ctx, c.Root, "add", "--all", "--", "."); err != nil {
 				return err
+			}
+			if len(ignored) != 0 {
+				// Exact ignored files were archived above; no blanket force removal.
+				for _, path := range nulPaths(ignored) {
+					if _, err = s.git(ctx, c.Root, "add", "--force", "--", path); err != nil {
+						return err
+					}
+				}
 			}
 			if _, err = s.git(ctx, c.Root, "-c", "user.name=Crude execution archive", "-c", "user.email=execution@crude.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "Archive execution "+c.ID); err != nil {
 				return err

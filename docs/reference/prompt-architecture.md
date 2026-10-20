@@ -24,6 +24,7 @@ Callers import it directly; do not recreate forwarding APIs in `agent/`,
 | `prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
 | `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, interruptions and exact unavailable-attachment explanations |
 | `prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
+| `prompt/execution.go` | Quiet context-only inventory and post-child disposition reminders; escaped execution facts |
 | `agent/` | Model requests, admission budgets, guidance compilation/verification execution, tool-batch deferral, checkpoint validation |
 | `session/`, `memory/`, `workspace/`, `fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |
 | `provider/`, `tools/`, `codexio/` | Wire encoding/replay, exact offered schemas, native execution interfaces |
@@ -69,11 +70,104 @@ dispositions. Summaries are notifications, not substitutes for reading evidence.
 Enforcement and passive recovery live in the
 [workspace collaboration runtime](workspace-collaboration.md), not prompt prose.
 
+One shared workflow rule covers passive inspection in solo, orchestrator and child
+prompts: resolve a name with `agent_list`, inspect the exact ID, and distinguish
+presence, current run, latest attempt and durable recent work. Follow exact report
+revisions with `artifact_read`, targeted events/threads with `board_read`, older
+work with `search_history`, and changes with `execution.review`. Observation alone
+never opens a session, sends a message, controls execution, waits or polls. Prefer
+supported evidence to SQLite/log inspection and state missing evidence explicitly.
+
 The child report contract describes `publish_report` as its required return
 channel, outside optional task-tool allowlists. Launch validation rejects an
 explicit denial; the prompt never overrides one. Runtime schema projection and
 dispatch share that selection rule, and unavailable reporting is a configuration
 failure rather than an endlessly repeated model reminder.
+
+### Execution lifecycle and workspace-wide hygiene
+
+`ExecutionHygieneContract` appears once, immediately after `instruction_priority`
+in every root and child system prompt. It makes the parent primarily responsible
+for each child's execution through final disposition, not merely launch and
+report collection. Later collaboration, orchestrator and bounded-child rules
+reference this shared contract rather than repeat it. Read final evidence and
+inspect the authoritative terminal outcome, including failed or cancelled runs.
+Discover the exact `execution.list`,
+`execution.inspect`, `execution.review`, `execution.apply`, `execution.cleanup`,
+and `execution.keep` schemas with `crude_commands`, and use `crude_control` for
+the exact resource. Integrate useful changes through the document/Local History
+owner, or explicitly discard unwanted work through reviewed cleanup, then clean
+finished or failed worktrees. Explicit discard uses the review's `discard_digest`,
+not its integration digest, so ignored files and HEAD changes are reviewed too.
+Respect intentional human work and reasoned Keep; active users and recovery must
+settle before destructive cleanup. Completion never automatically merges or
+deletes a worktree. A blocked cleanup retains the work and reports why, rather
+than improvising forced Git
+removal. Hygiene warnings are configurable reminders, not launch blockers or an
+automatic cleanup policy.
+
+Parent responsibility does not make janitorial inspection or cleanup
+descendant-only. Any capable root or child may review and clean another parent's
+settled worktrees in the same workspace within its permitted tools and policy.
+Inspect workspace inventory with `execution.list`/`execution.inspect` and exact
+agent/run/recovery facts with `agent_inspect`. Contact the exact owner or parent
+through `agent_send` when disposition is uncertain. Silence, age or offline
+presence alone never proves abandonment; respect reasoned Keep and explicitly
+settle live or recoverable work instead of blindly releasing its pins.
+
+Discover `execution.reconcile` through `crude_commands` and use `crude_control`
+with the exact execution ID to release forgotten pins only when the runtime
+proves their runs terminal with no live commands or open recovery. It is not a
+force-unpin operation. Review evidence, apply useful changes or archive an exact
+reviewed discard, then clean settled worktrees. Reconcile only proven-stale pins
+before cleanup; anything still live, recoverable, kept or uncertain stays
+protected and receives an explicit blocker, not a guessed disposition.
+
+For a deliberately unwanted parked task, `execution.settle` routes its exact
+recovery ID/generation through the owning session's normal cancellation path.
+Cold sessions are opened passively with `session.open` first. This lets a capable
+workspace janitor settle another parent's neglected parked experiment without
+manually editing databases or terminating unrelated live work. It preserves
+history and does not itself remove the checkout. A blocker is an instruction to
+inspect and resolve the named owner/reference with supported tools, not an excuse
+to abandon the harness or ask the human to perform routine cleanup.
+
+`BuildChild` includes one escaped `execution_context` with the supplied execution
+ID, root and resolved isolation mode. Missing facts remain empty, not inferred
+from directory names; a resolved shared mode with no ID means no separate
+checkout, not an identity the child should fabricate. Every child category's
+final report must name those facts, changes, focused verification, risks and a
+recommended integrate/discard/Keep disposition with a reason for Keep. A blocked
+child sends the parent an `agent_send` blocker and publishes its final
+partial/blocked evidence instead of waiting for unrelated work. It does not
+delete its active worktree or integrate automatically. Its parent remains
+responsible for that execution's disposition; this does not forbid permitted
+hygiene of other settled executions. Backend ownership and safety checks remain
+authoritative; prompt text alone neither
+enforces cleanup nor grants permission to discard work or to bypass a role's
+read-only policy.
+
+`ExecutionHygieneNotice` renders a context-only warning only when the session
+supplies threshold reasons. The session owns thresholds, configured in
+**Settings > Agents > Main Agent**, and delivery cadence; the renderer does not
+decide whether an artifact is stale or block a launch. Counts, age, storage,
+reasons and a sample of up to five exact execution IDs describe workspace-wide
+inventory, not just the recipient's descendants. Reason/ID text is escaped so it
+cannot become instruction markup. The notice references the early shared policy
+without repeating it or requesting user-facing narration. It never requests
+automatic merge/deletion, treats inventory age as authorization, or makes a
+count threshold block launches.
+
+`ChildExecutionDisposition` supplies one concise context-only reminder for each
+child run outcome, separately from the visible collaboration event body. It
+contains escaped exact ID/root/mode facts, references the shared contract, and
+reminds the parent to inspect evidence and terminal outcome, review/integrate or
+explicitly discard and clean when safe. With no ID and no mode it returns empty,
+even if a root was supplied. Shared mode with an empty ID explicitly has no
+separate worktree, and its root must not be deleted. Missing facts are never
+guessed. The session owns outcome-only delivery; this pure helper does not
+schedule repeated reminders, mutate the visible event or trigger automatic
+cleanup. Kept, human-owned, live and recoverable work retain the same protection.
 
 Exact tool schemas, descriptions, validation/denial messages and result payloads
 stay with the executing interface. They are not competing system prompts. External

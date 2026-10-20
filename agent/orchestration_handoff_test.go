@@ -16,7 +16,7 @@ func TestDelegationHasBoundedHandoffAndSingleVerificationOwner(t *testing.T) {
 			t.Errorf("main lacks %q", phrase)
 		}
 	}
-	for _, phrase := range []string{"blocked report immediately and stop", "Repeat a check only after", "parent owns integration"} {
+	for _, phrase := range []string{"send the blocker to your parent with agent_send", "publish a partial or blocked final report, and stop", "Repeat a check only after", "parent owns integration"} {
 		if !strings.Contains(child, phrase) {
 			t.Errorf("child lacks %q", phrase)
 		}

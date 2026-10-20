@@ -45,15 +45,12 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 		out.native = append(out.native, line)
 	}
 	if ctx.disclosure != DisclosureExpanded {
-		if info != nil && info.Output != nil {
-			out.appendPlainToolBody("execute_command", commandOutcomeOutput(*info.Output), ctx.innerW, ctx.height, false, false)
-		}
 		return out
 	}
 	if info == nil {
 		// Evidence without a typed outcome remains readable, never parsed
 		// into guessed status/command facts or painted as an oversized peer card.
-		out.appendPlainToolBody("", msg.Content, ctx.innerW, ctx.height, false, true)
+		out.appendPlainToolBody("execute_command", msg.Content, ctx.innerW, ctx.height, false, true)
 		return out
 	}
 	text := fmt.Sprintf("Command: %s\nHandle: %s\nStatus: %s\nPID: %d\nCaptured output: %s",
@@ -72,9 +69,9 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 	if info.Error != "" {
 		text += "\nReason: " + info.Error
 	}
-	out.appendPlainToolBody("", text, ctx.innerW, ctx.height, false, true)
+	out.appendPlainToolBody("execute_command", text, ctx.innerW, ctx.height, false, true)
 	if info.Output != nil {
-		out.appendPlainToolBody("", tools.CommandDetails(*info.Output), ctx.innerW, ctx.height, false, true)
+		out.appendPlainToolBody("execute_command", tools.CommandDetails(*info.Output), ctx.innerW, ctx.height, false, true)
 		out.appendPlainToolBody("execute_command", commandOutcomeOutput(*info.Output), ctx.innerW, ctx.height, false, true)
 	}
 	return out

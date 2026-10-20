@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ type Service struct {
 	root, store string
 	options     Options
 	contexts    map[string]Context
+	sizes       map[string]int64
 }
 
 // Open is passive: it loads only current-format manifests; it neither invokes
@@ -47,9 +49,6 @@ func Open(root, store string, options Options) (*Service, error) {
 	if within(r, a) || within(a, r) {
 		return nil, errors.New("managed store and logical checkout must be disjoint")
 	}
-	if options.MaxContexts <= 0 {
-		options.MaxContexts = 16
-	}
 	if options.MaxFiles <= 0 {
 		options.MaxFiles = 20000
 	}
@@ -59,7 +58,7 @@ func Open(root, store string, options Options) (*Service, error) {
 	if options.MaxFileBytes <= 0 {
 		options.MaxFileBytes = 32 << 20
 	}
-	s := &Service{root: r, store: a, options: options, contexts: map[string]Context{}}
+	s := &Service{root: r, store: a, options: options, contexts: map[string]Context{}, sizes: map[string]int64{}}
 	entries, err := os.ReadDir(a)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -70,9 +69,6 @@ func Open(root, store string, options Options) (*Service, error) {
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
-		}
-		if len(s.contexts) >= options.MaxContexts*4 {
-			return nil, errors.New("manifest inventory budget exceeded")
 		}
 		p := filepath.Join(a, e.Name())
 		fi, err := os.Lstat(p)
@@ -145,6 +141,7 @@ func Open(root, store string, options Options) (*Service, error) {
 			}
 		}
 		s.contexts[c.ID] = c
+		s.sizes[c.ID] = fi.Size()
 	}
 	for _, c := range s.contexts {
 		if c.Mode == Shared {
@@ -284,14 +281,32 @@ func (s *Service) save(c Context) error {
 	if err := os.MkdirAll(s.store, 0700); err != nil {
 		return err
 	}
+	c.StorageBytes = 0
 	data, err := json.Marshal(c)
 	if err != nil {
 		return err
+	}
+	if c.Removed && (len(c.Baseline) != 0 || len(c.ArchivedResult) != 0) {
+		// Keep undo evidence on disk, not in every live inventory/request. The
+		// compact ledger remains inspectable; full archive loads only on demand.
+		archiveDir := filepath.Join(s.store, "archive")
+		if err := os.MkdirAll(archiveDir, 0700); err != nil {
+			return err
+		}
+		if err := fileio.WriteAtomicChecked(filepath.Join(archiveDir, c.ID+".json"), data, 0600, nil); err != nil {
+			return err
+		}
+		c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
+		data, err = json.Marshal(c)
+		if err != nil {
+			return err
+		}
 	}
 	if err := fileio.WriteAtomicChecked(filepath.Join(s.store, c.ID+".json"), data, 0600, nil); err != nil {
 		return err
 	}
 	s.contexts[c.ID] = c
+	s.sizes[c.ID] = int64(len(data))
 	return nil
 }
 
@@ -303,6 +318,22 @@ func (s *Service) Inspect(id string) (Context, error) {
 	if !ok {
 		return Context{}, errors.New("unknown execution context")
 	}
+	if c.Removed && len(c.Baseline) == 0 {
+		data, err := os.ReadFile(filepath.Join(s.store, "archive", c.ID+".json"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Context{}, err
+		}
+		if err == nil {
+			var archived Context
+			if err := json.Unmarshal(data, &archived); err != nil {
+				return Context{}, err
+			}
+			if archived.ID != c.ID || archived.Owner != c.Owner || !archived.Removed {
+				return Context{}, errors.New("execution archive identity mismatch")
+			}
+			return archived, nil
+		}
+	}
 	return clone(c), nil
 }
 func (s *Service) List() []Context {
@@ -310,6 +341,9 @@ func (s *Service) List() []Context {
 	defer s.mu.Unlock()
 	result := make([]Context, 0, len(s.contexts))
 	for _, c := range s.contexts {
+		// Inventory must not export every baseline byte just to show paths/pins.
+		c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
+		c.StorageBytes = s.sizes[c.ID]
 		result = append(result, clone(c))
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
@@ -339,15 +373,6 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if mode != Auto && mode != Shared && mode != Isolated {
 		return Context{}, errors.New("unknown isolation mode")
 	}
-	active := 0
-	for _, c := range s.contexts {
-		if !c.Removed {
-			active++
-		}
-	}
-	if active >= s.options.MaxContexts {
-		return Context{}, errors.New("managed context count budget exhausted; no forced pruning")
-	}
 	sourceRoot := s.root
 	var source *Context
 	if req.SourceContextID != "" {
@@ -365,15 +390,31 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 			req.IncludeIgnored = append(req.IncludeIgnored, path)
 		}
 	}
+	// Shared execution is a binding, not a new snapshot. A child sharing an
+	// isolated parent pins that existing checkout for its own exact run.
+	shared := func(reason string) (Context, error) {
+		c := Context{Version: FormatVersion, LogicalRoot: s.root, Root: sourceRoot, Mode: Shared, Reason: reason, Ready: true, Owner: req.Owner}
+		if source != nil {
+			pinned := *source
+			if !slices.Contains(pinned.Pins, req.Owner) {
+				pinned.Pins = append(append([]Owner(nil), pinned.Pins...), req.Owner)
+				if err := s.save(pinned); err != nil {
+					return Context{}, err
+				}
+			}
+			c.ID, c.CommonGitDir = source.ID, source.CommonGitDir
+		}
+		return c, nil
+	}
+	if mode == Shared || mode == Auto && !req.Independent {
+		return shared("shared checkout; no separate worktree or snapshot")
+	}
 	gitRoot, gitErr := s.git(ctx, sourceRoot, "rev-parse", "--show-toplevel")
 	if err := ctx.Err(); err != nil {
 		return Context{}, err
 	}
 	isGit := gitErr == nil
 	if isGit {
-		if err := s.rejectAppliedFilters(ctx, sourceRoot, req.IncludeIgnored); err != nil {
-			return Context{}, err
-		}
 		r, err := canonical(strings.TrimSpace(string(gitRoot)))
 		if err != nil || r != sourceRoot {
 			return Context{}, errors.New("logical root must be repository top-level")
@@ -405,6 +446,12 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	}
 	if mode == Isolated && unborn {
 		return Context{}, errors.New("worktree isolation needs at least one commit; commit once or use shared isolation")
+	}
+	if mode == Shared {
+		return shared(reason)
+	}
+	if err := s.rejectAppliedFilters(ctx, sourceRoot, req.IncludeIgnored); err != nil {
+		return Context{}, err
 	}
 	var base, common string
 	if isGit {
@@ -489,8 +536,8 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if mode == Isolated {
 		c.Root = filepath.Join(s.store, c.ID, "checkout")
 	}
-	// Preparation-incomplete contexts are retained, never runnable.
-	c.Kept = true
+	// Preparation-incomplete contexts stay inspectable, never runnable. Readiness
+	// is not intentional Keep: a parent can review/discard a failed setup.
 	if err := s.save(c); err != nil {
 		return Context{}, err
 	}
@@ -537,7 +584,6 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 			}
 		}
 	}
-	c.Kept = false
 	c.Ready = true
 	if err := s.save(c); err != nil {
 		return clone(c), err

@@ -3,9 +3,9 @@ package fileio
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"crude/types/command"
 )
@@ -31,10 +31,24 @@ func TestOutputExcerptPreservesRawControlBytesAndDoesNotMoveCursors(t *testing.T
 		if state.readCursor != 3 || state.outputCursor != 2 || result.OutputDescriptor.TotalBytes != len(raw) {
 			t.Fatal("human audit consumed the model's output cursor or lost raw byte count")
 		}
-		encoded, err := json.Marshal(result)
-		if err != nil || len(encoded) > DefaultOutputChunkBytes*2+1024 {
-			t.Fatalf("bounded output overflowed journal serialization: %d bytes, %v", len(encoded), err)
+		if utf8.ValidString(raw) && result.OutputEncoding != "" {
+			t.Fatal("readable UTF-8 was encoded to satisfy an unrelated storage budget")
 		}
+	}
+}
+
+func TestCommandOutputPayloadOnlyEncodesNonUTF8Bytes(t *testing.T) {
+	for _, raw := range []string{"", strings.Repeat("\x1b[m", 300) + "reason=quota\r\n", strings.Repeat("\a", DefaultOutputChunkBytes), "literal {\"output\":42}\n"} {
+		output, encoding := commandOutputPayload(raw)
+		if output != raw || encoding != "" {
+			t.Fatal("command text was changed or unnecessarily encoded")
+		}
+	}
+	raw := "A\xff\x00B"
+	output, encoding := commandOutputPayload(raw)
+	decoded, err := base64.StdEncoding.DecodeString(output)
+	if encoding != "base64" || err != nil || string(decoded) != raw {
+		t.Fatal("non-UTF-8 evidence was not preserved losslessly")
 	}
 }
 

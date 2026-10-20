@@ -313,6 +313,7 @@ func copyConfig(src *Config) *Config {
 	}
 
 	agents := src.Agents
+	agents.ExecutionHygiene = ttypes.CloneExecutionHygiene(src.Agents.ExecutionHygiene)
 	if src.Agents.Profiles != nil {
 		agents.Profiles = make(map[string]ProfileConfig, len(src.Agents.Profiles))
 		for name, prof := range src.Agents.Profiles {

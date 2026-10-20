@@ -258,7 +258,7 @@ func TestControlExecutionStaleReviewDoesNotApply(t *testing.T) {
 	if err != nil || string(data) != "one\ntwo\nthree\n" {
 		t.Fatal("stale apply changed checkout", string(data), err)
 	}
-	raw, _ := json.Marshal(map[string]any{"id": c.ID})
+	raw, _ := json.Marshal(map[string]any{"id": c.ID, "keep": true})
 	run, _, _ := a.prepareControlDomain(control.Request{CommandID: "execution.keep", Caller: control.Caller{Kind: control.AgentCaller, AgentID: "foreign", RunID: "foreign-run"}, Target: control.Target{ResourceID: c.ID}, Input: raw}, owner)
 	if result := run(context.Background()); result.Fault == nil || result.Fault.Code != control.Denied {
 		t.Fatal("foreign run authority accepted", result)

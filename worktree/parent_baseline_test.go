@@ -37,7 +37,7 @@ func TestParentCheckoutIsExactChildBaseline(t *testing.T) {
 		}
 	}
 	reopened, err := Open(root, store, Options{})
-	if err != nil || len(reopened.List()) != 3 {
+	if err != nil || len(reopened.List()) != 2 {
 		t.Fatalf("passive reopen %v", err)
 	}
 	if _, err := s.Create(t.Context(), Request{Owner: testOwner, Mode: Shared, SourceContextID: strings.Repeat("0", 32)}); err == nil {

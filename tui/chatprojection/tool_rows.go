@@ -167,6 +167,9 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
 	}
+	if isCommandEvidenceTool(msg.ToolName) && !expanded {
+		return out
+	}
 	if tools.IsStructuredTool(msg.ToolName) {
 		if msg.ToolStatus == types.ToolStatusSuccess {
 			out.appendStructuredToolBody(tools.BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput), msg.ToolInput, innerW, height, expanded)
@@ -176,11 +179,9 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		return out
 	}
 	if commandOK {
-		if expanded {
-			out.appendPlainToolBody("", tools.CommandDetails(commandResult), innerW, height, false, true)
-		}
+		out.appendPlainToolBody(msg.ToolName, tools.CommandDetails(commandResult), innerW, height, false, true)
 		if commandResult.Error != "" {
-			out.appendPlainToolBody("", commandResult.Error, innerW, height, false, true)
+			out.appendPlainToolBody(msg.ToolName, commandResult.Error, innerW, height, false, true)
 		}
 		output := tools.CommandOutput(commandResult)
 		output = rendering.CommandOutputText(output)
@@ -388,24 +389,17 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 			}
 		}
 	}
-	indices, hidden := previewLineIndices(toolName, len(wrapped), maxRes, expanded)
-	headCount := commandPreviewHeadCount(toolName, len(indices))
-	for position, i := range indices {
-		if hidden > 0 && isCommandEvidenceTool(toolName) && position == headCount {
-			trunc := buildToolTruncationLine(hidden, width)
-			ml.lines = append(ml.lines, trunc.PlainText())
-			ml.native = append(ml.native, trunc)
-		}
-		seg := wrapped[i]
+	visible := len(wrapped)
+	if !expanded && maxRes > 0 && visible > maxRes {
+		visible = max(1, maxRes-1)
+	}
+	for _, seg := range wrapped[:visible] {
 		pl := buildToolPlainResultLine("│   ", seg, errorStyle)
-		if isCommandEvidenceTool(toolName) {
-			pl.Spans[1].Role = ui.ColorFg
-		}
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
-	if hidden > 0 && !isCommandEvidenceTool(toolName) {
-		trunc := buildToolTruncationLine(hidden, width)
+	if visible < len(wrapped) {
+		trunc := buildToolTruncationLine(len(wrapped)-visible, width)
 		ml.lines = append(ml.lines, trunc.PlainText())
 		ml.native = append(ml.native, trunc)
 	}
@@ -413,8 +407,6 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 
 func toolPreviewHeight(toolName string, height int) int {
 	switch toolName {
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command":
-		return min(6, tools.TerminalResultHeight(height))
 	case "grep_files", "web_search", "web_fetch", "arxiv_search":
 		return min(4, tools.TerminalResultHeight(height))
 	case "glob_files", "list_directory":
@@ -427,49 +419,7 @@ func toolPreviewHeight(toolName string, height int) int {
 }
 
 func isCommandEvidenceTool(toolName string) bool {
-	switch toolName {
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command":
-		return true
-	}
-	return false
-}
-
-// previewLineIndices preserves both command setup and outcome. Less critical
-// families keep their first useful rows and one explicit elision footer.
-func previewLineIndices(toolName string, count, budget int, expanded bool) ([]int, int) {
-	if expanded || budget <= 0 || count <= budget {
-		indices := make([]int, count)
-		for i := range indices {
-			indices[i] = i
-		}
-		return indices, 0
-	}
-	visible := max(1, budget-1)
-	hidden := count - visible
-	if !isCommandEvidenceTool(toolName) {
-		indices := make([]int, visible)
-		for i := range indices {
-			indices[i] = i
-		}
-		return indices, hidden
-	}
-	head := max(2, visible/3)
-	tail := visible - head
-	indices := make([]int, 0, visible)
-	for i := 0; i < head; i++ {
-		indices = append(indices, i)
-	}
-	for i := count - tail; i < count; i++ {
-		indices = append(indices, i)
-	}
-	return indices, hidden
-}
-
-func commandPreviewHeadCount(toolName string, visible int) int {
-	if !isCommandEvidenceTool(toolName) {
-		return visible
-	}
-	return max(2, visible/3)
+	return toolargs.IsCommandTool(toolName)
 }
 
 // commonDirPrefix returns the longest directory prefix shared by every line,

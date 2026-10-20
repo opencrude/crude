@@ -39,8 +39,8 @@ Background-command settle notifications are runtime evidence, not peer-message
 cards. The journal retains typed handle, command, status, duration, exit
 availability, PID and a bounded immutable stdout/stderr excerpt, even when the
 agent never called an output-read tool. Their default projection is an
-ordinary-tool-styled title (`Completed command build 4s`) and a short head/tail
-preview; failures/timeouts keep their failure indicator. Native disclosure exposes
+ordinary-tool-styled title (`Completed command build 4s`), with no output teaser;
+failures/timeouts keep their failure indicator. Native disclosure exposes
 retained command evidence without painting model-facing polling guidance. Live events and SQLite hydration
 share that builder, normal chat background and static settled geometry; no body
 text parsing supplies lifecycle facts.
@@ -58,11 +58,11 @@ Command bodies are literal audit logs, never Markdown or search-result parsers.
 The existing x/ansi decoder strips CSI/OSC/DCS metadata before text hygiene;
 CRLF is one line break and bare carriage-return progress updates become separate
 lines so evidence is not concatenated or overwritten. Tabs use eight-column stops,
-indentation and absolute paths remain intact, and body ink is normal foreground,
-not muted or failure-red. Transport base64 is decoded; binary/non-UTF-8 bytes use
+indentation and absolute paths remain intact, and body ink uses the theme's subdued
+`ColorMuted`, never foreground-white or failure-red. Transport base64 is decoded; binary/non-UTF-8 bytes use
 the standard-library hex dump instead of opaque base64 text. Empty capture,
-running-with-no-bytes and status-only reads are explicit. The default preview
-shows at most six rows including elision, retaining both setup and tail; disclosure
+running-with-no-bytes and status-only reads are explicit on expansion. Compact
+commands show only their title, process metadata and disclosure control; disclosure
 reveals every captured row plus exact multiline command/directory/PID/range/retention evidence. Full-screen
 interactive programs belong in the embedded terminal; chat does not implement a
 second terminal emulator. Original command-result bytes remain canonical.
@@ -95,6 +95,11 @@ every retained body and evidence field, exact revisions/IDs, attributed authors,
 Board roster/cursor/pagination and the readable request. Publication results
 distinguish pending/admitting/admitted delivery from request disposition and run
 outcome. Peer text remains peer data, not a red failure or proof of agreement.
+
+Agent inspection uses that same disclosure. Current activity and the latest
+recorded run are labeled separately; expanded evidence retains the exact trigger,
+bounded public recent work, recovery facts and report revision references. An
+attached or available participant without a current run is not labeled working.
 
 The family includes `remember`, `recall_memory`, `update_memory`, `forget_memory`,
 `memory_feedback` and `search_history`, not only the Board operations. Live

@@ -717,6 +717,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
 		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
 		ProfileInstructions: profileInstructions, WorkDir: spec.ExecutionRoot,
+		ExecutionID: spec.ExecutionID, Isolation: spec.Isolation,
 		TempDir: childTempDir, Model: spec.Model,
 	})
 	ownerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: profileInstructions})
@@ -944,7 +945,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		if err != nil {
 			return fail(fmt.Errorf("inspect the child's execution root: %w", err))
 		}
-		if !retained.Ready || retained.Removed || retained.Root != spec.ExecutionRoot || retained.Owner.AgentID != string(spec.ID) {
+		if !retained.Ready || retained.Removed || retained.Root != spec.ExecutionRoot {
 			return fail(errors.New("the child's isolated execution root was removed or reassigned; cancel it and launch a replacement"))
 		}
 		for _, pin := range retained.Pins {
@@ -1162,6 +1163,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
 		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
 		ProfileInstructions: owner.ProfileInstructions, WorkDir: live.WorkDir,
+		ExecutionID: spec.ExecutionID, Isolation: spec.Isolation,
 		TempDir: childTempDir, Model: spec.Model,
 	})
 	if err := r.mgr.Register(handle); err != nil {
@@ -2068,8 +2070,9 @@ func (r *SubAgentRunner) finalizeSubAgent(
 					IdempotencyKey: "run-outcome:" + runID,
 					RecipientIDs:   []string{string(handle.Spec.ParentID)},
 					Origin:         collaboration.OriginRuntime, Kind: collaboration.EventRunOutcome,
-					Body:  fmt.Sprintf("%s · %s", handle.Spec.Name, outcome),
-					RunID: runID, RequestID: handle.Spec.ParentToolCallID,
+					Body:      fmt.Sprintf("%s · %s", handle.Spec.Name, outcome),
+					Execution: &collaboration.ExecutionOutcome{ID: handle.Spec.ExecutionID, Root: handle.Spec.ExecutionRoot, Mode: handle.Spec.Isolation},
+					RunID:     runID, RequestID: handle.Spec.ParentToolCallID,
 					References: references,
 				})
 				if publishErr != nil {

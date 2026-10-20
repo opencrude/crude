@@ -192,11 +192,52 @@ type CategorySettings struct {
 }
 
 type AgentsSettings struct {
-	Enabled       bool
-	ActiveProfile string
-	MaxConcurrent int
-	Categories    map[string]CategorySettings
-	AgentProfiles map[string]AgentProfileSettings `json:"agent_profiles,omitempty"`
+	Enabled          bool
+	ActiveProfile    string
+	MaxConcurrent    int
+	Categories       map[string]CategorySettings
+	AgentProfiles    map[string]AgentProfileSettings `json:"agent_profiles,omitempty"`
+	ExecutionHygiene ExecutionHygieneSettings        `json:"execution_hygiene,omitempty"`
+}
+
+// ExecutionHygieneSettings are advisory parent reminders, never launch limits.
+// Nil inherits product defaults; explicit zero disables that threshold.
+type ExecutionHygieneSettings struct {
+	Warnings      *bool `json:"warnings,omitempty"`
+	RetainedCount *int  `json:"retained_count,omitempty"`
+	AgeHours      *int  `json:"age_hours,omitempty"`
+	StorageMB     *int  `json:"storage_mb,omitempty"`
+}
+
+func (s ExecutionHygieneSettings) Values() (enabled bool, count, ageHours, storageMB int) {
+	enabled, count, ageHours, storageMB = true, 16, 24, 1024
+	if s.Warnings != nil {
+		enabled = *s.Warnings
+	}
+	if s.RetainedCount != nil {
+		count = max(0, *s.RetainedCount)
+	}
+	if s.AgeHours != nil {
+		ageHours = max(0, *s.AgeHours)
+	}
+	if s.StorageMB != nil {
+		storageMB = max(0, *s.StorageMB)
+	}
+	return
+}
+
+func CloneExecutionHygiene(s ExecutionHygieneSettings) ExecutionHygieneSettings {
+	if s.Warnings != nil {
+		n := *s.Warnings
+		s.Warnings = &n
+	}
+	for _, ptr := range []**int{&s.RetainedCount, &s.AgeHours, &s.StorageMB} {
+		if *ptr != nil {
+			n := **ptr
+			*ptr = &n
+		}
+	}
+	return s
 }
 
 // AgentProfileSettings is a named, reusable specialization of a built-in role.

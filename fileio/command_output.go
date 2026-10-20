@@ -2,19 +2,14 @@ package fileio
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"unicode/utf8"
 )
 
-// commandOutputPayload preserves raw bytes without allowing control-heavy output
-// to expand sixfold as JSON escapes and overflow the bounded outcome journal.
-// The standard JSON encoder determines the size; this is not another ANSI parser.
+// JSON preserves UTF-8 text, including ANSI and control characters. Only byte
+// ranges that are not valid UTF-8 need a lossless binary representation.
 func commandOutputPayload(raw string) (output, encoding string) {
 	if utf8.ValidString(raw) {
-		encoded, _ := json.Marshal(raw) // strings always marshal successfully
-		if len(encoded) <= len(raw)*2+256 {
-			return raw, ""
-		}
+		return raw, ""
 	}
 	return base64.StdEncoding.EncodeToString([]byte(raw)), "base64"
 }

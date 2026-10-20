@@ -483,6 +483,32 @@ toggle in Main Agent and `/settings`; Main Agent has no redundant availability
 toggle. The Instructions tab accepts native multiline edits for every built-in
 role, including Memory.
 
+#### Worktree hygiene
+
+**Settings > Agents > Main Agent > Model** includes **Worktree hygiene** in
+Application and Workspace scopes. These are ordinary sparse preferences under
+`agents.execution_hygiene`, not security authority or execution admission limits:
+
+| Setting | Stored leaf | Default |
+|---|---|---|
+| Remind parent to clean up | `warnings` | On |
+| Warn at retained worktrees | `retained_count` | 16 |
+| Warn after | `age_hours` | 24 hours |
+| Warn at snapshot storage | `storage_mb` | 1024 MB |
+
+Blank numeric fields inherit; explicit zero disables that threshold. The switch
+disables inventory reminders altogether. None blocks launches, deletes work,
+changes Keep or cancels agents. Thresholds describe nonremoved, non-Keep workspace
+inventory, not only the current parent's children. Storage is retained active
+manifest/snapshot bytes, not a complete working-directory disk-usage scan.
+
+Parents receive quiet, deduplicated model-context reminders at request boundaries,
+plus a short disposition reminder after each child outcome. The early shared
+system contract remains even when inventory reminders are off. It requires
+respect for intentional human work, exact owner/recovery evidence and reviewed
+integration or archived discard, with explicit workspace-wide janitorial tools.
+See [managed executions](managed-executions.md#parent-ownership-and-workspace-hygiene).
+
 Breadcrumb labels are individual navigation targets; separators are not.
 Agents and Accounts return through the normal back/discard policy.
 Session Settings and its role labels navigate to the corresponding level and

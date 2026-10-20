@@ -124,7 +124,8 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 		ReplyTo: request.ReplyTo, ThreadID: eventID, RequestID: request.RequestID,
 		RequestRevision: request.RequestRevision, RunID: request.RunID,
 		Supersedes: request.Supersedes, References: request.References, CreatedAt: now,
-		Command: request.Command,
+		Command:   request.Command,
+		Execution: request.Execution,
 	}
 	if request.ReplyTo != "" {
 		parent, err := loadEvent(ctx, tx, request.ReplyTo)
@@ -153,7 +154,14 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 	if err != nil {
 		return PublishResult{}, err
 	}
-	if len(encoded) > MaxBodyBytes*2 {
+	limit := MaxBodyBytes * 2
+	if event.Command != nil && event.Command.Output != nil {
+		// A bounded 32 KiB command excerpt can occupy 192 KiB as JSON
+		// control escapes. Budget its serialized evidence here, not by
+		// encoding readable command text. Leave room for the Board page.
+		limit = MaxPageBytes - 1024
+	}
+	if len(encoded) > limit {
 		return PublishResult{}, ErrTooLarge
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO collaboration_events
@@ -617,6 +625,17 @@ func validatePublishRequest(request PublishRequest) error {
 	}
 	if err := validateBody(request.Body, MaxBodyBytes); err != nil {
 		return err
+	}
+	if request.Execution != nil {
+		if request.Kind != EventRunOutcome || request.Origin != OriginRuntime || request.Execution.Mode != "shared" && request.Execution.Mode != "worktree" {
+			return fmt.Errorf("%w: execution evidence requires a runtime run outcome", ErrInvalid)
+		}
+		if err := validateOptionalIdentity("execution_id", request.Execution.ID, 256); err != nil {
+			return err
+		}
+		if err := validateIdentity("execution root", request.Execution.Root, 65536); err != nil {
+			return err
+		}
 	}
 	if request.Command != nil {
 		if request.Kind != EventCommandOutcome || request.Origin != OriginRuntime {

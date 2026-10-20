@@ -40,8 +40,8 @@ func TestActivityProjectionSettledExpandAndBoundaries(t *testing.T) {
 			t.Fatalf("summary missing %q: %s", want, plain)
 		}
 	}
-	if strings.Contains(plain, "contents") || !strings.Contains(plain, "PASS") {
-		t.Fatalf("read evidence must stay compact while command preview remains readable: %s", plain)
+	if strings.Contains(plain, "contents") || strings.Contains(plain, "PASS") {
+		t.Fatalf("compact evidence must not expose output teasers: %s", plain)
 	}
 	for index, id := range map[int]string{3: "edit", 4: "progress2", 5: "fail", 6: "write"} {
 		if rows[index].ID != id {
@@ -53,7 +53,7 @@ func TestActivityProjectionSettledExpandAndBoundaries(t *testing.T) {
 	if len(rows) != 7 || rows[2].LeafToggles[2] != "think" || rows[2].LeafToggles[3] != "read" || rows[2].LeafToggles[4] != "cmd" {
 		t.Fatalf("expanded activity lost chronological calls: %+v", rows)
 	}
-	if len(rows[2].Lines) != 6 {
+	if len(rows[2].Lines) != 5 {
 		t.Fatalf("child disclosure or spacing: %+v", rows[2].Lines)
 	}
 	r.ToggleDisclosure("cmd")
@@ -298,7 +298,7 @@ func TestActivityProjectionGroupingInvalidatesOnAppendAndSourceRemoval(t *testin
 	}
 	r.ToggleDisclosure("activity:read")
 	third := r.ExportMessageRowsSnapshot(100)
-	if len(third.Rows) != 1 || third.Rows[0].LeafToggles[5] != "third" {
+	if len(third.Rows) != 1 || third.Rows[0].LeafToggles[4] != "third" {
 		t.Fatalf("expanded appended child missing: %+v", third.Rows)
 	}
 	r.SyncMessages(messages[:1], 3)
