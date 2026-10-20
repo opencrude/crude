@@ -120,8 +120,9 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 
 	startupInfo := &windows.StartupInfoEx{
 		StartupInfo: windows.StartupInfo{
-			Cb:    uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
-			Flags: windows.STARTF_USESTDHANDLES,
+			// The pseudoconsole supplies the child's console handles. Passing
+			// STARTF_USESTDHANDLES here would explicitly replace them with zeros.
+			Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
 		},
 		ProcThreadAttributeList: attrList.List(),
 	}
@@ -159,7 +160,7 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 		nil,        // appName: let CreateProcess parse the command line
 		cmdLinePtr, // commandLine: must be mutable UTF-16
 		nil, nil,   // process/thread security attributes
-		true, // inheritHandles: required for attribute list
+		false, // the pseudoconsole attribute does not require handle inheritance
 		creationFlags,
 		envBlock,
 		cwdPtr,

@@ -4,6 +4,8 @@ package workspace
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,55 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func TestConPTYStandardConsoleHandles(t *testing.T) {
+	if os.Args[len(os.Args)-1] == "conpty-console-handles" {
+		for _, stream := range []struct {
+			name string
+			id   uint32
+		}{{"stdin", windows.STD_INPUT_HANDLE}, {"stdout", windows.STD_OUTPUT_HANDLE}, {"stderr", windows.STD_ERROR_HANDLE}} {
+			handle, err := windows.GetStdHandle(stream.id)
+			var mode uint32
+			if err != nil || windows.GetConsoleMode(handle, &mode) != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "invalid console %s: handle=%v error=%v\n", stream.name, handle, err)
+				os.Exit(1)
+			}
+		}
+		_, _ = fmt.Fprintln(os.Stdout, "CONPTY_STDOUT_READY")
+		_, _ = fmt.Fprintln(os.Stderr, "CONPTY_STDERR_READY")
+		os.Exit(0)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewTerminalManager(t.TempDir())
+	service, err := NewTerminalService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.CloseAll)
+	info, err := service.Create(TerminalCreateOpts{Command: executable, Args: []string{"-test.run=^TestConPTYStandardConsoleHandles$", "--", "conpty-console-handles"}, CWD: t.TempDir(), Cols: 80, Rows: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		projection, err := service.Rows(info.ID, terminalvt.RowRequest{Start: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !projection.Info.Alive {
+			text := terminalText(projection)
+			if projection.Info.ExitCode != 0 || !strings.Contains(text, "CONPTY_STDOUT_READY") || !strings.Contains(text, "CONPTY_STDERR_READY") {
+				t.Fatalf("ConPTY did not supply console streams: %+v text=%q", projection.Info, text)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("ConPTY standard-handle probe did not exit")
+}
 
 func TestConPTYNaturalExitDrainsFinalOutputBeforePublishingExit(t *testing.T) {
 	manager := NewTerminalManager(t.TempDir())
