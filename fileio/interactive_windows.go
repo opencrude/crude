@@ -72,7 +72,12 @@ func startInteractiveProcess(cmd *exec.Cmd, tty bool, output io.Writer) (io.Writ
 	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(hpc), unsafe.Sizeof(hpc)); err != nil {
 		return fail(err)
 	}
-	startup := windows.StartupInfoEx{StartupInfo: windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))}, ProcThreadAttributeList: attrs.List()}
+	// Explicit invalid handles let ConPTY establish console streams instead of
+	// Windows duplicating the host's redirected stdin/stdout/stderr.
+	startup := windows.StartupInfoEx{StartupInfo: windows.StartupInfo{
+		Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{})), Flags: windows.STARTF_USESTDHANDLES,
+		StdInput: windows.InvalidHandle, StdOutput: windows.InvalidHandle, StdErr: windows.InvalidHandle,
+	}, ProcThreadAttributeList: attrs.List()}
 	args := make([]string, len(cmd.Args))
 	for i, arg := range cmd.Args {
 		args[i] = syscall.EscapeArg(arg)

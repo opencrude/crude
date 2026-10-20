@@ -21,6 +21,9 @@
 - Noninteractive Windows commands use `CREATE_NO_WINDOW` plus `HideWindow`;
   package managers such as WinGet must never attach to or paint into Crude's host
   console. Stdout/stderr is visible only through the captured tool/job result.
+- Interactive ConPTY commands explicitly invalidate their initial standard
+  handles under `STARTF_USESTDHANDLES`, with inheritance disabled, so redirected
+  host streams cannot replace the pseudoconsole's captured console streams.
 
 ## Completion delivery and output
 

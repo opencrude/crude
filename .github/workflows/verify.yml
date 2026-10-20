@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           . ./scripts/libghostty_env.ps1
-          go test ./fileio ./skills ./workspace ./core ./app ./sessiondb -count=1 -timeout=90s -run 'Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|WindowsShortPath|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|CreateDoesNotOverwriteAuthoredWork|ControlExecutionSelectionExactSessionAndRevision|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
+          go test ./fileio ./skills ./workspace ./core ./app ./sessiondb -count=1 -timeout=90s -run 'Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|WindowsShortPath|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|CreateDoesNotOverwriteAuthoredWork|ControlExecutionSelectionExactSessionAndRevision|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|ConPTYStandardConsoleHandles|ConPTYNaturalExitDrainsFinalOutputBeforePublishingExit|WindowsInteractiveConsoleStreamsAreCaptured|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
           if ($LASTEXITCODE -ne 0) { throw 'Windows regression preflight failed' }
       - name: Native build
         shell: pwsh

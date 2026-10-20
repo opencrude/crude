@@ -50,7 +50,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          CASES: '^Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|MigrateFailureDoesNotLeavePartialSchema|TerminalRetryUsesPublishedOwnerBeforeRunLoopStarts|RootStopDuringFailedTerminalSettlementRetriesOnlyPersistence|RecentRefreshPreservesQuerySelectionViewportAndFocus|ConnectedShellControlTreeRevealFilterAndPaint|DocumentWatchRemovedDirectoryReleasesAndReopens|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
+          CASES: '^Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|MigrateFailureDoesNotLeavePartialSchema|TerminalRetryUsesPublishedOwnerBeforeRunLoopStarts|RootStopDuringFailedTerminalSettlementRetriesOnlyPersistence|RecentRefreshPreservesQuerySelectionViewportAndFocus|ConnectedShellControlTreeRevealFilterAndPaint|DocumentWatchRemovedDirectoryReleasesAndReopens|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|ConPTYStandardConsoleHandles|ConPTYNaturalExitDrainsFinalOutputBeforePublishingExit|WindowsInteractiveConsoleStreamsAreCaptured|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
         run: |
           . ./scripts/libghostty_env.ps1
           go test -p 2 ./fileio ./sessiondb ./session ./tui/screens/launcher ./tui/viewmodel ./workspace ./core ./app -run $env:CASES -count=3 -timeout=90s
