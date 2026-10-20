@@ -130,7 +130,7 @@ func TestEvidenceBodiesNeverTakePatchCard(t *testing.T) {
 			Content:           content,
 		}
 		collapsed := renderToolMessageLines(msg, theme.DefaultDark(), 100, 102, 104, 0, 20, "done", DisclosureCollapsed)
-		if c.tool == "read_file" && len(collapsed.lines) != 1 {
+		if len(collapsed.lines) != 1 {
 			t.Fatalf("%s compact form must stay one line, got %#v", c.tool, collapsed.lines)
 		}
 		if !strings.HasPrefix(collapsed.lines[0], c.title) {

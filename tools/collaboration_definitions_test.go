@@ -97,3 +97,38 @@ func TestPublishReportSchemaKeepsRevisionAndLifecycleDistinct(t *testing.T) {
 		t.Fatal("report publication misrepresented as lifecycle success")
 	}
 }
+
+func TestPassiveAgentInspectionDescriptionsAndSchema(t *testing.T) {
+	for name, required := range map[string][]string{
+		"agent_list": {"by name", "agent_inspect with the exact returned ID", "availability, presence and current run", "names are labels"},
+		"agent_inspect": {
+			"Read-only", "presence", "run (current only, null when none)", "latest_run (most recent attempt, including finished)",
+			"trigger identity/origin/sender/preview", "bounded persisted public recent_work", "turn identity and tool statuses",
+			"latest_run report summaries with exact artifact IDs/revisions", "claims and recovery", "Availability/completeness is explicit",
+			"missing evidence is not inferred", "artifact_read for full reports", "No secrets, private reasoning or raw provider context",
+		},
+		"board_read": {"targeted collaboration event/thread", "search, sender/recipient filters", "stable snapshot pagination", "references from agent_inspect", "search_history for older session work", "automatic, not polled"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			definition, _ := collaborationSchema(t, name)
+			for _, phrase := range required {
+				if !strings.Contains(definition.Description, phrase) {
+					t.Errorf("description missing %q", phrase)
+				}
+			}
+			if strings.Contains(definition.Description, "\u2014") {
+				t.Fatal("inspection description contains an em dash")
+			}
+		})
+	}
+	_, schema := collaborationSchema(t, "agent_inspect")
+	properties := schemaProperties(t, schema)
+	agentID, ok := properties["agent_id"].(map[string]any)
+	if len(properties) != 1 || !ok || agentID["type"] != "string" {
+		t.Fatalf("inspection must accept only agent_id: %v", properties)
+	}
+	required := schema["required"].([]any)
+	if len(required) != 1 || required[0] != "agent_id" {
+		t.Fatalf("inspection must require only agent_id: %v", required)
+	}
+}

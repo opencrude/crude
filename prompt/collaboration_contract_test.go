@@ -20,7 +20,7 @@ func TestCollaborationWorkflowAcrossRootAndChild(t *testing.T) {
 			if err := xml.Unmarshal([]byte(text), &document); err != nil {
 				t.Fatal(err)
 			}
-			if len(document.Workflow.Rules) != 6 {
+			if len(document.Workflow.Rules) != 8 {
 				t.Fatalf("workflow rules = %d", len(document.Workflow.Rules))
 			}
 			for _, required := range []string{
@@ -55,6 +55,49 @@ func TestCollaborationWorkflowAcrossRootAndChild(t *testing.T) {
 		!strings.Contains(orchestrator, `<operating_mode type="orchestrator">`) ||
 		!strings.Contains(child, `<file_ownership>`) {
 		t.Fatal("collaboration workflow changed mode or child ownership contract")
+	}
+}
+
+func TestPassiveInspectionGuidanceAcrossRootAndChild(t *testing.T) {
+	child, _ := BuildChild(ChildOptions{Category: "crafter", ParentID: "parent-1"})
+	for name, text := range map[string]string{
+		"solo": BuildRoot(RootOptions{}), "orchestrator": BuildRoot(RootOptions{MultiAgent: true}), "child": child,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var document struct {
+				Workflow struct {
+					Rules []string `xml:"rule"`
+				} `xml:"collaboration_workflow"`
+			}
+			if err := xml.Unmarshal([]byte(text), &document); err != nil {
+				t.Fatal(err)
+			}
+			var inspectionRules []string
+			for _, rule := range document.Workflow.Rules {
+				if strings.Contains(rule, "To observe an agent") {
+					inspectionRules = append(inspectionRules, rule)
+				}
+			}
+			if len(inspectionRules) != 1 {
+				t.Fatalf("inspection rules = %d, want one shared rule", len(inspectionRules))
+			}
+			for _, required := range []string{
+				"exact name with agent_list, then use agent_inspect on the exact ID",
+				"presence", "current run (null when none)", "latest_run (including finished attempts)",
+				"durable recent_work", "missing evidence rather than inventing it",
+				"artifact_read for a report revision", "board_read for a targeted event/thread",
+				"search_history for older work", "execution.review for changes",
+				"never session.open, agent_send, controls, wait or poll just to observe",
+				"do not inspect SQLite or logs when supported evidence suffices",
+			} {
+				if !strings.Contains(inspectionRules[0], required) {
+					t.Errorf("inspection guidance missing %q", required)
+				}
+			}
+			if strings.Contains(inspectionRules[0], "\u2014") {
+				t.Fatal("inspection guidance contains an em dash")
+			}
+		})
 	}
 }
 

@@ -3,7 +3,10 @@
 // the workspace document and Local History owners must commit it transactionally.
 package worktree
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const FormatVersion = 1
 
@@ -38,7 +41,6 @@ type File struct {
 }
 
 type Options struct {
-	MaxContexts  int
 	MaxFiles     int
 	MaxBytes     int64
 	MaxFileBytes int64
@@ -80,6 +82,18 @@ type Context struct {
 	IntegratedSource  string            `json:"integrated_source,omitempty"`
 	ArchivedResult    map[string]File   `json:"archived_result,omitempty"`
 	ArchiveCommit     string            `json:"archive_commit,omitempty"`
+	// StorageBytes is inventory telemetry, not persisted snapshot content.
+	StorageBytes int64 `json:"storage_bytes,omitempty"`
+}
+
+// CleanupOptions makes discarding an unwanted result an explicit parent decision.
+// Digest is the discard_digest returned by ReviewDiscard, rechecked before effects.
+type CleanupOptions struct {
+	Discard bool   `json:"discard,omitempty"`
+	Digest  string `json:"digest,omitempty"`
+	// Check is the workspace owner's final retained-use check under the shared
+	// mutation lease, before locking artifact state. It is never caller input.
+	Check func(context.Context) error `json:"-"`
 }
 
 type Change struct {
@@ -89,11 +103,14 @@ type Change struct {
 }
 
 type PlanDelta struct {
-	ContextID    string   `json:"context_id"`
-	Owner        Owner    `json:"owner"`
-	Digest       string   `json:"digest"`
-	SourceDigest string   `json:"source_digest,omitempty"`
-	Changes      []Change `json:"changes"`
+	ContextID     string   `json:"context_id"`
+	Owner         Owner    `json:"owner"`
+	Digest        string   `json:"digest"`
+	SourceDigest  string   `json:"source_digest,omitempty"`
+	Changes       []Change `json:"changes"`
+	DiscardDigest string   `json:"discard_digest,omitempty"`
+	IgnoredPaths  []string `json:"ignored_paths,omitempty"`
+	HeadCommit    string   `json:"head_commit,omitempty"`
 }
 
 // Receipt is evidence supplied by the existing integration owner, not a claim

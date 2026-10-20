@@ -7,7 +7,9 @@ import (
 	"crude/worktree"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // ExecutionService borrows the logical workspace's document/history owners.
@@ -81,7 +83,41 @@ func (s *ExecutionService) Review(ctx context.Context, id string) (worktree.Plan
 		return worktree.PlanDelta{}, err
 	}
 	defer unlock()
+	if err := s.checkoutDocumentsLocked(id); err != nil {
+		return worktree.PlanDelta{}, err
+	}
 	return s.Resolve(ctx, id, s.documents.executionDocumentsLocked())
+}
+
+func (s *ExecutionService) ReviewDiscard(ctx context.Context, id string) (worktree.PlanDelta, error) {
+	if s.documents == nil {
+		return worktree.PlanDelta{}, errors.New("document authority unavailable")
+	}
+	s.documents.mu.Lock()
+	defer s.documents.mu.Unlock()
+	if err := s.checkoutDocumentsLocked(id); err != nil {
+		return worktree.PlanDelta{}, err
+	}
+	return s.Service.ReviewDiscard(ctx, id)
+}
+
+// Managed source edits must be saved before review so no accepted human text is
+// silently omitted. Cleanup holds this same owner lock through removal.
+func (s *ExecutionService) checkoutDocumentsLocked(id string) error {
+	c, err := s.Inspect(id)
+	if err != nil {
+		return err
+	}
+	if c.Root == c.LogicalRoot {
+		return nil
+	}
+	for _, doc := range s.documents.docs {
+		rel, err := filepath.Rel(c.Root, doc.snapshot.Path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && (doc.snapshot.Dirty || doc.snapshot.Conflict || doc.diskIntent != nil || doc.relocation != nil) {
+			return fmt.Errorf("checkout document %s has unsaved or unresolved work; save or resolve it before execution review/cleanup", doc.snapshot.Path)
+		}
+	}
+	return nil
 }
 func (s *ExecutionService) RecoverIntegration(ctx context.Context, operationID string) (worktree.Receipt, error) {
 	if s.documents == nil {
@@ -107,7 +143,7 @@ func (s *ExecutionService) Integration(operationID string) (IntegrationStatus, e
 // Cleanup requires the authoritative durable transaction receipt, not caller
 // supplied evidence. The artifact owner additionally verifies source archives
 // and refuses pins/Keep/newer unintegrated changes before ordinary Git removal.
-func (s *ExecutionService) Cleanup(ctx context.Context, id string, owner worktree.Owner) error {
+func (s *ExecutionService) Cleanup(ctx context.Context, id string, owner worktree.Owner, options ...worktree.CleanupOptions) error {
 	c, err := s.Inspect(id)
 	if err != nil {
 		return err
@@ -127,7 +163,15 @@ func (s *ExecutionService) Cleanup(ctx context.Context, id string, owner worktre
 			return err
 		}
 	}
-	return s.Service.Cleanup(ctx, id, owner)
+	if s.documents == nil {
+		return errors.New("document authority unavailable")
+	}
+	s.documents.mu.Lock()
+	defer s.documents.mu.Unlock()
+	if err := s.checkoutDocumentsLocked(id); err != nil {
+		return err
+	}
+	return s.Service.Cleanup(ctx, id, owner, options...)
 }
 
 // Integrations is passive recovery discovery; callers must not replay prepared

@@ -476,6 +476,7 @@ func (c *agentCatalog) apply() bool {
 		}
 		if c.roleIndex == catMain {
 			c.model.agents.Enabled = ui.BoolFieldValue(c.draft.Field(fieldMultiAgent))
+			c.model.agents.ExecutionHygiene = executionHygieneFromForm(c.draft, c.model.agents.ExecutionHygiene)
 			if field := c.draft.Field(fieldMaxSubAgents); field != nil {
 				c.model.agents.MaxConcurrent = maxSubAgentsValue(field)
 			}

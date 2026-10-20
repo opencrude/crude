@@ -173,7 +173,7 @@ var commandCatalog = func() []Descriptor {
 	out[len(out)-1].Requires.Session = true
 	add("execution.select", Domain, Write, "Select execution for future input in target.session_id; never moves live runs or queued input. Resource target must equal id, including empty id for shared execution. expected_revision fences the persisted session selection.", `{"id":{"type":"string","description":"Exact ready execution ID, or empty for shared logical workspace."},"expected_revision":{"type":"integer","minimum":0}}`, "id", "expected_revision")
 	out[len(out)-1].Requires.Session = true
-	for _, id := range []string{"execution.list", "execution.integrations", "execution.create", "execution.inspect", "execution.review", "execution.apply", "execution.keep", "execution.cleanup", "execution.undo", "execution.recover"} {
+	for _, id := range []string{"execution.list", "execution.integrations", "execution.create", "execution.inspect", "execution.review", "execution.apply", "execution.keep", "execution.cleanup", "execution.reconcile", "execution.settle", "execution.undo", "execution.recover"} {
 		effect := Read
 		props := `{}`
 		required := []string(nil)
@@ -187,16 +187,27 @@ var commandCatalog = func() []Descriptor {
 			props, required, effect = string(raw), []string{"plan"}, Write
 		case "execution.undo", "execution.recover":
 			props, required, effect = `{"operation_id":{"type":"string"}}`, []string{"operation_id"}, Write
-		case "execution.inspect", "execution.review", "execution.keep", "execution.cleanup":
+		case "execution.inspect":
 			props, required = `{"id":{"type":"string"}}`, []string{"id"}
-			if id == "execution.keep" {
-				effect = Write
-			}
-			if id == "execution.cleanup" {
-				effect = Delete
-			}
+		case "execution.reconcile":
+			props, required, effect = `{"id":{"type":"string"}}`, []string{"id"}, Write
+		case "execution.settle":
+			props, required, effect = `{"id":{"type":"string"},"session_id":{"type":"string"},"agent_id":{"type":"string"},"recovery_id":{"type":"string"},"recovery_generation":{"type":"integer","minimum":1}}`, []string{"id", "session_id", "agent_id", "recovery_id", "recovery_generation"}, Write
+		case "execution.review":
+			props, required = `{"id":{"type":"string"},"discard":{"type":"boolean","description":"Review only the source for discard, even if destination changes conflict. Returns discard_digest including HEAD and ignored-file bytes."}}`, []string{"id"}
+		case "execution.keep":
+			props, required, effect = `{"id":{"type":"string"},"keep":{"type":"boolean","description":"True retains intentionally, false clears Keep so the parent can clean up."}}`, []string{"id", "keep"}, Write
+		case "execution.cleanup":
+			props, required, effect = `{"id":{"type":"string"},"discard":{"type":"boolean","description":"Archive and remove an unwanted result without integrating it. Active pins still block."},"digest":{"type":"string","description":"Required for discard: discard_digest from execution.review with discard=true."}}`, []string{"id"}, Delete
 		}
-		add(id, Domain, effect, "Managed execution through accepted documents and Local History. Exact resource target must match id, plan.context_id or operation_id. Owner is gateway attribution, never input authority.", props, required...)
+		description := "Managed execution through accepted documents and Local History. Any workspace agent may inspect/review and clean settled work; active work and recovery remain protected. Exact resource target matches id, plan.context_id or operation_id. Owner is gateway attribution."
+		if id == "execution.reconcile" {
+			description = "Release only execution pins proven stale by exact terminal runs, no live local work and no recovery/queued/selected references. Returns released pins and retained reasons; never kills agents or deletes worktrees."
+		}
+		if id == "execution.settle" {
+			description = "Explicitly cancel one exact parked recovery retaining this execution, including another parent's abandoned task. Use only after deciding the work is unwanted. Open its owning root session with session.open first if cold. Refuses live/replaced/unrelated incidents. Preserves recovery history; never deletes a checkout. Then reconcile, review and cleanup."
+		}
+		add(id, Domain, effect, description, props, required...)
 	}
 	for _, id := range []string{"settings.set", "settings.reset"} {
 		props := `{"scope":{"type":"string","enum":["application","workspace","session"]},"path":{"type":"string","description":"Exact dot-separated JSON field path. Reset removes only this field's override; application reset uses shipped defaults."}`

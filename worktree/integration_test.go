@@ -96,9 +96,9 @@ func TestModesDeletedDocumentsAndCanceledCreation(t *testing.T) {
 	}
 }
 
-func TestCountBudgetAndIgnoredRetention(t *testing.T) {
+func TestIgnoredRetentionRequiresExplicitReviewedDiscard(t *testing.T) {
 	root, store, _ := fixture(t)
-	s, err := Open(root, store, Options{MaxContexts: 1})
+	s, err := Open(root, store, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,9 +106,6 @@ func TestCountBudgetAndIgnoredRetention(t *testing.T) {
 	c, err := s.Create(ctx, Request{Owner: testOwner, Mode: Isolated})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err = s.Create(ctx, Request{Owner: testOwner, Mode: Isolated}); err == nil {
-		t.Fatal("count budget ignored")
 	}
 	put(t, c.Root, "secret", []byte("new ignored evidence"))
 	if err = s.Unpin(c.ID, testOwner); err != nil {

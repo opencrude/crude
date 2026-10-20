@@ -102,6 +102,11 @@ func TestCommandOutcomeOutputSurvivesHydrationWithoutAnAgentRead(t *testing.T) {
 	for _, message := range []types.ChatMessage{msg, restored} {
 		r := newActivityRenderer()
 		r.SyncMessages([]types.ChatMessage{message}, 1)
+		compact, _, _ := r.ExportMessageRows(100)
+		if strings.Contains(strings.Join(compact[0].Lines, "\n"), "retained stderr") || len(compact[0].Native) != 2 {
+			t.Fatal("compact background outcome contains an output teaser")
+		}
+		r.ToggleDisclosure("settled")
 		rows, _, _ := r.ExportMessageRows(100)
 		text := strings.Join(rows[0].Lines, "\n")
 		if !strings.Contains(text, "FAIL") || !strings.Contains(text, "    retained stderr") || strings.Contains(text, "[31m") {

@@ -7,6 +7,23 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Command disclosure (2026-10-20)
+
+`BenchmarkCommandOutputDisclosure` measures the first tool-body projection of a
+1,000-line, 26 KiB command result, not provider execution or a cached full frame.
+Three Linux/amd64, Go 1.25.9 i7-10750H samples at 120 columns
+(`-benchtime=20x -count=3`) measured:
+
+| Projection | Before | After |
+|---|---|---|
+| Compact | 1.09–1.21 ms; ~256 KB; 1,104–1,105 allocations | 87–101 µs; ~59 KB; 38 allocations |
+| Expanded | 1.31 ms; ~571 KB; 5,091 allocations | 1.12–1.20 ms; ~563 KB; 5,090 allocations |
+
+Compact rows now omit the output body rather than preparing an invisible
+head/tail teaser. Expanded rows retain the complete supplied evidence. These
+short component measurements are diagnostic, not portable latency guarantees;
+no existing allocation ceiling or frame-work budget was raised.
+
 ## Native release schema startup (2026-10-19)
 
 The full race suite exhausted the existing five-minute session-package budget

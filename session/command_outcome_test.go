@@ -1,7 +1,6 @@
 package session
 
 import (
-	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
@@ -74,15 +73,14 @@ func TestControlHeavyCommandOutputFitsDurableOutcome(t *testing.T) {
 	// Raw NUL output expanded to 192 KiB of JSON escapes and exceeded the
 	// event's 128 KiB limit, silently losing the only completion evidence.
 	raw := strings.Repeat("\x00", fileio.DefaultOutputChunkBytes)
-	output := &command.Result{Command: "binary producer", Output: base64.StdEncoding.EncodeToString([]byte(raw)), OutputEncoding: "base64",
+	output := &command.Result{Command: "control producer", Output: raw,
 		OutputDescriptor: command.OutputDescriptor{Handle: "binary", Status: command.Completed, TotalBytes: len(raw)}}
 	s.publishCommandOutcome(child.ID, fileio.AsyncCmdInfo{Handle: "binary", Command: "binary producer", PID: 43, Status: fileio.AsyncCompleted, OutputBytes: len(raw), SettledOutput: output})
 	page, err := store.Page(t.Context(), collaboration.PageQuery{RecipientID: child.ID})
 	if err != nil || len(page.Events) != 1 || page.Events[0].Command == nil || page.Events[0].Command.Output == nil {
 		t.Fatalf("control-heavy completion output was not journalled: events=%d error=%v", len(page.Events), err)
 	}
-	decoded, err := base64.StdEncoding.DecodeString(page.Events[0].Command.Output.Output)
-	if err != nil || string(decoded) != raw {
-		t.Fatal("journal changed binary stdout evidence")
+	if got := page.Events[0].Command.Output; got.Output != raw || got.OutputEncoding != "" {
+		t.Fatal("journal changed or unnecessarily encoded UTF-8 stdout evidence")
 	}
 }

@@ -71,6 +71,12 @@ func TestParallelMutationAndFailureAreIndependent(t *testing.T) {
 		t.Fatalf("mutation buried in batch: %+v", rows)
 	}
 	text := strings.Join(rows[2].Lines, "\n")
+	if !strings.Contains(text, "exit 1") || strings.Contains(text, "detail") {
+		t.Fatalf("compact failed child lost status or exposed output: %s", text)
+	}
+	r.ToggleDisclosure("batch:2")
+	rows, _, _ = r.ExportMessageRows(100)
+	text = strings.Join(rows[2].Lines, "\n")
 	if !strings.Contains(text, "exit 1") || !strings.Contains(text, "detail") || strings.Contains(text, `\n`) {
 		t.Fatalf("failure lost readable output: %s", text)
 	}

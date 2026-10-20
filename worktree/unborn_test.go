@@ -34,8 +34,8 @@ func TestRepositoryWithoutCommitsSharesTheCheckout(t *testing.T) {
 		if created.Mode != Shared || created.BaseCommit != "" {
 			t.Fatalf("%s isolation = %+v, want shared without a base commit", mode, created)
 		}
-		if _, ok := created.Baseline["main.py"]; !ok {
-			t.Fatalf("baseline lacks untracked file: %+v", created.Baseline)
+		if created.ID != "" || len(created.Baseline) != 0 || len(service.List()) != 0 {
+			t.Fatal("shared execution allocated a snapshot", created.ID)
 		}
 	}
 	if _, err := service.Create(t.Context(), Request{Owner: Owner{AgentID: "isolated", RunID: "run-isolated"}, Mode: Isolated}); err == nil || !strings.Contains(err.Error(), "at least one commit") {

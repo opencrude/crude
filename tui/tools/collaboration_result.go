@@ -120,34 +120,7 @@ func buildCollaborationResult(name, content, input string) StructuredResult {
 		}
 		return result
 	case "agent_inspect":
-		var inspected struct {
-			Agent   collaboration.Agent      `json:"agent"`
-			Run     *collaboration.Run       `json:"run"`
-			Reports []collaboration.Artifact `json:"reports"`
-			Claims  []collaboration.Claim    `json:"claims"`
-		}
-		if json.Unmarshal([]byte(content), &inspected) != nil || inspected.Agent.ID == "" {
-			return BuildReadableResult(content)
-		}
-		result := StructuredResult{Summary: inspected.Agent.Name + " · " + string(inspected.Agent.State), Unit: "agents"}
-		section := agentSection(inspected.Agent)
-		if inspected.Run != nil {
-			section.Details = append(section.Details,
-				ResultField{"Run", inspected.Run.ID},
-				ResultField{"Run state", string(inspected.Run.State)},
-				ResultField{"Run version", fmt.Sprint(inspected.Run.Version)},
-			)
-		}
-		for _, claim := range inspected.Claims {
-			section.Details = append(section.Details, ResultField{"Owned path", claim.Path})
-		}
-		result.Sections = append(result.Sections, section)
-		for _, report := range inspected.Reports {
-			report := reportSection(report)
-			report.DetailOnly = true
-			result.Sections = append(result.Sections, report)
-		}
-		return result
+		return buildAgentInspectionResult(content)
 	case "agent_update_claims", "agent_narrow_claims":
 		var claims struct {
 			Released []collaboration.Claim `json:"released"`

@@ -200,11 +200,14 @@ func TestCommandResultKeepsExactPathPrefixes(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		sb.WriteString("/home/u/ocd/crude/tui/ui/panel_" + string(rune('0'+i)) + ".go:28" + string(rune('0'+i)) + ":applyRuleBleed(args)\n")
 	}
-	rows := exportForLayout(t, []types.ChatMessage{
-		{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", ToolArgs: "grep applyRuleBleed", Content: sb.String()},
-	})
+	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(120, 40)
+	r.SetChatAreaBounds(0, 30)
+	r.AppendMessage(types.ChatMessage{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", ToolArgs: "grep applyRuleBleed", Content: sb.String()})
+	r.ToggleDisclosure("t1")
+	rows, _, _ := r.ExportMessageRows(120)
 	if !strings.Contains(strings.Join(rows[0].Lines, "\n"), "/home/u/ocd/crude/tui/ui/panel_0.go") {
-		t.Fatal("command preview lost its exact path")
+		t.Fatal("command disclosure lost its exact path")
 	}
 }
 

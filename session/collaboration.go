@@ -196,6 +196,9 @@ func collaborationInput(delivery collaboration.PendingDelivery) provider.UserInp
 		Broadcast:  event.Broadcast,
 		References: references, Disposition: string(collaboration.EventDisposition(event)),
 	})
+	if event.Kind == collaboration.EventRunOutcome && event.Execution != nil {
+		text += "\n" + rootprompt.ChildExecutionDisposition(event.Execution.ID, event.Execution.Root, event.Execution.Mode)
+	}
 	display := event.SenderName + " · " + collaborationKindLabel(event.Kind)
 	if event.Broadcast {
 		display = event.SenderName + " · broadcast to running agents"
@@ -1071,34 +1074,8 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 		}
 		return collaborationResult(listed, nil), true, nil
 	case "agent_inspect":
-		agentID := getStrParam(params, "agent_id")
-		agentState, err := store.Agent(ctx, agentID)
-		if err != nil {
-			return tools.ToolResult{}, true, err
-		}
-		var run *collaboration.Run
-		if agentState.CurrentRunID != "" {
-			current, runErr := store.Run(ctx, agentState.CurrentRunID)
-			if runErr != nil {
-				return tools.ToolResult{}, true, runErr
-			}
-			run = &current
-		}
-		artifacts, err := store.ListArtifacts(ctx, agentID, "", "", 10)
-		if err != nil {
-			return tools.ToolResult{}, true, err
-		}
-		claims, err := store.Claims(ctx, agentID, true)
-		if err != nil {
-			return tools.ToolResult{}, true, err
-		}
-		return collaborationResult(struct {
-			Agent    collaboration.Agent      `json:"agent"`
-			Run      *collaboration.Run       `json:"run,omitempty"`
-			Recovery *agentRecoveryView       `json:"recovery,omitempty"`
-			Reports  []collaboration.Artifact `json:"reports,omitempty"`
-			Claims   []collaboration.Claim    `json:"claims,omitempty"`
-		}{agentState, run, s.agentRecovery(agentID), artifacts, claims}, nil), true, nil
+		inspection, err := s.inspectAgent(ctx, store, getStrParam(params, "agent_id"))
+		return collaborationResult(inspection, err), true, err
 	case "agent_send":
 		identity, err := collaborationExecutionIdentity(ctx)
 		if err != nil {

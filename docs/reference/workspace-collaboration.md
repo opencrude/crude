@@ -63,8 +63,8 @@ not a runnable process waiting to be reopened.
 
 | Tool | Contract |
 |---|---|
-| `agent_list` | Bounded workspace directory query with exact IDs and live facts |
-| `agent_inspect` | Exact agent/run/reports/claims without secrets or raw private context |
+| `agent_list` | Bounded name lookup with exact IDs, ownership, availability, presence and current run facts |
+| `agent_inspect` | Read-only exact identity, current/latest run, trigger, bounded public recent work, report references, claims and recovery |
 | `agent_start` | Start a bounded leaf; optional `profile` selects an exact enabled reusable profile whose category matches |
 | `agent_send` | Directed note/reply/request/revision or rare running-agent broadcast |
 | `agent_respond` | Accept, defer, or decline an exact request revision |
@@ -75,10 +75,42 @@ not a runnable process waiting to be reopened.
 | `publish_report` | Publish immutable authored evidence linked to the actual run/request |
 | `artifact_read` | Read an exact artifact revision; revision zero selects latest |
 | `agent_wait` | Wait for an exact run/report/agent condition without model polling |
-| `board_read` | Browse workspace communication history; not ordinary delivery transport |
+| `board_read` | Targeted event/thread history with search, sender/recipient filters and stable snapshot pagination; not delivery transport |
 
 Directed delivery is automatic. Models do not call `board_read`, `agent_wait`, or
 sleep merely to notice an ordinary message, report, or terminal outcome.
+
+### Passive inspection
+
+Resolve an agent's exact name with `agent_list`, then call
+`agent_inspect(agent_id)` with the returned stable ID. Presence describes runtime
+attachment, not task progress. `run` is current only and is null when none exists;
+`latest_run` is the most recent attempt, including finished attempts. Claims and
+recovery remain separate evidence, not inferred from presence or report prose.
+
+`trigger` exposes the recorded input/event identity, origin, sender and bounded
+preview when known. `recent_work` exposes bounded latest persisted public assistant
+text and tool names/statuses with recorded turn identity and explicit availability
+and completeness. Missing evidence is explicit; neither surface reveals private
+reasoning or raw provider context. Reports are bounded summaries and exact artifact
+IDs/revisions for `latest_run`, not large bodies or stale reports from older runs.
+
+Public work is a persisted tail, not live provider buffers. Root evidence reads
+both runtime-owned input rows and session-owned output rows. It includes its
+recorded turn/generation and a run link when recorded. A child's assignment
+transcript can span continuation attempts, so it is labeled
+`child_assignment_transcript` without a guessed attempt generation or run link.
+Trigger attribution requires an exact input/admission link. Active human inputs
+and initial child assignments can be visible before that link is recorded;
+`trigger.available:false` reports this limitation, not an idle or failed run.
+Ordinary active checkpoints are not presented as stopped recoveries.
+
+Read the exact report revision with `artifact_read`; use `board_read` for a
+targeted event/thread, `search_history` for older session work, and
+`execution.review` for changes. Inspection never requires `session.open`,
+`agent_send`, controls, waits or polling just to observe. Do not inspect SQLite or
+logs when supported evidence suffices, and say what evidence is missing rather
+than inventing progress, a trigger or a successful outcome.
 
 Choose direct work when simpler. Inspect an existing peer's exact identity,
 availability and ownership before reuse; otherwise delegate one independent,
@@ -112,6 +144,12 @@ Publication allocates the event sequence and exact recipient obligations in one
 workspace transaction. The event body, sender, origin, recipients, thread,
 request/run identity, supersession, references, and idempotency fingerprint are
 immutable.
+
+Ordinary serialized events remain limited to 128 KiB. Runtime command outcomes
+with a bounded captured excerpt may use up to 255 KiB so JSON control-character
+escaping cannot discard otherwise valid text. This is a storage allowance, not
+an output transformation or a larger process-capture budget; events still fit
+the unchanged 256 KiB Board page, and oversized evidence fails explicitly.
 
 Peer notes, reports, outcomes and lifecycle controls retain their own event
 identity. A `history_message` reference names evidence, never a replacement

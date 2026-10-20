@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"crude/fileio"
 	ttypes "crude/types"
 )
 
@@ -360,6 +362,13 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	if m == nil {
 		return TerminalInfo{}, fmt.Errorf("terminal manager is nil")
 	}
+	// Checkout deletion and admission of a PTY using it share one mutation
+	// boundary. A terminal cannot appear between final retention check/removal.
+	unlock, err := fileio.LockMutationContext(context.Background())
+	if err != nil {
+		return TerminalInfo{}, err
+	}
+	defer unlock()
 	cols, rows := opts.Cols, opts.Rows
 	if cols <= 0 {
 		cols = DefaultTerminalCols

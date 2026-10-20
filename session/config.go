@@ -68,11 +68,12 @@ type ProfileConfig struct {
 }
 
 type AgentsConfig struct {
-	Enabled       bool                          `json:"enabled,omitempty"`
-	ActiveProfile string                        `json:"active_profile,omitempty"`
-	MaxConcurrent int                           `json:"max_concurrent,omitempty"`
-	Profiles      map[string]ProfileConfig      `json:"profiles,omitempty"`
-	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
+	Enabled          bool                            `json:"enabled,omitempty"`
+	ActiveProfile    string                          `json:"active_profile,omitempty"`
+	MaxConcurrent    int                             `json:"max_concurrent,omitempty"`
+	Profiles         map[string]ProfileConfig        `json:"profiles,omitempty"`
+	AgentProfiles    map[string]AgentProfileConfig   `json:"agent_profiles,omitempty"`
+	ExecutionHygiene ttypes.ExecutionHygieneSettings `json:"execution_hygiene,omitempty"`
 }
 
 type AgentProfileConfig = ttypes.AgentProfileSettings
@@ -556,7 +557,8 @@ func AgentDefaultsSettings(agents AgentsConfig) ttypes.AgentsSettings {
 	EnsureAgentsDefaults(&cfg.Agents)
 	prof, name := activeProfileCfg(cfg)
 	out := ttypes.AgentsSettings{ActiveProfile: name, Enabled: cfg.IsMultiAgentEnabled(), MaxConcurrent: cfg.Agents.MaxConcurrent,
-		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles)}
+		ExecutionHygiene: ttypes.CloneExecutionHygiene(cfg.Agents.ExecutionHygiene),
+		Categories:       make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles)}
 	for role, cat := range prof.Categories {
 		out.Categories[role] = catConfigToSettings(cat)
 	}
@@ -601,11 +603,12 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	}
 
 	agentsSettings := ttypes.AgentsSettings{
-		AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles),
-		Enabled:       maEnabled,
-		ActiveProfile: ap,
-		MaxConcurrent: cfg.Agents.MaxConcurrent,
-		Categories:    make(map[string]ttypes.CategorySettings),
+		ExecutionHygiene: ttypes.CloneExecutionHygiene(cfg.Agents.ExecutionHygiene),
+		AgentProfiles:    ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles),
+		Enabled:          maEnabled,
+		ActiveProfile:    ap,
+		MaxConcurrent:    cfg.Agents.MaxConcurrent,
+		Categories:       make(map[string]ttypes.CategorySettings),
 	}
 	for k := range activeProf.Categories {
 		agentsSettings.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
@@ -653,6 +656,7 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	if cfg == nil {
 		return
 	}
+	cfg.Agents.ExecutionHygiene = ttypes.CloneExecutionHygiene(agents.ExecutionHygiene)
 	if agents.AgentProfiles != nil {
 		cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
 	}

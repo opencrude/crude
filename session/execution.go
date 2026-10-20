@@ -4,6 +4,7 @@ import (
 	"context"
 	"crude/agent"
 	"crude/collaboration"
+	"crude/fileio"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
@@ -30,8 +31,8 @@ type ExecutionService interface {
 	Apply(context.Context, worktree.PlanDelta) (worktree.Receipt, error)
 	Pin(string, worktree.Owner) error
 	Unpin(string, worktree.Owner) error
-	Keep(string, worktree.Owner) error
-	Cleanup(context.Context, string, worktree.Owner) error
+	Keep(string, worktree.Owner, ...bool) error
+	Cleanup(context.Context, string, worktree.Owner, ...worktree.CleanupOptions) error
 }
 
 func (s *Session) SetExecutionService(service ExecutionService) {
@@ -71,6 +72,11 @@ func (s *Session) loadExecutionSelection() error {
 // SelectExecution runs off the actor/UI and persists before acknowledging. The
 // admission mutex is also the immutable input capture boundary.
 func (s *Session) SelectExecution(ctx context.Context, id string, revision uint64) (ExecutionSelection, error) {
+	unlock, err := fileio.LockMutationContext(ctx)
+	if err != nil {
+		return ExecutionSelection{}, err
+	}
+	defer unlock()
 	s.admissionMu.Lock()
 	defer s.admissionMu.Unlock()
 	if ctx.Err() != nil || atomic.LoadInt32(&s.closing) != 0 {
@@ -121,6 +127,31 @@ func (s *Session) bindInputExecution(input provider.UserInput) provider.UserInpu
 	}
 	input.ControlTarget.SessionID = s.sessionID
 	return input
+}
+
+// Off-UI commit of an explicit checkout input cannot overtake cleanup. Once
+// committed, the durable queue/recovery is its retention evidence.
+func (s *Session) lockInputExecution(input provider.UserInput) (func(), error) {
+	if input.ControlTarget == nil || input.ControlTarget.ExecutionID == "" {
+		return func() {}, nil
+	}
+	unlock, err := fileio.LockMutationContext(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	service, err := s.executionService()
+	if err == nil {
+		var c worktree.Context
+		c, err = service.Inspect(input.ControlTarget.ExecutionID)
+		if err == nil && (!c.Ready || c.Removed || c.LogicalRoot != s.WorkDir()) {
+			err = errors.New("input execution is no longer available; choose shared or another ready execution")
+		}
+	}
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
 }
 
 func (s *Session) executionService() (ExecutionService, error) {
@@ -213,10 +244,13 @@ func (r *SubAgentRunner) prepareChildExecution(ctx context.Context, spec *agent.
 	} else {
 		independent := childIndependentWriter(*spec)
 		execution, err := service.Create(ctx, worktree.Request{Owner: worktree.Owner{AgentID: string(spec.ID), RunID: runID}, Mode: mode, Independent: independent, SourceContextID: sourceID})
+		spec.Isolation, spec.ExecutionID, spec.ExecutionRoot, spec.ExecutionRunID = string(execution.Mode), execution.ID, execution.Root, runID
 		if err != nil {
+			if execution.ID != "" {
+				return fmt.Errorf("%w (retained execution %s at %s; inspect it before cleanup)", err, execution.ID, execution.Root)
+			}
 			return err
 		}
-		spec.Isolation, spec.ExecutionID, spec.ExecutionRoot, spec.ExecutionRunID = string(execution.Mode), execution.ID, execution.Root, runID
 	}
 	if spec.ControlTarget != nil {
 		target := *spec.ControlTarget

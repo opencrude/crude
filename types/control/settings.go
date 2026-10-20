@@ -105,6 +105,9 @@ func OrdinaryAgentLeaf(name string) bool {
 // effect owners must also check container writes and the actual changed leaves.
 func SettingsAuthority(path string) bool {
 	parts := strings.Split(path, ".")
+	if strings.HasPrefix(path, "agents.execution_hygiene.") {
+		return false
+	}
 	for _, part := range parts {
 		switch strings.ToLower(part) {
 		case "safety", "network", "accounts", "capabilities", "multi_agent", "apikey", "api_key", "providerapikey", "provider_api_key", "environment", "allowedtools", "deniedtools", "allowed_tools", "denied_tools", "skill_modes", "policy", "file_ownership", "category":

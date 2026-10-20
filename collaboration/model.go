@@ -243,32 +243,42 @@ type PublishRequest struct {
 	Supersedes      string
 	References      []Reference
 	Command         *command.Outcome
+	Execution       *ExecutionOutcome
 	// AuditOnly is reserved for runtime outcomes addressed to the human UI;
 	// it journals an event without pretending that "human" is a model runtime.
 	AuditOnly bool
 }
 
 type Event struct {
-	ID              string           `json:"id"`
-	Sequence        int64            `json:"sequence"`
-	WorkspaceID     string           `json:"workspace_id"`
-	SenderID        string           `json:"sender_id"`
-	SenderName      string           `json:"sender_name"`
-	Recipients      []Recipient      `json:"recipients"`
-	Broadcast       bool             `json:"broadcast,omitempty"`
-	Origin          Origin           `json:"origin"`
-	Kind            EventKind        `json:"kind"`
-	Body            string           `json:"body"`
-	ReplyTo         string           `json:"reply_to,omitempty"`
-	ThreadID        string           `json:"thread_id"`
-	RequestID       string           `json:"request_id,omitempty"`
-	RequestRevision uint64           `json:"request_revision,omitempty"`
-	RunID           string           `json:"run_id,omitempty"`
-	Supersedes      string           `json:"supersedes,omitempty"`
-	References      []Reference      `json:"references,omitempty"`
-	Command         *command.Outcome `json:"command,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
-	Archived        bool             `json:"archived"`
+	ID              string            `json:"id"`
+	Sequence        int64             `json:"sequence"`
+	WorkspaceID     string            `json:"workspace_id"`
+	SenderID        string            `json:"sender_id"`
+	SenderName      string            `json:"sender_name"`
+	Recipients      []Recipient       `json:"recipients"`
+	Broadcast       bool              `json:"broadcast,omitempty"`
+	Origin          Origin            `json:"origin"`
+	Kind            EventKind         `json:"kind"`
+	Body            string            `json:"body"`
+	ReplyTo         string            `json:"reply_to,omitempty"`
+	ThreadID        string            `json:"thread_id"`
+	RequestID       string            `json:"request_id,omitempty"`
+	RequestRevision uint64            `json:"request_revision,omitempty"`
+	RunID           string            `json:"run_id,omitempty"`
+	Supersedes      string            `json:"supersedes,omitempty"`
+	References      []Reference       `json:"references,omitempty"`
+	Command         *command.Outcome  `json:"command,omitempty"`
+	Execution       *ExecutionOutcome `json:"execution,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
+	Archived        bool              `json:"archived"`
+}
+
+// ExecutionOutcome is compact post-child disposition evidence, never policy or
+// a rendered status string. Shared execution may have an empty ID.
+type ExecutionOutcome struct {
+	ID   string `json:"id,omitempty"`
+	Root string `json:"root"`
+	Mode string `json:"mode"`
 }
 
 type Delivery struct {

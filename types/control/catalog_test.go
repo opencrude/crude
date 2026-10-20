@@ -56,7 +56,7 @@ func TestCatalogRelevantQuery(t *testing.T) {
 }
 
 func TestExecutionCatalogInstalledAndExactEffects(t *testing.T) {
-	for id, effect := range map[string]Effect{"execution.list": Read, "execution.integrations": Read, "execution.create": Execute, "execution.inspect": Read, "execution.review": Read, "execution.apply": Write, "execution.keep": Write, "execution.cleanup": Delete, "execution.undo": Write, "execution.recover": Write} {
+	for id, effect := range map[string]Effect{"execution.list": Read, "execution.integrations": Read, "execution.create": Execute, "execution.inspect": Read, "execution.review": Read, "execution.apply": Write, "execution.keep": Write, "execution.cleanup": Delete, "execution.reconcile": Write, "execution.settle": Write, "execution.undo": Write, "execution.recover": Write} {
 		d, ok := Lookup(id)
 		if !ok || !d.Availability.Available || d.Effect != effect {
 			t.Fatalf("not installed %s: %#v", id, d)
