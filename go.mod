@@ -15,6 +15,7 @@ require (
 	github.com/charmbracelet/x/powernap v0.1.6
 	github.com/conductor-oss/markitdown v0.0.1
 	github.com/creack/pty v1.1.24
+	github.com/epilande/go-devicons v0.0.0-20250505162540-0661cab71a28
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.1

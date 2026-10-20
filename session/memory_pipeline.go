@@ -214,25 +214,22 @@ func observationsFromMessages(sessionID string, turn int, messages []provider.Ch
 		if command == "" {
 			command = getStrParam(arguments, "cmd")
 		}
-		if call.Function.Name == "exec_command" {
+		result, commandResult := tools.ParseCommandResult(call.Function.Name, message.ContentString())
+		if commandResult && (call.Function.Name == "execute_command" || call.Function.Name == "exec_command") {
 			outcome = memory.OutcomeUnmeasured
-			var result struct {
-				ExitCode *int   `json:"exit_code"`
-				Output   string `json:"output"`
-			}
-			if err := json.Unmarshal([]byte(message.ContentString()), &result); err == nil && result.ExitCode != nil {
-				outcome = memory.OutcomeSucceeded
-				if *result.ExitCode != 0 {
-					outcome = memory.OutcomeFailed
-				}
-				summary = result.Output
-			} else if message.ToolError {
+			if result.Failed() || message.ToolError {
 				outcome = memory.OutcomeFailed
+			} else if result.ExitCode != nil && result.OutputDescriptor.Status == "completed" && result.OutputEncoding == "" && result.OutputDescriptor.OmittedBytes == 0 {
+				outcome = memory.OutcomeSucceeded
 			}
+			if result.Cancelled {
+				outcome = memory.OutcomeCancelled
+			}
+			summary = result.Output
 		}
 		if (call.Function.Name == "execute_command" || call.Function.Name == "exec_command") && memoryValidationCommand(command) {
 			kind = memory.EvidenceValidation
-			if call.Function.Name == "execute_command" {
+			if call.Function.Name == "execute_command" && !commandResult {
 				summary = message.ContentString()
 			}
 		}

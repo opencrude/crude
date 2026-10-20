@@ -40,8 +40,8 @@ func TestActivityProjectionSettledExpandAndBoundaries(t *testing.T) {
 			t.Fatalf("summary missing %q: %s", want, plain)
 		}
 	}
-	if strings.Contains(plain, "contents") || strings.Contains(plain, "PASS") {
-		t.Fatalf("collapsed activity leaked output: %s", plain)
+	if strings.Contains(plain, "contents") || !strings.Contains(plain, "PASS") {
+		t.Fatalf("read evidence must stay compact while command preview remains readable: %s", plain)
 	}
 	for index, id := range map[int]string{3: "edit", 4: "progress2", 5: "fail", 6: "write"} {
 		if rows[index].ID != id {
@@ -53,7 +53,7 @@ func TestActivityProjectionSettledExpandAndBoundaries(t *testing.T) {
 	if len(rows) != 7 || rows[2].LeafToggles[2] != "think" || rows[2].LeafToggles[3] != "read" || rows[2].LeafToggles[4] != "cmd" {
 		t.Fatalf("expanded activity lost chronological calls: %+v", rows)
 	}
-	if len(rows[2].Lines) != 5 {
+	if len(rows[2].Lines) != 6 {
 		t.Fatalf("child disclosure or spacing: %+v", rows[2].Lines)
 	}
 	r.ToggleDisclosure("cmd")
@@ -261,9 +261,9 @@ func TestActivityProjectionRealAsyncResultsClassifiedHonestly(t *testing.T) {
 		name, content string
 		grouped       bool
 	}{
-		{"check_async_command", "Handle: job\nPID: 1\nStatus: completed\nExit code: 0\nDuration: 1s", true},
-		{"check_async_command", "Handle: job\nPID: 1\nStatus: failed\nExit code: 1\nDuration: 1s", false},
-		{"read_async_output", "[job output from byte 0]\nPASS\n[next_byte=4]", true},
+		{"check_async_command", `{"exit_code":0,"output":"","output_descriptor":{"handle":"job","status":"completed","total_bytes":4}}`, true},
+		{"check_async_command", `{"exit_code":1,"output":"","output_descriptor":{"handle":"job","status":"failed","total_bytes":4}}`, false},
+		{"read_async_output", `{"output":"PASS","output_descriptor":{"handle":"job","status":"completed","total_bytes":4},"page":{"since_byte":0,"next_byte":4,"has_more":false}}`, true},
 		{"agent_wait", `{"id":"run-ok","agent_id":"agent-1","state":"succeeded","version":2,"outcome":"completed"}`, true},
 		{"agent_wait", `{"id":"run-failed","agent_id":"agent-1","state":"failed","version":2,"outcome":"provider failed"}`, false},
 	} {
@@ -298,7 +298,7 @@ func TestActivityProjectionGroupingInvalidatesOnAppendAndSourceRemoval(t *testin
 	}
 	r.ToggleDisclosure("activity:read")
 	third := r.ExportMessageRowsSnapshot(100)
-	if len(third.Rows) != 1 || third.Rows[0].LeafToggles[4] != "third" {
+	if len(third.Rows) != 1 || third.Rows[0].LeafToggles[5] != "third" {
 		t.Fatalf("expanded appended child missing: %+v", third.Rows)
 	}
 	r.SyncMessages(messages[:1], 3)

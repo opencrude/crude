@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"crude/types/command"
 )
 
 // InteractiveOptions configures Codex's exec_command on the existing command
@@ -21,16 +23,7 @@ type InteractiveOptions struct {
 	Login, TTY          bool
 }
 
-type InteractiveResult struct {
-	WallTimeSeconds    float64          `json:"wall_time_seconds"`
-	ExitCode           *int             `json:"exit_code,omitempty"`
-	SessionID          int              `json:"session_id,omitempty"`
-	OriginalTokenCount int              `json:"original_token_count,omitempty"`
-	OutputDescriptor   OutputDescriptor `json:"output_descriptor"`
-	Retrieval          string           `json:"retrieval"`
-	OutputEncoding     string           `json:"output_encoding,omitempty"`
-	Output             string           `json:"output"`
-}
+type InteractiveResult = command.Result
 
 func utf8PrefixBoundary(raw string, limit int) int {
 	if limit >= len(raw) {
@@ -214,7 +207,7 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 	if outputEnd > outputStart {
 		descriptor.ShownRanges = []OutputRange{{StartByte: outputStart, EndByte: outputEnd}}
 	}
-	result := InteractiveResult{WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor}
+	result := InteractiveResult{Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor}
 	tokens := (utf8.RuneCountInString(output) + 3) / 4
 	firstOmitted := outputEnd
 	byteBudget := maxTokens * 4
@@ -245,6 +238,9 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 	} else if info.Status != AsyncKilled {
 		code := info.ExitCode
 		result.ExitCode = &code
+	}
+	if result.OutputEncoding == "" {
+		result.Output, result.OutputEncoding = commandOutputPayload(result.Output)
 	}
 	result.Retrieval = interactiveRetrieval(result.OutputDescriptor, info, firstOmitted)
 	if result.OutputEncoding == "base64" {

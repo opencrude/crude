@@ -55,6 +55,7 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 			StartedAt: info.StartedAt, EndedAt: info.EndedAt, Duration: info.Duration,
 			ExitCode: info.ExitCode, ExitKnown: info.Status == fileio.AsyncCompleted || info.Status == fileio.AsyncFailed,
 			OutputBytes: info.OutputBytes, Error: info.Error,
+			Output: info.SettledOutput,
 		},
 	})
 	if err != nil && s.logger != nil && !errors.Is(err, collaboration.ErrNotFound) {

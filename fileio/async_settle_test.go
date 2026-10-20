@@ -1,6 +1,7 @@
 package fileio
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,6 +46,9 @@ func TestTrackedCommandReportsTerminalStateOnce(t *testing.T) {
 	info := awaitSettled(t, settled)
 	if info.Handle != "build" || info.Status != AsyncFailed || info.ExitCode != 7 || info.OutputBytes == 0 || info.EndedAt.IsZero() {
 		t.Fatalf("settle notification lacks final state: %+v", info)
+	}
+	if info.SettledOutput == nil || !strings.Contains(info.SettledOutput.Output, "partial stdout") || !strings.Contains(info.SettledOutput.Output, "partial stderr") || info.SettledOutput.ExitCode == nil || *info.SettledOutput.ExitCode != 7 {
+		t.Fatal("completion notification lost readable output or exit evidence")
 	}
 	expectNoFurtherSettle(t, settled)
 }

@@ -7,6 +7,7 @@ import (
 	ccrude "crude/tools"
 	"crude/tui/rendering"
 	"crude/types"
+	"crude/types/command"
 )
 
 // ToolTitle keeps presentation roles separate from their text. Consumers must
@@ -143,7 +144,11 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		duration = rendering.FormatDuration(msg.ToolDuration)
 	}
 	if msg.ToolStatus == types.ToolStatusCancelled {
-		return ToolTitle{Action: "Stopped " + strings.ToLower(rendering.PascalCaseTool(msg.ToolName)), Operand: target, Metadata: duration}
+		action := "Stopped " + strings.ToLower(rendering.PascalCaseTool(msg.ToolName))
+		if ccrude.IsCommandTool(msg.ToolName) {
+			action = "Command stopped"
+		}
+		return ToolTitle{Action: action, Operand: target, Metadata: duration}
 	}
 	if msg.ToolStatus == "interrupted" {
 		return ToolTitle{Action: "Not run · " + strings.ToLower(rendering.PascalCaseTool(msg.ToolName)), Operand: target}
@@ -156,21 +161,30 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			return ToolTitle{Action: "Agent run failed", Operand: target, Metadata: outcome.summary, Failed: true}
 		}
 	}
-	if _, exit, session, ok := CommandResult(msg.ToolName, msg.Content); ok && (msg.ToolStatus == types.ToolStatusSuccess || failed) {
-		title := ToolTitle{Action: "Ran", Operand: target, Metadata: duration}
-		if msg.ToolName == "write_stdin" {
-			title.Action = "Read output"
+	if result, ok := ccrude.ParseCommandResult(msg.ToolName, types.StripToolHint(msg.Content)); ok && (msg.ToolStatus == types.ToolStatusSuccess || failed) {
+		if result.Command != "" {
+			target = strings.ReplaceAll(result.Command, "\n", " ")
 		}
-		if exit != nil && *exit != 0 {
+		title := ToolTitle{Action: "Ran", Operand: target, Metadata: CommandMetadata(result)}
+		if result.Cancelled {
+			title.Action = "Command stopped"
+			return title
+		}
+		switch msg.ToolName {
+		case "write_stdin", "read_async_output":
+			title.Action = "Read output"
+		case "check_async_command":
+			title.Action = "Checked command"
+		}
+		if result.Failed() {
 			title.Action = "Command failed"
-			title.Metadata = strings.TrimSpace(fmt.Sprintf("(exit %d) %s", *exit, duration))
 			title.Failed = true
 		} else if failed {
 			return errorTitle(msg.ToolName, target, duration, ToolErrorReason(msg.ToolName, msg.Content))
-		} else if exit == nil && session > 0 && msg.ToolName != "write_stdin" {
+		} else if result.OutputDescriptor.Status == command.Running && (msg.ToolName == "exec_command" || msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
 			title.Action = "Started"
-			title.Metadata = strings.TrimSpace(fmt.Sprintf("· session %d %s", session, duration))
 		}
+		title.Metadata = strings.TrimSpace(title.Metadata + " " + duration)
 		return title
 	}
 	if failed {
