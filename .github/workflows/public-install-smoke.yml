@@ -40,7 +40,7 @@ jobs:
           installer="$RUNNER_TEMP/crude-public-install.sh"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
             --retry 3 --connect-timeout 15 --max-time 180 \
-            https://github.com/agenticcrude/crude/releases/latest/download/install.sh -o "$installer"
+            https://github.com/uoosef403/crude/releases/latest/download/install.sh -o "$installer"
           bash "$installer" --accept-beta-risk
           binary="$HOME/.local/bin/crude"
           version=$("$binary" --version)
@@ -79,7 +79,7 @@ jobs:
           $marker = Join-Path $env:CRUDE_HOME '.crude/preserved.txt'
           [IO.File]::WriteAllText($marker, 'retained work')
           $installer = Join-Path $env:RUNNER_TEMP 'crude-public-install.ps1'
-          Invoke-WebRequest https://github.com/agenticcrude/crude/releases/latest/download/install.ps1 -OutFile $installer -UseBasicParsing -ErrorAction Stop
+          Invoke-WebRequest https://github.com/uoosef403/crude/releases/latest/download/install.ps1 -OutFile $installer -UseBasicParsing -ErrorAction Stop
           & $installer -AcceptBetaRisk
           $binary = Join-Path $env:LOCALAPPDATA 'Crude/bin/crude.exe'
           $version = & $binary --version

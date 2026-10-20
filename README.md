@@ -11,8 +11,8 @@ into one terminal-native workspace on Linux and Windows. Use your **mouse or
 keyboard**: click, drag, browse menus, or take a shortcut when it helps. It's 2026;
 you shouldn't need to memorize a thousand keybindings to get work done.
 
-[Documentation](docs/README.md) · [Releases](https://github.com/agenticcrude/crude/releases) ·
-[Report a bug](https://github.com/agenticcrude/crude/issues) · [Apache-2.0](LICENSE-APACHE)
+[Documentation](docs/README.md) · [Releases](https://github.com/uoosef403/crude/releases) ·
+[Report a bug](https://github.com/uoosef403/crude/issues) · [Apache-2.0](LICENSE-APACHE)
 
 ![Crude editing its own Go source with syntax highlighting, file navigation and an embedded terminal](assets/crude-source.png)
 
@@ -52,15 +52,17 @@ a local screenshot fixture, not a claim of a live model's output.
 
 ## Install or update
 
-**[Crude v0.1.0 is available](https://github.com/agenticcrude/crude/releases/tag/v0.1.0)**
-for Linux x86-64 and Windows x64. The commands below install the latest published
-release; [building from source](#build-from-source) remains available.
+The canonical repository is **[uoosef403/crude](https://github.com/uoosef403/crude)**.
+It currently has no published binary release. [Build from source](#build-from-source)
+until a verified Linux x86-64 / Windows x64 release is published there. The commands
+below require that repository to have a publicly accessible published release;
+the installers do not authenticate to private repositories.
 
 **Linux x86-64** — glibc 2.35+ (Ubuntu 22.04+ or equivalent), Bash, curl, GNU tar:
 
 ```bash
 installer=$(mktemp) &&
-  curl -fsSL https://github.com/agenticcrude/crude/releases/latest/download/install.sh -o "$installer" &&
+  curl -fsSL https://github.com/uoosef403/crude/releases/latest/download/install.sh -o "$installer" &&
   bash "$installer" --accept-beta-risk
 ```
 
@@ -68,7 +70,7 @@ installer=$(mktemp) &&
 
 ```powershell
 $installer = Join-Path $env:TEMP ('crude-install-' + [guid]::NewGuid() + '.ps1')
-Invoke-WebRequest https://github.com/agenticcrude/crude/releases/latest/download/install.ps1 -OutFile $installer -ErrorAction Stop
+Invoke-WebRequest https://github.com/uoosef403/crude/releases/latest/download/install.ps1 -OutFile $installer -ErrorAction Stop
 & $installer -AcceptBetaRisk
 ```
 

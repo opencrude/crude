@@ -1,6 +1,12 @@
 # Releases and installation
 
-> Status: Current guide — v0.1.0 is published for Linux/Windows amd64; native verification, actual package installation/reinstallation, and archive inspection passed for its exact source commit.
+> Status: Current guide. The canonical repository is uoosef403/crude, currently private with no published binary release. Historical verification below does not establish release availability there.
+
+Repository links, installer defaults and the public-install smoke workflow target
+`uoosef403/crude`. Source pushes preserve the repository's existing visibility.
+Public binary installation is unavailable until a verified release is published
+at a publicly accessible destination. Do not change visibility or treat a source
+push as release publication.
 
 ## Supported packages
 
@@ -111,29 +117,30 @@ builds/tests native archives, and creates a **draft only** with both packages,
 checksums and the installer scripts. Only the final draft job has contents:write.
 It never overwrites an existing release or silently promotes a prerelease.
 
-The first complete native verification is [run 39313929845](https://github.com/agenticcrude/crude/actions/runs/39313929845).
-Its successful checks apply to that exact commit, not to untested later source.
+The first complete historical native verification was run `39313929845` on the
+former hosting destination. Its successful checks apply to that exact commit,
+not to untested later source or the current repository's release availability.
 GitHub suppresses tag-push workflows when the source commit message contains a
 skip annotation such as `[skip ci]`. In that case explicitly dispatch the release
 workflow with the immutable tag selected as the ref; do not move the tag, select
 master instead, or bypass source validation.
 
-### v0.1.0 acceptance (2026-10-19)
+### Historical v0.1.0 acceptance (2026-10-19)
 
-[Crude v0.1.0](https://github.com/agenticcrude/crude/releases/tag/v0.1.0) is
-published from commit `984affa35c527db0020637af38e92558878e1f92`.
-[Release run 39319066535](https://github.com/agenticcrude/crude/actions/runs/39319066535)
+Crude v0.1.0 was published on the former hosting destination from commit
+`984affa35c527db0020637af38e92558878e1f92`. Historical release run `39319066535`
 passed all six source, native verification, native package build, and draft jobs.
+No release or asset was copied to the current repository by changing its URLs.
 The actual Windows ZIP passed installation/reinstallation (29 installer checks),
 and the actual Linux archive passed all ten installer checks. Both downloaded
 archives match SHA256SUMS and GitHub's recorded digests; their build stamps and
 native cgo/amd64 binaries identify the same source commit. Archive paths, notices,
 Linux runtime dependencies and Windows DLL imports were inspected before the
-reviewed draft was published. An anonymous latest-release lookup resolves all
+reviewed draft was published. An anonymous latest-release lookup then resolved all
 six assets. No macOS/ARM64/musl package or publisher-signature claim is implied.
 
-[Public install run 39327570783](https://github.com/agenticcrude/crude/actions/runs/39327570783)
-also passed real anonymous latest installation and explicit-tag reinstallation
+Historical public-install run `39327570783` also passed real anonymous latest
+installation and explicit-tag reinstallation
 on Linux, Windows PowerShell 5.1 and PowerShell 7. The first PowerShell 5.1 runner
 received HTTP 403 from GitHub's release-metadata API before installation; the
 unchanged smoke check passed on recheck. No token, release replacement, network
@@ -193,7 +200,7 @@ gh run view <run-id> --log-failed
 gh workflow run release.yml --ref <tag> -f tag=<tag>
 gh release view <tag>
 # After source/history audit, finished agents and a clean pushed checkout:
-gh repo edit agenticcrude/crude --visibility public --accept-visibility-change-consequences
+gh repo edit uoosef403/crude --visibility public --accept-visibility-change-consequences
 # Before binary publication, all native and release gates must also pass:
 gh release edit <tag> --draft=false
 ```

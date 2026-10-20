@@ -13,7 +13,7 @@ Dot-sourcing defines the installer functions without starting an installation.
 [CmdletBinding()]
 param(
     [string] $Version,
-    [string] $Repository = 'agenticcrude/crude',
+    [string] $Repository = 'uoosef403/crude',
     [string] $InstallDir,
     [switch] $NoPath,
     [switch] $AcceptBetaRisk
@@ -477,7 +477,7 @@ function Undo-CrudePath($Transaction) {
     }
 }
 
-function Install-Crude([string] $Version, [string] $Repository = 'agenticcrude/crude', [string] $InstallDir, [switch] $NoPath, [switch] $AcceptBetaRisk) {
+function Install-Crude([string] $Version, [string] $Repository = 'uoosef403/crude', [string] $InstallDir, [switch] $NoPath, [switch] $AcceptBetaRisk) {
     $ErrorActionPreference = 'Stop'
     Assert-CrudePlatform
     if ($Repository -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$') { throw 'Repository must be a public GitHub owner/repository name.' }
