@@ -76,8 +76,12 @@ Windows detached-core startup clears the Ctrl+C-ignore policy inherited from
 `CREATE_NEW_PROCESS_GROUP` before creating any PTY children; it does not attach
 to a shell console or sacrifice core independence. A real detached-core RPC
 regression interrupts an unmodified native PowerShell foreground command.
-ConPTY supplies that child's standard console handles; the launcher must not set
-`STARTF_USESTDHANDLES` with null handles or inherit unrelated parent handles.
+Both ConPTY launchers set `STARTF_USESTDHANDLES` with `INVALID_HANDLE_VALUE` for
+all three streams and disable general handle inheritance. This lets ConPTY supply
+console handles instead of Windows duplicating redirected host streams, including
+the detached core's log and a test runner's output pipes. See the
+[Windows Terminal discussion](https://github.com/microsoft/terminal/discussions/15814)
+and [Vim's same-path correction](https://github.com/vim/vim/pull/19589).
 ConPTY's process waiter closes the pseudoconsole exactly once on natural exit
 while the reader drains final output. Only after EOF and parsing does the
 manager publish exited state. Natural completion and interruption therefore do

@@ -92,7 +92,7 @@ func TestDetachedCorePTYInterruptsNativeForegroundCommand(t *testing.T) {
 	for !strings.Contains(text(read()), "DETACHED_CONTROL_READY") {
 		if time.Now().After(deadline) {
 			p := read()
-			t.Fatalf("native foreground command never became ready: info=%+v text=%q", p.Info, text(p))
+			t.Fatalf("native foreground command never became ready: info=%+v generation=%d error=%q synchronized=%t text=%q", p.Info, p.Generation, p.Error, p.Grid.Synchronized, text(p))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

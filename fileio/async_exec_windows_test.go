@@ -29,6 +29,31 @@ func TestWindowsAgentCommandsNeverAttachAVisibleConsole(t *testing.T) {
 	}
 }
 
+func TestWindowsInteractiveConsoleStreamsAreCaptured(t *testing.T) {
+	manager := NewAsyncCommandManager()
+	defer manager.CloseAndWait()
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	result, err := manager.StartInteractive(ctx, InteractiveOptions{
+		Command: "echo INTERACTIVE_STDOUT_READY&echo INTERACTIVE_STDERR_READY 1>&2",
+		Shell:   "cmd.exe", TTY: true, CWD: t.TempDir(),
+	}, 100*time.Millisecond, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := result.Output
+	for result.ExitCode == nil {
+		result, err = manager.WriteInteractive(ctx, result.SessionID, "", 100*time.Millisecond, 1000)
+		if err != nil {
+			t.Fatalf("interactive console never completed: output=%q error=%v", output, err)
+		}
+		output += result.Output
+	}
+	if *result.ExitCode != 0 || !strings.Contains(output, "INTERACTIVE_STDOUT_READY") || !strings.Contains(output, "INTERACTIVE_STDERR_READY") {
+		t.Fatalf("interactive console output escaped capture: exit=%d output=%q", *result.ExitCode, output)
+	}
+}
+
 func TestWindowsWingetOutputStaysInCapturedCommandChannel(t *testing.T) {
 	if _, err := exec.LookPath("winget.exe"); err != nil {
 		t.Skip("winget is not installed")

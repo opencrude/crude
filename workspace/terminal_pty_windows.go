@@ -120,9 +120,14 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 
 	startupInfo := &windows.StartupInfoEx{
 		StartupInfo: windows.StartupInfo{
-			// The pseudoconsole supplies the child's console handles. Passing
-			// STARTF_USESTDHANDLES here would explicitly replace them with zeros.
-			Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
+			// ConPTY replaces invalid standard handles with its console streams.
+			// Without this flag Windows duplicates redirected host handles even
+			// when CreateProcess handle inheritance is disabled.
+			Cb:        uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
+			Flags:     windows.STARTF_USESTDHANDLES,
+			StdInput:  windows.InvalidHandle,
+			StdOutput: windows.InvalidHandle,
+			StdErr:    windows.InvalidHandle,
 		},
 		ProcThreadAttributeList: attrList.List(),
 	}
