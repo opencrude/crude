@@ -1,12 +1,8 @@
 # Releases and installation
 
-> Status: Current guide. The canonical repository is uoosef403/crude. Builds and publication are manual; automatic GitHub Actions is disabled. Release notes state the exact platform inventory and validation limits.
+> Status: Current guide for installation and release maintenance.
 
-Repository links, installer defaults and the public-install smoke workflow target
-`uoosef403/crude`. Repository visibility is a separate explicit user choice, never
-a side effect of a build or push. Public installers require a publicly accessible
-published release. Source pushes and historical verification do not establish
-that a binary release exists.
+[Download the latest release](https://github.com/uoosef403/crude/releases/latest).
 
 ## Supported packages
 
@@ -19,10 +15,6 @@ No macOS, ARM64, 32-bit or Alpine/musl release artifacts are advertised. The
 embedded terminal requires cgo; a stub-only build is not a release. See
 [native dependency bootstrap](../../deps/README.md) and
 [terminal contracts](../reference/in-app-terminals.md).
-
-The current local publication is Linux-only. A prior full Windows suite failed
-after its terminal preflight passed, and its exact failure log was unavailable.
-No Windows package is published until that separate native acceptance is resolved.
 
 The single build tool is `scripts/release.py`: native `build --version <tag>`
 requires a clean committed tree, baseline-CPU stamped native Ghostty library and cgo, injects
@@ -104,8 +96,8 @@ two-platform matrix checker; do not weaken it or invent a Windows artifact to
 publish one platform.
 
 Inspect archive paths, notices, source/build identity and dynamic requirements.
-Publish only platforms actually built and validated natively. State missing
-platforms, known unrelated failures and any unrun acceptance in release notes.
+Publish only platforms actually built and validated natively. Keep release notes
+brief and product-focused; retain detailed validation evidence separately.
 Audit source/history, push the exact source and immutable tag, create a draft
 with explicit assets, download it and verify hashes, then publish it deliberately
 using `gh release edit`. Local artifacts are not a release until the uploaded
@@ -137,12 +129,6 @@ suite also limits package parallelism to two to avoid concurrent instrumented
 SQLite suites exhausting their existing time budgets. No durability or test gate
 is disabled or raised.
 
-Session database initialization creates the complete current schema in one
-transaction, with rollback on validation failure. It no longer reparses the
-schema through repeated legacy `ALTER TABLE` attempts on every open. Existing
-current-format databases retain their schema and content; outdated databases
-require backed-up manual alignment, never an automatic upgrade.
-
 `native-preflight.yml` is a manual Linux/Windows regression check for release
 repairs. Run it on a repair branch before rerunning the complete verification;
 it exercises the failing path/watch/control/recovery cases three times and both
@@ -154,34 +140,6 @@ commit must match, and be reachable from master. It runs the same verification,
 builds/tests native archives, and creates a **draft only** with both packages,
 checksums and the installer scripts. Only the final draft job has contents:write.
 It never overwrites an existing release or silently promotes a prerelease.
-
-The first complete historical native verification was run `39313929845` on the
-former hosting destination. Its successful checks apply to that exact commit,
-not to untested later source or the current repository's release availability.
-Historical tag-push workflows could be suppressed by `[skip ci]`. Current source
-has no tag-push trigger at all. A deliberate dispatch still requires the immutable
-tag as its ref; do not move the tag, select master instead or misattribute checks.
-
-### Historical v0.1.0 acceptance (2026-10-19)
-
-Crude v0.1.0 was published on the former hosting destination from commit
-`984affa35c527db0020637af38e92558878e1f92`. Historical release run `39319066535`
-passed all six source, native verification, native package build, and draft jobs.
-No release or asset was copied to the current repository by changing its URLs.
-The actual Windows ZIP passed installation/reinstallation (29 installer checks),
-and the actual Linux archive passed all ten installer checks. Both downloaded
-archives match SHA256SUMS and GitHub's recorded digests; their build stamps and
-native cgo/amd64 binaries identify the same source commit. Archive paths, notices,
-Linux runtime dependencies and Windows DLL imports were inspected before the
-reviewed draft was published. An anonymous latest-release lookup then resolved all
-six assets. No macOS/ARM64/musl package or publisher-signature claim is implied.
-
-Historical public-install run `39327570783` also passed real anonymous latest
-installation and explicit-tag reinstallation
-on Linux, Windows PowerShell 5.1 and PowerShell 7. The first PowerShell 5.1 runner
-received HTTP 403 from GitHub's release-metadata API before installation; the
-unchanged smoke check passed on recheck. No token, release replacement, network
-bypass or product timeout change was used to make that check pass.
 
 `public-install-smoke.yml` performs post-publication checks on standard Linux and
 Windows runners, including Windows PowerShell 5.1 and PowerShell 7. It downloads
@@ -196,7 +154,7 @@ Before any public launch:
    and no outstanding process/capture/editor changes left to arrive.
 2. Review the complete diff, run the [validation gates](validation.md), and verify
    every platform included in the release. Do not skip failures or raise
-   test/performance limits. Omit unverified platforms and state that explicitly.
+   test/performance limits.
 3. Audit tracked content **and Git history** for secrets/private data. Review
    findings; never make a genuine credential public or rewrite history without
    deliberate approval. `.gitleaksignore` contains only five exact, reviewed
@@ -206,10 +164,8 @@ Before any public launch:
    artifacts to make the source tree look tidy. Source archives contain tracked
    files, not ignored build directories.
 5. Commit and push every reviewed change. Check git status is empty and HEAD is
-   exactly origin/master. The audited source may become public at this point;
-   that is **not** a binary release or certification. Retain successful local
-   native checks for every included platform. Optional hosted checks require an
-   explicit dispatch after Actions is deliberately enabled.
+   exactly origin/master. Retain successful native checks for every included
+   platform.
 6. Choose the version and release notes. Tag only that reviewed commit; inspect
    the resulting draft, archive notices, installer risk/setup output and native
    install/update results. Verify no newer local/remote changes appeared.
@@ -218,17 +174,8 @@ Before any public launch:
    binary out. A successful earlier release does not attest that a later source
    commit or package has passed those gates.
 
-### No-payment public CI
-
-[GitHub's billing policy](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
-provides free standard GitHub-hosted runner usage for public repositories. Private
-repositories have an included quota; reaching it without a payment method blocks
-usage. These workflows use only standard ubuntu-22.04/windows-2022 runners, never
-paid larger runners, and do not change billing, payment methods or budgets.
-Artifact/cache storage has separate allowances; release artifacts are short-lived
-(14 days) and no increased storage limit is configured. Do not enable paid
-overages to make this project build. GitHub-side/account startup failures still
-need explicit resolution; source visibility alone is not proof that CI ran.
+Optional hosted builds use standard ubuntu-22.04/windows-2022 runners only.
+Do not enable paid runners or overages.
 
 Useful human-operated commands (substitute the reviewed tag/commit):
 
@@ -237,8 +184,6 @@ gh run list --workflow tui.yml
 gh run view <run-id> --log-failed
 gh workflow run release.yml --ref <tag> -f tag=<tag>
 gh release view <tag>
-# After source/history audit, finished agents and a clean pushed checkout:
-gh repo edit uoosef403/crude --visibility public --accept-visibility-change-consequences
 # After local native validation, exact asset/tag review and draft download checks:
 gh release edit <tag> --draft=false
 ```

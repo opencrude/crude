@@ -52,31 +52,7 @@ a local screenshot fixture, not a claim of a live model's output.
 
 ## Install or update
 
-The canonical repository is **[uoosef403/crude](https://github.com/uoosef403/crude)**.
-Binary releases are built and published manually. Check the
-[release inventory and validation notes](https://github.com/uoosef403/crude/releases)
-for each version; a Linux package does not imply a Windows package is available.
-GitHub Actions is disabled, and source workflows have no automatic push, pull-request
-or tag triggers.
-
-**Linux x86-64** — glibc 2.35+ (Ubuntu 22.04+ or equivalent), Bash, curl, GNU tar:
-
-```bash
-installer=$(mktemp) &&
-  curl -fsSL https://github.com/uoosef403/crude/releases/latest/download/install.sh -o "$installer" &&
-  bash "$installer" --accept-beta-risk
-```
-
-**Windows x64:** use the [native source build](#build-from-source) until a release
-explicitly includes a verified Windows package. The local Linux-only release does
-not include Windows binaries or installers; the last full native Windows test run
-has an unresolved failure despite its terminal regression preflight passing.
-
-Read the script before running it if you prefer. No Go, Zig or administrator
-rights are needed for the binary install. The same command updates Crude, verifies
-the release archive's SHA-256, and preserves application data. Latest selects a
-non-prerelease release; use `--version vX.Y.Z-beta.1` / `-Version vX.Y.Z-beta.1`
-for a specific beta. macOS, ARM64 and Alpine/musl release packages are not offered.
+[Download the latest release](https://github.com/uoosef403/crude/releases/latest).
 
 Open a fresh terminal, run `crude` in your project, and add a provider account in
 **Tools → Settings → Accounts**. Select its model under **Agents**. Use
@@ -115,8 +91,6 @@ The source is documented for **agents to hack on as readily as humans**.
 Start with [AGENTS.md](AGENTS.md) for repository rules, the
 [documentation index](docs/README.md) for architecture and contracts, and
 [validation](docs/guides/validation.md) for test/lint/design/performance gates.
-[Release requirements](docs/guides/releases.md) describe the native build matrix,
-installer options and publication checklist. A green build is not a safety guarantee.
 
 **License:** Crude's original code is **Apache-2.0**. Third-party code retains its
 own licenses; see [NOTICE](NOTICE), [Codex attribution](codexio/NOTICE) and the
