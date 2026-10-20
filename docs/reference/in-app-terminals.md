@@ -76,6 +76,8 @@ Windows detached-core startup clears the Ctrl+C-ignore policy inherited from
 `CREATE_NEW_PROCESS_GROUP` before creating any PTY children; it does not attach
 to a shell console or sacrifice core independence. A real detached-core RPC
 regression interrupts an unmodified native PowerShell foreground command.
+ConPTY supplies that child's standard console handles; the launcher must not set
+`STARTF_USESTDHANDLES` with null handles or inherit unrelated parent handles.
 ConPTY's process waiter closes the pseudoconsole exactly once on natural exit
 while the reader drains final output. Only after EOF and parsing does the
 manager publish exited state. Natural completion and interruption therefore do
