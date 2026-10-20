@@ -53,10 +53,11 @@ a local screenshot fixture, not a claim of a live model's output.
 ## Install or update
 
 The canonical repository is **[uoosef403/crude](https://github.com/uoosef403/crude)**.
-It currently has no published binary release. [Build from source](#build-from-source)
-until a verified Linux x86-64 / Windows x64 release is published there. The commands
-below require that repository to have a publicly accessible published release;
-the installers do not authenticate to private repositories.
+Binary releases are built and published manually. Check the
+[release inventory and validation notes](https://github.com/uoosef403/crude/releases)
+for each version; a Linux package does not imply a Windows package is available.
+GitHub Actions is disabled, and source workflows have no automatic push, pull-request
+or tag triggers.
 
 **Linux x86-64** — glibc 2.35+ (Ubuntu 22.04+ or equivalent), Bash, curl, GNU tar:
 
@@ -66,13 +67,10 @@ installer=$(mktemp) &&
   bash "$installer" --accept-beta-risk
 ```
 
-**Windows x64** — Windows 10 1809+ / Windows 11, PowerShell 5.1+:
-
-```powershell
-$installer = Join-Path $env:TEMP ('crude-install-' + [guid]::NewGuid() + '.ps1')
-Invoke-WebRequest https://github.com/uoosef403/crude/releases/latest/download/install.ps1 -OutFile $installer -ErrorAction Stop
-& $installer -AcceptBetaRisk
-```
+**Windows x64:** use the [native source build](#build-from-source) until a release
+explicitly includes a verified Windows package. The local Linux-only release does
+not include Windows binaries or installers; the last full native Windows test run
+has an unresolved failure despite its terminal regression preflight passing.
 
 Read the script before running it if you prefer. No Go, Zig or administrator
 rights are needed for the binary install. The same command updates Crude, verifies

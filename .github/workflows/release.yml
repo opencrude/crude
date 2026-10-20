@@ -1,11 +1,8 @@
 name: Release
 
-# Dispatch with the immutable tag selected as ref when a temporary [skip ci]
-# source commit suppresses the tag-push event. Source validation below still
-# requires that exact tag commit; dispatch never substitutes master for it.
+# Optional manual build: dispatch with the immutable tag selected as ref.
+# Pushes, pull requests and tags never start this workflow automatically.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:

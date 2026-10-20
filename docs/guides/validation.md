@@ -9,12 +9,16 @@ passing.
 
 ## Gates
 
-CI (`.github/workflows/tui.yml`, reusable `.github/workflows/verify.yml`) runs
+Optional manual CI (`.github/workflows/tui.yml`, reusable
+`.github/workflows/verify.yml`) runs
 Linux workflow/installer checks, full-repo lint, design/docs/performance gates,
 build, full tests and full race tests. A native Windows job builds/tests with
 cgo and exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these
 checks; see [releases](releases.md). Native CI configuration is not proof that
-the corresponding run has passed.
+the corresponding run has passed. Push, pull-request and tag triggers are removed;
+repository Actions is disabled. Local checks and manual publication do not require
+a hosted workflow. Explicitly re-enable Actions before deliberately dispatching
+one; see the [manual release path](releases.md#manual-local-publication).
 Locally:
 
 ```bash

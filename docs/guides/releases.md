@@ -1,24 +1,28 @@
 # Releases and installation
 
-> Status: Current guide. The canonical repository is uoosef403/crude, currently private with no published binary release. Historical verification below does not establish release availability there.
+> Status: Current guide. The canonical repository is uoosef403/crude. Builds and publication are manual; automatic GitHub Actions is disabled. Release notes state the exact platform inventory and validation limits.
 
 Repository links, installer defaults and the public-install smoke workflow target
-`uoosef403/crude`. Source pushes preserve the repository's existing visibility.
-Public binary installation is unavailable until a verified release is published
-at a publicly accessible destination. Do not change visibility or treat a source
-push as release publication.
+`uoosef403/crude`. Repository visibility is a separate explicit user choice, never
+a side effect of a build or push. Public installers require a publicly accessible
+published release. Source pushes and historical verification do not establish
+that a binary release exists.
 
 ## Supported packages
 
 | Package | Build host | End-user requirements |
 |---|---|---|
-| Linux amd64 | Ubuntu 22.04, native cgo + pinned libghostty-vt | x86-64, glibc 2.35+, Bash, curl, GNU tar and coreutils |
-| Windows amd64 | Windows Server 2022, native cgo + Zig | Windows x64 with ConPTY, PowerShell 5.1+; Windows Terminal recommended |
+| Linux amd64 | Native Linux, cgo + pinned baseline-CPU libghostty-vt | x86-64, glibc 2.35+ policy baseline, Bash, curl, GNU tar and coreutils; inspect each local binary's actual symbol requirements |
+| Windows amd64 | Native Windows, cgo + Zig | Windows x64 with ConPTY, PowerShell 5.1+; only available when included and verified in that release |
 
 No macOS, ARM64, 32-bit or Alpine/musl release artifacts are advertised. The
 embedded terminal requires cgo; a stub-only build is not a release. See
 [native dependency bootstrap](../../deps/README.md) and
 [terminal contracts](../reference/in-app-terminals.md).
+
+The current local publication is Linux-only. A prior full Windows suite failed
+after its terminal preflight passed, and its exact failure log was unavailable.
+No Windows package is published until that separate native acceptance is resolved.
 
 The single build tool is `scripts/release.py`: native `build --version <tag>`
 requires a clean committed tree, baseline-CPU stamped native Ghostty library and cgo, injects
@@ -79,9 +83,43 @@ checksums and file operations while intercepting transport. Native release jobs
 also install/repeat the actual platform package. Portable PowerShell fixtures do
 not establish native Windows registry, executable-lock or ConPTY acceptance.
 
-## GitHub workflow and publication gate
+## Manual local publication
 
-`.github/workflows/tui.yml` calls `.github/workflows/verify.yml` on PRs and pushes.
+Build the native platform on the local machine from a clean, committed checkout:
+
+```bash
+. scripts/libghostty_env.sh
+go test ./... -count=1 -timeout=180s
+golangci-lint run ./...
+make design-audit docs-check bench-gate
+python scripts/test_race.py
+python scripts/release.py build --version v0.1.1 --output /absolute/release-dir
+```
+
+Install the pinned notice collector (`go-licenses` v2.0.1) before packaging.
+For a Linux-only release, copy that archive's `.sha256` file to `SHA256SUMS`, then
+run `scripts/test_install.py` with `--release-dir /absolute/release-dir` and
+`--release-version v0.1.1`. The existing `combine` command remains the strict
+two-platform matrix checker; do not weaken it or invent a Windows artifact to
+publish one platform.
+
+Inspect archive paths, notices, source/build identity and dynamic requirements.
+Publish only platforms actually built and validated natively. State missing
+platforms, known unrelated failures and any unrun acceptance in release notes.
+Audit source/history, push the exact source and immutable tag, create a draft
+with explicit assets, download it and verify hashes, then publish it deliberately
+using `gh release edit`. Local artifacts are not a release until the uploaded
+assets and exact tag are verified. Never overwrite a prior release or move a tag.
+
+## Optional manual GitHub workflows
+
+Repository Actions is disabled, including generated hosted workflows. No jobs
+start on pushes, PRs or tag creation. The source workflows are manual-only so
+re-enabling Actions does not restore automatic CI/CD. Re-enable it only for an
+explicitly requested dispatch; local publication needs no Actions runs.
+
+When deliberately dispatched, `.github/workflows/tui.yml` calls
+`.github/workflows/verify.yml`.
 Linux runs lint, design/docs/performance gates, build, full tests and full race
 tests. Windows builds/tests with native cgo and runs installer fixtures on both
 Windows PowerShell 5.1 and PowerShell 7. Actions are pinned by SHA; Zig downloads
@@ -110,8 +148,8 @@ repairs. Run it on a repair branch before rerunning the complete verification;
 it exercises the failing path/watch/control/recovery cases three times and both
 native Windows installer shells. It does not replace the full publication gate.
 
-`.github/workflows/release.yml` accepts v-prefixed tags (or an existing tag through
-workflow_dispatch with **that tag selected as the ref**). Tag and verification
+`.github/workflows/release.yml` accepts an existing v-prefixed tag through
+workflow_dispatch with **that tag selected as the ref**. Tag and verification
 commit must match, and be reachable from master. It runs the same verification,
 builds/tests native archives, and creates a **draft only** with both packages,
 checksums and the installer scripts. Only the final draft job has contents:write.
@@ -120,10 +158,9 @@ It never overwrites an existing release or silently promotes a prerelease.
 The first complete historical native verification was run `39313929845` on the
 former hosting destination. Its successful checks apply to that exact commit,
 not to untested later source or the current repository's release availability.
-GitHub suppresses tag-push workflows when the source commit message contains a
-skip annotation such as `[skip ci]`. In that case explicitly dispatch the release
-workflow with the immutable tag selected as the ref; do not move the tag, select
-master instead, or bypass source validation.
+Historical tag-push workflows could be suppressed by `[skip ci]`. Current source
+has no tag-push trigger at all. A deliberate dispatch still requires the immutable
+tag as its ref; do not move the tag, select master instead or misattribute checks.
 
 ### Historical v0.1.0 acceptance (2026-10-19)
 
@@ -158,7 +195,8 @@ Before any public launch:
 1. All contributing agents must have finished, their exact final reports reviewed,
    and no outstanding process/capture/editor changes left to arrive.
 2. Review the complete diff, run the [validation gates](validation.md), and verify
-   both native platforms. Do not skip failures or raise test/performance limits.
+   every platform included in the release. Do not skip failures or raise
+   test/performance limits. Omit unverified platforms and state that explicitly.
 3. Audit tracked content **and Git history** for secrets/private data. Review
    findings; never make a genuine credential public or rewrite history without
    deliberate approval. `.gitleaksignore` contains only five exact, reviewed
@@ -168,10 +206,10 @@ Before any public launch:
    artifacts to make the source tree look tidy. Source archives contain tracked
    files, not ignored build directories.
 5. Commit and push every reviewed change. Check git status is empty and HEAD is
-   exactly origin/master. The audited source may become public at this point to
-   use free standard GitHub-hosted Linux/Windows runners; that is **not** a binary
-   release or certification. Inspect successful GitHub Linux **and** Windows runs
-   before proceeding to release publication.
+   exactly origin/master. The audited source may become public at this point;
+   that is **not** a binary release or certification. Retain successful local
+   native checks for every included platform. Optional hosted checks require an
+   explicit dispatch after Actions is deliberately enabled.
 6. Choose the version and release notes. Tag only that reviewed commit; inspect
    the resulting draft, archive notices, installer risk/setup output and native
    install/update results. Verify no newer local/remote changes appeared.
@@ -201,7 +239,7 @@ gh workflow run release.yml --ref <tag> -f tag=<tag>
 gh release view <tag>
 # After source/history audit, finished agents and a clean pushed checkout:
 gh repo edit uoosef403/crude --visibility public --accept-visibility-change-consequences
-# Before binary publication, all native and release gates must also pass:
+# After local native validation, exact asset/tag review and draft download checks:
 gh release edit <tag> --draft=false
 ```
 
