@@ -4,6 +4,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import tarfile
 import tempfile
 import unittest
@@ -74,6 +75,22 @@ class ReleaseTests(unittest.TestCase):
         (self.stage / "LICENSE-APACHE").unlink()
         with self.assertRaises(ValueError):
             release.package(self.stage, self.output, "v0.1.0", "linux")
+
+    def test_workflows_do_not_run_on_push_pull_request_or_tag(self):
+        expected = {
+            "tui.yml": {"workflow_dispatch"},
+            "release.yml": {"workflow_dispatch"},
+            "native-preflight.yml": {"workflow_dispatch"},
+            "public-install-smoke.yml": {"workflow_dispatch"},
+            "verify.yml": {"workflow_call"},
+        }
+        workflows = release.ROOT / ".github/workflows"
+        self.assertEqual({path.name for path in workflows.glob("*.yml")}, set(expected))
+        for name, triggers in expected.items():
+            with self.subTest(workflow=name):
+                text = (workflows / name).read_text()
+                events = text.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+                self.assertEqual(set(re.findall(r"^  ([a-z_]+):", events, re.MULTILINE)), triggers)
 
 
 if __name__ == "__main__":
