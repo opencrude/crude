@@ -91,6 +91,58 @@ bottom-anchored actions; narrow screens stack actions below results. The retaine
 Settings frame never resizes or moves because an editor opened. Back/Esc handles
 navigation and exact discard decisions; × and Close close the whole window.
 
+### First-use profile choices and AI setup
+
+The selected core owns two application-only choices under `onboarding`:
+
+- `introduction_completed` records introduction completion.
+- `ai_setup_reminder_hidden` suppresses proactive AI setup reminders.
+
+Both choices use the existing sparse field-edit save path.
+They have no workspace or session override, separate setup database, trust database, or configuration revision gate.
+Local and remote cores keep their own choices and accounts.
+
+Introduction eligibility uses committed profile metadata before startup writes.
+A saved completion, saved account, or saved workspace directory identifies previous use.
+An absent flag or an empty configuration object alone does not identify previous use.
+The metadata check does not open workspace databases or inspect project trees.
+Unreadable or malformed configuration remains a repair condition, not proof of first use.
+
+A new profile shows one native introduction with four feature rows and **Let's go!**.
+That button opens the shared native folder picker directly at the launch folder.
+The picker confirms the current root unless the user highlights another folder.
+The completion save runs off the UI thread and does not block folder selection.
+A failed save remains visible and passes to the attached shell as an operational issue.
+The introduction can appear again if persistence fails.
+
+Esc before **Let's go!** quits without completion.
+Picker cancellation returns to detached project selection, not an attached launch-folder workspace.
+Project attachment precedes AI setup guidance.
+Established project launches keep the current workspace home, controls, and services.
+Existing in-project switch confirmation and dirty-work protection remain unchanged.
+See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for navigation-only locations and request bounds.
+
+After attachment, a shell can show **Set up AI** when no saved account exists.
+The reminder reads committed state and appears at most once per shell launch.
+It has exactly two buttons: **Do not show this again** and **OK**.
+OK has initial focus and opens the native Add Account form directly.
+Esc defers setup without suppression.
+Suppression closes the reminder only after a successful application preference save.
+
+Suppression hides proactive reminders only.
+An explicit New Session action still receives typed missing-account or missing-model guidance and offers the matching setup action.
+Missing accounts lead directly to Add Account, not the Accounts catalog.
+A saved account without a Main Agent model leads to Main Agent settings.
+Neither condition creates session artifacts.
+Historical-session account repair and request attribution remain unchanged.
+
+Only this setup route continues from successful account Save to the Main Agent model draft.
+The draft offers the new account without saving a role choice.
+**Apply agent** stages the explicit model choice, and ordinary Settings **Save** persists it.
+Account or model errors retain the correct draft, and cancellation leaves project files available.
+Setup neither creates a session nor starts inference or retries a failed action automatically.
+Normal authentication and model-list requests retain their existing behavior.
+
 ### Durable startup and operational recovery
 
 Invalid or missing selected accounts, invalid connections or credentials,
@@ -101,11 +153,14 @@ reason, helpful repair guidance, and an explicit Accounts/Main Agent/Network or
 Edit config file action. Close/Esc dismisses without a retry, fallback account,
 reset, or data loss. Long details remain complete, copyable and scrollable.
 
-The same evidence is recorded independently in Notices; opening Notices is
-optional. Failed New Session/Resume never annotates the launcher button or tells
-users to inspect Notices to find the reason. The launcher remains intact beneath
-the modal. Failed registration releases unstarted backend workers and leaves
-saved conversations/pending inputs with their session owner.
+The same evidence is recorded independently in Notices.
+Opening Notices is optional.
+New Session with missing configuration opens the matching native setup form, as specified above.
+Other New Session and Resume failures show the recovery dialog.
+Neither path adds an error to the launcher button or requires Notices to find the reason.
+The launcher remains intact beneath the modal.
+Failed registration releases unstarted backend workers.
+Saved conversations and pending inputs stay with their session owner.
 
 Configuration loading understands only current-schema fields. Unknown or
 wrong-type ordinary leaves are ignored independently; valid neighbors remain
@@ -316,8 +371,8 @@ before use. Model discovery, if offered in an agent/model picker, is scoped to
 the selected account; stale auth and model results must not cross account
 boundaries. Credentials remain application-only and do not enter workspace or
 session data. Older or disconnected session history remains readable and asks
-for an explicit account before sending another turn. Creating a session without
-an account presents a setup warning. There is no automatic legacy credential
+for an explicit account before sending another turn. A New Session action without
+an account presents the explicit setup guidance described above. There is no automatic legacy credential
 migration path; existing local credentials must be explicitly transferred or
 re-entered.
 

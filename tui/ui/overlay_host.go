@@ -18,6 +18,7 @@ const (
 	OverlayFindReplace       OverlayID = "find-replace"
 	OverlayDirtyClose        OverlayID = "dirty-close-prompt"
 	OverlayOperationIssue    OverlayID = "operation-issue"
+	OverlayAISetup           OverlayID = "ai-setup-reminder"
 	OverlayAgentPrompt       OverlayID = "agent-prompt"
 	OverlayTabStats          OverlayID = "tab-stats"
 	OverlayPromptHistory     OverlayID = "prompt-history"

@@ -60,6 +60,27 @@ func (w *Workspace) TakeStartupIssues() []types.OperationIssue {
 	w.startup.Issues = nil
 	return issues
 }
+
+// AddStartupIssues hands pre-attachment diagnostics to the ordinary shell
+// recovery surface. Identical configuration evidence is not shown twice.
+func (w *Workspace) AddStartupIssues(issues []types.OperationIssue) {
+	for _, issue := range issues {
+		if issue.Target == "" {
+			w.Status().Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "startup", Summary: issue.Title, Detail: issue.Detail, Transient: true})
+			continue
+		}
+		found := false
+		for _, prior := range w.startup.Issues {
+			if prior == issue {
+				found = true
+				break
+			}
+		}
+		if !found {
+			w.startup.Issues = append(w.startup.Issues, issue)
+		}
+	}
+}
 func (w *Workspace) LastRegistryError() error {
 	if w.startup.RegistryError != "" {
 		return errors.New(w.startup.RegistryError)

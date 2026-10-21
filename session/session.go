@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -351,6 +352,9 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
 		return nil, fmt.Errorf("provider standard: %w", err)
+	}
+	if strings.TrimSpace(mainCat.Model) == "" {
+		return nil, ErrModelRequired
 	}
 	if mainCat.ModelInputPrice > 0 {
 		provider.SetModelPrice(mainCat.Model, provider.ModelPrice{

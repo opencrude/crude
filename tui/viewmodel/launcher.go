@@ -85,8 +85,10 @@ func (m *App) launcherNewSession() tea.Cmd {
 	result := m.ws.NewAgentSession()
 	if result != nil && result.Error != "" {
 		if result.NeedsAccount {
-			m.showAccountRecovery(false, result.Error)
-			return nil
+			return m.openAISetup()
+		}
+		if result.NeedsModel {
+			return m.openApplicationMainAgent()
 		}
 		m.showOperationFailure("Session could not be created", result.Error)
 		return nil

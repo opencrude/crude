@@ -46,7 +46,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
 | Tabs | `ui.Tabs` only for actual content/mode tabs — consumers include `shelltabs` (main tab bar), `ui/panel_deck.go` (session deck), and `termdock` (compact numbered terminal instances). Provider templates use a table and focused editor, not tab pages. Application/Workspace scope is a two-option, background-selected `ui.ToggleButton` switch aligned on the same row as Save/Close; one full-width separator sits directly above that footer row. It is not a tab strip. The workspace panel has no duplicate destination strip; the footer owns dock switching. |
-| File picker entries | native `ui.List` |
+| File picker entries | Native `ui.Tree` with the shared file-tree row painter and `ScrollbarControl`. Startup and in-project pickers share [folder movement](interaction-matrix.md#shared-folder-picker-movement). |
 | Session picker | native `ui.List` section headers + `ScrollbarControl` (`tui/screens/sessionpicker`) |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |

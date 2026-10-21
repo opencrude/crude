@@ -17,6 +17,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | File | Sub-interface(s) | Concern |
 |------|------------------|---------|
 | `runtime.go` | `Runtime`, `WorkspaceStore` | identity, lifecycle, project switch, event wiring, DB identity token |
+| `startup.go` | `Startup` | Detached path inspection, bounded folder browsing and discovery, and sparse introduction/reminder saves. No workspace attachment is necessary. |
 | `agents.go` | `Agents` | agent inventory replica, turn control, blocking prompts, input admission |
 | `sessions.go` | `Sessions` | session registry replica, create/open, per-session settings |
 | `settings.go` | `Settings`, `ToolLayoutStore` | app/workspace settings, accounts, tool layout |
@@ -34,6 +35,11 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `local.go`, `local_delegates.go` | `Local`, `Unwrap` | in-process adapter over `*workspace.Workspace` |
 
 ## Conventions
+
+`tui/startup/` uses the separate `Startup` port before a project workspace exists.
+The connected implementation is `shellport/remote/startup.go`.
+Read [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for ownership, operations, and limits.
+Attached shells read committed setup state through the same selected core.
 
 - **Accessors replace fields.** Every former `Workspace` field the shell read is
   a zero-argument method with the same name (`RootPath()`, `AgentMgr()`,

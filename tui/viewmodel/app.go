@@ -239,6 +239,7 @@ type App struct {
 	thinkingLatch          map[*workspace.Session]bool
 	editorScreen           *shelleditor.Screen
 	launcherScreen         *launcher.Screen
+	onboarding             onboardingState
 	workspacesScreen       *workspacescreen.Screen
 	workspaceInfos         []workspace.WorkspaceInfo
 	workspaceListLoading   bool
@@ -609,7 +610,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
-	return tea.Batch(m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory())
+	return tea.Batch(m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.

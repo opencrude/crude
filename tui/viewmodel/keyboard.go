@@ -58,7 +58,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// key ownership keeps the explicit passthrough exceptions below.
 	if m.actionRegistry != nil {
 		if match := m.actionRegistry.MatchGlobal(msg); match != nil {
-			// Ctrl+O is also the folder picker's explicit "open this folder"
+			// Ctrl+O is also the folder picker's explicit selected-folder
 			// action. A focused modal owns that local contract; treating it as
 			// global "attach file" would replace the picker underneath it.
 			if m.windowManager != nil {

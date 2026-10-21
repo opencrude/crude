@@ -57,6 +57,25 @@ hundreds of cases into one package-wide budget.
 - Cross-platform code also needs `GOOS=windows`/`GOOS=darwin` builds of the
   affected packages. Cross-compilation is not native-platform acceptance.
 
+### Startup process acceptance
+
+Build a current binary before this Linux check:
+
+```sh
+go build -o "$CRUDE_TEMP_DIR/startup-check" .
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/startup_acceptance.py \
+  --binary "$CRUDE_TEMP_DIR/startup-check" \
+  --out "$CRUDE_TEMP_DIR/startup-process-evidence"
+```
+
+Use a new output directory for each run.
+The script uses private short profiles, a private tmux socket, and a loopback catalog.
+It checks first use, reminder suppression, path errors, malformed configuration, and exact-process crash recovery.
+It retains evidence and stops its owned processes, including after failure.
+It sends no inference request and uses no external credentials.
+Its text captures do not replace sequential native visual captures.
+Native Windows and distinct-host SSH checks remain separate.
+
 Never regenerate goldens, raise allocation ceilings or loosen a gate to land a
 regression. Update golden output only for an intentional, visually verified
 change.

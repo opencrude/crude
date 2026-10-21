@@ -122,9 +122,8 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
-- [Broad workspace UX and resource bounds](plans/broad-workspace-ux.md): planned
-  pre-workspace folder selection, small explicit settings, bounded background
-  work, and regression acceptance without weakening undo or restore safety.
+- [First-use acceptance handoff](plans/broad-workspace-ux.md): remaining native
+  Windows, distinct-host SSH, and reported memory-workload acceptance.
 - [Agent experience roadmap](plans/agent-experience-roadmap.md) — vision and
   ordered roadmap for survivable, economical, frictionless agent work: working-set
   budgets, background compaction, lazy tool families, search providers, fast mode.

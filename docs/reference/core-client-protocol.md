@@ -17,6 +17,58 @@ directory using atomic no-replace hard-link publication. Concurrent losers never
 replace the inode another shell is executing. Unsupported hard-link filesystems
 and invalid existing image type/size/mode return explicit staging failures.
 
+## Startup before workspace attachment
+
+The connected core can serve startup without a workspace attachment.
+The application owns profile metadata and saves through the existing settings owner.
+`tui/startup/` owns the detached introduction and project-selection screen.
+The current project layout, settings, and services remain unchanged.
+
+`projectpath/` resolves the candidate on the core host before the workspace factory runs.
+OS-known home and personal folders, filesystem roots, and volume roots are navigation locations only.
+The check uses directory identity, not a folder name or project-tree scan.
+Children of these locations, empty folders, and non-Git folders remain valid projects.
+Optional personal-folder configuration failures produce a warning, not a block on unrelated projects.
+
+Every attachment uses this admission check, including explicit paths, control clients, resume, and SSH.
+A refused attachment returns `project_folder_required` with an instruction to select a project folder.
+Interactive startup keeps path entry, breadcrumbs, previous projects, and bounded folder browsing available.
+An unavailable previous-project list does not block folder selection.
+Startup rechecks the selected path before attachment.
+
+A navigation location creates no workspace actor or database, Local History, LSP manager, project watcher, search catalog, Git work, session, or terminal.
+It also starts no memory job or workspace capability initialization.
+Saved top-level sessions and history remain unchanged and do not resume automatically.
+Selecting another project cancels the original startup resume intent.
+Previously attached work and peer shells remain unchanged.
+
+| Operation | Contract |
+|---|---|
+| `startup.inspect` | Return path classification, introduction eligibility, theme, profile choices, issues, and relevant previous-workspace metadata. No workspace creation. |
+| `startup.browse` | Read directory-only pages from a requested path. Offsets count raw entries, including files. |
+| `startup.catalog` | Discover directories for an explicit, non-empty picker query. Request-owned work reads no file contents. |
+| `startup.save` | Save only the two application-owned onboarding choices through sparse field edits. |
+| `startup.onboarding` | Read committed application settings and redacted accounts from the selected core. |
+
+| Startup boundary | Limit or policy |
+|---|---|
+| Directory read batch | 128 raw entries |
+| Browse page | 512 returned directories |
+| Browse scan | 100,000 raw entries per request, including skipped offsets |
+| Search catalog | 10,000 visited entries and 2 MiB of accounted path storage |
+| Detached picker retention | 4,096 directory entries across retained browsing rows |
+| Detached UI request | 20-second deadline with cancellation and owner checks |
+
+Browse offsets are best-effort cursors, not filesystem snapshots.
+Limit results show an explicit notice and preserve more-specific path navigation.
+Directory symlinks remain browsable, but catalog discovery does not follow them.
+The catalog skips dependency, build, Git, and Crude data directories.
+Shutdown cancels and joins started startup requests before attachment.
+These bounds do not establish native Windows or distinct-host SSH acceptance.
+
+See [settings](settings.md#first-use-profile-choices-and-ai-setup) for introduction and AI setup behavior.
+See [shared folder-picker movement](interaction-matrix.md#shared-folder-picker-movement) for input behavior.
+
 ## Ownership and attachment
 
 `core.Runtime` accepts an application-owned workspace factory and private SQLite
@@ -167,6 +219,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 
 | Family | Operations |
 |---|---|
+| Detached startup | `startup.inspect`, `.browse`, `.catalog`, `.save`, `.onboarding` |
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |

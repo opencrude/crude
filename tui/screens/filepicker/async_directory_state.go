@@ -18,10 +18,14 @@ type asyncDirectoryLoad struct {
 // pickerSnapshot is kept separate from the async record so restoring a failed
 // navigation never has to reconstruct a tree from disk.
 type pickerSnapshot struct {
-	current  string
-	model    *filetree.FileTreeModel
-	filter   string
-	selected map[string]bool
+	current      string
+	model        *filetree.FileTreeModel
+	browseModel  *filetree.FileTreeModel
+	entries      []Entry
+	searchActive bool
+	searchQuery  string
+	filter       string
+	selected     map[string]bool
 }
 
 // BeginAsyncDirectoryLoad enters a loading state for a root navigation. It
@@ -63,6 +67,8 @@ func (s *Screen) beginAsyncDirectoryLoad(path string, intent IntentToken) bool {
 	s.current = cleanAbs(path)
 	s.errText = asyncDirectoryLoadingText
 	s.filter.field.SetValue("")
+	s.searchActive = false
+	s.searchQuery = ""
 	s.installModel(filetree.NewPickerFileTreeModel(s.current, s.mode == ModeFolder))
 	s.sync()
 	return true
@@ -86,6 +92,7 @@ func (s *Screen) BeginAsyncDirectoryExpandFor(path string, intent IntentToken) b
 		snapshot = s.asyncLoad.snapshot
 	}
 	s.asyncLoad = &asyncDirectoryLoad{intent: intent, path: path, expand: true, snapshot: snapshot}
+	s.pendingChildPath = ""
 	s.errText = asyncDirectoryLoadingText
 	s.sync()
 	return true
@@ -108,8 +115,11 @@ func (s *Screen) CompleteAsyncDirectoryLoadFor(intent IntentToken, path string, 
 		return s.SetDirectoryChildren(path, entries)
 	}
 	s.current = cleanAbs(path)
+	s.entries = append(s.entries[:0], entries...)
 	s.errText = ""
 	s.filter.field.SetValue("")
+	s.searchActive = false
+	s.searchQuery = ""
 	s.installModel(filetree.NewPickerFileTreeModel(s.current, s.mode == ModeFolder))
 	s.model.SetDirectoryEntries(s.current, toTreeEntries(entries))
 	s.rebuildActions()
@@ -150,6 +160,9 @@ func (s *Screen) CancelAsyncDirectoryLoad() bool {
 	if s == nil || s.asyncLoad == nil {
 		return false
 	}
+	if s.asyncLoad.expand && s.model != nil {
+		s.model.SetDirectoryLoadError(s.asyncLoad.path)
+	}
 	s.restoreSnapshot(s.asyncLoad.snapshot)
 	return true
 }
@@ -158,8 +171,7 @@ func (s *Screen) CancelAsyncDirectoryLoadFor(intent IntentToken) bool {
 	if !s.matchesAsyncDirectoryLoad(intent) {
 		return false
 	}
-	s.restoreSnapshot(s.asyncLoad.snapshot)
-	return true
+	return s.CancelAsyncDirectoryLoad()
 }
 
 func (s *Screen) AsyncDirectoryLoading() bool {
@@ -180,6 +192,8 @@ func (s *Screen) currentSnapshot() pickerSnapshot {
 	}
 	return pickerSnapshot{
 		current: s.current, model: s.model, filter: filter,
+		browseModel: s.browseModel, entries: append([]Entry(nil), s.entries...),
+		searchActive: s.searchActive, searchQuery: s.searchQuery,
 		selected: cloneSelected(s.selected),
 	}
 }
@@ -188,7 +202,10 @@ func (s *Screen) restoreSnapshot(snapshot pickerSnapshot) {
 	s.discardAsyncDirectoryLoad()
 	s.current = snapshot.current
 	s.model = snapshot.model
-	s.browseModel = snapshot.model
+	s.browseModel = snapshot.browseModel
+	s.entries = append(s.entries[:0], snapshot.entries...)
+	s.searchActive = snapshot.searchActive
+	s.searchQuery = snapshot.searchQuery
 	s.selected = cloneSelected(snapshot.selected)
 	if s.model != nil {
 		s.configureModel()

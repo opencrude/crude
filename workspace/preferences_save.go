@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"crude/types"
 )
@@ -26,6 +27,12 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 	return func() PreferencesSaveResult {
 		result := PreferencesSaveResult{Scope: scope, AppSettings: defaults}
 		if scope == types.SettingsScopeWorkspace {
+			for _, edit := range edits {
+				if len(edit.Path) > 0 && edit.Path[0] == "onboarding" {
+					result.Err = fmt.Errorf("introduction and reminder choices belong to Application settings")
+					return result
+				}
+			}
 			if database != nil {
 				overrides, err := saveWorkspacePreferences(database, defaults, edits)
 				if err != nil {

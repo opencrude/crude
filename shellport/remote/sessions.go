@@ -46,12 +46,16 @@ func (w *Workspace) lifecycle(method string, payload any) *workspace.NewSessionR
 		var fault *coreprotocol.Fault
 		if errors.As(err, &fault) {
 			result.Error = fault.Message
+			result.NeedsAccount = fault.Code == "account_required"
+			result.NeedsModel = fault.Code == "model_required"
 		} else {
 			result.Error = err.Error()
 		}
 		return &result
 	}
-	w.pending.add(coreprotocol.Change{Sessions: true, Agents: []string{result.OrchID}})
+	if result.Error == "" {
+		w.pending.add(coreprotocol.Change{Sessions: true, Agents: []string{result.OrchID}})
+	}
 	return &result
 }
 

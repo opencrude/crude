@@ -115,6 +115,10 @@ func RunCore(opts CoreOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := runtime.SetStartupOwner(application); err != nil {
+		_ = runtime.Close()
+		return err
+	}
 	prompts, err := history.LoadFile(history.DefaultPath())
 	if err != nil {
 		lg.Warn("CORE", "history_load_failed", "error", err.Error())

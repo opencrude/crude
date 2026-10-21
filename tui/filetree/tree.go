@@ -334,6 +334,9 @@ type FileTreeModel struct {
 
 	// selectedPath is the absolute path of the currently selected node.
 	selectedPath string
+	// selectionCleared is an explicit opt-in to no row selection. Ordinary
+	// explorer models retain their default valid-row invariant.
+	selectionCleared bool
 
 	// cursorIndex is the current cursor position in the visibleNodes slice.
 	cursorIndex int
@@ -1000,6 +1003,12 @@ func (m *FileTreeModel) MoveUp() {
 // MoveDown moves the cursor down by one visible item.
 func (m *FileTreeModel) MoveDown() {
 	m.mu.Lock()
+	if m.selectionCleared {
+		m.setCursorIndexLocked(0)
+		m.clampViewportLocked()
+		m.mu.Unlock()
+		return
+	}
 	m.clampCursorLocked()
 	if m.cursorIndex < len(m.visibleNodes)-1 {
 		m.setCursorIndexLocked(m.cursorIndex + 1)
@@ -1018,6 +1027,16 @@ func (m *FileTreeModel) SelectedNode() *TreeNode {
 		return nil
 	}
 	return m.nodes[m.selectedPath]
+}
+
+// ClearSelection explicitly removes the row cursor until actual navigation or
+// selection. Structural rebuilds alone must not select another row.
+func (m *FileTreeModel) ClearSelection() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.selectionCleared = true
+	m.selectedPath = ""
+	m.cursorIndex = -1
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,9 +1076,17 @@ func (m *FileTreeModel) rebuildVisibleNodes() {
 //     then to the nearest row at the old cursor position;
 //   - scrollOffset is valid and keeps the cursor inside the viewport.
 //
+// Explicit ClearSelection opts out of the row invariant until navigation.
+//
 // Centralising this at the projection boundary prevents future mutation paths
 // from having to remember a separate cursor clamp. The caller must hold m.mu.
 func (m *FileTreeModel) reconcileSelectionLocked() {
+	if m.selectionCleared {
+		m.selectedPath = ""
+		m.cursorIndex = -1
+		m.clampViewportLocked()
+		return
+	}
 	if len(m.visibleNodes) == 0 {
 		m.cursorIndex = 0
 		m.selectedPath = m.rootPath
@@ -1111,6 +1138,7 @@ func (m *FileTreeModel) visibleIndexLocked(path string) int {
 // reconcile path-aware selection, but movement must remain safe even if a new
 // mutation path is added without doing so.
 func (m *FileTreeModel) clampCursorLocked() {
+	m.selectionCleared = false
 	if len(m.visibleNodes) == 0 {
 		m.cursorIndex = 0
 		m.selectedPath = m.rootPath
@@ -1141,6 +1169,9 @@ func (m *FileTreeModel) clampViewportLocked() {
 		vh = 10
 	}
 	m.clampScrollRangeLocked(vh)
+	if m.selectionCleared {
+		return
+	}
 	if m.cursorIndex < m.scrollOffset {
 		m.scrollOffset = m.cursorIndex
 	}
@@ -1735,6 +1766,7 @@ func (m *FileTreeModel) ExpandToPath(path string) bool {
 	m.rebuildVisibleNodes()
 	for i, n := range m.visibleNodes {
 		if n.Path == target {
+			m.selectionCleared = false
 			m.cursorIndex = i
 			m.selectedPath = target
 			m.updateScrollOffsetLocked()

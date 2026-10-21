@@ -18,6 +18,7 @@ import (
 
 type FileConfig struct {
 	raw             json.RawMessage
+	Onboarding      *ttypes.OnboardingSettings   `json:"onboarding,omitempty"`
 	Accounts        map[string]provider.Account  `json:"accounts,omitempty"`
 	TurnLogsEnabled *bool                        `json:"turn_logs_enabled,omitempty"`
 	Agents          *session.AgentsConfig        `json:"agents,omitempty"`
@@ -211,6 +212,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	s := ttypes.AppSettings{
 		Accounts: cloneAccounts(fc.Accounts),
 	}
+	if fc.Onboarding != nil {
+		s.Onboarding = *fc.Onboarding
+	}
 	if fc.Theme != nil {
 		s.Theme = *fc.Theme
 	}
@@ -262,6 +266,8 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	if fc == nil {
 		return
 	}
+	onboarding := s.Onboarding
+	fc.Onboarding = &onboarding
 	theme, editor, lsp, ui, memorySettings, safetySettings, historySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Memory, s.Safety, s.LocalHistory
 	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), s.Safety.CommandRules...)
 	fc.Theme = &theme

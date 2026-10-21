@@ -18,7 +18,7 @@ import (
 	"crude/workspace"
 )
 
-func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing.T) {
+func TestNewSessionWithoutAccountOpensAddAccountDirectly(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	wsOf(app).RootPath = t.TempDir()
 	wsOf(app).WorkspaceDir = t.TempDir()
@@ -40,10 +40,13 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 	if cmd := app.launcherNewSession(); cmd != nil {
 		t.Fatal("failed creation should not enqueue an agent")
 	}
-	if app.ws.AgentMgr().Count() != 0 || len(app.ws.Sessions()) != 0 || len(app.ws.SessionsByID()) != 0 || app.ActiveSession != priorSession || app.launcherScreen == nil || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
-		t.Fatal("failed creation must leave launcher intact and open recovery")
+	if app.ws.AgentMgr().Count() != 0 || len(app.ws.Sessions()) != 0 || len(app.ws.SessionsByID()) != 0 || app.ActiveSession != priorSession || app.launcherScreen == nil || app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
+		t.Fatal("setup must retain the launcher without creating a session or generic recovery dialog")
 	}
-	fw := app.windowManager.Window(string(ui.OverlayOperationIssue))
+	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
+	if fw == nil {
+		t.Fatal("New Session did not open Add Account")
+	}
 	cw, ok := fw.Content.(*ui.WindowFrameWidget)
 	if !ok {
 		t.Fatal("warning has no retained component frame")
@@ -54,27 +57,13 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 	buf := surface.NewCellBuffer(w, h)
 	cw.Host().Paint(buf)
 	painted := bufferPlain(buf)
-	for _, want := range []string{"Account required", "Add account", "Close"} {
+	for _, want := range []string{"Add account", "Account name", "Close"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("missing painted warning %q:\n%s", want, painted)
 		}
 	}
-	if !strings.Contains(painted, "is unavailable") || !strings.Contains(painted, "Add an account") {
-		t.Fatalf("recovery dialog omitted the exact account failure:\n%s", painted)
-	}
-	if app.operationIssue == nil {
-		t.Fatal("safe dismissal is not the default action")
-	}
-	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.ws.AgentMgr().Count() != 0 || app.launcherScreen == nil {
-		t.Fatal("dismissing warning must not create a session or lose launcher")
-	}
-
-	app.launcherNewSession()
-	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyLeft}))
-	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if !app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
-		t.Fatal("account action did not open application settings")
+	if strings.Contains(painted, "provider standard:") || strings.Contains(painted, "is unavailable") {
+		t.Fatalf("setup exposed an internal error:\n%s", painted)
 	}
 	settingsWindow := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	settingsWidget := settingsWidgetForTest(t, settingsWindow)
@@ -103,21 +92,9 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 	wsOf(app).SetAppDefaults(ttypes.AppSettings{Accounts: cfg.Accounts,
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{session.CategoryDefault: {Model: "test-model"}}}})
 	app.launcherNewSession()
-	if app.ws.AgentMgr().Count() != 0 || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
-		t.Fatal("missing Main Agent account did not keep launcher and show recovery")
+	if app.ws.AgentMgr().Count() != 0 || app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
+		t.Fatal("incomplete Main Agent setup must not create a session or generic dialog")
 	}
-	if fw := app.windowManager.Window(string(ui.OverlayOperationIssue)); fw != nil {
-		cw := fw.Content.(*ui.WindowFrameWidget)
-		w, h := fw.Size()
-		cw.Host().Resize(w, h)
-		cw.Host().Layout()
-		buf := surface.NewCellBuffer(w, h)
-		cw.Host().Paint(buf)
-		if !strings.Contains(bufferPlain(buf), "Open Main Agent") {
-			t.Fatal("existing saved accounts were treated as missing accounts")
-		}
-	}
-	app.handleOperationIssueAction(operationissue.ActionMsg{Screen: app.operationIssue.screen, Action: "repair"})
 	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	if fw == nil {
 		t.Fatal("Main Agent account action did not open settings")

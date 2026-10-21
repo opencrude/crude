@@ -299,13 +299,6 @@ func Main() int {
 		return code
 	}
 	resumeID := flags.Resume
-	if resumeID != "" && flags.SSHHost == "" {
-		resumeID, err = ResolveResumeID(home, projectDir, resumeID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "crude: %v\n", err)
-			return 1
-		}
-	}
 	// Do not load credentials, configure network policy or open session storage
 	// in the shell. All application state is owned by the connected core.
 	application := &App{home: home, projectDir: projectDir, resumeID: resumeID,

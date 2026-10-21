@@ -126,7 +126,8 @@ func (m SearchMsg) Intent() IntentToken {
 }
 
 func (m SearchMsg) ValidFor(target *Screen) bool {
-	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+	return m.Target == target && target != nil && (target.IsCurrentIntent(m.Epoch, m.Sequence) ||
+		(m.Query == "" && target.active && m.Epoch == target.openEpoch && m.Sequence != 0 && m.Sequence == target.searchClearSeq))
 }
 
 func (m ToggleMsg) Intent() IntentToken {
@@ -167,7 +168,13 @@ type Screen struct {
 	errText   string
 	openEpoch uint64
 	intentSeq uint64
-	asyncLoad *asyncDirectoryLoad
+	// A queued search clear may settle after Escape also clears the row. All
+	// other newer intents invalidate it normally.
+	searchClearSeq uint64
+	asyncLoad      *asyncDirectoryLoad
+	// A child load marks its node before its LoadMsg reaches the host. Retain
+	// that ownership so superseding the queued request releases Loading too.
+	pendingChildPath string
 
 	model        *filetree.FileTreeModel
 	browseModel  *filetree.FileTreeModel
@@ -400,7 +407,7 @@ func (s *Screen) Selected() (Entry, bool) {
 		return Entry{}, false
 	}
 	node := s.model.SelectedNode()
-	if node == nil {
+	if node == nil || node == s.model.Root || s.model.CursorIndex() < 0 {
 		return Entry{}, false
 	}
 	return Entry{Name: node.Name, Path: node.Path, IsDir: node.IsDir, IsSymlink: node.IsSymlink}, true
@@ -626,7 +633,19 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	}
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() {
+		switch {
+		case evt.Key.Code == tea.KeyBackspace:
+			return s.navigateParent()
+		case evt.Key.Code == tea.KeyEsc:
+			return s.cancel()
+		case evt.Key.String() == "ctrl+o" && s.mode == ModeFolder, ui.IsCommitChord(evt.Key):
+			return s.ConfirmSelection()
+		}
+	}
+	return ui.EventResult{}
+}
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
@@ -742,6 +761,7 @@ func (s *Screen) statusText() string {
 }
 
 func (s *Screen) installModel(model *filetree.FileTreeModel) {
+	s.releasePendingChildLoad()
 	s.model = model
 	s.browseModel = model
 	if s.tree != nil {
@@ -753,6 +773,9 @@ func (s *Screen) installModel(model *filetree.FileTreeModel) {
 		return
 	}
 	s.configureModel()
+	if s.mode == ModeFolder {
+		model.ClearSelection()
+	}
 	s.rebuildTree()
 }
 
@@ -761,6 +784,7 @@ func (s *Screen) configureModel() {
 		return
 	}
 	model := s.model
+	model.SetShowHidden(s.showHidden)
 	model.SetDirectoryLoader(func(path string) tea.Cmd { return s.requestChildLoad(path) })
 	model.SetFileSelectedHandler(func(path string) tea.Cmd { return s.requestFileActivation(path) })
 }
@@ -789,7 +813,15 @@ func (s *Screen) rebuildTree() {
 	}
 	s.tree.tree.SetTokens(s.tokens)
 	s.tree.tree.SetSurfaceBackground(ui.ColorPopupBg)
-	s.tree.tree.SetRowPainter(filetree.NewTreeRowPainter(s.model, icons, cfg))
+	painter := filetree.NewTreeRowPainter(s.model, icons, cfg)
+	s.tree.tree.SetRowPainter(func(buf *surface.CellBuffer, ox, oy, rowY, width int, item ui.TreeItem, st ui.TreeRowState, tokens *ui.TokenSet) {
+		// A picker selection remains the confirmation target even when actions
+		// own keyboard focus. Reuse the existing row treatment, not new chrome.
+		if entry, ok := s.Selected(); ok && item.ID == entry.Path {
+			st.Cursor = true
+		}
+		painter(buf, ox, oy, rowY, width, item, st, tokens)
+	})
 	if s.scrollbar == nil {
 		s.scrollbar = ui.NewScrollbarControl(ScrollbarID, s.tree.tree.Scroll(), s.tokens)
 		s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
@@ -808,6 +840,7 @@ func (s *Screen) requestChildLoad(path string) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	s.pendingChildPath = cleanAbs(path)
 	return func() tea.Msg {
 		return LoadMsg{Target: s, Path: cleanAbs(path), Epoch: intent.Epoch, Sequence: intent.Sequence}
 	}
@@ -844,6 +877,9 @@ func (s *Screen) requestSearch(query string) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	if query == "" {
+		s.searchClearSeq = intent.Sequence
+	}
 	return func() tea.Msg {
 		return SearchMsg{Target: s, Query: query, Epoch: intent.Epoch, Sequence: intent.Sequence}
 	}
@@ -853,9 +889,6 @@ func (s *Screen) navigate(path string) ui.EventResult {
 	if s == nil || !s.active {
 		return ui.EventResult{Handled: true}
 	}
-	if s.searchActive {
-		s.ClearPathSearch()
-	}
 	intent, ok := s.nextIntent()
 	if !ok {
 		return ui.EventResult{Handled: true}
@@ -864,11 +897,18 @@ func (s *Screen) navigate(path string) ui.EventResult {
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 }
 
+// ConfirmSelection confirms the highlighted folder, or the current root when
+// no row is highlighted. All hosts and controls share this confirmation owner.
+func (s *Screen) ConfirmSelection() ui.EventResult { return s.confirm() }
+
 func (s *Screen) confirm() ui.EventResult {
 	if s == nil || !s.active || s.AsyncDirectoryLoading() {
 		return ui.EventResult{Handled: true}
 	}
 	if s.mode == ModeFolder {
+		if entry, ok := s.Selected(); ok && entry.IsDir {
+			return s.selectPath(entry.Path, nil, true)
+		}
 		return s.selectPath(s.current, nil, true)
 	}
 	if s.mode == ModeOpenFile {
@@ -898,13 +938,17 @@ func (s *Screen) cancel() ui.EventResult {
 	if s == nil || !s.active {
 		return ui.EventResult{Handled: true}
 	}
+	// Cancel pending directory ownership before changing the Escape ladder.
+	// A failed/canceled root read restores the previous actionable projection.
+	s.CancelAsyncDirectoryLoad()
 	if s.filter != nil && s.filter.field != nil && s.filter.field.Value() != "" {
-		s.filter.field.SetValue("")
-		if s.searchActive {
-			s.ClearPathSearch()
-		}
+		s.ClearPathSearch()
 		s.sync()
 		return ui.EventResult{Handled: true, Cmd: s.requestSearch(""), Invalidate: ui.InvalidatePaint}
+	}
+	if _, ok := s.Selected(); ok {
+		s.ClearSelection()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	intent, ok := s.nextIntent()
 	if !ok {
@@ -912,6 +956,30 @@ func (s *Screen) cancel() ui.EventResult {
 	}
 	message := CancelMsg{Target: s, Epoch: intent.Epoch, Sequence: intent.Sequence}
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
+}
+
+// ClearSelection removes the highlighted row (not attachment marks) and
+// invalidates pending intents so late reads cannot restore a selection.
+func (s *Screen) ClearSelection() {
+	if s == nil {
+		return
+	}
+	s.CancelAsyncDirectoryLoad()
+	s.releasePendingChildLoad()
+	if s.active {
+		s.intentSeq++
+	}
+	if s.model != nil {
+		s.model.ClearSelection()
+	}
+	if s.browseModel != nil && s.browseModel != s.model {
+		s.browseModel.ClearSelection()
+	}
+	if s.tree != nil {
+		s.tree.lastClickPath = ""
+		s.tree.lastClickAt = time.Time{}
+	}
+	s.sync()
 }
 
 func (s *Screen) navigateParent() ui.EventResult {
@@ -929,16 +997,25 @@ func (s *Screen) nextIntent() (IntentToken, bool) {
 	if s == nil || !s.active {
 		return IntentToken{}, false
 	}
+	s.releasePendingChildLoad()
 	s.intentSeq++
+	s.searchClearSeq = 0
 	return IntentToken{Epoch: s.openEpoch, Sequence: s.intentSeq}, true
+}
+
+func (s *Screen) releasePendingChildLoad() {
+	if s.pendingChildPath != "" && s.model != nil {
+		s.model.SetDirectoryLoadError(s.pendingChildPath)
+	}
+	s.pendingChildPath = ""
 }
 
 func (s *Screen) FocusedPath() string {
 	if s == nil || s.model == nil {
 		return ""
 	}
-	if node := s.model.SelectedNode(); node != nil {
-		return node.Path
+	if entry, ok := s.Selected(); ok {
+		return entry.Path
 	}
 	return s.current
 }
@@ -976,12 +1053,14 @@ func (p *pickerFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case key.String() == "ctrl+r" && !p.owner.AsyncDirectoryLoading():
 			return p.owner.navigate(p.owner.current)
+		case key.String() == "ctrl+o" && p.owner.mode == ModeFolder, ui.IsCommitChord(key):
+			return p.owner.ConfirmSelection()
 		case p.owner.AsyncDirectoryLoading():
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case key.Code == tea.KeyEnter:
 			return p.owner.confirmFiltered()
 		case key.Code == tea.KeyBackspace && p.field.Edit().Len() == 0:
-			return p.owner.navigateParent()
+			return ui.EventResult{Handled: true}
 		case key.Code == tea.KeyUp || key.Code == tea.KeyDown || key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown || key.Code == tea.KeyHome || key.Code == tea.KeyEnd || key.Code == tea.KeyRight || key.Code == tea.KeyLeft:
 			p.owner.FocusTree()
 			return p.owner.tree.Handle(ui.EventContext{Focused: true}, evt)
@@ -1010,13 +1089,13 @@ func (s *Screen) confirmFiltered() ui.EventResult {
 		return ui.EventResult{Handled: true}
 	}
 	if node := s.model.SelectedNode(); node != nil {
+		if node.IsDir {
+			return s.navigate(node.Path)
+		}
 		if s.mode == ModeOpenFile {
 			cmd := s.model.ToggleExpandOrSelect()
 			s.sync()
 			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
-		}
-		if node.IsDir && s.mode == ModeFolder {
-			return s.selectPath(node.Path, nil, true)
 		}
 		if !node.IsDir && s.mode == ModeFile {
 			s.TogglePath(node.Path)
@@ -1044,7 +1123,11 @@ func (p *pickerTree) sync() {
 	}
 	model.SetSelectionMarks(p.owner.selected)
 	p.tree.SetItems(filetree.TreeItems(model))
-	p.tree.SelectIndex(model.CursorIndex())
+	if _, ok := p.owner.Selected(); ok && model.CursorIndex() >= 0 {
+		p.tree.SelectIndex(model.CursorIndex())
+	} else {
+		p.tree.ClearSelection()
+	}
 	p.tree.SyncHover(model.Hover.Index)
 	filetree.SyncScrollModel(model, p.tree.Scroll(), p.Bounds().H)
 	if p.owner.scrollbar != nil {
@@ -1069,13 +1152,24 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil || p.owner.model == nil {
 		return ui.EventResult{}
 	}
-	if p.owner.mode == ModeOpenFile && p.owner.AsyncDirectoryLoading() && (!evt.IsKey() || evt.Key.Code != tea.KeyEsc) {
+	if p.owner.AsyncDirectoryLoading() && (!evt.IsKey() || evt.Key.Code != tea.KeyEsc) {
 		return ui.EventResult{Handled: true}
 	}
 	if evt.IsKey() {
 		key := evt.Key
 		if key.Code == tea.KeyEsc {
 			return p.owner.cancel()
+		}
+		if key.Code == tea.KeyBackspace {
+			return p.owner.navigateParent()
+		}
+		if key.String() == "ctrl+o" && p.owner.mode == ModeFolder {
+			return p.owner.ConfirmSelection()
+		}
+		if key.Code == tea.KeyEnter && !ui.IsCommitChord(key) {
+			if node := p.owner.model.SelectedNode(); node != nil && node.IsDir {
+				return p.owner.navigate(node.Path)
+			}
 		}
 		if key.Code == tea.KeyTab {
 			if key.Mod.Contains(tea.ModShift) {
@@ -1114,7 +1208,13 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			p.owner.FocusFilter()
 			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
 		}
+		before, sequence := p.owner.model.CursorIndex(), p.owner.intentSeq
+		node := p.owner.model.SelectedNode()
+		wasExpanded := node != nil && node.IsExpanded
 		cmd := p.owner.model.Update(filetree.TreeKeyPressMsg{Key: key})
+		if (before != p.owner.model.CursorIndex() || (wasExpanded && !node.IsExpanded)) && sequence == p.owner.intentSeq {
+			p.owner.nextIntent()
+		}
 		p.owner.sync()
 		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 	}
@@ -1144,13 +1244,18 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{Handled: true, Cmd: p.owner.requestFileActivation(node.Path), Invalidate: ui.InvalidatePaint}
 		}
 		if node != nil && !node.IsDir && p.owner.mode == ModeOpenFile {
+			p.owner.nextIntent()
 			p.owner.model.Select(node.Path)
 			p.owner.sync()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 	}
 	localY := ctx.LocalY
+	before, sequence := p.owner.model.CursorIndex(), p.owner.intentSeq
 	cmd := p.owner.model.Update(filetree.TreeMouseMsg{Mouse: pickerMouseMessage(evt, localY)})
+	if before != p.owner.model.CursorIndex() && sequence == p.owner.intentSeq {
+		p.owner.nextIntent()
+	}
 	p.owner.sync()
 	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 }

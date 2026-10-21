@@ -120,6 +120,7 @@ func TestPickerIntentEpochAndSequenceRejectStaleMessages(t *testing.T) {
 	}
 
 	selected := commandMessage[SelectMsg](t, screen.selectPath(filepath.FromSlash("/root/a.txt"), nil, false))
+	screen.ClearSelection()
 	cancelled := commandMessage[CancelMsg](t, screen.cancel())
 	if selected.ValidFor(screen) {
 		t.Fatal("older selection remained current after cancel")

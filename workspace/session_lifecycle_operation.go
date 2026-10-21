@@ -282,7 +282,7 @@ func (w *Workspace) installSessionLifecycle(result SessionLifecycleResult) {
 
 func (w *Workspace) ApplyAgentSession(result SessionLifecycleResult) *NewSessionResult {
 	if result.Err != nil {
-		return &NewSessionResult{Error: result.Err.Error(), NeedsAccount: errors.Is(result.Err, session.ErrAccountRequired)}
+		return &NewSessionResult{Error: result.Err.Error(), NeedsAccount: errors.Is(result.Err, session.ErrAccountRequired), NeedsModel: errors.Is(result.Err, session.ErrModelRequired)}
 	}
 	if result.owner == nil || result.cold && w.SessionsByID[result.owner.SessionID] != nil && w.SessionsByID[result.owner.SessionID] != result.owner {
 		return &NewSessionResult{Error: "Session owner changed"}

@@ -38,6 +38,9 @@ surfaces below retain their policies.
 
 ## Primary views
 
+Detached startup uses `tui/startup/` before any workspace attachment.
+The current in-project workspace home and services remain unchanged.
+
 Agent tab selection and visibility belong to each shell's `AgentViewState`.
 Thinking promotion is likewise a reversible local projection
 (`tui/viewmodel/thinking_presentation.go`): it borrows the canonical thought without
@@ -48,6 +51,7 @@ exit detaches without cancelling retained execution. See the active [core/shell 
 
 | Surface | Primary files | Notes |
 |---------|---------------|-------|
+| Detached startup | `tui/startup/`, `shellport/remote/startup.go`, `core/startup.go` | One native introduction, then the shared folder picker. Navigation-only locations show project selection with previous projects, path entry, bounded browsing, and readable issues. No project services start before selection. See [startup admission](core-client-protocol.md#startup-before-workspace-attachment). |
 | Workspace home | `tui/screens/launcher/`, `tui/viewmodel/launcher.go` | Wide: outlined New Session with cycling icon spans the top; folder-icon New Workspace starts the left pane, followed by one blank row and an equal-height Skills/live MCP split, while recent workspaces uses the right pane with a bottom-pinned guide. Cramped mode stacks the two actions with one blank row, hides capabilities, and gives Recent workspaces the full width. Dedicated search row, name/path pairs with quiet separators, native FilterField/VirtualList/ScrollbarControl, ProgressRule loading, error/retry and owner-safe async snapshots. No extra workspace heading or duplicate settings/help/session controls. Connected New Session/Resume are off-UI with pending replica activation; folder switches prepare the destination before shell detach/attach and failure preserves the old attachment. |
 | Git Changes review | `tui/screens/gitreview/`, `tui/screens/gitdiff/`, `tui/viewmodel/git_review.go` | One main tab per review (all changes, a folder, one file, or one commit; each with its own screen and component IDs) showing every working-tree change (optionally scoped to a folder/file from Explorer or editor menus) or one commit, stacked in a `gitdiff.Document` with sticky file headers, three-line context hunks, expandable folded gaps, per-file stats and Stage/Unstage/Discard/Open, per-hunk Stage/Unstage/Discard, drag/keyboard selection with copy, Ctrl+F find, unified/split, file navigator following the reading position, double-click opens the exact line. Stage/unstage records the painted bytes; unsaved editor bytes and changed HEAD/index/disk fail closed. |
 | Local comparison | `tui/screens/localdiff/`, `tui/screens/diffview/`, `tui/viewmodel/local_diff.go` | Movable main tab for disk/saved baseline versus unsaved editor snapshot. Shared Git reader: aligned source rows, syntax, diff bands, draggable split, synchronized vertical/independent horizontal scroll, find/highlight and source copy. Exact owner/generation-fenced preparation, explicit Refresh/stale/error, Open Source/Close and narrow More actions; no live-buffer cloning or writes. |
@@ -73,10 +77,13 @@ Click-outside policies (verified in `tui/viewmodel/overlay_click_outside_contrac
 |--------|----------|
 | **CloseRoute** (`PopoverPolicy(true)`) | context-menu, references-popup, completion-popup, outline-popup, diag-context, plan-hover (passive opening) |
 | **KeepRoute** (`DefaultOverlayPolicy` / `PopoverPolicy(false)`) | find-replace, command-palette, composer, textoverlay, find-in-files, replace-in-files, diag-hover, **floating terminals** (dynamic `terminal/<id>`, not in the static overlay matrix) |
-| **Ignore** (`ModalDialogPolicy`) | dirty-close-prompt, operation-issue, tree-prompt, tree-delete-confirm, workspace-delete, filepicker, workspace-settings, capability-picker, session-picker, help |
+| **Ignore** (`ModalDialogPolicy`) | dirty-close-prompt, operation-issue, ai-setup-reminder, tree-prompt, tree-delete-confirm, workspace-delete, filepicker, workspace-settings, capability-picker, session-picker, help |
+
+Detached startup uses its own Host and is outside that matrix.
 
 | Surface | Primary files | Notes |
 |---------|---------------|-------|
+| AI setup reminder | `tui/viewmodel/onboarding.go` | Native modal confirm frame after project attachment, with **Do not show this again** and initially focused **OK**. Esc defers. Suppression affects proactive reminders only. OK opens Add Account directly. See [AI setup](settings.md#first-use-profile-choices-and-ai-setup). |
 | Command palette | `tui/viewmodel/command_palette.go` | WindowFrame + TextField + List |
 | Find in Files | `tui/screens/findinfiles/find_in_files.go`, `tui/viewmodel/find_in_files.go` | Native SearchField (glyph at start) + case/regex ToggleButtons on the **right** + Label status + VirtualList + ScrollbarControl + editor preview + right-aligned Open/Close ActionBar; **resizable results/preview split**; search execution/cancellation owned by workspace.ProjectSearchService |
 | Replace in Files | same screen, `ModeReplace` | Sibling overlay (`OverlayReplaceInFiles`); replace field + Replace/All on the right; connected planning via core replace-plan RPC, then revision-fenced live document edits or core workspace file mutations |
@@ -87,7 +94,7 @@ Click-outside policies (verified in `tui/viewmodel/overlay_click_outside_contrac
 | Operational recovery | `tui/screens/operationissue/`, `tui/viewmodel/operation_issue.go`, `app/startup.go` | Native modal WindowFrame with copyable scrollable full reason/guidance, safe Close/Esc, explicit Accounts/Main Agent/Network or off-UI config-editor repair; usable shell on operational startup failure. Notices are optional and independently recorded. |
 | Network settings | `tui/settings/network.go`, `network/`, `tui/viewmodel/preferences_save.go` | Application-owned Connection / Proxy / Certificates pages in the rail's last group, after AI/Security/IDE; shared form/search, masked proxy URL, read-only workspace inheritance, exact-host trust/mTLS and owner-correlated off-UI certificate validation/save. |
 | Run recovery row | `agent/recovery.go`, `session/recovery.go`, `workspace/recovery.go`, `tui/chatprojection/recovery.go` | One compact, expandable incident; automatic retry countdown, shared-clock red square and exact-owner `(Retry now)` click. Expansion reveals the full neutral reason; drag/copy remains shared. Fixed-strip recovery status, retained `/retry`/context/palette routes, accepted work/draft preservation and live/hydrated parity. |
-| File/workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` | Native fuzzy FilterField + icon breadcrumb + filesystem browser + scrollbar + ActionBar. Folder mode is a larger resizable branded New Workspace window with tree-style directory rows |
+| File/workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` | Native search field, icon breadcrumb, `ui.Tree`, scrollbar, and ActionBar. Folder mode uses the shared [folder-picker movement](interaction-matrix.md#shared-folder-picker-movement) in startup and in-project selection. |
 | Help | `tui/screens/help/help.go`, `tui/viewmodel/help.go` | Native FilterField + VirtualList + ScrollbarControl in OverlayHost/FloatingWindow; usage topics + live slash commands + live shortcuts |
 | Composer | `tui/screens/composer` | Native TextArea + ActionBar; legacy ANSI widget deleted |
 | Text/reference overlay | `tui/screens/textoverlay`, `tui/viewmodel/reference_overlay.go`, `workspace/reference_content.go` | Native TextArea + ActionBar; full inline/file-backed pasted-text viewer/editor, asynchronous owner/epoch/preimage-fenced read/save, error-retained draft, terminal-bounded movable/resizable frame. Other file previews are read-only; the underlying composer stays mounted. Legacy ANSI widget deleted. |

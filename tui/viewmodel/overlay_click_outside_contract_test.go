@@ -54,6 +54,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayWorkspaceSwitch, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: projectReplaceOverlay, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayOperationIssue, policy: ui.ModalDialogPolicy(), wantSuppress: true},
+	{id: ui.OverlayAISetup, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayTreePrompt, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayTreeDelete, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayFilePicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
@@ -216,8 +217,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 24 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 24", got)
+	if got := len(overlayOutsideContractMatrix); got != 25 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 25", got)
 	}
 }
 
@@ -242,6 +243,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayWorkspaceSwitch:   ui.OutsideIgnoreAndConsume,
 		projectReplaceOverlay:       ui.OutsideIgnoreAndConsume,
 		ui.OverlayOperationIssue:    ui.OutsideIgnoreAndConsume,
+		ui.OverlayAISetup:           ui.OutsideIgnoreAndConsume,
 		ui.OverlayTreePrompt:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayTreeDelete:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayFilePicker:        ui.OutsideIgnoreAndConsume,
@@ -250,8 +252,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 		ui.OverlayHelp:              ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 24 {
-		t.Fatalf("expected opener registry len=%d want 24", len(expected))
+	if len(expected) != 25 {
+		t.Fatalf("expected opener registry len=%d want 25", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

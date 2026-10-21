@@ -38,6 +38,10 @@ func TestFilePickerKeyboardFilterPasteAndTypedResults(t *testing.T) {
 		t.Fatal("first escape did not clear the active search")
 	}
 	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if result.Cmd != nil {
+		t.Fatal("second escape should only clear the highlighted row")
+	}
+	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
 	cancel := commandMessage[CancelMsg](t, result)
 	if cancel.Target != screen {
 		t.Fatalf("cancel target=%p, want %p", cancel.Target, screen)
@@ -66,9 +70,9 @@ func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 		t.Fatal("could not focus tree")
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	load := commandMessage[LoadMsg](t, result)
-	if load.Target != screen || load.Path != pickerPath("src") {
-		t.Fatalf("keyboard load=%#v", load)
+	nav := commandMessage[NavigateMsg](t, result)
+	if nav.Target != screen || nav.Path != pickerPath("src") {
+		t.Fatalf("keyboard navigation=%#v", nav)
 	}
 
 	_, host = pickerHost(t, ModeFile)
@@ -76,7 +80,7 @@ func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 		t.Fatal("could not focus tree")
 	}
 	first := host.Handle(tea.MouseClickMsg{X: 2, Y: 7, Button: tea.MouseLeft})
-	load = commandMessage[LoadMsg](t, first)
+	load := commandMessage[LoadMsg](t, first)
 	if load.Path != pickerPath("src") {
 		t.Fatalf("first click load=%#v", load)
 	}
@@ -215,7 +219,7 @@ func TestFilePickerChildExpansionUsesLoadMessage(t *testing.T) {
 	if !host.Focus(ListID) {
 		t.Fatal("could not focus tree")
 	}
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
 	load := commandMessage[LoadMsg](t, result)
 	if !screen.BeginAsyncDirectoryExpandFor(load.Path, load.Intent()) {
 		t.Fatal("child expansion did not enter loading state")
