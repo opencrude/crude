@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,6 +85,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	onboardingHandled, onboardingCmd := m.handleOnboardingMessage(msg)
+	if onboardingHandled {
+		return m, onboardingCmd
+	}
 	if handled, cmd := m.handleWorkspaceOpenPromptInput(msg); handled {
 		return m, cmd
 	}
@@ -94,6 +99,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	var cmds []tea.Cmd
+	if onboardingCmd != nil {
+		cmds = append(cmds, onboardingCmd)
+	}
 	coalescePresentation := false
 	switch msg.(type) {
 	case tea.MouseMotionMsg, interactiveFrameMsg:
@@ -353,7 +361,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case types.TickMsg:
-		return m.handleTick(msg)
+		model, cmd := m.handleTick(msg)
+		return model, tea.Batch(cmd, onboardingCmd)
 	case editor.PointerScrollMsg:
 		return m, m.deliverPointerScroll(msg)
 
@@ -899,10 +908,30 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			err := owner.SaveAccountChange(request.Change)
 			var settings types.AppSettings
+			var refreshErr error
 			if err == nil {
-				settings = owner.AppDefaults()
+				if reader, ok := owner.(interface {
+					RefreshOnboarding(context.Context) (types.AppSettings, error)
+				}); ok {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					settings, refreshErr = reader.RefreshOnboarding(ctx)
+					cancel()
+				} else {
+					settings = owner.AppDefaults()
+				}
+				if refreshErr != nil {
+					settings = types.CloneAppSettings(owner.AppDefaults())
+					if settings.Accounts == nil {
+						settings.Accounts = make(map[string]provider.Account)
+					}
+					if request.Change.After == nil {
+						delete(settings.Accounts, request.Change.ID)
+					} else {
+						settings.Accounts[request.Change.ID] = provider.CloneAccount(*request.Change.After)
+					}
+				}
 			}
-			return settingsui.AccountChangeResultMsg{Target: request.Target, Change: request.Change, Settings: settings, Err: err, WorkspaceGeneration: generation}
+			return settingsui.AccountChangeResultMsg{Target: request.Target, Change: request.Change, Settings: settings, Err: err, RefreshError: refreshErr, WorkspaceGeneration: generation}
 		})
 	case capabilitySnapshotMsg:
 		m.applyCapabilitySnapshot(msg)
@@ -995,8 +1024,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if msg.Err != nil {
 			m.Feedback.NotifyError("Account not saved: " + msg.Err.Error())
 		} else {
+			if installer, ok := m.ws.(interface{ ApplyOnboarding(types.AppSettings) }); ok {
+				installer.ApplyOnboarding(msg.Settings)
+			}
 			m.refreshAllSessionSettingsProjections()
 			m.Feedback.NotifyInfo("Account change saved")
+			if msg.RefreshError != nil {
+				m.Feedback.NotifyError("Account saved. The configuration could not be refreshed: " + msg.RefreshError.Error())
+			}
 		}
 		if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
@@ -1008,6 +1043,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 			}
 		}
+		cmds = append(cmds, m.continueOnboardingAccount(msg))
 	case settingsui.ScopeMsg:
 		m.openSettings(msg.Scope)
 	case settingsui.ResetSectionMsg:

@@ -15,6 +15,7 @@ detailed contracts.
 | `buildinfo/` | Build identity and `buildinfo.Home`, the single Crude data root (`CRUDE_HOME`). |
 | `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. |
 | `coreprotocol/` | Versioned, presentation-neutral core API types. |
+| `projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
 | `corewire/` | Bounded framed transport (local socket, SSH stdio bridge). |
 | `coreclient/` | Client multiplexer and detached read mirrors (`WorkspaceView`). |
 | `shellport/` | The `shellport.Workspace` seam the TUI consumes; `shellport/remote` is the CLI runtime path. |
@@ -62,6 +63,7 @@ detailed contracts.
 | Package | Owns |
 |---|---|
 | `tui/viewmodel/` | The Bubble Tea `App`: presentation state, root Host, key/mouse dispatch, shell geometry ([shell host](shell-host.md)). |
+| `tui/startup/` | Detached native introduction and project selection before workspace attachment. Uses the shared folder picker and request-owned startup services. |
 | `tui/ui/` | The native component system: Host, Form, List, Tabs, TextArea/TextField, ScrollbarControl, WindowFrame. |
 | `tui/screens/` | One package per retained screen (`shellchat`, `shelleditor`, `shelltree`, `shellheader`, `shellfooter`, pickers, decks). |
 | `tui/chatprojection/` | Generation-keyed chat row snapshots, activity strip, tool rows. |

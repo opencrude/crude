@@ -47,6 +47,14 @@ func (w *Workspace) CatalogFiles(ctx context.Context, includeHidden bool) (works
 	err := w.call(ctx, coreprotocol.FilesCatalog, coreprotocol.FileCatalogRequest{IncludeHidden: includeHidden}, &out)
 	return out, err
 }
+
+// CatalogFolders is request-owned navigation, not a project search catalog.
+// The specified root is resolved on the core host, including over SSH.
+func (w *Workspace) CatalogFolders(ctx context.Context, root string, includeHidden bool) (workspace.BrowserCatalog, error) {
+	var out workspace.BrowserCatalog
+	err := w.call(ctx, coreprotocol.StartupCatalog, coreprotocol.StartupCatalogRequest{Root: root, IncludeHidden: includeHidden}, &out)
+	return out, err
+}
 func (w *Workspace) readClientFile(ctx context.Context, value string, external bool) ([]byte, error) {
 	method := coreprotocol.FilesRead
 	if external {

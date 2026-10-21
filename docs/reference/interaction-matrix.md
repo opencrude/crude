@@ -27,7 +27,7 @@ preserve or intentionally improve.
 | Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. In a text control Esc first drops the selection; the chat composer's ladder is selection → draft → cancel the turn. Cancelling requires live work (turn, pending prompt, compaction) or a recovery parked for retry: Esc with nothing to stop does nothing, a stopping turn is never re-entered, and palette Cancel Agent on an idle agent says "Nothing to stop". |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Within the focused main group, outside terminal key ownership, including editor focus |
 | Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Don't Save / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
-| Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
+| Attach file / choose folder | Ctrl+O | Opens Attach File from non-terminal shell views. An Open Workspace picker confirms its highlighted folder, or its current root without a highlight. |
 | Copy | Ctrl+C / Ctrl+Shift+C | Copies the selection of the chat input, chat messages, editor, overlay editors and every inline text control. A focused terminal is the deliberate exception: Ctrl+C always belongs to the child, even with a retained selection; Ctrl+Shift+C copies and never falls through to interrupt when nothing is selected. Unhandled Ctrl+C clears the chat draft, and Ctrl+C never navigates back. |
 | Terminal controls | Ctrl+C/D/Z/\\/S/Q and application key bindings | The focused PTY owns these before shell/editor selection handling. Ctrl+C interrupts when the child enables processed input/ISIG; Ctrl+D is EOF under Unix canonical input, Ctrl+Z is Unix suspend or Windows child-specific EOF, Ctrl+\\ is Unix quit, Ctrl+S/Q are child/TTY flow control. Crude forwards keys, never guesses Unix signals on Windows or kills unrelated processes. Raw/extended-keyboard children receive their negotiated key encoding. Only exact Shift+PgUp/PgDn/Home/End scroll local primary-screen history. |
 | Cut | Ctrl+X | Text controls: cuts the selection, or the whole value when nothing is selected (masked fields refuse it) |
@@ -317,6 +317,32 @@ tab attention until the panel is activated or closed.
 | File tree | yes | custom | no | clamp | expand/open |
 | Context menu | yes | no | no | wrap | activate |
 | Launcher | Up/Down | viewport | yes outside the search editor | clamp | open exact resource; Tab/Shift+Tab visit original action controls, Skills, MCP, search, resources and Retry; hover never redirects keyboard activation |
+
+### Shared folder-picker movement
+
+Startup and in-project workspace selection use the same native picker and movement owner.
+The current picker appearance and file attachment behavior remain unchanged.
+
+| Input | Result |
+|---|---|
+| Enter on a highlighted directory | Replace the current root with that directory. Do not expand it in place. |
+| Right Arrow | Expand the highlighted directory in place, or move to its child when expanded. Keep the current root. |
+| Left Arrow | Collapse the highlighted directory or move to its tree parent. Keep the current root. |
+| Single click on a directory | Select the row and retain the current inline expansion behavior. |
+| Backspace in search | Edit text only. An empty search does not navigate. |
+| Backspace in the tree or action controls | Navigate to the parent of the current root. A filesystem root is a no-op. |
+| Open Workspace or Ctrl+O | Confirm the highlighted directory. Without a highlighted directory, confirm the current root. |
+| Esc | Clear search, then clear the row highlight, then close. Skip empty stages. |
+
+Initial display and root navigation do not implicitly highlight the first child.
+Pointer hover does not select a row.
+The row highlight remains visible when focus moves to the action controls.
+Cancelled or failed reads preserve the previous root and usable rows.
+Owner, open-epoch, and intent checks prevent late results from restoring obsolete selection or navigation.
+
+Startup folder confirmation has no workspace-switch prompt because no workspace is attached.
+In-project confirmation still uses the exact-destination confirmation and existing dirty-file and draft checks.
+See [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for navigation-only locations.
 
 ### Workspace home
 

@@ -67,9 +67,9 @@ func TestOpenFileDirectoriesAndEmptyStateCannotConfirm(t *testing.T) {
 	for _, focus := range []ui.ComponentID{FilterID, ListID} {
 		screen, host := pickerHost(t, ModeOpenFile)
 		host.Focus(focus)
-		load := commandMessage[LoadMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
+		load := commandMessage[NavigateMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
 		if load.Path != pickerPath("src") || !load.ValidFor(screen) {
-			t.Fatalf("folder Enter must expand: %#v", load)
+			t.Fatalf("folder Enter must browse: %#v", load)
 		}
 	}
 	screen, host := pickerHost(t, ModeOpenFile)
@@ -146,7 +146,7 @@ func TestOpenFileSearchAndDirectoryIntentsRetainOwnerFences(t *testing.T) {
 	}
 	host.Layout()
 	host.Focus(ListID)
-	load := commandMessage[LoadMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	load := commandMessage[LoadMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyRight}))
 	if !screen.BeginAsyncDirectoryExpandFor(load.Path, load.Intent()) {
 		t.Fatal("current expansion did not start")
 	}

@@ -11,6 +11,10 @@ import (
 // repair. Callers may offer account setup without parsing error text.
 var ErrAccountRequired = errors.New("account required")
 
+// ErrModelRequired keeps an unconfigured session out of storage and directs
+// explicit creation to Main Agent settings without a provider request.
+var ErrModelRequired = errors.New("select a model for Main Agent")
+
 func (c *Config) account(id string) (provider.Account, bool) {
 	if c == nil || id == "" {
 		return provider.Account{}, false

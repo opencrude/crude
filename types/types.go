@@ -375,6 +375,7 @@ func SessionPreferencesOf(s Settings) SessionPreferences {
 }
 
 type AppSettings struct {
+	Onboarding   OnboardingSettings          `json:"onboarding,omitempty"`
 	Theme        ThemeSettings               `json:"theme,omitempty"`
 	Editor       EditorSettings              `json:"editor,omitempty"`
 	LSP          LSPSettings                 `json:"lsp,omitempty"`

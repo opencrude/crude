@@ -13,9 +13,10 @@ import (
 )
 
 type remoteSessionReadyMsg struct {
-	owner    shellport.Workspace
-	sequence uint64
-	result   *workspace.NewSessionResult
+	owner     shellport.Workspace
+	sequence  uint64
+	result    *workspace.NewSessionResult
+	sessionID string
 }
 
 func (m *App) remoteSessionCommand(sessionID string) tea.Cmd {
@@ -30,9 +31,20 @@ func (m *App) remoteSessionCommand(sessionID string) tea.Cmd {
 		if sessionID == "" {
 			result = owner.NewAgentSession()
 		} else {
-			result = owner.OpenAgentSession(sessionID)
+			id := sessionID
+			if id == "last" || id == "true" {
+				metas := owner.ListSessions()
+				if len(metas) == 0 {
+					result = &workspace.NewSessionResult{Error: "No saved session is available in this project."}
+				} else {
+					id = metas[0].ID
+				}
+			}
+			if result == nil {
+				result = owner.OpenAgentSession(id)
+			}
 		}
-		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: result}
+		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: result, sessionID: sessionID}
 	}
 }
 
@@ -42,6 +54,14 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	}
 	m.sessionLifecyclePending = false
 	if msg.result == nil || msg.result.Error != "" {
+		if msg.sessionID == "" && msg.result != nil {
+			if msg.result.NeedsAccount {
+				return m.openAISetup()
+			}
+			if msg.result.NeedsModel {
+				return m.openApplicationMainAgent()
+			}
+		}
 		detail := "Core returned no session result."
 		if msg.result != nil {
 			detail = msg.result.Error
@@ -263,11 +283,12 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	for _, issue := range m.ws.TakeStartupIssues() {
 		m.presentOperationIssue(issue)
 	}
+	m.onboarding.checking = false
 	closeOld := func() tea.Msg { _ = old.Close(); return nil }
 	if msg.resumeID != "" {
-		return tea.Batch(closeOld, m.remoteSessionCommand(msg.resumeID))
+		return tea.Batch(closeOld, m.remoteSessionCommand(msg.resumeID), m.onboardingCmd())
 	}
-	return closeOld
+	return tea.Batch(closeOld, m.onboardingCmd())
 }
 
 func (m *App) closeRemoteWorkspaceReady(msg remoteWorkspaceReadyMsg) tea.Cmd {

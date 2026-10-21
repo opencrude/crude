@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -19,6 +20,8 @@ import (
 	"crude/corewire"
 	"crude/shellport/remote"
 	"crude/tui"
+	startuptui "crude/tui/startup"
+	"crude/types"
 )
 
 // ErrClientProfileBusy is a safe refusal, never permission to displace a shell.
@@ -197,15 +200,66 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 	}
 	defer func() { result = errors.Join(result, drafts.Close()) }()
 	lg := &appLogger{}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	namespace := draftNamespace(flags, "")
-	ws, err := remote.Attach(ctx, remote.Options{Root: root, Logger: lg, Dial: shellDialer(home, flags),
-		Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
+	dial := shellDialer(home, flags)
+	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
+	var startupID [16]byte
+	if _, err := rand.Read(startupID[:]); err != nil {
+		connectCancel()
+		return err
+	}
+	clientID := fmt.Sprintf("startup-%x", startupID)
+	client, err := dial(connectCtx, clientID)
+	connectCancel()
 	if err != nil {
-		return fmt.Errorf("attach core workspace: %w", err)
+		return fmt.Errorf("connect core: %w", err)
+	}
+	navigation := &remote.StartupClient{Client: client, Dial: dial, ClientID: clientID}
+	defer func() { result = errors.Join(result, navigation.Close()) }()
+	inspectCtx, inspectCancel := context.WithTimeout(ctx, 15*time.Second)
+	selection, err := navigation.Inspect(inspectCtx, root)
+	inspectCancel()
+	if err != nil {
+		return fmt.Errorf("inspect launch folder: %w", err)
+	}
+	var ws *remote.Workspace
+	startupIssues := append([]types.OperationIssue(nil), selection.Issues...)
+	for {
+		if selection.ShowIntroduction || selection.FolderKind != "" || selection.PathError != "" {
+			selected, selectErr := startuptui.Run(ctx, navigation, selection)
+			if selectErr != nil {
+				return fmt.Errorf("select project: %w", selectErr)
+			}
+			if selected.Root == "" {
+				return nil
+			}
+			startupIssues = selected.Issues
+			if selected.Root != selection.Root {
+				resumeID = ""
+			}
+			root = selected.Root
+		} else {
+			root = selection.Root
+		}
+		attachCtx, attachCancel := context.WithTimeout(ctx, 30*time.Second)
+		ws, err = remote.Attach(attachCtx, remote.Options{Root: root, Logger: lg, Dial: dial,
+			Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
+		attachCancel()
+		if err == nil {
+			break
+		}
+		// Keep navigation usable when the destination disappears or initialization
+		// fails after selection. No old attachment or private draft is discarded.
+		selection.Root, selection.PathError = root, err.Error()
+		selection.ShowIntroduction = false
+		selection.Issues = startupIssues
 	}
 	defer func() { result = errors.Join(result, ws.Close()) }()
+	if err := navigation.Close(); err != nil {
+		return err
+	}
+	ws.AddStartupIssues(startupIssues)
 	ws.ConfigureInvocation(invocationSelection(flags))
 	terminal, err := tui.Start(ws, providerPresets(), nil, lg,
 		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()))

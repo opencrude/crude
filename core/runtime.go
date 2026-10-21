@@ -48,6 +48,7 @@ type Runtime struct {
 	history     *history.Store
 	historyPath string
 	uploads     *ReferenceUploads
+	startup     StartupOwner
 	draining    bool
 	lifetime    lifetimePolicy
 }
@@ -87,6 +88,8 @@ type Connection struct {
 	attached           map[string]*actor
 	events             chan coreprotocol.Change
 	done               chan struct{}
+	ctx                context.Context
+	cancel             context.CancelFunc
 	once               sync.Once
 	publishMu          sync.Mutex
 	resync             bool
@@ -113,6 +116,7 @@ func (r *Runtime) Connect(clientID string) (*Connection, error) {
 	}
 	r.epochs[clientID]++
 	c := &Connection{runtime: r, Owner: coreprotocol.Owner{ClientID: clientID, Epoch: r.epochs[clientID]}, attached: make(map[string]*actor), events: make(chan coreprotocol.Change, subscriberCapacity), done: make(chan struct{})}
+	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.controls = make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding)
 	c.controlRegistered = make(map[string]bool)
 	c.controlExternal = make(map[string]map[control.Effect]bool)
@@ -147,6 +151,7 @@ func (c *Connection) Done() <-chan struct{}              { return c.done }
 
 func (c *Connection) Close() {
 	c.once.Do(func() {
+		c.cancel()
 		close(c.done)
 		c.runtime.mu.Lock()
 		if c.runtime.clients[c.Owner.ClientID] == c {
@@ -260,6 +265,9 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	if len(request.Payload) > 8<<20 || !json.Valid(request.Payload) {
 		return finish(fault(request, "invalid_request", "invalid or oversized request payload"))
 	}
+	if startupMethod(request.Method) {
+		return c.dispatchStartup(ctx, request)
+	}
 	if request.Method == coreprotocol.Attach {
 		return finish(c.attach(ctx, request))
 	}
@@ -322,12 +330,9 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	if err := decode(request.Payload, &input); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
-	root, err := filepath.Abs(input.Root)
-	if err == nil {
-		root, err = filepath.EvalSymlinks(root)
-	}
+	root, err := inspectProject(input.Root)
 	if err != nil {
-		return fault(request, "invalid_workspace", err.Error())
+		return fault(request, "project_folder_required", err.Error())
 	}
 	key := sha256.Sum256([]byte(filepath.Clean(root)))
 	id := hex.EncodeToString(key[:])
@@ -1122,6 +1127,12 @@ func (a *actor) startJob(command actorCommand) bool {
 			return func() coreprotocol.Response {
 				out := a.ws.ApplyAgentSession(result)
 				if out.Error != "" {
+					if out.NeedsAccount {
+						return fault(request, "account_required", out.Error)
+					}
+					if out.NeedsModel {
+						return fault(request, "model_required", out.Error)
+					}
 					return fault(request, "session_failed", out.Error)
 				}
 				a.bindControlSessions()

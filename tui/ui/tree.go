@@ -49,18 +49,19 @@ type TreeRowPainter func(buf *surface.CellBuffer, ox, oy, rowY, width int, item 
 // Tree is a scrollable hierarchical list with optional custom row painting.
 type Tree struct {
 	Base
-	items       []TreeItem
-	rows        []TreeRow
-	sel         *SelectionModel
-	scroll      *ScrollModel
-	tokens      *TokenSet
-	hoverIdx    int
-	painter     TreeRowPainter
-	breadcrumb  string
-	activate    string
-	toggle      string
-	useRows     bool
-	surfaceRole SemanticColor
+	items            []TreeItem
+	rows             []TreeRow
+	sel              *SelectionModel
+	scroll           *ScrollModel
+	tokens           *TokenSet
+	hoverIdx         int
+	painter          TreeRowPainter
+	breadcrumb       string
+	activate         string
+	toggle           string
+	useRows          bool
+	selectionCleared bool
+	surfaceRole      SemanticColor
 }
 
 // NewTree creates a tree control.
@@ -93,8 +94,11 @@ func (t *Tree) SetItems(items []TreeItem) {
 	t.rows = nil
 	t.items = append(t.items[:0], items...)
 	t.sel.SetCount(len(items))
+	if t.selectionCleared {
+		t.sel.ClearSelection()
+	}
 	t.scroll.SetContent(len(items))
-	if len(items) > 0 && t.sel.Index() < 0 {
+	if len(items) > 0 && t.sel.Index() < 0 && !t.selectionCleared {
 		t.sel.SetIndex(0)
 	}
 	t.scroll.EnsureVisible(t.sel.Index())
@@ -115,7 +119,10 @@ func (t *Tree) SetRows(rows []TreeRow) {
 		}
 	}
 	if cursor >= 0 {
+		t.selectionCleared = false
 		t.sel.SetIndex(cursor)
+	} else if t.selectionCleared {
+		t.sel.ClearSelection()
 	} else if len(rows) > 0 && t.sel.Index() < 0 {
 		t.sel.SetIndex(0)
 	}
@@ -124,8 +131,16 @@ func (t *Tree) SetRows(rows []TreeRow) {
 
 // SelectIndex selects a row by index.
 func (t *Tree) SelectIndex(idx int) {
-	t.sel.SetIndex(idx)
+	if t.sel.SetIndex(idx) {
+		t.selectionCleared = false
+	}
 	t.scroll.EnsureVisible(idx)
+}
+
+// ClearSelection removes the row cursor without changing rows or scroll.
+func (t *Tree) ClearSelection() {
+	t.selectionCleared = true
+	t.sel.ClearSelection()
 }
 
 // SyncHover sets the hovered row index for paint ( -1 clears ).
@@ -387,28 +402,34 @@ func (t *Tree) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		switch {
 		case evt.Key.Code == tea.KeyUp || evt.Key.String() == "k":
+			t.selectionCleared = false
 			t.sel.MoveUp()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Action: &Action{ID: "tree.select", Payload: t.ActiveID()}, Invalidate: InvalidatePaint}
 		case evt.Key.Code == tea.KeyDown || evt.Key.String() == "j":
+			t.selectionCleared = false
 			t.sel.MoveDown()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Action: &Action{ID: "tree.select", Payload: t.ActiveID()}, Invalidate: InvalidatePaint}
 		case evt.Key.Code == tea.KeyEnter:
 			return EventResult{Handled: true, Action: &Action{ID: t.activate, Payload: t.ActiveID()}, Invalidate: InvalidatePaint}
 		case evt.Key.Code == tea.KeyPgUp:
+			t.selectionCleared = false
 			t.sel.PageUp(t.scroll.Viewport())
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case evt.Key.Code == tea.KeyPgDown:
+			t.selectionCleared = false
 			t.sel.PageDown(t.scroll.Viewport())
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case evt.Key.Code == tea.KeyHome:
+			t.selectionCleared = false
 			t.sel.Home()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case evt.Key.Code == tea.KeyEnd:
+			t.selectionCleared = false
 			t.sel.End()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
@@ -437,6 +458,7 @@ func (t *Tree) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true}
 		}
 		t.sel.SetIndex(idx)
+		t.selectionCleared = false
 		t.scroll.EnsureVisible(idx)
 		return EventResult{Handled: true, Action: &Action{ID: t.activate, Payload: t.ActiveID()}, Invalidate: InvalidateFocus | InvalidatePaint}
 	}

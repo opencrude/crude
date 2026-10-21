@@ -106,7 +106,7 @@ func New(opts Opts) (*App, error) {
 		home, _ = buildinfo.Home()
 	}
 
-	return &App{
+	application := &App{
 		fc:                   opts.FC,
 		persistedAccounts:    cloneAccounts(opts.FC.Accounts),
 		rotationPredecessors: make(map[string][]provider.Account),
@@ -117,7 +117,9 @@ func New(opts Opts) (*App, error) {
 		clientProfile:        opts.ClientProfile,
 		invocation:           opts.Invocation,
 		startupIssues:        issues,
-	}, nil
+	}
+	application.accounts = provider.NewAccountManager(application.fc.Accounts, application.persistAccountRotation)
+	return application, nil
 }
 
 // Run starts a connected shell. The retained core, not this process, owns

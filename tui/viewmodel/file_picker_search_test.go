@@ -207,3 +207,69 @@ func TestFilePickerDoubleClickFolderAdvancesBreadcrumb(t *testing.T) {
 		t.Fatalf("double-click current=%q want %q", got, child)
 	}
 }
+
+func TestFilePickerLateSearchAfterDeselectionDoesNotRestartOrRestoreHighlight(t *testing.T) {
+	app := newTestApp(t)
+	app.FilePicker = filepickerscreen.New(app.Theme)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "target"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	app.FilePicker.Open(root, filepickerscreen.ModeFolder, nil)
+	component := ui.NewComponentWidget(app.Theme, app.FilePicker, 96, 28)
+	app.FilePicker.SetFocusHandler(component.Focus)
+	component.Host().Layout()
+	app.FilePicker.FocusFilter()
+	input := component.Host().Handle(tea.KeyPressMsg{Code: 't', Text: "t"})
+	search := input.Cmd().(filepickerscreen.SearchMsg)
+	command := app.beginPickerPathSearch(search)
+	if command == nil {
+		t.Fatal("folder query did not start its request")
+	}
+	result := command().(pickerPathSearchResultMsg)
+	app.FilePicker.ClearSelection()
+	if followup := app.applyPickerPathSearchResult(result); followup != nil {
+		t.Fatal("obsolete selection intent restarted ranking instead of settling")
+	}
+	if _, selected := app.FilePicker.Selected(); selected || app.FilePicker.Current() != root {
+		t.Fatal("late search changed selection or root")
+	}
+}
+
+func TestFilePickerConnectedFolderSearchUsesTheBrowsedRoot(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, "project-only"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, project)
+	app := shell.app
+	app.FilePicker = filepickerscreen.New(app.Theme)
+	outside := t.TempDir()
+	target := filepath.Join(outside, "outside-target")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	app.FilePicker.Open(outside, filepickerscreen.ModeFolder, nil)
+	component := ui.NewComponentWidget(app.Theme, app.FilePicker, 96, 28)
+	app.FilePicker.SetFocusHandler(component.Focus)
+	component.Host().Layout()
+	app.FilePicker.FocusFilter()
+	input := component.Host().Handle(tea.KeyPressMsg{Code: 'o', Text: "outside-target"})
+	search := input.Cmd().(filepickerscreen.SearchMsg)
+	command := app.beginPickerPathSearch(search)
+	if command == nil {
+		t.Fatal("connected folder query did not start")
+	}
+	result := command().(pickerPathSearchResultMsg)
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if followup := app.applyPickerPathSearchResult(result); followup != nil {
+		t.Fatal("current folder query unexpectedly restarted")
+	}
+	paths := app.FilePicker.VisiblePaths()
+	if len(paths) != 1 || paths[0] != target {
+		t.Fatalf("folder query searched the attached project instead of the browsed root: %v", paths)
+	}
+}

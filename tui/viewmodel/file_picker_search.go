@@ -77,7 +77,13 @@ func (m *App) beginPickerPathSearch(msg filepickerscreen.SearchMsg) tea.Cmd {
 		var catalog workspace.BrowserCatalog
 		var err error
 		if connected {
-			catalog, err = files.CatalogFiles(ctx, includeHidden)
+			if folders, ok := files.(interface {
+				CatalogFolders(context.Context, string, bool) (workspace.BrowserCatalog, error)
+			}); ok && directoriesOnly {
+				catalog, err = folders.CatalogFolders(ctx, root, includeHidden)
+			} else {
+				catalog, err = files.CatalogFiles(ctx, includeHidden)
+			}
 			if directoriesOnly {
 				entries := catalog.Entries[:0]
 				for _, entry := range catalog.Entries {
@@ -150,7 +156,10 @@ func (m *App) applyPickerPathSearchResult(result pickerPathSearchResultMsg) tea.
 		}
 		return nil
 	}
-	if result.query != currentQuery || !result.target.IsCurrentIntent(currentIntent.Epoch, currentIntent.Sequence) {
+	if !result.target.IsCurrentIntent(currentIntent.Epoch, currentIntent.Sequence) {
+		return nil
+	}
+	if result.query != currentQuery {
 		return rankPickerCatalogCmd(result.target, result.generation, currentQuery, currentIntent, result.catalog)
 	}
 	if result.target != m.FilePicker || !result.target.IsOpen() {

@@ -17,6 +17,22 @@ import (
 const agentCatalogID ui.ComponentID = "settings/agents"
 const AgentSettingsFormID ui.ComponentID = "settings/agents/form"
 
+// ShowMainAgentForAccount offers a newly saved account in the Main Agent draft.
+// Neither opening this editor nor fetching its models applies or saves a role.
+func (s *WorkspaceSettingsSurface) ShowMainAgentForAccount(accountID string) tea.Cmd {
+	if _, exists := s.model.accounts[accountID]; !exists || s.agents.dirty() {
+		return nil
+	}
+	cmd := s.ShowMainAgent()
+	c := s.agents
+	if c.draft.Field(fieldConnection).Value.String() == accountID {
+		return cmd
+	}
+	c.draft.SetValue(fieldConnection, ui.StringValue(accountID))
+	c.syncModel()
+	return c.model.prefetchModels(catAgents)
+}
+
 var agentIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 var agentRoles = []struct {
 	key, label string

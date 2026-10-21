@@ -74,6 +74,7 @@ type AccountChangeResultMsg struct {
 	Change              types.AccountChange
 	Settings            types.AppSettings
 	Err                 error
+	RefreshError        error // the account commit succeeded; only its follow-up read failed
 	WorkspaceGeneration uint64
 }
 

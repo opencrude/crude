@@ -28,6 +28,7 @@ type NewSessionResult struct {
 	OrchID       string
 	Error        string
 	NeedsAccount bool
+	NeedsModel   bool
 }
 
 // Workspace is the project-scoped composition root for one IDE instance.
@@ -871,7 +872,7 @@ func (w *Workspace) OpenAgentSession(sessionID string) *NewSessionResult {
 func (w *Workspace) openAgentSessionOperation(id string) *NewSessionResult {
 	op, err := w.PrepareAgentSession(id)
 	if err != nil {
-		return &NewSessionResult{Error: err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
+		return &NewSessionResult{Error: err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired), NeedsModel: errors.Is(err, session.ErrModelRequired)}
 	}
 	return w.ApplyAgentSession(op.Run(context.Background()))
 }
