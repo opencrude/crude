@@ -7,6 +7,36 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Bounded question reading and review (2026-10-21)
+
+`BenchmarkQuestionLongReflow` alternates 48/49-column layouts over a roughly
+64 KiB question plus a similarly long choice. Initial Windows/amd64 Go 1.25.8
+i7-9850H measurements found 74 ms per reflow: the shared `WordWrap` rescanned
+the entire remaining suffix for every row. It now maintains the remaining width
+incrementally, preserving existing line-break semantics. Three ten-iteration
+samples measure 9.8–10.8 ms, about 16.7 MB and 12,185 allocations; the source is
+reflowed only on content/geometry/calibration changes. These are diagnostic
+component measurements, not a portable latency guarantee or an unbounded-size
+promise.
+
+`BenchmarkQuestionLongPaint` includes repeated Host layout and paint at 80×16
+with the same long source. Caching the rail's short labels removes a per-frame
+full-question width scan: 2.1–2.2 ms becomes 52–80 µs, 2,232 B and 23 allocations
+in three ten-iteration samples. Complete source and tail remain reachable in the
+bounded reader and editable final review. Existing allocation ceilings are not
+raised.
+
+Native sequential Windows 160×40, 80×24 and 60×18 captures exercise mixed choices,
+wrapped questions, write-ins, explicit review/edit/Submit, workspace-panel
+Hide, and preserved composer drafts. Another 80×24 run reads a 600-line question
+and a long option through its final marker, reviews its complete answer and
+submits through the connected core; a 60×18 run verifies the same long-content
+review and submission with the rail hidden. Native pointer slash selection opens the
+actual Sessions destination. This is selected-journey evidence, not every
+possible terminal/agent scenario. The full native suite and bench gate still
+report unrelated startup/session-platform failures and existing recovery-image
+and database-startup allocation failures; no timeout or ceiling was relaxed.
+
 ## Command disclosure (2026-10-20)
 
 `BenchmarkCommandOutputDisclosure` measures the first tool-body projection of a

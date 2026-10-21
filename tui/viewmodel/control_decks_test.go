@@ -227,6 +227,12 @@ func TestConnectedQuestionControlReceiptAndFailedAckRetainsDraft(t *testing.T) {
 	if r := invoke(string(ui.NewID(question.ActionsID, "next")), ui.ControlOperation{Verb: "activate"}); r.State != control.Applied {
 		t.Fatalf("question falsely settled: %+v", r)
 	}
+	if len(one.app.agentPrompts) != 1 || !state.question.Reviewing() || len(two.app.agentPrompts) != 1 {
+		t.Fatal("final answer disappeared without explicit review submission")
+	}
+	if r := invoke(string(ui.NewID(question.ActionsID, "submit")), ui.ControlOperation{Verb: "activate"}); r.State != control.Applied {
+		t.Fatalf("review submission: %+v", r)
+	}
 	remoteJourneyUntil(t, shells, func() bool {
 		return len(one.app.agentPrompts) == 0 && len(two.app.agentPrompts) == 0 && strings.Contains(one.app.View().Content, "QUESTION RECEIPT ACCEPTED")
 	})

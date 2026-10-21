@@ -80,8 +80,8 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 	if !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
 		t.Fatal("blocking question panel did not capture deck input")
 	}
-	if region := app.classifyShellRegion(app.width-1, app.height-1, false); region != regionSessionDeck {
-		t.Fatalf("blocking question click classified as %v", region)
+	if app.sessionDeckModal() {
+		t.Fatal("pending question made the shell globally modal")
 	}
 
 	selectDeckSession(t, app, second, "second-agent")

@@ -674,7 +674,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 
-	if m.AgentView.ActiveNode() != nil && !m.OverlayState.IsBlocking() {
+	if m.AgentView.ActiveNode() != nil && (!m.OverlayState.IsBlocking() || m.sessionDeckAllowsNavigation()) {
 		switch msg.Code {
 		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 			if msg.Code == tea.KeyHome || msg.Code == tea.KeyEnd {

@@ -30,6 +30,11 @@ func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
 	}
 	m.subPaneProjections.InvalidateWidthProfile()
 	m.sessionProjections.InvalidateWidthProfile()
+	for _, state := range m.agentPrompts {
+		if state.question != nil {
+			state.question.InvalidateWidthProfile()
+		}
+	}
 	m.comparisonWidthGen++
 	m.comparisonReflow = true
 

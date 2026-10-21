@@ -19,6 +19,12 @@ func TestControlQuestionWriteInAndOptionUseAnswerOwner(t *testing.T) {
 	if s.Result().Answers["1"] != "Yes" {
 		t.Fatal("option activation did not update canonical answer")
 	}
+	if !s.Reviewing() {
+		t.Fatal("single option bypassed mandatory review")
+	}
+	if _, err := invokeControl(t, h, OptionsID, ui.ControlOperation{Verb: "activate", ItemID: "review/0"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := invokeControl(t, h, InputID, ui.ControlOperation{Verb: "set_value", Value: json.RawMessage(`"Custom answer"`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -29,8 +35,12 @@ func TestControlQuestionWriteInAndOptionUseAnswerOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Cmd == nil {
-		t.Fatal("answer did not emit owner result")
+	if res.Cmd != nil || !s.Reviewing() {
+		t.Fatal("edited answer bypassed review")
+	}
+	res, err = invokeControl(t, h, ui.NewID(ActionsID, "submit"), ui.ControlOperation{Verb: "activate"})
+	if err != nil || res.Cmd == nil {
+		t.Fatal("explicit Submit did not emit owner result", err)
 	}
 	msg := res.Cmd().(ResultMsg)
 	if msg.Result.Answers["1"] != "Custom answer" || msg.Target != s {

@@ -394,7 +394,7 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 		y = 1
 	}
 	for i := range ab.buttons {
-		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: y, W: widths[i], H: 1})
+		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: min(y, r.H), W: widths[i], H: min(1, max(0, r.H-y))})
 		x += widths[i] + gap
 	}
 }

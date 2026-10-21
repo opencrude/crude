@@ -316,7 +316,7 @@ func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
 	if m.focusedPopup() != nil {
 		return nil, true
 	}
-	if m.sessionDeckBlocking() && !m.sessionDeckAllowsNavigation() {
+	if m.sessionDeckModal() {
 		return nil, true
 	}
 	switch id {

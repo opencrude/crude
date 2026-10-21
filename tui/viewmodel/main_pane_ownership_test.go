@@ -13,6 +13,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/editor"
 	"crude/tui/perf"
+	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -178,9 +179,23 @@ func TestMainPaneOwnershipVisibleBackgroundPermissionKeepsEditor(t *testing.T) {
 	app.forceFrame()
 	_ = app.View()
 	if app.mainPanes.groups[left].view.chat.HasActiveSelection() {
-		t.Fatal("background permission activation leaked through to transcript selection")
+		t.Fatal("plain transcript click created a retained selection")
 	}
+	// Agent prompts are no longer global modals. Deliberately focusing the
+	// transcript must not leave a hidden approval shortcut armed.
 	_, cmd := app.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	runAppCommand(t, app, cmd)
+	if len(channels["child-a"]) != 0 {
+		t.Fatal("transcript focus left the permission shortcut armed")
+	}
+	draftBeforeDecision := app.Input.Value()
+	projection := app.activeSessionDeck()
+	actions, ok := projection.deckHost.ScreenRect(confirmation.ActionsID)
+	if !ok || actions.Empty() {
+		t.Fatal("exact background decision is not mounted")
+	}
+	x, y := app.sessionDeckRect.X+actions.X+2, app.sessionDeckRect.Y+actions.Y+actions.H-1
+	_, cmd = app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)
 	select {
 	case response := <-channels["child-a"]:
@@ -195,7 +210,7 @@ func TestMainPaneOwnershipVisibleBackgroundPermissionKeepsEditor(t *testing.T) {
 			t.Fatalf("decision leaked to %s", owner)
 		}
 	}
-	if app.Input.Value() != "PERMISSION_DRAFT_MARKER" {
+	if app.Input.Value() != draftBeforeDecision || !strings.Contains(app.Input.Value(), "PERMISSION_DRAFT_MARKER") {
 		t.Fatal("permission consumed draft")
 	}
 }

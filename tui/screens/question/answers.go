@@ -12,12 +12,11 @@ import (
 // This file owns the dedicated answer controls for the question deck: the
 // stacked option rows, the write-in prompt area, and the focus gates that give
 // each pane its Tab/Esc policy. Nothing here touches the shared form field
-// types; the deck composes existing shared primitives (List, TextArea)
+// types; the deck composes existing shared primitives (VirtualList, TextArea)
 // instead.
 
 const (
-	// OptionsID is the focusable stacked answer list (one row per option plus
-	// the "Write your response" row).
+	// OptionsID is the focusable wrapped question/choice reader and final review.
 	OptionsID ui.ComponentID = "session-question/options"
 	// InputID is the free-text write-in prompt area under the option rows.
 	InputID ui.ComponentID = "session-question/input"
@@ -84,6 +83,9 @@ func (g *focusGate) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			}
 			return focusTargetResult(g.next, true)
 		case tea.KeyEsc:
+			if result := g.child.Handle(ctx, evt); result.Handled {
+				return result
+			}
 			action := g.escAction
 			if action == "" {
 				action = railFocusAction
@@ -95,6 +97,12 @@ func (g *focusGate) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 }
 
 func (g *focusGate) Semantics() ui.Semantics { return g.child.Semantics() }
+
+func (g *focusGate) CancelPointerCapture() {
+	if child, ok := g.child.(ui.PointerCaptureCanceller); ok {
+		child.CancelPointerCapture()
+	}
+}
 
 // TextEditor exposes the wrapped control's editor so a context menu inside the
 // gate's pane can copy or cut it (TextEditorProvider). The gate owns the pane's
@@ -108,7 +116,7 @@ var _ ui.Component = (*focusGate)(nil)
 // answerInput wraps the shared prompt-area (TextArea) with change detection
 // so typing in the write-in editor updates answer state without polling. It
 // is deliberately the same control as the session chat composer: multi-line,
-// Enter inserts a newline, the commit chord submits, and it carries no raised form
+// Enter inserts a newline, the commit chord advances, and it carries no raised form
 // background; the deck paints flat ColorBg everywhere.
 type answerInput struct {
 	*ui.TextArea

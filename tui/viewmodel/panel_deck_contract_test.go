@@ -58,7 +58,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		}
 	})
 
-	t.Run("confirmation_blocking_prevents_chat_and_mouse_leak", func(t *testing.T) {
+	t.Run("confirmation_initial_focus_blocks_composer_not_shell_pointer", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
 		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?", tool: "bash"})
 		if !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
@@ -69,17 +69,21 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		if app.Input.Value() != "should-not-reach" {
 			t.Fatal("blocking confirmation leaked key to chat input")
 		}
-		if region := app.classifyShellRegion(app.width-1, app.height-1, false); region != regionSessionDeck {
-			t.Fatalf("clicks classify as deck=%v want sessionDeck", region)
+		if app.sessionDeckModal() {
+			t.Fatal("a pending agent confirmation is not a shell-modal decision")
+		}
+		app.paintShellFrame()
+		if region := app.classifyShellRegion(app.chatRect.X+2, app.chatRect.Y, false); region != regionChat {
+			t.Fatalf("transcript click classified as %v, want chat", region)
 		}
 	})
 
-	t.Run("blocking_panel_shields_pointer_outside_deck_rect", func(t *testing.T) {
+	t.Run("agent_prompt_allows_transcript_pointer_reading", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
 		for range 40 {
 			app.appendActiveMessage(types.ChatMessage{
 				Role:    types.RoleAssistant,
-				Content: "underlying chat row must not receive modal pointer input",
+				Content: "transcript remains readable while an agent waits for an answer",
 				Time:    time.Now(),
 			})
 		}
@@ -95,20 +99,23 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 			t.Fatal("test requires scrollable content behind the blocking panel")
 		}
 		beforeOffset := scroll.Offset()
-		beforeFocus := app.rootHost.Focused()
 		x, y := app.chatRect.X+app.Theme.Spacing.PadLR+2, app.chatRect.Y+1
 
 		_, _ = app.dispatchMouseWheel(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
 		if got := scroll.Offset(); got >= beforeOffset {
-			t.Fatalf("blocking panel must allow wheel-only chat navigation: offset=%d before=%d", got, beforeOffset)
+			t.Fatalf("pending prompt must allow chat navigation: offset=%d before=%d", got, beforeOffset)
 		}
 		_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-		if got := app.rootHost.Focused(); got != beforeFocus {
-			t.Fatalf("blocking panel leaked click focus: got %q want %q", got, beforeFocus)
+		if projection.deckFocused || !app.rootHost.HasPointerCapture() {
+			t.Fatal("deliberate transcript press must release deck focus and start reading selection")
 		}
+		_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
 		_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseRight})
-		if app.LastContextMenu != nil {
-			t.Fatal("blocking panel leaked right-click to an underlying context menu")
+		if app.LastContextMenu == nil {
+			t.Fatal("pending prompt must not suppress transcript context actions")
+		}
+		if !projection.deck.IsOpen() || !app.sessionDeckBlocking() {
+			t.Fatal("reading the transcript discarded the pending decision")
 		}
 	})
 

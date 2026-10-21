@@ -235,6 +235,33 @@ func TestPlanHoverRefreshResizeAndAbsentPlan(t *testing.T) {
 	app.rootHost.CancelPointerCapture()
 }
 
+func TestPlanHoverReadableWhileQuestionWaitsButNotUnderModalDeck(t *testing.T) {
+	app, prompt := questionDockJourneyApp(t)
+	draft := app.Input.Value()
+	plan := hoverPlanFixture("Pending question plan", 4)
+	paintHoverFixture(app, map[string]*activity.Plan{"agent": plan})
+	anchor := app.planActivityRect(app.chatScreen)
+	if anchor.Empty() {
+		t.Fatal("pending question hid the plan activity anchor")
+	}
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 3, Y: anchor.Y})
+	if app.planHover == nil || !strings.Contains(hoverPopoverText(app), "Pending question plan") {
+		t.Fatal("pending continuation blocked reading its plan")
+	}
+	questionDockAssertRetained(t, app, prompt, "", draft)
+	app.clearPlanHover()
+	projection := app.activeSessionDeck()
+	projection.deck.Close(prompt.panelID())
+	projection.yolo.Reset()
+	projection.deck.Open(sessionYoloPanel(projection.yolo))
+	paintHoverFixture(app, map[string]*activity.Plan{"agent": plan})
+	anchor = app.planActivityRect(app.chatScreen)
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 3, Y: anchor.Y})
+	if app.planHover != nil {
+		t.Fatal("plan reading bypassed a true modal decision")
+	}
+}
+
 // The passive plan popover is a reading surface: dragging over its text in the
 // real shell selects it and release copies it, without dismissing the popover
 // mid-drag or touching the composer draft.
