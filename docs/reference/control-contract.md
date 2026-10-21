@@ -93,6 +93,12 @@ use the `capabilities.*` commands. Questions retain
 agent versus external-client answer provenance, never fabricated human input.
 See [settings layers](settings.md).
 
+Ordinary question drafts navigate through a distinct review stage. Only an exact
+admitted `question.submit` or `question.cancel` action can resolve the backend
+question; `question.next` is local navigation and never a decision receipt.
+Generic question controls preserve agent/external attribution and cannot approve
+permissions or bypass human-owned authority.
+
 ## Receipts, uncertainty and shell presentation
 
 Results distinguish admitted, committed, applied, pending_decision, partial,

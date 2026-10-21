@@ -201,7 +201,9 @@ func (m *App) closeProjectionPanel(projection *sessionProjection, id string) {
 	}
 	projection.deckHost.MarkLayout()
 	if panel := projection.deck.Active(); panel != nil && panel.BlockingGroup == "agent-prompts" {
-		projection.deckFocused, projection.deckFocus = true, panel.FocusID
+		// A remaining request changes the deck's local focus, not the user's
+		// deliberate shell focus (for example an editor or workspace panel).
+		projection.deckFocus = panel.FocusID
 	}
 	m.normalizeSessionDeckFocus(projection)
 }
@@ -221,10 +223,15 @@ func (m *App) sessionDeckBlocking() bool {
 }
 
 func (m *App) sessionDeckCapturesInput() bool {
-	if m.sessionDeckAllowsNavigation() && (m.focusTarget() == FocusTree || m.focusTarget() == FocusTabBar) {
-		return false
-	}
-	return m.sessionDeckFocused() || m.sessionDeckBlocking()
+	return m.sessionDeckFocused() || m.sessionDeckModal()
+}
+
+// sessionDeckModal is the shell-interaction boundary, separate from whether
+// an agent is waiting for a decision. Agent prompts retain their answers and
+// block continuation/composer submission, but keys and pointers may deliberately
+// move to other IDE content. Safety decisions such as YOLO remain modal.
+func (m *App) sessionDeckModal() bool {
+	return m.sessionDeckBlocking() && !m.sessionDeckAllowsNavigation()
 }
 
 func (m *App) sessionDeckAllowsNavigation() bool {

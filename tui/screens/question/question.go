@@ -47,25 +47,23 @@ type ResultMsg struct {
 
 type CancelMsg struct{ Target *Screen }
 
-// Screen composes the dedicated answer stack, write-in field, question rail,
-// and ActionBar for a blocking agent request. The right pane never renders a
-// dropdown: every option is its own stacked row followed by a "Write your
-// response" line, selectable by keyboard (arrows + Enter/Space) or mouse.
-// A question rail mirrors the settings deck; the active row is indicated by
-// background+text color only (no marker glyphs). It has no workspace
-// dependencies.
+// Screen composes a wrapped question/choice reader, bounded native write-in,
+// optional question rail, explicit review, and pinned ActionBar. Answers have
+// one retained owner until explicit Submit; neither choosing the last option
+// nor committing a write-in resolves the request.
 type Screen struct {
 	ui.Base
-	tokens  *ui.TokenSet
-	items   []Item
-	answers []string
-	choices [][]string
-	custom  []string
-	index   int
-	errMsg  string
+	tokens     *ui.TokenSet
+	items      []Item
+	answers    []string
+	choices    [][]string
+	custom     []string
+	railLabels []string
+	index      int
+	errMsg     string
 
 	railRows    *ui.List
-	options     *ui.List
+	options     *answerList
 	input       *answerInput
 	actions     *ui.ActionBar
 	railGate    *focusGate
@@ -74,18 +72,13 @@ type Screen struct {
 	railScroll  *ui.ScrollbarControl
 	divider     *railDivider
 
-	// Cached right-pane geometry from the latest Layout so Paint can place
-	// the header rule, error line, and truncations without recomputation.
-	paneX      int
-	paneW      int
-	paneIndent int
-	headerH    int
-	optH       int
-	inputH     int
-
-	ruleFullBleed bool
-	ruleBleedX    int
-	ruleBleedW    int
+	reviewing     bool
+	reviewVisited bool
+	paneX         int
+	paneW         int
+	paneIndent    int
+	inputH        int
+	railVisible   bool
 }
 
 func New(th *theme.Theme) *Screen {
@@ -93,17 +86,15 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	s := &Screen{
-		Base:          ui.NewBase(ScreenID),
-		tokens:        ui.NewTokenSet(th),
-		ruleFullBleed: true,
+		Base:   ui.NewBase(ScreenID),
+		tokens: ui.NewTokenSet(th),
 	}
 	s.railRows = ui.NewList(ui.NewID(RailID, "rows"), s.tokens)
 	s.railRows.SetActivateAction("question.rail.select")
 	s.railRows.SetDefaultRowBackground(ui.ColorBg)
 
-	s.options = ui.NewList(ui.NewID(OptionsID, "rows"), s.tokens)
+	s.options = newAnswerList(ui.NewID(OptionsID, "rows"), s.tokens)
 	s.options.SetActivateAction("question.option.activate")
-	s.options.SetDefaultRowBackground(ui.ColorBg)
 
 	field := ui.NewTextArea(InputID, s.tokens, true)
 	field.SetSubmitAction("question.next")
@@ -154,6 +145,16 @@ func (s *Screen) ResetWithError(questionsJSON string) (int, error) {
 	s.choices = make([][]string, len(items))
 	s.custom = make([]string, len(items))
 	s.index = 0
+	s.reviewing, s.reviewVisited = false, false
+	s.railLabels = make([]string, len(items))
+	for index, item := range items {
+		label := item.Header
+		if label == "" {
+			label = item.Question
+		}
+		label = strings.ReplaceAll(rendering.SanitizeForTerminal(label), "\n", " ")
+		s.railLabels[index] = fmt.Sprintf("%d. %s", index+1, rendering.TruncateVisual(label, 30, "…"))
+	}
 	s.syncRail()
 	s.openCurrent()
 	return len(items), nil
@@ -164,7 +165,9 @@ func (s *Screen) Dismiss() {
 	s.answers = nil
 	s.choices = nil
 	s.custom = nil
+	s.railLabels = nil
 	s.index = 0
+	s.reviewing, s.reviewVisited = false, false
 	s.syncRail()
 	s.openCurrent()
 }
@@ -188,21 +191,6 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.divider.tokens = tokens
 }
 
-// SetRuleFullBleed toggles whether the header rule may span the deck row
-// (docked panels do; the parent publishes the row geometry via SetRuleBleed).
-func (s *Screen) SetRuleFullBleed(v bool) { s.ruleFullBleed = v }
-
-// SetRuleBleed records the deck row geometry supplied by the parent deck at
-// layout time (mirrors Form/ActionBar).
-func (s *Screen) SetRuleBleed(offsetX, width int) { s.ruleBleedX, s.ruleBleedW = offsetX, width }
-
-func (s *Screen) ruleSpan(contentW int) (x, w int) {
-	if s.ruleFullBleed && s.ruleBleedW-s.ruleBleedX > contentW {
-		return -s.ruleBleedX, s.ruleBleedW
-	}
-	return 0, contentW
-}
-
 // syncRail rebuilds the question rail rows. Each question paints as
 // "○ N. Title" (unanswered) or "✓ N. Title" (answered); divider rules
 // separate entries; the active question is indicated by background and text
@@ -212,21 +200,14 @@ func (s *Screen) syncRail() {
 		return
 	}
 	items := make([]ui.ListItem, 0, max(0, s.Count()*2-1))
-	for i, q := range s.items {
-		label := q.Header
-		if label == "" {
-			label = q.Question
-		}
-		if rendering.VisibleWidth(label) > 30 {
-			label = rendering.TruncateVisual(label, 29, "…")
-		}
+	for i := range s.items {
 		icon := "○"
 		if i < len(s.answers) && strings.TrimSpace(s.answers[i]) != "" {
 			icon = "✓"
 		}
 		items = append(items, ui.ListItem{
 			ID:      fmt.Sprintf("rail/%d", i),
-			Label:   fmt.Sprintf("%d. %s", i+1, label),
+			Label:   s.railLabels[i],
 			Icon:    icon,
 			Payload: i,
 		})
@@ -234,9 +215,12 @@ func (s *Screen) syncRail() {
 			items = append(items, ui.ListItem{ID: fmt.Sprintf("rail/sep/%d", i), Separator: true})
 		}
 	}
+	if s.Count() > 0 {
+		items = append(items, ui.ListItem{ID: "rail/review", Label: "Review answers", Payload: len(s.items)})
+	}
 	s.railRows.SetItems(items)
 	for index, item := range items {
-		if payload, ok := item.Payload.(int); ok && payload == s.index {
+		if payload, ok := item.Payload.(int); ok && (s.reviewing && payload == len(s.items) || !s.reviewing && payload == s.index) {
 			s.railRows.SelectIndex(index)
 			break
 		}
@@ -247,19 +231,11 @@ func (s *Screen) syncRail() {
 // of the width (capped at 35), never below 8, and never starving the form
 // below the readable minimum.
 func (s *Screen) railWidth(total int) int {
-	if total <= 0 {
-		return 12
+	if total < 64 {
+		return 0
 	}
-	maxItemW := 0
-	for i, q := range s.items {
-		label := q.Header
-		if label == "" {
-			label = q.Question
-		}
-		if rendering.VisibleWidth(label) > 30 {
-			label = rendering.TruncateVisual(label, 29, "…")
-		}
-		title := fmt.Sprintf("%d. %s", i+1, label)
+	maxItemW := rendering.VisibleWidth("Review answers") + 1
+	for _, title := range s.railLabels {
 		w := rendering.VisibleWidth(title) + 4 // icon + indent spacing
 		if w > maxItemW {
 			maxItemW = w
@@ -288,6 +264,21 @@ func (s *Screen) railWidth(total int) int {
 
 func (s *Screen) Current() int { return s.index }
 
+// Reviewing reports the explicit final pass; no answer is sent on entering it.
+func (s *Screen) Reviewing() bool { return s.reviewing }
+
+// InvalidateWidthProfile keeps cached line breaks in the terminal's calibrated
+// column space even when the allocated number of columns did not change.
+func (s *Screen) InvalidateWidthProfile() {
+	if !s.options.dirty {
+		s.options.offset = s.options.Scroll().Offset()
+	}
+	s.options.dirty = true
+}
+
+// InitialFocus names the actual mounted entry control, including text-only requests.
+func (s *Screen) InitialFocus() ui.ComponentID { return s.entryFocusID() }
+
 func (s *Screen) Answer(index int) string {
 	if index < 0 || index >= len(s.answers) {
 		return ""
@@ -296,34 +287,20 @@ func (s *Screen) Answer(index int) string {
 }
 
 func (s *Screen) Children() []ui.Component {
-	children := []ui.Component{s.railGate, s.optionsGate, s.inputGate, s.actions}
-	if s.railScroll != nil && s.railScroll.Needed() {
+	if s.Count() == 0 {
+		return nil
+	}
+	children := []ui.Component{s.optionsGate, s.actions}
+	if s.railVisible {
+		children = append(children, s.railGate, s.divider)
+	}
+	if !s.reviewing {
+		children = append(children, s.inputGate)
+	}
+	if s.railVisible && s.railScroll != nil && s.railScroll.Needed() {
 		children = append(children, s.railScroll)
 	}
-	// The pane divider paints last so form rules and rail fills never mask it.
-	children = append(children, s.divider)
 	return children
-}
-
-// headerHeight is the right-pane chrome above the answer stack: title, optional
-// question detail, and the separator rule (mirrors the docked-form header).
-func (s *Screen) headerHeight() int {
-	if s.Count() == 0 {
-		return 0
-	}
-	item, ok := s.currentItem()
-	if !ok || strings.TrimSpace(item.Question) == "" {
-		return 2
-	}
-	return 3
-}
-
-func (s *Screen) optionRowCount() int {
-	item, ok := s.currentItem()
-	if !ok || s.index < 0 || s.index >= len(s.choices) {
-		return 0
-	}
-	return len(optionItems(item, s.choices[s.index]))
 }
 
 func (s *Screen) errHeight() int {
@@ -374,8 +351,13 @@ func (s *Screen) PreferredHeight(maxHeight int) int {
 	if s.actions != nil {
 		chrome = s.actions.PreferredHeight()
 	}
-	body := s.headerHeight() + s.optionRowCount() + s.preferredInputH(maxHeight) + s.errHeight()
-	return min(maxHeight, min(body, max(0, maxHeight-chrome))+chrome)
+	body := s.options.ContentHeight() + s.errHeight() + 1
+	if !s.reviewing {
+		body += min(6, s.preferredInputH(maxHeight))
+	}
+	// A request is a bounded dock, not the entire transcript. Both very long
+	// questions and review answers scroll inside this budget.
+	return min(maxHeight, min(20, max(8, body+chrome)))
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -384,8 +366,10 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.actions != nil {
 		chrome = s.actions.PreferredHeight()
 	}
-	bodyH := max(1, r.H-chrome)
+	chrome = min(chrome, max(0, r.H))
+	bodyH := max(0, r.H-chrome)
 	railW := s.railWidth(r.W)
+	s.railVisible = railW > 0
 	scroll := s.railScroll != nil && s.railScroll.NeededForViewport(bodyH)
 	railContentW := railW
 	if scroll {
@@ -398,26 +382,29 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.railScroll.Layout(ctx, ui.Rect{})
 	}
 
-	s.headerH = s.headerHeight()
-	s.paneX = railW + 2
-	s.paneW = max(1, r.W-s.paneX)
+	s.paneX = 0
+	if s.railVisible {
+		s.paneX = railW + 2
+	}
+	s.paneW = max(0, r.W-s.paneX)
 	s.paneIndent = s.inputIndent(s.paneW)
 	errH := s.errHeight()
-	inputW := max(1, s.paneW-s.paneIndent)
-	avail := max(1, bodyH-s.headerH-errH)
-	s.optH = 0
-	if rows := s.optionRowCount(); rows > 0 {
-		s.optH = min(rows, avail)
+	inputW := max(0, s.paneW-s.paneIndent)
+	// Keep reading, editing and actions in disjoint rectangles even on tiny
+	// grids. The write-in is capped independently; it never hides a long choice.
+	s.inputH = 0
+	if !s.reviewing {
+		room := max(0, (bodyH-errH-1)/3)
+		if bodyH > errH+1 {
+			room = max(1, room)
+		}
+		s.inputH = min(6, room, s.inputNaturalH(inputW, max(1, room)))
 	}
-	// The write-in is a prompt area: it grows with its content but never
-	// pushes the option stack or the action bar out of the pane; overflow
-	// scrolls inside the control instead.
-	room := max(1, avail-s.optH)
-	s.inputH = min(s.inputNaturalH(inputW, room), room)
-	s.optionsGate.Layout(ctx, ui.Rect{X: s.paneX, Y: s.headerH, W: s.paneW, H: s.optH})
+	readerH := max(0, bodyH-s.inputH-errH-1)
+	s.optionsGate.Layout(ctx, ui.Rect{X: s.paneX, W: s.paneW, H: readerH})
 	s.inputGate.Layout(ctx, ui.Rect{
 		X: s.paneX + s.paneIndent,
-		Y: s.headerH + s.optH,
+		Y: readerH,
 		W: inputW,
 		H: s.inputH,
 	})
@@ -431,12 +418,10 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 		return
 	}
 	bg := cell.NoColor
-	fg, muted, divider, errorFG := cell.NoColor, cell.NoColor, cell.NoColor, cell.NoColor
+	muted, errorFG := cell.NoColor, cell.NoColor
 	if s.tokens != nil {
 		bg = s.tokens.Color(ui.ColorBg)
-		fg = s.tokens.Color(ui.ColorFg)
 		muted = s.tokens.Color(ui.ColorMuted)
-		divider = s.tokens.Color(ui.ColorPopupDivider)
 		errorFG = s.tokens.Color(ui.ColorError)
 	}
 	ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
@@ -444,24 +429,21 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 		return
 	}
 	x, y := originX+r.X, originY+r.Y
-	title, detail := s.currentTitleDetail()
-	buf.WriteString(x+s.paneX, y, rendering.TruncateVisual(title, s.paneW, ""), fg, bg, cell.AttrBold)
-	if s.headerH == 3 {
-		buf.WriteString(x+s.paneX, y+1, rendering.TruncateVisual(detail, s.paneW, ""), muted, bg, 0)
-	}
-	// Header rule spans the deck row edge to edge when the parent published
-	// bleed geometry (paint-last ordering keeps it visible over fills).
-	ruleX, ruleW := s.ruleSpan(s.paneW)
-	startX := max(x, x+s.paneX+ruleX)
-	endX := min(x+r.W, x+s.paneX+ruleX+ruleW)
-	if endX > startX {
-		glyph := ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '─')
-		buf.WriteString(startX, y+s.headerH-1, strings.Repeat(string(glyph), endX-startX), divider, bg, 0)
-	}
+	readerH := s.optionsGate.Bounds().H
 	if s.errMsg != "" {
 		errX := x + s.paneX + s.paneIndent
-		errY := y + s.headerH + s.optH + s.inputH
-		buf.WriteString(errX, errY, rendering.TruncateVisual(s.errMsg, max(1, s.paneW-s.paneIndent), "…"), errorFG, bg, 0)
+		errY := y + readerH + s.inputH
+		buf.WriteString(errX, errY, rendering.TruncateVisual(s.errMsg, max(0, s.paneW-s.paneIndent), "…"), errorFG, bg, 0)
+	}
+	if hintY := r.H - s.actions.PreferredHeight() - 1; hintY >= 0 {
+		hint := "Tab: actions"
+		if s.options.Scroll().MaxOffset() > 0 {
+			hint = "Scroll / PgUp / PgDn to read · " + hint
+		}
+		if s.reviewing {
+			hint = "Click a response or Enter to edit · " + hint
+		}
+		buf.WriteString(x+s.paneX, y+hintY, rendering.TruncateVisual(hint, s.paneW, "…"), muted, bg, 0)
 	}
 }
 
@@ -479,7 +461,12 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		return s.focusResult(s.entryFocusID(), true)
 	case tea.KeyEsc:
-		return s.focusResult(RailID, false)
+		if !s.railVisible {
+			// Narrow forms replace the rail with the pinned actions. Once
+			// focus has climbed there, Esc is the explicit cancel step.
+			return s.cancel()
+		}
+		return s.focusResult(s.visibleTarget(RailID), false)
 	}
 	return ui.EventResult{}
 }
@@ -490,16 +477,20 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		target, _ := action.Payload.(ui.ComponentID)
 		return s.focusResult(s.visibleTarget(target), action.ID == focusForwardAction)
 	case railFocusAction:
-		return s.focusResult(RailID, false)
+		return s.focusResult(s.visibleTarget(RailID), false)
 	case "question.rail.select":
 		item, ok := action.Payload.(ui.ListItem)
 		if !ok {
 			return ui.EventResult{}
 		}
 		index, ok := item.Payload.(int)
-		if !ok || index < 0 || index >= len(s.items) || index == s.index {
+		if ok && index == len(s.items) {
+			return s.openReview()
+		}
+		if !ok || index < 0 || index >= len(s.items) {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
+		s.reviewing = false
 		s.index = index
 		s.syncRail()
 		s.openCurrent()
@@ -510,8 +501,19 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return s.handleOptionActivate(action)
 	case "question.next":
 		return s.advance()
+	case "question.submit":
+		if s.reviewing && s.allAnswered() {
+			result := s.Result()
+			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResultMsg{Target: s, Result: result} }}
+		}
+		return ui.EventResult{Handled: true}
 	case "question.previous":
-		if s.index > 0 {
+		if s.reviewing {
+			s.reviewing = false
+			s.index = len(s.items) - 1
+			s.syncRail()
+			s.openCurrent()
+		} else if s.index > 0 {
 			s.index--
 			s.syncRail()
 			s.openCurrent()
@@ -522,7 +524,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "question.cancel":
 		return s.cancel()
 	case "actionbar.exit.backward":
-		return s.focusResult(RailID, false)
+		return s.focusResult(OptionsID, false)
 	case "actionbar.exit.forward":
 		return s.focusResult(s.entryFocusID(), true)
 	}
@@ -534,6 +536,20 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 // multi-choice rows toggle in place; the write-in row selects the custom
 // answer and focuses the text line beneath the stack.
 func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
+	if s.reviewing {
+		row, ok := action.Payload.(ui.ListItem)
+		index, valid := row.Payload.(int)
+		if !ok || !valid || index < 0 || index >= s.Count() {
+			return ui.EventResult{Handled: true}
+		}
+		s.reviewing = false
+		s.index = index
+		s.syncRail()
+		s.openCurrent()
+		result := s.focusResult(s.entryFocusID(), true)
+		result.Invalidate |= ui.InvalidateLayout
+		return result
+	}
 	item, ok := s.currentItem()
 	row, rowOK := action.Payload.(ui.ListItem)
 	if !ok || !rowOK {
@@ -542,7 +558,11 @@ func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 	id, _ := row.Payload.(string)
 	if id == customOptionID {
 		s.selectCustom()
-		result := s.focusResult(InputID, true)
+		target := InputID
+		if item.Multiple && !containsCustom(s.choices[s.index]) {
+			target = OptionsID
+		}
+		result := s.focusResult(target, true)
 		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 		return result
 	}
@@ -556,7 +576,7 @@ func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 		s.syncOptions()
 		s.refreshError()
 		s.syncRail()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateLayout}
 	}
 	s.choices[s.index] = []string{id}
 	s.syncAnswer()
@@ -564,17 +584,15 @@ func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 	return s.advance()
 }
 
-// selectCustom marks the write-in row as the active answer. Single-choice
-// questions replace their pick with the write-in; multi-select adds it.
+// selectCustom activates the write-in answer. Single-choice questions replace
+// their pick; multi-select toggles membership without losing the retained draft.
 func (s *Screen) selectCustom() {
 	item, ok := s.currentItem()
 	if !ok {
 		return
 	}
 	if item.Multiple {
-		if !containsCustom(s.choices[s.index]) {
-			s.choices[s.index] = append(s.choices[s.index], customOptionID)
-		}
+		s.toggleChoice(customOptionID)
 	} else {
 		s.choices[s.index] = []string{customOptionID}
 	}
@@ -606,6 +624,7 @@ func (s *Screen) onInputChanged(value string) {
 	}
 	s.custom[s.index] = value
 	if len(item.Options) > 0 && strings.TrimSpace(value) != "" {
+		hadCustom := containsCustom(s.choices[s.index])
 		if item.Multiple {
 			if !containsCustom(s.choices[s.index]) {
 				s.choices[s.index] = append(s.choices[s.index], customOptionID)
@@ -613,7 +632,9 @@ func (s *Screen) onInputChanged(value string) {
 		} else if !containsCustom(s.choices[s.index]) {
 			s.choices[s.index] = []string{customOptionID}
 		}
-		s.syncOptions()
+		if !hadCustom {
+			s.syncOptions()
+		}
 	}
 	s.syncAnswer()
 	s.refreshError()
@@ -624,29 +645,39 @@ func (s *Screen) openCurrent() {
 	s.errMsg = ""
 	if _, ok := s.currentItem(); !ok {
 		s.syncRail()
+		s.options.SetItems(nil)
+		s.input.Clear()
 		s.actions = ui.NewDockedActionBar(ActionsID, s.tokens)
 		return
 	}
 	s.input.SetValue(s.custom[s.index])
+	s.options.SetItems(nil)
+	s.inputGate.escAction = focusBackwardAction
+	s.inputGate.escPayload = OptionsID
+	if item, _ := s.currentItem(); len(item.Options) == 0 {
+		s.inputGate.escAction = railFocusAction
+		s.inputGate.escPayload = RailID
+	}
 	s.syncOptions()
+	s.options.ResetViewport()
 
 	buttons := make([]ui.ActionBarButton, 0, 3)
 	if s.index > 0 {
 		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "question.previous", Variant: ui.VariantSecondary, Enabled: true})
 	}
 	label := "Next"
-	if s.index == len(s.items)-1 {
-		label = "Submit"
+	if s.index == len(s.items)-1 || s.reviewVisited {
+		label = "Review answers"
 	}
 	buttons = append(buttons,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Shortcut: ui.CommitChord, Variant: ui.VariantPrimary, Enabled: true},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
 	)
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 }
 
-// syncOptions rebuilds the stacked answer rows, anchoring the highlight on the
-// current answer when one exists, otherwise carrying the cursor across.
+// syncOptions rebuilds the reading rows, carrying the cursor across toggles.
+// Opening a question clears that cursor first and restores its retained choice.
 func (s *Screen) syncOptions() {
 	item, ok := s.currentItem()
 	if !ok || s.options == nil {
@@ -656,14 +687,16 @@ func (s *Screen) syncOptions() {
 	if selected, ok := s.options.Selected(); ok {
 		carried = selected.ID
 	}
-	items := optionItems(item, s.choices[s.index])
+	title, detail := s.currentTitleDetail()
+	items := []ui.ListItem{{ID: "title", Label: title, Header: true}, {ID: "question", Label: detail, Disabled: true}, {ID: "question-rule", Separator: true}}
+	items = append(items, optionItems(item, s.choices[s.index])...)
 	s.options.SetItems(items)
 	wants := make([]string, 0, 2)
-	if len(s.choices[s.index]) > 0 {
-		wants = append(wants, s.choices[s.index][0])
-	}
 	if carried != "" {
 		wants = append(wants, carried)
+	}
+	if len(s.choices[s.index]) > 0 {
+		wants = append(wants, s.choices[s.index][0])
 	}
 	for _, want := range wants {
 		for index, it := range items {
@@ -746,7 +779,7 @@ func (s *Screen) validationError() string {
 func (s *Screen) refreshError() { s.errMsg = s.validationError() }
 
 func (s *Screen) advance() ui.EventResult {
-	if s.Count() == 0 {
+	if s.Count() == 0 || s.reviewing {
 		return ui.EventResult{Handled: true}
 	}
 	s.syncAnswer()
@@ -759,7 +792,7 @@ func (s *Screen) advance() ui.EventResult {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	}
 	s.errMsg = ""
-	if s.index < len(s.items)-1 {
+	if !s.reviewVisited && s.index < len(s.items)-1 {
 		s.index++
 		s.syncRail()
 		s.openCurrent()
@@ -767,11 +800,47 @@ func (s *Screen) advance() ui.EventResult {
 		result.Invalidate |= ui.InvalidateLayout
 		return result
 	}
-	return ui.EventResult{
-		Handled:    true,
-		Cmd:        func() tea.Msg { return ResultMsg{Target: s, Result: s.Result()} },
-		Invalidate: ui.InvalidateLayout | ui.InvalidatePaint,
+	return s.openReview()
+}
+
+func (s *Screen) allAnswered() bool {
+	for index, item := range s.items {
+		if strings.TrimSpace(s.answers[index]) == "" || containsCustom(s.choices[index]) && strings.TrimSpace(s.custom[index]) == "" {
+			return false
+		}
+		if len(item.Options) > 0 && len(s.choices[index]) == 0 {
+			return false
+		}
 	}
+	return s.Count() > 0
+}
+
+func (s *Screen) openReview() ui.EventResult {
+	s.reviewing, s.reviewVisited = true, true
+	s.errMsg = ""
+	rows := []ui.ListItem{{ID: "review/title", Label: "Review answers", Header: true}}
+	for index, item := range s.items {
+		answer := s.answers[index]
+		if strings.TrimSpace(answer) == "" {
+			answer = "Not answered"
+		}
+		title := fmt.Sprintf("%d. %s", index+1, item.Header)
+		rows = append(rows, ui.ListItem{ID: fmt.Sprintf("review/%d", index), Label: strings.TrimSpace(title) + " · Edit", Detail: item.Question + "\n\nAnswer:\n" + answer, Payload: index})
+		if index < len(s.items)-1 {
+			rows = append(rows, ui.ListItem{ID: fmt.Sprintf("review/sep/%d", index), Separator: true})
+		}
+	}
+	s.options.SetItems(rows)
+	s.options.ResetViewport()
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "question.previous", Variant: ui.VariantSecondary, Enabled: true},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "submit"), Label: "Submit", Action: "question.submit", Variant: ui.VariantPrimary, Enabled: s.allAnswered()},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
+	)
+	s.syncRail()
+	result := s.focusResult(OptionsID, true)
+	result.Invalidate |= ui.InvalidateLayout
+	return result
 }
 
 func (s *Screen) cancel() ui.EventResult {
@@ -799,14 +868,14 @@ func (s *Screen) focusResult(target ui.ComponentID, forward bool) ui.EventResult
 	}
 }
 
-// visibleTarget redirects focus hops away from panes that do not exist for
-// the current question: text-only questions have no option rows, so leaving
-// the write-in (Esc) or Tabbing from the rail lands on the rail directly.
+// visibleTarget redirects focus away from the hidden write-in during review
+// and from the absent rail on narrow grids. The reader always remains reachable.
 func (s *Screen) visibleTarget(target ui.ComponentID) ui.ComponentID {
-	if target == OptionsID {
-		if item, ok := s.currentItem(); !ok || len(item.Options) == 0 {
-			return RailID
-		}
+	if s.reviewing && target == InputID {
+		return ActionsID
+	}
+	if target == RailID && !s.railVisible {
+		return ActionsID
 	}
 	return target
 }
@@ -814,6 +883,9 @@ func (s *Screen) visibleTarget(target ui.ComponentID) ui.ComponentID {
 // entryFocusID is where keyboard traversal enters the current question: the
 // stacked rows for option questions, the write-in line for free-text ones.
 func (s *Screen) entryFocusID() ui.ComponentID {
+	if s.reviewing {
+		return OptionsID
+	}
 	if item, ok := s.currentItem(); ok && len(item.Options) == 0 {
 		return InputID
 	}
@@ -874,9 +946,7 @@ func containsCustom(values []string) bool {
 	return false
 }
 
-// railDivider paints the vertical rule between the question rail and the form
-// pane. It is the last child so form rules and rail fills never mask it (the
-// settings deck uses the same paint-last split divider pattern).
+// railDivider paints the vertical rule between the question rail and the reader.
 type railDivider struct {
 	ui.Base
 	tokens *ui.TokenSet

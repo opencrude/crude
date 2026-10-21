@@ -53,13 +53,13 @@ func (m *App) routePlanHoverMotion(msg tea.MouseMotionMsg) bool {
 	if m.windowManager == nil || m.overlayHost == nil || m.rootHost == nil {
 		return false
 	}
-	if h := m.planHover; h != nil && h.widget.Host().HasPointerCapture() && !m.sessionDeckBlocking() {
+	if h := m.planHover; h != nil && h.widget.Host().HasPointerCapture() && !m.sessionDeckModal() {
 		if fw := m.overlayHost.Window(ui.OverlayPlanHover); fw != nil && m.windowManager.TopWindow() == fw {
 			m.forwardEventToWindowContent(fw, msg)
 			return true
 		}
 	}
-	if m.sessionDeckBlocking() || msg.Button != tea.MouseNone {
+	if m.sessionDeckModal() || msg.Button != tea.MouseNone {
 		m.clearPlanHover()
 		return false
 	}
@@ -131,7 +131,7 @@ func (m *App) syncPlanHover() {
 	anchor := m.planActivityRect(h.owner)
 	p := h.owner.ActivityPlan()
 	fw := m.overlayHost.Window(ui.OverlayPlanHover)
-	if fw == nil || anchor.Empty() || p == nil || len(p.Steps) == 0 || m.sessionDeckBlocking() ||
+	if fw == nil || anchor.Empty() || p == nil || len(p.Steps) == 0 || m.sessionDeckModal() ||
 		m.windowManager.TopWindow() != fw || m.width < 12 || anchor.Y < 4 {
 		m.clearPlanHover()
 		return

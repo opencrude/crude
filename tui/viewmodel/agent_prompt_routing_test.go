@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -208,6 +209,48 @@ func emitTestPermission(app *App, owner, block string) {
 		"block_id": block, "operation": "Update", "tool": "apply_patch", "target": owner + ".go",
 		"question": "Allow " + owner + " edit?", "reason": "This request belongs to " + owner,
 	}})
+}
+
+func TestQuestionReviewRetainedAcrossFamilySwitchAndConcurrentRequests(t *testing.T) {
+	app := newPromptFamilyApp(t)
+	wsOf(app).Logger = stubLogger{}
+	app.Input.SetInput("family-private draft")
+	emit := func(owner, block, payload string) *agentPromptState {
+		app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "blocking", Data: map[string]any{
+			"block_id": block, "operation": "questions", "tool": "question", "questions_json": payload,
+		}})
+		app.paintShellFrame()
+		return app.agentPrompts[len(app.agentPrompts)-1]
+	}
+	first := emit("child-a", "first-question", `[{"question":"FIRST_OWNER_QUESTION","options":["FIRST_ANSWER"]}]`)
+	questionDockClickText(t, app, app.sessionDeckRect, "FIRST_ANSWER")
+	if !first.question.Reviewing() {
+		t.Fatal("first owner did not retain explicit review")
+	}
+	second := emit("child-b", "second-question", `[{"question":"SECOND_OWNER_QUESTION","options":["SECOND_ANSWER"]}]`)
+	if first.projection != second.projection || first.projection.deck.Active().ID != first.panelID() {
+		t.Fatal("later question replaced the active owner's review")
+	}
+	questionDockClickText(t, app, app.sessionDeckRect, "child-b")
+	questionDockClickText(t, app, app.sessionDeckRect, "SECOND_ANSWER")
+	if !second.question.Reviewing() || first.question.Answer(0) != "FIRST_ANSWER" || second.question.Answer(0) != "SECOND_ANSWER" {
+		t.Fatal("concurrent owners shared review or answer state")
+	}
+	app.switchToAgentView("beta")
+	app.paintShellFrame()
+	if !app.sessionDeckRect.Empty() || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
+		t.Fatal("leaving the family turned its reviewed drafts into a global modal")
+	}
+	app.switchToAgentView("child-a")
+	app.paintShellFrame()
+	questionDockClickText(t, app, app.sessionDeckRect, "child-a")
+	text := paneJourneyText(app, app.sessionDeckRect)
+	if !first.question.Reviewing() || !second.question.Reviewing() || !strings.Contains(text, "FIRST_OWNER_QUESTION") || !strings.Contains(text, "FIRST_ANSWER") || strings.Contains(text, "SECOND_OWNER_QUESTION") {
+		t.Fatal("returning did not repaint the exact owner's retained review")
+	}
+	if app.Input.Value() != "family-private draft" || len(app.agentPrompts) != 2 {
+		t.Fatal("family navigation consumed a draft or resolved a question")
+	}
 }
 
 func TestFamilyPermissionTabsRetainExactOwnersAndResolveIndependently(t *testing.T) {

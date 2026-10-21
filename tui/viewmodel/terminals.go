@@ -40,7 +40,7 @@ func (m *App) termDockVisible() bool {
 }
 
 func (m *App) termDockOwnsKeys() bool {
-	return m.termDockFocused && m.termDockVisible() && !m.sessionDeckBlocking()
+	return m.termDockFocused && m.termDockVisible() && !m.sessionDeckCapturesInput()
 }
 
 func (m *App) terminalDockOwnsKeys() bool {
@@ -480,7 +480,7 @@ func (m *App) toggleTerminalFocus() tea.Cmd {
 }
 
 func (m *App) terminalSummonAllowed() bool {
-	if m.workspaceAttachPending || m.sessionDeckBlocking() {
+	if m.workspaceAttachPending || m.sessionDeckModal() {
 		return false
 	}
 	if popup := m.focusedPopup(); popup != nil && !ui.IsTerminalOverlay(ui.OverlayID(popup.ID)) {

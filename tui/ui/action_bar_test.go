@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -31,6 +32,24 @@ func TestActionBarRoutesOnlyFocusedAndHitButtons(t *testing.T) {
 	result = host.Handle(tea.MouseClickMsg{X: 32, Y: 0, Button: tea.MouseLeft})
 	if result.Action == nil || result.Action.ID != "cancel" {
 		t.Fatalf("cancel click result=%#v", result)
+	}
+}
+
+func TestDockedActionBarConstrainedHeightNeverPaintsBelowParent(t *testing.T) {
+	bar := NewDockedActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{Label: "Submit", Action: "submit", Enabled: true})
+	for height := 0; height <= 2; height++ {
+		bar.Layout(LayoutContext{}, Rect{X: 2, Y: 2, W: 20, H: height})
+		buf := surface.NewCellBuffer(24, 6)
+		buf.Fill(cell.NewCell('#', cell.NoColor, cell.NoColor, 0))
+		bar.Paint(buf, 0, 0, PaintContext{})
+		for y := 2 + height; y < buf.Height(); y++ {
+			for x := 0; x < buf.Width(); x++ {
+				if buf.Get(x, y).Char != '#' {
+					t.Fatalf("height %d painted below parent at %d,%d", height, x, y)
+				}
+			}
+		}
 	}
 }
 

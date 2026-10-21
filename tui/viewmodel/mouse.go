@@ -33,7 +33,7 @@ const (
 )
 
 func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
-	if m.sessionDeckBlocking() && !isWheel && !m.agentPromptNavigationHit(x, y) {
+	if m.sessionDeckModal() && !isWheel {
 		return regionSessionDeck
 	}
 
@@ -121,7 +121,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 // A drag that began inside the deck may finish outside; any capture owned by
 // another shell component is stale once a blocking panel takes precedence.
 func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) bool {
-	if !m.sessionDeckBlocking() {
+	if !m.sessionDeckModal() {
 		return false
 	}
 	if m.rootHost != nil {
@@ -140,20 +140,7 @@ func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) boo
 			}
 		}
 	}
-	return !m.sessionDeckRect.Contains(x, y) && !m.agentPromptNavigationHit(x, y)
-}
-
-func (m *App) agentPromptNavigationHit(x, y int) bool {
-	if !m.sessionDeckAllowsNavigation() {
-		return false
-	}
-	if x < m.sidebarHitWidth() {
-		return true
-	}
-	if g := m.paneAt(x, y); g != nil {
-		return y < g.body.Y || g.id != m.Win.ActiveGroup()
-	}
-	return m.tabBarVisible() && y >= m.chromeTopRow()-2 && y < m.chromeTopRow()
+	return !m.sessionDeckRect.Contains(x, y)
 }
 
 // handleShellPointer routes one pointer message through the root Host.
@@ -392,8 +379,9 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	}
 	m.setWheelHost(m.rootHost)
 	region := m.classifyShellRegion(msg.X, msg.Y, true)
-	// A blocking deck still shields clicks/selection, but wheel-over-chat is a
-	// read-only navigation action and remains available behind the deck.
+	// A modal deck still shields clicks/selection, but wheel-over-chat is a
+	// read-only navigation action and remains available behind it. Agent prompt
+	// docks are nonmodal and use ordinary Host hit testing for every surface.
 	if m.blockingDeckShieldsPointer(msg.X, msg.Y, false) && region != regionChat {
 		return m, nil
 	}

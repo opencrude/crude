@@ -83,6 +83,9 @@ and immutable snapshot lifetime are documented in Main View Panes.
 | Jump to latest chat | Centered `↓ Latest` above activity while scrolled up; existing End with empty composer | Uses the existing reserved gap, never adds transcript height. Reaches the actual virtualized tail and re-arms stream following for that pane only. |
 | Composer growth/scroll | Automatic one-to-six text-row viewport; wheel or cursor navigation | The full composer is also capped at one third of the available content column, leaving a readable transcript. Excess draft text scrolls internally; a quiet `↑↓ first–last/total` range appears beside its rule when it fits. Wheel browsing survives repaint, hit testing uses the painted offset, and navigation/edits reveal the caret. Typing/restoring/resizing never converts the draft to an attachment or trims content. |
 | Browse prompt history | Up / Down at composer boundaries | Prefix-filtered recall preserves text and attachment snapshots; Down past the newest match restores the original draft. File I/O runs outside Update, with session and input-generation checks. |
+| Slash suggestions | Click or Enter; Up/Down and wheel browse; Tab completes | Pointer and keyboard consume the exact selected item through the same input owner, clear the command draft once, and open the actual destination. Release, non-left clicks, padding and empty rows never activate. |
+| Agent questions | Click/Enter/Space choices; Tab visits write-in/actions; wheel, PgUp/PgDn, Home/End read | Question text, multiline options and the final review wrap inside one bounded VirtualList with a native scrollbar. The write-in and actions stay pinned; long write-ins scroll internally. Short grids hide the question rail before starving the reader; Esc climbs to actions there before cancelling. Last-answer activation always opens **Review answers**, never sends. Review shows every complete question and answer, allows correction, and exposes the only **Submit** button (no modified-Enter caption). Incomplete review cannot submit. |
+| Navigate while answering | Ordinary panel/sidebar/tab/editor/terminal controls | Pending agent prompts block continuation and ordinary composer Send, not the IDE. Deliberate focus moves keys to the selected surface; panel Hide/switch/resize and agent minimize/restore retain exact answers and composer state. Returning restores the same request and review. True modal decisions (dirty close, YOLO) keep their shielding. |
 | Search prompt history | `/history` | Searchable single-line summaries show time, prompt preview, and attachment count. Click or Enter expands full text and attachment details; **Use in composer** restores without sending. Missing media fails closed and leaves the draft intact. |
 | Turn capabilities off/on for a session | `/skills`, `/mcps`; palette **Session Skills** / **Session MCP Servers** | Separate Skills and MCP servers views (no tabs) with a padded heading, search and a list of self-contained cards. Switch click or Space toggles for the selected session and all its agents (live, next request); clicking a card body or Enter expands/collapses its full details in place; empty views explain where to start; Esc closes. Preserves the composer and registrations, never launches MCP or grants access. **Install & manage** opens Settings; `/skill`, `/mcp` and the composer capability control are removed. |
 | Open attachment | Click its filename chip or a linked history attachment | File-backed media opens with the OS default application; inline text opens the native reference editor. History previews use session-owned copies, never writable history assets. |
@@ -286,7 +289,7 @@ slots retain a vertical action fallback rather than clipping buttons.
 ## Focus precedence (current)
 
 1. Floating window (WM)
-2. Blocking session Panel Deck
+2. Explicitly focused session Panel Deck (true modal decisions remain trapped)
 3. Focused workspace terminal dock
 4. Launcher
 5. File tree
@@ -439,11 +442,12 @@ does not terminate the old core's agents or PTYs.
 5. Scrollbar colors hard-coded outside theme.
 6. Three chrome systems disagree on padding and close buttons.
 7. Modal=true combined with CloseRoute on some popups (contradictory).
-8. Blocking PanelDeck pointer shielding. **FIXED**: while a blocking panel is
-   active, clicks/wheel/motion/releases outside its slot are consumed before
-   root-Host hit testing. Deck-owned drags may still release outside; stale
-   captures owned by underlying shell controls are canceled. Guarded by
-   `TestPanelDeckViewmodelContractTable/blocking_panel_shields_pointer_outside_deck_rect`.
+8. Blocking PanelDeck pointer shielding. **FIXED**: `sessionDeckModal` separates
+   actual shell modality from a waiting agent request. Agent question/confirmation
+   docks use normal Host focus, hit testing and capture; unrelated IDE controls
+   remain usable without resolving the request. True modal decks alone shield
+   outside pointers and cancel underlying capture. Guarded by
+   `TestQuestionDockJourneyCapturesSurviveAndTrueModalsShield`.
 
 ## Connected shared-editor decisions
 

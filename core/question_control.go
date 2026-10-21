@@ -32,7 +32,7 @@ func (c *Connection) QuestionControlMethod(ctx context.Context, request coreprot
 			Verb string `json:"verb"`
 		} `json:"operation"`
 	}
-	if err := decode(original.Input, &intent); err != nil || intent.Operation.Verb != "activate" || !strings.HasPrefix(intent.ComponentID, "deck/"+input.SessionID+"/") || !strings.Contains(intent.ComponentID, "::session-question/") || (intent.ExpectedAction != "question.next" && intent.ExpectedAction != "question.cancel") {
+	if err := decode(original.Input, &intent); err != nil || intent.Operation.Verb != "activate" || !strings.HasPrefix(intent.ComponentID, "deck/"+input.SessionID+"/") || !strings.Contains(intent.ComponentID, "::session-question/") || (intent.ExpectedAction != "question.submit" && intent.ExpectedAction != "question.cancel") {
 		return fail("denied", "admission is not an ordinary question decision")
 	}
 	c.mu.Lock()

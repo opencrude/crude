@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/chatprojection"
+	"crude/tui/input"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/backgroundjobs"
@@ -278,6 +279,12 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case input.ActionSlashCommand:
+		if event, ok := action.Payload.(input.SlashCommandEvent); ok {
+			m.persistComposerDraftIfChanged()
+			return tea.Batch(m.handleInputEvent(event)...)
+		}
+		return nil
 	case "agent-prompt.close":
 		id, _ := action.Payload.(string)
 		m.closeAgentPromptTab(id)

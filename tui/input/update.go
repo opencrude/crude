@@ -85,6 +85,11 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			if strings.HasPrefix(text, "/") {
 				return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
 			}
+			// A pending question may leave the composer available for drafting,
+			// but its answer must settle before a prompt can be sent or steered.
+			if m.blocking {
+				return m, nil, nil
+			}
 			if m.thinking && !m.blocking {
 				return m, nil, SteeringSubmitEvent{Text: text, ReferenceIDs: refIDs, DraftRevision: m.draftRevision}
 			}
@@ -231,6 +236,25 @@ func (m *Model) setSlashFilter(filter string) {
 	}
 }
 
+// activateSlashSelection consumes the List's exact activation payload, so
+// keyboard and pointer selection share command construction and draft cleanup.
+func (m *Model) activateSlashSelection(action *ui.Action) (SlashCommandEvent, bool) {
+	if action == nil || action.ID != "slash.select" {
+		return SlashCommandEvent{}, false
+	}
+	item, ok := action.Payload.(ui.ListItem)
+	if !ok || !item.Selectable() || item.ID == "" {
+		return SlashCommandEvent{}, false
+	}
+	return m.commitSlashCommand("/" + item.ID), true
+}
+
+func (m *Model) commitSlashCommand(command string) SlashCommandEvent {
+	event := SlashCommandEvent{Command: command, ReferenceIDs: m.ReferencedIDs()}
+	m.ClearInput()
+	return event
+}
+
 func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -251,29 +275,14 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyEnter:
-		refIDs := m.ReferencedIDs()
 		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
-		if res.Action != nil && res.Action.ID == "slash.select" {
-			if item, ok := m.slashList.Selected(); ok {
-				cmd := "/" + item.ID
-				m.input.Clear()
-				m.invalidatePendingPastes()
-				m.slashActive = false
-				m.histIdx = -1
-				m.histDraft = ""
-				m.histPrefix = ""
-				return m, nil, SlashCommandEvent{Command: cmd, ReferenceIDs: refIDs}
-			}
+		if event, ok := m.activateSlashSelection(res.Action); ok {
+			return m, res.Cmd, event
 		}
 		text := strings.TrimSpace(m.input.Value())
 		if text != "" && strings.HasPrefix(text, "/") {
-			m.input.Clear()
-			m.invalidatePendingPastes()
-			m.slashActive = false
-			m.histIdx = -1
-			m.histDraft = ""
-			m.histPrefix = ""
-			return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
+			event := m.commitSlashCommand(text)
+			return m, nil, event
 		}
 		m.slashActive = false
 		return m, nil, nil

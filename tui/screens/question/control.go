@@ -41,6 +41,19 @@ func (a *answerInput) HandleControl(ctx ui.EventContext, op ui.ControlOperation)
 	}
 	return res, err
 }
+
+func (a *answerList) HandleControl(ctx ui.EventContext, op ui.ControlOperation) (ui.EventResult, error) {
+	a.reflow(max(1, a.width))
+	result, err := a.VirtualList.HandleControl(ctx, op)
+	if result.Action != nil {
+		if item, ok := result.Action.Payload.(ui.VirtItem); ok {
+			if row, ok := item.Payload.(wrappedAnswer); ok {
+				result.Action.Payload = row.source
+			}
+		}
+	}
+	return result, err
+}
 func (s *Screen) ControlMetadata(_ ui.ComponentID, _ string) (control.Effect, bool, error) {
 	return control.Write, false, nil
 }

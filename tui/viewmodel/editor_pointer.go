@@ -19,7 +19,7 @@ func (m *App) deliverPointerScroll(msg editor.PointerScrollMsg) tea.Cmd {
 	if m.rootHost != nil {
 		m.rootHost.Layout()
 		if id, _, ok := m.rootHost.CapturedPointer(); ok {
-			if m.sessionDeckBlocking() || modal != nil && modal.Policy.Modal {
+			if m.sessionDeckModal() || modal != nil && modal.Policy.Modal {
 				m.rootHost.CancelPointerCapture()
 			} else {
 				res := m.rootHost.Deliver(id, msg)

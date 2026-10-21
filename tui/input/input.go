@@ -14,6 +14,10 @@ import (
 
 const slashPageSize = 8
 
+// ActionSlashCommand carries a SlashCommandEvent from the mounted composer to
+// the shell's existing input-event handler, just like keyboard activation.
+const ActionSlashCommand = "input.slash-command"
+
 type Event interface{ event() }
 
 type SubmitEvent struct {
@@ -696,11 +700,13 @@ func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if m.showSlashPopup() && m.slashList != nil {
 		b := m.slashList.Bounds()
-		if ctx.LocalY >= b.Y && ctx.LocalY < b.Y+b.H {
-			local := ctx
-			local.LocalY = ctx.LocalY - b.Y
-			local.LocalX = ctx.LocalX - b.X
-			return m.slashList.Handle(local, evt)
+		if b.Contains(ctx.LocalX, ctx.LocalY) {
+			res := m.slashList.Handle(ui.ChildEventContext(ctx, b), evt)
+			if event, ok := m.activateSlashSelection(res.Action); ok {
+				res.Action = &ui.Action{ID: ActionSlashCommand, Payload: event}
+				res.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
+			}
+			return res
 		}
 	}
 	if m.input != nil {

@@ -167,7 +167,7 @@ func (m *App) openInlineAgentPrompt(state *agentPromptState) {
 	focus := confirmation.ActionsID
 	label := "Confirmation"
 	if state.question != nil {
-		content, focus, label = state.question, question.OptionsID, "Questions"
+		content, focus, label = state.question, state.question.InitialFocus(), "Questions"
 	}
 	name := state.request.agentID
 	if node := m.ws.AgentMgr().Get(name); node != nil && node.Label != "" {
@@ -181,6 +181,10 @@ func (m *App) openInlineAgentPrompt(state *agentPromptState) {
 	})
 	if projection.deck.Active().ID == state.panelID() {
 		projection.deckFocused, projection.deckFocus = true, focus
+		if projection == m.activeSessionDeck() {
+			m.setTermDockFocused(false)
+			m.FocusStack.Clear()
+		}
 	}
 	projection.deckHost.MarkLayout()
 }
@@ -229,7 +233,7 @@ func (m *App) openAgentQuestionPrompt(state *agentPromptState) {
 	w, h := fitFloatingSize(m.width, m.height, 96, 24, 48, 12)
 	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "agent-question-frame"), ui.FrameWindow, "Questions: "+m.promptOwnerLabel(state.request.agentID), screen, nil, false, w, h)
 	if frame.Host() != nil {
-		frame.Host().Focus(question.OptionsID)
+		frame.Host().Focus(screen.InitialFocus())
 	}
 	fw := wm.NewFloatingWindow(string(ui.OverlayAgentPrompt), "Questions", frame, w, h,
 		wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithClosable(false), wm.WithModal(true), wm.WithFocusable(true), wm.WithMinSize(minInt(48, w), minInt(12, h)), wm.WithClickOutside(wm.ClickOutsideIgnore))

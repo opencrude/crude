@@ -154,7 +154,11 @@ minimums, the tree and selections remain intact while only the focused group
 is shown. Alt+[ / Alt+] or the header's Pane menu visits the other groups; enlargement restores the
 layout rather than rebuilding it.
 
-Existing popup and blocking-deck policy precedes pane input. Settings
+Existing popup and actual-modal deck policy precedes pane input. Agent prompt
+docks retain exact-family continuation blocking without trapping the shell:
+deliberate pane/tab/sidebar/workspace-panel focus moves keys there, and minimizing
+an agent hides but retains its answers and review. Ordinary composer Send remains
+blocked until that request resolves. Settings
 remains Ignore/consume outside clicks, not click-through to an underlying pane.
 Terminal-owned keys remain PTY input. Pane commands do not bypass a modal
 decision. Pane windows (below) are main content, not popups: `focusedPopup()`

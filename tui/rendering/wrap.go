@@ -192,12 +192,17 @@ func WordWrap(s string, maxWidth int) []string {
 		state = newState
 	}
 	n := len(clusters)
+	remainingW := 0
+	for _, cluster := range clusters {
+		remainingW += cluster.width
+	}
 
 	var result []string
 	i := 0
 	for i < n {
 		if len(result) > 0 {
 			for i < n && clusters[i].str == " " {
+				remainingW -= clusters[i].width
 				i++
 			}
 			if i >= n {
@@ -205,10 +210,6 @@ func WordWrap(s string, maxWidth int) []string {
 			}
 		}
 
-		remainingW := 0
-		for k := i; k < n; k++ {
-			remainingW += clusters[k].width
-		}
 		if remainingW <= maxWidth {
 			var line strings.Builder
 			for k := i; k < n; k++ {
@@ -233,18 +234,20 @@ func WordWrap(s string, maxWidth int) []string {
 				lastSpace = j
 			}
 		}
-
 		if lastSpace >= i {
 			var line strings.Builder
 			for k := i; k < lastSpace; k++ {
 				line.WriteString(clusters[k].str)
+				remainingW -= clusters[k].width
 			}
+			remainingW -= clusters[lastSpace].width
 			result = append(result, line.String())
 			i = lastSpace + 1
 		} else {
 			var line strings.Builder
 			for k := i; k < lineEnd; k++ {
 				line.WriteString(clusters[k].str)
+				remainingW -= clusters[k].width
 			}
 			result = append(result, line.String())
 			i = lineEnd

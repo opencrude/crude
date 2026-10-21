@@ -63,8 +63,8 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 	for _, r := range "note" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	// Prompt-area semantics: plain Enter inserts a newline; only Ctrl+Enter
-	// commits the write-in answer.
+	// Plain Enter inserts a newline. A commit chord advances to review, never
+	// sends the last answer; the visible button requires no terminal chord.
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := screen.Answer(1); strings.Contains(got, "\n") {
 		t.Fatalf("plain enter advanced instead of inserting a newline: %q", got)
@@ -73,9 +73,10 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 		t.Fatalf("newline keystroke moved focus to %v", host.Focused())
 	}
 	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
-	if result.Cmd == nil {
-		t.Fatal("text submit did not emit a question result")
+	if result.Cmd != nil || !screen.Reviewing() {
+		t.Fatal("final answer must enter review without submitting")
 	}
+	result = submitReview(t, host, screen)
 	message, ok := result.Cmd().(ResultMsg)
 	if !ok {
 		t.Fatalf("result message=%T, want ResultMsg", result.Cmd())
@@ -164,9 +165,10 @@ func TestScreenMultiSelectValidatesAndReturnsSelectedOptions(t *testing.T) {
 	}
 
 	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"})
-	if result.Cmd == nil {
-		t.Fatal("multi-select submit did not emit a result")
+	if result.Cmd != nil || !screen.Reviewing() {
+		t.Fatal("multi-select answer bypassed review")
 	}
+	result = submitReview(t, host, screen)
 	message := result.Cmd().(ResultMsg)
 	if got, want := message.Result.Answers["1"], "alpha, beta"; got != want {
 		t.Fatalf("multi-select answer=%q, want %q", got, want)
@@ -217,9 +219,10 @@ func TestScreenCustomAnswerRequiresTextAndAcceptsPaste(t *testing.T) {
 
 	host.Handle(tea.PasteMsg{Content: "pasted answer"})
 	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
-	if result.Cmd == nil {
-		t.Fatal("pasted custom answer did not submit")
+	if result.Cmd != nil || !screen.Reviewing() {
+		t.Fatal("pasted custom answer bypassed review")
 	}
+	result = submitReview(t, host, screen)
 	message := result.Cmd().(ResultMsg)
 	if got, want := message.Result.Answers["1"], "pasted answer"; got != want {
 		t.Fatalf("custom answer=%q, want %q", got, want)
@@ -282,7 +285,7 @@ func TestScreenRailShowsAnswerStateAndSelectsQuestions(t *testing.T) {
 		t.Fatalf("after option commit index=%d answer=%q", screen.Current(), screen.Answer(0))
 	}
 	railItems := screen.railRows.Items()
-	if len(railItems) != 3 || railItems[0].Icon != "✓" || railItems[2].Icon != "○" {
+	if len(railItems) != 4 || railItems[0].Icon != "✓" || railItems[2].Icon != "○" || railItems[3].Label != "Review answers" {
 		t.Fatalf("rail icons after answering: %+v", railItems)
 	}
 
@@ -411,11 +414,36 @@ func TestScreenWriteInCommitsOnAltEnter(t *testing.T) {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModAlt, Code: tea.KeyEnter})
-	if result.Cmd == nil {
-		t.Fatal("Alt+Enter did not commit the write-in answer")
+	if result.Cmd != nil || !screen.Reviewing() {
+		t.Fatal("Alt+Enter must advance to review, never send it")
 	}
+	result = submitReview(t, host, screen)
 	message, ok := result.Cmd().(ResultMsg)
 	if !ok || message.Result.Answers["1"] != "note" {
 		t.Fatalf("commit result=%#v", result.Cmd())
 	}
+}
+
+// Submitting is a distinct native button action after the review has painted.
+// Neither last-option activation nor a textarea commit may send the request.
+func submitReview(t *testing.T, host *ui.Host, screen *Screen) ui.EventResult {
+	t.Helper()
+	if !screen.Reviewing() {
+		t.Fatal("submission attempted outside review")
+	}
+	host.MarkLayout()
+	host.Layout()
+	r, _ := host.ScreenRect(ActionsID)
+	buf := surface.NewCellBuffer(max(1, r.X+r.W), max(1, r.Y+r.H))
+	host.Paint(buf)
+	if !bufferContains(buf, "Submit") || bufferContains(buf, "Ctrl+Enter") {
+		t.Fatalf("review submission control missing or misleading:\n%s", bufferText(buf))
+	}
+	host.Focus(ActionsID)
+	screen.actions.FocusButton(1)
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("explicit review Submit did not emit owner result")
+	}
+	return result
 }
