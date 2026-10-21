@@ -184,7 +184,7 @@ namespace CrudeShot {
         [DllImport("user32.dll")]
         private static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
         [DllImport("user32.dll")]
-        public static extern bool SetCursorPos(int x, int y);
+        private static extern int GetSystemMetrics(int index);
         [DllImport("user32.dll")]
         public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extraInfo);
         [DllImport("user32.dll")]
@@ -247,6 +247,27 @@ namespace CrudeShot {
                     }
                 }
             };
+        }
+
+        public static void MovePointer(int x, int y) {
+            // SendInput produces actual terminal motion reports; SetCursorPos
+            // alone moved the cursor but omitted hover/drag events in Windows
+            // Terminal. Absolute virtual-desktop coordinates cover all monitors.
+            int left = GetSystemMetrics(76), top = GetSystemMetrics(77);
+            int width = GetSystemMetrics(78), height = GetSystemMetrics(79);
+            var input = new INPUT {
+                type = 0,
+                U = new InputUnion {
+                    mi = new MOUSEINPUT {
+                        dx = (int)(((long)x - left) * 65536 / width),
+                        dy = (int)(((long)y - top) * 65536 / height),
+                        dwFlags = 0x0001 | 0x8000 | 0x4000 | 0x2000 // MOVE | ABSOLUTE | VIRTUALDESK | MOVE_NOCOALESCE
+                    }
+                }
+            };
+            if (SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT))) != 1) {
+                throw new InvalidOperationException("SendInput mouse movement failed");
+            }
         }
 
         public static void SendChord(ushort[] modifiers, ushort key) {
@@ -397,9 +418,7 @@ function Get-CellPoint {
 function Set-CursorToCell {
     param([int]$Column, [int]$Row)
     $point = Get-CellPoint $Column $Row
-    if (-not [CrudeShot.Native]::SetCursorPos($point.X, $point.Y)) {
-        throw "SetCursorPos failed"
-    }
+    [CrudeShot.Native]::MovePointer($point.X, $point.Y)
 }
 
 function Move-ToCell {

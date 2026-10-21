@@ -20,6 +20,7 @@ const (
 	FilterID    ui.ComponentID = "activitylist/filter"
 	ScrollbarID ui.ComponentID = "activitylist/scrollbar"
 	DividerID   ui.ComponentID = "activitylist/divider"
+	ProgressID  ui.ComponentID = "activitylist/progress"
 
 	ActionActivate = "sidebar.activate"
 )
@@ -27,12 +28,13 @@ const (
 // doubleClickWindow matches the picker screens' click-arming interval.
 const doubleClickWindow = 500 * time.Millisecond
 
-// listTop is the first scrollable row after the icon+search header.
-const listTop = panelchrome.HeaderRows
+// Reserve the launcher's standard progress rule beneath search, whether idle
+// or loading, so refresh never moves the resource hit targets.
+const listTop = panelchrome.HeaderRows + 1
 
 const emptyStateText = "No items"
 
-// Screen is the sidebar body for Agents, Terminals, and Git.
+// Screen is the shared sidebar body for Workspaces, Agents, Skills, and MCP.
 type Screen struct {
 	ui.Base
 	th         *theme.Theme
@@ -42,6 +44,7 @@ type Screen struct {
 	scrollbar  *ui.ScrollbarControl
 	split      *ui.SplitModel
 	divider    *ui.SplitDivider
+	progress   *ui.ProgressRule
 	heading    string
 	icon       string
 	badge      string
@@ -67,7 +70,9 @@ func New(th *theme.Theme) *Screen {
 	s.filter.SetBackgroundColor(tokens.Color(ui.ColorSubPaneBg))
 	s.filter.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.filter.OnChanged(func(string) { s.applyFilter() })
-	s.list = newSidebarList(s, tokens)
+	s.list = newSidebarList(tokens)
+	s.progress = ui.NewProgressRule(ProgressID, tokens)
+	s.progress.SetSurfaceBackground(ui.ColorBg)
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, s.list.inner.Scroll(), tokens)
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetMinSizes(12, 0)
@@ -124,6 +129,14 @@ func (s *Screen) SetIcon(icon string) { s.icon = icon }
 
 func (s *Screen) SetBadge(badge string) { s.badge = badge }
 
+// SetLoading projects the catalog owner's state onto the shared progress rule.
+// The Host supplies the same animation clock used by the launcher.
+func (s *Screen) SetLoading(loading bool) { s.progress.SetActive(loading) }
+
+// SetActivateOnClick lets navigation collections request confirmation on one
+// click while picker-style collections retain click-to-select/double-to-open.
+func (s *Screen) SetActivateOnClick(activate bool) { s.list.activateOnClick = activate }
+
 type ViewState struct {
 	Filter, Selection string
 	Offset            int
@@ -138,6 +151,7 @@ func (screen *Screen) ViewState() ViewState {
 }
 
 func (screen *Screen) RestoreViewState(state ViewState) {
+	screen.list.lastClickID, screen.list.lastClickAt, screen.list.hoverID = "", time.Time{}, ""
 	screen.filter.field.SetValue(state.Filter)
 	screen.applyFilter()
 	for index, item := range screen.list.inner.Items() {
@@ -162,9 +176,7 @@ func (s *Screen) SetItems(items []ui.ListItem) {
 	if itemsEquivalent(s.sourceData, items) {
 		return
 	}
-	// Do not reuse the backing array: ui.List retains the visible slice. If
-	// sourceData overwrites that array before selection is captured, the
-	// selected ID silently changes to whichever new row occupies the index.
+	// Retain a source snapshot; filtered resource rows carry their own values.
 	s.sourceData = append([]ui.ListItem(nil), items...)
 	s.applyFilter()
 }
@@ -181,7 +193,7 @@ func (s *Screen) applyFilter() {
 			if !item.Selectable() {
 				continue
 			}
-			if fuzzyContains(item.Label, query) || fuzzyContains(item.Detail, query) {
+			if fuzzyContains(item.Label, query) || fuzzyContains(item.Detail, query) || fuzzyContains(item.Subtitle, query) {
 				items = append(items, item)
 			}
 		}
@@ -191,23 +203,25 @@ func (s *Screen) applyFilter() {
 
 func (s *Screen) applyVisibleItems(items []ui.ListItem) {
 	inner := s.list.inner
-	if itemsEquivalent(inner.Items(), items) {
-		return
-	}
 	prevID := ""
-	if it, ok := inner.Selected(); ok && it.Selectable() {
+	if it, ok := inner.Selected(); ok && !it.Disabled {
 		prevID = it.ID
 	}
 	prevOffset := inner.Scroll().Offset()
-	inner.SetItems(items)
-	if prevID != "" {
-		for i := range items {
-			if items[i].ID == prevID && items[i].Selectable() {
-				inner.Selection().SetIndex(i)
-				break
-			}
+	rows := make([]ui.VirtItem, len(items))
+	selected := -1
+	for i, item := range items {
+		height := 1
+		if item.Subtitle != "" {
+			height = 2
+		}
+		rows[i] = ui.VirtItem{ID: item.ID, Label: item.Label, Height: height, Disabled: !item.Selectable(), Payload: item}
+		if item.Selectable() && (selected < 0 || item.ID == prevID) {
+			selected = i
 		}
 	}
+	inner.SetItems(rows)
+	inner.SelectIndex(selected)
 	inner.Scroll().ScrollTo(prevOffset)
 }
 
@@ -223,13 +237,16 @@ func itemsEquivalent(a, b []ui.ListItem) bool {
 		if x.Payload != nil || y.Payload != nil {
 			return false
 		}
-		if x.ID != y.ID || x.Label != y.Label || x.Detail != y.Detail || x.Icon != y.Icon {
+		if x.ID != y.ID || x.Label != y.Label || x.Detail != y.Detail || x.Subtitle != y.Subtitle || x.Icon != y.Icon {
 			return false
 		}
 		if x.Disabled != y.Disabled || x.Header != y.Header || x.Separator != y.Separator || x.Spacer != y.Spacer {
 			return false
 		}
 		if x.Command != y.Command {
+			return false
+		}
+		if x.Active != y.Active {
 			return false
 		}
 		if x.Depth != y.Depth || x.TreeLast != y.TreeLast {
@@ -286,6 +303,9 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	if s.divider != nil {
 		s.divider.SetTokens(tokens)
 	}
+	if s.progress != nil {
+		s.progress.SetTokens(tokens)
+	}
 }
 
 func (s *Screen) SetTheme(th *theme.Theme) {
@@ -297,7 +317,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 }
 
 func (s *Screen) Children() []ui.Component {
-	out := make([]ui.Component, 0, 4)
+	out := make([]ui.Component, 0, 5)
 	if s.filter != nil {
 		out = append(out, s.filter)
 	}
@@ -309,6 +329,9 @@ func (s *Screen) Children() []ui.Component {
 	}
 	if s.divider != nil {
 		out = append(out, s.divider)
+	}
+	if s.progress != nil {
+		out = append(out, s.progress)
 	}
 	return out
 }
@@ -332,10 +355,7 @@ func (s *Screen) listWidth(r ui.Rect) int {
 }
 
 func (s *Screen) listTopRow(r ui.Rect) int {
-	if r.H <= listTop {
-		return 0
-	}
-	return listTop
+	return min(listTop, max(0, r.H))
 }
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
@@ -344,8 +364,9 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	if s.filter != nil {
 		s.filter.Layout(ui.LayoutContext{}, s.headerTitle().FieldRect(s.listWidth(r)))
 	}
+	s.progress.Layout(ui.LayoutContext{}, ui.Rect{Y: panelchrome.HeaderRows, W: s.listWidth(r), H: min(1, max(0, r.H-panelchrome.HeaderRows))})
 	listY := s.listTopRow(r)
-	listH := max(1, r.H-listY)
+	listH := max(0, r.H-listY)
 	if s.list != nil {
 		s.list.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: listY, W: s.listWidth(r), H: listH})
 	}
@@ -376,7 +397,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
 	body := ui.Rect{X: r.X, Y: r.Y, W: s.listWidth(r), H: r.H}
 	panelchrome.PaintTitle(buf, ox, oy, body, s.tokens, s.headerTitle())
-	if s.list != nil && len(s.list.items()) == 0 {
+	if s.list != nil && len(s.list.inner.Items()) == 0 && !s.progress.NeedsFrame() && r.H > listTop {
 		text := emptyStateText
 		if s.filter != nil && strings.TrimSpace(s.filter.Value()) != "" {
 			text = "No matches"
@@ -404,12 +425,12 @@ func (s *Screen) ItemAtLocalY(localY int) (ui.ListItem, bool) {
 	if row < 0 || row >= s.list.inner.Scroll().Viewport() {
 		return ui.ListItem{}, false
 	}
-	idx := s.list.inner.Scroll().Offset() + row
-	items := s.list.inner.Items()
-	if idx < 0 || idx >= len(items) || !items[idx].Selectable() {
+	item, ok := s.list.inner.ItemAtViewportRow(row)
+	if !ok || item.Disabled {
 		return ui.ListItem{}, false
 	}
-	return items[idx], true
+	value, ok := item.Payload.(ui.ListItem)
+	return value, ok
 }
 
 // SelectedItem returns the currently selected visible item.
@@ -417,7 +438,12 @@ func (s *Screen) SelectedItem() (ui.ListItem, bool) {
 	if s == nil || s.list == nil {
 		return ui.ListItem{}, false
 	}
-	return s.list.inner.Selected()
+	item, ok := s.list.inner.Selected()
+	if !ok {
+		return ui.ListItem{}, false
+	}
+	value, ok := item.Payload.(ui.ListItem)
+	return value, ok
 }
 
 // Handle catches pointer events that miss every child. Wheel anywhere in the
@@ -445,52 +471,43 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: s.heading}
 }
 
-// sidebarList wraps ui.List with sidebar policy: file-tree row styling,
-// select-on-click with activate-on-double-click (picker convention), hover
+// sidebarList wraps ui.VirtualList with sidebar policy: file-tree row styling,
+// picker or navigation activation, hover
 // tracking gated on host hover, and a viewport that survives the shell's
 // per-frame relayout (no EnsureVisible re-anchoring in Layout).
 type sidebarList struct {
 	ui.Base
-	owner       *Screen
-	inner       *ui.List
-	hoverIdx    int
-	lastClickID string
-	lastClickAt time.Time
+	inner           *ui.VirtualList
+	activateOnClick bool
+	hoverID         string
+	lastClickID     string
+	lastClickAt     time.Time
 }
 
-func newSidebarList(owner *Screen, tokens *ui.TokenSet) *sidebarList {
-	inner := ui.NewList(ListID+"/inner", tokens)
+func newSidebarList(tokens *ui.TokenSet) *sidebarList {
+	inner := ui.NewVirtualList(ListID+"/inner", tokens)
 	inner.SetActivateAction(ActionActivate)
-	return &sidebarList{
-		Base:     ui.NewBase(ListID),
-		owner:    owner,
-		inner:    inner,
-		hoverIdx: -1,
+	inner.SetSelectionAnchorsScroll(false)
+	inner.SetOpaqueRowFill(false)
+	l := &sidebarList{
+		Base:  ui.NewBase(ListID),
+		inner: inner,
 	}
+	inner.SetRowPainter(l.paintRow)
+	return l
 }
-
-func (l *sidebarList) items() []ui.ListItem { return l.inner.Items() }
 
 func (l *sidebarList) SetTokens(ts *ui.TokenSet) { l.inner.SetTokens(ts) }
-
-func (l *sidebarList) tokens() *ui.TokenSet {
-	if l.owner != nil {
-		return l.owner.tokens
-	}
-	return nil
-}
 
 func (l *sidebarList) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
 
-// Layout deliberately avoids ui.List.Layout: the root host relayouts every
-// frame and List.Layout re-anchors the viewport to the selection
-// (EnsureVisible), which would snap wheel scrolling back each frame.
-// Keyboard navigation still follows the selection via Handle.
+// Only keyboard movement reveals selection. Per-frame Layout and wheel
+// browsing preserve the row-based viewport, including a clipped path row.
 func (l *sidebarList) Layout(_ ui.LayoutContext, r ui.Rect) {
 	l.SetBounds(r)
-	l.inner.Scroll().SetViewport(r.H)
+	l.inner.Layout(ui.LayoutContext{}, ui.Rect{W: r.W, H: r.H})
 }
 
 func (l *sidebarList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
@@ -498,21 +515,11 @@ func (l *sidebarList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCon
 	if r.Empty() || buf == nil {
 		return
 	}
-	items := l.inner.Items()
-	off := l.inner.Scroll().Offset()
-	vh := l.inner.Scroll().Viewport()
-	sel := l.inner.SelectedIndex()
-	tokens := l.tokens()
-	for row := 0; row < vh && row < r.H; row++ {
-		idx := off + row
-		if idx < 0 || idx >= len(items) {
-			break
-		}
-		l.paintRow(buf, ox+r.X, oy+r.Y+row, r.W, items[idx], idx, sel, ctx, tokens)
-	}
+	l.inner.Paint(buf, ox+r.X, oy+r.Y, ctx)
 }
 
-func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, item ui.ListItem, idx, sel int, ctx ui.PaintContext, tokens *ui.TokenSet) {
+func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, row ui.VirtItem, localRow int, cursor ui.ControlState, ctx ui.PaintContext, tokens *ui.TokenSet) {
+	item := row.Payload.(ui.ListItem)
 	if item.Spacer {
 		return
 	}
@@ -530,16 +537,26 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, item ui.Lis
 	switch {
 	case item.Disabled:
 		state = ui.StateDisabled
-	case idx == sel && ctx.Focused:
+	case cursor == ui.StateFocused:
 		state = ui.StateFocused
-	case idx == sel:
+	case item.Active:
 		state = ui.StateSelected
-	case idx == l.hoverIdx && ctx.Hovered:
+	case item.ID == l.hoverID && ctx.Hovered:
 		state = ui.StateHovered
 	}
 	fg, bg, attr := panelchrome.RowColors(tokens, state)
+	// Commands remain recognizable as controls after focus/hover moves to a
+	// resource or the main pane. They are not a selected-resource highlight.
+	if item.Command && state != ui.StateFocused && state != ui.StateHovered {
+		bg = tokens.Color(ui.ColorSubPaneBg)
+	}
 	if !bg.IsDefault() {
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(bg))
+	}
+	if localRow > 0 {
+		path := rendering.TruncateMiddleVisual(item.Subtitle, max(0, w-2), "…")
+		buf.WriteString(x+1, y, path, tokens.Color(ui.ColorMuted), bg, 0)
+		return
 	}
 	cx := x + 1
 	remain := w - 2
@@ -617,22 +634,23 @@ func detailColor(item ui.ListItem, tokens *ui.TokenSet) cell.Color {
 func (l *sidebarList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	switch evt.Kind {
 	case ui.EventMouseMotion:
-		idx := l.rowAt(ctx.LocalY)
-		if idx != l.hoverIdx {
-			l.hoverIdx = idx
+		id := l.hoverAt(ctx.LocalY)
+		if id != l.hoverID {
+			l.hoverID = id
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 		return ui.EventResult{Handled: true}
 	case ui.EventMouseWheel:
 		res := l.inner.Handle(ctx, evt)
-		l.hoverIdx = l.rowAt(ctx.LocalY)
+		l.inner.Scroll().SetAutoScroll(false)
+		l.hoverID = l.hoverAt(ctx.LocalY)
 		return res
 	case ui.EventMouseClick:
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return ui.EventResult{}
 		}
 		res := l.inner.Handle(ctx, evt)
-		if res.Action != nil && res.Action.ID == ActionActivate && !activateIsCommand(res.Action) {
+		if !l.activateOnClick && res.Action != nil && res.Action.ID == ActionActivate && !activateIsCommand(res.Action) {
 			// Resource rows (agents, terminals, changed files) arm on the
 			// first click and open on the second, matching the pickers.
 			// Command rows are buttons and must fire immediately.
@@ -645,14 +663,50 @@ func (l *sidebarList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 				l.lastClickID, l.lastClickAt = "", time.Time{}
 			}
 		}
-		return res
-	default:
-		return l.inner.Handle(ctx, evt)
+		return sidebarAction(res)
+	case ui.EventKey:
+		// Page movement is in terminal rows, not resource indices: a two-row
+		// resource must not cause a page key to jump twice as far.
+		if evt.Key.Code == tea.KeyPgUp || evt.Key.Code == tea.KeyPgDown {
+			direction := 1
+			if evt.Key.Code == tea.KeyPgUp {
+				direction = -1
+			}
+			row := l.inner.ItemStartRow(l.inner.SelectedIndex()) + direction*l.inner.Scroll().Viewport()
+			row = max(0, min(row, l.inner.Scroll().Content()-1))
+			index := l.inner.ItemIndexAtRow(row)
+			for index >= 0 && index < len(l.inner.Items()) && !l.inner.SelectIndex(index) {
+				index += direction
+			}
+			l.inner.EnsureSelectedVisible()
+			l.inner.Scroll().SetAutoScroll(false)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		res := l.inner.Handle(ctx, evt)
+		if res.Handled {
+			l.inner.Scroll().SetAutoScroll(false)
+			l.inner.EnsureSelectedVisible()
+		}
+		return sidebarAction(res)
 	}
+	return l.inner.Handle(ctx, evt)
+}
+
+// Only activation carries resource data. Native resize/scroll actions retain
+// their original typed payloads all the way to their owning shell handler.
+func sidebarAction(result ui.EventResult) ui.EventResult {
+	if result.Action != nil && result.Action.ID == ActionActivate {
+		result.Action.Payload = result.Action.Payload.(ui.VirtItem).Payload.(ui.ListItem)
+	}
+	return result
 }
 
 func activateID(a *ui.Action) string {
-	item, ok := a.Payload.(ui.ListItem)
+	row, ok := a.Payload.(ui.VirtItem)
+	if !ok {
+		return ""
+	}
+	item, ok := row.Payload.(ui.ListItem)
 	if !ok {
 		return ""
 	}
@@ -660,21 +714,20 @@ func activateID(a *ui.Action) string {
 }
 
 func activateIsCommand(a *ui.Action) bool {
-	item, ok := a.Payload.(ui.ListItem)
+	row, ok := a.Payload.(ui.VirtItem)
+	if !ok {
+		return false
+	}
+	item, ok := row.Payload.(ui.ListItem)
 	return ok && item.Command
 }
 
-// rowAt maps a list-local row to a selectable item index, or -1.
-func (l *sidebarList) rowAt(localY int) int {
-	if localY < 0 || localY >= l.inner.Scroll().Viewport() {
-		return -1
+func (l *sidebarList) hoverAt(localY int) string {
+	item, ok := l.inner.ItemAtViewportRow(localY)
+	if !ok || item.Disabled {
+		return ""
 	}
-	idx := l.inner.Scroll().Offset() + localY
-	items := l.inner.Items()
-	if idx < 0 || idx >= len(items) || !items[idx].Selectable() {
-		return -1
-	}
-	return idx
+	return item.ID
 }
 
 func (l *sidebarList) Semantics() ui.Semantics { return l.inner.Semantics() }

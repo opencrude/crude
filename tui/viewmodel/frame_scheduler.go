@@ -8,7 +8,6 @@ import (
 
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/shelltree"
-	workspacescreen "crude/tui/screens/workspaces"
 )
 
 const interactiveFrameInterval = 16 * time.Millisecond
@@ -94,5 +93,5 @@ func (m *App) sidebarResizeActive() bool {
 	if !ok {
 		return false
 	}
-	return owner == activitylist.DividerID || owner == shelltree.DividerID || owner == workspacescreen.DividerID
+	return owner == activitylist.DividerID || owner == shelltree.DividerID
 }

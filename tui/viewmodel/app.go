@@ -39,7 +39,6 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
-	workspacescreen "crude/tui/screens/workspaces"
 	settingsui "crude/tui/settings"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -240,7 +239,6 @@ type App struct {
 	editorScreen           *shelleditor.Screen
 	launcherScreen         *launcher.Screen
 	onboarding             onboardingState
-	workspacesScreen       *workspacescreen.Screen
 	workspaceInfos         []workspace.WorkspaceInfo
 	workspaceListLoading   bool
 	workspaceListError     string

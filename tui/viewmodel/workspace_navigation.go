@@ -1,14 +1,16 @@
 package viewmodel
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/launcher"
-	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	"crude/workspace"
+)
+
+const (
+	sidebarItemNewWorkspace    = "workspace.new"
+	sidebarItemWorkspacePrefix = "workspace:"
 )
 
 // Both workspace home and the rail consume this one asynchronously loaded
@@ -27,41 +29,43 @@ func (m *App) applyWorkspaceListing(msg launcherWorkspacesMsg) {
 	if m.launcherScreen != nil && msg.Screen == m.launcherScreen {
 		m.launcherScreen.FinishLoad(msg.Cwd, msg.Infos, msg.Err)
 	}
-	if m.workspacesScreen != nil {
-		if msg.Err == nil {
-			m.workspacesScreen.SetData(m.ws.RootPath(), m.workspaceInfos)
-		}
-		m.workspacesScreen.SetStatus(false, m.workspaceListError)
+	if m.activityView == activityWorkspaces {
+		m.refreshActivityList()
 	}
 }
 
-func (m *App) ensureWorkspaceSwitcher() *workspacescreen.Screen {
-	if m.workspacesScreen == nil {
-		m.workspacesScreen = workspacescreen.New(m.Theme)
-		m.workspacesScreen.SetFocusHandler(m.rootHost.Focus)
-		m.workspacesScreen.SetData(m.ws.RootPath(), m.workspaceInfos)
-		m.workspacesScreen.SetStatus(m.workspaceListLoading, m.workspaceListError)
+func (m *App) workspaceSidebarItems() []ui.ListItem {
+	items := []ui.ListItem{{ID: sidebarItemNewWorkspace, Icon: "+", Label: "New Workspace…", Command: true}}
+	for _, info := range m.workspaceInfos {
+		if info.ProjectDir == "" {
+			continue
+		}
+		current := sameWorkspaceRoot(m.ws.RootPath(), info.ProjectDir)
+		detail := ""
+		if current {
+			detail = "Current"
+		}
+		items = append(items, ui.ListItem{ID: sidebarItemWorkspacePrefix + info.ProjectDir,
+			Label: workspace.WorkspaceDisplayName(info), Detail: detail, Subtitle: info.ProjectDir, Active: current})
 	}
-	return m.workspacesScreen
+	if m.workspaceListError != "" {
+		items = append(items, ui.ListItem{ID: "workspace.error", Label: "Couldn’t refresh · " + m.workspaceListError, Disabled: true})
+	} else if !m.workspaceListLoading && len(items) == 1 {
+		items = append(items, ui.ListItem{ID: "workspace.empty", Label: "No recent workspaces", Disabled: true})
+	}
+	return items
 }
 
-func (m *App) handleWorkspaceSwitcherAction(action ui.Action) (tea.Cmd, bool) {
-	if !strings.HasPrefix(action.ID, "workspaces.") {
-		return nil, false
+func (m *App) workspaceSidebarPath(id string) (string, bool) {
+	if m.activityView != activityWorkspaces || !m.sidebarHostVisible() {
+		return "", false
 	}
-	request, ok := action.Payload.(workspacescreen.Request)
-	if !ok || request.Screen != m.workspacesScreen || m.activityView != activityWorkspaces || !m.sidebarHostVisible() {
-		return nil, true
-	}
-	switch action.ID {
-	case workspacescreen.ActionNew:
-		m.openFolderPicker()
-	case workspacescreen.ActionOpen:
-		if request.Screen.HasPath(request.Path) {
-			return m.launcherOpenFolder(request.Path), true
+	for _, info := range m.workspaceInfos {
+		if id == sidebarItemWorkspacePrefix+info.ProjectDir {
+			return info.ProjectDir, true
 		}
 	}
-	return nil, true
+	return "", false
 }
 
 func (m *App) workspaceNavigationActions() ui.ContextMenuSection {
@@ -120,28 +124,12 @@ func (m *App) openWorkspacePathSwitcher() tea.Cmd {
 
 func (m *App) buildWorkspaceSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	menu := &ui.ContextMenuState{Title: "Recent Workspaces"}
-	screen := m.workspacesScreen
-	if screen != nil && m.rootHost != nil {
-		if rect, ok := m.rootHost.ScreenRect(workspacescreen.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
-			if info, hit := screen.ItemAt(mouse.X-rect.X, mouse.Y-rect.Y); hit {
+	if item, hit := m.activityItemAtMouse(mouse); hit {
+		for _, info := range m.workspaceInfos {
+			if item.ID == sidebarItemWorkspacePrefix+info.ProjectDir {
 				entry := launcher.WorkspaceEntry{ID: info.ID, Name: workspace.WorkspaceDisplayName(info), Path: info.ProjectDir, SessionCount: info.SessionCount}
-				owner, generation := m.ws, m.workspaceSwitchGen.Load()
-				valid := func() bool {
-					return m.ws == owner && generation == m.workspaceSwitchGen.Load() && screen == m.workspacesScreen && screen.HasPath(entry.Path)
-				}
-				menu.Title = entry.Name
-				menu.Sections = append(menu.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{
-					{Label: "Open workspace", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
-						if valid() {
-							m.runDetachedAsyncCmd(m.launcherOpenFolder(entry.Path))
-						}
-					}},
-					{Label: "Copy path", Action: func() {
-						if valid() {
-							m.copyToClipboard(entry.Path)
-						}
-					}},
-				}})
+				menu = m.workspaceResourceMenu(entry)
+				break
 			}
 		}
 	}
@@ -154,10 +142,7 @@ func (m *App) resetWorkspaceNavigation() {
 		m.workspaceListCancel()
 		m.workspaceListCancel = nil
 	}
-	// A saved catalog is application-owned metadata, not old workspace state.
-	// Recreate the view so queued intents cannot bind across attachment lifetimes.
-	m.workspacesScreen = nil
 	if m.activityView == activityWorkspaces {
-		m.ensureWorkspaceSwitcher()
+		m.refreshActivityList()
 	}
 }

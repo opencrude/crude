@@ -41,7 +41,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 |---------|--------|
 | Command palette list | sectioned VirtualList |
 | File tree | `ui.Tree` via `shelltree` |
-| Activity lists (Agents / Skills / MCP) | `ui.List` via `activitylist`. Terminals and Git live in the workspace dock, never in the activity rail. |
+| Activity lists (Workspaces / Agents / Skills / MCP) | `ui.VirtualList` via `activitylist`. Resources may supply a secondary line; workspace paths sit under their names in theme-muted ink, with no blank separators. Current-resource fill is derived from the open resource, independently of the focused browsing cursor and pointer hover. Command rows keep a theme-derived `ColorSubPaneBg` idle fill and share the sidebar focus/hover palette. The launcher's `ui.ProgressRule` sits beneath search, with loading motion on the Host clock and no loading-text row. Terminals and Git live in the workspace dock, never in the activity rail. |
 | Git change list | `gitpanel` grouped list (Merge Conflicts / Staged / Changes) with section bulk actions and hover/selection inline row actions; `gitdiff.Document` for the preview and the main-area multi-file review (sticky headers, folded gaps, unified/split) |
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
@@ -50,7 +50,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Session picker | native `ui.List` section headers + `ScrollbarControl` (`tui/screens/sessionpicker`) |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |
-| Recent Workspaces sidebar | Shared `panelchrome` icon/search/count header and row-state palette, retained FilterField + VirtualList name/path pairs, native single-line + New Workspace command row, Current badge, ScrollbarControl and shared SplitDivider. A single click on either resource row or Enter requests an exact-path switch. Refresh stays in the context menu, not the list. Home and rail share one recent-access catalog and the same Cancel-default navigation confirmation. |
+| Recent Workspaces sidebar | The same retained `activitylist` screen as Agents/Skills/MCP: `panelchrome` icon/search/count header, launcher-standard ProgressRule, name/path pairs in one variable-height resource item (Current on the attached root), + New Workspace command row with a persistent idle fill, ScrollbarControl and SplitDivider. Paths use theme-muted text and remain visible beneath names; no empty separator rows. Both lines share selection, hover and context targeting. A single resource click or Enter requests the exact-path switch confirmation; it does not attach until approved. New Workspace activates on one click. Refresh stays in the context menu; Open/Copy path/Delete use the same resource-menu builder as Home. Home and rail share one recent-access catalog and the same Cancel-default navigation confirmation. |
 | LSP popup lists | List |
 | Current plan hover reader | Passive WindowFrame with VirtualList and ScrollbarControl over the plan owner's complete immutable step projection; drag selection uses the shared chat line painter's selection columns and copies on release; no tool-JSON parsing or storage reads on paint | same |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
@@ -391,8 +391,24 @@ instead of leaving the panel loading indefinitely
 ## Sidebar list rows: resource vs command
 `ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").
 `activitylist` arms resource rows on the first click and activates on the
-second (matching the pickers), but command rows fire on a single click — a
+second for picker-style collections. Workspace navigation uses the shared
+single-click activation policy to request its existing confirmation. Command
+rows always fire on a single click — a
 button that needs a double click reads as broken.
+Command rows retain `ColorSubPaneBg` when focus or hover leaves; focus/hover
+feedback never provides their only visible background. This is control chrome,
+not the current-resource selection fill.
+
+The same `ui.ProgressRule` used by the launcher and settings sits directly under
+sidebar search. Its row stays reserved so catalog refresh never moves the item
+hit targets. Loading changes only the rule's ink, not labels or row count; the
+catalog owner stops animation on completion and only visible loading views use
+the fast frame clock.
+
+`ui.ListItem.Subtitle` retains an optional secondary resource line. The shared
+VirtualList owns its two-row height, scrolling and hit lookup; names and paths
+are never separate selectable entries. Subtitles use `ColorMuted` from the live
+theme and middle truncation at the pane width, without extra separator rows.
 
 ## Workspace and Open Tabs rows
 

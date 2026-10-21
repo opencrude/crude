@@ -15,7 +15,6 @@ import (
 
 	"crude/clientstate"
 	"crude/shellport"
-	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -97,16 +96,12 @@ func TestConnectedWorkspaceSwitchRailDirtyDecisionsRetainCoreAndComposer(t *test
 	}
 	t.Cleanup(func() { two.app.ws.Terminals().Close(terminal.ID) })
 	app.setActivity(activityWorkspaces, true)
-	screen := app.ensureWorkspaceSwitcher()
-	screen.SetData(root, []workspace.WorkspaceInfo{{ID: "target", ProjectName: "Target workspace", ProjectDir: target}})
+	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: "target", ProjectName: "Target workspace", ProjectDir: target}}
 	app.forceFrame()
 	if !strings.Contains(ansi.Strip(app.View().Content), "Target workspace") {
 		t.Fatal("rail catalog entry is not painted")
 	}
-	cmd, handled := app.handleWorkspaceSwitcherAction(ui.Action{ID: workspacescreen.ActionOpen, Payload: workspacescreen.Request{Screen: screen, Path: target}})
-	if !handled {
-		t.Fatal("rail entry did not route through the switch lifecycle")
-	}
+	cmd := app.handleSidebarActivate(ui.ListItem{ID: sidebarItemWorkspacePrefix + target})
 	runAppCommand(t, app, cmd)
 	if app.workspaceOpenPrompt == nil || app.workspaceSwitchIntent != nil {
 		t.Fatal("rail skipped initial consent")

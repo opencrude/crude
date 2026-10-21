@@ -17,7 +17,6 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shelltree"
-	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
 	"crude/types/recovery"
@@ -289,12 +288,7 @@ func (m *App) focusTreeHostControl() bool {
 	if m.rootHost == nil {
 		return false
 	}
-	if m.activityView == activityWorkspaces {
-		screen := m.ensureWorkspaceSwitcher()
-		if !screen.OwnsFocus(m.rootHost.Focused()) {
-			m.rootHost.Focus(workspacescreen.SearchID)
-		}
-	} else if m.activityView == activityFiles {
+	if m.activityView == activityFiles {
 		if m.rootHost.Focused() != shelltree.FilterID {
 			m.rootHost.Focus(shelltree.TreeID)
 		}
@@ -309,9 +303,6 @@ func (m *App) focusTreeHostControl() bool {
 // treeFilterBlocksEscPop reports whether Esc should clear the tree filter
 // (via sidebarHost/model) instead of popping FocusTree from the stack.
 func (m *App) treeFilterBlocksEscPop() bool {
-	if m.activityView == activityWorkspaces && m.workspacesScreen != nil {
-		return m.workspacesScreen.Query() != ""
-	}
 	if m.activityView != activityFiles && m.activityList != nil {
 		return m.activityList.Query() != ""
 	}

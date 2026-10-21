@@ -6,9 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/sessiondb"
+	"crude/tui/screens/activitylist"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
-	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -21,10 +21,11 @@ func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
 	app.launcherScreen = nil // live workflow removed home
 	app.setActivity(activityWorkspaces, true)
-	app.ensureWorkspaceSwitcher().SetData(root, []workspace.WorkspaceInfo{{ProjectDir: target, ProjectName: "destination"}})
+	app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: target, ProjectName: "destination"}}
 	app.paintShellFrame()
-	r, _ := app.rootHost.ScreenRect(workspacescreen.ListID)
-	// One click requests the exact destination without bypassing switch safety.
+	r, _ := app.rootHost.ScreenRect(activitylist.ListID)
+	// Navigation is one click into exact-destination consent, never a switch
+	// merely because the resource was selected.
 	run := func(msg tea.Msg) { _, cmd := app.Update(msg); runAppCommand(t, app, cmd) }
 	run(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 1, Button: tea.MouseLeft})
 	run(tea.MouseReleaseMsg{X: r.X + 2, Y: r.Y + 1, Button: tea.MouseLeft})
@@ -45,11 +46,14 @@ func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
 	if app.workspaceOpenPrompt != nil || app.ws != old {
 		t.Fatal("Enter did not keep workspace")
 	}
-	// The path row also works on its first click, including after cancellation.
-	run(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 2, Button: tea.MouseLeft})
-	run(tea.MouseReleaseMsg{X: r.X + 2, Y: r.Y + 2, Button: tea.MouseLeft})
+	// Enter opens the selected resource after cancellation without a second
+	// name/path hit implementation or an unreviewed switch.
+	app.setFocusTree()
+	app.paintShellFrame()
+	app.rootHost.Focus(activitylist.ListID)
+	run(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if app.workspaceOpenPrompt == nil || app.workspaceOpenPrompt.root != target {
-		t.Fatal("single path-row click did not request the workspace")
+		t.Fatal("Enter did not request the selected workspace")
 	}
 	run(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if app.workspaceOpenPrompt != nil || app.ws != old {
@@ -143,9 +147,10 @@ func TestWorkspaceConsentCancelInvalidatesDeferredFrame(t *testing.T) {
 }
 
 func TestWorkspaceEntryPointsShareExactConsent(t *testing.T) {
-	for _, entry := range []string{"home", "home-menu", "rail-menu", "folder-picker", "session-resume"} {
+	for _, entry := range []string{"home", "home-menu", "rail-name", "rail-path", "rail-menu", "folder-picker", "session-resume"} {
 		t.Run(entry, func(t *testing.T) {
 			app := newFullTestApp(t)
+			wsOf(app).Logger = stubLogger{}
 			app.width, app.height = 120, 35
 			target := t.TempDir()
 			app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: target, ProjectName: "target"}}
@@ -163,14 +168,23 @@ func TestWorkspaceEntryPointsShareExactConsent(t *testing.T) {
 				menu.Build()
 				menu.Cursor = 0
 				menu.Activate()
-			case "rail-menu":
+			case "rail-name", "rail-path", "rail-menu":
 				app.setActivity(activityWorkspaces, true)
 				app.paintShellFrame()
-				r, _ := app.rootHost.ScreenRect(workspacescreen.ListID)
-				menu := app.buildWorkspaceSidebarContextMenu(tea.Mouse{X: r.X + 2, Y: r.Y + 1})
-				menu.Build()
-				menu.Cursor = 0
-				menu.Activate()
+				r, _ := app.rootHost.ScreenRect(activitylist.ListID)
+				if entry == "rail-menu" {
+					menu := app.buildWorkspaceSidebarContextMenu(tea.Mouse{X: r.X + 2, Y: r.Y + 1})
+					menu.Build()
+					menu.Cursor = 0
+					menu.Activate()
+				} else {
+					y := r.Y + 1
+					if entry == "rail-path" {
+						y++
+					}
+					app.Update(tea.MouseClickMsg{X: r.X + 2, Y: y, Button: tea.MouseLeft})
+					app.Update(tea.MouseReleaseMsg{X: r.X + 2, Y: y, Button: tea.MouseLeft})
+				}
 			case "folder-picker":
 				app.openFolderPicker()
 				picker := app.FilePicker

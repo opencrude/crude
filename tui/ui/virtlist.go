@@ -10,12 +10,13 @@ import (
 
 // VirtItem is a variable-height list item.
 type VirtItem struct {
-	ID      string
-	Height  int // rows; min 1
-	Label   string
-	Detail  string
-	Icon    string
-	Payload any
+	ID       string
+	Height   int // rows; min 1
+	Label    string
+	Detail   string
+	Icon     string
+	Disabled bool // painted but never selected or activated
+	Payload  any
 }
 
 // RowPainter paints one visible screen row of an item.
@@ -67,8 +68,8 @@ func (v *VirtualList) SetItems(items []VirtItem) {
 	v.items = items
 	v.rebuildPrefix()
 	v.sel.SetCount(len(items))
-	if len(items) > 0 && v.sel.Index() < 0 {
-		v.sel.SetIndex(0)
+	if i := v.sel.Index(); i < 0 || i >= len(items) || items[i].Disabled {
+		v.selectFrom(0, 1)
 	}
 	v.applyScrollAfterContentChange()
 }
@@ -79,6 +80,9 @@ func (v *VirtualList) UpdateItem(index int, item VirtItem) bool {
 	}
 	oldHeight := max(1, v.items[index].Height)
 	v.items[index] = item
+	if item.Disabled && v.sel.Index() == index {
+		v.selectFrom(index, 1)
+	}
 	if max(1, item.Height) != oldHeight {
 		v.rebuildPrefix()
 		v.applyScrollAfterContentChange()
@@ -156,6 +160,9 @@ func (v *VirtualList) ApplyAutoScroll() { v.scroll.ApplyAutoScroll() }
 
 // SelectIndex selects idx and ensures its rows are visible.
 func (v *VirtualList) SelectIndex(idx int) bool {
+	if idx < 0 || idx >= len(v.items) || v.items[idx].Disabled {
+		return false
+	}
 	if !v.sel.SetIndex(idx) {
 		return false
 	}
@@ -182,6 +189,28 @@ func (v *VirtualList) Selection() *SelectionModel { return v.sel }
 
 // Scroll returns the scroll model (row-based).
 func (v *VirtualList) Scroll() *ScrollModel { return v.scroll }
+
+// selectFrom skips noninteractive rows without creating a second cursor owner.
+func (v *VirtualList) selectFrom(index, direction int) {
+	for i := index; i >= 0 && i < len(v.items); i += direction {
+		if !v.items[i].Disabled {
+			v.sel.SetIndex(i)
+			return
+		}
+	}
+	// At a boundary keep the current selectable item; otherwise find one in
+	// the opposite direction (or clear a list containing only status rows).
+	if i := v.sel.Index(); i >= 0 && i < len(v.items) && !v.items[i].Disabled {
+		return
+	}
+	for i := index - direction; i >= 0 && i < len(v.items); i -= direction {
+		if !v.items[i].Disabled {
+			v.sel.SetIndex(i)
+			return
+		}
+	}
+	v.sel.ClearSelection()
+}
 
 func (v *VirtualList) rebuildPrefix() {
 	v.structureRevision++
@@ -338,7 +367,9 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		localRow := absRow - itemStart
 		item := v.items[idx]
 		st := StateDefault
-		if idx == v.sel.Index() {
+		if item.Disabled {
+			st = StateDisabled
+		} else if idx == v.sel.Index() {
 			if ctx.Focused {
 				st = StateFocused
 			} else {
@@ -385,6 +416,7 @@ func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
 		switch evt.Key.Code {
 		case tea.KeyUp:
 			v.sel.MoveUp()
+			v.selectFrom(v.sel.Index(), -1)
 			v.scroll.SetAutoScroll(false)
 			if v.selectionAnchorsScroll {
 				v.ensureSelectedVisible()
@@ -392,6 +424,7 @@ func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyDown:
 			v.sel.MoveDown()
+			v.selectFrom(v.sel.Index(), 1)
 			v.scroll.SetAutoScroll(false)
 			if v.selectionAnchorsScroll {
 				v.ensureSelectedVisible()
@@ -399,6 +432,7 @@ func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyPgUp:
 			v.sel.PageUp(max(1, v.scroll.Viewport()/2))
+			v.selectFrom(v.sel.Index(), -1)
 			v.scroll.SetAutoScroll(false)
 			if v.selectionAnchorsScroll {
 				v.ensureSelectedVisible()
@@ -406,25 +440,26 @@ func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyPgDown:
 			v.sel.PageDown(max(1, v.scroll.Viewport()/2))
+			v.selectFrom(v.sel.Index(), 1)
 			v.scroll.SetAutoScroll(false)
 			if v.selectionAnchorsScroll {
 				v.ensureSelectedVisible()
 			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyHome:
-			v.sel.Home()
+			v.selectFrom(0, 1)
 			v.scroll.SetAutoScroll(false)
 			if v.selectionAnchorsScroll {
 				v.ensureSelectedVisible()
 			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyEnd:
-			v.sel.End()
+			v.selectFrom(len(v.items)-1, -1)
 			v.scroll.StickToBottom()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyEnter:
 			item, ok := v.Selected()
-			if !ok {
+			if !ok || item.Disabled {
 				return EventResult{Handled: true}
 			}
 			return EventResult{
@@ -450,6 +485,9 @@ func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
 		absRow := v.scroll.Offset() + ctx.LocalY
 		idx := v.itemAtRow(absRow)
 		if idx >= 0 {
+			if v.items[idx].Disabled {
+				return EventResult{Handled: true}
+			}
 			v.sel.SetIndex(idx)
 			v.scroll.SetAutoScroll(false)
 			if v.selectionAnchorsScroll {

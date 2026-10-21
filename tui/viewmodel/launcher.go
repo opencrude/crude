@@ -220,8 +220,8 @@ func (m *App) refreshLauncherAsync(cwd string) {
 	if screen != nil {
 		screen.BeginLoad(cwd)
 	}
-	if m.workspacesScreen != nil {
-		m.workspacesScreen.SetStatus(true, "")
+	if m.activityView == activityWorkspaces {
+		m.refreshActivityList()
 	}
 	if m.eventBus == nil {
 		return

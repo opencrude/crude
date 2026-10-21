@@ -554,6 +554,9 @@ func (m *App) wantsFastTick() bool {
 	if m.launcherScreen != nil && m.launcherScreen.Loading() && m.launcherHostVisible() {
 		return true
 	}
+	if m.activityView == activityWorkspaces && m.workspaceListLoading && m.sidebarHostVisible() {
+		return true
+	}
 	// Running and stopping agents repaint at frame rate; an idle session
 	// keeps the idle cadence.
 	if m.anyAgentAnimating() {

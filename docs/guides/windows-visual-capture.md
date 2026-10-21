@@ -102,6 +102,11 @@ pwsh scripts/tuishot.ps1 -Cols 120 -Rows 30 .\tmp\mouse `
   'drag:45,12,70,12'
 ```
 
+Pointer movement uses native `SendInput` motion, not only `SetCursorPos`.
+The latter can move the desktop cursor without delivering terminal hover/drag
+events. A standalone Bubble Tea probe verifies press, held motion and release;
+a screenshot of the pointer's new position alone does not prove a drag occurred.
+
 Available steps:
 
 | Step | Meaning |

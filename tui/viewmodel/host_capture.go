@@ -28,16 +28,13 @@ func (m *App) sidebarHostVisible() bool {
 	return m.sidebarContentVisible()
 }
 
-// sidebarContentVisible is the files/agents/terminals/git pane (not the rail).
+// sidebarContentVisible is the selected tool pane (not the activity rail).
 func (m *App) sidebarContentVisible() bool {
 	if m.Tree == nil || !m.Tree.Visible {
 		return false
 	}
 	if m.activityView == activityFiles {
 		return m.Tree.Model != nil && m.sidebarScreen != nil
-	}
-	if m.activityView == activityWorkspaces {
-		return true
 	}
 	return m.activityList != nil
 }

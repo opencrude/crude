@@ -188,7 +188,7 @@ func (m *App) configureShell() {
 		X: frame.Left, Y: m.shellTopRow(), W: activityW, H: sidebarH,
 	})
 
-	// Sidebar content: files / agents / terminals / git, right of the rail.
+	// Shared tool sidebar, right of the activity rail.
 	sidebarActive := m.sidebarHostVisible()
 	sidebarW := 0
 	if sidebarActive {
@@ -197,11 +197,7 @@ func (m *App) configureShell() {
 	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{
 		X: frame.Left + activityW, Y: m.shellTopRow(), W: sidebarW, H: sidebarH,
 	})
-	if m.activityView == activityWorkspaces {
-		screen := m.ensureWorkspaceSwitcher()
-		screen.SetSwitchStatus(m.remoteWorkspaceSwitchStatus())
-		m.shell.SetScreen(shellSidebarSlot, screen)
-	} else if m.activityView != activityFiles && m.activityList != nil {
+	if m.activityView != activityFiles && m.activityList != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.activityList)
 	} else if m.sidebarScreen != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.sidebarScreen)
@@ -282,12 +278,6 @@ func (m *App) syncRootFocus() {
 	switch m.focusTarget() {
 	case FocusTree:
 		switch m.activityView {
-		case activityWorkspaces:
-			screen := m.ensureWorkspaceSwitcher()
-			id = screen.PreferredFocus()
-			if current := m.rootHost.Focused(); screen.OwnsFocus(current) {
-				id = current
-			}
 		case activityFiles:
 			id = shelltree.TreeID
 			if current := m.rootHost.Focused(); current == shelltree.FilterID || current == shelltree.TreeID {
@@ -442,9 +432,6 @@ func (m *App) configureSidebarScreen() {
 			maxW = 12
 		}
 		m.activityList.SetSplitMaxFirst(maxW)
-	}
-	if m.workspacesScreen != nil {
-		m.workspacesScreen.SetSplitMaxFirst(max(12, m.width/2))
 	}
 }
 

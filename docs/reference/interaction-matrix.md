@@ -347,13 +347,23 @@ See [startup admission](core-client-protocol.md#startup-before-workspace-attachm
 ### Workspace home
 
 The Recent Workspaces rail is an independent navigation surface, not a route
-back to home. Its two-row resource targets and shared list/scrollbar remain
-available while any main-pane topology or floating editor is open. Both views
-consume one asynchronous, cancelable catalog, including after home unmounts.
-Search, selected identity, scroll and width survive sidebar destination changes.
-Right-click offers exact-path Open/Copy and New Workspace/Refresh; old-menu
-callbacks cannot switch a replacement attachment. Home keeps its existing
-recoverable Delete operation separately.
+back to home. It mounts the same `activitylist` screen as Agents/Skills/MCP:
+name/path resource pairs with theme-muted paths, no empty separator rows, and
+the shared search, scrollbar and draggable divider. Both lines are one resource
+for scrolling, selection, hover and context menus. A single click on either
+line, or Enter, requests the exact-destination switch confirmation; attachment
+waits for approval. The New Workspace command activates on
+one click and uses the same persistent idle background and focus/hover treatment
+as New Agent. The shared launcher/settings progress-rule animation beneath search
+indicates a catalog refresh; no loading-text row is inserted and resource targets
+do not move while it runs. Current-resource
+fill comes only from the attached root; browsing, hover and recency reorder never
+change it. The list remains available with any main-pane topology or floating
+editor open. Both views consume one asynchronous, cancelable catalog, including
+after home unmounts. Search, selected identity, scroll and width survive sidebar
+destination changes. Right-click offers the same Open/Copy path/Delete workspace
+resource menu as Home, plus New Workspace/Refresh. Open/Delete are disabled on
+the current workspace; old-menu callbacks cannot act on a replacement attachment.
 
 Connected switching keeps the old attachment, tabs and processes until the
 destination is ready. Unsaved shared editors offer Save / Close view / Cancel;

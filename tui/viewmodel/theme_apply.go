@@ -229,9 +229,6 @@ func (m *App) themeConsumers() []themeConsumer {
 				if m.activityList != nil {
 					m.activityList.SetTheme(th)
 				}
-				if m.workspacesScreen != nil {
-					m.workspacesScreen.SetTheme(th)
-				}
 				if m.gitPanel != nil {
 					m.gitPanel.SetTheme(th)
 				}
