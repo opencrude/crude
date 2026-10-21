@@ -186,8 +186,8 @@ func TestHeaderGitRightClickKeepsRegionMenu(t *testing.T) {
 }
 
 // The workspace root is a header identity segment of its own: clicking it
-// lists the recent workspaces and the sidebar's New Workspace / Refresh
-// commands, with the active root disabled like the current branch.
+// lists the recent workspaces and their navigation context-menu commands,
+// with the active root disabled like the current branch.
 func TestHeaderWorkspacePathClickOpensWorkspaceSwitcher(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28

@@ -56,8 +56,6 @@ func (m *App) handleWorkspaceSwitcherAction(action ui.Action) (tea.Cmd, bool) {
 	switch action.ID {
 	case workspacescreen.ActionNew:
 		m.openFolderPicker()
-	case workspacescreen.ActionRefresh:
-		m.refreshLauncherAsync(m.ws.RootPath())
 	case workspacescreen.ActionOpen:
 		if request.Screen.HasPath(request.Path) {
 			return m.launcherOpenFolder(request.Path), true
@@ -84,8 +82,8 @@ func (m *App) workspaceNavigationActions() ui.ContextMenuSection {
 }
 
 // openWorkspacePathSwitcher is the header workspace-root dropdown: the same
-// recent-workspace catalog the sidebar lists, plus its New Workspace and
-// Refresh commands. It anchors under the header like the branch picker, so
+// recent-workspace catalog the sidebar lists, plus its navigation context-menu
+// commands. It anchors under the header like the branch picker, so
 // the three identity segments behave alike.
 func (m *App) openWorkspacePathSwitcher() tea.Cmd {
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
