@@ -91,6 +91,32 @@ close owns final shutdown. Connected workspace switches prepare the destination 
 teardown of client-local resources, then replace only that shell attachment. A
 failed destination leaves the old attachment usable; peers keep the old workspace.
 
+Saved workspace deletion is an explicit core-host operation, never a client-side
+directory move. `workspace.delete_preview` releases a retained workspace only
+after its actor proves there are no attached views, in-flight operations, active
+agents/commands/maintenance, or live terminals. Session admission is fenced before
+retirement; the full watcher, resource-lane, session, collaboration, history and
+database shutdown joins off the actor. Immutable directory review follows those
+flushes, not before. Cancelling the dialog leaves saved data intact; a later
+attachment constructs a fresh actor.
+
+Attachment preparation, including factories which outlive a cancelled request,
+and delete/Undo share the saved-storage identity boundary. Catalog metadata
+readers retain a read lease until their actual SQL handles close, including
+timeout unwinding; directory review/move excludes them. Preview tokens are exact
+connection-owned, single-use, ten-minute reviews; commit rechecks use and directory
+preimages. `workspace.delete_saved` moves the complete saved directory to recovery
+without touching project files. `workspace.restore_deleted` never closes or
+overwrites a replacement workspace. Both mutations have durable receipts; lost
+acknowledgements expose **Check result**, which observes the original receipt
+without repeating an effect. Blocked dialogs explain the owner/activity and next
+action, offer **Review again**, and default to Cancel/Close. Other processes can
+still hold files open; genuine OS failures preserve saved/recovery data and remain
+explicit rather than triggering retries or stopping unrelated work.
+Preimages exclude only regular SQLite derived SHM and empty WAL sidecars after
+checking the database header. Nonempty WALs, journals and accepted later writes
+remain protected preconditions; ordinary catalog reads do not invalidate consent.
+
 Successful attachments record durable workspace access time off the actor loop,
 including returns to retained actors. Both recent-workspace views sort this
 metadata newest-first; session creation and background activity never reorder it.
@@ -220,7 +246,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Family | Operations |
 |---|---|
 | Detached startup | `startup.inspect`, `.browse`, `.catalog`, `.save`, `.onboarding` |
-| Workspace | `workspace.attach`, `.detach`, `.snapshot`; `agent.changes` |
+| Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
 | LSP | `lsp.snapshot`, `.open_file`, `.close_file`, `.queue_file_update`, `.notify_file_save`, `.notify_watched_files_changed`, `.set_active_file`, `.clear_diagnostics`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.rename` |

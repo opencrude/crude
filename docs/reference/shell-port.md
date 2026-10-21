@@ -94,6 +94,15 @@ Runtime is the identity, lifecycle and startup surface of one project workspace.
 | `LastRegistryError` | 2 | reads | yes | workspace.startup |
 | `SetEventSender` | 1 | mutates | no: passes callback interface (session.EventSender) | none; replaced by workspace.attach subscription |
 
+`SavedWorkspaceManagement` groups asynchronous `PreviewWorkspaceDeletion`,
+`DeleteSavedWorkspace`, and `RestoreDeletedWorkspace` alongside Runtime. Connected
+adapters use `workspace.delete_preview`, `.delete_saved`, and `.restore_deleted`
+on the selected core, including SSH; they never inspect/move a shell-local data
+directory. `SavedWorkspaceDeletionReceipts` provides exact receipt observation
+after a lost acknowledgement. The core owns preview preimages/tokens, actor
+retirement, activity refusal and recoverable moves; see
+[deletion ownership](core-client-protocol.md#ownership-and-attachment).
+
 ### `WorkspaceStore`
 
 WorkspaceStore is the workspace-level metadata database, reduced to what the shell reads.

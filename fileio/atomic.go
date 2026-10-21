@@ -25,6 +25,12 @@ func WriteCommitted(err error) bool {
 	return errors.As(err, &committed)
 }
 
+// CommittedWarning reconstructs a committed durability warning received from a
+// remote filesystem owner. It must never be used for an unconfirmed effect.
+func CommittedWarning(message string) error {
+	return committedWriteError{err: errors.New(message)}
+}
+
 // CommitAtomicFile publishes a closed, synced temporary file in the target's
 // directory. Callers own staging, permissions, mutation leases and preconditions;
 // this primitive owns platform-specific replacement and directory durability.

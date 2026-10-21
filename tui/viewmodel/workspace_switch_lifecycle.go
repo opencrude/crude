@@ -61,6 +61,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.cancelComparisonGeometry()
 	m.cancelComparisonSearch()
 	m.overlayHost.Close(ui.OverlayCapabilityPicker)
+	m.overlayHost.Close(ui.OverlayWorkspaceDelete)
 	m.cancelCapabilityOperations()
 	m.closeMemoryBrowser()
 	m.invalidateTreePathSearch()

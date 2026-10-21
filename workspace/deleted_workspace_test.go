@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -129,6 +130,29 @@ func TestWorkspaceUndoNeverOverwritesReplacement(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(deleted.RecoveryPath, "data", "workspace.db")); err != nil {
 		t.Fatal("conflict lost recovery data")
+	}
+}
+
+func TestSavedWorkspaceDeletionStillRejectsNewSQLiteWALWork(t *testing.T) {
+	project, saved := savedWorkspaceFixture(t)
+	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(saved, "workspace.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec("PRAGMA journal_mode=WAL; INSERT INTO workspace_metadata(key,value,updated_at) VALUES('later-work','must survive',1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeleteSavedWorkspace(t.Context(), plan); err == nil {
+		t.Fatal("new WAL-backed work bypassed the immutable preview")
+	}
+	var value string
+	if err := db.QueryRow("SELECT value FROM workspace_metadata WHERE key='later-work'").Scan(&value); err != nil || value != "must survive" {
+		t.Fatalf("refused deletion lost new WAL-backed work: %q, %v", value, err)
 	}
 }
 

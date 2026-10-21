@@ -799,6 +799,7 @@ func (m *App) stopAsyncIO() {
 	m.resetMemoryBrowser()
 	if m.overlayHost != nil {
 		m.overlayHost.Close(ui.OverlayCapabilityPicker)
+		m.overlayHost.Close(ui.OverlayWorkspaceDelete)
 	}
 	m.cancelCapabilityOperations()
 	m.cancelLocalDiffs()

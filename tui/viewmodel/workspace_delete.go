@@ -2,12 +2,17 @@ package viewmodel
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/coreclient"
+	"crude/coreprotocol"
 	"crude/fileio"
+	"crude/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/launcher"
 	"crude/tui/theme"
@@ -18,14 +23,19 @@ import (
 
 type workspaceDeletePrompt struct {
 	ui.Base
-	screen     *launcher.Screen
-	generation uint64
-	plan       workspace.WorkspaceDeletion
-	deleted    workspace.DeletedWorkspace
-	busy       bool
-	title      *ui.Label
-	detail     *ui.TextArea
-	actions    *ui.ActionBar
+	screen         *launcher.Screen
+	generation     uint64
+	plan           workspace.WorkspaceDeletion
+	deleted        workspace.DeletedWorkspace
+	busy           bool
+	entry          launcher.WorkspaceEntry
+	cancel         context.CancelFunc
+	deleteReady    bool
+	receiptID      string
+	receiptRestore bool
+	title          *ui.Label
+	detail         *ui.TextArea
+	actions        *ui.ActionBar
 }
 type workspaceDeleteIntent struct {
 	target *workspaceDeletePrompt
@@ -51,7 +61,7 @@ func newWorkspaceDeletePrompt(th *theme.Theme, screen *launcher.Screen, generati
 	p.detail = ui.NewTextArea("workspace-delete/detail", ui.NewTokenSet(th), true)
 	p.detail.SetReadOnly(true)
 	p.actions.SetCancelAction("cancel")
-	p.set("Preparing deletion preview…", "Your project files will not be deleted.", "", "", "", "")
+	p.set("Checking workspace use…", "Releasing unused core resources and preparing a safe preview.", "Your project files will not be deleted.")
 	p.buttons(ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	return p
 }
@@ -66,6 +76,12 @@ func (p *workspaceDeletePrompt) set(lines ...string) {
 	}
 }
 func (p *workspaceDeletePrompt) buttons(buttons ...ui.ActionBarButton) {
+	p.deleteReady = false
+	for _, button := range buttons {
+		if button.Action == "delete" {
+			p.deleteReady = button.Enabled
+		}
+	}
 	p.actions.SetButtons(buttons...)
 	p.actions.FocusLast()
 }
@@ -77,9 +93,7 @@ func (p *workspaceDeletePrompt) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	p.title.Layout(ctx, ui.Rect{W: r.W, H: min(1, r.H)})
 	p.detail.Layout(ctx, ui.Rect{Y: min(2, r.H), W: r.W, H: max(0, r.H-4)})
 	// A destructive action must not be reachable when its label cannot fit.
-	if r.W < rendering.VisibleWidth("[ Delete workspace ]  [ Cancel ]") {
-		p.actions.SetEnabled("delete", false)
-	}
+	p.actions.SetEnabled("delete", p.deleteReady && !p.busy && r.W >= rendering.VisibleWidth("[ Delete workspace ]  [ Cancel ]"))
 	p.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: min(1, r.H)})
 }
 func (p *workspaceDeletePrompt) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
@@ -87,7 +101,9 @@ func (p *workspaceDeletePrompt) Handle(ctx ui.EventContext, event ui.Event) ui.E
 		if event.Key.Code == tea.KeyEsc {
 			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "cancel"}}
 		}
-		return p.actions.Handle(ctx, event)
+		// Let the native read-only area own scrolling/selection when focused;
+		// action-bar focus keeps normal safe-default confirmation behavior.
+		return ui.EventResult{}
 	}
 	return ui.EventResult{}
 }
@@ -96,7 +112,7 @@ func (p *workspaceDeletePrompt) HandleAction(_ ui.EventContext, action ui.Action
 		return ui.EventResult{Handled: true}
 	}
 	switch action.ID {
-	case "delete", "undo", "cancel":
+	case "delete", "undo", "review", "check", "cancel":
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return workspaceDeleteIntent{target: p, action: action.ID} }}
 	}
 	return ui.EventResult{Handled: true}
@@ -105,9 +121,18 @@ func (p *workspaceDeletePrompt) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleDialog, Label: "Delete workspace"}
 }
 
+func workspaceDeleteErrorText(err error) string {
+	var fault *coreprotocol.Fault
+	if errors.As(err, &fault) {
+		return fault.Message
+	}
+	return err.Error()
+}
+
 func (m *App) openWorkspaceDelete(entry launcher.WorkspaceEntry) {
 	p := newWorkspaceDeletePrompt(m.Theme, m.launcherScreen, m.workspaceSwitchGen.Load())
-	w, h := min(76, max(24, m.width-4)), min(12, max(5, m.height-4))
+	p.entry = entry
+	w, h := min(80, max(24, m.width-4)), min(18, max(5, m.height-4))
 	frame := ui.NewWindowFrameWidget(m.Theme, "workspace-delete/frame", ui.FrameDialog, "Delete workspace", p, nil, false, w, h)
 	frame.Frame().SetBorderAccent(ui.NewTokenSet(m.Theme).Color(ui.ColorError))
 	frame.Host().Focus(p.actions.ID())
@@ -116,12 +141,26 @@ func (m *App) openWorkspaceDelete(entry launcher.WorkspaceEntry) {
 	policy := ui.ModalDialogPolicy()
 	policy.Decorated = true
 	policy.Movable = true
-	m.overlayHost.Open(ui.OverlayWorkspaceDelete, fw, policy, nil)
-	current := m.ws.RootPath()
+	m.overlayHost.Open(ui.OverlayWorkspaceDelete, fw, policy, func() {
+		if p.cancel != nil {
+			p.cancel()
+		}
+	})
+	m.prepareWorkspaceDelete(p)
+}
+
+func (m *App) prepareWorkspaceDelete(p *workspaceDeletePrompt) {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	owner := m.ws
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	p.cancel = cancel
+	p.set("Checking workspace use…", "Releasing unused core resources and preparing a safe preview.", "Your project files will not be deleted.")
+	p.buttons(ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	m.runDetachedAsyncCmd(func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		plan, err := workspace.PreviewWorkspaceDeletion(ctx, entry.ID, entry.Path, current)
+		plan, err := owner.PreviewWorkspaceDeletion(ctx, p.entry.ID, p.entry.Path)
 		return workspaceDeletePreviewMsg{target: p, plan: plan, err: err}
 	})
 }
@@ -152,7 +191,14 @@ func (m *App) applyWorkspaceDeletePreview(msg workspaceDeletePreviewMsg) {
 		return
 	}
 	if msg.err != nil {
-		p.set("Workspace could not be prepared", msg.err.Error())
+		p.set("Workspace could not be reviewed", workspaceDeleteErrorText(msg.err), "No saved data was deleted. Project files are unchanged.")
+		p.buttons(ui.ActionBarButton{Label: "Review again", Action: "review", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+		m.refreshWorkspaceDelete(p)
+		return
+	}
+	if issue := msg.plan.Issue; issue != nil {
+		p.set(issue.Title, issue.Summary, issue.Detail, issue.Guidance, "No saved data was deleted. Project files are unchanged.")
+		p.buttons(ui.ActionBarButton{Label: "Review again", Action: "review", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 		m.refreshWorkspaceDelete(p)
 		return
 	}
@@ -170,6 +216,48 @@ func (m *App) handleWorkspaceDeleteIntent(msg workspaceDeleteIntent) tea.Cmd {
 		m.overlayHost.Close(ui.OverlayWorkspaceDelete)
 		return nil
 	}
+	if msg.action == "review" && p.actions.ActionEnabled("review") {
+		m.prepareWorkspaceDelete(p)
+		m.refreshWorkspaceDelete(p)
+		return nil
+	}
+	if msg.action == "check" && p.actions.ActionEnabled("check") {
+		observer, ok := m.ws.(shellport.SavedWorkspaceDeletionReceipts)
+		if !ok || p.receiptID == "" {
+			return nil
+		}
+		p.busy = true
+		p.actions.SetEnabled("check", false)
+		p.title.SetText("Checking the original result…")
+		m.refreshWorkspaceDelete(p)
+		id, restored, deleted := p.receiptID, p.receiptRestore, p.deleted
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			receipt, err := observer.WorkspaceDeletionReceipt(ctx, id)
+			if err != nil {
+				return workspaceDeleteResultMsg{target: p, restored: restored, deleted: deleted, err: &coreclient.UncertainError{RequestID: id, Cause: err}}
+			}
+			method := coreprotocol.WorkspaceDelete
+			if restored {
+				method = coreprotocol.WorkspaceRestore
+			}
+			if receipt.RequestID != id || receipt.Response.ID != id || receipt.State != "completed" || receipt.Method != method {
+				return workspaceDeleteResultMsg{target: p, restored: restored, deleted: deleted, err: &coreclient.UncertainError{RequestID: id, Cause: errors.New("the original operation has no confirmed result yet; no action was repeated")}}
+			}
+			if receipt.Response.Error != nil {
+				return workspaceDeleteResultMsg{target: p, restored: restored, deleted: deleted, err: receipt.Response.Error}
+			}
+			var out coreprotocol.WorkspaceDeletionResult
+			if err := json.Unmarshal(receipt.Response.Payload, &out); err != nil {
+				return workspaceDeleteResultMsg{target: p, restored: restored, deleted: deleted, err: &coreclient.UncertainError{RequestID: id, Cause: err}}
+			}
+			if out.Warning != "" {
+				err = fileio.CommittedWarning(out.Warning)
+			}
+			return workspaceDeleteResultMsg{target: p, restored: restored, deleted: out.Deleted, err: err}
+		}
+	}
 	if msg.action != "delete" && msg.action != "undo" {
 		return nil
 	}
@@ -180,19 +268,19 @@ func (m *App) handleWorkspaceDeleteIntent(msg workspaceDeleteIntent) tea.Cmd {
 	p.actions.SetEnabled("delete", false)
 	p.actions.SetEnabled("undo", false)
 	p.actions.SetEnabled("cancel", false)
-	p.title.SetText("Saving recovery data…")
+	p.title.SetText("Moving saved data to recovery…")
 	if msg.action == "undo" {
 		p.title.SetText("Restoring workspace…")
 	}
 	m.refreshWorkspaceDelete(p)
-	plan, deleted := p.plan, p.deleted
+	plan, deleted, owner := p.plan, p.deleted, m.ws
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if msg.action == "undo" {
-			return workspaceDeleteResultMsg{target: p, deleted: deleted, restored: true, err: workspace.RestoreDeletedWorkspace(ctx, deleted)}
+			return workspaceDeleteResultMsg{target: p, deleted: deleted, restored: true, err: owner.RestoreDeletedWorkspace(ctx, deleted)}
 		}
-		result, err := workspace.DeleteSavedWorkspace(ctx, plan)
+		result, err := owner.DeleteSavedWorkspace(ctx, plan)
 		return workspaceDeleteResultMsg{target: p, deleted: result, err: err}
 	}
 }
@@ -203,14 +291,29 @@ func (m *App) applyWorkspaceDeleteResult(msg workspaceDeleteResultMsg) {
 	}
 	p.busy = false
 	if msg.err != nil && !fileio.WriteCommitted(msg.err) {
-		p.set("Workspace operation failed", msg.err.Error(), "No project files were changed.")
-		p.buttons(ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+		var uncertain *coreclient.UncertainError
+		var fault *coreprotocol.Fault
+		unknown := errors.As(msg.err, &uncertain) || errors.As(msg.err, &fault) && strings.HasPrefix(fault.Code, "outcome_")
+		if unknown {
+			p.set("Workspace result is not confirmed", msg.err.Error(), "Do not repeat the operation until its original receipt is checked.", "Project files were not changed.")
+			if uncertain != nil {
+				p.receiptID, p.receiptRestore, p.deleted = uncertain.RequestID, msg.restored, msg.deleted
+			}
+			_, canObserve := m.ws.(shellport.SavedWorkspaceDeletionReceipts)
+			p.buttons(ui.ActionBarButton{Label: "Check result", Action: "check", Enabled: canObserve && p.receiptID != "", Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+		} else if msg.restored {
+			p.set("Workspace could not be restored", workspaceDeleteErrorText(msg.err), "Recovery data was kept at:", msg.deleted.RecoveryPath, "Project files are unchanged.")
+			p.buttons(ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+		} else {
+			p.set("Workspace was not deleted", workspaceDeleteErrorText(msg.err), "Review again after resolving the issue. Project files are unchanged.")
+			p.buttons(ui.ActionBarButton{Label: "Review again", Action: "review", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+		}
 	} else if msg.restored {
 		p.set("Workspace restored", msg.deleted.ProjectDir)
 		p.buttons(ui.ActionBarButton{Label: "Done", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	} else {
 		p.deleted = msg.deleted
-		if p.screen == m.launcherScreen {
+		if p.screen != nil && p.screen == m.launcherScreen {
 			p.screen.RemoveWorkspace(msg.deleted.ID)
 		}
 		p.set("Workspace deleted", msg.deleted.Name, "Project files are unchanged. Saved data can be restored.", "Recovery location:", msg.deleted.RecoveryPath)

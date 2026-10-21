@@ -123,6 +123,16 @@ architecture. Terminal and network lifetimes are specified in
   the pool holds one connection, and an open `Rows` made the count wait on
   itself until the bound expired for every workspace.
 
+- **Saved workspace deletion belongs to the retained core.** It refuses actual
+  view/activity owners, fences idle-session admission, fully joins an unused
+  actor, and only then builds the immutable deletion preview. Saved-ID gates
+  exclude attaching/opening factories through move/Undo. Catalog metadata reads
+  hold storage leases through SQL close, even after their caller times out;
+  preview/delete/restore exclude these temporary handles. Busy work is explained,
+  never cancelled to make deletion succeed. Lost mutation acknowledgements are
+  observed by their exact receipt, not replayed. Recovery includes accepted dirty
+  documents and history; Undo never replaces newer saved work.
+
 - **Workspace navigation has one catalog and one switch intent.** Home and the
   Recent Workspaces rail consume one generation-owned, cancelable catalog read;
   home unmount does not discard navigation. Durable `last_accessed_at` metadata is
