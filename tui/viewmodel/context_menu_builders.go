@@ -273,11 +273,15 @@ func (m *App) activityItemAtMouse(mouse tea.Mouse) (ui.ListItem, bool) {
 	if m.activityList == nil || m.rootHost == nil {
 		return ui.ListItem{}, false
 	}
-	rect, ok := m.rootHost.ScreenRect(activitylist.ScreenID)
+	rect, ok := m.rootHost.ScreenRect(activitylist.ListID)
 	if !ok || !rect.Contains(mouse.X, mouse.Y) {
 		return ui.ListItem{}, false
 	}
-	return m.activityList.ItemAtLocalY(mouse.Y - rect.Y)
+	pane, ok := m.rootHost.ScreenRect(activitylist.ScreenID)
+	if !ok {
+		return ui.ListItem{}, false
+	}
+	return m.activityList.ItemAtLocalY(mouse.Y - pane.Y)
 }
 
 // buildLauncherContextMenu creates the menu for a right-click on a launcher
@@ -299,12 +303,33 @@ func (m *App) buildLauncherContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// Capture by value: the screen rebuilds its item slice freely, so the
 	// closures below must not alias the live list.
 	entry := *ws
+	return m.workspaceResourceMenu(entry)
+}
+
+// Home and the sidebar expose the same resource operations and lifetime fence.
+// Neither list owns deletion; both enter the one core-owned review/Undo flow.
+func (m *App) workspaceResourceMenu(entry launcher.WorkspaceEntry) *ui.ContextMenuState {
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
+	valid := func() bool { return m.ws == owner && generation == m.workspaceSwitchGen.Load() }
 	st := ui.QuickMenu("",
-		ui.ContextMenuItem{Label: "Open", Action: func() { m.runDetachedAsyncCmd(m.launcherOpenFolder(entry.Path)) }},
-		ui.ContextMenuItem{Label: "Copy path", Action: func() { m.copyToClipboard(entry.Path) }},
+		ui.ContextMenuItem{Label: "Open", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
+			if valid() {
+				m.runDetachedAsyncCmd(m.launcherOpenFolder(entry.Path))
+			}
+		}},
+		ui.ContextMenuItem{Label: "Copy path", Action: func() {
+			if valid() {
+				m.copyToClipboard(entry.Path)
+			}
+		}},
 	)
+	st.Title = entry.Name
 	st.Sections = append(st.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{
-		{Label: "Delete workspace…", Action: func() { m.openWorkspaceDelete(entry) }},
+		{Label: "Delete workspace…", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
+			if valid() {
+				m.openWorkspaceDelete(entry)
+			}
+		}},
 	}})
 	return st
 }

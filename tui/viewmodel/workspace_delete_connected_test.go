@@ -18,6 +18,7 @@ import (
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/shellport/remote"
+	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
 	"crude/types"
@@ -52,8 +53,26 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := current.app
-	app.openWorkspaceDelete(launcher.WorkspaceEntry{ID: workspace.WorkspaceID(project), Path: project})
+	app.launcherScreen = nil // The sidebar remains usable during a live workflow.
+	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(project), ProjectDir: project, ProjectName: "unused"}}
+	app.setActivity(activityWorkspaces, true)
+	app.paintShellFrame()
+	list, ok := app.rootHost.ScreenRect(activitylist.ListID)
+	if !ok {
+		t.Fatal("workspace sidebar is not mounted")
+	}
+	app.Update(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + 1, Button: tea.MouseRight})
+	if app.LastContextMenu == nil || !strings.Contains(app.View().Content, "Delete workspace") {
+		t.Fatal("right-click did not paint the shared resource Delete action")
+	}
+	app.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // Open -> Copy path
+	app.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // Copy path -> Delete
+	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runAppCommand(t, app, cmd)
 	window := app.overlayHost.Window(ui.OverlayWorkspaceDelete)
+	if window == nil {
+		t.Fatal("sidebar context menu did not open the deletion review")
+	}
 	p := window.Content.(*ui.WindowFrameWidget).Body().(*workspaceDeletePrompt)
 	remoteJourneyUntil(t, []remoteJourneyShell{current}, func() bool { return p.actions.ActionEnabled("delete") })
 	runAppCommand(t, app, app.handleWorkspaceDeleteIntent(workspaceDeleteIntent{target: p, action: "delete"}))
@@ -67,6 +86,11 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	if _, err := os.Stat(saved); !os.IsNotExist(err) {
 		t.Fatalf("deleted workspace remains at source: %v", err)
 	}
+	for _, item := range app.workspaceSidebarItems() {
+		if item.ID == sidebarItemWorkspacePrefix+project {
+			t.Fatal("committed deletion left a stale sidebar resource")
+		}
+	}
 	runAppCommand(t, app, app.handleWorkspaceDeleteIntent(workspaceDeleteIntent{target: p, action: "undo"}))
 	data, err := os.ReadFile(filepath.Join(saved, "saved-evidence"))
 	if err != nil || string(data) != "retained conversation evidence" {
@@ -78,6 +102,18 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	}
 	if !strings.Contains(p.title.Text(), "restored") {
 		t.Fatal("Undo did not show restored status")
+	}
+	remoteJourneyUntil(t, []remoteJourneyShell{current}, func() bool {
+		for _, info := range app.workspaceInfos {
+			if info.ID == workspace.WorkspaceID(project) {
+				return true
+			}
+		}
+		return false
+	})
+	app.overlayHost.Close(ui.OverlayWorkspaceDelete)
+	if !strings.Contains(app.View().Content, filepath.Base(project)) {
+		t.Fatal("Undo did not return the resource to the rendered sidebar")
 	}
 }
 

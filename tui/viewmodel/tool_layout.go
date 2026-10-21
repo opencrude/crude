@@ -39,12 +39,8 @@ func (app *App) captureToolView() {
 		app.toolLayout.Views = make(map[string]workspace.ToolViewState)
 	}
 	state := workspace.ToolViewState{Width: app.Tree.Width}
-	if app.activityList != nil && (app.activityView == activityAgents || app.activityView == activitySkills || app.activityView == activityMCP) {
+	if app.activityList != nil && app.activityView != activityFiles {
 		list := app.activityList.ViewState()
-		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
-	}
-	if app.activityView == activityWorkspaces && app.workspacesScreen != nil {
-		list := app.workspacesScreen.ViewState()
 		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
 	}
 	app.toolLayout.Views[app.activityView.ID()] = state

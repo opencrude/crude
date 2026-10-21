@@ -15,12 +15,14 @@ type ListItem struct {
 	ID        string
 	Label     string
 	Detail    string
+	Subtitle  string // optional secondary text below the label in resource lists
 	Icon      string
 	Disabled  bool // not activatable; skipped by keyboard nav
 	Header    bool // section label; not selectable
 	Separator bool // divider row; not selectable
 	Spacer    bool // empty gap row; not selectable
 	Command   bool // button-like row: activates on a single click, not a double
+	Active    bool // resource currently open; independent of the browsing cursor
 	Depth     int  // optional hierarchy depth for feature-specific row painters
 	TreeLast  bool // final sibling at Depth (feature-specific tree connector)
 	Payload   any  // optional feature data (e.g. menu section/item index)

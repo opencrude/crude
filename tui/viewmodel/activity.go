@@ -14,7 +14,6 @@ import (
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
-	workspacescreen "crude/tui/screens/workspaces"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 	"crude/workspace"
@@ -74,13 +73,10 @@ func (m *App) setActivity(view activitybar.View, showContent bool) {
 		if state.Width > 0 {
 			m.Tree.Width = state.Width
 		}
-		if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
+		if m.activityList != nil && view != activityFiles {
 			m.activityList.RestoreViewState(activitylist.ViewState{Filter: state.Filter, Selection: state.Selection, Offset: state.Offset})
 		}
-		if view == activityWorkspaces {
-			m.ensureWorkspaceSwitcher().RestoreViewState(workspacescreen.State{Filter: state.Filter, Selection: state.Selection, Offset: state.Offset})
-		}
-	} else if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
+	} else if m.activityList != nil && view != activityFiles {
 		m.activityList.RestoreViewState(activitylist.ViewState{})
 	}
 }
@@ -124,7 +120,14 @@ func (m *App) refreshActivityList() {
 		}
 	}
 	nerd := panelchrome.NerdFont(m.Theme)
+	m.activityList.SetLoading(m.activityView == activityWorkspaces && m.workspaceListLoading)
+	m.activityList.SetActivateOnClick(m.activityView == activityWorkspaces)
 	switch m.activityView {
+	case activityWorkspaces:
+		m.activityList.SetHeading("Workspaces")
+		m.activityList.SetIcon(activityWorkspaces.Icon(nerd))
+		m.activityList.SetBadge(fmt.Sprint(len(m.workspaceInfos)))
+		m.activityList.SetItems(m.workspaceSidebarItems())
 	case activityAgents:
 		m.activityList.SetHeading("Agents")
 		m.activityList.SetIcon(activitybar.ViewAgents.Icon(nerd))
@@ -202,6 +205,7 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			Icon:     icon,
 			Depth:    depth,
 			TreeLast: last,
+			Active:   n.ID == m.AgentView.ActiveID(),
 		})
 		for i, child := range n.Children {
 			appendTree(child, depth+1, i == len(n.Children)-1)
@@ -228,6 +232,16 @@ func sidebarCountBadge(items []ui.ListItem) string {
 
 func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 	switch {
+	case item.ID == sidebarItemNewWorkspace:
+		if m.activityView == activityWorkspaces && m.sidebarHostVisible() {
+			m.openFolderPicker()
+		}
+		return nil
+	case strings.HasPrefix(item.ID, sidebarItemWorkspacePrefix):
+		if path, ok := m.workspaceSidebarPath(item.ID); ok {
+			return m.launcherOpenFolder(path)
+		}
+		return nil
 	case strings.HasPrefix(item.ID, "capability:"):
 		return m.openCapabilityManager(m.activityView, "", strings.TrimPrefix(item.ID, "capability:"))
 	case item.ID == "capability.manage":
@@ -246,9 +260,6 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return nil
 	}
 	if cmd, handled := m.handleMainPaneAction(action); handled {
-		return cmd
-	}
-	if cmd, handled := m.handleWorkspaceSwitcherAction(*action); handled {
 		return cmd
 	}
 	if m.handleTerminalAction(*action) {
@@ -389,7 +400,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID || payload.ID == workspacescreen.DividerID {
+		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID {
 			m.setSidebarWidth(payload.First)
 			m.captureToolView()
 			m.toolLayoutVersion++

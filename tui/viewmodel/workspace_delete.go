@@ -313,6 +313,15 @@ func (m *App) applyWorkspaceDeleteResult(msg workspaceDeleteResultMsg) {
 		p.buttons(ui.ActionBarButton{Label: "Done", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	} else {
 		p.deleted = msg.deleted
+		// The App owns the recent-workspace catalog. Remove the committed
+		// resource there as well as in Home so an unmounted Home cannot leave
+		// a deleted entry in the sidebar while the asynchronous refresh runs.
+		for i, info := range m.workspaceInfos {
+			if info.ID == msg.deleted.ID {
+				m.workspaceInfos = append(m.workspaceInfos[:i], m.workspaceInfos[i+1:]...)
+				break
+			}
+		}
 		if p.screen != nil && p.screen == m.launcherScreen {
 			p.screen.RemoveWorkspace(msg.deleted.ID)
 		}
@@ -323,7 +332,7 @@ func (m *App) applyWorkspaceDeleteResult(msg workspaceDeleteResultMsg) {
 	if fileio.WriteCommitted(msg.err) {
 		m.Feedback.NotifyError(msg.err.Error())
 	}
-	if (msg.err == nil || fileio.WriteCommitted(msg.err)) && m.launcherScreen != nil {
+	if msg.err == nil || fileio.WriteCommitted(msg.err) {
 		m.refreshLauncherAsync(m.ws.RootPath())
 	}
 	m.refreshWorkspaceDelete(p)

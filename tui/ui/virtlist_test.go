@@ -175,3 +175,42 @@ func TestVirtualListRebuildPrefixReusesCapacity(t *testing.T) {
 		t.Fatal("regrowth did not rebuild the reused prefix")
 	}
 }
+
+func TestVirtualListNoninteractiveRowsNeverSelectOrActivate(t *testing.T) {
+	list := NewVirtualList("resources", nil)
+	list.SetItems([]VirtItem{
+		{ID: "heading", Disabled: true},
+		{ID: "one", Height: 2},
+		{ID: "status", Disabled: true},
+		{ID: "two", Height: 2},
+		{ID: "loading", Disabled: true},
+	})
+	list.Layout(LayoutContext{}, Rect{W: 20, H: 7})
+	if got, _ := list.Selected(); got.ID != "one" {
+		t.Fatal("initial cursor selected the heading")
+	}
+	for _, step := range []struct {
+		key  rune
+		want string
+	}{
+		{tea.KeyDown, "two"}, {tea.KeyDown, "two"}, {tea.KeyUp, "one"},
+		{tea.KeyHome, "one"}, {tea.KeyPgDown, "two"}, {tea.KeyPgUp, "one"}, {tea.KeyEnd, "two"},
+	} {
+		list.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: step.key}))
+		if got, _ := list.Selected(); got.ID != step.want {
+			t.Fatalf("key %d selected %s, want %s", step.key, got.ID, step.want)
+		}
+	}
+	list.Scroll().ScrollTo(0)
+	res := list.Handle(EventContext{LocalY: 3}, Event{Kind: EventMouseClick, MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft}})
+	if res.Action != nil || list.SelectIndex(2) {
+		t.Fatal("disabled status row activated or selected")
+	}
+	list.SetItems([]VirtItem{{ID: "none", Disabled: true}})
+	if list.SelectedIndex() != -1 {
+		t.Fatal("placeholder-only list has a cursor")
+	}
+	if res := list.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter})); res.Action != nil {
+		t.Fatal("placeholder-only list activated")
+	}
+}
