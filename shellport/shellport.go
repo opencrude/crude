@@ -10,6 +10,7 @@ package shellport
 // interface is cohesive and independently implementable.
 type Workspace interface {
 	Runtime
+	SavedWorkspaceManagement
 	Agents
 	Sessions
 	Settings

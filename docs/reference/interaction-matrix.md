@@ -403,6 +403,11 @@ does not terminate the old core's agents or PTYs.
   workspace. Delete opens an asynchronous review with Cancel focused. It moves
   saved workspace/session data into recovery storage; project files are never
   removed. Undo in the completed dialog refuses a later replacement workspace.
+  The selected core releases an unused retained workspace before preparing the
+  review; opening it earlier in that core is not a deletion blocker. Actual peer
+  views, running work/terminals and finishing operations are explained with a
+  next action and **Review again**, without stopping them. A lost acknowledgement
+  exposes **Check result**, which observes the original receipt, never replays it.
   Recovery location is recorded in Notices and an on-disk manifest; after the
   dialog closes, recovery is manual. The bare D key never deletes saved data.
 

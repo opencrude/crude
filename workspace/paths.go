@@ -335,6 +335,11 @@ func readWorkspaceMetaBounded(parent context.Context, dbPath string, limit time.
 // readWorkspaceMetaLight reads only workspace_metadata.project_dir so the
 // launcher can still show a path-derived name when the full meta read stalls.
 func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
+	unlock, err := lockWorkspaceStorage(ctx, false)
+	if err != nil {
+		return nil
+	}
+	defer unlock()
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
@@ -366,6 +371,15 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 // All queries are context-bound so a stalled read can be cancelled (which
 // also releases the file handle; see readWorkspaceMetaBounded).
 func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
+	unlock, err := lockWorkspaceStorage(ctx, false)
+	if err != nil {
+		return nil
+	}
+	defer unlock()
+	return readWorkspaceMetaUnlocked(ctx, dbPath)
+}
+
+func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInfo {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}

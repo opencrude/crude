@@ -7,21 +7,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"crude/fileio"
+	"crude/types"
 )
 
 // WorkspaceDeletion is an immutable preview of one saved workspace, not its
 // project directory. Deletion moves the complete saved data into recovery
 // storage. No session, history object, or project file is unlinked.
 type WorkspaceDeletion struct {
+	// Token names a connection-owned core preview. Local adapters keep the
+	// private directory preimage instead; neither is a caller-authored plan.
+	Token                string `json:"token,omitempty"`
 	ID, Name, ProjectDir string
 	SessionCount         int
+	Issue                *types.OperationIssue `json:"issue,omitempty"`
 	source               string
 	identity             os.FileInfo
 	stamp                [32]byte
@@ -33,11 +40,16 @@ type DeletedWorkspace struct {
 	Name         string    `json:"name"`
 	ProjectDir   string    `json:"project_dir"`
 	DeletedAt    time.Time `json:"deleted_at"`
-	RecoveryPath string    `json:"-"`
+	RecoveryPath string    `json:"recovery_path"`
 }
 
 func PreviewWorkspaceDeletion(ctx context.Context, id, projectDir, currentProject string) (WorkspaceDeletion, error) {
 	var plan WorkspaceDeletion
+	unlock, err := lockWorkspaceStorage(ctx, true)
+	if err != nil {
+		return plan, err
+	}
+	defer unlock()
 	decoded, err := hex.DecodeString(id)
 	if err != nil || len(decoded) != 8 || id != WorkspaceID(projectDir) {
 		return plan, errors.New("workspace identity does not match its project")
@@ -57,7 +69,7 @@ func PreviewWorkspaceDeletion(ctx context.Context, id, projectDir, currentProjec
 	if err != nil {
 		return plan, err
 	}
-	info := readWorkspaceMeta(ctx, filepath.Join(source, "workspace.db"))
+	info := readWorkspaceMetaUnlocked(ctx, filepath.Join(source, "workspace.db"))
 	if err = ctx.Err(); err != nil {
 		return plan, err
 	}
@@ -77,6 +89,11 @@ func PreviewWorkspaceDeletion(ctx context.Context, id, projectDir, currentProjec
 // of the same directory rather than overwritten with a stale snapshot.
 func DeleteSavedWorkspace(ctx context.Context, plan WorkspaceDeletion) (DeletedWorkspace, error) {
 	var deleted DeletedWorkspace
+	releaseStorage, err := lockWorkspaceStorage(ctx, true)
+	if err != nil {
+		return deleted, err
+	}
+	defer releaseStorage()
 	unlock, err := fileio.LockMutationContext(ctx)
 	if err != nil {
 		return deleted, err
@@ -139,6 +156,11 @@ func DeleteSavedWorkspace(ctx context.Context, plan WorkspaceDeletion) (DeletedW
 // RestoreDeletedWorkspace never overwrites a workspace created after deletion.
 // Recovery data remains in place on conflict and can be inspected manually.
 func RestoreDeletedWorkspace(ctx context.Context, deleted DeletedWorkspace) error {
+	releaseStorage, err := lockWorkspaceStorage(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer releaseStorage()
 	unlock, err := fileio.LockMutationContext(ctx)
 	if err != nil {
 		return err
@@ -196,6 +218,9 @@ func workspaceDeletionStamp(ctx context.Context, root string) ([32]byte, error) 
 		if err != nil {
 			return err
 		}
+		if transientWorkspaceSQLiteFile(path, info) {
+			return nil
+		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
@@ -212,6 +237,38 @@ func workspaceDeletionStamp(ctx context.Context, root string) ([32]byte, error) 
 	var stamp [32]byte
 	copy(stamp[:], hash.Sum(nil))
 	return stamp, err
+}
+
+// SQLite's SHM is a derived WAL index, not saved content. Even read-only
+// catalog access rewrites its timestamps on Windows. An empty WAL also has no
+// frames and may appear/disappear on read. Only recognize regular sidecars of
+// an actual SQLite database; nonempty WALs (including committed newer work),
+// journals, unrelated files and symlinks remain part of the exact preimage.
+func transientWorkspaceSQLiteFile(path string, info os.FileInfo) bool {
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	var database string
+	switch {
+	case strings.HasSuffix(path, ".db-shm"):
+		database = strings.TrimSuffix(path, "-shm")
+	case strings.HasSuffix(path, ".db-wal") && info.Size() == 0:
+		database = strings.TrimSuffix(path, "-wal")
+	default:
+		return false
+	}
+	base, err := os.Lstat(database)
+	if err != nil || !base.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(database)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var header [16]byte
+	_, err = io.ReadFull(f, header[:])
+	return err == nil && string(header[:]) == "SQLite format 3\x00"
 }
 
 func realDirectoryPath(path string) error {

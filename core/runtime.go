@@ -36,21 +36,23 @@ const subscriberCapacity = 64
 type Factory func(root string) (*workspace.Workspace, error)
 
 type Runtime struct {
-	mu          sync.Mutex
-	workspaces  map[string]*actor
-	clients     map[string]*Connection
-	epochs      map[string]uint64
-	factory     Factory
-	receipts    *receiptJournal
-	closed      bool
-	creating    map[string]*workspaceCreation
-	factoryWG   sync.WaitGroup
-	history     *history.Store
-	historyPath string
-	uploads     *ReferenceUploads
-	startup     StartupOwner
-	draining    bool
-	lifetime    lifetimePolicy
+	mu               sync.Mutex
+	workspaces       map[string]*actor
+	clients          map[string]*Connection
+	epochs           map[string]uint64
+	factory          Factory
+	receipts         *receiptJournal
+	closed           bool
+	creating         map[string]*workspaceCreation
+	factoryWG        sync.WaitGroup
+	history          *history.Store
+	historyPath      string
+	uploads          *ReferenceUploads
+	startup          StartupOwner
+	draining         bool
+	lifetime         lifetimePolicy
+	storageGates     map[string]*workspaceStorageGate
+	deletionPreviews map[string]workspaceDeletionPreview
 }
 
 func New(factory Factory, receiptPath string) (*Runtime, error) {
@@ -156,6 +158,11 @@ func (c *Connection) Close() {
 		c.runtime.mu.Lock()
 		if c.runtime.clients[c.Owner.ClientID] == c {
 			delete(c.runtime.clients, c.Owner.ClientID)
+		}
+		for token, preview := range c.runtime.deletionPreviews {
+			if preview.owner == c.Owner {
+				delete(c.runtime.deletionPreviews, token)
+			}
 		}
 		c.runtime.mu.Unlock()
 		c.mu.Lock()
@@ -300,6 +307,9 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 		}
 		return finish(response(request, receipt))
 	}
+	if workspaceDeletionMethod(request.Method) {
+		return c.dispatchWorkspaceDeletion(ctx, request)
+	}
 	c.mu.Lock()
 	a := c.attached[request.WorkspaceID]
 	c.mu.Unlock()
@@ -334,6 +344,13 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	if err != nil {
 		return fault(request, "project_folder_required", err.Error())
 	}
+	// Cover creation, subscription and RecordAccess, not just the factory wait.
+	// A cancelled factory may outlive this lease; deletion also checks creating.
+	release, err := c.runtime.lockWorkspaceStorage(ctx, workspace.WorkspaceID(root))
+	if err != nil {
+		return fault(request, "workspace_unavailable", err.Error())
+	}
+	defer release()
 	key := sha256.Sum256([]byte(filepath.Clean(root)))
 	id := hex.EncodeToString(key[:])
 	r := c.runtime
@@ -365,9 +382,10 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 }
 
 type workspaceCreation struct {
-	done  chan struct{}
-	actor *actor
-	err   error
+	done    chan struct{}
+	actor   *actor
+	err     error
+	savedID string
 }
 
 func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error) {
@@ -382,7 +400,7 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 	}
 	creation := r.creating[id]
 	if creation == nil {
-		creation = &workspaceCreation{done: make(chan struct{})}
+		creation = &workspaceCreation{done: make(chan struct{}), savedID: workspace.WorkspaceID(root)}
 		r.creating[id] = creation
 		r.factoryWG.Add(1)
 		go func() {
@@ -413,11 +431,20 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 				r.workspaces[id] = creation.actor
 			}
 			creation.err = err
-			delete(r.creating, id)
+			if err == nil {
+				delete(r.creating, id)
+			}
 			r.mu.Unlock()
 			if err != nil && ws != nil {
 				ws.CloseAllSessions()
 				ws.Close()
+			}
+			if err != nil {
+				// Failed construction still owns handles until cleanup has joined.
+				// Deletion must keep seeing this exact opening resource lifetime.
+				r.mu.Lock()
+				delete(r.creating, id)
+				r.mu.Unlock()
 			}
 			close(creation.done)
 		}()
@@ -463,6 +490,7 @@ type actor struct {
 	settingsQueue []actorCommand
 	controlQueue  []*actorControlCommand
 	resourceLane  *resourceLane
+	retiring      bool // actor-owned admission fence before off-actor shutdown
 	// terminalLane orders PTY effects independently of documents, files and
 	// language servers, so their slow work never delays a keystroke.
 	terminalLane     *resourceLane
@@ -479,6 +507,9 @@ type actorCommand struct {
 	result  chan coreprotocol.Response
 	view    chan coreprotocol.WorkspaceSnapshot
 	inspect func()
+	// retire acknowledges the atomic quiescence/admission decision before the
+	// loop exits. Its worker owns full off-actor resource shutdown afterward.
+	retire func() bool
 }
 
 func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *actor {
@@ -582,6 +613,7 @@ func (a *actor) serviceEvent(message any) {
 
 func (a *actor) run() {
 	defer close(a.done)
+	defer a.cancel()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -614,6 +646,12 @@ func (a *actor) run() {
 			a.publishStatusIfChanged()
 			a.publishLSPIfChanged()
 		case command := <-a.commands:
+			if command.retire != nil {
+				if command.retire() {
+					return
+				}
+				continue
+			}
 			if command.control != nil {
 				a.admitControl(command.control)
 				continue
@@ -682,7 +720,8 @@ func (a *actor) broadcast(change coreprotocol.Change) {
 	for subscriber := range a.subscribers {
 		select {
 		case <-subscriber.done:
-			delete(a.subscribers, subscriber)
+			// Detach owns removal after its immediate service fences complete.
+			// Publication must not make a closing view look fully released early.
 			continue
 		default:
 		}
@@ -969,7 +1008,7 @@ type actorJobResult struct {
 }
 
 func (a *actor) validClient(c *Connection) bool {
-	if c == nil {
+	if c == nil || a.retiring {
 		return false
 	}
 	select {

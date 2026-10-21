@@ -104,7 +104,7 @@ Detached startup uses its own Host and is outside that matrix.
 | Dirty-close prompt | `tui/viewmodel/dirty_prompt.go` | BuildDirtyCloseFrame; also the guard for tab close, bulk close (Close others / Close to the right), quit, and workspace switch. Cancel re-arms After Delay scheduling |
 | Tree create/rename | `tui/ui/textprompt.go`, `tui/ui/textprompt_frame.go` | WindowFrame + TextField + TextEdit |
 | Tree delete confirm | `tui/viewmodel/tree_operations.go` | BuildTreeDeleteFrame |
-| Workspace delete | `tui/viewmodel/workspace_delete.go`, `workspace/deleted_workspace.go` | WindowFrame + native read-only detail and ActionBar; async immutable preview, Cancel by default, recoverable directory move, exact Undo without overwriting replacement workspaces |
+| Workspace delete | `tui/viewmodel/workspace_delete.go`, `core/workspace_deletion.go`, `workspace/deleted_workspace.go` | WindowFrame + native read-only detail and ActionBar; core-owned use check/resource retirement then immutable preview, explicit blockers and Review again, Cancel by default, recoverable move, exact Undo without closing/overwriting replacement workspaces, Check result observes lost acknowledgements without replay |
 | LSP references | `tui/viewmodel/lsp_handlers.go` | BuildListPopupFrame; typed core request with local diagnostic/health replicas |
 | LSP completion | `tui/viewmodel/lsp_handlers.go` | BuildListPopupFrame; typed core request with local diagnostic/health replicas |
 | LSP outline | `tui/viewmodel/lsp_handlers.go` | BuildListPopupFrame; typed core request with local diagnostic/health replicas |
