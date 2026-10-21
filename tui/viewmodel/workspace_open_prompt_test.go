@@ -24,16 +24,12 @@ func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
 	app.ensureWorkspaceSwitcher().SetData(root, []workspace.WorkspaceInfo{{ProjectDir: target, ProjectName: "destination"}})
 	app.paintShellFrame()
 	r, _ := app.rootHost.ScreenRect(workspacescreen.ListID)
-	// First click selects; it must not leave the workspace or even prepare it.
+	// One click requests the exact destination without bypassing switch safety.
 	run := func(msg tea.Msg) { _, cmd := app.Update(msg); runAppCommand(t, app, cmd) }
-	run(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 2, Button: tea.MouseLeft})
-	run(tea.MouseReleaseMsg{X: r.X + 2, Y: r.Y + 2, Button: tea.MouseLeft})
-	if app.workspaceOpenPrompt != nil || app.workspaceAttachPending || app.ws != old {
-		t.Fatal("first click navigated")
-	}
-	run(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.workspaceOpenPrompt == nil || app.workspaceAttachPending || app.ws != old {
-		t.Fatal("activation skipped consent")
+	run(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 1, Button: tea.MouseLeft})
+	run(tea.MouseReleaseMsg{X: r.X + 2, Y: r.Y + 1, Button: tea.MouseLeft})
+	if app.workspaceOpenPrompt == nil || app.workspaceOpenPrompt.root != target || app.workspaceAttachPending || app.ws != old {
+		t.Fatal("single click did not request the exact destination safely")
 	}
 	if paint := app.View().Content; !strings.Contains(paint, "Switch workspace") || !strings.Contains(paint, "Open workspace") {
 		t.Fatal("confirmation not painted")
@@ -49,7 +45,12 @@ func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
 	if app.workspaceOpenPrompt != nil || app.ws != old {
 		t.Fatal("Enter did not keep workspace")
 	}
-	app.launcherOpenFolder(target)
+	// The path row also works on its first click, including after cancellation.
+	run(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 2, Button: tea.MouseLeft})
+	run(tea.MouseReleaseMsg{X: r.X + 2, Y: r.Y + 2, Button: tea.MouseLeft})
+	if app.workspaceOpenPrompt == nil || app.workspaceOpenPrompt.root != target {
+		t.Fatal("single path-row click did not request the workspace")
+	}
 	run(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if app.workspaceOpenPrompt != nil || app.ws != old {
 		t.Fatal("Esc did not cancel")
@@ -166,7 +167,7 @@ func TestWorkspaceEntryPointsShareExactConsent(t *testing.T) {
 				app.setActivity(activityWorkspaces, true)
 				app.paintShellFrame()
 				r, _ := app.rootHost.ScreenRect(workspacescreen.ListID)
-				menu := app.buildWorkspaceSidebarContextMenu(tea.Mouse{X: r.X + 2, Y: r.Y + 2})
+				menu := app.buildWorkspaceSidebarContextMenu(tea.Mouse{X: r.X + 2, Y: r.Y + 1})
 				menu.Build()
 				menu.Cursor = 0
 				menu.Activate()

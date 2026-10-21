@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -21,13 +20,12 @@ import (
 )
 
 const (
-	ScreenID      ui.ComponentID = "workspaces"
-	SearchID      ui.ComponentID = "workspaces/search"
-	ListID        ui.ComponentID = "workspaces/list"
-	DividerID     ui.ComponentID = "workspaces/divider"
-	ActionOpen                   = "workspaces.open"
-	ActionNew                    = "workspaces.new"
-	ActionRefresh                = "workspaces.refresh"
+	ScreenID   ui.ComponentID = "workspaces"
+	SearchID   ui.ComponentID = "workspaces/search"
+	ListID     ui.ComponentID = "workspaces/list"
+	DividerID  ui.ComponentID = "workspaces/divider"
+	ActionOpen                = "workspaces.open"
+	ActionNew                 = "workspaces.new"
 )
 
 // Request binds an intent to the exact mounted screen, not a list index.
@@ -65,7 +63,6 @@ func New(th *theme.Theme) *Screen {
 	f.SetPromptPlacement(ui.PromptEnd)
 	f.SetSubmitAction("")
 	f.OnChanged(func(string) {
-		s.list.lastClickID, s.list.lastClickAt = "", time.Time{}
 		s.filter()
 		s.list.inner.SelectIndex(0)
 		s.list.inner.Scroll().ScrollTo(0)
@@ -114,7 +111,6 @@ func (s *Screen) SetStatus(loading bool, err string) {
 }
 func (s *Screen) SetSwitchStatus(status string) { s.switchStatus = status }
 func (s *Screen) SetData(current string, infos []workspace.WorkspaceInfo) {
-	s.list.lastClickID, s.list.lastClickAt = "", time.Time{}
 	s.current = current
 	s.infos = append([]workspace.WorkspaceInfo(nil), infos...)
 	s.filter()
@@ -148,9 +144,9 @@ func (s *Screen) RestoreViewState(state State) {
 func (s *Screen) filter() {
 	state := s.ViewState()
 	query := strings.ToLower(strings.TrimSpace(s.Query()))
-	items := make([]ui.VirtItem, 0, len(s.infos)+2)
+	items := make([]ui.VirtItem, 0, len(s.infos)+1)
 	if query == "" {
-		items = append(items, ui.VirtItem{ID: ActionNew, Height: 1, Icon: "+", Label: "New Workspace…"}, ui.VirtItem{ID: ActionRefresh, Height: 1, Icon: "↻", Label: "Refresh"})
+		items = append(items, ui.VirtItem{ID: ActionNew, Height: 1, Icon: "+", Label: "New Workspace…"})
 	}
 	for _, info := range s.infos {
 		name := workspace.WorkspaceDisplayName(info)
@@ -206,7 +202,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
 	w := max(0, r.W-1)
 	panelchrome.PaintTitle(buf, ox, oy, ui.Rect{X: r.X, Y: r.Y, W: panelchrome.BodyWidth(w), H: r.H}, t, s.header())
-	status := "Enter opens · Right-click actions"
+	status := "Click or Enter opens · Right-click actions"
 	role := ui.ColorMuted
 	if s.switchStatus != "" {
 		status = s.switchStatus
@@ -221,7 +217,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		text := "No recent workspaces"
 		y := s.list.Bounds().Y
 		if s.Query() == "" {
-			y += 2
+			y++
 		}
 		if s.Query() != "" {
 			text = "No matching workspaces"
@@ -240,9 +236,6 @@ func (s *Screen) paintRow(buf *surface.CellBuffer, x, y, w int, item ui.VirtItem
 	}
 	if state == ui.StateHovered && !ctx.Hovered {
 		state = ui.StateDefault
-	}
-	if item.ID == ActionRefresh && s.loading {
-		state = ui.StateDisabled
 	}
 	fg, bg, attr := panelchrome.RowColors(t, state)
 	ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(bg))
@@ -331,10 +324,8 @@ func (f *searchField) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 
 type workspaceList struct {
 	ui.Base
-	owner       *Screen
-	inner       *ui.VirtualList
-	lastClickID string
-	lastClickAt time.Time
+	owner *Screen
+	inner *ui.VirtualList
 }
 
 func (l *workspaceList) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -348,9 +339,6 @@ func (l *workspaceList) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleList, Label: "Recent Workspaces"}
 }
 func (l *workspaceList) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
-	if e.IsKey() || e.Kind == ui.EventMouseWheel {
-		l.lastClickID, l.lastClickAt = "", time.Time{}
-	}
 	if e.Kind == ui.EventMouseClick {
 		if e.MouseClick.Button != tea.MouseLeft {
 			return ui.EventResult{}
@@ -362,17 +350,7 @@ func (l *workspaceList) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 		}
 		l.inner.SelectIndex(i)
 		l.owner.focusID(ListID)
-		item := l.inner.Items()[i]
-		if item.ID == ActionNew || item.ID == ActionRefresh {
-			return l.activate(item)
-		}
-		now := time.Now()
-		if l.lastClickID != item.ID || now.Sub(l.lastClickAt) > 500*time.Millisecond {
-			l.lastClickID, l.lastClickAt = item.ID, now
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
-		l.lastClickID, l.lastClickAt = "", time.Time{}
-		return l.activate(item)
+		return l.activate(l.inner.Items()[i])
 	}
 	res := l.inner.Handle(ctx, e)
 	if e.IsKey() && res.Handled {
@@ -392,11 +370,8 @@ func (l *workspaceList) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 
 func (l *workspaceList) activate(item ui.VirtItem) ui.EventResult {
 	id, path := ActionOpen, item.ID
-	if item.ID == ActionNew || item.ID == ActionRefresh {
+	if item.ID == ActionNew {
 		id, path = item.ID, ""
-	}
-	if id == ActionRefresh && l.owner.loading {
-		return ui.EventResult{Handled: true}
 	}
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: id, Payload: Request{Screen: l.owner, Path: path}}}
 }

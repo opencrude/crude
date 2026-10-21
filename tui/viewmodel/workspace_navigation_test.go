@@ -32,10 +32,13 @@ func TestWorkspaceRailAvailableDuringNestedWorkflow(t *testing.T) {
 		t.Fatal("rail did not reach workspace navigation during nested flow")
 	}
 	paint := bufferPlain(app.mainSurf.Buffer())
-	for _, label := range []string{"New Workspace…", "Refresh", "Search workspaces", "alpha", "beta"} {
+	for _, label := range []string{"New Workspace…", "Search workspaces", "alpha", "beta"} {
 		if !strings.Contains(paint, label) {
 			t.Fatalf("missing %q in nested workflow:\n%s", label, paint)
 		}
+	}
+	if strings.Contains(paint, "↻ Refresh") {
+		t.Fatal("workspace rail still paints the refresh command row")
 	}
 	if app.launcherScreen != nil {
 		t.Fatal("rail resurrected launcher instead of independent navigation")

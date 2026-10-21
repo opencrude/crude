@@ -43,10 +43,13 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			s, host := fixture(t, size[0], size[1])
 			b := surface.NewCellBuffer(size[0], size[1])
 			host.Paint(b)
-			for _, label := range []string{"New Workspace…", "Refresh", "alpha", "beta", "Current", "Search"} {
+			for _, label := range []string{"New Workspace…", "alpha", "beta", "Current", "Search"} {
 				if !strings.Contains(text(b), label) {
 					t.Fatalf("missing %q:\n%s", label, text(b))
 				}
+			}
+			if strings.Contains(text(b), "Refresh") || strings.Contains(text(b), "↻") {
+				t.Fatalf("workspace sidebar still contains the refresh row:\n%s", text(b))
 			}
 			s.SetTheme(theme.DefaultDark())
 			host.MarkLayout()
@@ -59,42 +62,72 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	}
 }
 func TestWorkspacePointerTargetsAndNativeCommands(t *testing.T) {
-	s, host := fixture(t, 40, 18)
-	list, _ := host.ScreenRect(ListID)
-	for _, row := range []int{2, 3} {
-		res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + row, Button: tea.MouseLeft})
-		if row == 2 && res.Action != nil {
-			t.Fatal("first resource click must only select")
-		}
-		if row == 2 {
-			host.Handle(tea.MouseReleaseMsg{Button: tea.MouseLeft})
-			continue
-		}
-		if res.Action == nil || res.Action.ID != ActionOpen {
-			t.Fatalf("row %d action=%#v", row, res.Action)
-		}
-		req, ok := res.Action.Payload.(Request)
-		if !ok || req.Screen != s || req.Path != "C:/alpha" {
-			t.Fatalf("row %d request=%#v", row, res.Action.Payload)
-		}
-		host.Handle(tea.MouseReleaseMsg{Button: tea.MouseLeft})
-	}
-	res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + 4, Button: tea.MouseLeft})
-	if res.Action != nil {
-		t.Fatal("separator opened a workspace")
-	}
 	for _, spec := range []struct {
 		row    int
 		action string
-	}{{0, ActionNew}, {1, ActionRefresh}} {
-		res := host.Handle(tea.MouseClickMsg{X: list.X + 1, Y: list.Y + spec.row, Button: tea.MouseLeft})
-		if res.Action == nil || res.Action.ID != spec.action {
-			t.Fatalf("%s action=%#v", spec.action, res.Action)
+		path   string
+	}{
+		{0, ActionNew, ""},
+		{1, ActionOpen, "C:/alpha"},
+		{2, ActionOpen, "C:/alpha"},
+		{4, ActionOpen, "D:/second/beta"},
+		{5, ActionOpen, "D:/second/beta"},
+	} {
+		t.Run(fmt.Sprint(spec.row), func(t *testing.T) {
+			s, host := fixture(t, 40, 18)
+			list, _ := host.ScreenRect(ListID)
+			res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + spec.row, Button: tea.MouseLeft})
+			if res.Action == nil || res.Action.ID != spec.action {
+				t.Fatalf("single click on row %d action=%#v", spec.row, res.Action)
+			}
+			if req, ok := res.Action.Payload.(Request); !ok || req.Screen != s || req.Path != spec.path {
+				t.Fatalf("single click request=%#v", res.Action.Payload)
+			}
+			if res := host.Handle(tea.MouseReleaseMsg{X: list.X + 2, Y: list.Y + spec.row, Button: tea.MouseLeft}); res.Action != nil {
+				t.Fatal("release activated the same row again")
+			}
+		})
+	}
+}
+
+func TestWorkspacePointerDoesNotActivateSeparatorsOrNonLeftClicks(t *testing.T) {
+	for _, row := range []int{3, 6, 7} {
+		_, host := fixture(t, 40, 18)
+		list, _ := host.ScreenRect(ListID)
+		if res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + row, Button: tea.MouseLeft}); res.Action != nil {
+			t.Fatalf("blank row %d opened a workspace", row)
 		}
-		if req, ok := res.Action.Payload.(Request); !ok || req.Screen != s {
-			t.Fatalf("command owner=%#v", res.Action.Payload)
+	}
+	for _, button := range []tea.MouseButton{tea.MouseMiddle, tea.MouseRight} {
+		_, host := fixture(t, 40, 18)
+		list, _ := host.ScreenRect(ListID)
+		if res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + 1, Button: button}); res.Action != nil {
+			t.Fatalf("button %v opened a workspace", button)
 		}
-		host.Handle(tea.MouseReleaseMsg{Button: tea.MouseLeft})
+	}
+}
+
+func TestFilteredAndScrolledWorkspaceSingleClick(t *testing.T) {
+	s, host := fixture(t, 40, 4)
+	host.Handle(tea.PasteMsg{Content: "second"})
+	host.Layout()
+	// The first visible row is a partially scrolled workspace's path, not its name.
+	s.list.inner.Scroll().ScrollTo(1)
+	if s.list.inner.Scroll().Offset() != 1 {
+		t.Fatal("fixture did not scroll to the workspace path row")
+	}
+	list, _ := host.ScreenRect(ListID)
+	b := surface.NewCellBuffer(40, 4)
+	host.Paint(b)
+	if !strings.Contains(text(b), "D:/second/beta") {
+		t.Fatal("scrolled path row is not painted")
+	}
+	res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y, Button: tea.MouseLeft})
+	if res.Action == nil || res.Action.ID != ActionOpen {
+		t.Fatalf("filtered path single click action=%#v", res.Action)
+	}
+	if req, ok := res.Action.Payload.(Request); !ok || req.Screen != s || req.Path != "D:/second/beta" {
+		t.Fatalf("filtered path single click request=%#v", res.Action.Payload)
 	}
 }
 func TestFilterPasteEnterAndEscape(t *testing.T) {
@@ -116,10 +149,35 @@ func TestFilterPasteEnterAndEscape(t *testing.T) {
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
 	host.Layout()
-	if s.Query() != "" || len(s.list.inner.Items()) != 4 {
+	if s.Query() != "" || len(s.list.inner.Items()) != 3 {
 		t.Fatal("Escape did not restore catalog")
 	}
 }
+
+func TestEmptyCatalogAndNoMatchesHaveNoHiddenRefreshTarget(t *testing.T) {
+	s, host := fixture(t, 40, 18)
+	s.SetData("C:/alpha", nil)
+	host.Layout()
+	b := surface.NewCellBuffer(40, 18)
+	host.Paint(b)
+	list, _ := host.ScreenRect(ListID)
+	if got := text(b); !strings.Contains(got, "New Workspace…") || !strings.Contains(got, "No recent workspaces") || strings.Contains(got, "Refresh") {
+		t.Fatalf("empty catalog painting:\n%s", got)
+	}
+	if res := host.Handle(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + 1, Button: tea.MouseLeft}); res.Action != nil {
+		t.Fatal("empty-state row activated a hidden command")
+	}
+	host.Handle(tea.PasteMsg{Content: "missing"})
+	host.Layout()
+	host.Paint(b)
+	if got := text(b); !strings.Contains(got, "No matching workspaces") || strings.Contains(got, "New Workspace…") || strings.Contains(got, "Refresh") {
+		t.Fatalf("no-match painting:\n%s", got)
+	}
+	if res := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); res.Action != nil {
+		t.Fatal("no-match Enter activated a hidden command")
+	}
+}
+
 func TestRefreshAndRelayoutPreserveBrowsing(t *testing.T) {
 	s, host := fixture(t, 32, 15)
 	infos := make([]workspace.WorkspaceInfo, 50)
@@ -205,17 +263,16 @@ func TestSidebarStatesMatchAgentsAndDoNotLeakHover(t *testing.T) {
 	}
 	// The resource's two content rows share one state; blank separators never fill.
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	b := surface.NewCellBuffer(48, 20)
 	host.Paint(b)
-	if b.Get(2, list.Y+2).BG != s.tokens.TreeCursorBg() || b.Get(2, list.Y+3).BG != s.tokens.TreeCursorBg() || b.Get(2, list.Y+4).BG != s.tokens.Color(ui.ColorBg) {
+	if b.Get(2, list.Y+1).BG != s.tokens.TreeCursorBg() || b.Get(2, list.Y+2).BG != s.tokens.TreeCursorBg() || b.Get(2, list.Y+3).BG != s.tokens.Color(ui.ColorBg) {
 		t.Fatal("resource focus band/spacer inconsistent")
 	}
 	// A refresh can't leave a previously hovered row highlighted after pointer exit.
-	host.Handle(tea.MouseMotionMsg{X: list.X + 2, Y: list.Y + 5})
+	host.Handle(tea.MouseMotionMsg{X: list.X + 2, Y: list.Y + 4})
 	host.Handle(tea.MouseMotionMsg{X: 47, Y: 19})
 	host.Paint(b)
-	if b.Get(2, list.Y+5).BG != s.tokens.Color(ui.ColorBg) {
+	if b.Get(2, list.Y+4).BG != s.tokens.Color(ui.ColorBg) {
 		t.Fatal("hover stuck after leaving list")
 	}
 }
