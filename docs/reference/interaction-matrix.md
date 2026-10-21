@@ -323,6 +323,15 @@ tab attention until the panel is activated or closed.
 Startup and in-project workspace selection use the same native picker and movement owner.
 The current picker appearance and file attachment behavior remain unchanged.
 
+Detached startup is fully keyboard navigable. Enter/Space activates **Let's go!**.
+On the workspace chooser, Up/Down traverses Open Workspace, previous-workspace
+rows, and Quit; Home/End and PageUp/PageDown remain list-owned. Tab/Shift+Tab
+visits controls in either direction, skipping the empty list and disabled
+**More folders**. Inside the picker, both **Open Workspace** and **Cancel** are
+individual Tab stops owned by the shared ActionBar. Ctrl+L focuses the path,
+Ctrl+O confirms the folder, and Esc follows the ordinary picker back ladder.
+An issue reader retains its own arrow scrolling and is reachable by Tab.
+
 | Input | Result |
 |---|---|
 | Enter on a highlighted directory | Replace the current root with that directory. Do not expand it in place. |

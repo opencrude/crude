@@ -402,16 +402,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.host.Focus(pathID)
 			return m, nil
 		}
-		if m.root.mode == picking && v.Code == tea.KeyTab {
+		// The shared action bar owns its individual buttons and Tab/Shift+Tab
+		// between them. Do not steal those keys at the page boundary.
+		if v.Code == tea.KeyTab && (m.root.mode != picking || m.host.Focused() != filepicker.ActionsID) {
 			m.cycleFocus(v.Mod.Contains(tea.ModShift))
 			return m, nil
 		}
-		if m.root.mode != picking && v.Code == tea.KeyTab {
-			m.cycleFocus(v.Mod.Contains(tea.ModShift))
+		if m.root.mode == selection && v.Mod == 0 && (v.Code == tea.KeyUp || v.Code == tea.KeyDown) && m.moveChooserFocus(v.Code == tea.KeyUp) {
 			return m, nil
 		}
 	}
+	previousFocus := m.host.Focused()
 	r := m.host.Handle(msg)
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyTab && m.root.mode == picking && previousFocus == filepicker.ActionsID && m.host.Focused() != previousFocus {
+		// The picker has finished traversing its own action buttons. Rejoin
+		// this page's cycle so path controls and the issue reader stay reachable.
+		m.host.Focus(previousFocus)
+		m.cycleFocus(key.Mod.Contains(tea.ModShift))
+	}
 	if r.Action != nil {
 		switch r.Action.ID {
 		case "startup.go":
@@ -465,6 +473,38 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) quit() tea.Cmd { m.closed = true; m.stopRequest(); m.cancel(); return tea.Quit }
+
+// moveChooserFocus lets arrows traverse the vertical page without requiring a
+// mouse or a Tab just to reach the list. Inside the list, the shared control
+// keeps owning movement until the user reaches its first/last selectable row.
+func (m *Model) moveChooserFocus(back bool) bool {
+	focused := m.host.Focused()
+	if focused != openID && focused != quitID && focused != previousID {
+		return false // read-only issue text keeps its own scroll keys
+	}
+	if focused == previousID {
+		items := m.root.previous.Items()
+		step := 1
+		if back {
+			step = -1
+		}
+		for i := m.root.previous.SelectedIndex() + step; i >= 0 && i < len(items); i += step {
+			if items[i].Selectable() {
+				return false
+			}
+		}
+	}
+	m.cycleFocus(back)
+	if m.host.Focused() == previousID {
+		key := tea.KeyHome
+		if back {
+			key = tea.KeyEnd
+		}
+		m.host.Handle(tea.KeyPressMsg{Code: key})
+	}
+	return true
+}
+
 func (m *Model) cycleFocus(back bool) {
 	ids := []ui.ComponentID{goID}
 	switch m.root.mode {
@@ -476,17 +516,48 @@ func (m *Model) cycleFocus(back bool) {
 	if len(m.issues) > 0 {
 		ids = append(ids, issuesID)
 	}
-	idx := 0
+	// An empty list and disabled More folders are not keyboard destinations.
+	available := ids[:0]
+	for _, id := range ids {
+		component := m.host.Component(id)
+		bounds, mounted := m.host.ScreenRect(id)
+		if component == nil || !mounted || bounds.Empty() || component.Semantics().Disabled {
+			continue
+		}
+		if id == previousID {
+			if item, ok := m.root.previous.Selected(); !ok || !item.Selectable() {
+				continue
+			}
+		}
+		available = append(available, id)
+	}
+	ids = available
+	if len(ids) == 0 {
+		return
+	}
+	idx := -1
 	for i, id := range ids {
 		if id == m.host.Focused() {
 			idx = i
 			break
 		}
 	}
-	if back {
+	if idx < 0 {
+		idx = 0
+		if back {
+			idx = len(ids) - 1
+		}
+	} else if back {
 		idx = (idx + len(ids) - 1) % len(ids)
 	} else {
 		idx = (idx + 1) % len(ids)
+	}
+	if bar, ok := m.host.Component(ids[idx]).(*ui.ActionBar); ok {
+		if back {
+			bar.FocusLast()
+		} else {
+			bar.FocusFirst()
+		}
 	}
 	m.host.Focus(ids[idx])
 }

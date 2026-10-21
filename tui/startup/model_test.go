@@ -624,7 +624,9 @@ func TestLongStartupIssueScrollKeepsActionsAndPreviousRows(t *testing.T) {
 	// The same reader remains bounded inside the native folder picker.
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))
-	for i := 0; i < 3; i++ {
+	// Filter -> tree -> Open Workspace -> Cancel -> issue reader. The
+	// action bar must retain both keyboard-accessible decisions.
+	for i := 0; i < 4; i++ {
 		send(t, m, key(tea.KeyTab))
 	}
 	if m.host.Focused() != issuesID {
