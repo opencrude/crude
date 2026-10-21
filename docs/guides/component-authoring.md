@@ -90,6 +90,12 @@ host.Paint(buf)
 
 ### Rules
 
+- Standalone pages the user meets outside a project open with the shared
+  application wordmark: `ui.PaintBanner(buf, x, y, width, tokens, bg)` for
+  `ui.BannerHeight` rows, and every body row below it is measured from that
+  height. Never re-type or re-style the artwork in a screen; one page painting
+  a different brand block is a defect, not a variation. Add the page to
+  `tui/startup/banner_consistency_test.go` when a new pre-workspace page appears.
 - Use `ui.TokenSet` for all colors — never hardcode lipgloss hex in screens.
 - `SetTheme` / `SetTokens` must propagate to every child control.
 - Paint goldens: `host.Paint(buf)` + assert labels and accent FG (see `TestPaintGoldenCellBufferContract` in each screen package).

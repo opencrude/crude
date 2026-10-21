@@ -28,6 +28,17 @@ const (
 	issuesID   ui.ComponentID = "startup/issues"
 )
 
+// Project-selection content follows the same banner as the introduction.
+const (
+	titleRow  = ui.BannerHeight + 1
+	rootRow   = ui.BannerHeight + 2
+	reasonRow = ui.BannerHeight + 3
+	openRow   = ui.BannerHeight + 5
+	noticeRow = ui.BannerHeight + 6
+	headerRow = ui.BannerHeight + 7
+	listRow   = ui.BannerHeight + 8
+)
+
 type phase uint8
 
 const (
@@ -167,14 +178,20 @@ func (s *screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		return
 	}
 	s.goButton.Layout(ctx, ui.Rect{X: c.X, Y: c.Y + min(19, max(0, c.H-2)), W: min(15, c.W), H: 1})
-	s.open.Layout(ctx, ui.Rect{X: c.X, Y: c.Y + 6, W: min(22, c.W), H: 1})
-	listY := c.Y + 10
-	listH := max(0, c.H-13)
+	s.open.Layout(ctx, ui.Rect{X: c.X, Y: c.Y + min(openRow, max(0, c.H-2)), W: min(22, c.W), H: 1})
+	listY := c.Y + listRow
+	listH := max(0, c.H-listRow-3)
 	if s.issues.Value() != "" {
 		s.issues.SetBackgroundColor(s.tokens.Color(ui.ColorBg))
 		issueY := max(0, c.H-8)
+		if s.mode == selection {
+			// Keep at least one previous-project row between the banner/body
+			// and the bounded issue reader, including at 80x24.
+			issueH := min(5, max(0, c.H-listRow-4))
+			issueY = max(0, c.H-2-issueH)
+		}
 		s.issues.Layout(ctx, ui.Rect{X: c.X, Y: c.Y + issueY, W: c.W, H: min(5, max(0, c.H-issueY-3))})
-		listH = max(0, issueY-1-10)
+		listH = max(0, issueY-1-listRow)
 		if s.mode == introduction {
 			s.goButton.Layout(ctx, ui.Rect{X: c.X, Y: c.Y + max(0, issueY-1), W: min(15, c.W), H: 1})
 		}
@@ -190,6 +207,9 @@ func (s *screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	c := s.content
 	x, y := ox+r.X+c.X, oy+r.Y+c.Y
 	write := func(row int, text string, role ui.SemanticColor, bold bool) {
+		if row < 0 || row >= c.H {
+			return
+		}
 		attr := cell.Attrs(0)
 		if bold {
 			attr = cell.AttrBold
@@ -202,11 +222,8 @@ func (s *screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		}
 		return
 	}
+	ui.PaintBanner(buf, x, y, c.W, s.tokens, bg)
 	if s.mode == introduction {
-		logo := []string{" ██████╗██████╗ ██╗   ██╗██████╗ ███████╗", "██╔════╝██╔══██╗██║   ██║██╔══██╗██╔════╝", "██║     ██████╔╝██║   ██║██║  ██║█████╗  ", "██║     ██╔══██╗██║   ██║██║  ██║██╔══╝  ", "╚██████╗██║  ██║╚██████╔╝██████╔╝███████╗", " ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝"}
-		for i, line := range logo {
-			write(i, line, ui.ColorAccent, true)
-		}
 		write(7, "Welcome to Crude", ui.ColorFg, true)
 		features := []string{"Edit project files.", "Compare changes with Git.", "Run commands in built-in terminals.", "Use AI agents, skills, and MCP tools."}
 		stride := 2
@@ -219,26 +236,25 @@ func (s *screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		write(min(21, max(0, c.H-1)), "Select a project folder next. You can edit files without an account.", ui.ColorMuted, false)
 		return
 	}
-	write(0, "Crude", ui.ColorAccent, true)
-	write(2, "Choose a project workspace", ui.ColorFg, true)
-	write(3, s.initial.Root, ui.ColorMuted, false)
+	write(titleRow, "Choose a project workspace", ui.ColorFg, true)
+	write(rootRow, s.initial.Root, ui.ColorMuted, false)
 	for i, line := range rendering.WordWrap(selectionReason(s.initial), max(1, c.W)) {
 		if i >= 2 {
 			break
 		}
-		write(4+i, line, ui.ColorFg, false)
+		write(reasonRow+i, line, ui.ColorFg, false)
 	}
-	write(8, "Previous workspaces", ui.ColorFg, true)
+	write(headerRow, "Previous workspaces", ui.ColorFg, true)
 	if s.initial.WorkspacesError != "" {
-		write(9, "Could not load workspaces: "+s.initial.WorkspacesError, ui.ColorError, false)
+		write(headerRow+1, "Could not load workspaces: "+s.initial.WorkspacesError, ui.ColorError, false)
 	}
 	if s.notice != "" {
-		write(7, s.notice, ui.ColorWarning, false)
+		write(noticeRow, s.notice, ui.ColorWarning, false)
 	}
 	if s.issues.Value() != "" {
-		write(max(0, c.H-9), "Startup issues · Tab to read · Arrow keys to scroll", ui.ColorWarning, true)
+		write(s.issues.Bounds().Y-c.Y-1, "Startup issues · Tab to read · Arrow keys to scroll", ui.ColorWarning, true)
 	}
-	write(max(0, c.H-1), "Tab to navigate · Enter to open · Esc to quit", ui.ColorMuted, false)
+	write(max(0, c.H-1), "↑↓ / Tab to navigate · Enter to open · Esc to quit", ui.ColorMuted, false)
 }
 func selectionReason(v coreprotocol.StartupSnapshot) string {
 	if v.PathError != "" {
