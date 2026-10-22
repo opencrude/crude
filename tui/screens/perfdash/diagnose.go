@@ -72,6 +72,7 @@ func Diagnose(d Data) []Finding {
 		"turning core change notices into shell updates takes long; transcripts and status lag"))
 	add(tableFinding(d, processCore, "lsp.requests", SectionServices, "Slow language server"))
 	add(tableFinding(d, processCore, "git.commands", SectionServices, "Slow Git"))
+	add(tableFinding(d, processCore, "git.remote", SectionServices, "Slow Git remote"))
 	add(tableFinding(d, processCore, "agent.first_output", SectionAgents, "Slow model responses"))
 	add(noteFinding(d, metrics.GroupLSP, SectionServices))
 	add(noteFinding(d, metrics.GroupAgents, SectionAgents))

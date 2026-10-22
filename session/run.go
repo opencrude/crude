@@ -231,10 +231,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			currentMsgID = userMsg.InternalID
 			userInput.InternalID = currentMsgID
 			createdAt = request.deliveries[0].Event.CreatedAt
-			meta = canonicalizeDisplayMeta(userMsg, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", len(s.msgs), createdAt)
+			meta = sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}
 			if userMsg.EffectiveVisibility() == provider.VisibilityConversation {
-				meta.DisplayRole, meta.DisplayContent, meta.ContextOnly = "user", userMsg.DisplayContent, false
+				meta = sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userMsg.DisplayContent}
 			}
+			meta = canonicalizeDisplayMeta(userMsg, meta, "", len(s.msgs), createdAt)
 		}
 		s.msgsMu.Lock()
 		state, err := s.publishRootContext(sessiondb.ContextPublication{

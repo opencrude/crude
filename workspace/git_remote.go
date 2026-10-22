@@ -90,19 +90,34 @@ func (s GitSnapshot) ConflictedPaths() []string {
 	return out
 }
 
-// runRemote runs a command that may talk to a remote. Credential prompts are
-// disabled so a missing credential fails promptly instead of waiting on a
-// terminal that does not exist; an askpass helper or credential manager the
-// user configured still works.
+// runRemote runs a remote operation the user started. It waits for the remote
+// lane (a background fetch may hold it briefly) within the caller's deadline.
+// Credential prompts are disabled so a missing credential fails promptly
+// instead of waiting on a terminal that does not exist; an askpass helper or
+// credential manager the user configured still works.
 func (s *GitService) runRemote(ctx context.Context, args ...string) (string, error) {
+	select {
+	case s.remote <- struct{}{}:
+	case <-ctx.Done():
+		return "", fmt.Errorf("git %s stopped: %w", args[0], ctx.Err())
+	}
+	defer func() { <-s.remote }()
+	out, err := s.execRemote(ctx, nil, args...)
+	if err == nil {
+		s.autoFetchPaused.Store(false)
+	}
+	return out, err
+}
+
+func (s *GitService) execRemote(ctx context.Context, env []string, args ...string) (string, error) {
 	repo, root, err := s.open()
 	if err != nil {
 		return "", err
 	}
 	closeGitRepository(repo)
-	defer observeGit(args, time.Now())
+	defer observeGitRemote(args, time.Now())
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"), env...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err == nil {

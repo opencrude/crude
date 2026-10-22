@@ -26,6 +26,11 @@
 - Snapshot, SQLite, verification, pruning, and restore work always runs in a
   command/background service, never Bubble Tea `Update`. Project switch and
   shutdown wait for active restore ownership.
+- A stored snapshot reuses the previous scan's entry for a file whose size,
+  mtime, change key and file identity are unchanged, whose object still exists,
+  and whose observation is older than the timestamp granule (a same-granule
+  write is invisible to metadata, so such files are re-read). Paths the walk did
+  not visit leave the cache. Restore planning never uses it and reads every file.
 
 ## Restore and agent undo
 

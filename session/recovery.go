@@ -810,20 +810,15 @@ func publishStoppedChildRecovery(handle *agent.SubAgentHandle, checkpoint sessio
 		if !cancelled {
 			return checkpoint, fmt.Errorf("child recovery incident is no longer pending")
 		}
-		var archive, pending []byte
-		var admitted bool
-		if err := handle.DB.QueryRow(`SELECT archive_json,pending_input_json,input_admitted,owner_data
-			FROM agent_recoveries WHERE session_id=? AND agent_id=? AND incident_id=?`,
-			handle.SessionID, agentID, status.ID).Scan(&archive, &pending, &admitted, &checkpoint.OwnerData); err != nil {
+		cancelledCheckpoint, found, err := sessiondb.LoadRecoveryIncident(handle.DB, handle.SessionID, agentID, status.ID)
+		if err != nil {
 			return checkpoint, err
 		}
-		if err := json.Unmarshal(archive, &checkpoint.Archive); err != nil {
-			return checkpoint, err
+		if !found {
+			return checkpoint, sql.ErrNoRows
 		}
-		if err := json.Unmarshal(pending, &checkpoint.PendingInput); err != nil {
-			return checkpoint, err
-		}
-		checkpoint.InputAdmitted = admitted
+		checkpoint.Archive, checkpoint.PendingInput = cancelledCheckpoint.Archive, cancelledCheckpoint.PendingInput
+		checkpoint.InputAdmitted, checkpoint.OwnerData = cancelledCheckpoint.InputAdmitted, cancelledCheckpoint.OwnerData
 	}
 	current, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, agentID)
 	if err != nil {

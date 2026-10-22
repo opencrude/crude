@@ -99,10 +99,20 @@ func BuildDiffRows(raw string, maxLines, maxWidth int) []PaintLine {
 // When expanded is false the preview is budgeted and a "+N more changes"
 // footer reports the hidden remainder.
 func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) []PaintLine {
+	rows, _ := buildBandedDiffRows(raw, textWidth, totalWidth, expanded)
+	return rows
+}
+
+// buildBandedDiffRows also reports whether syntax colors are still being
+// prepared off the UI goroutine; such rows paint uncolored until then.
+func buildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) ([]PaintLine, bool) {
 	files := tools.ParseUnifiedDiffStruct(raw)
 	if len(files) == 0 {
-		return nil
+		return nil, false
 	}
+	syntaxPending := false
+	// The synchronous lexing budget is the whole row's, across its files.
+	syncBudget := diffSyntaxSyncBytes
 
 	const previewDiffRows = 24
 	var all []PaintLine
@@ -204,7 +214,9 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 			for _, p := range planned {
 				texts = append(texts, p.segments...)
 			}
-			pretokenizeDiffSegments(lexer, texts, syntaxCache)
+			if !prepareDiffSyntax(lexer, texts, syntaxCache, &syncBudget) {
+				syntaxPending = true
+			}
 		}
 		for _, p := range planned {
 			if p.line < 0 {
@@ -223,12 +235,12 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 	if !expanded && (cut || len(all) > previewDiffRows) {
 		shown := previewDiffRows - 1
 		out := append([]PaintLine(nil), all[:shown]...)
-		return append(out, buildDiffTruncationRow(0, logical-(lastOwner(owner[:shown])+1)))
+		return append(out, buildDiffTruncationRow(0, logical-(lastOwner(owner[:shown])+1))), syntaxPending
 	}
 	if len(all) == 0 {
-		return nil
+		return nil, false
 	}
-	return all
+	return all, syntaxPending
 }
 
 // lastOwner is the last diff line any painted row shows, or -1.
@@ -395,6 +407,15 @@ func pretokenizeDiffSegments(lexer chroma.Lexer, texts []string, cache map[diffS
 	if lexer == nil || cache == nil || len(texts) == 0 {
 		return
 	}
+	pending := pendingDiffSegments(texts, cache)
+	for i, tokens := range lexDiffLines(lexer, pending) {
+		cache[diffSyntaxKey{text: pending[i], role: tokensRole}] = tokens
+	}
+}
+
+// pendingDiffSegments lists the distinct single-line segments without
+// tokens yet, in first-seen order.
+func pendingDiffSegments(texts []string, cache map[diffSyntaxKey][]RowSpan) []string {
 	var pending []string
 	seen := make(map[string]bool, len(texts))
 	for _, text := range texts {
@@ -404,12 +425,19 @@ func pretokenizeDiffSegments(lexer chroma.Lexer, texts []string, cache map[diffS
 		seen[text] = true
 		pending = append(pending, text)
 	}
-	if len(pending) == 0 {
-		return
+	return pending
+}
+
+// lexDiffLines lexes lines joined in one pass and returns each line's colored
+// tokens. It touches no shared state, so it may run off the UI goroutine.
+func lexDiffLines(lexer chroma.Lexer, pending []string) [][]RowSpan {
+	out := make([][]RowSpan, len(pending))
+	if lexer == nil || len(pending) == 0 {
+		return out
 	}
 	iterator, err := chroma.Coalesce(lexer).Tokenise(nil, strings.Join(pending, "\n"))
 	if err != nil {
-		return
+		return out
 	}
 	style := styles.Get("github-dark")
 	if style == nil {
@@ -419,7 +447,7 @@ func pretokenizeDiffSegments(lexer chroma.Lexer, texts []string, cache map[diffS
 	line, current := 0, []RowSpan(nil)
 	flush := func() {
 		if line < len(pending) {
-			cache[diffSyntaxKey{text: pending[line], role: tokensRole}] = current
+			out[line] = current
 		}
 		line, current = line+1, nil
 	}
@@ -449,6 +477,7 @@ func pretokenizeDiffSegments(lexer chroma.Lexer, texts []string, cache map[diffS
 	for line < len(pending) {
 		flush()
 	}
+	return out
 }
 
 // bandPaintLine pads a PaintLine with the band background so the tint spans

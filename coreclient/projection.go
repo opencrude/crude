@@ -385,7 +385,6 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 	return changed, nil
 }
 
-
 func (v *WorkspaceView) LoadAppSettings() types.AppSettings {
 	result := v.appSettings
 	result.Theme = cloneTheme(result.Theme)

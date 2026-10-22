@@ -59,20 +59,19 @@ func gitChangesIcon() string { return "✎" }
 // headerGitChanges renders the working-tree counts that used to share the
 // branch segment: changed files plus ahead/behind tracking. It is its own
 // header segment so clicking the counts opens Git while clicking the branch
-// keeps the branch picker.
+// keeps the branch picker. Like the Git panel, only non-zero counts paint.
 func headerGitChanges(changesIcon string, snapshot workspace.GitSnapshot) string {
-	changes := ""
+	var parts []string
 	if count := len(snapshot.Changes); count > 0 {
-		changes = fmt.Sprintf("%s %d", changesIcon, count)
+		parts = append(parts, fmt.Sprintf("%s %d", changesIcon, count))
 	}
-	if snapshot.Ahead > 0 || snapshot.Behind > 0 {
-		tracking := fmt.Sprintf("↑%d ↓%d", snapshot.Ahead, snapshot.Behind)
-		if changes == "" {
-			return tracking
-		}
-		changes += " " + tracking
+	if snapshot.Ahead > 0 {
+		parts = append(parts, fmt.Sprintf("↑%d", snapshot.Ahead))
 	}
-	return changes
+	if snapshot.Behind > 0 {
+		parts = append(parts, fmt.Sprintf("↓%d", snapshot.Behind))
+	}
+	return strings.Join(parts, " ")
 }
 
 // shortWorkspacePath renders the active workspace root for the header identity
@@ -330,14 +329,16 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 	} else if working > 0 {
 		workspaceHue = ui.ColorAccent2
 	}
-	segments := []shellfooter.Segment{
+	// Sized for the fixed pills, the Performance pill and Workspace: the
+	// footer is built every frame, so an append must not reallocate.
+	segments := append(make([]shellfooter.Segment, 0, 8), []shellfooter.Segment{
 		{Text: problemText, FillRole: problemRole, Attention: problemAttention, Pill: true, Active: active == termdock.PanelProblems, Action: "problems", Priority: 1},
 		{Text: noticeText, FillRole: ui.ColorAccent, Attention: unread > 0, Pill: true, Active: active == termdock.PanelNotices, Action: "notices", Priority: 1},
 		{Text: terminalText, FillRole: mapBool(terminalCount > 0, ui.ColorSuccess, ui.ColorDiffHunk), Attention: terminalCount > 0, Pill: true, Active: active == termdock.PanelTerminal, Action: "terminals", Priority: 1},
 		{Text: "Git", FillRole: ui.ColorDiffFile, Pill: true, Active: active == termdock.PanelGit, Action: "git", Priority: 1},
 		{Text: "Board", FillRole: ui.ColorAccent2, Pill: true, Active: active == termdock.PanelBoard, Action: "board", Priority: 0},
 		{Text: "Memory", FillRole: ui.ColorMuted, Pill: true, Active: active == termdock.PanelMemory, Action: "memory", Priority: 0},
-	}
+	}...)
 	segments = append(segments, m.performanceFooterSegments(active)...)
 	return append(segments, shellfooter.Segment{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0})
 }

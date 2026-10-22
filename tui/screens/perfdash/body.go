@@ -46,7 +46,6 @@ type block struct {
 	kind     blockKind
 	y, h     int
 	text     string
-	detail   string
 	sev      Severity
 	tiles    []tile
 	findings []Finding

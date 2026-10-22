@@ -260,10 +260,6 @@ func (m *Model) rebuildNetworkForms() {
 	}
 }
 
-func (m *Model) isNetworkCategory(index int) bool {
-	return index == catNetworkConnection || index == catNetworkProxy || index == catNetworkCertificates
-}
-
 func (m *Model) validateNetworkSettings() (int, string, bool) {
 	if m == nil || m.Scope() != types.SettingsScopeApplication {
 		return 0, "", true

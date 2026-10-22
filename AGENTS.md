@@ -196,6 +196,7 @@ most often broken there.
 | Embedded terminals | [in-app terminals](docs/reference/in-app-terminals.md) | One parser in the core; PTY writes never block |
 | Unicode width, ANSI | [terminal width](docs/reference/terminal-width.md) | One shared width profile |
 | Performance work | [performance baselines](docs/reference/performance-baselines.md) | Benchmark first; never raise a ceiling to land |
+| Performance dashboard, `metrics/` | [performance baselines](docs/reference/performance-baselines.md#performance-dashboard-and-dense-session-freezes-2026-10-22) | An observation never allocates or does I/O; snapshot only while visible |
 | Gates, tests, visual capture | [validation](docs/guides/validation.md), [Windows capture](docs/guides/windows-visual-capture.md) | Never two captures at once; close the window |
 
 Active plans are listed in the [docs index](docs/README.md#plans-active-work-only).

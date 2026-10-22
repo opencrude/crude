@@ -165,8 +165,25 @@ it still retries only the captured persistence intent, never provider work.
   reservations and preserves prepared input without enqueueing execution.
   Starting an already-admitted turn reuses that durable envelope rather than
   republishing the unchanged source. Related-only publications still advance the
-  revision under CAS and commit their recovery/receipts transactionally, but do
-  not re-encode or update unchanged `messages_json` payloads.
+  revision under CAS and commit their recovery/receipts transactionally, but
+  rewrite no messages.
+- Message lists (a context, a checkpoint's archive and active context) are a
+  base JSON array in the owning row followed by tail rows, one encoded message
+  each (`agent_context_tail`, `agent_recovery_tail`; `sessiondb/message_lists.go`).
+  The list's encoding is byte-identical to encoding the whole list
+  (`TestCheckpointAppendKeepsExactContextEncoding`). Writers keep the base
+  empty and replace tail rows from the first changed message, so a tool round
+  writes only what it added; a base that still holds messages (written before
+  lists moved to rows) is moved to rows by its next write. The owning rows also
+  carry the revision and recovery status that change every round, and SQLite
+  rewrites a whole row on any update, so no list may live inline there.
+  Planning a write needs the stored list without reading it back: the context
+  is cached by revision and write time, a recovery list by its field's version
+  in `agent_recovery_lists`; both caches record only committed writes, and an
+  unknown list is rewritten whole. A committed prefix was validated when it was
+  committed, so a replacement validates only its new messages. Loaders read a
+  base and its tail in one transaction; deleting an incident cascades to its
+  rows.
   Stopped children use current authoritative context and retain newer facts;
   parent mirrors/results are separately checked, never silently acknowledged.
   Root and child checkpoints reconcile exact late lifecycle controls and

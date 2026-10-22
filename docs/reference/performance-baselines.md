@@ -7,6 +7,60 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Performance dashboard and dense-session freezes (2026-10-22)
+
+`metrics/` records bounded per-second history for one process: the shell and
+the core each own a registry, and the Performance surface (`/perf`, palette
+"Performance", `tui/screens/perfdash/`) reads both, the core's through
+`coreprotocol.CoreMetricsMethod`. An observation is a clock read, a ring-slot
+update and, past the series' stall threshold, one bounded event (about 80 ns, no
+allocation, no I/O). Snapshots are taken off `Update` and only while the surface
+is visible; the footer's Performance pill appears only after a recent UI stall
+(`ui.update`, `ui.view`, `ui.blocking`) or slow input. Third-party Bubble Tea
+hands frames, resizes and control sequences to the renderer under `viewMu`
+only and writes the terminal under `flushMu`, so a slow console never blocks
+the next `Update` (`third_party/bubbletea/observer_test.go`).
+
+Measured on the user's sessions:
+
+| Workload | Before | After |
+|---|---|---|
+| Open a 2,628-message session, worst frame | 2.4 s | 58 ms |
+| Enter → "Preparing" status | ~400 ms | ~40 ms |
+| Local History pre-message capture, 2,000 files | 145 ms | 43 ms |
+| Supervised tool-round checkpoint, 560 messages / 4 MB context (`BenchmarkRecoveryCheckpoint_560Msgs`) | 345 ms | 1.7 ms |
+| Same, 2,000 messages (`BenchmarkRecoveryCheckpoint_2000Msgs`) | ~1.2 s | 2.3 ms |
+| Checkpoint on a copy of the user's 103 MB session (first round moves the stored lists to rows) | ~345 ms each | 177 ms once, then 1.4–2.3 ms |
+
+- Offscreen history materializes nearest-first within
+  `chatprojection.DefaultMaterializeBudget` (4 ms) per frame. A width-only
+  reflow keeps offscreen items at their previous heights until exposed; it never
+  spends the budget in the commit frame (`BenchmarkDenseChatWidthCommit_500HeavyMsgs`).
+  Benchmarks that open history call `settleHistory` before timing, so they
+  measure the steady state rather than the budgeted settle.
+- Core receipts use WAL with `synchronous=NORMAL`: commits survive process
+  crashes without the per-commit flush that cost tens to hundreds of
+  milliseconds on Windows.
+- Local History reuses a stored entry when size, mtime, change key and file
+  identity match a scan older than the timestamp granule; restore planning
+  always reads files.
+- A tool-round checkpoint used to decode the stored context, re-validate every
+  committed message against the transcript, re-encode the context and the
+  recovery archive, and rewrite ~16 MB of blobs. Message lists are now stored as
+  tail rows (see [run recovery](run-recovery.md)), so a round validates, encodes
+  and writes only the messages it adds. What still scales with history is an
+  in-memory comparison and copy of message headers. The checkpoint benchmarks
+  are gated on allocations; their allocation counts are flat from 560 to 2,000
+  messages (GOMAXPROCS=2, i7-10750H Linux).
+- Expanded file-edit rows lex at most 1 KiB synchronously; larger diffs get
+  their syntax colors from a background lexer. On the 2,628-message session
+  `apply_patch` rendering during history settle fell from 477 ms (worst row
+  24 ms) to 134 ms (worst 9 ms). Markdown first paint is now the largest row
+  cost (assistant messages average ~1.7 ms, the longest ~19 ms).
+- The footer builds its pills into one sized slice; a reallocation per frame
+  was the `BenchmarkIdleTick_200Msgs`/`BenchmarkAgentSwitchWarm_80Msgs`
+  regression.
+
 ## Bounded question reading and review (2026-10-21)
 
 `BenchmarkQuestionLongReflow` alternates 48/49-column layouts over a roughly

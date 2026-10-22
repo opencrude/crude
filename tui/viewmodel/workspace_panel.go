@@ -203,7 +203,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		if server.Error != "" {
 			lines = append(lines, statusoverview.DetailLine{Label: "Error", Value: server.Error, Role: ui.ColorError})
 		}
-		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: server.Status, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines})
+		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: server.Status, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines, Actions: lspServerActions(server)})
 	}
 
 	diagnostics := m.ws.LSPMgr().AllDiagnostics()
@@ -235,12 +235,20 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			})
 		}
 	}
-	for _, issue := range m.ws.Status().Issues() {
-		if issue.ResolvedAt.IsZero() && issue.Owner.Kind == ttypes.ResourceLSP {
-			items = append(items, statusoverview.Item{ID: "issue:" + issue.ID, Label: issue.Summary, Summary: issue.Detail, Icon: "!", Owner: issue.Owner, Lines: []statusoverview.DetailLine{{Label: "Issue", Value: issue.Detail, Role: severityRole(issue.Severity)}}})
-		}
-	}
 	return items
+}
+
+// lspServerActions are the lifecycle commands a server row offers. A failed
+// or stopped server is retried in place (the start re-resolves the command,
+// so installing a missing server and choosing Retry is enough).
+func lspServerActions(server ttypes.LSPServerHealth) []ttypes.StatusAction {
+	if server.Error != "" || server.Status == "Stopped" {
+		return []ttypes.StatusAction{{ID: "lsp:restart", Label: "Retry", Enabled: true}}
+	}
+	return []ttypes.StatusAction{
+		{ID: "lsp:restart", Label: "Restart", Enabled: true},
+		{ID: "lsp:stop", Label: "Stop", Enabled: !server.Starting},
+	}
 }
 
 func severityIconFromRole(role ui.SemanticColor) string {

@@ -223,6 +223,12 @@ Tea's update goroutine (the tab-close hang).
   `LSPClient.Done()`, clears that server's diagnostics, marks it `LSPFailed` and
   stops the process. A lost server is not silently restarted on every keypress or
   open; the user restarts it explicitly. Test fakes return a nil `Done()` channel.
+- A start that fails because the executable is missing reports "`<cmd>` is not
+  installed or not on PATH. Install it, then choose Retry." instead of the
+  transport's wrapped errors. The Problems panel's server row offers **Retry**
+  while failed or stopped and **Restart** / **Stop** while running; Retry is
+  `RestartServer`, which re-resolves the command on the next start, so
+  installing the server and choosing Retry is enough.
 - `LSPIntegration.WithServerEnv` sets the server subprocess environment.
 - The client advertises `window.workDoneProgress`, answers
   `window/workDoneProgress/create` and tracks `$/progress` tokens.

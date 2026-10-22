@@ -211,6 +211,17 @@ CREATE TABLE IF NOT EXISTS agent_context_generations (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+-- A context's messages are its messages_json array followed by its tail rows
+-- in position order; writers keep the array empty (see message_lists.go).
+CREATE TABLE IF NOT EXISTS agent_context_tail (
+    session_id     TEXT NOT NULL,
+    agent_id       TEXT NOT NULL,
+    position       INTEGER NOT NULL,
+    message_json   BLOB NOT NULL,
+    PRIMARY KEY (session_id, agent_id, position),
+    FOREIGN KEY (session_id, agent_id) REFERENCES agent_context_state(session_id, agent_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS immutable_message_identities (
     internal_id     TEXT PRIMARY KEY,
     session_id      TEXT NOT NULL,
@@ -308,6 +319,26 @@ CREATE INDEX IF NOT EXISTS idx_agent_recoveries_session
     ON agent_recoveries(session_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_agent_recoveries_agent
     ON agent_recoveries(session_id, agent_id, generation, updated_at);
+
+-- A checkpoint's archive and active context are its archive_json and
+-- active_context_json arrays followed by tail rows of the same field; writers
+-- keep the arrays empty. version advances with every write of a field's list.
+CREATE TABLE IF NOT EXISTS agent_recovery_tail (
+    incident_id    TEXT NOT NULL,
+    field          TEXT NOT NULL,
+    position       INTEGER NOT NULL,
+    message_json   BLOB NOT NULL,
+    PRIMARY KEY (incident_id, field, position),
+    FOREIGN KEY (incident_id) REFERENCES agent_recoveries(incident_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_recovery_lists (
+    incident_id    TEXT NOT NULL,
+    field          TEXT NOT NULL,
+    version        INTEGER NOT NULL,
+    PRIMARY KEY (incident_id, field),
+    FOREIGN KEY (incident_id) REFERENCES agent_recoveries(incident_id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS session_runtime_state (
     key        TEXT PRIMARY KEY,

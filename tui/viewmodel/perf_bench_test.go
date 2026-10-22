@@ -30,6 +30,9 @@ func BenchmarkIdleTick_200Msgs(b *testing.B) {
 		app.appendActiveMessage(msg)
 	}
 	app.paintShellFrame()
+	// Opening history materializes over a few frames; the idle tick is the
+	// state after that.
+	settleHistory(b, app)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -69,6 +72,7 @@ func BenchmarkAgentSwitchWarm_80Msgs(b *testing.B) {
 	app.switchToAgentView("first")
 	app.syncAgentMessages("first", false)
 	app.paintShellFrame()
+	settleHistory(b, app)
 	app.AddOrchestrator("second")
 	for _, msg := range seedBudgetSession(80, 2) {
 		app.appendAgentMessage("second", msg)
@@ -78,6 +82,7 @@ func BenchmarkAgentSwitchWarm_80Msgs(b *testing.B) {
 	app.switchToAgentView("second")
 	app.syncAgentMessages("second", false)
 	app.paintShellFrame()
+	settleHistory(b, app)
 	next := "first"
 	b.ReportAllocs()
 	b.ResetTimer()

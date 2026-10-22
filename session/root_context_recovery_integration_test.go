@@ -388,6 +388,16 @@ func TestPassiveRootResumeReconcilesSemanticArchiveByID(t *testing.T) {
 			resumed.Close()
 			t.Fatalf("restart changed immutable IDs: %v -> %v", restoredIDs, ids)
 		}
+		// The transcript paints exactly the hydrated rows' snapshots. Hidden
+		// preparation restored from the archive must not become a human row.
+		for _, row := range resumed.MessagesWithMeta() {
+			for _, snapshot := range row.Meta.Snapshots {
+				if strings.Contains(snapshot.Content, "captured hidden preparation") {
+					resumed.Close()
+					t.Fatalf("restart %d painted context-only preparation as a %s row: %+v", restart, snapshot.Role, snapshot)
+				}
+			}
+		}
 		unknown := current.Messages[6]
 		if unknown.InternalID == "" || unknown.ToolCallID != "never-replay" || !unknown.ToolError {
 			resumed.Close()
@@ -556,6 +566,9 @@ func TestPassiveRootResumeRejectsIdentityAndTranscriptConflicts(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := s.db.Exec(`UPDATE agent_recoveries SET archive_json=? WHERE incident_id='incident'`, raw); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`DELETE FROM agent_recovery_tail WHERE incident_id='incident' AND field='archive'`); err != nil {
 				t.Fatal(err)
 			}
 			path, sessionID := s.dbPath, s.sessionID

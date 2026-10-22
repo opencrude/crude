@@ -123,6 +123,10 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
 
 ## Composer
 
+- Enter acknowledges on the next frame: the submitted draft stays intact, dimmed
+  with "Sending…", until the core's durable receipt clears it (`MarkSending` /
+  `ClearSending` by draft revision); editing it ends the sending state. The
+  status reads "Preparing" within a frame of the receipt.
 - Composer height is a viewport, never the draft's total row count: grow from
   one to six text rows, apply the host's tighter one-third-column budget on short
   grids, and scroll internally without trimming text. Paint a quiet visible-row

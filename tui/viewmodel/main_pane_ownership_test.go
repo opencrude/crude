@@ -367,6 +367,7 @@ func BenchmarkMainPane(b *testing.B) {
 				app.switchToAgentView("dense-second")
 				app.forceFrame()
 				_ = app.View()
+				settleHistory(b, app)
 			}
 			r, _ := app.rootHost.ScreenRect(app.mainPanes.dividers[app.Win.PaneRoot().ID].ID())
 			_, _ = app.Update(tea.MouseClickMsg{X: r.X, Y: r.Y + 3, Button: tea.MouseLeft})

@@ -75,6 +75,7 @@ var curated = map[string][]seriesRef{
 		{processCore, "storage.receipts"}, {processCore, "files.search"}, {processCore, "files.events"},
 		{processCore, "lsp.diagnostics"}, {processCore, "files.watch"},
 		{processCore, "storage.session"}, {processCore, "lsp.requests"}, {processCore, "lsp.start"}, {processCore, "git.commands"},
+		{processCore, "git.remote"},
 	},
 	SectionRuntime: {
 		{processShell, "runtime.cpu"}, {processCore, "runtime.cpu"},

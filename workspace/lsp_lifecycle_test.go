@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ type lifecycleRuntime struct {
 	specs               []model.LSPServerSpec
 	startGate, stopGate <-chan struct{}
 	active, peak        int
+	// startErrs fail the next starts in order, like a missing executable.
+	startErrs []error
 }
 type lifecycleClient struct {
 	reapableClient
@@ -28,12 +31,16 @@ type lifecycleClient struct {
 	calls               []string
 	startGate, stopGate <-chan struct{}
 	started, stopped    bool
+	startErr            error
 }
 
 func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string) LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := &lifecycleClient{runtime: r, startGate: r.startGate, stopGate: r.stopGate, reapableClient: reapableClient{done: make(chan struct{})}}
+	if len(r.startErrs) > 0 {
+		c.startErr, r.startErrs = r.startErrs[0], r.startErrs[1:]
+	}
 	r.clients = append(r.clients, c)
 	r.roots = append(r.roots, root)
 	r.specs = append(r.specs, spec)
@@ -51,6 +58,9 @@ func (c *lifecycleClient) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	if c.startErr != nil {
+		return c.startErr
 	}
 	c.mu.Lock()
 	c.started = true
@@ -203,6 +213,27 @@ func TestLSPStopRestartRetainsDocumentAndRejectsStaleDiagnostics(t *testing.T) {
 	changes := m.DrainDiagnosticChanges()
 	if _, ok := changes[path]; !ok {
 		t.Fatal("clear omitted UI delta")
+	}
+}
+
+// A missing server is reported as such, and Retry after installing it starts
+// the server for the documents still open, without reopening them.
+func TestLSPRetryAfterInstallingMissingServer(t *testing.T) {
+	m, r, root := lifecycleManager(t)
+	r.startErrs = []error{fmt.Errorf("failed to start process: %w", &exec.Error{Name: "gopls", Err: exec.ErrNotFound})}
+	path := filepath.Join(root, "main.go")
+	m.OpenFile(t.Context(), path, "unsaved")
+	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots(); return len(h) == 1 && h[0].Error != "" })
+	server := m.ServerHealthSnapshots()[0]
+	if server.Error != "gopls is not installed or not on PATH. Install it, then choose Retry." {
+		t.Fatalf("missing server error = %q", server.Error)
+	}
+	if !m.RestartServer(server.ID) {
+		t.Fatal("retry rejected for a failed server")
+	}
+	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots(); return len(h) == 1 && h[0].Connected })
+	if cs := r.snapshot(); len(cs) != 2 || len(cs[1].snapshot()) != 1 || cs[1].snapshot()[0] != "open:main.go:go:unsaved" {
+		t.Fatalf("retry did not reopen the document on the new server")
 	}
 }
 

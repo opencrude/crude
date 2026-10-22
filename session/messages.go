@@ -146,6 +146,14 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		meta.Snapshots = []ttypes.ConversationMessage{{InternalID: internalID, Role: ttypes.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: internalID, Time: now, TurnGeneration: meta.TurnGeneration}}
 		return meta
 	}
+	// Context-only messages (turn context, runtime continuity, enrichment) are
+	// provider input, never transcript rows. A resumed interrupted run rebuilds
+	// its history from the recovery archive, which holds them, so deriving a
+	// snapshot from their role would paint them as human messages.
+	if meta.ContextOnly {
+		meta.Snapshots = nil
+		return meta
+	}
 	switch message.Role {
 	case "tool":
 		// A reply is delivered as assistant progress when its tool result
