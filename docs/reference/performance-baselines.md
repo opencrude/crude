@@ -10,13 +10,15 @@ Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 ## Performance dashboard and dense-session freezes (2026-10-22)
 
 `metrics/` records bounded per-second history for one process: the shell and
-the core each own a registry, and the Performance surface (`/perf`, palette
-"Performance", `tui/screens/perfdash/`) reads both, the core's through
-`coreprotocol.CoreMetricsMethod`. An observation is a clock read, a ring-slot
-update and, past the series' stall threshold, one bounded event (about 80 ns, no
+the core each own a registry, and the app-level Performance surface (bottom-bar
+**Performance**, palette "Performance", `tui/screens/perfdash/`) reads both, the
+core's through `coreprotocol.CoreMetricsMethod`. An observation is a clock read,
+a ring-slot update and, past the series' stall threshold, one bounded event (about 80 ns, no
 allocation, no I/O). Snapshots are taken off `Update` and only while the surface
-is visible; the footer's Performance pill appears only after a recent UI stall
-(`ui.update`, `ui.view`, `ui.blocking`) or slow input. Third-party Bubble Tea
+is visible; the footer's Performance pill is always available, including without
+a session, and moves into **More** on narrow terminals. Recent UI stalls
+(`ui.update`, `ui.view`, `ui.blocking`) or slow input change its severity. It is
+not a session slash command. Third-party Bubble Tea
 hands frames, resizes and control sequences to the renderer under `viewMu`
 only and writes the terminal under `flushMu`, so a slow console never blocks
 the next `Update` (`third_party/bubbletea/observer_test.go`).
@@ -60,6 +62,14 @@ Measured on the user's sessions:
 - The footer builds its pills into one sized slice; a reallocation per frame
   was the `BenchmarkIdleTick_200Msgs`/`BenchmarkAgentSwitchWarm_80Msgs`
   regression.
+- Making Performance permanent also exercises footer overflow during ordinary
+  chat. Retained fitting scratch keeps guidance and completion notices visible
+  without rebuilding temporary slices on every paint. Three Linux/i7-10750H,
+  Go 1.25.9, `GOMAXPROCS=2` runs of `BenchmarkFooterOverflowPaint` at 120×2
+  measure 27.0–27.7 µs / 160 B / 14 allocations, versus 29.0–29.8 µs / 3,376 B /
+  34 allocations before scratch reuse. These are component paint measurements,
+  not terminal latency. Idle, warm-switch and tab-rederivation remain within
+  their unchanged ceilings; the footer leaf now has its own allocation gate.
 
 ## Bounded question reading and review (2026-10-21)
 

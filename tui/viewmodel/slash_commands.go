@@ -56,8 +56,6 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case "/perf":
-		cmds = append(cmds, m.openPerformancePanel(""))
 	case "/help":
 		m.ws.Logger().Info("INPUT", "slash", "command", "help")
 		m.openHelp()

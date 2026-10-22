@@ -177,3 +177,77 @@ func TestMovedGroupsKeepTheirHitTargets(t *testing.T) {
 		t.Fatalf("non-actionable hint became clickable: %+v", res)
 	}
 }
+
+func TestPillNavigationPreservesGuidanceAndFeedback(t *testing.T) {
+	right := []Segment{
+		{Text: "Problems", Pill: true, Action: "problems", Priority: 1},
+		{Text: "Notices", Pill: true, Action: "notices", Priority: 1},
+		{Text: "Terminals", Pill: true, Action: "terminals", Priority: 1},
+		{Text: "Git", Pill: true, Action: "git", Priority: 1},
+		{Text: "Board", Pill: true, Action: "board"},
+		{Text: "Memory", Pill: true, Action: "memory"},
+		{Text: "Performance", Pill: true, Action: "performance"},
+		{Text: "Workspace", Pill: true, Action: "workspace"},
+	}
+	for _, test := range []struct {
+		name string
+		left []Segment
+	}{
+		{"guidance", []Segment{{Text: "Alt+Enter new line", Priority: 3}, {Text: "Ctrl+O attach file", Priority: 3}, {Text: "Help", Action: "help", Priority: 1}}},
+		{"feedback", []Segment{{Text: "Samuel sub Rebecca · Researcher completed"}, {Text: "Help", Action: "help", Priority: 1}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			screen, row := paintFooter(t, Projection{Left: test.left, Right: right}, 120)
+			for _, segment := range test.left {
+				if !strings.Contains(row, segment.Text) {
+					t.Fatalf("navigation crowded out %q: %q", segment.Text, row)
+				}
+			}
+			if !strings.Contains(row, "Performance") || !strings.Contains(row, "More") || len(screen.Overflow()) == 0 {
+				t.Fatalf("navigation did not retain Performance and explicit overflow: %q", row)
+			}
+		})
+	}
+}
+
+func BenchmarkFooterOverflowPaint(b *testing.B) {
+	screen := New(theme.DefaultDark(), ui.DefaultRegistry())
+	screen.SetProjection(Projection{
+		Left: []Segment{{Text: "Alt+Enter new line", Priority: 3}, {Text: "Ctrl+O attach file", Priority: 3}, {Text: "Help", Action: "help", Priority: 1}},
+		Right: []Segment{
+			{Text: "Problems", Pill: true, Action: "problems", Priority: 1},
+			{Text: "Notices", Pill: true, Action: "notices", Priority: 1},
+			{Text: "Terminals", Pill: true, Action: "terminals", Priority: 1},
+			{Text: "Git", Pill: true, Action: "git", Priority: 1},
+			{Text: "Board", Pill: true, Action: "board"},
+			{Text: "Memory", Pill: true, Action: "memory"},
+			{Text: "Performance", Pill: true, Action: "performance"},
+			{Text: "Workspace", Pill: true, Action: "workspace"},
+		},
+	})
+	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 120, H: 2})
+	buf := surface.NewCellBuffer(120, 2)
+	screen.Paint(buf, 0, 0, ui.PaintContext{})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		screen.Paint(buf, 0, 0, ui.PaintContext{})
+	}
+}
+
+func TestFooterRepaintClearsReplacedNavigation(t *testing.T) {
+	screen, buf := paintFooterBuffer(t, theme.DefaultDark(), Projection{Right: stripSegments()}, 36)
+	if len(screen.Overflow()) == 0 {
+		t.Fatal("fixture did not exercise retained overflow")
+	}
+	screen.SetProjection(Projection{Right: []Segment{{Text: "Performance", Action: "performance", Pill: true}}})
+	screen.Paint(buf, 0, 0, ui.PaintContext{})
+	if len(screen.Overflow()) != 0 || len(screen.hits) != 1 || screen.hits[0].action != "performance" {
+		t.Fatalf("repaint retained old destinations: overflow=%+v hits=%+v", screen.Overflow(), screen.hits)
+	}
+	screen.SetProjection(Projection{})
+	screen.Paint(buf, 0, 0, ui.PaintContext{})
+	if len(screen.Overflow()) != 0 || len(screen.hits) != 0 || strings.TrimSpace(rowText(buf, 1)) != "" {
+		t.Fatal("empty projection retained footer ink or actions")
+	}
+}

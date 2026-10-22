@@ -339,7 +339,7 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		{Text: "Board", FillRole: ui.ColorAccent2, Pill: true, Active: active == termdock.PanelBoard, Action: "board", Priority: 0},
 		{Text: "Memory", FillRole: ui.ColorMuted, Pill: true, Active: active == termdock.PanelMemory, Action: "memory", Priority: 0},
 	}...)
-	segments = append(segments, m.performanceFooterSegments(active)...)
+	segments = append(segments, m.performanceFooterSegment(active))
 	return append(segments, shellfooter.Segment{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0})
 }
 
