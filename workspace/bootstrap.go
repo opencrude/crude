@@ -598,6 +598,8 @@ func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
 }
 
 // ResolveQuestion sends formatted question answers to the owning orchestrator.
+// The human may skip any question, so an unanswered entry is reported as such
+// rather than failing the whole response.
 func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions map[string]string, cancelled bool) bool {
 	if cancelled {
 		return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
@@ -605,31 +607,45 @@ func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions 
 			Outcome:   ttypes.BlockUserCancelled,
 		})
 	}
-	if len(answers) == 0 {
+	text, ok := formatQuestionAnswers(answers, questions)
+	if !ok {
 		return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
 			RequestID: blockID,
 			Outcome:   ttypes.BlockValidationError,
-			Detail:    "no answers were provided",
+			Detail:    "no questions were answered",
 		})
-	}
-
-	var response strings.Builder
-	for i := 1; i <= len(answers); i++ {
-		key := fmt.Sprintf("%d", i)
-		if question := questions[key]; question != "" {
-			fmt.Fprintf(&response, "Q%d: %s\nA%d: %s", i, question, i, answers[key])
-		} else {
-			fmt.Fprintf(&response, "A%d: %s", i, answers[key])
-		}
-		if i < len(answers) {
-			response.WriteString("\n\n")
-		}
 	}
 	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
 		RequestID: blockID,
 		Outcome:   ttypes.BlockAnswered,
-		Value:     response.String(),
+		Value:     text,
 	})
+}
+
+// formatQuestionAnswers renders the model-visible question result. Questions
+// come back in payload order, and one the human left unanswered reads as
+// "(no answer)" so the model can tell a deliberate skip from a missing entry.
+func formatQuestionAnswers(answers, questions map[string]string) (string, bool) {
+	if len(answers) == 0 {
+		return "", false
+	}
+	var response strings.Builder
+	for i := 1; i <= len(answers); i++ {
+		key := fmt.Sprintf("%d", i)
+		answer := strings.TrimSpace(answers[key])
+		if answer == "" {
+			answer = "(no answer)"
+		}
+		if i > 1 {
+			response.WriteString("\n\n")
+		}
+		if question := questions[key]; question != "" {
+			fmt.Fprintf(&response, "Q%d: %s\nA%d: %s", i, question, i, answer)
+		} else {
+			fmt.Fprintf(&response, "A%d: %s", i, answer)
+		}
+	}
+	return response.String(), true
 }
 
 // RejectQuestion reports a frontend validation failure without attributing it

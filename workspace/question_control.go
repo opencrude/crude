@@ -3,8 +3,6 @@ package workspace
 import (
 	"crude/types"
 	"crude/types/control"
-	"fmt"
-	"strings"
 )
 
 // ResolveQuestionControl runs under the workspace actor after caller admission.
@@ -23,25 +21,11 @@ func (w *Workspace) ResolveQuestionControl(caller control.Caller, sessionID, age
 	if cancelled {
 		reply.Outcome = types.BlockUserCancelled
 	} else {
-		if len(answers) == 0 {
+		text, ok := formatQuestionAnswers(answers, questions)
+		if !ok {
 			return false
 		}
-		var text strings.Builder
-		for i := 1; i <= len(answers); i++ {
-			key := fmt.Sprint(i)
-			answer, ok := answers[key]
-			if !ok || strings.TrimSpace(answer) == "" {
-				return false
-			}
-			if i > 1 {
-				text.WriteString("\n\n")
-			}
-			if q := questions[key]; q != "" {
-				fmt.Fprintf(&text, "Q%d: %s\n", i, q)
-			}
-			fmt.Fprintf(&text, "A%d: %s", i, answer)
-		}
-		reply.Value = text.String()
+		reply.Value = text
 	}
 	return w.resolveAgentBlock(agentID, reply)
 }

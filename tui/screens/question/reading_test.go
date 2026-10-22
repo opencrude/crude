@@ -165,22 +165,37 @@ func TestQuestionReviewIsMandatoryEditableAndComplete(t *testing.T) {
 	}
 }
 
-func TestQuestionReviewRejectsSkippedAndClearedAnswers(t *testing.T) {
+func TestQuestionReviewAllowsSkippedAndClearedAnswers(t *testing.T) {
 	screen, host := questionHost(t, []Item{{Question: "One"}, {Question: "Two"}}, 80, 12)
-	// Open review through the rail before answering; it remains usable but cannot send.
+	// A human may leave questions unanswered: Next never blocks, and review is
+	// the only step that decides what is sent.
+	clickQuestionText(t, host, 80, 12, "Next")
+	if screen.Current() != 1 {
+		t.Fatalf("unanswered question blocked Next at index %d", screen.Current())
+	}
 	clickQuestionText(t, host, 80, 12, "Review answers")
-	if !screen.Reviewing() || screen.actions.ActionEnabled("question.submit") {
-		t.Fatal("incomplete review enabled Submit")
+	if !screen.Reviewing() || !screen.actions.ActionEnabled("question.submit") {
+		t.Fatal("unanswered review did not expose a live Submit")
 	}
-	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.submit"}); result.Cmd != nil {
-		t.Fatal("incomplete review submitted via stale action")
+	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.submit"})
+	if result.Cmd == nil {
+		t.Fatal("unanswered review could not submit")
 	}
+	if message := result.Cmd().(ResultMsg); message.Result.Answers["1"] != "" || message.Result.Answers["2"] != "" {
+		t.Fatalf("skipped answers drifted: %+v", message.Result)
+	}
+
+	// A cleared write-in releases its claim instead of holding the answer.
 	clickQuestionText(t, host, 80, 12, "1.")
 	host.Handle(tea.PasteMsg{Content: "draft"})
 	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if screen.Answer(0) != "" {
-		t.Fatal("cleared answer remained submittable")
+	if screen.Answer(0) != "" || containsCustom(screen.choices[0]) {
+		t.Fatalf("cleared answer kept its claim: %q %v", screen.Answer(0), screen.choices[0])
+	}
+	result = screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"})
+	if result.Cmd != nil || !screen.Reviewing() || !screen.actions.ActionEnabled("question.submit") {
+		t.Fatal("cleared answer left the review unusable")
 	}
 }
 
@@ -343,6 +358,44 @@ func TestQuestionNarrowEscapeClimbsToActionsBeforeCancelling(t *testing.T) {
 	}
 }
 
+// The review keeps one blank row after its last answer so the final line is
+// never glued to the viewport's bottom edge when the review is scrolled down.
+func TestQuestionReviewEndsWithABlankRow(t *testing.T) {
+	items := make([]Item, 4)
+	for index := range items {
+		items[index] = Item{
+			Header:   fmt.Sprintf("Section %d", index+1),
+			Question: fmt.Sprintf("QUESTION_%d ", index+1) + strings.Repeat("detail ", 20),
+			Options:  []string{"Yes", "No"},
+		}
+	}
+	s, host := questionHost(t, items, 60, 10)
+	for range items {
+		clickQuestionText(t, host, 60, 10, "Yes")
+	}
+	if !s.Reviewing() {
+		t.Fatal("answering every question did not reach the review")
+	}
+	host.Focus(OptionsID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
+	scroll := s.options.Scroll()
+	if scroll.MaxOffset() == 0 {
+		t.Fatal("fixture review fits in one viewport; no tail to check")
+	}
+	if scroll.Offset() != scroll.MaxOffset() {
+		t.Fatalf("End did not reach the review tail: %d/%d", scroll.Offset(), scroll.MaxOffset())
+	}
+	buf := paintQuestion(host, 60, 10)
+	reader, _ := host.ScreenRect(OptionsID)
+	bottom := reader.Y + reader.H - 1
+	// The final column is the reader's own scrollbar gutter, not content.
+	for x := reader.X; x < reader.X+reader.W-1; x++ {
+		if char := buf.Get(x, bottom).Char; char != 0 && char != ' ' {
+			t.Fatalf("review last row sticks to the viewport edge:\n%s", bufferText(buf))
+		}
+	}
+}
+
 func TestQuestionManyQuestionsKeepRailAndReviewFullyReachable(t *testing.T) {
 	items := make([]Item, 80)
 	for index := range items {
@@ -359,8 +412,8 @@ func TestQuestionManyQuestionsKeepRailAndReviewFullyReachable(t *testing.T) {
 	clickQuestionText(t, host, 120, 16, "80. Section")
 	host.Handle(tea.PasteMsg{Content: "LAST_ANSWER"})
 	clickQuestionText(t, host, 120, 16, "Review answers")
-	if !s.Reviewing() || s.actions.ActionEnabled("question.submit") {
-		t.Fatal("skipping many questions bypassed incomplete-review validation")
+	if !s.Reviewing() || !s.actions.ActionEnabled("question.submit") {
+		t.Fatal("skipping many questions left the review without a live Submit")
 	}
 	host.Focus(OptionsID)
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnd})

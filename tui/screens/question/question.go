@@ -60,7 +60,6 @@ type Screen struct {
 	custom     []string
 	railLabels []string
 	index      int
-	errMsg     string
 
 	railRows    *ui.List
 	options     *answerList
@@ -98,7 +97,6 @@ func New(th *theme.Theme) *Screen {
 
 	field := ui.NewTextArea(InputID, s.tokens, true)
 	field.SetSubmitAction("question.next")
-	field.SetPlaceholder("Type your answer")
 	// Prompt-area chrome rule (mirrors the session chat composer): the
 	// shared InputColors default is a raised popup fill; decks stay flat.
 	field.SetBackgroundColor(s.tokens.Color(ui.ColorBg))
@@ -194,7 +192,10 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 // syncRail rebuilds the question rail rows. Each question paints as
 // "○ N. Title" (unanswered) or "✓ N. Title" (answered); divider rules
 // separate entries; the active question is indicated by background and text
-// color only (the shared List selection row), never a marker glyph.
+// color only (the shared List selection row), never a marker glyph. The rail
+// indexes questions only: review is a step of the pinned actions, so it never
+// borrows the numbered-row style, and no rail row is highlighted while the
+// review is open.
 func (s *Screen) syncRail() {
 	if s.railRows == nil {
 		return
@@ -215,16 +216,21 @@ func (s *Screen) syncRail() {
 			items = append(items, ui.ListItem{ID: fmt.Sprintf("rail/sep/%d", i), Separator: true})
 		}
 	}
-	if s.Count() > 0 {
-		items = append(items, ui.ListItem{ID: "rail/review", Label: "Review answers", Payload: len(s.items)})
-	}
 	s.railRows.SetItems(items)
-	for index, item := range items {
-		if payload, ok := item.Payload.(int); ok && (s.reviewing && payload == len(s.items) || !s.reviewing && payload == s.index) {
-			s.railRows.SelectIndex(index)
-			break
+	selected := -1
+	if !s.reviewing {
+		for index, item := range items {
+			if payload, ok := item.Payload.(int); ok && payload == s.index {
+				selected = index
+				break
+			}
 		}
 	}
+	if selected >= 0 {
+		s.railRows.SelectIndex(selected)
+		return
+	}
+	s.railRows.Selection().ClearSelection()
 }
 
 // railWidth sizes the question rail like the old deck's sidebar: at most 25%
@@ -234,7 +240,7 @@ func (s *Screen) railWidth(total int) int {
 	if total < 64 {
 		return 0
 	}
-	maxItemW := rendering.VisibleWidth("Review answers") + 1
+	maxItemW := 0
 	for _, title := range s.railLabels {
 		w := rendering.VisibleWidth(title) + 4 // icon + indent spacing
 		if w > maxItemW {
@@ -303,13 +309,6 @@ func (s *Screen) Children() []ui.Component {
 	return children
 }
 
-func (s *Screen) errHeight() int {
-	if s.errMsg == "" {
-		return 0
-	}
-	return 1
-}
-
 func (s *Screen) inputIndent(paneW int) int {
 	indent := 0
 	if s.tokens != nil {
@@ -351,7 +350,7 @@ func (s *Screen) PreferredHeight(maxHeight int) int {
 	if s.actions != nil {
 		chrome = s.actions.PreferredHeight()
 	}
-	body := s.options.ContentHeight() + s.errHeight() + 1
+	body := s.options.ContentHeight() + 1
 	if !s.reviewing {
 		body += min(6, s.preferredInputH(maxHeight))
 	}
@@ -388,19 +387,18 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	s.paneW = max(0, r.W-s.paneX)
 	s.paneIndent = s.inputIndent(s.paneW)
-	errH := s.errHeight()
 	inputW := max(0, s.paneW-s.paneIndent)
 	// Keep reading, editing and actions in disjoint rectangles even on tiny
 	// grids. The write-in is capped independently; it never hides a long choice.
 	s.inputH = 0
 	if !s.reviewing {
-		room := max(0, (bodyH-errH-1)/3)
-		if bodyH > errH+1 {
+		room := max(0, (bodyH-1)/3)
+		if bodyH > 1 {
 			room = max(1, room)
 		}
 		s.inputH = min(6, room, s.inputNaturalH(inputW, max(1, room)))
 	}
-	readerH := max(0, bodyH-s.inputH-errH-1)
+	readerH := max(0, bodyH-s.inputH-1)
 	s.optionsGate.Layout(ctx, ui.Rect{X: s.paneX, W: s.paneW, H: readerH})
 	s.inputGate.Layout(ctx, ui.Rect{
 		X: s.paneX + s.paneIndent,
@@ -418,33 +416,10 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 		return
 	}
 	bg := cell.NoColor
-	muted, errorFG := cell.NoColor, cell.NoColor
 	if s.tokens != nil {
 		bg = s.tokens.Color(ui.ColorBg)
-		muted = s.tokens.Color(ui.ColorMuted)
-		errorFG = s.tokens.Color(ui.ColorError)
 	}
 	ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
-	if s.Count() == 0 {
-		return
-	}
-	x, y := originX+r.X, originY+r.Y
-	readerH := s.optionsGate.Bounds().H
-	if s.errMsg != "" {
-		errX := x + s.paneX + s.paneIndent
-		errY := y + readerH + s.inputH
-		buf.WriteString(errX, errY, rendering.TruncateVisual(s.errMsg, max(0, s.paneW-s.paneIndent), "…"), errorFG, bg, 0)
-	}
-	if hintY := r.H - s.actions.PreferredHeight() - 1; hintY >= 0 {
-		hint := "Tab: actions"
-		if s.options.Scroll().MaxOffset() > 0 {
-			hint = "Scroll / PgUp / PgDn to read · " + hint
-		}
-		if s.reviewing {
-			hint = "Click a response or Enter to edit · " + hint
-		}
-		buf.WriteString(x+s.paneX, y+hintY, rendering.TruncateVisual(hint, s.paneW, "…"), muted, bg, 0)
-	}
 }
 
 func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
@@ -484,9 +459,6 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 			return ui.EventResult{}
 		}
 		index, ok := item.Payload.(int)
-		if ok && index == len(s.items) {
-			return s.openReview()
-		}
 		if !ok || index < 0 || index >= len(s.items) {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
@@ -502,7 +474,9 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "question.next":
 		return s.advance()
 	case "question.submit":
-		if s.reviewing && s.allAnswered() {
+		// The human may leave any question unanswered: review submits exactly
+		// what is there, and an empty answer is reported as such to the model.
+		if s.reviewing {
 			result := s.Result()
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResultMsg{Target: s, Result: result} }}
 		}
@@ -574,7 +548,6 @@ func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 		s.toggleChoice(id)
 		s.syncAnswer()
 		s.syncOptions()
-		s.refreshError()
 		s.syncRail()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateLayout}
 	}
@@ -598,7 +571,6 @@ func (s *Screen) selectCustom() {
 	}
 	s.syncAnswer()
 	s.syncOptions()
-	s.refreshError()
 	s.syncRail()
 }
 
@@ -614,35 +586,35 @@ func (s *Screen) toggleChoice(id string) {
 	s.choices[s.index] = append(append([]string(nil), values...), id)
 }
 
-// onInputChanged runs on every keystroke/paste in the write-in line: typing
-// selects the custom answer (replacing any single-choice pick), keeps the
-// stack icons in sync, and re-runs live validation like the shared form did.
+// onInputChanged runs on every keystroke/paste in the write-in line. Non-empty
+// text claims the write-in answer (replacing a single-choice pick); clearing it
+// releases that claim, so an accidental keystroke never keeps overriding the
+// chosen option or leaves the question impossible to settle.
 func (s *Screen) onInputChanged(value string) {
 	item, ok := s.currentItem()
 	if !ok {
 		return
 	}
 	s.custom[s.index] = value
-	if len(item.Options) > 0 && strings.TrimSpace(value) != "" {
-		hadCustom := containsCustom(s.choices[s.index])
-		if item.Multiple {
-			if !containsCustom(s.choices[s.index]) {
+	if len(item.Options) > 0 {
+		claims := strings.TrimSpace(value) != ""
+		if hadCustom := containsCustom(s.choices[s.index]); claims != hadCustom {
+			switch {
+			case claims && item.Multiple:
 				s.choices[s.index] = append(s.choices[s.index], customOptionID)
+			case claims:
+				s.choices[s.index] = []string{customOptionID}
+			default:
+				s.choices[s.index] = withoutCustom(s.choices[s.index])
 			}
-		} else if !containsCustom(s.choices[s.index]) {
-			s.choices[s.index] = []string{customOptionID}
-		}
-		if !hadCustom {
 			s.syncOptions()
 		}
 	}
 	s.syncAnswer()
-	s.refreshError()
 	s.syncRail()
 }
 
 func (s *Screen) openCurrent() {
-	s.errMsg = ""
 	if _, ok := s.currentItem(); !ok {
 		s.syncRail()
 		s.options.SetItems(nil)
@@ -674,6 +646,19 @@ func (s *Screen) openCurrent() {
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
 	)
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
+	s.actions.SetHint(s.actionHint())
+}
+
+// actionHint is the trailing guidance painted at the far end of the pinned
+// actions row. The write-in has no in-field placeholder, so the text-only form
+// names its only input there; every form points at the pinned decisions.
+func (s *Screen) actionHint() string {
+	if !s.reviewing {
+		if item, ok := s.currentItem(); ok && len(item.Options) == 0 {
+			return "Type your answer · Tab: actions"
+		}
+	}
+	return "Tab: actions"
 }
 
 // syncOptions rebuilds the reading rows, carrying the cursor across toggles.
@@ -738,60 +723,14 @@ func (s *Screen) syncAnswer() {
 	s.answers[s.index] = strings.Join(values, ", ")
 }
 
-// canAdvance reports whether the current question carries a submittable
-// answer. An empty write-in blocks even though it paints no message: the
-// prompt area's placeholder already asks for text, and repeating it as an
-// error line under the input said the same thing twice.
-func (s *Screen) canAdvance() bool {
-	item, ok := s.currentItem()
-	if !ok {
-		return false
-	}
-	if len(item.Options) == 0 {
-		return strings.TrimSpace(s.input.Value()) != ""
-	}
-	if len(s.choices[s.index]) == 0 {
-		return false
-	}
-	if containsCustom(s.choices[s.index]) && strings.TrimSpace(s.input.Value()) == "" {
-		return false
-	}
-	return true
-}
-
-// validationError reports the live blocking message for the current question,
-// mirroring the required/custom validators the shared form enforced. Only the
-// option-choice gaps speak up; text-input gaps stay silent (see canAdvance).
-func (s *Screen) validationError() string {
-	item, ok := s.currentItem()
-	if !ok {
-		return ""
-	}
-	if len(item.Options) == 0 || len(s.choices[s.index]) > 0 {
-		return ""
-	}
-	if item.Multiple {
-		return "Select at least one answer"
-	}
-	return "Choose an answer to continue"
-}
-
-func (s *Screen) refreshError() { s.errMsg = s.validationError() }
-
+// advance moves to the next question, or opens the review on the last one.
+// Nothing here gates on completeness: a human may leave any question
+// unanswered, and review is the only place that decides what is sent.
 func (s *Screen) advance() ui.EventResult {
 	if s.Count() == 0 || s.reviewing {
 		return ui.EventResult{Handled: true}
 	}
 	s.syncAnswer()
-	if !s.canAdvance() {
-		// Blocked stays put. Option-choice gaps paint their hint; empty
-		// write-ins rely on the placeholder and stay silent.
-		if message := s.validationError(); message != "" {
-			s.errMsg = message
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-	}
-	s.errMsg = ""
 	if !s.reviewVisited && s.index < len(s.items)-1 {
 		s.index++
 		s.syncRail()
@@ -803,21 +742,8 @@ func (s *Screen) advance() ui.EventResult {
 	return s.openReview()
 }
 
-func (s *Screen) allAnswered() bool {
-	for index, item := range s.items {
-		if strings.TrimSpace(s.answers[index]) == "" || containsCustom(s.choices[index]) && strings.TrimSpace(s.custom[index]) == "" {
-			return false
-		}
-		if len(item.Options) > 0 && len(s.choices[index]) == 0 {
-			return false
-		}
-	}
-	return s.Count() > 0
-}
-
 func (s *Screen) openReview() ui.EventResult {
 	s.reviewing, s.reviewVisited = true, true
-	s.errMsg = ""
 	rows := []ui.ListItem{{ID: "review/title", Label: "Review answers", Header: true}}
 	for index, item := range s.items {
 		answer := s.answers[index]
@@ -830,13 +756,17 @@ func (s *Screen) openReview() ui.EventResult {
 			rows = append(rows, ui.ListItem{ID: fmt.Sprintf("review/sep/%d", index), Separator: true})
 		}
 	}
+	// A trailing gap row keeps the final answer off the viewport's bottom edge
+	// when the review is scrolled to its end.
+	rows = append(rows, ui.ListItem{ID: "review/trailer", Spacer: true})
 	s.options.SetItems(rows)
 	s.options.ResetViewport()
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "question.previous", Variant: ui.VariantSecondary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "submit"), Label: "Submit", Action: "question.submit", Variant: ui.VariantPrimary, Enabled: s.allAnswered()},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "submit"), Label: "Submit", Action: "question.submit", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
 	)
+	s.actions.SetHint(s.actionHint())
 	s.syncRail()
 	result := s.focusResult(OptionsID, true)
 	result.Invalidate |= ui.InvalidateLayout
@@ -944,6 +874,18 @@ func containsCustom(values []string) bool {
 		}
 	}
 	return false
+}
+
+// withoutCustom returns values with the write-in membership removed; the
+// remaining option picks keep their order.
+func withoutCustom(values []string) []string {
+	out := values[:0:0]
+	for _, value := range values {
+		if value != customOptionID {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // railDivider paints the vertical rule between the question rail and the reader.

@@ -43,6 +43,10 @@ type ActionBar struct {
 	exitForward   string
 	exitBackward  string
 	showRule      bool
+	hint          string
+	hintWidth     int
+	buttonsStart  int
+	buttonsEnd    int
 	surfaceRole   SemanticColor
 	surfaceSet    bool
 	ruleFullBleed bool
@@ -175,6 +179,15 @@ func (ab *ActionBar) SetRuleFullBleed(v bool) { ab.ruleFullBleed = v }
 // bar's own origin, width the total row width. Width 0 keeps the rule
 // bounded to the bar's own width.
 func (ab *ActionBar) SetRuleBleed(offsetX, width int) { ab.ruleBleedX, ab.ruleBleedW = offsetX, width }
+
+// SetHint sets optional trailing guidance painted at the opposite end of the
+// button row: right of left-packed docked buttons, left of right-aligned
+// floating ones. The bar paints it only when the whole text fits beside the
+// buttons, so decisions never shrink or disappear for a hint.
+func (ab *ActionBar) SetHint(text string) {
+	ab.hint = text
+	ab.hintWidth = rendering.VisibleWidth(text)
+}
 
 // SetSurfaceBackground is the idle button fill (dock ColorBg, popup ColorPopupBg).
 func (ab *ActionBar) SetSurfaceBackground(role SemanticColor) {
@@ -327,6 +340,7 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 		for i := range ab.buttons {
 			ab.buttons[i].button.Layout(ctx, Rect{})
 		}
+		ab.buttonsStart, ab.buttonsEnd = 0, 0
 		return
 	}
 	totalW := 0
@@ -393,9 +407,12 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	if ab.showRule {
 		y = 1
 	}
+	ab.buttonsStart = x
+	ab.buttonsEnd = x
 	for i := range ab.buttons {
 		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: min(y, r.H), W: widths[i], H: min(1, max(0, r.H-y))})
 		x += widths[i] + gap
+		ab.buttonsEnd = x - gap
 	}
 }
 
@@ -424,6 +441,39 @@ func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		buttonCtx.Hovered = ctx.Hovered && i == ab.hovered
 		ab.buttons[i].button.Paint(buf, originX+r.X, originY+r.Y, buttonCtx)
 	}
+	ab.paintHint(buf, originX+r.X, originY+r.Y, r)
+}
+
+// paintHint paints the trailing guidance on the button row itself, at the end
+// opposite the buttons. It is dropped entirely — never truncated into a
+// fragment and never pressed against a button — when the row cannot hold it.
+func (ab *ActionBar) paintHint(buf *surface.CellBuffer, originX, originY int, r Rect) {
+	if ab.hint == "" || ab.hintWidth <= 0 || ab.tokens == nil {
+		return
+	}
+	y := 0
+	if ab.showRule {
+		y = 1
+	}
+	if y >= r.H {
+		return
+	}
+	start, end := 0, r.W
+	if len(ab.buttons) > 0 {
+		if ab.alignEnd {
+			end = ab.buttonsStart - ab.gap
+		} else {
+			start = ab.buttonsEnd + ab.gap
+		}
+	}
+	if end-start < ab.hintWidth {
+		return
+	}
+	x := start
+	if !ab.alignEnd {
+		x = end - ab.hintWidth
+	}
+	buf.WriteString(originX+x, originY+y, ab.hint, ab.tokens.Color(ColorMuted), cell.NoColor, 0)
 }
 
 func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
