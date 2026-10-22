@@ -258,7 +258,8 @@ var AgentTools = []ToolDef{
 			Description: "Ask the user 1-4 focused questions only when an answer is genuinely required to continue. " +
 				"Supply questions as a real JSON array, not a JSON-encoded string. Each item needs a short header and a clear question. " +
 				"Options are optional because the user can write a custom response. Batch related questions in one call. " +
-				"The result maps each question to the user's answer, or explicitly reports cancellation or validation failure.",
+				"The result maps each question to the user's answer, or explicitly reports cancellation or validation failure. " +
+				"A question the user left unanswered reads as \"(no answer)\": the human may skip any question, so treat a skip as a decision, not an error.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

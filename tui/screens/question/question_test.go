@@ -42,13 +42,13 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 	if host.Focused() != InputID {
 		t.Fatalf("text-only question entry focus=%v, want %v", host.Focused(), InputID)
 	}
-	// Empty text answers block without painting a redundant hint line.
-	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"}); result.Cmd != nil {
-		t.Fatal("empty text answer bypassed validation")
+	// A human may leave a question unanswered, so the empty write-in reaches
+	// the review instead of being blocked with a hint line.
+	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"})
+	if result.Cmd != nil || !screen.Reviewing() {
+		t.Fatal("unanswered text question could not reach the review")
 	}
-	if screen.Current() != 1 || screen.errMsg != "" {
-		t.Fatalf("silent block drifted: index=%d errMsg=%q", screen.Current(), screen.errMsg)
-	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.previous"})
 	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.previous"})
 	selected, _ := screen.options.Selected()
 	if screen.Current() != 0 || selected.ID != "option:0" {
@@ -56,9 +56,14 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 			screen.Current(), selected.ID)
 	}
 	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"})
-	if screen.Current() != 1 {
-		t.Fatal("next navigation did not restore the subsequent question")
+	if !screen.Reviewing() {
+		t.Fatal("next navigation did not restore the review pass")
 	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.rail.select", Payload: ui.ListItem{ID: "rail/1", Payload: 1}})
+	if screen.Current() != 1 || screen.Reviewing() {
+		t.Fatalf("rail selection stayed on index %d", screen.Current())
+	}
+	host.Focus(InputID)
 
 	for _, r := range "note" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -72,7 +77,7 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 	if host.Focused() != InputID {
 		t.Fatalf("newline keystroke moved focus to %v", host.Focused())
 	}
-	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
+	result = host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
 	if result.Cmd != nil || !screen.Reviewing() {
 		t.Fatal("final answer must enter review without submitting")
 	}
@@ -178,7 +183,7 @@ func TestScreenMultiSelectValidatesAndReturnsSelectedOptions(t *testing.T) {
 	}
 }
 
-func TestScreenCustomAnswerRequiresTextAndAcceptsPaste(t *testing.T) {
+func TestScreenCustomAnswerAcceptsPaste(t *testing.T) {
 	screen := New(theme.DefaultDark())
 	screen.Reset(`[{"question":"Choose or type","options":["known"]}]`)
 	host := newTestHost(t, screen)
@@ -200,23 +205,6 @@ func TestScreenCustomAnswerRequiresTextAndAcceptsPaste(t *testing.T) {
 		t.Fatalf("custom not selected: %v", got)
 	}
 
-	// Empty write-in still blocks submit, but silently: the placeholder in
-	// the prompt area already asks for text, so no hint repeats underneath.
-	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"}); result.Cmd != nil {
-		t.Fatal("empty custom answer bypassed validation")
-	}
-	if screen.Current() != 0 || screen.errMsg != "" {
-		t.Fatalf("blocked advance drifted: index=%d errMsg=%q", screen.Current(), screen.errMsg)
-	}
-	buf = surface.NewCellBuffer(80, 12)
-	host.Paint(buf)
-	painted := bufferText(buf)
-	for _, redundant := range []string{"Type your response", "Type an answer to continue"} {
-		if strings.Contains(painted, redundant) {
-			t.Fatalf("redundant text-input validation painted:\n%s", painted)
-		}
-	}
-
 	host.Handle(tea.PasteMsg{Content: "pasted answer"})
 	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
 	if result.Cmd != nil || !screen.Reviewing() {
@@ -226,6 +214,35 @@ func TestScreenCustomAnswerRequiresTextAndAcceptsPaste(t *testing.T) {
 	message := result.Cmd().(ResultMsg)
 	if got, want := message.Result.Answers["1"], "pasted answer"; got != want {
 		t.Fatalf("custom answer=%q, want %q", got, want)
+	}
+}
+
+// A stray keystroke in the write-in must never trap the question: clearing the
+// text releases exactly the write-in claim, the checked options survive, and
+// the deck still reaches its review.
+func TestScreenClearingWriteInReleasesOnlyTheWriteInClaim(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.Reset(`[{"question":"Choose all","options":["alpha","beta"],"multiple":true}]`)
+	host := newTestHost(t, screen)
+	host.Focus(OptionsID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Focus(InputID)
+	for _, r := range "accidental" {
+		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if got := screen.Answer(0); !strings.Contains(got, "alpha") || !strings.Contains(got, "accidental") {
+		t.Fatalf("typing did not claim the write-in answer: %q", got)
+	}
+	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if got := screen.Answer(0); got != "alpha" {
+		t.Fatalf("cleared write-in stayed in the answer: %q", got)
+	}
+	if containsCustom(screen.choices[0]) {
+		t.Fatalf("cleared write-in kept its selection: %v", screen.choices[0])
+	}
+	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"}); result.Cmd != nil || !screen.Reviewing() {
+		t.Fatal("a released write-in blocked the review step")
 	}
 }
 
@@ -285,8 +302,15 @@ func TestScreenRailShowsAnswerStateAndSelectsQuestions(t *testing.T) {
 		t.Fatalf("after option commit index=%d answer=%q", screen.Current(), screen.Answer(0))
 	}
 	railItems := screen.railRows.Items()
-	if len(railItems) != 4 || railItems[0].Icon != "✓" || railItems[2].Icon != "○" || railItems[3].Label != "Review answers" {
+	if len(railItems) != 3 || railItems[0].Icon != "✓" || railItems[2].Icon != "○" {
 		t.Fatalf("rail icons after answering: %+v", railItems)
+	}
+	// The rail indexes questions only; review is reached through the actions,
+	// never as an unnumbered extra row.
+	for _, item := range railItems {
+		if item.Label == "Review answers" || item.ID == "rail/review" {
+			t.Fatalf("rail painted an out-of-contract review row: %+v", railItems)
+		}
 	}
 
 	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.rail.select", Payload: ui.ListItem{ID: "rail/0", Label: "1. Color", Payload: 0}})

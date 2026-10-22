@@ -133,6 +133,50 @@ func TestDockedActionBarPacksFromLeftWithRule(t *testing.T) {
 	}
 }
 
+// A hint rides the button row itself, at the end opposite the decisions, and
+// disappears rather than crowding or clipping a button when the row is narrow.
+func TestActionBarPaintsHintOppositeTheButtons(t *testing.T) {
+	bar := NewDockedActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{Label: "Next", Action: "next", Enabled: true},
+		ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true},
+	)
+	bar.SetHint("Tab: actions")
+	bar.Layout(LayoutContext{}, Rect{W: 60, H: 2})
+	buf := surface.NewCellBuffer(60, 2)
+	bar.Paint(buf, 0, 0, PaintContext{})
+	var row strings.Builder
+	for x := 0; x < 60; x++ {
+		row.WriteRune(buf.Get(x, 1).Char)
+	}
+	if !strings.HasSuffix(strings.TrimRight(row.String(), " "), "Tab: actions") {
+		t.Fatalf("hint is not at the end of the button row: %q", row.String())
+	}
+	if !strings.HasPrefix(row.String(), "[ Next ]") {
+		t.Fatalf("buttons did not keep the other end: %q", row.String())
+	}
+
+	// Too narrow for both: the decisions win and the hint yields entirely
+	// instead of clipping into a fragment or pushing a button off the row.
+	bounds, _ := bar.ButtonBounds("next")
+	for width := bounds.W; width < bounds.W+28; width++ {
+		bar.Layout(LayoutContext{}, Rect{W: width, H: 2})
+		buf = surface.NewCellBuffer(60, 2)
+		bar.Paint(buf, 0, 0, PaintContext{})
+		text := ""
+		for x := 0; x < 60; x++ {
+			text += string(buf.Get(x, 1).Char)
+		}
+		end, _ := bar.ButtonBounds("cancel")
+		if end.X+end.W > width {
+			t.Fatalf("width %d: hint pushed a button outside the row", width)
+		}
+		fits := width-end.X-end.W >= bar.gap+bar.hintWidth
+		if fits != strings.Contains(text, "Tab: actions") {
+			t.Fatalf("width %d: hint painted=%v with %d columns free: %q", width, !fits, width-end.X-end.W, text)
+		}
+	}
+}
+
 func TestActionBarConstrainedWidthKeepsEveryDecisionInsideRow(t *testing.T) {
 	bar := NewDockedActionBar("actions", NewTokenSet(theme.DefaultDark()),
 		ActionBarButton{Label: "Allow", Action: "allow", Shortcut: "y", Enabled: true},
