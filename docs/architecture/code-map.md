@@ -29,7 +29,7 @@ detailed contracts.
 |---|---|
 | `agent/` | Agent turn loop, supervisor and recovery, request boundaries, guidance intake, tool dispatch. |
 | `session/` | Session runtime: tools execution, memory pipeline, children (live sub-agent limit), collaboration wiring, compaction triggers, agent code intelligence (`code_intelligence.go`) and plan discipline (`plan_discipline.go`). |
-| `sessiondb/` | Session SQLite schema: transcript, recovery checkpoints, context publication, queue. |
+| `sessiondb/` | Session SQLite schema: transcript, recovery checkpoints, context publication and their row-stored message lists, queue. |
 | `prompt/` | Every code-authored model instruction template ([prompt architecture](../reference/prompt-architecture.md)). |
 | `provider/` | Wire protocols, streaming, failure classification, connection accounting. |
 | `codexio/` | Native Codex/OpenAI interfaces such as freeform `apply_patch`. |
@@ -40,6 +40,7 @@ detailed contracts.
 | `capability/`, `skills/`, `mcpclient/`, `cranemcp/` | Capability discovery/acquisition/grants, skill loading, MCP client transport, Crude's own MCP control server. |
 | `safety/` | Command safety assessment and permission policy. |
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
+| `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
 | `search/`, `docconv/` | Web/arXiv search engines and binary document conversion for read/fetch tools. |
 | `worktree/` | Managed execution worktrees and integration plans. |
@@ -77,6 +78,7 @@ detailed contracts.
 | `tui/theme/` | Themes and design tokens; the only place for hard-coded hex. |
 | `tui/termview/` | Terminal scrollback, selection and copy projection. |
 | `tui/tools/` | Tool-result presentation helpers. |
+| `tui/screens/perfdash/` | Performance surface: sections, charts, owner tables, plain-language findings, copyable report. |
 | `tui/perf/`, `tui/uitest/`, `tui/platform/`, `tui/xchroma/` | Perf logging, UI test harness, console platform shims, Chroma adapter. |
 
 ## Vendored replacements (`third_party/`)

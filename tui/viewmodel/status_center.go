@@ -43,7 +43,7 @@ func (m *App) syncLSPStatusIssues() {
 		center.SetIssue(ttypes.IssueSnapshot{
 			ID: issueID, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID},
 			Severity: ttypes.SeverityError, Summary: server.Name + " failed", Detail: server.Error,
-			Actions: []ttypes.StatusAction{{ID: "lsp:restart", Label: "Restart Server", Enabled: true}},
+			Actions: []ttypes.StatusAction{{ID: "lsp:restart", Label: "Retry", Enabled: true}},
 		})
 	}
 	for _, issue := range center.Issues() {

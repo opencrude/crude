@@ -511,15 +511,15 @@ func TestChildParkedStopPreservesNewerContextAndPassiveResume(t *testing.T) {
 	if checkpoint, open, err := sessiondb.LoadRecoveryCheckpoint(db, f.childID, f.childID); err != nil || open {
 		t.Fatalf("stopped child still has an unfinished incident: %+v open=%v err=%v", checkpoint, open, err)
 	}
-	var archiveJSON []byte
-	var mirrorRevision uint64
-	if err := s.db.QueryRow(`SELECT archive_json,context_revision FROM agent_recoveries WHERE incident_id=?`, status.ID).Scan(&archiveJSON, &mirrorRevision); err != nil {
+	var mirrorSession, mirrorAgent string
+	if err := s.db.QueryRow(`SELECT session_id,agent_id FROM agent_recoveries WHERE incident_id=?`, status.ID).Scan(&mirrorSession, &mirrorAgent); err != nil {
 		t.Fatal(err)
 	}
-	var mirroredArchive []provider.ChatMessage
-	if err := json.Unmarshal(archiveJSON, &mirroredArchive); err != nil {
-		t.Fatal(err)
+	mirror, found, err := sessiondb.LoadRecoveryIncident(s.db, mirrorSession, mirrorAgent, status.ID)
+	if err != nil || !found {
+		t.Fatalf("load parent mirror: found=%v err=%v", found, err)
 	}
+	mirroredArchive, mirrorRevision := mirror.Archive, mirror.ContextRevision
 	counts := make(map[string]int)
 	for _, message := range mirroredArchive {
 		counts[message.InternalID]++

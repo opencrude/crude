@@ -1841,6 +1841,12 @@ func (r *Renderer) materializeOffscreen(width int) {
 		r.vl.BuildIndex()
 	}
 	r.vl.BuildIndex()
+	// A width-only reflow keeps offscreen items at their previous heights
+	// until exposed; only source invalidation materializes history.
+	if r.lazyWidthReflow {
+		r.materializing = false
+		return
+	}
 	anchor, local := r.vl.ItemAtLine(r.vl.ScrollY())
 	r.materializing = r.vl.MaterializeNear(r.renderItem, width, anchor, time.Now().Add(budget))
 	r.materializedAt = time.Now()
@@ -1859,11 +1865,12 @@ func (r *Renderer) materializeOffscreen(width int) {
 }
 
 // Materializing reports whether offscreen history is still rendering in
-// the background of successive frames; the shell keeps frames coming. A
-// projection that stopped being painted (hidden, minimized) only resumes
-// when it is shown again, so it never holds the frame rate up.
+// the background of successive frames, or rows wait for background diff
+// colors; the shell keeps frames coming. A projection that stopped being
+// painted (hidden, minimized) only resumes when it is shown again, so it never
+// holds the frame rate up.
 func (r *Renderer) Materializing() bool {
-	return r != nil && r.materializing && time.Since(r.materializedAt) < time.Second
+	return r != nil && (r.materializing && time.Since(r.materializedAt) < time.Second || len(r.frameSensitive) > 0 && DiffSyntaxBusy())
 }
 
 // messageRenders attributes transcript rendering by message kind so the

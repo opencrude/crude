@@ -701,11 +701,29 @@ implementation is copied or depended on.
 - Hydration publishes one normalized stopped transcript, never each growing
   prefix. Diff previews select their lexer once per file and tokenize only their
   visible preview budget; counting omitted visual rows must not highlight them.
+  The 24-row preview stops building rows at its budget, and its "+N more
+  changes" footer counts hidden diff lines, not wrapped screen rows.
+- File edits render expanded by default, so a row lexes at most
+  `diffSyntaxSyncBytes` (1 KiB) of diff text on the UI goroutine. Larger files
+  paint at once with their diff bands and fallback colors while one background
+  worker lexes them (`tui/chatprojection/diff_syntax.go`, a bounded cache keyed
+  by lexer and text); the waiting row is frame-sensitive, repaints on the next
+  activity phase and stops once colored. Colors never change a row's text or
+  height. Live and hydrated rows take the same path.
+- Offscreen history materializes nearest-first within a per-frame budget
+  (`chatprojection.DefaultMaterializeBudget`); unrendered items keep estimated
+  heights and the line under the viewport top stays fixed while they settle. The
+  visible range is never budgeted, and a width-only reflow leaves offscreen
+  items at their previous heights until exposed.
 - Hydration projects explicit display snapshots first, then excludes context-only
   provider envelopes using visibility/metadata. Recalled memory without a display
   snapshot must contribute zero chat rows, not blank fallback rows sorted at the
   transcript tail by their later persistence timestamp. Restore and compaction
   boundary snapshots remain visible; provider history is not deleted.
+  `canonicalizeDisplayMeta` derives no snapshot for a context-only message (turn
+  context, runtime continuity, enrichment): resuming an interrupted run rebuilds
+  its history from the recovery archive, which holds them, and they painted as
+  human messages.
 
 ## Data and parity
 

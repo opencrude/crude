@@ -105,7 +105,7 @@ type Model struct {
 	draftRevision         uint64
 	// sendingRevision is the draft revision submitted and awaiting its
 	// durable receipt; zero when nothing is in flight.
-	sendingRevision uint64
+	sendingRevision       uint64
 	pasteSequence         uint64
 	pendingPastes         map[uint64]bool
 	attachmentOffset      int
@@ -462,7 +462,7 @@ func (m *Model) recordDraftEdit(before ui.TextAreaState) {
 // DraftRevision is a monotonic identity for the complete editable draft. It
 // prevents a late admission result from clearing an edited or ABA-replaced
 // composer value.
-func (m Model) DraftRevision() uint64             { return m.draftRevision }
+func (m Model) DraftRevision() uint64 { return m.draftRevision }
 
 // MarkSending records that the draft at revision was submitted. The composer
 // presents it as sending until the receipt clears it or the user edits it.

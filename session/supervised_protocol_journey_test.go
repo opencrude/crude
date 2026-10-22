@@ -137,23 +137,15 @@ func loadSessionSupervisedJourneySnapshot(ctx context.Context, path, sessionID, 
 			return snapshot, fmt.Errorf("exact owner recovery records = %+v", records)
 		}
 		snapshot.checkpoint.Status = records[0]
-		var pending, archive, active []byte
-		if err := db.QueryRowContext(ctx, `SELECT pending_input_json,input_admitted,archive_json,active_context_json,
-			context_owner_id,context_revision,context_generation,context_reason,owner_data
-			FROM agent_recoveries WHERE session_id=? AND agent_id=? AND incident_id=?`, sessionID, records[0].AgentID, incidentID).Scan(
-			&pending, &snapshot.checkpoint.InputAdmitted, &archive, &active, &snapshot.checkpoint.ContextOwnerID,
-			&snapshot.checkpoint.ContextRevision, &snapshot.checkpoint.ContextGeneration, &snapshot.checkpoint.ContextReason, &snapshot.checkpoint.OwnerData,
-		); err != nil {
-			return snapshot, err
+		stored, found, err := sessiondb.LoadRecoveryIncident(db, sessionID, records[0].AgentID, incidentID)
+		if err != nil || !found {
+			return snapshot, fmt.Errorf("load recovery incident %s: found=%t err=%v", incidentID, found, err)
 		}
-		for _, value := range []struct {
-			raw    []byte
-			target any
-		}{{pending, &snapshot.checkpoint.PendingInput}, {archive, &snapshot.checkpoint.Archive}, {active, &snapshot.checkpoint.ActiveContext}} {
-			if err := json.Unmarshal(value.raw, value.target); err != nil {
-				return snapshot, err
-			}
-		}
+		checkpoint := &snapshot.checkpoint
+		checkpoint.PendingInput, checkpoint.InputAdmitted = stored.PendingInput, stored.InputAdmitted
+		checkpoint.Archive, checkpoint.ActiveContext = stored.Archive, stored.ActiveContext
+		checkpoint.ContextOwnerID, checkpoint.ContextRevision = stored.ContextOwnerID, stored.ContextRevision
+		checkpoint.ContextGeneration, checkpoint.ContextReason, checkpoint.OwnerData = stored.ContextGeneration, stored.ContextReason, stored.OwnerData
 	}
 	rows, err := db.QueryContext(ctx, `SELECT internal_id,message_json FROM immutable_message_identities
 		WHERE session_id=? AND agent_id=? ORDER BY internal_id`, sessionID, ownerID)

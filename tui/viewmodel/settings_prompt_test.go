@@ -211,6 +211,7 @@ func TestSettingsDirtyCloseXClosesWithoutPrompt(t *testing.T) {
 		t.Fatal("× left Settings or a prompt open")
 	}
 }
+
 // Back is cancel for an editor: it returns to the same catalog, discards the
 // edit and schedules no persistence.
 func TestSettingsDirtyEditorBackReturnsToCatalog(t *testing.T) {

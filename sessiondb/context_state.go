@@ -84,7 +84,8 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		return ContextState{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	current, exists, raw, err := loadContextStateTx(tx, p.SessionID, p.AgentID)
+	cacheKey := contextCacheKey{db, p.SessionID, p.AgentID}
+	current, stored, exists, err := loadContextStateTx(tx, cacheKey)
 	if err != nil {
 		return ContextState{}, err
 	}
@@ -102,9 +103,13 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		if err := registerImmutableMessagesTx(tx, p.SessionID, p.AgentID, current.Messages, "archive"); err != nil {
 			return ContextState{}, err
 		}
+		raw, err := loadContextEncodingTx(tx, cacheKey)
+		if err != nil {
+			return ContextState{}, err
+		}
 		var archivedReason string
 		var archivedRaw []byte
-		err := tx.QueryRow(`SELECT reason,messages_json FROM agent_context_generations WHERE session_id=? AND agent_id=? AND generation=?`, p.SessionID, p.AgentID, current.Generation).Scan(&archivedReason, &archivedRaw)
+		err = tx.QueryRow(`SELECT reason,messages_json FROM agent_context_generations WHERE session_id=? AND agent_id=? AND generation=?`, p.SessionID, p.AgentID, current.Generation).Scan(&archivedReason, &archivedRaw)
 		if err == nil {
 			if archivedReason != current.Reason || !reflect.DeepEqual(archivedRaw, raw) {
 				return ContextState{}, errors.New("sessiondb: context archive identity conflict")
@@ -126,17 +131,24 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		transcriptChanged = transcriptChanged || appended
 	}
 	semanticChanged := false
+	// shared is how many leading messages next keeps from the current context.
+	shared := len(current.Messages)
 	if p.Mutation.Replace != nil {
 		replacement := p.Mutation.Replace
 		if replacement.Generation == 0 || replacement.Reason == "" {
 			return ContextState{}, errors.New("sessiondb: invalid context replacement")
 		}
-		if err := validateReplacementMessagesTx(tx, p.SessionID, p.AgentID, replacement.Messages); err != nil {
+		// A recovery checkpoint republishes its whole active context each
+		// round. The committed prefix was validated when it was committed and
+		// its identities are immutable, so only the new messages are checked.
+		shared = commonMessagePrefix(current.Messages, replacement.Messages)
+		if err := validateReplacementMessagesTx(tx, p.SessionID, p.AgentID, replacement.Messages, shared); err != nil {
 			return ContextState{}, err
 		}
 		next.Generation, next.Reason = replacement.Generation, replacement.Reason
 		next.Messages = append([]provider.ChatMessage(nil), replacement.Messages...)
-		semanticChanged = !exists || current.Generation != next.Generation || current.Reason != next.Reason || !reflect.DeepEqual(current.Messages, next.Messages)
+		semanticChanged = !exists || current.Generation != next.Generation || current.Reason != next.Reason ||
+			shared != len(current.Messages) || len(next.Messages) != len(current.Messages)
 	} else {
 		if !exists {
 			next.Generation, next.Reason = 1, "append"
@@ -151,25 +163,24 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 	}
 	next.Revision = actual + 1
 	if !semanticChanged && !transcriptChanged && !p.ArchivePrevious && p.Recovery == nil && len(p.Admissions) == 0 && p.Compaction == nil && p.RuntimeState == nil {
+		current.Messages = append([]provider.ChatMessage(nil), current.Messages...)
 		return current, nil
 	}
+	// Related receipts and recovery still advance the exact publication
+	// revision when the messages did not change; nothing of them is rewritten.
+	write, err := planListWrite(stored, exists, shared, next.Messages)
+	if err != nil {
+		return ContextState{}, err
+	}
+	updatedAt := time.Now().UnixNano()
 	var result sql.Result
-	// activePayload is the exact encoding of next.Messages; the recovery
-	// checkpoint below stores the same active context and reuses it.
-	var activePayload []byte
-	if exists && !semanticChanged {
-		activePayload = raw
-		// Related receipts/recovery still advance the exact publication revision,
-		// but the immutable source payload did not change. Do not re-encode and
-		// rewrite every captured image merely to publish lifecycle bookkeeping.
-		result, err = tx.Exec(`UPDATE agent_context_state SET revision=?,updated_at=? WHERE session_id=? AND agent_id=? AND revision=?`, next.Revision, time.Now().UnixNano(), p.SessionID, p.AgentID, actual)
-	} else {
-		payload, encodeErr := json.Marshal(next.Messages)
-		if encodeErr != nil {
-			return ContextState{}, encodeErr
-		}
-		activePayload = payload
-		result, err = tx.Exec(`INSERT INTO agent_context_state(session_id,agent_id,revision,generation,reason,messages_json,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,agent_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,reason=excluded.reason,messages_json=excluded.messages_json,updated_at=excluded.updated_at WHERE agent_context_state.revision=?`, p.SessionID, p.AgentID, next.Revision, next.Generation, next.Reason, payload, time.Now().UnixNano(), actual)
+	switch {
+	case !exists:
+		result, err = tx.Exec(`INSERT INTO agent_context_state(session_id,agent_id,revision,generation,reason,messages_json,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,agent_id) DO NOTHING`, p.SessionID, p.AgentID, next.Revision, next.Generation, next.Reason, write.base, updatedAt)
+	case write.rewrite:
+		result, err = tx.Exec(`UPDATE agent_context_state SET revision=?,generation=?,reason=?,messages_json=?,updated_at=? WHERE session_id=? AND agent_id=? AND revision=?`, next.Revision, next.Generation, next.Reason, write.base, updatedAt, p.SessionID, p.AgentID, actual)
+	default:
+		result, err = tx.Exec(`UPDATE agent_context_state SET revision=?,generation=?,reason=?,updated_at=? WHERE session_id=? AND agent_id=? AND revision=?`, next.Revision, next.Generation, next.Reason, updatedAt, p.SessionID, p.AgentID, actual)
 	}
 	if err != nil {
 		return ContextState{}, err
@@ -181,12 +192,16 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 	if affected != 1 {
 		return ContextState{}, &ContextRevisionConflictError{p.SessionID, p.AgentID, p.ExpectedRevision, actual}
 	}
+	if err := writeContextTailTx(tx, cacheKey, stored, write); err != nil {
+		return ContextState{}, err
+	}
+	var recorded func()
 	if p.Recovery != nil {
 		checkpoint := *p.Recovery
 		checkpoint.ContextOwnerID, checkpoint.ContextRevision = p.AgentID, next.Revision
 		checkpoint.ContextGeneration, checkpoint.ContextReason = next.Generation, next.Reason
-		checkpoint.ActiveContext = append([]provider.ChatMessage(nil), next.Messages...)
-		if err := saveRecoveryCheckpointEncodedTx(tx, p.SessionID, checkpoint, activePayload); err != nil {
+		checkpoint.ActiveContext = next.Messages[:len(next.Messages):len(next.Messages)]
+		if recorded, err = saveRecoveryCheckpointTx(tx, db, p.SessionID, checkpoint); err != nil {
 			return ContextState{}, err
 		}
 	}
@@ -206,6 +221,11 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 	if err := tx.Commit(); err != nil {
 		return ContextState{}, err
 	}
+	rememberContext(cacheKey, contextCacheEntry{revision: next.Revision, updatedAt: updatedAt, list: write.result})
+	if recorded != nil {
+		recorded()
+	}
+	next.Messages = append([]provider.ChatMessage(nil), next.Messages...)
 	return next, nil
 }
 
@@ -236,27 +256,34 @@ func appendTranscriptMessageTx(tx *sql.Tx, sessionID, contextOwnerID string, del
 	return true, nil
 }
 
-func validateReplacementMessagesTx(tx *sql.Tx, sessionID, agentID string, messages []provider.ChatMessage) error {
-	seen := make(map[string]provider.ChatMessage, len(messages))
-	for _, message := range messages {
+// validateReplacementMessagesTx checks every message of a replacement for
+// duplicates and its first committed messages no further: they are the current
+// context's own, already registered and checked against the transcript.
+func validateReplacementMessagesTx(tx *sql.Tx, sessionID, agentID string, messages []provider.ChatMessage, committed int) error {
+	seen := make(map[string]*provider.ChatMessage, len(messages))
+	for i := range messages {
+		message := &messages[i]
 		if message.InternalID == "" {
 			continue
 		}
 		if existing, ok := seen[message.InternalID]; ok {
-			if !reflect.DeepEqual(existing, message) {
+			if !sameMessage(existing, message) {
 				return &ContextMessageConflictError{message.InternalID, "replacement"}
 			}
 			return &ContextMessageConflictError{message.InternalID, "duplicate replacement"}
 		}
 		seen[message.InternalID] = message
-		if err := registerImmutableMessageTx(tx, sessionID, agentID, message, "replacement"); err != nil {
+		if i < committed {
+			continue
+		}
+		if err := registerImmutableMessageTx(tx, sessionID, agentID, *message, "replacement"); err != nil {
 			return err
 		}
 		transcript, exists, err := loadPersistedMessageByInternalIDTx(tx, message.InternalID)
 		if err != nil {
 			return err
 		}
-		canonicalMessage := canonicalPersistedMessage(persistedMessage{Message: message}).Message
+		canonicalMessage := canonicalPersistedMessage(persistedMessage{Message: *message}).Message
 		transcriptProjection := transcriptPersistedProjection(persistedMessage{Message: canonicalMessage}).Message
 		if exists && !reflect.DeepEqual(transcript.Message, transcriptProjection) {
 			return &ContextMessageConflictError{message.InternalID, "transcript"}
@@ -271,36 +298,52 @@ func SaveContextState(db *sql.DB, sessionID, agentID string, state ContextState)
 }
 
 func LoadContextState(db *sql.DB, sessionID, agentID string) (ContextState, bool, error) {
-	state := ContextState{AgentID: agentID}
-	var payload []byte
-	err := db.QueryRow(`SELECT revision, generation, reason, messages_json FROM agent_context_state WHERE session_id = ? AND agent_id = ?`, sessionID, agentID).
-		Scan(&state.Revision, &state.Generation, &state.Reason, &payload)
-	if err == sql.ErrNoRows {
-		return ContextState{}, false, nil
-	}
+	tx, err := db.Begin()
 	if err != nil {
 		return ContextState{}, false, err
 	}
-	if err := json.Unmarshal(payload, &state.Messages); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	state, _, exists, err := loadContextStateTx(tx, contextCacheKey{db, sessionID, agentID})
+	if err != nil || !exists {
 		return ContextState{}, false, err
 	}
-	return state, true, nil
+	state.Messages = append([]provider.ChatMessage(nil), state.Messages...)
+	return state, true, tx.Commit()
 }
 
-func loadContextStateTx(tx *sql.Tx, sessionID, agentID string) (ContextState, bool, []byte, error) {
-	state := ContextState{AgentID: agentID}
-	var payload []byte
-	err := tx.QueryRow(`SELECT revision,generation,reason,messages_json FROM agent_context_state WHERE session_id=? AND agent_id=?`, sessionID, agentID).Scan(&state.Revision, &state.Generation, &state.Reason, &payload)
+// loadContextStateTx reads the current context and how it is stored. Its
+// messages are shared with the context cache and clipped; callers copy before
+// writing elements.
+func loadContextStateTx(tx *sql.Tx, key contextCacheKey) (ContextState, storedList, bool, error) {
+	state := ContextState{AgentID: key.agentID}
+	var updatedAt int64
+	err := tx.QueryRow(`SELECT revision,generation,reason,updated_at FROM agent_context_state WHERE session_id=? AND agent_id=?`, key.sessionID, key.agentID).Scan(&state.Revision, &state.Generation, &state.Reason, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ContextState{}, false, nil, nil
+		return ContextState{}, storedList{}, false, nil
 	}
 	if err != nil {
-		return ContextState{}, false, nil, err
+		return ContextState{}, storedList{}, false, err
 	}
-	if err := json.Unmarshal(payload, &state.Messages); err != nil {
-		return ContextState{}, false, nil, err
+	entry, ok := contextCache.get(key)
+	if !ok || entry.revision != state.Revision || entry.updatedAt != updatedAt {
+		var base []byte
+		if err := tx.QueryRow(`SELECT messages_json FROM agent_context_state WHERE session_id=? AND agent_id=?`, key.sessionID, key.agentID).Scan(&base); err != nil {
+			return ContextState{}, storedList{}, false, err
+		}
+		tail, err := loadContextTailTx(tx, key)
+		if err != nil {
+			return ContextState{}, storedList{}, false, err
+		}
+		list, err := decodeMessageList(base, tail)
+		if err != nil {
+			return ContextState{}, storedList{}, false, err
+		}
+		entry = contextCacheEntry{revision: state.Revision, updatedAt: updatedAt, list: list}
+		rememberContext(key, entry)
 	}
-	return state, true, payload, nil
+	messages := entry.list.messages
+	state.Messages = messages[:len(messages):len(messages)]
+	return state, storedList{messages: state.Messages, base: entry.list.base}, true, nil
 }
 
 func appendContextMessageTx(tx *sql.Tx, sessionID string, state *ContextState, delta ContextMessageDelta) (bool, error) {
@@ -312,11 +355,12 @@ func appendContextMessageTx(tx *sql.Tx, sessionID string, state *ContextState, d
 		return false, err
 	}
 	inContext := false
-	for _, existing := range state.Messages {
+	for i := range state.Messages {
+		existing := &state.Messages[i]
 		if existing.InternalID != delta.Message.InternalID {
 			continue
 		}
-		if !reflect.DeepEqual(existing, delta.Message) {
+		if !sameMessage(existing, &delta.Message) {
 			return false, &ContextMessageConflictError{delta.Message.InternalID, "context"}
 		}
 		inContext = true

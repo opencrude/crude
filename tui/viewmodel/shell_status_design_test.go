@@ -228,6 +228,12 @@ func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 			t.Fatalf("footer retained Git workspace fact %q (lives in the header branch segment): %q", fact, footer)
 		}
 	}
+	// One-sided tracking paints like the Git panel: no "↑0" noise.
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{Branch: "main", Behind: 1})
+	app.paintShellFrame()
+	if header = rowText(app, 0); !strings.Contains(header, "↓1") || strings.Contains(header, "↑0") {
+		t.Fatalf("header tracking for a branch only behind: %q", header)
+	}
 	if strings.Contains(header, "Git main") {
 		t.Fatalf("header spells out Git instead of using the shared branch symbol: %q", header)
 	}

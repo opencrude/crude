@@ -341,8 +341,17 @@ func searchText(item Item) string {
 }
 
 func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListItem {
-	if (s.docked || s.stats) && item.PrimaryAction != "" && item.PrimaryEnabled {
-		rows = append(rows, ui.ListItem{ID: item.ID + "/open", Label: item.PrimaryLabel, Command: true, Payload: statusRow{ItemID: item.ID, Action: item.PrimaryAction}})
+	// Docked surfaces have no action bar: every command an item offers is a
+	// row of its own, so nothing is reachable only through a context menu.
+	if s.docked || s.stats {
+		if item.PrimaryAction != "" && item.PrimaryEnabled {
+			rows = append(rows, ui.ListItem{ID: item.ID + "/open", Label: item.PrimaryLabel, Command: true, Payload: statusRow{ItemID: item.ID, Action: item.PrimaryAction}})
+		}
+		for index, action := range item.Actions {
+			if action.Enabled {
+				rows = append(rows, ui.ListItem{ID: item.ID + "/action/" + strconv.Itoa(index), Label: action.Label, Command: true, Payload: statusRow{ItemID: item.ID, Action: action.ID}})
+			}
+		}
 	}
 	lines := make([]DetailLine, 0, len(item.Lines)+8)
 	if item.Subtitle != "" {

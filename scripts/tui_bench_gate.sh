@@ -78,6 +78,7 @@ run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview
 run_bench '^BenchmarkGitDiffLongLine(Paint|FarRightPaint)$' ./tui/screens/gitdiff
 run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory
 run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./sessiondb
+run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs)$' ./sessiondb
 run_bench '^BenchmarkSessionDatabaseStartup$' ./sessiondb
 run_bench '^BenchmarkEstimateMultipartImage$' ./provider
 run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000Requests)$' ./workspace

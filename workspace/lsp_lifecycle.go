@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -363,7 +365,7 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 		m.mu.Lock()
 		state.client = nil
 		if !stale {
-			state.status, state.err = LSPFailed, state.cmd+" failed to start: "+err.Error()
+			state.status, state.err = LSPFailed, lspStartError(state.cmd, err)
 			m.clearServerDiagnosticsLocked(key)
 		}
 	} else {
@@ -372,6 +374,16 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 	state.cancel = nil
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
+}
+
+// lspStartError says what a failed start means for the user. A missing
+// executable is the common case and has one remedy, so it is not reported as
+// the transport's stack of wrapped errors.
+func lspStartError(cmd string, err error) string {
+	if errors.Is(err, exec.ErrNotFound) {
+		return cmd + " is not installed or not on PATH. Install it, then choose Retry."
+	}
+	return cmd + " failed to start: " + err.Error()
 }
 
 func (m *LSPManager) liveCountLocked() int {

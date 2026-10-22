@@ -507,6 +507,7 @@ type actor struct {
 	// language servers, so their slow work never delays a keystroke.
 	terminalLane     *resourceLane
 	fileWatch        *coreFileWatch
+	stopGitFetch     func()
 	documentReleases []document.Owner
 }
 
@@ -545,6 +546,9 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	} else {
 		a.fileWatch = watch
 	}
+	// Remote-tracking refs stay current for every attached shell; the fetch
+	// moves .git refs, which the file watch above turns into a reconcile.
+	a.stopGitFetch = ws.Git.StartAutoFetch()
 	return a
 }
 
@@ -840,6 +844,9 @@ func (a *actor) close() {
 	a.once.Do(func() {
 		close(a.stop)
 		a.fileWatch.Close()
+		if a.stopGitFetch != nil {
+			a.stopGitFetch()
+		}
 		<-a.done
 		a.resourceLane.close()
 		a.terminalLane.close()

@@ -772,6 +772,21 @@ stored overlay is loaded as is. **Reset section** returns that category to full
 inheritance. New format alignment is manual outside product code, never an
 automatic migration or guessed configuration repair.
 
+Each preference page has exactly one reset, owned by `tui/settings/page_reset.go`:
+**Use Application settings** in Workspace scope (removes the page's stored
+workspace leaves) and **Restore defaults** in Application scope. A reset removes
+only the paths that page owns; pages sharing a stored section (Memory and the
+Memory Agent, Security and the Auto Review Agent, Code Intelligence and Language
+Servers, Skills and MCP) never clear each other. Collection pages (Accounts,
+Agents in Application scope, Skills, MCP, Sources, Language Servers) and Network
+have no page reset; their items are reset or removed individually. A reset
+clears the page's staged model, so a reverted value cannot be saved back.
+
+Editors have **Save** and **Back**. Back, Esc, ✕ and Close discard unsaved
+editor changes without a prompt; navigating to another page from an unsaved
+editor still asks. Save keeps the window open, and an agent's settings control
+cannot close the window over unsaved edits.
+
 The selected account's `connection` supplies endpoint, authentication mode,
 wire protocol, headers, request options and transport budgets directly. Embedded
 presets only seed new drafts; editing them is not a runtime inheritance path.

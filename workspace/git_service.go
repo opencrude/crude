@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -77,10 +78,16 @@ type GitSnapshot struct {
 type GitService struct {
 	root string
 	gate chan struct{}
+	// remote serializes network operations (fetch, pull, push) separately from
+	// gate, so background fetches never hold status reads behind the network.
+	remote chan struct{}
+	// autoFetchPaused stops background fetches after a credential failure
+	// until a remote operation the user started succeeds.
+	autoFetchPaused atomic.Bool
 }
 
 func NewGitService(root string) *GitService {
-	return &GitService{root: root, gate: make(chan struct{}, 1)}
+	return &GitService{root: root, gate: make(chan struct{}, 1), remote: make(chan struct{}, 1)}
 }
 
 // The repository lane includes queue time in the caller's deadline. A fetch,

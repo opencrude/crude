@@ -211,9 +211,11 @@ composer path.
   not a target. Window hosts report pointer geometry in window coordinates;
   `windowScreenAction` converts it before the shared drop logic runs.
 - The title bar's **⇲** returns the tabs to the main area; a window holding only
-  a workspace surface returns it to the bottom dock. The window **✕** also
-  returns tabs to the main area and never closes them. Esc is never a window
-  close for pane windows; it belongs to the editor or composer.
+  a workspace surface returns it to the bottom dock. The window **✕** closes
+  its tabs, each under its own close policy (`closePaneWindowTabs`): an agent tab
+  minimizes, a workspace surface hides, and a file with unsaved edits still asks
+  first; the window disappears with its last tab. Esc is never a window close
+  for pane windows; it belongs to the editor or composer.
 - Entry points: tab context menu **Open in Window** (in a window: **Move to Main
   Area**), file tree **Open in window**, Agents panel **Open in window**, the
   **⇱ window** control on a sub-agent's transcript pane, the dock header **⇱**,
@@ -422,6 +424,15 @@ wins over prepared disk bytes. See the recorded measurements in
   History safety snapshot. Remote commands run with `GIT_TERMINAL_PROMPT=0`;
   an authentication failure is reported, never prompted on the TTY. Results
   carry their own sequence and are dropped when stale.
+- Remote tracking stays current without a manual Fetch: each core workspace
+  actor runs `GitService.StartAutoFetch` (10 s after open, then every 3 minutes,
+  backing off to 30 minutes while the remote is unreachable). It fetches only the
+  checked-out branch's upstream remote, takes a separate remote lane (a busy lane
+  skips the round; status reads never wait for the network), disables every
+  askpass helper, and pauses after a credential failure until a user-started
+  remote operation succeeds. The moved `.git` refs reach the header and the Git
+  panel through the core file watch. Both paint only non-zero `↑n`/`↓n` counts
+  from the same snapshot.
 - The commit message **Edit…** button opens a dialog with the full message
   (Save / Commit / Cancel) and the repository's commit conventions.
 - The Changes/History split collapses either side with the divider's ◂ ▸

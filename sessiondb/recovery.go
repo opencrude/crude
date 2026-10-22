@@ -57,49 +57,56 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 		return fmt.Errorf("sessiondb: begin recovery checkpoint: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := saveRecoveryCheckpointTx(tx, sessionID, checkpoint); err != nil {
+	recorded, err := saveRecoveryCheckpointTx(tx, db, sessionID, checkpoint)
+	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sessiondb: commit recovery checkpoint: %w", err)
 	}
+	recorded()
 	return nil
 }
 
-func saveRecoveryCheckpointTx(tx *sql.Tx, sessionID string, checkpoint RecoveryCheckpoint) error {
-	return saveRecoveryCheckpointEncodedTx(tx, sessionID, checkpoint, nil)
-}
-
-// saveRecoveryCheckpointEncodedTx stores checkpoint; a non-nil activeJSON is
-// the exact encoding of checkpoint.ActiveContext, already produced by the
-// context publication in the same transaction.
-func saveRecoveryCheckpointEncodedTx(tx *sql.Tx, sessionID string, checkpoint RecoveryCheckpoint, activeJSON []byte) error {
+// saveRecoveryCheckpointTx stores checkpoint. Its archive and active context
+// grow by a round per checkpoint and are stored as message lists, so a round
+// writes what it added. The returned function records the written lists once
+// the transaction commits.
+func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoint RecoveryCheckpoint) (func(), error) {
 	if sessionID == "" || checkpoint.Status.ID == "" || checkpoint.Status.AgentID == "" || checkpoint.Status.Generation == 0 {
-		return errors.New("sessiondb: invalid recovery identity")
+		return nil, errors.New("sessiondb: invalid recovery identity")
 	}
 	var existingSession, existingAgent string
 	var existingGeneration uint64
 	err := tx.QueryRow(`SELECT session_id,agent_id,generation FROM agent_recoveries WHERE incident_id=?`, checkpoint.Status.ID).Scan(&existingSession, &existingAgent, &existingGeneration)
 	if err == nil && (existingSession != sessionID || existingAgent != checkpoint.Status.AgentID || existingGeneration != checkpoint.Status.Generation) {
-		return errors.New("sessiondb: recovery identity conflict")
+		return nil, errors.New("sessiondb: recovery identity conflict")
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+		return nil, err
 	}
+	rowExists := err == nil
 	pending, err := json.Marshal(recoveryInput{UserInput: checkpoint.PendingInput, TerminalSettlement: checkpoint.TerminalSettlement, InFlightTools: checkpoint.InFlightTools})
 	if err != nil {
-		return fmt.Errorf("sessiondb: encode recovery input: %w", err)
+		return nil, fmt.Errorf("sessiondb: encode recovery input: %w", err)
 	}
-	archive, err := json.Marshal(checkpoint.Archive)
-	if err != nil {
-		return fmt.Errorf("sessiondb: encode recovery archive: %w", err)
-	}
-	active := activeJSON
-	if active == nil {
-		active, err = json.Marshal(checkpoint.ActiveContext)
-		if err != nil {
-			return fmt.Errorf("sessiondb: encode recovery context: %w", err)
+	var versions map[string]int64
+	if rowExists {
+		if versions, err = recoveryListVersionsTx(tx, checkpoint.Status.ID); err != nil {
+			return nil, err
 		}
+	}
+	archiveKey := recoveryListKey{db, checkpoint.Status.ID, recoveryArchiveField}
+	archiveVersion := versions[recoveryArchiveField]
+	archiveStored, archive, err := planRecoveryListTx(archiveKey, archiveVersion, checkpoint.Archive)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: encode recovery archive: %w", err)
+	}
+	activeKey := recoveryListKey{db, checkpoint.Status.ID, recoveryActiveField}
+	activeVersion := versions[recoveryActiveField]
+	activeStored, active, err := planRecoveryListTx(activeKey, activeVersion, checkpoint.ActiveContext)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: encode recovery context: %w", err)
 	}
 	nowTime := time.Now()
 	if checkpoint.Status.StartedAt.IsZero() {
@@ -141,8 +148,8 @@ func saveRecoveryCheckpointEncodedTx(tx *sql.Tx, sessionID string, checkpoint Re
 			action=excluded.action,
 			pending_input_json=excluded.pending_input_json,
 			input_admitted=excluded.input_admitted,
-			archive_json=excluded.archive_json,
-			active_context_json=excluded.active_context_json,
+			archive_json=CASE WHEN ? THEN excluded.archive_json ELSE agent_recoveries.archive_json END,
+			active_context_json=CASE WHEN ? THEN excluded.active_context_json ELSE agent_recoveries.active_context_json END,
 			context_owner_id=excluded.context_owner_id,
 			context_revision=excluded.context_revision,
 			context_generation=excluded.context_generation,
@@ -153,37 +160,65 @@ func saveRecoveryCheckpointEncodedTx(tx *sql.Tx, sessionID string, checkpoint Re
 	`, checkpoint.Status.ID, sessionID, checkpoint.Status.AgentID, checkpoint.Status.Generation,
 		string(checkpoint.Status.State), checkpoint.Status.Attempt, retryAt,
 		checkpoint.Status.Summary, checkpoint.Status.Detail, checkpoint.Status.Action,
-		pending, recoveryBoolInt(checkpoint.InputAdmitted), archive, active,
+		pending, recoveryBoolInt(checkpoint.InputAdmitted), listBase(archive), listBase(active),
 		checkpoint.ContextOwnerID, checkpoint.ContextRevision, checkpoint.ContextGeneration, checkpoint.ContextReason,
-		nullBytes(checkpoint.OwnerData), startedAt, updatedAt, endedAt)
+		nullBytes(checkpoint.OwnerData), startedAt, updatedAt, endedAt, archive.rewrite, active.rewrite)
 	if err != nil {
-		return fmt.Errorf("sessiondb: save recovery checkpoint: %w", err)
+		return nil, fmt.Errorf("sessiondb: save recovery checkpoint: %w", err)
 	}
-	return nil
+	recordArchive, err := writeRecoveryListTx(tx, archiveKey, archiveStored, archiveVersion, archive)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: save recovery archive: %w", err)
+	}
+	recordActive, err := writeRecoveryListTx(tx, activeKey, activeStored, activeVersion, active)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: save recovery context: %w", err)
+	}
+	return func() { recordArchive(); recordActive() }, nil
 }
+
+// listBase is the base a write inserts; an update keeps the stored base
+// unless the write rewrites it, and only a rewrite can create the row.
+func listBase(write listWrite) []byte {
+	if write.rewrite {
+		return write.base
+	}
+	return emptyListBase
+}
+
+const recoveryCheckpointColumns = `incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
+		       summary, detail, action, pending_input_json, input_admitted,
+		       archive_json, active_context_json, context_owner_id, context_revision,
+		       context_generation, context_reason, owner_data`
 
 // LoadRecoveryCheckpoint returns the latest unfinished incident for an agent.
 func LoadRecoveryCheckpoint(db *sql.DB, sessionID, agentID string) (RecoveryCheckpoint, bool, error) {
 	if db == nil || sessionID == "" || agentID == "" {
 		return RecoveryCheckpoint{}, false, nil
 	}
-	row := db.QueryRow(`
-		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
-		       summary, detail, action, pending_input_json, input_admitted,
-		       archive_json, active_context_json, context_owner_id, context_revision,
-		       context_generation, context_reason, owner_data
+	checkpoints, err := loadRecoveryCheckpoints(db, `SELECT `+recoveryCheckpointColumns+`
 		FROM agent_recoveries
 		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?)
 		ORDER BY updated_at DESC LIMIT 1
 	`, sessionID, agentID, string(recovery.Recovered), string(recovery.Cancelled))
-	checkpoint, err := scanRecoveryCheckpoint(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RecoveryCheckpoint{}, false, nil
-	}
-	if err != nil {
+	if err != nil || len(checkpoints) == 0 {
 		return RecoveryCheckpoint{}, false, err
 	}
-	return checkpoint, true, nil
+	return checkpoints[0], true, nil
+}
+
+// LoadRecoveryIncident returns an agent's incident in any state.
+func LoadRecoveryIncident(db *sql.DB, sessionID, agentID, incidentID string) (RecoveryCheckpoint, bool, error) {
+	if db == nil || sessionID == "" || agentID == "" || incidentID == "" {
+		return RecoveryCheckpoint{}, false, nil
+	}
+	checkpoints, err := loadRecoveryCheckpoints(db, `SELECT `+recoveryCheckpointColumns+`
+		FROM agent_recoveries WHERE session_id=? AND agent_id=? AND incident_id=?
+	`, sessionID, agentID, incidentID)
+	if err != nil || len(checkpoints) == 0 {
+		return RecoveryCheckpoint{}, false, err
+	}
+	return checkpoints[0], true, nil
 }
 
 // LoadOpenRecoveryCheckpoints returns every unfinished incident for passive
@@ -192,11 +227,7 @@ func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckp
 	if db == nil || sessionID == "" {
 		return nil, nil
 	}
-	rows, err := db.Query(`
-		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
-		       summary, detail, action, pending_input_json, input_admitted,
-		       archive_json, active_context_json, context_owner_id, context_revision,
-		       context_generation, context_reason, owner_data
+	checkpoints, err := loadRecoveryCheckpoints(db, `SELECT `+recoveryCheckpointColumns+`
 		FROM agent_recoveries
 		WHERE session_id=? AND state NOT IN (?, ?)
 		ORDER BY updated_at, incident_id
@@ -204,16 +235,56 @@ func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckp
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: load open recoveries: %w", err)
 	}
-	defer rows.Close()
-	var result []RecoveryCheckpoint
+	return checkpoints, nil
+}
+
+// loadRecoveryCheckpoints reads checkpoints and their list tails in one
+// transaction, so no checkpoint mixes a base with another write's tail.
+func loadRecoveryCheckpoints(db *sql.DB, query string, args ...any) ([]RecoveryCheckpoint, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	type scanned struct {
+		checkpoint      RecoveryCheckpoint
+		archive, active []byte
+	}
+	var found []scanned
 	for rows.Next() {
-		checkpoint, err := scanRecoveryCheckpoint(rows)
+		var item scanned
+		if item.checkpoint, item.archive, item.active, err = scanRecoveryCheckpoint(rows); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		found = append(found, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]RecoveryCheckpoint, 0, len(found))
+	for _, item := range found {
+		checkpoint := item.checkpoint
+		versions, err := recoveryListVersionsTx(tx, checkpoint.Status.ID)
 		if err != nil {
+			return nil, err
+		}
+		if checkpoint.Archive, err = loadRecoveryListTx(tx, recoveryListKey{db, checkpoint.Status.ID, recoveryArchiveField}, versions[recoveryArchiveField], item.archive); err != nil {
+			return nil, err
+		}
+		if checkpoint.ActiveContext, err = loadRecoveryListTx(tx, recoveryListKey{db, checkpoint.Status.ID, recoveryActiveField}, versions[recoveryActiveField], item.active); err != nil {
 			return nil, err
 		}
 		result = append(result, checkpoint)
 	}
-	return result, rows.Err()
+	return result, tx.Commit()
 }
 
 // LoadRecoveryRecords is the hydrated transcript/UI contract.
@@ -296,7 +367,9 @@ type recoveryScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error) {
+// scanRecoveryCheckpoint scans a checkpoint and its archive and active
+// context bases, which the caller extends with their tail rows.
+func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, []byte, []byte, error) {
 	var checkpoint RecoveryCheckpoint
 	var state string
 	var retryAt int64
@@ -310,7 +383,7 @@ func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error)
 		&pending, &inputAdmitted, &archive, &active, &checkpoint.ContextOwnerID, &checkpoint.ContextRevision,
 		&checkpoint.ContextGeneration, &checkpoint.ContextReason, &checkpoint.OwnerData,
 	); err != nil {
-		return RecoveryCheckpoint{}, err
+		return RecoveryCheckpoint{}, nil, nil, err
 	}
 	checkpoint.Status.State = recovery.State(state)
 	if retryAt > 0 {
@@ -321,17 +394,11 @@ func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error)
 	checkpoint.InputAdmitted = inputAdmitted != 0
 	var input recoveryInput
 	if err := json.Unmarshal(pending, &input); err != nil {
-		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery input: %w", err)
+		return RecoveryCheckpoint{}, nil, nil, fmt.Errorf("sessiondb: decode recovery input: %w", err)
 	}
 	checkpoint.PendingInput, checkpoint.TerminalSettlement = input.UserInput, input.TerminalSettlement
 	checkpoint.InFlightTools = input.InFlightTools
-	if err := json.Unmarshal(archive, &checkpoint.Archive); err != nil {
-		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery archive: %w", err)
-	}
-	if err := json.Unmarshal(active, &checkpoint.ActiveContext); err != nil {
-		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery context: %w", err)
-	}
-	return checkpoint, nil
+	return checkpoint, archive, active, nil
 }
 
 func scanRecoveryStatus(scanner recoveryScanner) (recovery.Status, error) {
