@@ -95,7 +95,7 @@ func TestFooterLeadsWithGuidanceAndTrailsStatus(t *testing.T) {
 	if !strings.HasPrefix(footer[left:], ui.FormatShortcut(ui.NewlineChord)+" new line") {
 		t.Fatalf("footer left rail does not lead with the composer hints: %q", footer)
 	}
-	if !strings.HasSuffix(footer, "Workspace") {
+	if !strings.Contains(footer, "Workspace") || (!strings.HasSuffix(footer, "Workspace") && !strings.HasSuffix(footer, "More")) {
 		t.Fatalf("footer right rail does not carry the workspace controls: %q", footer)
 	}
 	if help, workspace := strings.Index(footer, "Help"), strings.Index(footer, "Workspace"); help > workspace {

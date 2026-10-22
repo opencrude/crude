@@ -16,3 +16,11 @@ func TestAvailableCmdsExposeModelNotProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestAvailableCmdsExcludeAppPerformance(t *testing.T) {
+	for _, cmd := range AvailableCmds() {
+		if cmd.Name == "perf" {
+			t.Fatal("application performance must not be a session slash command")
+		}
+	}
+}

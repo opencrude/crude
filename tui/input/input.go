@@ -66,7 +66,6 @@ var availableCmds = []CmdInfo{
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
-	{Name: "perf", Label: "perf", Desc: "Show live performance and what is slow"},
 	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills"},
 	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},

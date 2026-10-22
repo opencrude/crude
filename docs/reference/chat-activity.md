@@ -610,9 +610,11 @@ existing aggregate totals.
   treatment as blame/uptime. Footer-left is the guidance group: unread Notices,
   then a small ranked navigation set (find, next tab, focus tree), then Help.
   It must remain focus-aware and must not regress into the old Save/Undo/Redo
-  inventory. The status group is capped at half the footer row so a wide status
-  set never truncates the guidance group; keep the two-group split in
-  `configureFooterScreen`, not in the screen painter.
+  inventory. The shared footer painter reserves the ranked guidance/feedback
+  group up to half the row, then fits the navigation pills in the remainder
+  with explicit More overflow. Adding an app utility must not crowd out a
+  completion notice or the useful composer hints. `configureFooterScreen`
+  supplies the two groups; the component owns their width and hit geometry.
 - Agent header is muted telemetry only: model, `↑` latest reported input tokens
   over that request's runtime context capacity/occupancy, `↓` cumulative agent
   output, reported cache-hit rate, known estimated cost, and uptime. It never

@@ -14,7 +14,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/termdock"
+	"crude/tui/screens/shellfooter"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"
@@ -394,13 +394,18 @@ func (app *App) openNavigationMenu() {
 }
 
 func (app *App) openFooterMenu() {
-	items := []ui.ContextMenuItem{
-		{Label: "Problems", Action: func() { app.toggleWorkspacePanel(termdock.PanelProblems) }},
-		{Label: "Notices", Action: func() { app.toggleWorkspacePanel(termdock.PanelNotices) }},
-		{Label: "Terminals", Action: func() { app.toggleWorkspacePanel(termdock.PanelTerminal) }},
-		{Label: "Board", Action: func() { app.startSourceControlMutation(app.toggleBoardBrowser()) }},
-		{Label: "Memory", Action: func() { _, command := app.toggleMemoryBrowser(); app.startSourceControlMutation(command) }},
-		{Label: "Workspace", Action: func() { app.toggleWorkspacePanel(termdock.PanelWorkspace) }},
+	segments := app.footerStatusSegments()
+	items := make([]ui.ContextMenuItem, 0, len(segments))
+	for _, segment := range segments {
+		if segment.Action == "" {
+			continue
+		}
+		// Use the footer's projection and dispatch path so overflow cannot
+		// lose a destination or acquire different toggle/refresh behavior.
+		message := shellfooter.ActionMsg{Action: segment.Action, TargetID: segment.TargetID}
+		items = append(items, ui.ContextMenuItem{Label: segment.Text, Action: func() {
+			app.runDetachedAsyncCmd(func() tea.Msg { return message })
+		}})
 	}
-	app.openContextMenuState(tea.Mouse{X: max(0, app.width-20), Y: max(0, app.height-app.chromeBottomRows()-len(items)-2)}, &ui.ContextMenuState{Title: "Workspace views", Sections: []ui.ContextMenuSection{{Items: items}}})
+	app.openContextMenuState(tea.Mouse{X: max(0, app.width-20), Y: max(0, app.height-app.chromeBottomRows()-len(items)-2)}, &ui.ContextMenuState{Title: "Views", Sections: []ui.ContextMenuSection{{Items: items}}})
 }

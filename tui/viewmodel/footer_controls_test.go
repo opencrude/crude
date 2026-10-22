@@ -18,7 +18,7 @@ func TestFooterControlsContainOnlyPanelToggles(t *testing.T) {
 	app.AddOrchestrator("root")
 
 	segments := app.footerStatusSegments()
-	wantActions := []string{"problems", "notices", "terminals", "git", "board", "memory", "workspace"}
+	wantActions := []string{"problems", "notices", "terminals", "git", "board", "memory", "performance", "workspace"}
 	if len(segments) != len(wantActions) {
 		t.Fatalf("footer status group has %d segments, want %d: %+v", len(segments), len(wantActions), segments)
 	}
@@ -27,7 +27,7 @@ func TestFooterControlsContainOnlyPanelToggles(t *testing.T) {
 			t.Fatalf("footer control %d=%+v want action %q", index, segment, wantActions[index])
 		}
 	}
-	wantFills := []ui.SemanticColor{ui.ColorAccent2, ui.ColorAccent, ui.ColorDiffHunk, ui.ColorDiffFile, ui.ColorAccent2, ui.ColorMuted, ui.ColorAccent}
+	wantFills := []ui.SemanticColor{ui.ColorAccent2, ui.ColorAccent, ui.ColorDiffHunk, ui.ColorDiffFile, ui.ColorAccent2, ui.ColorMuted, ui.ColorMuted, ui.ColorAccent}
 	for index, segment := range segments {
 		if segment.FillRole != wantFills[index] {
 			t.Fatalf("control %s lost its vivid hue: %v", segment.Text, segment.FillRole)
@@ -108,12 +108,14 @@ func TestFooterColorsFollowAttentionInsteadOfPermanentAlarms(t *testing.T) {
 		t.Fatal("read notice retained attention fill")
 	}
 	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentTool})
-	working := app.footerStatusSegments()[6]
+	segments := app.footerStatusSegments()
+	working := segments[len(segments)-1]
 	if !working.Attention || working.FillRole != ui.ColorAccent2 {
 		t.Fatal("background work did not change Workspace color")
 	}
 	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentQuestion, NeedsAction: true})
-	if needsInput := app.footerStatusSegments()[6]; !needsInput.Attention || needsInput.FillRole != ui.ColorWarning {
+	segments = app.footerStatusSegments()
+	if needsInput := segments[len(segments)-1]; !needsInput.Attention || needsInput.FillRole != ui.ColorWarning {
 		t.Fatal("genuine input request did not change Workspace color")
 	}
 }

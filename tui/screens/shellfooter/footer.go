@@ -1,7 +1,8 @@
 package shellfooter
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -58,6 +59,9 @@ type Screen struct {
 	projection Projection
 	hits       []segmentHit
 	overflow   []Segment
+	leftFit    segmentFit
+	rightFit   segmentFit
+	ranked     []Segment
 }
 
 func New(th *theme.Theme, _ *ui.ActionRegistry) *Screen {
@@ -91,20 +95,26 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	leftRail, rightRail := ui.ShellContentRail(s.tokens, r.W)
 	innerW := rightRail - leftRail
 	s.hits = s.hits[:0]
-	// The labeled workspace-panel controls are stable navigation, so the right
-	// group gets its complete width first. Contextual hints use the remainder
-	// and may collapse while momentary feedback is visible.
+	// Preserve a bounded guidance/feedback group before fitting navigation.
+	// Panel destinations can overflow into More; a transient completion notice
+	// cannot, and adding an app utility must not silently crowd it out.
 	rightSeparator := groupSeparator(s.projection.Right)
 	rightBudget := innerW
-	if !hasPills(s.projection.Right) {
+	if hasPills(s.projection.Right) {
+		guidance := s.leftFit.fit(s.projection.Left, innerW/2, " · ")
+		if width := segmentsWidth(guidance, " · "); width > 0 {
+			rightBudget = max(0, innerW-width-2)
+		}
+	} else {
 		rightBudget = max(8, innerW/2)
 	}
-	right := fitSegments(s.projection.Right, rightBudget, rightSeparator)
-	s.overflow = nil
+	right := s.rightFit.fit(s.projection.Right, rightBudget, rightSeparator)
+	s.overflow = s.overflow[:0]
 	if hasPills(s.projection.Right) && len(right) < len(s.projection.Right) {
 		more := Segment{Text: "More", FillRole: ui.ColorMuted, Pill: true, Action: "footer-more", Priority: 0}
 		budget := max(0, rightBudget-rendering.VisibleWidth(more.Text)-2)
-		ranked := append([]Segment(nil), s.projection.Right...)
+		s.ranked = append(s.ranked[:0], s.projection.Right...)
+		ranked := s.ranked
 		for index := range ranked {
 			if ranked[index].Active || ranked[index].Attention {
 				ranked[index].Priority = -2
@@ -112,7 +122,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 				ranked[index].Priority = -1
 			}
 		}
-		right = fitSegments(ranked, budget, rightSeparator)
+		right = s.rightFit.fit(ranked, budget, rightSeparator)
 		for _, segment := range s.projection.Right {
 			found := false
 			for _, visible := range right {
@@ -130,7 +140,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		}
 	}
 	rightW := paintedGroupWidth(right, rightSeparator)
-	left := fitSegments(s.projection.Left, max(0, innerW-rightW-2), " · ")
+	left := s.leftFit.fit(s.projection.Left, max(0, innerW-rightW-2), " · ")
 	s.paintGroup(buf, ox+r.X+leftRail, oy+r.Y+1, left, " · ", leftRail)
 	// The left budget already reserves separation when hints fit. Do not reserve
 	// a phantom gap when they collapse: a full-width strip must stay on the rail.
@@ -214,20 +224,30 @@ func (s *Screen) Semantics() ui.Semantics {
 
 func (s *Screen) Overflow() []Segment { return append([]Segment(nil), s.overflow...) }
 
-func fitSegments(segments []Segment, width int, separator string) []Segment {
+// segmentFit reuses bounded footer-sized scratch between frames. Guidance and
+// overflow fitting must not allocate a fresh projection on every idle paint.
+type segmentFit struct {
+	indices  []int
+	kept     []bool
+	segments []Segment
+}
+
+func (f *segmentFit) fit(segments []Segment, width int, separator string) []Segment {
+	f.segments = f.segments[:0]
 	if width <= 0 {
-		return nil
+		return f.segments
 	}
-	indices := make([]int, 0, len(segments))
+	f.indices = f.indices[:0]
 	for index, segment := range segments {
 		if segment.Text != "" {
-			indices = append(indices, index)
+			f.indices = append(f.indices, index)
 		}
 	}
-	sort.SliceStable(indices, func(i, j int) bool { return segments[indices[i]].Priority < segments[indices[j]].Priority })
-	kept := make([]bool, len(segments))
+	slices.SortStableFunc(f.indices, func(i, j int) int { return cmp.Compare(segments[i].Priority, segments[j].Priority) })
+	f.kept = slices.Grow(f.kept[:0], len(segments))[:len(segments)]
+	clear(f.kept)
 	used, count := 0, 0
-	for _, index := range indices {
+	for _, index := range f.indices {
 		needed := rendering.VisibleWidth(segments[index].Text)
 		if segments[index].Pill {
 			// Conservative: a strip's last pill drops its trailing pad, so a kept
@@ -238,16 +258,15 @@ func fitSegments(segments []Segment, width int, separator string) []Segment {
 			needed += rendering.VisibleWidth(separator)
 		}
 		if used+needed <= width {
-			kept[index], used, count = true, used+needed, count+1
+			f.kept[index], used, count = true, used+needed, count+1
 		}
 	}
-	out := make([]Segment, 0, count)
 	for index, segment := range segments {
-		if kept[index] {
-			out = append(out, segment)
+		if f.kept[index] {
+			f.segments = append(f.segments, segment)
 		}
 	}
-	return out
+	return f.segments
 }
 
 func hasPills(segments []Segment) bool {

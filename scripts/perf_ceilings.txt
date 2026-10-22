@@ -33,6 +33,7 @@ BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
 BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
+BenchmarkFooterOverflowPaint 200 17
 # Scenario benches (tui/viewmodel): steady-state work budgets.
 BenchmarkIdleTick_200Msgs 15000 325
 BenchmarkTabRederive_80Msgs 14000 300

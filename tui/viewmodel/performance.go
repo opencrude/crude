@@ -60,18 +60,6 @@ func (m *App) togglePerformancePanel() tea.Cmd {
 	return m.requestPerfSnapshot(true)
 }
 
-// openPerformancePanel shows the dashboard on a given section.
-func (m *App) openPerformancePanel(section string) tea.Cmd {
-	screen := m.perfDashboard()
-	if section != "" {
-		screen.SetSection(section)
-	}
-	if !m.panelShown(termdock.PanelPerformance) {
-		m.toggleWorkspacePanel(termdock.PanelPerformance)
-	}
-	return m.requestPerfSnapshot(true)
-}
-
 // requestPerfSnapshot starts one refresh when the dashboard is visible and
 // the previous one finished. force skips the interval (open, window change).
 func (m *App) requestPerfSnapshot(force bool) tea.Cmd {
@@ -167,12 +155,9 @@ func (m *App) syncPerfAttentionFrom(findings []perfdash.Finding) {
 	}
 }
 
-// performanceFooterSegments is the dashboard's footer pill. It appears only
-// while the shell recorded a freeze, blocking call or slow input in the last
-// minute (carrying that severity, so the cause is one click away) or while
-// the dashboard is shown; otherwise the palette and /perf reach it.
-func (m *App) performanceFooterSegments(active string) []shellfooter.Segment {
-	shown := active == termdock.PanelPerformance || m.perf.screen != nil && m.panelShown(termdock.PanelPerformance)
+// performanceFooterSegment is the app dashboard's permanent footer control.
+// Recent stalls change its severity, never whether it is available.
+func (m *App) performanceFooterSegment(active string) shellfooter.Segment {
 	segment := shellfooter.Segment{Text: "Performance", FillRole: ui.ColorMuted, Pill: true,
 		Active: active == termdock.PanelPerformance, Action: "performance", Priority: 0}
 	switch m.perf.attention {
@@ -180,10 +165,6 @@ func (m *App) performanceFooterSegments(active string) []shellfooter.Segment {
 		segment.Text, segment.FillRole, segment.Attention, segment.Priority = "✕ Performance", ui.ColorError, true, 1
 	case perfdash.SeverityWarn:
 		segment.Text, segment.FillRole, segment.Attention, segment.Priority = "⚠ Performance", ui.ColorWarning, true, 1
-	default:
-		if !shown {
-			return nil
-		}
 	}
-	return []shellfooter.Segment{segment}
+	return segment
 }
