@@ -172,37 +172,19 @@ func TestSettingsCloseXDiscardsAllDraftsAndCloses(t *testing.T) {
 				body.ShowMainAgent()
 				body.Model().SetValueForTest(body.Model().SelectedCategory(), "agent-instructions", "Unsaved edit")
 			}
-			title := body.PaneTitle()
 			x, y := parent.Position()
 			w, _ := parent.Size()
-			click := tea.MouseClickMsg{X: x + w - 2, Y: y, Button: tea.MouseLeft}
-			_, cmd := app.Update(click)
+			_, cmd := app.Update(tea.MouseClickMsg{X: x + w - 2, Y: y, Button: tea.MouseLeft})
 			if cmd == nil {
-				t.Fatal("dirty × did not request a close decision")
-			}
-			prompt, ok := cmd().(settingsui.PromptMsg)
-			if !ok || prompt.Kind != settingsui.PromptDiscardSettings {
-				t.Fatal("dirty × did not cover all Settings drafts")
-			}
-			_, _ = app.Update(prompt)
-			_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-			if app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || body.PaneTitle() != title || !body.PromptRelevant(prompt) {
-				t.Fatal("Keep settings open lost the draft or navigated away")
-			}
-			_, cmd = app.Update(click)
-			_, _ = app.Update(cmd())
-			_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
-			_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-			if cmd == nil || body.PaneTitle() != title {
-				t.Fatal("confirmed × discard navigated back instead of closing")
+				t.Fatal("dirty × did not close Settings")
 			}
 			msg := cmd()
 			if _, ok := msg.(settingsui.CancelMsg); !ok {
-				t.Fatalf("confirmed close returned %T", msg)
+				t.Fatalf("dirty × returned %T, want CancelMsg", msg)
 			}
 			_, _ = app.Update(msg)
 			if app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) || app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) {
-				t.Fatal("confirmed close left Settings or its prompt open")
+				t.Fatal("× left Settings or its prompt open")
 			}
 			app.openApplicationSettings()
 			reopened := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings)).Model().AppSettings()

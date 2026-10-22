@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crude/codexio"
+	"crude/metrics"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
@@ -146,6 +147,7 @@ func (a *Agent) executeOneToolCallSafely(
 	if err := ctx.Err(); err != nil {
 		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled before tool execution."}, toolError: true}
 	}
+	defer toolRuns.Since(tc.Function.Name, time.Now())
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			message := fmt.Sprintf("Error: tool %q panicked: %v. Its effects are uncertain: inspect the affected state before relying on or retrying it.", tc.Function.Name, recovered)
@@ -1064,3 +1066,6 @@ func controlArgumentLines(raw json.RawMessage) string {
 	walk("", value)
 	return strings.Join(lines, "\n")
 }
+
+var toolRuns = metrics.NewTable(metrics.Meta{Name: "tools.run", Group: metrics.GroupTools, Title: "Tool time by tool",
+	Help: "Tool execution per tool, including any approval or question wait.", Warn: 10_000_000, Crit: 120_000_000, Stall: 300_000_000})

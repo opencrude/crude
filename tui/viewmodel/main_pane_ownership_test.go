@@ -312,6 +312,7 @@ func paneOwnershipDense(tb testing.TB) *App {
 	app.focusMainGroup(right)
 	app.forceFrame()
 	_ = app.View()
+	settleHistory(tb, app)
 	return app
 }
 

@@ -11,6 +11,9 @@ import (
 const (
 	CoreStatusMethod   = "core.status"
 	CoreShutdownMethod = "core.shutdown"
+	// CoreMetricsMethod takes a metrics.Query and returns the core process's
+	// metrics.Snapshot for the Performance surface.
+	CoreMetricsMethod = "core.metrics"
 )
 
 // ActiveWork is the per-workspace work a shutdown must not silently abandon.

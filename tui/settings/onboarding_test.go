@@ -34,7 +34,7 @@ func TestOnboardingAccountOfferIsAnExplicitMainAgentDraft(t *testing.T) {
 	}
 	for _, size := range [][2]int{{124, 28}, {80, 24}} {
 		painted := bufferPlain(paintAccountSurface(t, s, size[0], size[1]))
-		for _, want := range []string{"Main Agent", "New account", "Apply agent"} {
+		for _, want := range []string{"Main Agent", "New account", "Save"} {
 			if !strings.Contains(painted, want) {
 				t.Fatalf("missing %q at %v:\n%s", want, size, painted)
 			}
@@ -46,7 +46,7 @@ func TestOnboardingAccountOfferIsAnExplicitMainAgentDraft(t *testing.T) {
 	if got := m.AppSettings().Agents.Categories["default"]; got.AccountID != before.AccountID || got.Model != before.Model {
 		t.Fatal("selecting model bypassed Apply agent")
 	}
-	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.apply"})
+	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.save"})
 	if got := m.AppSettings().Agents.Categories["default"]; got.AccountID != "new" || got.Model != "chosen" {
 		t.Fatalf("explicit Apply agent did not publish settings draft: %+v", got)
 	}

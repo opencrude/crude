@@ -187,6 +187,7 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 		// Admit in wire order, before scheduling response waiters. Awaiting a
 		// slow effect must not stall unrelated responses, but goroutines calling
 		// Call here would reorder input before it ever reaches the actor.
+		admitted := time.Now()
 		pending := c.Dispatch(ctx, coreprotocol.Request{ID: frame.RequestID, Owner: owner, WorkspaceID: frame.WorkspaceID, Method: frame.Method, Payload: frame.Payload})
 		workers.Add(1)
 		go func(frame corewire.Frame, pending <-chan coreprotocol.Response) {
@@ -194,6 +195,7 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 			var result coreprotocol.Response
 			select {
 			case result = <-pending:
+				coreRequests.Since(frame.Method, admitted)
 			case <-ctx.Done():
 				return
 			}

@@ -25,6 +25,9 @@ type cursedRenderer struct {
 	term          string // the terminal type $TERM
 	width, height int
 	mu            sync.Mutex
+	viewMu        sync.Mutex // guards view and pendingSize only; see flush
+	pendingSize   *[2]int
+	written       int // bytes written by the last flush
 	profile       colorprofile.Profile
 	logger        uv.Logger
 	view          View
@@ -279,7 +282,17 @@ func (s *cursedRenderer) flush(closing bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// The event loop hands frames over under viewMu only, so a slow terminal
+	// write never blocks the next Update (Crude: Windows console writes).
+	s.viewMu.Lock()
 	view := s.view
+	size := s.pendingSize
+	s.pendingSize = nil
+	s.viewMu.Unlock()
+	if size != nil {
+		s.applyResize(size[0], size[1])
+	}
+	s.written = 0
 	frameArea := uv.Rect(0, 0, s.width, s.height)
 	if len(view.Content) == 0 {
 		// If the component is nil, we should clear the screen buffer.
@@ -587,6 +600,7 @@ func (s *cursedRenderer) flush(closing bool) error {
 	s.buf.Reset()
 
 	// If our updates flush buffer has content, write it to the output writer.
+	s.written = buf.Len()
 	if buf.Len() > 0 {
 		if s.logger != nil {
 			s.logger.Printf("output: %q", buf.String())
@@ -603,10 +617,9 @@ func (s *cursedRenderer) flush(closing bool) error {
 
 // render implements renderer.
 func (s *cursedRenderer) render(v View) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.viewMu.Lock()
 	s.view = v
+	s.viewMu.Unlock()
 }
 
 // reset implements renderer.
@@ -643,17 +656,20 @@ func (s *cursedRenderer) setColorProfile(p colorprofile.Profile) {
 
 // resize implements renderer.
 func (s *cursedRenderer) resize(w, h int) {
-	s.mu.Lock()
-	// We need to mark the screen for clear to force a redraw. However, we
-	// only do so if we're using alt screen or the width has changed.
-	// That's because redrawing is expensive and we can avoid it if the
-	// width hasn't changed in inline mode. On the other hand, when using
-	// alt screen mode, we always want to redraw because some terminals
-	// would scroll the screen and our content would be lost.
+	// The event loop records the size under viewMu; the next flush applies it
+	// before drawing, so a resize never waits for a terminal write (Crude).
+	s.viewMu.Lock()
+	s.pendingSize = &[2]int{w, h}
+	s.viewMu.Unlock()
+}
+
+// applyResize marks the screen for a full redraw at the new size. Called
+// with s.mu held. Alt screen terminals may scroll on resize, so the old
+// content is never trusted.
+func (s *cursedRenderer) applyResize(w, h int) {
 	s.scr.Erase()
 	s.width, s.height = w, h
 	s.scr.Resize(s.width, s.height)
-	s.mu.Unlock()
 }
 
 // clearScreen implements renderer.
@@ -878,4 +894,12 @@ func keyboardEnhancementsFlags(ke KeyboardEnhancements) int {
 		flags |= ansi.KittyReportAssociatedKeys
 	}
 	return flags
+}
+
+// flushedBytes reports the bytes the last flush wrote. Called only from the
+// renderer goroutine after flush returns.
+func (s *cursedRenderer) flushedBytes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.written
 }

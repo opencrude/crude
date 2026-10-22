@@ -18,6 +18,7 @@ import (
 	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/metrics"
 	"crude/shellport/remote"
 	"crude/tui"
 	startuptui "crude/tui/startup"
@@ -261,6 +262,7 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 	}
 	ws.AddStartupIssues(startupIssues)
 	ws.ConfigureInvocation(invocationSelection(flags))
+	metrics.Start("shell")
 	terminal, err := tui.Start(ws, providerPresets(), nil, lg,
 		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()))
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/metrics"
 	"crude/network"
 	"crude/retry"
 	"crude/types/reasoning"
@@ -376,6 +377,7 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 		return nil, err
 	}
 	ctx, cancel := c.withTimeout(ctx)
+	modelStreams.Add(1)
 	return &ChatStream{
 		client:               c,
 		ctx:                  ctx,
@@ -383,6 +385,7 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 		body:                 body,
 		request:              req,
 		reasoningContentKind: req.ReasoningContentKind,
+		started:              time.Now(),
 	}, nil
 }
 
@@ -401,6 +404,20 @@ type ChatStream struct {
 	yielded              bool
 	sawDone              bool
 	closed               bool
+	started              time.Time
+	finished             bool // metrics: the open-stream gauge was released
+}
+
+// finish releases the stream's metrics once, recording a complete response.
+func (s *ChatStream) finish(complete bool) {
+	if s.finished {
+		return
+	}
+	s.finished = true
+	modelStreams.Add(-1)
+	if complete {
+		modelResponse.Since(s.request.Model, s.started)
+	}
 }
 
 // Next returns the next decoded stream update. It returns io.EOF after the
@@ -413,6 +430,7 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 	}
 	defer func() {
 		if s.closed {
+			s.finish(false)
 			s.cancel()
 		}
 	}()
@@ -505,7 +523,12 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 		}
 		// Accounting/framing alone does not commit model output. Once content,
 		// reasoning, tools or opaque state is accepted, replay is never safe.
-		s.yielded = s.yielded || update.ContentDelta != "" || update.ReasoningText() != "" || len(update.ToolCalls) > 0 || len(update.ProviderItems) > 0
+		output := update.ContentDelta != "" || update.ReasoningText() != "" || len(update.ToolCalls) > 0 || len(update.ProviderItems) > 0
+		if output && !s.yielded {
+			modelFirstOutput.Since(s.request.Model, s.started)
+		}
+		modelOutput.Add(uint64(updateOutputSize(update)))
+		s.yielded = s.yielded || output
 		if update.Done {
 			s.done()
 		}
@@ -540,10 +563,12 @@ func (s *ChatStream) done() {
 	s.sawDone = true
 	s.closed = true
 	s.closeResp()
+	s.finish(true)
 }
 
 // Close releases the underlying response, if any.
 func (s *ChatStream) Close() error {
+	s.finish(false)
 	s.closed = true
 	s.closeResp()
 	if s.cancel != nil {
@@ -623,6 +648,7 @@ func (s *ChatStream) establish() error {
 		if c.onRequestAccepted != nil {
 			c.onRequestAccepted()
 		}
+		modelConnect.Since(s.request.Model, s.started)
 		return nil
 	}
 	return &ExhaustedError{Attempts: s.attempt, Cause: errors.New("stream not established")}
@@ -917,6 +943,8 @@ func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, 
 	if c.onRetry != nil {
 		c.onRetry(attempt, delay, cause)
 	}
+	modelRetries.Inc()
+	metrics.Note(metrics.GroupAgents, "Provider retry", c.proto.Info().ID, cause.Error(), "warn")
 	return waitForRetry(ctx, delay)
 }
 

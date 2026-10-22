@@ -254,6 +254,7 @@ type App struct {
 	projectReplace         *projectReplaceReview
 	memoryBrowser          *memorybrowser.Screen
 	boardBrowser           *boardbrowser.Screen
+	perf                   perfState
 	gitReviews             map[window.TabID]*gitReviewView
 	gitPrepareGen          uint64
 	gitPrepareInFlight     bool
@@ -728,6 +729,17 @@ func (m *App) openApplicationMainAgent() tea.Cmd {
 	return nil
 }
 
+// settingsLayers is the one source Settings is built from: the application
+// layer, the effective workspace settings and the sparse workspace overlay,
+// read together so a form never mixes a fresh layer with a stale one.
+func (m *App) settingsLayers() (application, effective roottypes.AppSettings, overrides roottypes.WorkspaceOverrides) {
+	application, effective, overrides = m.ws.AppDefaults(), m.ws.LoadAppSettings(), m.ws.LoadWorkspaceOverrides()
+	if len(effective.Agents.Categories) == 0 {
+		effective.Agents = m.ws.WorkspaceAgentDefaults()
+	}
+	return application, effective, overrides
+}
+
 func (m *App) openSettings(scope roottypes.SettingsScope) {
 	m.openSettingsTo(scope, false)
 }
@@ -736,16 +748,12 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 	m.overlayHost.Close(ui.OverlaySettingsPrompt)
 	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
-	appDefaults := m.ws.AppDefaults()
-	overrides := m.ws.LoadWorkspaceOverrides()
+	appDefaults, effective, overrides := m.settingsLayers()
 	working := appDefaults
 	title := "Application Settings"
 	if scope == roottypes.SettingsScopeWorkspace {
-		working = m.ws.LoadAppSettings()
+		working = effective
 		title = "Workspace Settings"
-	}
-	if len(working.Agents.Categories) == 0 && scope == roottypes.SettingsScopeWorkspace {
-		working.Agents = m.ws.WorkspaceAgentDefaults()
 	}
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
 	if body, ok := wsWidget.Component().(*settingsui.WorkspaceSettingsSurface); ok {

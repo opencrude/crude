@@ -73,7 +73,7 @@ func (e *Editor) initChroma() {
 	if path == "" {
 		path = e.title
 	}
-	l := lexers.Match(path)
+	l := rendering.MatchLexer(path)
 	if l == nil || l.Config().Name == "fallback" {
 		l = lexers.Fallback
 	}

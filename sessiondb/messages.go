@@ -87,6 +87,7 @@ func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, 
 }
 
 func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatMessage, turnNumbers []int, metas []DisplayMeta) (int, error) {
+	defer sessionWrites.Since("replace messages", time.Now())
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages begin: %w", err)
@@ -236,6 +237,7 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 }
 
 func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage, turn int, meta DisplayMeta) error {
+	defer sessionWrites.Since("append message", time.Now())
 	tx, err := db.Begin()
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package lspclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/metrics"
 	model "crude/types"
 )
 
@@ -130,6 +132,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	started := time.Now()
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	launch := &lspLaunch{cancel: cancel, done: make(chan struct{})}
 	l.launch = launch
@@ -160,6 +163,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 					Version *int32 `json:"version"`
 				}
 				if json.Unmarshal(params, &diagnostics) == nil {
+					lspDiagnostics.Inc()
 					l.updateDiagnostics(launch, diagnostics.URI, diagnostics.Version, diagnostics.Diagnostics)
 				}
 			})
@@ -199,6 +203,10 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	l.mu.Unlock()
 	if err != nil && client != nil {
 		client.Kill()
+	}
+	lspStarts.Since(l.serverName(), started)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		metrics.Note(metrics.GroupLSP, "Language server failed to start", l.serverName(), err.Error(), "crit")
 	}
 	close(launch.done)
 	return err
@@ -300,6 +308,7 @@ func (l *LSPIntegration) NotifySave(ctx context.Context, path, text string, reas
 // RequestCompletions returns a flat list of completion items at (line, col).
 // Returns nil if the request fails or the file is not open in the LSP server.
 func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string, line, col int) []CompletionItem {
+	defer l.observeRequest("completion", time.Now())
 	l.mu.Lock()
 	fp := filepath.Clean(filePath)
 	state, ok := l.openFiles[fp]
@@ -410,6 +419,7 @@ func documentationOf(it protocol.CompletionItem) string {
 // not connected. Multiple locations can be returned for symbols defined in
 // multiple places (interfaces, generics).
 func (l *LSPIntegration) RequestDefinition(ctx context.Context, filePath string, line, col int) []LSPLocation {
+	defer l.observeRequest("definition", time.Now())
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
@@ -434,6 +444,7 @@ func (l *LSPIntegration) RequestDefinition(ctx context.Context, filePath string,
 // filePath, optionally including the declaration site. includeDeclaration=true
 // is the typical UX (VSCode/JetBrains include it by default).
 func (l *LSPIntegration) FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []LSPLocation {
+	defer l.observeRequest("references", time.Now())
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
@@ -457,6 +468,7 @@ func (l *LSPIntegration) FindReferences(ctx context.Context, filePath string, li
 // RequestDocumentSymbols returns a hierarchical outline (functions, types,
 // variables) for the given file. Children of nested symbols are preserved.
 func (l *LSPIntegration) RequestDocumentSymbols(ctx context.Context, filePath string) []LSPSymbol {
+	defer l.observeRequest("symbols", time.Now())
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
@@ -484,6 +496,7 @@ func (l *LSPIntegration) RequestDocumentSymbols(ctx context.Context, filePath st
 // RequestHover returns the hover information (markup content + range) for the
 // symbol at (line, col). Returns nil if no hover info is available.
 func (l *LSPIntegration) RequestHover(ctx context.Context, filePath string, line, col int) (string, error) {
+	defer l.observeRequest("hover", time.Now())
 	l.mu.Lock()
 	fp := filepath.Clean(filePath)
 	state, ok := l.openFiles[fp]
@@ -518,6 +531,7 @@ func (l *LSPIntegration) RequestHover(ctx context.Context, filePath string, line
 // RequestRename returns the workspace edit that would rename the symbol at
 // (line, col) to newName. The caller is responsible for applying the edit.
 func (l *LSPIntegration) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error) {
+	defer l.observeRequest("rename", time.Now())
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)

@@ -108,7 +108,7 @@ func TestViewIconName(t *testing.T) {
 		WithInput(strings.NewReader("")),
 		WithOutput(&output),
 	)
-	go p.Send(Quit)
+	go p.Quit()
 	if _, err := p.Run(); err != nil {
 		t.Fatal(err)
 	}

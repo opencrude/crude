@@ -512,6 +512,7 @@ type Program struct {
 	// where to send output, this will usually be os.Stdout.
 	output    io.Writer
 	outputBuf bytes.Buffer // buffer used to queue commands to be sent to the output
+	flushMu   sync.Mutex   // serializes writes of outputBuf; see flush
 
 	// ttyOutput is null if output is not a TTY.
 	ttyOutput           term.File
@@ -558,6 +559,10 @@ type Program struct {
 
 	// whether to use hard tabs to optimize cursor movements
 	useHardTabs bool
+
+	// observer receives one LoopSample per processed message and one
+	// FlushSample per terminal write (Crude: performance metrics).
+	observer Observer
 	// whether to use backspace to optimize cursor movements
 	useBackspace bool
 
@@ -763,6 +768,12 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			return model, err
 
 		case msg := <-p.msgs:
+			var sample LoopSample
+			if timed, ok := msg.(timedInput); ok {
+				msg = timed.msg
+				sample.Input = true
+				sample.Wait = time.Since(timed.at)
+			}
 			msg = p.translateInputEvent(msg)
 			var consumed bool
 			msg, consumed = p.handleTerminalWidthProbeMessage(msg)
@@ -890,7 +901,9 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			}
 
 			var cmd Cmd
+			updateStart := time.Now()
 			model, cmd = model.Update(msg) // run update
+			sample.Update = time.Since(updateStart)
 
 			select {
 			case <-p.ctx.Done():
@@ -898,6 +911,17 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			case cmds <- cmd: // process command (if any)
 			}
 
+			if p.observer != nil {
+				viewStart := time.Now()
+				view := p.viewOf(model)
+				sample.View = time.Since(viewStart)
+				handoff := time.Now()
+				p.present(view)
+				sample.Present = time.Since(handoff)
+				sample.Msg = msg
+				p.observer.ObserveLoop(sample)
+				continue
+			}
 			p.render(model) // render view
 		}
 	}
@@ -907,6 +931,19 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 func (p *Program) render(model Model) {
 	if p.renderer != nil {
 		p.renderer.render(model.View()) // send view to renderer
+	}
+}
+
+func (p *Program) viewOf(model Model) View {
+	if p.renderer == nil {
+		return View{}
+	}
+	return model.View()
+}
+
+func (p *Program) present(view View) {
+	if p.renderer != nil {
+		p.renderer.render(view)
 	}
 }
 
@@ -1250,20 +1287,25 @@ func (p *Program) execute(seq string) {
 	p.mu.Unlock()
 }
 
-// flush flushes the output buffer to the program output.
+// flush flushes the output buffer to the program output. The queued bytes
+// are taken under p.mu and written under flushMu only, so execute (called by
+// the event loop) never waits for terminal output (Crude).
 func (p *Program) flush() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.flushMu.Lock()
+	defer p.flushMu.Unlock()
 
+	p.mu.Lock()
 	if p.outputBuf.Len() == 0 {
+		p.mu.Unlock()
 		return nil
 	}
-	if p.logger != nil {
-		p.logger.Printf("output: %q", p.outputBuf.String())
-	}
-	_, err := p.output.Write(p.outputBuf.Bytes())
+	pending := bytes.Clone(p.outputBuf.Bytes())
 	p.outputBuf.Reset()
-	if err != nil {
+	p.mu.Unlock()
+	if p.logger != nil {
+		p.logger.Printf("output: %q", pending)
+	}
+	if _, err := p.output.Write(pending); err != nil {
 		return fmt.Errorf("error writing to output: %w", err)
 	}
 	return nil
@@ -1446,7 +1488,17 @@ func (p *Program) startRenderer() {
 
 			case <-p.ticker.C:
 				_ = p.flush()
+				if p.observer == nil {
+					_ = p.renderer.flush(false)
+					continue
+				}
+				start := time.Now()
 				_ = p.renderer.flush(false)
+				if counted, ok := p.renderer.(interface{ flushedBytes() int }); ok {
+					if written := counted.flushedBytes(); written > 0 {
+						p.observer.ObserveFlush(FlushSample{Duration: time.Since(start), Bytes: written})
+					}
+				}
 			}
 		}
 	}()

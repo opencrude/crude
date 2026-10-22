@@ -74,7 +74,8 @@ func TestWorkspaceSectionResetPreservesUnrelatedDraft(t *testing.T) {
 	m := NewScoped(theme.DefaultDark(), types.MergeAppWorkspace(app, stored), nil, types.SettingsScopeWorkspace, app, stored)
 	m.SetValueForTest(catUI, "sidebar-width", "45")
 	stored.Editor = nil
-	next := m.SectionResetModel(app, types.MergeAppWorkspace(app, stored), stored, "editor")
+	m.SelectCategory(catEditor)
+	next := m.SectionResetModel(app, types.MergeAppWorkspace(app, stored), stored, catEditor)
 	if next.AppSettings().Editor.TabSize != 4 || next.AppSettings().UI.SidebarWidth != 45 {
 		t.Fatal("section reset lost parent or unrelated draft")
 	}

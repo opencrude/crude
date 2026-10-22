@@ -724,6 +724,13 @@ var defaultActions = []*ActionDef{
 		HintKey: "Ctrl+Alt+M",
 	},
 	{
+		ID:          "performance.open",
+		Label:       "Performance",
+		Description: "live UI, core, agent and service performance with a diagnosis",
+		Icon:        "⚡",
+		Category:    "System",
+	},
+	{
 		ID:          "system.undo",
 		Label:       "Revert Agent Files",
 		Description: "preview this agent's file rollback while retaining conversation history",

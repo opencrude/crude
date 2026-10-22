@@ -494,6 +494,10 @@ func (m *controlVisualModel) journey(key int) error {
 		if saved.Effective.Editor.TabSize != 8 || !strings.Contains(string(saved.Overrides.Editor), `"tab_size":8`) {
 			return fmt.Errorf("Save did not persist effective workspace tab size: %s", result.Output)
 		}
+		// Save keeps Settings open; Close (clean, so agent-permitted) leaves.
+		if err := m.control(string(settingsui.WorkspaceSettingsCancelID), ui.ControlOperation{Verb: "activate"}); err != nil {
+			return err
+		}
 		// Leave a real freshly loaded settings surface visible for capture, not a
 		// synthetic success overlay. Its value is read back from the core owner.
 		if err := do("settings.open", map[string]any{"scope": "workspace"}); err != nil {

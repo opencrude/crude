@@ -21,6 +21,7 @@ import (
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/history"
+	"crude/metrics"
 	"crude/provider"
 	"crude/session"
 	"crude/workspace"
@@ -64,6 +65,7 @@ func RunCore(opts CoreOptions) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
+	metrics.Start("core")
 	lg, err := openCoreLogger(CoreLogPath(opts.Home))
 	if err != nil {
 		return err

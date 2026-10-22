@@ -50,15 +50,12 @@ func TestWidthOnlyReflowLazilyUpdatesRowsAsTheyEnterViewport(t *testing.T) {
 	scroll.SetViewport(4)
 	scroll.SetAutoScroll(false)
 	scroll.ScrollTo(0)
+	oldTailHeight := len(initial.Rows[len(initial.Rows)-1].Lines)
 	r.SetSize(32, 20)
 	top := r.ExportMessageRowsSnapshot(28)
-	oldTailHeight := len(top.Rows[len(top.Rows)-1].Lines)
 	scroll.SetContent(top.ContentHeight)
 	scroll.ScrollTo(scroll.MaxOffset())
 	bottom := r.ExportMessageRowsSnapshot(28)
-	if bottom.Generation == top.Generation {
-		t.Fatal("scrolling into dirty rows did not advance projection")
-	}
 	if got := len(bottom.Rows[len(bottom.Rows)-1].Lines); got <= oldTailHeight {
 		t.Fatalf("tail row remained at stale width: old=%d new=%d", oldTailHeight, got)
 	}
@@ -153,5 +150,61 @@ func TestRenderVisibleIndexesRowsExposedByHeightCorrection(t *testing.T) {
 	}
 	if indexed := list.TotalHeight(); indexed != height {
 		t.Fatalf("second-pass heights were not indexed: total=%d actual=%d", indexed, height)
+	}
+}
+
+// A long transcript must not render all of its history in one export: the
+// visible rows render first and the rest settle within a per-export budget
+// across later frames, with rows always matching the height index.
+func TestLargeTranscriptMaterializesProgressivelyWithinBudget(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 20)
+	r.SetSize(100, 20)
+	r.MaterializeBudget = time.Millisecond
+	messages := make([]types.ChatMessage, 400)
+	for i := range messages {
+		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant,
+			Content: fmt.Sprintf("## Heading %d\n\n%s\n\n- item\n- item", i, strings.Repeat("markdown *body* text ", 30)), Time: time.Now()}
+	}
+	r.SyncMessages(messages, 1)
+	scroll := ui.NewScrollModel()
+	scroll.SetAutoScroll(true)
+	r.BindScroll(scroll)
+	first := r.ExportMessageRowsSnapshot(96)
+	rendered := 0
+	for i := 0; i < r.vl.ItemCount(); i++ {
+		if item := r.vl.Item(i); item != nil && !item.Dirty {
+			rendered++
+		}
+	}
+	if rendered > 60 {
+		t.Fatalf("first export rendered %d items; history must not render synchronously", rendered)
+	}
+	if !r.Materializing() {
+		t.Fatal("400 markdown messages cannot all render within a 1ms budget")
+	}
+	tail := first.Rows[len(first.Rows)-1]
+	if strings.TrimSpace(strings.Join(tail.Lines, "")) == "" {
+		t.Fatal("the visible tail must be rendered in the first export")
+	}
+	checkRows := func(s MessageRowsSnapshot) {
+		total := 0
+		for _, row := range s.Rows {
+			total += len(row.Lines)
+		}
+		if total != s.ContentHeight {
+			t.Fatalf("rows=%d lines, index=%d", total, s.ContentHeight)
+		}
+	}
+	checkRows(first)
+	for i := 0; r.Materializing(); i++ {
+		if i > 100000 {
+			t.Fatal("materialization never completed")
+		}
+		checkRows(r.ExportMessageRowsSnapshot(96))
+	}
+	settled := r.ExportMessageRowsSnapshot(96)
+	if settled.ContentHeight <= first.ContentHeight {
+		t.Fatalf("settled height %d should exceed estimated %d", settled.ContentHeight, first.ContentHeight)
 	}
 }

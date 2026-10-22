@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent"
+	"crude/metrics"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/shellport"
@@ -60,6 +61,7 @@ type inputAdmissionMsg struct {
 	composerWindow  *wm.FloatingWindow
 	composerEditor  *ui.TextArea
 	composerState   ui.TextAreaState
+	submitted       time.Time
 }
 
 func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, draftRevision uint64) tea.Cmd {
@@ -98,11 +100,15 @@ func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, dr
 	m.pendingInputAdmissions[intent] = struct{}{}
 	workspaceGen := m.workspaceSwitchGen.Load()
 	draftEpoch := m.Input.DraftEpoch()
+	submitted := time.Now()
+	if draftRevision != 0 {
+		m.Input.MarkSending(draftRevision)
+	}
 	return func() tea.Msg {
 		result := owner.CommitAgentInputAdmission(context.Background(), intent)
 		return inputAdmissionMsg{workspace: owner, workspaceGen: workspaceGen, session: frontend, intent: intent,
 			agentID: sessionID, draftRevision: intent.DraftRevision, draftEpoch: draftEpoch,
-			input: input, referenceLabels: labels, references: references, result: result}
+			input: input, referenceLabels: labels, references: references, result: result, submitted: submitted}
 	}
 }
 
@@ -138,6 +144,12 @@ func (m *App) submitComposerInput(sessionID, text string) tea.Cmd {
 }
 
 func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
+	if !msg.submitted.IsZero() {
+		promptAdmission.Since(msg.submitted)
+	}
+	if msg.composerWindow == nil && msg.draftRevision != 0 {
+		m.Input.ClearSending(msg.draftRevision)
+	}
 	if _, pending := m.pendingInputAdmissions[msg.intent]; !pending || msg.intent == nil {
 		return nil
 	}
@@ -496,3 +508,7 @@ func (m *App) agentCompacting(agentID string) bool {
 	node := m.ws.AgentMgr().Get(agentID)
 	return node != nil && node.State != nil && node.State.ActiveCompaction.Phase != ""
 }
+
+var promptAdmission = metrics.NewLatency(metrics.Meta{Name: "ui.prompt", Group: metrics.GroupUI, Title: "Send to accepted",
+	Help: "Enter in the composer until the core durably accepted the prompt and the shell applied that receipt.",
+	Warn: 150_000, Crit: 500_000})

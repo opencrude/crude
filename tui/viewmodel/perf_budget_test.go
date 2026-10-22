@@ -102,12 +102,26 @@ func enableIdleTicks(t *testing.T, app *App) {
 func idleWindowWork(t *testing.T, app *App, ticks int) perf.Stats {
 	t.Helper()
 	enableIdleTicks(t, app)
+	settleHistory(t, app)
 	base := perf.Snapshot()
 	for range ticks {
 		app.handleTick(ttypes.TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 	return perf.Snapshot().Sub(base)
+}
+
+// settleHistory paints frames until offscreen transcript history finished
+// materializing: that one-time work is spread over frames by design and is
+// not idle churn.
+func settleHistory(t testing.TB, app *App) {
+	t.Helper()
+	for i := 0; app.subPaneProjections.AnyMaterializing(); i++ {
+		if i > 10_000 {
+			t.Fatal("transcript history never finished materializing")
+		}
+		app.paintShellFrame()
+	}
 }
 
 // Steady-state budgets over pumpTicks idle frames (tick+paint). Only

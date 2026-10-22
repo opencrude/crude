@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/metrics"
 	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -71,9 +72,17 @@ type Renderer struct {
 	exportScrollY    int
 	exportViewportH  int
 	lazyWidthReflow  bool
-	frameSensitive   map[string]struct{}
-	thinkingPanes    map[string]string
-	thinkingOriginal map[string]types.ChatMessage
+	// materializing is set while offscreen items still await their first
+	// render at this width; each export advances them within a time budget.
+	materializing  bool
+	materializedAt time.Time // last export that advanced materialization
+	// MaterializeBudget bounds offscreen rendering per export; zero uses
+	// DefaultMaterializeBudget and a negative value renders everything in
+	// the export that needs it.
+	MaterializeBudget time.Duration
+	frameSensitive    map[string]struct{}
+	thinkingPanes     map[string]string
+	thinkingOriginal  map[string]types.ChatMessage
 }
 
 type MessageRowsSnapshot struct {
@@ -1053,7 +1062,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	}
 	scrollbarW := r.ScrollbarWidth()
 	scrollY, viewportH := r.effectiveScrollY(), r.vl.ViewportHeight()
-	if r.exportSnapshot.Generation != 0 && r.exportRevision == r.vl.Revision() && r.exportWidth == width && r.exportScrollbarW == scrollbarW && r.exportScrollY == scrollY && r.exportViewportH == viewportH {
+	if !r.materializing && r.exportSnapshot.Generation != 0 && r.exportRevision == r.vl.Revision() && r.exportWidth == width && r.exportScrollbarW == scrollbarW && r.exportScrollY == scrollY && r.exportViewportH == viewportH {
 		return r.exportSnapshot
 	}
 	structureChanged := r.exportSnapshot.Generation == 0 || r.exportWidth != width || r.exportScrollbarW != scrollbarW || len(r.exportSnapshot.Rows) != r.vl.ItemCount()
@@ -1067,18 +1076,14 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 		}
 	}
 	r.prepareRender(width)
-	if !r.lazyWidthReflow {
-		r.vl.EnsureHeights(r.renderItem, width)
-	}
+	r.materializeOffscreen(width)
 	// Newly materialized content may reveal a main scrollbar. Settle its width
 	// before publishing this snapshot, not on the first idle tick (which would
 	// discard a completed heavy diff's cache and repeat all preview work).
 	if r.extScroll != nil && r.ScrollbarWidth() != r.lastScrollbarW {
 		structureChanged = true
 		r.prepareRender(width)
-		if !r.lazyWidthReflow {
-			r.vl.EnsureHeights(r.renderItem, width)
-		}
+		r.materializeOffscreen(width)
 	}
 	// Width-only virtualization materializes the visible range plus overscan;
 	// offscreen dirty items retain previous/estimated heights until exposed.
@@ -1184,7 +1189,9 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 	}
 	lines := item.Rendered
 	if len(lines) == 0 {
-		lines = []string{""}
+		// Not yet materialized: blank rows at the estimated height keep rows
+		// and the height index in agreement until the item renders.
+		lines = make([]string, max(1, item.Height))
 	}
 	native := item.Native
 	if len(native) != len(lines) {
@@ -1573,6 +1580,7 @@ func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
 }
 
 func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []PaintLine) {
+	defer observeRender(msg, time.Now())
 	origMsg := msg
 	sanitized := *msg
 	sanitized.Content = rendering.SanitizeForTerminal(msg.Content)
@@ -1798,4 +1806,76 @@ func (r *Renderer) CanScroll() bool {
 func (r *Renderer) ContentHeight() int {
 	r.vl.BuildIndex()
 	return r.vl.TotalHeight()
+}
+
+// DefaultMaterializeBudget is the per-frame time offscreen history may use.
+const DefaultMaterializeBudget = 4 * time.Millisecond
+
+// materializeOffscreen renders dirty items outside the visible range, nearest
+// first, within the budget, keeping the line under the viewport top fixed
+// when the user is not following the bottom.
+func (r *Renderer) materializeOffscreen(width int) {
+	if r.MaterializeBudget < 0 {
+		r.vl.EnsureHeights(r.renderItem, width)
+		r.materializing = false
+		return
+	}
+	budget := r.MaterializeBudget
+	if budget <= 0 {
+		budget = DefaultMaterializeBudget
+	}
+	// The visible range is never budgeted: render it at the final scroll
+	// position (following the bottom can move it as real heights replace
+	// estimates), settling in a few passes.
+	for pass := 0; pass < 4; pass++ {
+		before := r.vl.Revision()
+		_ = r.vl.RenderVisible(r.renderItem, width)
+		if r.autoScroll() {
+			r.vl.BuildIndex()
+			r.vl.ScrollToBottom()
+			_ = r.vl.RenderVisible(r.renderItem, width)
+		}
+		if r.vl.Revision() == before && !r.vl.indexDirty {
+			break
+		}
+		r.vl.BuildIndex()
+	}
+	r.vl.BuildIndex()
+	anchor, local := r.vl.ItemAtLine(r.vl.ScrollY())
+	r.materializing = r.vl.MaterializeNear(r.renderItem, width, anchor, time.Now().Add(budget))
+	r.materializedAt = time.Now()
+	if r.autoScroll() {
+		return
+	}
+	r.vl.BuildIndex()
+	line := r.vl.LineOfItem(anchor) + local
+	if line != r.vl.ScrollY() {
+		if scroll := r.authoritativeScroll(); scroll != nil {
+			scroll.SetContent(r.vl.TotalHeight())
+		}
+		r.vl.ScrollTo(line)
+		r.syncScrollFromVL()
+	}
+}
+
+// Materializing reports whether offscreen history is still rendering in
+// the background of successive frames; the shell keeps frames coming. A
+// projection that stopped being painted (hidden, minimized) only resumes
+// when it is shown again, so it never holds the frame rate up.
+func (r *Renderer) Materializing() bool {
+	return r != nil && r.materializing && time.Since(r.materializedAt) < time.Second
+}
+
+// messageRenders attributes transcript rendering by message kind so the
+// Performance surface names the kinds that make frames slow.
+var messageRenders = metrics.NewTable(metrics.Meta{Name: "render.messages", Group: metrics.GroupRender, Title: "Transcript rendering by kind",
+	Help: "Rendering one transcript row (markdown, diffs, tool output). One slow row is one slow frame.",
+	Warn: 8_000, Crit: 33_000})
+
+func observeRender(msg *types.ChatMessage, start time.Time) {
+	key := string(msg.Role)
+	if msg.ToolName != "" {
+		key += " " + msg.ToolName
+	}
+	messageRenders.Since(key, start)
 }

@@ -122,8 +122,9 @@ func TestConnectedSettingsControlEditSaveAndClose(t *testing.T) {
 	if r := invoke(string(settingsui.WorkspaceSettingsSaveID), ui.ControlOperation{Verb: "activate"}); r.State != control.Applied {
 		t.Fatal("save", r)
 	}
-	if one.app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
-		t.Fatal("successful save did not close settings")
+	// Save keeps Settings open on the saved values; Close is the way out.
+	if body := one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings)); body == nil || len(body.Model().Edits()) != 0 {
+		t.Fatal("successful save closed settings or left unsaved edits")
 	}
 	settings := one.app.ws.LoadAppSettings()
 	if settings.Editor.WordWrap || settings.Editor.SyntaxTheme != "dracula" {
@@ -146,9 +147,9 @@ func TestConnectedSettingsControlEditSaveAndClose(t *testing.T) {
 	if r := invoke(string(settingsui.WorkspaceSettingsSaveID), ui.ControlOperation{Verb: "activate"}); r.State != control.Failed || r.Fault == nil || r.Fault.Code != control.Denied {
 		t.Fatal("security dirty Save laundered", r)
 	}
-	// Discard remains human-owned: closing now opens a decision, never says closed.
-	if r := invoke(string(settingsui.WorkspaceSettingsCancelID), ui.ControlOperation{Verb: "activate"}); r.State != control.PendingDecision {
-		t.Fatal("dirty close receipt", r)
+	// Discard remains human-owned: an agent cannot close over unsaved edits.
+	if r := invoke(string(settingsui.WorkspaceSettingsCancelID), ui.ControlOperation{Verb: "activate"}); r.State == control.Applied || one.app.overlayHost.Window(ui.OverlayWorkspaceSettings) == nil {
+		t.Fatal("agent close discarded human edits", r)
 	}
 	one.app.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	// Close the exact decision overlay before reopening the settings lifetime.

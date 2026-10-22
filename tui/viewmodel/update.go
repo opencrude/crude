@@ -182,6 +182,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case remotePromptHistoryMsg:
 		m.applyRemotePromptHistory(msg)
 		return m, nil
+	case perfSnapshotMsg:
+		m.applyPerfSnapshot(msg)
+		return m, nil
 	case shellport.SettingsChangedMsg:
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
@@ -296,6 +299,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.toggleBoardBrowser()
 		case "memory":
 			return m.toggleMemoryBrowser()
+		case "performance":
+			return m, m.togglePerformancePanel()
 		case "footer-more":
 			m.openFooterMenu()
 		}
@@ -526,6 +531,8 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 
 	m.syncLSPStatusIssues()
 	m.syncAgentStatusInventory()
+	m.syncPerfAttention(now)
+	perfCmd := m.requestPerfSnapshot(false)
 	var launcherCmd tea.Cmd
 	if m.capabilityObservationVisible() {
 		launcherCmd = m.launcherCapabilitiesCmd(now)
@@ -539,10 +546,10 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -560,6 +567,10 @@ func (m *App) wantsFastTick() bool {
 	// Running and stopping agents repaint at frame rate; an idle session
 	// keeps the idle cadence.
 	if m.anyAgentAnimating() {
+		return true
+	}
+	// Long transcripts settle offscreen history a few milliseconds per frame.
+	if m.subPaneProjections.AnyMaterializing() {
 		return true
 	}
 	// Aeron drafting a commit message animates its progress rule.
@@ -1054,16 +1065,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			break
 		}
 		body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings))
-		if body == nil || body.Model() != msg.Target {
+		if body == nil || body.Model() != msg.Target || msg.Target.Scope() != msg.Scope || !msg.Target.BeginSave() {
 			break
 		}
-		overrides := m.ws.LoadWorkspaceOverrides()
-		before := overrides
-		overrides.ClearCategory(msg.Key)
-		if !msg.Target.BeginSave() {
-			break
+		label := "Page restored to built-in defaults"
+		if msg.Scope == types.SettingsScopeWorkspace {
+			label = "Page now follows Application settings"
 		}
-		cmds = append(cmds, m.saveSettingsShortcut(types.SettingsScopeWorkspace, types.SettingsEdits(before, overrides), "Section now inherits Application settings", msg.Target, msg.Key))
+		cmds = append(cmds, m.saveSettingsShortcut(msg.Scope, msg.Edits, label, msg.Target, msg.Category))
 	case settingsui.CancelMsg:
 		// Live preset cycling previews via ThemePreviewMsg without persisting.
 		// Cancel must restore the last saved palette across the whole UI.
@@ -1171,7 +1180,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		// future agent (and new session) inherits them.
 		m.ws.Logger().Info("CONFIG", "session_settings_save_as_workspace")
 		edits := promotedSessionEdits(msg.Settings)
-		cmds = append(cmds, m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Agent settings saved as workspace defaults", nil))
+		cmds = append(cmds, m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Agent settings saved as workspace defaults", nil, 0))
 	case sessionSettingsSaveResultMsg:
 		if msg.workspace != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 			break

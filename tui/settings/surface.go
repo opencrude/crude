@@ -217,9 +217,15 @@ func (s *WorkspaceSettingsSurface) rebuildActions() {
 	)
 	s.actions.SetCancelAction("settings.cancel")
 	s.reset = nil
-	if s.model != nil && s.model.Scope() == ttypes.SettingsScopeWorkspace {
+	if s.model != nil {
+		// One page reset per scope: a workspace page returns to the
+		// Application settings, an application page to built-in defaults.
+		label := "Restore defaults"
+		if s.model.Scope() == ttypes.SettingsScopeWorkspace {
+			label = "Use Application settings"
+		}
 		s.reset = ui.NewActionBar(WorkspaceSettingsResetBarID, s.tokens,
-			ui.ActionBarButton{ID: WorkspaceSettingsResetID, Label: "Reset section", Action: "settings.reset", Variant: ui.VariantDanger, Enabled: true},
+			ui.ActionBarButton{ID: WorkspaceSettingsResetID, Label: label, Action: "settings.reset", Variant: ui.VariantDanger, Enabled: true},
 		)
 		s.reset.SetAlignEnd(false)
 		s.reset.SetExitActions("resetbar.exit.forward", "resetbar.exit.backward")
@@ -249,8 +255,10 @@ func (s *WorkspaceSettingsSurface) capabilitiesOpen() bool {
 	return s.model != nil && (s.model.SelectedCategory() == catSkills || s.model.SelectedCategory() == catMCP || s.model.SelectedCategory() == catSources)
 }
 
+// showReset reports whether the visible page offers its reset: preference
+// pages on their root view only (an open editor shows its own decisions).
 func (s *WorkspaceSettingsSurface) showReset() bool {
-	return s.reset != nil && s.model != nil && !s.model.isNetworkCategory(s.model.SelectedCategory())
+	return s.reset != nil && s.model != nil && s.model.CanResetPage() && !s.editorOpen()
 }
 
 func (s *WorkspaceSettingsSurface) syncAccountControls() {
@@ -680,8 +688,8 @@ func (s *WorkspaceSettingsSurface) syncSaveState() {
 	s.actions.SetEnabled("settings.save", !busy && s.hasUnsavedDrafts())
 }
 
-// RequestClose closes the entire window, never a nested settings page. Back,
-// breadcrumbs and Esc retain their separate navigation/discard policy.
+// RequestClose closes the entire window, never a nested settings page, and
+// discards what was not saved: Close and × mean cancel.
 func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
 	if s.model == nil || s.model.accountBusy || s.model.Saving() {
 		return ui.EventResult{Handled: true}
@@ -689,9 +697,6 @@ func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
 	// A close request supersedes any pending page or scope navigation.
 	s.model.nextCategory, s.model.nextScope = -1, ""
 	s.capCatalog.nextOpen = nil
-	if s.hasUnsavedDrafts() {
-		return s.requestPrompt(PromptDiscardSettings, "", "", 0)
-	}
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
 
@@ -1547,11 +1552,12 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		if !s.showReset() {
 			return ui.EventResult{Handled: true}
 		}
-		if s.agents.draft != nil {
-			return s.agents.back()
+		edits, ok := s.model.PageResetEdits()
+		if !ok {
+			return ui.EventResult{Handled: true}
 		}
-		target, key := s.model, s.model.currentOverrideKey()
-		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetSectionMsg{Target: target, Key: key} }}
+		msg := ResetSectionMsg{Target: s.model, Scope: s.model.Scope(), Category: s.model.SelectedCategory(), Edits: edits}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return msg }}
 	case "settings.scope":
 		id, _ := action.Payload.(string)
 		next := ttypes.SettingsScopeApplication
@@ -1580,7 +1586,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			s.agents.closeDraft()
 		}
 		if s.model.accountEditor != nil {
-			result := s.cancelAccountEdit()
+			result := s.leaveAccountEdit()
 			if result.Cmd != nil {
 				s.model.nextScope = next
 				return result
@@ -1661,7 +1667,7 @@ func (s *WorkspaceSettingsSurface) openCategory(index int) ui.EventResult {
 		s.capCatalog.closeEditor()
 	}
 	if s.model.accountEditor != nil {
-		if change := s.cancelAccountEdit(); change.Cmd != nil {
+		if change := s.leaveAccountEdit(); change.Cmd != nil {
 			s.model.nextCategory = index
 			s.categories.syncItems()
 			return ui.EventResult{Handled: true, Cmd: change.Cmd, Invalidate: change.Invalidate | handled.Invalidate | ui.InvalidateFocus}
@@ -1672,14 +1678,14 @@ func (s *WorkspaceSettingsSurface) openCategory(index int) ui.EventResult {
 			s.model.nextCategory = index
 			s.model.SelectCategory(catAgents)
 			s.syncModel()
-			return s.agents.back()
+			return s.agents.leave()
 		}
 		s.agents.closeDraft()
 	}
 	if s.lsp.draft != nil {
 		// Server edits are already in the draft; an incomplete server stays
 		// open with guidance rather than being half-saved.
-		if s.lsp.back(); s.lsp.draft != nil {
+		if s.lsp.keep(); s.lsp.draft != nil {
 			s.model.SelectCategory(catLanguageServers)
 			s.syncModel()
 			return handled
@@ -1803,12 +1809,11 @@ func (s *WorkspaceSettingsSurface) closeDraftsRelevant(msg PromptMsg) bool {
 		reflect.DeepEqual(formDraftBytes(s.model.capabilityDraft), msg.capabilityDraft)
 }
 
+// cancelAccountEdit is the account editor's Back and Esc: it discards the
+// editor's changes and returns to the account list.
 func (s *WorkspaceSettingsSurface) cancelAccountEdit() ui.EventResult {
 	if s.model.accountBusy {
 		return ui.EventResult{Handled: true}
-	}
-	if s.model.accountEditorDirty() {
-		return s.requestPrompt(PromptDiscardEditor, "", "", 0)
 	}
 	s.model.cancelAccountEdit()
 	s.refreshForm()
@@ -1816,6 +1821,20 @@ func (s *WorkspaceSettingsSurface) cancelAccountEdit() ui.EventResult {
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 }
 
+// leaveAccountEdit runs when navigation (not Back) would close the account
+// editor: changed edits are confirmed first, then the navigation resumes.
+func (s *WorkspaceSettingsSurface) leaveAccountEdit() ui.EventResult {
+	if s.model.accountBusy {
+		return ui.EventResult{Handled: true}
+	}
+	if s.model.accountEditorDirty() {
+		return s.requestPrompt(PromptDiscardEditor, "", "", 0)
+	}
+	return s.cancelAccountEdit()
+}
+
+// cancelSettings is Esc: an open editor goes back to its list, and the root
+// closes the window without saving.
 func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 	if s.model != nil && s.model.Saving() {
 		return ui.EventResult{Handled: true}
@@ -1836,11 +1855,12 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 			return s.cancelAccountEdit()
 		}
 	}
-	if s.model.hasUnsavedPreferences() {
-		return s.requestPrompt(PromptDiscardSettings, "", "", 0)
+	if s.lspServersOpen() && s.lsp.draft != nil {
+		return s.lsp.back()
 	}
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
+
 func (s *WorkspaceSettingsSurface) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Workspace settings"}
 }

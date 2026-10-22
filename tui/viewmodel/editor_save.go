@@ -401,5 +401,5 @@ func (m *App) setWorkspaceAutosave(enabled bool) tea.Cmd {
 		return nil
 	}
 	overrides.Editor = data
-	return m.saveSettingsShortcut(types.SettingsScopeWorkspace, types.SettingsEdits(before, overrides), "Workspace auto save: "+string(mode), nil)
+	return m.saveSettingsShortcut(types.SettingsScopeWorkspace, types.SettingsEdits(before, overrides), "Workspace auto save: "+string(mode), nil, 0)
 }

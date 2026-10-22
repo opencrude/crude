@@ -17,6 +17,7 @@ import (
 
 	"crude/coreclient"
 	"crude/coreprotocol"
+	"crude/metrics"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/shellport"
@@ -525,7 +526,9 @@ func (w *Workspace) fetch(initial coreprotocol.WorkspaceSnapshot) {
 		case <-w.pending.ready:
 		}
 		batch := w.pending.take()
+		fetchStart := time.Now()
 		if batch.resync {
+			linkResyncs.Inc()
 			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 			var snapshot coreprotocol.WorkspaceSnapshot
 			err := w.call(ctx, coreprotocol.Snapshot, struct{}{}, &snapshot)
@@ -614,9 +617,18 @@ func (w *Workspace) fetch(initial coreprotocol.WorkspaceSnapshot) {
 				out.lsp = &snapshot
 			}
 		}
+		linkFetch.Since(fetchStart)
 		w.post(out)
 	}
 }
+
+var (
+	linkFetch = metrics.NewLatency(metrics.Meta{Name: "link.fetch", Group: metrics.GroupRPC, Title: "Change fetch",
+		Help: "Turning one coalesced burst of core change notices into a replica batch (agent deltas, status, settings, ...).",
+		Warn: 50_000, Crit: 250_000})
+	linkResyncs = metrics.NewCounter(metrics.Meta{Name: "link.resync", Group: metrics.GroupRPC, Title: "Snapshot reloads",
+		Help: "Full workspace snapshot reloads after a reconnect or a lost change stream."})
+)
 
 func (w *Workspace) requestResync() {
 	select {

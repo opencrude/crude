@@ -186,7 +186,8 @@ func TestSettingsPromptNarrowTerminalKeepsSafeChoiceVisible(t *testing.T) {
 	}
 }
 
-func TestSettingsPromptDirtyCloseXAndParentTeardown(t *testing.T) {
+// × means close: dirty preferences are discarded without a decision window.
+func TestSettingsDirtyCloseXClosesWithoutPrompt(t *testing.T) {
 	app, parent, body := newSettingsPromptApp(t)
 	for _, item := range body.Model().CategoryItems() {
 		if item.Label == "Appearance" {
@@ -198,65 +199,39 @@ func TestSettingsPromptDirtyCloseXAndParentTeardown(t *testing.T) {
 	px, py := parent.Position()
 	pw, _ := parent.Size()
 	_, cmd := app.Update(tea.MouseClickMsg{X: px + pw - 2, Y: py, Button: tea.MouseLeft})
-	if cmd == nil || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent {
-		t.Fatal("settings X closed dirty settings without a decision")
+	if cmd == nil {
+		t.Fatal("dirty × did not close Settings")
 	}
-	msg, ok := cmd().(settingsui.PromptMsg)
-	if !ok || msg.Kind != settingsui.PromptDiscardSettings {
-		t.Fatalf("dirty X returned %T, want discard prompt", cmd())
-	}
-	_, _ = app.Update(msg)
-	if !app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) {
-		t.Fatal("dirty X did not show a second window")
-	}
-	app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent {
-		t.Fatal("Esc discarded drafts or closed settings")
+	msg := cmd()
+	if _, ok := msg.(settingsui.CancelMsg); !ok {
+		t.Fatalf("dirty × returned %T, want CancelMsg", msg)
 	}
 	_, _ = app.Update(msg)
-	app.overlayHost.Close(ui.OverlayWorkspaceSettings)
-	if app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) || app.settingsPrompt != nil {
-		t.Fatal("closing parent left an orphan prompt")
+	if app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) || app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) {
+		t.Fatal("× left Settings or a prompt open")
 	}
 }
-
-func TestSettingsPromptDirtyEditorBackDecisionKeepsParent(t *testing.T) {
-	for _, tc := range []struct {
-		name, category, editAction, backAction, field string
-	}{
-		{"account", "Accounts", "settings.account.edit", "settings.account.cancel-edit", "account-label"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			app, parent, body := newSettingsPromptApp(t)
-			for _, item := range body.Model().CategoryItems() {
-				if item.Label == tc.category {
-					body.Model().SelectCategory(item.Payload.(int))
-					break
-				}
-			}
-			body.HandleAction(ui.EventContext{}, ui.Action{ID: tc.editAction})
-			body.Model().SetValueForTest(body.Model().SelectedCategory(), tc.field, "Unsaved edit")
-			prompt := requestSettingsPrompt(t, app, body, tc.backAction)
-			if prompt.Kind != settingsui.PromptDiscardEditor {
-				t.Fatalf("dirty editor Back returned %+v instead of a discard prompt", prompt)
-			}
-			app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-			if app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || !body.PromptRelevant(prompt) {
-				t.Fatal("safe default did not keep the editor and selected row")
-			}
-			_, _ = app.Update(prompt)
-			app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyLeft})
-			if cmd := app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
-				t.Fatal("discarding editor draft scheduled persistence")
-			}
-			if app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || body.PromptRelevant(prompt) {
-				t.Fatal("discard did not return to the same settings catalog")
-			}
-		})
+// Back is cancel for an editor: it returns to the same catalog, discards the
+// edit and schedules no persistence.
+func TestSettingsDirtyEditorBackReturnsToCatalog(t *testing.T) {
+	app, parent, body := newSettingsPromptApp(t)
+	for _, item := range body.Model().CategoryItems() {
+		if item.Label == "Accounts" {
+			body.Model().SelectCategory(item.Payload.(int))
+			break
+		}
+	}
+	body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	body.Model().SetValueForTest(body.Model().SelectedCategory(), "account-label", "Unsaved edit")
+	result := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"})
+	if result.Cmd != nil {
+		t.Fatal("Back scheduled persistence or a decision")
+	}
+	if app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || body.PaneTitle() != "Accounts" {
+		t.Fatalf("Back did not return to the same settings catalog: %q", body.PaneTitle())
 	}
 }
-
-func TestSettingsPromptDiscardDraftsClosesOnlyAfterCancelMsg(t *testing.T) {
+func TestSettingsEscAtRootClosesThroughCancelMsg(t *testing.T) {
 	app, parent, body := newSettingsPromptApp(t)
 	for _, item := range body.Model().CategoryItems() {
 		if item.Label == "Appearance" {
@@ -265,18 +240,16 @@ func TestSettingsPromptDiscardDraftsClosesOnlyAfterCancelMsg(t *testing.T) {
 		}
 	}
 	body.Model().SetValueForTest(body.Model().SelectedCategory(), "preset", "light")
-	requestSettingsPrompt(t, app, body, "settings.cancel")
-	app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyLeft})
-	cmd := app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd == nil || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) {
-		t.Fatal("discard confirmation did not defer parent close to CancelMsg")
+	result := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.cancel"})
+	if result.Cmd == nil || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent {
+		t.Fatal("Esc closed before its CancelMsg was applied")
 	}
-	msg := cmd()
+	msg := result.Cmd()
 	if _, ok := msg.(settingsui.CancelMsg); !ok {
-		t.Fatalf("discard returned %T instead of CancelMsg", msg)
+		t.Fatalf("Esc returned %T instead of CancelMsg", msg)
 	}
 	_, _ = app.Update(msg)
 	if app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
-		t.Fatal("confirmed discard did not close settings")
+		t.Fatal("CancelMsg did not close settings")
 	}
 }

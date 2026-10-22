@@ -1,8 +1,10 @@
 package shellport
 
 import (
+	"context"
 	"time"
 
+	"crude/metrics"
 	"crude/types"
 )
 
@@ -29,4 +31,11 @@ type StatusService interface {
 	SetOperation(op types.OperationSnapshot)
 	UnreadCount() int
 	Version() uint64
+}
+
+// MetricsSource is implemented by shells attached to a separate core
+// process; it reads that process's performance history. An in-process core
+// records into the shell's own registry instead.
+type MetricsSource interface {
+	CoreMetrics(ctx context.Context, query metrics.Query) (metrics.Snapshot, error)
 }

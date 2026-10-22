@@ -18,18 +18,14 @@ type settingsShortcutResultMsg struct {
 	result     workspace.PreferencesSaveResult
 	label      string
 	reset      *settingsui.Model
-	section    string
+	category   int
 }
 
-func (m *App) saveSettingsShortcut(scope types.SettingsScope, edits []types.SettingEdit, label string, reset *settingsui.Model, section ...string) tea.Cmd {
+func (m *App) saveSettingsShortcut(scope types.SettingsScope, edits []types.SettingEdit, label string, reset *settingsui.Model, category int) tea.Cmd {
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	run := owner.PreparePreferencesSave(scope, edits)
 	return func() tea.Msg {
-		key := ""
-		if len(section) > 0 {
-			key = section[0]
-		}
-		return settingsShortcutResultMsg{owner: owner, generation: generation, result: run(), label: label, reset: reset, section: key}
+		return settingsShortcutResultMsg{owner: owner, generation: generation, result: run(), label: label, reset: reset, category: category}
 	}
 }
 
@@ -57,7 +53,8 @@ func (m *App) applySettingsShortcut(msg settingsShortcutResultMsg) {
 		body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings))
 		if body != nil && body.Model() == msg.reset {
 			msg.reset.FinishSave(nil)
-			body.SetModel(msg.reset.SectionResetModel(msg.result.AppSettings, msg.result.Effective, msg.result.Overrides, msg.section))
+			application, effective, overrides := m.settingsLayers()
+			body.SetModel(msg.reset.SectionResetModel(application, effective, overrides, msg.category))
 		}
 	}
 	m.Feedback.NotifyInfo(msg.label)

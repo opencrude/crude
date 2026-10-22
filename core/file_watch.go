@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"crude/coreprotocol"
 	"github.com/fsnotify/fsnotify"
@@ -61,7 +62,9 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange)) (*co
 				emit(coreprotocol.FileChange{Resync: true})
 			}
 		}
+		watchStart := time.Now()
 		add(root)
+		fileWatchStart.Since(watchStart)
 		close(w.ready)
 		for {
 			select {
@@ -74,6 +77,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange)) (*co
 				if skipCoreWatchPath(root, event.Name) {
 					continue
 				}
+				fileEvents.Inc()
 				if event.Op&fsnotify.Create != 0 {
 					add(event.Name)
 				}

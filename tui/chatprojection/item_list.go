@@ -2,6 +2,7 @@ package chatprojection
 
 import (
 	"sort"
+	"time"
 
 	"crude/tui/perf"
 
@@ -223,6 +224,48 @@ func (vl *itemList) EnsureHeights(renderFn func(idx int, item *renderItem, width
 		vl.indexDirty = true
 		vl.revision++
 	}
+}
+
+// MaterializeNear renders dirty items nearest to center first until the
+// deadline passes, so offscreen history settles over a few frames instead of
+// blocking one. Unrendered items keep their estimated heights meanwhile. It
+// reports whether dirty items remain.
+func (vl *itemList) MaterializeNear(renderFn func(idx int, item *renderItem, width int) []string, width, center int, deadline time.Time) bool {
+	n := len(vl.items)
+	if n == 0 {
+		return false
+	}
+	center = clamp(center, 0, n-1)
+	changed, remaining := false, false
+	render := func(i int) bool {
+		item := &vl.items[i]
+		if !item.Dirty && item.Rendered != nil {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			remaining = true
+			return false
+		}
+		rendered := renderFn(i, item, width)
+		item.Rendered = rendered
+		item.Height = len(rendered)
+		item.Dirty = false
+		changed = true
+		return true
+	}
+	for k := 0; center+k < n || center-k-1 >= 0; k++ {
+		if center+k < n && !render(center+k) {
+			break
+		}
+		if center-k-1 >= 0 && !render(center-k-1) {
+			break
+		}
+	}
+	if changed {
+		vl.indexDirty = true
+		vl.revision++
+	}
+	return remaining
 }
 
 func (vl *itemList) Revision() uint64 { return vl.revision }

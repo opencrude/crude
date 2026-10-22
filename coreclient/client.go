@@ -15,6 +15,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/metrics"
 )
 
 var ErrResync = errors.New("core client requires resynchronization")
@@ -149,6 +150,12 @@ func (c *Client) CallRequest(ctx context.Context, request coreprotocol.Request) 
 		return coreprotocol.Response{}, errors.New("request frame too large")
 	}
 	request.Payload = nil // Retain only correlation metadata after enqueue.
+	started := time.Now()
+	defer func() {
+		elapsed := time.Since(started)
+		clientRequests.Observe(request.Method, elapsed)
+		metrics.Blocking("core request", request.Method, elapsed)
+	}()
 	p := pending{request: request, result: make(chan coreprotocol.Response, 1)}
 	c.mu.Lock()
 	if c.err != nil {
@@ -305,3 +312,7 @@ func (c *Client) read() {
 		}
 	}
 }
+
+var clientRequests = metrics.NewTable(metrics.Meta{Name: "link.requests", Group: metrics.GroupRPC, Title: "Shell requests by method",
+	Help: "Round trip from the shell to the core and back, per method. Compare with the core's own time to separate transport from work.",
+	Warn: 100_000, Crit: 1_000_000})

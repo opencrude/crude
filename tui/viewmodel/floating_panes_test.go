@@ -109,29 +109,45 @@ func TestPaneWindowEditorJourney(t *testing.T) {
 	}
 }
 
-// Closing the window (✕) never closes its tabs; they return to the main area.
-func TestPaneWindowCloseDocksTabs(t *testing.T) {
+// A window's ✕ closes its tabs under their own policy: a clean file closes,
+// a file with unsaved edits asks first and stays until decided. ⇲ Dock is
+// the action that returns tabs to the main area.
+func TestPaneWindowCloseClosesItsTabs(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
 	paneJourneySize(app, 160, 44)
-	openEditorTabs(t, app, "one.go", "two.go")
-	two := app.Win.ActiveTab().ID
-	app.openTabInWindow(two)
+	paths := openEditorTabs(t, app, "one.go", "two.go", "three.go")
+	tabFor := func(name string) window.TabID {
+		for _, tab := range app.Win.Tabs() {
+			if strings.Contains(tab.Title, name) {
+				return tab.ID
+			}
+		}
+		t.Fatalf("no tab for %s", name)
+		return 0
+	}
+	three := tabFor("three.go")
+	app.openTabInWindow(three)
 	_ = app.View()
-	group := app.Win.GroupOf(two)
+	group := app.Win.GroupOf(three)
 	app.closePopupWindowByID(string(paneWindowID(group)))
 	_ = app.View()
-	if app.Win.HasGroup(group) || app.Win.IndexOf(two) < 0 || app.Win.IsFloating(app.Win.GroupOf(two)) {
-		t.Fatal("closing the window closed or stranded its tab")
+	if app.Win.IndexOf(three) >= 0 || app.overlayHost.IsOpen(paneWindowID(group)) || len(app.mainPanes.windows) != 0 {
+		t.Fatal("✕ did not close the window and its clean tab")
 	}
-	// Closing the window's last tab closes the window.
+	if app.Win.IndexOf(tabFor("one.go")) < 0 {
+		t.Fatal("✕ touched tabs outside its window")
+	}
+
+	two := tabFor("two.go")
 	app.openTabInWindow(two)
 	_ = app.View()
 	group = app.Win.GroupOf(two)
-	_ = app.handleAgentTabClose(app.Win.IndexOf(two))
+	app.EditorState.Tabs[paths[1]].Editor.InsertRune('x')
+	app.closePopupWindowByID(string(paneWindowID(group)))
 	_ = app.View()
-	if app.overlayHost.IsOpen(paneWindowID(group)) || len(app.mainPanes.windows) != 0 {
-		t.Fatal("an empty window stayed open")
+	if app.Win.IndexOf(two) < 0 || app.DirtyPromptPath == "" {
+		t.Fatal("✕ closed a file with unsaved edits without asking")
 	}
 }
 

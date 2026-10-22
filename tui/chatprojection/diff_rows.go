@@ -12,7 +12,6 @@ import (
 	"crude/tui/ui"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 )
 
@@ -107,23 +106,35 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 
 	const previewDiffRows = 24
 	var all []PaintLine
-	totalRows := 0
+	// owner maps each painted row to the diff line it shows (-1 for chrome),
+	// so a preview footer counts the changed lines it hides, not wrap rows.
+	var owner []int
+	logical := 0
+	cut := false // a diff line was skipped or only partly painted
+	full := func() bool { return !expanded && len(all) >= previewDiffRows }
 	for fi, file := range files {
-		if fi > 0 {
-			totalRows++
-			if expanded || len(all) < previewDiffRows {
-				all = append(all, buildDiffGutterBlank())
-			}
-		}
-		if len(files) > 1 && file.Path != "" {
-			totalRows++
-			if expanded || len(all) < previewDiffRows {
-				all = append(all, buildDiffFileTransitionRow(file.Path))
-			}
-		}
 		rows := tools.BuildDiffRows(file)
 		if len(rows) > 0 && tools.CompactContextLines > 0 {
 			rows = tools.TrimDiffContext(rows, tools.CompactContextLines)
+		}
+		if full() {
+			// Beyond the preview nothing is normalized, measured or lexed: the
+			// footer only needs how many diff lines stay hidden.
+			for _, r := range rows {
+				if !r.Ellipsis {
+					logical++
+					cut = true
+				}
+			}
+			continue
+		}
+		if fi > 0 {
+			all = append(all, buildDiffGutterBlank())
+			owner = append(owner, -1)
+		}
+		if len(files) > 1 && file.Path != "" && !full() {
+			all = append(all, buildDiffFileTransitionRow(file.Path))
+			owner = append(owner, -1)
 		}
 		rows = normalizeDiffPresentationRows(rows)
 		maxNumWidth := 1
@@ -149,46 +160,85 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 		contentWidth := max(1, textWidth-maxNumWidth-3)
 		var lexer chroma.Lexer
 		var syntaxCache map[diffSyntaxKey][]RowSpan
-		if expanded || len(all) < previewDiffRows {
-			lexer = lexers.Match(file.Path)
-			if lexer != nil {
-				syntaxCache = make(map[diffSyntaxKey][]RowSpan)
-			}
+		lexer = rendering.MatchLexer(file.Path)
+		if lexer != nil {
+			syntaxCache = make(map[diffSyntaxKey][]RowSpan)
 		}
 
+		// Plan the painted rows first so the file's shown lines are lexed in
+		// one pass rather than one lexer run per row.
+		type plannedRow struct {
+			row      tools.DiffRow
+			segments []string
+			line     int
+		}
+		var planned []plannedRow
+		rowsAfter := len(all)
 		for _, r := range rows {
 			if r.Ellipsis {
-				totalRows++
-				if expanded || len(all) < previewDiffRows {
-					all = append(all, buildDiffEllipsisRow(maxNumWidth))
+				if expanded || rowsAfter < previewDiffRows {
+					planned = append(planned, plannedRow{row: r, line: -1})
+					rowsAfter++
 				}
+				continue
+			}
+			line := logical
+			logical++
+			if !expanded && rowsAfter >= previewDiffRows {
+				cut = true
 				continue
 			}
 			segments := []string{r.Content}
 			if rendering.VisibleWidth(r.Content) > contentWidth {
 				segments = rendering.HardWrap(r.Content, contentWidth)
 			}
-			totalRows += len(segments)
-			// Count all visual rows for the exact footer, but never tokenize or
-			// allocate painted cells for content beyond the preview budget.
-			if !expanded {
-				segments = segments[:min(len(segments), previewDiffRows-len(all))]
+			if !expanded && len(segments) > previewDiffRows-rowsAfter {
+				segments = segments[:previewDiffRows-rowsAfter]
+				cut = true
 			}
-			if len(segments) > 0 {
-				all = append(all, buildBandedDiffContentRows(r, lexer, syntaxCache, segments, maxNumWidth, totalWidth)...)
+			planned = append(planned, plannedRow{row: r, segments: segments, line: line})
+			rowsAfter += len(segments)
+		}
+		if lexer != nil {
+			var texts []string
+			for _, p := range planned {
+				texts = append(texts, p.segments...)
 			}
+			pretokenizeDiffSegments(lexer, texts, syntaxCache)
+		}
+		for _, p := range planned {
+			if p.line < 0 {
+				all = append(all, buildDiffEllipsisRow(maxNumWidth))
+				owner = append(owner, -1)
+				continue
+			}
+			for range p.segments {
+				owner = append(owner, p.line)
+			}
+			all = append(all, buildBandedDiffContentRows(p.row, lexer, syntaxCache, p.segments, maxNumWidth, totalWidth)...)
 		}
 	}
-	if !expanded && totalRows > previewDiffRows {
+	// The preview fits only when every diff line was painted in full within
+	// the budget; otherwise one row yields to the footer.
+	if !expanded && (cut || len(all) > previewDiffRows) {
 		shown := previewDiffRows - 1
-		hidden := totalRows - shown
 		out := append([]PaintLine(nil), all[:shown]...)
-		return append(out, buildDiffTruncationRow(0, hidden))
+		return append(out, buildDiffTruncationRow(0, logical-(lastOwner(owner[:shown])+1)))
 	}
 	if len(all) == 0 {
 		return nil
 	}
 	return all
+}
+
+// lastOwner is the last diff line any painted row shows, or -1.
+func lastOwner(owner []int) int {
+	for i := len(owner) - 1; i >= 0; i-- {
+		if owner[i] >= 0 {
+			return owner[i]
+		}
+	}
+	return -1
 }
 
 // normalizeDiffPresentationRows removes block-local common indentation and
@@ -312,38 +362,93 @@ func syntaxDiffSpans(lexer chroma.Lexer, text string, fallback ui.SemanticColor,
 	if lexer == nil {
 		return []RowSpan{{Text: text, Role: fallback}}
 	}
-	key := diffSyntaxKey{text, fallback}
-	if spans, ok := cache[key]; ok {
+	if spans, ok := cache[diffSyntaxKey{text, fallback}]; ok {
 		return spans
 	}
-	iterator, err := chroma.Coalesce(lexer).Tokenise(nil, text)
-	if err != nil {
+	tokens, ok := cache[diffSyntaxKey{text: text, role: tokensRole}]
+	if !ok {
+		pretokenizeDiffSegments(lexer, []string{text}, cache)
+		tokens = cache[diffSyntaxKey{text: text, role: tokensRole}]
+	}
+	if len(tokens) == 0 {
 		return []RowSpan{{Text: text, Role: fallback}}
+	}
+	spans := make([]RowSpan, len(tokens))
+	for i, token := range tokens {
+		token.Role = fallback
+		spans[i] = token
+	}
+	if cache != nil && len(cache) < 512 {
+		cache[diffSyntaxKey{text, fallback}] = spans
+	}
+	return spans
+}
+
+// tokensRole keys a segment's colored tokens before a row role is applied.
+const tokensRole = ui.SemanticColor(255)
+
+// pretokenizeDiffSegments lexes the shown segments of one file in a single
+// pass and records each segment's colored tokens. One lexer run per row cost
+// roughly 90µs of regexp setup; joined, the file's rows share it. Tokens that
+// span a line break are split at it.
+func pretokenizeDiffSegments(lexer chroma.Lexer, texts []string, cache map[diffSyntaxKey][]RowSpan) {
+	if lexer == nil || cache == nil || len(texts) == 0 {
+		return
+	}
+	var pending []string
+	seen := make(map[string]bool, len(texts))
+	for _, text := range texts {
+		if _, ok := cache[diffSyntaxKey{text: text, role: tokensRole}]; ok || seen[text] || strings.Contains(text, "\n") {
+			continue
+		}
+		seen[text] = true
+		pending = append(pending, text)
+	}
+	if len(pending) == 0 {
+		return
+	}
+	iterator, err := chroma.Coalesce(lexer).Tokenise(nil, strings.Join(pending, "\n"))
+	if err != nil {
+		return
 	}
 	style := styles.Get("github-dark")
 	if style == nil {
 		style = styles.Fallback
 	}
-	var spans []RowSpan
-	for token := iterator(); token != chroma.EOF; token = iterator() {
-		span := RowSpan{Text: token.Value, Role: fallback}
-		entry := style.Get(token.Type)
-		if entry.Colour.IsSet() {
-			span.FGColor = rendering.LipglossColorToCell(entry.Colour.String())
-			span.FGSet = !span.FGColor.IsDefault()
+	colors := make(map[chroma.TokenType]RowSpan)
+	line, current := 0, []RowSpan(nil)
+	flush := func() {
+		if line < len(pending) {
+			cache[diffSyntaxKey{text: pending[line], role: tokensRole}] = current
 		}
-		spans = append(spans, span)
+		line, current = line+1, nil
 	}
-	if len(spans) == 0 {
-		return []RowSpan{{Text: text, Role: fallback}}
+	for token := iterator(); token != chroma.EOF; token = iterator() {
+		template, ok := colors[token.Type]
+		if !ok {
+			if entry := style.Get(token.Type); entry.Colour.IsSet() {
+				template.FGColor = rendering.LipglossColorToCell(entry.Colour.String())
+				template.FGSet = !template.FGColor.IsDefault()
+			}
+			colors[token.Type] = template
+		}
+		for value := token.Value; ; {
+			part, rest, broke := strings.Cut(value, "\n")
+			if part != "" {
+				span := template
+				span.Text = part
+				current = append(current, span)
+			}
+			if !broke {
+				break
+			}
+			flush()
+			value = rest
+		}
 	}
-	// Diff lines tokenize independently. Repeated source segments share their
-	// immutable syntax within this file/render only; gutter and band are copied.
-	// Bound the temporary index so unique large files do not grow another cache.
-	if cache != nil && len(cache) < 256 {
-		cache[key] = spans
+	for line < len(pending) {
+		flush()
 	}
-	return spans
 }
 
 // bandPaintLine pads a PaintLine with the band background so the tint spans

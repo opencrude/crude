@@ -154,17 +154,14 @@ func TestConnectedAgentsInstructionsApplyStageAndSharedSave(t *testing.T) {
 			if !strings.Contains(ansi.Strip(one.app.View().Content), text) {
 				t.Fatal("edited instructions not painted")
 			}
-			invoke("settings/agents/actions/Apply agent", ui.ControlOperation{Verb: "activate"})
+			// The editor's Save applies the agent and persists in one step.
+			invoke("settings/agents/actions/Save", ui.ControlOperation{Verb: "activate"})
 			body := one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings))
-			if body.Model().AppSettings().Agents.Categories[role].Instructions != text {
-				t.Fatal("Apply did not stage ordinary instructions")
+			if body == nil || one.app.ws.LoadAppSettings().Agents.Categories[role].Instructions != text {
+				t.Fatal("agent Save did not persist the instructions")
 			}
-			if one.app.ws.LoadAppSettings().Agents.Categories[role].Instructions == text {
-				t.Fatal("Apply persisted before shared Save")
-			}
-			invoke(string(settingsui.WorkspaceSettingsSaveID), ui.ControlOperation{Verb: "activate"})
-			if one.app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil || one.app.ws.LoadAppSettings().Agents.Categories[role].Instructions != text {
-				t.Fatal("Save receipt did not persist and close")
+			if body.Model().AppSettings().Agents.Categories[role].Instructions != text || len(body.Model().Edits()) != 0 {
+				t.Fatal("agent Save left the form stale or dirty")
 			}
 			if peer.app.Input.Value() != "peer private instructions draft" || peer.app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
 				t.Fatal("shared settings changed peer private state")
@@ -217,13 +214,13 @@ func TestConnectedAgentsOffPageAuthorityDeniesApplyAndSave(t *testing.T) {
 			if strings.Contains(ansi.Strip(one.app.View().Content), "Tool access") {
 				t.Fatal("authority control remained on-page")
 			}
-			if r := invoke("settings/agents/actions/Apply agent", ui.ControlOperation{Verb: "activate"}); r.State != control.Failed || r.Fault == nil || r.Fault.Code != control.Denied {
+			if r := invoke("settings/agents/actions/Save", ui.ControlOperation{Verb: "activate"}); r.State != control.Failed || r.Fault == nil || r.Fault.Code != control.Denied {
 				t.Fatalf("offpage Apply: %+v", r)
 			}
 			// Human Apply stages it; generic Save must still inspect the full preimage.
 			for _, child := range body.Children() {
 				if child.ID() == "settings/agents" {
-					child.(ui.ActionHandler).HandleAction(ui.EventContext{}, ui.Action{ID: "agents.apply"})
+					child.(ui.ActionHandler).HandleAction(ui.EventContext{}, ui.Action{ID: "agents.save"})
 				}
 			}
 			if model.Categories()[index].Form.Field(tc.field) != nil {
@@ -260,7 +257,7 @@ func TestConnectedAgentsInvalidApplyFailsAndRetainsDraft(t *testing.T) {
 	if r := invoke("settings/agents/form/model-context-window", ui.ControlOperation{Verb: "set_value", Value: json.RawMessage(`"not-a-number"`)}); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if r := invoke("settings/agents/actions/Apply agent", ui.ControlOperation{Verb: "activate"}); r.State != control.Failed || r.Fault == nil {
+	if r := invoke("settings/agents/actions/Save", ui.ControlOperation{Verb: "activate"}); r.State != control.Failed || r.Fault == nil {
 		t.Fatalf("invalid Apply acknowledged success: %+v", r)
 	}
 	field := body.Model().Categories()[index].Form.Field("model-context-window")

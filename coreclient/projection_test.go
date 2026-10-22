@@ -1,6 +1,7 @@
 package coreclient
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -30,7 +31,7 @@ func projectionFixture() coreprotocol.WorkspaceSnapshot {
 
 func newProjection(t *testing.T, snapshot coreprotocol.WorkspaceSnapshot) *WorkspaceView {
 	t.Helper()
-	v, err := NewWorkspaceView(nil, snapshot)
+	v, err := NewWorkspaceView(nil, mustDetach(t, snapshot))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +60,12 @@ func TestWorkspaceViewIndependentStreamStablePointers(t *testing.T) {
 		Conversation: workspace.ConversationDelta{BaseRevision: 1, Revision: 2, Upserts: []workspace.Message{message}},
 	}}}
 	for _, view := range []*WorkspaceView{a, b} {
-		changed, err := view.ApplyChanges(delta)
+		// Each client decodes its own batch from the wire.
+		changed, err := view.ApplyChanges(mustDetach(t, delta))
 		if err != nil || len(changed) != 1 {
 			t.Fatalf("apply: %v %v", changed, err)
 		}
-		if _, err := view.ApplyChanges(delta); err != nil {
+		if _, err := view.ApplyChanges(mustDetach(t, delta)); err != nil {
 			t.Fatal(err)
 		}
 		messages := view.AgentMgr.Get("root").State.Messages.Messages()
@@ -133,7 +135,7 @@ func TestWorkspaceViewDetachedNestedData(t *testing.T) {
 			Activity: types.AgentActivityView{Plan: &activity.Plan{Steps: []activity.Step{{Text: "delta plan"}}}}},
 		Conversation: workspace.ConversationDelta{BaseRevision: 1, Revision: 2, Upserts: []workspace.Message{{InternalID: "m", ReferenceLabels: []string{"delta label"}}}},
 	}}}
-	if _, err := v.ApplyChanges(delta); err != nil {
+	if _, err := v.ApplyChanges(mustDetach(t, delta)); err != nil {
 		t.Fatal(err)
 	}
 	delta.Agents[0].State.Activity.Plan.Steps[0].Text = "changed producer"
@@ -180,4 +182,18 @@ func TestWorkspaceViewUsageScopes(t *testing.T) {
 	if child.Requests != 1 {
 		t.Fatal("subtree borrowed parent accounting")
 	}
+}
+
+// mustDetach models the wire: every client decodes its own copy of a batch.
+func mustDetach[T any](t *testing.T, value T) T {
+	t.Helper()
+	var out T
+	data, err := json.Marshal(value)
+	if err == nil {
+		err = json.Unmarshal(data, &out)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

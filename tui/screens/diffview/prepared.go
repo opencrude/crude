@@ -5,12 +5,12 @@ package diffview
 import (
 	"context"
 	"crude/textdiff"
+	"crude/tui/rendering"
 	"crude/tui/ui"
 	"fmt"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/lexers"
 )
 
 type Comparison struct{ Path, BeforeLabel, AfterLabel, Before, After string }
@@ -79,7 +79,7 @@ func prepareSyntax(ctx context.Context, path, source string) ([][]syntaxSpan, er
 	if len(source) > SyntaxByteLimit {
 		return nil, nil
 	}
-	l := lexers.Match(path)
+	l := rendering.MatchLexer(path)
 	if l == nil || l.Config().Name == "fallback" {
 		return nil, nil // Plain source needs no per-character fallback token projection.
 	}

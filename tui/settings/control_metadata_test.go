@@ -143,7 +143,7 @@ func TestAgentApplyProspectiveFullDraftAndSave(t *testing.T) {
 			if err != nil || !res.Handled {
 				t.Fatal(err)
 			}
-			effect, human, err := s.ControlMetadata("apply", "agents.apply")
+			effect, human, err := s.ControlMetadata("apply", "agents.save")
 			if err != nil || human || effect != control.Write {
 				t.Fatalf("ordinary Apply: %s %v %v", effect, human, err)
 			}
@@ -160,7 +160,7 @@ func TestAgentApplyProspectiveFullDraftAndSave(t *testing.T) {
 			s.agents.begin("role/"+role, false)
 			s.agents.draft.SetValue("agent-tool-mode", ui.StringValue("Custom selection"))
 			s.agents.setPage("model")
-			effect, human, err = s.ControlMetadata("apply", "agents.apply")
+			effect, human, err = s.ControlMetadata("apply", "agents.save")
 			if err != nil || !human || effect != control.Authority {
 				t.Fatal("offpage tool mode admitted", effect, human, err)
 			}

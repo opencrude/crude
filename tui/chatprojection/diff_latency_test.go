@@ -24,7 +24,10 @@ func TestDiffPreviewMatchesExpandedPrefix(t *testing.T) {
 			if len(preview) != 24 || !reflect.DeepEqual(preview[:23], full[:23]) {
 				t.Fatal("preview lost source text, syntax colors, or diff bands")
 			}
-			want := fmt.Sprintf("+%d more changes", len(full)-23)
+			// The footer counts diff lines not visible in the 23 preview rows;
+			// each fixture line wraps into the same number of rows.
+			perLine := len(full) / count
+			want := fmt.Sprintf("+%d more changes", count-(23+perLine-1)/perLine)
 			if !strings.Contains(preview[23].PlainText(), want) {
 				t.Fatalf("footer = %q, want %q", preview[23].PlainText(), want)
 			}

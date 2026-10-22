@@ -84,7 +84,27 @@ func (p *Program) initInputReader(cancel bool) error {
 func (p *Program) readLoop() {
 	defer close(p.readLoopDone)
 
-	if err := p.inputScanner.StreamEvents(p.ctx, p.msgs); err != nil {
+	events := p.msgs
+	var forwarded chan struct{}
+	if p.observer != nil {
+		// Input is stamped when the terminal reader produced it, so the event
+		// loop can report how long it waited behind other work.
+		raw := make(chan Msg)
+		forwarded = make(chan struct{})
+		events = raw
+		go func() {
+			defer close(forwarded)
+			for msg := range raw {
+				select {
+				case <-p.ctx.Done():
+					return
+				case p.msgs <- timedInput{msg: msg, at: time.Now()}:
+				}
+			}
+		}()
+		defer func() { close(raw); <-forwarded }()
+	}
+	if err := p.inputScanner.StreamEvents(p.ctx, events); err != nil {
 		select {
 		case <-p.ctx.Done():
 			return

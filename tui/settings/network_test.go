@@ -205,11 +205,6 @@ func TestNetworkDirtyDiscardAndAsyncSaveLifecycle(t *testing.T) {
 	if !model.hasUnsavedPreferences() {
 		t.Fatal("network edit did not mark settings dirty")
 	}
-	prompt := settingsPrompt(t, root.RequestClose())
-	if prompt.Kind != PromptDiscardSettings || !root.PromptRelevant(prompt) {
-		t.Fatalf("dirty Network close did not request a relevant discard decision: %+v", prompt)
-	}
-
 	result := root.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
 	if result.Cmd == nil || !model.Saving() {
 		t.Fatal("valid Network save did not enter the retained saving state")

@@ -119,13 +119,21 @@ func TestLanguageServerCustomServerLifecycle(t *testing.T) {
 	root := NewSurface(theme.DefaultDark(), model)
 	model.SelectCategory(catLanguageServers)
 	root.syncModel()
+	before := cloneLSPLanguages(model.AppSettings().LSP.Languages)
+
+	// Back abandons an Add: nothing is left behind and nothing is unsaved.
 	root.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.add"})
 	if root.lsp.editing != "custom" {
 		t.Fatalf("editing %q", root.lsp.editing)
 	}
-	root.lsp.back()
-	if root.lsp.draft == nil || root.lsp.notice == "" {
-		t.Fatal("an incomplete custom server must stay open with guidance")
+	root.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.cancel"})
+	if root.lsp.draft != nil || !reflect.DeepEqual(model.AppSettings().LSP.Languages, before) || root.hasUnsavedDrafts() {
+		t.Fatal("Back left an abandoned server behind")
+	}
+
+	root.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.add"})
+	if result := root.lsp.save(); root.lsp.draft == nil || root.lsp.notice == "" || result.Action != nil {
+		t.Fatal("an incomplete custom server must stay open with guidance and not be saved")
 	}
 	draft := root.lsp.draft
 	draft.SetValue(lspFieldID, ui.StringValue("Ruby!"))
@@ -136,7 +144,10 @@ func TestLanguageServerCustomServerLifecycle(t *testing.T) {
 	draft.SetValue(lspFieldCommand, ui.StringValue("ruby-lsp"))
 	draft.SetValue(lspFieldExtensions, ui.StringValue(".rb, .rake"))
 	draft.SetValue(lspFieldLanguageID, ui.StringValue("ruby"))
-	root.lsp.back()
+	result := root.lsp.save()
+	if result.Action == nil || result.Action.ID != "settings.save" {
+		t.Fatal("Save did not persist Settings")
+	}
 	ruby, ok := model.AppSettings().LSP.Languages["ruby"]
 	if root.lsp.draft != nil || !ok || ruby.Command != "ruby-lsp" || !reflect.DeepEqual(ruby.Extensions, []string{".rb", ".rake"}) {
 		t.Fatalf("custom server not applied: %+v open=%v", ruby, root.lsp.draft != nil)

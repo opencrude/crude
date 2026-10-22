@@ -76,6 +76,7 @@ func (s *ProjectSearchService) Execute(req ProjectSearchRequest) ProjectSearchRe
 		ctx = context.Background()
 	}
 	matches, err := fileio.SearchProject(ctx, req.Root, req.Query, req.Options)
+	projectSearches.Since(started)
 	return ProjectSearchResult{
 		RequestID: req.ID,
 		Matches:   matches,

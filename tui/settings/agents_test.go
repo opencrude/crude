@@ -104,13 +104,10 @@ func TestAgentCatalogDraftValidationAndDiscard(t *testing.T) {
 	if c.apply() {
 		t.Fatal("invalid name accepted")
 	}
+	// Esc is cancel: the editor closes and nothing is committed.
 	s.cancelSettings()
-	if c.draft == nil || c.confirm != "discard" {
-		t.Fatal("closing discarded an unapplied agent without confirmation")
-	}
-	c.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.discard"})
 	if c.draft != nil || len(m.AppSettings().Agents.AgentProfiles) != 0 {
-		t.Fatal("discard committed the draft")
+		t.Fatal("Esc kept or committed the agent draft")
 	}
 }
 
@@ -140,7 +137,7 @@ func TestInactiveAgentCatalogDoesNotPaintItsActions(t *testing.T) {
 	}
 }
 
-func TestAgentCatalogResetsBuiltinsAndPreservesCompleteNamedEditors(t *testing.T) {
+func TestAgentCatalogEditsBuiltinsAndPreservesCompleteNamedEditors(t *testing.T) {
 	defaults := types.AppSettings{Agents: types.AgentsSettings{Categories: types.DefaultAgentRoleCategories(), AgentProfiles: map[string]types.AgentProfileSettings{
 		"explorer": {Category: "researcher", Description: "Read-only codebase explorer"},
 	}}}
@@ -156,16 +153,6 @@ func TestAgentCatalogResetsBuiltinsAndPreservesCompleteNamedEditors(t *testing.T
 	}
 	if role := m.AppSettings().Agents.Categories["researcher"]; role.Enabled == nil || *role.Enabled || role.Instructions != "Customized" {
 		t.Fatalf("role edits lost: %+v", role)
-	}
-	for i, row := range c.table.Rows() {
-		if row.ID == "role/researcher" {
-			c.table.SelectIndex(i)
-		}
-	}
-	c.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.reset"})
-	c.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.reset-confirm"})
-	if got := m.AppSettings().Agents.Categories["researcher"]; got.Instructions != "" || got.Enabled != nil || got.Policy != "read-only" {
-		t.Fatalf("built-in reset did not restore shipped role: %+v", got)
 	}
 	c.begin("profile/reviewer", true)
 	c.draft.SetValue("agent-name", ui.StringValue("review-copy"))
@@ -322,8 +309,8 @@ func TestBuiltinInstructionsEditThroughHostAndScrollbarMatchesPopup(t *testing.T
 		host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 		host.Handle(tea.PasteMsg{Content: "Edited built-in instructions\nSecond line"})
 		host.Paint(buf)
-		if !strings.Contains(bufferPlain(buf), "Edited built-in instructions") || !strings.Contains(bufferPlain(buf), "Purpose") || !strings.Contains(bufferPlain(buf), "Apply agent") {
-			t.Fatalf("%s instructions or their Apply action were not painted", role.key)
+		if !strings.Contains(bufferPlain(buf), "Edited built-in instructions") || !strings.Contains(bufferPlain(buf), "Purpose") || !strings.Contains(bufferPlain(buf), "Save") {
+			t.Fatalf("%s instructions or their Save action were not painted", role.key)
 		}
 		// The editor's decisions replace Save/Close on the footer row.
 		bar, ok := host.ScreenRect(c.bar.ID())
@@ -353,7 +340,9 @@ func TestBuiltinInstructionsEditThroughHostAndScrollbarMatchesPopup(t *testing.T
 	}
 }
 
-func TestSettingsBreadcrumbReturnsToCatalogWithoutDiscardingEdits(t *testing.T) {
+// The breadcrumb parent is Back: it returns to the catalog and discards the
+// editor's unsaved changes, like the Back button and Esc.
+func TestSettingsBreadcrumbIsBack(t *testing.T) {
 	for _, page := range []string{"agents", "accounts"} {
 		for _, dirty := range []bool{false, true} {
 			m := New(theme.DefaultDark(), accountSettingsFixture(), nil)
@@ -383,18 +372,11 @@ func TestSettingsBreadcrumbReturnsToCatalogWithoutDiscardingEdits(t *testing.T) 
 			if !result.Handled {
 				t.Fatalf("%s breadcrumb did not handle its visible parent segment", page)
 			}
-			open := s.agents.draft != nil || m.accountEditor != nil
-			if open != dirty {
-				t.Fatalf("%s breadcrumb open=%v, dirty=%v", page, open, dirty)
+			if s.agents.draft != nil || m.accountEditor != nil {
+				t.Fatalf("%s breadcrumb did not return to the catalog (dirty=%v)", page, dirty)
 			}
-			if dirty {
-				if page == "agents" {
-					if s.agents.confirm != "discard" {
-						t.Fatal("agent breadcrumb did not preserve the discard confirmation")
-					}
-				} else if result.Cmd == nil {
-					t.Fatal("editor breadcrumb did not request discard confirmation")
-				}
+			if m.AppSettings().Agents.Categories["default"].Instructions == "Keep this draft" || m.accounts["work"].Label == "Keep this draft" {
+				t.Fatalf("%s breadcrumb applied the discarded edit", page)
 			}
 		}
 	}

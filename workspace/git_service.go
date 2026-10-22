@@ -188,6 +188,7 @@ func (s *GitService) run(ctx context.Context, args ...string) error {
 		return err
 	}
 	closeGitRepository(repo)
+	defer observeGit(args, time.Now())
 	cmdArgs := append([]string{"-C", root}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	out, err := cmd.CombinedOutput()

@@ -94,16 +94,27 @@ func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 	if got.ConfirmAt != "destructive" || got.AutoPermission.Model != "review-v2" || got.AutoPermission.Instructions != "Never send builds" || got.AutoPermission.DenyMode != "deny" || got.AutoPermission.UnresolvedMode != "deny" {
 		t.Fatalf("one Security page erased another's draft: %+v", got)
 	}
-	for index, row := range s.agents.table.Rows() {
-		if row.ID == "role/auto-review" {
-			s.agents.table.SelectIndex(index)
+	// The two pages share safety.auto_permission. Each page reset removes only
+	// what that page edits: the policy page never clears the reviewer
+	// identity, and the workspace agent catalog never clears the policy.
+	policyPage, _ := pageOwnershipFor(catAutoReviewPolicy, modeltypes.SettingsScopeApplication)
+	agents, _ := pageOwnershipFor(catAgents, modeltypes.SettingsScopeWorkspace)
+	for _, field := range []string{"enabled", "account_id", "model", "provider", "instructions"} {
+		path := []string{"safety", "auto_permission", field}
+		if policyPage.owns(path) || !agents.owns(path) {
+			t.Fatalf("reviewer identity %s belongs to Agents, not the policy page", field)
 		}
 	}
-	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.reset"})
-	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.reset-confirm"})
-	reset := m.AppSettings().Safety.AutoPermission
-	if reset.Enabled != "off" || reset.Model != "" || reset.AccountID != "" || reset.Instructions != "" || reset.DenyMode != "deny" || reset.UnresolvedMode != "deny" {
-		t.Fatalf("resetting reviewer identity changed its bounded policy: %+v", reset)
+	for _, field := range []string{"deny_mode", "unresolved_mode", "timeout_seconds"} {
+		path := []string{"safety", "auto_permission", field}
+		if !policyPage.owns(path) || agents.owns(path) {
+			t.Fatalf("policy %s belongs to Auto Review Policy, not Agents", field)
+		}
+	}
+	for _, edit := range policyPage.resetEdits() {
+		if agents.owns(edit.Path) {
+			t.Fatalf("policy reset removes reviewer identity %v", edit.Path)
+		}
 	}
 }
 

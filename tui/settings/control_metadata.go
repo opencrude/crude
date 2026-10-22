@@ -189,18 +189,28 @@ func (s *WorkspaceSettingsSurface) ControlMetadata(id ui.ComponentID, action str
 			return control.Authority, true, nil
 		}
 		return control.Write, false, nil
-	case "settings.close", "settings.category.open", "settings.search", "settings.scope", "settings.lsp.servers":
+	case "settings.close", "settings.cancel", "agents.back", "lsp.cancel", "settings.account.cancel-edit":
+		// Close discards unsaved edits. Discarding a person's work is theirs
+		// to decide, so an agent cannot close over unsaved changes.
+		if s.hasUnsavedDrafts() {
+			return control.Authority, true, nil
+		}
 		return control.Write, false, nil
-	case "agents.edit", "agents.back", "tabs.activate", "lsp.edit", "lsp.back":
+	case "settings.category.open", "settings.search", "settings.scope", "settings.lsp.servers":
 		return control.Write, false, nil
-	case "agents.apply":
+	case "agents.edit", "tabs.activate", "lsp.edit":
+		return control.Write, false, nil
+	case "lsp.save":
+		return s.ControlMetadata(id, "settings.save")
+	case "agents.save":
+		// Save applies the open agent and persists every pending change.
 		if s.agents == nil || s.agents.draft == nil {
 			return "", false, fmt.Errorf("agent draft unavailable")
 		}
 		if s.agentDraftAuthority() {
 			return control.Authority, true, nil
 		}
-		return control.Write, false, nil
+		return s.ControlMetadata(id, "settings.save")
 	}
 	return "", false, nil
 }
@@ -219,7 +229,7 @@ func (s *WorkspaceSettingsSurface) ControlValueAllowed(id ui.ComponentID) bool {
 // completed. A handled validation failure is useful for human focus routing,
 // but is not an applied semantic operation.
 func (s *WorkspaceSettingsSurface) ControlActionOutcome(action string) error {
-	if action != "agents.apply" {
+	if action != "agents.save" {
 		return nil
 	}
 	if s.agents == nil || s.agents.draft == nil {
@@ -227,10 +237,10 @@ func (s *WorkspaceSettingsSurface) ControlActionOutcome(action string) error {
 	}
 	for _, field := range s.agents.draft.Fields() {
 		if field.HasErrors() {
-			return fmt.Errorf("agent Apply failed: %s: %s", field.Label, strings.Join(field.Errors, "; "))
+			return fmt.Errorf("agent Save failed: %s: %s", field.Label, strings.Join(field.Errors, "; "))
 		}
 	}
-	return fmt.Errorf("agent Apply did not stage the draft")
+	return fmt.Errorf("agent Save did not apply the agent")
 }
 
 // ControlEditGeneration includes off-page drafts; Save is not page-local.

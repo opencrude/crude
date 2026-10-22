@@ -16,6 +16,7 @@ import (
 	"crude/history"
 
 	"crude/sessiondb"
+	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/viewmodel"
 	roottypes "crude/types"
@@ -292,6 +293,7 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 		a,
 		tea.WithWidthMethod(ansi.GraphemeWidth),
 		tea.WithWidthProbe(rendering.TerminalWidthProbeCorpus()...),
+		tea.WithObserver(perf.NewLoopObserver()),
 	)
 	t.app = a
 	t.Program = program

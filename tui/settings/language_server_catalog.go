@@ -3,6 +3,7 @@ package settings
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,8 +24,7 @@ var lspIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // lspCatalog is the Language Servers page: a searchable server table that
 // opens a focused per-server editor, the same list → detail rhythm as
-// Accounts and Agents. Edits apply to the settings draft immediately and
-// persist with the window's Save.
+// Accounts and Agents. The editor's Save persists; Back discards its edits.
 type lspCatalog struct {
 	ui.Base
 	owner      *WorkspaceSettingsSurface
@@ -37,6 +37,20 @@ type lspCatalog struct {
 	draft      *ui.FormModel
 	editing    string
 	notice     string
+	// before is the server inventory when the editor opened: Back restores
+	// it, so an abandoned Add or edit leaves nothing behind.
+	before       map[string]types.LSPLanguageSettings
+	beforeResets [][]string
+	snapshotted  bool
+}
+
+// snapshot records the inventory once per editor session.
+func (c *lspCatalog) snapshot() {
+	if c.snapshotted {
+		return
+	}
+	m := c.model()
+	c.before, c.beforeResets, c.snapshotted = cloneLSPLanguages(m.lspLanguages), slices.Clone(m.resetPaths), true
 }
 
 type lspCatalogFilter struct {
@@ -94,7 +108,7 @@ func newLSPCatalog(owner *WorkspaceSettingsSurface) *lspCatalog {
 	c.bar = ui.NewActionBar("settings/language-servers/actions", t)
 	c.bar.SetAlignEnd(false)
 	c.bar.SetExitActions("lsp.bar.forward", "lsp.bar.backward")
-	c.bar.SetCancelAction("lsp.back")
+	c.bar.SetCancelAction("lsp.cancel")
 	return c
 }
 
@@ -163,13 +177,15 @@ func (c *lspCatalog) selected() (lspServer, bool) {
 func (c *lspCatalog) rebuildBar() {
 	if c.draft != nil {
 		server, _ := c.model().lspServer(c.editing)
-		// Edits apply to the settings draft as they are made, so the editor
-		// closes with Done rather than a separate apply step.
+		// Save keeps the server and persists; Back restores the inventory
+		// from when the editor opened.
 		buttons := []ui.ActionBarButton{{Label: "Restore default", Action: "lsp.reset", Enabled: true}}
 		if !server.builtin {
 			buttons = []ui.ActionBarButton{{Label: "Remove server", Action: "lsp.remove", Variant: ui.VariantDanger, Enabled: true}}
 		}
-		c.bar.SetButtons(append(buttons, ui.ActionBarButton{Label: "Done", Action: "lsp.back", Variant: ui.VariantPrimary, Enabled: true})...)
+		c.bar.SetButtons(append(buttons,
+			ui.ActionBarButton{Label: "Save", Action: "lsp.save", Variant: ui.VariantPrimary, Enabled: true},
+			ui.ActionBarButton{Label: "Back", Action: "lsp.cancel", Enabled: true})...)
 		return
 	}
 	server, ok := c.selected()
@@ -196,6 +212,7 @@ func (c *lspCatalog) begin(id string) {
 	if !ok {
 		return
 	}
+	c.snapshot()
 	c.editing, c.notice = id, ""
 	c.draft = buildLSPServerForm(server)
 	c.draft.OnChanged(func(string) { c.applyDraft() })
@@ -256,13 +273,56 @@ func builtinLSP(id string) bool {
 
 func (c *lspCatalog) closeEditor() {
 	c.draft, c.editing, c.notice = nil, "", ""
+	c.before, c.beforeResets, c.snapshotted = nil, nil, false
 	c.form.SetForm(nil, "", "")
 	c.rebuildBar()
 }
 
-// back leaves the editor. A custom server that cannot run yet stays open so
-// its missing fields are fixed rather than silently saved half-defined.
+// back is the editor's Back and Esc: it restores the inventory from when
+// the editor opened and returns to the list.
 func (c *lspCatalog) back() ui.EventResult {
+	if c.draft == nil {
+		return ui.EventResult{}
+	}
+	m := c.model()
+	id := c.editing
+	if c.snapshotted {
+		m.lspLanguages, m.resetPaths = c.before, c.beforeResets
+		m.syncLSPSummary()
+	}
+	c.closeEditor()
+	c.refreshRows()
+	c.selectRow(id)
+	c.rebuildBar()
+	c.owner.focusID(c.table.ID())
+	if m.onChange != nil {
+		m.onChange()
+	}
+	return c.changed()
+}
+
+// save keeps the server and persists Settings; an incomplete server stays
+// open with guidance instead of being saved half-defined.
+func (c *lspCatalog) save() ui.EventResult {
+	result := c.keep()
+	if c.draft != nil {
+		return result
+	}
+	result.Action = &ui.Action{ID: "settings.save"}
+	return result
+}
+
+func (c *lspCatalog) selectRow(id string) {
+	for index, row := range c.table.Rows() {
+		if row.ID == id {
+			c.table.SelectIndex(index)
+		}
+	}
+}
+
+// keep closes the editor keeping its changes in the page (navigation away
+// from a valid editor). A custom server that cannot run yet stays open.
+func (c *lspCatalog) keep() ui.EventResult {
 	if c.draft == nil {
 		return ui.EventResult{}
 	}
@@ -313,6 +373,7 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 		}
 		return c.changed()
 	case "lsp.add":
+		c.snapshot()
 		id := "custom"
 		for n := 2; m.lspLanguages[id].Command != "" || m.lspLanguages[id].Extensions != nil; n++ {
 			id = fmt.Sprintf("custom-%d", n)
@@ -365,8 +426,10 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 			c.owner.focusID(c.table.ID())
 		}
 		return c.changed()
-	case "lsp.back":
+	case "lsp.cancel":
 		return c.back()
+	case "lsp.save":
+		return c.save()
 	case "lsp.bar.forward":
 		if c.draft != nil {
 			c.owner.focusID(WorkspaceSettingsCloseBarID)
