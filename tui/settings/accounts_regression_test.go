@@ -146,10 +146,15 @@ func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
 			}
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
-			for _, label := range map[string][]string{"agents": {"Add", "Edit", "Clone", "Reset", "Remove"}, "accounts": {"Add account", "Edit", "Clone", "Remove"}}[catalog] {
+			for _, label := range map[string][]string{"agents": {"Add", "Edit", "Clone", "Remove"}, "accounts": {"Add account", "Edit", "Clone", "Remove"}}[catalog] {
 				if !strings.Contains(bufferPlain(buf), label) {
 					t.Fatalf("%s at %+v: %q is clipped or missing", catalog, size, label)
 				}
+			}
+			// Catalog items are edited or removed individually; there is no
+			// item or page reset in Application scope.
+			if strings.Contains(bufferPlain(buf), "Reset") || strings.Contains(bufferPlain(buf), "Restore defaults") {
+				t.Fatalf("%s at %+v: a collection offers a reset", catalog, size)
 			}
 		}
 	}
@@ -261,17 +266,10 @@ func TestAccountEditRemovalAndSelectionDoNotRewriteOtherSessions(t *testing.T) {
 	if m.accountEditor == nil || m.accounts["work"].APIKey != "work-secret" || !strings.Contains(m.accountError, "write failed") {
 		t.Fatal("failed save discarded editor or changed persisted account")
 	}
-	discard := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"}))
-	if discard.Target != m || discard.Kind != PromptDiscardEditor || m.accountEditor == nil || m.value(catAccounts, fieldAccountLabel) != "Team" {
-		t.Fatalf("dirty editor did not remain mounted: %+v", discard)
-	}
-	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.stay"})
-	if m.accountEditor == nil || m.value(catAccounts, fieldAPIKey) != "team-key" {
-		t.Fatal("staying in the editor lost unsaved changes")
-	}
-	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: PromptDiscardEditor})
+	// Back is cancel: the failed edit is discarded and the table restored.
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"})
 	if m.accountEditor != nil || m.accounts["work"].APIKey != "work-secret" {
-		t.Fatal("explicit discard failed to restore the account table")
+		t.Fatal("Back failed to discard the editor and restore the account table")
 	}
 	remove := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.remove"}))
 	if remove.Kind != PromptRemoveAccount || remove.Target != m || remove.ID != "work" || remove.Label != "Work" || !s.PromptRelevant(remove) || len(m.accounts) != 2 {

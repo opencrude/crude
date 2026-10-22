@@ -215,6 +215,9 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 	entries := make(map[string]Entry)
 	included := normalizedIncludedPaths(opts.IncludePaths)
 	hardlinks := make(map[string]string)
+	scanStarted := time.Now().UnixNano()
+	seen := make(map[string]bool)
+	defer func() { s.forgetUnseen(seen) }()
 	err = filepath.WalkDir(s.workspaceRoot, func(path string, dirEntry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -230,6 +233,7 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		seen[rel] = true
 		if matcher.hardExcluded(rel) {
 			if dirEntry.IsDir() {
 				return filepath.SkipDir
@@ -261,16 +265,21 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 			if !forced && info.Size() > maxFileSize {
 				return nil
 			}
-			var entry Entry
-			if storeObjects {
-				entry, err = s.storeRegularFile(ctx, path)
-			} else {
-				entry, err = hashRegularFile(path, mode)
+			identity, hasIdentity := fileIdentityKey(path, info)
+			entry, cached := s.cachedEntry(rel, info, identity, storeObjects)
+			if !cached {
+				if storeObjects {
+					entry, err = s.storeRegularFile(ctx, path)
+				} else {
+					entry, err = hashRegularFile(path, mode)
+				}
+				if err != nil {
+					return err
+				}
+				s.rememberEntry(rel, info, identity, storeObjects, entry, scanStarted)
 			}
-			if err != nil {
-				return err
-			}
-			if identity, ok := fileIdentityKey(path, info); ok {
+			entry.Mode = storedMode(mode)
+			if identity, ok := identity, hasIdentity; ok {
 				if canonical := hardlinks[identity]; canonical != "" {
 					entry.Type = EntryHardlink
 					entry.HardlinkTarget = canonical
@@ -466,4 +475,56 @@ func (s *Store) stats() (Stats, error) {
 		return Stats{}, err
 	}
 	return stats, nil
+}
+
+// cachedEntry returns the previous scan's entry for an unchanged file. A
+// stored scan only trusts entries whose objects were stored and still exist.
+func (s *Store) cachedEntry(rel string, info os.FileInfo, identity string, storeObjects bool) (Entry, bool) {
+	// Restore planning reads every file: its preview must not depend on
+	// metadata that a same-granule write could have left unchanged.
+	if !storeObjects {
+		return Entry{}, false
+	}
+	s.statMu.Lock()
+	cached, ok := s.statCache[rel]
+	s.statMu.Unlock()
+	if !ok || cached.size != info.Size() || cached.modTime != info.ModTime().UnixNano() || cached.identity != identity || cached.change != changeKey(info) {
+		return Entry{}, false
+	}
+	// A write in the same timestamp granule as the observation is invisible
+	// to metadata; such entries are re-read until they age out.
+	if cached.scanned-cached.modTime < int64(racyWindow) {
+		return Entry{}, false
+	}
+	if !cached.stored {
+		return Entry{}, false
+	}
+	path, err := objectPath(s.root, "files", cached.entry.Hash, ".json")
+	if err != nil {
+		return Entry{}, false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return Entry{}, false
+	}
+	return cached.entry, true
+}
+
+func (s *Store) rememberEntry(rel string, info os.FileInfo, identity string, stored bool, entry Entry, scanned int64) {
+	s.statMu.Lock()
+	defer s.statMu.Unlock()
+	if s.statCache == nil {
+		s.statCache = make(map[string]statEntry)
+	}
+	s.statCache[rel] = statEntry{size: info.Size(), modTime: info.ModTime().UnixNano(), change: changeKey(info), identity: identity, scanned: scanned, stored: stored, entry: entry}
+}
+
+// forgetUnseen drops cache entries for paths the last walk did not visit.
+func (s *Store) forgetUnseen(seen map[string]bool) {
+	s.statMu.Lock()
+	defer s.statMu.Unlock()
+	for rel := range s.statCache {
+		if !seen[rel] {
+			delete(s.statCache, rel)
+		}
+	}
 }

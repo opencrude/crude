@@ -330,15 +330,16 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 	} else if working > 0 {
 		workspaceHue = ui.ColorAccent2
 	}
-	return []shellfooter.Segment{
+	segments := []shellfooter.Segment{
 		{Text: problemText, FillRole: problemRole, Attention: problemAttention, Pill: true, Active: active == termdock.PanelProblems, Action: "problems", Priority: 1},
 		{Text: noticeText, FillRole: ui.ColorAccent, Attention: unread > 0, Pill: true, Active: active == termdock.PanelNotices, Action: "notices", Priority: 1},
 		{Text: terminalText, FillRole: mapBool(terminalCount > 0, ui.ColorSuccess, ui.ColorDiffHunk), Attention: terminalCount > 0, Pill: true, Active: active == termdock.PanelTerminal, Action: "terminals", Priority: 1},
 		{Text: "Git", FillRole: ui.ColorDiffFile, Pill: true, Active: active == termdock.PanelGit, Action: "git", Priority: 1},
 		{Text: "Board", FillRole: ui.ColorAccent2, Pill: true, Active: active == termdock.PanelBoard, Action: "board", Priority: 0},
 		{Text: "Memory", FillRole: ui.ColorMuted, Pill: true, Active: active == termdock.PanelMemory, Action: "memory", Priority: 0},
-		{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0},
 	}
+	segments = append(segments, m.performanceFooterSegments(active)...)
+	return append(segments, shellfooter.Segment{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0})
 }
 
 // footerHelpSegments is the footer's guidance group: unread Notices when

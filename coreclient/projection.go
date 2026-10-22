@@ -1,7 +1,6 @@
 package coreclient
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -53,7 +52,9 @@ func (v *WorkspaceView) Revisions() map[string]uint64 {
 }
 
 // InstallSnapshot reconciles a resynchronization without replacing surviving
-// session, node, state, reference-cache or conversation identities.
+// session, node, state, reference-cache or conversation identities. Like
+// every replica install it takes ownership of its freshly decoded argument;
+// copying transcripts here would put that cost on the UI goroutine.
 func (v *WorkspaceView) InstallSnapshot(snapshot coreprotocol.WorkspaceSnapshot) error {
 	if snapshot.ID == "" || v.ID != "" && snapshot.ID != v.ID {
 		return fmt.Errorf("%w: wrong workspace", ErrResync)
@@ -95,11 +96,7 @@ func (v *WorkspaceView) InstallSnapshot(snapshot coreprotocol.WorkspaceSnapshot)
 			return fmt.Errorf("%w: missing session", ErrResync)
 		}
 	}
-	// Clone only the boundary payload, never a whole transcript during paint.
-	detached, err := detach(snapshot)
-	if err != nil {
-		return err
-	}
+	detached := snapshot
 	v.ID, v.RootPath, v.Username, v.StartTime = detached.ID, detached.Root, detached.Username, detached.StartedAt
 	v.InitialSettings = types.Settings{Theme: detached.Settings.Theme, Editor: detached.Settings.Editor, UI: detached.Settings.UI}
 	v.appSettings = v.InitialSettings.AppPart()
@@ -115,7 +112,8 @@ func (v *WorkspaceView) InstallSnapshot(snapshot coreprotocol.WorkspaceSnapshot)
 }
 
 // InstallSessions reconciles the session set without transcripts, retaining
-// surviving session identities and their reference replicas.
+// surviving session identities and their reference replicas. It takes
+// ownership of snapshots.
 func (v *WorkspaceView) InstallSessions(snapshots []coreprotocol.SessionSnapshot) error {
 	ids := make(map[string]bool)
 	for _, s := range snapshots {
@@ -124,11 +122,7 @@ func (v *WorkspaceView) InstallSessions(snapshots []coreprotocol.SessionSnapshot
 		}
 		ids[s.ID] = true
 	}
-	detached, err := detach(snapshots)
-	if err != nil {
-		return err
-	}
-	v.installSessions(detached)
+	v.installSessions(snapshots)
 	v.rebindSessions()
 	return nil
 }
@@ -176,6 +170,8 @@ func (v *WorkspaceView) rebindSessions() {
 
 // ApplyChanges installs committed facts exactly once. Conversation revisions
 // fence missed token publications; a bad batch is rejected before installation.
+// ApplyChanges installs an exclusively owned batch; the caller must not use
+// or share changes afterwards.
 func (v *WorkspaceView) ApplyChanges(changes coreprotocol.AgentChangesResult) ([]string, error) {
 	if changes.Revision <= v.revision {
 		return nil, nil
@@ -313,10 +309,10 @@ func validateMembership(current map[string]bool, d workspace.ConversationDelta) 
 }
 
 func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) ([]string, error) {
-	deltas, err := detach(changes.Agents)
-	if err != nil {
-		return nil, err
-	}
+	// Ownership transfers with the batch: it was decoded from the wire by the
+	// fetch goroutine and nothing else references it, so installing it
+	// requires no copy of the transcript on the UI goroutine.
+	deltas := changes.Agents
 	changed := append([]string(nil), changes.Removed...)
 	for _, id := range changes.Removed {
 		v.AgentMgr.Remove(id)
@@ -389,14 +385,6 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 	return changed, nil
 }
 
-func detach[T any](source T) (T, error) {
-	var result T
-	data, err := json.Marshal(source)
-	if err == nil {
-		err = json.Unmarshal(data, &result)
-	}
-	return result, err
-}
 
 func (v *WorkspaceView) LoadAppSettings() types.AppSettings {
 	result := v.appSettings

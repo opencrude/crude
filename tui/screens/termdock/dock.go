@@ -30,6 +30,8 @@ const (
 	PanelMemory    = "memory"
 	PanelBoard     = "board"
 	PanelGit       = "git"
+	// PanelPerformance is the process-level Performance dashboard.
+	PanelPerformance = "performance"
 )
 
 const (

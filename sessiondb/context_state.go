@@ -72,6 +72,7 @@ func (e *ContextRevisionConflictError) Error() string {
 // PublishContext is the single SQLite transaction owner for current context,
 // recovery, local collaboration receipts, and compaction publication.
 func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
+	defer sessionWrites.Since("publish context", time.Now())
 	if db == nil || p.SessionID == "" || p.AgentID == "" {
 		return ContextState{}, errors.New("sessiondb: invalid context publication")
 	}
@@ -153,7 +154,11 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		return current, nil
 	}
 	var result sql.Result
+	// activePayload is the exact encoding of next.Messages; the recovery
+	// checkpoint below stores the same active context and reuses it.
+	var activePayload []byte
 	if exists && !semanticChanged {
+		activePayload = raw
 		// Related receipts/recovery still advance the exact publication revision,
 		// but the immutable source payload did not change. Do not re-encode and
 		// rewrite every captured image merely to publish lifecycle bookkeeping.
@@ -163,6 +168,7 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		if encodeErr != nil {
 			return ContextState{}, encodeErr
 		}
+		activePayload = payload
 		result, err = tx.Exec(`INSERT INTO agent_context_state(session_id,agent_id,revision,generation,reason,messages_json,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(session_id,agent_id) DO UPDATE SET revision=excluded.revision,generation=excluded.generation,reason=excluded.reason,messages_json=excluded.messages_json,updated_at=excluded.updated_at WHERE agent_context_state.revision=?`, p.SessionID, p.AgentID, next.Revision, next.Generation, next.Reason, payload, time.Now().UnixNano(), actual)
 	}
 	if err != nil {
@@ -180,7 +186,7 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		checkpoint.ContextOwnerID, checkpoint.ContextRevision = p.AgentID, next.Revision
 		checkpoint.ContextGeneration, checkpoint.ContextReason = next.Generation, next.Reason
 		checkpoint.ActiveContext = append([]provider.ChatMessage(nil), next.Messages...)
-		if err := saveRecoveryCheckpointTx(tx, p.SessionID, checkpoint); err != nil {
+		if err := saveRecoveryCheckpointEncodedTx(tx, p.SessionID, checkpoint, activePayload); err != nil {
 			return ContextState{}, err
 		}
 	}

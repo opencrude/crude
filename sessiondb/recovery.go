@@ -37,6 +37,7 @@ type recoveryInput struct {
 // SaveRecoveryCheckpoint atomically persists the exact incident status,
 // original input, archive, active context, and the context owner's live state.
 func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryCheckpoint) error {
+	defer sessionWrites.Since("recovery checkpoint", time.Now())
 	if db == nil {
 		return errors.New("sessiondb: nil recovery database")
 	}
@@ -66,6 +67,13 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 }
 
 func saveRecoveryCheckpointTx(tx *sql.Tx, sessionID string, checkpoint RecoveryCheckpoint) error {
+	return saveRecoveryCheckpointEncodedTx(tx, sessionID, checkpoint, nil)
+}
+
+// saveRecoveryCheckpointEncodedTx stores checkpoint; a non-nil activeJSON is
+// the exact encoding of checkpoint.ActiveContext, already produced by the
+// context publication in the same transaction.
+func saveRecoveryCheckpointEncodedTx(tx *sql.Tx, sessionID string, checkpoint RecoveryCheckpoint, activeJSON []byte) error {
 	if sessionID == "" || checkpoint.Status.ID == "" || checkpoint.Status.AgentID == "" || checkpoint.Status.Generation == 0 {
 		return errors.New("sessiondb: invalid recovery identity")
 	}
@@ -86,9 +94,12 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, sessionID string, checkpoint RecoveryC
 	if err != nil {
 		return fmt.Errorf("sessiondb: encode recovery archive: %w", err)
 	}
-	active, err := json.Marshal(checkpoint.ActiveContext)
-	if err != nil {
-		return fmt.Errorf("sessiondb: encode recovery context: %w", err)
+	active := activeJSON
+	if active == nil {
+		active, err = json.Marshal(checkpoint.ActiveContext)
+		if err != nil {
+			return fmt.Errorf("sessiondb: encode recovery context: %w", err)
+		}
 	}
 	nowTime := time.Now()
 	if checkpoint.Status.StartedAt.IsZero() {

@@ -77,6 +77,7 @@ func TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource(t *testing.T) {
 			}
 			invoke(string(settingsui.WorkspaceSettingsSaveID), ui.ControlOperation{Verb: "activate"})
 			remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool { return one.app.ws.LSPMgr().Settings().Enabled })
+			invoke(string(settingsui.WorkspaceSettingsCancelID), ui.ControlOperation{Verb: "activate"})
 			if !alreadyOpen {
 				one.app.toggleWorkspacePanel(termdock.PanelProblems)
 				one.app.paintShellFrame()

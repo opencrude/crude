@@ -69,13 +69,13 @@ func TestWorkspaceScopeShowsResetSection(t *testing.T) {
 	if !bufferContains(surf.Buffer(), "Workspace") {
 		t.Fatal("workspace scope bar missing")
 	}
-	if !bufferContains(surf.Buffer(), "Reset section") {
-		t.Fatal("workspace scope should show Reset section")
+	if !bufferContains(surf.Buffer(), "Use Application") {
+		t.Fatal("workspace scope should offer Use Application settings")
 	}
 	if !bufferContains(surf.Buffer(), "Application") {
 		t.Fatal("segmented scope switch must show Application")
 	}
-	resetX, saveX := bufferIndex(surf.Buffer(), "Reset section"), bufferIndex(surf.Buffer(), "Save")
+	resetX, saveX := bufferIndex(surf.Buffer(), "Use Application"), bufferIndex(surf.Buffer(), "Save")
 	if resetX < 0 || saveX < 0 || resetX >= saveX {
 		t.Fatalf("Reset should sit left of Save: reset=%d save=%d", resetX, saveX)
 	}

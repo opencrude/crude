@@ -133,6 +133,7 @@ func gitWriteBlob(ctx context.Context, root, rel, text string, worktreeForm bool
 // gitStdout runs Git at root and returns stdout only; warnings on stderr never
 // corrupt content and are kept for the error text.
 func gitStdout(ctx context.Context, root string, stdin []byte, args ...string) ([]byte, error) {
+	defer observeGit(args, time.Now())
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(stdin)

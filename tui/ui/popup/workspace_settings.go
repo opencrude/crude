@@ -9,8 +9,10 @@ import (
 	ttypes "crude/types"
 )
 
+// WorkspaceSettings adapts the settings surface to a floating window. The
+// surface is the one owner of the current model: a section reset or save
+// installs a replacement there, and events must reach that replacement.
 type WorkspaceSettings struct {
-	model   *settings.Model
 	surface *settings.WorkspaceSettingsSurface
 }
 
@@ -20,16 +22,13 @@ func NewWorkspaceSettings(th *theme.Theme, appSets ttypes.AppSettings, presets [
 
 func NewWorkspaceSettingsScoped(th *theme.Theme, working ttypes.AppSettings, presets []ttypes.ProviderPreset, scope ttypes.SettingsScope, appDefaults ttypes.AppSettings, overrides ttypes.WorkspaceOverrides) *WorkspaceSettings {
 	model := settings.NewScoped(th, working, presets, scope, appDefaults, overrides)
-	return &WorkspaceSettings{
-		model:   model,
-		surface: settings.NewSurface(th, model),
-	}
+	return &WorkspaceSettings{surface: settings.NewSurface(th, model)}
 }
 
 func (ws *WorkspaceSettings) Component() ui.Component { return ws.surface }
 
 // ModelForTest exposes the underlying settings model for tests.
-func (ws *WorkspaceSettings) ModelForTest() *settings.Model { return ws.model }
+func (ws *WorkspaceSettings) ModelForTest() *settings.Model { return ws.surface.Model() }
 
 func (ws *WorkspaceSettings) SetFocusHandler(fn func(ui.ComponentID)) {
 	ws.surface.SetFocusHandler(fn)
@@ -42,15 +41,14 @@ func (ws *WorkspaceSettings) ShowAccounts() { ws.surface.ShowAccounts() }
 func (ws *WorkspaceSettings) ShowAccountSetup() { ws.surface.ShowAccountSetup() }
 
 func (ws *WorkspaceSettings) HandleEvent(msg tea.Msg) tea.Cmd {
-	oldPane := ws.model.Pane()
-	// Update mutates the model in place and returns a copy; keep ws.model
-	// pointing at the same instance. Replacing it with the copy would orphan
-	// the form's onChanged closures, which capture the original pointer, so
-	// later field edits would mutate a stale model and the dropdown and model
-	// would diverge (e.g. provider switch after a sign-in).
-	_, cmd := ws.model.Update(msg)
-	ws.surface.SetModel(ws.model)
-	if oldPane == 1 && ws.model.Pane() == 0 {
+	model := ws.surface.Model()
+	oldPane := model.Pane()
+	// Update mutates the model in place and returns a copy; keep the surface
+	// on the same instance. Replacing it with the copy would orphan the form's
+	// onChanged closures, which capture the original pointer.
+	_, cmd := model.Update(msg)
+	ws.surface.SetModel(model)
+	if oldPane == 1 && model.Pane() == 0 {
 		ws.surface.FocusCategories()
 	}
 	return cmd

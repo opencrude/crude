@@ -3,6 +3,7 @@ package workspace
 import (
 	"crude/types"
 	"crude/types/recovery"
+	"time"
 )
 
 // SyncAgentStatusInventory reconciles semantic lifecycle facts only. Selection
@@ -54,9 +55,28 @@ func (w *Workspace) SyncAgentStatusInventory() {
 			status.NeedsAction = false
 		case !state.IsActive() && status.Phase != types.AgentCompleted && status.Phase != types.AgentCancelled && status.Phase != types.AgentFailed && status.Phase != types.AgentCompactionResult:
 			status.Phase, status.Detail = types.AgentIdle, "Idle"
-		case state.IsActive() && (!exists || status.Phase == types.AgentIdle || status.Phase == types.AgentCompactionResult || status.Phase == types.AgentApproval || status.Phase == types.AgentQuestion):
+		case state.IsActive() && (status.Phase == types.AgentApproval || status.Phase == types.AgentQuestion):
 			status.Phase, status.Detail = types.AgentThinking, "Working"
+		case state.IsActive() && !liveAgentPhase(status.Phase):
+			// Accepted input starts the turn at admission. A phase left by the
+			// previous turn (Completed, Failed, Idle...) must not keep claiming
+			// nothing is happening until the run's first event arrives.
+			status.Phase, status.Detail = types.AgentPreparing, "Preparing context"
+			status.StartedAt = time.Now()
+			status.RequestID = ""
+			status.UploadedBytes, status.TotalBytes, status.ProgressKnown, status.Progress = 0, 0, false, 0
 		}
 		w.Status.SetAgent(status)
 	}
+}
+
+// liveAgentPhase reports phases that describe a turn in progress.
+func liveAgentPhase(phase types.AgentPhase) bool {
+	switch phase {
+	case types.AgentOpening, types.AgentPreparing, types.AgentUploading, types.AgentWaiting, types.AgentCompacting,
+		types.AgentThinking, types.AgentResponding, types.AgentTool, types.AgentChildren, types.AgentRetrying,
+		types.AgentRecovering, types.AgentCancelling:
+		return true
+	}
+	return false
 }

@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/tui/wm"
 )
 
@@ -108,8 +109,42 @@ func (m *App) closePopupWindowByID(id string) tea.Cmd {
 			}
 		}
 	}
+	if group, ok := paneGroupFromOverlay(ui.OverlayID(id)); ok && m.Win != nil && m.Win.IsFloating(group) {
+		return m.closePaneWindowTabs(group)
+	}
 	m.overlayHost.Close(ui.OverlayID(id))
 	return nil
+}
+
+// closePaneWindowTabs is a pane window's ✕: every tab closes under its own
+// policy (a file with unsaved edits asks first, an agent tab minimizes, a
+// workspace surface hides) and the window disappears with its last tab.
+// ⇲ Dock is the action that returns tabs to the main area.
+func (m *App) closePaneWindowTabs(group window.GroupID) tea.Cmd {
+	var cmds []tea.Cmd
+	dirty := false
+	for _, tab := range m.Win.GroupTabs(group) {
+		if m.isEditorTabTitle(tab.Title) {
+			path := m.editorPathFromTabTitle(tab.Title)
+			if t, ok := m.EditorState.Tabs[path]; ok && t.Editor != nil && t.Editor.Modified() {
+				dirty = true
+				continue // asked once below, after the clean tabs are gone
+			}
+		}
+		if index := m.Win.IndexOf(tab.ID); index >= 0 {
+			cmds = append(cmds, m.handleAgentTabClose(index))
+		}
+	}
+	if dirty {
+		for _, tab := range m.Win.GroupTabs(group) {
+			if index := m.Win.IndexOf(tab.ID); index >= 0 {
+				cmds = append(cmds, m.handleAgentTabClose(index))
+				break
+			}
+		}
+	}
+	m.forceFrame()
+	return tea.Batch(cmds...)
 }
 
 // popupClickOutsideBehavior is a reference: which popup ID has which behavior.

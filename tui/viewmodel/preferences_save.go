@@ -58,5 +58,7 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 		}
 		m.Feedback.NotifyInfo(label)
 	}
-	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
+	// Save keeps Settings open on the saved values; Close is the way out.
+	application, effective, overrides := m.settingsLayers()
+	body.SetModel(message.target.SavedModel(application, effective, overrides))
 }

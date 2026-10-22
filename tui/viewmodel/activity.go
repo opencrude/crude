@@ -275,6 +275,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if cmd, handled := m.handleBoardAction(*action); handled {
 		return cmd
 	}
+	if cmd, handled := m.handlePerfAction(*action); handled {
+		return cmd
+	}
 	if cmd, handled := m.handleCapabilityPickerAction(*action); handled {
 		return cmd
 	}

@@ -21,3 +21,7 @@ func fileIdentityKey(path string, _ os.FileInfo) (string, bool) {
 	}
 	return fmt.Sprintf("%d:%d:%d", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow), true
 }
+
+// changeKey is unavailable from Windows FileInfo; size, modification time
+// and file index identify unchanged content there.
+func changeKey(os.FileInfo) int64 { return 0 }

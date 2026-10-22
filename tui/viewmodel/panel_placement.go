@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"strings"
+	"time"
 
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
@@ -20,12 +21,13 @@ const (
 )
 
 var panelTitles = map[string]string{
-	termdock.PanelWorkspace: "Workspace",
-	termdock.PanelProblems:  "Problems",
-	termdock.PanelNotices:   "Notices",
-	termdock.PanelMemory:    "Memory",
-	termdock.PanelBoard:     "Board",
-	termdock.PanelGit:       "Git",
+	termdock.PanelWorkspace:   "Workspace",
+	termdock.PanelProblems:    "Problems",
+	termdock.PanelNotices:     "Notices",
+	termdock.PanelMemory:      "Memory",
+	termdock.PanelBoard:       "Board",
+	termdock.PanelGit:         "Git",
+	termdock.PanelPerformance: "Performance",
 }
 
 // movablePanel reports whether a dock surface can be shown as a tab or
@@ -201,6 +203,9 @@ func (m *App) preparePlacedPanel(id string) {
 	case termdock.PanelWorkspace, termdock.PanelProblems, termdock.PanelNotices:
 		m.workspacePanelLastVersion, m.workspacePanelLastSecond = 0, 0
 		m.syncWorkspacePanels()
+	case termdock.PanelPerformance:
+		// The next tick refreshes it; the new placement may change chart width.
+		m.perf.requestedAt = time.Time{}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"crude/fileio"
@@ -99,6 +100,7 @@ func (s *GitService) runRemote(ctx context.Context, args ...string) (string, err
 		return "", err
 	}
 	closeGitRepository(repo)
+	defer observeGit(args, time.Now())
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
 	out, err := cmd.CombinedOutput()

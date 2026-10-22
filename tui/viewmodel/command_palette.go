@@ -448,7 +448,7 @@ func (m *App) cycleNextThemePreset() tea.Cmd {
 	before := m.ws.AppDefaults()
 	s := types.CloneAppSettings(before)
 	s.Theme.Preset = next
-	return m.saveSettingsShortcut(types.SettingsScopeApplication, types.SettingsEdits(before, s), "Theme: "+next, nil)
+	return m.saveSettingsShortcut(types.SettingsScopeApplication, types.SettingsEdits(before, s), "Theme: "+next, nil, 0)
 }
 
 func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
@@ -490,6 +490,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "memory.browse":
 		_, command := m.toggleMemoryBrowser()
 		return command
+
+	case "performance.open":
+		return m.togglePerformancePanel()
 
 	case "help.show":
 		m.openHelp()

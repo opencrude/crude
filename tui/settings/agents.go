@@ -183,14 +183,12 @@ func (c *agentCatalog) rebuildBar() {
 		buttons = []ui.ActionBarButton{{Label: "Discard edits", Action: "agents.discard", Variant: ui.VariantDanger, Enabled: true}, {Label: "Keep editing", Action: "agents.stay", Enabled: true}}
 	case "remove":
 		buttons = []ui.ActionBarButton{{Label: "Remove agent", Action: "agents.remove-confirm", Variant: ui.VariantDanger, Enabled: true}, {Label: "Keep agent", Action: "agents.stay", Enabled: true}}
-	case "reset":
-		buttons = []ui.ActionBarButton{{Label: "Restore default", Action: "agents.reset-confirm", Variant: ui.VariantDanger, Enabled: true}, {Label: "Keep changes", Action: "agents.stay", Enabled: true}}
 	default:
 		if c.draft != nil {
-			buttons = []ui.ActionBarButton{{Label: "Apply agent", Action: "agents.apply", Variant: ui.VariantPrimary, Enabled: true}, {Label: "Back", Action: "agents.back", Enabled: true}}
+			buttons = []ui.ActionBarButton{{Label: "Save", Action: "agents.save", Variant: ui.VariantPrimary, Enabled: true}, {Label: "Back", Action: "agents.back", Enabled: true}}
 		} else {
 			row, ok := c.table.Selected()
-			buttons = []ui.ActionBarButton{{Label: "Add", Action: "agents.add", Variant: ui.VariantPrimary, Enabled: true}, {Label: "Edit", Action: "agents.edit", Enabled: ok}, {Label: "Clone", Action: "agents.duplicate", Enabled: ok}, {Label: "Reset", Action: "agents.reset", Enabled: ok}, {Label: "Remove", Action: "agents.remove", Variant: ui.VariantDanger, Enabled: ok && strings.HasPrefix(row.ID, "profile/")}}
+			buttons = []ui.ActionBarButton{{Label: "Add", Action: "agents.add", Variant: ui.VariantPrimary, Enabled: true}, {Label: "Edit", Action: "agents.edit", Enabled: ok}, {Label: "Clone", Action: "agents.duplicate", Enabled: ok}, {Label: "Remove", Action: "agents.remove", Variant: ui.VariantDanger, Enabled: ok && strings.HasPrefix(row.ID, "profile/")}}
 		}
 	}
 	c.stackActions = c.draft == nil && c.confirm == "" && c.Bounds().W > 0 && c.barWidth(buttons) > c.Bounds().W
@@ -388,15 +386,23 @@ func (c *agentCatalog) dirty() bool {
 	return false
 }
 
+// back is the editor's Back and Esc: it discards this agent's edits and
+// returns to the catalog.
 func (c *agentCatalog) back() ui.EventResult {
-	if c.dirty() {
-		c.confirm = "discard"
-		c.notice = "Discard this agent's unapplied edits?"
-		c.rebuildBar()
-		c.owner.focusID(c.bar.ID())
-	} else {
-		c.closeDraft()
+	c.closeDraft()
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+}
+
+// leave runs when navigation (not Back) would close the editor: changed
+// edits are confirmed first, then the navigation resumes.
+func (c *agentCatalog) leave() ui.EventResult {
+	if !c.dirty() {
+		return c.back()
 	}
+	c.confirm = "discard"
+	c.notice = "Discard this agent's unsaved edits?"
+	c.rebuildBar()
+	c.owner.focusID(c.bar.ID())
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 }
 
@@ -746,8 +752,11 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		} else {
 			c.owner.focusID(c.table.ID())
 		}
-	case "agents.apply":
-		c.apply()
+	case "agents.save":
+		// Save applies this agent and persists Settings in one step.
+		if c.apply() {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "settings.save"}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		}
 	case "agents.remove":
 		if strings.HasPrefix(row.ID, "profile/") {
 			c.id = strings.TrimPrefix(row.ID, "profile/")
@@ -760,76 +769,7 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		if c.confirm == "remove" {
 			delete(c.model.agents.AgentProfiles, c.id)
 			c.confirm = ""
-			c.notice = "Agent removed from this settings draft."
-			c.refreshRows()
-		}
-	case "agents.reset":
-		if row.ID != "" {
-			c.id = row.ID
-			c.confirm = "reset"
-			c.notice = "Restore shipped defaults for this agent? Save settings to persist."
-			c.rebuildBar()
-			c.owner.focusID(c.bar.ID())
-		}
-	case "agents.reset-confirm":
-		if c.confirm == "reset" {
-			workspaceScope := c.model.Scope() == types.SettingsScopeWorkspace
-			if key := strings.TrimPrefix(c.id, "role/"); key != c.id {
-				switch key {
-				case "memory":
-					c.model.memoryAgent = types.DefaultAgentRoleCategories()["memory"]
-					if workspaceScope {
-						c.model.memoryAgent = c.model.appDefaults.Memory.MemoryCategory
-						c.model.resetWorkspacePath("memory", "memory_category")
-					}
-				case "auto-review":
-					c.model.autoReviewer.Enabled = "off"
-					c.model.autoReviewer.Provider = ""
-					c.model.autoReviewer.AccountID = ""
-					c.model.autoReviewer.Model = ""
-					c.model.autoReviewer.Instructions = ""
-					if workspaceScope {
-						parent := c.model.appDefaults.Safety.AutoPermission
-						c.model.autoReviewer.Enabled, c.model.autoReviewer.AccountID, c.model.autoReviewer.Model, c.model.autoReviewer.Provider, c.model.autoReviewer.Instructions = parent.Enabled, parent.AccountID, parent.Model, parent.Provider, parent.Instructions
-						for _, field := range []string{"enabled", "account_id", "model", "provider", "instructions"} {
-							c.model.resetWorkspacePath("safety", "auto_permission", field)
-						}
-					}
-				default:
-					cfg := types.DefaultAgentRoleCategories()[key]
-					if workspaceScope {
-						cfg = c.model.appDefaults.Agents.Categories[key]
-						c.model.resetWorkspacePath("agents", "Categories", key)
-					}
-					c.model.agents.Categories[key] = cfg
-					for _, role := range agentRoles {
-						if role.key == key {
-							form := c.model.buildAgentForm(cfg, role.index == catMain)
-							c.model.categories[role.index].Form = form
-							index := role.index
-							form.OnChanged(func(id string) { c.model.handleFieldChanged(index, id) })
-						}
-					}
-					if key == "default" {
-						c.model.agents.Enabled = true
-						if workspaceScope {
-							c.model.agents.Enabled = c.model.appDefaults.Agents.Enabled
-							c.model.resetWorkspacePath("agents", "Enabled")
-						}
-					}
-				}
-			} else if key := strings.TrimPrefix(c.id, "profile/"); key != c.id {
-				// Named agents are user-created; reset keeps identity and role only.
-				if current, exists := c.model.agents.AgentProfiles[key]; exists {
-					c.model.agents.AgentProfiles[key] = types.AgentProfileSettings{Category: current.Category, Description: current.Description}
-					if workspaceScope {
-						c.model.agents.AgentProfiles[key] = c.model.appDefaults.Agents.AgentProfiles[key]
-						c.model.resetWorkspacePath("agents", "agent_profiles", key)
-					}
-				}
-			}
-			c.confirm = ""
-			c.notice = "Default settings restored in this draft. Save to persist."
+			c.notice = "Agent removed. Save to apply."
 			c.refreshRows()
 		}
 	case "tabs.activate", "tabs.enter":

@@ -116,10 +116,14 @@ type ModelsErrorMsg struct {
 	Error      string
 }
 
-// ResetSectionMsg clears the workspace override for one settings page.
+// ResetSectionMsg makes one settings page inherit again: in Workspace scope
+// it removes the page's workspace choices, in Application scope its explicit
+// application choices. Edits are the exact removals; Category is the page.
 type ResetSectionMsg struct {
-	Target *Model
-	Key    string
+	Target   *Model
+	Scope    types.SettingsScope
+	Category int
+	Edits    []types.SettingEdit
 }
 
 // ScopeMsg switches the settings dialog between application and workspace.
@@ -2194,24 +2198,35 @@ func (m *Model) resetWorkspacePath(path ...string) {
 	}
 }
 
-// SectionResetModel installs the committed parent-relative section while
-// retaining unrelated unsaved preferences in this same editor.
-func (m *Model) SectionResetModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides, section string) *Model {
-	pending := m.Edits()
-	key := section
-	switch key {
-	case "appearance":
-		key = "theme"
-	case "interface":
-		key = "ui"
+// SectionResetModel installs the committed page reset while keeping the
+// user's unsaved edits on other pages.
+func (m *Model) SectionResetModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides, category int) *Model {
+	ownership, _ := pageOwnershipFor(category, m.Scope())
+	return m.rebased(application, effective, overrides, func(e types.SettingEdit) bool { return !ownership.owns(e.Path) })
+}
+
+// SavedModel continues on the persisted settings after a successful Save:
+// every edit is now the baseline, and the page, pane and search are kept.
+func (m *Model) SavedModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides) *Model {
+	return m.rebased(application, effective, overrides, func(types.SettingEdit) bool { return false })
+}
+
+// rebased builds a model on committed layers, re-applying the unsaved edits
+// keep selects. The draft base is the layer the scope edits: effective
+// settings for a workspace, application settings otherwise.
+func (m *Model) rebased(application, effective types.AppSettings, overrides types.WorkspaceOverrides, keep func(types.SettingEdit) bool) *Model {
+	pending := slices.DeleteFunc(m.Edits(), func(e types.SettingEdit) bool { return !keep(e) })
+	base := effective
+	if m.Scope() != types.SettingsScopeWorkspace {
+		base = application
 	}
-	pending = slices.DeleteFunc(pending, func(e types.SettingEdit) bool { return len(e.Path) > 0 && e.Path[0] == key })
-	baseline := NewScoped(m.th, effective, m.presets, m.Scope(), application, overrides)
-	draft := types.CloneAppSettings(effective)
+	baseline := NewScoped(m.th, base, m.presets, m.Scope(), application, overrides)
+	draft := types.CloneAppSettings(base)
 	_ = types.ApplySettingsEdits(&draft, pending)
 	next := NewScoped(m.th, draft, m.presets, m.Scope(), application, overrides)
 	next.collectedBase, next.layerBase, next.preferencesBase = baseline.collectedBase, baseline.layerBase, baseline.preferencesBase
 	next.selected, next.pane = m.selected, m.pane
+	next.capabilitySnapshot = m.capabilitySnapshot
 	next.SetSearchQuery(m.searchText())
 	return next
 }
@@ -2476,33 +2491,6 @@ const (
 	catLanguageServers
 	catTerminal
 )
-
-func (m *Model) currentOverrideKey() string {
-	switch m.selected {
-	case catAppearance:
-		return "appearance"
-	case catEditor:
-		return "editor"
-	case catLSP, catLanguageServers:
-		return "lsp"
-	case catUI:
-		return "interface"
-	case catMemory:
-		return "memory"
-	case catNetworkConnection, catNetworkProxy, catNetworkCertificates:
-		return ""
-	case catSafety, catAutoReviewPolicy:
-		return "safety"
-	case catHistory:
-		return "local_history"
-	case catTerminal:
-		return "terminal"
-	case catSkills, catMCP, catSources, catAcquisition:
-		return "capabilities"
-	default:
-		return "agents"
-	}
-}
 
 // AppSettings returns the values held by the shared form models.
 func (m *Model) AppSettings() types.AppSettings {

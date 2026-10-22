@@ -66,6 +66,7 @@ var availableCmds = []CmdInfo{
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
+	{Name: "perf", Label: "perf", Desc: "Show live performance and what is slow"},
 	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills"},
 	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
@@ -102,6 +103,9 @@ type Model struct {
 	historyLoading        bool
 	draftEpoch            uint64
 	draftRevision         uint64
+	// sendingRevision is the draft revision submitted and awaiting its
+	// durable receipt; zero when nothing is in flight.
+	sendingRevision uint64
 	pasteSequence         uint64
 	pendingPastes         map[uint64]bool
 	attachmentOffset      int
@@ -459,6 +463,22 @@ func (m *Model) recordDraftEdit(before ui.TextAreaState) {
 // prevents a late admission result from clearing an edited or ABA-replaced
 // composer value.
 func (m Model) DraftRevision() uint64             { return m.draftRevision }
+
+// MarkSending records that the draft at revision was submitted. The composer
+// presents it as sending until the receipt clears it or the user edits it.
+func (m *Model) MarkSending(revision uint64) { m.sendingRevision = revision }
+
+// ClearSending ends the sending presentation for revision (or any, with 0).
+func (m *Model) ClearSending(revision uint64) {
+	if revision == 0 || m.sendingRevision == revision {
+		m.sendingRevision = 0
+	}
+}
+
+// Sending reports whether the shown draft is the one awaiting its receipt.
+func (m Model) Sending() bool {
+	return m.sendingRevision != 0 && m.sendingRevision == m.draftRevision
+}
 func (m *Model) SetDraftRevision(revision uint64) { m.draftRevision = revision }
 
 // ClearInputAtRevision consumes only the exact draft submitted by an earlier

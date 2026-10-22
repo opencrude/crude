@@ -496,71 +496,33 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		m.chatScreen.ClearPaneGutterHover()
 	}
 
-	// Launcher: when the launcher screen is active (no agents, no
-	// editor), route motion only inside the launcher or the file tree.
-	// This is a critical performance fix: every motion event outside
-	// those regions clears stale tree/tab hover and returns without
-	// the launcher re-render churn.
-	if m.launcherHostVisible() {
-		switch region {
-		case regionSidebar:
-			return m, m.handleShellPointer(msg)
-		case regionLauncher:
-			m.LastInteractionTime = time.Now()
-			return m, m.handleShellPointer(msg)
-		default:
-			if m.Tree.Model != nil {
-				m.Tree.Model.Hover.Clear()
-			}
-			m.Win.Hover.Clear()
-			return m, nil
-		}
-	}
-
+	// The root Host is the one hover authority for every shell region (dock,
+	// header, footer and launcher included); motion is presentation-coalesced
+	// by the frame gate, so routing it everywhere costs no extra frames.
 	switch region {
-	case regionSidebar:
-		return m, m.handleShellPointer(msg)
-
-	case regionTabBar:
-		// Tab hover is viewmodel state (Win.Hover) fed from the native
-		// Tabs control after routing the motion through the shell tree.
-		cmd := m.handleShellPointer(msg)
-		return m, cmd
-
-	case regionSessionDeck:
-		return m, m.handleShellPointer(msg)
-
 	case regionEditor:
 		if m.isEditorActive() {
 			cmd := m.handleShellPointer(msg)
 			m.updateDiagHoverPopup(mouse.X, mouse.Y)
 			return m, cmd
 		}
-		return m, nil
-
-	case regionInput:
+	case regionInput, regionChat:
 		if m.Input.InputDragging() {
 			return m, tea.Batch(m.routeInputMouse(msg)...)
 		}
-		return m, m.handleShellPointer(msg)
-
-	case regionChat:
-		if m.Input.InputDragging() {
-			return m, tea.Batch(m.routeInputMouse(msg)...)
-		}
-		return m, m.handleShellPointer(msg)
+	case regionLauncher:
+		m.LastInteractionTime = time.Now()
 	}
-
-	// Mouse is outside every interactive region; clear stale hover.
-	if m.Tree.Model != nil {
+	if region != regionSidebar && m.Tree.Model != nil {
 		m.Tree.Model.Hover.Clear()
 	}
-	m.Win.Hover.Clear()
-	m.clearDiagHoverPopup()
-	if m.OverlayState.IsChat() {
-		return m, m.handleShellPointer(msg)
+	if region != regionTabBar {
+		m.Win.Hover.Clear()
 	}
-	return m, nil
+	if region != regionEditor {
+		m.clearDiagHoverPopup()
+	}
+	return m, m.handleShellPointer(msg)
 }
 
 // capturingWindow is the window whose content host holds pointer capture.

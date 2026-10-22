@@ -47,7 +47,27 @@ type Store struct {
 	instanceLock        *flock.Flock
 	beforeApply         func(index int, change Change) error
 	beforeDirectoryMode func(change Change) error
+	// stats caches file content identities from the last scan, keyed by
+	// relative path, so unchanged files are not re-read and re-hashed.
+	statCache map[string]statEntry
+	statMu    sync.Mutex
 }
+
+// statEntry is a file's observed metadata and the content it had then.
+// Like Git's index, a match on size, modification time and identity means
+// unchanged content; entries observed within racyWindow of their own
+// modification are always re-read.
+type statEntry struct {
+	size     int64
+	modTime  int64
+	change   int64
+	identity string
+	scanned  int64
+	stored   bool
+	entry    Entry
+}
+
+const racyWindow = 2 * time.Second
 
 func Open(storeRoot, workspaceRoot string) (*Store, error) {
 	root, err := filepath.Abs(storeRoot)

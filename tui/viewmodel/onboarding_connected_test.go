@@ -151,12 +151,12 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 		t.Fatal("account model list did not reach the rendered model control")
 	}
 	model.SetValueForTest(model.SelectedCategory(), "model", "startup-model")
-	// Apply agent uses the same action owner as the button. Save remains a
-	// separate explicit decision and must retain this choice on write failure.
+	// The editor's Save applies the agent (this handler) and then persists
+	// through ordinary Settings Save, which must retain the choice on failure.
 	agents := frame.Host().Component("settings/agents").(ui.ActionHandler)
-	agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.apply"})
+	agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.save"})
 	if model.AppSettings().Agents.Categories["default"].Model != "startup-model" {
-		t.Fatal("Apply agent did not stage the selected model")
+		t.Fatal("agent Save did not apply the selected model")
 	}
 	owner.mu.Lock()
 	owner.failSave = true
@@ -173,8 +173,11 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 		}
 	}
 	committed, _ = owner.ReadStartupSettings(t.Context())
-	if committed.Agents.Categories["default"].Model != "startup-model" || app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) || app.ws.AgentMgr().Count() != 0 || posts.Load() != 0 {
+	if committed.Agents.Categories["default"].Model != "startup-model" || app.ws.AgentMgr().Count() != 0 || posts.Load() != 0 {
 		t.Fatal("model Save did not commit cleanly or setup started AI work")
+	}
+	if current := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings)); current == nil || len(current.Model().Edits()) != 0 {
+		t.Fatal("Save closed Settings or left the saved model dirty")
 	}
 	remoteJourneyCreate(t, shell)
 	if posts.Load() != 0 {

@@ -104,13 +104,18 @@ func openReceipts(path string) (*receiptJournal, error) {
 	if err := privatePath(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	// synchronous=NORMAL keeps every commit across process crashes (WAL) and
+	// skips the per-commit flush: receipts fence replays between live
+	// processes, and a power loss also ends the shell holding the request
+	// identities. The two flushes per mutation ran on the workspace actor and
+	// cost tens to hundreds of milliseconds on Windows.
+	// Pragmas in the DSN apply to replacement connections too.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
-CREATE TABLE IF NOT EXISTS core_receipts (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS core_receipts (
  client TEXT NOT NULL, request TEXT NOT NULL, digest BLOB NOT NULL,
  workspace TEXT NOT NULL, method TEXT NOT NULL, state TEXT NOT NULL,
  response BLOB, created INTEGER NOT NULL, PRIMARY KEY(client, request));
@@ -138,6 +143,7 @@ func requestDigest(request coreprotocol.Request) [32]byte {
 }
 
 func (s *receiptJournal) begin(ctx context.Context, request coreprotocol.Request) (coreprotocol.Receipt, bool, error) {
+	defer receiptLatency.Since(time.Now())
 	digest := requestDigest(request)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -167,6 +173,7 @@ func (s *receiptJournal) begin(ctx context.Context, request coreprotocol.Request
 }
 
 func (s *receiptJournal) complete(ctx context.Context, request coreprotocol.Request, response coreprotocol.Response) error {
+	defer receiptLatency.Since(time.Now())
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return err

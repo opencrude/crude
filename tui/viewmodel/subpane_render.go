@@ -183,6 +183,25 @@ func (reg *subPaneProjectionRegistry) TickAll(spinFrame int) {
 	}
 }
 
+// AnyMaterializing reports whether a projection is still rendering offscreen
+// history across frames.
+func (reg *subPaneProjectionRegistry) AnyMaterializing() bool {
+	if reg == nil {
+		return false
+	}
+	for _, child := range reg.owners {
+		if child.AnyMaterializing() {
+			return true
+		}
+	}
+	for _, p := range reg.projections {
+		if p != nil && p.renderer.Materializing() {
+			return true
+		}
+	}
+	return false
+}
+
 // HasAnyScrollbarVisible reports whether any non-Done pane has a visible
 // scrollbar (the prior PaneManager.HasAnyScrollbarVisible behavior).
 func (reg *subPaneProjectionRegistry) HasAnyScrollbarVisible(done map[string]bool) bool {

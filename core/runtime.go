@@ -23,6 +23,7 @@ import (
 	"crude/corewire"
 	"crude/document"
 	"crude/history"
+	"crude/metrics"
 	"crude/provider"
 	"crude/types"
 	"crude/types/control"
@@ -193,9 +194,13 @@ func (c *Connection) publish(change coreprotocol.Change) {
 	}
 	select {
 	case c.events <- change:
+		coreChanges.Inc()
 		return
 	default:
 	}
+	coreResyncs.Inc()
+	metrics.Note(metrics.GroupCore, "Shell fell behind the change stream", c.Owner.ClientID,
+		"the bounded change queue overflowed; the shell reloads snapshots", "warn")
 	// Overflow invalidates the entire cursor. Empty the bounded backlog and
 	// publish one explicit resync; never pretend that dropped deltas applied.
 	for {
@@ -292,6 +297,13 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	}
 	if request.Method == coreprotocol.ControlClientRegister || request.Method == coreprotocol.ControlDescribe || request.Method == coreprotocol.ControlResolve || request.Method == coreprotocol.ControlExecute || request.Method == coreprotocol.ControlShells {
 		return c.controlClientMethod(ctx, request)
+	}
+	if request.Method == coreprotocol.CoreMetricsMethod {
+		var query metrics.Query
+		if err := decode(request.Payload, &query); err != nil {
+			return finish(fault(request, "invalid_request", err.Error()))
+		}
+		return finish(response(request, metrics.Take(query)))
 	}
 	if request.Method == coreprotocol.CoreStatusMethod || request.Method == coreprotocol.CoreShutdownMethod {
 		return finish(c.runtime.coreMethod(ctx, c, request))
@@ -627,17 +639,28 @@ func (a *actor) run() {
 			}
 			return
 		case job := <-a.jobs:
+			start := time.Now()
 			a.finishJob(job)
+			method := ""
+			if job.command.request != nil {
+				method = job.command.request.Method
+			}
+			observeActorStep(start, "finish", method)
 		case message := <-a.serviceEvents:
+			start := time.Now()
 			a.serviceEvent(message)
+			observeActorStep(start, "service", message)
 		case event := <-a.ingress:
+			start := time.Now()
 			if notice, ok := workspace.NoticeFromEvent(event); ok {
 				a.notice(notice)
+				observeActorStep(start, "notice", event)
 				continue
 			}
 			if reduced := a.ws.ApplyAgentEvent(event); reduced.Accepted {
 				a.reduced(reduced)
 			}
+			observeActorStep(start, "agent", event)
 		case now := <-tick.C:
 			a.drainDocumentReleases()
 			if reduced := a.ws.AdvanceAgentState(now); reduced.Accepted {
@@ -645,57 +668,86 @@ func (a *actor) run() {
 			}
 			a.publishStatusIfChanged()
 			a.publishLSPIfChanged()
+			coreQueue.Set(int64(len(a.commands) + len(a.ingress) + len(a.serviceEvents) + len(a.jobs)))
+			observeActorStep(now, "tick", nil)
 		case command := <-a.commands:
-			if command.retire != nil {
-				if command.retire() {
-					return
-				}
-				continue
+			start := time.Now()
+			retired := a.runCommand(command)
+			observeActorStep(start, "request", commandKind(command))
+			if retired {
+				return
 			}
-			if command.control != nil {
-				a.admitControl(command.control)
-				continue
-			}
-			if command.inspect != nil {
-				command.inspect()
-				continue
-			}
-			if command.attach != nil {
-				a.subscribers[command.attach] = struct{}{}
-				command.view <- a.snapshot()
-				continue
-			}
-			if command.detach != nil {
-				delete(a.subscribers, command.detach)
-				if a.ws.Terminals != nil {
-					a.ws.Terminals.Detach(workspace.TerminalController{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
-				}
-				if a.ws.LiveDocuments != nil {
-					a.ws.LiveDocuments.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
-				}
-				a.lspViews.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
-				a.documentReleases = append(a.documentReleases, document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
-				a.drainDocumentReleases()
-				continue
-			}
-			if !a.validClient(command.client) {
-				command.result <- fault(*command.request, "detached", "request attachment is stale")
-				continue
-			}
-			if serializedSettings(command.request.Method) && a.settingsBusy {
-				if len(a.settingsQueue) >= 16 {
-					command.result <- fault(*command.request, "busy", "settings queue is full")
-				} else {
-					a.settingsQueue = append(a.settingsQueue, command)
-				}
-				continue
-			}
-			if a.startJob(command) {
-				continue
-			}
-			command.result <- a.execute(*command.request)
 		}
 	}
+}
+
+func commandKind(command actorCommand) string {
+	switch {
+	case command.request != nil:
+		return command.request.Method
+	case command.retire != nil:
+		return "retire"
+	case command.control != nil:
+		return "control"
+	case command.inspect != nil:
+		return "inspect"
+	case command.attach != nil:
+		return "attach"
+	case command.detach != nil:
+		return "detach"
+	}
+	return ""
+}
+
+// runCommand admits or answers one actor command and reports whether the
+// actor retired.
+func (a *actor) runCommand(command actorCommand) (retired bool) {
+	if command.retire != nil {
+		return command.retire()
+	}
+	if command.control != nil {
+		a.admitControl(command.control)
+		return false
+	}
+	if command.inspect != nil {
+		command.inspect()
+		return false
+	}
+	if command.attach != nil {
+		a.subscribers[command.attach] = struct{}{}
+		command.view <- a.snapshot()
+		return false
+	}
+	if command.detach != nil {
+		delete(a.subscribers, command.detach)
+		if a.ws.Terminals != nil {
+			a.ws.Terminals.Detach(workspace.TerminalController{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
+		}
+		if a.ws.LiveDocuments != nil {
+			a.ws.LiveDocuments.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
+		}
+		a.lspViews.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
+		a.documentReleases = append(a.documentReleases, document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
+		a.drainDocumentReleases()
+		return false
+	}
+	if !a.validClient(command.client) {
+		command.result <- fault(*command.request, "detached", "request attachment is stale")
+		return false
+	}
+	if serializedSettings(command.request.Method) && a.settingsBusy {
+		if len(a.settingsQueue) >= 16 {
+			command.result <- fault(*command.request, "busy", "settings queue is full")
+		} else {
+			a.settingsQueue = append(a.settingsQueue, command)
+		}
+		return false
+	}
+	if a.startJob(command) {
+		return false
+	}
+	command.result <- a.execute(*command.request)
+	return false
 }
 
 func (a *actor) changed(ids []string) {
@@ -1287,6 +1339,9 @@ func (a *actor) finishJob(job actorJobResult) {
 		return
 	}
 	result := job.apply()
+	// Effects of an applied job (an accepted prompt starting a turn) reach
+	// shells now, not on the next tick.
+	a.publishStatusIfChanged()
 	a.publishLSPIfChanged()
 	result.Revision = a.revision
 	if job.journal {

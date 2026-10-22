@@ -115,54 +115,42 @@ func TestLayeredPromptRejectsStaleRemovalAndRequiresPayload(t *testing.T) {
 }
 
 func TestLayeredDirtyEditorBackEscAndScopeDecision(t *testing.T) {
-	for _, tc := range []struct {
-		name, editField, editAction, back string
-		index                             int
-	}{{"account", fieldAccountLabel, "settings.account.edit", "settings.account.cancel-edit", catAccounts}} {
-		t.Run(tc.name, func(t *testing.T) {
-			th := theme.DefaultDark()
-			m := New(th, accountSettingsFixture(), nil)
-			s := NewSurface(th, m)
-			s.ShowAccounts()
-			s.HandleAction(ui.EventContext{}, ui.Action{ID: tc.editAction})
-			m.SetValueForTest(tc.index, tc.editField, "Unsaved edit")
-			s.refreshForm()
-			for _, action := range []string{tc.back, "form.cancel"} {
-				prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: action}))
-				if prompt.Kind != PromptDiscardEditor || !s.PromptRelevant(prompt) || m.value(tc.index, tc.editField) != "Unsaved edit" {
-					t.Fatalf("%s lost dirty editor before decision: %+v", action, prompt)
-				}
-				for _, size := range []ui.Size{{W: 124, H: 28}, {W: 70, H: 18}} {
-					out := bufferPlain(paintAccountSurface(t, s, size.W, size.H))
-					if !strings.Contains(out, "Unsaved edit") || !strings.Contains(out, "Back") || strings.Contains(out, "Discard changes") {
-						t.Fatalf("size=%+v editor disappeared behind inline prompt:\n%s", size, out)
-					}
-				}
-				s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.stay"})
-				if m.value(tc.index, tc.editField) != "Unsaved edit" {
-					t.Fatal("cancel/stay lost editor draft")
-				}
-			}
-			prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.scope", Payload: scopeTabWorkspace}))
-			if prompt.Kind != PromptDiscardEditor || m.Scope() != types.SettingsScopeApplication || m.SelectedCategory() != tc.index {
-				t.Fatalf("scope changed before dirty-editor decision: %+v", prompt)
-			}
-			s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.stay"})
-			if m.Scope() != types.SettingsScopeApplication || m.value(tc.index, tc.editField) != "Unsaved edit" {
-				t.Fatal("staying switched scope or lost edits")
-			}
-			prompt = settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.scope", Payload: scopeTabWorkspace}))
-			res := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: prompt.Kind})
-			if res.Cmd == nil {
-				t.Fatal("confirmed discard did not route pending scope")
-			}
-			if scope, ok := res.Cmd().(ScopeMsg); !ok || scope.Scope != types.SettingsScopeWorkspace || m.accountEditor != nil {
-				t.Fatalf("discard failed to return pending scope: %+v", res)
-			}
-		})
+	th := theme.DefaultDark()
+	m := New(th, accountSettingsFixture(), nil)
+	s := NewSurface(th, m)
+	s.ShowAccounts()
+	edit := func() {
+		s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+		m.SetValueForTest(catAccounts, fieldAccountLabel, "Unsaved edit")
+		s.refreshForm()
+	}
+	// Back and Esc are cancel: they discard the editor without asking.
+	for _, action := range []string{"settings.account.cancel-edit", "form.cancel"} {
+		edit()
+		result := s.HandleAction(ui.EventContext{}, ui.Action{ID: action})
+		if result.Cmd != nil || m.accountEditor != nil || m.accounts["work"].Label != "Work" {
+			t.Fatalf("%s did not discard the account editor: %+v", action, result)
+		}
+	}
+	// Switching scope is navigation, not cancel: dirty editor work is confirmed.
+	edit()
+	prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.scope", Payload: scopeTabWorkspace}))
+	if prompt.Kind != PromptDiscardEditor || m.Scope() != types.SettingsScopeApplication || m.SelectedCategory() != catAccounts {
+		t.Fatalf("scope changed before dirty-editor decision: %+v", prompt)
+	}
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.stay"})
+	if m.Scope() != types.SettingsScopeApplication || m.value(catAccounts, fieldAccountLabel) != "Unsaved edit" {
+		t.Fatal("staying switched scope or lost edits")
+	}
+	prompt = settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.scope", Payload: scopeTabWorkspace}))
+	res := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: prompt.Kind})
+	if res.Cmd == nil {
+		t.Fatal("confirmed discard did not route pending scope")
+	}
+	if scope, ok := res.Cmd().(ScopeMsg); !ok || scope.Scope != types.SettingsScopeWorkspace || m.accountEditor != nil {
+		t.Fatalf("discard failed to return pending scope: %+v", res)
 	}
 }
-
 func TestDirtyEditorCategoryChangeWaitsForDecision(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, accountSettingsFixture(), nil)
@@ -199,7 +187,7 @@ func TestDirtyEditorCategoryChangeWaitsForDecision(t *testing.T) {
 	}
 }
 
-func TestSettingsValidationErrorStaysOnEditorWhenBackPrompts(t *testing.T) {
+func TestInvalidEditorBackDiscardsWithoutSubmitting(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, accountSettingsFixture(), nil)
 	s := NewSurface(th, m)
@@ -213,19 +201,14 @@ func TestSettingsValidationErrorStaysOnEditorWhenBackPrompts(t *testing.T) {
 	if field := m.categories[catAccounts].Form.Field(fieldAccountLabel); field == nil || len(field.Errors) == 0 {
 		t.Fatal("validation error is not attached to the account name field")
 	}
-	prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"}))
-	if prompt.Kind != PromptDiscardEditor || !s.PromptRelevant(prompt) {
-		t.Fatalf("back from invalid editor skipped dirty prompt: %+v", prompt)
+	if res := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"}); res.Cmd != nil || m.accountEditor != nil {
+		t.Fatalf("Back from an invalid editor did not discard it: %+v", res)
 	}
-	for _, size := range []ui.Size{{W: 124, H: 28}, {W: 70, H: 18}} {
-		out := bufferPlain(paintAccountSurface(t, s, size.W, size.H))
-		if !strings.Contains(out, "Edit account") || !strings.Contains(out, "Account name") || !strings.Contains(out, "Back") || strings.Contains(out, "Discard unsaved account") {
-			t.Fatalf("size=%+v invalid editor was replaced by inline prompt:\n%s", size, out)
-		}
+	if m.accounts["work"].Label != "Work" {
+		t.Fatal("discarded edit reached the account")
 	}
 }
-
-func TestDirtySettingsClosePromptsWithoutHidingPreferences(t *testing.T) {
+func TestCloseDiscardsUnsavedPreferences(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, accountSettingsFixture(), nil)
 	s := NewSurface(th, m)
@@ -235,39 +218,21 @@ func TestDirtySettingsClosePromptsWithoutHidingPreferences(t *testing.T) {
 	if !m.hasUnsavedPreferences() {
 		t.Fatal("fixture did not dirty preferences")
 	}
-	if prompt := settingsPrompt(t, s.RequestClose()); prompt.Kind != PromptDiscardSettings {
-		t.Fatalf("window close did not ask about preference drafts: %+v", prompt)
-	}
-	if m.value(catAppearance, "preset") != "light" {
-		t.Fatal("window close glyph silently discarded dirty preferences")
-	}
+	// Leaving the form focus is not a close.
 	if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "form.cancel"}); result.Cmd != nil || m.value(catAppearance, "preset") != "light" {
 		t.Fatal("leaving the form focus discarded or closed unsaved preferences")
 	}
-	prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.cancel"}))
-	if prompt.Target != m || prompt.Kind != PromptDiscardSettings || !s.PromptRelevant(prompt) {
-		t.Fatalf("close discarded dirty preferences silently: %+v", prompt)
-	}
-	for _, size := range []ui.Size{{W: 124, H: 28}, {W: 70, H: 18}} {
-		out := bufferPlain(paintAccountSurface(t, s, size.W, size.H))
-		if !strings.Contains(out, "Theme") || !strings.Contains(out, "Save") || strings.Contains(out, "Discard unsaved preferences?") {
-			t.Fatalf("size=%+v preferences replaced by inline confirmation:\n%s", size, out)
+	// Close, × and Esc at the root close without saving and without asking.
+	for _, result := range []ui.EventResult{s.RequestClose(), s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.cancel"})} {
+		if result.Cmd == nil {
+			t.Fatal("close did not close settings")
+		}
+		if _, ok := result.Cmd().(CancelMsg); !ok {
+			t.Fatalf("close returned %T, want CancelMsg", result.Cmd())
 		}
 	}
-	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.stay"})
-	if m.value(catAppearance, "preset") != "light" {
-		t.Fatal("staying discarded preferences")
-	}
-	result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: PromptDiscardSettings})
-	if result.Cmd == nil {
-		t.Fatal("confirmed preference discard did not close settings")
-	}
-	if _, ok := result.Cmd().(CancelMsg); !ok {
-		t.Fatalf("confirmed preference discard returned %T, want CancelMsg", result.Cmd())
-	}
 }
-
-func TestDirtyEditorEscRequestsPromptFromHost(t *testing.T) {
+func TestDirtyEditorEscDiscardsFromHost(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, accountSettingsFixture(), nil)
 	s := NewSurface(th, m)
@@ -278,12 +243,11 @@ func TestDirtyEditorEscRequestsPromptFromHost(t *testing.T) {
 	host.Resize(70, 18)
 	host.Layout()
 	host.Focus(WorkspaceSettingsEditorBarID)
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if prompt := settingsPrompt(t, result); prompt.Kind != PromptDiscardEditor || m.accountEditor == nil {
-		t.Fatalf("Esc silently closed dirty editor: %+v", prompt)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.accountEditor != nil || m.accounts["work"].Label != "Work" {
+		t.Fatal("Esc did not discard the dirty editor")
 	}
 }
-
 func TestLayeredDiscardPromptRejectsChangedDraft(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, accountSettingsFixture(), nil)
@@ -291,7 +255,7 @@ func TestLayeredDiscardPromptRejectsChangedDraft(t *testing.T) {
 	s.ShowAccounts()
 	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 	m.SetValueForTest(catAccounts, fieldAccountLabel, "Proposed")
-	prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"}))
+	prompt := settingsPrompt(t, s.openCategory(catAppearance))
 	if !s.PromptRelevant(prompt) {
 		t.Fatal("unchanged account draft was rejected")
 	}
@@ -303,9 +267,7 @@ func TestLayeredDiscardPromptRejectsChangedDraft(t *testing.T) {
 	if m.accountEditor == nil {
 		t.Fatal("staying in editor discarded the newer draft")
 	}
-
 }
-
 func TestConfirmedDiscardFocusesUnrelatedSettingsPage(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, accountSettingsFixture(), nil)
@@ -317,11 +279,10 @@ func TestConfirmedDiscardFocusesUnrelatedSettingsPage(t *testing.T) {
 	s.ShowAccounts()
 	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 	m.SetValueForTest(catAccounts, fieldAccountLabel, "Unsaved edit")
-	prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"}))
+	prompt := settingsPrompt(t, s.openCategory(catAppearance))
 	if prompt.Kind != PromptDiscardEditor || !s.PromptRelevant(prompt) {
 		t.Fatal("dirty account did not request an owner-bound decision")
 	}
-	m.nextCategory = catAppearance
 	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: prompt.Kind})
 	host.MarkLayout()
 	host.Layout()

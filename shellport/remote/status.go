@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"crude/coreprotocol"
+	"crude/metrics"
 	"crude/shellport"
 	"crude/types"
 )
@@ -265,4 +266,16 @@ func randomID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// CoreMetrics reads the core process's performance history for the
+// Performance surface. It is a core-level request, not workspace-bound.
+func (w *Workspace) CoreMetrics(ctx context.Context, query metrics.Query) (metrics.Snapshot, error) {
+	client, _ := w.conn()
+	if client == nil {
+		return metrics.Snapshot{}, errDisconnected
+	}
+	var out metrics.Snapshot
+	err := client.Call(ctx, "", coreprotocol.CoreMetricsMethod, query, &out)
+	return out, err
 }
