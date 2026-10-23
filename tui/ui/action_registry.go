@@ -60,6 +60,11 @@ type ActionDef struct {
 	// command and MUST be hidden from the command palette. Status-bar
 	// hint fragments (Close, Next, Navigate, …) are DisplayOnly.
 	DisplayOnly bool
+	// Contextual marks a runnable action that belongs to one surface (pane
+	// arrangement, tab cycling, sidebar views, editor documentation). Its key
+	// binding and that surface's menus invoke it; the palette omits it, as it
+	// omits every FocusContext-bound action.
+	Contextual bool
 }
 
 // ActionRegistry holds the set of registered actions. It is the
@@ -227,13 +232,16 @@ func DefaultRegistry() *ActionRegistry {
 // keybindings. Product code registers additional context-specific
 // actions at runtime, but these globals are always available.
 //
-// Categories (used as palette group headers, in order of definition):
+// The command palette lists only commands that make sense from anywhere,
+// grouped Session, File, View, Git, App (see paletteEntriesFromRegistry).
+// Hidden from the palette:
+//   - palette.open (self-reference; opening it from itself is a no-op)
+//   - DisplayOnly entries (status-bar hint fragments)
+//   - Contextual and FocusContext-bound actions, which belong to their own
+//     surface's keys and menus
 //
-//	File, Edit, View, Tabs, Agent, Tools, System, Help, Chat, App.
-//
-// Hidden from the palette (excluded by paletteEntriesFromRegistry):
-//   - palette.open          (self-reference; opening it from itself is a no-op)
-//   - any entry with DisplayOnly: true (status-bar hint fragments)
+// Session commands that act on the selected conversation (/plan, /goal,
+// /fork, /undo, /yolo, …) are composer slash commands, not palette entries.
 //
 // Icons are single-rune glyphs that render at display width 1 under
 // the shared grapheme-width path. Do NOT use emoji or ZWJ sequences
@@ -256,6 +264,75 @@ var defaultActions = []*ActionDef{
 		HintKey: "Ctrl+Alt+P",
 	},
 
+	// ─── Session ─────────────────────────────────────────────────────
+	{
+		ID:          "agent.newSession",
+		Label:       "New Session",
+		Description: "start a fresh session",
+		Icon:        "✦",
+		Category:    "Session",
+	},
+	{
+		ID:          "app.sessions",
+		Label:       "Sessions",
+		Description: "browse and resume past sessions",
+		Icon:        "⊟",
+		Category:    "Session",
+		// Ctrl+Alt+S: free of collisions with palette (Ctrl+Alt+P), find
+		// (Ctrl+Alt+F), sidebar (Ctrl+B), composer (Alt+C), save (Ctrl+S
+		// editor-only), and quit (Ctrl+Q). Available while tabs are open because
+		// the launcher is unreachable then.
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+s"},
+			{Key: "ctrl+alt+S"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 's'},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'S'},
+		},
+		HintKey: "Ctrl+Alt+S",
+	},
+	{
+		ID:          "composer.toggle",
+		Label:       "Compose Prompt",
+		Description: "compose a detailed prompt",
+		Icon:        "✏",
+		Category:    "Session",
+		Bindings:    []KeyBinding{{Key: "alt+c"}},
+		HintKey:     "Alt+C",
+	},
+	{
+		ID:          "file.attach",
+		Label:       "Attach File",
+		Description: "attach a file to the next prompt",
+		Icon:        "⧉",
+		Category:    "Session",
+		Bindings:    []KeyBinding{{Key: "ctrl+o"}},
+		HintKey:     "Ctrl+O",
+	},
+	{ID: "board.browse", Label: "Agent Board", Description: "inspect collaborations, participants and peer messages without waking agents", Icon: "▦", Category: "Session"},
+	{
+		ID:          "memory.browse",
+		Label:       "Workspace Memory",
+		Description: "browse, pin, and forget durable agent memories",
+		Icon:        "◆",
+		Category:    "Session",
+		// Ctrl+Alt+M: free of collisions with palette (Ctrl+Alt+P),
+		// sessions (Ctrl+Alt+S), and find (Ctrl+Alt+F).
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+m"},
+			{Key: "ctrl+alt+M"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'm'},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'M'},
+		},
+		HintKey: "Ctrl+Alt+M",
+	},
+	{
+		ID:          "app.copyLastAssistant",
+		Label:       "Copy Last Reply",
+		Description: "copy the last assistant reply to the clipboard",
+		Icon:        "⎘",
+		Category:    "Session",
+	},
+
 	// ─── File ────────────────────────────────────────────────────────
 	{
 		ID:           "file.save",
@@ -266,15 +343,6 @@ var defaultActions = []*ActionDef{
 		FocusContext: "editor",
 		Bindings:     []KeyBinding{{Key: "ctrl+s"}},
 		HintKey:      "Ctrl+S",
-	},
-	{
-		ID:          "file.attach",
-		Label:       "Attach File",
-		Description: "add a file reference",
-		Icon:        "⧉",
-		Category:    "File",
-		Bindings:    []KeyBinding{{Key: "ctrl+o"}},
-		HintKey:     "Ctrl+O",
 	},
 	{
 		ID:          "file.new",
@@ -327,17 +395,9 @@ var defaultActions = []*ActionDef{
 		},
 		HintKey: "Ctrl+Alt+H",
 	},
-	{ID: "editor.autosave.enable", Label: "Enable Auto Save", Description: "enable after-delay autosave in this workspace", Category: "File"},
-	{ID: "editor.autosave.disable", Label: "Disable Auto Save", Description: "disable autosave in this workspace", Category: "File"},
-	{ID: "editor.compareDisk", Label: "Compare With Disk", Description: "open a read-only split comparison of disk and editor snapshots", Category: "File"},
-	{ID: "editor.compareSaved", Label: "Compare With Saved Version", Description: "open a read-only split comparison of the saved baseline and unsaved editor text", Category: "File"},
-	{ID: "editor.resolveShared", Label: "Resolve Shared Editor Changes", Description: "review the retained private draft against current shared text", Category: "File"},
-	{ID: "editor.privateRecovery", Label: "Private Editor Drafts", Description: "preview and recover retained private drafts and discard backups", Category: "File"},
+	{ID: "editor.privateRecovery", Label: "Recover Editor Drafts", Description: "preview and recover retained private drafts and discard backups", Icon: "↺", Category: "File"},
 
 	// ─── Edit ────────────────────────────────────────────────────────
-	{ID: "editor.change.inspect", Label: "Inspect Current Change", Description: "inspect HEAD versus buffer", Category: "Edit"},
-	{ID: "editor.change.next", Label: "Next Change", Description: "go to next HEAD-relative change", Category: "Edit"},
-	{ID: "editor.change.previous", Label: "Previous Change", Description: "go to previous HEAD-relative change", Category: "Edit"},
 	{
 		ID:           "edit.undo",
 		Label:        "Undo Typing",
@@ -469,21 +529,8 @@ var defaultActions = []*ActionDef{
 			{Key: "ctrl+1"},
 			{Mod: tea.ModCtrl, Code: '1'},
 		},
-		HintKey: "Ctrl+1",
-	},
-	{
-		ID:          "view.focus.editor",
-		Label:       "Focus Editor",
-		Description: "move keyboard focus to the editor",
-		Icon:        "▥",
-		Category:    "View",
-	},
-	{
-		ID:          "view.focus.chat",
-		Label:       "Focus Chat",
-		Description: "move keyboard focus to the chat input",
-		Icon:        "▣",
-		Category:    "View",
+		HintKey:    "Ctrl+1",
+		Contextual: true,
 	},
 	{
 		ID:          "view.activity.files",
@@ -493,6 +540,7 @@ var defaultActions = []*ActionDef{
 		Category:    "View",
 		Bindings:    []KeyBinding{{Key: "ctrl+shift+e"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'e'}},
 		HintKey:     "Ctrl+Shift+E",
+		Contextual:  true,
 	},
 	{
 		ID:          "view.activity.agents",
@@ -502,6 +550,7 @@ var defaultActions = []*ActionDef{
 		Category:    "View",
 		Bindings:    []KeyBinding{{Key: "ctrl+shift+a"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'a'}},
 		HintKey:     "Ctrl+Shift+A",
+		Contextual:  true,
 	},
 	{
 		ID:          "terminal.picker",
@@ -514,10 +563,10 @@ var defaultActions = []*ActionDef{
 	},
 	{
 		ID:          "view.activity.git",
-		Label:       "Git",
+		Label:       "Source Control",
 		Description: "stage, commit and preview changes in the Git panel",
 		Icon:        "G",
-		Category:    "View",
+		Category:    "Git",
 		Bindings: []KeyBinding{
 			{Key: "ctrl+alt+g"},
 			{Key: "ctrl+alt+G"},
@@ -528,18 +577,12 @@ var defaultActions = []*ActionDef{
 	},
 	{ID: "git.review", Label: "Review All Changes", Description: "every changed file as one scrollable diff in the main area", Icon: "±", Category: "Git"},
 	{ID: "git.history", Label: "Git History", Description: "browse recent commits and their changes in the Git panel", Category: "Git"},
-	{ID: "view.activity.skills", Label: "Skills", Description: "show workspace skills in the sidebar", Category: "View"},
-	{ID: "view.activity.mcp", Label: "MCP", Description: "show workspace MCP connections in the sidebar", Category: "View"},
-	{ID: "skills.manage", Label: "Manage Skills", Description: "browse, configure and inspect skills in Settings", Category: "Tools"},
-	{ID: "capabilities.pick", Label: "Session Skills", Description: "turn installed skills on or off for this session and its agents", Category: "Tools"},
-	{ID: "capabilities.pick.mcp", Label: "Session MCP Servers", Description: "turn installed MCP servers on or off for this session and its agents", Category: "Tools"},
-	{ID: "mcp.manage", Label: "Manage MCP", Description: "configure connections, tools, resources and prompts in Settings", Category: "Tools"},
-	{ID: "board.browse", Label: "Agent Board", Description: "inspect collaborations, participants and peer messages without waking agents", Category: "Agent"},
-	{ID: "workspace.panel.hide", Label: "Hide Workspace Panel", Description: "hide the panel without stopping processes or deleting drafts", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+j"}, {Mod: tea.ModCtrl | tea.ModAlt, Code: 'j'}}, HintKey: "Ctrl+Alt+J"},
-	{ID: "workspace.panel.tab", Label: "Open Panel as Tab", Description: "move the visible dock panel into the main tabs, like a file or agent", Category: "View"},
-	{ID: "workspace.panel.window", Label: "Open Panel as Window", Description: "move the visible dock panel into its own movable window", Category: "View"},
-	{ID: "tab.window", Label: "Open Tab in Window", Description: "move the focused tab into its own movable, resizable window", Category: "View"},
-	{ID: "tab.dock", Label: "Move Window to Main Area", Description: "return the focused window's tabs to the main tabs", Category: "View"},
+	{ID: "view.activity.skills", Label: "Skills", Description: "show workspace skills in the sidebar", Category: "View", Contextual: true},
+	{ID: "view.activity.mcp", Label: "MCP", Description: "show workspace MCP connections in the sidebar", Category: "View", Contextual: true},
+	{ID: "workspace.panel.hide", Label: "Hide Workspace Panel", Description: "hide the panel without stopping processes or deleting drafts", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+j"}, {Mod: tea.ModCtrl | tea.ModAlt, Code: 'j'}}, HintKey: "Ctrl+Alt+J", Contextual: true},
+	{ID: "workspace.panel.tab", Label: "Open Panel as Tab", Description: "move the visible dock panel into the main tabs, like a file or agent", Category: "View", Contextual: true},
+	{ID: "workspace.panel.window", Label: "Open Panel as Window", Description: "move the visible dock panel into its own movable window", Category: "View", Contextual: true},
+	{ID: "tab.window", Label: "Open Tab in Window", Description: "move the focused tab into its own movable, resizable window", Category: "View", Contextual: true},
 	{
 		ID:          "terminal.new",
 		Label:       "New Terminal",
@@ -587,6 +630,7 @@ var defaultActions = []*ActionDef{
 		Category:    "Tabs",
 		Bindings:    []KeyBinding{{Key: "ctrl+]"}},
 		HintKey:     "Ctrl+]",
+		Contextual:  true,
 	},
 	{
 		ID:          "tabs.previous",
@@ -596,191 +640,70 @@ var defaultActions = []*ActionDef{
 		Category:    "Tabs",
 		Bindings:    []KeyBinding{{Key: "ctrl+["}},
 		HintKey:     "Ctrl+[",
+		Contextual:  true,
 	},
 
 	// ─── Agent ───────────────────────────────────────────────────────
-	{
-		ID:          "agent.orchestrator.reset",
-		Label:       "Reset Overrides",
-		Description: "clear orchestrator overrides",
-		Icon:        "↺",
-		Category:    "Agent",
-	},
-	{
-		ID:          "agent.toggle.multiagent",
-		Label:       "Toggle Multi-Agent",
-		Description: "enable or disable sub-agents",
-		Icon:        "☆",
-		Category:    "Agent",
-	},
-	{
-		ID:          "agent.cancel",
-		Label:       "Cancel Agent",
-		Description: "stop the running agent",
-		Icon:        "⊘",
-		Category:    "Agent",
-	},
-	{
-		ID:          "agent.retry",
-		Label:       "Continue Agent Run",
-		Description: "retry a pending recovery from saved work",
-		Icon:        "↻",
-		Category:    "Agent",
-	},
-	{
-		ID:          "agent.newSession",
-		Label:       "New Session",
-		Description: "start a fresh session",
-		Icon:        "✦",
-		Category:    "Agent",
-	},
 
 	// ─── Tools (LSP, Composer, Settings, Safety) ─────────────────────
-	{
-		ID:          "composer.toggle",
-		Label:       "Composer",
-		Description: "compose a detailed prompt",
-		Icon:        "✏",
-		Category:    "Tools",
-		Bindings:    []KeyBinding{{Key: "alt+c"}},
-		HintKey:     "Alt+C",
-	},
 	{
 		ID:          "settings.open",
 		Label:       "Application Settings",
 		Description: "app-wide theme, editor, LSP, UI, font, and credentials",
 		Icon:        "⚙",
-		Category:    "Tools",
+		Category:    "App",
 	},
 	{
 		ID:          "settings.workspace",
 		Label:       "Workspace Settings",
 		Description: "project overrides on top of application settings",
 		Icon:        "⬡",
-		Category:    "Tools",
-	},
-	{
-		ID:          "settings.network",
-		Label:       "Network Settings",
-		Description: "configure connections, proxies, and certificate trust",
-		Icon:        "⚙",
-		Category:    "Tools",
+		Category:    "App",
 	},
 	{
 		ID:          "lsp.outline",
 		Label:       "Go to Symbol",
 		Description: "document outline — jump to any function or class",
 		Icon:        "§",
-		Category:    "Tools",
+		Category:    "File",
 		Bindings:    []KeyBinding{{Key: "alt+o"}},
 		HintKey:     "Alt+O",
 	},
-	{ID: "lsp.hover", Label: "Symbol Documentation", Description: "show language-server documentation at the editor cursor", Icon: "i", Category: "Tools", HintKey: "Alt+K"},
-	{ID: "lsp.start", Label: "Start Language Servers", Description: "start enabled servers for open editor documents", Icon: "▷", Category: "Tools"},
-	{ID: "lsp.stop", Label: "Stop Language Servers", Description: "stop all workspace language servers", Icon: "■", Category: "Tools"},
-	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart enabled servers for open editor documents", Icon: "↻", Category: "Tools"},
-	{ID: "lsp.problems", Label: "Project Problems", Description: "inspect reported workspace diagnostics", Icon: "!", Category: "Tools"},
-	{
-		ID:          "safety.yolo.toggle",
-		Label:       "YOLO Mode",
-		Description: "toggle safety checks",
-		Icon:        "☠",
-		Category:    "Tools",
-	},
+	{ID: "lsp.hover", Label: "Symbol Documentation", Description: "show language-server documentation at the editor cursor", Icon: "i", Category: "Tools", HintKey: "Alt+K", Contextual: true},
+	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart enabled servers for open editor documents", Icon: "↻", Category: "App"},
+	{ID: "lsp.problems", Label: "Problems", Description: "inspect reported workspace diagnostics", Icon: "!", Category: "View"},
 
 	// ─── System (sessions, undo, theme, copy) ────────────────────────
-	{
-		ID:          "app.sessions",
-		Label:       "Sessions",
-		Description: "browse and resume past sessions",
-		Icon:        "⊟",
-		Category:    "System",
-		// Ctrl+Alt+S: free of collisions with palette (Ctrl+Alt+P), find
-		// (Ctrl+Alt+F), sidebar (Ctrl+B), composer (Alt+C), save (Ctrl+S
-		// editor-only), and quit (Ctrl+Q). Available while tabs are open because
-		// the launcher is unreachable then.
-		Bindings: []KeyBinding{
-			{Key: "ctrl+alt+s"},
-			{Key: "ctrl+alt+S"},
-			{Mod: tea.ModCtrl | tea.ModAlt, Code: 's'},
-			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'S'},
-		},
-		HintKey: "Ctrl+Alt+S",
-	},
-	{
-		ID:          "memory.browse",
-		Label:       "Workspace Memory",
-		Description: "browse, pin, and forget durable agent memories",
-		Icon:        "◆",
-		Category:    "System",
-		// Ctrl+Alt+M: free of collisions with palette (Ctrl+Alt+P),
-		// sessions (Ctrl+Alt+S), and find (Ctrl+Alt+F).
-		Bindings: []KeyBinding{
-			{Key: "ctrl+alt+m"},
-			{Key: "ctrl+alt+M"},
-			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'm'},
-			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'M'},
-		},
-		HintKey: "Ctrl+Alt+M",
-	},
 	{
 		ID:          "performance.open",
 		Label:       "Performance",
 		Description: "live UI, core, agent and service performance with a diagnosis",
 		Icon:        "⚡",
-		Category:    "System",
-	},
-	{
-		ID:          "system.undo",
-		Label:       "Revert Agent Files",
-		Description: "preview this agent's file rollback while retaining conversation history",
-		Icon:        "⤺",
-		Category:    "System",
+		Category:    "View",
 	},
 	{
 		ID:          "history.open",
-		Label:       "Open Local History",
+		Label:       "Local History",
 		Description: "browse workspace snapshots and restore previews",
 		Icon:        "◷",
-		Category:    "Workspace",
+		Category:    "File",
 	},
-	{ID: "history.verify", Label: "Verify Local History", Description: "verify every retained manifest and content object", Icon: "✓", Category: "Workspace"},
-	{ID: "history.prune", Label: "Prune Local History", Description: "apply the configured retention and storage budget", Icon: "⌫", Category: "Workspace"},
-	{ID: "history.snapshot", Label: "Create History Snapshot", Description: "capture the current workspace state now", Icon: "●", Category: "Workspace"},
-	{ID: "history.location", Label: "Open Local History Folder", Description: "open the external per-workspace history storage location", Icon: "◫", Category: "Workspace"},
+	{ID: "history.snapshot", Label: "Snapshot Workspace", Description: "capture the current workspace state now", Icon: "●", Category: "File"},
 	{
 		ID:          "app.toggleTheme",
-		Label:       "Toggle Theme",
+		Label:       "Next Theme",
 		Description: "cycle through theme presets",
 		Icon:        "◐",
-		Category:    "System",
-	},
-	{
-		ID:          "app.copyLastAssistant",
-		Label:       "Copy Last Assistant",
-		Description: "copy the last assistant message to clipboard",
-		Icon:        "⎘",
-		Category:    "System",
+		Category:    "App",
 	},
 	{
 		ID:          "app.quit",
 		Label:       "Quit",
 		Description: "exit immediately",
 		Icon:        "✖",
-		Category:    "System",
+		Category:    "App",
 		Bindings:    []KeyBinding{{Key: "ctrl+q"}},
 		HintKey:     "Ctrl+Q",
-	},
-
-	// ─── Help ────────────────────────────────────────────────────────
-	{
-		ID:          "help.show",
-		Label:       "Help",
-		Description: "open help: usage, slash commands, and shortcuts",
-		Icon:        "?",
-		Category:    "Help",
-		Bindings:    []KeyBinding{{Key: "f1"}},
-		HintKey:     "F1",
 	},
 
 	// ─── Chat input context actions (FocusContext: "chat") ───
@@ -1008,27 +931,27 @@ var defaultActions = []*ActionDef{
 		HintKey:      "Esc",
 		DisplayOnly:  true,
 	},
-	{ID: "view.activity.workspaces", Label: "Recent Workspaces", Description: "switch workspace or open a new folder from the sidebar", Category: "View"},
-	{ID: "pane.split-left", Label: "Split Pane Left", Category: "View"},
-	{ID: "pane.split-up", Label: "Split Pane Above", Category: "View"},
-	{ID: "pane.split-layout", Label: "Split Containing Layout…", Description: "choose this pane, a containing layout, or the entire layout, then an edge", Category: "View"},
-	{ID: "pane.arrange", Label: "Arrange Tab…", Description: "move this tab beside any pane or layout subtree, on any of four edges", Category: "Tabs"},
-	{ID: "pane.move-left", Label: "Move Tab to Left Split", Category: "Tabs"},
-	{ID: "pane.move-up", Label: "Move Tab to Upper Split", Category: "Tabs"},
-	{ID: "pane.split-right", Label: "Split Pane Right", Description: "create an empty side-by-side pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+l"}, {Key: "ctrl+alt+right"}}, HintKey: "Ctrl+Alt+L"},
-	{ID: "pane.split-down", Label: "Split Pane Down", Description: "create an empty stacked pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+d"}, {Key: "ctrl+alt+down"}}, HintKey: "Ctrl+Alt+D"},
-	{ID: "pane.next", Label: "Focus Next Pane", Category: "View", Bindings: []KeyBinding{{Key: "alt+]"}}, HintKey: "Alt+]"},
-	{ID: "pane.previous", Label: "Focus Previous Pane", Category: "View", Bindings: []KeyBinding{{Key: "alt+["}}, HintKey: "Alt+["},
-	{ID: "pane.move-next", Label: "Move Tab to Next Pane", Category: "Tabs"},
-	{ID: "pane.move-previous", Label: "Move Tab to Previous Pane", Category: "Tabs"},
-	{ID: "pane.tab-left", Label: "Move Tab Left in Group", Category: "Tabs"},
-	{ID: "pane.tab-right", Label: "Move Tab Right in Group", Category: "Tabs"},
-	{ID: "pane.move-right", Label: "Move Tab to Right Split", Category: "Tabs"},
-	{ID: "pane.move-down", Label: "Move Tab to Lower Split", Category: "Tabs"},
-	{ID: "pane.merge-all", Label: "Merge All Panes", Description: "keep all tabs in the focused group", Category: "View"},
-	{ID: "pane.close", Label: "Close Empty Pane", Category: "View"},
-	{ID: "pane.grow", Label: "Grow Pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+="}}, HintKey: "Ctrl+Alt+="},
-	{ID: "pane.shrink", Label: "Shrink Pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+-"}}, HintKey: "Ctrl+Alt+-"},
-	{ID: "pane.open-file", Label: "Open File in Pane", Category: "File"},
-	{ID: "pane.new-session", Label: "New Session in Pane", Category: "Agent", Bindings: []KeyBinding{{Key: "ctrl+alt+n"}}, HintKey: "Ctrl+Alt+N"},
+	{ID: "view.activity.workspaces", Label: "Switch Workspace", Description: "open a recent workspace or a new folder", Category: "View"},
+	{ID: "pane.split-left", Label: "Split Pane Left", Category: "View", Contextual: true},
+	{ID: "pane.split-up", Label: "Split Pane Above", Category: "View", Contextual: true},
+	{ID: "pane.split-layout", Label: "Split Containing Layout…", Description: "choose this pane, a containing layout, or the entire layout, then an edge", Category: "View", Contextual: true},
+	{ID: "pane.arrange", Label: "Arrange Tab…", Description: "move this tab beside any pane or layout subtree, on any of four edges", Category: "Tabs", Contextual: true},
+	{ID: "pane.move-left", Label: "Move Tab to Left Split", Category: "Tabs", Contextual: true},
+	{ID: "pane.move-up", Label: "Move Tab to Upper Split", Category: "Tabs", Contextual: true},
+	{ID: "pane.split-right", Label: "Split Pane Right", Description: "create an empty side-by-side pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+l"}, {Key: "ctrl+alt+right"}}, HintKey: "Ctrl+Alt+L", Contextual: true},
+	{ID: "pane.split-down", Label: "Split Pane Down", Description: "create an empty stacked pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+d"}, {Key: "ctrl+alt+down"}}, HintKey: "Ctrl+Alt+D", Contextual: true},
+	{ID: "pane.next", Label: "Focus Next Pane", Category: "View", Bindings: []KeyBinding{{Key: "alt+]"}}, HintKey: "Alt+]", Contextual: true},
+	{ID: "pane.previous", Label: "Focus Previous Pane", Category: "View", Bindings: []KeyBinding{{Key: "alt+["}}, HintKey: "Alt+[", Contextual: true},
+	{ID: "pane.move-next", Label: "Move Tab to Next Pane", Category: "Tabs", Contextual: true},
+	{ID: "pane.move-previous", Label: "Move Tab to Previous Pane", Category: "Tabs", Contextual: true},
+	{ID: "pane.tab-left", Label: "Move Tab Left in Group", Category: "Tabs", Contextual: true},
+	{ID: "pane.tab-right", Label: "Move Tab Right in Group", Category: "Tabs", Contextual: true},
+	{ID: "pane.move-right", Label: "Move Tab to Right Split", Category: "Tabs", Contextual: true},
+	{ID: "pane.move-down", Label: "Move Tab to Lower Split", Category: "Tabs", Contextual: true},
+	{ID: "pane.merge-all", Label: "Merge All Panes", Description: "keep all tabs in the focused group", Category: "View", Contextual: true},
+	{ID: "pane.close", Label: "Close Empty Pane", Category: "View", Contextual: true},
+	{ID: "pane.grow", Label: "Grow Pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+="}}, HintKey: "Ctrl+Alt+=", Contextual: true},
+	{ID: "pane.shrink", Label: "Shrink Pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+-"}}, HintKey: "Ctrl+Alt+-", Contextual: true},
+	{ID: "pane.open-file", Label: "Open File in Pane", Category: "File", Contextual: true},
+	{ID: "pane.new-session", Label: "New Session in Pane", Category: "Agent", Bindings: []KeyBinding{{Key: "ctrl+alt+n"}}, HintKey: "Ctrl+Alt+N", Contextual: true},
 }

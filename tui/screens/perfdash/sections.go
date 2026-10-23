@@ -8,17 +8,19 @@ import (
 
 // Dashboard tabs.
 const (
-	SectionOverview = "overview"
-	SectionUI       = "ui"
-	SectionCore     = "core"
-	SectionAgents   = "agents"
-	SectionServices = "services"
-	SectionRuntime  = "runtime"
-	SectionEvents   = "events"
+	SectionOverview  = "overview"
+	SectionResources = "resources"
+	SectionUI        = "ui"
+	SectionCore      = "core"
+	SectionAgents    = "agents"
+	SectionServices  = "services"
+	SectionRuntime   = "runtime"
+	SectionEvents    = "events"
 )
 
 var sectionLabels = []struct{ id, label string }{
 	{SectionOverview, "Overview"},
+	{SectionResources, "Resources"},
 	{SectionUI, "UI"},
 	{SectionCore, "Core"},
 	{SectionAgents, "Agents"},

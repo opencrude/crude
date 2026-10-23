@@ -251,6 +251,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		displayMetas:         displayMetas,
 		createdAts:           createdAts,
 		orchestrators:        make(map[string]*Orchestrator),
+		goalWake:             make(chan struct{}, 1),
 		recoverySlots:        make(map[string]*recoverySlot),
 		pendingRecoveries:    make(map[string]sessiondb.RecoveryCheckpoint),
 		runtimeProfile:       NewRuntimeProfile(cfg),
@@ -345,6 +346,12 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		for _, result := range results {
 			sess.subAgentSup.Manager().HydrateCompleted(result)
 		}
+	}
+	if err := sess.loadPlanMode(); err != nil {
+		return nil, fmt.Errorf("resume: load plan mode: %w", err)
+	}
+	if err := sess.loadGoal(); err != nil {
+		return nil, fmt.Errorf("resume: load goal: %w", err)
 	}
 	if err := sess.loadQueuedInputs(); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)

@@ -142,7 +142,7 @@ func TestPlanHoverRetiresOnCompletionUnmountAndModal(t *testing.T) {
 				app.syncAgentWindowTabs()
 				paintHoverFixture(app, plans)
 			case "modal":
-				app.openHelp()
+				app.openSessionPicker()
 				app.syncPlanHover()
 			case "leave":
 				app.dispatchMouseMotion(tea.MouseMotionMsg{X: 0, Y: 0})
@@ -252,8 +252,8 @@ func TestPlanHoverReadableWhileQuestionWaitsButNotUnderModalDeck(t *testing.T) {
 	app.clearPlanHover()
 	projection := app.activeSessionDeck()
 	projection.deck.Close(prompt.panelID())
-	projection.yolo.Reset()
-	projection.deck.Open(sessionYoloPanel(projection.yolo))
+	projection.decisionAgentID = "agent"
+	projection.deck.Open(sessionDecisionPanel(projection.decision, "YOLO"))
 	paintHoverFixture(app, map[string]*activity.Plan{"agent": plan})
 	anchor = app.planActivityRect(app.chatScreen)
 	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 3, Y: anchor.Y})

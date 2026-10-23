@@ -67,6 +67,10 @@ func (w *Workspace) OpenAgentSession(sessionID string) *workspace.NewSessionResu
 	return w.lifecycle(coreprotocol.OpenSession, coreprotocol.InvocationSessionRequest{SessionID: sessionID, Selection: w.invocation})
 }
 
+func (w *Workspace) ForkAgentSession(sessionID string) *workspace.NewSessionResult {
+	return w.lifecycle(coreprotocol.ForkSession, coreprotocol.InvocationSessionRequest{SessionID: sessionID})
+}
+
 // BackendSession is never available to a connected shell; the core owns it.
 func (w *Workspace) BackendSession(string) *session.Session { return nil }
 

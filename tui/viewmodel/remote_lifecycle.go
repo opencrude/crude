@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/workspace"
@@ -17,6 +18,24 @@ type remoteSessionReadyMsg struct {
 	sequence  uint64
 	result    *workspace.NewSessionResult
 	sessionID string
+	forked    bool
+	// initial is sent as the new session's first message once it is open.
+	initial provider.UserInput
+}
+
+// newSessionWithInput opens a new session in its own tab and sends input as
+// its first message.
+func (m *App) newSessionWithInput(input provider.UserInput) tea.Cmd {
+	if m.sessionLifecyclePending || m.workspaceAttachPending {
+		m.Feedback.NotifyInfo("A session is still opening; try again when it is ready")
+		return nil
+	}
+	m.sessionLifecycleSequence++
+	sequence, owner := m.sessionLifecycleSequence, m.ws
+	m.sessionLifecyclePending = true
+	return func() tea.Msg {
+		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: owner.NewAgentSession(), initial: input}
+	}
 }
 
 func (m *App) remoteSessionCommand(sessionID string) tea.Cmd {
@@ -48,12 +67,40 @@ func (m *App) remoteSessionCommand(sessionID string) tea.Cmd {
 	}
 }
 
+// forkSessionCommand continues the selected conversation in a new session, in
+// its own tab. The owner refuses while anything in the source is mid-flight.
+func (m *App) forkSessionCommand() tea.Cmd {
+	source := m.ActiveSession
+	if source == nil {
+		m.Feedback.NotifyError("No session is selected")
+		return nil
+	}
+	if m.sessionLifecyclePending || m.workspaceAttachPending {
+		m.Feedback.NotifyInfo("A session is still opening; fork again when it is ready")
+		return nil
+	}
+	m.sessionLifecycleSequence++
+	sequence, owner, id := m.sessionLifecycleSequence, m.ws, source.SessionID
+	m.sessionLifecyclePending = true
+	return func() tea.Msg {
+		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: owner.ForkAgentSession(id), sessionID: id, forked: true}
+	}
+}
+
 func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	if msg.owner != m.ws || msg.sequence != m.sessionLifecycleSequence {
 		return nil
 	}
 	m.sessionLifecyclePending = false
 	if msg.result == nil || msg.result.Error != "" {
+		if msg.forked {
+			detail := "Core returned no session result."
+			if msg.result != nil {
+				detail = msg.result.Error
+			}
+			m.Feedback.NotifyError("Fork failed: " + detail)
+			return nil
+		}
 		if msg.sessionID == "" && msg.result != nil {
 			if msg.result.NeedsAccount {
 				return m.openAISetup()
@@ -70,7 +117,36 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		return nil
 	}
 	m.AddOrchestrator(msg.result.OrchID)
+	if msg.forked {
+		m.Feedback.NotifyInfo("Forked into a new session; the original is unchanged")
+	}
+	if msg.initial.Text != "" {
+		return m.submitFirstInput(msg.result.OrchID, msg.initial)
+	}
 	return nil
+}
+
+// submitFirstInput sends a new session's first message now, or once its
+// session reaches this connected shell.
+func (m *App) submitFirstInput(agentID string, input provider.UserInput) tea.Cmd {
+	if m.ws.AgentMgr().Get(agentID) != nil {
+		return m.submitPreparedInput(agentID, input, 0)
+	}
+	if m.pendingFirstInputs == nil {
+		m.pendingFirstInputs = make(map[string]provider.UserInput)
+	}
+	m.pendingFirstInputs[agentID] = input
+	return nil
+}
+
+// takePendingFirstInput sends the first message held for an activated tab.
+func (m *App) takePendingFirstInput(agentID string) tea.Cmd {
+	input, ok := m.pendingFirstInputs[agentID]
+	if !ok {
+		return nil
+	}
+	delete(m.pendingFirstInputs, agentID)
+	return m.submitPreparedInput(agentID, input, 0)
 }
 
 type remoteWorkspaceReadyMsg struct {
@@ -271,6 +347,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		m.composerDraftClient = &composerDraftClient{store: client.store, attachment: client.attachment, workspaceID: id}
 	}
 	m.pendingOrchestrators = nil
+	m.pendingFirstInputs = nil
 	m.sessionLifecycleSequence++
 	m.sessionLifecyclePending = false
 	m.ws.SetEventBus(m.eventBus)

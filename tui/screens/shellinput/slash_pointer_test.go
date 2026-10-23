@@ -47,7 +47,7 @@ func TestSlashPointerActivatesRenderedSuggestion(t *testing.T) {
 	}{
 		{"different row", "/", "sessions", false},
 		{"filtered row", "/se", "sessions", false},
-		{"scrolled row", "/", "help", true},
+		{"scrolled row", "/", "skills", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model, host, buf := slashHost(t, test.query, 0)
@@ -55,7 +55,7 @@ func TestSlashPointerActivatesRenderedSuggestion(t *testing.T) {
 				if _, _, found := slashLabelPoint(buf, test.label); found {
 					t.Fatal("scrolled target must start outside the rendered viewport")
 				}
-				x, y, found := slashLabelPoint(buf, "settings")
+				x, y, found := slashLabelPoint(buf, "plan")
 				if !found {
 					t.Fatal("initial slash suggestions were not painted")
 				}
@@ -109,7 +109,7 @@ func TestSlashPointerIgnoresOtherButtonsAndBlankSpace(t *testing.T) {
 		{"middle click", "/se", tea.MouseMiddle, "sessions"},
 		{"left padding", "/se", tea.MouseLeft, "padding"},
 		{"separator", "/se", tea.MouseLeft, "separator"},
-		{"blank row", "/help", tea.MouseLeft, "blank"},
+		{"blank row", "/fork", tea.MouseLeft, "blank"},
 		{"no matches", "/zzzz-no-match", tea.MouseLeft, "empty"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -128,9 +128,9 @@ func TestSlashPointerIgnoresOtherButtonsAndBlankSpace(t *testing.T) {
 			case "separator":
 				x, y = 5, 0
 			case "blank":
-				x, y, found = slashLabelPoint(buf, "help")
+				x, y, found = slashLabelPoint(buf, "fork")
 				if !found {
-					t.Fatal("help suggestion was not rendered")
+					t.Fatal("fork suggestion was not rendered")
 				}
 				y++
 			case "empty":

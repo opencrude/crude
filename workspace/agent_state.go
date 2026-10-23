@@ -7,6 +7,7 @@ import (
 
 	"crude/collaboration"
 	"crude/provider"
+	"crude/sessiondb"
 	ttypes "crude/types"
 	"crude/types/command"
 	"crude/types/reasoning"
@@ -50,6 +51,8 @@ type AgentState struct {
 	// so it's only applied to the correct tool message.
 	PendingPermTool string
 	PendingBlockID  string
+	// Goal is the last goal this main agent reported, for transition rows.
+	Goal            *ttypes.Goal
 	TurnIdentity    ttypes.TurnIdentity
 	runtimeIdentity ttypes.RuntimeEventIdentity
 	runtimeEventIDs map[string]struct{}
@@ -116,9 +119,38 @@ func (a *AgentState) ComputeActiveTyping() bool {
 	return (a.Streaming || a.Thinking) && !a.LastTokenTime.IsZero() && time.Since(a.LastTokenTime) < 400*time.Millisecond
 }
 
+// newerTurnRecovery reports a recovery status from a turn newer than the last
+// announced one. A turn's preflight (history, guidance, configuration) runs
+// before turn_started, so it can need attention while the previous turn still
+// looks finished; that status must reach the user, never be dropped as late.
+// An explicit Stop in progress still wins.
+func (a *AgentState) newerTurnRecovery(evt AgentEvent) bool {
+	status, ok := evt.Data.(recovery.Status)
+	return ok && evt.Type == "recovery" && !a.Cancelling && status.Generation > a.TurnIdentity.Generation
+}
+
+// applySessionFact applies a fact about the session rather than a turn (its
+// goal, a recorded status row). Facts apply whatever state the turn is in.
+func (a *AgentState) applySessionFact(evt AgentEvent) bool {
+	switch evt.Type {
+	case "goal":
+		a.applyGoalEvent(evt.Data)
+	case "status_row":
+		if row, ok := evt.Data.(sessiondb.StatusRow); ok && a.Messages != nil {
+			a.Messages.AppendMessageIfAbsent(messageFromView(statusRowView(row)))
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 // ApplyEvent mutates canonical agent state and returns presentation-neutral effects.
 func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	var effects AgentEffects
+	if a.applySessionFact(evt) {
+		return effects
+	}
 	target := a.Messages
 	if !a.acceptCompactionEvent(evt) {
 		return effects
@@ -160,7 +192,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	if status, ok := evt.Data.(recovery.Status); ok && evt.Type == "recovery" {
 		cancelledRecovery = status.State == recovery.Cancelled
 	}
-	inactive := a.Cancelling || a.terminal || a.Completed
+	inactive := (a.Cancelling || a.terminal || a.Completed) && !a.newerTurnRecovery(evt)
 	// Manual compaction is a separate session operation, not a new model turn.
 	// Keep the old turn terminal so late output cannot animate again, but admit
 	// the new operation's lifecycle even after that turn completed or stopped.

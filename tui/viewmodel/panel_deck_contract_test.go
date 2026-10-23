@@ -8,8 +8,8 @@ import (
 
 	"crude/fileio"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/decision"
 	"crude/tui/screens/question"
-	"crude/tui/screens/yolo"
 	"crude/types"
 	"crude/workspace"
 )
@@ -194,13 +194,13 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 
 	t.Run("yolo_esc_resolves_disabled_once", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
-		projection.yoloAgentID = "agent"
+		projection.decisionAgentID = "agent"
 		app.openSessionYoloPanel()
 		projection.deckHost.Resize(100, 12)
 		projection.deckHost.Layout()
 		app.focusSessionDeckAfterLayout()
-		if projection.deckHost.Focused() != yolo.ActionsID {
-			t.Fatalf("YOLO focus=%q want %q", projection.deckHost.Focused(), yolo.ActionsID)
+		if projection.deckHost.Focused() != decision.ActionsID {
+			t.Fatalf("YOLO focus=%q want %q", projection.deckHost.Focused(), decision.ActionsID)
 		}
 		app.Input.SetInput("must-not-leak")
 		_, cmd := app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})

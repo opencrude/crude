@@ -42,7 +42,7 @@ func TestYoloSlashRemainsAvailableDuringActiveTurn(t *testing.T) {
 		t.Fatal("/yolo prompt should open synchronously")
 	}
 	projection := app.activeSessionProjection()
-	if projection == nil || projection.deck.Active() == nil || projection.deck.Active().ID != sessionYoloPanelID {
+	if projection == nil || projection.deck.Active() == nil || projection.deck.Active().ID != sessionDecisionPanelID {
 		t.Fatal("/yolo did not open its confirmation during the active turn")
 	}
 }

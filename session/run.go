@@ -89,6 +89,16 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		return true
 	}
 
+	// startGoalTurn continues an active goal when nothing else owns the agent:
+	// collaboration deliveries and queued human input always go first.
+	startGoalTurn := func() bool {
+		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
+			return false
+		}
+		input, ok := s.goalContinuation()
+		return ok && o.SubmitInput(input)
+	}
+
 	asyncPollingStop := make(chan struct{})
 	defer close(asyncPollingStop)
 	go func() {
@@ -141,12 +151,17 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 					}
 					s.processTurnOrchestrator(request, o, sender, l)
 				case <-collaborationNotifications:
-					if startCollaborationTurn() {
+					if startCollaborationTurn() || startGoalTurn() {
 						request := <-o.inputCh
 						s.processTurnOrchestrator(request, o, sender, l)
 					}
 				case <-collaborationPoll.C:
-					if startCollaborationTurn() {
+					if startCollaborationTurn() || startGoalTurn() {
+						request := <-o.inputCh
+						s.processTurnOrchestrator(request, o, sender, l)
+					}
+				case <-s.goalWake:
+					if startCollaborationTurn() || startGoalTurn() {
 						request := <-o.inputCh
 						s.processTurnOrchestrator(request, o, sender, l)
 					}
@@ -221,7 +236,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			userMsg.DisplayContent = userInput.DisplayText
 		}
 		createdAt := time.Now()
-		meta := canonicalizeDisplayMeta(userMsg, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userInput.Text}, "", len(s.msgs), createdAt)
+		meta := sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userInput.Text}
+		if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
+			// Runtime-started turns (goal continuations) are provider input,
+			// never a human message in the transcript.
+			meta = sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}
+		}
+		meta = canonicalizeDisplayMeta(userMsg, meta, "", len(s.msgs), createdAt)
 		if len(request.deliveries) > 0 {
 			// The collaboration event owns the canonical message identity, payload and
 			// timestamp. The later admission transaction reuses this exact delta while
@@ -332,6 +353,14 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.reconcileRootExecutionPins()
 		return nil
 	}
+	// The goal settles after the unwind below has decided whether the turn
+	// completed, failed, was stopped or parked for recovery.
+	var goalProgress *goalTurn
+	defer func() {
+		// The turn context is always cancelled once the turn ends; only the
+		// final state says whether the user stopped it.
+		s.goalTurnEnd(goalProgress, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, recoveryParked)
+	}()
 	defer func() {
 		// Parking during unwind must not advertise Retry while the old turn
 		// still owns its reservation, nor publish between slot removal and
@@ -775,9 +804,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
 	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
+	// Plan mode is fixed for the whole turn; a toggle applies from the next one.
+	planMode := s.PlanMode()
+	planModeEnded := s.notePlanModeTurn(planMode)
+	goalProgress = s.goalTurnBegin(userInput, planMode)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	ag.WorkDir = executionRoot
 	ag.ToolFn = s.buildToolFnAtRoot(effectiveCfg.IsMultiAgentEnabled(), turnProvider, activeCfg.ModelModalities, executionRoot)
+	if planMode {
+		ag.Policy = safety.ReadOnlyPolicy()
+	}
 	ag.GuidancePaths = append([]string(nil), userInput.ActivePaths...)
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
 	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
@@ -836,6 +872,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	baseToolFn := ag.ToolFn
 	ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if planMode {
+			if err := planModeRefusal(tool, params, ag.ToolMetadata, s.logger); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 		return baseToolFn(withDelegationOwner(toolCtx, o.ID, turnGeneration), tool, params)
 	}
 	ag.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
@@ -844,7 +885,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.delegationMu.Lock()
 		defer s.delegationMu.Unlock()
 		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
-		return configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
+		defs, notices := configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
+		if planMode {
+			defs = planModeTools(defs, ag.ToolMetadata)
+		}
+		if planModeEnded {
+			planModeEnded = false
+			notices = append(notices, planModeEndedNotice())
+		}
+		return defs, append(notices, s.takeGoalNotices()...)
 	}
 	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
 	s.bindAgentControl(ctx, ag, userInput.ControlTarget)
@@ -909,7 +958,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return nil
 	}
 	var finalContent string
-	prompt := s.systemPromptForModelAtRoot(effectiveCfg.IsMultiAgentEnabled(), ag.Model, ag.WorkDir)
+	prompt := s.systemPromptForModelAtRoot(effectiveCfg.IsMultiAgentEnabled(), planMode, ag.Model, ag.WorkDir)
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
@@ -949,6 +998,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	var terminalDone *agent.AgentEvent
 	emit := func(evt agent.AgentEvent) {
 		evt = eventSource.bind(evt)
+		if evt.AgentID == "" || evt.AgentID == o.ID {
+			goalProgress.observe(evt)
+		}
 		if evt.Type == "error" && ctx.Err() == nil {
 			turnFinalState = sessiondb.TurnFailed
 		}
@@ -989,6 +1041,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.updateDisplayFromEvent(evt, displayTracker)
 		if evt.Type == "usage" {
 			s.processUsageEvent(evt.Data, activeCfg.Model, agentID, "")
+			if goalProgress != nil {
+				s.enforceGoalBudget()
+			}
 		}
 		if evt.Type == "done" {
 			if content, ok := evt.Data.(string); ok {
@@ -1033,7 +1088,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			Generation: turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
 		}
-		return s.systemPromptForModelAtRoot(current.IsMultiAgentEnabled(), ag.Model, ag.WorkDir), nil
+		return s.systemPromptForModelAtRoot(current.IsMultiAgentEnabled(), planMode, ag.Model, ag.WorkDir), nil
 	}
 	runResult := ag.RunSupervised(
 		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,

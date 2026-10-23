@@ -59,19 +59,20 @@ type CmdInfo struct {
 }
 
 var availableCmds = []CmdInfo{
-	{Name: "settings", Label: "settings", Desc: "Open session AI settings (models and multi-agent)"},
-	{Name: "model", Label: "model", Desc: "Choose this session's model"},
-	{Name: "history", Label: "history", Desc: "Search and reuse prompts with their attachments"},
+	{Name: "plan", Label: "plan", Desc: "Plan mode: explore read-only and agree a plan before changing anything"},
+	{Name: "goal", Label: "goal", Desc: "Set or view a goal the agent pursues until a verifier confirms it"},
+	{Name: "fork", Label: "fork", Desc: "Continue this conversation in a new session; this one stays as it is"},
+	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
+	{Name: "retry", Label: "retry", Desc: "Continue this agent's pending recovery without replaying completed work"},
 	{Name: "undo", Label: "undo", Desc: "Revert this agent's files; retain conversation history"},
-	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
+	{Name: "history", Label: "history", Desc: "Search and reuse prompts with their attachments"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
 	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills"},
 	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs"},
-	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
+	{Name: "settings", Label: "settings", Desc: "Open session AI settings (models and multi-agent)"},
 	{Name: "fast", Label: "fast", Desc: "Toggle the provider's fast tier for this session's main agent"},
-	{Name: "retry", Label: "retry", Desc: "Continue this agent's pending recovery without replaying completed work"},
-	{Name: "help", Label: "help", Desc: "Open help"},
+	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 }
 
 func AvailableCmds() []CmdInfo {

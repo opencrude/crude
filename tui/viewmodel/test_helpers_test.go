@@ -111,6 +111,20 @@ func (noopEventSender) SendAgentEvent(typ string, data any)                  {}
 func (noopEventSender) SendAgentEventWithID(typ string, data any, id string) {}
 func (noopEventSender) SendAgentEventEnvelope(agent.AgentEvent)              {}
 
+// sessionFactSender delivers session facts (status rows, the goal) to the
+// workspace as the core does, and drops turn events like noopEventSender.
+type sessionFactSender struct{ ws *workspace.Workspace }
+
+func (s sessionFactSender) SendAgentEvent(typ string, data any) {
+	s.SendAgentEventWithID(typ, data, "")
+}
+func (s sessionFactSender) SendAgentEventWithID(typ string, data any, id string) {
+	if typ == "status_row" || typ == "goal" {
+		s.ws.ApplyAgentEvent(workspace.AgentEvent{Type: typ, Data: data, AgentID: id})
+	}
+}
+func (sessionFactSender) SendAgentEventEnvelope(agent.AgentEvent) {}
+
 // newTestApp builds an App with the full shell tree mounted (all shell
 // screens under one rootHost painted into mainSurf) plus the workspace
 // stubs. No compositor/renderCtx are created; tests that call View()
@@ -233,7 +247,7 @@ func addBackendTestOrchestrator(t *testing.T, app *App) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orchestrator, err := wsOf(app).StartOrchestrator(owner.SessionID, noopEventSender{})
+	orchestrator, err := wsOf(app).StartOrchestrator(owner.SessionID, sessionFactSender{ws: wsOf(app)})
 	if err != nil {
 		t.Fatal(err)
 	}

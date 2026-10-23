@@ -130,6 +130,12 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 	}
 	if strings.HasPrefix(target, "agent:") {
 		agentID := strings.TrimPrefix(target, "agent:")
+		if m.ws.PlanModeForAgent(agentID) {
+			segments = append(segments, shellheader.Segment{Text: "Plan mode", Role: ui.ColorAccent, Action: "tabs", TargetID: target, Priority: 0})
+		}
+		if text := m.goalHeaderText(agentID); text != "" {
+			segments = append(segments, shellheader.Segment{Text: text, Role: ui.ColorAccent, Action: "goal", TargetID: target, Priority: 0})
+		}
 		if node := m.ws.AgentMgr().Get(agentID); node != nil {
 			usage, _ := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
 			identity := m.ws.AgentModelIdentity(node.ID)
@@ -344,7 +350,7 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 }
 
 // footerHelpSegments is the footer's guidance group: unread Notices when
-// present, a small ranked set of contextual hints, and the Help entry.
+// present, otherwise a small ranked set of contextual hints.
 // configureFooterScreen left-aligns it.
 func (m *App) footerHelpSegments() []shellfooter.Segment {
 	segments := make([]shellfooter.Segment, 0, 4)
@@ -360,7 +366,6 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 			}
 		}
 	}
-	segments = append(segments, shellfooter.Segment{Text: "Help", Role: ui.ColorMuted, Action: "help", Priority: 1})
 	return segments
 }
 

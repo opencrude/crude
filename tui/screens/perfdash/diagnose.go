@@ -79,6 +79,9 @@ func Diagnose(d Data) []Finding {
 	for _, p := range d.processes() {
 		add(runtimeFinding(d, p))
 	}
+	for _, f := range resourceFindings(d) {
+		add(f)
+	}
 	slices.SortStableFunc(out, func(a, b Finding) int { return int(b.Severity) - int(a.Severity) })
 	return out
 }

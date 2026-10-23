@@ -342,4 +342,11 @@ func (a *actor) applyService(request coreprotocol.Request, result coreprotocol.R
 	if result.Error == nil && serviceMutation(request.Method) {
 		a.changed(nil)
 	}
+	// Plan mode and goals are session state every shell paints.
+	if result.Error == nil && (request.Method == coreprotocol.AgentPlanMode || request.Method == coreprotocol.AgentGoal) {
+		var in coreprotocol.AgentIDRequest
+		if decode(request.Payload, &in) == nil {
+			a.changed([]string{in.AgentID})
+		}
+	}
 }

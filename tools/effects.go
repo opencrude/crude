@@ -29,11 +29,11 @@ type ExecutionIdentityKey struct{}
 func NativeMetadata(name string) (ToolMetadata, bool) {
 	metadata := ToolMetadata{Name: name, Scope: "workspace"}
 	switch name {
-	case "read_file", "glob_files", "grep_files", "list_directory", "recall_memory", "search_history", "get_plan", "check_async_command", "read_async_output", "wait", "capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read", "crude_commands", "lsp":
+	case "read_file", "glob_files", "grep_files", "list_directory", "recall_memory", "search_history", "get_plan", "check_async_command", "read_async_output", "wait", "capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read", "crude_commands", "lsp", "get_goal":
 		metadata.Effect = captypes.EffectRead
 	case "crude_control":
 		metadata.ContextResolved = true
-	case "reply", "question", "update_plan", "remember", "update_memory", "forget_memory", "memory_feedback", "agent_send", "agent_respond", "publish_report":
+	case "reply", "question", "update_plan", "remember", "update_memory", "forget_memory", "memory_feedback", "agent_send", "agent_respond", "publish_report", "create_goal", "update_goal":
 		metadata.Effect = captypes.EffectCommunication
 	case "apply_patch", "write_file", "edit_file", "move_file", "copy_file":
 		metadata.Effect = captypes.EffectWrite

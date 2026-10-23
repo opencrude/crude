@@ -25,11 +25,13 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 			delete(m.pendingOrchestrators, id)
 		}
 		m.addOrchestrator(id, activate)
+		commands = append(commands, m.takePendingFirstInput(id))
 	}
 	for id := range m.pendingOrchestrators {
 		if m.ws.AgentMgr().Get(id) != nil {
 			delete(m.pendingOrchestrators, id)
 			m.addOrchestrator(id, true)
+			commands = append(commands, m.takePendingFirstInput(id))
 		}
 	}
 	for _, notice := range applied.Notices {

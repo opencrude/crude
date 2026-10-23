@@ -92,7 +92,7 @@ func TestRecoveryCancelAcknowledgementPassesShieldButLateRetryCannotReactivate(t
 
 func TestNetworkPaletteDeepLinkAndRecoveryActionsAreDiscoverable(t *testing.T) {
 	app := newFullTestApp(t)
-	app.executePaletteCommand("settings.network")
+	app.openNetworkSettings()
 	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	body := app.settingsSurface(window)
 	if body == nil {

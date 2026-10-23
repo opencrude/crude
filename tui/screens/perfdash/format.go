@@ -72,8 +72,10 @@ func formatBytes(n float64) string {
 		return strconv.FormatFloat(n/unit, 'f', oneDecimalBelowTen(n/unit), 64) + " KiB"
 	case n < unit*unit*unit:
 		return strconv.FormatFloat(n/(unit*unit), 'f', oneDecimalBelowTen(n/(unit*unit)), 64) + " MiB"
-	default:
+	case n < unit*unit*unit*unit:
 		return strconv.FormatFloat(n/(unit*unit*unit), 'f', 1, 64) + " GiB"
+	default:
+		return strconv.FormatFloat(n/(unit*unit*unit*unit), 'f', 1, 64) + " TiB"
 	}
 }
 

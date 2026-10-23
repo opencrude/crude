@@ -434,6 +434,15 @@ func (v *WorkspaceView) AgentTurnActive(id string) bool {
 }
 func (v *WorkspaceView) YoloForAgent(id string) bool { return v.agents[id].Yolo }
 
+func (v *WorkspaceView) PlanModeForAgent(id string) bool { return v.agents[id].PlanMode }
+
+func (v *WorkspaceView) GoalForAgent(id string) (types.Goal, bool) {
+	if goal := v.agents[id].Goal; goal != nil {
+		return *goal, true
+	}
+	return types.Goal{}, false
+}
+
 // SetYolo reflects a requested YOLO change across the owning root's subtree
 // until the core's next delta confirms or replaces it.
 func (v *WorkspaceView) SetYolo(id string, enabled bool) {

@@ -39,6 +39,41 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			}
 			return response(request, coreprotocol.BoolResult{OK: true})
 		}, true
+	case coreprotocol.AgentPlanMode:
+		var in coreprotocol.AgentPlanModeRequest
+		if err := decode(request.Payload, &in); err != nil {
+			return bad(err)
+		}
+		run, err := ws.PrepareSetPlanMode(in.AgentID, in.Enabled)
+		if err != nil {
+			return done(coreprotocol.BoolResult{Error: err.Error()})
+		}
+		return func(context.Context) coreprotocol.Response {
+			if err := run(); err != nil {
+				return response(request, coreprotocol.BoolResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.BoolResult{OK: true})
+		}, true
+	case coreprotocol.AgentGoal:
+		var in coreprotocol.AgentGoalRequest
+		if err := decode(request.Payload, &in); err != nil {
+			return bad(err)
+		}
+		run, err := ws.PrepareGoalAction(in.AgentID, in.Action, in.Objective)
+		if err != nil {
+			return done(coreprotocol.AgentGoalResult{Error: err.Error()})
+		}
+		return func(context.Context) coreprotocol.Response {
+			goal, present, err := run()
+			if err != nil {
+				return response(request, coreprotocol.AgentGoalResult{Error: err.Error()})
+			}
+			out := coreprotocol.AgentGoalResult{}
+			if present {
+				out.Goal = &goal
+			}
+			return response(request, out)
+		}, true
 	case coreprotocol.AgentStopCommand:
 		var in coreprotocol.StopCommandRequest
 		if err := decode(request.Payload, &in); err != nil {
@@ -181,7 +216,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 // ownerMutation reports which owner operations are journaled.
 func ownerMutation(method string) bool {
 	switch method {
-	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact,
+	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal,
 		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave, coreprotocol.HistoryRestoreEvent,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
 		return true
@@ -191,7 +226,7 @@ func ownerMutation(method string) bool {
 
 func ownerOperation(method string) bool {
 	switch method {
-	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact,
+	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal,
 		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryRestoreEvent, coreprotocol.HistoryUndoScopes,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true

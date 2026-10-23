@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/decision"
 	"testing"
 
 	"crude/tui/ui"
@@ -18,13 +19,13 @@ func TestYoloTransitionsUseOnePathAndDoNotImpersonateAssistant(t *testing.T) {
 	state := app.ws.AgentMgr().Get(id).State
 	app.executeSlashCommand("/yolo")
 	projection := app.activeSessionProjection()
-	app.resolveSessionYolo(projection.yolo, true)
+	app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "yolo", Confirmed: true})
 	if !app.ws.YoloForAgent(id) || !app.OverlayState.IsYolo() {
 		t.Fatal("confirmed policy did not reach backend and header")
 	}
-	app.executePaletteCommand("safety.yolo.toggle")
+	app.executeSlashCommand("/yolo")
 	if app.ws.YoloForAgent(id) || app.OverlayState.IsYolo() {
-		t.Fatal("palette did not restore the owning session's approval policy")
+		t.Fatal("/yolo did not restore the owning session's approval policy")
 	}
 	messages := state.Messages.Messages()
 	if len(messages) != 2 || messages[0].LifecyclePhase != "yolo_enabled" || messages[1].LifecyclePhase != "yolo_disabled" {
@@ -36,9 +37,9 @@ func TestYoloTransitionsUseOnePathAndDoNotImpersonateAssistant(t *testing.T) {
 		}
 	}
 	state.Messages.ClearTurnStatus()
-	app.executePaletteCommand("safety.yolo.toggle")
-	app.resolveSessionYolo(projection.yolo, false)
-	app.resolveSessionYolo(projection.yolo, true)
+	app.executeSlashCommand("/yolo")
+	app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "yolo", Confirmed: false})
+	app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "yolo", Confirmed: true})
 	if len(state.Messages.Messages()) != 2 || app.ws.YoloForAgent(id) {
 		t.Fatal("cancel or stale confirmation changed policy/transcript")
 	}

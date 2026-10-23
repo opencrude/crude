@@ -3,9 +3,9 @@ package viewmodel
 import (
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/composer"
+	"crude/tui/screens/decision"
 	"crude/tui/screens/sessionsettings"
 	textoverlay "crude/tui/screens/textoverlay"
-	"crude/tui/screens/yolo"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
@@ -17,16 +17,18 @@ import (
 // projections are keyed by the stable Session object so switching tabs cannot
 // leak dialog, form, or text-input state between conversations.
 type sessionProjection struct {
-	backgroundJobs *backgroundjobs.Screen
-	yolo           *yolo.Screen
-	yoloAgentID    string
-	textOverlay    *textoverlay.Screen
-	composer       *composer.Screen
-	settings       *sessionsettings.Screen
-	deck           *ui.PanelDeck
-	deckHost       *ui.Host
-	deckFocused    bool
-	deckFocus      ui.ComponentID
+	backgroundJobs  *backgroundjobs.Screen
+	decision        *decision.Screen
+	decisionAgentID string
+	// decisionData is what the pending decision acts on (a new objective).
+	decisionData string
+	textOverlay  *textoverlay.Screen
+	composer     *composer.Screen
+	settings     *sessionsettings.Screen
+	deck         *ui.PanelDeck
+	deckHost     *ui.Host
+	deckFocused  bool
+	deckFocus    ui.ComponentID
 }
 
 type sessionProjectionRegistry struct {
@@ -61,7 +63,7 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 	deck := ui.NewPanelDeck("session-deck", ui.NewTokenSet(r.theme))
 	projection := &sessionProjection{
 		backgroundJobs: backgroundjobs.New(r.theme),
-		yolo:           yolo.New(r.theme),
+		decision:       decision.New(r.theme),
 		textOverlay:    textoverlay.New(r.theme),
 		composer:       composer.New(r.theme),
 		settings:       settings,
@@ -149,8 +151,8 @@ func (r *sessionProjectionRegistry) SetTheme(th *theme.Theme) {
 		if projection.settings != nil {
 			projection.settings.SetTokens(tokens)
 		}
-		if projection.yolo != nil {
-			projection.yolo.SetTokens(tokens)
+		if projection.decision != nil {
+			projection.decision.SetTokens(tokens)
 		}
 		if projection.backgroundJobs != nil {
 			projection.backgroundJobs.SetTokens(tokens)
@@ -181,12 +183,12 @@ func (r *sessionProjectionRegistry) projectionForSettings(screen *sessionsetting
 	return nil, nil
 }
 
-func (r *sessionProjectionRegistry) projectionForYolo(screen *yolo.Screen) (*workspace.Session, *sessionProjection) {
+func (r *sessionProjectionRegistry) projectionForDecision(screen *decision.Screen) (*workspace.Session, *sessionProjection) {
 	if r == nil || screen == nil {
 		return nil, nil
 	}
 	for session, projection := range r.items {
-		if projection != nil && projection.yolo == screen {
+		if projection != nil && projection.decision == screen {
 			return session, projection
 		}
 	}

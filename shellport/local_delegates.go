@@ -162,6 +162,22 @@ func (l *local) YoloForAgent(agentID string) bool {
 	return l.ws.YoloForAgent(agentID)
 }
 
+func (l *local) PlanModeForAgent(agentID string) bool {
+	return l.ws.PlanModeForAgent(agentID)
+}
+
+func (l *local) SetPlanModeForAgent(agentID string, enabled bool) error {
+	return l.ws.SetPlanModeForAgent(agentID, enabled)
+}
+
+func (l *local) GoalForAgent(agentID string) (types.Goal, bool) {
+	return l.ws.GoalForAgent(agentID)
+}
+
+func (l *local) GoalAction(agentID, action, objective string) (types.Goal, bool, error) {
+	return l.ws.GoalAction(agentID, action, objective)
+}
+
 func (l *local) SetYoloForAgent(agentID string, enabled bool) bool {
 	return l.ws.SetYoloForAgent(agentID, enabled)
 }
@@ -300,6 +316,10 @@ func (l *local) NewAgentSession() *workspace.NewSessionResult {
 
 func (l *local) OpenAgentSession(sessionID string) *workspace.NewSessionResult {
 	return l.ws.OpenAgentSession(sessionID)
+}
+
+func (l *local) ForkAgentSession(sessionID string) *workspace.NewSessionResult {
+	return l.ws.ForkAgentSession(sessionID)
 }
 
 func (l *local) BackendSession(sessionID string) *session.Session {

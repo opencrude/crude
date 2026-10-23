@@ -11,6 +11,7 @@ func renderMarkdown(content string, mdRenderer *rendering.MarkdownRenderer) (str
 	if mdRenderer == nil {
 		return "", false
 	}
+	content = presentProposedPlan(content)
 	if content != "" && strings.TrimSpace(content) == content && strings.IndexFunc(content, func(character rune) bool {
 		return character != ' ' && (character < 'a' || character > 'z') && (character < 'A' || character > 'Z')
 	}) < 0 {
@@ -51,4 +52,23 @@ func updateStreamingCache(msg *types.ChatMessage, mdRenderer *rendering.Markdown
 	}
 	msg.StreamCompletedLines = lines
 	msg.StreamCompletedLen = completedLen
+}
+
+// presentProposedPlan shows Plan mode's proposed_plan block as a titled
+// section between rules: the tags are protocol for Crude, not prose. Live and
+// hydrated rows both render through here, so they paint identically.
+func presentProposedPlan(content string) string {
+	if !strings.Contains(content, "proposed_plan>") {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for index, line := range lines {
+		switch strings.TrimSpace(line) {
+		case "<proposed_plan>":
+			lines[index] = "\n---\n\n**Proposed plan**\n"
+		case "</proposed_plan>":
+			lines[index] = "\n---\n"
+		}
+	}
+	return strings.Join(lines, "\n")
 }

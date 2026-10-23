@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/localhistory"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
@@ -180,30 +179,6 @@ func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {
 	}
 }
 
-func (m *App) verifyHistoryCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.ws.LocalHistory() == nil {
-			return historyOperationMsg{Error: "Local history unavailable"}
-		}
-		if err := m.ws.LocalHistory().VerifyAll(context.Background()); err != nil {
-			return historyOperationMsg{Error: err.Error()}
-		}
-		return historyOperationMsg{Label: "Local history verified"}
-	}
-}
-func (m *App) pruneHistoryCmd() tea.Cmd {
-	settings := m.ws.LoadAppSettings().LocalHistory
-	return func() tea.Msg {
-		if m.ws.LocalHistory() == nil {
-			return historyOperationMsg{Error: "Local history unavailable"}
-		}
-		result, err := m.ws.LocalHistory().Prune(context.Background(), localhistory.RetentionPolicy{KeepHours: settings.RetentionKeepHours, KeepDaily: settings.RetentionKeepDaily, MaxSnapshots: settings.RetentionMaxSnapshots, BudgetBytes: int64(settings.StorageBudgetMB) * 1024 * 1024})
-		if err != nil {
-			return historyOperationMsg{Error: err.Error()}
-		}
-		return historyOperationMsg{Label: fmt.Sprintf("Pruned %d snapshots and %d objects", result.RemovedSnapshots, result.RemovedObjects)}
-	}
-}
 func (m *App) captureHistoryCmd() tea.Cmd {
 	settings := m.ws.LoadAppSettings().LocalHistory
 	return func() tea.Msg {
@@ -220,19 +195,6 @@ func (m *App) captureHistoryCmd() tea.Cmd {
 		return historyOperationMsg{Label: "Local history snapshot created"}
 	}
 }
-func (m *App) openHistoryLocationCmd() tea.Cmd {
-	if m.ws.LocalHistory() == nil {
-		return func() tea.Msg { return historyOperationMsg{Error: "Local history unavailable"} }
-	}
-	path := m.ws.LocalHistory().Root()
-	return func() tea.Msg {
-		if err := fileio.OpenDesktopPath(path, false); err != nil {
-			return historyOperationMsg{Error: "Open history folder: " + err.Error()}
-		}
-		return historyOperationMsg{Label: "Opened local history folder"}
-	}
-}
-
 func historySnapshotOptions(settings ttypes.LocalHistorySettings) localhistory.SnapshotOptions {
 	return localhistory.SnapshotOptions{
 		DisableGitIgnore:    !settings.UseGitIgnoreValue(),

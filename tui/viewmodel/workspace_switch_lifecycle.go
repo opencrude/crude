@@ -387,7 +387,7 @@ func (m *App) closeWorkspaceEditors() {
 }
 
 // closeWorkspaceBoundOverlays closes project/session/editor surfaces while
-// preserving application-global Help and Command Palette state.
+// preserving the application-global Command Palette.
 func (m *App) closeWorkspaceBoundOverlays() {
 	search := m.findInFiles
 	if m.overlayHost != nil {
@@ -395,8 +395,7 @@ func (m *App) closeWorkspaceBoundOverlays() {
 			if entry == nil {
 				continue
 			}
-			switch entry.ID {
-			case ui.OverlayHelp, ui.OverlayCommandPalette:
+			if entry.ID == ui.OverlayCommandPalette {
 				continue
 			}
 			m.stopReveal(string(entry.ID))
@@ -429,7 +428,7 @@ func (m *App) closeWorkspaceBoundOverlays() {
 	m.OverlayState = NewOverlayState()
 
 	for id := range m.reveals {
-		if id != string(ui.OverlayHelp) && id != string(ui.OverlayCommandPalette) {
+		if id != string(ui.OverlayCommandPalette) {
 			delete(m.reveals, id)
 		}
 	}

@@ -57,3 +57,13 @@ func LoadRuntimeState(ctx context.Context, db *sql.DB, key string) ([]byte, erro
 	}
 	return append([]byte(nil), value...), nil
 }
+
+func DeleteRuntimeState(ctx context.Context, db *sql.DB, key string) error {
+	if db == nil {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM session_runtime_state WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("sessiondb: delete runtime state %q: %w", key, err)
+	}
+	return nil
+}

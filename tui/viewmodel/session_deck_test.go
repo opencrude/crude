@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/decision"
 	"testing"
 	"time"
 
@@ -56,11 +57,11 @@ func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 	}
 
 	selectDeckSession(t, app, first, "first-agent")
-	firstProjection.yolo.Reset()
-	firstProjection.yoloAgentID = "first-agent"
-	firstProjection.deck.Open(sessionYoloPanel(firstProjection.yolo))
+	firstProjection.decision.Show(decision.Spec{Purpose: "yolo"})
+	firstProjection.decisionAgentID = "first-agent"
+	firstProjection.deck.Open(sessionDecisionPanel(firstProjection.decision, "YOLO"))
 	selectDeckSession(t, app, second, "second-agent")
-	app.resolveSessionYolo(firstProjection.yolo, true)
+	app.resolveSessionDecision(decision.ResultMsg{Target: firstProjection.decision, Purpose: "yolo", Confirmed: true})
 	if firstProjection.deck.IsOpen() || secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("inactive YOLO resolution changed the active session")
 	}

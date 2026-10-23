@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"reflect"
 	"testing"
 
 	"crude/shellport"
@@ -35,48 +34,6 @@ func TestShellSessionSelectionDoesNotChangeAnotherShell(t *testing.T) {
 	left.FocusStack.Clear()
 	if right.FocusStack.Top() != FocusInput {
 		t.Fatal("focus was cleared in another shell")
-	}
-}
-
-func TestPaletteMultiAgentToggleUsesExactOwnerAndOnlyChangesDelegation(t *testing.T) {
-	app := newFullTestApp(t)
-	wsOf(app).Logger = stubLogger{}
-	firstID := addBackendTestOrchestrator(t, app)
-	first := app.ws.SessionsByAgent()[firstID]
-	secondID := addBackendTestOrchestrator(t, app)
-	second := app.ws.SessionsByAgent()[secondID]
-	configure := func(owner *workspace.Session, model string) {
-		t.Helper()
-		settings := app.ws.BackendSession(owner.SessionID).SettingsSnapshot()
-		settings.SessionOverrides = map[string]types.CategorySettings{"default": {
-			AccountID: settings.AccountID, Model: model, DeniedTools: []string{"write_file"}, SkillModes: map[string]string{"local": "manual"},
-		}}
-		if err := wsOf(app).HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
-			t.Fatal(err)
-		}
-	}
-	configure(first, "first-model")
-	configure(second, "second-model")
-	firstBefore := app.ws.BackendSession(first.SessionID).SettingsSnapshots()
-	secondBefore := app.ws.BackendSession(second.SessionID).SettingsSnapshots()
-	app.ActivateSessionByAgent(secondID)
-	// A display cache is never command authority, even if a prior save left it stale.
-	app.LastSettings = firstBefore.Effective
-	command := app.executePaletteCommand("agent.toggle.multiagent")
-	if command == nil {
-		t.Fatal("palette toggle did not prepare its operation")
-	}
-	app.ActivateSessionByAgent(firstID) // switch before the off-thread command runs
-	runAppCommand(t, app, command)
-	firstAfter := app.ws.BackendSession(first.SessionID).SettingsSnapshots()
-	secondAfter := app.ws.BackendSession(second.SessionID).SettingsSnapshots()
-	if !reflect.DeepEqual(firstBefore, firstAfter) || !reflect.DeepEqual(secondBefore.Overrides, secondAfter.Overrides) ||
-		!reflect.DeepEqual(secondBefore.Base, secondAfter.Base) || secondBefore.Effective.Model != secondAfter.Effective.Model ||
-		secondBefore.Effective.Agents.Enabled == secondAfter.Effective.Agents.Enabled {
-		t.Fatal("palette toggle overwrote unrelated owner/settings or failed to toggle")
-	}
-	if app.ActiveSession != first || app.ModelName != "first-model" || app.LastSettings.Model != "first-model" {
-		t.Fatal("late toggle completion stole the selected session")
 	}
 }
 

@@ -328,6 +328,27 @@ func Report(d Data) string {
 	for _, t := range overviewTiles(d) {
 		fmt.Fprintf(&b, "%s: %s\n", t.label, t.value)
 	}
+	if view, ok := resources(d); ok {
+		b.WriteString("\nResources\n")
+		for _, t := range resourceTiles(view) {
+			fmt.Fprintf(&b, "  %s: %s\n", t.label, t.value)
+		}
+		for _, row := range processRows(view) {
+			fmt.Fprintf(&b, "  %-20s %-36s %10s cpu %s\n", row.label, row.detail, row.value, row.extra)
+		}
+		if disk := view.disk; disk != nil {
+			fmt.Fprintf(&b, "  %s\n", diskHeading(disk, d.Fetched))
+			for _, row := range diskPartRows(disk) {
+				fmt.Fprintf(&b, "    %-34s %10s\n", row.label, row.value)
+			}
+			for _, row := range workspaceRows(disk) {
+				fmt.Fprintf(&b, "    %-34s %10s  %s\n", row.label, row.value, row.detail)
+			}
+			if note := orphanNote(disk); note != "" {
+				fmt.Fprintf(&b, "  %s\n", note)
+			}
+		}
+	}
 	for _, p := range d.processes() {
 		snapshot := d.snapshot(p)
 		fmt.Fprintf(&b, "\n%s process (pid %d)\n", p.label(), snapshot.PID)

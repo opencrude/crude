@@ -108,6 +108,9 @@ func (w *Workspace) prepareSessionHydration(frontend *Session) []ChatMessageView
 	for _, record := range frontend.backend.CompactionRecords("") {
 		views = append(views, compactionRecordView(record))
 	}
+	for _, row := range frontend.backend.StatusRows() {
+		views = append(views, statusRowView(row))
+	}
 
 	if db := frontend.DB; db != nil {
 		if records, err := sessiondb.ListUsageRecords(db); err == nil {
@@ -329,6 +332,42 @@ func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedComp
 	return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
 }
 
+// humanName is how the human appears to people and agents: their username.
+// The event's OriginHuman, not the name, tells models it is the user.
+func (w *Workspace) humanName() string {
+	if w.Username != "" {
+		return w.Username
+	}
+	return "user"
+}
+
+// PlanModeForAgent reports Plan mode of the session that owns agentID.
+func (w *Workspace) PlanModeForAgent(agentID string) bool {
+	sess := w.sessionForAgent(agentID)
+	return sess != nil && sess.backend != nil && sess.backend.PlanMode()
+}
+
+// PrepareSetPlanMode resolves the owning session on the workspace owner; the
+// returned persistence runs off it. Plan mode applies from the next turn.
+func (w *Workspace) PrepareSetPlanMode(agentID string, enabled bool) (func() error, error) {
+	sess := w.sessionForAgent(agentID)
+	if sess == nil || sess.backend == nil {
+		return nil, errors.New("no session owns this agent")
+	}
+	backend := sess.backend
+	return func() error { return backend.SetPlanMode(enabled) }, nil
+}
+
+// SetPlanModeForAgent is PrepareSetPlanMode run in place, for callers already
+// off the owner thread.
+func (w *Workspace) SetPlanModeForAgent(agentID string, enabled bool) error {
+	run, err := w.PrepareSetPlanMode(agentID, enabled)
+	if err != nil {
+		return err
+	}
+	return run()
+}
+
 // SetYoloForAgent updates the owning session's live safety policy.
 func (w *Workspace) SetYoloForAgent(agentID string, enabled bool) bool {
 	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
@@ -399,7 +438,7 @@ func (w *Workspace) CancelAgent(agentID string) {
 	}
 	_, _ = w.Collaboration.Publish(context.Background(), collaboration.PublishRequest{
 		SenderID:       "human",
-		SenderName:     "Human",
+		SenderName:     w.humanName(),
 		IdempotencyKey: fmt.Sprintf("human-control:%s:cancel:%d", run.ID, run.Version),
 		RecipientIDs:   []string{agentID},
 		Origin:         collaboration.OriginHuman,
@@ -517,7 +556,7 @@ func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput)
 	}
 	published, err := owner.backend.PublishHumanSteering(context.Background(), agentID, collaboration.PublishRequest{
 		SenderID:       "human",
-		SenderName:     "Human",
+		SenderName:     w.humanName(),
 		IdempotencyKey: "human-steering:" + agentID + ":" + input.InternalID,
 		RecipientIDs:   []string{agentID},
 		Origin:         collaboration.OriginHuman,

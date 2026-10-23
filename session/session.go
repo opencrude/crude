@@ -117,6 +117,17 @@ type Session struct {
 	sessionID    string
 	sessionStart time.Time
 	yolo         atomic.Bool
+	planMode     atomic.Bool
+	// lastTurnPlanMode is the mode the latest turn ran in.
+	lastTurnPlanMode atomic.Bool
+	goalMu           sync.Mutex
+	goal             goalRuntime
+	// goalWake prompts the run loop to reconsider continuing the goal.
+	goalWake chan struct{}
+	// goalShownMu orders goal publications; goalShown is the last goal the
+	// transcript was told about, from which each change derives its row.
+	goalShownMu sync.Mutex
+	goalShown   *ttypes.Goal
 
 	usageMu       sync.RWMutex
 	usageRecords  map[string]sessiondb.UsageRecord
@@ -486,6 +497,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		dbPath:              dbPath,
 		collaborationAgents: make(map[string]collaboration.Agent),
 		orchestrators:       make(map[string]*Orchestrator),
+		goalWake:            make(chan struct{}, 1),
 		recoverySlots:       make(map[string]*recoverySlot),
 		pendingRecoveries:   make(map[string]sessiondb.RecoveryCheckpoint),
 		runtimeProfile:      NewRuntimeProfile(cfg),
@@ -725,12 +737,12 @@ func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	if s != nil {
 		root = s.WorkDir()
 	}
-	return s.systemPromptForModelAtRoot(multiAgent, model, root)
+	return s.systemPromptForModelAtRoot(multiAgent, false, model, root)
 }
 
-func (s *Session) systemPromptForModelAtRoot(multiAgent bool, model, root string) string {
+func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, root string) string {
 	if s == nil {
-		return rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent})
+		return rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent, PlanMode: planMode})
 	}
 	s.mu.Lock()
 	var cfg *Config
@@ -751,7 +763,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent bool, model, root string
 	if multiAgent {
 		catalog = agentProfileCatalog(cfg)
 	}
-	key := fmt.Sprintf("%t:%s:%s:%s:%s", multiAgent, model, instructions, catalog, root)
+	key := fmt.Sprintf("%t:%t:%s:%s:%s:%s", multiAgent, planMode, model, instructions, catalog, root)
 	if prompt, ok := s.systemPrompts[key]; ok {
 		return prompt
 	}
@@ -759,7 +771,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent bool, model, root string
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
 	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
-		MultiAgent: multiAgent, WorkDir: root, TempDir: s.TempDir(), Model: model,
+		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
 	})
 	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt
@@ -809,7 +821,12 @@ func (s *Session) Logger() *logger.Logger { return s.logger }
 // initSubAgentRunner creates the runner only on demand. Registration and
 // identity are published together, including when Settings enabled delegation
 // after the orchestrator had already started.
-func (s *Session) initSubAgentRunner() bool {
+func (s *Session) initSubAgentRunner() bool { return s.initSubAgentRunnerFor(false) }
+
+// initSubAgentRunnerFor with runtime set creates the runner for a child the
+// runtime itself starts (the goal verifier), which the user's multi-agent
+// setting does not govern.
+func (s *Session) initSubAgentRunnerFor(runtime bool) bool {
 	s.orchMu.Lock()
 	defer s.orchMu.Unlock()
 	s.subAgentMu.Lock()
@@ -841,7 +858,7 @@ func (s *Session) initSubAgentRunner() bool {
 		}
 		s.mu.Unlock()
 	}
-	if cfg == nil || !cfg.IsMultiAgentEnabled() {
+	if !runtime && (cfg == nil || !cfg.IsMultiAgentEnabled()) {
 		return false
 	}
 	runner := NewSubAgentRunner(s, s.effectiveMaxSubAgents())

@@ -70,13 +70,13 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 			t.Fatalf("footer missing useful composer hint %q: %q", hint, footer)
 		}
 	}
-	if !strings.Contains(footer, "Help") {
-		t.Fatalf("footer lost Help entry: %q", footer)
+	if strings.Contains(footer, "Help") {
+		t.Fatalf("footer still offers the removed Help window: %q", footer)
 	}
 }
 
 // TestFooterLeadsWithGuidanceAndTrailsStatus pins the footer's rail split: the
-// guidance group (contextual hints, then Help) starts on the shared left rail
+// guidance group (contextual hints) starts on the shared left rail
 // and the quieter status group is right-aligned on the shared right rail.
 func TestFooterLeadsWithGuidanceAndTrailsStatus(t *testing.T) {
 	app := newFullTestApp(t)
@@ -97,9 +97,6 @@ func TestFooterLeadsWithGuidanceAndTrailsStatus(t *testing.T) {
 	}
 	if !strings.Contains(footer, "Workspace") || (!strings.HasSuffix(footer, "Workspace") && !strings.HasSuffix(footer, "More")) {
 		t.Fatalf("footer right rail does not carry the workspace controls: %q", footer)
-	}
-	if help, workspace := strings.Index(footer, "Help"), strings.Index(footer, "Workspace"); help > workspace {
-		t.Fatalf("Help must stay inside the leading guidance group: %q", footer)
 	}
 }
 
@@ -212,7 +209,7 @@ func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 			t.Fatalf("header missing %q: %q", fact, header)
 		}
 	}
-	for _, hint := range []string{"Ctrl+F", "Ctrl+]", "Help"} {
+	for _, hint := range []string{"Ctrl+F", "Ctrl+]"} {
 		if !strings.Contains(footer, hint) {
 			t.Fatalf("footer missing useful editor hint %q: %q", hint, footer)
 		}

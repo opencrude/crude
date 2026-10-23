@@ -30,8 +30,8 @@ func TestConnectedShellInspectionPagesBeyond4096Rows(t *testing.T) {
 	body := ui.NewStack("fixture/body", ui.Vertical, 0, list, text)
 	open := func() {
 		frame := ui.NewWindowFrameWidget(m.Theme, "fixture/frame", ui.FrameWindow, "Paging fixture", body, nil, false, 80, 20)
-		window := wm.NewFloatingWindow(string(ui.OverlayHelp), "Paging fixture", frame, 80, 20, wm.WithModal(true), wm.WithFocusable(true))
-		m.overlayHost.Open(ui.OverlayHelp, window, ui.ModalDialogPolicy(), nil)
+		window := wm.NewFloatingWindow(string(ui.OverlayOperationIssue), "Paging fixture", frame, 80, 20, wm.WithModal(true), wm.WithFocusable(true))
+		m.overlayHost.Open(ui.OverlayOperationIssue, window, ui.ModalDialogPolicy(), nil)
 		m.View()
 	}
 	open()
@@ -107,7 +107,7 @@ func TestConnectedShellInspectionPagesBeyond4096Rows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.overlayHost.Close(ui.OverlayHelp)
+	m.overlayHost.Close(ui.OverlayOperationIssue)
 	open()
 	if _, err := m.inspectShellControls(target, control.PageRequest{Limit: 128, Cursor: page.NextCursor}); err == nil {
 		t.Fatal("cursor crossed modal close/reopen")

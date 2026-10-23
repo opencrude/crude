@@ -12,6 +12,7 @@ import (
 	"crude/agent"
 	"crude/capability"
 	"crude/collaboration"
+	"crude/logger"
 	"crude/session"
 )
 
@@ -36,8 +37,11 @@ type SessionLifecycleOperation struct {
 	backend                                      *session.Session
 	expectedAgentID                              string
 	start                                        bool
-	once                                         sync.Once
-	result                                       SessionLifecycleResult
+	// fork, when set, writes the new saved session from an open one before it
+	// is opened; the operation then names that new session.
+	fork   func() error
+	once   sync.Once
+	result SessionLifecycleResult
 }
 
 type SessionLifecycleResult struct {
@@ -145,6 +149,44 @@ func (w *Workspace) prepareSessionLifecycle(id string, cfg *session.Config, home
 	return op, nil
 }
 
+// PrepareForkSession validates the open source session on the owner and
+// returns an operation that copies it into a new saved session and opens that
+// session like any other. The source keeps running unchanged.
+func (w *Workspace) PrepareForkSession(sourceID string) (*SessionLifecycleOperation, error) {
+	source := w.SessionsByID[sourceID]
+	if source == nil || source.backend == nil {
+		return nil, errors.New("only an open session can be forked")
+	}
+	if w.sessionCfg == nil {
+		return nil, errors.New("Session configuration is unavailable")
+	}
+	if w.sender == nil {
+		return nil, errors.New("Session event transport is unavailable")
+	}
+	id := logger.NewSessionID()
+	path, err := SessionDBPath(w.RootPath, id)
+	if err != nil {
+		return nil, err
+	}
+	op, err := w.prepareSessionLifecycle(id, w.sessionCfg, w.homeDir, true)
+	if err != nil {
+		return nil, err
+	}
+	backend := source.backend
+	op.fork = func() error { return backend.Fork(filepath.Dir(path), id) }
+	return op, nil
+}
+
+// ForkAgentSession forks an open session and registers the new one's runtime
+// without selecting it in any shell.
+func (w *Workspace) ForkAgentSession(sourceID string) *NewSessionResult {
+	op, err := w.PrepareForkSession(sourceID)
+	if err != nil {
+		return &NewSessionResult{Error: err.Error()}
+	}
+	return w.ApplyAgentSession(op.Run(context.Background()))
+}
+
 func (op *SessionLifecycleOperation) Run(ctx context.Context) SessionLifecycleResult {
 	op.once.Do(func() { op.result = op.run(ctx) })
 	return op.result
@@ -160,6 +202,12 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		var backend *session.Session
 		var err error
 		root := filepath.Join(op.directory, "sessions")
+		if op.fork != nil {
+			if err := op.fork(); err != nil {
+				result.Err = err
+				return
+			}
+		}
 		if op.sessionID == "" {
 			backend, err = session.NewWithSessionDir("", op.cfg, op.home, root)
 		} else {
@@ -206,7 +254,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		owner.installSettings(backend.SettingsSnapshots())
 		result.cold = true
 		result.registryErr = op.database.RegisterSession(owner.SessionID, op.root, filepath.Base(op.root), backend.ModelName(), backend.SettingsSnapshot().ProviderID)
-		if op.sessionID == "" {
+		if op.sessionID == "" || op.fork != nil {
 			_ = op.database.SetAgentName(owner.SessionID, backend.AgentName())
 		}
 	}
@@ -302,7 +350,12 @@ func (w *Workspace) ApplyAgentSession(result SessionLifecycleResult) *NewSession
 		return &NewSessionResult{Error: "Session runtime is unavailable"}
 	}
 	w.SessionsByAgent[owner.AgentID] = owner
-	w.RegisterAgentRoot(owner.AgentID)
+	if node := w.RegisterAgentRoot(owner.AgentID); node != nil && node.State != nil && node.State.Goal == nil {
+		// Later goal events describe changes from this restored goal.
+		if goal, ok := w.GoalForAgent(owner.AgentID); ok {
+			node.State.Goal = &goal
+		}
+	}
 	if result.cold && !owner.hydrated {
 		w.installSessionHydration(owner, result.views)
 	}

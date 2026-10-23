@@ -255,7 +255,12 @@ receipt. A failed selection or preparation keeps its exact pending input and
 requires attention instead of issuing a weakened request. Stop/close preserve
 accepted input even when execution has not been queued. Semantic late tool and
 stream events cannot reactivate a stopping or terminal generation or consume a
-later draft; a genuinely new generation remains runnable.
+later draft; a genuinely new generation remains runnable. A turn's preflight
+(history, guidance, configuration) runs before `turn_started`, so a recovery
+status whose generation is newer than the last announced turn is admitted even
+though the previous turn looks finished (`AgentState.newerTurnRecovery`); an
+explicit Stop in progress still wins. Dropping it left the shell on
+"Preparing" with no way to act.
 
 Root checkpoint/finalization and delivery writers share the serialized
 revision-owned publication described in [adaptive context](adaptive-context.md).

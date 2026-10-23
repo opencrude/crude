@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,11 +21,11 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/decision"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/editorchanges"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
-	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
@@ -37,7 +38,6 @@ import (
 	statusoverview "crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	textoverlay "crude/tui/screens/textoverlay"
-	"crude/tui/screens/yolo"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -196,6 +196,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case remoteWorkspaceReadyMsg:
 		return m, m.applyRemoteWorkspace(msg)
+	case planModeResultMsg:
+		return m, m.applyPlanModeResult(msg)
+	case goalActionResultMsg:
+		m.applyGoalActionResult(msg)
+		return m, nil
 	case remoteSessionReadyMsg:
 		return m, m.applyRemoteSession(msg)
 	case types.OperationIssueMsg:
@@ -269,10 +274,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleWorkspacePanel(termdock.PanelNotices)
 		case "tabs":
 			m.openTabStats(msg.TargetID)
-		case "help":
-			m.openHelp()
 		case "git":
 			return m, m.toggleGitPanel()
+		case "goal":
+			return m, m.goalCommand(strings.TrimPrefix(msg.TargetID, "agent:"), "")
 		case "git-branch":
 			return m, m.openBranchSwitcher()
 		case "git-changes":
@@ -283,8 +288,6 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case shellfooter.ActionMsg:
 		switch msg.Action {
-		case "help":
-			m.openHelp()
 		case "workspace":
 			m.toggleWorkspacePanel(termdock.PanelWorkspace)
 		case "problems":
@@ -756,10 +759,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.applyMemoryBrowserMutation(msg))
 	case memorybrowser.CancelMsg:
 		m.handleMemoryBrowserCancel(msg)
-	case helpscreen.CancelMsg:
-		if m.helpScreen != nil && msg.Target == m.helpScreen {
-			m.closeHelp()
-		}
 	case types.ConfigReloadedMsg:
 		if msg.ThemePreset != "" {
 			m.applyThemePreset(msg.ThemePreset)
@@ -1276,8 +1275,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.resolvePromptConfirmation(msg.Target, msg.Choice)
 	case confirmation.CancelMsg:
 		m.cancelPromptConfirmation(msg.Target)
-	case yolo.ResultMsg:
-		m.resolveSessionYolo(msg.Target, msg.Enabled)
+	case decision.ResultMsg:
+		cmds = append(cmds, m.resolveSessionDecision(msg))
 	case filetree.FileSelectedMsg:
 		m.ws.Logger().Info("TREE", "file_selected", "path", msg.Path)
 		cmd, err := m.openEditorTab(msg.Path)

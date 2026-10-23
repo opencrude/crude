@@ -30,7 +30,7 @@ func orchestratorTools(enabled bool) []tools.ToolDef {
 
 func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tools.ToolDef {
 	category := cfg.GetActiveDefaultCategory()
-	return agent.FilterToolsForModel(orchestratorTools(enabled), category.AllowedTools, category.DeniedTools, "", false, model)
+	return agent.FilterToolsForModel(append(orchestratorTools(enabled), tools.GoalTools...), category.AllowedTools, category.DeniedTools, "", false, model)
 }
 
 // childCoordinationTools are a child's channel back to its parent: report the

@@ -31,7 +31,7 @@ func TestTerminalOverlayID(t *testing.T) {
 	if !ok || got != "t9" {
 		t.Fatalf("got=%q ok=%v", got, ok)
 	}
-	if IsTerminalOverlay(OverlayHelp) || !IsTerminalOverlay(id) {
+	if IsTerminalOverlay(OverlayCommandPalette) || !IsTerminalOverlay(id) {
 		t.Fatal("IsTerminalOverlay mismatch")
 	}
 }
