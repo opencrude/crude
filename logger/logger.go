@@ -46,7 +46,7 @@ func New(opts Options) (*Logger, error) {
 
 	sessionID := opts.SessionID
 	if sessionID == "" {
-		sessionID = generateSessionID()
+		sessionID = NewSessionID()
 	}
 
 	var dir string
@@ -94,7 +94,9 @@ func New(opts Options) (*Logger, error) {
 	return l, nil
 }
 
-func generateSessionID() string {
+// NewSessionID returns a fresh session identity; it names the session's
+// database and directory.
+func NewSessionID() string {
 	now := time.Now()
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)

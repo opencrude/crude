@@ -346,6 +346,34 @@ CREATE TABLE IF NOT EXISTS session_runtime_state (
     updated_at INTEGER NOT NULL
 );
 
+-- session_status_rows are transcript lines the session owner records for a
+-- change the user made to the session (Plan mode, YOLO, goal), so a reopened
+-- transcript shows the same history as the live one.
+CREATE TABLE IF NOT EXISTS session_status_rows (
+    id         TEXT PRIMARY KEY,
+    phase      TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+-- session_goal is the session's /goal: one objective pursued across turns
+-- until an independent verifier confirms it or the user or a stop rule ends it.
+CREATE TABLE IF NOT EXISTS session_goal (
+    session_id   TEXT PRIMARY KEY,
+    goal_id      TEXT NOT NULL,
+    objective    TEXT NOT NULL,
+    status       TEXT NOT NULL CHECK (status IN ('active','paused','blocked','budget_limited','complete')),
+    reason       TEXT NOT NULL DEFAULT '',
+    tokens_used  INTEGER NOT NULL DEFAULT 0,
+    token_budget INTEGER NOT NULL DEFAULT 0,
+    time_used_ms INTEGER NOT NULL DEFAULT 0,
+    waiting      INTEGER NOT NULL DEFAULT 0,
+    verifier_id  TEXT NOT NULL DEFAULT '',
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS plans (
     id          TEXT PRIMARY KEY,
     session_id  TEXT NOT NULL,

@@ -24,6 +24,8 @@ Callers import it directly; do not recreate forwarding APIs in `agent/`,
 | `prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
 | `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, interruptions and exact unavailable-attachment explanations |
 | `prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
+| `prompt/plan_mode.go` | Plan mode contract and its ended notice ([session commands](session-commands.md)) |
+| `prompt/goal.go` | Goal continuation, objective-updated notice, goal verifier contract and assignment |
 | `prompt/execution.go` | Quiet context-only inventory and post-child disposition reminders; escaped execution facts |
 | `agent/` | Model requests, admission budgets, guidance compilation/verification execution, tool-batch deferral, checkpoint validation |
 | `session/`, `memory/`, `workspace/`, `fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |

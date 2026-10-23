@@ -66,6 +66,8 @@ func RunCore(opts CoreOptions) error {
 		return err
 	}
 	metrics.Start("core")
+	// The core owns Crude's data; the Performance surface reads its disk usage.
+	metrics.SetDiskSource(workspace.NewDataUsage(dataDir).Usage)
 	lg, err := openCoreLogger(CoreLogPath(opts.Home))
 	if err != nil {
 		return err

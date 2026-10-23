@@ -37,6 +37,16 @@ type Agents interface {
 	YoloForAgent(agentID string) bool
 	// SetYoloForAgent updates the owning session's live safety policy.
 	SetYoloForAgent(agentID string, enabled bool) bool
+	// PlanModeForAgent reports Plan mode of the session that owns agentID.
+	PlanModeForAgent(agentID string) bool
+	// SetPlanModeForAgent persists Plan mode for the owning session; it does
+	// I/O, so shells call it from a command, never on their UI thread.
+	SetPlanModeForAgent(agentID string, enabled bool) error
+	// GoalForAgent is the goal of the session whose main agent is agentID.
+	GoalForAgent(agentID string) (types.Goal, bool)
+	// GoalAction applies a workspace.Goal* action; it does I/O, so shells call
+	// it from a command. present is false once the goal is cleared.
+	GoalAction(agentID, action, objective string) (goal types.Goal, present bool, err error)
 	// ApplyAgentEvent is the single semantic ingress for already-owned backend
 	// events. It never uses focus, terminal width, a renderer or a client's clock.
 	// Identity-free service events are admitted only for existing owners, except

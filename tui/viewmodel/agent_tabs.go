@@ -69,6 +69,7 @@ func (m *App) addOrchestrator(orchID string, activate bool) {
 	m.RestoreAgent(orchID)
 	m.syncAgentWindowTabs()
 	m.activateAgentWindowTab(orchID)
+	m.offerGoalResume(orchID)
 }
 
 // ensureAgentProjection binds a local renderer to existing canonical inventory.

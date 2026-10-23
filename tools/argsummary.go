@@ -137,6 +137,14 @@ func SummarizeArgs(tool, argsStr string) string {
 	if tool == "update_plan" || tool == "get_plan" {
 		return ExtractArg(argsStr, "plan_id")
 	}
+	switch tool {
+	case "update_goal":
+		return ExtractArg(argsStr, "status")
+	case "create_goal":
+		return truncateLabel(ExtractArg(argsStr, "objective"), 80)
+	case "get_goal":
+		return ""
+	}
 	if tool == "agent_start" {
 		// The assignment is the useful operand. Raw launch arguments can include
 		// lengthy instructions and policy fields; neither belongs in a chat title.

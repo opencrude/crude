@@ -573,8 +573,19 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		return errors.New("cancel requires an exact agent, recovery_id and recovery_generation")
 	}
 	s.lifecycleMu.Lock()
-	defer s.lifecycleMu.Unlock()
-	return s.cancelRecoveryFor(agentID, recoveryID, generation)
+	err := s.cancelRecoveryFor(agentID, recoveryID, generation)
+	s.lifecycleMu.Unlock()
+	if err == nil {
+		// Stopping the main agent's unfinished run is a Stop: its goal pauses
+		// rather than starting the next goal turn.
+		s.orchMu.Lock()
+		_, root := s.orchestrators[agentID]
+		s.orchMu.Unlock()
+		if goal, ok := s.Goal(); root && ok && goal.Status == ttypes.GoalActive {
+			_, _ = s.PauseGoal("Paused because the unfinished run was stopped. Resume it with /goal resume.")
+		}
+	}
+	return err
 }
 
 // Caller holds lifecycleMu so parked-task disposition cannot overtake Continue.

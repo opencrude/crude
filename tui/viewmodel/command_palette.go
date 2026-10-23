@@ -14,39 +14,36 @@ import (
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/types"
-	captypes "crude/types/capability"
-	"crude/workspace"
 )
 
-type cmdCategory string
-
-const (
-	catFile   cmdCategory = "file"
-	catEdit   cmdCategory = "edit"
-	catView   cmdCategory = "view"
-	catTabs   cmdCategory = "tabs"
-	catTools  cmdCategory = "tools"
-	catSystem cmdCategory = "system"
-	catHelp   cmdCategory = "help"
-	catAgent  cmdCategory = "agent"
-	catChat   cmdCategory = "chat"
-	catApp    cmdCategory = "app"
-)
+// paletteCategories orders the palette's groups. Every palette entry belongs
+// to one of them; an action with another category is a registry mistake and
+// is left out rather than shown under an unlabeled group.
+var paletteCategories = []string{"Session", "File", "View", "Git", "App"}
 
 type cmdEntry struct {
 	ID       string
 	Label    string
-	Detail   string
-	Category cmdCategory
+	Shortcut string
+	Category string
 	Icon     string
 }
 
+// paletteEntriesFromRegistry lists the commands that make sense from
+// anywhere, with the live shortcut that also runs them. Surface-bound actions
+// (DisplayOnly hints, Contextual or FocusContext actions) stay with their
+// surface's keys and menus.
 func paletteEntriesFromRegistry(registry *ui.ActionRegistry) []cmdEntry {
-	all := registry.All()
-	entries := make([]cmdEntry, 0, len(all))
-	for _, a := range all {
-		// Skip self-reference and all display-only fragments (status-bar hints).
-		if a.ID == "palette.open" || a.DisplayOnly {
+	order := make(map[string]int, len(paletteCategories))
+	for i, category := range paletteCategories {
+		order[category] = i
+	}
+	var entries []cmdEntry
+	for _, a := range registry.All() {
+		if a.ID == "palette.open" || a.DisplayOnly || a.Contextual || a.FocusContext != "" {
+			continue
+		}
+		if _, ok := order[a.Category]; !ok {
 			continue
 		}
 		icon := a.Icon
@@ -56,13 +53,12 @@ func paletteEntriesFromRegistry(registry *ui.ActionRegistry) []cmdEntry {
 		entries = append(entries, cmdEntry{
 			ID:       string(a.ID),
 			Label:    a.Label,
-			Detail:   a.Description,
-			Category: cmdCategory(strings.ToLower(a.Category)),
+			Shortcut: ui.FormatShortcut(registry.HintFor(a.ID)),
+			Category: a.Category,
 			Icon:     icon,
 		})
 	}
-	order := map[cmdCategory]int{catFile: 0, catEdit: 1, catView: 2, catTabs: 3, catAgent: 4, catTools: 5, catSystem: 6, catHelp: 7, catChat: 8, catApp: 9}
-	sort.SliceStable(entries, func(first, second int) bool { return order[entries[first].Category] < order[entries[second].Category] })
+	sort.SliceStable(entries, func(i, j int) bool { return order[entries[i].Category] < order[entries[j].Category] })
 	return entries
 }
 
@@ -70,7 +66,6 @@ type commandPaletteModel struct {
 	th       *theme.Theme
 	items    []cmdEntry
 	filtered []cmdEntry
-	groups   []cmdGroup
 	filterEd *ui.TextEdit // shared rune-safe filter engine
 	idx      int
 	callback func(cmdID string) tea.Cmd
@@ -94,39 +89,6 @@ func (m *commandPaletteModel) setFilter(s string) {
 	m.filterEd.SetValue(s)
 }
 
-type cmdGroup struct {
-	Category cmdCategory
-	Label    string
-	Start    int
-	Count    int
-}
-
-func categoryLabel(c cmdCategory) string {
-	switch c {
-	case catFile:
-		return "File"
-	case catEdit:
-		return "Edit"
-	case catView:
-		return "View"
-	case catTabs:
-		return "Tabs"
-	case catTools:
-		return "Tools"
-	case catSystem:
-		return "System"
-	case catHelp:
-		return "Help"
-	case catAgent:
-		return "Agent"
-	case catChat:
-		return "Chat"
-	case catApp:
-		return "App"
-	}
-	return string(c)
-}
-
 func newCommandPaletteModel(th *theme.Theme, callback func(cmdID string) tea.Cmd, registry *ui.ActionRegistry) *commandPaletteModel {
 	m := &commandPaletteModel{
 		th:       th,
@@ -138,89 +100,123 @@ func newCommandPaletteModel(th *theme.Theme, callback func(cmdID string) tea.Cmd
 	return m
 }
 
+// applyFilter keeps category order for an empty query. A query matches only
+// command labels (and the group name), never descriptions, and results are
+// ranked so the obvious command is first: exact, prefix, word prefix,
+// substring, multi-word, group name, then initials or an in-order
+// subsequence of the label.
 func (m *commandPaletteModel) applyFilter() {
-	q := m.filterText()
-	if q == "" {
-		m.filtered = append([]cmdEntry(nil), m.items...)
+	query := strings.ToLower(strings.TrimSpace(m.filterText()))
+	if query == "" {
+		m.filtered = append(m.filtered[:0], m.items...)
 	} else {
-		m.filtered = nil
-		lower := strings.ToLower(q)
+		type ranked struct {
+			entry cmdEntry
+			score int
+		}
+		var matches []ranked
 		for _, item := range m.items {
-			if fuzzyMatch(item, lower) {
-				m.filtered = append(m.filtered, item)
+			if score, ok := paletteMatch(item, query); ok {
+				matches = append(matches, ranked{item, score})
 			}
 		}
+		sort.SliceStable(matches, func(i, j int) bool { return matches[i].score < matches[j].score })
+		m.filtered = m.filtered[:0]
+		for _, match := range matches {
+			m.filtered = append(m.filtered, match.entry)
+		}
 	}
-	m.buildGroups()
 	if m.idx >= len(m.filtered) {
 		m.idx = 0
 	}
 }
 
-func fuzzyMatch(item cmdEntry, filter string) bool {
-	return fuzzyContains(item.Label, filter) ||
-		fuzzyContains(item.Detail, filter) ||
-		fuzzyContains(item.ID, filter)
-}
-
-func fuzzyContains(text, filter string) bool {
-	if filter == "" {
-		return true
+func paletteMatch(item cmdEntry, query string) (int, bool) {
+	label := strings.ToLower(item.Label)
+	words := strings.Fields(label)
+	switch {
+	case label == query:
+		return 0, true
+	case strings.HasPrefix(label, query):
+		return 1, true
 	}
-	lower := strings.ToLower(text)
-	fi := 0
-	for _, r := range lower {
-		if fi < len(filter) && byte(r) == filter[fi] {
-			fi++
+	for _, word := range words {
+		if strings.HasPrefix(word, query) {
+			return 2, true
 		}
 	}
-	return fi == len(filter)
-}
-
-func (m *commandPaletteModel) buildGroups() {
-	m.groups = nil
-	var current cmdCategory
-	var start int
-	for i, item := range m.filtered {
-		if item.Category != current {
-			if i > start {
-				m.groups = append(m.groups, cmdGroup{Category: current, Start: start, Count: i - start})
+	if strings.Contains(label, query) {
+		return 3, true
+	}
+	// "git hist", "file save": every term starts a word of the group or label.
+	if terms := strings.Fields(query); len(terms) > 1 {
+		candidates := append(words, strings.ToLower(item.Category))
+		all := true
+		for _, term := range terms {
+			found := false
+			for _, word := range candidates {
+				if strings.HasPrefix(word, term) {
+					found = true
+					break
+				}
 			}
-			current = item.Category
-			start = i
+			if !found {
+				all = false
+				break
+			}
+		}
+		if all {
+			return 4, true
 		}
 	}
-	if len(m.filtered) > start {
-		m.groups = append(m.groups, cmdGroup{Category: current, Start: start, Count: len(m.filtered) - start})
+	if strings.HasPrefix(strings.ToLower(item.Category), query) {
+		return 5, true
 	}
+	var initials strings.Builder
+	for _, word := range words {
+		initials.WriteString(word[:1])
+	}
+	if strings.HasPrefix(initials.String(), query) {
+		return 6, true
+	}
+	if paletteSubsequence(label, query) {
+		return 7, true
+	}
+	return 0, false
 }
 
-// listItems converts the filtered commands into ui.ListItem with category headers
-// and section dividers, matching the old buildContentLines layout.
+func paletteSubsequence(text, query string) bool {
+	q := []rune(query)
+	i := 0
+	for _, r := range text {
+		if i < len(q) && r == q[i] {
+			i++
+		}
+	}
+	return i == len(q)
+}
+
+// listItems groups the empty-query list under category headers; a filtered
+// list is one ranked run with no headers, so the best match is always first.
 func (m *commandPaletteModel) listItems() []ui.ListItem {
-	var items []ui.ListItem
-	for gi, g := range m.groups {
-		if g.Count <= 0 {
-			continue
-		}
-		if gi > 0 {
-			items = append(items, ui.ListItem{Separator: true, Label: "─"})
-		}
-		items = append(items, ui.ListItem{Header: true, Label: categoryLabel(g.Category)})
-		for i := g.Start; i < g.Start+g.Count; i++ {
-			entry := m.filtered[i]
-			icon := " "
-			if entry.Icon != "" {
-				icon = entry.Icon
+	items := make([]ui.ListItem, 0, len(m.filtered)+2*len(paletteCategories))
+	grouped := strings.TrimSpace(m.filterText()) == ""
+	current := ""
+	for _, entry := range m.filtered {
+		if grouped && entry.Category != current {
+			if current != "" {
+				items = append(items, ui.ListItem{Separator: true, Label: "─"})
 			}
-			items = append(items, ui.ListItem{
-				ID:      entry.ID,
-				Label:   entry.Label,
-				Detail:  entry.Detail,
-				Icon:    icon,
-				Payload: entry,
-			})
+			items = append(items, ui.ListItem{Header: true, Label: entry.Category})
+			current = entry.Category
 		}
+		items = append(items, ui.ListItem{
+			ID:      entry.ID,
+			Label:   entry.Label,
+			Detail:  entry.Shortcut,
+			Icon:    entry.Icon,
+			Payload: entry,
+		})
 	}
 	return items
 }
@@ -236,22 +232,20 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		return m.executePaletteCommand(cmdID)
 	}, m.actionRegistry)
 
-	// 60 % of screen width, clamped to [60, 96]. Wider than the old
-	// 50 %/80 because detail strings ("expand the file tree to the
-	// active file", "search file names and contents", …) get
-	// truncated at the narrower bound.
-	palW := m.width * 60 / 100
-	if palW < 60 {
-		palW = 60
+	// Labels and shortcuts are short; half the screen, clamped to [52, 72].
+	palW := m.width / 2
+	if palW < 52 {
+		palW = 52
 	}
-	if palW > 96 {
-		palW = 96
+	if palW > 72 {
+		palW = 72
+	}
+	if palW > m.width-4 {
+		palW = m.width - 4
 	}
 
-	// Height scales with the number of registered commands so the
-	// palette is usable without a filter even when there are 30+
-	// entries. Chrome eats 4 rows (title + search + divider + a
-	// breath of margin), so 26 rows renders ~22 commands.
+	// Height scales with the command count; chrome eats 4 rows (title,
+	// search, divider and a breath of margin).
 	palH := 12 + len(model.items)
 	if palH < 16 {
 		palH = 16
@@ -469,20 +463,11 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.openWorkspaceSettings()
 	case "status.overview":
 		m.toggleWorkspacePanel(termdock.PanelWorkspace)
-	case "lsp.start":
-		m.startLSPForWorkspace()
-	case "lsp.hover":
-		return m.requestLSPHoverCmd()
-	case "lsp.stop":
-		m.StopLSP()
 	case "lsp.restart":
 		m.StopLSP()
 		m.startLSPForWorkspace()
 	case "lsp.problems":
 		m.toggleWorkspacePanel(termdock.PanelProblems)
-
-	case "agent.orchestrator.reset":
-		cmds = append(cmds, m.resetOrchestratorOverrides())
 
 	case "app.sessions":
 		m.openSessionPicker()
@@ -494,86 +479,20 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "performance.open":
 		return m.togglePerformancePanel()
 
-	case "help.show":
-		m.openHelp()
-
-	case "system.undo":
-		return m.executeSlashCommand("/undo")
 	case "history.open":
 		return m.openLocalHistory()
-	case "history.verify":
-		return m.verifyHistoryCmd()
-	case "history.prune":
-		return m.pruneHistoryCmd()
 	case "history.snapshot":
 		return m.captureHistoryCmd()
-	case "history.location":
-		return m.openHistoryLocationCmd()
-
-	case "safety.yolo.toggle":
-		return m.executeSlashCommand("/yolo")
 
 	case "view.toggle.sidebar":
 		m.ToggleSidebar()
 
-	case "view.focus.sidebar":
-		m.toggleFocusTree()
-
-	case "view.focus.editor":
-		// Real focus-editor path: only valid when an editor tab is open.
-		// Clearing the stack and pushing FocusEditor makes the intent
-		// explicit; focusTarget() returns FocusEditor.
-		if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("No editor open")
-			}
-			return nil
-		}
-		m.setFocusEditor()
-
-	case "view.focus.chat":
-		m.setFocusInput()
-
-	case "view.activity.files":
-		m.toggleActivity(activityFiles)
-	case "view.activity.agents":
-		m.toggleActivity(activityAgents)
 	case "view.activity.workspaces":
 		return m.toggleActivity(activityWorkspaces)
 	case "terminal.picker":
 		m.openTerminalPicker()
-	case "view.activity.skills":
-		return m.toggleActivity(activitySkills)
-	case "view.activity.mcp":
-		return m.toggleActivity(activityMCP)
-	case "skills.manage":
-		return m.openCapabilityManager(activitySkills, "", "")
-	case "capabilities.pick":
-		return m.openCapabilityPicker()
-	case "capabilities.pick.mcp":
-		return m.openCapabilityPickerTab(captypes.KindMCP, "")
-	case "mcp.manage":
-		return m.openCapabilityManager(activityMCP, "", "")
 	case "board.browse":
 		return m.openBoardBrowser()
-	case "workspace.panel.hide":
-		m.hideWorkspacePanel()
-	case "workspace.panel.tab":
-		m.openPanelAsTab(m.activeDockPanel())
-	case "workspace.panel.window":
-		m.openPanelAsWindow(m.activeDockPanel())
-	case "tab.window":
-		if tab := m.Win.ActiveTab(); tab != nil {
-			m.openTabInWindow(tab.ID)
-		} else {
-			m.Feedback.NotifyInfo("No tab is focused")
-		}
-	case "tab.dock":
-		if group := m.Win.ActiveGroup(); m.Win.IsFloating(group) {
-			m.dockPaneWindow(group)
-		} else {
-			m.Feedback.NotifyInfo("The focused tab is not in a window")
-		}
 	case "view.activity.git":
 		return m.toggleGitPanel()
 	case "git.review":
@@ -600,29 +519,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 		m.startNewFileInTree(dir)
 
-	case "file.save":
-		return m.requestActiveEditorSave(workspace.DocumentSaveManual)
-	case "editor.change.inspect":
-		if ed := m.EditorState.Editor; ed != nil {
-			m.inspectEditorChange(ed, ed.CursorLine())
-		}
-	case "editor.resolveShared":
-		return m.OpenLiveEditorConflict(m.EditorState.Editor)
 	case "editor.privateRecovery":
 		return m.OpenEditorRecoveryBrowser()
-	case "editor.compareDisk", "editor.compareSaved":
-		if ed := m.EditorState.Editor; ed != nil && ed.IsOpen() {
-			if cmdID == "editor.compareSaved" {
-				return m.openLocalDiff(ed, localDiffSaved)
-			}
-			return m.compareEditorWithDisk(ed)
-		}
-	case "editor.change.next":
-		m.jumpEditorChange(1)
-	case "editor.change.previous":
-		m.jumpEditorChange(-1)
-	case "editor.autosave.enable", "editor.autosave.disable":
-		cmds = append(cmds, m.setWorkspaceAutosave(cmdID == "editor.autosave.enable"))
 
 	case "file.close":
 		if m.hostTabActive() {
@@ -640,92 +538,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			}
 		}
 
-	case "edit.find":
-		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("No file open to search")
-			}
-		} else {
-			m.openFindReplace(false)
-		}
-
-	case "edit.replace":
-		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("No file open for replace")
-			}
-		} else {
-			m.openFindReplace(true)
-		}
-
-	case "edit.undo":
-		// Editor undo is a legitimate palette command when an editor is
-		// open. Mirrors the Ctrl+Z keyboard path (keyboard.go:146).
-		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("No file open to undo")
-			}
-		} else {
-			m.EditorState.Editor.Undo()
-		}
-
-	case "edit.redo":
-		// Editor redo mirrors the Ctrl+Y keyboard path (keyboard.go:150).
-		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("No file open to redo")
-			}
-		} else {
-			m.EditorState.Editor.Redo()
-		}
-
-	case "edit.moveLineUp", "edit.moveLineDown", "edit.duplicateLine", "edit.deleteLine", "edit.toggleComment":
-		// Line operations forward the same chord the keyboard path uses,
-		// so palette invocation and keyboard invocation cannot drift.
-		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("No file open")
-			}
-			return nil
-		}
-		var key tea.KeyPressMsg
-		switch cmdID {
-		case "edit.moveLineUp":
-			key = tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt}
-		case "edit.moveLineDown":
-			key = tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt}
-		case "edit.duplicateLine":
-			key = tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl | tea.ModShift}
-		case "edit.deleteLine":
-			key = tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl | tea.ModShift}
-		case "edit.toggleComment":
-			key = tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}
-		}
-		m.EditorState.Editor.HandleEvent(key)
-
 	case "lsp.outline":
 		return m.requestDocumentSymbolsCmd()
-
-	case "tabs.next":
-		if m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() > 0 {
-			m.Win.Next()
-			m.handleTabSwitch()
-		}
-
-	case "tabs.previous":
-		if m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() > 0 {
-			m.Win.Prev()
-			m.handleTabSwitch()
-		}
-
-	case "agent.cancel":
-		if !m.cancelAgentTurn(m.AgentView.ActiveID()) {
-			m.Feedback.NotifyInfo("Nothing to stop: the agent is not running")
-		}
-	case "agent.retry":
-		return m.retryAgentRecovery(m.AgentView.ActiveID())
-	case "settings.network":
-		m.openNetworkSettings()
 
 	case "agent.newSession":
 		return m.launcherNewSession()
@@ -735,23 +549,6 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "search.project.replace":
 		m.toggleReplaceInFiles()
-
-	case "agent.toggle.multiagent":
-		owner, runtime := m.ActiveSession, m.ws
-		if owner == nil || runtime == nil {
-			m.Feedback.NotifyError("No session is selected")
-			break
-		}
-		operation, err := runtime.PrepareMultiAgentToggle(owner.SessionID)
-		if err != nil {
-			m.Feedback.NotifyError(err.Error())
-			break
-		}
-		m.Feedback.NotifyInfo("Toggling multi-agent mode...")
-		generation := m.workspaceSwitchGen.Load()
-		cmds = append(cmds, func() tea.Msg {
-			return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: operation.Run()}
-		})
 
 	case "app.toggleTheme":
 		cmds = append(cmds, m.cycleNextThemePreset())

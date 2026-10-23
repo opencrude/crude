@@ -249,20 +249,11 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 			r.session.delegationMu.Unlock()
 		}
 	}()
-	if owner, ok := ctx.Value(delegationOwnerKey{}).(delegationOwner); ok {
-		r.SetParentTurnGeneration(owner.generation)
-		r.effectiveCfg = r.session.runtimeProfile.GetEffectiveConfig(owner.id)
-		if !r.effectiveCfg.IsMultiAgentEnabled() {
-			return delegationDisabledResult(), nil
-		}
-		// Tools retain the launching turn's media/history context, not another
-		// turn's mutable proxy. Child policy is still enforced by its own wrapper.
-		cat := r.effectiveCfg.GetActiveDefaultCategory()
-		parentProvider, err := r.effectiveCfg.providerForCategory(cat)
+	if disabled, err := r.bindLaunchOwner(ctx, true); disabled || err != nil {
 		if err != nil {
-			return tools.ToolResult{}, fmt.Errorf("sub-agent parent provider: %w", err)
+			return tools.ToolResult{}, err
 		}
-		r.SetParentToolFn(r.session.buildToolFn(false, parentProvider, cat.ModelModalities))
+		return delegationDisabledResult(), nil
 	}
 	if err := ctx.Err(); err != nil {
 		return tools.ToolResult{Content: "Turn cancelled before sub-agent launch."}, err
@@ -344,9 +335,53 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 			return tools.ToolResult{}, err
 		}
 	}
+	handle, result, err := r.admitAndLaunch(ctx, spec, profileInstructions, getStrParam(params, "nickname"))
+	if handle == nil {
+		return result, err
+	}
+	r.session.delegationMu.Unlock()
+	locked = false
+	r.watchLaunched(handle)
+	runID, runVersion := handle.RunIdentity()
+	resultJSON, _ := json.Marshal(map[string]any{
+		"agent_id": string(handle.Spec.ID), "name": handle.Spec.Name, "category": handle.Spec.Category,
+		"status": "running", "session_id": handle.SessionID,
+		"run_id": runID, "run_version": runVersion,
+		"execution_id": handle.Spec.ExecutionID, "execution_root": handle.Spec.ExecutionRoot, "isolation": handle.Spec.Isolation,
+	})
+	return tools.ToolResult{Content: string(resultJSON)}, nil
+}
+
+// bindLaunchOwner takes the launching turn's configuration and tools; it
+// requires delegationMu. requireDelegation applies the user's multi-agent
+// setting, which governs only model-requested children.
+func (r *SubAgentRunner) bindLaunchOwner(ctx context.Context, requireDelegation bool) (disabled bool, err error) {
+	owner, ok := ctx.Value(delegationOwnerKey{}).(delegationOwner)
+	if !ok {
+		return false, nil
+	}
+	r.SetParentTurnGeneration(owner.generation)
+	r.effectiveCfg = r.session.runtimeProfile.GetEffectiveConfig(owner.id)
+	if requireDelegation && !r.effectiveCfg.IsMultiAgentEnabled() {
+		return true, nil
+	}
+	// Tools retain the launching turn's media/history context, not another
+	// turn's mutable proxy. Child policy is still enforced by its own wrapper.
+	cat := r.effectiveCfg.GetActiveDefaultCategory()
+	parentProvider, err := r.effectiveCfg.providerForCategory(cat)
+	if err != nil {
+		return false, fmt.Errorf("sub-agent parent provider: %w", err)
+	}
+	r.SetParentToolFn(r.session.buildToolFn(false, parentProvider, cat.ModelModalities))
+	return false, nil
+}
+
+// admitAndLaunch validates a complete spec and starts the child; it requires
+// delegationMu. A nil handle carries the refusal as a tool result and error.
+func (r *SubAgentRunner) admitAndLaunch(ctx context.Context, spec agent.SubAgentSpec, profileInstructions, nickname string) (*agent.SubAgentHandle, tools.ToolResult, error) {
 	keepChildCoordinationTools(&spec)
 	if err := validateChildReportPermission(spec); err != nil {
-		return tools.ToolResult{}, err
+		return nil, tools.ToolResult{}, err
 	}
 	activeConfig := r.effectiveCfg
 	if activeConfig == nil {
@@ -355,19 +390,19 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		r.session.mu.Unlock()
 	}
 	if categoryCfg := activeConfig.GetCategoryConfig(spec.Category); categoryCfg.Enabled != nil && !*categoryCfg.Enabled {
-		return tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
+		return nil, tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
 	}
 	identity := ""
-	if chosen := getStrParam(params, "nickname"); strings.TrimSpace(chosen) != "" {
+	if strings.TrimSpace(nickname) != "" {
 		var err error
-		if identity, err = validChildName(chosen); err != nil {
-			return tools.ToolResult{}, err
+		if identity, err = validChildName(nickname); err != nil {
+			return nil, tools.ToolResult{}, err
 		}
 		identity = r.distinctChildName(ctx, identity)
 	} else {
 		var err error
 		if identity, err = allocateAgentName(r.session.nameHome); err != nil {
-			return tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
+			return nil, tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
 		}
 	}
 	spec.Name = identity + " sub " + r.session.AgentName()
@@ -381,18 +416,18 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	spec.Policy = agent.ComposePolicy(parentPolicy, spec.PolicyName, spec.Category)
 
 	if err := r.mgr.Validate(spec); err != nil {
-		return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
+		return nil, tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
 	}
 
 	handle, err := r.launchSubAgent(ctx, spec, profileInstructions)
 	if err != nil {
 		r.fileOwnership.Release(spec.ID)
-		return tools.ToolResult{Content: fmt.Sprintf("Error launching sub-agent: %s", err)}, fmt.Errorf("launch: %w", err)
+		return nil, tools.ToolResult{Content: fmt.Sprintf("Error launching sub-agent: %s", err)}, fmt.Errorf("launch: %w", err)
 	}
+	return handle, tools.ToolResult{}, nil
+}
 
-	r.session.delegationMu.Unlock()
-	locked = false
-
+func (r *SubAgentRunner) watchLaunched(handle *agent.SubAgentHandle) {
 	go func() {
 		select {
 		case <-r.sessionCtx.Done():
@@ -400,14 +435,47 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		case <-handle.ResultCh:
 		}
 	}()
-	runID, runVersion := handle.RunIdentity()
-	resultJSON, _ := json.Marshal(map[string]any{
-		"agent_id": string(spec.ID), "name": spec.Name, "category": spec.Category,
-		"status": "running", "session_id": handle.SessionID,
-		"run_id": runID, "run_version": runVersion,
-		"execution_id": handle.Spec.ExecutionID, "execution_root": handle.Spec.ExecutionRoot, "isolation": handle.Spec.Isolation,
-	})
-	return tools.ToolResult{Content: string(resultJSON)}, nil
+}
+
+// goalVerifierDeniedTools keep a verifier judging, not fixing or delegating.
+var goalVerifierDeniedTools = []string{"write_file", "edit_file", "apply_patch", "delete_file", "move_file", "copy_file", "agent_start", "update_plan"}
+
+// StartGoalVerifier launches the independent verifier of a goal completion
+// claim: an ordinary visible, recoverable child of the root that inspects
+// and runs checks under the session's command approvals but cannot change
+// files or delegate. The runtime starts it, so the user's multi-agent
+// setting, which governs model-requested children, does not apply.
+func (r *SubAgentRunner) StartGoalVerifier(ctx context.Context, instructions string) (agent.AgentID, error) {
+	r.session.delegationMu.Lock()
+	defer r.session.delegationMu.Unlock()
+	if _, err := r.bindLaunchOwner(ctx, false); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	spec := agent.SubAgentSpec{
+		ID:            agent.AgentID("agent-" + generateShortID()),
+		Category:      agent.CatCrafter,
+		Description:   "Verify the session goal is achieved",
+		Instructions:  instructions,
+		PolicyName:    "verify",
+		Depth:         1,
+		ParentID:      agent.AgentID(r.orchestratorID),
+		ParentTurn:    r.parentTurn.Load(),
+		Isolation:     "shared",
+		DeniedTools:   append([]string(nil), goalVerifierDeniedTools...),
+		ControlTarget: controlTargetFromContext(ctx),
+	}
+	handle, _, err := r.admitAndLaunch(ctx, spec, "", "")
+	if handle == nil {
+		if err == nil {
+			err = errors.New("verifier launch was refused")
+		}
+		return "", err
+	}
+	r.watchLaunched(handle)
+	return handle.Spec.ID, nil
 }
 
 func validateOwnershipPaths(workDir string, paths []string) ([]string, error) {
@@ -2110,6 +2178,7 @@ func (r *SubAgentRunner) finalizeSubAgent(
 	}
 	handle.ResultCh <- result
 	r.mgr.MarkFinished(handle.Spec.ID, result)
+	r.session.observeGoalVerifier(handle.Spec.ID, result)
 	return nil
 }
 

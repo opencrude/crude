@@ -26,6 +26,9 @@ type Sessions interface {
 	// OpenAgentSession opens an exact saved session or returns its existing
 	// runtime. Opening never selects a client view or starts a provider turn.
 	OpenAgentSession(sessionID string) *workspace.NewSessionResult
+	// ForkAgentSession copies an open session into a new saved session and
+	// registers it like OpenAgentSession; the source keeps running unchanged.
+	ForkAgentSession(sessionID string) *workspace.NewSessionResult
 	// BackendSession returns the underlying backend for the specified session.
 	BackendSession(sessionID string) *session.Session
 	// SessionConnectionIssue leaves a resumed transcript readable while the UI

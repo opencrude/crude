@@ -75,8 +75,8 @@ func TestSlashPointerThroughAppActivatesExactRenderedCommand(t *testing.T) {
 	}{
 		{"different suggestion", "/", "sessions", "No sessions yet", 112, 40, false, ui.OverlaySessionPicker},
 		{"filtered suggestion", "/se", "sessions", "No sessions yet", 112, 40, false, ui.OverlaySessionPicker},
-		{"scrolled suggestion", "/", "help", "Using Crude", 112, 40, true, ui.OverlayHelp},
-		{"constrained composer", "/help", "help", "Using Crude", 64, 20, false, ui.OverlayHelp},
+		{"scrolled suggestion", "/", "skills", "Skills", 112, 40, true, ui.OverlayCapabilityPicker},
+		{"constrained composer", "/skills", "skills", "Skills", 64, 20, false, ui.OverlayCapabilityPicker},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			app := setupChatInputApp(t, test.width, test.height, test.width > 80)
@@ -90,7 +90,7 @@ func TestSlashPointerThroughAppActivatesExactRenderedCommand(t *testing.T) {
 				if _, _, found := renderedSlashPoint(t, app, test.label); found {
 					t.Fatal("scrolled command is already in the initial viewport")
 				}
-				x, y, found := renderedSlashPoint(t, app, "settings")
+				x, y, found := renderedSlashPoint(t, app, "plan")
 				if !found {
 					t.Fatal("initial suggestions were not rendered")
 				}
@@ -133,20 +133,20 @@ func TestSlashAppKeyboardPointerParity(t *testing.T) {
 			app := setupChatInputApp(t, 100, 32, false)
 			logger := &slashPointerLogger{}
 			wsOf(app).Logger = logger
-			app.Input.SetInput("/help")
+			app.Input.SetInput("/sessions")
 			app.Input.SetSelection(1, 3)
 			app.paintShellFrame()
 			if path == "keyboard" {
 				slashAppEvent(t, app, tea.KeyPressMsg{Code: tea.KeyEnter})
 			} else {
-				x, y, found := renderedSlashPoint(t, app, "help")
+				x, y, found := renderedSlashPoint(t, app, "sessions")
 				if !found {
-					t.Fatal("help suggestion was not rendered")
+					t.Fatal("sessions suggestion was not rendered")
 				}
 				slashAppEvent(t, app, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 			}
-			if !slices.Equal(logger.commands, []string{"/help"}) || !app.overlayHost.IsOpen(ui.OverlayHelp) {
-				t.Fatalf("%s did not execute /help once: %v", path, logger.commands)
+			if !slices.Equal(logger.commands, []string{"/sessions"}) || !app.overlayHost.IsOpen(ui.OverlaySessionPicker) {
+				t.Fatalf("%s did not execute /sessions once: %v", path, logger.commands)
 			}
 			if app.Input.Value() != "" || app.Input.SlashActive() || app.Input.InputSelecting() || app.Input.CursorFlat() != 0 {
 				t.Fatalf("%s retained the consumed slash draft", path)
@@ -181,7 +181,7 @@ func TestSlashAppIgnoresRightClickAndComposerBlank(t *testing.T) {
 			value, cursor, selection, revision := app.Input.Value(), app.Input.CursorFlat(), app.Input.SelectedText(), app.Input.DraftRevision()
 			slashAppEvent(t, app, tea.MouseClickMsg{X: x, Y: y, Button: button})
 			slashAppEvent(t, app, tea.MouseReleaseMsg{X: x, Y: y, Button: button})
-			if len(logger.commands) != 0 || app.overlayHost.IsOpen(ui.OverlaySessionPicker) || app.overlayHost.IsOpen(ui.OverlayHelp) {
+			if len(logger.commands) != 0 || app.overlayHost.IsOpen(ui.OverlaySessionPicker) {
 				t.Fatal("nonactivation executed a slash command")
 			}
 			if app.Input.Value() != value || app.Input.CursorFlat() != cursor || app.Input.SelectedText() != selection || app.Input.DraftRevision() != revision || !app.Input.SlashActive() {

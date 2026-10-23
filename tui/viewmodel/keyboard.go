@@ -105,8 +105,6 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				case "memory.browse":
 					return m.toggleMemoryBrowser()
-				case "help.show":
-					return m.toggleHelp()
 				case "file.attach":
 					m.openFilePicker()
 					return m, nil
@@ -527,12 +525,6 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			}
 			return m, tea.Batch(cmds...)
 
-		case "help":
-			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-
 		case string(lspRenameOverlay):
 			return m, m.forwardEventToWindowContent(fw, msg)
 
@@ -774,7 +766,7 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			m.Feedback.NotifyError("Note was not sent: no active agent tab")
 		}
 	case input.SlashCommandEvent:
-		cmds = append(cmds, m.executeSlashCommand(e.Command))
+		cmds = append(cmds, m.executeSlashCommandWithRefs(e.Command, e.ReferenceIDs))
 	case input.HistoryRecallEvent:
 		cmds = append(cmds, m.recallPrompt(e))
 	case input.SettingsOpenEvent:

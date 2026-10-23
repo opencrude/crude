@@ -13,12 +13,14 @@ import (
 )
 
 const (
-	Attach         = "workspace.attach"
-	Detach         = "workspace.detach"
-	Snapshot       = "workspace.snapshot"
-	AgentChanges   = "agent.changes"
-	NewSession     = "session.create"
-	OpenSession    = "session.open"
+	Attach       = "workspace.attach"
+	Detach       = "workspace.detach"
+	Snapshot     = "workspace.snapshot"
+	AgentChanges = "agent.changes"
+	NewSession   = "session.create"
+	OpenSession  = "session.open"
+	// ForkSession copies an open session (SessionID) into a new one and opens it.
+	ForkSession    = "session.fork"
 	ListSessions   = "session.list"
 	SubmitInput    = "agent.submit"
 	SteerInput     = "agent.steer"

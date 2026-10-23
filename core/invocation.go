@@ -13,8 +13,14 @@ func (a *actor) prepareInvocation(request coreprotocol.Request) (*workspace.Invo
 	if err := decode(request.Payload, &input); err != nil {
 		return nil, errors.New("invalid invocation request")
 	}
-	if request.Method == coreprotocol.OpenSession && input.SessionID == "" {
+	if (request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession) && input.SessionID == "" {
 		return nil, errors.New("session identity is required")
+	}
+	if request.Method == coreprotocol.ForkSession {
+		if !input.Selection.Empty() {
+			return nil, errors.New("a fork keeps its source's connection; open it without selectors")
+		}
+		return a.ws.PrepareInvocationFork(input.SessionID)
 	}
 	if request.Method == coreprotocol.NewSession && input.SessionID != "" {
 		return nil, errors.New("new session must not name an existing session")

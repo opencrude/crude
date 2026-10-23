@@ -228,7 +228,7 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 			return m.submitPreparedInput(sessionID, provider.InputWithRefs(text, refIDs), m.Input.DraftRevision())
 		}
 		if m.Feedback != nil {
-			m.Feedback.NotifyError("human steering was not queued: this turn is no longer accepting notes")
+			m.Feedback.NotifyError("Your note was not sent: this turn is no longer accepting notes")
 		}
 		return nil
 	}
@@ -454,6 +454,9 @@ func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 		severity, message = coretypes.SeverityError, "✕ "+label+" "+msg.reason
 	}
 	m.Feedback.NotifyAgentTransient(msg.agentID, message, severity)
+	if msg.reason == "completed" {
+		m.offerPlanImplementation(msg.agentID)
+	}
 	m.forceFrame()
 }
 

@@ -170,6 +170,7 @@ most often broken there.
 
 | Area | Read | Most-broken rule |
 |---|---|---|
+| Plan mode, goals, fork, slash commands, palette | [session commands](docs/reference/session-commands.md) | Runtime enforces modes; only the verifier's verdict completes a goal |
 | Prompts, guidance intake, instruction text | [prompt architecture](docs/reference/prompt-architecture.md) | One policy for every model; overlays are escaped and lower priority |
 | Context budget, compaction, continuity, memory jobs | [adaptive context](docs/reference/adaptive-context.md) | Never delete history to fit; never replay accepted output |
 | Children, delegation, reports | [agent orchestration](docs/reference/agent-orchestration.md) | `publish_report` is mandatory; child connections are complete |

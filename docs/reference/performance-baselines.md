@@ -23,6 +23,25 @@ hands frames, resizes and control sequences to the renderer under `viewMu`
 only and writes the terminal under `flushMu`, so a slow console never blocks
 the next `Update` (`third_party/bubbletea/observer_test.go`).
 
+**Resources** (second tab) shows what Crude occupies on the machine: resident
+memory and CPU of the shell, the core and every process they started
+(terminals, language servers, commands; the core is counted once even when
+the shell started it), the machine's memory and CPU, and Crude's data folder
+by part and by saved workspace (sessions, Local History, worktrees), with the
+workspaces whose project folder no longer exists. The Overview's Memory and
+CPU tiles are these OS figures; Go heap and runtime CPU stay under Runtime.
+Low disk space (under 10% free, critical under 5%) and memory pressure are
+findings. Process and machine figures come from gopsutil and are read only
+inside `metrics.Take` (`metrics/resources.go`), so they cost nothing while the
+surface is hidden; each platform builds the process tree in one pass
+(`/proc`, one Toolhelp snapshot, or the OS process list). Disk usage walks
+every saved file, so the core's `workspace.DataUsage` measures in the
+background at most once a minute, only when a snapshot asks, and `Take`
+returns the latest result; each workspace's project folder is read from its
+database once per core. On the user's 15 GB data folder (4,753 workspaces)
+the first measurement takes about 5 s in the background and later ones about
+0.25 s.
+
 Measured on the user's sessions:
 
 | Workload | Before | After |

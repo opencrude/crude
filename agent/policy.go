@@ -16,6 +16,12 @@ func ComposePolicy(parentPolicy safety.Policy, specPolicyName string, category s
 		case "no-delete":
 			child = safety.DefaultPolicy()
 			child.AllowedCapabilities[safety.CanDelete] = false
+		case "verify":
+			// A verifier inspects and runs checks but never changes the work.
+			child = safety.DefaultPolicy()
+			child.AllowedCapabilities[safety.CanCreate] = false
+			child.AllowedCapabilities[safety.CanUpdate] = false
+			child.AllowedCapabilities[safety.CanDelete] = false
 		case "no-execute":
 			child = safety.DefaultPolicy()
 			child.AllowedCapabilities[safety.CanExecute] = false

@@ -327,9 +327,9 @@ func TestWorkspaceSwitchClosesEditorsAndClearsProjectProjections(t *testing.T) {
 	oldSearch := app.findInFiles
 	app.findInFilesRequest = 91
 	app.findInFilesGen = 7
-	app.openHelp() // application-global overlay must survive a domain switch
-	if !app.overlayHost.IsOpen(ui.OverlayHelp) {
-		t.Fatal("help overlay precondition failed")
+	_, _ = app.toggleCommandPalette() // application-global overlay must survive a domain switch
+	if !app.overlayHost.IsOpen(ui.OverlayCommandPalette) {
+		t.Fatal("command palette precondition failed")
 	}
 
 	oldGitGen := app.gitRefreshGen.Add(1)
@@ -382,8 +382,8 @@ func TestWorkspaceSwitchClosesEditorsAndClearsProjectProjections(t *testing.T) {
 	if app.overlayHost.IsOpen(ui.OverlayFindInFiles) || app.overlayHost.IsOpen(ui.OverlayReplaceInFiles) {
 		t.Fatal("project-search overlay survived workspace switch")
 	}
-	if !app.overlayHost.IsOpen(ui.OverlayHelp) {
-		t.Fatal("workspace switch closed unrelated application-global Help")
+	if !app.overlayHost.IsOpen(ui.OverlayCommandPalette) {
+		t.Fatal("workspace switch closed the application-global command palette")
 	}
 	_, _ = app.Update(findinfiles.SearchRequestMsg{
 		Screen:     oldSearch,

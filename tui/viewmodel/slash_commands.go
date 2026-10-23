@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 )
@@ -18,6 +19,12 @@ type slashBackendResultMsg struct {
 }
 
 func (m *App) executeSlashCommand(cmd string) tea.Cmd {
+	return m.executeSlashCommandWithRefs(cmd, nil)
+}
+
+// executeSlashCommandWithRefs runs a slash command; commands that take a
+// prompt (/plan) send it with the composer's attachments.
+func (m *App) executeSlashCommandWithRefs(cmd string, referenceIDs []string) tea.Cmd {
 	if m.ws.Logger() != nil {
 		m.ws.Logger().Info("INPUT", "slash_command", "cmd", cmd)
 	}
@@ -33,6 +40,12 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	switch cmdName {
 	case "/retry":
 		return m.retryAgentRecovery(agentID)
+	case "/fork":
+		return m.forkSessionCommand()
+	case "/goal":
+		return m.goalCommand(agentID, remainder)
+	case "/plan":
+		return m.planModeCommand(agentID, provider.InputWithRefs(remainder, referenceIDs))
 	case "/skills":
 		return m.openCapabilityPickerTab(captypes.KindSkill, remainder)
 	case "/mcps":
@@ -42,11 +55,6 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.openSessionSettings()
 	case "/history":
 		cmds = append(cmds, m.openPromptHistory())
-	case "/model":
-		m.ws.Logger().Info("INPUT", "slash", "command", "model")
-		if cmd := m.openSessionModelPicker(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
 	case "/sessions":
 		m.ws.Logger().Info("INPUT", "slash", "command", "sessions")
 		m.openSessionPicker()
@@ -56,9 +64,6 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case "/help":
-		m.ws.Logger().Info("INPUT", "slash", "command", "help")
-		m.openHelp()
 	case "/compact":
 		m.ws.Logger().Info("INPUT", "slash", "command", "compact")
 		if agentID == "" {
@@ -135,7 +140,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.Feedback.NotifyError("Legacy destructive undo commands were removed. Use /undo to review message changes safely.")
 	default:
 		m.ws.Logger().Warn("INPUT", "slash_unknown", "cmd", cmdName)
-		m.Feedback.NotifyError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
+		m.Feedback.NotifyError(fmt.Sprintf("Unknown command: %s", cmdName))
 	}
 
 	if len(cmds) > 0 {

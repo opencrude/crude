@@ -10,7 +10,6 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
-	helpcatalog "crude/tui/screens/help"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 )
@@ -62,7 +61,7 @@ func TestInputContractsFocusChatTypesIntoInputWithEditorOpen(t *testing.T) {
 	app.EditorState.ActiveView = path
 	beforeEditor := ed.Value()
 
-	app.executePaletteCommand("view.focus.chat")
+	app.setFocusInput()
 	if app.focusTarget() != FocusInput {
 		t.Fatalf("focusTarget=%v want FocusInput", app.focusTarget())
 	}
@@ -240,25 +239,6 @@ func TestInputContractsShortcutMetadataAndHelpStayConsistent(t *testing.T) {
 		want := ui.FormatShortcut(reg.HintFor(id))
 		if want == "" || !strings.Contains(closeItem.Detail, want) {
 			t.Fatalf("Close tab detail=%q missing registry hint %q (%s)", closeItem.Detail, want, id)
-		}
-	}
-
-	topics := helpcatalog.UsageTopics()
-	var chatBody, editorBody string
-	for _, topic := range topics {
-		switch topic.ID {
-		case "chat":
-			chatBody = topic.Body
-		case "editor":
-			editorBody = topic.Body
-		}
-	}
-	if !strings.Contains(chatBody, "Ctrl+O") || !strings.Contains(chatBody, "Ctrl+C") {
-		t.Fatalf("chat help does not describe attach/copy contracts: %q", chatBody)
-	}
-	for _, chord := range []string{"Ctrl+W", "Esc", "Ctrl+[", "Ctrl+]"} {
-		if !strings.Contains(editorBody, chord) {
-			t.Fatalf("editor help missing %q: %q", chord, editorBody)
 		}
 	}
 }

@@ -11,6 +11,8 @@ import (
 // agent/session target; none depends on which tab a shell has selected.
 const (
 	AgentYolo             = "agent.yolo"
+	AgentPlanMode         = "agent.plan_mode"
+	AgentGoal             = "agent.goal"
 	AgentAppendMessages   = "agent.append_messages"
 	AgentRecover          = "agent.recover"
 	AgentRecoverCancel    = "agent.recover_cancel"
@@ -39,6 +41,26 @@ type CancelRequestPayload struct {
 type AgentYoloRequest struct {
 	AgentID string `json:"agent_id"`
 	Enabled bool   `json:"enabled"`
+}
+
+// AgentPlanModeRequest sets Plan mode for the session that owns AgentID.
+type AgentPlanModeRequest struct {
+	AgentID string `json:"agent_id"`
+	Enabled bool   `json:"enabled"`
+}
+
+// AgentGoalRequest applies one user action (workspace.GoalSet, …) to the
+// goal of the session whose main agent is AgentID.
+type AgentGoalRequest struct {
+	AgentID   string `json:"agent_id"`
+	Action    string `json:"action"`
+	Objective string `json:"objective,omitempty"`
+}
+
+// AgentGoalResult is the goal after the action; Goal is nil once cleared.
+type AgentGoalResult struct {
+	Goal  *types.Goal `json:"goal,omitempty"`
+	Error string      `json:"error,omitempty"`
 }
 
 type AppendMessagesRequest struct {

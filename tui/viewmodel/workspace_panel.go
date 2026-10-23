@@ -130,14 +130,6 @@ func (app *App) hideWorkspacePanel() {
 	app.setTermDockFocused(false)
 }
 
-// activeDockPanel is the surface the dock shows, for the move commands.
-func (app *App) activeDockPanel() string {
-	if app.termDock == nil || !app.termDock.IsOpen() {
-		return ""
-	}
-	return app.termDock.ActivePanel()
-}
-
 func (app *App) openTerminalPicker() {
 	manager := app.termMgr()
 	if manager == nil {

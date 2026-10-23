@@ -812,7 +812,7 @@ automatic format migration or silent transcript rewrite occurs.
 | Application Settings → Save | scoped edits via `PreparePreferencesSave` → app-owned config transaction | `workspace.db`, API keys on agent profiles |
 | Workspace Settings → Save | field-level `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys, untouched fields |
 | Workspace Settings → Reset section | remove the addressed section via the same awaited scoped save | other categories, app config, unrelated draft edits |
-| `/settings` or `/model` dock | session agent connection/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
+| `/settings` dock | session agent connection/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
 Editor autosave is an application/workspace field-level setting and is **Off by
@@ -884,8 +884,7 @@ edge marks a section with workspace choices; the existing subtitle explains
 workspace values into the Application form, changes geometry or opens a prompt.
 The unsaved `●` takes precedence. Workspace scope does not repeat the marker.
 
-Session settings stay on the per-session Panel Deck (`/settings` or
-`/model`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
+Session settings stay on the per-session Panel Deck (`/settings`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
 for any depth. The root page is a compact agent table (model, then
 provider, aligned `·` columns) with **Multi Agent** last after a blank
 row — that inherited `·` shares the agent table's last column. Enter on

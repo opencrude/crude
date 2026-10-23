@@ -33,6 +33,7 @@ const (
 	blockTable
 	blockEvents
 	blockText
+	blockRows
 )
 
 type tile struct {
@@ -54,6 +55,9 @@ type block struct {
 	table    tableBlockData
 	rowLimit int
 	events   []processedEvent
+	rows     []resourceRow
+	// columns titles the value columns of a heading over rows.
+	columns [2]string
 	// target is the section a click on this block opens (overview only).
 	target string
 }
@@ -120,6 +124,36 @@ func (b *body) rebuild() {
 		if events := d.events(); len(events) > 0 {
 			push(block{kind: blockHeading, h: 1, text: "Recent events", target: SectionEvents})
 			push(block{kind: blockEvents, h: min(len(events), 5), events: events})
+		}
+	case SectionResources:
+		view, ok := resources(d)
+		if !ok {
+			push(block{kind: blockText, h: 1, text: "Resource usage is not available yet."})
+			break
+		}
+		tiles := resourceTiles(view)
+		push(block{kind: blockTiles, h: tileRows(tiles, width), tiles: tiles})
+		gap()
+		rows := processRows(view)
+		push(block{kind: blockHeading, h: 1, text: "Processes", columns: [2]string{"memory", "cpu"}})
+		push(block{kind: blockRows, h: len(rows), rows: rows})
+		if disk := view.disk; disk != nil {
+			gap()
+			push(block{kind: blockHeading, h: 1, text: diskHeading(disk, d.Fetched), columns: [2]string{"size"}})
+			if rows := diskPartRows(disk); len(rows) > 0 {
+				push(block{kind: blockRows, h: len(rows), rows: rows})
+			}
+			if rows := workspaceRows(disk); len(rows) > 0 {
+				gap()
+				push(block{kind: blockHeading, h: 1, text: workspacesHeading(disk), columns: [2]string{"size"}})
+				push(block{kind: blockRows, h: len(rows), rows: rows})
+			}
+			if note := orphanNote(disk); note != "" {
+				gap()
+				for _, line := range rendering.WordWrap(note, width) {
+					push(block{kind: blockText, h: 1, text: line})
+				}
+			}
 		}
 	case SectionEvents:
 		events := d.events()
@@ -226,15 +260,13 @@ func overviewTiles(d Data) []tile {
 	if d.Core != nil {
 		addLatency("Core actor", processCore, "core.actor")
 	}
-	for _, p := range d.processes() {
-		if cpu, ok := d.gauge(p, "runtime.cpu"); ok {
-			value := lastSet(cpu)
-			tiles = append(tiles, tile{label: p.label() + " CPU", value: formatValue(float64(value), "%"), sev: severityOf(value, cpu.Meta)})
+	if view, ok := resources(d); ok {
+		tiles = append(tiles, tile{label: "Memory", value: formatBytes(float64(view.memory))})
+		if view.cpu >= 0 {
+			tiles = append(tiles, tile{label: "CPU", value: formatValue(view.cpu, "%")})
 		}
-	}
-	for _, p := range d.processes() {
-		if heap, ok := d.gauge(p, "runtime.heap"); ok {
-			tiles = append(tiles, tile{label: p.label() + " heap", value: formatBytes(float64(lastSet(heap)))})
+		if sev := diskSeverity(view.disk); sev > SeverityOK {
+			tiles = append(tiles, tile{label: "Disk free", value: formatBytes(float64(view.disk.DeviceFree)), sev: sev})
 		}
 	}
 	if streams, ok := d.gauge(d.resolve(seriesRef{processCore, ""}).process, "agent.streams"); ok && lastSet(streams) > 0 {
@@ -485,7 +517,20 @@ func (b *body) paintBlock(p *painter, blk *block, x, y, w int) {
 			}
 		}
 	case blockHeading:
-		p.text(x, y, w, blk.text, fg, cell.AttrBold)
+		titleW := w
+		if blk.columns[0] != "" {
+			titleW = max(0, w-resourceColumnsWidth(w, blk.columns[1] != "")-1)
+			paintResourceColumns(p, x, y, w, blk.columns)
+		}
+		p.text(x, y, titleW, blk.text, fg, cell.AttrBold)
+	case blockRows:
+		extra := len(blk.rows) > 0 && blk.rows[0].extra != ""
+		for i, row := range blk.rows {
+			if i >= blk.h {
+				break
+			}
+			paintResourceRow(p, row, x, y+i, w, extra)
+		}
 	case blockCards:
 		for i := range blk.cards {
 			cx := x + i*(blk.cardW+cardGap)

@@ -153,6 +153,16 @@ func (w *Workspace) PrepareInvocationSession(id string, selection InvocationSele
 	return &InvocationLifecycleOperation{op: op, selection: selection}, nil
 }
 
+// PrepareInvocationFork forks an open session; the fork keeps the source's
+// own connection settings, so it takes no invocation selectors.
+func (w *Workspace) PrepareInvocationFork(sourceID string) (*InvocationLifecycleOperation, error) {
+	op, err := w.PrepareForkSession(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	return &InvocationLifecycleOperation{op: op}, nil
+}
+
 func (op *InvocationLifecycleOperation) Run(ctx context.Context) SessionLifecycleResult {
 	op.once.Do(func() { op.result = op.run(ctx) })
 	return op.result

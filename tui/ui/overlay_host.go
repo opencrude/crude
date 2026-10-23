@@ -43,7 +43,6 @@ const (
 	OverlayDiagHover         OverlayID = "diag-hover"
 	OverlayPlanHover         OverlayID = "plan-hover"
 	OverlaySessionPicker     OverlayID = "session-picker"
-	OverlayHelp              OverlayID = "help"
 	OverlayTerminalPrefix    OverlayID = "terminal/"
 )
 

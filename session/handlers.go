@@ -136,10 +136,13 @@ func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status tt
 }
 
 func (s *Session) SetYolo(enabled bool) {
-	s.yolo.Store(enabled)
+	if s.yolo.Swap(enabled) == enabled {
+		return
+	}
 	if s.logger != nil {
 		s.logger.Info("SAFETY", "yolo", "enabled", enabled)
 	}
+	s.recordStatusRow(yoloRow(enabled))
 }
 
 // YoloEnabled reports the live session policy. Active turns consult this

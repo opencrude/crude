@@ -227,8 +227,8 @@ func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 	}
 
 	footer := rowText(app, app.height-app.frameBottomRow()-1)
-	if !strings.Contains(footer, "Help") {
-		t.Fatalf("footer Help entry missing after long chat: %q", footer)
+	if !strings.Contains(footer, "Workspace") {
+		t.Fatalf("footer controls missing after long chat: %q", footer)
 	}
 }
 

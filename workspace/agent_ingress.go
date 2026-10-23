@@ -118,6 +118,12 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		w.RegisterAgentRoot(node.ID)
 	}
 	state := node.State
+	if state.applySessionFact(evt) {
+		w.agentRevision++
+		result.ChangedAgents = append(result.ChangedAgents, node.ID)
+		result.Accepted, result.Revision = true, w.agentRevision
+		return result
+	}
 	if !state.acceptCompactionEvent(evt) {
 		return result
 	}
@@ -128,7 +134,7 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		semantic := identified && (evt.Type == "tool_result" || evt.Type == "stream_token" || evt.Type == "thinking" || evt.Type == "reasoning_classified" || evt.Type == "usage")
 		turn, valid := parseTurnIdentity(evt.Data)
 		fresh := evt.Type == "turn_started" && valid && turn.Generation > state.TurnIdentity.Generation
-		if !semantic && !fresh {
+		if !semantic && !fresh && !state.newerTurnRecovery(evt) {
 			return result
 		}
 	}
@@ -393,13 +399,16 @@ type AgentSnapshot struct {
 	ReasoningMode                                       reasoning.Kind
 	Recovery                                            recovery.Status
 	Yolo                                                bool
-	ActiveCompaction                                    TurnStatus
-	LastTokenTime                                       time.Time
-	Messages                                            []Message
-	ConversationRevision                                uint64
-	Prompt                                              *AgentPrompt
-	Usage                                               types.UsageSummary
-	Activity                                            types.AgentActivityView
+	PlanMode                                            bool
+	// Goal is the main agent's session goal; children have none.
+	Goal                 *types.Goal
+	ActiveCompaction     TurnStatus
+	LastTokenTime        time.Time
+	Messages             []Message
+	ConversationRevision uint64
+	Prompt               *AgentPrompt
+	Usage                types.UsageSummary
+	Activity             types.AgentActivityView
 }
 
 type AgentWorkspaceSnapshot struct {
@@ -433,7 +442,10 @@ func (w *Workspace) snapshotAgents(includeMessages bool) AgentWorkspaceSnapshot 
 			Completed: state.Completed, Status: state.Status, TurnIdentity: state.TurnIdentity,
 			RuntimeIdentity: state.runtimeIdentity, ReasoningMode: state.ReasoningMode, Recovery: state.RecoveryStatus(),
 			LastTokenTime: state.LastTokenTime, ConversationRevision: state.Messages.Version(),
-			Activity: w.AgentActivity(node.ID), Yolo: w.YoloForAgent(node.ID), ActiveCompaction: state.ActiveCompaction}
+			Activity: w.AgentActivity(node.ID), Yolo: w.YoloForAgent(node.ID), PlanMode: w.PlanModeForAgent(node.ID), ActiveCompaction: state.ActiveCompaction}
+		if goal, ok := w.GoalForAgent(node.ID); ok {
+			snapshot.Goal = &goal
+		}
 		if includeMessages {
 			snapshot.Messages = state.Messages.Messages()
 		}

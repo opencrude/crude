@@ -37,6 +37,41 @@ func (w *Workspace) UsageSummary(agentID string, scope types.UsageScope) (types.
 
 func (w *Workspace) YoloForAgent(agentID string) bool { return w.view.YoloForAgent(agentID) }
 
+func (w *Workspace) PlanModeForAgent(agentID string) bool { return w.view.PlanModeForAgent(agentID) }
+
+func (w *Workspace) SetPlanModeForAgent(agentID string, enabled bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	var out coreprotocol.BoolResult
+	if err := w.call(ctx, coreprotocol.AgentPlanMode, coreprotocol.AgentPlanModeRequest{AgentID: agentID, Enabled: enabled}, &out); err != nil {
+		return err
+	}
+	if out.Error != "" {
+		return errors.New(out.Error)
+	}
+	return nil
+}
+
+func (w *Workspace) GoalForAgent(agentID string) (types.Goal, bool) {
+	return w.view.GoalForAgent(agentID)
+}
+
+func (w *Workspace) GoalAction(agentID, action, objective string) (types.Goal, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*callTimeout)
+	defer cancel()
+	var out coreprotocol.AgentGoalResult
+	if err := w.call(ctx, coreprotocol.AgentGoal, coreprotocol.AgentGoalRequest{AgentID: agentID, Action: action, Objective: objective}, &out); err != nil {
+		return types.Goal{}, false, err
+	}
+	if out.Error != "" {
+		return types.Goal{}, false, errors.New(out.Error)
+	}
+	if out.Goal == nil {
+		return types.Goal{}, false, nil
+	}
+	return *out.Goal, true, nil
+}
+
 func (w *Workspace) SetYoloForAgent(agentID string, enabled bool) bool {
 	if w.view.AgentMgr.OrchestratorFor(agentID) == nil {
 		return false

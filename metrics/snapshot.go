@@ -109,6 +109,7 @@ type Snapshot struct {
 	Gauges    []GaugeSeries   `json:"gauges,omitempty"`
 	Tables    []TableSeries   `json:"tables,omitempty"`
 	Events    []Event         `json:"events,omitempty"`
+	Resources *Resources      `json:"resources,omitempty"`
 }
 
 const recentSeconds = 5
@@ -267,6 +268,7 @@ func Take(q Query) Snapshot {
 		snapshot.Tables = append(snapshot.Tables, series)
 	}
 	snapshot.Events = eventsSince(time.Unix(first, 0))
+	snapshot.Resources = takeResources()
 	snapshot.Latencies = sortedByName(snapshot.Latencies, func(s LatencySeries) string { return s.Meta.Name })
 	snapshot.Counters = sortedByName(snapshot.Counters, func(s CounterSeries) string { return s.Meta.Name })
 	snapshot.Gauges = sortedByName(snapshot.Gauges, func(s GaugeSeries) string { return s.Meta.Name })

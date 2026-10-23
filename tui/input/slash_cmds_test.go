@@ -2,15 +2,18 @@ package input
 
 import "testing"
 
-func TestAvailableCmdsExposeModelNotProvider(t *testing.T) {
+func TestAvailableCmdsOfferSessionCommandsOnly(t *testing.T) {
 	seen := map[string]bool{}
 	for _, cmd := range AvailableCmds() {
 		seen[cmd.Name] = true
 	}
-	if !seen["model"] || !seen["settings"] {
-		t.Fatalf("slash list missing model/settings: %#v", seen)
+	for _, want := range []string{"plan", "goal", "fork", "settings"} {
+		if !seen[want] {
+			t.Fatalf("slash list missing /%s: %#v", want, seen)
+		}
 	}
-	for _, gone := range []string{"provider", "api-key", "changes"} {
+	// Model selection lives in /settings; help lives in the palette.
+	for _, gone := range []string{"provider", "api-key", "changes", "model", "help"} {
 		if seen[gone] {
 			t.Fatalf("slash list still has /%s", gone)
 		}

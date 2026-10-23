@@ -1,10 +1,12 @@
 package workspace
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"crude/session"
+	"crude/sessiondb"
 	ttypes "crude/types"
 	"crude/types/recovery"
 )
@@ -223,5 +225,62 @@ func TestApplyAgentStatusEventSafetyAndMissingOwners(t *testing.T) {
 	}
 	if got := AgentToolDetail(map[string]any{"name": `{"private_id":"agent-8f21"}`}); got != "Running tool" {
 		t.Fatalf("structured tool name leaked: %q", got)
+	}
+}
+
+// A turn's preflight (history, guidance, configuration) runs before
+// turn_started. When it needs attention right after a completed turn, the
+// status must reach the agent and the status center; it used to be dropped as
+// late output of the finished turn, leaving the shell on "Preparing" forever.
+func TestPreflightRecoveryAfterACompletedTurnNeedsAttention(t *testing.T) {
+	w, node := newAgentStatusEventWorkspace(t)
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "stream_token", Data: "pong"})
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "done", Data: map[string]any{"content": "pong", "reason": "completed"}})
+	if node.State.IsActive() {
+		t.Fatal("the first turn did not finish")
+	}
+	status := recovery.Status{ID: "incident", AgentID: node.ID, Generation: 2, State: recovery.NeedsAttention,
+		Summary: "Recovery state could not be saved", Detail: "open mutation.lock: no such file or directory"}
+	if reduction := w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "recovery", Data: status}); !reduction.Accepted {
+		t.Fatal("the next turn's preflight recovery was dropped")
+	}
+	if node.State.Recovery.ID != "incident" || !node.State.IsActive() {
+		t.Fatalf("agent state did not take the recovery: %+v active=%v", node.State.Recovery, node.State.IsActive())
+	}
+	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentNeedsAttention, "Recovery state could not be saved", true)
+	// The finished turn's own late status stays rejected.
+	stale := status
+	stale.ID, stale.Generation = "stale", 1
+	if reduction := w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "recovery", Data: stale}); reduction.Accepted && node.State.Recovery.ID == "stale" {
+		t.Fatal("a finished turn's recovery replaced the current one")
+	}
+}
+
+// Session facts (a recorded status row, the goal) arrive while the agent is
+// idle; they apply then, once, exactly as hydration paints the stored row.
+func TestSessionFactsApplyWhileTheAgentIsIdle(t *testing.T) {
+	w, node := newAgentStatusEventWorkspace(t)
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "done", Data: map[string]any{"content": "", "reason": "completed"}})
+	row := sessiondb.StatusRow{ID: "plan_mode_on:1", Phase: "plan_mode_on", Content: "Plan mode on.", CreatedAt: time.Unix(10, 0)}
+	for range 2 {
+		if !w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "status_row", Data: row}).Accepted {
+			t.Fatal("an idle agent dropped a status row")
+		}
+	}
+	goal := ttypes.Goal{ID: "g", Objective: "Ship it", Status: ttypes.GoalPaused}
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "goal", Data: goal})
+	if node.State.Goal == nil || node.State.Goal.Status != ttypes.GoalPaused {
+		t.Fatalf("idle agent dropped the goal: %+v", node.State.Goal)
+	}
+	var rows []Message
+	for _, message := range node.State.Messages.Messages() {
+		if message.LifecyclePhase == "plan_mode_on" {
+			rows = append(rows, message)
+		}
+	}
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0], messageFromView(statusRowView(row))) {
+		t.Fatalf("live row %+v differs from the hydrated row or repeated", rows)
 	}
 }

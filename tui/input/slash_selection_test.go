@@ -14,7 +14,7 @@ func TestSlashSelectionKeyboardPointerDraftParity(t *testing.T) {
 	for _, path := range []string{"keyboard", "pointer"} {
 		t.Run(path, func(t *testing.T) {
 			model := NewModel(theme.DefaultDark())
-			model.SetInput("/help")
+			model.SetInput("/goal")
 			model.UseReferenceIDs([]string{"old-unresolved-reference"})
 			model.SetHistory([]history.Entry{{Text: "old recalled prompt"}})
 			model.histIdx, model.histDraft, model.histPrefix = 0, "old unsent draft", "old"
@@ -42,8 +42,8 @@ func TestSlashSelectionKeyboardPointerDraftParity(t *testing.T) {
 					t.Fatalf("pointer event=%T, want SlashCommandEvent", result.Action.Payload)
 				}
 			}
-			if event.Command != "/help" || model.Value() != "" || model.SlashActive() || model.CursorFlat() != 0 || model.InputSelecting() || model.ScrollOffset() != 0 {
-				t.Fatalf("selection did not activate /help and reset the editor: event=%+v text=%q", event, model.Value())
+			if event.Command != "/goal" || model.Value() != "" || model.SlashActive() || model.CursorFlat() != 0 || model.InputSelecting() || model.ScrollOffset() != 0 {
+				t.Fatalf("selection did not activate /goal and reset the editor: event=%+v text=%q", event, model.Value())
 			}
 			if model.histIdx != -1 || model.histDraft != "" || model.histPrefix != "" || model.historyLoading || len(model.SnapshotReferenceIDs()) != 0 {
 				t.Fatal("selection retained consumed history or reference state")

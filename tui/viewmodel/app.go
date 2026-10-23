@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/history"
+	"crude/provider"
 	"crude/sessiondb"
 	"crude/shellport"
 	"crude/tui/cell"
@@ -25,7 +26,6 @@ import (
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/screens/gitpanel"
-	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
@@ -101,10 +101,13 @@ type App struct {
 
 	// Composer state changes at session activation, never from Paint. Warm
 	// sessions retain their editor; cold persisted drafts load asynchronously.
-	composerHydratedFor         *workspace.Session
-	composerDraftEpoch          uint64
-	composerDraftClient         *composerDraftClient
-	pendingOrchestrators        map[string]bool
+	composerHydratedFor  *workspace.Session
+	composerDraftEpoch   uint64
+	composerDraftClient  *composerDraftClient
+	pendingOrchestrators map[string]bool
+	// pendingFirstInputs are first messages for new sessions whose tab is
+	// still pending; each is sent once its session reaches this shell.
+	pendingFirstInputs          map[string]provider.UserInput
 	workspaceAttachSequence     uint64
 	workspaceAttachCancel       context.CancelFunc
 	workspaceAttachPending      bool
@@ -245,7 +248,6 @@ type App struct {
 	workspaceListCancel    context.CancelFunc
 	historyScreen          *historyscreen.Screen
 	sessionPicker          *sessionpicker.Screen
-	helpScreen             *helpscreen.Screen
 	commandPaletteModel    *commandPaletteModel
 	findInFiles            *findinfiles.Screen
 	findInFilesRequest     uint64
@@ -1000,31 +1002,6 @@ func (m *App) openSessionSettings() {
 	m.openSessionSettingsPanel()
 }
 
-// resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.
-func (m *App) resetOrchestratorOverrides() tea.Cmd {
-	id := m.AgentView.ActiveID()
-	if id == "" {
-		id = m.EditorState.ActiveView
-		if id == "" {
-			m.Feedback.NotifyInfo("No active orchestrator to reset")
-			return nil
-		}
-	}
-	owner := m.ws.SessionForAgent(id)
-	if owner == nil || owner.Settings == nil {
-		return nil
-	}
-	op, err := m.ws.PrepareSessionSettingsReset(owner.SessionID)
-	if err != nil {
-		m.Feedback.NotifyError(err.Error())
-		return nil
-	}
-	runtime, generation := m.ws, m.workspaceSwitchGen.Load()
-	return func() tea.Msg {
-		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: op.Run()}
-	}
-}
-
 // registerOverlayHandlers registers per-overlay content-click and hover
 // handlers on the OverlayHost. Each handler delegates to the existing App
 // method for that popup type, replacing the bespoke switch statements in
@@ -1140,13 +1117,6 @@ func (m *App) registerOverlayHandlers() {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
 	oh.RegisterHoverHandler(ui.OverlaySessionPicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
-	oh.RegisterContentHandler(ui.OverlayHelp, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.forwardEventToWindowContent(fw, msg)
-	})
-	oh.RegisterHoverHandler(ui.OverlayHelp, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		x, y := fw.Position()
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})

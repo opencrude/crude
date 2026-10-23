@@ -1,4 +1,4 @@
-package yolo
+package decision
 
 import (
 	"testing"
@@ -26,7 +26,7 @@ func TestYoloKeyboardMouseAndEscapeActions(t *testing.T) {
 			t.Fatalf("key %q did not emit a result", test.key.String())
 		}
 		message := result.Cmd().(ResultMsg)
-		if message.Target != screen || message.Enabled != test.enabled {
+		if message.Target != screen || message.Confirmed != test.enabled || message.Purpose != "yolo" {
 			t.Fatalf("key %q result=%#v", test.key.String(), message)
 		}
 	}
@@ -39,7 +39,7 @@ func TestYoloKeyboardMouseAndEscapeActions(t *testing.T) {
 		t.Fatalf("Enable button not painted:\n%s", text(buf))
 	}
 	result := host.Handle(tea.MouseClickMsg{X: click.x, Y: click.y, Button: tea.MouseLeft})
-	if result.Cmd == nil || !result.Cmd().(ResultMsg).Enabled {
+	if result.Cmd == nil || !result.Cmd().(ResultMsg).Confirmed {
 		t.Fatalf("mouse enable result=%#v", result)
 	}
 }
@@ -59,7 +59,7 @@ func TestYoloEnableRequiresExplicitSelection(t *testing.T) {
 	_, host := testHost(t)
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd == nil || !result.Cmd().(ResultMsg).Enabled {
+	if result.Cmd == nil || !result.Cmd().(ResultMsg).Confirmed {
 		t.Fatal("explicit enable selection did not activate")
 	}
 }
@@ -68,6 +68,7 @@ func TestYoloPaintsAcrossThemesAndSizes(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		for _, size := range []ui.Size{{W: 42, H: 8}, {W: 120, H: 20}} {
 			screen := New(th)
+			screen.Show(yoloSpec())
 			deck := ui.NewPanelDeck("deck", ui.NewTokenSet(th))
 			deck.Open(ui.PanelEntry{ID: "yolo", Title: "YOLO", Content: screen, Policy: ui.PanelBlocking})
 			host := ui.NewHost(th, deck)
@@ -96,10 +97,19 @@ func text(buf *surface.CellBuffer) string {
 	return result
 }
 
+func yoloSpec() Spec {
+	return Spec{
+		Purpose: "yolo", Title: "Enable YOLO for this session?", Hint: "Use /yolo to restore approvals.",
+		Facts:   []Fact{{"Approval prompts", "Skipped"}, {"Commands / edits", "No confirmation"}, {"Hard blocks", "Enforced"}, {"Restore safeguards", "Enforced"}},
+		Confirm: Answer{Label: "Enable YOLO", Shortcut: "y"}, Cancel: Answer{Label: "Cancel", Shortcut: "n"}, ConfirmDanger: true,
+	}
+}
+
 func testHost(t *testing.T) (*Screen, *ui.Host) {
 	t.Helper()
 	th := theme.DefaultDark()
 	screen := New(th)
+	screen.Show(yoloSpec())
 	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(th))
 	deck.Open(ui.PanelEntry{ID: "yolo", Title: "YOLO", Content: screen, Policy: ui.PanelBlocking})
 	host := ui.NewHost(th, deck)
@@ -149,4 +159,53 @@ func findPainted(buf *surface.CellBuffer, want string) paintedAt {
 		}
 	}
 	return paintedAt{x: -1, y: -1}
+}
+
+func TestAlternateAnswerIsExplicitAndDistinct(t *testing.T) {
+	th := theme.DefaultDark()
+	open := func() (*Screen, *ui.Host) {
+		screen := New(th)
+		screen.Show(Spec{Purpose: "implement_plan", Title: "Implement this plan?",
+			Confirm:   Answer{Label: "Implement plan", Shortcut: "y"},
+			Alternate: &Answer{Label: "Implement in new session", Shortcut: "c"},
+			Cancel:    Answer{Label: "Keep planning", Shortcut: "n"}})
+		deck := ui.NewPanelDeck("deck", ui.NewTokenSet(th))
+		deck.Open(ui.PanelEntry{ID: "plan", Title: "Plan", Content: screen, Policy: ui.PanelBlocking})
+		host := ui.NewHost(th, deck)
+		host.Resize(100, 10)
+		host.Layout()
+		if !host.Focus(ActionsID) {
+			t.Fatal("could not focus actions")
+		}
+		return screen, host
+	}
+	for _, test := range []struct {
+		key                  tea.KeyPressMsg
+		confirmed, alternate bool
+	}{
+		{key: tea.KeyPressMsg{Code: 'c', Text: "c"}, confirmed: true, alternate: true},
+		{key: tea.KeyPressMsg{Code: 'y', Text: "y"}, confirmed: true},
+		{key: tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{key: tea.KeyPressMsg{Code: tea.KeyEsc}},
+	} {
+		_, host := open()
+		result := host.Handle(test.key)
+		if result.Cmd == nil {
+			t.Fatalf("key %q emitted nothing", test.key.String())
+		}
+		if message := result.Cmd().(ResultMsg); message.Confirmed != test.confirmed || message.Alternate != test.alternate {
+			t.Fatalf("key %q result=%#v", test.key.String(), message)
+		}
+	}
+	_, host := open()
+	buf := surface.NewCellBuffer(100, 10)
+	host.Paint(buf)
+	click := findPainted(buf, "[ Implement in new session")
+	if click.x < 0 {
+		t.Fatalf("alternate answer not painted:\n%s", text(buf))
+	}
+	result := host.Handle(tea.MouseClickMsg{X: click.x, Y: click.y, Button: tea.MouseLeft})
+	if result.Cmd == nil || !result.Cmd().(ResultMsg).Alternate {
+		t.Fatalf("click on the alternate answer = %#v", result)
+	}
 }

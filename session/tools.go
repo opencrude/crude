@@ -111,6 +111,8 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			return executeCodexCommand(ctx, s.asyncMgr, root, tool, params, policy)
 		case "update_plan", "get_plan":
 			return s.executePlanTool(ctx, tool, params)
+		case "get_goal", "create_goal", "update_goal":
+			return s.executeGoalTool(ctx, tool, params)
 		case "async_execute_command":
 			command := getStrParam(params, "command")
 			if sr := safety.CheckCommandSafety(command, s.logger); sr.Risk.IsAlwaysBlocked() {

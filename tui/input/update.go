@@ -83,7 +83,8 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			}
 			refIDs := m.ReferencedIDs()
 			if strings.HasPrefix(text, "/") {
-				return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
+				// A command with arguments is sent like one picked from the list.
+				return m, nil, m.commitSlashCommand(text)
 			}
 			// A pending question may leave the composer available for drafting,
 			// but its answer must settle before a prompt can be sent or steered.
@@ -208,19 +209,19 @@ func (m *Model) syncSlashState() {
 func (m *Model) setSlashFilter(filter string) {
 	m.slashFilter = filter
 	filter = strings.ToLower(filter)
-	var items []ui.ListItem
+	// Commands whose name starts with the filter come first, so Tab and Enter
+	// complete the command being typed; description matches follow.
+	var named, described []ui.ListItem
 	for _, c := range availableCmds {
-		id := strings.ToLower(c.Name)
-		desc := strings.ToLower(c.Desc)
-		if filter == "" || strings.HasPrefix(id, filter) || strings.Contains(desc, filter) {
-			items = append(items, ui.ListItem{
-				ID:     c.Name,
-				Label:  c.Label,
-				Detail: c.Desc,
-				Icon:   c.Icon,
-			})
+		item := ui.ListItem{ID: c.Name, Label: c.Label, Detail: c.Desc, Icon: c.Icon}
+		switch {
+		case filter == "" || strings.HasPrefix(strings.ToLower(c.Name), filter):
+			named = append(named, item)
+		case strings.Contains(strings.ToLower(c.Desc), filter):
+			described = append(described, item)
 		}
 	}
+	items := append(named, described...)
 	prevID := ""
 	if item, ok := m.slashList.Selected(); ok {
 		prevID = item.ID

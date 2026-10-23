@@ -40,7 +40,7 @@ detailed contracts.
 | `capability/`, `skills/`, `mcpclient/`, `cranemcp/` | Capability discovery/acquisition/grants, skill loading, MCP client transport, Crude's own MCP control server. |
 | `safety/` | Command safety assessment and permission policy. |
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
-| `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
+| `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
 | `search/`, `docconv/` | Web/arXiv search engines and binary document conversion for read/fetch tools. |
 | `worktree/` | Managed execution worktrees and integration plans. |
@@ -78,7 +78,7 @@ detailed contracts.
 | `tui/theme/` | Themes and design tokens; the only place for hard-coded hex. |
 | `tui/termview/` | Terminal scrollback, selection and copy projection. |
 | `tui/tools/` | Tool-result presentation helpers. |
-| `tui/screens/perfdash/` | Performance surface: sections, charts, owner tables, plain-language findings, copyable report. |
+| `tui/screens/perfdash/` | Performance surface: sections (including Resources), charts, owner tables, plain-language findings, copyable report. |
 | `tui/perf/`, `tui/uitest/`, `tui/platform/`, `tui/xchroma/` | Perf logging, UI test harness, console platform shims, Chroma adapter. |
 
 ## Vendored replacements (`third_party/`)

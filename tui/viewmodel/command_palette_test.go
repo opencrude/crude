@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,24 +70,6 @@ func TestCommandPaletteEmptyFilterShowsAll(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteBuildGroups(t *testing.T) {
-	reg := ui.DefaultRegistry()
-	m := newCommandPaletteModel(testTheme(), nil, reg)
-	if len(m.groups) == 0 {
-		t.Fatal("expected at least one group")
-	}
-	totalItems := 0
-	for _, g := range m.groups {
-		if g.Count <= 0 {
-			t.Errorf("group %q has count %d", g.Category, g.Count)
-		}
-		totalItems += g.Count
-	}
-	if totalItems != len(m.filtered) {
-		t.Errorf("group item count %d != filtered items %d", totalItems, len(m.filtered))
-	}
-}
-
 func TestPaintGoldenCellBufferContract(t *testing.T) {
 	th := testTheme()
 	m := newCommandPaletteModel(th, nil, ui.DefaultRegistry())
@@ -108,7 +89,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("command palette paint produced no non-empty cells")
 	}
 	painted := bufferPlain(buf)
-	for _, label := range []string{"Command Palette", "search commands", "Find in Files"} {
+	for _, label := range []string{"Command Palette", "search commands", "New Session"} {
 		if !strings.Contains(painted, label) {
 			t.Fatalf("missing palette label %q:\n%s", label, painted)
 		}
@@ -218,7 +199,7 @@ func TestCommandPaletteListItemsHasHeaders(t *testing.T) {
 		t.Error("expected category headers in list items")
 	}
 	// Separators appear between groups
-	if len(m.groups) > 1 && !hasSeparator {
+	if !hasSeparator {
 		t.Error("expected separators between groups")
 	}
 }
@@ -291,45 +272,6 @@ func TestPaletteEntriesSkipDisplayOnly(t *testing.T) {
 	}
 }
 
-// TestPaletteIncludesNewCommands verifies every new runnable command
-// appears in the palette with a label and a non-empty category.
-func TestPaletteIncludesNewCommands(t *testing.T) {
-	reg := ui.DefaultRegistry()
-	entries := paletteEntriesFromRegistry(reg)
-
-	required := []string{
-		"file.save", "file.attach", "file.new", "file.close", "file.revealInTree",
-		"search.project.open", "search.project.replace",
-		"edit.undo", "edit.redo", "edit.find", "edit.replace",
-		"view.toggle.sidebar", "view.focus.sidebar", "view.focus.editor", "view.focus.chat",
-		"view.activity.files", "view.activity.agents", "view.activity.skills", "view.activity.mcp", "view.activity.git",
-		"terminal.new", "terminal.toggle", "terminal.picker", "skills.manage", "mcp.manage", "board.browse",
-		"tabs.next", "tabs.previous",
-		"agent.orchestrator.reset",
-		"agent.toggle.multiagent", "agent.cancel", "agent.newSession",
-		"composer.toggle", "settings.open", "settings.workspace", "lsp.outline", "safety.yolo.toggle",
-		"app.sessions", "system.undo", "history.open", "app.toggleTheme", "app.copyLastAssistant",
-		"app.quit", "help.show",
-	}
-	byID := make(map[string]cmdEntry, len(entries))
-	for _, e := range entries {
-		byID[e.ID] = e
-	}
-	for _, id := range required {
-		e, ok := byID[id]
-		if !ok {
-			t.Errorf("palette missing required command %q", id)
-			continue
-		}
-		if e.Label == "" {
-			t.Errorf("palette entry %q has empty label", id)
-		}
-		if e.Category == "" {
-			t.Errorf("palette entry %q has empty category", id)
-		}
-	}
-}
-
 // TestPaletteSelfReferenceHidden asserts the "Command Palette" entry
 // that opens the palette is excluded, because selecting it from the palette
 // is meaningless and visually noisy.
@@ -343,41 +285,13 @@ func TestPaletteSelfReferenceHidden(t *testing.T) {
 	}
 }
 
-// TestPaletteGroupOrderIsStable verifies the group order follows the
-// defaultActions order (File, Edit, View, Tabs, Agent, Tools, System, Help, Chat, App).
-// This locks in the visual ordering so future reorders require a
-// deliberate test update.
-func TestPaletteGroupOrderIsStable(t *testing.T) {
-	reg := ui.DefaultRegistry()
-	entries := paletteEntriesFromRegistry(reg)
-	prev := -1
-	wantOrder := map[cmdCategory]int{
-		catFile: 0, catEdit: 1, catView: 2, catTabs: 3,
-		catAgent: 4, catTools: 5, catSystem: 6, catHelp: 7,
-		catChat: 8, catApp: 9,
-	}
-	for _, e := range entries {
-		ord, ok := wantOrder[e.Category]
-		if !ok {
-			continue
-		}
-		if ord < prev {
-			t.Errorf("category %q appeared out of order (ord=%d, prev=%d)", e.Category, ord, prev)
-		}
-		prev = ord
-	}
-}
-
 // Unrelated commands must not collide, but a shared semantic operation keeps
 // its established glyph instead of introducing a one-off icon dialect.
 func TestDistinctIconsPerCommand(t *testing.T) {
 	reg := ui.DefaultRegistry()
 	entries := paletteEntriesFromRegistry(reg)
 	seen := make(map[string]string, len(entries))
-	sameOperation := map[string]map[string]bool{
-		"⚙": {"settings.open": true, "settings.network": true},
-		"↻": {"lsp.restart": true, "agent.retry": true},
-	}
+	sameOperation := map[string]map[string]bool{}
 	for _, e := range entries {
 		// Only consider non-empty icons; blank " " placeholders are fine to repeat.
 		if e.Icon == "" || e.Icon == " " {
@@ -390,46 +304,6 @@ func TestDistinctIconsPerCommand(t *testing.T) {
 			}
 		}
 		seen[e.Icon] = e.ID
-	}
-}
-
-// TestPaletteExecuteCommandRoutesToHandler checks that pressing
-// Enter on a known command id invokes the right App method. We do
-// this without spinning up a full editor: just verify the command
-// id appears in the palette and that its description isn't empty.
-func TestPaletteExecuteCommandRoutesToHandler(t *testing.T) {
-	reg := ui.DefaultRegistry()
-	entries := paletteEntriesFromRegistry(reg)
-	want := map[string]string{
-		"file.save":             "save current file",
-		"file.close":            "close the active editor tab",
-		"file.new":              "create a new file in the workspace",
-		"file.revealInTree":     "expand the file tree to the active file",
-		"edit.find":             "search within the current file",
-		"edit.replace":          "find and replace within the current file",
-		"lsp.outline":           "document outline",
-		"view.focus.editor":     "move keyboard focus to the editor",
-		"view.focus.chat":       "move keyboard focus to the chat input",
-		"tabs.next":             "switch to the next editor tab",
-		"tabs.previous":         "switch to the previous editor tab",
-		"agent.cancel":          "stop the running agent",
-		"agent.newSession":      "start a fresh session",
-		"app.toggleTheme":       "cycle through theme presets",
-		"app.copyLastAssistant": "copy the last assistant message to clipboard",
-	}
-	byID := make(map[string]cmdEntry)
-	for _, e := range entries {
-		byID[e.ID] = e
-	}
-	for id, wantDesc := range want {
-		e, ok := byID[id]
-		if !ok {
-			t.Errorf("missing command %q", id)
-			continue
-		}
-		if !strings.Contains(e.Detail, wantDesc) && e.Detail != wantDesc {
-			t.Errorf("command %q: detail %q does not mention %q", id, e.Detail, wantDesc)
-		}
 	}
 }
 
@@ -515,19 +389,6 @@ func TestExecutePaletteCommandRevealInTree(t *testing.T) {
 	}
 }
 
-// TestExecutePaletteCommandNoActiveAgentCancel is a smoke test for the
-// Cancel Agent command when no agent is active. The command must not
-// crash, even with no active ID.
-func TestExecutePaletteCommandNoActiveAgentCancel(t *testing.T) {
-	app := newFullTestApp(t)
-	if app.AgentView.ActiveID() != "" {
-		t.Skip("test requires no active agent")
-	}
-	app.executePaletteCommand("agent.cancel")
-}
-
-// ── Fixes for the command-palette cleanup audit ───────────────────────────
-
 // TestPaletteExcludesSendAndNewLineHints verifies the two chat-input
 // hint fragments ("Send", "New line") are DisplayOnly and therefore
 // absent from the palette. Before the fix they appeared as inert dead
@@ -559,144 +420,96 @@ func TestPaletteExcludesSendAndNewLineHints(t *testing.T) {
 	}
 }
 
-// TestPaletteUndoRedoLabelsDisambiguated verifies the two distinct
-// "Undo" operations are no longer confusable in the palette: edit.undo
-// is editor undo ("Undo Typing"), system.undo is agent-file-change
-// revert ("Undo Agent File Change").
-func TestPaletteUndoRedoLabelsDisambiguated(t *testing.T) {
-	reg := ui.DefaultRegistry()
-	entries := paletteEntriesFromRegistry(reg)
+// The palette lists only commands that work from anywhere; surface-bound
+// actions keep their keys and menus but never crowd the palette.
+func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
+	entries := paletteEntriesFromRegistry(ui.DefaultRegistry())
 	byID := make(map[string]cmdEntry, len(entries))
 	for _, e := range entries {
 		byID[e.ID] = e
 	}
-	eu, ok := byID["edit.undo"]
-	if !ok {
-		t.Fatal("palette missing edit.undo")
+	for _, id := range []string{
+		"agent.newSession", "app.sessions", "file.attach", "composer.toggle", "board.browse", "memory.browse",
+		"file.new", "file.close", "search.project.open", "search.project.replace", "lsp.outline", "history.open",
+		"view.toggle.sidebar", "lsp.problems", "status.overview", "performance.open", "terminal.new", "terminal.toggle",
+		"view.activity.git", "git.review", "git.history",
+		"settings.open", "settings.workspace", "lsp.restart", "app.quit",
+	} {
+		if e, ok := byID[id]; !ok || e.Label == "" {
+			t.Errorf("palette missing global command %q", id)
+		}
 	}
-	if eu.Label != "Undo Typing" {
-		t.Errorf("edit.undo label = %q, want %q", eu.Label, "Undo Typing")
+	for _, id := range []string{
+		"file.save", "edit.undo", "edit.moveLineUp", "lsp.hover", "tabs.next", "view.focus.sidebar",
+		"pane.split-right", "pane.move-left", "workspace.panel.tab", "help.show", "safety.yolo.toggle", "system.undo",
+	} {
+		if _, ok := byID[id]; ok {
+			t.Errorf("palette lists surface-bound or removed command %q", id)
+		}
 	}
-	su, ok := byID["system.undo"]
-	if !ok {
-		t.Fatal("palette missing system.undo")
-	}
-	if su.Label != "Revert Agent Files" {
-		t.Errorf("system.undo label = %q, want %q", su.Label, "Revert Agent Files")
-	}
-	// Sanity: the two labels must not be equal.
-	if eu.Label == su.Label {
-		t.Fatal("edit.undo and system.undo share a label — palette is ambiguous")
-	}
-}
-
-// TestExecutePaletteCommandEditUndoRedo wires the editor undo/redo
-// commands through the palette. With an editor open, edit.undo/edit.redo
-// must dispatch to the editor's Undo()/Redo(); with no editor open they
-// must emit a status-bar info message instead of crashing.
-func TestExecutePaletteCommandEditUndoRedo(t *testing.T) {
-	app := newFullTestApp(t)
-	app.width, app.height = 80, 24
-
-	// No editor open: must not crash, status bar gets a hint.
-	app.executePaletteCommand("edit.undo")
-	app.executePaletteCommand("edit.redo")
-	if app.Feedback == nil {
-		t.Fatal("editor actions require a feedback sink")
+	if len(entries) > 40 {
+		t.Fatalf("palette has %d commands; keep it to commands that work from anywhere", len(entries))
 	}
 }
 
-// TestExecutePaletteCommandFocusChatWithEditorOpen is the regression
-// test for the core focus-architecture fix. Before the fix,
-// view.focus.chat called unfocus() (clearing the stack), and
-// focusTarget() then fell through to FocusEditor because an editor was
-// open, so "Focus Chat" was a no-op. The fix pushes FocusInput onto
-// the stack and focusTarget() now returns FocusInput even with an
-// editor open.
-func TestExecutePaletteCommandFocusChatWithEditorOpen(t *testing.T) {
-	app, _, mainPath := setupTreeRoutingApp(t)
-	if app.focusTarget() != FocusEditor {
-		t.Fatalf("precondition: focusTarget=%v want FocusEditor (editor open)", app.focusTarget())
+func TestPaletteGroupsFollowCategoryOrder(t *testing.T) {
+	order := map[string]int{}
+	for i, category := range paletteCategories {
+		order[category] = i
 	}
-	app.executePaletteCommand("view.focus.chat")
-	if app.focusTarget() != FocusInput {
-		t.Fatalf("after view.focus.chat with editor open: focusTarget=%v want FocusInput", app.focusTarget())
-	}
-	if app.FocusStack.Top() != FocusInput {
-		t.Fatalf("FocusStack.Top=%v want FocusInput", app.FocusStack.Top())
-	}
-	// And the editor is still open; focus.chat must not close it.
-	if app.EditorState.ActiveView != mainPath {
-		t.Fatalf("view.focus.chat closed the editor: ActiveView=%q want %q", app.EditorState.ActiveView, mainPath)
+	prev := -1
+	for _, e := range paletteEntriesFromRegistry(ui.DefaultRegistry()) {
+		ord, ok := order[e.Category]
+		if !ok {
+			t.Fatalf("entry %q has unknown category %q", e.ID, e.Category)
+		}
+		if ord < prev {
+			t.Fatalf("category %q appeared out of order", e.Category)
+		}
+		prev = ord
 	}
 }
 
-// TestExecutePaletteCommandFocusEditorWithEditorOpen verifies
-// view.focus.editor clears any stale FocusInput (from a prior
-// view.focus.chat) so the editor reclaims focus.
-func TestExecutePaletteCommandFocusEditorWithEditorOpen(t *testing.T) {
-	app, _, _ := setupTreeRoutingApp(t)
-
-	// First drive focus to chat, then back to editor.
-	app.executePaletteCommand("view.focus.chat")
-	if app.focusTarget() != FocusInput {
-		t.Fatalf("precondition focus.chat: focusTarget=%v want FocusInput", app.focusTarget())
+func TestPaletteRowsShowLiveShortcuts(t *testing.T) {
+	reg := overrideHintKey(t, "search.project.open", "Ctrl+Alt+F2")
+	m := newCommandPaletteModel(testTheme(), nil, reg)
+	want := ui.FormatShortcut(reg.HintFor("search.project.open"))
+	for _, item := range m.listItems() {
+		if item.ID == "search.project.open" {
+			if item.Detail != want {
+				t.Fatalf("Find in Files shortcut = %q, want %q", item.Detail, want)
+			}
+			return
+		}
 	}
-	app.executePaletteCommand("view.focus.editor")
-	if app.focusTarget() != FocusEditor {
-		t.Fatalf("after view.focus.editor: focusTarget=%v want FocusEditor", app.focusTarget())
-	}
-	if app.FocusStack.Top() == FocusInput {
-		t.Fatal("view.focus.editor must clear stale FocusInput from the stack")
-	}
+	t.Fatal("Find in Files missing from palette rows")
 }
 
-// TestExecutePaletteCommandFocusEditorNoEditor verifies that with no
-// editor open, view.focus.editor emits a status-bar message and does
-// not crash.
-func TestExecutePaletteCommandFocusEditorNoEditor(t *testing.T) {
-	app := newFullTestApp(t)
-	app.width, app.height = 80, 24
-	// No editor open in this fixture.
-	app.executePaletteCommand("view.focus.editor")
-	// No panic; we don't assert the status text because newFullTestApp
-	// wires a real Feedback only if it was set.
-}
-
-// TestExecutePaletteCommandFileSaveError verifies file.save surfaces a
-// write failure via the status bar instead of silently dropping the
-// error. We open the file while its directory is writable, then lock
-// down permissions so the subsequent Save() write fails.
-func TestExecutePaletteCommandFileSaveError(t *testing.T) {
-	app, _, _ := setupTreeRoutingApp(t)
-
-	dir := filepath.Dir(app.EditorState.ActiveView)
-	roDir := filepath.Join(dir, "readonly")
-	// Create writable so we can write the file inside it.
-	if err := os.MkdirAll(roDir, 0o700); err != nil {
-		t.Fatal(err)
+// A query ranks label matches ahead of loose ones, ignores descriptions and
+// drops group headers so the obvious command is the first selectable row.
+func TestPaletteFilterRanksLabelMatches(t *testing.T) {
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
+	for _, test := range []struct{ query, first string }{
+		{"git h", "git.history"},
+		{"settings", "settings.open"},
+		{"new term", "terminal.new"},
+		{"fif", "search.project.open"},
+		{"quit", "app.quit"},
+	} {
+		m.setFilter(test.query)
+		m.applyFilter()
+		items := m.listItems()
+		if len(items) == 0 || items[0].Header || items[0].ID != test.first {
+			got := ""
+			if len(items) > 0 {
+				got = items[0].ID
+			}
+			t.Fatalf("query %q: first row %q, want %q", test.query, got, test.first)
+		}
 	}
-	t.Cleanup(func() { _ = os.Chmod(roDir, 0o700) })
-
-	roPath := filepath.Join(roDir, "n.go")
-	if err := os.WriteFile(roPath, []byte("package main\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ed := app.EditorState.Editor
-	if err := ed.Open(roPath); err != nil {
-		t.Fatal(err)
-	}
-	app.EditorState.ActiveView = roPath
-
-	// Dirty the buffer, then make the file read-only so Save()'s
-	// overwrite fails. Overwriting an existing file needs the file's
-	// write bit (not the directory's), so we clear that.
-	ed.InsertRune('x')
-	if err := os.Chmod(roPath, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	app.executePaletteCommand("file.save")
-	if !ed.Modified() {
-		t.Fatal("file.save into read-only file must not clear modified flag (save should have failed)")
+	m.setFilter("retention") // only in a removed command's description
+	m.applyFilter()
+	if len(m.filtered) != 0 {
+		t.Fatalf("descriptions must not match: %+v", m.filtered)
 	}
 }

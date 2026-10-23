@@ -42,14 +42,6 @@ func TestCancelOnIdleAgentIsGraceful(t *testing.T) {
 	if notices := cancelNotices(app); len(notices) != 0 {
 		t.Fatalf("Esc on an idle session reported %q", notices)
 	}
-
-	_ = app.executePaletteCommand("agent.cancel")
-	if node.State.Cancelling {
-		t.Fatal("Cancel Agent entered the stopping boundary of an idle agent")
-	}
-	if notices := cancelNotices(app); len(notices) != 1 || notices[0] != "Nothing to stop: the agent is not running" {
-		t.Fatalf("Cancel Agent on idle agent notices = %q", notices)
-	}
 }
 
 // A running turn is stopped once; further presses while it stops are no-ops.

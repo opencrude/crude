@@ -185,7 +185,7 @@ func TestShellInputSlashListUsesShellBackground(t *testing.T) {
 
 	for y := 0; y < buf.Height(); y++ {
 		plain := PlainRow(buf, y, 48)
-		if !strings.Contains(plain, "settings") {
+		if !strings.Contains(plain, "sessions") {
 			continue
 		}
 		for x := 0; x < buf.Width(); x++ {

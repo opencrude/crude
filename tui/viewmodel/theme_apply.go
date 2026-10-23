@@ -34,7 +34,6 @@ const (
 	themeConsumerFindInFiles        themeConsumerID = "findInFiles"
 	themeConsumerFilePicker         themeConsumerID = "FilePicker"
 	themeConsumerSessionPicker      themeConsumerID = "sessionPicker"
-	themeConsumerHelp               themeConsumerID = "helpScreen"
 	themeConsumerOpenOverlays       themeConsumerID = "openOverlays"
 )
 
@@ -395,15 +394,6 @@ func (m *App) themeConsumers() []themeConsumer {
 			apply: func(th *theme.Theme) {
 				if m.sessionPicker != nil {
 					m.sessionPicker.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme { return m.Theme },
-		},
-		{
-			id: themeConsumerHelp,
-			apply: func(th *theme.Theme) {
-				if m.helpScreen != nil {
-					m.helpScreen.SetTheme(th)
 				}
 			},
 			read: func() *theme.Theme { return m.Theme },

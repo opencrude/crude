@@ -8,8 +8,8 @@ import (
 	"crude/fileio"
 	"crude/shellport"
 	"crude/tui/screens/backgroundjobs"
+	"crude/tui/screens/decision"
 	"crude/tui/screens/sessionsettings"
-	"crude/tui/screens/yolo"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
@@ -18,7 +18,7 @@ import (
 const (
 	sessionBackgroundJobsPanelID = "session-background-jobs"
 	sessionSettingsPanelID       = "session-settings"
-	sessionYoloPanelID           = "session-yolo"
+	sessionDecisionPanelID       = "session-decision"
 )
 
 func sessionBackgroundJobsPanel(screen *backgroundjobs.Screen, ownerID string) ui.PanelEntry {
@@ -120,25 +120,43 @@ func sessionSettingsPanel(screen *sessionsettings.Screen) ui.PanelEntry {
 	}
 }
 
-func sessionYoloPanel(screen *yolo.Screen) ui.PanelEntry {
-	return ui.PanelEntry{ID: sessionYoloPanelID, Title: "YOLO", Content: screen, Closable: false, Policy: ui.PanelBlocking, PreferredHeight: 12}
+func sessionDecisionPanel(screen *decision.Screen, title string) ui.PanelEntry {
+	return ui.PanelEntry{ID: sessionDecisionPanelID, Title: title, Content: screen, Closable: false, Policy: ui.PanelBlocking, PreferredHeight: 12}
 }
 
-func (m *App) openSessionYoloPanel() {
+// openSessionDecision asks the active session one docked yes/no question
+// about agentID's session; a newer question replaces an unanswered one.
+func (m *App) openSessionDecision(agentID, title string, spec decision.Spec) {
 	projection := m.activeSessionProjection()
-	if projection == nil || projection.yolo == nil {
+	if projection == nil || projection.decision == nil {
 		return
 	}
-	projection.yolo.Reset()
-	projection.yoloAgentID = m.AgentView.ActiveID()
-	projection.deck.Open(sessionYoloPanel(projection.yolo))
-	if panel := projection.deck.Active(); panel == nil || panel.ID != sessionYoloPanelID {
+	projection.decision.Show(spec)
+	projection.decisionAgentID, projection.decisionData = agentID, ""
+	projection.deck.Close(sessionDecisionPanelID)
+	projection.deck.Open(sessionDecisionPanel(projection.decision, title))
+	if panel := projection.deck.Active(); panel == nil || panel.ID != sessionDecisionPanelID {
 		projection.deckHost.MarkLayout()
 		return
 	}
 	projection.deckFocused = true
-	projection.deckFocus = yolo.ActionsID
+	projection.deckFocus = decision.ActionsID
 	projection.deckHost.MarkLayout()
+}
+
+func (m *App) openSessionYoloPanel() {
+	m.openSessionDecision(m.AgentView.ActiveID(), "YOLO", decision.Spec{
+		Purpose: "yolo", Title: "Enable YOLO for this session?", Hint: "Use /yolo to restore approvals.",
+		Facts: []decision.Fact{
+			{Label: "Approval prompts", Value: "Skipped"},
+			{Label: "Commands / edits", Value: "No confirmation"},
+			{Label: "Hard blocks", Value: "Enforced"},
+			{Label: "Restore safeguards", Value: "Enforced"},
+		},
+		Confirm:       decision.Answer{Label: "Enable YOLO", Shortcut: "y"},
+		Cancel:        decision.Answer{Label: "Cancel", Shortcut: "n"},
+		ConfirmDanger: true, SemanticsLabel: "YOLO mode confirmation",
+	})
 }
 
 func (m *App) activeSessionDeck() *sessionProjection {
@@ -164,18 +182,6 @@ func (m *App) openSessionSettingsPanel() {
 	projection.deckFocused = true
 	projection.deckFocus = sessionsettings.FormID
 	projection.deckHost.MarkLayout()
-}
-
-func (m *App) openSessionModelPicker() tea.Cmd {
-	m.openSessionSettings()
-	projection := m.activeSessionDeck()
-	if projection == nil || projection.settings == nil {
-		return nil
-	}
-	cmd := projection.settings.OpenModelPicker("default")
-	projection.deckFocus = sessionsettings.ScreenID
-	projection.deckHost.MarkLayout()
-	return cmd
 }
 
 func (m *App) openSessionAccountPicker() tea.Cmd {
@@ -298,21 +304,36 @@ func (m *App) focusSessionDeckAfterLayout() {
 	}
 }
 
-func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {
-	_, projection := m.sessionProjections.projectionForYolo(target)
-	if projection == nil || projection.yoloAgentID == "" {
-		return
+func (m *App) resolveSessionDecision(msg decision.ResultMsg) tea.Cmd {
+	_, projection := m.sessionProjections.projectionForDecision(msg.Target)
+	if projection == nil || projection.decisionAgentID == "" {
+		return nil
 	}
-	agentID := projection.yoloAgentID
-	if enabled {
+	agentID, data := projection.decisionAgentID, projection.decisionData
+	projection.decisionAgentID, projection.decisionData = "", ""
+	m.closeProjectionPanel(projection, sessionDecisionPanelID)
+	if !msg.Confirmed {
+		return nil
+	}
+	switch msg.Purpose {
+	case "yolo":
 		m.setAgentYolo(agentID, true)
+	case "implement_plan":
+		if msg.Alternate {
+			return m.implementPlanInNewSession(data)
+		}
+		return m.implementProposedPlan(agentID)
+	case "goal_replace":
+		return m.goalAction(agentID, workspace.GoalReplace, data)
+	case "goal_resume":
+		return m.goalAction(agentID, workspace.GoalResume, "")
 	}
-	projection.yoloAgentID = ""
-	m.closeProjectionPanel(projection, sessionYoloPanelID)
+	return nil
 }
 
+// setAgentYolo changes the owning session's policy; the session records the
+// change's transcript row for every shell.
 func (m *App) setAgentYolo(agentID string, enabled bool) {
-	previous := m.ws.YoloForAgent(agentID)
 	if !m.ws.SetYoloForAgent(agentID, enabled) {
 		m.notifyStatus(types.SeverityError, "safety", "YOLO mode was not changed", "The owning session is no longer available.", types.ResourceRef{Kind: types.ResourceAgent, ID: agentID})
 		return
@@ -320,18 +341,5 @@ func (m *App) setAgentYolo(agentID string, enabled bool) {
 	node := m.ws.AgentMgr().OrchestratorFor(agentID)
 	if node != nil && m.ws.SessionsByAgent()[node.ID] == m.ActiveSession {
 		m.OverlayState.SetYolo(m.ws.YoloForAgent(agentID))
-	}
-	if previous == enabled {
-		return
-	}
-	phase, content := "yolo_disabled", "Tool approval prompts are restored for this session."
-	if enabled {
-		phase, content = "yolo_enabled", "Commands and file changes can run without confirmation. Hard blocks and restore safeguards remain enforced. Use /yolo to restore approval prompts."
-	}
-	if node != nil && node.State != nil && node.State.Messages != nil {
-		now := time.Now()
-		id := phase + ":" + now.Format(time.RFC3339Nano)
-		m.ws.AppendAgentMessages(node.ID, []workspace.Message{{InternalID: id, Role: types.RoleStatus, LifecyclePhase: phase, LifecycleOperationID: id, Content: content, Time: now}}, false)
-		m.syncAgentMessages(node.ID, false)
 	}
 }

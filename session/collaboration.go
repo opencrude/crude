@@ -1018,7 +1018,19 @@ func (s *Session) collaborationDefinitions(actorID string) []tools.ToolDef {
 		}
 		definitions = filtered
 	}
+	if s.isGoalVerifier(actorID) {
+		definitions = tools.WithGoalVerdict(definitions)
+	}
 	return definitions
+}
+
+func (s *Session) isGoalVerifier(actorID string) bool {
+	runner := s.SubAgentRunner()
+	if runner == nil {
+		return false
+	}
+	handle, ok := runner.Manager().GetActive(agent.AgentID(actorID))
+	return ok && handle.Spec.PolicyName == "verify"
 }
 
 func getBoolParam(params map[string]any, key string) bool {
@@ -1214,6 +1226,18 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 			return tools.ToolResult{}, true, err
 		}
 		metadata, _ := params["metadata"].(map[string]any)
+		if s.isGoalVerifier(actorID) {
+			verdict := getStrParam(params, "verdict")
+			if verdict != "achieved" && verdict != "not_achieved" {
+				return tools.ToolResult{}, true, errors.New(`a goal verifier's report needs verdict "achieved" or "not_achieved"`)
+			}
+			typed := make(map[string]any, len(metadata)+1)
+			for key, value := range metadata {
+				typed[key] = value
+			}
+			typed["goal_verdict"] = verdict
+			metadata = typed
+		}
 		runID := getStrParam(params, "run_id")
 		if runID == "" {
 			if current, agentErr := store.Agent(ctx, actorID); agentErr == nil {

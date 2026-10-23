@@ -99,8 +99,8 @@ func TestTerminalOverlayIDsAreDynamicKeepRoute(t *testing.T) {
 	if !ok || got != "t1" {
 		t.Fatalf("TerminalIDFromOverlay=%q %v", got, ok)
 	}
-	if ui.IsTerminalOverlay(ui.OverlayHelp) {
-		t.Fatal("help is not a terminal overlay")
+	if ui.IsTerminalOverlay(ui.OverlayCommandPalette) {
+		t.Fatal("the command palette is not a terminal overlay")
 	}
 	if ui.DefaultOverlayPolicy().Outside != ui.OutsideKeepAndRoute {
 		t.Fatal("floating terminals use DefaultOverlayPolicy KeepRoute")

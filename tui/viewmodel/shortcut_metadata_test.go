@@ -114,42 +114,9 @@ func TestLauncherShortcutsDeriveFromRegistryMetadata(t *testing.T) {
 	}
 }
 
-func TestHelpListingDerivesShortcutsFromRegistryMetadata(t *testing.T) {
-	app := newTestApp(t)
-	app.width, app.height = 100, 30
-	app.actionRegistry = overrideHintKey(t, "edit.find", "Ctrl+Alt+F2")
-	app.openHelp()
-	if app.helpScreen == nil || app.overlayHost.Window(ui.OverlayHelp) == nil {
-		t.Fatal("help overlay did not open")
-	}
-
-	want := ui.FormatShortcut(app.actionRegistry.HintFor("edit.find"))
-	found := false
-	for _, sc := range app.helpShortcuts() {
-		if sc.Keys == want && sc.Label == "Save" {
-			// overrideHintKey replaces the whole ActionDef with Label "Save"
-			found = true
-		}
-		if sc.Keys == want {
-			found = true
-		}
-		if strings.EqualFold(sc.Label, "Send") || strings.EqualFold(sc.Label, "New line") {
-			t.Fatalf("help catalog must exclude DisplayOnly hint %q", sc.Label)
-		}
-	}
-	if !found {
-		t.Fatalf("help catalog missing overridden shortcut %q", want)
-	}
-	if want == "Ctrl+F" {
-		t.Fatal("precondition: override should not be the default Ctrl+F")
-	}
-}
-
-// TestPaletteEntriesRenderFromActionMetadata proves the command palette
-// derives every row (label, detail, icon) from ActionDef metadata.
 func TestPaletteEntriesRenderFromActionMetadata(t *testing.T) {
 	reg := ui.NewActionRegistry()
-	reg.Register(&ui.ActionDef{ID: "palette.custom", Label: "Custom Thing", Description: "does custom things", Icon: "!", Category: "Tools"})
+	reg.Register(&ui.ActionDef{ID: "palette.custom", Label: "Custom Thing", Description: "does custom things", Icon: "!", Category: "App", HintKey: "Ctrl+Alt+Z"})
 	reg.Register(&ui.ActionDef{ID: "input.submit", Label: "Send", HintKey: "Enter", DisplayOnly: true})
 
 	entries := paletteEntriesFromRegistry(reg)
@@ -157,7 +124,7 @@ func TestPaletteEntriesRenderFromActionMetadata(t *testing.T) {
 	for _, e := range entries {
 		if e.ID == "palette.custom" {
 			found = true
-			if e.Label != "Custom Thing" || e.Detail != "does custom things" || e.Icon != "!" {
+			if e.Label != "Custom Thing" || e.Shortcut != "Ctrl+Alt+Z" || e.Icon != "!" {
 				t.Fatalf("palette entry must render registry metadata verbatim, got %+v", e)
 			}
 		}
@@ -175,7 +142,7 @@ func TestPaletteEntriesRenderFromActionMetadata(t *testing.T) {
 // from ActionDef metadata, not a hardcoded command table.
 func TestPaletteListPaintsRegistryMetadata(t *testing.T) {
 	reg := ui.NewActionRegistry()
-	reg.Register(&ui.ActionDef{ID: "palette.custom", Label: "Custom Thing", Description: "does custom things", Icon: "!", Category: "Tools"})
+	reg.Register(&ui.ActionDef{ID: "palette.custom", Label: "Custom Thing", Description: "does custom things", Icon: "!", Category: "App"})
 	m := newCommandPaletteModel(testTheme(), nil, reg)
 	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: m.listItems(),
