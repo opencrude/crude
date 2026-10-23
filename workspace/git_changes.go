@@ -105,19 +105,17 @@ func (s *GitService) CommitStaged(ctx context.Context, expected []string, messag
 		return err
 	}
 	defer s.unlock()
-	state, err := s.readReviewState(ctx)
+	repo, root, err := s.open()
 	if err != nil {
 		return err
 	}
-	defer state.close()
-	review, err := state.commitReview(ctx)
+	closeGitRepository(repo)
+	status, err := ReadGitStatus(ctx, root)
 	if err != nil {
 		return err
 	}
-	actual := make([]string, 0, len(review.Comparisons))
-	for _, comparison := range review.Comparisons {
-		actual = append(actual, comparison.Path)
-	}
+	// The same projection the panel showed, so the two cannot disagree.
+	actual := GitSnapshot{Changes: projectGitChanges(root, status)}.StagedPaths()
 	want := slices.Clone(expected)
 	slices.Sort(want)
 	if !slices.Equal(actual, slices.Compact(want)) {
