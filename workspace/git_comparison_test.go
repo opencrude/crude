@@ -232,6 +232,46 @@ func TestGitCommitStagedUsesExactStagedSetAndInspectsEvidence(t *testing.T) {
 	}
 }
 
+// A staged rename is one row in the panel; committing what the panel showed
+// must succeed rather than fail as stale.
+func TestGitCommitStagedAcceptsTheRenameThePanelShows(t *testing.T) {
+	repo, _, service, root := reviewRepository(t, true)
+	if err := os.Mkdir(filepath.Join(root, "moved"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGit(t, root, "mv", "file.txt", "moved/file.txt"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.StagedPaths(); len(got) != 1 || got[0] != "moved/file.txt" {
+		t.Fatalf("panel shows staged=%v, want the one rename row", got)
+	}
+	if err := service.CommitStaged(context.Background(), snapshot.StagedPaths(), "move"); err != nil {
+		t.Fatalf("commit of the shown rename failed: %v", err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tree.File("moved/file.txt"); err != nil {
+		t.Fatalf("committed tree lacks the rename destination: %v", err)
+	}
+	if _, err := tree.File("file.txt"); err == nil {
+		t.Fatal("committed tree still holds the rename source")
+	}
+}
+
 func TestGitComparisonPathCancellationAndExistingLock(t *testing.T) {
 	_, _, service, root := reviewRepository(t, true)
 	for _, name := range []string{"../outside", ".git/config", "nested/../file.txt", "/file.txt"} {
