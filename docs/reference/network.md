@@ -267,6 +267,15 @@ the selected core's settings. It retains Local and saved SSH/direct connections,
 connection state/carrier/RTT, errors, explicit Test/Connect/Disconnect and remote
 workspace browsing. Add/Edit uses shared native forms. SSH config aliases may be
 listed as suggestions; this does not import SSH passwords or disable host checks.
+The globe is fourth in the default rail, immediately after Recent Workspaces.
+Both sidebar resource lines target the exact connection's context menu, including
+Connect/Open, Test, Edit/Pair and Remove; Local omits saved-connection operations
+and the current remote cannot be removed. Refresh lives in the context menu, not
+a dedicated list/footer control. It uses the same retained activity-list
+ProgressRule and visible-only animation cadence as Workspaces: keep usable rows
+during reads and failures, reject stale completions, and clear the refresh error
+on the next attempt. Menu callbacks are fenced to their manager and workspace
+lifetime; they never start I/O on Update.
 Switching backends prepares the destination and applies existing dirty-editor,
 pending-command and private-draft safeguards before replacing the old attachment.
 Failure leaves the old backend usable; no peer work is stopped. Late results are

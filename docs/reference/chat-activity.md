@@ -164,6 +164,9 @@ source-derived treatment through wrapping, animation, disclosure, parallel
 projection and hydration. Compose owns geometry only, never a second background
 classifier. Markdown/code styling and text selection paint over the band without
 changing content or interaction targets.
+Row padding inherits the fill already painted in its own buffer, just like
+text. In floating chats it must never replace that fill with a default-background
+cell that inherits a shaded transcript underneath the window during composition.
 
 Every visible leaf uses a structured shared title, with separate action, operand,
 and metadata spans. `ColorToolTitle` follows the theme's function accent;

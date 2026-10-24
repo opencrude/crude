@@ -18,13 +18,14 @@ import (
 
 type fakeRemoteManager struct {
 	snapshot        remoteconn.Snapshot
+	snapshotErr     error
 	err             error
 	saves, attaches int
 	attach          func(context.Context, string, string) (shellport.Workspace, error)
 }
 
 func (f *fakeRemoteManager) Snapshot(context.Context) (remoteconn.Snapshot, error) {
-	return f.snapshot, nil
+	return f.snapshot, f.snapshotErr
 }
 func (f *fakeRemoteManager) Save(_ context.Context, d shellport.RemoteConnectionDraft) (shellport.RemoteStatus, error) {
 	f.saves++

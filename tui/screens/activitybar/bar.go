@@ -1,6 +1,7 @@
 package activitybar
 
 import (
+	"slices"
 	"strconv"
 
 	tea "charm.land/bubbletea/v2"
@@ -156,7 +157,7 @@ func SettingsIcon(nerdFont bool) string {
 	return "⚙"
 }
 
-var views = []View{ViewFiles, ViewAgents, ViewWorkspaces, ViewSkills, ViewMCP, ViewRemotes}
+var views = []View{ViewFiles, ViewAgents, ViewWorkspaces, ViewRemotes, ViewSkills, ViewMCP}
 
 // Views returns the rail order.
 func Views() []View { return append([]View(nil), views...) }
@@ -205,15 +206,14 @@ func (screen *Screen) SetOrder(ids []string) {
 			}
 		}
 	}
-	// Workspace switching is primary shell navigation, not an optional tool.
-	// Every projection keeps it reachable directly beneath Agents (or Files
-	// when Agents is unpinned), independently of optional shortcut preferences.
-	for i, view := range screen.order {
-		if view == ViewWorkspaces {
-			screen.order = append(screen.order[:i], screen.order[i+1:]...)
-			break
-		}
-	}
+	// Workspace switching and backend choice are primary shell navigation,
+	// not optional tools. Every projection keeps them directly beneath
+	// Agents (or Files when Agents is unpinned), independently of optional
+	// shortcut preferences: Files / Agents / Recent Workspaces / Remotes /
+	// Skills / MCP.
+	screen.order = slices.DeleteFunc(screen.order, func(view View) bool {
+		return view == ViewWorkspaces || view == ViewRemotes
+	})
 	insert := 0
 	for i, view := range screen.order {
 		if view == ViewFiles && insert == 0 {
@@ -224,17 +224,7 @@ func (screen *Screen) SetOrder(ids []string) {
 			break
 		}
 	}
-	screen.order = append(screen.order, ViewWorkspaces)
-	copy(screen.order[insert+1:], screen.order[insert:len(screen.order)-1])
-	screen.order[insert] = ViewWorkspaces
-	// Backend choice is client navigation, not a workspace-pinnable tool.
-	found := false
-	for _, view := range screen.order {
-		found = found || view == ViewRemotes
-	}
-	if !found {
-		screen.order = append(screen.order, ViewRemotes)
-	}
+	screen.order = slices.Insert(screen.order, insert, ViewWorkspaces, ViewRemotes)
 	screen.hover = -1
 }
 

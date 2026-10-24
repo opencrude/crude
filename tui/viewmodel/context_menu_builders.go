@@ -159,6 +159,8 @@ func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuSta
 		return m.buildAgentSidebarContextMenu(mouse)
 	case activityWorkspaces:
 		return m.buildWorkspaceSidebarContextMenu(mouse)
+	case activityRemotes:
+		return m.buildRemoteSidebarContextMenu(mouse)
 	case activitySkills, activityMCP:
 		return m.buildActivityRailContextMenu(m.activityView)
 	default:
@@ -233,6 +235,8 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 		})
 	case activitybar.ViewWorkspaces:
 		st.Sections = append(st.Sections, m.workspaceNavigationActions())
+	case activitybar.ViewRemotes:
+		st.Sections = append(st.Sections, m.remoteNavigationActions())
 	case activitybar.ViewSkills, activitybar.ViewMCP:
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: view.Label(),

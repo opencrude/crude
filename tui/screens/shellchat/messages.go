@@ -275,7 +275,9 @@ func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.Toke
 			// Padding belongs to the same semantic text range.
 			cf, cb = tokens.TextSelectionColors(cf)
 		}
-		buf.Set(x+i, y, cell.Cell{Char: ' ', Content: " ", Width: 1, FG: cf, BG: cb})
+		// Default background inherits this window's already-painted fill,
+		// never the transcript underneath it at composition time.
+		buf.WriteString(x+i, y, " ", cf, cb, 0)
 		col++
 	}
 }

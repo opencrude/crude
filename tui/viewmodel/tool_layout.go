@@ -47,7 +47,7 @@ func (app *App) captureToolView() {
 }
 
 func (app *App) navigationActions(view activitybar.View) ui.ContextMenuSection {
-	if view == activityWorkspaces {
+	if view == activityWorkspaces || view == activityRemotes {
 		return ui.ContextMenuSection{SectionLabel: "Navigation", Items: []ui.ContextMenuItem{{Label: "Reset navigation", Action: app.resetToolLayout}}}
 	}
 	pinned := slices.Contains(app.toolLayout.Rail, view.ID())
