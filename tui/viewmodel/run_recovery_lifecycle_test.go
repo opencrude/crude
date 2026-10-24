@@ -262,36 +262,36 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			incident := waitFor("recovery").Data.(recovery.Status)
 			app.paintShellFrame()
 			if failure == http.StatusUnauthorized {
-				if incident.State != recovery.NeedsAttention {
-					t.Fatalf("authentication did not park for attention: %+v", incident)
+				// A permanent provider verdict ends the turn with its reason (as in
+				// Codex and Claude Code); the draft stays and nothing offers Retry.
+				if incident.State != recovery.Failed || !strings.Contains(incident.Detail, "401") {
+					t.Fatalf("authentication failure did not end the turn with its reason: %+v", incident)
 				}
-				// Find the actual painted action and use the product pointer
-				// entry point, not a direct call to the backend retry method.
-				x, y := -1, -1
-				for row := app.chatRect.Y; row < app.chatRect.Y+app.chatRect.H-1; row++ {
-					runes := []rune(rowText(app, row))
-					if column := strings.Index(string(runes), "(Retry now)"); column >= 0 {
-						x, y = len([]rune(string(runes)[:column]))+3, row
-						break
+				deadline := time.Now().Add(2 * time.Second)
+				for app.ws.AgentActivity(orch.ID).Status.Phase != types.AgentFailed && time.Now().Before(deadline) {
+					select {
+					case event := <-sender.events:
+						if event.AgentID == "" {
+							event.AgentID = orch.ID
+						}
+						_, _ = app.Update(event)
+					case <-time.After(10 * time.Millisecond):
 					}
 				}
-				if x < 0 {
-					t.Fatal("the recovery row did not paint Retry now")
+				_, _ = app.Update(types.TickMsg(time.Now()))
+				app.paintShellFrame()
+				var transcript strings.Builder
+				for row := app.chatRect.Y; row < app.chatRect.Y+app.chatRect.H; row++ {
+					transcript.WriteString(rowText(app, row) + "\n")
 				}
-				_, _ = app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-				_, command := app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
-				if command == nil {
-					t.Fatal("Retry now click did not submit an owner action")
+				painted := transcript.String()
+				if !strings.Contains(painted, "Turn failed") || !strings.Contains(painted, "401") || strings.Contains(painted, "Retry now") || strings.Contains(painted, "/retry") {
+					t.Fatalf("failed turn was not reported plainly:\n%s", painted)
 				}
-				// This release has one command: the exact durable retry request.
-				result := command()
-				if batch, ok := result.(tea.BatchMsg); ok {
-					for _, cmd := range batch {
-						_, _ = app.Update(cmd())
-					}
-				} else {
-					_, _ = app.Update(result)
+				if app.canRetryAgentRecovery(orch.ID) || app.Input.Value() != draft || app.Input.CursorFlat() != 7 || requests.Load() != 1 {
+					t.Fatalf("failed turn retried or consumed the draft: retry=%v draft=%q requests=%d", app.canRetryAgentRecovery(orch.ID), app.Input.Value(), requests.Load())
 				}
+				return
 			} else if incident.State != recovery.Recovering || incident.RetryAt.IsZero() {
 				t.Fatalf("transport exhaustion has no automatic cooldown: %+v", incident)
 			} else {

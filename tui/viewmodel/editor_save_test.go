@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func newSaveTestEditor(t *testing.T, app *App, content string) *editor.Editor {

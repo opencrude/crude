@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"crude/coreprotocol"
 	"crude/session"
 	"crude/sessiondb"
 	"crude/shellport"
@@ -97,9 +96,5 @@ func (w *Workspace) reportFailure(operation string, err error) {
 }
 
 func (s workspaceStore) ListSessions() ([]sessiondb.SessionMeta, error) {
-	ctx, cancel := context.WithTimeout(s.w.ctx, callTimeout)
-	defer cancel()
-	var metas []sessiondb.SessionMeta
-	err := s.w.call(ctx, coreprotocol.ListSessions, struct{}{}, &metas)
-	return metas, err
+	return s.w.ListSessions(), nil
 }

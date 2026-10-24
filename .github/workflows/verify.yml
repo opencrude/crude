@@ -38,6 +38,12 @@ jobs:
         run: . scripts/libghostty_env.sh && go test ./... -count=1 -timeout=180s
       - name: Full race suite
         run: . scripts/libghostty_env.sh && python scripts/test_race.py
+      - name: Bounded native protocol fuzz campaigns
+        env:
+          CRUDE_TEMP_DIR: ${{ runner.temp }}
+          FUZZ_SECONDS: '2'
+          GOMAXPROCS: '2'
+        run: bash scripts/protocol_fuzz.sh
   windows:
     name: Windows native build and tests
     runs-on: windows-2022

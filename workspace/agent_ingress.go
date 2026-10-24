@@ -171,7 +171,6 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 			return result
 		}
 		state.Status = data["status"]
-		flushAgentTokens(state, time.Now())
 		if state.Status == "completed" {
 			state.Messages.MarkAllThinkingDone()
 		} else {
@@ -217,8 +216,6 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		result.ChangedAgents = append(result.ChangedAgents, node.Parent.ID)
 	default:
 		result.Effects = state.ApplyEvent(evt)
-		// Canonical text is available immediately, even with no presentation tick.
-		flushAgentTokens(state, time.Now())
 	}
 	if prompt := result.Effects.Prompt; prompt != nil {
 		if w.agentPrompts == nil {
@@ -278,13 +275,6 @@ func (w *Workspace) agentPane(id string) *SubPane {
 	return w.PaneMgr.Get(id)
 }
 
-func flushAgentTokens(state *AgentState, now time.Time) {
-	if state.TokenBuf != "" && state.Messages != nil {
-		state.Messages.AppendToken(state.TokenBuf)
-		state.TokenBuf, state.LastTokenTime = "", now
-	}
-}
-
 // AdvanceAgentState advances domain-owned lifecycle transitions. A consumer may
 // choose any presentation cadence without governing accepted semantic evidence.
 func (w *Workspace) AdvanceAgentState(now time.Time) AgentReduction {
@@ -297,7 +287,6 @@ func (w *Workspace) AdvanceAgentState(now time.Time) AgentReduction {
 			continue
 		}
 		before := node.State.Messages.Version()
-		flushAgentTokens(node.State, now)
 		node.State.Messages.AdvanceToolLifecycles(now)
 		if before != node.State.Messages.Version() {
 			result.ChangedAgents = append(result.ChangedAgents, node.ID)
@@ -433,46 +422,62 @@ func (w *Workspace) snapshotAgents(includeMessages bool) AgentWorkspaceSnapshot 
 	}
 	result.Revision = w.agentRevision
 	for _, node := range w.AgentMgr.AllNodes() {
-		state := node.State
-		if state == nil {
-			continue
+		if node.State != nil {
+			result.Agents = append(result.Agents, w.snapshotAgent(node, includeMessages))
 		}
-		snapshot := AgentSnapshot{ID: node.ID, Label: node.Label, Model: node.Model, Category: node.Category,
-			Streaming: state.Streaming, Thinking: state.Thinking, Running: state.Running, Cancelling: state.Cancelling,
-			Completed: state.Completed, Status: state.Status, TurnIdentity: state.TurnIdentity,
-			RuntimeIdentity: state.runtimeIdentity, ReasoningMode: state.ReasoningMode, Recovery: state.RecoveryStatus(),
-			LastTokenTime: state.LastTokenTime, ConversationRevision: state.Messages.Version(),
-			Activity: w.AgentActivity(node.ID), Yolo: w.YoloForAgent(node.ID), PlanMode: w.PlanModeForAgent(node.ID), ActiveCompaction: state.ActiveCompaction}
-		if goal, ok := w.GoalForAgent(node.ID); ok {
-			snapshot.Goal = &goal
-		}
-		if includeMessages {
-			snapshot.Messages = state.Messages.Messages()
-		}
-		if node.Parent != nil {
-			snapshot.ParentID = node.Parent.ID
-		}
-		if owner := w.SessionForAgent(node.ID); owner != nil {
-			snapshot.SessionID = owner.SessionID
-		}
-		if prompt, ok := w.agentPrompts[node.ID]; ok && prompt.BlockID == state.PendingBlockID {
-			snapshot.Prompt = &prompt
-		}
-		if snapshot.Activity.Plan != nil {
-			plan := *snapshot.Activity.Plan
-			plan.Steps = slices.Clone(plan.Steps)
-			plan.Current = slices.Clone(plan.Current)
-			if plan.Next != nil {
-				next := *plan.Next
-				plan.Next = &next
-			}
-			snapshot.Activity.Plan = &plan
-		}
-		snapshot.Usage, _ = w.UsageSummary(node.ID, types.UsageThisAgent)
-		snapshot.Usage.Models = slices.Clone(snapshot.Usage.Models)
-		result.Agents = append(result.Agents, snapshot)
 	}
 	return result
+}
+
+// AgentStateSnapshot publishes one changed agent without scanning inventory or
+// exporting transcript bodies. Calls are serialized with semantic ingress.
+func (w *Workspace) AgentStateSnapshot(id string) (AgentSnapshot, bool) {
+	if w == nil || w.AgentMgr == nil {
+		return AgentSnapshot{}, false
+	}
+	node := w.AgentMgr.Get(id)
+	if node == nil || node.State == nil {
+		return AgentSnapshot{}, false
+	}
+	return w.snapshotAgent(node, false), true
+}
+
+func (w *Workspace) snapshotAgent(node *AgentNode, includeMessages bool) AgentSnapshot {
+	state := node.State
+	snapshot := AgentSnapshot{ID: node.ID, Label: node.Label, Model: node.Model, Category: node.Category,
+		Streaming: state.Streaming, Thinking: state.Thinking, Running: state.Running, Cancelling: state.Cancelling,
+		Completed: state.Completed, Status: state.Status, TurnIdentity: state.TurnIdentity,
+		RuntimeIdentity: state.runtimeIdentity, ReasoningMode: state.ReasoningMode, Recovery: state.RecoveryStatus(),
+		LastTokenTime: state.LastTokenTime, ConversationRevision: state.Messages.Version(),
+		Activity: w.AgentActivity(node.ID), Yolo: w.YoloForAgent(node.ID), PlanMode: w.PlanModeForAgent(node.ID), ActiveCompaction: state.ActiveCompaction}
+	if goal, ok := w.GoalForAgent(node.ID); ok {
+		snapshot.Goal = &goal
+	}
+	if includeMessages {
+		snapshot.Messages = state.Messages.Messages()
+	}
+	if node.Parent != nil {
+		snapshot.ParentID = node.Parent.ID
+	}
+	if owner := w.SessionForAgent(node.ID); owner != nil {
+		snapshot.SessionID = owner.SessionID
+	}
+	if prompt, ok := w.agentPrompts[node.ID]; ok && prompt.BlockID == state.PendingBlockID {
+		snapshot.Prompt = &prompt
+	}
+	if snapshot.Activity.Plan != nil {
+		plan := *snapshot.Activity.Plan
+		plan.Steps = slices.Clone(plan.Steps)
+		plan.Current = slices.Clone(plan.Current)
+		if plan.Next != nil {
+			next := *plan.Next
+			plan.Next = &next
+		}
+		snapshot.Activity.Plan = &plan
+	}
+	snapshot.Usage, _ = w.UsageSummary(node.ID, types.UsageThisAgent)
+	snapshot.Usage.Models = slices.Clone(snapshot.Usage.Models)
+	return snapshot
 }
 
 // ApplyAgentInputAdmission commits the visible accepted input on the same owner

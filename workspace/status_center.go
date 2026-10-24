@@ -49,6 +49,7 @@ type StatusCenter struct {
 	byNoticeID    map[string]int
 	nextID        uint64
 	version       uint64
+	changed       chan struct{}
 
 	persistMu    sync.Mutex
 	persistQueue map[string]statusPersistRequest
@@ -122,15 +123,20 @@ func (c *StatusCenter) Hydrate() error {
 		return err
 	}
 	c.mu.Lock()
+	before := len(c.notifications)
+	added := false
 	for i := len(loaded) - 1; i >= 0; i-- {
 		if _, exists := c.byNoticeID[loaded[i].ID]; exists {
 			continue
 		}
 		c.notifications = append(c.notifications, loaded[i])
+		added = true
 	}
 	c.reindexLocked()
 	c.pruneLocked(time.Now())
-	c.version++
+	if added || len(c.notifications) != before {
+		c.bumpVersionLocked()
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -162,18 +168,24 @@ func (c *StatusCenter) SetAgent(snapshot ttypes.AgentStatusSnapshot) {
 	if snapshot.StartedAt.IsZero() {
 		snapshot.StartedAt = now
 	}
+	if snapshot.PhaseStartedAt.IsZero() && previous.Phase == snapshot.Phase {
+		snapshot.PhaseStartedAt = previous.PhaseStartedAt
+	}
 	if snapshot.PhaseStartedAt.IsZero() || previous.Phase != snapshot.Phase {
 		snapshot.PhaseStartedAt = now
 	}
 	if snapshot.UpdatedAt.IsZero() {
-		snapshot.UpdatedAt = now
+		snapshot.UpdatedAt = previous.UpdatedAt
 	}
 	if previous == snapshot {
 		c.mu.Unlock()
 		return
 	}
+	if snapshot.UpdatedAt.Equal(previous.UpdatedAt) {
+		snapshot.UpdatedAt = now
+	}
 	c.agents[snapshot.Ref.ID] = snapshot
-	c.version++
+	c.bumpVersionLocked()
 	c.mu.Unlock()
 }
 
@@ -184,7 +196,7 @@ func (c *StatusCenter) RemoveAgent(id string) {
 	c.mu.Lock()
 	if _, exists := c.agents[id]; exists {
 		delete(c.agents, id)
-		c.version++
+		c.bumpVersionLocked()
 	}
 	c.mu.Unlock()
 }
@@ -218,13 +230,20 @@ func (c *StatusCenter) SetOperation(op ttypes.OperationSnapshot) {
 		return
 	}
 	now := time.Now()
+	c.mu.Lock()
+	previous := c.operations[op.ID]
+	if op.StartedAt.IsZero() {
+		op.StartedAt = previous.StartedAt
+	}
+	if operationTerminal(op.State) && op.EndedAt.IsZero() {
+		op.EndedAt = previous.EndedAt
+	}
 	if op.StartedAt.IsZero() {
 		op.StartedAt = now
 	}
 	if operationTerminal(op.State) && op.EndedAt.IsZero() {
 		op.EndedAt = now
 	}
-	c.mu.Lock()
 	if previous, exists := c.operations[op.ID]; exists && operationEquivalent(previous, op) {
 		c.mu.Unlock()
 		return
@@ -232,7 +251,7 @@ func (c *StatusCenter) SetOperation(op ttypes.OperationSnapshot) {
 	op.UpdatedAt = now
 	c.operations[op.ID] = op
 	c.pruneOperationsLocked(now)
-	c.version++
+	c.bumpVersionLocked()
 	c.mu.Unlock()
 }
 
@@ -305,7 +324,7 @@ func (c *StatusCenter) FinishOperations(ownerID string, state ttypes.OperationSt
 		}
 		op.State, op.Error, op.UpdatedAt, op.EndedAt = state, errText, now, now
 		c.operations[id] = op
-		c.version++
+		c.bumpVersionLocked()
 	}
 	c.mu.Unlock()
 }
@@ -320,7 +339,7 @@ func (c *StatusCenter) FinishOperation(id string, state ttypes.OperationState, e
 	if ok && !operationTerminal(op.State) {
 		op.State, op.Error, op.UpdatedAt, op.EndedAt = state, errText, now, now
 		c.operations[id] = op
-		c.version++
+		c.bumpVersionLocked()
 	}
 	c.mu.Unlock()
 }
@@ -340,7 +359,7 @@ func (c *StatusCenter) SetIssue(issue ttypes.IssueSnapshot) {
 	}
 	issue.UpdatedAt = time.Now()
 	c.issues[issue.ID] = issue
-	c.version++
+	c.bumpVersionLocked()
 	c.mu.Unlock()
 }
 
@@ -354,7 +373,7 @@ func (c *StatusCenter) ResolveIssue(id string) {
 		issue.ResolvedAt = time.Now()
 		issue.UpdatedAt = issue.ResolvedAt
 		c.issues[id] = issue
-		c.version++
+		c.bumpVersionLocked()
 	}
 	c.mu.Unlock()
 }
@@ -397,7 +416,7 @@ func (c *StatusCenter) Notify(n ttypes.NotificationRecord) string {
 				old.Occurrences++
 				old.Actions = append([]ttypes.StatusAction(nil), n.Actions...)
 				updated := *old
-				c.version++
+				c.bumpVersionLocked()
 				c.mu.Unlock()
 				c.enqueue(statusPersistRequest{kind: persistNotice, notice: updated})
 				return updated.ID
@@ -413,7 +432,7 @@ func (c *StatusCenter) Notify(n ttypes.NotificationRecord) string {
 	}
 	n.CreatedAt, n.UpdatedAt = now, now
 	c.notifications = append(c.notifications, n)
-	c.version++
+	c.bumpVersionLocked()
 	c.pruneLocked(now)
 	c.reindexLocked()
 	c.mu.Unlock()
@@ -491,13 +510,41 @@ func (c *StatusCenter) updateNotice(id string, fn func(*ttypes.NotificationRecor
 		c.mu.Unlock()
 		return false
 	}
+	previous := c.notifications[i]
 	fn(&c.notifications[i])
+	if previous.Read == c.notifications[i].Read && previous.Dismissed == c.notifications[i].Dismissed && previous.ResolvedAt.Equal(c.notifications[i].ResolvedAt) {
+		c.mu.Unlock()
+		return true
+	}
 	c.notifications[i].UpdatedAt = time.Now()
-	c.version++
+	c.bumpVersionLocked()
 	n := c.notifications[i]
 	c.mu.Unlock()
 	c.enqueue(statusPersistRequest{kind: persistNotice, notice: n})
 	return true
+}
+
+// Changed atomically captures the version and a broadcast closed by the next
+// semantic mutation. Capturing before reading projections fences concurrent
+// changes without polling, callbacks, or a watcher goroutine.
+func (c *StatusCenter) Changed() (uint64, <-chan struct{}) {
+	if c == nil {
+		return 0, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.changed == nil {
+		c.changed = make(chan struct{})
+	}
+	return c.version, c.changed
+}
+
+func (c *StatusCenter) bumpVersionLocked() {
+	c.version++
+	if c.changed != nil {
+		close(c.changed)
+		c.changed = nil
+	}
 }
 
 func (c *StatusCenter) Version() uint64 {

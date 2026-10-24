@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +46,40 @@ func TestSharedDocumentsAuthoritativeBytesReceiptReplayAndDetach(t *testing.T) {
 	if first.ID != other.ID || string(first.Text) != "alpha\n" || string(other.Text) != "alpha\n" || first.Revision != other.Revision {
 		t.Fatalf("not one authoritative document: %+v %+v", first, other)
 	}
+	// The subscriber follows actual document bytes/revisions, not the removed
+	// workspace invalidation cursor followed by a read request.
+	observer := newResourceWire(t, r, "document-topic-observer")
+	var observerAttach coreprotocol.AttachResult
+	observer.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &observerAttach)
+	var observerDocument document.Snapshot
+	observer.call(t, ws, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}, &observerDocument)
+	updates := make(chan coreprotocol.DocumentUpdate, 8)
+	sub := observer.c.Subscribe(t.Context(), ws, coreprotocol.TopicDocument, first.ID, func(_ coreprotocol.TopicHeader, body []byte) error {
+		var update coreprotocol.DocumentUpdate
+		if err := coreprotocol.Decode(body, &update); err != nil {
+			return err
+		}
+		select {
+		case updates <- update:
+			return nil
+		case <-t.Context().Done():
+			return t.Context().Err()
+		}
+	})
+	defer sub.Close()
+	next := func() coreprotocol.DocumentUpdate {
+		t.Helper()
+		select {
+		case update := <-updates:
+			return update
+		case <-time.After(5 * time.Second):
+			t.Fatal("document topic did not publish")
+			return coreprotocol.DocumentUpdate{}
+		}
+	}
+	if initial := next(); initial.Snapshot == nil || string(initial.Snapshot.Text) != "alpha\n" {
+		t.Fatalf("invalid initial document: %+v", initial)
+	}
 	input := coreprotocol.DocumentEditRequest{ID: first.ID, Revision: first.Revision, Edits: []document.Edit{{Start: 0, End: 5, Text: "βeta"}}}
 	response := callCore(t, a, "edit-once", ws, coreprotocol.DocumentEdit, input)
 	var receipt document.Receipt
@@ -54,9 +87,9 @@ func TestSharedDocumentsAuthoritativeBytesReceiptReplayAndDetach(t *testing.T) {
 	if !receipt.Accepted || receipt.RequestID != "edit-once" || receipt.DocumentID != first.ID || receipt.Before != first.Revision || receipt.Revision != first.Revision+1 {
 		t.Fatalf("edit receipt lost identity: %+v", receipt)
 	}
-	change := nextResourceChange(t, b, ws, func(ch coreprotocol.Change) bool { return ch.Revision >= response.Revision })
-	if change.Revision != response.Revision {
-		t.Fatalf("edit delta did not advertise committed revision: %+v response=%+v", change, response)
+	change := next()
+	if change.Snapshot != nil || change.Base != first.Revision || change.State.Revision != receipt.Revision || len(change.Changes) != 1 || len(change.Changes[0].Edits) != 1 || change.Changes[0].Edits[0].Text != "βeta" {
+		t.Fatalf("pushed edit did not carry exact committed operation: %+v receipt=%+v", change, receipt)
 	}
 	read := func(c *Connection, id string) document.Snapshot {
 		var snapshot document.Snapshot
@@ -66,7 +99,7 @@ func TestSharedDocumentsAuthoritativeBytesReceiptReplayAndDetach(t *testing.T) {
 	if got := read(b, "read-edit"); string(got.Text) != "βeta\n" || !got.Dirty || got.Revision != receipt.Revision {
 		t.Fatalf("survivor did not see real edited bytes: %+v", got)
 	}
-	raw, err := json.Marshal(input)
+	raw, err := testPayload(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,16 +152,16 @@ func TestSharedDocumentsPendingFirstOpenRejectedAfterDisconnect(t *testing.T) {
 		t.Fatal("could not hold resource lane")
 	}
 	<-entered
-	raw, err := json.Marshal(coreprotocol.DocumentOpenRequest{Path: "pending.txt"})
+	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.DocumentOpenRequest{Path: "pending.txt"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	result := a.Dispatch(context.Background(), coreprotocol.Request{ID: "pending-first-open", Owner: a.Owner, WorkspaceID: ws, Method: coreprotocol.DocumentOpen, Payload: raw})
 	// Same-connection snapshot passes the queued resource job on the actor,
 	// proving admission before disconnect without inspecting race-prone state.
-	callCore(t, a, "admission-barrier", ws, coreprotocol.Snapshot, struct{}{})
+	callCore(t, a, "admission-barrier", ws, coreprotocol.Snapshot, coreprotocol.Empty{})
 	a.Close()
-	callCore(t, b, "detach-barrier", ws, coreprotocol.Snapshot, struct{}{})
+	callCore(t, b, "detach-barrier", ws, coreprotocol.Snapshot, coreprotocol.Empty{})
 	unblock()
 	select {
 	case response := <-result:

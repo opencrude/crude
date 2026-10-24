@@ -17,13 +17,14 @@ import (
 	"crude/coreprotocol"
 	"crude/tools"
 	"crude/types/control"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type Client interface {
 	Owner() coreprotocol.Owner
-	Call(context.Context, string, string, any, any) error
-	CallRequest(context.Context, coreprotocol.Request) (coreprotocol.Response, error)
+	Call(context.Context, string, string, coreprotocol.Value, coreprotocol.Target) error
+	CallWith(context.Context, string, string, coreprotocol.Value, coreprotocol.Target, coreclient.CallOptions) (uint64, error)
 }
 
 // New installs one immutable launch grant before offering tools. The client must
@@ -36,7 +37,7 @@ func New(ctx context.Context, client Client, workspace string, grant coreprotoco
 		owner := *grant.Shell
 		grant.Shell = &owner
 	}
-	if err := client.Call(ctx, workspace, coreprotocol.ControlClientRegister, grant, nil); err != nil {
+	if err := client.Call(ctx, workspace, coreprotocol.ControlClientRegister, &grant, nil); err != nil {
 		return nil, err
 	}
 	a := &adapter{client: client, workspace: workspace, shell: grant.Shell}
@@ -106,15 +107,15 @@ func (a *adapter) invoke(ctx context.Context, call *mcp.CallToolRequest) (any, s
 		if err := decode(call.Params.Arguments, &input); err != nil {
 			return nil, "", err
 		}
-		var values []control.Descriptor
-		err := a.client.Call(ctx, a.workspace, coreprotocol.ControlDescribe, coreprotocol.ControlDescribeRequest{Query: input.Query, Target: bound}, &values)
+		var values coreprotocol.ControlDescriptors
+		err := a.client.Call(ctx, a.workspace, coreprotocol.ControlDescribe, &coreprotocol.ControlDescribeRequest{Query: input.Query, Target: bound}, &values)
 		return values, fmt.Sprintf("Crude command descriptors: %d; discovery grants no authority.", len(values)), err
 	case "crude_shells":
 		if err := decode(call.Params.Arguments, &struct{}{}); err != nil {
 			return nil, "", err
 		}
-		var values []coreprotocol.ControlShellInfo
-		err := a.client.Call(ctx, a.workspace, coreprotocol.ControlShells, struct{}{}, &values)
+		var values coreprotocol.ControlShellInfos
+		err := a.client.Call(ctx, a.workspace, coreprotocol.ControlShells, &coreprotocol.Empty{}, &values)
 		return values, fmt.Sprintf("Registered Crude shells: %d; launch binding unchanged.", len(values)), err
 	case "crude_receipt":
 		var input coreprotocol.ReceiptRequest
@@ -125,8 +126,8 @@ func (a *adapter) invoke(ctx context.Context, call *mcp.CallToolRequest) (any, s
 			return nil, "", errors.New("request_id is required")
 		}
 		var receipt coreprotocol.Receipt
-		err := a.client.Call(ctx, a.workspace, coreprotocol.GetReceipt, input, &receipt)
-		return receipt, "Crude request receipt: " + receipt.State, err
+		err := a.client.Call(ctx, a.workspace, coreprotocol.GetReceipt, &input, &receipt)
+		return receipt.View(), "Crude request receipt: " + receipt.State, err
 	case "crude_control":
 		var input invocation
 		if err := decode(call.Params.Arguments, &input); err != nil {
@@ -156,7 +157,7 @@ func (a *adapter) invoke(ctx context.Context, call *mcp.CallToolRequest) (any, s
 			observe, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
 			var receipt coreprotocol.Receipt
-			if lookup := a.client.Call(observe, a.workspace, coreprotocol.GetReceipt, coreprotocol.ReceiptRequest{RequestID: id}, &receipt); lookup == nil && receipt.State == "completed" && receipt.Response.Error == nil && json.Unmarshal(receipt.Response.Payload, &outcome) == nil && outcome.RequestID == id {
+			if lookup := a.client.Call(observe, a.workspace, coreprotocol.GetReceipt, &coreprotocol.ReceiptRequest{RequestID: id}, &receipt); lookup == nil && receipt.State == "completed" && receipt.Response.Error == nil && coreprotocol.Decode(receipt.Response.Payload, &outcome) == nil && outcome.RequestID == id {
 				err = nil
 			} else {
 				outcome = control.Result{RequestID: id, OperationID: id, State: control.Uncertain, Fault: &control.Fault{Code: control.UnknownOutcome, Message: "Outcome unknown; inspect crude_receipt with this request_id. Do not replay the effect."}}
@@ -171,19 +172,9 @@ func (a *adapter) invoke(ctx context.Context, call *mcp.CallToolRequest) (any, s
 		return nil, "", errors.New("unknown Crude tool")
 	}
 }
-func (a *adapter) request(ctx context.Context, method string, input control.Request, output any) error {
-	payload, err := json.Marshal(input)
-	if err != nil {
-		return err
-	}
-	r, err := a.client.CallRequest(ctx, coreprotocol.Request{ID: input.ID, Owner: a.client.Owner(), WorkspaceID: a.workspace, Method: method, Payload: payload})
-	if err != nil {
-		return err
-	}
-	if r.Error != nil {
-		return r.Error
-	}
-	return json.Unmarshal(r.Payload, output)
+func (a *adapter) request(ctx context.Context, method string, input control.Request, output coreprotocol.Target) error {
+	_, err := a.client.CallWith(ctx, a.workspace, method, &input, output, coreclient.CallOptions{ID: input.ID})
+	return err
 }
 
 // RandomID provides a stable, unguessable process/request identity without

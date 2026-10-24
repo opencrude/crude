@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"crude/coreprotocol"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,7 +18,7 @@ func TestReceiptExclusiveRecoveryAndReuse(t *testing.T) {
 		_ = other.close()
 		t.Fatal("concurrent journal owner accepted")
 	}
-	request := coreprotocol.Request{ID: "one", Owner: coreprotocol.Owner{ClientID: "client", Epoch: 1}, WorkspaceID: "workspace", Method: coreprotocol.SubmitInput, Payload: json.RawMessage(`{"text":"hello"}`)}
+	request := coreprotocol.Request{ID: "one", Owner: coreprotocol.Owner{ClientID: "client", Epoch: 1}, WorkspaceID: "workspace", Method: coreprotocol.SubmitInput, Payload: mustTestPayload(coreprotocol.InputRequest{Text: "hello"})}
 	if _, fresh, err := journal.begin(context.Background(), request); err != nil || !fresh {
 		t.Fatalf("begin: %v %v", fresh, err)
 	}
@@ -48,7 +47,9 @@ func TestReceiptExclusiveRecoveryAndReuse(t *testing.T) {
 	if err != nil || fresh || prior.State != "completed" || string(prior.Response.Payload) != string(out.Payload) {
 		t.Fatalf("lost response: %+v %v %v", prior, fresh, err)
 	}
-	request.Payload = json.RawMessage(`{"text":"different"}`)
+	// Reusing an identity with any other content is refused, whatever the
+	// payload's encoding: the digest covers its exact bytes.
+	request.Payload = mustTestPayload(coreprotocol.InputRequest{Text: "different"})
 	if _, _, err := journal.begin(context.Background(), request); err == nil {
 		t.Fatal("request reuse accepted")
 	}

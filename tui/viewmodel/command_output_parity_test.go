@@ -69,7 +69,7 @@ func TestCommandOutputLiveEventsAndSQLiteHydration(t *testing.T) {
 					r := chatprojection.NewRenderer(theme.DefaultDark())
 					r.SetSize(width, 30)
 					r.SetChatAreaBounds(0, 24)
-					r.SyncMessages(msg, 1)
+					r.SyncMessages(msg, 1, 0)
 					return r
 				}
 				left, right := newRenderer(live), newRenderer(hydrated)

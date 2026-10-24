@@ -60,7 +60,7 @@ func TestDetachedCorePTYInterruptsNativeForegroundCommand(t *testing.T) {
 	// This automated foreground-command fixture must not request interactive
 	// PowerShell input from a headless runner.
 	opts := workspace.TerminalCreateOpts{Command: "powershell.exe", Args: []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `Write-Output DETACHED_CONTROL_READY; Start-Sleep -Seconds 30; Write-Output MUST_NOT_COMPLETE`}, CWD: root, Cols: 100, Rows: 10}
-	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalCreate, opts, &info); err != nil {
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalCreate, &opts, &info); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -73,7 +73,7 @@ func TestDetachedCorePTYInterruptsNativeForegroundCommand(t *testing.T) {
 	read := func() workspace.TerminalProjection {
 		t.Helper()
 		var p workspace.TerminalProjection
-		if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalRows, coreprotocol.TerminalRowsRequest{ID: info.ID, Start: -1}, &p); err != nil {
+		if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalRows, &coreprotocol.TerminalRowsRequest{ID: info.ID, Start: -1}, &p); err != nil {
 			t.Fatal(err)
 		}
 		return p
@@ -96,7 +96,7 @@ func TestDetachedCorePTYInterruptsNativeForegroundCommand(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalInput, coreprotocol.TerminalInputRequest{Lease: lease, Kind: "key", Key: terminalvt.Key{Code: 'c', Mod: terminalvt.ModCtrl}}, nil); err != nil {
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.TerminalInput, &coreprotocol.TerminalInputRequest{Lease: lease, Kind: "key", Key: terminalvt.Key{Code: 'c', Mod: terminalvt.ModCtrl}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(5 * time.Second)

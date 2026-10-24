@@ -3,8 +3,9 @@ package viewmodel
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/termdock"

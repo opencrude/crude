@@ -23,7 +23,7 @@ func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
 
 	// Width is a layout primitive. Every retained presentation cache must cross
 	// this barrier together before the renderer's forced clean redraw.
-	m.cachedOutput = ""
+	m.framePresented = false
 	if m.rootHost != nil {
 		m.rootHost.CancelPointerCapture()
 		m.rootHost.MarkLayout()

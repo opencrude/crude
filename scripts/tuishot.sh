@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Launch crude in a dedicated Alacritty window, drive it with keys/mouse, and
+# Launch crude in a dedicated terminal window, drive it with keys/mouse, and
 # screenshot after each step. Always kills the window on exit.
 #
 # Usage: scripts/tuishot.sh <outdir> [step ...]
 #
 # Steps:
 #   key:<xdotool-key-spec>    key:ctrl+alt+p  key:Down  key:Escape  key:shift+Down
+#   quit:<key-spec>          expected clean product exit; must be the final step
+#   await-exit              wait for an autonomous journey's clean exit (last step)
+#   record:<seconds>        lossless native video of this exact window (FFMPEG_BIN)
 #   type:<literal text>       type:main.go
 #   click:<col>,<row>[,<btn>] cell coords, btn 1=left 2=mid 3=right 4=whlup 5=whldn
 #   move:<col>,<row>          move pointer only (hover test)
@@ -19,6 +22,7 @@
 #   shot[:label]              extra screenshot
 #
 # Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS CRUDE_CWD KEEP_OPEN
+# TERMINAL=alacritty|kitty|tilix selects the actual emulator (default alacritty).
 # CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
 # An isolated CRUDE_HOME must be a real short directory, not a symlink to a
 # long path: the core canonicalizes it before creating its Unix socket.
@@ -34,6 +38,11 @@ STEP_WAIT="${STEP_WAIT:-0.7}"
 FONT_SIZE="${FONT_SIZE:-9}"
 CRUDE_ARGS="${CRUDE_ARGS:-}"
 KEEP_OPEN="${KEEP_OPEN:-0}"
+TERMINAL="${TERMINAL:-alacritty}"
+case "$TERMINAL" in alacritty|kitty|tilix) ;; *) echo "ERROR: unsupported capture terminal: $TERMINAL" >&2; exit 1 ;; esac
+if [ -z "${TERM_NAME:-}" ]; then
+  case "$TERMINAL" in alacritty) TERM_NAME=alacritty ;; kitty) TERM_NAME=xterm-kitty ;; tilix) TERM_NAME=xterm-256color ;; esac
+fi
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CRUDE_CWD="${CRUDE_CWD:-$REPO}"
@@ -65,8 +74,13 @@ export DISPLAY="${DISPLAY:-:0}"
 WIN_ID=""
 CAPTURE_PID=""
 POINTER_DOWN=0
+VIDEO_PID=""
 cleanup() {
   [ "$POINTER_DOWN" = "1" ] && xdotool mouseup 1 2>/dev/null
+  if [ -n "$VIDEO_PID" ]; then
+    kill "$VIDEO_PID" 2>/dev/null || true
+    wait "$VIDEO_PID" 2>/dev/null || true
+  fi
   [ "$KEEP_OPEN" = "1" ] && return 0
   [ -n "$WIN_ID" ] && xdotool windowkill "$WIN_ID" 2>/dev/null
   if [ -n "$CAPTURE_PID" ]; then
@@ -102,7 +116,10 @@ sleep 900
 EOF
 chmod +x "$LAUNCH"
 
-# opacity 1 + zero padding + no decorations => clean colors and exact cell math.
+# Separate emulator processes never attach to a user's existing terminal. Borderless
+# zero-padding grids keep pointer coordinates relative to the captured window.
+case "$TERMINAL" in
+alacritty)
 alacritty --class CrudeShot,CrudeShot \
   -o "window.opacity=1.0" \
   -o "window.blur=false" \
@@ -118,15 +135,44 @@ alacritty --class CrudeShot,CrudeShot \
   -o "env.TERM=\"${TERM_NAME:-alacritty}\"" \
   -o "env.COLORTERM=\"truecolor\"" \
   -o "env.NO_COLOR=\"\"" \
-  -e "$LAUNCH" >>"$WORK/alacritty.log" 2>&1 &
+  -e "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
+kitty)
+kitty --class CrudeShot --name CrudeShot \
+  -o remember_window_size=no -o "initial_window_width=${COLS}c" \
+  -o "initial_window_height=${ROWS}c" -o "font_size=$FONT_SIZE" \
+  -o window_padding_width=0 -o window_margin_width=0 \
+  -o hide_window_decorations=yes -o background_opacity=1 \
+  "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
+tilix)
+# --new-process is essential: capture teardown must not own a user's Tilix server.
+tilix --new-process --name=CrudeShot --class=CrudeShot --title=CrudeShot \
+  --window-style=borderless --geometry="${COLS}x${ROWS}" \
+  -e "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
+esac
 CAPTURE_PID=$!
 
+# Ignore an emulator's short-lived startup window. Resolve only visible windows
+# owned by this dedicated process, then validate geometry before committing the
+# exact target. Never fall back to a user window with a matching class.
+GEOMETRY=""
 for _ in $(seq 1 100); do
-  WIN_ID=$(xdotool search --class "CrudeShot" 2>/dev/null | tail -1 || true)
+  while read -r candidate; do
+    [ -n "$candidate" ] || continue
+    owner=$(xdotool getwindowpid "$candidate" 2>/dev/null || true)
+    [ "$owner" = "$CAPTURE_PID" ] || continue
+    geometry=$(xdotool getwindowgeometry --shell "$candidate" 2>/dev/null) || continue
+    [ -n "$geometry" ] || continue
+    WIN_ID="$candidate"
+    GEOMETRY="$geometry"
+  done < <(xdotool search --onlyvisible --class "CrudeShot" 2>/dev/null || true)
   [ -n "$WIN_ID" ] && break
+  kill -0 "$CAPTURE_PID" 2>/dev/null || { echo 'ERROR: dedicated capture terminal exited during startup'; tail -20 "$WORK/terminal.log"; exit 1; }
   sleep 0.15
 done
-[ -n "$WIN_ID" ] || { echo "ERROR: no window"; tail -20 "$WORK/alacritty.log"; exit 1; }
+[ -n "$WIN_ID" ] || { echo "ERROR: no window"; tail -20 "$WORK/terminal.log"; exit 1; }
 
 # Pin to 0,0, raise above the desktop panel, and keep it there.
 xdotool windowmove "$WIN_ID" 0 0 2>/dev/null
@@ -135,7 +181,8 @@ xdotool windowraise "$WIN_ID" 2>/dev/null
 xdotool windowactivate --sync "$WIN_ID" 2>/dev/null
 sleep 0.3
 
-eval "$(xdotool getwindowgeometry --shell "$WIN_ID")"
+GEOMETRY=$(xdotool getwindowgeometry --shell "$WIN_ID" 2>/dev/null) || { echo 'ERROR: dedicated capture window disappeared before geometry'; exit 1; }
+eval "$GEOMETRY"
 CW=$((WIDTH / COLS))
 CH=$((HEIGHT / ROWS))
 echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT}+${X}+${Y} cell=${CW}x${CH} grid=${COLS}x${ROWS}"
@@ -172,19 +219,60 @@ shot() {
   if $IMPORT -window "$WIN_ID" "$p" 2>/dev/null; then echo "saved $p"; else echo "SHOT FAILED $p" >&2; exit 1; fi
 }
 slug() { printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_' | cut -c1-22; }
+# GTK/VTE intentionally ignores XSendEvent key injection. Activate and fence the
+# exact dedicated window, then use XTEST, the same input route as a real key.
+# Never send a key if focus changed to an unrelated desktop window.
+focus_keys() {
+  xdotool windowactivate --sync "$WIN_ID"
+  [ "$(xdotool getactivewindow)" = "$WIN_ID" ] || { echo 'ERROR: capture window lost keyboard focus' >&2; exit 1; }
+}
+send_key() { focus_keys; xdotool key --clearmodifiers "$1"; }
+await_exit() {
+  for _ in $(seq 1 300); do
+    grep -q '^CRUDE-EXITED ' "$LOG" && break
+    sleep 0.1
+  done
+  grep -q '^CRUDE-EXITED rc=0$' "$LOG" || { echo 'ERROR: expected clean product exit was not observed' >&2; tail -30 "$LOG" >&2; exit 1; }
+  echo 'verified expected clean product exit'
+}
 
 shot boot
 
 for step in "$@"; do
-  assert_running
+  [ "$step" = await-exit ] || assert_running
   case "$step" in
+    quit:*)
+      [ "$step" = "${!#}" ] || { echo 'ERROR: quit must be the final capture step' >&2; exit 1; }
+      spec="${step#quit:}"
+      send_key "$spec"
+      await_exit
+      ;;
+    await-exit)
+      [ "$step" = "${!#}" ] || { echo 'ERROR: await-exit must be the final capture step' >&2; exit 1; }
+      await_exit
+      ;;
+    record:*)
+      duration="${step#record:}"
+      [[ "$duration" =~ ^[0-9]+$ ]] && [ "$duration" -ge 1 ] && [ "$duration" -le 30 ] || { echo 'ERROR: record duration must be 1–30 seconds' >&2; exit 1; }
+      ffmpeg="${FFMPEG_BIN:-ffmpeg}"
+      command -v "$ffmpeg" >/dev/null || { echo 'ERROR: ffmpeg is required for exact-window video' >&2; exit 1; }
+      video="$OUTDIR/native-window.mkv"
+      [ ! -e "$video" ] || { echo 'ERROR: refusing to overwrite native video evidence' >&2; exit 1; }
+      "$ffmpeg" -hide_banner -loglevel error -n -f x11grab -draw_mouse 0 -framerate 60 -window_id "$WIN_ID" -i "$DISPLAY" \
+        -t "$duration" -c:v ffv1 -level 1 -threads 1 "$video" > "$OUTDIR/native-window-video.log" 2>&1 &
+      VIDEO_PID=$!
+      wait "$VIDEO_PID" || { VIDEO_PID=""; echo 'ERROR: native-window recording failed' >&2; tail -20 "$OUTDIR/native-window-video.log" >&2; exit 1; }
+      VIDEO_PID=""
+      echo "saved $video; native window=$WIN_ID, 60 Hz capture, review actual frame timestamps"
+      ;;
     key:*)
       spec="${step#key:}"
-      xdotool key --window "$WIN_ID" --clearmodifiers "$spec"
+      send_key "$spec"
       sleep "$STEP_WAIT"; shot "key-$(slug "$spec")" ;;
     type:*)
       txt="${step#type:}"
-      xdotool type --window "$WIN_ID" --delay 45 -- "$txt"
+      focus_keys
+      xdotool type --delay 45 -- "$txt"
       sleep "$STEP_WAIT"; shot "type-$(slug "$txt")" ;;
     click:*)
       IFS=',' read -r c r b <<<"${step#click:}"

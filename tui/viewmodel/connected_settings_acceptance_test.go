@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"crude/core"
 	"crude/provider"
@@ -14,6 +15,7 @@ import (
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -73,7 +75,7 @@ func TestConnectedSettingsAccountKeepAndFailedPreferenceDraft(t *testing.T) {
 	if commits.Load() != 1 {
 		t.Fatal("form save did not commit exactly once")
 	}
-	if strings.Contains(ansi.Strip(app.View().Content), secret) {
+	if strings.Contains(ansi.Strip(app.View().RenderContent()), secret) {
 		t.Fatal("paint exposed credential")
 	}
 	// A later deliberate Save is valid without a configuration revision.
@@ -90,9 +92,22 @@ func TestConnectedSettingsAccountKeepAndFailedPreferenceDraft(t *testing.T) {
 	body = app.settingsSurface(parent)
 	model = body.Model()
 	// Appearance is the category that owns the preset form, not the initial rail page.
-	model.SelectCategory(11)
+	appearance := -1
+	for index, category := range model.Categories() {
+		if category.Form != nil && category.Form.Field("preset") != nil {
+			appearance = index
+			break
+		}
+	}
+	if appearance < 0 {
+		t.Fatal("Appearance preset form is missing")
+	}
+	model.SelectCategory(appearance)
 	model.SetValueForTest(model.SelectedCategory(), "preset", "light")
 	before := model.AppSettings()
+	if before.Theme.Preset != "light" || len(model.Edits()) == 0 {
+		t.Fatal("Appearance edit did not stage the light preset before Save")
+	}
 	save := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
 	if save.Cmd == nil {
 		t.Fatal("real preference form did not emit Save")
@@ -104,5 +119,91 @@ func TestConnectedSettingsAccountKeepAndFailedPreferenceDraft(t *testing.T) {
 	}
 	if !reflect.DeepEqual(model.AppSettings().Theme, before.Theme) || before.Theme.Preset != "light" {
 		t.Fatal("failed save consumed preference draft")
+	}
+}
+
+func TestConnectedPreferenceSaveWaitsForAppliedTopic(t *testing.T) {
+	for _, closeAttachment := range []bool{false, true} {
+		t.Run(map[bool]string{false: "apply", true: "detach"}[closeAttachment], func(t *testing.T) {
+			committed := make(chan struct{})
+			runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
+				ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{})
+				ws.SetAppDefaults(types.AppSettings{Theme: types.ThemeSettings{Preset: "dark"}})
+				ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+					after := ws.AppDefaults()
+					err := types.ApplySettingsEdits(&after, edits)
+					close(committed)
+					return after, err
+				}
+				return ws, nil
+			}, filepath.Join(t.TempDir(), "receipts.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = runtime.Close() })
+			shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+			app := shell.app
+			app.openApplicationSettings()
+			body := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings))
+			model := body.Model()
+			for index, category := range model.Categories() {
+				if category.Form != nil && category.Form.Field("preset") != nil {
+					model.SelectCategory(index)
+				}
+			}
+			model.SetValueForTest(model.SelectedCategory(), "preset", "light")
+			save := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
+			if save.Cmd == nil {
+				t.Fatal("Save did not prepare the preference draft")
+			}
+			cmd := app.savePreferences(save.Cmd().(settingsui.SaveMsg))
+			if cmd == nil {
+				t.Fatal("Save was not admitted")
+			}
+			completed := make(chan preferencesSavedMsg, 1)
+			go func() { completed <- cmd().(preferencesSavedMsg) }()
+			select {
+			case <-committed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("preference persistence did not finish")
+			}
+			// Hold every real publication in the FIFO. A network receipt or queued
+			// topic cannot report Save before Update installs the new settings.
+			select {
+			case result := <-completed:
+				t.Fatalf("Save completed before any topic was applied: error=%v", result.result.Err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			if !model.Saving() || model.AppSettings().Theme.Preset != "light" || app.ws.AppDefaults().Theme.Preset != "dark" {
+				t.Fatal("queued topic changed the draft or replica before Update")
+			}
+			if closeAttachment {
+				if err := app.CloseWorkspaceAttachment(); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case result := <-completed:
+					if result.result.Err == nil {
+						t.Fatal("detached save reported an applied settings projection")
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("detachment did not cancel the projection waiter")
+				}
+				return
+			}
+			var result preferencesSavedMsg
+			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
+				select {
+				case result = <-completed:
+					return true
+				default:
+					return false
+				}
+			})
+			app.applyPreferencesSaved(result)
+			if result.result.Err != nil || body.Model().Saving() || len(body.Model().Edits()) != 0 || body.Model().AppSettings().Theme.Preset != "light" || app.ws.AppDefaults().Theme.Preset != "light" {
+				t.Fatal("applied save did not leave an authoritative clean light preset")
+			}
+		})
 	}
 }

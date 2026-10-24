@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/ui"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestContextMenuNativeNavigationReachesBoundedLastItem(t *testing.T) {
@@ -41,7 +42,7 @@ func TestContextMenuNativeNavigationReachesBoundedLastItem(t *testing.T) {
 	}
 	app.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
 	_ = app.View()
-	if !strings.Contains(app.View().Content, "Scope 38") {
+	if !strings.Contains(app.View().RenderContent(), "Scope 38") {
 		t.Fatal("last scope was not painted")
 	}
 	app.Update(tea.KeyPressMsg{Code: tea.KeyHome})

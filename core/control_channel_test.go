@@ -32,7 +32,7 @@ func controlWireClient(t *testing.T, r *Runtime, id string) *coreclient.Client {
 	go func() { done <- ServeConnection(context.Background(), r, b) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := coreclient.Dial(ctx, a, id)
+	c, err := coreclient.Dial(ctx, coreclient.SingleCarrier(a), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestControlWireExactTargetAndImmutableOutcome(t *testing.T) {
 	default:
 	}
 	result := control.Result{RequestID: e.Request.ID, OperationID: "op-1", State: control.Applied, Output: json.RawMessage(`{"observed":true}`)}
-	if err := b.Call(ctx, ws, coreprotocol.ControlShellReply, result, nil); err == nil {
+	if err := b.Call(ctx, ws, coreprotocol.ControlShellReply, &result, nil); err == nil {
 		t.Fatal("foreign reply accepted")
 	}
 	if err := a.ReplyControl(ctx, ws, result); err != nil {
@@ -124,7 +124,7 @@ func TestControlWireExactTargetAndImmutableOutcome(t *testing.T) {
 	}
 	changed := result.Clone()
 	changed.OperationID = "changed"
-	if err := a.Call(ctx, ws, coreprotocol.ControlShellReply, changed, nil); err == nil {
+	if err := a.Call(ctx, ws, coreprotocol.ControlShellReply, &changed, nil); err == nil {
 		t.Fatal("changed reply accepted")
 	}
 	recovered, err := r.RequestShellControl(ctx, ws, *e.Request.Target.Shell, e)
@@ -145,7 +145,7 @@ func TestControlWireExactTargetAndImmutableOutcome(t *testing.T) {
 	if _, err := r.RequestShellControl(ctx, ws, *e.Request.Target.Shell, e); err == nil {
 		t.Fatal("stale epoch accepted")
 	}
-	if err := a.Call(ctx, ws, coreprotocol.Detach, struct{}{}, nil); err != nil {
+	if err := a.Call(ctx, ws, coreprotocol.Detach, &coreprotocol.Empty{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	e = shellEnvelope("after-switch", ws, a.Owner())

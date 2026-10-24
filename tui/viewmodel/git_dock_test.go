@@ -1,10 +1,11 @@
 package viewmodel
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/gitpanel"

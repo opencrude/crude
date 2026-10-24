@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -42,7 +41,7 @@ func TestTerminalOperationsDoNotWaitBehindDocumentLane(t *testing.T) {
 
 	call := func(id, method string, value, out any) {
 		t.Helper()
-		raw, err := json.Marshal(value)
+		raw, err := testPayload(value)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +52,7 @@ func TestTerminalOperationsDoNotWaitBehindDocumentLane(t *testing.T) {
 			t.Fatalf("%s waited behind unrelated document work: %v", method, result.Error)
 		}
 		if out != nil {
-			if err := json.Unmarshal(result.Payload, out); err != nil {
+			if err := testDecode(result.Payload, out); err != nil {
 				t.Fatal(err)
 			}
 		}

@@ -21,7 +21,7 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		}), true
 	case coreprotocol.StatusMutateMethod:
 		var in coreprotocol.StatusMutation
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error()), true
 		}
 		out, err := a.mutateStatus(in)
@@ -32,7 +32,7 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		return response(request, out), true
 	case coreprotocol.CancelRequest:
 		var in coreprotocol.CancelRequestPayload
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error()), true
 		}
 		// Only the requester's own job is reachable: the key includes its client.
@@ -44,7 +44,7 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		return response(request, coreprotocol.BoolResult{OK: ok}), true
 	case coreprotocol.AgentYolo:
 		var in coreprotocol.AgentYoloRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error()), true
 		}
 		ok := a.ws.SetYoloForAgent(in.AgentID, in.Enabled)
@@ -54,7 +54,7 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		return response(request, coreprotocol.BoolResult{OK: ok}), true
 	case coreprotocol.AgentAppendMessages:
 		var in coreprotocol.AppendMessagesRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error()), true
 		}
 		ok := a.ws.AppendAgentMessages(in.AgentID, in.Messages, in.Stopped)
@@ -64,7 +64,7 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		return response(request, coreprotocol.BoolResult{OK: ok}), true
 	case coreprotocol.AgentRecoverReject:
 		var in coreprotocol.RecoveryRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error()), true
 		}
 		a.ws.RejectAgentRecoveryCancellation(in.AgentID, in.IncidentID)

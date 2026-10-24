@@ -35,6 +35,9 @@ type liveEditorState struct {
 	owner                                   document.Owner
 	done                                    chan liveEditorResult
 	start                                   tea.Cmd
+	topic                                   *shellport.LiveDocumentsChangedMsg
+	topicReady                              bool
+	pushedRevision                          uint64
 }
 
 // Core view registration is owner/document keyed, not counted. Serialize opens
@@ -111,27 +114,27 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	ed.SetOnContentChanged(func(path, text string) { m.onEditorContentChanged(ed, path, text) })
 	m.BufferMgr.InstallPrepared(ed.DocumentBuffer())
 	m.EditorState.Tabs[s.Path] = NewEditorTab(s.Path, ed)
+	if msg, ok := m.pendingDocumentTopics[s.ID]; ok {
+		delete(m.pendingDocumentTopics, s.ID)
+		m.applyDocumentTopic(msg)
+	}
 	if lsp := m.ws.LSPMgr(); lsp != nil {
 		ed.SetDiagnostics(lsp.FileDiagnostics(s.Path))
 	}
 	return nil
 }
 
-func (m *App) invalidateLiveEditors(ids []string) {
-	for ed, state := range m.liveEditors {
-		if len(ids) == 0 {
-			state.sync = true
-			state.recoverDue = time.Time{}
-		}
-		for _, id := range ids {
-			if id == ed.DocumentState().DocumentID {
-				state.sync = true
+func (m *App) drainLiveEditorCommands() tea.Cmd {
+	// A stale asynchronous open can close its registration before mounting.
+	// Release retained initial publications when that exact token expires.
+	for id, msg := range m.pendingDocumentTopics {
+		if msg.Owner != m.ws || msg.Valid != nil && !msg.Valid() {
+			if msg.Done != nil {
+				msg.Done(document.ErrOwner)
 			}
+			delete(m.pendingDocumentTopics, id)
 		}
 	}
-}
-
-func (m *App) drainLiveEditorCommands() tea.Cmd {
 	commands := m.editorCommands
 	m.editorCommands = nil
 	live, connected := m.ws.(shellport.LiveDocuments)
@@ -178,6 +181,24 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 			state.sync = true
 			state.err = nil
 		}
+		if state.sync && state.undo != nil {
+			// A gesture may arrive after its preceding edit receipt but before
+			// that edit's publication. It has not been submitted (busy/uncertain
+			// were handled above), so return it to the ordered input queue rather
+			// than letting UndoPending block the very publication it awaits.
+			if err := ed.DeferDocumentUndoUntilSync(*state.undo); err != nil {
+				m.liveEditorFailure(state, err)
+				continue
+			}
+			state.undo = nil
+			if pending := state.topic; pending != nil {
+				state.topic = nil
+				m.applyDocumentTopic(*pending)
+			}
+		}
+		if state.sync || !state.topicReady && state.undo == nil {
+			continue
+		}
 		if state.err != nil {
 			continue
 		}
@@ -201,19 +222,6 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 		msg := liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: state}
 		var operation func(context.Context)
 		switch {
-		case state.sync && !ds.InFlight && !ds.UndoPending:
-			state.sync = false
-			msg.kind = "sync"
-			path := ed.FilePath()
-			reopen := state.owner != live.DocumentOwner()
-			operation = func(ctx context.Context) {
-				if reopen {
-					_, msg.err = live.OpenDocument(ctx, path)
-				}
-				if msg.err == nil {
-					msg.sync, msg.err = live.SyncDocument(ctx, ds.DocumentID, ds.Revision)
-				}
-			}
 		case ds.PendingEdits > 0 && !ds.InFlight && !ds.UndoPending:
 			id := fmt.Sprintf("edit-%x", rand.Uint64())
 			msg.requestID = id
@@ -291,6 +299,95 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 	return tea.Batch(commands...)
 }
 
+// applyDocumentTopic commits on Update and only then releases the network ACK.
+// Batches arriving before their command receipts remain unacknowledged, not
+// projected over an unknown in-flight edit or undo request.
+func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd {
+	finish := func(err error) {
+		if msg.Done != nil {
+			msg.Done(err)
+		}
+	}
+	if msg.Owner != m.ws || msg.Valid != nil && !msg.Valid() {
+		finish(document.ErrOwner)
+		return nil
+	}
+	var targets []*editor.Editor
+	for ed, state := range m.liveEditors {
+		if !ed.IsOpen() || ed.DocumentState().DocumentID != msg.DocumentID {
+			continue
+		}
+		targets = append(targets, ed)
+		ds := ed.DocumentState()
+		if ds.InFlight || ds.UndoPending {
+			state.topic = &msg
+			return nil
+		}
+	}
+	if len(targets) == 0 {
+		if m.pendingDocumentTopics == nil {
+			m.pendingDocumentTopics = make(map[string]shellport.LiveDocumentsChangedMsg)
+		}
+		m.pendingDocumentTopics[msg.DocumentID] = msg
+		return nil
+	}
+	u := msg.Update
+	owner := m.ws.(shellport.LiveDocuments).DocumentOwner()
+	plans := make([]*editor.PreparedDocumentUpdate, len(targets))
+	var failure error
+	if u.Fault != nil {
+		failure = u.Fault
+	}
+	if msg.Header.Seq == 0 || msg.Header.Reset != (u.Snapshot != nil) || u.State.ID != msg.DocumentID {
+		failure = document.ErrRevision
+	}
+	// All owner/path/canonical/optimistic preconditions precede every mutation.
+	for i, ed := range targets {
+		if failure != nil {
+			break
+		}
+		if failure = m.preflightLiveEditorPath(ed, u.State.Path); failure != nil {
+			break
+		}
+		plans[i], failure = ed.PrepareDocumentUpdate(owner, u.Base, u.Changes, u.State, u.Snapshot, u.Savepoint)
+	}
+	if failure != nil {
+		for _, ed := range targets {
+			m.liveEditorFailure(m.liveEditors[ed], failure)
+		}
+		finish(failure)
+		return nil
+	}
+	for i, ed := range targets {
+		state := m.liveEditors[ed]
+		if failure = ed.CommitDocumentUpdate(plans[i]); failure != nil {
+			m.liveEditorFailure(state, failure)
+			finish(failure)
+			return nil
+		}
+		state.topic = nil
+		state.topicReady, state.pushedRevision = true, max(state.pushedRevision, u.State.Revision)
+		state.sync = state.pushedRevision < ed.DocumentState().Revision
+		state.owner = owner
+		// Both operations are preflighted, and Update owns all indexes throughout.
+		if failure = m.retargetLiveEditor(ed); failure != nil {
+			m.liveEditorFailure(state, failure)
+			finish(failure)
+			return nil
+		}
+		if !state.sync {
+			ed.CompleteDocumentHistorySync()
+		}
+		if state.closeAfter && !ed.Modified() {
+			m.overlayHost.Close(ui.OverlayDirtyClose)
+			m.closeEditorTabForce(ed.FilePath())
+			m.continuePendingTabClose()
+		}
+	}
+	finish(nil)
+	return nil
+}
+
 func (m *App) liveEditorFailure(state *liveEditorState, err error) {
 	state.err = err
 	for ed, candidate := range m.liveEditors {
@@ -356,10 +453,13 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 		if err != nil {
 			if !msg.receipt.Accepted && strings.Contains(msg.receipt.Error, document.ErrRevision.Error()) {
 				ed.ReconcileDocumentRevision()
-				state.sync = true
+				state.sync = state.pushedRevision < max(msg.receipt.Revision, ed.DocumentState().Revision)
 			} else {
 				m.liveEditorFailure(state, err)
 			}
+		}
+		if msg.receipt.Accepted {
+			state.sync = state.pushedRevision < msg.receipt.Revision
 		}
 	case "undo":
 		var err error
@@ -373,10 +473,17 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			m.Feedback.NotifyError("Shared undo refused; other authors' work retained: " + err.Error())
 		}
 		state.sync = true
+		if state.pushedRevision >= msg.receipt.Revision {
+			state.sync = false
+			ed.CompleteDocumentHistorySync()
+		}
 	case "format":
 		// Fetch the authoritative change group and rebase any typing that
 		// arrived while formatting. A snapshot replacement would lose it.
 		state.sync = true
+		if state.pushedRevision >= msg.snapshot.Revision {
+			state.sync = false
+		}
 	case "sync":
 		state.owner = m.ws.(shellport.LiveDocuments).DocumentOwner()
 		if err := ed.BindDocumentOwner(state.owner); err != nil {
@@ -412,6 +519,9 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			}
 		}
 	case "save":
+		if msg.snapshot.Revision < ed.DocumentState().Revision {
+			break
+		}
 		if err := ed.AcceptDocumentSnapshot(msg.snapshot); err != nil {
 			m.liveEditorFailure(state, err)
 			return
@@ -428,6 +538,10 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			// Typing after the save capture belongs to a later revision.
 			state.save = true
 		}
+	}
+	if pending := state.topic; pending != nil {
+		state.topic = nil
+		m.applyDocumentTopic(*pending)
 	}
 }
 
@@ -484,6 +598,16 @@ func (m *App) FlushLiveEditors() error {
 			}
 			if state.uncertain != nil {
 				state.recoverDue = time.Time{}
+			}
+			// Bubble Tea is no longer consuming topic messages. The explicit
+			// shutdown barrier may read canonical history to settle already
+			// accepted commands; normal Update never takes this recovery path.
+			if (state.sync || !state.topicReady) && !state.busy {
+				ctx, cancel := context.WithDeadline(context.Background(), deadline)
+				result, err := m.ws.(shellport.LiveDocuments).SyncDocument(ctx, ed.DocumentState().DocumentID, ed.DocumentState().Revision)
+				cancel()
+				state.sync = false
+				m.applyLiveEditorResult(liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: state, kind: "sync", sync: result, err: err})
 			}
 			if state.err != nil && state.uncertain == nil {
 				return state.err

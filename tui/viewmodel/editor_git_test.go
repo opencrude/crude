@@ -225,7 +225,7 @@ func TestBackgroundTabSyncDoesNotRestartEditorServices(t *testing.T) {
 		}
 	}
 	app.forceFrame()
-	painted := rendering.StripAnsi(app.View().Content)
+	painted := rendering.StripAnsi(app.View().RenderContent())
 	if ed.Value() != "x"+before || !strings.Contains(painted, "xpackage main") {
 		t.Fatalf("typed content was not retained and painted: text=%q, frame=%s", ed.Value(), painted)
 	}

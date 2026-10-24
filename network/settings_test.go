@@ -2,12 +2,51 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRemoteAccessScalarDefaultsAndRoundTrip(t *testing.T) {
+	defaults := Normalize(Settings{})
+	if defaults.RemoteAccessEnabled || defaults.RemoteQUICAddress != "127.0.0.1:7340" || defaults.RemoteTLSAddress != "127.0.0.1:7340" || defaults.SessionGraceSeconds != 900 {
+		t.Fatalf("unsafe remote defaults: %+v", defaults)
+	}
+	want := defaults
+	want.RemoteAccessEnabled, want.RemoteQUICAddress, want.RemoteTLSAddress, want.SessionGraceSeconds = true, "[::]:7341", "host.invalid:7342", 1800
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Settings
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("remote scalar round trip lost fields: got %+v want %+v", got, want)
+	}
+	// This hostname deliberately has no resolvable endpoint: validation is scalar.
+	if err := got.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*Settings){
+		func(s *Settings) { s.RemoteQUICAddress = "https://host:7340" },
+		func(s *Settings) { s.RemoteTLSAddress = "host:0" },
+		func(s *Settings) { s.RemoteTLSAddress = "host:65536" },
+		func(s *Settings) { s.RemoteQUICAddress = "bad host:7340" },
+		func(s *Settings) { s.SessionGraceSeconds = -1 },
+		func(s *Settings) { s.SessionGraceSeconds = 86401 },
+	} {
+		s := defaults
+		mutate(&s)
+		if err := s.Validate(); err == nil {
+			t.Fatalf("invalid remote scalar accepted: %+v", s)
+		}
+	}
+}
 
 func TestNormalizeAndValidateSettings(t *testing.T) {
 	normalized := Normalize(Settings{

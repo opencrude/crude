@@ -3,10 +3,8 @@
 package coreprotocol
 
 import (
-	"encoding/json"
 	"time"
 
-	"crude/corewire"
 	"crude/sessiondb"
 	"crude/types"
 	"crude/workspace"
@@ -39,12 +37,16 @@ type Owner struct {
 	Epoch    uint64 `json:"epoch"`
 }
 
+// Request is one admitted command. Payload is the request value's encoding.
 type Request struct {
-	ID          string          `json:"id"`
-	Owner       Owner           `json:"owner"`
-	WorkspaceID string          `json:"workspace_id,omitempty"`
-	Method      string          `json:"method"`
-	Payload     json.RawMessage `json:"payload"`
+	ID          string `json:"id"`
+	Owner       Owner  `json:"owner"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Method      string `json:"method"`
+	Payload     []byte `json:"payload"`
+	// JSON marks a payload that is JSON text: a request the core built from a
+	// semantic control document. It never crosses the wire.
+	JSON bool `json:"-"`
 }
 
 type Fault struct {
@@ -54,12 +56,15 @@ type Fault struct {
 
 func (f *Fault) Error() string { return f.Code + ": " + f.Message }
 
+// Response is one command's outcome. Payload is the result value's encoding.
 type Response struct {
-	ID       string                    `json:"id"`
-	Revision uint64                    `json:"revision,omitempty"`
-	Payload  json.RawMessage           `json:"payload,omitempty"`
-	Error    *Fault                    `json:"error,omitempty"`
-	Transfer *corewire.PayloadTransfer `json:"transfer,omitempty"`
+	ID       string `json:"id"`
+	Revision uint64 `json:"revision,omitempty"`
+	Payload  []byte `json:"payload,omitempty"`
+	Error    *Fault `json:"error,omitempty"`
+	// Value is the typed result inside the core, for consumers that render it
+	// in another form (semantic control output). It never crosses the wire.
+	Value any `json:"-"`
 }
 
 // Receipt preserves uncertainty rather than retrying an effect after a lost
@@ -128,8 +133,8 @@ type SessionSettings struct {
 	MultiAgent     *bool  `json:"multi_agent,omitempty"`
 }
 
-// Change advertises committed revisions. Readers fetch detached changed data
-// using their prior cursor; no producer goroutine waits for a shell to repaint.
+// Change is actor-local publication intent. Workspace and independent state
+// topics own replication; no Change invalidations cross the session stream.
 type Change struct {
 	WorkspaceID  string   `json:"workspace_id"`
 	BaseRevision uint64   `json:"base_revision"`
@@ -149,11 +154,8 @@ type Change struct {
 	// LSP announces a new diagnostic, outline or server-health projection.
 	LSP bool `json:"lsp,omitempty"`
 	// Documents advertises changed live text or savepoints, never client cursors.
-	Documents []string     `json:"documents,omitempty"`
-	Files     []FileChange `json:"files,omitempty"`
-	// Progress is request-scoped partial output, sent only to the requester.
-	Progress        *Progress                     `json:"progress,omitempty"`
-	Resync          bool                          `json:"resync,omitempty"`
+	Documents       []string                      `json:"documents,omitempty"`
+	Files           []FileChange                  `json:"files,omitempty"`
 	Terminals       []string                      `json:"terminals,omitempty"`
 	TerminalEffects *workspace.TerminalEffectsMsg `json:"terminal_effects,omitempty"`
 }

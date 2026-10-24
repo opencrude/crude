@@ -68,8 +68,7 @@ func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) 
 
 func (m *LSPManager) recomputeActiveStatusLocked() {
 	defer m.recomputeIdleReasonLocked()
-	m.version++
-	m.broadcastLocked()
+	m.bumpVersionLocked()
 	if m.paused || m.closed || !m.settings.Enabled {
 		m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
 		return
@@ -234,7 +233,7 @@ func (m *LSPManager) clearDiagnosticsLocked() {
 	m.diagnosticErrors, m.diagnosticWarnings = 0, 0
 	m.diagnosticInfo, m.diagnosticHints = 0, 0
 	m.filesAffected, m.symbolCount, m.projectLastSync, m.topIssue = 0, 0, 0, ""
-	m.version++
+	m.bumpVersionLocked()
 }
 
 // DrainDiagnosticChanges coalesces server notifications into one UI projection
@@ -251,6 +250,25 @@ func (m *LSPManager) DrainDiagnosticChanges() map[string][]LSPDiagnostic {
 	}
 	clear(m.diagnosticChanges)
 	return out
+}
+
+// Changed atomically captures the version and the next state broadcast. The
+// same channel wakes document probes and retained-core publication.
+func (m *LSPManager) Changed() (uint64, <-chan struct{}) {
+	if m == nil {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stateChanged == nil {
+		m.stateChanged = make(chan struct{})
+	}
+	return m.version, m.stateChanged
+}
+
+func (m *LSPManager) bumpVersionLocked() {
+	m.version++
+	m.broadcastLocked()
 }
 
 func (m *LSPManager) Version() uint64 {
@@ -492,7 +510,7 @@ func (m *LSPManager) setFileDiagnosticsLocked(serverID, filePath string, diags [
 		m.projectLastSync = m.lastSyncLocked()
 	}
 	m.recomputeTopIssueLocked()
-	m.version++
+	m.bumpVersionLocked()
 }
 
 func adjustDiagnosticAggregate(aggregate *diagnosticAggregate, severity, delta int) {
@@ -562,7 +580,7 @@ func (m *LSPManager) InflightRequests() int {
 func (m *LSPManager) trackInflight(fn func() error) error {
 	m.mu.Lock()
 	m.inflight++
-	m.version++
+	m.bumpVersionLocked()
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
@@ -570,7 +588,7 @@ func (m *LSPManager) trackInflight(fn func() error) error {
 		if m.inflight < 0 {
 			m.inflight = 0
 		}
-		m.version++
+		m.bumpVersionLocked()
 		m.mu.Unlock()
 	}()
 	return fn()
@@ -660,7 +678,7 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 			m.docSymbols[path] = out
 			m.symbolCount += len(out)
 			m.symbolsCached = true
-			m.version++
+			m.bumpVersionLocked()
 			m.mu.Unlock()
 		}
 		return nil

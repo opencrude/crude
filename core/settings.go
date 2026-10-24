@@ -186,16 +186,17 @@ func publicAccount(value provider.Account) coreprotocol.AccountView {
 	return coreprotocol.AccountView{ID: value.ID, ProviderID: value.ProviderID, Label: value.Label, Revision: entityRevision(value), Connection: connection, APIKeyPresent: value.APIKey != "", OAuthPresent: value.OAuth != nil, HeadersPresent: len(value.Connection.Headers) != 0, ExtraBodyPresent: len(value.Connection.ExtraBody) != 0}
 }
 
-func resolveSecret[T any](update coreprotocol.SecretUpdate[T], before T) (T, error) {
+func resolveSecret[T any](update interface{ Update() (bool, *T) }, before T) (T, error) {
 	var zero T
-	if update.Keep {
-		if update.Value != nil {
+	keep, value := update.Update()
+	if keep {
+		if value != nil {
 			return zero, errors.New("keep and replacement are mutually exclusive")
 		}
 		return before, nil
 	}
-	if update.Value != nil {
-		return *update.Value, nil
+	if value != nil {
+		return *value, nil
 	}
 	return zero, nil
 }
@@ -235,57 +236,73 @@ func resolveAccount(draft coreprotocol.AccountDraft, before provider.Account) (p
 	return provider.CloneAccount(out), nil
 }
 
+// captureSettings captures a detached public settings projection on the actor.
+// It performs no storage, shell discovery or other host I/O. Worker callers may
+// add TerminalShells; state publications reuse host discovery owned at startup.
+func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, types.AgentsSettings) {
+	app := a.ws.AppDefaults()
+	overrides := a.ws.LoadWorkspaceOverrides()
+	effective := types.MergeAppWorkspace(app, overrides)
+	// Sparse raw JSON must be sanitized independently; never send the raw DB overlay.
+	publicOverrides := overrides
+	if len(overrides.Capabilities) != 0 {
+		publicOverrides.Capabilities = publicCapabilityOverrides(overrides.Capabilities)
+	}
+	out := coreprotocol.SettingsFetchResult{ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(effective.Capabilities), Application: publicApp(app), Effective: publicApp(effective), Overrides: publicOverrides, Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool)}
+	if u, err := url.Parse(app.Network.ProxyURL); err == nil {
+		out.ProxyCredentialsPresent = u.User != nil || u.RawQuery != ""
+	}
+	for id, account := range app.Accounts {
+		out.Accounts[id] = publicAccount(account)
+	}
+	out.ConnectionSecretFields = make(map[string]coreprotocol.ConnectionSecretPresence)
+	// Effective connections include workspace-bound registrations.
+	for id, conn := range effective.Capabilities.Connections {
+		out.ConnectionSecretsPresent[id] = len(conn.Environment)+len(conn.Headers)+len(conn.SecretRefs) != 0 || conn.CredentialRef != ""
+		out.ConnectionSecretFields[id] = coreprotocol.ConnectionSecretPresence{Args: len(conn.Args) != 0, Environment: len(conn.Environment) != 0,
+			Headers: len(conn.Headers) != 0, SecretRefs: len(conn.SecretRefs) != 0, CredentialRef: conn.CredentialRef != ""}
+	}
+	defaults := types.CloneAppSettings(types.AppSettings{Agents: a.ws.WorkspaceAgentDefaults()}).Agents
+	return out, defaults
+}
+
 // prepareSettings captures values/backend identity on the actor. Mutation paths
 // lacking an atomic owner API fail explicitly rather than execute unsafe worker
 // callbacks. The parent owns startJob/journal integration.
 func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
-	result := func(value any) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
-		return func(context.Context) coreprotocol.Response { return response(request, value) }, nil, true
+	result := func(value coreprotocol.Value) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
+		return func(context.Context) coreprotocol.Response { return responseValue(request, value) }, nil, true
 	}
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, nil, true
 	}
 	switch request.Method {
 	case coreprotocol.SettingsFetch:
-		if err := decode(request.Payload, &struct{}{}); err != nil {
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		app := a.ws.AppDefaults()
-		overrides := a.ws.LoadWorkspaceOverrides()
-		// Sparse raw JSON must be sanitized independently; never send the raw DB overlay.
-		publicOverrides := overrides
-		if len(overrides.Capabilities) != 0 {
-			publicOverrides.Capabilities = publicCapabilityOverrides(overrides.Capabilities)
-		}
-		out := coreprotocol.SettingsFetchResult{ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(types.MergeAppWorkspace(app, overrides).Capabilities), Application: publicApp(app), Effective: publicApp(types.MergeAppWorkspace(app, overrides)), Overrides: publicOverrides, Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool)}
-		if u, err := url.Parse(app.Network.ProxyURL); err == nil {
-			out.ProxyCredentialsPresent = u.User != nil || u.RawQuery != ""
-		}
-		out.TerminalShells = workspace.DetectTerminalShells()
-		for id, account := range a.ws.AllAccounts() {
-			out.Accounts[id] = publicAccount(account)
-		}
-		out.ConnectionSecretFields = make(map[string]coreprotocol.ConnectionSecretPresence)
-		// Effective connections include workspace-bound registrations.
-		for id, conn := range types.MergeAppWorkspace(app, overrides).Capabilities.Connections {
-			out.ConnectionSecretsPresent[id] = len(conn.Environment)+len(conn.Headers)+len(conn.SecretRefs) != 0 || conn.CredentialRef != ""
-			out.ConnectionSecretFields[id] = coreprotocol.ConnectionSecretPresence{Args: len(conn.Args) != 0, Environment: len(conn.Environment) != 0,
-				Headers: len(conn.Headers) != 0, SecretRefs: len(conn.SecretRefs) != 0, CredentialRef: conn.CredentialRef != ""}
-		}
-		return result(out)
+		out, _ := a.captureSettings()
+		return func(ctx context.Context) coreprotocol.Response {
+			if ctx.Err() != nil {
+				return fault(request, "cancelled", "settings observation cancelled")
+			}
+			observed := out
+			observed.TerminalShells = workspace.DetectTerminalShells()
+			return response(request, observed)
+		}, nil, true
 	case coreprotocol.SessionSettingsRead:
 		var in coreprotocol.SessionSettingsRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		backend := a.ws.BackendSession(in.SessionID)
 		if backend == nil {
 			return bad("session_missing", "exact session is not open")
 		}
-		return result(publicSessionSet(backend.SettingsSnapshots()))
+		return result(wire(publicSessionSet(backend.SettingsSnapshots())))
 	case coreprotocol.AccountModels:
 		var in coreprotocol.AccountModelsRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		before, exists := a.ws.AllAccounts()[in.AccountID]
@@ -316,7 +333,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			return response(request, coreprotocol.AccountModelsResult{Models: models})
 		}, nil, true
 	case coreprotocol.CapabilityRuntime:
-		if err := decode(request.Payload, &struct{}{}); err != nil {
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		service := a.ws.Capabilities

@@ -2,12 +2,13 @@ package viewmodel
 
 import (
 	"context"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	tea "charm.land/bubbletea/v2"
 

@@ -1,10 +1,11 @@
 package viewmodel
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"errors"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
 	settingsui "crude/tui/settings"

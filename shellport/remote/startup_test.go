@@ -2,7 +2,6 @@ package remote
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net"
@@ -104,7 +103,7 @@ func TestStartupClientExplicitInspectReconnectsAfterDialAndConnectionFailure(t *
 		a, b := net.Pipe()
 		serverConn = a
 		go func() { _ = core.ServeConnection(t.Context(), r, a) }()
-		return coreclient.Dial(ctx, b, id)
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(b), id)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	root := t.TempDir()
@@ -158,7 +157,7 @@ func TestStartupClientUncertainSaveIsNotReplayed(t *testing.T) {
 		serverConn = a
 		mu.Unlock()
 		go func() { _ = core.ServeConnection(t.Context(), r, a) }()
-		return coreclient.Dial(ctx, b, id)
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(b), id)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	_, err := s.Save(startupTestContext(t), startupTestEdit("introduction_completed"))
@@ -175,57 +174,83 @@ func TestStartupClientUncertainSaveIsNotReplayed(t *testing.T) {
 	}
 }
 
-// startupBrowseResponseDropper consumes just the Browse response. All requests
-// still go through the real core; other response frames pass immediately. This
-// deterministically leaves Browse awaiting network delivery without a slow disk.
-type startupBrowseResponseDropper struct {
-	net.Conn
-	buffer  []byte
-	dropped chan struct{}
-	once    sync.Once
-}
-
-func (c *startupBrowseResponseDropper) Write(p []byte) (int, error) {
-	c.buffer = append(c.buffer, p...)
-	for len(c.buffer) >= 4 {
-		size := int(binary.BigEndian.Uint32(c.buffer[:4]))
-		if len(c.buffer) < 4+size {
-			break
+// holdingCore speaks the session protocol and never answers the held method,
+// leaving that command awaiting delivery while the others are served.
+func holdingCore(t *testing.T, conn net.Conn, held string, reached chan struct{}, answer func(coreprotocol.Open, []byte) coreprotocol.Value) {
+	t.Helper()
+	ch := reached
+	var once sync.Once
+	m := corewire.NewMux(conn, corewire.CarrierLocal, false)
+	t.Cleanup(func() { _ = m.Close() })
+	go func() {
+		control, err := m.AcceptStream(context.Background())
+		if err != nil {
+			return
 		}
-		packet := c.buffer[:4+size]
-		var frame corewire.Frame
-		if err := json.Unmarshal(packet[4:], &frame); err != nil {
-			return 0, err
+		body, err := corewire.NewReader(control, 1<<16).Next()
+		if err != nil {
+			return
 		}
-		if frame.Kind == corewire.KindResponse && frame.Method == coreprotocol.StartupBrowse {
-			c.once.Do(func() { close(c.dropped) })
-		} else {
-			for len(packet) > 0 {
-				n, err := c.Conn.Write(packet)
-				if err != nil {
-					return 0, err
-				}
-				packet = packet[n:]
+		var hello coreprotocol.Hello
+		_ = coreprotocol.Decode(body, &hello)
+		welcome := coreprotocol.Welcome{Owner: coreprotocol.Owner{ClientID: hello.ClientID, Epoch: 1}, SessionID: "held", Secret: "held", Schema: coreprotocol.Schema, Build: hello.Build, Grace: time.Second}
+		reply, _ := coreprotocol.Marshal(&welcome)
+		_ = corewire.WriteMessage(control, reply)
+		for {
+			s, err := m.AcceptStream(context.Background())
+			if err != nil {
+				return
 			}
+			go func() {
+				body, err := corewire.NewReader(s, corewire.MaxMessage).Next()
+				if err != nil {
+					return
+				}
+				var open coreprotocol.Open
+				rest, err := coreprotocol.DecodePrefix(body, &open)
+				if err != nil || open.Kind != coreprotocol.StreamCommand {
+					<-m.Done()
+					return
+				}
+				if open.Method == held {
+					once.Do(func() { close(ch) })
+					<-m.Done()
+					return
+				}
+				out, _ := coreprotocol.Marshal(&coreprotocol.Reply{Final: true})
+				value, _ := coreprotocol.Marshal(answer(open, rest))
+				_ = corewire.WriteMessage(s, append(out, value...))
+				_ = s.CloseWrite()
+			}()
 		}
-		c.buffer = c.buffer[4+size:]
-	}
-	return len(p), nil
+	}()
 }
 
 func TestStartupClientPendingBrowseDoesNotSerializeInspectOrSaveAndCancels(t *testing.T) {
-	owner := &startupTestOwner{}
-	r := newStartupTestCore(t, owner)
-	dropped := make(chan struct{})
 	var dials atomic.Int32
+	dropped := make(chan struct{})
+	var mu sync.Mutex
+	settings := types.OnboardingSettings{}
 	s := &StartupClient{ClientID: "startup-cancel-browse"}
 	s.Dial = func(ctx context.Context, id string) (*coreclient.Client, error) {
 		dials.Add(1)
 		a, b := net.Pipe()
-		go func() {
-			_ = core.ServeConnection(t.Context(), r, &startupBrowseResponseDropper{Conn: a, dropped: dropped})
-		}()
-		return coreclient.Dial(ctx, b, id)
+		holdingCore(t, a, coreprotocol.StartupBrowse, dropped, func(open coreprotocol.Open, payload []byte) coreprotocol.Value {
+			mu.Lock()
+			defer mu.Unlock()
+			if open.Method == coreprotocol.StartupSave {
+				var in coreprotocol.StartupSaveRequest
+				_ = coreprotocol.Decode(payload, &in)
+				app := types.AppSettings{Onboarding: settings}
+				_ = types.ApplySettingsEdits(&app, in.Edits)
+				settings = app.Onboarding
+				return &settings
+			}
+			var in coreprotocol.StartupInspectRequest
+			_ = coreprotocol.Decode(payload, &in)
+			return &coreprotocol.StartupSnapshot{Root: in.Root, Onboarding: settings, ShowIntroduction: !settings.IntroductionCompleted}
+		})
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(b), id)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	browseCtx, cancel := context.WithCancel(t.Context())

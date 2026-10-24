@@ -7,6 +7,56 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Protocol v2 terminal hot paths (2026-10-23)
+
+Measured Linux amd64, i7-10750H, native libghostty-vt, Go 1.25.9. These are
+focused workload observations, not relaxed limits or a substitute for the active
+[protocol acceptance gates](../plans/core-protocol-v2.md#acceptance-gates).
+
+| Stage and workload | Before | After |
+|---|---|---|
+| SDK Apply, every cell changes truecolor, 200×50 | 953,408 B, 453 allocations/frame | 327,808–327,809 B, 53 allocations/frame |
+| View install, immutable SDK 200×50 page | 329,058 B, 53 allocations/frame | 2,657 B, 3 page-container allocations/frame |
+| Direct 200×50 new RGB frame | 64,112 B, 20,001 allocations, 0.963–1.020 ms | 80 B, 1 allocation, 0.591–0.629 ms |
+| Retained renderer pen SGR append | intermediate color/style strings per cell | 0 B, 0 warmed allocations/transition |
+| 200×50 RGB complete renderer flush | 217,468–217,524 B/frame, 1.70–1.82 ms | 37,770–37,825 B/frame, 1.59–1.66 ms; reusable actual-size envelope |
+| Native 200×50 RGB StreamRows export | 5.44–5.61 ms mean, 20,212 allocations | 1.09–1.14 ms mean, 261 allocations; one C transfer/row |
+| 20 KiB reply, forty individually applied 512-byte appends | 40,107 complete mux-carrier bytes (1.9583×) | 23,766 bytes (1.1604×), unchanged <1.5× gate |
+| Terminal key with no local ink change, real Update + View | 127.9–129.3 µs, 14,787–14,788 B, 120 allocations | 38.8–43.1 µs, 13,874 B, 97 allocations before registry-map reuse; same completed publication |
+
+SDK changed rows allocate one actual-width buffer and remain immutable. Explicit
+immutable view installation shares those rows but detaches headers/wrap metadata;
+mutable page callers retain detachment. UV uses one tagged scalar color and one
+append SGR encoder, not per-cell interface boxes or an unbounded RGB cache.
+Transcript metadata comparison ignores only the independent observation clock,
+not status transitions or the suffix's token timestamp.
+
+The R6 separate-core full-color flood measured shell GC 4.4835% of active shell
+runtime CPU, but traced enqueue→PTY-write p99 was 8.288 ms (failed <3 ms). A
+separate profile located per-cell cgo row extraction holding the terminal service
+lock. Later clean-key retention and zero-allocation Host registry generations
+remove needless shell composition without delaying input or losing source damage.
+
+The final R16 three-run cohort measures 2.430815 / 2.904142 / 2.699153 ms p99
+enqueue→successful PTY-master write, and 3.987291 / 4.071365 / 4.166104% shell GC
+CPU. Each run independently verifies 100 exact keys and 59.994–59.999 full redraws/s
+at the 200×50 truecolor source. In-kernel seccomp filtering traces write/writev
+without stopping unrelated syscalls; PTY write trace overhead remains included.
+Source redraws and 50.20–50.90 content writer flushes/s are not outer displayed
+FPS. Earlier latency/GC failures remain evidence; no ceiling was changed.
+
+The R16 native Alacritty mpv run measures 2.367363 ms input p99, 4.971892% shell
+GC and 36.125 distinct, coherent tagged source-frame identities/s over an
+eight-second capture; every one-second bin has at least 32. A lossless 60 Hz
+source carries the same ten-bit frame index in top/middle/bottom bands, decoded
+from actual pixels. The recording has 339 actual frames with 16–34 ms PTS steps,
+not 480 simply because its nominal rate is 60 Hz. Passthrough decoding excludes
+16 mixed-tag and five ambiguous samples. mpv's default line buffering is unsynchronized; counting
+only agreeing tags is not a claim of atomicity for its incomplete raster states.
+The longer input/GC sample is 20 seconds; capture rate and writer flush rate are
+not substituted for the observed source-frame identities. Three agreeing tags
+are not independent verification of every pixel between them.
+
 ## Performance dashboard and dense-session freezes (2026-10-22)
 
 `metrics/` records bounded per-second history for one process: the shell and

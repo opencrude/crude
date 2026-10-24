@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 
 	"crude/coreclient"
 	"crude/coreprotocol"
-	"crude/corewire"
 	"crude/memory"
 	"crude/types"
 	"crude/workspace"
@@ -39,44 +37,15 @@ func TestGitServiceFacadeWireAndReviewedMutation(t *testing.T) {
 	left, right := net.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		f := corewire.NewFramer(ctx, right)
-		defer f.Close()
-		id, _, err := f.NegotiateServer(corewire.MaxFrameSize)
-		if err != nil {
-			done <- err
-			return
-		}
-		owner := coreprotocol.Owner{ClientID: id, Epoch: 1}
-		raw, _ := json.Marshal(owner)
-		if err := f.Write(corewire.Frame{Version: 1, Kind: corewire.KindEvent, ClientID: id, Epoch: 1, Method: "connection.ready", Payload: raw}); err != nil {
-			done <- err
-			return
-		}
-		for count := 0; count < 5; count++ {
-			frame, err := f.Read()
-			if err != nil {
-				done <- err
-				return
-			}
-			request := coreprotocol.Request{ID: frame.RequestID, Owner: owner, WorkspaceID: frame.WorkspaceID, Method: frame.Method, Payload: frame.Payload}
+		done <- fakeCore(ctx, right, 5, func(request coreprotocol.Request) coreprotocol.Response {
 			run, ok := actor.prepareService(request)
 			if !ok {
-				done <- context.Canceled
-				return
+				return fault(request, "unknown_method", request.Method)
 			}
-			result := run(ctx)
-			out := corewire.Frame{Version: 1, Kind: corewire.KindResponse, RequestID: request.ID, ClientID: id, Epoch: 1, WorkspaceID: request.WorkspaceID, Method: request.Method, Payload: result.Payload}
-			if result.Error != nil {
-				out.Error = &corewire.Fault{Code: result.Error.Code, Message: result.Error.Message}
-			}
-			if err := f.Write(out); err != nil {
-				done <- err
-				return
-			}
-		}
-		done <- nil
+			return run(ctx)
+		})
 	}()
-	client, err := coreclient.Dial(ctx, left, "service-test")
+	client, err := coreclient.Dial(ctx, coreclient.SingleCarrier(left), "service-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,17 +90,23 @@ func TestServiceDispatcherClosedAndValidation(t *testing.T) {
 	ws.WorkspaceDB, ws.Collaboration = nil, nil
 	defer func() { ws.WorkspaceDB, ws.Collaboration = db, board }()
 	for _, method := range []string{"git.run", "memory.execute", "board.delete"} {
-		if run, ok := a.prepareService(coreprotocol.Request{Method: method, Payload: json.RawMessage(`{}`)}); ok || run != nil {
+		if run, ok := a.prepareService(coreprotocol.Request{Method: method, Payload: emptyPayload}); ok || run != nil {
 			t.Fatalf("open dispatch for %s", method)
 		}
 	}
-	for _, test := range []struct{ method, payload, code string }{
-		{coreprotocol.GitSnapshot, `{"command":"rm"}`, "invalid_request"},
-		{coreprotocol.SearchMemories, `{}`, "service_failed"},
-		{coreprotocol.BoardSnapshot, `{}`, "service_failed"},
-		{coreprotocol.PinMemory, `{"ID":"x","ExpectedRevision":1} {}`, "invalid_request"},
+	for _, test := range []struct {
+		method  string
+		payload []byte
+		code    string
+	}{
+		// An undeclared field is a wrong tuple arity, and trailing bytes are
+		// never ignored: both are rejected before any effect.
+		{coreprotocol.GitSnapshot, withExtraField(mustTestPayload(coreprotocol.GitSnapshotRequest{}), "rm"), "invalid_request"},
+		{coreprotocol.SearchMemories, mustTestPayload(coreprotocol.SearchMemoriesRequest{}), "service_failed"},
+		{coreprotocol.BoardSnapshot, mustTestPayload(coreprotocol.BoardSnapshotRequest{}), "service_failed"},
+		{coreprotocol.PinMemory, append(mustTestPayload(coreprotocol.PinMemoryRequest{ID: "x", ExpectedRevision: 1}), emptyPayload...), "invalid_request"},
 	} {
-		run, ok := a.prepareService(coreprotocol.Request{ID: "request", Method: test.method, Payload: json.RawMessage(test.payload)})
+		run, ok := a.prepareService(coreprotocol.Request{ID: "request", Method: test.method, Payload: test.payload})
 		if !ok {
 			t.Fatal("known operation absent", test.method)
 		}
@@ -163,7 +138,7 @@ func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
 	a := &actor{ws: ws}
 	prepare := func(method string, input any) func(context.Context) coreprotocol.Response {
 		t.Helper()
-		raw, err := json.Marshal(input)
+		raw, err := testPayload(input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +166,7 @@ func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
 	if result.Error != nil {
 		t.Fatal(result.Error)
 	}
-	if err := json.Unmarshal(result.Payload, &detail); err != nil {
+	if err := coreprotocol.Decode(result.Payload, &detail); err != nil {
 		t.Fatal(err)
 	}
 	if !detail.Detail.Record.Pinned || detail.Detail.Record.Revision != 2 || len(detail.Detail.Revisions) != 2 || detail.Detail.Record.Content != "Exact original assertion" {
@@ -203,7 +178,7 @@ func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
 	}
 	result = prepare(coreprotocol.SearchMemories, coreprotocol.SearchMemoriesRequest{Query: memory.ListQuery{}})(ctx)
 	var listed coreprotocol.SearchMemoriesResult
-	if err := json.Unmarshal(result.Payload, &listed); err != nil {
+	if err := coreprotocol.Decode(result.Payload, &listed); err != nil {
 		t.Fatal(err)
 	}
 	if result.Error != nil || len(listed.Records) != 0 {

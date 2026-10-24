@@ -17,13 +17,13 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 	bad := func(err error) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
-	done := func(value any) (func(context.Context) coreprotocol.Response, bool) {
-		return func(context.Context) coreprotocol.Response { return response(request, value) }, true
+	done := func(value coreprotocol.Value) (func(context.Context) coreprotocol.Response, bool) {
+		return func(context.Context) coreprotocol.Response { return responseValue(request, value) }, true
 	}
 	switch request.Method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel:
 		var in coreprotocol.RecoveryRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		run := ws.PrepareAgentRecovery(in.AgentID, in.IncidentID, in.Generation)
@@ -41,7 +41,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}, true
 	case coreprotocol.AgentPlanMode:
 		var in coreprotocol.AgentPlanModeRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		run, err := ws.PrepareSetPlanMode(in.AgentID, in.Enabled)
@@ -56,12 +56,12 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}, true
 	case coreprotocol.AgentGoal:
 		var in coreprotocol.AgentGoalRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		run, err := ws.PrepareGoalAction(in.AgentID, in.Action, in.Objective)
 		if err != nil {
-			return done(coreprotocol.AgentGoalResult{Error: err.Error()})
+			return done(wire(coreprotocol.AgentGoalResult{Error: err.Error()}))
 		}
 		return func(context.Context) coreprotocol.Response {
 			goal, present, err := run()
@@ -76,7 +76,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}, true
 	case coreprotocol.AgentStopCommand:
 		var in coreprotocol.StopCommandRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		stop, err := ws.PrepareAsyncCommandTermination(in.AgentID, in.Ref)
@@ -91,15 +91,15 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}, true
 	case coreprotocol.AgentCompact:
 		var in coreprotocol.AgentIDRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		if ws.AgentTurnActive(in.AgentID) {
-			return done(types.CompactResultMsg{Error: "Stop the active turn before compacting context"})
+			return done(wire(types.CompactResultMsg{Error: "Stop the active turn before compacting context"}))
 		}
 		prepared, result := ws.PrepareCompactForAgent(in.AgentID)
 		if prepared.Run == nil {
-			return done(result)
+			return done(wire(result))
 		}
 		// The boundary row is reduced once here, so every shell shows it.
 		if reduced := ws.ApplyAgentEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: in.AgentID, Data: map[string]any{
@@ -127,7 +127,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}, true
 	case coreprotocol.ToolLayoutSave:
 		var in coreprotocol.ToolLayoutRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		store := &workspace.Workspace{WorkspaceDB: ws.WorkspaceDB}
@@ -137,20 +137,9 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			}
 			return response(request, coreprotocol.BoolResult{OK: true})
 		}, true
-	case coreprotocol.HistoryRestoreEvent:
-		var in coreprotocol.HistoryRestoreEventRequest
-		if err := decode(request.Payload, &in); err != nil {
-			return bad(err)
-		}
-		return func(context.Context) coreprotocol.Response {
-			if err := ws.AppendHistoryRestoreEvent(in.Result); err != nil {
-				return fault(request, "append_failed", err.Error())
-			}
-			return response(request, coreprotocol.BoolResult{OK: true})
-		}, true
 	case coreprotocol.HistoryUndoScopes:
 		var in coreprotocol.UndoScopesRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		service := ws.HistoryService
@@ -166,7 +155,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}, true
 	case coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
 		var in coreprotocol.GitPathsRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		if ws.Git == nil {
@@ -194,7 +183,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		return done(coreprotocol.CommitModelResult{Model: writer.Model})
 	case coreprotocol.GitCommitMessage:
 		var in coreprotocol.CommitMessageRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
 		writer, err := ws.PrepareCommitMessageWriter()
@@ -217,7 +206,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 func ownerMutation(method string) bool {
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal,
-		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave, coreprotocol.HistoryRestoreEvent,
+		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
 		return true
 	}
@@ -227,7 +216,7 @@ func ownerMutation(method string) bool {
 func ownerOperation(method string) bool {
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal,
-		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryRestoreEvent, coreprotocol.HistoryUndoScopes,
+		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryUndoScopes,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true
 	}

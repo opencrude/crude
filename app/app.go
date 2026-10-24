@@ -74,6 +74,7 @@ type App struct {
 	// defaultsChanged is installed by the core host to republish committed
 	// application defaults to every retained workspace.
 	defaultsChanged func()
+	remote          *coreRemote // listener owner, installed by the retained core host
 }
 
 // Opts configures the App. Passed to New() during initialization.

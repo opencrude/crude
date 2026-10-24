@@ -52,6 +52,9 @@ type CoreStatus struct {
 // ShutdownRequest asks the core to stop. Force overrides active work only.
 type ShutdownRequest struct {
 	Force bool `json:"force"`
+	// ExpectedOwner binds a fixed old-image handover helper to one exact
+	// endpoint lifetime; it cannot stop a replacement process on that address.
+	ExpectedOwner string `json:"expected_owner,omitempty"`
 }
 
 // ShutdownResult reports the decision. A refusal is a typed result, not a fault,

@@ -63,27 +63,19 @@ func TestLiveAgentInspectionIsPassiveAndSelfExplanatory(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close() })
 	server, wire := net.Pipe()
 	go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-	client, err := coreclient.Dial(t.Context(), wire, "inspection-live")
+	client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(wire), "inspection-live")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	done := make(chan string, 8)
-	go func() {
-		for event := range client.Events() {
-			for _, reduction := range event.Reductions {
-				if reduction.Effects.Done != nil {
-					done <- reduction.AgentID
-				}
-			}
-		}
-	}()
 	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
 	var attached coreprotocol.AttachResult
 	if err := client.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: project}, &attached); err != nil {
 		t.Fatal(err)
 	}
+	followLiveAgentCompletions(t, client, attached.WorkspaceID, done)
 	store := ws.Collaboration
 	peer, err := store.RegisterAgent(ctx, collaboration.AgentRegistration{ID: "mara", Name: "Mara", SessionID: "mara-session", OwnerInstance: "fixture"})
 	if err != nil {
@@ -137,19 +129,33 @@ func TestLiveAgentInspectionIsPassiveAndSelfExplanatory(t *testing.T) {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult
-	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, struct{}{}, &created); err != nil || created.Error != "" {
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created); err != nil || created.Error != "" {
 		t.Fatal(err, created.Error)
 	}
 	ws.BackendSession(created.SessionID).SetYolo(true)
 	goal := "Why was Mara working earlier? Is she still working, what woke her, and what did she actually do? Include any verification code in her latest visible answer. Inspect only: do not message, open, restart or control her session, and do not change files."
-	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: goal, DraftRevision: 1}, nil); err != nil {
+	var admission coreprotocol.InputResult
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: created.OrchID, Text: goal, DraftRevision: 1}, &admission); err != nil {
 		t.Fatal(err)
+	}
+	if admission.Status != session.InputAdmissionAccepted || admission.Error != "" {
+		t.Fatalf("inspection input was not admitted: %s %s", admission.Status, admission.Error)
 	}
 	for finished := false; !finished; {
 		select {
 		case id := <-done:
 			finished = id == created.OrchID
 		case <-ctx.Done():
+			diagnostic, stop := context.WithTimeout(context.Background(), time.Second)
+			defer stop()
+			var snapshot coreprotocol.WorkspaceSnapshot
+			if err := client.Call(diagnostic, attached.WorkspaceID, coreprotocol.Snapshot, &coreprotocol.Empty{}, &snapshot); err == nil {
+				for _, agent := range snapshot.Agents {
+					if agent.ID == created.OrchID {
+						t.Logf("observer model=%s running=%v completed=%v status=%s recovery=%+v", agent.Model, agent.Running, agent.Completed, agent.Status, agent.Recovery)
+					}
+				}
+			}
 			t.Fatal("inspection did not complete", ctx.Err())
 		}
 	}
@@ -178,4 +184,27 @@ func TestLiveAgentInspectionIsPassiveAndSelfExplanatory(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(used)
 	t.Logf("LIVE_INSPECTION_PASS model=%s tools=%s answer=%s", main.Model, encoded, final)
+}
+
+// These observers consume the same acknowledged workspace log as a shell; a
+// controller that does not subscribe receives no duplicate invalidations.
+func followLiveAgentCompletions(t *testing.T, client *coreclient.Client, ws string, done chan<- string) {
+	t.Helper()
+	sub := client.Subscribe(t.Context(), ws, coreprotocol.TopicWorkspace, "", func(_ coreprotocol.TopicHeader, body []byte) error {
+		var update coreprotocol.WorkspaceUpdate
+		if err := coreprotocol.Decode(body, &update); err != nil {
+			return err
+		}
+		for _, reduction := range update.Reductions {
+			if reduction.Effects.Done != nil {
+				select {
+				case done <- reduction.AgentID:
+				case <-t.Context().Done():
+					return t.Context().Err()
+				}
+			}
+		}
+		return nil
+	})
+	t.Cleanup(sub.Close)
 }

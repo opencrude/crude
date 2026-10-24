@@ -4,13 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/sessiondb"
 	"crude/tui/screens/activitylist"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
@@ -32,7 +33,7 @@ func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
 	if app.workspaceOpenPrompt == nil || app.workspaceOpenPrompt.root != target || app.workspaceAttachPending || app.ws != old {
 		t.Fatal("single click did not request the exact destination safely")
 	}
-	if paint := app.View().Content; !strings.Contains(paint, "Switch workspace") || !strings.Contains(paint, "Open workspace") {
+	if paint := app.View().RenderContent(); !strings.Contains(paint, "Switch workspace") || !strings.Contains(paint, "Open workspace") {
 		t.Fatal("confirmation not painted")
 	}
 	// Pointer outside, global shortcuts, paste and wheel cannot bypass consent.

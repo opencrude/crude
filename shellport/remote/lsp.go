@@ -6,8 +6,9 @@ import (
 	"crude/shellport"
 	"crude/types"
 	"crude/workspace"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"path/filepath"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // lspReplica owns only detached observations. Core alone owns server lifetime;
@@ -25,7 +26,7 @@ func (w *Workspace) LSPMgr() shellport.LSPService { return w.lsp }
 
 func (l *lspReplica) fetch(ctx context.Context) (coreprotocol.LSPSnapshot, error) {
 	var out coreprotocol.LSPSnapshot
-	err := l.w.call(ctx, coreprotocol.LSPSnapshotMethod, coreprotocol.LSPRequest{}, &out)
+	err := l.w.call(ctx, coreprotocol.LSPSnapshotMethod, &coreprotocol.LSPRequest{}, &out)
 	return out, err
 }
 
@@ -65,14 +66,14 @@ func cloneLSPSnapshot(in coreprotocol.LSPSnapshot) coreprotocol.LSPSnapshot {
 func (l *lspReplica) send(method string, input coreprotocol.LSPRequest) {
 	l.w.commands.push(func(ctx context.Context) {
 		var out coreprotocol.LSPResult
-		if err := l.w.call(ctx, method, input, &out); err != nil {
+		if err := l.w.call(ctx, method, &input, &out); err != nil {
 			l.w.logger.Warn("REMOTE", "lsp_mutation_failed", "method", method, "error", err.Error())
 		}
 	})
 }
 func (l *lspReplica) query(ctx context.Context, method string, input coreprotocol.LSPRequest) (coreprotocol.LSPResult, error) {
 	var out coreprotocol.LSPResult
-	err := l.w.call(ctx, method, input, &out)
+	err := l.w.call(ctx, method, &input, &out)
 	return out, err
 }
 
@@ -166,5 +167,5 @@ func (l *lspReplica) RequestHover(ctx context.Context, path string, line, col in
 }
 func (l *lspReplica) RequestRename(ctx context.Context, path string, line, col int, name string) (*protocol.WorkspaceEdit, error) {
 	out, err := l.query(ctx, coreprotocol.LSPRequestRename, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, NewName: name})
-	return out.Edit, err
+	return (*protocol.WorkspaceEdit)(out.Edit), err
 }

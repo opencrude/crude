@@ -98,6 +98,8 @@ type App struct {
 	FilePicker                *filepickerscreen.Screen
 	DiagPopupID               string
 	planHover                 *planHoverState
+	remotes                   *remoteManagerState
+	remoteUICommands          []tea.Cmd
 
 	// Composer state changes at session activation, never from Paint. Warm
 	// sessions retain their editor; cold persisted drafts load asynchronously.
@@ -165,8 +167,9 @@ type App struct {
 	compositor         *compositor.Compositor
 	windowManager      *wm.WindowManager
 	renderCtx          *wm.RenderContext
-	cachedOutput       string // last ANSI frame reused while high-rate presentation is coalesced
+	framePresented     bool // the compositor holds a complete reusable cell frame
 	frameGate          frameGate
+	headerClockSecond  int64 // wall-clock source generation, not presented-frame state
 	chatReflowContentW int
 	chatReflowInnerW   int
 
@@ -247,6 +250,7 @@ type App struct {
 	workspaceListError     string
 	workspaceListCancel    context.CancelFunc
 	historyScreen          *historyscreen.Screen
+	historyOperation       *historyOperation
 	sessionPicker          *sessionpicker.Screen
 	commandPaletteModel    *commandPaletteModel
 	findInFiles            *findinfiles.Screen
@@ -315,12 +319,13 @@ type App struct {
 	// in the dock (panel_placement.go).
 	panelPlacements map[string]panelPlacement
 	// paneFocusSeen is Window's focused group at the last window-focus sync.
-	paneFocusSeen      window.GroupID
-	workspaceSwitchGen atomic.Uint64   // invalidates project-bound async callbacks
-	lspRequestCtx      context.Context // canceled whenever the workspace generation changes
-	lspRequestCancel   context.CancelFunc
-	lspDiagnostics     shellport.LSPDiagnosticConsumer
-	reveals            map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
+	paneFocusSeen         window.GroupID
+	workspaceSwitchGen    atomic.Uint64 // invalidates project-bound async callbacks
+	pendingDocumentTopics map[string]shellport.LiveDocumentsChangedMsg
+	lspRequestCtx         context.Context // canceled whenever the workspace generation changes
+	lspRequestCancel      context.CancelFunc
+	lspDiagnostics        shellport.LSPDiagnosticConsumer
+	reveals               map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
 	OnExitMessage func()
@@ -611,7 +616,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
-	return tea.Batch(m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
+	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.
@@ -760,6 +765,7 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
 	if body, ok := wsWidget.Component().(*settingsui.WorkspaceSettingsSurface); ok {
 		body.Model().SetCapabilitySnapshot(m.capabilitySnapshot)
+		m.bindRemoteSettings(body)
 	}
 
 	w, h := fitFloatingSize(m.width, m.height, minInt(124, m.width-8), minInt(28, m.height-4), 60, 18)
@@ -789,6 +795,9 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayWorkspaceSettings, win, ui.ModalDialogPolicy(), func() {
+		if body := m.settingsSurface(win); body != nil {
+			body.CancelRemoteAccess()
+		}
 		if m.settingsPrompt != nil && m.settingsPrompt.parent == win {
 			m.overlayHost.Close(ui.OverlaySettingsPrompt)
 		}

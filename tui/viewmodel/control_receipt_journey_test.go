@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/internal/wiretest"
 	"encoding/json"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestConnectedGenericCloseObservesOriginalReceiptAfterOwnerRemoved(t *testin
 	}
 	defer external.Close()
 	call := func(id, method string, input any) coreprotocol.Response {
-		raw, err := json.Marshal(input)
+		raw, err := wiretest.Marshal(input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +60,7 @@ func TestConnectedGenericCloseObservesOriginalReceiptAfterOwnerRemoved(t *testin
 		return finished
 	})
 	var outcome control.Result
-	if reply.Error != nil || json.Unmarshal(reply.Payload, &outcome) != nil || outcome.State != control.Applied || one.app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
+	if reply.Error != nil || coreprotocol.Decode(reply.Payload, &outcome) != nil || outcome.State != control.Applied || one.app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
 		t.Fatalf("real Close failed: %+v", reply)
 	}
 	// There is no mounted component left to resolve. The exact receipt must be
@@ -72,7 +73,7 @@ func TestConnectedGenericCloseObservesOriginalReceiptAfterOwnerRemoved(t *testin
 	changed := call(request.ID, coreprotocol.ControlExecute, request)
 	if changed.Error == nil {
 		var denied control.Result
-		if json.Unmarshal(changed.Payload, &denied) != nil || denied.State != control.Failed || denied.Fault == nil || denied.Fault.Code != control.Invalid {
+		if coreprotocol.Decode(changed.Payload, &denied) != nil || denied.State != control.Failed || denied.Fault == nil || denied.Fault.Code != control.Invalid {
 			t.Fatalf("changed original intent accepted: %+v", changed)
 		}
 	}

@@ -84,7 +84,7 @@ func TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource(t *testing.T) {
 				one.app.rootHost.Focus("status-overview/list")
 				_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 				runAppCommand(t, one.app, cmd)
-				paint := ansi.Strip(one.app.View().Content)
+				paint := ansi.Strip(one.app.View().RenderContent())
 				if !strings.Contains(paint, "Waiting for source file") || strings.Contains(paint, "No language server") {
 					t.Fatalf("saved enabled idle state is misleading:\n%s", paint)
 				}
@@ -102,7 +102,7 @@ func TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource(t *testing.T) {
 			remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool { return one.app.ws.LSPMgr().ProjectInsights().Errors == 1 })
 			one.app.hideWorkspacePanel()
 			one.app.toggleWorkspacePanel(termdock.PanelProblems)
-			if paint := ansi.Strip(one.app.View().Content); !strings.Contains(paint, "missingEnableIdentifier") || strings.Contains(paint, "Waiting for source file") {
+			if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "missingEnableIdentifier") || strings.Contains(paint, "Waiting for source file") {
 				t.Fatalf("opened source diagnostics not rendered:\n%s", paint)
 			}
 			if !one.app.ws.LoadAppSettings().LSP.Enabled || !one.app.ws.AppDefaults().LSP.Enabled {

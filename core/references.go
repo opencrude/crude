@@ -45,7 +45,7 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 		return nil, false
 	}
 	var input coreprotocol.ReferenceCommand
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	var owner *workspace.Session
@@ -69,11 +69,11 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 		if err != nil {
 			return fault(request, "reference_failed", err.Error())
 		}
-		return response(request, value)
+		return responseValue(request, value)
 	}, true
 }
 
-func runReferenceCommand(store workspace.SessionReferences, method string, in coreprotocol.ReferenceCommand) (any, error) {
+func runReferenceCommand(store workspace.SessionReferences, method string, in coreprotocol.ReferenceCommand) (coreprotocol.Value, error) {
 	referenceCommandMu.Lock()
 	defer referenceCommandMu.Unlock()
 	if method == coreprotocol.ReferenceList {
@@ -84,7 +84,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		sort.Slice(out.References, func(i, j int) bool {
 			return out.References[i].Reference.CreatedAt < out.References[j].Reference.CreatedAt
 		})
-		return out, nil
+		return wire(out), nil
 	}
 	if method == coreprotocol.ReferenceCreate {
 		if in.Create == nil {
@@ -126,7 +126,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 			return nil, errors.New("reference kind is not supported for creation")
 		}
 		ref, err := store.CreateReference(sessiondb.CreateRequest{Kind: req.Kind, Label: req.Label, Title: req.Title, Mime: req.Mime, Content: content, Data: imageData, FilePath: req.ServerPath, Inline: req.Inline})
-		return referenceView(ref), err
+		return wire(referenceView(ref)), err
 	}
 	ref, ok := store.GetReference(in.ID)
 	if !ok || !ref.Active() || ref.SessionID != in.SessionID {
@@ -141,7 +141,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 	switch method {
 	case coreprotocol.ReferenceImport:
 		created, err := store.ImportReference(ref)
-		return referenceView(created), err
+		return wire(referenceView(created)), err
 	case coreprotocol.ReferenceReadContent, coreprotocol.ReferenceReadMedia:
 		var data []byte
 		var readOnly bool
@@ -163,25 +163,25 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		if len(data) > coreprotocol.ReferenceMaxBytes {
 			return nil, errors.New("content exceeds 64 MiB read bound")
 		}
-		return referenceChunk(referenceView(ref), data, readOnly, in.Offset, in.Digest)
+		return wired(referenceChunk(referenceView(ref), data, readOnly, in.Offset, in.Digest))
 	case coreprotocol.ReferenceSaveContent:
 		if len(in.Content) > coreprotocol.ReferenceUploadMaxBytes || len(in.Original) > coreprotocol.ReferenceUploadMaxBytes {
-			return nil, errors.New("save exceeds inline transport bound; chunked upload is not offered")
+			return nil, errors.New("editable text exceeds 16 MiB")
 		}
 		if err := store.SaveReferenceContent(ref, in.Original, in.Content); err != nil {
 			return nil, err
 		}
 		updated, _ := store.GetReference(ref.ID)
-		return referenceView(updated), nil
+		return wire(referenceView(updated)), nil
 	case coreprotocol.ReferenceRename:
 		label, ok := store.RenameReference(ref.ID, in.Label)
 		if !ok {
 			return nil, errors.New("reference rename failed")
 		}
 		ref.Label = label
-		return referenceView(ref), nil
+		return wire(referenceView(ref)), nil
 	case coreprotocol.ReferenceDelete:
-		return struct{}{}, store.DeleteReference(ref.ID)
+		return wire(coreprotocol.Empty{}), store.DeleteReference(ref.ID)
 	}
 	return nil, errors.New("unknown reference operation")
 }
@@ -189,9 +189,8 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 func referenceChunk(view coreprotocol.ReferenceView, data []byte, readOnly bool, offset int64, expected string) (coreprotocol.ReferenceContentResult, error) {
 	hash := sha256.Sum256(data)
 	digest := hex.EncodeToString(hash[:])
-	if len(data) > coreprotocol.ReferenceMaxBytes || offset < 0 || offset > int64(len(data)) || offset != 0 && expected == "" || expected != "" && expected != digest {
+	if len(data) > coreprotocol.ReferenceMaxBytes || offset != 0 || expected != "" {
 		return coreprotocol.ReferenceContentResult{}, errors.New("invalid offset or content changed during download")
 	}
-	end := min(int64(len(data)), offset+coreprotocol.ReferenceChunkBytes)
-	return coreprotocol.ReferenceContentResult{View: view, Data: data[offset:end], ReadOnly: readOnly, Total: int64(len(data)), Next: end, Digest: digest}, nil
+	return coreprotocol.ReferenceContentResult{View: view, Data: data, ReadOnly: readOnly, Total: int64(len(data)), Next: int64(len(data)), Digest: digest}, nil
 }

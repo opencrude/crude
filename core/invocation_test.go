@@ -2,7 +2,6 @@ package core
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,12 +36,12 @@ func TestInvocationTypedCoreJourney(t *testing.T) {
 	defer c.Close()
 	attach := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()})
 	var attached coreprotocol.AttachResult
-	if err := json.Unmarshal(attach.Payload, &attached); err != nil {
+	if err := coreprotocol.Decode(attach.Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
 	created := callCore(t, c, "create", attached.WorkspaceID, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{Selection: coreprotocol.InvocationSelection{AccountID: "saved", Model: "selected-model", APIKey: "write-only-key", Instructions: "extra"}})
 	var identity workspace.NewSessionResult
-	if err := json.Unmarshal(created.Payload, &identity); err != nil {
+	if err := coreprotocol.Decode(created.Payload, &identity); err != nil {
 		t.Fatal(err)
 	}
 	if identity.Error != "" || identity.SessionID == "" {
@@ -53,7 +52,7 @@ func TestInvocationTypedCoreJourney(t *testing.T) {
 		t.Fatal("typed selector ignored")
 	}
 	callCore(t, c, "warm", attached.WorkspaceID, coreprotocol.OpenSession, coreprotocol.InvocationSessionRequest{SessionID: identity.SessionID})
-	raw, _ := json.Marshal(coreprotocol.InvocationSessionRequest{SessionID: identity.SessionID, Selection: coreprotocol.InvocationSelection{Model: "other"}})
+	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.InvocationSessionRequest{SessionID: identity.SessionID, Selection: coreprotocol.InvocationSelection{Model: "other"}}))
 	refused := c.Call(t.Context(), coreprotocol.Request{ID: "incompatible", Owner: c.Owner, WorkspaceID: attached.WorkspaceID, Method: coreprotocol.OpenSession, Payload: raw})
 	if refused.Error == nil {
 		t.Fatal("live selection mutated peer backend")

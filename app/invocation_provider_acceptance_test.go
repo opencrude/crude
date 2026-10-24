@@ -84,7 +84,7 @@ func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
 	}()
 	peer, wire := net.Pipe()
 	go func() { _ = core.ServeConnection(t.Context(), runtime, peer) }()
-	client, err := coreclient.Dial(t.Context(), wire, "invocation-provider")
+	client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(wire), "invocation-provider")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,14 +95,14 @@ func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
 	}
 	selection := invocationSelection(CLIFlags{Account: "saved", Model: "selected-wire-model", Provider: "openai", APIKey: key, SystemPrompt: "extra <unsafe> & instruction"})
 	var created workspace.NewSessionResult
-	if err := client.Call(t.Context(), attached.WorkspaceID, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{Selection: selection}, &created); err != nil {
+	if err := client.Call(t.Context(), attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: selection}, &created); err != nil {
 		t.Fatal(err)
 	}
 	if created.Error != "" {
 		t.Fatal(created.Error)
 	}
 	var admitted coreprotocol.InputResult
-	if err := client.Call(t.Context(), attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: "wire acceptance", DraftRevision: 1}, &admitted); err != nil {
+	if err := client.Call(t.Context(), attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: created.OrchID, Text: "wire acceptance", DraftRevision: 1}, &admitted); err != nil {
 		t.Fatal(err)
 	}
 	select {

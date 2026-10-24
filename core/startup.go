@@ -68,7 +68,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 	bad := func(err error) coreprotocol.Response { return fault(request, "startup_failed", err.Error()) }
 	switch request.Method {
 	case coreprotocol.StartupOnboarding:
-		if err := decode(request.Payload, &struct{}{}); err != nil {
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		if c.runtime.startup == nil {
@@ -85,7 +85,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 		return response(request, out)
 	case coreprotocol.StartupInspect:
 		var in coreprotocol.StartupInspectRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		var out coreprotocol.StartupSnapshot
@@ -118,7 +118,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 		return response(request, out)
 	case coreprotocol.StartupBrowse:
 		var in coreprotocol.StartupBrowseRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		directory, err := projectpath.Browse(ctx, in.Path, in.Offset)
@@ -132,7 +132,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 		return response(request, out)
 	case coreprotocol.StartupCatalog:
 		var in coreprotocol.StartupCatalogRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		location, err := projectpath.Inspect(in.Root)
@@ -146,7 +146,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 		return response(request, catalog)
 	case coreprotocol.StartupSave:
 		var in coreprotocol.StartupSaveRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		if err := validateStartupEdits(in.Edits); err != nil {

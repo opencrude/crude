@@ -7,6 +7,33 @@ Live text in connected shells is owned by the core's shared document service
 editor PieceTables are optimistic projections of it. This page covers the editor
 engine and its invariants.
 
+## Shared document publication
+
+Every connected open registers one document topic. The first publication is a
+snapshot boundary; subsequent publications carry ordered revision operations and
+savepoint/path state, not another complete text fetch after each command. The
+core remains the text, LSP, undo and save authority. Edit/undo/redo/format/save
+results are private command evidence; they do not replace the shared publication
+clock or consume another editor's pending draft.
+
+On Update, the adapter validates the owner, document, base revision and exact
+subscription token, prepares the full canonical update plus optimistic edit and
+anchor rebase, then commits all prepared state atomically. Failed preparation
+leaves the previous editor state intact and retains private recovery evidence.
+Only successful application releases the topic's applied ACK. Cursors, selection,
+scroll and pending optimistic text remain private. Ordinary typing, save and
+idle ticks do not invoke `SyncDocument`; explicit recovery and final shutdown
+reconciliation retain that API.
+
+A warm retained-session resume continues the applied topic cursor. A cold reset
+cannot prove that an unresolved private edit was applied: it enters conflict and
+observes the original receipt instead of silently replacing or replaying text.
+Close/reopen, draft resolution, workspace switch and shutdown invalidate exact
+per-open generation tokens, including publications already queued to Update.
+Switching away and back to the same port does not revive an old token. Explicit
+Use shared backs up private evidence first; it grants no permission to overwrite
+an external disk conflict. See [private shared-editor recovery](core-client-protocol.md#shared-resources-and-private-state).
+
 ## Motion
 
 - Display geometry is never source text. PieceTable positions resolve through
@@ -77,7 +104,7 @@ engine and its invariants.
   burst RPCs. A new edit after Undo invalidates Redo. Whole groups are retained
   or retired; pruning cannot leave half a command.
 - Every Undo/Redo gesture is ordered. Input arriving behind pending history
-  waits for its exact receipt and full canonical sync, then runs at the resulting
+  waits for its exact receipt and canonical topic revision, then runs at the resulting
   caret. Save/close wait too. Ordinary queued key/paste input is retained in private
   recovery evidence; restored evidence is not automatic permission to replay.
 - Standalone views restore pre/post caret and selection with exact source bytes.

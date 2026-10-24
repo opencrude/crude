@@ -18,7 +18,7 @@ func TestActivityExpansionKeepsTreeAndFullOperands(t *testing.T) {
 		{InternalID: "read", Role: "tool", ToolName: "read_file", ToolArgs: "tui/chatprojection/very_descriptive_file_name.go", ToolStatus: "success", Content: "package fixture"},
 		{InternalID: "search", Role: "tool", ToolName: "grep_files", ToolInput: "the complete expression", ToolScope: "tui/chatprojection", ToolStatus: "calling", ToolPreviewPhase: "streaming"},
 	}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	r.ToggleDisclosure("activity:read")
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ID != "activity:read" {
@@ -77,7 +77,7 @@ func TestPatchFailureColorsOnlyActionAndIndicator(t *testing.T) {
 func TestWriteDefaultsExpandedAndCanCollapse(t *testing.T) {
 	r := newActivityRenderer()
 	msg := types.ChatMessage{InternalID: "write", Role: "tool", ToolName: "write_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: "Written 2 lines\n+package fixture\n+var X = true"}
-	r.SyncMessages([]types.ChatMessage{msg}, 1)
+	r.SyncMessages([]types.ChatMessage{msg}, 1, 0)
 	if r.disclosureState(r.sync.MsgByID["write"]) != DisclosureExpanded {
 		t.Fatal("file write hidden by default")
 	}
@@ -178,7 +178,7 @@ func BenchmarkDenseActivityPresentedFrame(b *testing.B) {
 		messages[i] = types.ChatMessage{InternalID: fmt.Sprint(i), Role: "tool", ToolName: "read_file", ToolArgs: "src/file.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: strings.Repeat("source line\n", 40)}
 	}
 	messages[4000] = types.ChatMessage{InternalID: "active", Role: "tool", ToolName: "exec_command", ToolCommand: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: "streaming"}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	r.ExportMessageRows(100)
 	b.ReportAllocs()
 	b.ResetTimer()

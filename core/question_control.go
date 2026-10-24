@@ -18,7 +18,7 @@ func (c *Connection) QuestionControlMethod(ctx context.Context, request coreprot
 		return fail("invalid_owner", "question connection owner changed")
 	}
 	var input coreprotocol.QuestionControlRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return fail("invalid_request", err.Error())
 	}
 	original, ok := c.ControlAdmission(input.ControlRequestID, request.WorkspaceID)
@@ -32,7 +32,7 @@ func (c *Connection) QuestionControlMethod(ctx context.Context, request coreprot
 			Verb string `json:"verb"`
 		} `json:"operation"`
 	}
-	if err := decode(original.Input, &intent); err != nil || intent.Operation.Verb != "activate" || !strings.HasPrefix(intent.ComponentID, "deck/"+input.SessionID+"/") || !strings.Contains(intent.ComponentID, "::session-question/") || (intent.ExpectedAction != "question.submit" && intent.ExpectedAction != "question.cancel") {
+	if err := decodeJSON(original.Input, &intent); err != nil || intent.Operation.Verb != "activate" || !strings.HasPrefix(intent.ComponentID, "deck/"+input.SessionID+"/") || !strings.Contains(intent.ComponentID, "::session-question/") || (intent.ExpectedAction != "question.submit" && intent.ExpectedAction != "question.cancel") {
 		return fail("denied", "admission is not an ordinary question decision")
 	}
 	c.mu.Lock()

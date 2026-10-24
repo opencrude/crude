@@ -12,7 +12,7 @@ func (a *actor) prepareProjectReplace(request coreprotocol.Request) (func(contex
 		return nil, false
 	}
 	var input coreprotocol.ProjectReplaceRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	root, docs := a.ws.RootPath, a.ws.LiveDocuments
@@ -44,15 +44,7 @@ func (a *actor) prepareProjectReplace(request coreprotocol.Request) (func(contex
 			if chunk.Total > 16<<20 {
 				return nil, errors.New("replacement document exceeds 16 MiB")
 			}
-			data := append([]byte(nil), chunk.Data...)
-			for !chunk.EOF {
-				chunk, err = readFileChunk(ctx, root, coreprotocol.FileReadRequest{Path: path, Offset: chunk.NextOffset, Limit: coreprotocol.MaxFileChunk, Digest: chunk.Digest})
-				if err != nil {
-					return nil, err
-				}
-				data = append(data, chunk.Data...)
-			}
-			return data, nil
+			return chunk.Data, nil
 		})
 		if err != nil {
 			return fault(request, "files_failed", err.Error())

@@ -47,6 +47,7 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.invalidateMessageRegions(msg)
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.BlurMsg:
 		m.setWheelHost(nil)
@@ -57,6 +58,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
+	command = tea.Batch(command, m.drainRemoteUICommands())
 	command = tea.Batch(command, m.drainTerminalCommands())
 	command = tea.Batch(command, m.continueRemoteWorkspaceSwitch())
 	command = tea.Batch(command, m.drainLiveEditorCommands())
@@ -85,6 +87,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.handleRemoteInstallInput(msg); handled {
+		return m, cmd
+	}
+	if handled, cmd := m.HandleRemoteMessage(msg); handled {
+		return m, cmd
+	}
 	onboardingHandled, onboardingCmd := m.handleOnboardingMessage(msg)
 	if onboardingHandled {
 		return m, onboardingCmd
@@ -104,11 +112,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	coalescePresentation := false
 	switch msg.(type) {
-	case tea.MouseMotionMsg, interactiveFrameMsg:
-	case types.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg, terminalProjectionMsg:
+	case tea.MouseMotionMsg, interactiveFrameMsg, types.TickMsg:
+	case types.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg, terminalProjectionMsg, shellport.TerminalFrameMsg:
 		coalescePresentation = true
 	default:
-		m.forceFrame()
+		m.presentImmediateFrame()
 	}
 
 	// Any live input makes the following window expected work in the perf
@@ -120,8 +128,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Mutations are processed for every message. High-rate pointer/stream/PTY
-	// presentation is coalesced by frameGate; a presented frame still repaints
-	// the complete shell, with expensive leaf work retained by source version.
+	// presentation is coalesced by frameGate. Host generations independently
+	// retain source damage until a frame actually paints it.
 
 	switch msg := msg.(type) {
 	case editor.SyntaxReadyMsg:
@@ -173,10 +181,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyEditorRecoveryCleared(msg)
 		return m, nil
 	case shellport.LiveDocumentsChangedMsg:
-		if msg.Owner == m.ws {
-			m.invalidateLiveEditors(msg.IDs)
-		}
-		return m, nil
+		return m, m.applyDocumentTopic(msg)
 	case shellport.ReplicaChangesMsg:
 		return m, m.applyReplicaChanges(msg)
 	case remotePromptHistoryMsg:
@@ -264,6 +269,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case shellheader.ActionMsg:
 		switch msg.Action {
+		case "remotes":
+			return m, m.OpenRemotes()
 		case "panes":
 			return m, m.openMainPaneMenu()
 		case "workspace":
@@ -449,6 +456,64 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// invalidateMessageRegions publishes source mutations to the one damage owner.
+// Unknown messages conservatively invalidate the shell. High-rate terminal
+// publications and clock updates have bounded, explicit presentation owners;
+// scheduling a frame itself is never a source mutation.
+func (m *App) invalidateMessageRegions(msg tea.Msg) {
+	if m.rootHost == nil || m.shell == nil {
+		return
+	}
+	mark := func(c ui.Component) {
+		if c != nil {
+			m.rootHost.MarkComponentPaint(c.ID())
+		}
+	}
+	switch msg := msg.(type) {
+	case interactiveFrameMsg:
+		return
+	case tea.KeyPressMsg:
+		if m.terminalOwnsKeys() {
+			// The focused terminal Host owns selection, blink and prediction
+			// paint. Global terminal shortcuts own their layout/overlay damage.
+			// Do not convert an admitted PTY key into a full shell repaint.
+			return
+		}
+		m.rootHost.MarkPaint()
+	case shellport.TerminalFrameMsg:
+		if msg.Err != nil {
+			m.rootHost.MarkPaint()
+			return
+		}
+		// A grid publication may also change the tab title. Floating terminal
+		// content is independently invalidated by its existing window owner.
+		mark(m.shell.termDock)
+	case terminalProjectionMsg:
+		if msg.err != nil {
+			m.rootHost.MarkPaint()
+			return
+		}
+		mark(m.shell.termDock)
+	case workspace.TerminalChangedMsg:
+		// Only schedules the projection read; the result owns paint damage.
+	case types.TickMsg:
+		// Focused text controls (including the file-tree filter) own cursor
+		// blink even when their surrounding slot has no clock-driven content.
+		m.invalidateClockContent()
+		mark(m.shell.header)
+		mark(m.shell.footer)
+		mark(m.shell.activity)
+		mark(m.shell.termDock)
+		// Agent/workspace lists have clock-driven activity. The file tree has
+		// no clock presentation; its async refresh result invalidates normally.
+		if m.activityView != activityFiles {
+			mark(m.shell.sidebar)
+		}
+	default:
+		m.rootHost.MarkPaint()
+	}
 }
 
 func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
@@ -712,6 +777,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.applyTerminalCreated(msg))
 	case terminalProjectionMsg:
 		cmds = append(cmds, m.applyTerminalProjection(msg))
+	case shellport.TerminalFrameMsg:
+		cmds = append(cmds, m.applyTerminalFrame(msg))
 	case workspace.TerminalChangedMsg:
 		cmds = append(cmds, m.terminalRefresh(msg.ID))
 	case workspace.TerminalEffectsMsg:
@@ -1057,6 +1124,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 		}
 		cmds = append(cmds, m.continueOnboardingAccount(msg))
+	case settingsui.RemoteAccessResultMsg:
+		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
+	case settingsui.RemotePairingExpiredMsg:
+		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
 	case settingsui.ScopeMsg:
 		m.openSettings(msg.Scope)
 	case settingsui.ResetSectionMsg:
@@ -1110,20 +1181,29 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+	case historyApplyResultMsg:
+		if cmd := m.applyHistoryResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case historyscreen.AppliedMsg:
 		if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if msg.Error == "" {
+		if msg.Error == "" && msg.RequestID == "" {
 			if cmd := m.applyHistoryRefresh(msg.Result); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			if msg.Warning != "" {
 				m.Feedback.NotifyError(msg.Warning)
 			}
-			m.overlayHost.Close(ui.OverlayLocalHistory)
+			// Scoped restores expose their safety inverse on the canonical chat
+			// boundary. A workspace snapshot has no conversation owner: retain
+			// its real success view and Undo action instead of inventing one.
+			if msg.Result.SessionID != "" && msg.Warning == "" && !msg.Incomplete {
+				m.overlayHost.Close(ui.OverlayLocalHistory)
+			}
 		}
 	case historyLatestMsg:
 		if msg.Error != "" {

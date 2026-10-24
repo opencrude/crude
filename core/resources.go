@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"crude/coreprotocol"
@@ -21,131 +20,135 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 	bad := func(err error) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
-	ok := func(value any, err error) coreprotocol.Response {
+	ok := func(value coreprotocol.Value, err error) coreprotocol.Response {
 		if err != nil {
 			return fault(request, "resource_failed", err.Error())
 		}
-		return response(request, value)
+		return responseValue(request, value)
 	}
 	switch request.Method {
 	case coreprotocol.DocumentOpen:
 		var input coreprotocol.DocumentOpenRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			value, err := docs.Open(owner, input.Path)
-			return ok(value, err)
+			return ok(wire(value), err)
 		}, true
 	case coreprotocol.DocumentRead:
 		var input coreprotocol.DocumentReadRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			value, err := docs.Snapshot(input.ID)
-			return ok(value, err)
+			return ok(wire(value), err)
 		}, true
 	case coreprotocol.DocumentSync:
 		var input coreprotocol.DocumentSyncRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			value, err := docs.Sync(owner, input.ID, input.After)
-			if err == nil {
-				encoded, encodeErr := json.Marshal(value)
-				if encodeErr != nil {
-					return fault(request, "encode_failed", encodeErr.Error())
-				}
-				if len(encoded) > corewire.MaxPayloadSize {
-					value.Changes = nil
-					value.Reset = true
-				}
+			if err == nil && value.Msgsize() > corewire.MaxMessage/2 {
+				value.Changes = nil
+				value.Reset = true
 			}
-			return ok(value, err)
+			return ok(wire(value), err)
 		}, true
 	case coreprotocol.DocumentClose:
 		var input coreprotocol.DocumentReadRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
-		return func(context.Context) coreprotocol.Response { return ok(struct{}{}, docs.CloseView(owner, input.ID)) }, true
+		return func(context.Context) coreprotocol.Response {
+			return ok(wire(coreprotocol.Empty{}), docs.CloseView(owner, input.ID))
+		}, true
 	case coreprotocol.DocumentEdit:
 		var input coreprotocol.DocumentEditRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			value, err := docs.Apply(document.Change{DocumentID: input.ID, RequestID: request.ID, Owner: owner, BaseRevision: input.Revision, GroupID: input.Group, Edits: input.Edits})
-			return ok(value, err)
+			result := responseValue(request, wire(value))
+			if err != nil {
+				result.Error = &coreprotocol.Fault{Code: "resource_failed", Message: err.Error()}
+			}
+			return result
 		}, true
 	case coreprotocol.DocumentFormat, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave:
 		var input coreprotocol.DocumentRevisionRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(ctx context.Context) coreprotocol.Response {
 			if request.Method == coreprotocol.DocumentFormat {
 				value, err := docs.Format(ctx, owner, input.ID, request.ID, input.Revision)
-				return ok(value, err)
+				return ok(wire(value), err)
 			}
 			if request.Method == coreprotocol.DocumentSave {
 				value, err := docs.Save(ctx, owner, input.ID, input.Revision, input.Reason)
-				return ok(value, err)
+				return ok(wire(value), err)
 			}
 			if request.Method == coreprotocol.DocumentUndo {
 				value, err := docs.Undo(owner, input.ID, request.ID, input.Revision)
-				return ok(value, err)
+				return ok(wire(value), err)
 			}
 			value, err := docs.Redo(owner, input.ID, request.ID, input.Revision)
-			return ok(value, err)
+			return ok(wire(value), err)
 		}, true
 	case coreprotocol.TerminalList:
-		return func(context.Context) coreprotocol.Response { return ok(manager.List(), nil) }, true
+		return func(context.Context) coreprotocol.Response {
+			return ok(wire(coreprotocol.TerminalInfos(manager.List())), nil)
+		}, true
 	case coreprotocol.TerminalCreate:
 		var input workspace.TerminalCreateOpts
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			value, err := terminals.Create(input)
-			return ok(value, err)
+			return ok(wire(value), err)
 		}, true
 	case coreprotocol.TerminalRows:
 		var input coreprotocol.TerminalRowsRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			value, err := terminals.Rows(input.ID, terminalvt.RowRequest{Start: input.Start, Count: input.Count, ViewportStart: input.ViewportStart, HistoryEpoch: input.HistoryEpoch, HistoryBase: input.HistoryBase})
-			return ok(value, err)
+			return ok(wire(value), err)
 		}, true
 	case coreprotocol.TerminalControl, coreprotocol.TerminalClose:
 		var input coreprotocol.TerminalIDRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
 			if request.Method == coreprotocol.TerminalControl {
 				value, err := terminals.Acquire(input.ID, controller)
-				return ok(value, err)
+				return ok(wire(value), err)
 			}
 			terminals.Close(input.ID)
-			return ok(struct{}{}, nil)
+			return ok(wire(coreprotocol.Empty{}), nil)
 		}, true
 	case coreprotocol.TerminalRelease:
 		var input workspace.TerminalLease
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		if input.Owner != controller {
 			return bad(workspace.ErrTerminalControl)
 		}
-		return func(context.Context) coreprotocol.Response { return ok(struct{}{}, terminals.Release(input)) }, true
+		return func(context.Context) coreprotocol.Response {
+			return ok(wire(coreprotocol.Empty{}), terminals.Release(input))
+		}, true
 	case coreprotocol.TerminalInput:
 		var input coreprotocol.TerminalInputRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		if input.Lease.Owner != controller {
@@ -165,18 +168,18 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			default:
 				err = fmt.Errorf("invalid terminal input kind")
 			}
-			return ok(struct{}{}, err)
+			return ok(wire(coreprotocol.Empty{}), err)
 		}, true
 	case coreprotocol.TerminalResize:
 		var input coreprotocol.TerminalResizeRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
 		if input.Lease.Owner != controller {
 			return bad(workspace.ErrTerminalControl)
 		}
 		return func(context.Context) coreprotocol.Response {
-			return ok(struct{}{}, terminals.Resize(input.Lease, input.Cols, input.Rows))
+			return ok(wire(coreprotocol.Empty{}), terminals.Resize(input.Lease, input.Cols, input.Rows))
 		}, true
 	}
 	return nil, false
@@ -209,7 +212,7 @@ func (a *actor) applyResource(request coreprotocol.Request, result coreprotocol.
 		}
 	case coreprotocol.TerminalClose:
 		var input coreprotocol.TerminalIDRequest
-		if decode(request.Payload, &input) == nil {
+		if decodeRequest(request, &input) == nil {
 			id = input.ID
 		}
 	}

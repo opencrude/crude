@@ -279,7 +279,13 @@ func (s *DocumentService) rollbackIntegration(service *worktree.Service, j Integ
 }
 func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.Service, history *LocalHistoryService, plan worktree.PlanDelta) (worktree.Receipt, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var changed []string
+	defer func() {
+		s.mu.Unlock()
+		for _, id := range changed {
+			s.changed(id)
+		}
+	}()
 	if s.closed || s.stateErr != nil {
 		return worktree.Receipt{}, errors.New("document authority unavailable")
 	}
@@ -477,7 +483,7 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 		if s.lsp != nil && d.lspOpen {
 			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
 		}
-		s.changed(d.snapshot.ID)
+		changed = append(changed, d.snapshot.ID)
 	}
 	// Everything below is metadata publication, never grounds to roll back an
 	// already accepted group. The durable receipt recovers lost replies exactly.
@@ -515,7 +521,13 @@ func (s *DocumentService) recoverExecution(ctx context.Context, service *worktre
 // Nonoverlapping later text is preserved; overlap/binary changes fail closed.
 func (s *DocumentService) undoExecution(ctx context.Context, service *worktree.Service, history *LocalHistoryService, id string) (worktree.Receipt, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var changed []string
+	defer func() {
+		s.mu.Unlock()
+		for _, id := range changed {
+			s.changed(id)
+		}
+	}()
 	j, err := s.loadIntegration(id)
 	if err != nil {
 		return worktree.Receipt{}, err
@@ -644,7 +656,7 @@ func (s *DocumentService) undoExecution(ctx context.Context, service *worktree.S
 		if s.lsp != nil && d.lspOpen {
 			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
 		}
-		s.changed(d.snapshot.ID)
+		changed = append(changed, d.snapshot.ID)
 	}
 	err = history.store.CompleteAgentOperation(inverse.Receipt.OperationID, true)
 	err = errors.Join(err, history.store.CloseMessageScope(sessionID, inverse.Receipt.OperationID, safety.ID, nil, nil, time.Now()))

@@ -227,13 +227,13 @@ func (c *Connection) workspaceDeletionCall(ctx context.Context, request coreprot
 	switch request.Method {
 	case coreprotocol.WorkspaceDeletePreview:
 		var in coreprotocol.WorkspaceDeletePreviewRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		id, project = in.ID, in.ProjectDir
 	case coreprotocol.WorkspaceDelete:
 		var in coreprotocol.WorkspaceDeleteRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		r.mu.Lock()
@@ -248,7 +248,7 @@ func (c *Connection) workspaceDeletionCall(ctx context.Context, request coreprot
 		plan = preview.plan
 		id, project = plan.ID, plan.ProjectDir
 	case coreprotocol.WorkspaceRestore:
-		if err := decode(request.Payload, &deleted); err != nil {
+		if err := decodeRequest(request, &deleted); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		id, project = deleted.ID, deleted.ProjectDir

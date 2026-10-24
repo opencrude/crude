@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"crude/buildinfo"
 	"errors"
@@ -76,6 +77,11 @@ func RunCore(opts CoreOptions) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	lifetime, err := lockCoreLifetime(opts.Home)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lifetime.Close() }()
 	listener, err := listenCore(ctx, dataDir)
 	if err != nil {
 		if errors.Is(err, errCoreOwned) {
@@ -84,6 +90,18 @@ func RunCore(opts CoreOptions) error {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
+	if err := clearSettledCoreOwner(opts.Home); err != nil {
+		return err
+	}
+	owner, err := installCoreOwner(opts.Home)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := removeCoreOwner(opts.Home, owner.Generation); err != nil {
+			lg.Warn("CORE", "owner_release_failed", "error", err.Error())
+		}
+	}()
 	lg.Info("CORE", "listening", "pid", os.Getpid(), "server", opts.Server, "grace", opts.Grace.String())
 
 	// Application state is resolved by the core, never by an attaching shell.
@@ -133,6 +151,17 @@ func RunCore(opts CoreOptions) error {
 	}
 	runtime.SetLifetimePolicy(opts.Server, opts.Grace, cancel)
 	runtime.SetBuildID(BuildID())
+	runtime.SetOwnerGeneration(owner.Generation)
+	remoteHost, remoteErr := newCoreRemote(ctx, runtime, filepath.Join(dataDir, "remote-access"), application.committedDefaults().Network, lg)
+	if remoteHost == nil {
+		_ = runtime.Close()
+		return remoteErr
+	}
+	application.remote = remoteHost
+	defer remoteHost.Close()
+	if remoteErr != nil {
+		application.startupIssues = append(application.startupIssues, remoteListenerIssue(remoteErr))
+	}
 
 	var background sync.WaitGroup
 	// One latest-wins worker republishes committed application defaults on each
@@ -167,6 +196,9 @@ func RunCore(opts CoreOptions) error {
 			case <-fileChanged:
 				if err := application.reloadFileConfiguration(); err != nil {
 					lg.Warn("CONFIG", "reload_rejected", "error", err.Error())
+					for _, ws := range runtime.Workspaces() {
+						ws.QueueStartupIssue(remoteListenerIssue(err))
+					}
 					continue
 				}
 				if err := runtime.ApplyAppDefaults(ctx, application.committedDefaults()); err != nil {
@@ -208,6 +240,7 @@ func RunCore(opts CoreOptions) error {
 	serveErr := core.Serve(ctx, runtime, listener)
 	cancel()
 	background.Wait()
+	_ = remoteHost.Close()
 	lg.Info("CORE", "stopping")
 	closeErr := runtime.Close()
 	if prompts.Len() > 0 {
@@ -280,17 +313,29 @@ func ConnectCore(ctx context.Context, home, clientID string) (*coreclient.Client
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
 	}
-	if client, err := dialCore(ctx, dataDir, clientID); err == nil {
-		replaced, err := replaceStaleCore(ctx, home, client)
-		if err != nil {
+	client, err := dialCore(ctx, dataDir, clientID)
+	if err == nil {
+		// Image identity is not protocol identity: same-cohort clients may use
+		// different native executable images without replacing their owner.
+		return client, nil
+	}
+	if isCoreMismatch(err) {
+		if err := handoverCore(ctx, home); err != nil {
 			return nil, err
 		}
-		if !replaced {
-			return client, nil
-		}
+	} else if !errors.Is(err, coreclient.ErrNoCarrier) {
+		return nil, fmt.Errorf("connect to existing core: %w", err)
 	}
-	if err := spawnCore(home); err != nil {
-		return nil, fmt.Errorf("start core: %w", err)
+	start, cancelStart := context.WithTimeout(ctx, 15*time.Second)
+	startErr := prepareCoreStart(start, home)
+	cancelStart()
+	if startErr != nil && !errors.Is(startErr, errCoreOwned) {
+		return nil, fmt.Errorf("confirm core absence: %w", startErr)
+	}
+	if startErr == nil {
+		if err := spawnCore(home); err != nil {
+			return nil, fmt.Errorf("start core: %w", err)
+		}
 	}
 	wait, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -299,6 +344,9 @@ func ConnectCore(ctx context.Context, home, clientID string) (*coreclient.Client
 		client, err := dialCore(wait, dataDir, clientID)
 		if err == nil {
 			return client, nil
+		}
+		if !errors.Is(err, coreclient.ErrNoCarrier) {
+			return nil, fmt.Errorf("connect to starting core: %w", err)
 		}
 		lastErr = err
 		select {
@@ -310,16 +358,32 @@ func ConnectCore(ctx context.Context, home, clientID string) (*coreclient.Client
 }
 
 func dialCore(ctx context.Context, dataDir, clientID string) (*coreclient.Client, error) {
-	conn, err := corewire.DialLocal(ctx, dataDir)
-	if err != nil {
-		return nil, err
+	return coreclient.Dial(ctx, localCarrier(dataDir), clientID)
+}
+
+func coreAbsent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
+}
+
+func isCoreMismatch(err error) bool {
+	var fault *coreprotocol.Fault
+	return errors.As(err, &fault) && (fault.Code == "schema_mismatch" || fault.Code == "build_mismatch")
+}
+
+// localCarrier dials the per-user endpoint as a stream-mux carrier. The
+// client dials again to resume its session after a lost carrier.
+func localCarrier(dataDir string) coreclient.Dialer {
+	return func(ctx context.Context) (corewire.Conn, error) {
+		conn, err := corewire.DialLocal(ctx, dataDir)
+		if coreAbsent(err) {
+			// No core is running: sessions live in the core, so none survives.
+			return nil, fmt.Errorf("%w: %v", coreclient.ErrNoCarrier, err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return corewire.NewMux(conn, corewire.CarrierLocal, true), nil
 	}
-	client, err := coreclient.Dial(ctx, conn, clientID)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return client, nil
 }
 
 // spawnCore starts `crude --core` detached from the invoking terminal so it
@@ -337,38 +401,51 @@ func spawnCore(home string) error {
 		return err
 	}
 	defer func() { _ = logFile.Close() }()
-	// A start of another build may prune this image between staging and
-	// execution; staging again is the complete recovery.
-	for attempt := 0; ; attempt++ {
-		image, err := stageCoreImage(home, exe, BuildID())
-		if err != nil {
-			return fmt.Errorf("stage core executable: %w", err)
-		}
-		cmd := exec.Command(image, "--core")
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, logFile, logFile
-		cmd.Dir = home
-		cmd.SysProcAttr = detachedProcAttr()
-		if err := cmd.Start(); err != nil {
-			if attempt == 0 && errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return err
-		}
-		// Reap without waiting on the core's lifetime.
-		go func() { _ = cmd.Wait() }()
-		return nil
+	image, err := stageCoreImage(home, exe, BuildID())
+	if err != nil {
+		return fmt.Errorf("stage core executable: %w", err)
 	}
+	cmd := exec.Command(image, "--core")
+	cmd.Env = coreProfileEnv(home, "")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, logFile, logFile
+	cmd.Dir = home
+	cmd.SysProcAttr = detachedProcAttr()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap without waiting on the core's lifetime.
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
-// RunCoreStdio relays one framed connection between stdio and the local core.
-// It is the fixed remote command for SSH attach; frames are not reinterpreted.
+// RunCoreStdio terminates one SSH mux and relays its streams to the local core.
+// The relay narrows local admission to authenticated SSH authority, never host
+// administration. Empty stdin is not a session and must not start a core.
 func RunCoreStdio(home string) error {
+	input := bufio.NewReader(os.Stdin)
+	if _, err := input.Peek(1); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
 	dataDir := DataDir(home)
 	ctx := context.Background()
 	conn, err := corewire.DialLocal(ctx, dataDir)
 	if err != nil {
-		if err := spawnCore(home); err != nil {
+		if !coreAbsent(err) {
 			return err
+		}
+		start, cancel := context.WithTimeout(ctx, 15*time.Second)
+		startErr := prepareCoreStart(start, home)
+		cancel()
+		if startErr != nil && !errors.Is(startErr, errCoreOwned) {
+			return startErr
+		}
+		if startErr == nil {
+			if err := spawnCore(home); err != nil {
+				return err
+			}
 		}
 		deadline := time.Now().Add(15 * time.Second)
 		for {
@@ -383,21 +460,31 @@ func RunCoreStdio(home string) error {
 		}
 	}
 	defer func() { _ = conn.Close() }()
-	done := make(chan error, 2)
-	go func() { _, err := io.Copy(conn, os.Stdin); done <- err }()
-	go func() { _, err := io.Copy(os.Stdout, conn); done <- err }()
-	return <-done
+	return coreclient.RelaySSH(ctx, corewire.NewMux(stdioRelay{reader: input}, corewire.CarrierSSH, false), corewire.NewMux(conn, corewire.CarrierLocal, true))
 }
+
+// stdioRelay belongs only to the fixed SSH subprocess; closing it releases its
+// pipes, not any shell or the retained core it is attached to.
+type stdioRelay struct{ reader io.Reader }
+
+func (s stdioRelay) Read(p []byte) (int, error) {
+	if s.reader != nil {
+		return s.reader.Read(p)
+	}
+	return os.Stdin.Read(p)
+}
+func (stdioRelay) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
+func (stdioRelay) Close() error                { return errors.Join(os.Stdin.Close(), os.Stdout.Close()) }
 
 // CoreStatus queries the running core without starting one.
 func CoreStatus(ctx context.Context, home string) (coreprotocol.CoreStatus, error) {
 	var status coreprotocol.CoreStatus
 	client, err := dialCore(ctx, DataDir(home), core.NewClientID())
 	if err != nil {
-		return status, fmt.Errorf("no core is running: %w", err)
+		return status, fmt.Errorf("core status unavailable: %w", err)
 	}
 	defer func() { _ = client.Close() }()
-	err = client.Call(ctx, "", coreprotocol.CoreStatusMethod, struct{}{}, &status)
+	err = client.Call(ctx, "", coreprotocol.CoreStatusMethod, &coreprotocol.Empty{}, &status)
 	return status, err
 }
 
@@ -405,12 +492,29 @@ func CoreStatus(ctx context.Context, home string) (coreprotocol.CoreStatus, erro
 // unless force is set; the result names that work either way.
 func StopCore(ctx context.Context, home string, force bool) (coreprotocol.ShutdownResult, error) {
 	var result coreprotocol.ShutdownResult
+	expected := os.Getenv(expectedCoreOwnerEnv)
+	if expected != "" {
+		owner, err := readCoreOwner(home)
+		if err != nil {
+			return result, err
+		}
+		if force || owner.Generation != expected {
+			return result, errors.New("matching helper owner precondition failed")
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return result, err
+		}
+		if err := verifyCoreImage(exe, owner.Digest); err != nil {
+			return result, err
+		}
+	}
 	client, err := dialCore(ctx, DataDir(home), core.NewClientID())
 	if err != nil {
-		return result, fmt.Errorf("no core is running: %w", err)
+		return result, fmt.Errorf("core stop unavailable: %w", err)
 	}
 	defer func() { _ = client.Close() }()
-	err = client.Call(ctx, "", coreprotocol.CoreShutdownMethod, coreprotocol.ShutdownRequest{Force: force}, &result)
+	err = client.Call(ctx, "", coreprotocol.CoreShutdownMethod, coreprotocol.ShutdownRequest{Force: force, ExpectedOwner: expected}, &result)
 	return result, err
 }
 
@@ -467,46 +571,3 @@ func (l *coreLogger) Debug(tag, msg string, pairs ...any) {}
 func (l *coreLogger) Close() error                        { return l.file.Close() }
 
 var _ workspace.Logger = (*coreLogger)(nil)
-
-// replaceStaleCore checks that the running core is this exact build. An idle
-// core from another build (for example the previous `go run .`) is stopped
-// gracefully so a fresh one can start; a busy one is never interrupted.
-func replaceStaleCore(ctx context.Context, home string, client *coreclient.Client) (bool, error) {
-	var status coreprotocol.CoreStatus
-	if err := client.Call(ctx, "", coreprotocol.CoreStatusMethod, struct{}{}, &status); err != nil {
-		_ = client.Close()
-		return false, fmt.Errorf("query running core: %w", err)
-	}
-	if status.BuildID == BuildID() {
-		return false, nil
-	}
-	busy := core.BusyWorkspaces(status)
-	if status.Clients > 0 || len(busy) > 0 {
-		_ = client.Close()
-		detail := fmt.Sprintf("%d shell(s) attached", status.Clients)
-		for _, w := range busy {
-			detail += fmt.Sprintf("; %s has active work (turns=%d children=%d commands=%d)", w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands)
-		}
-		return false, fmt.Errorf("a core from a different build (pid %d) is still in use: %s. To run this build beside it (for example developing crude inside crude), give it its own profile: set %s to a separate directory. Otherwise close the other shells or let the work finish, then retry; `crude --core-stop --force` stops it anyway", status.PID, detail, buildinfo.HomeEnv)
-	}
-	var result coreprotocol.ShutdownResult
-	err := client.Call(ctx, "", coreprotocol.CoreShutdownMethod, coreprotocol.ShutdownRequest{}, &result)
-	_ = client.Close()
-	if err != nil || !result.Accepted {
-		if err == nil {
-			err = errors.New(result.Reason)
-		}
-		return false, fmt.Errorf("replace core from a different build: %w", err)
-	}
-	// Wait for the old core to release the endpoint before starting ours.
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		probe, err := corewire.DialLocal(ctx, DataDir(home))
-		if err != nil {
-			return true, nil
-		}
-		_ = probe.Close()
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false, errors.New("the previous core did not shut down within 30s; see " + CoreLogPath(home))
-}

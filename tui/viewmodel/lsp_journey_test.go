@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	model "crude/types"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 

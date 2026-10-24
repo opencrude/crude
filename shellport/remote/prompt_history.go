@@ -24,7 +24,7 @@ func historyEntries(result coreprotocol.HistoryListResult) []history.Entry {
 
 func (w *Workspace) ListPromptHistory(ctx context.Context, sessionID string) ([]history.Entry, error) {
 	var result coreprotocol.HistoryListResult
-	err := w.call(ctx, coreprotocol.HistoryList, coreprotocol.HistoryCommand{SessionID: sessionID}, &result)
+	err := w.call(ctx, coreprotocol.HistoryList, &coreprotocol.HistoryCommand{SessionID: sessionID}, &result)
 	return historyEntries(result), err
 }
 
@@ -37,7 +37,7 @@ func (w *Workspace) RecordPromptHistory(ctx context.Context, sessionID, text str
 		// Resolve revisions through the typed core read, not a guessed hash or a
 		// client-local file path. The sent reference snapshot must still match.
 		var refs coreprotocol.ReferenceListResult
-		if err := w.call(ctx, coreprotocol.ReferenceList, coreprotocol.ReferenceCommand{SessionID: sessionID}, &refs); err != nil {
+		if err := w.call(ctx, coreprotocol.ReferenceList, &coreprotocol.ReferenceCommand{SessionID: sessionID}, &refs); err != nil {
 			return nil, err
 		}
 		for _, a := range attachments {
@@ -55,6 +55,6 @@ func (w *Workspace) RecordPromptHistory(ctx context.Context, sessionID, text str
 		}
 	}
 	var result coreprotocol.HistoryListResult
-	err := w.call(ctx, coreprotocol.HistoryRecord, in, &result)
+	err := w.call(ctx, coreprotocol.HistoryRecord, &in, &result)
 	return historyEntries(result), err
 }

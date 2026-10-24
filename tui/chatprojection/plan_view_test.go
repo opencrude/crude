@@ -432,7 +432,7 @@ func TestPlanRendererLiveAndHydratedMessagesMatch(t *testing.T) {
 	hydrated := chatprojection.NewRenderer(theme.DefaultDark())
 	hydrated.SetSize(100, 30)
 	hydrated.SetChatAreaBounds(0, 20)
-	hydrated.SyncMessages([]types.ChatMessage{message}, 1)
+	hydrated.SyncMessages([]types.ChatMessage{message}, 1, 0)
 	hydratedRows, _, _ := hydrated.ExportMessageRows(100)
 
 	if fmt.Sprint(liveRows) != fmt.Sprint(hydratedRows) {

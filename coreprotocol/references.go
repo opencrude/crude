@@ -16,7 +16,7 @@ const (
 	HistoryRestore          = "history.restore"
 	HistoryReadMedia        = "history.read-media"
 	ReferenceMaxBytes       = 64 << 20
-	ReferenceUploadMaxBytes = 4 << 20
+	ReferenceUploadMaxBytes = 16 << 20
 	ReferenceChunkBytes     = 256 << 10
 )
 

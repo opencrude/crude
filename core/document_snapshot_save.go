@@ -18,7 +18,7 @@ func (a *actor) prepareDocumentSnapshotSave(request coreprotocol.Request) (func(
 		return nil, false
 	}
 	var input coreprotocol.DocumentSnapshotSaveRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return func(context.Context) coreprotocol.Response {
 			return fault(request, "invalid_request", err.Error())
 		}, true

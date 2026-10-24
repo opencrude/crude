@@ -47,9 +47,12 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 		return
 	}
 	m.ws.ApplyPreferencesSave(message.result)
+	// Connected saves await the applied settings topic. Read that authority,
+	// not the unsequenced receipt, which may precede a newer peer publication.
+	effective := m.ws.LoadAppSettings()
 	m.clearFramePreview()
-	m.applyThemePreset(themePresetFromSettings(message.result.Effective))
-	m.applyEditorSettings(message.result.Effective.Editor)
+	m.applyThemePreset(themePresetFromSettings(effective))
+	m.applyEditorSettings(effective.Editor)
 	m.refreshAllSessionSettingsProjections()
 	if m.Feedback != nil {
 		label := "Application settings saved"
@@ -60,5 +63,7 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 	}
 	// Save keeps Settings open on the saved values; Close is the way out.
 	application, effective, overrides := m.settingsLayers()
+	body.CancelRemoteAccess()
 	body.SetModel(message.target.SavedModel(application, effective, overrides))
+	m.bindRemoteSettings(body)
 }

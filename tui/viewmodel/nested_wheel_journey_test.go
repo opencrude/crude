@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func installWheelProjection(s *shellchat.Screen, rootID uint64, outerOffset int) *ui.ScrollModel {

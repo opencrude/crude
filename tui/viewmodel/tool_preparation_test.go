@@ -118,7 +118,7 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 				recovered := chatprojection.NewRenderer(app.Theme)
 				recovered.SetSize(app.chatReflowInnerW, 32)
 				recovered.SetChatAreaBounds(0, app.chatRect.H-2)
-				recovered.SyncMessages(snapshots, 1)
+				recovered.SyncMessages(snapshots, 1, 0)
 				resumed, _, _ := recovered.ExportMessageRows(app.chatReflowInnerW)
 				if len(live) != 1 || len(resumed) != 1 {
 					t.Fatalf("live/recovered batch rows=%d/%d", len(live), len(resumed))

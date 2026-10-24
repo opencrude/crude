@@ -1,10 +1,8 @@
 package coreprotocol
 
 import (
-	"encoding/json"
 	"errors"
 
-	"crude/corewire"
 	"crude/types/control"
 )
 
@@ -65,19 +63,12 @@ func (e ControlEnvelope) ValidateTransport(workspaceID string, owner control.She
 			return errors.New("invalid control transport identity")
 		}
 	}
-	b, err := json.Marshal(e)
+	b, err := Marshal(&e)
 	if err != nil {
 		return err
 	}
 	if len(b) > ControlMaxEnvelopeBytes {
 		return errors.New("control envelope exceeds limit")
-	}
-	size, err := corewire.FrameSize(corewire.Frame{Version: 1, Kind: corewire.KindEvent, ClientID: owner.ClientID, Epoch: owner.Epoch, WorkspaceID: workspaceID, RequestID: e.Request.ID, Method: ControlRequest, Payload: b})
-	if err != nil {
-		return err
-	}
-	if size > ControlMaxEnvelopeBytes {
-		return errors.New("encoded control frame exceeds limit")
 	}
 	return nil
 }
@@ -94,7 +85,7 @@ func ValidateControlResult(r control.Result) error {
 			return errors.New("invalid control resource identity")
 		}
 	}
-	b, err := json.Marshal(r)
+	b, err := Marshal(&r)
 	if err != nil {
 		return err
 	}

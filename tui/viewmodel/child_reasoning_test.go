@@ -181,7 +181,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					resumed := chatprojection.NewRenderer(app.Theme)
 					resumed.SetSize(width, 40)
 					resumed.SetChatAreaBounds(0, 30)
-					resumed.SyncMessages(ChatMessagesFromViews(views), 1)
+					resumed.SyncMessages(ChatMessagesFromViews(views), 1, 0)
 					resumed.ToggleDisclosure(thought.InternalID)
 					rows := resumed.ExportMessageRowsSnapshot(width).Rows
 					visible := ""

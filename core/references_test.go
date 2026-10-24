@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"image"
 	"image/png"
 	"os"
@@ -22,13 +21,13 @@ func TestReferenceBridgeContentAndPreimages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := value.(coreprotocol.ReferenceView)
+	view := value.(*coreprotocol.ReferenceView)
 	in := coreprotocol.ReferenceCommand{SessionID: "session", ID: view.Reference.ID, Revision: view.Revision}
 	value, err = runReferenceCommand(store, coreprotocol.ReferenceReadContent, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	read := value.(coreprotocol.ReferenceContentResult)
+	read := value.(*coreprotocol.ReferenceContentResult)
 	if string(read.Data) != "complete original" || read.ReadOnly {
 		t.Fatalf("bad content: %+v", read)
 	}
@@ -41,7 +40,7 @@ func TestReferenceBridgeContentAndPreimages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := value.(coreprotocol.ReferenceView)
+	updated := value.(*coreprotocol.ReferenceView)
 	if updated.Revision == view.Revision { // file-backed content lives outside metadata; byte preimage still fences saves.
 		in.Original = "complete original"
 		if _, err = runReferenceCommand(store, coreprotocol.ReferenceSaveContent, in); err == nil {
@@ -56,7 +55,7 @@ func TestReferenceBridgeContentAndPreimages(t *testing.T) {
 	if _, err = runReferenceCommand(store, coreprotocol.ReferenceDelete, in); err == nil {
 		t.Fatal("accepted stale metadata")
 	}
-	current := value.(coreprotocol.ReferenceView)
+	current := value.(*coreprotocol.ReferenceView)
 	in.Revision = current.Revision
 	if _, err = runReferenceCommand(store, coreprotocol.ReferenceDelete, in); err != nil {
 		t.Fatal(err)
@@ -78,7 +77,7 @@ func TestReferenceBridgeChunkedMediaAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := value.(coreprotocol.ReferenceView)
+	view := value.(*coreprotocol.ReferenceView)
 	if view.Reference.Content != "" || view.Reference.FilePath == "" {
 		t.Fatal("image was not server-owned")
 	}
@@ -93,8 +92,8 @@ func TestReferenceBridgeChunkedMediaAndIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		chunk := value.(coreprotocol.ReferenceContentResult)
-		if len(chunk.Data) > coreprotocol.ReferenceChunkBytes {
+		chunk := value.(*coreprotocol.ReferenceContentResult)
+		if len(chunk.Data) > coreprotocol.ReferenceMaxBytes {
 			t.Fatal("unbounded response")
 		}
 		downloaded = append(downloaded, chunk.Data...)
@@ -114,7 +113,7 @@ func TestReferenceBridgeChunkedMediaAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection := value.(coreprotocol.ReferenceListResult)
+	projection := value.(*coreprotocol.ReferenceListResult)
 	projection.References[0].Reference.Label = "client mutation"
 	actual, _ := store.GetReference(view.Reference.ID)
 	if actual.Label == "client mutation" {
@@ -145,7 +144,7 @@ func TestReferenceBridgeRejectsEncodedTextAsImage(t *testing.T) {
 
 func TestPrepareReferencesFailsClosed(t *testing.T) {
 	a := &actor{ws: &workspace.Workspace{}}
-	raw, err := json.Marshal(coreprotocol.ReferenceCommand{SessionID: "missing"})
+	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.ReferenceCommand{SessionID: "missing"}))
 	if err != nil {
 		t.Fatal(err)
 	}

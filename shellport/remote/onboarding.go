@@ -11,7 +11,7 @@ import (
 // UI thread. Installation remains on Update, not in this request worker.
 func (w *Workspace) RefreshOnboarding(ctx context.Context) (types.AppSettings, error) {
 	var value coreprotocol.OnboardingResult
-	err := w.call(ctx, coreprotocol.StartupOnboarding, struct{}{}, &value)
+	err := w.call(ctx, coreprotocol.StartupOnboarding, &coreprotocol.Empty{}, &value)
 	if err != nil {
 		return types.AppSettings{}, err
 	}

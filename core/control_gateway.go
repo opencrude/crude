@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"crude/collaboration"
@@ -293,7 +294,7 @@ func (a *actor) admitControl(command *actorControlCommand) {
 			}
 			return
 		}
-		journal := coreprotocol.Request{ID: command.request.ID, Owner: owner, WorkspaceID: a.id, Method: "control.execute", Payload: mustControlJSON(*command.request)}
+		journal := coreprotocol.Request{ID: command.request.ID, Owner: owner, WorkspaceID: a.id, Method: coreprotocol.ControlExecute, Payload: mustPayload(command.request)}
 		if _, fresh, beginErr := a.receipts.begin(command.ctx, journal); beginErr != nil || fresh {
 			command.observe <- controlObserveResult{found: true, result: failedControl(*command.request, control.Invalid, "original receipt preimage changed")}
 			return
@@ -301,7 +302,7 @@ func (a *actor) admitControl(command *actorControlCommand) {
 		outcome := uncertainControl(command.request.ID)
 		if prior.State == "completed" {
 			var completed control.Result
-			if json.Unmarshal(prior.Response.Payload, &completed) == nil && completed.RequestID == command.request.ID {
+			if coreprotocol.Decode(prior.Response.Payload, &completed) == nil && completed.RequestID == command.request.ID {
 				outcome = completed
 			}
 		}
@@ -329,13 +330,13 @@ func (a *actor) admitControl(command *actorControlCommand) {
 	// Recovery observes the immutable caller-owned receipt before another UI
 	// resolution. A component may have legitimately closed after its effect.
 	if prior, lookupErr := a.receipts.lookup(command.ctx, owner.ClientID, request.ID); lookupErr == nil {
-		journal := coreprotocol.Request{ID: request.ID, Owner: owner, WorkspaceID: a.id, Method: "control.execute", Payload: mustControlJSON(request)}
+		journal := coreprotocol.Request{ID: request.ID, Owner: owner, WorkspaceID: a.id, Method: coreprotocol.ControlExecute, Payload: mustPayload(&request)}
 		if _, fresh, beginErr := a.receipts.begin(command.ctx, journal); beginErr != nil || fresh {
 			command.result <- failedControl(request, control.Invalid, "original receipt preimage changed")
 			return
 		}
 		var outcome control.Result
-		if prior.State == "completed" && json.Unmarshal(prior.Response.Payload, &outcome) == nil {
+		if prior.State == "completed" && coreprotocol.Decode(prior.Response.Payload, &outcome) == nil {
 			command.result <- outcome
 		} else {
 			command.result <- uncertainControl(request.ID)
@@ -430,7 +431,7 @@ func (a *actor) admitControl(command *actorControlCommand) {
 // must not accidentally look in the target shell's private map.
 func (a *actor) executeShellControl(ctx context.Context, owner coreprotocol.Owner, in control.Request, descriptor control.Descriptor) control.Result {
 	journal := descriptor.Effect != control.Read
-	request := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: a.id, Method: "control.execute", Payload: mustControlJSON(in)}
+	request := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: a.id, Method: coreprotocol.ControlExecute, Payload: mustPayload(&in)}
 	if journal {
 		prior, fresh, err := a.receipts.begin(ctx, request)
 		if err != nil {
@@ -438,7 +439,7 @@ func (a *actor) executeShellControl(ctx context.Context, owner coreprotocol.Owne
 		}
 		if !fresh {
 			var result control.Result
-			if prior.State == "completed" && json.Unmarshal(prior.Response.Payload, &result) == nil {
+			if prior.State == "completed" && coreprotocol.Decode(prior.Response.Payload, &result) == nil {
 				return result
 			}
 			return uncertainControl(in.ID)
@@ -449,7 +450,7 @@ func (a *actor) executeShellControl(ctx context.Context, owner coreprotocol.Owne
 		result = failedControl(in, control.OperationFailed, err.Error())
 	}
 	if journal {
-		if err := a.receipts.complete(context.WithoutCancel(ctx), request, coreprotocol.Response{ID: in.ID, Payload: mustControlJSON(result)}); err != nil {
+		if err := a.receipts.complete(context.WithoutCancel(ctx), request, coreprotocol.Response{ID: in.ID, Payload: mustPayload(&result)}); err != nil {
 			return uncertainControl(in.ID)
 		}
 	}
@@ -466,6 +467,10 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 		command.result <- failedControl(in, control.Denied, "history restore owns admission")
 		return true
 	}
+	if a.lifecycle && (in.CommandID == "session.create" || in.CommandID == "session.open") {
+		command.result <- failedControl(in, control.Unavailable, "session creation owns admission")
+		return true
+	}
 	if in.CommandID == "operation.receipt" {
 		var input coreprotocol.ReceiptRequest
 		if err := controlDecode(in.Input, &input); err != nil || input.RequestID == "" {
@@ -478,7 +483,7 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 				command.result <- failedControl(in, control.Unavailable, "receipt unavailable for this exact caller/workspace")
 				return
 			}
-			command.result <- control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: mustControlJSON(receipt)}
+			command.result <- control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: controlJSON(receipt.View())}
 		}()
 		return true
 	}
@@ -494,7 +499,7 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 		command.result <- failedControl(in, control.Unavailable, "control capacity occupied")
 		return true
 	}
-	request := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: a.id, Method: "control.execute", Payload: mustControlJSON(in)}
+	request := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: a.id, Method: coreprotocol.ControlExecute, Payload: mustPayload(&in)}
 	journal := descriptor.Effect != control.Read
 	if journal {
 		prior, fresh, err := a.receipts.begin(a.ctx, request)
@@ -504,7 +509,7 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 		}
 		if !fresh {
 			var result control.Result
-			if prior.State == "completed" && json.Unmarshal(prior.Response.Payload, &result) == nil {
+			if prior.State == "completed" && coreprotocol.Decode(prior.Response.Payload, &result) == nil {
 				command.result <- result
 			} else {
 				command.result <- uncertainControl(in.ID)
@@ -512,7 +517,10 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 			return true
 		}
 	}
-	run, apply, handled := a.prepareControlDomain(in, owner)
+	run, apply, finish, handled := a.prepareControlHistory(in, owner)
+	if !handled {
+		run, apply, handled = a.prepareControlDomain(in, owner)
+	}
 	var lifecycle *workspace.SessionLifecycleOperation
 	if in.CommandID == "session.create" || in.CommandID == "session.open" {
 		var input struct {
@@ -533,15 +541,25 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 	if !handled {
 		result := failedControl(in, control.Unavailable, "domain control command unavailable")
 		if journal {
-			_ = a.receipts.complete(a.ctx, request, coreprotocol.Response{ID: in.ID, Payload: mustControlJSON(result)})
+			_ = a.receipts.complete(a.ctx, request, coreprotocol.Response{ID: in.ID, Payload: mustPayload(&result)})
 		}
 		command.result <- result
 		return true
 	}
 	a.inFlight++
+	if lifecycle != nil {
+		a.lifecycle = true
+	}
 	historyMutation := in.CommandID == "history.apply" || in.CommandID == "git.discard_reviewed"
 	if historyMutation {
 		a.historyBusy = true
+		release := finish
+		finish = func() {
+			if release != nil {
+				release()
+			}
+			a.historyBusy = false
+		}
 	}
 	settings := strings.HasPrefix(in.CommandID, "settings.")
 	if settings {
@@ -550,27 +568,46 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 	work := func() {
 		var result control.Result
 		var lifecycleResult workspace.SessionLifecycleResult
-		if lifecycle != nil {
-			lifecycleResult = lifecycle.Run(command.ctx)
-			result = control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed}
-		} else {
-			result = run(command.ctx)
-		}
-		completion := make(chan coreprotocol.Response, 1)
-		a.jobs <- actorJobResult{command: actorCommand{result: completion}, admitted: true, settings: settings, apply: func() coreprotocol.Response {
-			if historyMutation {
-				defer func() { a.historyBusy = false }()
+		panicked := false
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					panicked = true
+					result = uncertainControl(in.ID)
+					result.Fault.Message = fmt.Sprintf("operation panicked: %v; inspect original receipt before retrying", recovered)
+				}
+			}()
+			if lifecycle != nil {
+				lifecycleResult = lifecycle.Run(command.ctx)
+				result = control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed}
+			} else {
+				result = run(command.ctx)
 			}
-			if apply != nil {
+		}()
+		completion := make(chan coreprotocol.Response, 1)
+		a.jobs <- actorJobResult{command: actorCommand{result: completion}, admitted: true, lifecycle: lifecycle != nil, settings: settings, finish: finish, apply: func() coreprotocol.Response {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					result = uncertainControl(in.ID)
+					result.Fault.Message = fmt.Sprintf("publication panicked: %v; inspect original receipt before retrying", recovered)
+				}
+				if journal {
+					if err := a.receipts.complete(context.Background(), request, coreprotocol.Response{ID: in.ID, Payload: mustPayload(&result)}); err != nil {
+						result = uncertainControl(in.ID)
+					}
+				}
+				command.result <- result
+			}()
+			if apply != nil && !panicked {
 				result = apply(result)
 			}
-			if lifecycle != nil {
+			if lifecycle != nil && !panicked {
 				out := a.ws.ApplyAgentSession(lifecycleResult)
 				if out.Error != "" {
 					result = failedControl(in, control.OperationFailed, out.Error)
 				} else {
 					result.ResourceIDs = []string{out.SessionID, out.OrchID}
-					result.Output = mustControlJSON(out)
+					result.Output = controlJSON(out)
 					a.bindControlSessions()
 					a.changed([]string{out.OrchID})
 					a.broadcast(coreprotocol.Change{Sessions: true})
@@ -582,12 +619,6 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 					a.broadcast(coreprotocol.Change{Settings: true, Sessions: true})
 				}
 			}
-			if journal {
-				if err := a.receipts.complete(context.Background(), request, coreprotocol.Response{ID: in.ID, Payload: mustControlJSON(result)}); err != nil {
-					result = uncertainControl(in.ID)
-				}
-			}
-			command.result <- result
 			return coreprotocol.Response{}
 		}}
 	}
@@ -613,6 +644,11 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 	return true
 }
 
-func mustControlJSON(value any) json.RawMessage { raw, _ := json.Marshal(value); return raw }
+// controlJSON renders a semantic control output document.
+func controlJSON(value any) json.RawMessage { raw, _ := json.Marshal(value); return raw }
+
+// mustPayload encodes a control value for its receipt; control values always
+// have generated codecs.
+func mustPayload(value coreprotocol.Value) []byte { raw, _ := coreprotocol.Marshal(value); return raw }
 
 var _ control.Runtime = (*actorControlRuntime)(nil)

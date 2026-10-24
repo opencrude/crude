@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/shellport"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/gitdiff"
@@ -18,6 +17,8 @@ import (
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestGitPreparationFailureSettlesEveryWorkingView(t *testing.T) {

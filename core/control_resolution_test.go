@@ -43,7 +43,7 @@ func TestRepeatedControlResolutionOwnsDistinctReadReplies(t *testing.T) {
 		}
 		seen[envelope.Request.ID] = true
 		output, _ := json.Marshal(map[string]any{"descriptor": descriptor})
-		payload, _ := json.Marshal(control.Result{RequestID: envelope.Request.ID, OperationID: envelope.Request.ID, State: control.Applied, Output: output})
+		payload, _ := coreprotocol.Marshal(coreprotocol.Ptr(control.Result{RequestID: envelope.Request.ID, OperationID: envelope.Request.ID, State: control.Applied, Output: output}))
 		response := c.controlMethod(coreprotocol.Request{ID: NewClientID(), Owner: c.Owner, WorkspaceID: "ws", Method: coreprotocol.ControlShellReply, Payload: payload})
 		if response.Error != nil {
 			t.Fatal(response.Error)

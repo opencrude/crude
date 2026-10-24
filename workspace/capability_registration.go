@@ -70,6 +70,8 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 		return store.commitApplication(ctx, change)
 	}
 
+	store.db.settingsWriteMu.Lock()
+	defer store.db.settingsWriteMu.Unlock()
 	tx, err := store.db.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return captypes.Settings{}, fmt.Errorf("begin capability registration: %w", err)
@@ -106,6 +108,7 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	if err := tx.Commit(); err != nil {
 		return captypes.Settings{}, fmt.Errorf("commit capability registration: %w", err)
 	}
+	store.db.publishSettingsRow(string(encoded))
 	return merged, nil
 }
 

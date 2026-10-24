@@ -28,7 +28,6 @@ type AgentState struct {
 	Cancelling       bool
 	ActiveCompaction TurnStatus
 	Recovery         recovery.Status
-	TokenBuf         string
 	LastTokenTime    time.Time
 	SpinFrame        int
 	ActiveTyping     bool
@@ -106,11 +105,6 @@ func (a *AgentState) AcceptRuntimeEvent(id ttypes.RuntimeEventIdentity) bool {
 func (a *AgentState) Tick(spinFrame int) {
 	if a.Messages != nil {
 		a.Messages.AdvanceToolLifecycles(time.Now())
-	}
-	if a.TokenBuf != "" {
-		a.Messages.AppendToken(a.TokenBuf)
-		a.TokenBuf = ""
-		a.LastTokenTime = time.Now()
 	}
 	a.SpinFrame = spinFrame
 }
@@ -351,10 +345,6 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 			status.Generation > 0 && status.Generation < a.TurnIdentity.Generation {
 			return effects
 		}
-		if a.TokenBuf != "" {
-			target.AppendToken(a.TokenBuf)
-			a.TokenBuf = ""
-		}
 		target.MarkAllThinkingInterrupted()
 		target.MarkStreamingToolsCancelled()
 		target.ClearTurnStatus()
@@ -363,7 +353,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		a.ActiveCompaction = TurnStatus{}
 		a.Thinking, a.Streaming = false, false
 		// Waiting for configuration is still an owned, unfinished turn.
-		a.Running = status.State != recovery.Interrupted && status.State != recovery.Cancelled
+		a.Running = status.State != recovery.Interrupted && status.State != recovery.Cancelled && status.State != recovery.Failed
 		a.Cancelling, a.Completed = false, false
 		effects.setStatus(status.Summary)
 		effects.setThinking(a.Running, false, false)
@@ -403,13 +393,14 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 			if !a.Streaming && !inactive {
 				target.MarkAllThinkingDone()
 			}
-			a.TokenBuf += s
 			if !inactive {
 				a.Running, a.Streaming = true, true
 				effects.setStatus("Receiving response")
 				effects.setThinking(true, true, false)
 			}
 			target.EnsureAssistant()
+			target.AppendToken(s)
+			a.LastTokenTime = time.Now()
 		}
 
 	case "tool_call_streaming":
@@ -417,10 +408,6 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		a.Thinking = true
 		finishThinkingBlocks(target)
 		if a.Streaming {
-			if a.TokenBuf != "" {
-				target.AppendToken(a.TokenBuf)
-				a.TokenBuf = ""
-			}
 			a.Streaming = false
 		}
 		effects.setThinking(true, false, false)
@@ -432,10 +419,6 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		a.Thinking = true
 		finishThinkingBlocks(target)
 		if a.Streaming {
-			if a.TokenBuf != "" {
-				target.AppendToken(a.TokenBuf)
-				a.TokenBuf = ""
-			}
 			a.Streaming = false
 		}
 		effects.setThinking(true, false, false)
@@ -503,10 +486,6 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	case "error":
 		a.terminal = true
 		compactionFailure := a.ActiveCompaction.OperationID != "" && a.ActiveCompaction.Phase == "compaction_failed"
-		if a.TokenBuf != "" {
-			target.AppendToken(a.TokenBuf)
-			a.TokenBuf = ""
-		}
 		target.MarkAllThinkingInterrupted()
 		target.MarkStreamingToolsCancelled()
 		errMsg := FormatErr(evt.Data)
@@ -613,7 +592,6 @@ func (a *AgentState) SubmitInput(text string) {
 	a.Cancelling = false
 	a.Thinking = true
 	a.Streaming = false
-	a.TokenBuf = ""
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
 	a.PendingBlockID = ""
@@ -627,10 +605,6 @@ func (a *AgentState) SubmitInput(text string) {
 func (a *AgentState) BeginCancellation() {
 	if a == nil {
 		return
-	}
-	if a.TokenBuf != "" && a.Messages != nil {
-		a.Messages.AppendToken(a.TokenBuf)
-		a.TokenBuf = ""
 	}
 	if a.Messages != nil {
 		a.Messages.MarkAllThinkingInterrupted()

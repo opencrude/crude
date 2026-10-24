@@ -6,9 +6,54 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/filetree"
 	"crude/workspace"
 )
+
+type cadenceWorkspace struct {
+	shellport.Workspace
+	interval time.Duration
+	calls    int
+}
+
+func (w *cadenceWorkspace) SetDisplayInterval(interval time.Duration) {
+	w.interval = interval
+	w.calls++
+}
+
+type fixedDisplayCadence struct{ interval time.Duration }
+
+func (c *fixedDisplayCadence) DisplayInterval() time.Duration { return c.interval }
+
+func TestPresentedCadenceFollowsMeasuredWriterAndWorkspaceOwner(t *testing.T) {
+	app := newFullTestApp(t)
+	original := app.ws
+	defer func() { app.ws = original }()
+	first := &cadenceWorkspace{Workspace: original}
+	app.ws = first
+	source := &fixedDisplayCadence{interval: 80 * time.Millisecond}
+	app.SetDisplayCadence(source)
+	app.noteFramePresented(time.Now())
+	if first.interval != 80*time.Millisecond || first.calls != 1 {
+		t.Fatalf("measured pacing not propagated: %+v", first)
+	}
+	app.noteFramePresented(time.Now().Add(time.Second))
+	if first.calls != 1 {
+		t.Fatal("idle gap or unchanged frame republished cadence")
+	}
+	second := &cadenceWorkspace{Workspace: original}
+	app.ws = second
+	app.noteFramePresented(time.Now())
+	if second.interval != 80*time.Millisecond || second.calls != 1 {
+		t.Fatal("same geometry new workspace missed pacing")
+	}
+	source.interval = time.Second
+	app.noteFramePresented(time.Now())
+	if second.interval != 250*time.Millisecond {
+		t.Fatal("unbounded peer pacing")
+	}
+}
 
 func TestPointerBurstCoalescesPresentationWithoutBufferingGeometry(t *testing.T) {
 	app := newFullTestApp(t)
@@ -48,7 +93,7 @@ func TestPointerBurstCoalescesPresentationWithoutBufferingGeometry(t *testing.T)
 
 func TestFrameGateKeepsSingleWakeAndReleaseForcesFrame(t *testing.T) {
 	app := newFullTestApp(t)
-	app.cachedOutput = "cached"
+	app.framePresented = true
 	app.frameGate.lastPresented = time.Now()
 	first := app.requestCoalescedFrame(time.Now())
 	if first == nil || !app.frameGate.wakePending {

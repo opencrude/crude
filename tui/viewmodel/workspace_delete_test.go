@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/tui/screens/launcher"
@@ -15,6 +14,8 @@ import (
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestWorkspaceDeleteMenuPreviewCancelDeleteAndUndo(t *testing.T) {

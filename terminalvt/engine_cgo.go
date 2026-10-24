@@ -45,6 +45,13 @@ type Engine struct {
 	syncStarted  time.Time
 	now          func() time.Time
 	readSequence uint64
+	// streamGrid owns detached immutable rows shared by all paced viewers. Only
+	// Ghostty dirty rows are exported again; ordinary row-page reads invalidate it.
+	streamGrid *Projection
+	// Pointer-free C transfer scratch for one actual-width row. Published rows
+	// own an immutable copied string; neither C nor clients retain this storage.
+	rowCells []C.crude_export_cell
+	rowText  []byte
 }
 
 func New(opts Options) (*Engine, error) {
@@ -117,6 +124,8 @@ func (e *Engine) Close() {
 		return
 	}
 	e.closed = true
+	e.rowCells = nil
+	e.rowText = nil
 	C.ghostty_tracked_grid_ref_free(e.historyRef)
 	C.ghostty_tracked_grid_ref_free(e.historyTail)
 	e.historyRef = nil
@@ -283,6 +292,9 @@ func (e *Engine) Resize(cols, rows int) error {
 		return fmt.Errorf("resize: %d", rc)
 	}
 	e.cols, e.rows = cols, rows
+	e.rowCells = nil
+	e.rowText = nil
+	e.streamGrid = nil
 	e.synchronized = nil // Ghostty resize releases DEC 2026 as specified.
 	C.ghostty_tracked_grid_ref_free(e.historyRef)
 	C.ghostty_tracked_grid_ref_free(e.historyTail)

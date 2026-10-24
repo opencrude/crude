@@ -54,7 +54,7 @@ func TestDisclosurePolicyUsesOnlyMeaningfulFamilies(t *testing.T) {
 		"remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history",
 		"capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "mcp__docs__lookup"} {
 		msg := types.ChatMessage{InternalID: tool, Role: types.RoleTool, ToolName: tool, ToolStatus: "success", Content: "body"}
-		r.SyncMessages([]types.ChatMessage{msg}, version)
+		r.SyncMessages([]types.ChatMessage{msg}, version, 0)
 		version++
 		rows, _, _ := r.ExportMessageRows(80)
 		if len(rows) != 1 {

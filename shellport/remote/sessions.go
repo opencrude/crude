@@ -38,7 +38,7 @@ func (w *Workspace) ListSessions() []sessiondb.SessionMeta {
 
 // lifecycle creates or opens a session in the core. The new root reaches this
 // shell's replica through the ordered pump; the shell activates it then.
-func (w *Workspace) lifecycle(method string, payload any) *workspace.NewSessionResult {
+func (w *Workspace) lifecycle(method string, payload coreprotocol.Value) *workspace.NewSessionResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*callTimeout)
 	defer cancel()
 	var result workspace.NewSessionResult
@@ -53,22 +53,19 @@ func (w *Workspace) lifecycle(method string, payload any) *workspace.NewSessionR
 		}
 		return &result
 	}
-	if result.Error == "" {
-		w.pending.add(coreprotocol.Change{Sessions: true, Agents: []string{result.OrchID}})
-	}
 	return &result
 }
 
 func (w *Workspace) NewAgentSession() *workspace.NewSessionResult {
-	return w.lifecycle(coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{Selection: w.invocation})
+	return w.lifecycle(coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: w.invocation})
 }
 
 func (w *Workspace) OpenAgentSession(sessionID string) *workspace.NewSessionResult {
-	return w.lifecycle(coreprotocol.OpenSession, coreprotocol.InvocationSessionRequest{SessionID: sessionID, Selection: w.invocation})
+	return w.lifecycle(coreprotocol.OpenSession, &coreprotocol.InvocationSessionRequest{SessionID: sessionID, Selection: w.invocation})
 }
 
 func (w *Workspace) ForkAgentSession(sessionID string) *workspace.NewSessionResult {
-	return w.lifecycle(coreprotocol.ForkSession, coreprotocol.InvocationSessionRequest{SessionID: sessionID})
+	return w.lifecycle(coreprotocol.ForkSession, &coreprotocol.InvocationSessionRequest{SessionID: sessionID})
 }
 
 // BackendSession is never available to a connected shell; the core owns it.

@@ -225,17 +225,11 @@ func (m *controlVisualModel) connect() error {
 	go func() { _ = core.ServeConnection(m.ctx, m.runtime, server) }()
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 	defer cancel()
-	c, err := coreclient.Dial(ctx, client, "visual-controller")
+	c, err := coreclient.Dial(ctx, coreclient.SingleCarrier(client), "visual-controller")
 	if err != nil {
 		return err
 	}
 	m.client = c
-	// Like the product MCP adapter, this controller is not a replica: drain
-	// unsolicited workspace changes so a busy workspace cannot overflow it.
-	go func() {
-		for range c.Events() {
-		}
-	}()
 	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: m.root}, nil); err != nil {
 		return err
 	}
@@ -249,13 +243,13 @@ func (m *controlVisualModel) connect() error {
 	// Shell registration is asynchronous product startup. Observe it, never
 	// retry a mutation or manufacture a registered shell.
 	for {
-		var shells []coreprotocol.ControlShellInfo
-		if err := c.Call(ctx, target.WorkspaceID, coreprotocol.ControlShells, struct{}{}, &shells); err != nil {
+		var shells coreprotocol.ControlShellInfos
+		if err := c.Call(ctx, target.WorkspaceID, coreprotocol.ControlShells, &coreprotocol.Empty{}, &shells); err != nil {
 			return err
 		}
 		for _, shell := range shells {
 			if shell.Owner == *target.Shell {
-				return c.Call(ctx, target.WorkspaceID, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute, control.Delete}, Shell: target.Shell}, nil)
+				return c.Call(ctx, target.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute, control.Delete}, Shell: target.Shell}, nil)
 			}
 		}
 		select {
@@ -284,7 +278,7 @@ func (m *controlVisualModel) execute(id string, input any, adjust func(*control.
 	if adjust != nil {
 		adjust(&r)
 	}
-	payload, err := json.Marshal(r)
+	payload, err := coreprotocol.Marshal(coreprotocol.Ptr(r))
 	if err != nil {
 		return control.Result{}, err
 	}
@@ -298,7 +292,7 @@ func (m *controlVisualModel) execute(id string, input any, adjust func(*control.
 		return control.Result{}, response.Error
 	}
 	var result control.Result
-	if err := json.Unmarshal(response.Payload, &result); err != nil {
+	if err := coreprotocol.Decode(response.Payload, &result); err != nil {
 		return result, err
 	}
 	if result.State != control.Applied && result.State != control.Committed {
@@ -389,7 +383,7 @@ func (m *controlVisualModel) journey(key int) error {
 			return fmt.Errorf("file lacks exact tab/document receipt: %+v", result)
 		}
 		return m.check(func(m *controlVisualModel) error {
-			paint := ansi.Strip(m.View().Content)
+			paint := ansi.Strip(m.View().RenderContent())
 			if m.Tree.Visible || len(m.Win.GroupIDs()) != 2 || m.EditorState.Editor == nil || m.EditorState.Editor.FilePath() != m.path || !strings.Contains(paint, "CONTROL READY") {
 				return fmt.Errorf("editor/tree/split did not mount and paint; tree=%t groups=%d editor=%t frame=%dx%d:\n%s", m.Tree.Visible, len(m.Win.GroupIDs()), m.EditorState.Editor != nil, m.width, m.height, paint)
 			}
@@ -423,7 +417,7 @@ func (m *controlVisualModel) journey(key int) error {
 			return err
 		}
 		return m.check(func(m *controlVisualModel) error {
-			paint := ansi.Strip(m.View().Content)
+			paint := ansi.Strip(m.View().RenderContent())
 			if len(m.termMgr().List()) != 1 || m.termScreens[m.terminal] == nil || !m.termDockVisible() || !strings.Contains(paint, "Terminal") {
 				return fmt.Errorf("one usable terminal did not mount/paint")
 			}
@@ -472,7 +466,7 @@ func (m *controlVisualModel) journey(key int) error {
 			return err
 		}
 		if err := m.check(func(m *controlVisualModel) error {
-			paint := ansi.Strip(m.View().Content)
+			paint := ansi.Strip(m.View().RenderContent())
 			if !strings.Contains(paint, "Tab size") || !strings.Contains(paint, "8") {
 				return fmt.Errorf("edited ordinary field not painted")
 			}

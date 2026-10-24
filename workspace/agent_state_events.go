@@ -398,10 +398,6 @@ func (a *AgentState) handleBlockingAuto(evt AgentEvent, target *Conversation) {
 }
 
 func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, effects *AgentEffects) {
-	if a.TokenBuf != "" {
-		target.AppendToken(a.TokenBuf)
-		a.TokenBuf = ""
-	}
 	wasStreaming := a.Streaming
 
 	var content, reason string

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/collaboration"
 	"crude/provider"
 	"crude/sessiondb"
 	recoverytypes "crude/types/recovery"
@@ -182,6 +183,61 @@ func TestAcceptedInputStartsFromItsDurableAdmissionCheckpoint(t *testing.T) {
 	checkpoint, found, err := sessiondb.LoadRecoveryCheckpoint(s.db, s.sessionID, o.ID)
 	if err != nil || !found || !checkpoint.InputAdmitted || checkpoint.ContextRevision != state.Revision || checkpoint.PendingInput.InternalID != intent.InputID {
 		t.Fatalf("admission did not retain its exact durable recovery envelope: found=%v error=%v", found, err)
+	}
+}
+
+func TestAcceptedTurnCannotRollBackLateControlContext(t *testing.T) {
+	s, err := NewWithSessionDir("admission-late-control", testConfig(), t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	// Drive the normal admitted request deterministically before starting its
+	// execution loop; an older turn's journal control can commit in this gap.
+	sender := newMockEventSender()
+	o := NewOrchestrator("root", s)
+	o.sender = sender
+	s.runtimeProfile.GetOrCreateOverride(o.ID)
+	s.orchestrators[o.ID] = o
+	intent, err := s.PrepareInputAdmission(o.ID, provider.PlainInput("follow-up after Stop"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted := s.CommitInputAdmission(t.Context(), intent)
+	if admitted.Status != InputAdmissionAccepted {
+		t.Fatalf("input admission: %+v", admitted)
+	}
+	request := <-o.inputCh
+	control := provider.NewTextMessage("user", "late lifecycle control evidence")
+	control.InternalID, control.Origin, control.Visibility = "late-control", provider.OriginRuntimeContext, provider.VisibilityContextOnly
+	control.Collaboration = &provider.CollaborationAttribution{Kind: string(collaboration.EventLifecycleControl)}
+	s.msgsMu.Lock()
+	stamp := time.Now()
+	delta := contextDelta(control, sessiondb.DisplayMeta{ContextOnly: true}, 0, stamp, o.ID)
+	current, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{delta}}})
+	if err == nil {
+		s.msgs = append(s.msgs, delta.Message)
+		s.msgTurns = append(s.msgTurns, 0)
+		s.displayMetas = append(s.displayMetas, delta.Meta)
+		s.createdAts = append(s.createdAts, delta.CreatedAt)
+	}
+	s.msgsMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	s.SetBeforeTurnHook(func(context.Context, string) error {
+		s.msgsMu.Lock()
+		seen = s.contextRevision == current.Revision && len(s.activeContext) == len(current.Messages) && s.activeContext[len(s.activeContext)-1].InternalID == control.InternalID
+		s.msgsMu.Unlock()
+		o.closing.Store(true)
+		close(o.stopCh) // End a failed publisher wait too; no routine sleeps.
+		o.CancelTurn()  // No provider work; only the real startup/settlement path.
+		return context.Canceled
+	})
+	s.processTurnOrchestrator(request, o, sender, s.logger)
+	if !seen {
+		t.Fatal("starting accepted input rolled back the newer control's context owner revision or bytes")
 	}
 }
 

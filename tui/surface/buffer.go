@@ -106,8 +106,14 @@ func (b *CellBuffer) Get(x, y int) cell.Cell {
 
 // Fill fills the entire buffer with the given cell.
 func (b *CellBuffer) Fill(c cell.Cell) {
-	for i := range b.cells {
-		b.cells[i] = c
+	if len(b.cells) == 0 {
+		return
+	}
+	// Seed once, then double the initialized prefix with bulk copies. Cells
+	// contain immutable strings, so copying values does not alias mutable state.
+	b.cells[0] = c
+	for n := 1; n < len(b.cells); n *= 2 {
+		copy(b.cells[n:], b.cells[:n])
 	}
 }
 
@@ -217,10 +223,7 @@ func (b *CellBuffer) Clone() *CellBuffer {
 
 // Clear resets all cells to transparent blanks.
 func (b *CellBuffer) Clear() {
-	blank := cell.TransparentBlank()
-	for i := range b.cells {
-		b.cells[i] = blank
-	}
+	b.Fill(cell.TransparentBlank())
 }
 
 // Cells returns the raw cell slice for fast iteration in the compositor.

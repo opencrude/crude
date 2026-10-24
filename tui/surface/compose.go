@@ -14,23 +14,27 @@ import (
 func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 	srcW, srcH := src.Width(), src.Height()
 	dstW, dstH := dst.Width(), dst.Height()
+	bounds := Rect{X: dstX, Y: dstY, W: srcW, H: srcH}.Intersect(FullRect(dstW, dstH))
+	if clip != nil {
+		bounds = bounds.Intersect(clip.Active())
+	}
+	if bounds.Empty() {
+		return
+	}
 
-	for sy := 0; sy < srcH; sy++ {
-		dy := dstY + sy
-		if dy < 0 || dy >= dstH {
+	for dy := bounds.Y; dy < bounds.Y+bounds.H; dy++ {
+		source := src.Row(dy - dstY)
+		destination := dst.Row(dy)
+		// Replacing a whole opaque row cannot leave a partially occluded old
+		// grapheme. Validate the actual cells (not a stale surface flag), then
+		// copy values in bulk. Default backgrounds and malformed spans retain
+		// the inheritance/normalization path below.
+		if dstX == 0 && len(source) == len(destination) && bounds.X == 0 && bounds.W == dstW && opaqueCellRow(source) {
+			copy(destination, source)
 			continue
 		}
-		for sx := 0; sx < srcW; sx++ {
-			dx := dstX + sx
-			if dx < 0 || dx >= dstW {
-				continue
-			}
-			// Clip check
-			if clip != nil && !clip.Contains(dx, dy) {
-				continue
-			}
-
-			srcCell := src.Get(sx, sy)
+		for dx := bounds.X; dx < bounds.X+bounds.W; dx++ {
+			srcCell := source[dx-dstX]
 
 			// Skip continuation cells (width=0); they are handled by
 			// the primary wide cell that wrote them.
@@ -44,7 +48,7 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 			}
 
 			span := max(1, int(srcCell.Width))
-			if dx+span > dstW || !spanInsideClip(clip, dx, dy, span) {
+			if span > 1 && (dx+span > dstW || !spanInsideClip(clip, dx, dy, span)) {
 				continue
 			}
 
@@ -55,17 +59,39 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 			// inherits the background of whatever container it's composited into
 			// (e.g., a floating window's SubPaneBg), rather than reverting to the
 			// terminal's default background.
-			dstCell := dst.Get(dx, dy)
+			dstCell := destination[dx]
 			if srcCell.BG.IsDefault() {
 				srcCell.BG = dstCell.BG
 			}
 			if srcCell.Width == 1 && dstCell.Width == 1 {
-				dst.setRaw(dx, dy, srcCell)
+				destination[dx] = srcCell
 				continue
 			}
 			replaceCellSpan(dst, dx, dy, srcCell)
 		}
 	}
+}
+
+func opaqueCellRow(row []cell.Cell) bool {
+	for x := 0; x < len(row); {
+		c := &row[x]
+		width := int(c.Width)
+		if c.Transparent || c.BG.IsDefault() || width == 0 || x+width > len(row) {
+			return false
+		}
+		end := x + width
+		if width == 1 {
+			x++
+			continue
+		}
+		continuation := cell.Cell{FG: c.FG, BG: c.BG, Attr: c.Attr}
+		for x++; x < end; x++ {
+			if row[x] != continuation {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // BlitOpaque copies all cells from source to destination, overwriting

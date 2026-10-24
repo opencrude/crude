@@ -99,7 +99,7 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			recovered := chatprojection.NewRenderer(app.Theme)
 			recovered.SetSize(width, 40)
 			recovered.SetChatAreaBounds(0, 30)
-			recovered.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(loaded)), 1)
+			recovered.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(loaded)), 1, 0)
 			// Keep geometry identical after the full shell changed the live viewport.
 			renderer.SetSize(width, 40)
 			renderer.SetChatAreaBounds(0, 30)
@@ -246,8 +246,8 @@ func TestActivityTreeCommandClickAndEmptyEnvelopeRecovery(t *testing.T) {
 		r.SetSize(42, 28)
 		r.SetChatAreaBounds(0, 26)
 	}
-	left.SyncMessages(live, 1)
-	right.SyncMessages(recovered, 1)
+	left.SyncMessages(live, 1, 0)
+	right.SyncMessages(recovered, 1, 0)
 	check := func(stage string) []chatprojection.MessageRow {
 		t.Helper()
 		l, _, _ := left.ExportMessageRows(42)
@@ -296,7 +296,7 @@ func TestCompactToolStyleAndBlinkUseSharedTitles(t *testing.T) {
 	sp := workspace.NewSubPane("child", workspace.PaneAgent, "child")
 	p := reg.Get(sp.ID, sp.Type)
 	messages := []ctypes.ChatMessage{{InternalID: "tool", Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolStatus: ctypes.ToolStatusCalling, ToolPreviewPhase: ctypes.ToolPreviewStreaming}}
-	p.renderer.SyncMessages(messages, 1)
+	p.renderer.SyncMessages(messages, 1, 0)
 	reg.renderAgentCompact(sp.ID, sp, sp.View(), 48, 6, 0, false)
 	if !strings.Contains(p.compactToolLines[0].PlainText(), "●") {
 		t.Fatal("active compact tool has no shared activity dot")
@@ -310,7 +310,7 @@ func TestCompactToolStyleAndBlinkUseSharedTitles(t *testing.T) {
 	}
 	messages[0].ToolStatus = ctypes.ToolStatusSuccess
 	messages[0].ToolPreviewPhase = ctypes.ToolPreviewDone
-	p.renderer.SyncMessages(messages, 2)
+	p.renderer.SyncMessages(messages, 2, 0)
 	reg.renderAgentCompact(sp.ID, sp, sp.View(), 48, 6, 0, false)
 	cached := &p.compactToolLines[0]
 	reg.renderAgentCompact(sp.ID, sp, sp.View(), 48, 6, ui.ActivityBlinkPhaseMillis, false)

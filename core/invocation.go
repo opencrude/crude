@@ -10,7 +10,7 @@ import (
 // worker. Receipts retain only a payload digest, never the write-only selection.
 func (a *actor) prepareInvocation(request coreprotocol.Request) (*workspace.InvocationLifecycleOperation, error) {
 	var input coreprotocol.InvocationSessionRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return nil, errors.New("invalid invocation request")
 	}
 	if (request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession) && input.SessionID == "" {

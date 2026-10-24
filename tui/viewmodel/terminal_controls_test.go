@@ -133,7 +133,7 @@ func TestTerminalControlsNativeSignalAndRawKeysDockAndFloat(t *testing.T) {
 				}
 				await(want)
 				app.forceFrame()
-				if painted := app.View().Content; !strings.Contains(painted, want) {
+				if painted := app.View().RenderContent(); !strings.Contains(painted, want) {
 					t.Fatal("native control result absent from rendered terminal")
 				}
 			})

@@ -10,11 +10,11 @@ import (
 
 func (c *Connection) controlClientMethod(ctx context.Context, request coreprotocol.Request) <-chan coreprotocol.Response {
 	ready := make(chan coreprotocol.Response, 1)
-	complete := func(value any, err error) {
+	complete := func(value coreprotocol.Value, err error) {
 		if err != nil {
 			ready <- fault(request, "control_failed", err.Error())
 		} else {
-			ready <- response(request, value)
+			ready <- responseValue(request, value)
 		}
 	}
 	c.mu.Lock()
@@ -26,7 +26,7 @@ func (c *Connection) controlClientMethod(ctx context.Context, request coreprotoc
 	}
 	if request.Method == coreprotocol.ControlClientRegister {
 		var grant coreprotocol.ControlClientGrant
-		if err := decode(request.Payload, &grant); err != nil {
+		if err := decodeRequest(request, &grant); err != nil {
 			complete(nil, err)
 			return ready
 		}
@@ -66,7 +66,7 @@ func (c *Connection) controlClientMethod(ctx context.Context, request coreprotoc
 			c.controlTargets[request.WorkspaceID] = &owner
 		}
 		c.mu.Unlock()
-		complete(struct{}{}, nil)
+		complete(wire(coreprotocol.Empty{}), nil)
 		return ready
 	}
 	caller := control.Caller{Kind: control.ExternalCaller, ClientID: c.Owner.ClientID}
@@ -74,24 +74,24 @@ func (c *Connection) controlClientMethod(ctx context.Context, request coreprotoc
 	go func() {
 		switch request.Method {
 		case coreprotocol.ControlShells:
-			var empty struct{}
-			if err := decode(request.Payload, &empty); err != nil {
+			var empty coreprotocol.Empty
+			if err := decodeRequest(request, &empty); err != nil {
 				complete(nil, err)
 				return
 			}
-			complete(c.runtime.controlShells(request.WorkspaceID), nil)
+			complete(wire(coreprotocol.ControlShellInfos(c.runtime.controlShells(request.WorkspaceID))), nil)
 		case coreprotocol.ControlDescribe:
 			var input coreprotocol.ControlDescribeRequest
-			if err := decode(request.Payload, &input); err != nil {
+			if err := decodeRequest(request, &input); err != nil {
 				complete(nil, err)
 				return
 			}
 			input.Target.WorkspaceID = request.WorkspaceID
 			values, err := runtime.Describe(ctx, caller, input.Target, input.Query)
-			complete(values, err)
+			complete(wire(coreprotocol.ControlDescriptors(values)), err)
 		case coreprotocol.ControlResolve, coreprotocol.ControlExecute:
 			var input control.Request
-			if err := decode(request.Payload, &input); err != nil {
+			if err := decodeRequest(request, &input); err != nil {
 				complete(nil, err)
 				return
 			}
@@ -117,7 +117,7 @@ func (c *Connection) controlClientMethod(ctx context.Context, request coreprotoc
 			}
 			if request.Method == coreprotocol.ControlResolve {
 				value, err := runtime.Resolve(ctx, input)
-				complete(value, err)
+				complete(wire(value), err)
 			} else {
 				value, err := runtime.Execute(ctx, input)
 				if value.RequestID != "" {

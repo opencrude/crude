@@ -27,7 +27,7 @@ func (a *actor) prepareHistory(request coreprotocol.Request) func(context.Contex
 		}
 	}
 	var in coreprotocol.HistoryCommand
-	if err := decode(request.Payload, &in); err != nil {
+	if err := decodeRequest(request, &in); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }
 	}
 	var store workspace.SessionReferences
@@ -46,11 +46,11 @@ func (a *actor) prepareHistory(request coreprotocol.Request) func(context.Contex
 		if err != nil {
 			return fault(request, "history_failed", err.Error())
 		}
-		return response(request, value)
+		return responseValue(request, value)
 	}
 }
 
-func runHistoryCommand(h *history.Store, path string, store workspace.SessionReferences, method string, in coreprotocol.HistoryCommand) (any, error) {
+func runHistoryCommand(h *history.Store, path string, store workspace.SessionReferences, method string, in coreprotocol.HistoryCommand) (coreprotocol.Value, error) {
 	referenceCommandMu.Lock()
 	defer referenceCommandMu.Unlock()
 	list := func() coreprotocol.HistoryListResult {
@@ -61,7 +61,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 		return out
 	}
 	if method == coreprotocol.HistoryList {
-		return list(), nil
+		return wire(list()), nil
 	}
 	if method == coreprotocol.HistoryRecord {
 		if store == nil || in.SessionID == "" {
@@ -92,7 +92,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 		if err := h.Save(path); err != nil {
 			return nil, err
 		}
-		return list(), nil
+		return wire(list()), nil
 	}
 	var entry history.Entry
 	for _, e := range h.Entries() {
@@ -117,7 +117,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 			ref, _ := store.GetReference(id)
 			out.References = append(out.References, referenceView(ref))
 		}
-		return out, nil
+		return wire(out), nil
 	}
 	if method == coreprotocol.HistoryReadMedia {
 		if in.AttachmentIndex < 0 || in.AttachmentIndex >= len(entry.Attachments) {
@@ -131,7 +131,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 		if err != nil {
 			return nil, err
 		}
-		return referenceChunk(referenceView(attachment.Reference), data, true, in.Offset, in.Digest)
+		return wired(referenceChunk(referenceView(attachment.Reference), data, true, in.Offset, in.Digest))
 	}
 	return nil, errors.New("unknown history operation")
 }

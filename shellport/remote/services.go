@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -62,13 +63,28 @@ func (g gitService) InspectCommit(ctx context.Context, hash string) (workspace.G
 	return g.client().InspectCommit(ctx, hash)
 }
 func (g gitService) Snapshot(ctx context.Context) (workspace.GitSnapshot, error) {
-	return g.client().Snapshot(ctx)
+	g.w.auxMu.RLock()
+	value := g.w.gitState
+	stateErr := g.w.gitError
+	g.w.auxMu.RUnlock()
+	if stateErr != nil {
+		return workspace.GitSnapshot{}, stateErr
+	}
+	if value == nil {
+		return workspace.GitSnapshot{}, errors.New("Git state is not ready")
+	}
+	var out coreprotocol.GitSnapshotResult
+	body, err := coreprotocol.Marshal(value)
+	if err == nil {
+		err = coreprotocol.Decode(body, &out)
+	}
+	return out.Snapshot, err
 }
 func (g gitService) Stage(ctx context.Context, paths ...string) error {
-	return g.w.call(ctx, coreprotocol.GitStagePaths, coreprotocol.GitPathsRequest{Paths: paths}, &coreprotocol.BoolResult{})
+	return g.w.call(ctx, coreprotocol.GitStagePaths, &coreprotocol.GitPathsRequest{Paths: paths}, &coreprotocol.BoolResult{})
 }
 func (g gitService) Unstage(ctx context.Context, paths ...string) error {
-	return g.w.call(ctx, coreprotocol.GitUnstagePaths, coreprotocol.GitPathsRequest{Paths: paths}, &coreprotocol.BoolResult{})
+	return g.w.call(ctx, coreprotocol.GitUnstagePaths, &coreprotocol.GitPathsRequest{Paths: paths}, &coreprotocol.BoolResult{})
 }
 func (g gitService) StageHunk(ctx context.Context, comparison workspace.GitComparison, hunk workspace.GitHunkRange) error {
 	return g.client().StageHunk(ctx, comparison, hunk)
@@ -186,14 +202,17 @@ func (h historyStore) PlanMessageRestore(ctx context.Context, sessionID, message
 func (w *Workspace) LocalHistory() shellport.LocalHistoryStore     { return historyStore{w: w} }
 func (w *Workspace) HistoryService() shellport.LocalHistoryService { return historyStore{w: w} }
 
-func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult) error {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-	defer cancel()
-	return w.call(ctx, coreprotocol.HistoryRestoreEvent, coreprotocol.HistoryRestoreEventRequest{Result: result}, &coreprotocol.BoolResult{})
-}
-
 func (w *Workspace) ApplyHistoryRestoreChoices(ctx context.Context, planID string, choices []localhistory.RestoreChoice) (localhistory.RestoreResult, error) {
 	return w.rpc().History().ApplyRestoreChoices(ctx, planID, choices)
+}
+
+func (w *Workspace) HistoryRestoreReceipt(ctx context.Context, id string) (coreprotocol.Receipt, error) {
+	var out coreprotocol.Receipt
+	err := w.call(ctx, coreprotocol.GetReceipt, &coreprotocol.ReceiptRequest{RequestID: id}, &out)
+	if err == nil && (out.RequestID != id || out.WorkspaceID != w.id || out.Method != coreprotocol.HistoryApply) {
+		err = errors.New("original restore receipt identity does not match this workspace")
+	}
+	return out, err
 }
 
 // ---- Memory and board -----------------------------------------------------
@@ -244,7 +263,27 @@ func (w *Workspace) CorrectMemory(ctx context.Context, replacement memory.Record
 func (w *Workspace) BindMemory() shellport.MemoryStore { return memoryStore{w: w} }
 
 func (w *Workspace) BoardSnapshot(ctx context.Context, query, thread string, since, snapshot int64) (workspace.BoardSnapshot, error) {
-	return w.rpc().BoardSnapshot(ctx, query, thread, since, snapshot)
+	// Explicit filtered and historical pages are resource reads, not replica
+	// refreshes. Only the latest default page belongs to the pushed state topic.
+	if query != "" || thread != "" || since != 0 || snapshot != 0 {
+		return w.rpc().BoardSnapshot(ctx, query, thread, since, snapshot)
+	}
+	w.auxMu.RLock()
+	value := w.boardState
+	stateErr := w.boardError
+	w.auxMu.RUnlock()
+	if stateErr != nil {
+		return workspace.BoardSnapshot{}, stateErr
+	}
+	if value == nil {
+		return workspace.BoardSnapshot{}, errors.New("board state is not ready")
+	}
+	var out coreprotocol.BoardSnapshotResult
+	body, err := coreprotocol.Marshal(value)
+	if err == nil {
+		err = coreprotocol.Decode(body, &out)
+	}
+	return out.Snapshot, err
 }
 func (w *Workspace) MarkBoardRead(ctx context.Context, through int64) error {
 	return w.rpc().MarkBoardRead(ctx, through)
@@ -321,8 +360,7 @@ func connectionSecrets(conn, before captypes.ConnectionConfig, present coreproto
 	if present.Args && slices.Equal(conn.Args, storedArgs) {
 		out.Args.Keep = true
 	} else if len(conn.Args) != 0 {
-		args := slices.Clone(conn.Args)
-		out.Args.Value = &args
+		out.Args.Value = slices.Clone(conn.Args)
 	}
 	out.Environment = mapUpdate(conn.Environment, present.Environment)
 	out.Headers = mapUpdate(conn.Headers, present.Headers)
@@ -340,15 +378,14 @@ var storedArgs = []string{StoredSecret}
 
 func storedMap() map[string]string { return map[string]string{storedKey: StoredSecret} }
 
-func mapUpdate(value map[string]string, present bool) coreprotocol.SecretUpdate[map[string]string] {
+func mapUpdate(value map[string]string, present bool) coreprotocol.SecretMap {
 	if present && len(value) == 1 && value[storedKey] == StoredSecret {
-		return coreprotocol.SecretUpdate[map[string]string]{Keep: true}
+		return coreprotocol.SecretMap{Keep: true}
 	}
 	if len(value) == 0 {
-		return coreprotocol.SecretUpdate[map[string]string]{}
+		return coreprotocol.SecretMap{}
 	}
-	copy := maps.Clone(value)
-	return coreprotocol.SecretUpdate[map[string]string]{Value: &copy}
+	return coreprotocol.SecretMap{Value: maps.Clone(value)}
 }
 
 // markStoredCapabilities shows each redacted connection field as stored.

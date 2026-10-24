@@ -70,27 +70,27 @@ func (a *actor) prepareClientFiles(request coreprotocol.Request) (func(context.C
 		if err := ctx.Err(); err != nil {
 			return fault(request, "cancelled", err.Error())
 		}
-		var value any
+		var value coreprotocol.Value
 		var err error
 		if request.Method == coreprotocol.ClientFilesReadExternal {
 			var in coreprotocol.FileReadRequest
-			if err := decode(request.Payload, &in); err != nil {
+			if err := decodeRequest(request, &in); err != nil {
 				return fault(request, "invalid_request", err.Error())
 			}
 			in.Path, err = externalReadPath(in.Path)
 			if err == nil {
-				value, err = readFileChunk(ctx, filepath.VolumeName(in.Path)+string(filepath.Separator), in)
+				value, err = wired(readFileChunk(ctx, filepath.VolumeName(in.Path)+string(filepath.Separator), in))
 			}
 		} else {
 			var in coreprotocol.FilePathRequest
-			if err := decode(request.Payload, &in); err != nil {
+			if err := decodeRequest(request, &in); err != nil {
 				return fault(request, "invalid_request", err.Error())
 			}
-			value, err = browseClientDirectory(ctx, root, in.Path, request.Method == coreprotocol.ClientFilesBrowseExternal)
+			value, err = wiredList[coreprotocol.ClientDirectoryEntries](browseClientDirectory(ctx, root, in.Path, request.Method == coreprotocol.ClientFilesBrowseExternal))
 		}
 		if err != nil {
 			return fault(request, "files_failed", err.Error())
 		}
-		return response(request, value)
+		return responseValue(request, value)
 	}, true
 }

@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/ui"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestTerminalSummonShortcutsRestoreLastUsedAcrossDockAndWindow(t *testing.T) {

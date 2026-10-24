@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/internal/wiretest"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -129,7 +130,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 	defer external.Close()
 	target := one.app.ws.(shellport.ShellControl).ControlIdentity()
 	call := func(name, method string, value any) coreprotocol.Response {
-		raw, err := json.Marshal(value)
+		raw, err := wiretest.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +166,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 		Descriptor control.Descriptor `json:"descriptor"`
 		Node       control.Node       `json:"node"`
 	}
-	if readResponse.Error != nil || json.Unmarshal(readResponse.Payload, &readResult) != nil || readResult.State != control.Applied || json.Unmarshal(readResult.Output, &readDescription) != nil || readDescription.Descriptor.Effect != control.Read {
+	if readResponse.Error != nil || coreprotocol.Decode(readResponse.Payload, &readResult) != nil || readResult.State != control.Applied || json.Unmarshal(readResult.Output, &readDescription) != nil || readDescription.Descriptor.Effect != control.Read {
 		t.Fatal("external read-only scope cannot describe exact read", readResponse)
 	}
 	readIntent.ExpectedAction = readDescription.Descriptor.ID
@@ -173,7 +174,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 	readTarget := target.Clone()
 	readTarget.ResourceID = readDescription.Node.ID
 	readResponse = execute(control.Request{ID: "external-generic-read", CommandID: "shell.control", Target: readTarget, Caller: caller, Input: readInput, Preconditions: control.Preconditions{Revision: &readDescription.Node.Revision, OpenEpoch: &readDescription.Node.OpenEpoch}})
-	if readResponse.Error != nil || json.Unmarshal(readResponse.Payload, &readResult) != nil || readResult.State != control.Applied {
+	if readResponse.Error != nil || coreprotocol.Decode(readResponse.Payload, &readResult) != nil || readResult.State != control.Applied {
 		t.Fatal("external read-only scope cannot invoke exact read", readResponse)
 	}
 	intent := shellControlIntent{ComponentID: string(memorybrowser.ActionsID) + "/hide", Operation: ui.ControlOperation{Verb: "activate"}}
@@ -187,7 +188,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 	writeTarget.ResourceID = node.ID
 	out := execute(control.Request{ID: "deny-generic-write", CommandID: "shell.control", Target: writeTarget, Caller: caller, Input: input, Preconditions: control.Preconditions{Revision: &node.Revision, OpenEpoch: &node.OpenEpoch}})
 	var denied control.Result
-	if out.Error != nil || json.Unmarshal(out.Payload, &denied) != nil || denied.Fault == nil || denied.Fault.Code != control.Denied {
+	if out.Error != nil || coreprotocol.Decode(out.Payload, &denied) != nil || denied.Fault == nil || denied.Fault.Code != control.Denied {
 		t.Fatal("external read scope invoked resolved Write", out)
 	}
 	path := filepath.Join(root, "preserved.txt")
@@ -197,7 +198,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 	deleteTarget := target.Clone()
 	deleteTarget.Shell = nil
 	out = execute(control.Request{ID: "deny-delete", CommandID: "files.delete", Target: deleteTarget, Caller: caller, Input: json.RawMessage(`{"path":"preserved.txt"}`)})
-	if out.Error != nil || json.Unmarshal(out.Payload, &denied) != nil || denied.Fault == nil || denied.Fault.Code != control.Denied {
+	if out.Error != nil || coreprotocol.Decode(out.Payload, &denied) != nil || denied.Fault == nil || denied.Fault.Code != control.Denied {
 		t.Fatal("external read scope invoked Delete", out)
 	}
 	bytes, err := os.ReadFile(path)

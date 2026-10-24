@@ -95,7 +95,7 @@ func (s *WorkspaceSettingsSurface) controlField(id ui.ComponentID) (*ui.FieldSta
 				path = "accounts"
 			case catSafety, catAutoReviewPolicy:
 				path = "safety"
-			case catNetworkConnection, catNetworkProxy, catNetworkCertificates:
+			case catNetworkConnection, catNetworkProxy, catNetworkCertificates, catNetworkRemoteAccess:
 				path = "network"
 			case catAcquisition:
 				path = "capabilities"
@@ -149,6 +149,9 @@ func (s *WorkspaceSettingsSurface) agentDraftAuthority() bool {
 func (s *WorkspaceSettingsSurface) ControlMetadata(id ui.ComponentID, action string) (control.Effect, bool, error) {
 	if s.model == nil {
 		return "", false, fmt.Errorf("settings owner unavailable")
+	}
+	if strings.HasPrefix(action, "settings.remote.") {
+		return control.Authority, true, nil
 	}
 	if id == "settings/agents/search" || id == "settings/language-servers/search" {
 		return control.Write, false, nil

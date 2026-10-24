@@ -221,7 +221,10 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 	}
 	jobs := make(chan string)
 	results := make(chan workspaceResult, len(ids))
-	workerCount := min(24, len(ids))
+	// SQLite schema loading is CPU-bound. Twenty-four simultaneous opens made
+	// every healthy database miss the unchanged 150 ms bound under -race (and
+	// caused a second wave of light reads), publishing an empty catalog.
+	workerCount := min(2, len(ids))
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for range workerCount {
@@ -343,7 +346,7 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_busy_timeout=1"
+	dsn := fileURI(dbPath) + "?mode=ro&_pragma=busy_timeout(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil
@@ -351,16 +354,17 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
 
-	var dir string
-	if err := db.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key = 'project_dir'`).Scan(&dir); err != nil || dir == "" {
+	var dir, accessed string
+	if err := db.QueryRowContext(ctx, `SELECT
+		COALESCE(MAX(CASE WHEN key = 'project_dir' THEN value END), ''),
+		COALESCE(MAX(CASE WHEN key = 'last_accessed_at' THEN value END), '')
+		FROM workspace_metadata WHERE key IN ('project_dir', 'last_accessed_at')`).Scan(&dir, &accessed); err != nil || dir == "" {
 		return nil
 	}
 	info := &WorkspaceInfo{
 		ProjectDir:  dir,
 		ProjectName: filepath.Base(dir),
 	}
-	var accessed string
-	_ = db.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key = 'last_accessed_at'`).Scan(&accessed)
 	info.LastAccessed, _ = strconv.ParseInt(accessed, 10, 64)
 	return info
 }
@@ -386,7 +390,9 @@ func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInf
 	// Short busy timeout + read-only: a live IDE holding the WAL must not stall
 	// the launcher (or unit tests) for the default 5s sessiondb busy wait.
 	// Avoid immutable=1 so recent WAL-backed project_dir writes remain visible.
-	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_busy_timeout=1"
+	// Escape filesystem delimiters before adding SQLite's options. A literal
+	// '#' or '?' in CRUDE_HOME belongs to the path, not a URI fragment/query.
+	dsn := fileURI(dbPath) + "?mode=ro&_pragma=busy_timeout(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil
@@ -394,46 +400,18 @@ func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInf
 	db.SetMaxOpenConns(1)
 	defer db.Close()
 
-	wdb := &WorkspaceDB{DB: db, Path: dbPath, Dir: filepath.Dir(dbPath)}
-
 	info := &WorkspaceInfo{}
-	info.LastAccessed, _ = strconv.ParseInt(wdb.GetSettingContext(ctx, "last_accessed_at"), 10, 64)
-	// Prefer an explicit metadata key if present.
-	if p := wdb.GetSettingContext(ctx, "project_dir"); p != "" {
-		info.ProjectDir = p
-		info.ProjectName = filepath.Base(p)
+	var accessed string
+	// One statement owns one consistent metadata/count observation and releases
+	// its rows before returning. No second query can wait on our one connection.
+	if err := db.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT value FROM workspace_metadata WHERE key = 'project_dir'), ''),
+		COALESCE((SELECT value FROM workspace_metadata WHERE key = 'last_accessed_at'), ''),
+		(SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0)
+	`).Scan(&info.ProjectDir, &accessed, &info.SessionCount); err != nil || info.ProjectDir == "" {
+		return nil
 	}
-	// Fall back to the most recent session's project_dir. A locked or corrupt
-	// DB still yields a stub entry from the folder name.
-	rows, qerr := db.QueryContext(ctx, `
-		SELECT project_dir, project_name
-		FROM workspace_sessions
-		ORDER BY created_at DESC
-		LIMIT 1
-	`)
-	if qerr == nil {
-		if rows.Next() {
-			var dir, name string
-			if rows.Scan(&dir, &name) == nil {
-				if info.ProjectDir == "" {
-					info.ProjectDir = dir
-				}
-				if info.ProjectName == "" {
-					if name != "" {
-						info.ProjectName = name
-					} else if dir != "" {
-						info.ProjectName = filepath.Base(dir)
-					}
-				}
-			}
-		}
-		// Close BEFORE the count query: the pool is capped at one
-		// connection, and an open Rows holds it; the count would wait on
-		// itself (self-deadlock) until the deferred Close runs.
-		_ = rows.Close()
-	}
-	// Session count (exclude rows whose session DB was marked unavailable).
-	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
+	info.LastAccessed, _ = strconv.ParseInt(accessed, 10, 64)
 	info.ProjectName = WorkspaceDisplayName(*info)
 	return info
 }

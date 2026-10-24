@@ -10,6 +10,13 @@ import (
 // settings; it carries no credentials or persistence authority.
 type SettingsChangedMsg struct{}
 
+// GitSnapshotChangedMsg publishes an installed Git topic to shell projections.
+// Its attachment token prevents a queued old workspace from changing the UI.
+type GitSnapshotChangedMsg struct {
+	Owner    Workspace
+	Snapshot workspace.GitSnapshot
+}
+
 // ReplicaFailureMsg reports a queued mutation failure on its exact attachment.
 type ReplicaFailureMsg struct {
 	Owner     Workspace

@@ -198,6 +198,10 @@ func (m *Model) networkForm(page string, fields ...*ui.FieldState) *ui.FormModel
 func (m *Model) networkSettingsFromForms() network.Settings {
 	defaults := network.DefaultSettings()
 	return network.Settings{
+		RemoteAccessEnabled:        m.value(catNetworkRemoteAccess, fieldRemoteEnabled) == "on",
+		RemoteQUICAddress:          strings.TrimSpace(m.value(catNetworkRemoteAccess, fieldRemoteQUIC)),
+		RemoteTLSAddress:           strings.TrimSpace(m.value(catNetworkRemoteAccess, fieldRemoteTLS)),
+		SessionGraceSeconds:        networkIntValue(m.value(catNetworkRemoteAccess, fieldRemoteGrace), defaults.SessionGraceSeconds),
 		ProxyMode:                  defaultString(strings.TrimSpace(m.value(catNetworkProxy, fieldNetworkProxyMode)), defaults.ProxyMode),
 		ProxyURL:                   strings.TrimSpace(m.value(catNetworkProxy, fieldNetworkProxyURL)),
 		NoProxy:                    strings.TrimSpace(m.value(catNetworkProxy, fieldNetworkNoProxy)),
@@ -241,7 +245,7 @@ func (m *Model) collectNetwork(settings *network.Settings) {
 }
 
 func (m *Model) rebuildNetworkForms() {
-	if m == nil || len(m.categories) <= catNetworkCertificates {
+	if m == nil || len(m.categories) <= catNetworkRemoteAccess {
 		return
 	}
 	settings := m.appDefaults.Network
@@ -252,6 +256,7 @@ func (m *Model) rebuildNetworkForms() {
 		{catNetworkConnection, m.buildNetworkConnectionForm(settings)},
 		{catNetworkProxy, m.buildNetworkProxyForm(settings)},
 		{catNetworkCertificates, m.buildNetworkCertificatesForm(settings)},
+		{catNetworkRemoteAccess, m.buildRemoteAccessForm(settings)},
 	}
 	for _, item := range forms {
 		m.categories[item.index].Form = item.form
@@ -274,7 +279,7 @@ func (m *Model) validateNetworkSettings() (int, string, bool) {
 	if !changed {
 		return 0, "", true
 	}
-	for _, category := range []int{catNetworkConnection, catNetworkProxy, catNetworkCertificates} {
+	for _, category := range []int{catNetworkConnection, catNetworkProxy, catNetworkCertificates, catNetworkRemoteAccess} {
 		form := m.categories[category].Form
 		form.ValidateAll()
 		for _, field := range form.Fields() {
@@ -296,6 +301,12 @@ func (m *Model) validateNetworkSettings() (int, string, bool) {
 func networkValidationTarget(message string) (int, string) {
 	lower := strings.ToLower(message)
 	switch {
+	case strings.Contains(lower, "remote_quic"):
+		return catNetworkRemoteAccess, fieldRemoteQUIC
+	case strings.Contains(lower, "remote_tls"):
+		return catNetworkRemoteAccess, fieldRemoteTLS
+	case strings.Contains(lower, "session_grace"):
+		return catNetworkRemoteAccess, fieldRemoteGrace
 	case strings.Contains(lower, "no_proxy"), strings.Contains(lower, "no proxy"):
 		return catNetworkProxy, fieldNetworkNoProxy
 	case strings.Contains(lower, "proxy_mode"), strings.Contains(lower, "proxy mode"):

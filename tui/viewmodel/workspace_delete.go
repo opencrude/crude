@@ -2,13 +2,11 @@ package viewmodel
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/fileio"
@@ -19,6 +17,8 @@ import (
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 type workspaceDeletePrompt struct {
@@ -249,7 +249,7 @@ func (m *App) handleWorkspaceDeleteIntent(msg workspaceDeleteIntent) tea.Cmd {
 				return workspaceDeleteResultMsg{target: p, restored: restored, deleted: deleted, err: receipt.Response.Error}
 			}
 			var out coreprotocol.WorkspaceDeletionResult
-			if err := json.Unmarshal(receipt.Response.Payload, &out); err != nil {
+			if err := coreprotocol.Decode(receipt.Response.Payload, &out); err != nil {
 				return workspaceDeleteResultMsg{target: p, restored: restored, deleted: deleted, err: &coreclient.UncertainError{RequestID: id, Cause: err}}
 			}
 			if out.Warning != "" {

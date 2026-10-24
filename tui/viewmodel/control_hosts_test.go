@@ -10,6 +10,7 @@ import (
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types/control"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -97,7 +98,7 @@ func TestConnectedSettingsControlEditSaveAndClose(t *testing.T) {
 	if r := invoke(string(settingsui.WorkspaceSettingsSearchID), ui.ControlOperation{Verb: "activate"}); r.State != control.Applied {
 		t.Fatal("navigate", r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "Word wrap") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Word wrap") {
 		t.Fatal("native editor page not painted")
 	}
 	if r := invoke("workspace-settings/form/word-wrap", ui.ControlOperation{Verb: "set_value", Value: json.RawMessage(`"off"`)}); r.State != control.Applied {
@@ -115,7 +116,7 @@ func TestConnectedSettingsControlEditSaveAndClose(t *testing.T) {
 	if r := invoke("workspace-settings/form/history-ignores", ui.ControlOperation{Verb: "set_value", Value: json.RawMessage(`"build/**\ncache/**"`)}); r.State != control.Applied {
 		t.Fatal("textarea", r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "build/**") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "build/**") {
 		t.Fatal("textarea edit not painted")
 	}
 	// Footer button IDs are retained native ActionBar children.

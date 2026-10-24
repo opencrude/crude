@@ -7,7 +7,6 @@ import (
 	"crude/localhistory"
 	"crude/types"
 	"crude/workspace"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +14,7 @@ import (
 
 func fileBridge(t *testing.T, a *actor, method string, in any) coreprotocol.Response {
 	t.Helper()
-	raw, err := json.Marshal(in)
+	raw, err := testPayload(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,15 +35,11 @@ func TestFilesChunksBoundedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Data) != coreprotocol.MaxFileChunk || first.EOF || !bytes.Equal(first.Data, data[:coreprotocol.MaxFileChunk]) {
-		t.Fatal("bad first chunk")
+	if !first.EOF || !bytes.Equal(first.Data, data) {
+		t.Fatal("incomplete snapshot")
 	}
-	next, err := readFileChunk(context.Background(), root, coreprotocol.FileReadRequest{Path: "data", Offset: first.NextOffset, Digest: first.Digest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(next.Data, data[first.NextOffset:next.NextOffset]) {
-		t.Fatal("bad continuation")
+	if _, err := readFileChunk(context.Background(), root, coreprotocol.FileReadRequest{Path: "data", Offset: first.NextOffset, Digest: first.Digest}); err == nil {
+		t.Fatal("removed continuation accepted")
 	}
 	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), len(data)), 0600); err != nil {
 		t.Fatal(err)
@@ -99,7 +94,7 @@ func TestFilesBridgeMutationsAndCapturedOwner(t *testing.T) {
 	}
 	got = fileBridge(t, a, coreprotocol.FilesEdit, coreprotocol.FileEditsRequest{Edits: []workspace.FileEdit{{Path: "dir/file", OldContent: "wrong", NewContent: "overwrite"}}})
 	var failed coreprotocol.FileOperationResult
-	if err := json.Unmarshal(got.Payload, &failed); err != nil {
+	if err := coreprotocol.Decode(got.Payload, &failed); err != nil {
 		t.Fatal(err)
 	}
 	if failed.Error == "" {
@@ -109,7 +104,7 @@ func TestFilesBridgeMutationsAndCapturedOwner(t *testing.T) {
 	if err != nil || string(data) != "hello" {
 		t.Fatal("failed edit changed bytes", err)
 	}
-	raw, _ := json.Marshal(coreprotocol.FileReadRequest{Path: "dir/file"})
+	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.FileReadRequest{Path: "dir/file"}))
 	run, _ := a.prepareFiles(coreprotocol.Request{Method: coreprotocol.FilesRead, Payload: raw})
 	ws.RootPath = t.TempDir()
 	if result := run(context.Background()); result.Error != nil {
@@ -146,7 +141,7 @@ func TestFilesHistoryCaptureAndStalePreview(t *testing.T) {
 		t.Fatal(got.Error)
 	}
 	var snapshot localhistory.Manifest
-	if err := json.Unmarshal(got.Payload, &snapshot); err != nil {
+	if err := coreprotocol.Decode(got.Payload, &snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("after"), 0600); err != nil {
@@ -157,7 +152,7 @@ func TestFilesHistoryCaptureAndStalePreview(t *testing.T) {
 		t.Fatal(got.Error)
 	}
 	var plan localhistory.RestorePlan
-	if err := json.Unmarshal(got.Payload, &plan); err != nil {
+	if err := coreprotocol.Decode(got.Payload, &plan); err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.Changes) != 1 {
@@ -173,9 +168,8 @@ func TestFilesHistoryCaptureAndStalePreview(t *testing.T) {
 	if err != nil || string(data) != "later" {
 		t.Fatal("stale preview lost later work")
 	}
-	got = fileBridge(t, a, coreprotocol.HistoryApply, coreprotocol.HistoryApplyRequest{PlanID: plan.ID})
-	if got.Error == nil || got.Error.Code != "ownership_blocked" {
-		t.Fatal("unleased restore exposed")
+	if _, known := a.prepareFiles(coreprotocol.Request{Method: coreprotocol.HistoryApply}); known {
+		t.Fatal("restore exposed through an unleased file worker instead of the actor admission owner")
 	}
 	ws.LocalHistory = nil
 }
@@ -188,7 +182,7 @@ func TestFilesSearchCancellationDoesNotInvalidateNeighbor(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &actor{ws: ws}
-	raw, err := json.Marshal(coreprotocol.FileSearchRequest{Query: "needle"})
+	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.FileSearchRequest{Query: "needle"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +199,7 @@ func TestFilesSearchCancellationDoesNotInvalidateNeighbor(t *testing.T) {
 		t.Fatal("global search cancellation touched request-owned search", got.Error)
 	}
 	var out coreprotocol.FileSearchResult
-	if err := json.Unmarshal(got.Payload, &out); err != nil {
+	if err := coreprotocol.Decode(got.Payload, &out); err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Matches) == 0 || out.Matches[0].RelativePath != "needle.txt" {

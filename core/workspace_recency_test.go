@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -31,12 +30,12 @@ func TestWorkspaceReturnUpdatesDurableRecencyWithoutNewSession(t *testing.T) {
 	for i, root := range []string{a, b, a} {
 		var attached coreprotocol.AttachResult
 		out := callCore(t, c, fmt.Sprintf("attach-%d", i), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
-		if err := json.Unmarshal(out.Payload, &attached); err != nil {
+		if err := coreprotocol.Decode(out.Payload, &attached); err != nil {
 			t.Fatal(err)
 		}
-		var infos []workspace.WorkspaceInfo
-		out = callCore(t, c, fmt.Sprintf("list-%d", i), attached.WorkspaceID, coreprotocol.SavedWorkspaces, struct{}{})
-		if err := json.Unmarshal(out.Payload, &infos); err != nil {
+		var infos coreprotocol.WorkspaceInfos
+		out = callCore(t, c, fmt.Sprintf("list-%d", i), attached.WorkspaceID, coreprotocol.SavedWorkspaces, coreprotocol.Empty{})
+		if err := coreprotocol.Decode(out.Payload, &infos); err != nil {
 			t.Fatal(err)
 		}
 		if len(infos) == 0 || infos[0].ProjectDir != root || infos[0].LastAccessed == 0 || infos[0].SessionCount != 0 {

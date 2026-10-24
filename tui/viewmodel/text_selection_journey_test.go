@@ -3,8 +3,9 @@ package viewmodel
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/ui"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestMountedComposerBackwardAndKeyboardSelectionPaint(t *testing.T) {

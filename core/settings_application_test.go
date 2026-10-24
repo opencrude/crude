@@ -8,7 +8,6 @@ import (
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"
-	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,8 +27,8 @@ func TestPreparedAccountCommitKeepsSecretsAndPublishesOnlyOnApply(t *testing.T) 
 		return types.AppSettings{Accounts: map[string]provider.Account{"one": *change.After}}, nil
 	}
 	a := &actor{ws: ws}
-	input := coreprotocol.AccountChangeRequest{ID: "one", After: &coreprotocol.AccountDraft{ID: "one", ProviderID: "provider", Label: "After", APIKey: coreprotocol.SecretUpdate[string]{Keep: true}}}
-	raw, _ := json.Marshal(input)
+	input := coreprotocol.AccountChangeRequest{ID: "one", After: &coreprotocol.AccountDraft{ID: "one", ProviderID: "provider", Label: "After", APIKey: coreprotocol.SecretString{Keep: true}}}
+	raw, _ := testPayload(input)
 	run, apply, known := a.prepareApplicationSettings(coreprotocol.Request{Method: coreprotocol.AccountChange, Payload: raw})
 	if !known {
 		t.Fatal("not dispatched")
@@ -67,7 +66,7 @@ func TestPreparedAccountRemovalNeedsNoConfigRevision(t *testing.T) {
 		return types.AppSettings{}, nil
 	}
 	a := &actor{ws: ws}
-	run, _, _ := a.prepareApplicationSettings(coreprotocol.Request{Method: coreprotocol.AccountChange, Payload: json.RawMessage(`{"id":"one","after":null}`)})
+	run, _, _ := a.prepareApplicationSettings(coreprotocol.Request{Method: coreprotocol.AccountChange, Payload: mustTestPayload(coreprotocol.AccountChangeRequest{ID: "one"})})
 	if out := run(context.Background()); out.Error != nil || !called {
 		t.Fatalf("explicit remove rejected: %+v", out)
 	}
@@ -84,7 +83,7 @@ func TestPreparedPreferencesPublishesPrivateSnapshotAndKeepsProxy(t *testing.T) 
 	fetched := fetchSettingsForTest(t, a)
 	next := types.CloneAppSettings(fetched.Application)
 	next.Theme.Preset = "changed"
-	input := coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(fetched.Application, next), ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}
+	input := coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(fetched.Application, next), ProxyURL: coreprotocol.SecretString{Keep: true}}
 	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
 		next := ws.AppDefaults()
 		if err := types.ApplySettingsEdits(&next, edits); err != nil {
@@ -95,7 +94,7 @@ func TestPreparedPreferencesPublishesPrivateSnapshotAndKeepsProxy(t *testing.T) 
 		}
 		return next, nil
 	}
-	raw, _ := json.Marshal(input)
+	raw, _ := testPayload(input)
 	run, apply, _ := a.prepareApplicationSettings(coreprotocol.Request{Method: coreprotocol.ApplicationPreferencesSave, Payload: raw})
 	out := run(context.Background())
 	if out.Error != nil {
@@ -115,13 +114,13 @@ func TestPreparedPreferencesPublishesPrivateSnapshotAndKeepsProxy(t *testing.T) 
 
 func fetchSettingsForTest(t *testing.T, a *actor) coreprotocol.SettingsFetchResult {
 	t.Helper()
-	run, _, _ := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: json.RawMessage(`{}`)})
+	run, _, _ := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: emptyPayload})
 	response := run(context.Background())
 	if response.Error != nil {
 		t.Fatal(response.Error)
 	}
 	var value coreprotocol.SettingsFetchResult
-	if err := json.Unmarshal(response.Payload, &value); err != nil {
+	if err := coreprotocol.Decode(response.Payload, &value); err != nil {
 		t.Fatal(err)
 	}
 	return value
@@ -143,8 +142,8 @@ func TestFetchedAccountLabelOnlyKeepsEndpointBytes(t *testing.T) {
 		}
 		return types.AppSettings{Accounts: map[string]provider.Account{"one": *change.After}}, nil
 	}
-	in := coreprotocol.AccountChangeRequest{ID: "one", After: &coreprotocol.AccountDraft{ID: view.ID, ProviderID: view.ProviderID, Label: "after", Connection: view.Connection, Endpoint: coreprotocol.SecretUpdate[string]{Keep: true}, APIKey: coreprotocol.SecretUpdate[string]{Keep: true}, Headers: coreprotocol.SecretUpdate[map[string]string]{Keep: true}, ExtraBody: coreprotocol.SecretUpdate[map[string]any]{Keep: true}}}
-	raw, _ := json.Marshal(in)
+	in := coreprotocol.AccountChangeRequest{ID: "one", After: &coreprotocol.AccountDraft{ID: view.ID, ProviderID: view.ProviderID, Label: "after", Connection: view.Connection, Endpoint: coreprotocol.SecretString{Keep: true}, APIKey: coreprotocol.SecretString{Keep: true}, Headers: coreprotocol.SecretMap{Keep: true}, ExtraBody: coreprotocol.SecretObject{Keep: true}}}
+	raw, _ := testPayload(in)
 	run, apply, _ := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.AccountChange, Payload: raw})
 	out := run(context.Background())
 	if out.Error != nil {
@@ -184,8 +183,8 @@ func TestCapabilityFetchedSecretKeepRoundtrip(t *testing.T) {
 	fetched := fetchSettingsForTest(t, a)
 	connView := fetched.Application.Capabilities.Connections["one"]
 	connView.Name = "after"
-	in := coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "save-connection", ID: "one", Scope: captypes.ScopeApplication, Connection: &connView}, ConnectionSecrets: coreprotocol.ConnectionSecretUpdates{Endpoint: coreprotocol.SecretUpdate[string]{Keep: true}, Args: coreprotocol.SecretUpdate[[]string]{Keep: true}, Environment: coreprotocol.SecretUpdate[map[string]string]{Keep: true}, Headers: coreprotocol.SecretUpdate[map[string]string]{Keep: true}, SecretRefs: coreprotocol.SecretUpdate[map[string]string]{Keep: true}, CredentialRef: coreprotocol.SecretUpdate[string]{Keep: true}}}
-	raw, _ := json.Marshal(in)
+	in := coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "save-connection", ID: "one", Scope: captypes.ScopeApplication, Connection: &connView}, ConnectionSecrets: coreprotocol.ConnectionSecretUpdates{Endpoint: coreprotocol.SecretString{Keep: true}, Args: coreprotocol.SecretStrings{Keep: true}, Environment: coreprotocol.SecretMap{Keep: true}, Headers: coreprotocol.SecretMap{Keep: true}, SecretRefs: coreprotocol.SecretMap{Keep: true}, CredentialRef: coreprotocol.SecretString{Keep: true}}}
+	raw, _ := testPayload(in)
 	run, apply, _ := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.CapabilityAction, Payload: raw})
 	out := run(context.Background())
 	if out.Error != nil {
@@ -201,13 +200,13 @@ func TestCapabilityFetchedSecretKeepRoundtrip(t *testing.T) {
 		t.Fatalf("private connection bytes lost: %+v", saved)
 	}
 	var result coreprotocol.CapabilityResult
-	if err := json.Unmarshal(out.Payload, &result); err != nil {
+	if err := coreprotocol.Decode(out.Payload, &result); err != nil {
 		t.Fatal(err)
 	}
 	sourceView := result.Snapshot.Settings.Sources["private"]
 	sourceView.Name = "after"
-	in = coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "save-source", ID: "private", Scope: captypes.ScopeApplication, Source: &sourceView}, SourceLocation: coreprotocol.SecretUpdate[string]{Keep: true}}
-	raw, _ = json.Marshal(in)
+	in = coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "save-source", ID: "private", Scope: captypes.ScopeApplication, Source: &sourceView}, SourceLocation: coreprotocol.SecretString{Keep: true}}
+	raw, _ = testPayload(in)
 	run, apply, _ = a.prepareSettings(coreprotocol.Request{Method: coreprotocol.CapabilityAction, Payload: raw})
 	out = run(context.Background())
 	if out.Error != nil {

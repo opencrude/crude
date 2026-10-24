@@ -31,7 +31,7 @@ func TestSettingsNetworkGroupOrderAndSearch(t *testing.T) {
 		if want := []string{"AI", "Security", "IDE", "Network"}; !reflect.DeepEqual(headers, want) {
 			t.Fatalf("scope %s group order = %v, want %v", scope, headers, want)
 		}
-		if want := []string{"Connection", "Proxy", "Certificates"}; !reflect.DeepEqual(networkPages, want) {
+		if want := []string{"Connection", "Proxy", "Certificates", "Remote access"}; !reflect.DeepEqual(networkPages, want) {
 			t.Fatalf("scope %s Network pages = %v, want %v", scope, networkPages, want)
 		}
 

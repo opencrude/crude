@@ -36,7 +36,8 @@ new human message or a replacement for permission policy.
 | Accepted partial response | Preserve it and append a semantic continuation, never replay the stochastic request |
 | Truncated/unfinished tool arguments | Execute none of that response's calls; retain visible text and ask for complete calls |
 | Repeated tool loop, output truncation, missing final report | Bounded corrective continuation, then an actionable pause if correction does not work |
-| Authentication, billing/quota, invalid configuration/trust/guidance | Needs attention; no unbounded invalid-request loop or silent account/model failover |
+| Permanent provider verdict on a root turn (refusal/policy, authentication, billing/quota, schema or other validation) | The turn ends with the exact reason, as in Codex and Claude Code: the incident settles `failed` (one durable live/hydrated row, no Retry), the turn is `failed`, an active goal blocks with that reason, and the next human message continues on the committed context. No retry repeats the verdict and no account/model failover happens |
+| The same verdict on a child, or a local configuration/trust/guidance fault before the request (for example steering media the protocol cannot carry) | Needs attention: the child parks for its parent; a root waits in place with its exact pending input until repaired, then Continue |
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
 | Native file-ownership rejection (outside scope, or another agent's claim) | Ordinary tool error: nothing changes, the run continues, the parent is notified and can replace the live child's scope with `agent_update_claims` |
 | Automatic compaction failure while the next request still fits | The run continues on the retained full context and retries compaction after the context grows by a bounded step; the boundary row records a deferred failure, nothing needs attention. Background preparation failures back off silently |
@@ -112,8 +113,10 @@ it still retries only the captured persistence intent, never provider work.
 - `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
   exhaustion, deadlines, truncation, loop guards, missing reports and panics are
   not natural completion or permission to kill a task. Recover transient outages;
-  park configuration, guidance, storage and unavoidable compaction failures with
-  an actionable Needs attention state. A compaction failure that leaves room for
+  end a root turn on a permanent provider verdict (`AttentionEndTurn`,
+  `Supervisor.Fail`, incident state `failed`); park configuration, guidance,
+  storage and unavoidable compaction failures with an actionable Needs attention
+  state. A compaction failure that leaves room for
   the next request is deferred, never a stop: cheap or unstable compaction
   models must not halt a run that can still make requests. Only natural finish or explicit user/parent
   lifecycle may settle work. Preserve safe canonical boundaries; never replay
@@ -414,7 +417,10 @@ Explicit entry points are **Continue run** in chat/agent/tab context menus,
 fenced to exact backend owner, incident ID, turn generation and workspace boundary;
 it cannot wake another incident or consume a new draft. Stop remains available
 while waiting/recovering. Configuration changes can wake an active waiting owner;
-they do not silently restart passively recovered history.
+they do not silently restart passively recovered history. Steering/configuration
+notifications while a run is executing never bank a wake for a later failure.
+Only an actual attention wait or timed cooldown accepts one; its acknowledged
+transition clears duplicate signals before the next provider attempt.
 
 A root panic/unwind first installs the exact passive checkpoint and releases its
 old turn reservation, then emits the actionable attention state. Retry cannot

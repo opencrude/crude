@@ -54,7 +54,7 @@ func newScrollingTerminalApp(t *testing.T) (*App, string) {
 
 func scrollingAppPaint(app *App) string {
 	app.forceFrame()
-	return rendering.StripAnsi(app.View().Content)
+	return rendering.StripAnsi(app.View().RenderContent())
 }
 
 func TestTerminalStreamingScrollViewportNeverClearsBetweenAsyncPages(t *testing.T) {

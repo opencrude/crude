@@ -45,7 +45,7 @@ func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
 					t.Fatal(err)
 				}
 				hydrated := newRenderer()
-				hydrated.SyncMessages([]types.ChatMessage{detached}, 1)
+				hydrated.SyncMessages([]types.ChatMessage{detached}, 1, 0)
 				for _, expanded := range []bool{false, true} {
 					if expanded {
 						live.ToggleDisclosure(message.InternalID)
@@ -101,7 +101,7 @@ func TestCommandOutcomeOutputSurvivesHydrationWithoutAnAgentRead(t *testing.T) {
 	}
 	for _, message := range []types.ChatMessage{msg, restored} {
 		r := newActivityRenderer()
-		r.SyncMessages([]types.ChatMessage{message}, 1)
+		r.SyncMessages([]types.ChatMessage{message}, 1, 0)
 		compact, _, _ := r.ExportMessageRows(100)
 		if strings.Contains(strings.Join(compact[0].Lines, "\n"), "retained stderr") || len(compact[0].Native) != 2 {
 			t.Fatal("compact background outcome contains an output teaser")

@@ -17,7 +17,8 @@ embedded terminal requires cgo; a stub-only build is not a release. See
 [terminal contracts](../reference/in-app-terminals.md).
 
 The single build tool is `scripts/release.py`: native `build --version <tag>`
-requires a clean committed tree, baseline-CPU stamped native Ghostty library and cgo, injects
+requires a clean committed tree, checks protocol-source freshness without
+regeneration, requires a baseline-CPU stamped native Ghostty library and cgo, injects
 the tag/full commit/UTC commit date, executes `--version`, collects Go dependency
 notices with go-licenses v2.0.1, then packages the executable, README and licenses.
 Ghostty, its native dependencies, Go, vendored Pathwalk and Codex notices are
@@ -29,6 +30,23 @@ crude_&lt;tag&gt;_windows_amd64.zip, with root crude/crude.exe. The `combine` co
 rejects missing/extra/corrupted platform artifacts and writes one SHA256SUMS.
 Checksums detect corruption; fetching both over GitHub HTTPS does not provide an
 independent signature or protect against a compromised release publisher.
+
+### Protocol identities and reproducible source cohort
+
+Run `go run ./internal/wiregen` explicitly after production-source edits and commit
+the reviewed codecs/schema/cohort output before release.
+`go run ./internal/wiregen -check` is nonmutating; release builds, Make build/test/
+benchmark targets and `scripts/build.sh` invoke it. Direct `go build` never
+implicitly regenerates or proves freshness.
+
+Admission compares exact `Hello.Schema` and the full 64-hex
+`buildinfo.ProtocolBuild` source cohort. That cohort covers production platform/tag
+alternatives, local forks, embedded assets and native pins; canonical native cgo
+builds of the same source may have different executable IDs. Broad LF attributes
+keep source bytes stable across checkouts. This is source equality, not user
+authentication, release signing or native-platform acceptance. Local `BuildID` /
+`ExecutableID` identify staging/status images, not protocol cohorts. See the
+[protocol reference](../reference/core-client-protocol.md#wire-format-and-bounded-delivery).
 
 ## Install and update
 
@@ -62,8 +80,11 @@ agent mistakes, work loss, independent backups and committing important work.
 - Neither installer stops a core, deletes app data, installs fonts or changes
   terminal settings. An update changes the executable, not a core already running
   from a staged image. Finish agent work and close/stop the old core yourself
-  before opening the new build if a build mismatch is reported. Never use force
-  as an automatic updater step.
+  before opening the new cohort if a mismatch is reported. Automatic handover
+  refuses even idle retained workspaces and uses only the verified owner helper
+  with an exact generation fence; it never kills the core. All staged images
+  currently remain retained because unlink is not lifecycle proof, so disk use
+  may grow across updates. Never use force as an automatic updater step.
 - The opinionated setup advice recommends Kitty/Alacritty or Windows Terminal,
   truecolor and JetBrainsMono Nerd Font **NF**, not NFM. Installed-font discovery
   is advisory: the actual terminal font cannot be proven from an installer.
@@ -81,6 +102,7 @@ Build the native platform on the local machine from a clean, committed checkout:
 
 ```bash
 . scripts/libghostty_env.sh
+go run ./internal/wiregen -check
 go test ./... -count=1 -timeout=180s
 golangci-lint run ./...
 make design-audit docs-check bench-gate

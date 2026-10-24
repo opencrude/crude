@@ -88,7 +88,7 @@ func (m *commandOutputVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, message := range messages {
 				records = append(records, sessiondb.MessageWithMeta{Msg: provider.ChatMessage{Role: message.Role}, Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{message}}})
 			}
-			m.subPaneProjections.GetExisting(m.owner).renderer.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(records)), state.Messages.Version()+1)
+			m.subPaneProjections.GetExisting(m.owner).renderer.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(records)), state.Messages.Version()+1, 0)
 			return m, nil
 		case tea.KeyF4:
 			m.light = !m.light

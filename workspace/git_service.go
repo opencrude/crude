@@ -125,6 +125,11 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 
 	repo, root, err := s.open()
 	if err != nil {
+		// A plain directory is a valid workspace. Absence of a repository is
+		// the empty source-control state, not an operational failure/modal.
+		if errors.Is(err, git.ErrRepositoryNotExists) {
+			return GitSnapshot{}, nil
+		}
 		return GitSnapshot{}, err
 	}
 	defer closeGitRepository(repo)

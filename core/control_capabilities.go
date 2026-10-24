@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -140,7 +139,7 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		connection.Args, connection.Environment, connection.Headers, connection.SecretRefs, connection.CredentialRef, connection.URL = nil, nil, nil, nil, "", ""
 		request.Action.Connection = &connection
 	}
-	payload, _ := json.Marshal(request)
+	payload, _ := coreprotocol.Marshal(&request)
 	rpc := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: in.Target.WorkspaceID, Method: method, Payload: payload}
 	run, apply, handled := a.prepareApplicationSettings(rpc)
 	if !handled {
@@ -151,11 +150,11 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		if response.Error != nil {
 			return response
 		}
-		var result coreprotocol.CapabilityResult
-		if err := json.Unmarshal(response.Payload, &result); err != nil {
+		result, ok := resultValue[coreprotocol.CapabilityResult](response)
+		if !ok {
 			return fault(rpc, "operation_failed", "capability result is unreadable")
 		}
-		response.Payload, _ = json.Marshal(capabilityControlView(result))
+		response.Value = capabilityControlView(result)
 		return response
 	}
 	var publish func(coreprotocol.Response) error
@@ -212,19 +211,19 @@ func mergeControlConnection(existing captypes.ConnectionConfig, input controlCon
 		merged.Disabled = !*input.Enabled
 	}
 	if input.URL != nil {
-		updates.Endpoint = coreprotocol.SecretUpdate[string]{Value: input.URL}
+		updates.Endpoint = coreprotocol.SecretString{Value: input.URL}
 	}
 	if input.Args != nil {
-		updates.Args = coreprotocol.SecretUpdate[[]string]{Value: input.Args}
+		updates.Args = coreprotocol.SecretStrings{Value: *input.Args}
 	}
 	if input.Environment != nil {
-		updates.Environment = coreprotocol.SecretUpdate[map[string]string]{Value: input.Environment}
+		updates.Environment = coreprotocol.SecretMap{Value: *input.Environment}
 	}
 	if input.Headers != nil {
-		updates.Headers = coreprotocol.SecretUpdate[map[string]string]{Value: input.Headers}
+		updates.Headers = coreprotocol.SecretMap{Value: *input.Headers}
 	}
 	if input.SecretRefs != nil {
-		updates.SecretRefs = coreprotocol.SecretUpdate[map[string]string]{Value: input.SecretRefs}
+		updates.SecretRefs = coreprotocol.SecretMap{Value: *input.SecretRefs}
 	}
 	return merged, updates
 }

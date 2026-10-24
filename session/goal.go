@@ -437,7 +437,7 @@ func (t *goalTurn) observe(event agent.AgentEvent) {
 // goalTurnEnd applies the stop rules to a finished turn. A turn parked for
 // recovery changes nothing: recovery owns it, and no goal turn can start
 // until it settles.
-func (s *Session) goalTurnEnd(turn *goalTurn, stopped, failed, parked bool) {
+func (s *Session) goalTurnEnd(turn *goalTurn, stopped, failed bool, failure string, parked bool) {
 	if turn == nil || parked {
 		return
 	}
@@ -455,6 +455,9 @@ func (s *Session) goalTurnEnd(turn *goalTurn, stopped, failed, parked bool) {
 		g.record.Goal.Status, g.record.Goal.Reason = types.GoalPaused, "Paused because the turn was stopped. Resume it with /goal resume."
 	case failed:
 		g.record.Goal.Status, g.record.Goal.Reason = types.GoalBlocked, "The last turn failed. Fix the cause, then resume with /goal resume."
+		if failure != "" {
+			g.record.Goal.Reason = "The last turn failed: " + failure + ". Fix the cause, then resume with /goal resume."
+		}
 	case turn.automatic:
 		if turn.toolCalls == 0 && strings.TrimSpace(turn.reply) == "" {
 			g.emptyTurns++

@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,15 @@ import (
 func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var normal, extraction atomic.Int32
+	var requestsMu sync.Mutex
+	var selectedRequests []string
+	t.Cleanup(func() {
+		if t.Failed() {
+			requestsMu.Lock()
+			defer requestsMu.Unlock()
+			t.Logf("provider selections (%d normal requests): %q", normal.Load(), selectedRequests)
+		}
+	})
 	releaseSteering := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request provider.ChatRequest
@@ -38,22 +48,26 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 		}
 		normal.Add(1)
 		latest := ""
-		steering := false
+		hasSteering := false
 		for i := len(request.Messages) - 1; i >= 0; i-- {
 			message := request.Messages[i]
 			if message.Role != "user" {
 				continue
 			}
-			text := message.ContentString()
-			if strings.Contains(text, `kind="human_steering"`) {
-				steering = true
-				break
-			}
+			text, steering := stopJourneyHumanText(message.ContentString())
 			if strings.HasPrefix(text, "HOLD ") || strings.HasPrefix(text, "FOLLOW ") || text == "FAIL AUTH" {
 				latest = text
 				break
 			}
+			hasSteering = hasSteering || steering
 		}
+		// An accepted steering envelope remains historical model context on
+		// later turns. It is not the current request and must not mask a newer
+		// direct FOLLOW/FAIL AUTH input in this provider fixture.
+		steering := hasSteering && latest == "HOLD for genuine steering"
+		requestsMu.Lock()
+		selectedRequests = append(selectedRequests, fmt.Sprintf("%s steering=%v", strings.Split(latest, "\n")[0], steering))
+		requestsMu.Unlock()
 		if latest == "FAIL AUTH" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = fmt.Fprint(w, `{"error":{"type":"authentication_error","message":"test credential rejected"}}`)
@@ -99,10 +113,16 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool { return two.app.AgentView.ActiveID() == id })
 	send := func(shell remoteJourneyShell, text string) {
 		t.Helper()
+		if shell.app.operationIssue != nil {
+			t.Fatalf("connected journey rejected a publication before Send: %+v", shell.app.operationIssue.screen.Issue())
+		}
 		shell.app.Input.SetInput(text)
 		shell.app.setFocusInput()
 		_, cmd := shell.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		runAppCommand(t, shell.app, cmd)
+		if shell.app.Input.Value() != "" {
+			t.Fatalf("connected Send did not accept %q; draft retained, pending admissions=%d", strings.Split(text, "\n")[0], len(shell.app.pendingInputAdmissions))
+		}
 	}
 	send(one, "FOLLOW seed evidence\n"+strings.Repeat("retained source evidence\n", 4_000))
 	remoteJourneyUntil(t, shells, func() bool {
@@ -122,15 +142,22 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 		send(owner, text)
 		remoteJourneyUntil(t, shells, func() bool { return normal.Load() > before && owner.app.ws.AgentMgr().Get(id).State.Streaming })
 		peer.app.Input.SetInput("peer draft remains")
+		stopRevision := owner.app.ws.AgentMgr().Get(id).State.Messages.Version()
 		if !owner.app.cancelAgentTurn(id) {
 			t.Fatal("active turn could not be stopped")
+		}
+		if got := owner.app.ws.AgentMgr().Get(id).State.Messages.Version(); got != stopRevision {
+			t.Fatalf("Stop changed canonical replica conversation revision: %d -> %d", stopRevision, got)
 		}
 		// Repeated Stop is a no-op, never a second terminal generation.
 		owner.app.cancelAgentTurn(id)
 		remoteJourneyUntil(t, shells, func() bool {
 			for _, shell := range shells {
+				if shell.app.operationIssue != nil {
+					t.Fatalf("Stop rejected a connected publication: %+v", shell.app.operationIssue.screen.Issue())
+				}
 				state := shell.app.ws.AgentMgr().Get(id).State
-				if shell.app.ws.AgentTurnActive(id) || state.Cancelling || state.RecoveryStatus().CanRetry() || !strings.Contains(ansi.Strip(shell.app.View().Content), "Stopped") {
+				if shell.app.ws.AgentTurnActive(id) || state.Cancelling || state.RecoveryStatus().CanRetry() || !strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Stopped") {
 					return false
 				}
 			}
@@ -149,7 +176,7 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 				if shell.app.ws.AgentActivity(id).Status.Phase != types.AgentCompleted {
 					return false
 				}
-				paint := ansi.Strip(shell.app.View().Content)
+				paint := ansi.Strip(shell.app.View().RenderContent())
 				if strings.Contains(paint, "<turn_context>") || strings.Contains(paint, "<workspace_event") {
 					t.Fatal("hidden provider context leaked into the transcript")
 				}
@@ -170,8 +197,8 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	close(releaseSteering)
 	remoteJourneyUntil(t, shells, func() bool {
 		return normal.Load() == 13 && one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted &&
-			strings.Contains(ansi.Strip(one.app.View().Content), "HUMAN STEERING REACHED THE MODEL") &&
-			strings.Contains(ansi.Strip(two.app.View().Content), "HUMAN STEERING REACHED THE MODEL")
+			strings.Contains(ansi.Strip(one.app.View().RenderContent()), "HUMAN STEERING REACHED THE MODEL") &&
+			strings.Contains(ansi.Strip(two.app.View().RenderContent()), "HUMAN STEERING REACHED THE MODEL")
 	})
 	send(two, "FOLLOW after successful steering")
 	remoteJourneyUntil(t, shells, func() bool {
@@ -180,18 +207,21 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	if normal.Load() != 14 {
 		t.Fatalf("steering was lost or replayed: %d", normal.Load())
 	}
-	send(one, "FAIL AUTH")
-	remoteJourneyUntil(t, shells, func() bool {
-		return one.app.ws.AgentMgr().Get(id).State.RecoveryStatus().State == recovery.NeedsAttention
-	})
 	two.app.Input.SetInput("private draft during failure")
-	if !one.app.cancelAgentTurn(id) {
-		t.Fatal("provider failure could not be explicitly stopped")
-	}
+	send(one, "FAIL AUTH")
+	// A permanent provider verdict ends the turn with its reason in every
+	// shell; nobody has to Stop or Retry before the next message.
 	remoteJourneyUntil(t, shells, func() bool {
-		return !one.app.ws.AgentTurnActive(id) && !two.app.ws.AgentTurnActive(id) && !one.app.ws.AgentMgr().Get(id).State.Cancelling
+		for _, shell := range shells {
+			status := shell.app.ws.AgentMgr().Get(id).State.RecoveryStatus()
+			if status.State != recovery.Failed || status.CanRetry() || shell.app.ws.AgentTurnActive(id) ||
+				!strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Turn failed") {
+				return false
+			}
+		}
+		return true
 	})
-	send(one, "FOLLOW after stopped authentication failure")
+	send(one, "FOLLOW after failed authentication")
 	remoteJourneyUntil(t, shells, func() bool {
 		return normal.Load() == 16 && one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
 	})
@@ -222,6 +252,42 @@ func TestRemoteAppJourneyRepeatedStopSteeringCompactionAndResume(t *testing.T) {
 	})
 	if normal.Load() != 17 {
 		t.Fatal("resumed dense session did not accept one fresh turn")
+	}
+}
+
+// A new send can legitimately steer the still-finalizing previous run even
+// after a shell paints Completed. The provider fixture must read that genuine
+// event's body instead of ignoring it or matching quoted historical envelopes.
+func stopJourneyHumanText(text string) (string, bool) {
+	if !strings.HasPrefix(text, "[USER INTERRUPTION — READ THIS NOW]\n") {
+		return text, false
+	}
+	start := strings.Index(text, "<workspace_event ")
+	end := strings.Index(text, "</workspace_event>")
+	if start < 0 || end < start {
+		return "", false
+	}
+	var event struct {
+		XMLName xml.Name `xml:"workspace_event"`
+		Origin  string   `xml:"origin,attr"`
+		Kind    string   `xml:"kind,attr"`
+		Body    string   `xml:",chardata"`
+	}
+	if xml.Unmarshal([]byte(text[start:end+len("</workspace_event>")]), &event) != nil || event.Origin != "human" || event.Kind != "human_steering" {
+		return "", false
+	}
+	return event.Body, true
+}
+
+func TestStopJourneyProviderReadsCurrentHumanEnvelopeNotQuotedHistory(t *testing.T) {
+	envelope := "[USER INTERRUPTION — READ THIS NOW]\nignored prefix\n<workspace_event origin=\"human\" kind=\"human_steering\">FAIL AUTH</workspace_event>\nowned suffix"
+	if text, steering := stopJourneyHumanText(envelope); text != "FAIL AUTH" || !steering {
+		t.Fatal("current input inside an admitted steering envelope was ignored")
+	}
+	for _, value := range []string{"FOLLOW newer direct input", "<runtime_continuity>quoted " + envelope + "</runtime_continuity>"} {
+		if text, steering := stopJourneyHumanText(value); text != value || steering {
+			t.Fatal("historical event was promoted into new human input")
+		}
 	}
 }
 
@@ -276,7 +342,7 @@ func TestRemoteAppJourneyStaleRunningShellSendsAfterPeerCompletion(t *testing.T)
 	_, cmd = two.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, two.app, cmd)
 	remoteJourneyUntil(t, shells, func() bool {
-		return calls.Load() == 2 && strings.Contains(ansi.Strip(two.app.View().Content), "STALE SHELL FOLLOW-UP COMPLETED") &&
+		return calls.Load() == 2 && strings.Contains(ansi.Strip(two.app.View().RenderContent()), "STALE SHELL FOLLOW-UP COMPLETED") &&
 			one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted && two.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
 	})
 	if two.app.Input.Value() != "" || one.app.Input.Value() != "private peer draft" {

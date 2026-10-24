@@ -51,7 +51,7 @@ func TestCommandOutputPaintFollowsThemeAcrossDisclosureAndThemeSwitch(t *testing
 	r.SetSize(100, 30)
 	r.SetChatAreaBounds(0, 20)
 	r.SyncMessages([]types.ChatMessage{{InternalID: "ink", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: types.ToolStatusError,
-		Content: `{"exit_code":7,"output_descriptor":{"status":"failed","total_bytes":16},"output":"    quiet output"}`}}, 1)
+		Content: `{"exit_code":7,"output_descriptor":{"status":"failed","total_bytes":16},"output":"    quiet output"}`}}, 1, 0)
 	r.ToggleDisclosure("ink")
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight(), theme.DefaultDark()} {
 		r.SetTheme(th)

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"crude/types/jsondoc"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -25,7 +26,7 @@ type Template struct {
 	Headers     map[string]string `json:"headers,omitempty"`
 	Dialer      *DialSettings     `json:"dialer,omitempty"`
 	Protocol    *ProtocolSettings `json:"protocol,omitempty"`
-	ExtraBody   map[string]any    `json:"extra_body,omitempty"`
+	ExtraBody   jsondoc.Object    `json:"extra_body,omitempty"`
 }
 
 const (

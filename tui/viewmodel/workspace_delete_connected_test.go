@@ -2,8 +2,6 @@ package viewmodel
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -12,17 +10,18 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/core"
 	"crude/coreclient"
 	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/internal/wirefault"
 	"crude/shellport/remote"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
@@ -62,7 +61,7 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 		t.Fatal("workspace sidebar is not mounted")
 	}
 	app.Update(tea.MouseClickMsg{X: list.X + 2, Y: list.Y + 1, Button: tea.MouseRight})
-	if app.LastContextMenu == nil || !strings.Contains(app.View().Content, "Delete workspace") {
+	if app.LastContextMenu == nil || !strings.Contains(app.View().RenderContent(), "Delete workspace") {
 		t.Fatal("right-click did not paint the shared resource Delete action")
 	}
 	app.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // Open -> Copy path
@@ -112,39 +111,9 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 		return false
 	})
 	app.overlayHost.Close(ui.OverlayWorkspaceDelete)
-	if !strings.Contains(app.View().Content, filepath.Base(project)) {
+	if !strings.Contains(app.View().RenderContent(), filepath.Base(project)) {
 		t.Fatal("Undo did not return the resource to the rendered sidebar")
 	}
-}
-
-type deletionResponseDropper struct {
-	net.Conn
-	buffer  []byte
-	dropped chan struct{}
-}
-
-func (c *deletionResponseDropper) Write(data []byte) (int, error) {
-	c.buffer = append(c.buffer, data...)
-	for len(c.buffer) >= 4 {
-		size := int(binary.BigEndian.Uint32(c.buffer[:4]))
-		if len(c.buffer) < size+4 {
-			break
-		}
-		packet := c.buffer[:size+4]
-		var frame corewire.Frame
-		if err := json.Unmarshal(packet[4:], &frame); err != nil {
-			return 0, err
-		}
-		if frame.Kind == corewire.KindResponse && frame.Method == coreprotocol.WorkspaceDelete {
-			close(c.dropped)
-		} else {
-			if _, err := c.Conn.Write(packet); err != nil {
-				return 0, err
-			}
-		}
-		c.buffer = c.buffer[size+4:]
-	}
-	return len(data), nil
 }
 
 func TestConnectedWorkspaceDeleteLostAcknowledgementChecksOriginalReceipt(t *testing.T) {
@@ -161,13 +130,13 @@ func TestConnectedWorkspaceDeleteLostAcknowledgementChecksOriginalReceipt(t *tes
 	if err := old.app.CloseWorkspaceAttachment(); err != nil {
 		t.Fatal(err)
 	}
-	dropped := make(chan struct{})
+	var dropped chan struct{}
 	dial := func(ctx context.Context, id string) (*coreclient.Client, error) {
 		server, client := net.Pipe()
-		go func() {
-			_ = core.ServeConnection(t.Context(), r, &deletionResponseDropper{Conn: server, dropped: dropped})
-		}()
-		return coreclient.Dial(ctx, client, id)
+		fault := wirefault.NewDropReplies(server, coreprotocol.WorkspaceDelete)
+		dropped = fault.Dropped
+		go func() { _ = core.ServeConnection(t.Context(), r, fault) }()
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(client), id)
 	}
 	port, err := remote.Attach(t.Context(), remote.Options{Root: t.TempDir(), Dial: dial})
 	if err != nil {

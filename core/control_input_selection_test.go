@@ -56,13 +56,6 @@ func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = runtime.Close() })
 	c := controlWireClient(t, runtime, "selection-control-shell")
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for range c.Events() {
-		}
-	}()
-	t.Cleanup(func() { _ = c.Close(); <-done })
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	var attached coreprotocol.AttachResult
@@ -72,11 +65,11 @@ func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 	if err := c.RegisterControlShell(ctx, attached.WorkspaceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Communication}}, nil); err != nil {
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Communication}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult
-	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, struct{}{}, &created); err != nil || created.Error != "" {
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created); err != nil || created.Error != "" {
 		t.Fatal(created, err)
 	}
 	backend := ws.BackendSession(created.SessionID)
@@ -111,7 +104,7 @@ func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	var admitted coreprotocol.InputResult
-	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitControlInput, coreprotocol.ControlInputRequest{ControlRequestID: envelope.Request.ID, SessionID: created.SessionID, AgentID: created.OrchID, DraftEpoch: epoch, DraftRevision: revision, Text: "Read disk.txt in the selected execution."}, &admitted); err != nil || admitted.Error != "" || admitted.Status != session.InputAdmissionAccepted {
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitControlInput, &coreprotocol.ControlInputRequest{ControlRequestID: envelope.Request.ID, SessionID: created.SessionID, AgentID: created.OrchID, DraftEpoch: epoch, DraftRevision: revision, Text: "Read disk.txt in the selected execution."}, &admitted); err != nil || admitted.Error != "" || admitted.Status != session.InputAdmissionAccepted {
 		t.Fatal(admitted, err)
 	}
 	if err := c.ReplyControl(ctx, attached.WorkspaceID, control.Result{RequestID: envelope.Request.ID, OperationID: envelope.Request.ID, State: control.Applied}); err != nil {

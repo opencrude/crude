@@ -75,6 +75,8 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 // Capability cards have independent entity commits. A preference draft opened
 // before an agent install must not replace those authoritative registration maps.
 func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, edits []types.SettingEdit) (types.WorkspaceOverrides, error) {
+	database.settingsWriteMu.Lock()
+	defer database.settingsWriteMu.Unlock()
 	ctx := context.Background()
 	tx, err := database.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -101,6 +103,7 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 	if err := tx.Commit(); err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
+	database.publishSettingsRow(string(encoded))
 	return currentOverrides, nil
 }
 

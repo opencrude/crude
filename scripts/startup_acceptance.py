@@ -17,8 +17,6 @@ from pathlib import Path
 import re
 import shlex
 import signal
-import socket
-import struct
 import subprocess
 import sys
 import tempfile
@@ -155,6 +153,15 @@ class Profile:
     def text(self, name, text):
         self.tmux("send-keys", "-t", self.shells[name][0], "-l", str(text))
 
+    def click_text(self, name, text):
+        rows = self.capture(name).splitlines()
+        matches = [(row.index(text) + max(1, len(text) // 2) + 1, y + 1)
+                   for y, row in enumerate(rows) if text in row]
+        assert len(matches) == 1, (text, matches)
+        x, y = matches[0]
+        self.tmux("send-keys", "-t", self.shells[name][0], "-l",
+                  f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m")
+
     def navigate(self, name, path, label, error=None):
         self.keys(name, "C-l", "C-a")
         self.text(name, path)
@@ -184,13 +191,13 @@ class Profile:
             except (OSError, EOFError):
                 return False
         until(self.name + ": private observer", attempt, timeout=25)
-        peer = struct.unpack("3i", self.observer.sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[0]
+        status = self.status("connected")
+        peer = status["pid"]
         env = (Path("/proc") / str(peer) / "environ").read_bytes().split(b"\0")
         assert ("CRUDE_HOME=" + str(self.home)).encode() in env, "non-private core refused"
         owned = identity(peer)
         if not any(p["pid"] == peer and p["start_ticks"] == owned["start_ticks"] for p in self.owned):
             self.owned.append({**owned, "role": "core"})
-        status = self.status("connected")
         assert status["pid"] == peer, status
         self.info["core_resources"] = proc(peer)
         return owned
@@ -401,16 +408,11 @@ class Harness:
 
     @staticmethod
     def open_sample(p, name):
-        # Native command palette reaches the real Open File action, not attach.
-        p.keys(name, "C-M-p")
-        p.text(name, "Open File in Pane")
-        p.visible(name, "open-file-command", "Open File in Pane")
-        p.keys(name, "Enter")
-        p.visible(name, "native-open-file-picker", "OPEN FILE")
-        p.text(name, "sample.txt")
-        p.visible(name, "sample-file-search", "sample.txt")
-        p.keys(name, "Enter")
-        p.visible(name, "sample-editor", "STARTUP EDITOR ACCEPTANCE SENTINEL", absent=("OPEN FILE",))
+        # Open via the real tree; contextual pane actions are intentionally not
+        # offered by the application-global command palette.
+        p.visible(name, "sample-file-tree", "sample.txt")
+        p.click_text(name, "sample.txt")
+        p.visible(name, "sample-editor", "STARTUP EDITOR ACCEPTANCE SENTINEL")
 
     def core_crash(self):
         p = self.profile("core-crash", {"onboarding": {"introduction_completed": True, "ai_setup_reminder_hidden": True}})

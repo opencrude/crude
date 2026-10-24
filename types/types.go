@@ -2,6 +2,7 @@ package types
 
 import (
 	captypes "crude/types/capability"
+	"crude/types/jsondoc"
 	"maps"
 	"time"
 
@@ -727,8 +728,8 @@ type LSPLanguageSettings struct {
 	LanguageID            string            `json:"language_id,omitempty"`
 	RootMarkers           []string          `json:"root_markers,omitempty"`
 	Environment           map[string]string `json:"environment,omitempty"`
-	Settings              map[string]any    `json:"settings,omitempty"`
-	InitializationOptions map[string]any    `json:"initialization_options,omitempty"`
+	Settings              jsondoc.Object    `json:"settings,omitempty"`
+	InitializationOptions jsondoc.Object    `json:"initialization_options,omitempty"`
 }
 
 // LSPSettings is the language-intelligence configuration. Bools are persisted

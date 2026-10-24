@@ -1,21 +1,23 @@
 # Core client protocol
 
-> Status: Current connected CLI/core contract. Shared editors and SSH are implemented; native-platform, distinct-host and final resource acceptance remain open.
+> Status: Current — protocol v2 carriers, retained sessions, typed commands and pushed replicas.
 
 Normal `crude` startup uses `app.ConnectCore` and `shellport/remote.Attach`.
 The per-user core owns runtime workspaces/sessions, configuration/accounts,
 catalogs and prompt history; independently rendered shells detach without stopping
 peer execution. `--core [--server] [--core-grace d]`, `--core-status`,
 `--core-stop [--force]` and `--core-stdio` are implemented. There is no direct
-in-process interactive CLI fallback. Follow the
-[active separation plan](../plans/core-shell-separation.md) for remaining
-integration and release acceptance; connected startup is not universal resource
-migration or proof of uninterrupted work after a core crash.
+in-process interactive CLI fallback. Connected startup is not universal resource migration or proof of uninterrupted
+work after a core crash. Validation and release evidence live in the active plans,
+not in a wire-version compatibility promise.
 
 Same-build startup publishes one immutable staged executable under the data
 directory using atomic no-replace hard-link publication. Concurrent losers never
 replace the inode another shell is executing. Unsupported hard-link filesystems
-and invalid existing image type/size/mode return explicit staging failures.
+and invalid existing image type/size/mode or digest return explicit staging failures.
+All staged images are currently retained: Unix unlink success cannot prove that a
+core, helper or concurrent starter no longer needs an image. Disk use can therefore
+grow across builds; there is no automatic liveness-based pruning.
 
 ## Startup before workspace attachment
 
@@ -73,20 +75,26 @@ See [shared folder-picker movement](interaction-matrix.md#shared-folder-picker-m
 
 `core.Runtime` accepts an application-owned workspace factory and private SQLite
 receipt journal. Concurrent creation converges on one actor per canonical project.
-Actors admit commands and agent events, flush accepted text on their own ticks,
-reduce workspace state and publish revision changes. Resource I/O is prepared or
+Actors admit commands and agent events, immediately reduce accepted text and
+workspace state, and publish revisioned changes. Presentation pacing never holds
+accepted tokens in a second 100 ms mutation buffer. Resource I/O is prepared or
 performed off the actor where required and completed under owner fences.
+Workspace publication arms a 16 ms one-shot only when accepted facts become
+pending, coalesces the burst, and disarms after publishing. Retained idle actors
+do not run a periodic publication clock; accepted mutations and state-topic
+source-generation fences remain immediate and independent of presentation.
 
 Before publishing a retained actor, its factory worker restores saved Notices
 and initializes configured capability metadata. Neither requires a model session
 or a shell to open Settings. Initialization never connects MCP, downloads skills
 or replays tools; failures retain a usable shell and an explicit workspace notice.
 
-A connection has an immutable client ID and attachment epoch. Every request is
+A retained session has an immutable client ID and attachment epoch. Every request is
 bound to the negotiated owner; selecting another tab is not a change of owner.
 `workspace.attach` installs a subscription and captures its snapshot at the actor
-boundary. Detach/connection close removes subscriptions and document/terminal
-attachment authority, not the retained workspace or its sessions. Explicit runtime
+boundary. Explicit detach/session close removes subscriptions and document/terminal
+attachment authority, not the retained workspace or its model sessions. Carrier
+loss alone retains attachment authority during the resumable session grace period. Explicit runtime
 close owns final shutdown. Connected workspace switches prepare the destination before
 teardown of client-local resources, then replace only that shell attachment. A
 failed destination leaves the old attachment usable; peers keep the old workspace.
@@ -128,9 +136,11 @@ Snapshots are detached values, not service pointers, SQL handles, callbacks or
 reflected Workspace calls. `coreclient.WorkspaceView` installs snapshots and
 conversation deltas on the client's serialized UI thread, retaining surviving
 session/node/conversation identities. Paint reads its local projection without
-RPC, persistence or semantic event reduction. The remote collector drains events while a coalesced fetch worker builds batches;
-`StartReplica` releases publication only after the shell sink is ready. Update
-alone installs batches and presents neutral effects. Pane renderers use the
+RPC, persistence or semantic event reduction. Acknowledged push subscriptions
+deliver detached batches; there is no invalidation-then-fetch worker in normal
+replication. `StartReplica` releases publication only after the shell sink is
+ready. Update preflights and atomically installs each batch, then releases its ACK
+and presents neutral effects. Pane renderers use the
 canonical replica Conversation. Create/open are off-UI; pending root activation
 waits for replica inventory and peer-created roots preserve editor focus.
 
@@ -170,9 +180,8 @@ mutable Workspace.
   runtime path; `shellport.Local` remains core/test infrastructure. Read
   `docs/reference/core-client-protocol.md` before extending it. `--ssh` selects a
   strictly host-key-verified system-SSH connection to the fixed stdio bridge;
-  remote paths stay in frames. Ten real Linux shells, twenty retained workspaces
-  and loopback SSH have measured acceptance, not physically unlimited/efficient
-  resources or distinct-host/native-Windows acceptance.
+  remote paths stay in frames. Transport choice does not establish native-platform, distinct-host or
+  resource-efficiency acceptance.
 - Retained core creation hydrates Notices and initializes capability metadata on
   its factory worker before actor publication, never from shell startup or a
   model session. Passive capability observations bypass long settings operations;
@@ -197,8 +206,9 @@ mutable Workspace.
   shell PieceTables are optimistic projections with private cursors and no source
   watcher. SQLite current-format checkpoints plus revision-fenced operation deltas
   and exact receipts commit before accepted edits; cold recovery is passive.
-  Stable document IDs survive durable file/directory relocation. Core file and
-  document watchers publish invalidations; shell reads/transfers use typed RPC.
+  Stable document IDs survive durable file/directory relocation. Core file watchers publish ordered file facts; per-open document topics push
+  canonical revision operations/savepoints. Explicit shell reads/transfers use
+  typed commands or bulk streams.
   Lost edit/save/format outcomes recover their original receipt, never replay an
   effect. Native conflict decisions default to Keep draft; explicit Use shared
   backs up private work and never overwrites collaborators. `document.snapshot_save`
@@ -211,32 +221,129 @@ mutable Workspace.
 
 ## Wire format and bounded delivery
 
-Protocol version 1 uses length-prefixed JSON frames: a four-byte big-endian length
-and an envelope containing kind, request/client/workspace identity, epoch,
-revision, method, typed payload and optional fault. Hello/welcome negotiate version
-and frame bounds; `connection.ready` returns the exact owner. Malformed framing,
-wrong owners and invalid envelopes close the stream rather than reusing a
-partially consumed connection. Concurrent writes cannot interleave.
+Protocol v2 uses generated MessagePack tuple codecs from the Go types, not JSON
+frame envelopes or a second handwritten schema. A uvarint byte length bounds each
+application message; a role/header value is followed directly by its typed value.
+Generated decoders bound collection counts against available bytes before
+allocation, validate tuple shapes, and reject malformed or trailing data. JSON
+required by an external contract (for example an LSP WorkspaceEdit or arbitrary
+JSON document) remains a typed leaf, not the transport envelope.
+`Hello.Schema` must exactly equal `coreprotocol.Schema`, and `Hello.Build` must
+exactly equal `buildinfo.ProtocolBuild`. Incompatible peers are refused before
+application traffic, not adapted.
 
-Current bounds include:
+The build cohort is a full 64-hex SHA-256 of platform-independent production
+source, not the native image ID. `internal/wiregen/` includes all platform/tag
+alternatives, checked-in local forks, embedded assets, prompt templates, module
+manifests, generated codecs and native dependency pins; it does not hash local
+native archives or executable bytes. Supported builds use the canonical cgo/native
+profile. Broad LF rules in `.gitattributes` keep checked-out source bytes stable
+across hosts. This establishes source equality, not user authentication or proof
+that an arbitrary binary was built correctly.
+
+Regenerate explicitly with `go run ./internal/wiregen` after production-source
+changes. `go run ./internal/wiregen -check` verifies the cohort without writing or
+regenerating anything. Make build/test/benchmark targets, `scripts/build.sh` and
+`scripts/release.py` invoke that check; arbitrary direct `go build` does not run
+generators or establish freshness. `app.BuildID` / `buildinfo.ExecutableID` identify
+the exact local executable for staging and status only. Native images from the
+same source cohort may differ and are admitted without replacing their core.
+
+`corewire.Conn` supplies ordered, flow-controlled streams over the local
+socket/named-pipe mux, strict SSH stdio, TLS 1.3 TCP mux or QUIC. The pinned
+quic-go fork and byte-stream mux both schedule control/input/interactive/bulk
+classes with bounded weighted service **8:4:2:1**. This is local scheduling, not a
+peer-negotiated priority protocol or a guarantee against physical network delay.
+Every network carrier uses the same per-direction compression wrapper: control,
+input and a first write below 256 bytes select identity; eligible directions keep
+one standard zstd frame/history through FIN, with synchronous flushes and bounded
+records. Streams never share compression history across trust boundaries. Local
+IPC is uncompressed. There is no timer-delayed compression batch.
 
 | Boundary | Limit/policy |
 |---|---|
-| Encoded frame | 8 MiB maximum; negotiated framing bound |
+| Application message | 64 MiB maximum; narrower role-specific reader bounds apply |
+| Byte-stream mux data frame | 16 KiB maximum |
+| Mux stream receive credit | 256 KiB per stream; 256 admission slots per direction |
 | Actor mailbox | 128 commands, 1024 agent events, 256 service events |
-| Connection subscription | 64 changes; overflow invalidates cursors and emits explicit resync |
-| Server output | 64 frames and 8 MiB queued bytes; overflow disconnects |
-| Server requests | 16 in flight; duplicate active request IDs are rejected |
-| Transport deadlines | 10-second handshake, 30-second server write |
-| File transfer | 256 KiB chunks, 64 MiB read ceiling |
-| Large response payload | 64 MiB raw JSON; 4 payloads / 128 MiB per connection, 30-second inactivity TTL renewed on reads |
-| Terminal projection | 512 rows per page; bounded engine grid/history |
+| Retained command results | 16 unacknowledged commands; 128 MiB aggregate request preimages; capacity refuses new commands without evicting unknown results |
+| Ordered topic journal | 256 entries / 8 MiB, with explicit snapshot reset on an evicted gap |
+| Bulk chunk | 256 KiB, ordered offsets and whole-transfer digest verification; two-minute transfer lifetime |
+| Private clipboard inbox | 16 outstanding offers / 1 MiB accounted bytes; explicit local refusal on overflow |
+| Terminal history read | 512 rows per page; bounded engine grid/history |
+| Retained session grace | 15 minutes by default after carrier loss |
 
-Producer mutation is not silently dropped to accommodate slow readers. Change
-events advertise committed revisions/changed identities. `agent.changes` returns
-conversation order/upsert/removal deltas or a reset when needed; snapshots are a
-boundary/resynchronization operation, not a per-frame transcript export. A resync
-or disconnected observer must fetch fresh state before trusting its old cursor.
+The first control stream exchanges Hello/Welcome. The independent session secret
+resumes the same owner over a replacement carrier; lease and topic cursors survive
+within grace. Clean session close ends it; carrier failure does not. Resume
+reattaches to exact command preimages and applied topic cursors, never replays an
+effect under a new identity. Heartbeats detect failed carriers, not slow replica
+application. Credit and bounded journals prevent unbounded backlog; a slow viewer
+is paced or reset, not disconnected merely for reading slowly.
+
+Clean close sends control FIN, releases the core's topic/lease/document attachment
+authority, then returns `SessionEnd` as the cleanup receipt. The client consumes
+that receipt before closing its carrier; a queued FIN or successful write alone
+does not prove cleanup. Live close drains for at most one second and reports a
+missing receipt or deadline explicitly. Closing an already-lost carrier only
+joins local workers; the core retains that session through its grace period.
+The server joins its control reader and drains different clients concurrently,
+so a hostile peer cannot multiply the shutdown timeout by client count.
+
+## Push publication and application ACKs
+
+Domain replication uses only the acknowledged workspace log, seven state topics,
+and per-open document/terminal topics. There is no invalidation `Events`/`Change`
+queue or command-progress event broadcast. The workspace topic is an ordered
+semantic/inventory/conversation log. Status, settings, LSP, registry, terminal
+inventory, Git and Board each have independent
+latest-state slots and joined derivation workers. Slow Git or settings work cannot
+hold status or input behind it. Each paced topic sends at most the latest state
+at `max(display interval, min(RTT / 2, 250 ms))`, after the prior applied ACK; a
+change after quiet is sent at once (terminal grids wait mosh's 8 ms
+`SEND_MINDELAY`) and idle topics arm no timer. Conflation affects observation
+only, never canonical mutation.
+
+Workspace transcript publications compare semantic agent metadata independently
+of conversation/token and Status Center observation clocks. Token suffixes carry
+their own `LastTokenTime`; an unchanged status with a newer `UpdatedAt` does not
+force another complete agent tuple. The independent Status topic retains the
+actual observation timestamp. A real-carrier 20 KiB reply regression counts all
+mux/application bytes across forty separately applied suffix publications rather
+than using a re-encoded conversation-size proxy.
+
+An initial or reset state subscription captures the actor's requested derivation
+generation and waits for that source boundary to finish before sending its first
+snapshot. Completion wakes waiters even when byte deduplication keeps the topic
+sequence unchanged. Post-save Settings therefore cannot report an old projection
+as refreshed merely because the new worker is still running; application ACK is
+a separate, later boundary.
+
+The shell owns the display clock. `perf.LoopObserver` measures actual nonempty
+renderer writer duration, clamps it to 16–250 ms, and publishes it atomically.
+Update declares that interval through `shellport.DisplayPacer`; the SDK carries
+it on topic acknowledgements and terminal viewport declarations. Idle gaps are
+not display cadence. This pacing is a contract, not evidence of 30 fps on an
+outer emulator.
+
+`ApplyReplicaChanges` runs on Update. It checks owner/client/topic generation,
+sequence/reset boundary, the complete candidate inventory and every transcript
+before committing any retained objects. Surviving sessions, nodes and Conversations
+keep identity. Only a successful commit advances the applied cursor, emits neutral
+effects and releases the subscription's `TopicAck`. Invalid publication leaves the
+old projection intact and requests a bounded snapshot reset; a repeated malformed
+or rejected publication surfaces failure rather than an infinite resync loop.
+
+`SessionEvent` carries only private shell-control requests, capability-host
+requests and controller-local terminal clipboard offers, never domain state or
+command progress. The session topic is a one-event stop-and-wait journal. A successful carrier write is not delivery: the
+ACK follows admission to the exact owner's inbox, not arbitrary callback return
+or completion of the requested operation. The retained event crosses carrier
+replacement; no second event bypasses an unacknowledged one. Clipboard inboxes
+are capped at 16 offers / 1 MiB. A full shell inbox produces a visible, coalesced
+local refusal rather than waiting for presentation and starving owner requests.
+Offers are fenced by exact workspace, client/attachment and terminal lease
+generation, never broadcast or automatically written to a system clipboard.
 
 ## Typed methods
 
@@ -251,9 +358,9 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
 | LSP | `lsp.snapshot`, `.open_file`, `.close_file`, `.queue_file_update`, `.notify_file_save`, `.notify_watched_files_changed`, `.set_active_file`, `.clear_diagnostics`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.rename` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
-| Documents | `document.open`, `.read`, `.sync`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; separate `.snapshot_save` checked disk commit |
-| Response transfer | `payload.read`, `payload.release` (connection-private immutable responses) |
-| Terminals | `terminal.list`, `.create`, `.rows`, `.control`, `.release`, `.input`, `.resize`, `.close` |
+| Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
+| Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
+| Terminals | `terminal.list`, `.create`, `.rows`, `.control`, `.release`, `.close`; terminal grid topics and ordered lease input streams; explicit typed input/resize commands remain available |
 | Files | browse/catalog, chunked reads, create/folder/rename/delete/edit/search, canonical `files.replace_plan` and saved workspace listing |
 | Local History | timeline/file/stats, operation/path/message/agent plans, apply/verify/prune/capture |
 | References | create/import/list, content/media reads, exact content save, rename/delete |
@@ -262,6 +369,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Memory/Board | search/episodes/inspect, revision-fenced pin/forget/correct; Board snapshot/read acknowledgement |
 | Settings | redacted fetch, session read/save/reset/delegation toggle, account change/models, application preference save; `workspace.overrides`, `.overrides_save`, `.startup`, `.tool_layout`, `.tool_layout_save` |
 | Capabilities | runtime/snapshot/action, acquisition preview and exact skill-input preparation |
+| Remote host administration | `remote.access.read`, `remote.pairing.create`, `remote.device.revoke` (authenticated local host only); `remote.ssh.bootstrap` (authenticated SSH authority only) |
 
 Connected adapters use these families; method existence is not proof that the real settings form, composer, Git review,
 history preview or capability approval journey uses it. Existing domain rules
@@ -269,6 +377,14 @@ remain authoritative, including Local History safety previews and application vs
 workspace capability registration; the transport cannot widen a grant.
 
 ## Mutation receipts and uncertainty
+
+One command stream carries one request, progress notes in typed `Reply` values
+and a final typed result. Progress never enters a session or domain event queue.
+The core retains the exact admitted preimage/result across carrier loss until the
+client sends `TopicAck{Seq: 1}` after decoding the final result (including a known
+fault). A failed final ACK or ACK-close cannot turn that known outcome into
+uncertainty. Unknown outcomes still require exact receipt observation. Reusing an
+identity with changed method, workspace or payload fails closed.
 
 Journaled mutations persist request intent before effects and their exact response
 afterward. Identity is client ID plus request ID; its digest binds workspace,
@@ -300,7 +416,7 @@ late Stop requests against replacement work. Compaction jobs observe exact reque
 and actor shutdown cancellation. Owner preparation starts only after capacity and
 receipt checks; receipt replay must not reserve another operation. Queued input
 receipts have no turn/context revision until their atomic dequeue/admission, and
-pending message flags survive conversation reset/delta JSON projection.
+pending message flags survive conversation reset/delta tuple projection.
 
 Connected preference saves carry exact path/value edits, not resolved form
 snapshots or expected configuration revisions. Last explicit write wins;
@@ -323,17 +439,25 @@ cancelled or superseded results cannot replace newer success or cancel a newer p
 
 `workspace.DocumentService` is the universal connected editor text/revision,
 savepoint, author-specific undo and LSP authority. `shellport.LiveDocuments`
-provides Open/Sync/Edit/Close/Save and optional Format/receipt interfaces.
+provides Open/Edit/Close/Save and optional Format/receipt/topic interfaces; Sync
+is explicit recovery/shutdown infrastructure, not a normal post-command poll.
 `DocumentOwner` includes the attachment epoch. The Update coordinator installs
 immutable snapshots/deltas, retains optimistic edits and orders off-UI commands.
 Edits, undo, formatting and saves fence exact revisions; a lost response is
-observed through its original receipt, not resent as a new mutation. Reconnect
-reopens client views before sync. Cursors, selection and scrolling stay private.
+observed through its original receipt, not resent as a new mutation. Each open
+subscribes to a document topic: a snapshot boundary, then ordered revision
+operations and savepoint metadata. The shell prepares a complete rebase of
+canonical and optimistic private state before committing it atomically; receipt,
+publication and draft identities remain distinct. Warm session resume retains
+applied cursors; a cold reset with private pending work enters conflict/recovery,
+not silent text replacement. Close/reopen, conflict resolution, workspace switch
+and shutdown fence queued publications with exact topic-generation tokens.
+Cursors, selection and scrolling stay private.
 
 Document GroupID identifies a logical editing transaction, not an RPC batch.
 The shell retains group boundaries while publishing ordered optimistic edits;
-Undo/Redo gestures and later input wait for exact command completion and complete
-sync. History deltas preserve the reversed group ID. Core operations retain
+Undo/Redo gestures and later input wait for exact command completion and matching canonical
+topic publication. History deltas preserve the reversed group ID. Core operations retain
 explicit inverse-of revisions in checkpoints/deltas, allowing cancelled history
 pairs to normalize before safe disjoint rebase; equality of text never proves
 cancellation. Undo/redo also roll bounded history by whole units. Old operations
@@ -372,8 +496,8 @@ An external disk conflict is a different precondition: choosing shared text does
 not authorize overwriting the changed disk file.
 
 `workspace.TerminalService` installs one neutral `terminalvt` engine before first
-PTY output and owns all child query replies. Readers receive detached row pages,
-not bytes to parse again. Exact client/epoch/generation leases fence input and
+PTY output and owns all child query replies. Readers receive packed changed-row grid publications and explicit on-demand
+history pages, not bytes to parse again. Exact client/epoch/generation leases fence input and
 resize. Selection, scroll, wrapping-aware copy, focus and dock/floating placement
 are shell-local. OSC 52 writes are offers for explicit client copy, never automatic
 broadcast system-clipboard effects. See [in-app terminals](in-app-terminals.md).
@@ -393,24 +517,49 @@ owning session off-UI. A replica is not a second persistence authority.
 ## Trust, secrets and platform limits
 
 Local transport is same-user authority, not multi-tenant isolation. Unix uses a
-0700 user-owned socket directory, a 0600 socket and an exclusive owner lock; it
-converges on an exclusive owner lock and reclaims crash-left endpoints only under
-that lock, never by deleting a guessed live owner. Windows
+0700 user-owned socket directory and a 0600 socket. Windows
 uses a user-SID/data-directory named pipe with a protected DACL granting that
 user and denying network logons. Neither mechanism restricts an already trusted
 same-user client to harmless reads.
 
+`app/core_handover.go` and its Unix/Windows path-security implementations own a
+private corewire/owner.json record: random owner generation, exact staged helper path
+and full image digest, schema and source cohort. An exclusive `lifetime.lock` is
+held through runtime shutdown, including the listener-close/data-flush interval.
+Autostart requires positive endpoint absence and exclusive lifetime proof before
+reclaiming a crash-left record; failed admission, permission errors and incomplete
+probes never mean absence.
+
+For a mismatched cohort/schema, startup verifies and invokes only the retained
+owner image with `--core-stop`, passing the exact generation as `ExpectedOwner`.
+It does not decode foreign application traffic, force shutdown or kill the core.
+Automatic handover refuses any retained workspace (even idle), attached shell,
+opening factory or incomplete status, and rechecks admission before draining.
+Failure keeps the old core intact and directs the user to its original graceful
+stop or a separate `CRUDE_HOME`. Same-cohort native-image variants attach directly.
+
 SSH transport starts system `ssh` without a local shell, enables strict host-key
 checking and disables forwarding, remote/local command overrides and shared
-control sessions. The remote command is fixed to `crude --core-stdio`; project
-paths belong in frames, never interpolated shell arguments. CLI selection is
+control sessions. Fixed helper commands inspect/install/launch the exact image;
+project paths remain typed payloads, never interpolated shell arguments. A missing
+or mismatched image offers an explicit user-consented, expiring exact-image
+installation review. It rechecks executable digest and host facts, retains old
+images/data, and never kills an active older core to make installation succeed.
+Unsupported platform/artifact combinations fail explicitly; there is no backwards
+adapter or unverified executable download. CLI selection is
 `--ssh HOST --workspace REMOTE_PATH`, with optional `--ssh-user`, `--ssh-port`
-and `--ssh-identity`. Authentication is noninteractive public-key/system SSH
-configuration, not disabled verification. Loopback OpenSSH acceptance is not
-distinct-host filesystem proof; cross-build is not native pipe/ConPTY acceptance.
-Both terminal read and write failures join the owned SSH process/stderr capture
-before formatting their bounded diagnostic, so a negotiation broken pipe cannot
-race away the actionable host-key error.
+and `--ssh-identity`. SSH uses noninteractive public-key/system configuration.
+Owned process/stderr shutdown preserves bounded actionable host-key diagnostics.
+
+Direct QUIC/TLS sessions authenticate before admission, with TLS 1.3 and an exact
+host certificate fingerprint. Restricted `Hello.Pair` / `Welcome.Paired`
+enrollment verifies the pin before transmitting a single-use pairing code and
+never creates a normal session. Host-local authenticated settings own pairing,
+device revocation and listener policy. `Welcome.LocalHost` is immutable admission
+provenance, not inferred from carrier or UI labels; resuming an SSH/direct session
+on a local carrier cannot grant host administration. `Hello.SSHRelay` can only
+narrow an already OS-authenticated local admission to SSH authority, never
+authenticate a network caller. See [remote access](network.md#remote-core-access).
 
 Unsolicited workspace snapshots exclude credentials. Explicit settings reads
 redact account/connection secrets and return presence/precondition data.
@@ -424,7 +573,8 @@ Terminal create acknowledgements mount their exact returned ID/title on Update
 without waiting for the independently delivered inventory. Switching from Notices
 to Terminals must replace the painted panel regardless of receipt/inventory order.
 Saved and newly published Notices reach every shell; stale same-core snapshots
-cannot erase newer notices, and reconnect resets the status revision domain.
+cannot erase newer notices. Warm resume preserves the retained status domain;
+a replacement core admits a new revision domain explicitly.
 
 ## Invocation selection and acceptance limits
 
@@ -442,29 +592,23 @@ queued application/workspace shell writers are removed. Capability previews
 retain exact approval/preimage authority;
 a zero-action preview result cannot publish application defaults.
 
-Large response JSON uses connection-owned `payload.read` / `payload.release`
-chunks with digest verification. Tokens expire or are released on disconnect;
-they confer no cross-connection authority. Durable receipts contain the original
-response, not an ephemeral token. This is response transfer only: an incoming
-9 MiB mutation fails before enqueue under the 8 MiB frame bound. There is no
-chunked mutation-upload path or claim that every 64 MiB edit can be submitted.
+Large files, reference content and media use credit-controlled bulk streams
+with method metadata, bounded chunks and whole-transfer digest verification.
+Current owner caps are 64 MiB file and reference/media reads, 16 MiB editable
+reference uploads and document text, and 64 MiB media upload admission. These
+come from `coreprotocol.MaxFileRead`, `coreprotocol.ReferenceMaxBytes`,
+`coreprotocol.ReferenceUploadMaxBytes` and `document.MaxBytes`, not the message
+limit. Chunks are 256 KiB with a two-minute transfer lifetime. Bulk bytes are neither JSON nor
+connection-private response tokens. Durable command receipts contain typed
+outcomes, not ephemeral transfer tokens.
+The 64 MiB application-message bound is not permission for arbitrary-size edits;
+each owner validates its own content, collection and transfer limits.
 
-See the [review workflow](../guides/core-shell-workflows.md) for exact commands,
-source owners and evidence limits. Ten real CLI shells, peer decision/Stop,
-zero-shell server completion and loopback SSH have supplied checkpoint evidence.
-The final two-shell editor harness passed all six journeys, including shared
-unsaved edits, author undo/save, accepted origin-kill survival, zero-client core
-restart restore and visible external-disk conflict with safe Esc. Parent read the
-result JSON and cleanup evidence. Final full tests passed 94 packages; build,
-tagged remote vet, complete core/client/app/remote races, focused UI/private-draft
-races, zero-issue lint, docs/design and benchmark gates pass. The sixteen-MiB
-Runtime/ServeConnection snapshot and durable receipt journey passes with race
-instrumentation and a separate 60-second deadline for each request, not a shared
-clock consumed by previous test decoding. Incoming JSON retains strict key,
-syntax, depth and UTF-8 validation; output encodes once for bounded queue accounting.
-Final ten-shell and genuine loopback SSH reruns pass. Native Windows and
-distinct-host SSH remain unverified; cross-builds and loopback are not substitutes.
-Resource sampling does not prove a smaller footprint.
+This reference describes contracts, not a release acceptance result. Native
+Windows pipe/ConPTY, physically distinct-host SSH, full-process install/resume and
+resource/performance gates require their own recorded evidence; cross-builds,
+loopback and deterministic fault tests are not substitutes. Current remaining
+acceptance belongs in the active plans and consolidated validation report.
 
 ## Semantic control and capability host channels
 

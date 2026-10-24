@@ -64,7 +64,47 @@ architecture. Terminal and network lifetimes are specified in
   cancelled command. Search highlights are discarded and re-derived with the
   retained query after geometry publication.
 
+## Pushed application and private effects
+
+Domain state arrives through the acknowledged workspace log, seven state topics
+and document/terminal topics, not an invalidation/fetch or `Events`/`Change` queue.
+Command progress stays on its `Reply` stream. Private `SessionEvent` delivery is
+stop-and-wait and retains the unacknowledged request across carrier replacement.
+Control and capability-host requests ACK exact-owner inbox admission. Terminal
+clipboard offers have a separate 16-offer / 1 MiB bound and visible local refusal;
+a full presentation inbox cannot block those owner requests. Exact client,
+workspace and lease generation fence offers before explicit local copy.
+
+Workspace/document publications ACK only after the owning Update validates and
+installs them. Terminal publication likewise waits for its `Applied` completion,
+not merely FIFO admission: Update checks the service, active subscription/client
+and terminal identity, installs the projection and caches/modes, then releases
+the ACK. Stale, closed or rejected publications do not advance the applied cursor.
+Shutdown cancels the wait; a queued message is not evidence of application.
+
+The shell display owner measures nonempty renderer writer duration through
+`perf.LoopObserver`, clamps 16–250 ms and declares it through `DisplayPacer` without
+I/O on Update. State/terminal pacing spaces frames by
+`max(display interval, min(RTT / 2, 250 ms))`; a first change after quiet is not
+delayed by that interval and an idle view arms no timer. Idle gaps never become cadence.
+
+Retained actors select the Status Center and LSP authorities' change broadcasts;
+they do not poll every retained workspace on an unconditional 100 ms timer.
+Capturing each broadcast before deriving its publication prevents a concurrent
+change from being lost. A 100 ms one-shot maintenance clock exists only while
+tool-phase completion or refused document release still needs a later attempt;
+it disarms once those obligations settle. Workspace publication separately arms
+its 16 ms one-shot only while accepted facts await publication. Shutdown stops
+both clocks. Empty collaboration control sweeps use read-only eligibility and
+pending observations; actual reservations still revalidate under the serialized
+write transaction, preserving owner/epoch and receipt boundaries.
+
 ## Generation boundaries and shutdown
+
+Actor inspection has a joined result lifetime. Cancellation can remove a queued
+callback before it starts; once running, its caller waits for the callback to
+finish before returning and reading captured results. A cancelled snapshot must
+not keep writing caller-owned result memory after the caller has returned.
 
 - **A workspace switch is an explicit generation boundary.** Stop the old tree
   watcher first; cancel search without replacing its monotonic ID service;
@@ -101,7 +141,18 @@ architecture. Terminal and network lifetimes are specified in
   `go run`/rebuilds can delete or replace it on Windows while the core lives.
   Publish one closed candidate by no-replace hard link; concurrent losers reuse
   the immutable winner, never rename another writable inode over it (ETXTBSY).
-  Invalid type/size/mode or unsupported hard-link filesystems fail explicitly.
+  Existing images also require exact digest validation. Invalid type/size/mode,
+  digest mismatch or unsupported hard-link filesystems fail explicitly. All staged
+  images remain retained; Unix unlink is not liveness proof and disk use can grow.
+  `BuildID` names a native image, not the source cohort negotiated by Hello.
+- **Core handover has lifetime ownership.** The private owner record binds a
+  generation to its retained helper and full hash. The lifetime lock is held until
+  runtime shutdown completes; closing a listener does not prove absence. Autostart
+  and crash-left reclaim require positive absence plus the exclusive lock. A
+  mismatched cohort uses the verified original helper and exact `ExpectedOwner`
+  graceful stop, never a kill or force. Any retained workspace, attached/opening
+  owner or incomplete status refuses automatic handover. See the
+  [core ownership contract](core-client-protocol.md#trust-secrets-and-platform-limits).
 - **Windows process control retains both signal and output ownership.** The
   detached core clears the inherited `CREATE_NEW_PROCESS_GROUP` Ctrl+C-ignore
   policy before spawning terminal children, without joining a shell console.
@@ -119,9 +170,12 @@ architecture. Terminal and network lifetimes are specified in
 - **Launcher workspace scans are bounded and leak nothing.**
   `readWorkspaceMetaBounded` aborts both the read and its goroutine's channel
   send on timeout, so a stale read never leaks an open SQLite handle (which kept
-  `workspace.db` locked on Windows). It closes its `Rows` before the count query:
-  the pool holds one connection, and an open `Rows` made the count wait on
-  itself until the bound expired for every workspace.
+  `workspace.db` locked on Windows). Two concurrent readers load SQLite schemas
+  without a CPU-bound open storm; one statement reads identity, recency and
+  session count under the unchanged 150 ms per-database bound. No count query
+  can wait on rows held by the same single-connection pool. Read-only SQLite catalog
+  handles use the shared escaped file URI; literal `#`, `%` and query delimiters
+  in the profile path are filesystem content, never URI options or fragments.
 
 - **Saved workspace deletion belongs to the retained core.** It refuses actual
   view/activity owners, fences idle-session admission, fully joins an unused

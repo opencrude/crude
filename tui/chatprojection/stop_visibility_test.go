@@ -20,10 +20,10 @@ func TestRedundantStopNoticesAreNeutralToRowsHeadersAndGrouping(t *testing.T) {
 			{{InternalID: "a", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: types.ToolStatusSuccess}, {InternalID: "b", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "b.go", ToolStatus: types.ToolStatusSuccess}},
 		} {
 			baseline := newActivityRenderer()
-			baseline.SyncMessages(content, 1)
+			baseline.SyncMessages(content, 1, 0)
 			want := baseline.ExportMessageRowsSnapshot(100)
 			r := newActivityRenderer()
-			r.SyncMessages([]types.ChatMessage{content[0], notice, content[1]}, 1)
+			r.SyncMessages([]types.ChatMessage{content[0], notice, content[1]}, 1, 0)
 			got := r.ExportMessageRowsSnapshot(100)
 			if got.ContentHeight != want.ContentHeight || !reflect.DeepEqual(got.Rows, want.Rows) {
 				t.Fatalf("notice %s changed visible adjacency/spacing: got %+v want %+v", notice.InternalID, got, want)
@@ -44,7 +44,7 @@ func TestStopFilteringKeepsRecoveryEvidenceAndExactActions(t *testing.T) {
 			}
 			r := newActivityRenderer()
 			// A stale generic phase cannot hide a real actionable/resumed incident.
-			r.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, LifecyclePhase: "stopped", Recovery: &status}}, 1)
+			r.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, LifecyclePhase: "stopped", Recovery: &status}}, 1, 0)
 			r.ToggleDisclosure(status.ID)
 			got := r.ExportMessageRowsSnapshot(100)
 			if state == recovery.Cancelled {
@@ -85,7 +85,7 @@ func TestStopFilteringDoesNotHideCancelledToolsErrorsOrContextBoundaries(t *test
 		{InternalID: "history", Role: types.RoleStatus, LifecycleOperationID: "history", LifecyclePhase: "history_restored"},
 	} {
 		r := newActivityRenderer()
-		r.SyncMessages([]types.ChatMessage{message}, 1)
+		r.SyncMessages([]types.ChatMessage{message}, 1, 0)
 		got := r.ExportMessageRowsSnapshot(100)
 		if len(got.Rows) != 1 || got.ContentHeight == 0 || got.Rows[0].ID != message.InternalID {
 			t.Fatalf("stop filter erased non-generic evidence: %+v", message)

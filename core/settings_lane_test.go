@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -46,26 +45,26 @@ func TestSettingsLaneCapturesOnlyAfterPriorPublication(t *testing.T) {
 	defer c.Close()
 	attached := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()})
 	var owner coreprotocol.AttachResult
-	if err = json.Unmarshal(attached.Payload, &owner); err != nil {
+	if err = coreprotocol.Decode(attached.Payload, &owner); err != nil {
 		t.Fatal(err)
 	}
-	initial := callCore(t, c, "fetch", owner.WorkspaceID, coreprotocol.SettingsFetch, struct{}{})
+	initial := callCore(t, c, "fetch", owner.WorkspaceID, coreprotocol.SettingsFetch, coreprotocol.Empty{})
 	var fetched coreprotocol.SettingsFetchResult
-	if err = json.Unmarshal(initial.Payload, &fetched); err != nil {
+	if err = coreprotocol.Decode(initial.Payload, &fetched); err != nil {
 		t.Fatal(err)
 	}
-	draft := coreprotocol.AccountDraft{ID: "one", ProviderID: "p", Label: "after", Endpoint: coreprotocol.SecretUpdate[string]{Keep: true}}
-	body, _ := json.Marshal(coreprotocol.AccountChangeRequest{ID: "one", After: &draft})
+	draft := coreprotocol.AccountDraft{ID: "one", ProviderID: "p", Label: "after", Endpoint: coreprotocol.SecretString{Keep: true}}
+	body, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AccountChangeRequest{ID: "one", After: &draft}))
 	changed := c.Dispatch(context.Background(), coreprotocol.Request{ID: "change", Owner: c.Owner, WorkspaceID: owner.WorkspaceID, Method: coreprotocol.AccountChange, Payload: body})
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
 		t.Fatal("commit did not start")
 	}
-	later := c.Dispatch(context.Background(), coreprotocol.Request{ID: "later", Owner: c.Owner, WorkspaceID: owner.WorkspaceID, Method: coreprotocol.SettingsFetch, Payload: json.RawMessage(`{}`)})
+	later := c.Dispatch(context.Background(), coreprotocol.Request{ID: "later", Owner: c.Owner, WorkspaceID: owner.WorkspaceID, Method: coreprotocol.SettingsFetch, Payload: emptyPayload})
 	// This independent read proves the actor has admitted both messages while
 	// the settings worker remains blocked; settings fetch must not capture A.
-	callCore(t, c, "barrier", owner.WorkspaceID, coreprotocol.Snapshot, struct{}{})
+	callCore(t, c, "barrier", owner.WorkspaceID, coreprotocol.Snapshot, coreprotocol.Empty{})
 	select {
 	case <-later:
 		t.Fatal("settings read overtook uncommitted settings writer")
@@ -79,7 +78,7 @@ func TestSettingsLaneCapturesOnlyAfterPriorPublication(t *testing.T) {
 	if result.Error != nil {
 		t.Fatal(result.Error)
 	}
-	if err = json.Unmarshal(result.Payload, &fetched); err != nil {
+	if err = coreprotocol.Decode(result.Payload, &fetched); err != nil {
 		t.Fatal(err)
 	}
 	if fetched.Accounts["one"].Label != "after" {

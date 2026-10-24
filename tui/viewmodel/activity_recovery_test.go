@@ -66,8 +66,8 @@ func TestActivityReadStormSurvivesDBRecoveryAndDisclosure(t *testing.T) {
 	}
 	recovered := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(loaded))
 	liveRenderer, recoveredRenderer := newParityRenderer(), newParityRenderer()
-	liveRenderer.SyncMessages(live, 1)
-	recoveredRenderer.SyncMessages(recovered, 1)
+	liveRenderer.SyncMessages(live, 1, 0)
+	recoveredRenderer.SyncMessages(recovered, 1, 0)
 	assert := func(label string, size int) {
 		t.Helper()
 		left, _, _ := liveRenderer.ExportMessageRows(200)

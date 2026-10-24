@@ -22,7 +22,7 @@ func (c *Connection) ControlInputMethod(ctx context.Context, request coreprotoco
 		return fail("invalid_owner", "control input connection owner changed")
 	}
 	var input coreprotocol.ControlInputRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return fail("invalid_request", err.Error())
 	}
 	original, ok := c.ControlAdmission(input.ControlRequestID, request.WorkspaceID)
@@ -76,7 +76,7 @@ func (c *Connection) ControlInputMethod(ctx context.Context, request coreprotoco
 		}
 		// A separate domain intent uses the ORIGINAL caller/control identity.
 		// Repeated shell RPCs cannot reserve or dispatch a second provider turn.
-		domain := coreprotocol.Request{ID: original.ID + "/input", Owner: callerOwner, WorkspaceID: a.id, Method: coreprotocol.SubmitControlInput, Payload: request.Payload}
+		domain := coreprotocol.Request{ID: original.ID + "/input", Owner: callerOwner, WorkspaceID: a.id, Method: coreprotocol.SubmitControlInput, Payload: request.Payload, JSON: request.JSON}
 		prior, fresh, err := a.receipts.begin(a.ctx, domain)
 		if err != nil {
 			ready <- fault(request, "receipt_failed", err.Error())

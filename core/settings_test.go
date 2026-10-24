@@ -25,7 +25,7 @@ func TestSettingsFetchRedactsAllCredentialContainers(t *testing.T) {
 		Capabilities: captypes.Settings{Connections: map[string]captypes.ConnectionConfig{"mcp": {ID: "mcp", Environment: map[string]string{"KEY": "env-secret"}, Headers: map[string]string{"Authorization": "mcp-secret"}, Args: []string{"arg-secret"}}}},
 	})
 	a := &actor{ws: ws}
-	run, _, known := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: json.RawMessage(`{}`)})
+	run, _, known := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: emptyPayload})
 	if !known {
 		t.Fatal("fetch not dispatched")
 	}
@@ -39,7 +39,7 @@ func TestSettingsFetchRedactsAllCredentialContainers(t *testing.T) {
 		}
 	}
 	var out coreprotocol.SettingsFetchResult
-	if err := json.Unmarshal(got.Payload, &out); err != nil {
+	if err := coreprotocol.Decode(got.Payload, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !out.Accounts["one"].APIKeyPresent || !out.ProxyCredentialsPresent || !out.ConnectionSecretsPresent["mcp"] {
@@ -94,7 +94,7 @@ func TestSessionSettingsDTOCarriesOmittedFields(t *testing.T) {
 
 func TestAccountDraftSecretKeepIsExplicitAndDetached(t *testing.T) {
 	before := provider.Account{ID: "one", APIKey: "secret", Connection: provider.Template{Headers: map[string]string{"Authorization": "secret"}}}
-	draft := coreprotocol.AccountDraft{ID: "one", APIKey: coreprotocol.SecretUpdate[string]{Keep: true}, Headers: coreprotocol.SecretUpdate[map[string]string]{Keep: true}}
+	draft := coreprotocol.AccountDraft{ID: "one", APIKey: coreprotocol.SecretString{Keep: true}, Headers: coreprotocol.SecretMap{Keep: true}}
 	got, err := resolveAccount(draft, before)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestDraftModelsChecksIdentityWithoutConfigRevision(t *testing.T) {
 	defer ws.Close()
 	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one", APIKey: "secret"}}})
 	a := &actor{ws: ws}
-	raw, err := json.Marshal(coreprotocol.AccountModelsRequest{AccountID: "one", Draft: &coreprotocol.AccountDraft{ID: "another"}})
+	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AccountModelsRequest{AccountID: "one", Draft: &coreprotocol.AccountDraft{ID: "another"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,12 +170,12 @@ func TestSettingsFetchCarriesCoreHostTerminalShells(t *testing.T) {
 	defer ws.Close()
 	ws.SetAppDefaults(types.AppSettings{})
 	a := &actor{ws: ws}
-	run, _, known := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: json.RawMessage(`{}`)})
+	run, _, known := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: emptyPayload})
 	if !known {
 		t.Fatal("fetch not dispatched")
 	}
 	var out coreprotocol.SettingsFetchResult
-	if err := json.Unmarshal(run(context.Background()).Payload, &out); err != nil {
+	if err := coreprotocol.Decode(run(context.Background()).Payload, &out); err != nil {
 		t.Fatal(err)
 	}
 	if want := workspace.DetectTerminalShells(); len(want) == 0 || !reflect.DeepEqual(out.TerminalShells, want) {

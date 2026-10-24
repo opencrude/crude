@@ -165,15 +165,15 @@ func (c *Connection) CapabilityHostMethod(request coreprotocol.Request) coreprot
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if request.Method == coreprotocol.CapabilityHostRegister {
-		var empty struct{}
-		if err := decode(request.Payload, &empty); err != nil {
+		var empty coreprotocol.Empty
+		if err := decodeRequest(request, &empty); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		h.registered[request.WorkspaceID] = true
-		return response(request, struct{}{})
+		return response(request, coreprotocol.Empty{})
 	}
 	var reply captypes.HostReply
-	if err := decode(request.Payload, &reply); err != nil {
+	if err := decodeRequest(request, &reply); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
 	if len(request.Payload) > coreprotocol.CapabilityHostMaxBytes {
@@ -200,5 +200,5 @@ func (c *Connection) CapabilityHostMethod(request coreprotocol.Request) coreprot
 		p.finished = true
 		close(p.done)
 	}
-	return response(request, struct{}{})
+	return response(request, coreprotocol.Empty{})
 }

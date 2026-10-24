@@ -8,6 +8,7 @@ import (
 	"crude/shellport"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/workspace"
+
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 

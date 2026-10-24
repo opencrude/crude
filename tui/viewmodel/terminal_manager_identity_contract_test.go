@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/terminalvt"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
 	"crude/workspace"

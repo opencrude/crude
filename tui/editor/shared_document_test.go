@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"math/rand"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -224,6 +227,92 @@ func TestDocumentProjectionUndoIntentAndSavepoint(t *testing.T) {
 	}
 }
 
+func TestDocumentUndoDeferredPublicationRetainsExactGestureOrder(t *testing.T) {
+	e, s := projectionEditor(t, "alpha")
+	if err := e.BindDocumentOwner(projectionOwner); err != nil {
+		t.Fatal(err)
+	}
+	var intents []DocumentUndoIntent
+	e.SetOnDocumentUndo(func(intent DocumentUndoIntent) { intents = append(intents, intent) })
+	e.InsertRune('X')
+	change, err := e.CaptureDocumentEdits(projectionOwner, "edit", "group")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.AcceptDocumentReceipt(document.Receipt{DocumentID: s.ID, RequestID: "edit", Before: 1, Revision: 2, Accepted: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.Undo()
+	e.Redo()
+	e.InsertRune('Q')
+	first := intents[0]
+	for _, field := range []string{"projection", "document", "owner", "revision", "sequence"} {
+		wrong := first
+		switch field {
+		case "projection":
+			wrong.Projection = nil
+		case "document":
+			wrong.DocumentID = "other"
+		case "owner":
+			wrong.Owner.Epoch++
+		case "revision":
+			wrong.ExpectedRevision++
+		case "sequence":
+			wrong.Sequence++
+		}
+		before, _ := e.ExportDocumentRecovery()
+		if err = e.DeferDocumentUndoUntilSync(wrong); !errors.Is(err, document.ErrRequest) {
+			t.Fatalf("%s admitted: %v", field, err)
+		}
+		after, _ := e.ExportDocumentRecovery()
+		if !reflect.DeepEqual(before, after) {
+			t.Fatalf("%s rejection changed private recovery", field)
+		}
+	}
+	if err = e.DeferDocumentUndoUntilSync(first); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.DeferDocumentUndoUntilSync(first); !errors.Is(err, document.ErrRequest) {
+		t.Fatal("same gesture deferred twice", err)
+	}
+	// The earlier publication also contains a peer edit. Admission must use its
+	// resulting revision, not the revision captured by the retired intent.
+	state := s
+	state.Text, state.Saved, state.Revision = nil, nil, 3
+	peer := document.Change{DocumentID: s.ID, BaseRevision: 2, Owner: document.Owner{ClientID: "peer", Epoch: 1}, RequestID: "peer", Edits: []document.Edit{{Start: 6, End: 6, Text: "!"}}}
+	plan, err := e.PrepareDocumentUpdate(projectionOwner, 1, []document.Change{change, peer}, state, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.CommitDocumentUpdate(plan); err != nil {
+		t.Fatal(err)
+	}
+	if e.Value() != "Xalpha!" || len(intents) != 1 {
+		t.Fatal("publication replayed queued input before full commit")
+	}
+	e.CompleteDocumentHistorySync()
+	if len(intents) != 2 || intents[1].Redo || intents[1].ExpectedRevision != 3 || intents[1].Sequence == first.Sequence {
+		t.Fatalf("undo not re-admitted against publication: %+v", intents)
+	}
+	if err = e.CompleteDocumentUndo(first, nil); !errors.Is(err, document.ErrRequest) {
+		t.Fatal("retired intent completed a later gesture", err)
+	}
+	if err = e.CompleteDocumentUndo(intents[1], document.ErrOverlap); err != nil {
+		t.Fatal(err)
+	}
+	e.CompleteDocumentHistorySync()
+	if len(intents) != 3 || !intents[2].Redo || e.Value() != "Xalpha!" {
+		t.Fatal("redo or typing crossed the deferred undo")
+	}
+	if err = e.CompleteDocumentUndo(intents[2], document.ErrOverlap); err != nil {
+		t.Fatal(err)
+	}
+	e.CompleteDocumentHistorySync()
+	if e.Value() != "XQalpha!" || e.DocumentState().HistoryQueued {
+		t.Fatalf("queued typing lost: %q %+v", e.Value(), e.DocumentState())
+	}
+}
+
 func TestDocumentResetKeepsManagedBufferAndQueuedUndo(t *testing.T) {
 	e, s := projectionEditor(t, "abc")
 	manager := NewBufferManager()
@@ -335,5 +424,207 @@ func BenchmarkDocumentProjectionCaptureDense(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestDocumentUpdateAtomicAdmission(t *testing.T) {
+	for _, invalid := range []string{"later-edit", "owner", "path", "revision", "overlap"} {
+		t.Run(invalid, func(t *testing.T) {
+			e, s := projectionEditor(t, "abc def")
+			if err := e.BindDocumentOwner(projectionOwner); err != nil {
+				t.Fatal(err)
+			}
+			e.SetCursorPosition(0, 7)
+			e.InsertRune('P')
+			before, _ := e.ExportDocumentRecovery()
+			owner := projectionOwner
+			state := s
+			state.Text = nil
+			state.Saved = nil
+			state.Revision = 3
+			changes := []document.Change{{DocumentID: s.ID, BaseRevision: 1, Edits: []document.Edit{{Start: 0, End: 0, Text: "X"}}}, {DocumentID: s.ID, BaseRevision: 2, Edits: []document.Edit{{Start: 2, End: 2, Text: "Y"}}}}
+			switch invalid {
+			case "later-edit":
+				changes[1].Edits[0].Start = 99
+				changes[1].Edits[0].End = 99
+			case "owner":
+				owner.ClientID = "foreign"
+			case "path":
+				state.Path = "relative"
+			case "revision":
+				changes[1].BaseRevision = 9
+			case "overlap":
+				changes[1].Edits[0].Start = 8
+				changes[1].Edits[0].End = 8
+			}
+			if _, err := e.PrepareDocumentUpdate(owner, 1, changes, state, nil, false); err == nil {
+				t.Fatal("invalid transaction admitted")
+			}
+			after, _ := e.ExportDocumentRecovery()
+			if !reflect.DeepEqual(before, after) {
+				t.Fatalf("failed batch changed draft/history/owner: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+}
+
+func TestDocumentUpdatePendingAndPreparationFence(t *testing.T) {
+	e, s := projectionEditor(t, "abc def")
+	if err := e.BindDocumentOwner(projectionOwner); err != nil {
+		t.Fatal(err)
+	}
+	e.SetCursorPosition(0, 7)
+	e.InsertRune('P')
+	state := s
+	state.Text = nil
+	state.Saved = nil
+	state.Revision = 3
+	changes := []document.Change{{DocumentID: s.ID, BaseRevision: 1, Edits: []document.Edit{{Start: 0, End: 0, Text: "X"}}}, {DocumentID: s.ID, BaseRevision: 2, Edits: []document.Edit{{Start: 2, End: 2, Text: "Y"}}}}
+	plan, err := e.PrepareDocumentUpdate(projectionOwner, 1, changes, state, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer := e.DocumentBuffer()
+	if err = e.CommitDocumentUpdate(plan); err != nil {
+		t.Fatal(err)
+	}
+	if e.Value() != "XaYbc defP" || e.DocumentState().PendingEdits != 1 || e.DocumentBuffer() != buffer {
+		t.Fatalf("wrong projection: %q %+v", e.Value(), e.DocumentState())
+	}
+	plan, err = e.PrepareDocumentUpdate(projectionOwner, 3, nil, state, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.InsertRune('Q')
+	if err = e.CommitDocumentUpdate(plan); !errors.Is(err, ErrDocumentPending) {
+		t.Fatal(err)
+	}
+	if e.Value() != "XaYbc defPQ" {
+		t.Fatal("stale plan lost typing")
+	}
+}
+
+func TestDocumentUpdateOldInitialAndColdResetRetainPrivateWork(t *testing.T) {
+	e, s := projectionEditor(t, "abc")
+	e.InsertRune('X')
+	c, err := e.CaptureDocumentEdits(projectionOwner, "own", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.AcceptDocumentReceipt(document.Receipt{DocumentID: s.ID, RequestID: c.RequestID, Before: 1, Revision: 2, Accepted: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.InsertRune('P')
+	state := s
+	state.Text = nil
+	state.Saved = nil
+	plan, err := e.PrepareDocumentUpdate(projectionOwner, 0, nil, state, &s, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.CommitDocumentUpdate(plan); err != nil {
+		t.Fatal(err)
+	}
+	if e.Value() != "XPabc" || e.DocumentState().Revision != 2 || e.DocumentState().PendingEdits != 1 {
+		t.Fatal("old initial rolled back own receipt")
+	}
+	s.Revision = 9
+	s.Text = []byte("cold")
+	state.Revision = 9
+	if _, err = e.PrepareDocumentUpdate(projectionOwner, 0, nil, state, &s, true); !errors.Is(err, ErrDocumentPending) {
+		t.Fatal(err)
+	}
+	if e.Value() != "XPabc" {
+		t.Fatal("cold reset lost draft")
+	}
+}
+
+func FuzzDocumentUpdateAtomicBoundary(f *testing.F) {
+	f.Add(0, 0, "x", 2, 2, "y")
+	f.Add(1, 1, "x", 99, 99, "bad")
+	f.Add(2, 2, "x", 1, 1, "bad")
+	f.Fuzz(func(t *testing.T, a, b int, text string, c, d int, later string) {
+		if len(text) > 128 || len(later) > 128 {
+			t.Skip()
+		}
+		e, s := projectionEditor(t, "é🙂 abc")
+		state := s
+		state.Text = nil
+		state.Saved = nil
+		state.Revision = 3
+		changes := []document.Change{{DocumentID: s.ID, BaseRevision: 1, Edits: []document.Edit{{Start: a, End: b, Text: text}}}, {DocumentID: s.ID, BaseRevision: 2, Edits: []document.Edit{{Start: c, End: d, Text: later}}}}
+		expected, _, firstErr := document.Apply(s.Text, changes[0].Edits)
+		var secondErr error
+		if firstErr == nil {
+			expected, _, secondErr = document.Apply(expected, changes[1].Edits)
+		}
+		plan, err := e.PrepareDocumentUpdate(projectionOwner, 1, changes, state, nil, false)
+		if firstErr != nil || secondErr != nil {
+			if err == nil || e.Value() != "é🙂 abc" || e.DocumentState().Revision != 1 {
+				t.Fatal("invalid batch changed projection")
+			}
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = e.CommitDocumentUpdate(plan); err != nil {
+			t.Fatal(err)
+		}
+		if e.Value() != string(expected) || e.DocumentState().Revision != 3 {
+			t.Fatalf("got %q expected %q", e.Value(), expected)
+		}
+	})
+}
+
+func BenchmarkDocumentUpdatePrepareDense(b *testing.B) {
+	for _, size := range []int{1024, 8 << 20} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			e := New(theme.DefaultDark())
+			defer e.Close()
+			s := document.Snapshot{ID: "dense", Path: filepath.Join(b.TempDir(), "dense.txt"), Revision: 1, Text: bytes.Repeat([]byte("a"), size)}
+			if err := e.InstallDocument(s); err != nil {
+				b.Fatal(err)
+			}
+			if done := e.SyntaxDone(); done != nil {
+				<-done
+			}
+			e.StopSyntax()
+			state := s
+			state.Text = nil
+			state.Revision = 2
+			changes := []document.Change{{DocumentID: s.ID, BaseRevision: 1, Edits: []document.Edit{{Start: 1, End: 2, Text: "X"}}}}
+			e.documentProjection.pending = []document.Edit{{Start: size, End: size, Text: "P"}}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := e.PrepareDocumentUpdate(projectionOwner, 1, changes, state, nil, false); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestDocumentReviewedRecoveryRebindsOnlyAfterDiscard(t *testing.T) {
+	e, s := projectionEditor(t, "abc")
+	if err := e.BindDocumentOwner(projectionOwner); err != nil {
+		t.Fatal(err)
+	}
+	e.InsertRune('P')
+	current := document.Owner{ClientID: "replacement-shell", Epoch: 1}
+	if err := e.BindDocumentOwner(current); !errors.Is(err, document.ErrOwner) {
+		t.Fatal("private original provenance rebound before review")
+	}
+	if err := e.UseSharedDocument(s, e.Revision()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.BindDocumentOwner(current); err != nil {
+		t.Fatal("reviewed recovery cannot resume current attachment", err)
+	}
+	e.InsertRune('Q')
+	change, err := e.CaptureDocumentEdits(current, "after-review", "")
+	if err != nil || change.Owner != current || len(change.Edits) != 1 || change.Edits[0].Text != "Q" {
+		t.Fatalf("review did not resume fresh edits: %+v %v", change, err)
 	}
 }

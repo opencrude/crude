@@ -3,6 +3,7 @@ package chatprojection
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,11 +14,13 @@ import (
 // MessageSync projects workspace-owned chat rows into a retained TUI store.
 // Stable IDs preserve render caches; structural diffs drive virtlist updates.
 type MessageSync struct {
-	Messages      []*types.ChatMessage
-	MsgByID       map[string]*types.ChatMessage
-	version       uint64
-	sourceVersion uint64
-	msgIDSeq      uint64
+	Messages         []*types.ChatMessage
+	MsgByID          map[string]*types.ChatMessage
+	version          uint64
+	sourceVersion    uint64
+	sourceGeneration uint64
+	sourceSet        bool
+	msgIDSeq         uint64
 }
 
 // NewMessageSync creates an empty projection store.
@@ -34,6 +37,9 @@ func (s *MessageSync) Version() uint64 { return s.version }
 // SourceVersion returns the last applied workspace conversation version.
 func (s *MessageSync) SourceVersion() uint64 { return s.sourceVersion }
 
+// SourceGeneration fences revisions reused by a replacement source snapshot.
+func (s *MessageSync) SourceGeneration() uint64 { return s.sourceGeneration }
+
 // SyncResult describes how a sync changed the projection.
 type SyncResult struct {
 	ChangedIDs       []string
@@ -43,10 +49,10 @@ type SyncResult struct {
 }
 
 // SyncMessages updates the retained projection from workspace-owned data.
-// Returns a SyncResult when sourceVersion differs from the stored version.
+// Returns a SyncResult when the source generation/version tuple changes.
 // Caller applies virtlist AppendItem / InvalidateItem / RebuildItems.
-func (s *MessageSync) SyncMessages(messages []types.ChatMessage, sourceVersion uint64) (SyncResult, bool) {
-	if sourceVersion == s.sourceVersion {
+func (s *MessageSync) SyncMessages(messages []types.ChatMessage, sourceVersion, sourceGeneration uint64) (SyncResult, bool) {
+	if s.sourceSet && sourceVersion == s.sourceVersion && sourceGeneration == s.sourceGeneration {
 		return SyncResult{}, false
 	}
 
@@ -103,6 +109,8 @@ func (s *MessageSync) SyncMessages(messages []types.ChatMessage, sourceVersion u
 	s.Messages = next
 	s.MsgByID = nextByID
 	s.sourceVersion = sourceVersion
+	s.sourceGeneration = sourceGeneration
+	s.sourceSet = true
 	s.BumpVersion()
 
 	return SyncResult{
@@ -132,11 +140,14 @@ func (s *MessageSync) trackMessageID(id string) {
 func sameMessageData(current, incoming *types.ChatMessage) bool {
 	return current.InternalID == incoming.InternalID &&
 		current.Role == incoming.Role &&
+		current.Origin == incoming.Origin &&
+		reflect.DeepEqual(current.Collaboration, incoming.Collaboration) &&
 		current.Content == incoming.Content &&
 		slices.Equal(current.ReferenceLabels, incoming.ReferenceLabels) &&
 		current.Time.Equal(incoming.Time) &&
 		current.TurnGeneration == incoming.TurnGeneration &&
 		current.ProviderID == incoming.ProviderID &&
+		current.AccountID == incoming.AccountID &&
 		current.ModelID == incoming.ModelID &&
 		current.ToolName == incoming.ToolName &&
 		current.ToolArgs == incoming.ToolArgs &&
@@ -177,6 +188,9 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.LifecycleRetryAt.Equal(incoming.LifecycleRetryAt) &&
 		current.LifecycleRetryLimit == incoming.LifecycleRetryLimit &&
 		current.LifecycleContextWindow == incoming.LifecycleContextWindow &&
+		current.HistoryPathCount == incoming.HistoryPathCount &&
+		current.HistoryTargetSnapshot == incoming.HistoryTargetSnapshot &&
+		current.HistorySafetySnapshot == incoming.HistorySafetySnapshot &&
 		recoveryEqual(current.Recovery, incoming.Recovery) &&
 		current.PendingSteering == incoming.PendingSteering &&
 		current.Incomplete == incoming.Incomplete &&

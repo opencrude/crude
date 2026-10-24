@@ -20,6 +20,7 @@ import (
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -121,7 +122,7 @@ func TestOnboardingConnectedAccountModelSaveAndExplicitSession(t *testing.T) {
 	runAppCommand(t, app, app.activateAISetupReminder(1))
 	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	body := app.settingsSurface(window)
-	if body == nil || !strings.Contains(ansi.Strip(app.View().Content), "Add account") {
+	if body == nil || !strings.Contains(ansi.Strip(app.View().RenderContent()), "Add account") {
 		t.Fatal("OK did not render Add Account directly")
 	}
 	model := body.Model()

@@ -646,6 +646,8 @@ var defaultActions = []*ActionDef{
 	// ─── Agent ───────────────────────────────────────────────────────
 
 	// ─── Tools (LSP, Composer, Settings, Safety) ─────────────────────
+	{ID: "remote.connect", Label: "Connect to…", Description: "open saved remote connections and add a destination", Category: "App"},
+	{ID: "remote.switch", Label: "Switch backend", Description: "choose Local or a saved remote backend", Category: "App"},
 	{
 		ID:          "settings.open",
 		Label:       "Application Settings",

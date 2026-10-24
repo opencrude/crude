@@ -890,6 +890,12 @@ func (r *Renderer) SourceVersion() uint64 {
 	return r.sync.SourceVersion()
 }
 
+func (r *Renderer) SourceGeneration() uint64 { return r.sync.SourceGeneration() }
+
+// InvalidateSource releases the cursor binding when a pane is rebound to a
+// different Conversation. The next sync still diffs stable rows normally.
+func (r *Renderer) InvalidateSource() { r.sync.sourceSet = false }
+
 // PresentThinkingPane replaces only a retained frontend row.
 func (r *Renderer) PresentThinkingPane(id, paneID string) {
 	message := r.sync.MsgByID[id]
@@ -949,8 +955,8 @@ func (r *Renderer) RemoveThinkingPane(paneID string) {
 
 // SyncMessages updates the retained TUI projection from workspace-owned
 // message data. Stable IDs preserve unchanged render caches and scroll state.
-func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint64) {
-	if sourceVersion == r.sync.SourceVersion() {
+func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion, sourceGeneration uint64) {
+	if r.sync.sourceSet && sourceVersion == r.sync.SourceVersion() && sourceGeneration == r.sync.SourceGeneration() {
 		return
 	}
 	// Restore only overridden rows before the ordinary source diff. The saved
@@ -962,7 +968,7 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint
 	}
 	clear(r.thinkingOriginal)
 	cursorOwnerID := r.streamingCursorOwnerID()
-	result, ok := r.sync.SyncMessages(messages, sourceVersion)
+	result, ok := r.sync.SyncMessages(messages, sourceVersion, sourceGeneration)
 	if !ok {
 		return
 	}

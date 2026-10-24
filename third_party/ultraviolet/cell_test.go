@@ -10,9 +10,9 @@ import (
 
 func TestConvertStyle(t *testing.T) {
 	s := Style{
-		Fg:             color.Black,
-		Bg:             color.White,
-		UnderlineColor: color.Black,
+		Fg:             NewColor(color.Black),
+		Bg:             NewColor(color.White),
+		UnderlineColor: NewColor(color.Black),
 	}
 	tests := []struct {
 		name    string
@@ -28,27 +28,27 @@ func TestConvertStyle(t *testing.T) {
 			name:    "256 Color",
 			profile: colorprofile.ANSI256,
 			want: Style{
-				Fg:             colorprofile.ANSI256.Convert(color.Black),
-				Bg:             colorprofile.ANSI256.Convert(color.White),
-				UnderlineColor: colorprofile.ANSI256.Convert(color.Black),
+				Fg:             NewColor(colorprofile.ANSI256.Convert(color.Black)),
+				Bg:             NewColor(colorprofile.ANSI256.Convert(color.White)),
+				UnderlineColor: NewColor(colorprofile.ANSI256.Convert(color.Black)),
 			},
 		},
 		{
 			name:    "16 Color",
 			profile: colorprofile.ANSI,
 			want: Style{
-				Fg:             colorprofile.ANSI.Convert(color.Black),
-				Bg:             colorprofile.ANSI.Convert(color.White),
-				UnderlineColor: colorprofile.ANSI.Convert(color.Black),
+				Fg:             NewColor(colorprofile.ANSI.Convert(color.Black)),
+				Bg:             NewColor(colorprofile.ANSI.Convert(color.White)),
+				UnderlineColor: NewColor(colorprofile.ANSI.Convert(color.Black)),
 			},
 		},
 		{
 			name:    "Grayscale",
 			profile: colorprofile.Ascii,
 			want: Style{
-				Fg:             nil,
-				Bg:             nil,
-				UnderlineColor: nil,
+				Fg:             0,
+				Bg:             0,
+				UnderlineColor: 0,
 			},
 		},
 		{
@@ -132,85 +132,85 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "from nil to styled",
 			from: nil,
-			to:   &Style{Fg: red, Attrs: AttrBold},
+			to:   &Style{Fg: NewColor(red), Attrs: AttrBold},
 			want: "\x1b[1;38;2;255;0;0m",
 		},
 
 		// Foreground color tests
 		{
 			name: "foreground color change",
-			from: &Style{Fg: red},
-			to:   &Style{Fg: blue},
+			from: &Style{Fg: NewColor(red)},
+			to:   &Style{Fg: NewColor(blue)},
 			want: "\x1b[38;2;0;0;255m",
 		},
 		{
 			name: "add foreground color",
 			from: &Style{},
-			to:   &Style{Fg: red},
+			to:   &Style{Fg: NewColor(red)},
 			want: "\x1b[38;2;255;0;0m",
 		},
 		{
 			name: "remove foreground color",
-			from: &Style{Fg: red},
+			from: &Style{Fg: NewColor(red)},
 			to:   &Style{},
 			want: "\x1b[m",
 		},
 		{
 			name: "foreground color same",
-			from: &Style{Fg: red},
-			to:   &Style{Fg: red},
+			from: &Style{Fg: NewColor(red)},
+			to:   &Style{Fg: NewColor(red)},
 			want: "",
 		},
 
 		// Background color tests
 		{
 			name: "background color change",
-			from: &Style{Bg: red},
-			to:   &Style{Bg: blue},
+			from: &Style{Bg: NewColor(red)},
+			to:   &Style{Bg: NewColor(blue)},
 			want: "\x1b[48;2;0;0;255m",
 		},
 		{
 			name: "add background color",
 			from: &Style{},
-			to:   &Style{Bg: blue},
+			to:   &Style{Bg: NewColor(blue)},
 			want: "\x1b[48;2;0;0;255m",
 		},
 		{
 			name: "remove background color",
-			from: &Style{Bg: blue},
+			from: &Style{Bg: NewColor(blue)},
 			to:   &Style{},
 			want: "\x1b[m",
 		},
 		{
 			name: "background color same",
-			from: &Style{Bg: blue},
-			to:   &Style{Bg: blue},
+			from: &Style{Bg: NewColor(blue)},
+			to:   &Style{Bg: NewColor(blue)},
 			want: "",
 		},
 
 		// Underline color tests
 		{
 			name: "underline color change",
-			from: &Style{UnderlineColor: red, Underline: UnderlineStyleSingle},
-			to:   &Style{UnderlineColor: blue, Underline: UnderlineStyleSingle},
+			from: &Style{UnderlineColor: NewColor(red), Underline: UnderlineStyleSingle},
+			to:   &Style{UnderlineColor: NewColor(blue), Underline: UnderlineStyleSingle},
 			want: "\x1b[58;2;0;0;255m",
 		},
 		{
 			name: "add underline color",
 			from: &Style{Underline: UnderlineStyleSingle},
-			to:   &Style{UnderlineColor: green, Underline: UnderlineStyleSingle},
+			to:   &Style{UnderlineColor: NewColor(green), Underline: UnderlineStyleSingle},
 			want: "\x1b[58;2;0;255;0m",
 		},
 		{
 			name: "remove underline color",
-			from: &Style{UnderlineColor: green, Underline: UnderlineStyleSingle},
+			from: &Style{UnderlineColor: NewColor(green), Underline: UnderlineStyleSingle},
 			to:   &Style{Underline: UnderlineStyleSingle},
 			want: "\x1b[59m",
 		},
 		{
 			name: "underline color same",
-			from: &Style{UnderlineColor: green, Underline: UnderlineStyleSingle},
-			to:   &Style{UnderlineColor: green, Underline: UnderlineStyleSingle},
+			from: &Style{UnderlineColor: NewColor(green), Underline: UnderlineStyleSingle},
+			to:   &Style{UnderlineColor: NewColor(green), Underline: UnderlineStyleSingle},
 			want: "",
 		},
 
@@ -602,14 +602,14 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "complex style change with all properties",
 			from: &Style{
-				Fg:    red,
-				Bg:    blue,
+				Fg:    NewColor(red),
+				Bg:    NewColor(blue),
 				Attrs: AttrBold,
 			},
 			to: &Style{
-				Fg:             green,
-				Bg:             yellow,
-				UnderlineColor: cyan,
+				Fg:             NewColor(green),
+				Bg:             NewColor(yellow),
+				UnderlineColor: NewColor(cyan),
 				Attrs:          AttrItalic,
 				Underline:      UnderlineStyleSingle,
 			},
@@ -618,14 +618,14 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "complex change keeping some properties",
 			from: &Style{
-				Fg:        red,
-				Bg:        blue,
+				Fg:        NewColor(red),
+				Bg:        NewColor(blue),
 				Attrs:     AttrBold | AttrItalic,
 				Underline: UnderlineStyleSingle,
 			},
 			to: &Style{
-				Fg:        red,
-				Bg:        green,
+				Fg:        NewColor(red),
+				Bg:        NewColor(green),
 				Attrs:     AttrBold | AttrReverse,
 				Underline: UnderlineStyleDouble,
 			},
@@ -634,9 +634,9 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "complete style reset",
 			from: &Style{
-				Fg:             red,
-				Bg:             blue,
-				UnderlineColor: green,
+				Fg:             NewColor(red),
+				Bg:             NewColor(blue),
+				UnderlineColor: NewColor(green),
 				Attrs:          AttrBold | AttrItalic | AttrReverse,
 				Underline:      UnderlineStyleSingle,
 			},
@@ -648,16 +648,16 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "no changes with all properties",
 			from: &Style{
-				Fg:             red,
-				Bg:             blue,
-				UnderlineColor: green,
+				Fg:             NewColor(red),
+				Bg:             NewColor(blue),
+				UnderlineColor: NewColor(green),
 				Attrs:          AttrBold | AttrItalic,
 				Underline:      UnderlineStyleSingle,
 			},
 			to: &Style{
-				Fg:             red,
-				Bg:             blue,
-				UnderlineColor: green,
+				Fg:             NewColor(red),
+				Bg:             NewColor(blue),
+				UnderlineColor: NewColor(green),
 				Attrs:          AttrBold | AttrItalic,
 				Underline:      UnderlineStyleSingle,
 			},
@@ -666,13 +666,13 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "only colors change",
 			from: &Style{
-				Fg:    red,
-				Bg:    blue,
+				Fg:    NewColor(red),
+				Bg:    NewColor(blue),
 				Attrs: AttrBold,
 			},
 			to: &Style{
-				Fg:    green,
-				Bg:    yellow,
+				Fg:    NewColor(green),
+				Bg:    NewColor(yellow),
 				Attrs: AttrBold,
 			},
 			want: "\x1b[38;2;0;255;0;48;2;255;255;0m",
@@ -680,11 +680,11 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "only attributes change",
 			from: &Style{
-				Fg:    red,
+				Fg:    NewColor(red),
 				Attrs: AttrBold,
 			},
 			to: &Style{
-				Fg:    red,
+				Fg:    NewColor(red),
 				Attrs: AttrItalic,
 			},
 			want: "\x1b[22;3m",
@@ -693,9 +693,9 @@ func TestStyleDiff(t *testing.T) {
 			name: "add all colors",
 			from: &Style{},
 			to: &Style{
-				Fg:             red,
-				Bg:             blue,
-				UnderlineColor: green,
+				Fg:             NewColor(red),
+				Bg:             NewColor(blue),
+				UnderlineColor: NewColor(green),
 				Underline:      UnderlineStyleSingle,
 			},
 			want: "\x1b[38;2;255;0;0;48;2;0;0;255;58;2;0;255;0;4m",
@@ -704,17 +704,17 @@ func TestStyleDiff(t *testing.T) {
 			name: "add all colors without underline",
 			from: &Style{},
 			to: &Style{
-				Fg:             red,
-				Bg:             blue,
-				UnderlineColor: green,
+				Fg:             NewColor(red),
+				Bg:             NewColor(blue),
+				UnderlineColor: NewColor(green),
 			},
 			want: "\x1b[38;2;255;0;0;48;2;0;0;255;58;2;0;255;0m",
 		},
 		{
 			name: "remove all colors with attributes",
 			from: &Style{
-				Fg:    red,
-				Bg:    blue,
+				Fg:    NewColor(red),
+				Bg:    NewColor(blue),
 				Attrs: AttrBold,
 			},
 			to: &Style{
@@ -725,14 +725,14 @@ func TestStyleDiff(t *testing.T) {
 		{
 			name: "change all colors",
 			from: &Style{
-				Fg:             red,
-				Bg:             blue,
-				UnderlineColor: green,
+				Fg:             NewColor(red),
+				Bg:             NewColor(blue),
+				UnderlineColor: NewColor(green),
 			},
 			to: &Style{
-				Fg:             cyan,
-				Bg:             magenta,
-				UnderlineColor: yellow,
+				Fg:             NewColor(cyan),
+				Bg:             NewColor(magenta),
+				UnderlineColor: NewColor(yellow),
 			},
 			want: "\x1b[38;2;0;255;255;48;2;255;0;255;58;2;255;255;0m",
 		},

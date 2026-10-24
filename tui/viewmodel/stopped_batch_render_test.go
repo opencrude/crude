@@ -33,7 +33,7 @@ func TestCanonicalBatchCancellationPaintsStaticRetainedEvidence(t *testing.T) {
 				parentID = view.InternalID
 			}
 		}
-		r.SyncMessages(views, version)
+		r.SyncMessages(views, version, 0)
 	}
 	paint := func() string {
 		rows, _, _ := r.ExportMessageRows(100)

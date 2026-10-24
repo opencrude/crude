@@ -30,6 +30,32 @@ type TerminalService interface {
 	Rows(id string, request terminalvt.RowRequest) (workspace.TerminalProjection, error)
 }
 
+// StreamingTerminals owns asynchronous grid publication and nonblocking ordered
+// input admission. Unlike Rows, StartGrid performs no I/O on the caller thread.
+type StreamingTerminals interface {
+	StartGrid(id string)
+	SetViewport(id string, request terminalvt.RowRequest)
+	SendInput(workspace.TerminalInput) error
+	// ApplyTerminalFrame validates exact stream ownership and installs replica
+	// caches on Update. It may supply the latest authoritative error rollback.
+	// Rejection must leave both the message and replica unchanged.
+	ApplyTerminalFrame(*TerminalFrameMsg) error
+}
+
+// TerminalFrameMsg is installed on the shell's Update thread, never by the
+// subscription worker. Service identity fences workspace switches.
+type TerminalFrameMsg struct {
+	Service    TerminalService
+	ID         string
+	Projection workspace.TerminalProjection
+	Err        error
+	// Frame is the service's opaque stream-generation/input owner token.
+	Frame any
+	// Applied is a buffered, one-result application receipt. Update sends nil
+	// only after installation; stale/closed owners receive cancellation instead.
+	Applied chan<- error
+}
+
 // TerminalManager owns the PTY sessions.
 type TerminalManager interface {
 	// Get returns one session snapshot.

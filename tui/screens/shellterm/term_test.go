@@ -91,6 +91,33 @@ func keyEvent(code rune, mod tea.KeyMod, text string) ui.Event {
 	return ui.KeyEvent(tea.KeyPressMsg{Code: code, Mod: mod, Text: text})
 }
 
+func TestScreenKeyPaintTracksOnlyLocalInk(t *testing.T) {
+	s, commands := newTestScreen(t)
+	s.view.Grid.Cursor.Visible = false
+	s.blinkOn = false
+	plain := func() ui.EventResult { return s.Handle(ui.EventContext{}, keyEvent('j', 0, "j")) }
+	if res := plain(); res.Invalidate != 0 || len(*commands) != 1 {
+		t.Fatalf("hidden cursor key must enqueue without repaint: %+v %+v", res, *commands)
+	}
+	s.view.SelectAll()
+	if res := plain(); res.Invalidate&ui.InvalidatePaint == 0 || s.view.HasSelection() {
+		t.Fatal("key did not repaint cleared local selection")
+	}
+	fixture(s, "history", 51, terminalvt.Modes{})
+	s.view.ScrollTop()
+	if res := plain(); res.Invalidate&ui.InvalidatePaint == 0 || !s.view.Pinned() {
+		t.Fatal("key did not repaint return to live tail")
+	}
+	s.view.Grid.Cursor.Visible = true
+	s.blinkOn = false
+	if res := plain(); res.Invalidate&ui.InvalidatePaint == 0 || !s.blinkOn {
+		t.Fatal("key did not repaint newly visible cursor phase")
+	}
+	if res := plain(); res.Invalidate != 0 || len(*commands) != 5 {
+		t.Fatalf("unchanged local ink still repaints or input was lost: %+v %+v", res, *commands)
+	}
+}
+
 func TestScreenShiftPageUpScrollsInsteadOfWriting(t *testing.T) {
 	s, writes := newTestScreen(t)
 	fixture(s, "line", 51, terminalvt.Modes{})

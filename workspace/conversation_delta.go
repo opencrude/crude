@@ -1,28 +1,45 @@
 package workspace
 
-import ttypes "crude/types"
+import (
+	ttypes "crude/types"
+	"crude/types/reasoning"
+)
 
 // ConversationDelta is a detached publication at Revision. Reset replaces all
-// subscriber state; otherwise Upserts and Removed update records by InternalID.
-// A non-nil Order replaces the ordered membership (including an empty order).
+// subscriber state; otherwise Upserts and Removed update records by InternalID
+// and Appends extend existing text rows. These three sets are disjoint. A non-nil
+// Order replaces the ordered membership (including an empty order).
 type ConversationDelta struct {
 	BaseRevision, Revision uint64
 	Reset                  bool
 	Order                  []string
 	Upserts                []Message
 	Removed                []string
+	Appends                []ConversationTextAppend
+}
+
+// ConversationTextAppend adds Text at an exact byte offset in the canonical
+// message. ThinkingDisplay is the latest semantic block index for thinking rows;
+// it is zero for assistant rows. Offsets, like reasoning.Display.Start, are bytes.
+type ConversationTextAppend struct {
+	InternalID      string
+	Offset          uint64
+	Text            string
+	ThinkingDisplay reasoning.Display
 }
 
 const conversationJournalLimit = 256
 
-// Only identities are retained: readers receive current values, not historical
-// token bodies. This bounds retained evidence without copying dense transcripts
-// or retaining every intermediate streamed string.
+// Only identities and scalar offsets are retained: readers receive current
+// suffixes, not historical token bodies. This bounds retained evidence without
+// copying dense transcripts or retaining every intermediate streamed string.
 type conversationChange struct {
 	revision   uint64
 	ids        []string
 	removed    []string
 	structural bool
+	textID     string
+	textOffset int
 }
 
 func (c *Conversation) changed(message *Message) {
@@ -40,6 +57,11 @@ func (c *Conversation) commitChange(message *Message) {
 	c.pendingChange.revision = c.version
 	c.changeJournal[c.version%conversationJournalLimit] = c.pendingChange
 	c.pendingChange = conversationChange{}
+}
+
+func (c *Conversation) commitText(message *Message, offset int) {
+	c.pendingChange.textID, c.pendingChange.textOffset = message.InternalID, offset
+	c.commitChange(nil)
 }
 
 // ChangesSince reads independently of other subscribers. Like the existing
@@ -71,32 +93,45 @@ func (c *Conversation) ChangesSince(revision uint64) ConversationDelta {
 	if revision == c.version {
 		return delta
 	}
-	seen := make(map[string]bool)
+	type changedRecord struct {
+		id     string
+		offset int
+		upsert bool
+	}
+	var records []changedRecord
+	add := func(id string, offset int, upsert bool) {
+		for i := range records {
+			if records[i].id == id {
+				records[i].upsert = records[i].upsert || upsert
+				return
+			}
+		}
+		records = append(records, changedRecord{id, offset, upsert})
+	}
 	structural := false
 	for r := revision + 1; r <= c.version; r++ {
 		change := c.changeJournal[r%conversationJournalLimit]
 		structural = structural || change.structural
 		for _, id := range change.ids {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if message := c.byID[id]; message != nil {
-				delta.Upserts = append(delta.Upserts, ttypes.CloneConversationMessage(*message))
-			} else {
-				delta.Removed = append(delta.Removed, id)
-			}
+			add(id, 0, true)
 		}
 		for _, id := range change.removed {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if message := c.byID[id]; message != nil {
-				delta.Upserts = append(delta.Upserts, ttypes.CloneConversationMessage(*message))
-			} else {
-				delta.Removed = append(delta.Removed, id)
-			}
+			add(id, 0, true)
+		}
+		if change.textID != "" {
+			add(change.textID, change.textOffset, false)
+		}
+	}
+	for _, record := range records {
+		message := c.byID[record.id]
+		if message == nil {
+			delta.Removed = append(delta.Removed, record.id)
+		} else if record.upsert {
+			delta.Upserts = append(delta.Upserts, ttypes.CloneConversationMessage(*message))
+		} else {
+			delta.Appends = append(delta.Appends, ConversationTextAppend{
+				InternalID: record.id, Offset: uint64(record.offset), Text: message.Content[record.offset:], ThinkingDisplay: message.ThinkingDisplay,
+			})
 		}
 	}
 	if structural {

@@ -30,6 +30,18 @@ func TestFormatDurationAvoidsZeroSecondLabel(t *testing.T) {
 	}
 }
 
+func TestFormatTimeLabelUsesViewerZoneAcrossWireAndHydration(t *testing.T) {
+	old := time.Local
+	time.Local = time.FixedZone("viewer", -5*60*60)
+	t.Cleanup(func() { time.Local = old })
+	instant := time.Date(2001, 2, 3, 1, 20, 0, 0, time.UTC)
+	for _, source := range []time.Time{instant, instant.Local(), instant.In(time.FixedZone("remote", 9*60*60))} {
+		if got := FormatTimeLabel(source); got != "02/02 20:20" {
+			t.Fatalf("source zone=%s label=%q", source.Location(), got)
+		}
+	}
+}
+
 func TestFormatBytes(t *testing.T) {
 	for _, test := range []struct {
 		bytes int64

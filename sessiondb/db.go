@@ -3,6 +3,7 @@ package sessiondb
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"time"
 
@@ -424,9 +425,20 @@ CREATE INDEX IF NOT EXISTS idx_plan_events_plan ON plan_events(plan_id, revision
 `
 
 func Open(dbPath string) (*sql.DB, error) {
+	abs, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: resolve path: %w", err)
+	}
+	path := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" {
+		path = "/" + path
+	}
 	// modernc applies _pragma in order, including on replacement connections.
 	// Waiting must be enabled before WAL takes its initial schema lock.
-	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)"
+	// The argument is a filesystem path, never an unescaped SQLite URI. Literal
+	// delimiters in a profile/session name cannot become connection options.
+	u := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)"}
+	dsn := u.String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: open: %w", err)

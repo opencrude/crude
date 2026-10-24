@@ -61,7 +61,9 @@ an independent verifier confirms it, or the user or a stop rule ends it.
   input is context-only runtime input (`prompt.GoalContinuation`), never a
   human message in the transcript. Plan mode turns do not count.
 - Stop rules: Stop on a goal turn, or stopping its unfinished run, pauses the
-  goal; a terminal turn failure blocks it; three consecutive automatic turns
+  goal; a terminal turn failure blocks it with the failure's exact reason (a
+  permanent provider verdict such as a policy refusal ends the turn rather than
+  waiting for Retry; see [run recovery](run-recovery.md)); three consecutive automatic turns
   that are empty, or whose tool calls all failed, block it. A turn parked for
   recovery changes nothing: recovery owns it and no goal turn can start until
   it settles. A reopened session never restarts work by itself: an active

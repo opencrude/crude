@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/internal/wiretest"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -48,7 +49,7 @@ func TestConnectedTerminalCloseUnmountsEveryShell(t *testing.T) {
 			defer controller.Close()
 			target := one.app.ws.(shellport.ShellControl).ControlIdentity()
 			call := func(requestID, method string, input any) coreprotocol.Response {
-				raw, err := json.Marshal(input)
+				raw, err := wiretest.Marshal(input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -64,7 +65,7 @@ func TestConnectedTerminalCloseUnmountsEveryShell(t *testing.T) {
 				input, _ := json.Marshal(coreprotocol.TerminalIDRequest{ID: id})
 				closed := call("close", coreprotocol.ControlExecute, control.Request{ID: "close", CommandID: "terminal.close", Target: control.Target{WorkspaceID: target.WorkspaceID}, Input: input})
 				var result control.Result
-				if closed.Error != nil || json.Unmarshal(closed.Payload, &result) != nil || result.State != control.Committed {
+				if closed.Error != nil || coreprotocol.Decode(closed.Payload, &result) != nil || result.State != control.Committed {
 					t.Fatalf("close receipt: %+v", closed)
 				}
 			} else {
@@ -92,9 +93,9 @@ func TestConnectedTerminalCloseUnmountsEveryShell(t *testing.T) {
 			if !two.app.termDock.IsOpen() || two.app.termDock.ActivePanel() != termdock.PanelNotices {
 				t.Fatal("terminal close disturbed the peer's unrelated panel")
 			}
-			var inventory []any
-			listed := call(fmt.Sprintf("list-%s", route), coreprotocol.TerminalList, struct{}{})
-			if listed.Error != nil || json.Unmarshal(listed.Payload, &inventory) != nil || len(inventory) != 0 {
+			var inventory coreprotocol.TerminalInfos
+			listed := call(fmt.Sprintf("list-%s", route), coreprotocol.TerminalList, coreprotocol.Empty{})
+			if listed.Error != nil || coreprotocol.Decode(listed.Payload, &inventory) != nil || len(inventory) != 0 {
 				t.Fatalf("closed PTY retained by core: %+v", listed)
 			}
 		})

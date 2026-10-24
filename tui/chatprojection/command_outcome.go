@@ -61,10 +61,10 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 		text += "\nExit code: unavailable"
 	}
 	if !info.StartedAt.IsZero() {
-		text += "\nStarted: " + info.StartedAt.Format("2006-01-02 15:04:05 MST")
+		text += "\nStarted: " + info.StartedAt.Local().Format("2006-01-02 15:04:05 MST")
 	}
 	if !info.EndedAt.IsZero() {
-		text += "\nEnded: " + info.EndedAt.Format("2006-01-02 15:04:05 MST")
+		text += "\nEnded: " + info.EndedAt.Local().Format("2006-01-02 15:04:05 MST")
 	}
 	if info.Error != "" {
 		text += "\nReason: " + info.Error

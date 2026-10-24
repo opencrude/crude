@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/coreprotocol"
 	"crude/shellport"
 	"crude/tui/ui"
 	"crude/types/control"
+
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -101,7 +102,7 @@ func TestProductWindowMovementPreimageAndPaint(t *testing.T) {
 	one := newRemoteJourneyShell(t, runtime, t.TempDir())
 	m := one.app
 	result := productRequest(t, m, "project.search_open", "", "", map[string]any{"replace": false}, nil)
-	if result.State != control.Admitted || !strings.Contains(ansi.Strip(m.View().Content), "Find in Files") {
+	if result.State != control.Admitted || !strings.Contains(ansi.Strip(m.View().RenderContent()), "Find in Files") {
 		t.Fatal("search did not paint", result)
 	}
 	w := m.overlayHost.Window(ui.OverlayFindInFiles)

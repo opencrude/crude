@@ -109,6 +109,10 @@ func (s *TerminalRenderer) scrolln(newbuf *RenderBuffer, n, top, bot, maxY int) 
 	}
 
 	s.scrollBuffer(s.curbuf, n, top, bot, blank)
+	// Hard scrolling changes terminal cells independently of producer damage:
+	// unchanged source rows can move or become newly exposed blank rows. The
+	// subsequent diff must re-evaluate the entire physical scroll region.
+	s.touchLine(newbuf, top, bot-top+1, true)
 
 	// shift hash values too, they can be reused
 	s.scrollOldhash(n, top, bot)

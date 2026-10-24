@@ -22,6 +22,7 @@ const (
 	ActionPreview                = "history.preview"
 	ActionApply                  = "history.apply"
 	ActionBack                   = "history.back"
+	ActionCheck                  = "history.check_result"
 )
 
 type TimelineMsg struct {
@@ -41,9 +42,11 @@ type PlanMsg struct {
 	Error string
 }
 type AppliedMsg struct {
-	Result  localhistory.RestoreResult
-	Error   string
-	Warning string
+	Result     localhistory.RestoreResult
+	Error      string
+	Warning    string
+	RequestID  string // unresolved original mutation; only observation is allowed
+	Incomplete bool   // retained safety evidence, not a fully completed restore
 }
 type PreviewRequest struct {
 	SnapshotID string
@@ -73,6 +76,7 @@ type Screen struct {
 	lastRestore  *localhistory.RestoreResult
 	previewPaths []string
 	messageRefs  map[string]MessageRef
+	requestID    string
 }
 
 func New(th *theme.Theme) *Screen {
@@ -116,6 +120,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	hint := "Enter preview · Esc close"
 	if s.lastRestore != nil {
 		hint = "Enter/U preview undo of restore · Esc close"
+	}
+	if s.requestID != "" {
+		hint = "Enter check original result · Esc close"
 	}
 	s.list.Paint(buf, ox+r.X, oy+r.Y, ctx)
 	s.scrollbar.Paint(buf, ox+r.X, oy+r.Y, ctx)
@@ -197,10 +204,26 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 		case AppliedMsg:
 			s.loading = false
-			if msg.Error != "" {
+			s.armed = false
+			if msg.RequestID != "" {
+				s.requestID = msg.RequestID
 				s.errorText = msg.Error
+				s.plan = nil
+				s.lastRestore = nil
+				s.list.SetItems([]ui.ListItem{{ID: "check-result", Label: "Check original restore result", Detail: msg.RequestID, Command: true}})
+			} else if msg.Error != "" {
+				s.errorText = msg.Error
+				s.requestID = ""
+				// A refusal invalidates the armed preview. Re-review current disk
+				// state instead of leaving an old Apply action reachable.
+				s.plan = nil
+				s.rebuildTimeline()
 			} else {
+				s.errorText, s.requestID = "", ""
 				s.status = fmt.Sprintf("Restored %d path(s). Safety snapshot %s", len(msg.Result.Paths), short(msg.Result.SafetySnapshotID))
+				if msg.Incomplete {
+					s.status = "Restore incomplete. Review safety snapshot " + short(msg.Result.SafetySnapshotID)
+				}
 				if msg.Warning != "" {
 					s.status += " · warning: " + msg.Warning
 				}
@@ -260,6 +283,7 @@ func (s *Screen) setTimeline(msg TimelineMsg) {
 	s.previewPaths = append([]string(nil), msg.Paths...)
 	s.messageRefs = msg.Messages
 	s.lastRestore = nil
+	s.requestID = ""
 	if msg.Error == "" {
 		prefix := ""
 		if len(msg.Paths) > 0 {
@@ -297,6 +321,9 @@ func (s *Screen) rebuildTimeline() {
 	s.list.SetItems(items)
 }
 func (s *Screen) setPlan(msg PlanMsg) {
+	if s.requestID != "" {
+		return
+	}
 	s.loading = false
 	s.errorText = msg.Error
 	s.status = ""
@@ -395,6 +422,13 @@ func (s *Screen) toggleExact() {
 	s.rebuildPlan()
 }
 func (s *Screen) activate() ui.EventResult {
+	if s.loading {
+		return ui.EventResult{Handled: true}
+	}
+	if s.requestID != "" {
+		s.loading = true
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionCheck, Payload: s.requestID}, Invalidate: ui.InvalidatePaint}
+	}
 	if s.plan == nil {
 		item, ok := s.list.Selected()
 		if !ok {

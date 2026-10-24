@@ -110,24 +110,17 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 	}
 	defer func() { release.Do(func() { close(rootRelease) }); _ = runtime.Close() }()
 	c := controlWireClient(t, runtime, "execution-connected")
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		for range c.Events() {
-		}
-	}()
-	t.Cleanup(func() { _ = c.Close(); <-eventsDone })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	var attached coreprotocol.AttachResult
 	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute, control.Delete}}, nil); err != nil {
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute, control.Delete}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult
-	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, struct{}{}, &created); err != nil || created.Error != "" {
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created); err != nil || created.Error != "" {
 		t.Fatal(created, err)
 	}
 	parentID = created.OrchID
@@ -140,12 +133,12 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 		raw, _ := json.Marshal(input)
 		request := control.Request{ID: fmt.Sprintf("execution-wire-%d", next), CommandID: command, Target: control.Target{WorkspaceID: attached.WorkspaceID, SessionID: created.SessionID, ResourceID: id}, Input: raw}
 		var result control.Result
-		payload, _ := json.Marshal(request)
+		payload, _ := coreprotocol.Marshal(coreprotocol.Ptr(request))
 		response, err := c.CallRequest(ctx, coreprotocol.Request{ID: request.ID, Owner: c.Owner(), WorkspaceID: attached.WorkspaceID, Method: coreprotocol.ControlExecute, Payload: payload})
 		if err != nil || response.Error != nil {
 			t.Fatal(err, response.Error)
 		}
-		if err := json.Unmarshal(response.Payload, &result); err != nil {
+		if err := coreprotocol.Decode(response.Payload, &result); err != nil {
 			t.Fatal(err)
 		}
 		if result.Fault != nil {
@@ -166,7 +159,7 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 	if backend.ExecutionSelection().ID != execution.ID {
 		t.Fatal("selection not persisted in real backend")
 	}
-	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: parentID, Text: "Read dirty baseline in selected execution.", DraftRevision: 1}, nil); err != nil {
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: parentID, Text: "Read dirty baseline in selected execution.", DraftRevision: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {

@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -76,6 +77,34 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 	if command.Kind != shellterm.CommandReadRows {
 		command.Viewport = viewport.Viewport
 	}
+	if stream, ok := service.(shellport.StreamingTerminals); ok {
+		stream.StartGrid(command.ID)
+		if command.Kind != shellterm.CommandReadRows && command.Kind != shellterm.CommandTakeControl {
+			input := workspace.TerminalInput{Lease: lease, Key: command.Key, Mouse: command.Mouse, Data: command.Paste, Focused: command.Focused, Cols: command.Cols, Rows: command.Rows}
+			switch command.Kind {
+			case shellterm.CommandKey:
+				input.Kind = "key"
+			case shellterm.CommandMouse:
+				input.Kind = "mouse"
+			case shellterm.CommandPaste:
+				input.Kind = "paste"
+			case shellterm.CommandFocus:
+				input.Kind = "focus"
+			case shellterm.CommandResize:
+				input.Kind = "resize"
+			}
+			for i := 0; i < max(1, command.Repeat); i++ {
+				if err := stream.SendInput(input); err != nil {
+					m.reportTerminalIOError("input", command.ID, err)
+					break
+				}
+				if command.Kind == shellterm.CommandKey {
+					m.predictTerminalKey(command.ID, command.Key)
+				}
+			}
+			return nil
+		}
+	}
 	run := func() tea.Msg {
 		result := terminalProjectionMsg{service: service, generation: generation, command: command}
 		for i := 0; i < max(1, command.Repeat); i++ {
@@ -101,7 +130,8 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 				break
 			}
 		}
-		if result.err == nil && command.Kind != shellterm.CommandReadRows {
+		_, streaming := service.(shellport.StreamingTerminals)
+		if result.err == nil && command.Kind != shellterm.CommandReadRows && !streaming {
 			result.projection, result.err = service.Rows(command.ID, terminalvt.RowRequest{Start: viewport.Start, HistoryEpoch: viewport.HistoryEpoch, HistoryBase: viewport.HistoryBase})
 		}
 		return result
@@ -131,6 +161,10 @@ func (m *App) nextTerminalCommand() tea.Cmd {
 }
 
 func (m *App) terminalRefresh(id string) tea.Cmd {
+	if stream, ok := m.ws.Terminals().(shellport.StreamingTerminals); ok {
+		stream.StartGrid(id)
+		return nil
+	}
 	if m.terminalReads == nil {
 		m.terminalReads = make(map[string]bool)
 		m.terminalDirty = make(map[string]bool)
@@ -182,6 +216,16 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 		nextInput = m.nextTerminalCommand()
 	}
 	id := msg.command.ID
+	if _, streaming := msg.service.(shellport.StreamingTerminals); streaming && msg.command.Kind == shellterm.CommandTakeControl && msg.err == nil {
+		if m.terminalLeases == nil {
+			m.terminalLeases = make(map[string]workspace.TerminalLease)
+		}
+		m.terminalLeases[id] = msg.lease
+		if screen := m.termScreens[id]; screen != nil {
+			screen.SetControlled(true)
+		}
+		return tea.Batch(nextInput, m.drainTerminalCommands())
+	}
 	if m.terminalClosed[id] {
 		return nextInput
 	}
@@ -237,9 +281,65 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 	return tea.Batch(nextInput, next, m.drainTerminalCommands())
 }
 
+func (m *App) applyTerminalFrame(msg shellport.TerminalFrameMsg) tea.Cmd {
+	result := context.Canceled
+	defer func() {
+		if msg.Applied != nil {
+			select {
+			case msg.Applied <- result:
+			default:
+			}
+		}
+	}()
+	if m.ws == nil || msg.Service != m.ws.Terminals() || m.terminalClosed[msg.ID] {
+		return nil
+	}
+	if stream, ok := msg.Service.(shellport.StreamingTerminals); ok {
+		if err := stream.ApplyTerminalFrame(&msg); err != nil {
+			result = err
+			return nil
+		}
+	}
+	if msg.Err != nil {
+		// An input failure rolls provisional ink back to the latest authority,
+		// resolved on Update rather than captured by a racing transport worker.
+		if msg.Projection.Info.ID != "" {
+			if screen := m.termScreens[msg.ID]; screen != nil {
+				screen.SetImmutableProjection(msg.Projection)
+				if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
+					fw.MarkContentDirty()
+				}
+			}
+		}
+		if errors.Is(msg.Err, workspace.ErrTerminalControl) {
+			delete(m.terminalLeases, msg.ID)
+			if screen := m.termScreens[msg.ID]; screen != nil {
+				screen.SetControlled(false)
+			}
+		}
+		m.reportTerminalIOError("stream", msg.ID, msg.Err)
+		result = msg.Err
+		return nil
+	}
+	screen := m.ensureTermScreen(msg.ID, msg.Projection.Info.Title)
+	// SDK stream publications (including authoritative prediction rollbacks)
+	// retain immutable rows for their lifetime; do not clone the full grid again.
+	screen.SetImmutableProjection(msg.Projection)
+	m.applyTerminalTitle(msg.ID, msg.Projection.Info.Title)
+	if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
+		fw.MarkContentDirty()
+	}
+	result = nil
+	return m.drainTerminalCommands()
+}
+
 func (m *App) drainTerminalCommands() tea.Cmd {
 	var commands []tea.Cmd
-	for _, screen := range m.termScreens {
+	for id, screen := range m.termScreens {
+		if stream, ok := m.ws.Terminals().(shellport.StreamingTerminals); ok {
+			viewport := screen.ViewportRead()
+			stream.SetViewport(id, terminalvt.RowRequest{Start: viewport.Start, HistoryEpoch: viewport.HistoryEpoch, HistoryBase: viewport.HistoryBase})
+		}
 		for _, command := range screen.TakePendingCommands() {
 			commands = append(commands, m.terminalCommand(command))
 		}

@@ -60,6 +60,7 @@ func (wm *WindowManager) AddWindow(fw *FloatingWindow) {
 func (wm *WindowManager) AddWindowPassive(fw *FloatingWindow) {
 	wm.windows = append(wm.windows, fw)
 	wm.zOrder = append(wm.zOrder, fw)
+	wm.needsRender = true
 }
 
 // RemoveWindow removes a floating window by ID.
@@ -69,6 +70,7 @@ func (wm *WindowManager) RemoveWindow(id string) {
 	for i, fw := range wm.windows {
 		if fw.ID == id {
 			wm.windows = append(wm.windows[:i], wm.windows[i+1:]...)
+			wm.needsRender = true
 			break
 		}
 	}
@@ -114,6 +116,10 @@ func (wm *WindowManager) Windows() []*FloatingWindow {
 	copy(result, wm.windows)
 	return result
 }
+
+// HasWindows reports whether any independently owned floating layer is mounted.
+// Callers inspecting composition requirements need not allocate a window list.
+func (wm *WindowManager) HasWindows() bool { return len(wm.windows) != 0 }
 
 // WindowAt resolves the current pointer owner without focusing or raising it.
 // Input policy and tab menus must use the same z-order and modal boundary as

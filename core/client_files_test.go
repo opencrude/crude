@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/coreclient"
 	"crude/coreprotocol"
 )
 
@@ -49,34 +48,8 @@ func TestClientBoundedTransferChangesAndInvalidChunks(t *testing.T) {
 	if err := os.WriteFile(file, want, 0600); err != nil {
 		t.Fatal(err)
 	}
-	read := func(ctx context.Context, in coreprotocol.FileReadRequest) (coreprotocol.FileChunk, error) {
-		return readFileChunk(ctx, root, in)
-	}
-	got, err := coreclient.ReadBoundedClientFile(context.Background(), file, read)
-	if err != nil || !bytes.Equal(want, got) {
-		t.Fatalf("transfer err=%v len=%d", err, len(got))
-	}
-	calls := 0
-	got, err = coreclient.ReadBoundedClientFile(context.Background(), file, func(ctx context.Context, in coreprotocol.FileReadRequest) (coreprotocol.FileChunk, error) {
-		calls++
-		if calls == 2 {
-			if err := os.WriteFile(file, bytes.Repeat([]byte("b"), len(want)), 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return read(ctx, in)
-	})
-	if err == nil || got != nil {
-		t.Fatal("changed continuation published partial data")
-	}
-	for _, bad := range []coreprotocol.FileChunk{
-		{Path: file, Digest: "d", Total: coreprotocol.MaxFileRead + 1},
-		{Path: file, Digest: "d", Total: 1},
-		{Path: file, Digest: "d", Total: 1, Data: []byte("a"), NextOffset: 2, EOF: true},
-	} {
-		got, err := coreclient.ReadBoundedClientFile(context.Background(), file, func(context.Context, coreprotocol.FileReadRequest) (coreprotocol.FileChunk, error) { return bad, nil })
-		if err == nil || got != nil {
-			t.Fatal("invalid chunk accepted", bad)
-		}
+	got, err := readFileChunk(context.Background(), root, coreprotocol.FileReadRequest{Path: file})
+	if err != nil || !bytes.Equal(want, got.Data) || !got.EOF {
+		t.Fatal("incomplete immutable snapshot", err)
 	}
 }

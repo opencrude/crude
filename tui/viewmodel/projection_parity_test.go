@@ -267,8 +267,8 @@ func TestLiveAndHydratedParallelAgentIdentitiesAreIdentical(t *testing.T) {
 		root, recovered := newParityRenderer(), newParityRenderer()
 		root.SetSize(width, 40)
 		recovered.SetSize(width, 40)
-		root.SyncMessages(live, 1)
-		recovered.SyncMessages(ChatMessagesFromViews(views), 1)
+		root.SyncMessages(live, 1, 0)
+		recovered.SyncMessages(ChatMessagesFromViews(views), 1, 0)
 		for _, expand := range []bool{false, true} {
 			left, _, _ := root.ExportMessageRows(width)
 			right, _, _ := recovered.ExportMessageRows(width)
@@ -384,8 +384,8 @@ func TestLiveAndHydratedActivityGroupsAreIdentical(t *testing.T) {
 	}
 	hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(history))
 	lr, hr := newParityRenderer(), newParityRenderer()
-	lr.SyncMessages(live, 1)
-	hr.SyncMessages(hydrated, 1)
+	lr.SyncMessages(live, 1, 0)
+	hr.SyncMessages(hydrated, 1, 0)
 	left, _, _ := lr.ExportMessageRows(200)
 	right, _, _ := hr.ExportMessageRows(200)
 	if len(left) != len(right) || len(left) != 5 {
@@ -418,14 +418,14 @@ func TestLiveAndHydratedActivityGroupsAreIdentical(t *testing.T) {
 func renderLive(t *testing.T, toolID string, c projectionCase, expanded bool) []chatprojection.MessageRow {
 	t.Helper()
 	r := newParityRenderer()
-	r.SyncMessages(liveToolMessages(t, toolID, c), 1)
+	r.SyncMessages(liveToolMessages(t, toolID, c), 1, 0)
 	return exportRows(t, r, expanded)
 }
 
 func renderHydrated(t *testing.T, toolID string, c projectionCase, expanded bool) []chatprojection.MessageRow {
 	t.Helper()
 	r := newParityRenderer()
-	r.SyncMessages(ChatMessagesFromViews(hydratedViews(t, toolID, c)), 1)
+	r.SyncMessages(ChatMessagesFromViews(hydratedViews(t, toolID, c)), 1, 0)
 	return exportRows(t, r, expanded)
 }
 
@@ -599,7 +599,7 @@ func TestPaintedCommandRowShowsRealOperators(t *testing.T) {
 		t.Fatalf("live messages = %d, want 1", len(messages))
 	}
 	r := newParityRenderer()
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(200)
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))

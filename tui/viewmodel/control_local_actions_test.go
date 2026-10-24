@@ -14,6 +14,7 @@ import (
 	captypes "crude/types/capability"
 	"crude/types/control"
 	"crude/workspace"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -85,7 +86,7 @@ func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
 	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/search", ui.ControlOperation{Verb: "set_value", Value: json.RawMessage(`"Semantic"`)}, control.Write, false); r.State != control.Applied {
 		t.Fatal("search", r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "Semantic curation") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Semantic curation") {
 		t.Fatal("search result not painted")
 	}
 	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/list/control", ui.ControlOperation{Verb: "activate", ItemID: record.ID}, control.Read, true); r.State != control.Failed {
@@ -94,7 +95,7 @@ func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
 	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/list/control", ui.ControlOperation{Verb: "activate", ItemID: record.ID}, control.Read, false); r.State != control.Applied {
 		t.Fatal("inspect", r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "Revision: 1") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Revision: 1") {
 		t.Fatal("detail not painted")
 	}
 	activate := ui.ControlOperation{Verb: "activate"}
@@ -114,7 +115,7 @@ func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
 	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/action-list", ui.ControlOperation{Verb: "activate", ItemID: "memorybrowser.retire"}, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "revision 2?") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "revision 2?") {
 		t.Fatal("exact retire preview missing")
 	}
 	// Another shell curates the record after preview. The old revision must fail
@@ -145,7 +146,7 @@ func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
 		t.Fatal("retire", r)
 	}
 	detail, err = one.app.ws.InspectMemory(context.Background(), record.ID)
-	if err != nil || detail.Record.Revision != 4 || !strings.Contains(ansi.Strip(one.app.View().Content), "superseded") {
+	if err != nil || detail.Record.Revision != 4 || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "superseded") {
 		t.Fatalf("retire not durable/painted: %+v %v", detail, err)
 	}
 	if two.app.Input.Value() != "peer memory draft" || two.app.memoryBrowserVisible() {
@@ -169,7 +170,7 @@ func TestConnectedLocalBoardOverflowAndPickerNavigation(t *testing.T) {
 	if r := invokeLocalControl(t, runtime, shells, one, "boardbrowser/action-list", ui.ControlOperation{Verb: "activate", ItemID: "board.refresh"}, control.Read, false); r.State != control.Applied {
 		t.Fatal("refresh", r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "Refresh") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Refresh") {
 		t.Fatal("Board overflow not painted")
 	}
 	one.app.width = 120
@@ -179,7 +180,7 @@ func TestConnectedLocalBoardOverflowAndPickerNavigation(t *testing.T) {
 		t.Fatal(r)
 	}
 	localControlNode(t, one.app, "capability-picker/card/observed/switch")
-	if paint := ansi.Strip(one.app.View().Content); !strings.Contains(paint, "Documentation") || !strings.Contains(paint, "Open a session") {
+	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Documentation") || !strings.Contains(paint, "Open a session") {
 		t.Fatal("capability card or no-session state not painted", paint)
 	}
 	if _, _, err := one.app.resolveControlHost("boardbrowser/action-list", one.app.ws.(shellport.ShellControl).ControlIdentity()); err == nil {

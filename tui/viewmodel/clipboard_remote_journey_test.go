@@ -15,9 +15,10 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/clipboard"
 	"crude/provider"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Exercise the actual shell -> framed client -> core store -> provider route,
@@ -120,7 +121,7 @@ func connectedClipboardJourney(t *testing.T, size int, native bool, gesture tea.
 	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, app, cmd)
 	admissionElapsed := time.Since(sendStart)
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return strings.Contains(app.View().Content, "clipboard accepted") })
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return strings.Contains(app.View().RenderContent(), "clipboard accepted") })
 	t.Logf("image=%d bytes capture=%v admission=%v send-to-visible=%v", len(data), captureElapsed, admissionElapsed, time.Since(sendStart))
 	request := <-requests
 	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)

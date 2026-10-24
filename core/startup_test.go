@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -41,13 +40,13 @@ func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
 	for _, root := range []string{home, desktop, filepath.VolumeName(home) + string(filepath.Separator)} {
 		out := callCore(t, c, "inspect", "", coreprotocol.StartupInspect, coreprotocol.StartupInspectRequest{Root: root})
 		var snapshot coreprotocol.StartupSnapshot
-		if err := json.Unmarshal(out.Payload, &snapshot); err != nil {
+		if err := coreprotocol.Decode(out.Payload, &snapshot); err != nil {
 			t.Fatal(err)
 		}
 		if snapshot.FolderKind == "" || snapshot.PathError != "" {
 			t.Fatalf("not classified: %+v", snapshot)
 		}
-		raw, _ := json.Marshal(coreprotocol.AttachRequest{Root: root})
+		raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AttachRequest{Root: root}))
 		attached := c.Call(t.Context(), coreprotocol.Request{ID: "forbidden-attach", Owner: c.Owner, Method: coreprotocol.Attach, Payload: raw})
 		if attached.Error == nil || attached.Error.Code != "project_folder_required" {
 			t.Fatalf("top-level attached: %+v", attached)
@@ -55,7 +54,7 @@ func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
 	}
 	var browse coreprotocol.StartupBrowseResult
 	result := callCore(t, c, "browse", "", coreprotocol.StartupBrowse, coreprotocol.StartupBrowseRequest{Path: desktop})
-	if err := json.Unmarshal(result.Payload, &browse); err != nil {
+	if err := coreprotocol.Decode(result.Payload, &browse); err != nil {
 		t.Fatal(err)
 	}
 	if len(browse.Entries) != 1 || browse.Entries[0].Path != project {
@@ -63,7 +62,7 @@ func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
 	}
 	var catalog workspace.BrowserCatalog
 	result = callCore(t, c, "catalog", "", coreprotocol.StartupCatalog, coreprotocol.StartupCatalogRequest{Root: desktop})
-	if err := json.Unmarshal(result.Payload, &catalog); err != nil {
+	if err := coreprotocol.Decode(result.Payload, &catalog); err != nil {
 		t.Fatal(err)
 	}
 	if len(catalog.Entries) != 1 || catalog.Entries[0].Path != project {
@@ -89,7 +88,7 @@ func TestStartupProjectAndLinkAdmission(t *testing.T) {
 	c, _ := r.Connect("project-admission")
 	defer c.Close()
 	for _, root := range []string{project, filepath.Join(project, "missing")} {
-		raw, _ := json.Marshal(coreprotocol.AttachRequest{Root: root})
+		raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AttachRequest{Root: root}))
 		result := c.Call(t.Context(), coreprotocol.Request{ID: "attach", Owner: c.Owner, Method: coreprotocol.Attach, Payload: raw})
 		if result.Error == nil {
 			t.Fatal("fixture unexpectedly attached")
@@ -160,7 +159,7 @@ func TestStartupCloseCancelsAndJoinsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, _ := r.Connect("closing-startup")
-	raw, _ := json.Marshal(coreprotocol.StartupInspectRequest{Root: t.TempDir()})
+	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.StartupInspectRequest{Root: t.TempDir()}))
 	result := c.Dispatch(context.Background(), coreprotocol.Request{ID: "read", Owner: c.Owner, Method: coreprotocol.StartupInspect, Payload: raw})
 	<-owner.started
 	done := make(chan error, 1)

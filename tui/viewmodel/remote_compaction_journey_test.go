@@ -101,7 +101,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 		for _, shell := range shells {
 			node := shell.app.ws.AgentMgr().Get(id)
 			if node.State.ActiveCompaction.Phase == "" ||
-				!strings.Contains(ansi.Strip(shell.app.View().Content), "Compacting context") {
+				!strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacting context") {
 				return false
 			}
 		}
@@ -132,7 +132,7 @@ func TestRemoteAppJourneyCompactionQueuesFromBothShells(t *testing.T) {
 	}
 	remoteJourneyUntil(t, shells, func() bool {
 		for _, shell := range shells {
-			if !strings.Contains(ansi.Strip(shell.app.View().Content), "ANSWER TO queued prompt two") ||
+			if !strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "ANSWER TO queued prompt two") ||
 				shell.app.ws.AgentActivity(id).Status.Phase != types.AgentCompleted {
 				return false
 			}
@@ -262,7 +262,7 @@ func TestRemoteAppJourneyStopCompactionPreservesQueuedPromptAndResumeIsPassive(t
 func pendingJourneyPrompt(app *App, id, text string) bool {
 	for _, message := range app.ws.AgentMgr().Get(id).State.Messages.Messages() {
 		if message.Role == workspace.MessageRoleUser && message.Content == text && message.PendingSteering {
-			return strings.Contains(ansi.Strip(app.View().Content), text)
+			return strings.Contains(ansi.Strip(app.View().RenderContent()), text)
 		}
 	}
 	return false

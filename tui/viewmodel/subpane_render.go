@@ -263,7 +263,7 @@ func (reg *subPaneProjectionRegistry) InvalidateAllMessages(paneID string) {
 
 // SyncFromWorkspace projects the workspace Conversation into the
 // projection's MessageList by stable ID/version. No-op when the
-// MessageList is already at this Conversation version (preserves
+// MessageList is already at this Conversation generation/version (preserves
 // retained caches, selection, scroll).
 func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversation *workspace.Conversation, scroll bool) {
 	p, ok := reg.projections[paneID]
@@ -273,22 +273,22 @@ func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversat
 	if conversation == nil {
 		return
 	}
-	if p.source == conversation && p.renderer.SourceVersion() == conversation.Version() {
+	if p.source == conversation && p.renderer.SourceVersion() == conversation.Version() && p.renderer.SourceGeneration() == conversation.SourceGeneration() {
 		return
 	}
-	if p.source != nil && p.source != conversation {
-		// The ID can be reused by a new canonical conversation. A fresh model
-		// fences captured gestures/anchors to the old source's exact lifetime.
+	if p.source != nil && (p.source != conversation || p.renderer.SourceGeneration() != conversation.SourceGeneration()) {
+		// The ID or revision can be reused by a replacement source. A fresh
+		// model fences captured gestures/anchors to the old source's lifetime.
 		p.scroll = ui.NewScrollModel()
 		p.scroll.SetAutoScroll(true)
 		p.renderer.BindPaneScroll(p.scroll)
 		p.compactToolLines = nil
 	}
 	messages, version := chatMessagesFromConversation(conversation)
-	if p.source != conversation && p.renderer.SourceVersion() == version {
-		p.renderer.SyncMessages(nil, 0)
+	if p.source != conversation {
+		p.renderer.InvalidateSource()
 	}
-	p.renderer.SyncMessages(messages, version)
+	p.renderer.SyncMessages(messages, version, conversation.SourceGeneration())
 	p.source = conversation
 	if scroll {
 		p.renderer.ScrollToBottom()

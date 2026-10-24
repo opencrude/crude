@@ -16,6 +16,7 @@ import (
 	"crude/types"
 	"crude/types/control"
 	"crude/workspace"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -33,7 +34,7 @@ func wire(t *testing.T, r *core.Runtime, id, root string) (*coreclient.Client, s
 	a, b := net.Pipe()
 	done := make(chan error, 1)
 	go func() { done <- core.ServeConnection(t.Context(), r, b) }()
-	c, err := coreclient.Dial(t.Context(), a, id)
+	c, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(a), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +46,6 @@ func wire(t *testing.T, r *core.Runtime, id, root string) (*coreclient.Client, s
 			t.Error("core wire did not close")
 		}
 	})
-	go func() {
-		for range c.Events() {
-		}
-	}()
 	var attached coreprotocol.AttachResult
 	if err := c.Call(t.Context(), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
@@ -72,18 +69,18 @@ func (c *interruptedMutation) Owner() coreprotocol.Owner {
 	return coreprotocol.Owner{ClientID: "interrupted", Epoch: 1}
 }
 
-func (c *interruptedMutation) CallRequest(ctx context.Context, request coreprotocol.Request) (coreprotocol.Response, error) {
-	if request.Method == coreprotocol.ControlResolve {
-		return coreprotocol.Response{Payload: json.RawMessage(`{}`)}, nil
+func (c *interruptedMutation) CallWith(ctx context.Context, _ string, method string, _ coreprotocol.Value, _ coreprotocol.Target, opts coreclient.CallOptions) (uint64, error) {
+	if method == coreprotocol.ControlResolve {
+		return 0, nil
 	}
 	c.executions++
-	c.requestID = request.ID
-	c.admitted <- request.ID
+	c.requestID = opts.ID
+	c.admitted <- opts.ID
 	<-ctx.Done()
-	return coreprotocol.Response{}, &coreclient.UncertainError{RequestID: request.ID, Cause: ctx.Err()}
+	return 0, &coreclient.UncertainError{RequestID: opts.ID, Cause: ctx.Err()}
 }
 
-func (c *interruptedMutation) Call(ctx context.Context, _ string, method string, input, output any) error {
+func (c *interruptedMutation) Call(ctx context.Context, _ string, method string, input coreprotocol.Value, output coreprotocol.Target) error {
 	if method != coreprotocol.GetReceipt {
 		return errors.New("unexpected operation")
 	}
@@ -94,13 +91,13 @@ func (c *interruptedMutation) Call(ctx context.Context, _ string, method string,
 	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 3*time.Second {
 		return errors.New("receipt observation is not bounded")
 	}
-	if input.(coreprotocol.ReceiptRequest).RequestID != c.requestID {
+	if input.(*coreprotocol.ReceiptRequest).RequestID != c.requestID {
 		return errors.New("receipt identity changed")
 	}
 	if c.disconnected {
 		return coreclient.ErrClosed
 	}
-	payload, _ := json.Marshal(control.Result{RequestID: c.requestID, OperationID: c.requestID, State: control.Committed})
+	payload, _ := coreprotocol.Marshal(coreprotocol.Ptr(control.Result{RequestID: c.requestID, OperationID: c.requestID, State: control.Committed}))
 	*output.(*coreprotocol.Receipt) = coreprotocol.Receipt{State: c.receiptState, Response: coreprotocol.Response{Payload: payload}}
 	return nil
 }
@@ -197,13 +194,13 @@ type lostReply struct {
 	executions int
 }
 
-func (c *lostReply) CallRequest(ctx context.Context, request coreprotocol.Request) (coreprotocol.Response, error) {
-	response, err := c.Client.CallRequest(ctx, request)
-	if request.Method == coreprotocol.ControlExecute && err == nil && response.Error == nil {
+func (c *lostReply) CallWith(ctx context.Context, workspace, method string, in coreprotocol.Value, out coreprotocol.Target, opts coreclient.CallOptions) (uint64, error) {
+	revision, err := c.Client.CallWith(ctx, workspace, method, in, out, opts)
+	if method == coreprotocol.ControlExecute && err == nil {
 		c.executions++
-		return coreprotocol.Response{}, &coreclient.UncertainError{RequestID: request.ID, Cause: context.DeadlineExceeded}
+		return 0, &coreclient.UncertainError{RequestID: opts.ID, Cause: context.DeadlineExceeded}
 	}
-	return response, err
+	return revision, err
 }
 
 func TestSDKCoreDomainAndExactShell(t *testing.T) {

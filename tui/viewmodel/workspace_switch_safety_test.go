@@ -32,6 +32,7 @@ func switchTestKey(t *testing.T, app *App, code rune) {
 	t.Helper()
 	_, cmd := app.Update(tea.KeyPressMsg{Code: code, Text: string(code)})
 	runAppCommand(t, app, cmd)
+	liveTestSync(t, app)
 }
 
 // Existing lifecycle tests begin with real navigation consent before exercising
@@ -98,7 +99,7 @@ func TestConnectedWorkspaceSwitchRailDirtyDecisionsRetainCoreAndComposer(t *test
 	app.setActivity(activityWorkspaces, true)
 	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: "target", ProjectName: "Target workspace", ProjectDir: target}}
 	app.forceFrame()
-	if !strings.Contains(ansi.Strip(app.View().Content), "Target workspace") {
+	if !strings.Contains(ansi.Strip(app.View().RenderContent()), "Target workspace") {
 		t.Fatal("rail catalog entry is not painted")
 	}
 	cmd := app.handleSidebarActivate(ui.ListItem{ID: sidebarItemWorkspacePrefix + target})
@@ -109,10 +110,11 @@ func TestConnectedWorkspaceSwitchRailDirtyDecisionsRetainCoreAndComposer(t *test
 	switchTestKey(t, app, tea.KeyLeft)
 	switchTestKey(t, app, tea.KeyEnter)
 	runAppCommand(t, app, app.drainLiveEditorCommands())
+	liveTestSync(t, app)
 	if app.DirtyPromptPath != first || app.DirtyPromptChoice != 2 {
 		t.Fatalf("first dirty decision/default lost: %q/%d", app.DirtyPromptPath, app.DirtyPromptChoice)
 	}
-	paint := ansi.Strip(app.View().Content)
+	paint := ansi.Strip(app.View().RenderContent())
 	if !strings.Contains(paint, "Switch workspace") || !strings.Contains(paint, "Close view") {
 		t.Fatalf("switch decision is not user-visible: %s", paint)
 	}
@@ -176,6 +178,7 @@ func TestConnectedWorkspaceSwitchCancelAndSaveFailureKeepEveryView(t *testing.T)
 			app.Input.SetInput("safe composer")
 			runAppCommand(t, app, confirmWorkspaceSwitchTest(t, app, t.TempDir()))
 			runAppCommand(t, app, app.drainLiveEditorCommands())
+			liveTestSync(t, app)
 			if app.DirtyPromptPath != p {
 				t.Fatalf("missing first prompt: %q", app.DirtyPromptPath)
 			}
@@ -331,6 +334,7 @@ func TestConnectedWorkspaceSwitchPeerDeltaAndPendingHistoryFailClosed(t *testing
 		t.Fatal("unpublished clean history was not held behind the editor barrier")
 	}
 	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+	liveTestSync(t, one.app)
 	if one.app.ws == old {
 		t.Fatal("settled history did not automatically resume switch")
 	}
@@ -350,6 +354,7 @@ func TestConnectedWorkspaceSwitchAttachFailureKeepsDirtyViews(t *testing.T) {
 	old := shell.app.ws
 	runAppCommand(t, shell.app, confirmWorkspaceSwitchTest(t, shell.app, filepath.Join(t.TempDir(), "missing")))
 	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
 	switchTestKey(t, shell.app, 'd')
 	if shell.app.ws != old || !ed.IsOpen() || ed.Value() != "Xbase" || !ed.Modified() || shell.app.workspaceAttachPending {
 		t.Fatal("destination failure closed the original dirty view")
@@ -364,6 +369,7 @@ func TestConnectedWorkspaceSwitchPendingSaveWaitsForAcknowledgement(t *testing.T
 	ed := liveTestOpen(t, shell.app, path)
 	ed.InsertRune('S')
 	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
 	shell.app.requestEditorSaveWithFormat(ed, workspace.DocumentSaveManual, false, false)
 	held := shell.app.drainLiveEditorCommands()
 	old := shell.app.ws
@@ -374,6 +380,7 @@ func TestConnectedWorkspaceSwitchPendingSaveWaitsForAcknowledgement(t *testing.T
 		t.Fatal("pending Save freezes input without visible preparation status")
 	}
 	runAppCommand(t, shell.app, held)
+	liveTestSync(t, shell.app)
 	data, err := os.ReadFile(path)
 	if err != nil || string(data) != "Sbase" || shell.app.ws == old || shell.app.ws.RootPath() != target {
 		t.Fatalf("Save acknowledgement did not safely resume intent: disk=%q error=%v root=%q", data, err, shell.app.ws.RootPath())
@@ -470,5 +477,76 @@ func TestConnectedWorkspaceSwitchUnsupportedComposerFailsClosed(t *testing.T) {
 				t.Fatal("unsupported draft was consumed or hidden behind pending switch")
 			}
 		})
+	}
+}
+
+func TestConnectedWorkspaceSwitchFirstTopicAndSwitchBackFence(t *testing.T) {
+	rt := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	shell := newRemoteJourneyShell(t, rt, root)
+	path := switchTestFile(t, root, "generation.txt", "base")
+	// Keep the independent topic FIFO held while installing the open receipt.
+	// The normal journey executor pumps both clocks and may already apply the
+	// initial topic, which would not exercise this detach-barrier interleaving.
+	runWithoutTopics := func(command tea.Cmd) {
+		queue := []tea.Cmd{command}
+		for steps := 0; len(queue) > 0; steps++ {
+			if steps >= 64 {
+				t.Fatal("held-topic open did not settle")
+			}
+			command := queue[0]
+			queue = queue[1:]
+			if command == nil {
+				continue
+			}
+			message := command()
+			if batch, ok := message.(tea.BatchMsg); ok {
+				queue = append(queue, batch...)
+			} else if message != nil {
+				_, follow := shell.app.Update(message)
+				queue = append(queue, follow)
+			}
+		}
+	}
+	runWithoutTopics(shell.app.openPaneFiles([]string{path}, shell.app.Win.ActiveGroup()))
+	ed := shell.app.EditorState.Tabs[path].Editor
+	if pending, err := shell.app.workspaceSwitchEditorPending(ed); err != nil || !pending {
+		t.Fatalf("first publication not part of detach barrier: %v %v", pending, err)
+	}
+	var held shellport.LiveDocumentsChangedMsg
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for held.DocumentID == "" {
+		select {
+		case msg := <-shell.fifo:
+			if topic, ok := msg.(shellport.LiveDocumentsChangedMsg); ok {
+				held = topic
+			} else {
+				_, cmd := shell.app.Update(msg)
+				runWithoutTopics(cmd)
+			}
+		case <-timer.C:
+			t.Fatal("initial document missing")
+		}
+	}
+	before := shell.app.workspaceSwitchGen.Load()
+	lifecycle := shell.app.beginWorkspaceSwitch()
+	lifecycle.restore(shell.app) // failed destination returns to exact same port
+	if shell.app.workspaceSwitchGen.Load() != before {
+		t.Fatal("fixture did not exercise same generation return")
+	}
+	shell.app.applyDocumentTopic(held)
+	if shell.app.liveEditors[ed].topicReady || len(shell.app.pendingDocumentTopics) != 0 {
+		t.Fatal("old queued publication survived switch-back")
+	}
+	liveTestSync(t, shell.app)
+	if !shell.app.liveEditors[ed].topicReady || ed.Value() != "base" {
+		t.Fatal("replacement topic did not restore live editor")
+	}
+	ed.InsertRune('X')
+	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
+	if ed.Value() != "Xbase" || ed.DocumentState().Revision != 2 {
+		t.Fatal("switch-back lost edit authority")
 	}
 }

@@ -102,7 +102,7 @@ func (w *Workspace) AppendAgentMessages(id string, messages []workspace.Message,
 	}
 	payload := coreprotocol.AppendMessagesRequest{AgentID: id, Messages: append([]workspace.Message(nil), messages...), Stopped: stopped}
 	w.commands.push(func(ctx context.Context) {
-		if err := w.call(ctx, coreprotocol.AgentAppendMessages, payload, &coreprotocol.BoolResult{}); err != nil {
+		if err := w.call(ctx, coreprotocol.AgentAppendMessages, &payload, &coreprotocol.BoolResult{}); err != nil {
 			w.logger.Warn("REMOTE", "append_messages_failed", "agent", id, "error", err.Error())
 		}
 	})
@@ -131,27 +131,30 @@ func (w *Workspace) CancelAgent(agentID string) {
 		request.OperationID = node.State.ActiveCompaction.OperationID
 	}
 	w.commands.push(func(ctx context.Context) {
-		if err := w.call(ctx, coreprotocol.CancelAgent, request, &struct{}{}); err != nil {
+		if err := w.call(ctx, coreprotocol.CancelAgent, request, &coreprotocol.Empty{}); err != nil {
 			w.logger.Warn("REMOTE", "cancel_failed", "agent", agentID, "error", err.Error())
 		}
 	})
 }
 
-// BeginAgentCancellation shows the stopping boundary immediately; the core's
-// cancellation reduction then becomes authoritative for every shell.
+// BeginAgentCancellation shows the stopping boundary immediately. Only the core
+// may settle transcript rows: AgentState.BeginCancellation also mutates its
+// Conversation, which would advance this replica beyond the next core delta.
 func (w *Workspace) BeginAgentCancellation(id string) bool {
 	node := w.view.AgentMgr.Get(id)
 	if node == nil || node.State == nil {
 		return false
 	}
-	node.State.BeginCancellation()
+	state := node.State
+	state.Running, state.Thinking, state.Streaming = false, false, false
+	state.Cancelling = true
 	return true
 }
 
 func (w *Workspace) CloseAgent(agentID string) {
 	request := coreprotocol.AgentRequest{AgentID: agentID, Generation: w.generation(agentID)}
 	w.commands.push(func(ctx context.Context) {
-		if err := w.call(ctx, coreprotocol.TerminateAgent, request, &struct{}{}); err != nil {
+		if err := w.call(ctx, coreprotocol.TerminateAgent, request, &coreprotocol.Empty{}); err != nil {
 			w.logger.Warn("REMOTE", "terminate_failed", "agent", agentID, "error", err.Error())
 		}
 	})
@@ -165,7 +168,7 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 		ActivePaths: append([]string(nil), input.ActivePaths...), DisplayText: input.DisplayText, ContextParts: append([]string(nil), input.ContextParts...)}
 	w.commands.push(func(ctx context.Context) {
 		var out coreprotocol.DecisionResult
-		if err := w.call(ctx, coreprotocol.SteerInput, request, &out); err != nil {
+		if err := w.call(ctx, coreprotocol.SteerInput, &request, &out); err != nil {
 			w.logger.Warn("REMOTE", "steer_failed", "agent", agentID, "error", err.Error())
 		}
 	})
@@ -179,7 +182,7 @@ func (w *Workspace) decide(request coreprotocol.DecisionRequest) bool {
 	}
 	w.commands.push(func(ctx context.Context) {
 		var out coreprotocol.DecisionResult
-		if err := w.call(ctx, coreprotocol.Decide, request, &out); err != nil {
+		if err := w.call(ctx, coreprotocol.Decide, &request, &out); err != nil {
 			w.logger.Warn("REMOTE", "decision_failed", "agent", request.AgentID, "error", err.Error())
 			w.reportFailure("Respond to agent", err)
 			w.requestResync()
@@ -196,13 +199,13 @@ func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions 
 
 func (w *Workspace) ResolveQuestionReceipt(ctx context.Context, agentID, blockID string, answers, questions map[string]string, cancelled bool) (coreprotocol.QuestionControlResult, error) {
 	var out coreprotocol.DecisionResult
-	err := w.call(ctx, coreprotocol.Decide, coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Answers: answers, Questions: questions, Cancelled: cancelled}, &out)
+	err := w.call(ctx, coreprotocol.Decide, &coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Answers: answers, Questions: questions, Cancelled: cancelled}, &out)
 	return coreprotocol.QuestionControlResult{Accepted: out.Accepted, BlockID: blockID}, err
 }
 
 func (w *Workspace) ResolveQuestionControl(ctx context.Context, request coreprotocol.QuestionControlRequest) (coreprotocol.QuestionControlResult, error) {
 	var out coreprotocol.QuestionControlResult
-	err := w.call(ctx, coreprotocol.QuestionControl, request, &out)
+	err := w.call(ctx, coreprotocol.QuestionControl, &request, &out)
 	return out, err
 }
 
@@ -257,7 +260,7 @@ func (w *Workspace) PrepareAsyncCommandTermination(agentID string, ref fileio.As
 		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 		defer cancel()
 		var out coreprotocol.BoolResult
-		if err := w.call(ctx, coreprotocol.AgentStopCommand, request, &out); err != nil {
+		if err := w.call(ctx, coreprotocol.AgentStopCommand, &request, &out); err != nil {
 			return err
 		}
 		if out.Error != "" {
@@ -325,7 +328,7 @@ func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *works
 		ActivePaths: append([]string(nil), input.ActivePaths...), DraftRevision: intent.DraftRevision,
 		DisplayText: input.DisplayText, ContextParts: append([]string(nil), input.ContextParts...)}
 	var out coreprotocol.InputResult
-	if err := w.call(ctx, coreprotocol.SubmitInput, request, &out); err != nil {
+	if err := w.call(ctx, coreprotocol.SubmitInput, &request, &out); err != nil {
 		return workspace.InputAdmissionResult{Status: workspace.InputAdmissionRejected, Err: err}
 	}
 	result := workspace.InputAdmissionResult{Status: out.Status, Receipt: out.Receipt}

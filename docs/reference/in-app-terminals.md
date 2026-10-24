@@ -143,12 +143,102 @@ or second query-reply source.
 Input and resize require the exact `TerminalLease`: terminal ID, client ID,
 attachment epoch and lease generation. A second controller cannot silently steal
 it; release/detach invalidates only the exact owner. Viewers may read rows and
-select/scroll locally without input authority. The standalone shell admits
+select/scroll locally without input authority. The local/test adapter admits
 key/paste/focus/resize commands on Update into a bounded 256-command FIFO, then
 executes service calls off Update. Resize geometry is acknowledged from the
 returned projection, not optimistically committed by Paint. Async results are
 fenced to the service and workspace-switch generation; stale reads cannot
 replace a newer page.
+
+### Grid topics and ordered input streams
+
+Connected active viewports follow one acknowledged terminal topic, not an
+invalidation followed by a `terminal.rows` polling loop. `TerminalFrame` carries a
+base sequence, metadata without duplicate cell arrays, incremental style
+dictionary definitions, packed changed rows and copy/scroll operations. Packed
+rows preserve width/wrap metadata, dictionary IDs, inline short style runs and
+repeat-cell runs; the dictionary is bounded (4096 entries), so truecolor pixels
+cannot grow it without limit. Ghostty dirty-row identity reuses unchanged detached
+rows and their packed bytes without exporting/comparing every cell again.
+
+Each viewer retains previous and current acknowledged/outstanding bases across a
+carrier switch. A matching applied sequence continues delta delivery; an unknown
+base or incompatible grid/history identity gets a complete reset. Only a fully
+validated frame installed by the owning Update releases its ACK.
+`SubscribeTerminalApplied` waits on the publication's `Applied` completion; FIFO
+admission alone is not application. Update fences service, terminal, current
+subscription/client and closure before installing rows, modes and prediction
+state. Cancellation or rejection releases the waiter without an applied ACK.
+The SDK allocates one bounded-width buffer per changed row; it never recycles a
+published row into a later frame. The screen/view's explicit immutable-install
+entry point retains those rows and detaches only page headers/wrap metadata.
+Selection, paint and cache eviction read or drop rows, never modify them. Mutable
+page/prediction injection keeps its separate detachment contract, while both
+entry points share the same viewport, history and generation-fencing algorithm.
+Ordered input validates its lease/stream/sequence, encodes against the same
+engine modes, enqueues the nonblocking PTY write and commits its receipt under
+one control boundary. It never drops and reacquires the engine lock between
+those stages, so a fullscreen export cannot repeatedly overtake one key or a
+replacement lease inherit a partially committed input sequence.
+The producer conflates pending output
+and schedules the latest observation as mosh's SSP sender does: a change after
+quiet waits only `SEND_MINDELAY` (8 ms) for the application's burst, successive
+frames stay `max(display interval, min(RTT / 2, 250 ms))` apart, and an idle view
+arms no timer (a DEC 2026 hold is re-read each interval). PTY mutation and query
+replies continue immediately. The shell presentation owner
+supplies measured display cadence independently of the emulator/carrier:
+`perf.LoopObserver` samples actual nonempty writer duration, clamped 16–250 ms,
+and Update declares it through `DisplayPacer`. Idle gaps are not cadence.
+
+Input uses a stable stream identity for the exact controller lease and a
+contiguous sequence log retained until acknowledgement. Carrier replacement can
+reattach/resend the same unacknowledged batch; the service deduplicates by sequence
+instead of executing keys/paste/resize twice. ACKs retain per-sequence failures,
+so a failed PTY write is not acknowledged as successful input. Bounded queue
+admission fails explicitly rather than dropping key, paste, button, focus or
+resize events. Only pointer **motion** has a frame-bounded latest slot; clicks,
+releases and other ordered input are never conflated. Release/reacquisition creates
+a new lease/input identity and cannot revive old authority.
+
+On a non-local link, successfully admitted safe printable ASCII keys may receive
+a private echo at the live primary-screen cursor. The policy is mosh's adaptive
+display on its send interval `ceil(SRTT / 2)` clamped to 20–250 ms: predictions
+show once SRTT exceeds 60 ms and stop at 40 ms or less with none outstanding;
+they are underlined above 160 ms until it falls to 100 ms.
+Local IPC, modifiers, paste/control keys, alternate-screen/mouse-reporting mode,
+synchronized updates, hidden cursor and unsafe edge/width conditions do not
+predict. This is a disposable presentation overlay, not canonical VT state or
+proof of remote echo; any authoritative frame replaces it and failures roll it
+back. Selection/copy and the core parser never treat speculative ink as source.
+
+`terminal.rows` remains an explicit bounded on-demand scrollback/selection read.
+Viewport intent changes the grid subscription's history anchor; no hidden full
+scrollback stream or second parser is introduced. Existing complete-viewport,
+history-epoch and selection safeguards below apply to both paths.
+
+### Detached control glyphs and clipboard offers
+
+Ghostty remains the sole parser. At the engine's native-to-detached viewport
+boundary, stored C0, DEL and C1 control codepoints (including ground-state
+CAN/SUB) become U+FFFD, preserving the parser's cursor/cell geometry. The same
+normalization covers live, historical and synchronized rows and copy/paint
+consumers; Unicode grapheme format characters remain unchanged. Packed-row
+decoding still rejects control codepoints. Do not relax codecs, reinterpret VT
+sequences or add an upstream/second parser to hide stored controls.
+
+Native row extraction batches scalar cells and UTF-8 through one pointer-free C
+transfer per actual-width row, rather than crossing cgo for every cell field.
+The engine owns bounded reusable row scratch; an oversized grapheme sizes the
+actual row before one exact retry. Published rows retain an exact-length copied
+string, never mutable scratch or C memory. Resize/close release scratch, and all
+live/history/synchronized exports keep the same literal glyph/style/wrap rules.
+
+OSC clipboard data follows the private session stop-and-wait journal to the exact
+controller, not a workspace broadcast. Core and shell private inboxes are bounded
+at 16 offers / 1 MiB; overflow is an explicit local refusal, not an unbounded
+queue or a reason to starve control/capability requests. Workspace, attachment
+and lease-generation fences reject stale offers. Copy remains an explicit local
+menu action, never an automatic system-clipboard write.
 
 ### Completed-frame publication
 
@@ -170,11 +260,11 @@ viewport in place. A history-identity change at commit clears incompatible
 selection once. Read sequences fence asynchronous pages even when timeout
 release changes the visual state without advancing PTY ingress generation.
 
-The normal shell cursor tick queues a fenced asynchronous row read after one
-second while synchronization is outstanding. This releases an abandoned update
-even when no further output arrives; the engine owns the deadline and has no
-timer goroutine. The next ordinary idle tick may add up to its 400 ms cadence to
-that retry. Resize releases synchronization immediately under Ghostty's contract.
+The terminal topic checks outstanding synchronization on its paced timer even
+without further output; explicit local/read consumers may also request a fenced
+page. The engine owns the one-second abandoned-update deadline, not a second
+parser or timer goroutine. Resize releases synchronization immediately under
+Ghostty's contract.
 
 `TestHighRateSynchronizedOutputNeverPresentsPartialFrame` exercises 120 split
 alternate-screen redraws through the real engine, terminal screen and ANSI
@@ -186,7 +276,7 @@ tear-free on every outer emulator.
 
 The native Windows ConPTY transport preserves DEC 2026 in a paced PowerShell
 child probe, but can emit the reset before its separately buffered cursor
-home/show. The shell coalesces both terminal invalidations **and asynchronous
+home/show. The shell coalesces both terminal publication opportunities **and asynchronous
 projection completions** to the same 16 ms latest-state deadline; every returned
 projection is installed immediately. This avoids making every PTY page response
 an accidental forced presentation. A native 120-update probe observed zero blank
@@ -224,10 +314,11 @@ history/grid transitions rather than copied from unrelated rows.
 ### Streaming scrollback publication
 
 Scroll intent, presented viewport and PTY ingress have independent clocks. The
-shell snapshots `Screen.ViewportRead` on Update and performs one bounded
-`TerminalService.Rows(id, terminalvt.RowRequest)` off Update. Refreshes request
-the desired historical viewport directly, not the active grid followed by a
-second historical read. Count zero means one complete current-grid-height page;
+shell snapshots `Screen.ViewportRead` on Update, publishes its grid subscription
+anchor, and performs bounded on-demand
+`TerminalService.Rows(id, terminalvt.RowRequest)` off Update when history or copy
+needs an uncached page. Reads request the desired historical viewport directly,
+not the active grid followed by a second historical read. Count zero means one complete current-grid-height page;
 start `-1` explicitly follows the live tail, including output arriving between
 request admission and execution. Wheel, page, Home, End and thumb gestures do not
 move the presented offset until every requested visible row is available. The
@@ -304,7 +395,7 @@ Explicit close is command-owned and does not publish a `TerminalClosedMsg`:
 workspace switches and close actions run on Bubble Tea's update goroutine, so
 synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
 Successful creation and explicit close publish the same actor-owned terminal
-inventory invalidation for both typed RPC and semantic control completion.
+inventory state publication for both typed RPC and semantic control completion.
 Existing peer shells discover even a silent PTY immediately; inventory never
 waits for the child's first output, title or exit. Every replica unmounts removed
 IDs, including docked and floating views, without closing an unrelated workspace
@@ -315,8 +406,8 @@ panel. Hide only changes presentation and is never a substitute for close.
 | Layer | Owns |
 |-------|------|
 | `workspace.TerminalManager` | PTY process lifecycle and bounded asynchronous I/O |
-| `workspace.TerminalService` | One VT engine/reply owner, metadata, exact controller leases and detached row pages |
-| `terminalvt/` | Neutral libghostty-vt engine, encoding, effects and row projections; no TUI imports |
+| `workspace.TerminalService` | One VT engine/reply owner, metadata, exact controller leases, deduplicated input and dirty detached rows |
+| `terminalvt/` | Neutral libghostty-vt engine, dirty-row reuse, packed dictionary/repeat rows, encoding and effects; no TUI imports |
 | `tui/termview` | Client-local row cache, scroll, selection/copy and snapshot painting |
 | `tui/screens/shellterm` | Immutable projection reader; key/paste/mouse/resize intents + Float/Dock/Close |
 | `tui/screens/termdock` | Workspace bottom-panel host, resize handle, compact numbered terminal tabs, shared header controls, and retained PTY mounting |
@@ -341,7 +432,7 @@ Dock/floating placement and focus belong to each shell (`App.terminalPlacements`
 not the PTY service. The service has one process/grid; a viewer does not acquire
 resize authority merely by laying out a screen. See the
 [core client protocol](core-client-protocol.md) for the implemented resource API
-and the still-outstanding connected-product cutover.
+and the outstanding native/performance acceptance gates.
 
 - **Docked:** Terminal mode in the workspace bottom panel (`tui/screens/termdock`)
   above the footer, independent of AI session `PanelDeck`. Available in launcher,

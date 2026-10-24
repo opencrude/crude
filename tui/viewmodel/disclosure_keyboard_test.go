@@ -31,7 +31,7 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 	ml.SyncMessages([]ttypes.ChatMessage{
 		{InternalID: "thought-1", Role: ttypes.RoleThinking, Content: "a b c", Time: time.Now(), ThinkingDuration: 2 * time.Second},
 		{InternalID: "tool-1", Role: ttypes.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: "ls\nfoo", Time: time.Now()},
-	}, 1)
+	}, 1, 0)
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Text: "ctrl+alt+e", Mod: tea.ModCtrl | tea.ModAlt, Code: 'e'})
 

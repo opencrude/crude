@@ -34,7 +34,7 @@ func TestLiveFinishAndHydratedStopPreserveContentWithoutTranscriptNotice(t *test
 		r := chatprojection.NewRenderer(theme.DefaultDark())
 		r.SetSize(100, 30)
 		r.SetChatAreaBounds(0, 30)
-		r.SyncMessages(messages, version)
+		r.SyncMessages(messages, version, 0)
 		got := r.ExportMessageRowsSnapshot(100)
 		if len(got.Rows) != 1 || got.Rows[0].ID != "partial" || got.ContentHeight != len(got.Rows[0].Lines) {
 			t.Fatalf("stop left a row or spacer after accepted content: %+v", got)

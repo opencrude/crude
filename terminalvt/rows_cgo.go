@@ -6,7 +6,11 @@ package terminalvt
 #include "ghostty_bridge.h"
 */
 import "C"
-import "unsafe"
+import (
+	"strings"
+	"unicode/utf8"
+	"unsafe"
+)
 
 // Rows returns a bounded page starting at the oldest retained history row.
 // start=-1 requests the active grid. A reader never leaves the engine scrolled.
@@ -15,6 +19,7 @@ func (e *Engine) Rows(request RowRequest) (result Projection, err error) {
 	if e == nil || e.closed {
 		return Projection{}, ErrClosed
 	}
+	e.streamGrid = nil // history paging moves the render viewport
 	if count < 0 || count > MaxSnapshotRows || start < -1 || request.ViewportStart < -1 {
 		return Projection{}, ErrBounds
 	}
@@ -123,7 +128,9 @@ func requestStart(request RowRequest, p Projection) int {
 }
 
 func (e *Engine) rowMetadata(start int) (Projection, error) {
-	C.crude_scroll_bottom(e.term)
+	if !bool(C.crude_viewport_pinned(e.term)) {
+		C.crude_scroll_bottom(e.term)
+	}
 	_, retained, _ := e.Scrollbar()
 	total := min(retained, e.scrollback+e.rows)
 	base := retained - total
@@ -178,6 +185,51 @@ func (e *Engine) syncHistoryIdentity(base, total int) error {
 	return nil
 }
 func (e *Engine) viewportRows() ([][]Cell, []bool, error) {
+	return e.viewportDirtyRows(nil, nil)
+}
+
+// StreamRows shares unchanged immutable rows among viewers. It is not a second
+// render state: DEC2026 and on-demand history still use the sole Ghostty owner.
+func (e *Engine) StreamRows(request RowRequest) (Projection, error) {
+	if e == nil || e.closed {
+		return Projection{}, ErrClosed
+	}
+	if request.Start >= 0 {
+		return e.Rows(request)
+	}
+	e.expireSynchronizedOutput()
+	e.readSequence++
+	var p Projection
+	var err error
+	if e.synchronized != nil {
+		p = *e.synchronized
+	} else {
+		p, err = e.rowMetadata(-1)
+		if err != nil {
+			return Projection{}, err
+		}
+		if C.ghostty_render_state_update(e.render, e.term) != C.GHOSTTY_SUCCESS {
+			return Projection{}, ErrUnavailable
+		}
+	}
+	var prior [][]Cell
+	var wraps []bool
+	if old := e.streamGrid; old != nil && old.Cols == p.Cols && old.GridRows == p.GridRows && old.HistoryEpoch == p.HistoryEpoch {
+		prior, wraps = old.Cells, old.Wrapped
+	}
+	p.Cells, p.Wrapped, err = e.viewportDirtyRows(prior, wraps)
+	if err != nil {
+		return Projection{}, err
+	}
+	p.ReadSequence = e.readSequence
+	e.streamGrid = &p
+	return p, nil
+}
+
+func (e *Engine) viewportDirtyRows(prior [][]Cell, wraps []bool) ([][]Cell, []bool, error) {
+	if e.cols < 8 || e.cols > MaxCols || e.rows < 2 || e.rows > MaxRows {
+		return nil, nil, ErrBounds
+	}
 	var it C.GhosttyRenderStateRowIterator
 	if C.ghostty_render_state_row_iterator_new(nil, &it) != C.GHOSTTY_SUCCESS {
 		return nil, nil, ErrUnavailable
@@ -193,8 +245,21 @@ func (e *Engine) viewportRows() ([][]Cell, []bool, error) {
 	defer C.ghostty_render_state_row_cells_free(cells)
 	out := make([][]Cell, 0, e.rows)
 	wrapped := make([]bool, 0, e.rows)
-	buf := make([]byte, 64)
+	if len(e.rowCells) != e.cols {
+		e.rowCells = make([]C.crude_export_cell, e.cols)
+		e.rowText = make([]byte, e.cols*4)
+	}
+	var dirty C.GhosttyRenderStateDirty
+	C.ghostty_render_state_get(e.render, C.GHOSTTY_RENDER_STATE_DATA_DIRTY, unsafe.Pointer(&dirty))
 	for len(out) < e.rows && bool(C.ghostty_render_state_row_iterator_next(it)) {
+		var rowDirty C.bool
+		C.ghostty_render_state_row_get(it, C.GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, unsafe.Pointer(&rowDirty))
+		index := len(out)
+		if dirty != C.GHOSTTY_RENDER_STATE_DIRTY_FULL && !bool(rowDirty) && index < len(prior) && index < len(wraps) && len(prior[index]) == e.cols {
+			out = append(out, prior[index])
+			wrapped = append(wrapped, wraps[index])
+			continue
+		}
 		var rawRow C.GhosttyRow
 		var wrap C.bool
 		if C.ghostty_render_state_row_get(it, C.GHOSTTY_RENDER_STATE_ROW_DATA_RAW, unsafe.Pointer(&rawRow)) != C.GHOSTTY_SUCCESS || C.ghostty_row_get(rawRow, C.GHOSTTY_ROW_DATA_WRAP, unsafe.Pointer(&wrap)) != C.GHOSTTY_SUCCESS {
@@ -203,42 +268,70 @@ func (e *Engine) viewportRows() ([][]Cell, []bool, error) {
 		if C.ghostty_render_state_row_get(it, C.GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, unsafe.Pointer(&cells)) != C.GHOSTTY_SUCCESS {
 			return nil, nil, ErrUnavailable
 		}
-		row := make([]Cell, 0, e.cols)
-		for len(row) < e.cols && bool(C.ghostty_render_state_row_cells_next(cells)) {
-			var raw C.GhosttyCell
-			var wide C.GhosttyCellWide
-			C.ghostty_render_state_row_cells_get(cells, C.GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, unsafe.Pointer(&raw))
-			C.ghostty_cell_get(raw, C.GHOSTTY_CELL_DATA_WIDE, unsafe.Pointer(&wide))
-			c := Cell{Width: 1, Text: " "}
-			if wide == C.GHOSTTY_CELL_WIDE_WIDE {
-				c.Width = 2
-			}
-			if wide == C.GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == C.GHOSTTY_CELL_WIDE_SPACER_HEAD {
-				c.Width = 0
-				c.Text = ""
-			}
-			enc := C.crude_cell_utf8(cells, (*C.uint8_t)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)))
-			if enc.result == C.GHOSTTY_OUT_OF_SPACE && enc.len <= 65536 {
-				buf = make([]byte, int(enc.len))
-				enc = C.crude_cell_utf8(cells, (*C.uint8_t)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)))
-			}
-			if enc.result == C.GHOSTTY_OUT_OF_SPACE {
+		enc := C.crude_export_row(cells, &e.rowCells[0], C.size_t(e.cols), (*C.uint8_t)(unsafe.Pointer(&e.rowText[0])), C.size_t(len(e.rowText)))
+		if bool(enc.bounds) {
+			return nil, nil, ErrBounds
+		}
+		if enc.result == C.GHOSTTY_OUT_OF_SPACE {
+			if enc.text_len > C.size_t(e.cols*65536) || enc.text_len <= C.size_t(len(e.rowText)) {
 				return nil, nil, ErrBounds
 			}
-			if enc.result == C.GHOSTTY_SUCCESS && enc.len > 0 && c.Width != 0 {
-				c.Text = C.GoStringN((*C.char)(unsafe.Pointer(&buf[0])), C.int(enc.len))
+			e.rowText = make([]byte, int(enc.text_len))
+			enc = C.crude_export_row(cells, &e.rowCells[0], C.size_t(e.cols), (*C.uint8_t)(unsafe.Pointer(&e.rowText[0])), C.size_t(len(e.rowText)))
+		}
+		if bool(enc.bounds) || enc.result == C.GHOSTTY_OUT_OF_SPACE || enc.text_len > C.size_t(len(e.rowText)) {
+			return nil, nil, ErrBounds
+		}
+		if enc.result != C.GHOSTTY_SUCCESS {
+			return nil, nil, ErrUnavailable
+		}
+		// One exact-length immutable copy per row. Substrings cannot retain the
+		// larger reusable scratch, and later Feed/Rows/Close cannot change them.
+		text := string(e.rowText[:int(enc.text_len)])
+		row := make([]Cell, e.cols)
+		for x, s := range e.rowCells {
+			c := Cell{Width: uint8(s.width), Text: " "}
+			if c.Width == 0 {
+				c.Text = ""
+			} else if s.text_len > 0 {
+				c.Text = detachedCellText(text[int(s.text_offset):int(s.text_offset+s.text_len)])
 			}
-			s := C.crude_cell_style_get(cells)
-			if s.result != C.GHOSTTY_SUCCESS {
-				return nil, nil, ErrUnavailable
-			}
-			c.FG = Color{bool(s.style.has_foreground), uint8(s.style.foreground.r), uint8(s.style.foreground.g), uint8(s.style.foreground.b)}
-			c.BG = Color{bool(s.style.has_background), uint8(s.style.background.r), uint8(s.style.background.g), uint8(s.style.background.b)}
-			c.Style = Style{bool(s.style.bold), bool(s.style.faint), bool(s.style.italic), bool(s.style.underline), bool(s.style.strikethrough), bool(s.style.inverse)}
-			row = append(row, c)
+			c.FG = Color{s.fg_set != 0, uint8(s.fg_r), uint8(s.fg_g), uint8(s.fg_b)}
+			c.BG = Color{s.bg_set != 0, uint8(s.bg_r), uint8(s.bg_g), uint8(s.bg_b)}
+			c.Style = Style{s.bold != 0, s.faint != 0, s.italic != 0, s.underline != 0, s.strikethrough != 0, s.inverse != 0}
+			row[x] = c
 		}
 		out = append(out, row)
 		wrapped = append(wrapped, bool(wrap))
+		clean := C.bool(false)
+		C.ghostty_render_state_row_set(it, C.GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, unsafe.Pointer(&clean))
 	}
+	if len(out) != e.rows || bool(C.ghostty_render_state_row_iterator_next(it)) {
+		return nil, nil, ErrBounds
+	}
+	clean := C.GhosttyRenderStateDirty(C.GHOSTTY_RENDER_STATE_DIRTY_FALSE)
+	C.ghostty_render_state_set(e.render, C.GHOSTTY_RENDER_STATE_OPTION_DIRTY, unsafe.Pointer(&clean))
 	return out, wrapped, nil
+}
+
+// detachedCellText is the one native-to-projection text boundary, shared by
+// live rows, historical pages, synchronized frames and their copy/paint users.
+// Ghostty d2c70a8's stream.zig handleCodepoint prints ground-state CAN/SUB (and
+// other controls above 0x0f); parse_table.zig instead cancels non-ground sequences.
+// Do not reinterpret that parser state here or change its cursor/cell widths.
+// Represent any stored terminal control with U+FFFD so direct rendering cannot
+// execute it in the outer terminal. Unicode format characters (ZWJ, VS, etc.)
+// are grapheme content, not terminal controls, and must remain byte-identical.
+func detachedCellText(text string) string {
+	for _, r := range text {
+		if r < 0x20 || r >= 0x7f && r <= 0x9f {
+			return strings.Map(func(r rune) rune {
+				if r < 0x20 || r >= 0x7f && r <= 0x9f {
+					return utf8.RuneError
+				}
+				return r
+			}, text)
+		}
+	}
+	return text
 }

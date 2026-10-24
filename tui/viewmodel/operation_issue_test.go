@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/screens/operationissue"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func paintedOperationIssue(t *testing.T, app *App) string {

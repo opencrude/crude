@@ -42,7 +42,7 @@ func (s *DocumentService) WithHistoryMutation(ctx context.Context, paths []strin
 	}
 	err := run()
 	for _, id := range changed {
-		s.reconcileLocked(id)
+		err = errors.Join(err, s.reconcileLocked(id))
 		if d := s.docs[id]; d != nil && d.snapshot.Conflict {
 			err = errors.Join(err, errors.New("disk effect requires document reconciliation; do not replay"))
 		}

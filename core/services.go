@@ -14,14 +14,20 @@ import (
 
 // serviceCall is a typed adapter, not a dynamic dispatcher. Preparation and decoding
 // happen on the actor; the captured operation alone runs on its joined worker.
-func serviceCall[I, O any](request coreprotocol.Request, run func(context.Context, I) (O, error)) (func(context.Context) coreprotocol.Response, bool) {
+func serviceCall[I, O any, PI interface {
+	*I
+	coreprotocol.Target
+}, PO interface {
+	*O
+	coreprotocol.Value
+}](request coreprotocol.Request, run func(context.Context, I) (O, error)) (func(context.Context) coreprotocol.Response, bool) {
 	var input I
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, PI(&input)); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	return func(ctx context.Context) coreprotocol.Response {
 		out, err := run(ctx, input)
-		result := response(request, out)
+		result := response[O, PO](request, out)
 		if err != nil {
 			result.Error = &coreprotocol.Fault{Code: "service_failed", Message: err.Error()}
 		}
@@ -341,12 +347,22 @@ func serviceMutation(method string) bool {
 func (a *actor) applyService(request coreprotocol.Request, result coreprotocol.Response) {
 	if result.Error == nil && serviceMutation(request.Method) {
 		a.changed(nil)
+		if strings.HasPrefix(request.Method, "git.") {
+			a.queueState(coreprotocol.TopicGit)
+		}
 	}
 	// Plan mode and goals are session state every shell paints.
 	if result.Error == nil && (request.Method == coreprotocol.AgentPlanMode || request.Method == coreprotocol.AgentGoal) {
-		var in coreprotocol.AgentIDRequest
-		if decode(request.Payload, &in) == nil {
-			a.changed([]string{in.AgentID})
+		if request.Method == coreprotocol.AgentPlanMode {
+			var in coreprotocol.AgentPlanModeRequest
+			if decodeRequest(request, &in) == nil {
+				a.changed([]string{in.AgentID})
+			}
+		} else {
+			var in coreprotocol.AgentGoalRequest
+			if decodeRequest(request, &in) == nil {
+				a.changed([]string{in.AgentID})
+			}
 		}
 	}
 }

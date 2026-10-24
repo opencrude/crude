@@ -15,9 +15,6 @@ import (
 // and authorized the actual descriptor. owner is trusted gateway attribution;
 // it is never derived from request input or a claimed shell ID.
 func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owner) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
-	if run, apply, handled := a.prepareControlHistory(in, owner); handled {
-		return run, apply, true
-	}
 	if strings.HasPrefix(in.CommandID, "execution.") {
 		return a.prepareControlExecution(in, owner)
 	}
@@ -44,13 +41,12 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 		"git.snapshot": coreprotocol.GitSnapshot, "git.review": coreprotocol.GitCompare,
 		"git.stage_reviewed": coreprotocol.GitStageReviewed, "git.discard_preview": coreprotocol.PreviewGitDiscard,
 		"git.discard_reviewed": coreprotocol.DiscardGitReviewed,
-		"history.timeline":     coreprotocol.HistoryTimeline, "history.plan": coreprotocol.HistoryPlan, "history.apply": coreprotocol.HistoryApply,
 	}
 	method, known := methods[in.CommandID]
 	if !known {
 		return nil, nil, false
 	} // session lifecycle is gateway-owned.
-	request := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: in.Target.WorkspaceID, Method: method, Payload: in.Input}
+	request := coreprotocol.Request{ID: in.ID, Owner: owner, WorkspaceID: in.Target.WorkspaceID, Method: method, Payload: in.Input, JSON: true}
 	if owner.ClientID == "" || owner.Epoch == 0 {
 		return controlFailure(in, control.Invalid, "trusted caller owner is required")
 	}
@@ -80,7 +76,7 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 		root, db, logger := a.ws.RootPath, a.ws.WorkspaceDB, a.ws.Logger
 		return wrapControlOperation(in, func(context.Context) coreprotocol.Response {
 			reader := &workspace.Workspace{RootPath: root, WorkspaceDB: db, Logger: logger}
-			return response(request, reader.ListSessions())
+			return response(request, coreprotocol.SessionRegistry(reader.ListSessions()))
 		}, nil)
 	}
 	var run func(context.Context) coreprotocol.Response
@@ -92,8 +88,6 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 		if run, handled = a.prepareFilesAtRoot(request, root); !handled {
 			run, handled = a.prepareServiceAtRoot(request, root)
 			apply = func(result coreprotocol.Response) error { a.applyService(request, result); return nil }
-		} else {
-			apply = func(result coreprotocol.Response) error { return a.applyFiles(request, result) }
 		}
 	}
 	if !handled {
@@ -149,13 +143,17 @@ func wrapControlOperation(in control.Request, run func(context.Context) coreprot
 			// semantic control result must not mistake that domain failure for a
 			// committed effect, while ordinary RPC consumers keep their contract.
 			if strings.HasPrefix(in.CommandID, "files.") && receipt.Error == nil {
-				var operation coreprotocol.FileOperationResult
-				if json.Unmarshal(receipt.Payload, &operation) == nil && operation.Error != "" {
+				if operation, ok := resultValue[coreprotocol.FileOperationResult](receipt); ok && operation.Error != "" {
 					receipt.Error = &coreprotocol.Fault{Code: "operation_failed", Message: operation.Error}
 				}
 			}
 		})
-		out := control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: append(json.RawMessage(nil), receipt.Payload...)}
+		// The semantic control output is the typed result as a JSON document.
+		var output json.RawMessage
+		if receipt.Value != nil {
+			output, _ = json.Marshal(receipt.Value)
+		}
+		out := control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: output}
 		if in.Target.ResourceID != "" {
 			out.ResourceIDs = []string{in.Target.ResourceID}
 		}
@@ -163,7 +161,7 @@ func wrapControlOperation(in control.Request, run func(context.Context) coreprot
 			ID          string `json:"id"`
 			OperationID string `json:"operation_id"`
 		}
-		if json.Unmarshal(receipt.Payload, &identity) == nil {
+		if json.Unmarshal(output, &identity) == nil {
 			for _, id := range []string{identity.ID, identity.OperationID} {
 				if id != "" && (len(out.ResourceIDs) == 0 || out.ResourceIDs[0] != id) {
 					out.ResourceIDs = append(out.ResourceIDs, id)

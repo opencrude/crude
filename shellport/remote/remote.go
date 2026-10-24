@@ -6,21 +6,18 @@ package remote
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
-	"strings"
+	"reflect"
 	"sync"
 	"time"
 
 	"crude/coreclient"
 	"crude/coreprotocol"
-	"crude/metrics"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/shellport"
+	"crude/terminalvt"
 	"crude/workspace"
 )
 
@@ -71,23 +68,32 @@ type Workspace struct {
 	busSet    chan struct{}
 	startOnce sync.Once
 
-	pending      pendingChanges
-	resync       chan struct{}
-	commands     commandQueue
-	status       *statusReplica
-	terminals    *terminalReplica
-	settings     *settingsReplica
-	settingsMu   sync.RWMutex
-	lsp          *lspReplica
-	documents    *documentService
-	startup      coreprotocol.StartupResult
-	registryMu   sync.RWMutex
-	registry     []sessiondb.SessionMeta
-	searchMu     sync.Mutex
-	searchSeq    uint64
-	searchCancel context.CancelFunc
-	progressMu   sync.Mutex
-	progress     map[string]func(string)
+	topicMu            sync.Mutex
+	topics             map[string]*replicaTopic
+	topicClients       map[string]*coreclient.Client // UI-owned revision domains
+	topicCursors       map[string]uint64
+	topicUpdated       chan struct{}
+	auxMu              sync.RWMutex
+	gitState           *coreprotocol.GitSnapshotResult
+	gitError           error
+	boardError         error
+	boardState         *coreprotocol.BoardSnapshotResult
+	initialized        bool
+	liveDocumentMu     sync.Mutex
+	liveDocumentTopics map[string]*liveDocumentTopic
+	commands           commandQueue
+	status             *statusReplica
+	terminals          *terminalReplica
+	settings           *settingsReplica
+	settingsMu         sync.RWMutex
+	lsp                *lspReplica
+	documents          *documentService
+	startup            coreprotocol.StartupResult
+	registryMu         sync.RWMutex
+	registry           []sessiondb.SessionMeta
+	searchMu           sync.Mutex
+	searchSeq          uint64
+	searchCancel       context.CancelFunc
 
 	// admissions holds submitted input between Prepare (Update goroutine) and
 	// Commit (a command goroutine).
@@ -139,15 +145,15 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 		clientID: clientID, ctx: lifeCtx, cancel: lifeCancel,
 		profileID: opts.ClientID,
 		view:      view, busSet: make(chan struct{}),
-		resync: make(chan struct{}, 1), stop: make(chan struct{}),
+		stop: make(chan struct{}), topics: make(map[string]*replicaTopic),
+		topicClients: make(map[string]*coreclient.Client), topicCursors: make(map[string]uint64),
 	}
 	w.status = newStatusReplica(w)
 	w.terminals = &terminalReplica{w: w}
 	w.settings = &settingsReplica{w: w}
 	w.lsp = newLSPReplica(w)
 	w.documents = newDocumentService(w)
-	w.progress = make(map[string]func(string))
-	if err := w.call(ctx, coreprotocol.ListSessions, struct{}{}, &w.registry); err != nil {
+	if err := w.call(ctx, coreprotocol.ListSessions, &coreprotocol.Empty{}, (*coreprotocol.SessionRegistry)(&w.registry)); err != nil {
 		lifeCancel()
 		_ = client.Close()
 		return nil, fmt.Errorf("load session registry: %w", err)
@@ -159,7 +165,7 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 		return nil, fmt.Errorf("load workspace settings: %w", err)
 	}
 	w.settings.install(settings)
-	if err := w.call(ctx, coreprotocol.WorkspaceStartup, struct{}{}, &w.startup); err != nil {
+	if err := w.call(ctx, coreprotocol.WorkspaceStartup, &coreprotocol.Empty{}, &w.startup); err != nil {
 		lifeCancel()
 		_ = client.Close()
 		return nil, fmt.Errorf("load startup diagnostics: %w", err)
@@ -174,11 +180,10 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 		w.lsp.install(snapshot)
 	}
 	w.admissions = make(map[*workspace.InputAdmissionIntent]provider.UserInput)
-	w.pending.init()
 	w.commands.init()
-	w.wg.Add(3)
+	w.wg.Add(2)
 	go w.collect(client)
-	go w.fetch(attached.View)
+	w.startTopics(client)
 	go w.runCommands()
 	return w, nil
 }
@@ -228,7 +233,7 @@ func (w *Workspace) rpc() *coreclient.WorkspaceView {
 }
 
 // call performs one typed request on the current connection.
-func (w *Workspace) call(ctx context.Context, method string, in, out any) error {
+func (w *Workspace) call(ctx context.Context, method string, in coreprotocol.Value, out coreprotocol.Target) error {
 	client, id := w.conn()
 	if client == nil {
 		return errDisconnected
@@ -240,42 +245,26 @@ func (w *Workspace) call(ctx context.Context, method string, in, out any) error 
 	return client.Call(ctx, id, method, in, out)
 }
 
-// callWithProgress registers the exact request before admission. Cancelling an
-// await sends a typed cancellation for that request only, never a replay.
-func (w *Workspace) callWithProgress(ctx context.Context, method string, in, out any, onProgress func(string)) error {
+// callWithProgress delivers the command's partial output as it arrives.
+// Cancelling the await sends a typed cancellation for that request only,
+// never a replay.
+func (w *Workspace) callWithProgress(ctx context.Context, method string, in coreprotocol.Value, out coreprotocol.Target, onProgress func(string)) error {
 	client, id := w.conn()
 	if client == nil {
 		return errDisconnected
 	}
-	payload, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
 	requestID := randomID()
-	w.progressMu.Lock()
-	w.progress[requestID] = onProgress
-	w.progressMu.Unlock()
-	defer func() { w.progressMu.Lock(); delete(w.progress, requestID); w.progressMu.Unlock() }()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(w.ctx, cancel)
 	defer stop()
-	result, err := client.CallRequest(ctx, coreprotocol.Request{ID: requestID, Owner: client.Owner(), WorkspaceID: id, Method: method, Payload: payload})
-	if err != nil {
-		if ctx.Err() != nil {
-			cancelCtx, cancel := context.WithTimeout(context.Background(), callTimeout)
-			defer cancel()
-			_ = client.Call(cancelCtx, id, coreprotocol.CancelRequest, coreprotocol.CancelRequestPayload{RequestID: requestID}, &coreprotocol.BoolResult{})
-		}
-		return err
+	_, err := client.CallWith(ctx, id, method, in, out, coreclient.CallOptions{ID: requestID, Progress: onProgress})
+	if err != nil && ctx.Err() != nil {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		defer cancel()
+		_ = client.Call(cancelCtx, id, coreprotocol.CancelRequest, &coreprotocol.CancelRequestPayload{RequestID: requestID}, &coreprotocol.BoolResult{})
 	}
-	if result.Error != nil {
-		return result.Error
-	}
-	if out != nil {
-		return json.Unmarshal(result.Payload, out)
-	}
-	return nil
+	return err
 }
 
 var errDisconnected = errors.New("not connected to the crude core")
@@ -311,128 +300,25 @@ func (w *Workspace) StartReplica() {
 	w.StartCapabilityHost()
 }
 
-// pendingChanges coalesces change events while a fetch is in flight, so the
-// connection's bounded event queue is always drained promptly.
-type pendingChanges struct {
-	mu          sync.Mutex
-	ready       chan struct{}
-	agents      map[string]bool
-	documents   map[string]bool
-	files       map[string]coreprotocol.FileChange
-	filesResync bool
-	reductions  []workspace.AgentReduction
-	notices     []workspace.AgentNotice
-	terminals   []coreprotocol.Change
-	status      bool
-	settings    bool
-	sessions    bool
-	lsp         bool
-	resync      bool
-}
-
-func (p *pendingChanges) init() {
-	p.ready = make(chan struct{}, 1)
-	p.agents = make(map[string]bool)
-	p.documents = make(map[string]bool)
-	p.files = make(map[string]coreprotocol.FileChange)
-}
-
-func (p *pendingChanges) add(change coreprotocol.Change) {
-	p.mu.Lock()
-	if change.Resync {
-		p.resync = true
-	}
-	for _, id := range change.Agents {
-		p.agents[id] = true
-	}
-	for _, id := range change.Documents {
-		p.documents[id] = true
-	}
-	for _, file := range change.Files {
-		if file.Resync || len(p.files) >= 1024 {
-			p.filesResync = true
-			clear(p.files)
-		} else if !p.filesResync {
-			p.files[file.Path] = file
-		}
-	}
-	p.reductions = append(p.reductions, change.Reductions...)
-	p.notices = append(p.notices, change.Notices...)
-	if len(change.Terminals) != 0 {
-		p.terminals = append(p.terminals, change)
-	}
-	if change.Status {
-		p.status = true
-	}
-	p.settings = p.settings || change.Settings
-	p.sessions = p.sessions || change.Sessions
-	p.lsp = p.lsp || change.LSP
-	p.mu.Unlock()
-	select {
-	case p.ready <- struct{}{}:
-	default:
-	}
-}
-
-type pendingBatch struct {
-	agents     []string
-	documents  []string
-	files      []coreprotocol.FileChange
-	reductions []workspace.AgentReduction
-	notices    []workspace.AgentNotice
-	terminals  []coreprotocol.Change
-	status     bool
-	settings   bool
-	sessions   bool
-	lsp        bool
-	resync     bool
-}
-
-func (p *pendingChanges) take() pendingBatch {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	batch := pendingBatch{reductions: p.reductions, notices: p.notices, terminals: p.terminals, status: p.status, resync: p.resync, settings: p.settings, sessions: p.sessions, lsp: p.lsp}
-	for id := range p.agents {
-		batch.agents = append(batch.agents, id)
-	}
-	slices.Sort(batch.agents)
-	for id := range p.documents {
-		batch.documents = append(batch.documents, id)
-	}
-	slices.Sort(batch.documents)
-	if p.filesResync {
-		batch.files = []coreprotocol.FileChange{{Resync: true}}
-	} else {
-		for _, file := range p.files {
-			batch.files = append(batch.files, file)
-		}
-		slices.SortFunc(batch.files, func(a, b coreprotocol.FileChange) int { return strings.Compare(a.Path, b.Path) })
-	}
-	p.agents = make(map[string]bool)
-	p.documents = make(map[string]bool)
-	clear(p.files)
-	p.filesResync = false
-	p.reductions, p.notices, p.terminals, p.status, p.resync = nil, nil, nil, false, false
-	p.settings, p.sessions, p.lsp = false, false, false
-	return batch
-}
-
-// collect drains one connection's events. When the connection fails it
+// collect drains one connection's private effects. When the connection fails it
 // reconnects, re-attaches and requests a snapshot; work in the core continues.
 func (w *Workspace) collect(client *coreclient.Client) {
 	defer w.wg.Done()
 	for {
-		for change := range client.Events() {
-			if change.Progress != nil {
-				w.progressMu.Lock()
-				fn := w.progress[change.Progress.RequestID]
-				w.progressMu.Unlock()
-				if fn != nil {
-					fn(change.Progress.Text)
+		connected := true
+		for connected {
+			select {
+			case effect, ok := <-client.PrivateEffects():
+				if !ok {
+					connected = false
+					continue
 				}
-				continue
+				w.post(privateEffectsBatch{client: client, effect: effect})
+			case <-client.Done():
+				connected = false
+			case <-w.stop:
+				return
 			}
-			w.pending.add(change)
 		}
 		select {
 		case <-w.stop:
@@ -468,7 +354,7 @@ func (w *Workspace) reconnect() (*coreclient.Client, bool) {
 				w.startCapabilityHostLocked(client, attached.WorkspaceID)
 				w.connMu.Unlock()
 				w.logger.Info("REMOTE", "reconnected", "workspace", attached.WorkspaceID)
-				w.pending.add(coreprotocol.Change{Resync: true})
+				w.startTopics(client)
 				return client, true
 			}
 			_ = client.Close()
@@ -478,296 +364,381 @@ func (w *Workspace) reconnect() (*coreclient.Client, bool) {
 	}
 }
 
-// Batches posted into the shell FIFO.
-type attachBatch struct {
-	snapshot coreprotocol.WorkspaceSnapshot
+// Each topic has one cancellation-owned generation. Explicit refreshes reset the
+// subscription, never fetch state; cancellation fences already queued UI batches.
+type replicaTopic struct {
+	cancel  context.CancelFunc
+	applied bool // protected by topicMu; set only after Update installs a value
 }
-type snapshotBatch struct {
-	snapshot coreprotocol.WorkspaceSnapshot
-	client   *coreclient.Client
-}
-type deltaBatch struct {
-	changes          coreprotocol.AgentChangesResult
-	documents        []string
-	documentsResync  bool
-	files            []coreprotocol.FileChange
-	fetched          bool
-	reductions       []workspace.AgentReduction
-	notices          []workspace.AgentNotice
-	terminals        []coreprotocol.Change
-	status           *statusSnapshot
-	settings         *settingsSnapshot
-	sessions         []coreprotocol.SessionSnapshot
-	sessionsFetched  bool
-	registry         []sessiondb.SessionMeta
-	registryFetched  bool
-	terminalInfos    []workspace.TerminalInfo
-	terminalsFetched bool
-	lsp              *coreprotocol.LSPSnapshot
+type privateEffectsBatch struct {
+	client *coreclient.Client
+	effect coreclient.PrivateEffect
 }
 
-// fetch turns coalesced change notifications into replica batches. Its
-// conversation cursors are exactly what it delivered, in FIFO order, so they
-// match the replica once the shell applies each batch.
-func (w *Workspace) fetch(initial coreprotocol.WorkspaceSnapshot) {
+type publicationBatch struct {
+	client *coreclient.Client
+	ctx    context.Context
+	topic  string
+	header coreprotocol.TopicHeader
+	update coreprotocol.WorkspaceUpdate
+	state  coreprotocol.WorkspaceState
+	done   chan error
+	owner  *replicaTopic
+}
+
+var replicaTopics = []string{coreprotocol.TopicWorkspace, coreprotocol.TopicStatus,
+	coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory,
+	coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard}
+
+func (w *Workspace) startTopics(client *coreclient.Client) {
+	w.topicMu.Lock()
+	for _, topic := range w.topics {
+		topic.cancel()
+	}
+	w.topics = make(map[string]*replicaTopic)
+	w.topicMu.Unlock()
+	for _, name := range replicaTopics {
+		w.wg.Add(1)
+		go w.followTopic(client, name)
+	}
+	w.startDocumentTopics(client)
+}
+
+func (w *Workspace) followTopic(client *coreclient.Client, name string) {
 	defer w.wg.Done()
-	cursors := snapshotCursors(initial)
-	w.post(attachBatch{snapshot: initial})
-	if status, err := w.status.fetch(); err == nil {
-		w.post(deltaBatch{status: &status})
+	for {
+		ctx, cancel := context.WithCancel(w.ctx)
+		token := &replicaTopic{cancel: cancel}
+		w.connMu.Lock()
+		current := w.client == client
+		id := w.id
+		w.topicMu.Lock()
+		if current && ctx.Err() == nil {
+			w.topics[name] = token
+			w.notifyTopicUpdated()
+		}
+		w.topicMu.Unlock()
+		w.connMu.Unlock()
+		if !current || ctx.Err() != nil {
+			cancel()
+			return
+		}
+		failures := 0
+		sub := client.Subscribe(ctx, id, name, "", func(header coreprotocol.TopicHeader, body []byte) error {
+			batch := publicationBatch{client: client, ctx: ctx, topic: name, header: header, done: make(chan error, 1), owner: token}
+			var err error
+			if name == coreprotocol.TopicWorkspace {
+				err = coreprotocol.Decode(body, &batch.update)
+			} else {
+				err = coreprotocol.Decode(body, &batch.state)
+			}
+			if err != nil {
+				w.reportFailure("Decode "+name, err)
+				failures++
+				if failures > 1 {
+					return fmt.Errorf("repeated malformed %s: %v", name, err)
+				}
+				return coreclient.ErrTopicReset
+			}
+			w.post(batch)
+			select {
+			case err := <-batch.done:
+				if errors.Is(err, coreclient.ErrTopicReset) {
+					failures++
+					if failures > 1 {
+						return fmt.Errorf("repeated rejected %s", name)
+					}
+				} else if err == nil {
+					failures = 0
+				}
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		<-sub.Done()
+		reset := ctx.Err() != nil && w.ctx.Err() == nil
+		cancel()
+		if !reset {
+			return
+		}
+	}
+}
+
+func (w *Workspace) resetTopic(name string) {
+	w.topicMu.Lock()
+	if topic := w.topics[name]; topic != nil {
+		topic.cancel()
+	}
+	w.topicMu.Unlock()
+}
+
+// notifyTopicUpdated runs with topicMu held. Waiters observe subscription
+// replacement and UI application, never network delivery alone.
+func (w *Workspace) notifyTopicUpdated() {
+	if w.topicUpdated != nil {
+		close(w.topicUpdated)
+		w.topicUpdated = nil
+	}
+}
+
+// refreshTopicApplied waits off Update for a post-request subscription value.
+// Reset fences queued pre-save publications; only the topic installer remains a
+// replica writer. Another reset/reconnect may supersede ours without losing the
+// waiter, and attachment cancellation releases it during shutdown.
+func (w *Workspace) refreshTopicApplied(ctx context.Context, name string) error {
+	w.topicMu.Lock()
+	before := w.topics[name]
+	if before != nil {
+		before.cancel()
 	}
 	for {
+		current := w.topics[name]
+		if current != nil && current != before && current.applied {
+			w.topicMu.Unlock()
+			return nil
+		}
+		if w.topicUpdated == nil {
+			w.topicUpdated = make(chan struct{})
+		}
+		updated := w.topicUpdated
+		w.topicMu.Unlock()
 		select {
-		case <-w.stop:
-			return
-		case <-w.resync:
-			w.pending.add(coreprotocol.Change{Resync: true})
-			continue
-		case <-w.pending.ready:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-updated:
 		}
-		batch := w.pending.take()
-		fetchStart := time.Now()
-		if batch.resync {
-			linkResyncs.Inc()
-			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-			var snapshot coreprotocol.WorkspaceSnapshot
-			err := w.call(ctx, coreprotocol.Snapshot, struct{}{}, &snapshot)
-			cancel()
-			if err != nil {
-				w.logger.Warn("REMOTE", "snapshot_failed", "error", err.Error())
-				continue
-			}
-			client, _ := w.conn()
-			cursors = snapshotCursors(snapshot)
-			w.post(snapshotBatch{snapshot: snapshot, client: client})
-			batch.agents = nil
-			batch.status = true
-			batch.settings, batch.sessions, batch.lsp = true, true, true
-			batch.terminals = append(batch.terminals, coreprotocol.Change{})
-			batch.files = []coreprotocol.FileChange{{Resync: true}}
-		}
-		out := deltaBatch{reductions: batch.reductions, notices: batch.notices, terminals: batch.terminals,
-			documents: batch.documents, documentsResync: batch.resync, files: batch.files}
-		newAgent := false
-		for _, id := range batch.agents {
-			if _, known := cursors[id]; !known {
-				newAgent = true
-			}
-		}
-		if batch.sessions || newAgent {
-			ctx, cancel := context.WithTimeout(w.ctx, callTimeout)
-			err := w.call(ctx, coreprotocol.SessionSnapshots, struct{}{}, &out.sessions)
-			cancel()
-			if err == nil {
-				out.sessionsFetched = true
-			} else {
-				w.requestResync()
-			}
-			ctx, cancel = context.WithTimeout(w.ctx, callTimeout)
-			err = w.call(ctx, coreprotocol.ListSessions, struct{}{}, &out.registry)
-			cancel()
-			out.registryFetched = err == nil
-		}
-		if len(batch.agents) != 0 || len(batch.reductions) != 0 {
-			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-			err := w.call(ctx, coreprotocol.AgentChanges, coreprotocol.AgentChangesRequest{Revisions: maps.Clone(cursors)}, &out.changes)
-			cancel()
-			if err != nil {
-				w.logger.Warn("REMOTE", "changes_failed", "error", err.Error())
-				w.requestResync()
-				out.reductions = nil
-			} else {
-				out.fetched = true
-				for _, delta := range out.changes.Agents {
-					cursors[delta.State.ID] = delta.Conversation.Revision
-				}
-				for _, id := range out.changes.Removed {
-					delete(cursors, id)
-				}
-			}
-		}
-		if batch.status {
-			if status, err := w.status.fetch(); err == nil {
-				out.status = &status
-			}
-		}
-		if batch.settings {
-			ctx, cancel := context.WithTimeout(w.ctx, callTimeout)
-			snapshot, err := w.settings.load(ctx)
-			cancel()
-			if err == nil {
-				out.settings = &snapshot
-			} else {
-				w.requestResync()
-			}
-		}
-		if len(batch.terminals) != 0 {
-			ctx, cancel := context.WithTimeout(w.ctx, callTimeout)
-			infos, err := w.terminals.fetch(ctx)
-			cancel()
-			if err == nil {
-				out.terminalInfos, out.terminalsFetched = infos, true
-			}
-		}
-		if batch.lsp {
-			ctx, cancel := context.WithTimeout(w.ctx, callTimeout)
-			snapshot, err := w.lsp.fetch(ctx)
-			cancel()
-			if err == nil {
-				out.lsp = &snapshot
-			}
-		}
-		linkFetch.Since(fetchStart)
-		w.post(out)
+		w.topicMu.Lock()
 	}
 }
+func (w *Workspace) requestResync() { w.resetTopic(coreprotocol.TopicWorkspace) }
 
-var (
-	linkFetch = metrics.NewLatency(metrics.Meta{Name: "link.fetch", Group: metrics.GroupRPC, Title: "Change fetch",
-		Help: "Turning one coalesced burst of core change notices into a replica batch (agent deltas, status, settings, ...).",
-		Warn: 50_000, Crit: 250_000})
-	linkResyncs = metrics.NewCounter(metrics.Meta{Name: "link.resync", Group: metrics.GroupRPC, Title: "Snapshot reloads",
-		Help: "Full workspace snapshot reloads after a reconnect or a lost change stream."})
-)
-
-func (w *Workspace) requestResync() {
-	select {
-	case w.resync <- struct{}{}:
-	default:
-	}
-}
-
-func snapshotCursors(snapshot coreprotocol.WorkspaceSnapshot) map[string]uint64 {
-	cursors := make(map[string]uint64, len(snapshot.Agents))
-	for _, agent := range snapshot.Agents {
-		cursors[agent.ID] = agent.ConversationRevision
-	}
-	return cursors
-}
-
-// ApplyReplicaChanges installs one batch on the shell's Update goroutine.
+// ApplyReplicaChanges validates and commits on Update. Completing done only after
+// this transaction lets the subscription ACK the exact UI-applied cursor off UI.
 func (w *Workspace) ApplyReplicaChanges(msg shellport.ReplicaChangesMsg) shellport.ReplicaApplied {
 	var applied shellport.ReplicaApplied
 	if msg.Owner != w {
 		return applied
 	}
-	switch batch := msg.Batch.(type) {
-	case attachBatch:
-		applied = w.installSnapshot(batch.snapshot, true)
-	case snapshotBatch:
-		if batch.client != nil {
-			if batch.client != w.view.Client {
-				w.status.resetRevision()
+	if private, ok := msg.Batch.(privateEffectsBatch); ok {
+		w.connMu.Lock()
+		defer w.connMu.Unlock()
+		if private.client == w.client && w.ctx.Err() == nil {
+			if private.effect.WorkspaceID != w.id {
+				return applied
 			}
-			w.view.Client = batch.client
-		}
-		applied = w.installSnapshot(batch.snapshot, false)
-	case deltaBatch:
-		applied.Notices = batch.notices
-		if len(batch.files) != 0 {
-			applied.Follow = append(applied.Follow, shellport.ClientFilesChangedMsg{Owner: w, Changes: slices.Clone(batch.files)})
-		}
-		if batch.documentsResync || len(batch.documents) != 0 {
-			// An empty ID list means reconcile every open document after reconnect.
-			applied.Follow = append(applied.Follow, shellport.LiveDocumentsChangedMsg{Owner: w, IDs: slices.Clone(batch.documents)})
-		}
-		if batch.registryFetched {
-			w.registryMu.Lock()
-			w.registry = batch.registry
-			w.registryMu.Unlock()
-		}
-		if batch.sessionsFetched {
-			applied.SessionsChanged = true
-			if err := w.view.InstallSessions(batch.sessions); err != nil {
-				w.requestResync()
+			if private.effect.Error != "" {
+				applied.Follow = append(applied.Follow, shellport.ReplicaFailureMsg{Owner: w, Operation: "Terminal clipboard", Error: private.effect.Error})
+			} else if offer := private.effect.TerminalClipboard; offer != nil && w.terminals.ownsClipboard(*offer, private.client.Owner()) {
+				applied.Follow = append(applied.Follow, workspace.TerminalEffectsMsg{ID: offer.TerminalID, Effects: terminalvt.Effects{Clipboard: offer.Clipboard}})
 			}
 		}
-		if batch.fetched {
-			known := make(map[string]bool)
-			blocks := make(map[string]string)
-			for _, node := range w.view.AgentMgr.AllNodes() {
-				blocks[node.ID] = node.State.PendingBlockID
-			}
-			for _, node := range w.view.AgentMgr.Orchestrators() {
-				known[node.ID] = true
-			}
-			if _, err := w.view.ApplyChanges(batch.changes); err != nil {
-				w.logger.Warn("REMOTE", "replica_rejected_changes", "error", err.Error())
-				w.requestResync()
-			} else {
-				applied.Reductions = batch.reductions
-				for _, delta := range batch.changes.Agents {
-					id, previous := delta.State.ID, blocks[delta.State.ID]
-					if previous != "" && (delta.State.Prompt == nil || delta.State.Prompt.BlockID != previous) {
-						applied.Reductions = append(applied.Reductions, workspace.AgentReduction{Accepted: true, AgentID: id, Effects: workspace.AgentEffects{DismissPrompt: true, DismissBlockID: previous}})
-					}
-					if prompt := delta.State.Prompt; prompt != nil && prompt.BlockID != previous {
-						applied.Reductions = append(applied.Reductions, workspace.AgentReduction{Accepted: true, AgentID: id, Effects: workspace.AgentEffects{Prompt: prompt}})
-					}
-				}
-				for _, node := range w.view.AgentMgr.Orchestrators() {
-					if !known[node.ID] {
-						applied.Attached = append(applied.Attached, node.ID)
-					}
-				}
-				applied.Reductions = append(applied.Reductions, workspace.AgentReduction{Accepted: true, EvidenceOnly: true, ChangedAgents: batchAgentIDs(batch.changes)})
-			}
-		}
-		if batch.settings != nil && w.settings.install(*batch.settings) {
-			applied.Follow = append(applied.Follow, shellport.SettingsChangedMsg{})
-		}
-		if batch.terminalsFetched {
-			applied.Follow = append(applied.Follow, w.terminals.install(batch.terminalInfos)...)
-		}
-		if batch.lsp != nil {
-			applied.Follow = append(applied.Follow, w.lsp.install(*batch.lsp)...)
-		}
-		if batch.status != nil {
-			if w.status.install(*batch.status) {
-				applied.Follow = append(applied.Follow, workspace.StatusCenterHydratedMsg{})
-			}
-		}
-		for _, change := range batch.terminals {
-			applied.Follow = append(applied.Follow, terminalMessages(change)...)
-		}
-	}
-	return applied
-}
-
-// installSnapshot reconciles a snapshot and reports what the shell must
-// surface: every root on attach, only unseen roots on resync, and every
-// pending decision (prompt de-duplication is by exact block identity).
-func (w *Workspace) installSnapshot(snapshot coreprotocol.WorkspaceSnapshot, initial bool) shellport.ReplicaApplied {
-	var applied shellport.ReplicaApplied
-	applied.Initial = initial
-	known := make(map[string]bool)
-	for _, node := range w.view.AgentMgr.AllNodes() {
-		known[node.ID] = true
-	}
-	if err := w.view.InstallSnapshot(snapshot); err != nil {
-		w.logger.Warn("REMOTE", "snapshot_rejected", "error", err.Error())
 		return applied
 	}
-	for _, agent := range snapshot.Agents {
-		if agent.ParentID == "" && (initial || !known[agent.ID]) {
-			applied.Attached = append(applied.Attached, agent.ID)
+	batch, ok := msg.Batch.(publicationBatch)
+	if !ok {
+		return applied
+	}
+	var err error
+	defer func() { batch.done <- err }()
+	w.connMu.Lock()
+	defer w.connMu.Unlock()
+	w.topicMu.Lock()
+	defer w.topicMu.Unlock()
+	current := batch.client == w.client
+	if !current || batch.ctx.Err() != nil {
+		err = context.Canceled
+		return applied
+	}
+	if previous, exists := w.topicCursors[batch.topic]; exists && w.topicClients[batch.topic] == batch.client && !batch.header.Reset && (batch.header.Seq <= previous || batch.topic == coreprotocol.TopicWorkspace && batch.header.Seq != previous+1) {
+		err = fmt.Errorf("topic cursor mismatch: have %d, next %d", previous, batch.header.Seq)
+	} else if batch.topic != coreprotocol.TopicWorkspace {
+		applied, err = w.applyState(batch)
+	} else {
+		applied, err = w.applyPublication(batch)
+	}
+	if err == nil {
+		w.topicCursors[batch.topic] = batch.header.Seq
+		w.topicClients[batch.topic] = batch.client
+		if batch.owner != nil && w.topics[batch.topic] == batch.owner && batch.state.Fault == nil {
+			batch.owner.applied = true
+			w.notifyTopicUpdated()
 		}
-		reduction := workspace.AgentReduction{Accepted: true, AgentID: agent.ID, ChangedAgents: []string{agent.ID}}
-		if agent.Prompt != nil {
-			prompt := *agent.Prompt
-			reduction.Effects.Prompt = &prompt
-		}
-		applied.Reductions = append(applied.Reductions, reduction)
+	}
+	if err != nil {
+		applied = shellport.ReplicaApplied{Follow: []any{shellport.ReplicaFailureMsg{Owner: w, Operation: "Apply " + batch.topic, Error: err.Error()}}}
+		err = coreclient.ErrTopicReset
 	}
 	return applied
 }
 
-func batchAgentIDs(changes coreprotocol.AgentChangesResult) []string {
-	ids := make([]string, 0, len(changes.Agents))
-	for _, delta := range changes.Agents {
-		ids = append(ids, delta.State.ID)
+func (w *Workspace) applyPublication(batch publicationBatch) (shellport.ReplicaApplied, error) {
+	var applied shellport.ReplicaApplied
+	u := batch.update
+	if batch.header.Reset != (u.Snapshot != nil) {
+		return applied, fmt.Errorf("snapshot/reset boundary mismatch")
 	}
-	return ids
+	known := make(map[string]bool)
+	blocks := make(map[string]string)
+	for _, node := range w.view.AgentMgr.AllNodes() {
+		known[node.ID] = true
+		blocks[node.ID] = node.State.PendingBlockID
+	}
+	var ids []string
+	prompts := make(map[string]workspace.AgentSnapshot)
+	if u.Snapshot != nil {
+		if len(u.Changes.Agents)+len(u.Changes.Removed)+len(u.Conversations) != 0 || u.Sessions != nil {
+			return applied, fmt.Errorf("snapshot mixed with incremental state")
+		}
+		if err := w.view.InstallPublicationSnapshot(*u.Snapshot, batch.client != w.view.Client); err != nil {
+			return applied, err
+		}
+		w.view.Client = batch.client
+		applied.Initial = !w.initialized
+		w.initialized = true
+		for _, a := range u.Snapshot.Agents {
+			ids = append(ids, a.ID)
+			prompts[a.ID] = a
+		}
+		applied.SessionsChanged = true
+		applied.Follow = append(applied.Follow, shellport.ClientFilesChangedMsg{Owner: w, Changes: []coreprotocol.FileChange{{Resync: true}}})
+	} else {
+		if !w.initialized {
+			return applied, fmt.Errorf("publication before snapshot")
+		}
+		var err error
+		ids, err = w.view.ApplyPublication(u)
+		if err != nil {
+			return applied, err
+		}
+		for _, delta := range u.Changes.Agents {
+			prompts[delta.State.ID] = delta.State
+		}
+		applied.SessionsChanged = u.Sessions != nil
+	}
+	// Effects and follow-up invalidations are emitted only after successful commit.
+	applied.Notices = u.Notices
+	applied.Reductions = u.Reductions
+	for _, id := range ids {
+		node := w.view.AgentMgr.Get(id)
+		previous := blocks[id]
+		if previous != "" && (node == nil || node.State.PendingBlockID != previous) {
+			applied.Reductions = append(applied.Reductions, workspace.AgentReduction{Accepted: true, AgentID: id, Effects: workspace.AgentEffects{DismissPrompt: true, DismissBlockID: previous}})
+		}
+	}
+	for _, node := range w.view.AgentMgr.Orchestrators() {
+		if applied.Initial || !known[node.ID] {
+			applied.Attached = append(applied.Attached, node.ID)
+		}
+	}
+	for _, id := range ids {
+		if node := w.view.AgentMgr.Get(id); node != nil {
+			if prompt := prompts[id].Prompt; prompt != nil && (applied.Initial || prompt.BlockID != blocks[id]) {
+				applied.Reductions = append(applied.Reductions, workspace.AgentReduction{Accepted: true, AgentID: id, Effects: workspace.AgentEffects{Prompt: prompt}})
+			}
+		}
+	}
+	if len(ids) > 0 {
+		applied.Reductions = append(applied.Reductions, workspace.AgentReduction{Accepted: true, EvidenceOnly: true, ChangedAgents: ids})
+	}
+	if len(u.Files) > 0 {
+		applied.Follow = append(applied.Follow, shellport.ClientFilesChangedMsg{Owner: w, Changes: u.Files})
+	}
+	for _, effect := range u.TerminalEffects {
+		applied.Follow = append(applied.Follow, effect)
+	}
+	return applied, nil
+}
+
+func (w *Workspace) applyState(batch publicationBatch) (shellport.ReplicaApplied, error) {
+	var applied shellport.ReplicaApplied
+	s := batch.state
+	if s.Fault != nil {
+		if s.Registry != nil || s.Settings != nil || s.AgentDefaults != nil || s.Status != nil || s.LSP != nil || s.Terminals != nil || s.Git != nil || s.Board != nil {
+			return applied, fmt.Errorf("state fault mixed with value")
+		}
+		w.auxMu.Lock()
+		switch batch.topic {
+		case coreprotocol.TopicGit:
+			w.gitError = s.Fault
+		case coreprotocol.TopicBoard:
+			w.boardError = s.Fault
+		}
+		w.auxMu.Unlock()
+		applied.Follow = append(applied.Follow, shellport.ReplicaFailureMsg{Owner: w, Operation: batch.topic, Error: s.Fault.Error()})
+		return applied, nil
+	}
+	count := 0
+	for _, present := range []bool{s.Registry != nil, s.Settings != nil, s.Status != nil, s.LSP != nil, s.Terminals != nil, s.Git != nil, s.Board != nil} {
+		if present {
+			count++
+		}
+	}
+	if count != 1 || s.AgentDefaults != nil && batch.topic != coreprotocol.TopicSettings {
+		return applied, fmt.Errorf("state topic requires exactly one projection")
+	}
+	valid := false
+	switch batch.topic {
+	case coreprotocol.TopicRegistry:
+		if s.Registry != nil {
+			w.registryMu.Lock()
+			w.registry = *s.Registry
+			w.registryMu.Unlock()
+			valid = true
+		}
+	case coreprotocol.TopicSettings:
+		if s.Settings != nil && s.AgentDefaults != nil {
+			if w.settings.install(settingsSnapshot{fetch: *s.Settings, defaults: *s.AgentDefaults}) {
+				applied.Follow = append(applied.Follow, shellport.SettingsChangedMsg{})
+			}
+			valid = true
+		}
+	case coreprotocol.TopicStatus:
+		if s.Status != nil {
+			if previous := w.topicClients[batch.topic]; previous != nil && previous != batch.client {
+				w.status.resetRevision()
+			}
+			if w.status.install(*s.Status) {
+				applied.Follow = append(applied.Follow, workspace.StatusCenterHydratedMsg{})
+			}
+			valid = true
+		}
+	case coreprotocol.TopicLSP:
+		if s.LSP != nil {
+			applied.Follow = append(applied.Follow, w.lsp.install(*s.LSP)...)
+			valid = true
+		}
+	case coreprotocol.TopicTerminalInventory:
+		if s.Terminals != nil {
+			applied.Follow = append(applied.Follow, w.terminals.install(*s.Terminals)...)
+			valid = true
+		}
+	case coreprotocol.TopicGit:
+		if s.Git != nil {
+			w.auxMu.Lock()
+			changed := w.gitState == nil || w.gitError != nil || !reflect.DeepEqual(w.gitState, s.Git)
+			w.gitState = s.Git
+			w.gitError = nil
+			w.auxMu.Unlock()
+			if changed {
+				applied.Follow = append(applied.Follow, shellport.GitSnapshotChangedMsg{Owner: w, Snapshot: s.Git.Snapshot})
+			}
+			valid = true
+		}
+	case coreprotocol.TopicBoard:
+		if s.Board != nil {
+			w.auxMu.Lock()
+			w.boardState = s.Board
+			w.boardError = nil
+			w.auxMu.Unlock()
+			valid = true
+		}
+	}
+	if !valid {
+		return shellport.ReplicaApplied{}, fmt.Errorf("wrong projection for %s", batch.topic)
+	}
+
+	return applied, nil
 }
 
 type nopLogger struct{}

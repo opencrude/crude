@@ -18,7 +18,8 @@ type cellStyleState struct {
 }
 
 // GenerateANSI converts a cell buffer into a full ANSI escape sequence string.
-// This is the primary output path for Bubble Tea integration.
+// This is an explicit diagnostic/legacy output path. The application hands
+// cells to Bubble Tea through PresentSurface instead.
 //
 // Algorithm:
 //  1. Start each row from the leftmost column

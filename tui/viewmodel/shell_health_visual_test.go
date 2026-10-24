@@ -104,7 +104,7 @@ func (m *shellHealthVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			paint := ansi.Strip(m.App.View().Content)
+			paint := ansi.Strip(m.App.View().RenderContent())
 			if node := m.Tree.Model.NodeByPath(m.path); node == nil || node.GitStatus == 0 || node.DiagErrors != 1 {
 				m.t.Error("tree Git/diagnostics were not projected")
 			}
@@ -121,7 +121,7 @@ func (m *shellHealthVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF4:
 			return m, m.footerClick("Terminals")
 		case tea.KeyF9:
-			paint := ansi.Strip(m.App.View().Content)
+			paint := ansi.Strip(m.App.View().RenderContent())
 			if !m.checked || !m.terminal || !m.termDock.TerminalActive() || !strings.Contains(paint, "TERMINAL_HEALTH_READY") || strings.Contains(paint, "Recovered notice") {
 				m.t.Error("Notices -> Terminal journey did not replace the rendered panel")
 			}
@@ -136,7 +136,7 @@ func (m *shellHealthVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	_, command := m.App.Update(message)
 	if action, ok := message.(shellfooter.ActionMsg); ok && action.Action == "notices" {
-		if m.termDock.ActivePanel() != termdock.PanelNotices || !strings.Contains(ansi.Strip(m.App.View().Content), "Recovered notice") {
+		if m.termDock.ActivePanel() != termdock.PanelNotices || !strings.Contains(ansi.Strip(m.App.View().RenderContent()), "Recovered notice") {
 			m.t.Error("saved Notices not visible after footer click")
 		}
 	}

@@ -16,7 +16,7 @@ func TestAssistantHeaderIsShownAfterThinking(t *testing.T) {
 		{InternalID: "user", Role: types.RoleUser, Content: "so you say we group them?"},
 		{InternalID: "thinking", Role: types.RoleThinking, Content: "considering", TurnGeneration: 4, ProviderID: "ollama-cloud", ModelID: "kimi-k3"},
 		{InternalID: "assistant", Role: types.RoleAssistant, Content: "Yes, but with a specific shape.", TurnGeneration: 4, ProviderID: "ollama-cloud", ModelID: "kimi-k3"},
-	}, 1)
+	}, 1, 0)
 
 	_ = renderer.Render(100)
 	assertHeaderModel(t, renderer, 2, "kimi-k3")
@@ -30,7 +30,7 @@ func TestAssistantContinuationAfterToolSuppressesDuplicateHeaderWithinTurn(t *te
 		{InternalID: "assistant-1", Role: types.RoleAssistant, Content: "I will inspect it.", TurnGeneration: 4, ModelID: "kimi-k3"},
 		{InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "success", TurnGeneration: 4, ModelID: "kimi-k3"},
 		{InternalID: "assistant-2", Role: types.RoleAssistant, Content: "The result is correct.", TurnGeneration: 4, ModelID: "kimi-k3"},
-	}, 1)
+	}, 1, 0)
 
 	_ = renderer.Render(100)
 	item := renderer.vl.Item(2)

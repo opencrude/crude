@@ -356,10 +356,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// The goal settles after the unwind below has decided whether the turn
 	// completed, failed, was stopped or parked for recovery.
 	var goalProgress *goalTurn
+	var turnFailure string
 	defer func() {
 		// The turn context is always cancelled once the turn ends; only the
 		// final state says whether the user stopped it.
-		s.goalTurnEnd(goalProgress, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, recoveryParked)
+		s.goalTurnEnd(goalProgress, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, turnFailure, recoveryParked)
 	}()
 	defer func() {
 		// Parking during unwind must not advertise Retry while the old turn
@@ -503,8 +504,18 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	s.msgsMu.Lock()
-	s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
+	// Admission's immutable checkpoint may precede a journal control committed
+	// before this execution starts. Reconcile that checkpoint with the live
+	// publication owner; never install its older revision back into the owner.
+	contextErr := s.reconcileRootRecoveryLocked(recoveryState)
 	s.msgsMu.Unlock()
+	if contextErr != nil && !recoverStep(agent.RecoveryFailureStorage, func() error {
+		s.msgsMu.Lock()
+		defer s.msgsMu.Unlock()
+		return s.reconcileRootRecoveryLocked(recoveryState)
+	}) {
+		return
+	}
 	if !recoverStep(agent.RecoveryFailureStorage, func() error { return s.runBeforeTurn(ctx) }) {
 		return
 	}
@@ -738,11 +749,19 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if humanTurn {
 		s.prevContextInjected.Store(true)
 	}
-	frozenPrefix = append([]provider.ChatMessage(nil), contextMsgs...)
-	s.msgsMu.Lock()
-	persistedPrefixLen = len(s.msgs)
-	s.activeContext = append([]provider.ChatMessage(nil), contextMsgs...)
-	s.msgsMu.Unlock()
+	if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		s.msgsMu.Lock()
+		defer s.msgsMu.Unlock()
+		if err := s.reconcileRootRecoveryLocked(recoveryState); err != nil {
+			return err
+		}
+		archiveCopy, contextMsgs = recoveryState.contexts()
+		frozenPrefix = append([]provider.ChatMessage(nil), contextMsgs...)
+		persistedPrefixLen = len(s.msgs)
+		return nil
+	}) {
+		return
+	}
 	if len(request.deliveries) > 0 {
 		if !recoverStep(agent.RecoveryFailureStorage, func() error {
 			// The event message was already admitted through the exact same
@@ -1093,9 +1112,19 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	runResult := ag.RunSupervised(
 		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,
 		agent.SupervisedRunOptions{
-			Supervisor:      supervisor,
-			Prepare:         prepareAttempt,
-			Snapshot:        recoveryState.snapshot,
+			Supervisor: supervisor,
+			Prepare:    prepareAttempt,
+			Snapshot:   recoveryState.snapshot,
+			// A permanent provider verdict (refusal, auth, quota, schema) ends the
+			// turn with its reason, as Codex and Claude Code do: the session is
+			// idle and the next message continues. Waiting for Retry cannot fix
+			// it. Local preparation faults keep waiting with their pending input.
+			OnAttention: func(failure agent.RecoveryFailure) agent.AttentionDisposition {
+				if failure.Kind == agent.RecoveryFailureConfiguration && failure.ProviderVerdict {
+					return agent.AttentionEndTurn
+				}
+				return agent.AttentionWait
+			},
 			DeferSettlement: true,
 		},
 	)
@@ -1158,7 +1187,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if !recoverStep(agent.RecoveryFailureStorage, finishTurn) {
 		return
 	}
-	if cancelled {
+	if runResult.State == agent.SupervisedRunFailed {
+		if err := supervisor.Fail(runResult.Failure); err != nil {
+			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			s.parkRecovery(recoveryState.checkpoint(status))
+			recoveryParked = true
+			return
+		}
+		turnFailure = supervisor.CheckpointStatus().Detail
+	} else if cancelled {
 		if err := supervisor.Cancel(); err != nil {
 			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
 			s.parkRecovery(recoveryState.checkpoint(status))

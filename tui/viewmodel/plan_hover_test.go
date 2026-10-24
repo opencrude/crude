@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/cell"
 	"crude/tui/screens/shellchat"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/types/activity"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func hoverPlanFixture(goal string, count int) *activity.Plan {

@@ -79,6 +79,28 @@ func NewView(s string) View {
 	return view
 }
 
+// NewViewFromSurface creates a view without encoding or parsing ANSI content.
+// The renderer snapshots the surface synchronously after View returns, before
+// the next Update. The producer may reuse its cells on the next View call; it
+// must not mutate them concurrently with the handoff. Terminal writes remain
+// asynchronous. Surface takes precedence over Content, including when empty.
+func NewViewFromSurface(surface uv.Surface) View {
+	return View{Surface: surface}
+}
+
+// RenderContent renders a view to an ANSI string for diagnostics and tests.
+// It is explicitly opt-in: the program's direct-cell renderer never calls it.
+func (v View) RenderContent() string {
+	if v.Surface == nil {
+		return v.Content
+	}
+	bounds := v.Surface.Bounds()
+	buf := uv.NewScreenBuffer(max(0, bounds.Dx()), max(0, bounds.Dy()))
+	buf.Method = ansi.GraphemeWidth
+	v.Surface.Draw(buf, buf.Bounds())
+	return buf.Buffer.Render()
+}
+
 // View represents a terminal view that can be composed of multiple layers.
 // It can also contain a cursor that will be rendered on top of the layers.
 type View struct {
@@ -94,6 +116,11 @@ type View struct {
 	//  v := tea.NewView("Hello, World!")
 	//  ```
 	Content string
+
+	// Surface supplies precomposed cells instead of an ANSI string. See
+	// NewViewFromSurface for its ownership and handoff lifetime contract.
+	Surface      uv.Surface
+	surfaceFrame uint64 // renderer-owned snapshot generation
 
 	// OnMouse is an optional mouse message handler that can be used to
 	// intercept mouse messages that depends on view content from last render.
@@ -510,9 +537,10 @@ type Program struct {
 	profile *colorprofile.Profile // the terminal color profile
 
 	// where to send output, this will usually be os.Stdout.
-	output    io.Writer
-	outputBuf bytes.Buffer // buffer used to queue commands to be sent to the output
-	flushMu   sync.Mutex   // serializes writes of outputBuf; see flush
+	output           io.Writer
+	outputBuf        bytes.Buffer     // buffer used to queue commands to be sent to the output
+	flushMu          sync.Mutex       // serializes writes of outputBuf; see flush
+	rendererCommands []func(renderer) // ordered terminal effects, guarded by mu
 
 	// ttyOutput is null if output is not a TTY.
 	ttyOutput           term.File
@@ -536,14 +564,11 @@ type Program struct {
 	// modes keeps track of terminal modes that have been enabled or disabled.
 	ignoreSignals uint32
 
-	// ticker is the ticker that will be used to write to the renderer.
-	ticker *time.Ticker
-
-	// once is used to stop the renderer.
-	once sync.Once
-
-	// rendererDone is used to stop the renderer.
+	// Renderer lifecycle is joined before closing or restarting its terminal.
+	rendererMu   sync.Mutex
+	rendererStop chan struct{}
 	rendererDone chan struct{}
+	rendererWake chan struct{} // one pending notification; snapshots conflate separately
 
 	// Initial window size. Mainly used for testing.
 	width, height int
@@ -615,7 +640,7 @@ func NewProgram(model Model, opts ...ProgramOption) *Program {
 		initialModel: model,
 		msgs:         make(chan Msg),
 		errs:         make(chan error, 1),
-		rendererDone: make(chan struct{}),
+		rendererWake: make(chan struct{}, 1),
 	}
 
 	// Apply all options to the program.
@@ -778,6 +803,7 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			var consumed bool
 			msg, consumed = p.handleTerminalWidthProbeMessage(msg)
 			if consumed {
+				p.wakeRenderer() // internal probes can queue output/resize without a View
 				continue
 			}
 
@@ -820,11 +846,11 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 					if msg.Value == ansi.ModeReset {
 						// The terminal supports synchronized output and it's
 						// currently disabled, so we can enable it on the renderer.
-						p.renderer.setSyncdUpdates(true)
+						p.queueRendererCommand(func(r renderer) { r.setSyncdUpdates(true) })
 					}
 				case ansi.ModeUnicodeCore:
 					if msg.Value == ansi.ModeReset || msg.Value == ansi.ModeSet || msg.Value == ansi.ModePermanentlySet {
-						p.renderer.setWidthMethod(ansi.GraphemeWidth)
+						p.queueRendererCommand(func(r renderer) { r.setWidthMethod(ansi.GraphemeWidth) })
 					}
 				}
 
@@ -890,13 +916,13 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 				p.execute(fmt.Sprint(msg.Msg))
 
 			case printLineMessage:
-				p.renderer.insertAbove(msg.messageBody) //nolint:errcheck,gosec
+				p.queueRendererCommand(func(r renderer) { _ = r.insertAbove(msg.messageBody) })
 
 			case clearScreenMsg:
-				p.renderer.clearScreen()
+				p.queueRendererCommand(func(r renderer) { r.clearScreen() })
 
 			case ColorProfileMsg:
-				p.renderer.setColorProfile(msg.Profile)
+				p.queueRendererCommand(func(r renderer) { r.setColorProfile(msg.Profile) })
 
 			}
 
@@ -930,7 +956,7 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 // render renders the given view to the renderer.
 func (p *Program) render(model Model) {
 	if p.renderer != nil {
-		p.renderer.render(model.View()) // send view to renderer
+		p.present(model.View())
 	}
 }
 
@@ -944,6 +970,7 @@ func (p *Program) viewOf(model Model) View {
 func (p *Program) present(view View) {
 	if p.renderer != nil {
 		p.renderer.render(view)
+		p.wakeRenderer()
 	}
 }
 
@@ -1285,6 +1312,33 @@ func (p *Program) execute(seq string) {
 	p.mu.Lock()
 	_, _ = p.outputBuf.WriteString(seq)
 	p.mu.Unlock()
+	p.wakeRenderer()
+}
+
+// Notifications never wait for a writer or an occupied frame slot. The renderer
+// drains the notification before flushing, so enqueues during a write survive.
+func (p *Program) wakeRenderer() {
+	select {
+	case p.rendererWake <- struct{}{}:
+	default:
+	}
+}
+
+func (p *Program) queueRendererCommand(cmd func(renderer)) {
+	p.mu.Lock()
+	p.rendererCommands = append(p.rendererCommands, cmd)
+	p.mu.Unlock()
+	p.wakeRenderer()
+}
+
+func (p *Program) flushRendererCommands() {
+	p.mu.Lock()
+	commands := p.rendererCommands
+	p.rendererCommands = nil
+	p.mu.Unlock()
+	for _, cmd := range commands {
+		cmd(p.renderer)
+	}
 }
 
 // flush flushes the output buffer to the program output. The queued bytes
@@ -1435,7 +1489,8 @@ func (p *Program) RestoreTerminal() error {
 	go p.checkResize()
 
 	// Flush queued commands.
-	return p.flush()
+	p.wakeRenderer()
+	return nil
 }
 
 // Println prints above the Program. This output is unmanaged by the program
@@ -1464,56 +1519,94 @@ func (p *Program) Printf(template string, args ...any) {
 
 // startRenderer starts the renderer.
 func (p *Program) startRenderer() {
-	framerate := time.Second / time.Duration(p.fps)
-	if p.ticker == nil {
-		p.ticker = time.NewTicker(framerate)
-	} else {
-		// If the ticker already exists, it has been stopped and we need to
-		// reset it.
-		p.ticker.Reset(framerate)
+	p.rendererMu.Lock()
+	defer p.rendererMu.Unlock()
+	if p.rendererStop != nil {
+		return
 	}
-
-	// Since the renderer can be restarted after a stop, we need to reset
-	// the done channel and its corresponding sync.Once.
-	p.once = sync.Once{}
+	framerate := time.Second / time.Duration(p.fps)
+	stop, done := make(chan struct{}), make(chan struct{})
+	p.rendererStop, p.rendererDone = stop, done
 
 	// Start the renderer.
 	p.renderer.start()
+	p.wakeRenderer() // initial render or restored terminal modes
 	go func() {
+		defer close(done)
+		// The timer is idle at 2 FPS, not a 60 Hz poll of an empty frame slot.
+		// A producer notification brings its deadline forward to the active
+		// ceiling, measured start-to-start with no tick backlog after slow I/O.
+		timer := time.NewTimer(rendererIdleInterval)
+		defer timer.Stop()
+		finished := time.Now()
+		var elapsed time.Duration
+		pending := false
 		for {
 			select {
-			case <-p.rendererDone:
-				p.ticker.Stop()
+			case <-stop:
 				return
-
-			case <-p.ticker.C:
-				_ = p.flush()
-				if p.observer == nil {
-					_ = p.renderer.flush(false)
-					continue
+			default:
+			}
+			select {
+			case <-stop:
+				return
+			case <-p.rendererWake:
+				if !pending {
+					delay := time.Until(finished.Add(nextFrameDelay(framerate, elapsed)))
+					timer.Reset(max(0, delay))
+					pending = true
 				}
+
+			case <-timer.C:
+				// All enqueues already visible to this flush are covered by it.
+				select {
+				case <-p.rendererWake:
+				default:
+				}
+				pending = false
 				start := time.Now()
+				p.flushRendererCommands()
+				_ = p.flush()
 				_ = p.renderer.flush(false)
-				if counted, ok := p.renderer.(interface{ flushedBytes() int }); ok {
-					if written := counted.flushedBytes(); written > 0 {
+				finished = time.Now()
+				elapsed = finished.Sub(start)
+				if p.observer != nil {
+					if counted, ok := p.renderer.(interface{ flushedBytes() int }); ok && counted.flushedBytes() > 0 {
+						written := counted.flushedBytes()
 						p.observer.ObserveFlush(FlushSample{Duration: time.Since(start), Bytes: written})
 					}
 				}
+				timer.Reset(max(time.Nanosecond, rendererIdleInterval-elapsed))
 			}
 		}
 	}()
+}
+
+const rendererIdleInterval = 500 * time.Millisecond
+
+// nextFrameDelay keeps the requested FPS ceiling without accumulating ticks.
+// Slow flushes pace themselves, with no additional frame-length sleep; idle
+// cadence is never intentionally reduced below 2 FPS.
+func nextFrameDelay(minInterval, flush time.Duration) time.Duration {
+	interval := min(max(minInterval, flush), rendererIdleInterval)
+	return max(time.Nanosecond, interval-flush)
 }
 
 // stopRenderer stops the renderer.
 // If kill is true, the renderer will be stopped immediately without flushing
 // the last frame.
 func (p *Program) stopRenderer(kill bool) {
-	// Stop the renderer before acquiring the mutex to avoid a deadlock.
-	p.once.Do(func() {
-		p.rendererDone <- struct{}{}
-	})
+	p.rendererMu.Lock()
+	defer p.rendererMu.Unlock()
+	if p.rendererStop == nil {
+		return
+	}
+	close(p.rendererStop)
+	<-p.rendererDone // owns the timer and any in-flight terminal write
+	p.rendererStop = nil
 
 	if !kill {
+		p.flushRendererCommands()
 		// flush locks the mutex
 		_ = p.renderer.flush(true)
 	}

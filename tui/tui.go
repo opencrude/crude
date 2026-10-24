@@ -263,6 +263,14 @@ func WithComposerDrafts(store *clientstate.Store, attachment clientstate.Attachm
 	}
 }
 
+// WithRemoteManager binds this client's saved connections before the first frame.
+func WithRemoteManager(manager shellport.RemoteManager, initialBackend string) StartOption {
+	return func(a *viewmodel.App) error {
+		a.SetRemoteManager(manager, initialBackend)
+		return nil
+	}
+}
+
 // Start creates and starts the terminal UI for the given workspace.
 //
 // The workspace must already be initialized. The app layer is responsible
@@ -289,11 +297,13 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 	global = t
 	// Force UV to use the same grapheme-width method as Crude layout and
 	// surface packing. See ../../docs/reference/terminal-width.md.
+	observer := perf.NewLoopObserver()
+	a.SetDisplayCadence(observer)
 	program := tea.NewProgram(
 		a,
 		tea.WithWidthMethod(ansi.GraphemeWidth),
 		tea.WithWidthProbe(rendering.TerminalWidthProbeCorpus()...),
-		tea.WithObserver(perf.NewLoopObserver()),
+		tea.WithObserver(observer),
 	)
 	t.app = a
 	t.Program = program

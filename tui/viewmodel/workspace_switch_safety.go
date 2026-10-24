@@ -31,6 +31,10 @@ type remoteWorkspaceSwitchIntent struct {
 	session        *workspace.Session
 	draftEpoch     uint64
 	preparation    *remoteWorkspacePreparation
+	// A backend switch supplies a different SDK attachment factory but shares
+	// every editor/draft decision and preparation lease with workspace navigation.
+	prepare   func(context.Context) (shellport.Workspace, error)
+	backendID string
 }
 
 // A prepared attachment remains command-owned until Update explicitly claims
@@ -216,7 +220,7 @@ func (m *App) workspaceSwitchEditorPending(ed *editor.Editor) (bool, error) {
 		if live, ok := m.ws.(shellport.LiveDocuments); ok && state.owner != live.DocumentOwner() {
 			state.sync = true
 		}
-		if state.busy || state.sync || state.save || state.undo != nil || state.closeView || state.closeAfter {
+		if state.busy || state.sync || !state.topicReady || state.save || state.undo != nil || state.closeView || state.closeAfter {
 			return true, nil
 		}
 	} else if ed.Modified() {
@@ -339,6 +343,9 @@ func (m *App) workspaceSwitchPrompt() (*remoteWorkspaceSwitchIntent, *editor.Edi
 }
 
 func (m *App) remoteWorkspaceSwitchStillSafe(intent *remoteWorkspaceSwitchIntent) bool {
+	if m.historyOperation != nil {
+		return false
+	}
 	if intent == nil || m.workspaceSwitchIntent != intent || intent.owner != m.ws || intent.sequence != m.workspaceAttachSequence || !m.workspaceAttachPending || m.asyncIOStopped.Load() || intent.session != m.ActiveSession || intent.draftEpoch != m.composerDraftEpoch || len(intent.drafts) != len(m.composerDraftOwners) {
 		return false
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -70,6 +71,40 @@ func TestOpenAndMigrate(t *testing.T) {
 	}
 	if count < 3 {
 		t.Errorf("expected >=3 tables, got %d", count)
+	}
+}
+
+func TestOpenAndMigrateUsesLiteralFilesystemPath(t *testing.T) {
+	names := []string{"session#literal.db", "session%20 + spaced.db"}
+	if runtime.GOOS != "windows" {
+		names = append(names, "session?literal.db")
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), name)
+			db, err := OpenAndMigrate(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO sessions(id, project_path, project_name, created_at) VALUES ('literal-session', '/project', 'project', 123)`); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("database was not created at the exact requested path: %v", err)
+			}
+			db, err = OpenAndMigrate(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var id string
+			if err := db.QueryRow(`SELECT id FROM sessions WHERE created_at = 123`).Scan(&id); err != nil || id != "literal-session" {
+				t.Fatalf("reopen changed identity/content: %q %v", id, err)
+			}
+		})
 	}
 }
 

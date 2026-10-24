@@ -122,11 +122,6 @@ func RunMCP(ctx context.Context, flags CLIFlags) error {
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	// Drain unsolicited workspace events: this adapter is not another replica.
-	go func() {
-		for range client.Events() {
-		}
-	}()
 	var attached coreprotocol.AttachResult
 	if err := client.Call(startup, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		return err

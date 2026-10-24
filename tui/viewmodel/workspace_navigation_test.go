@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestWorkspaceRailAvailableDuringNestedWorkflow(t *testing.T) {

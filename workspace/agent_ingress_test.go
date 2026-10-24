@@ -43,7 +43,7 @@ func TestAgentIngressAdvancesRootAndChildWithoutShell(t *testing.T) {
 			t.Fatalf("event rejected: %+v", event)
 		}
 	}
-	if root.State.TokenBuf != "" || w.AgentMgr.Get("child").State.TokenBuf != "" {
+	if root.State.LastTokenTime.IsZero() || w.AgentMgr.Get("child").State.LastTokenTime.IsZero() {
 		t.Fatal("semantic output still requires a shell tick")
 	}
 	snapshot := w.SnapshotAgents()

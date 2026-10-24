@@ -26,6 +26,7 @@ import (
 	captypes "crude/types/capability"
 	"crude/types/control"
 	"crude/workspace"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -186,11 +187,11 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult
-	if err := target.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, struct{}{}, &created); err != nil || created.Error != "" {
+	if err := target.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created); err != nil || created.Error != "" {
 		t.Fatal(created, err)
 	}
 	ws.BackendSession(created.SessionID).SetYolo(true)
-	if err := target.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Activate shell-picture, grant its exact picture tool and inspect the image.", DraftRevision: 1}, nil); err != nil {
+	if err := target.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Activate shell-picture, grant its exact picture tool and inspect the image.", DraftRevision: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {

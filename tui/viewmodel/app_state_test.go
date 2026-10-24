@@ -765,7 +765,6 @@ func TestCollaborationDeliverySettlementClearsPendingStatus(t *testing.T) {
 	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first"})
 	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second"})
 	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
-	app.syncPendingSteeringCount()
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_admitted", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
 	if got := conversation.PendingSteeringCount(); got != 1 {
 		t.Fatalf("pending human steering count=%d want 1", got)
