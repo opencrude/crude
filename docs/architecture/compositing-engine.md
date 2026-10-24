@@ -10,7 +10,7 @@ Build a production-grade multi-window compositing engine for the Crude TUI that:
 - Enables **floating windows** that can overlap, be dragged, resized, and stacked
 - Supports **transparency** (seeing through empty cells to windows below)
 - Handles **partial-line rendering** (Window A on left, Window B on right of the same row)
-- Maintains **zero-allocation frame rendering** via pool-based interning
+- Reuses retained cells and bounded caches; allocation/latency claims require measured gates
 - Integrates cleanly with Bubble Tea v2's event loop
 
 ## 2. Architecture Layers
@@ -29,7 +29,7 @@ Build a production-grade multi-window compositing engine for the Crude TUI that:
 ├                             ┤
 │  Layer 2: Compositor (tui/compositor/)                   │
 │  (Compositor, double-buffer, damage tracking, cell diff, │
-│   ANSI output generation)                                │
+│   direct-cell publication / diagnostic ANSI)              │
 ├                             ┤
 │  Layer 1: Surface System (tui/surface/)                  │
 │  (CellBuffer, Surface hierarchy, Rect, ClipStack,       │
@@ -59,7 +59,8 @@ tui/
 │   ├  compositor.go       # Compositor (frame pipeline, double-buffer)
 │   ├  damage.go           # DamageRegion tracking
 │   ├  diff.go             # Cell diff between front/back buffers
-│   └  output.go           # ANSI output generation from cell buffer
+│   ├  direct.go           # Direct-cell Bubble Tea/UV surface publication
+│   └  output.go           # Explicit diagnostic/string ANSI output
 ├  wm/                      # Layer 3: Window manager
 │   ├  window.go           # FloatingWindow struct and lifecycle
 │   ├  manager.go          # WindowManager (focus, z-order, hit-test)
@@ -551,10 +552,10 @@ package compositor
 // 1. BeginFrame() — clear back buffer, reset damage
 // 2. App renders widgets into surfaces
 // 3. Composite() — flatten surface tree, composite bottom-to-top into back buffer
-// 4. Present() — diff back vs front, generate ANSI output, swap buffers
+// 4. PresentSurface() — publish cells, swap buffers; Bubble Tea owns output
 //
 // The compositor owns the screen-sized cell buffers and manages the
-// conversion from cell buffer → ANSI escape sequences for the terminal.
+// completed cell-grid publication. Explicit ANSI output remains diagnostic.
 type Compositor struct {
     front     *surface.CellBuffer // Currently displayed (last frame sent to terminal)
     back      *surface.CellBuffer // Being rendered into (current frame)
@@ -562,14 +563,6 @@ type Compositor struct {
     height    int                 // Terminal height in rows
     root      *surface.Surface    // Root of the surface tree
     damage    DamageRegion        // Tracks what changed this frame
-    stylePool *cell.StylePool     // Interned styles for output optimization
-    lastStyle cellStyleState      // Cursor for optimizing ANSI output (avoids redundant SGR)
-}
-
-type cellStyleState struct {
-    fg   cell.Color
-    bg   cell.Color
-    attr cell.Attrs
 }
 
 // NewCompositor creates a compositor for the given terminal dimensions.
@@ -602,13 +595,14 @@ func (c *Compositor) BeginFrame() { ... }
 // cell level.
 func (c *Compositor) Composite() { ... }
 
-// Present finalizes the frame:
-// 1. Diffs back buffer vs front buffer (within damage region)
-// 2. Generates optimized ANSI output for changed cells
-// 3. Swaps front and back buffers
-// 4. Returns the ANSI output string
-//
-// The returned string can be passed directly to Bubble Tea's View() return value.
+// PresentSurface publishes the completed grid and swaps buffers. The drawable
+// borrows the front grid until BeginFrame/Resize. Bubble Tea snapshots it before
+// another Update and UV diffs/replaces changed row spans for terminal output.
+func (c *Compositor) PresentSurface() uv.Surface { ... }
+func (c *Compositor) CurrentSurface() uv.Surface { ... }
+
+// Present is the explicit ANSI path for diagnostics and string consumers.
+// It is not called by App.View's normal direct-cell path.
 func (c *Compositor) Present() string { ... }
 
 // FullRender performs a complete frame cycle:
@@ -624,9 +618,8 @@ func (c *Compositor) FullRender() string { ... }
 // DamageRegion tracks which cells changed during a frame.
 //
 // For efficiency, we track a bounding box rather than individual cells.
-// The diff only examines rows within the bounding box.
-// On a typical streaming frame, only 10-20 rows change out of 50+,
-// giving a 3-5x reduction in diff work.
+// Explicit diff consumers can restrict comparisons to this box.
+// Normal App output uses UV's independent changed-row replacement.
 //
 // For future optimization, we can track multiple non-overlapping rectangles
 // instead of a single bounding box.
@@ -703,7 +696,7 @@ func DiffRow(front, back *surface.CellBuffer, y int, minX, maxX int) []CellChang
 // 3. Group consecutive cells with the same style
 // 4. For diff-based output: only emit changed rows/cells
 //
-// Performance note: this function is called every frame (16ms when streaming).
+// This is an explicit diagnostic/string path, not App.View presentation.
 // The inner loop must be tight. Avoid string concatenation in the hot path;
 // use a bytes.Buffer or strings.Builder.
 func GenerateANSI(buf *surface.CellBuffer) string { ... }
@@ -711,13 +704,8 @@ func GenerateANSI(buf *surface.CellBuffer) string { ... }
 // GenerateDiffANSI converts only the changed cells into ANSI output.
 // Uses cursor positioning (CSI H) to jump to changed cells.
 //
-// This is more efficient than full-frame output when only a small
-// portion of the screen changed. However, for Bubble Tea integration,
-// we use full-frame output (GenerateANSI) since Bubble Tea writes
-// the entire view each frame.
-//
-// For future direct-to-terminal rendering (bypassing Bubble Tea),
-// this diff-based output would provide significant savings.
+// Diagnostic consumers can request changed-cell ANSI. App.View instead hands
+// a native cell surface to Bubble Tea; UV owns the terminal diff/output.
 func GenerateDiffANSI(buf *surface.CellBuffer, diff *DiffResult) string { ... }
 
 // cellToANSI writes the ANSI escape sequences for a single cell's style.
@@ -979,24 +967,78 @@ func ClampSize(fw *FloatingWindow) { ... }
 
 ## 9. Integration with Bubble Tea
 
-`App.View()` returns a string built from the composited cell buffer, so Bubble
-Tea itself is unchanged:
+`App.View()` returns `tea.View` with a native `Surface`, not a full-frame ANSI
+string. The local Bubble Tea/UV integration snapshots the borrowed drawable
+synchronously before another Update; rendering never races a mutable front grid.
 
-```
+```text
 App.View()
-  1. compositor.BeginFrame()            clear root children and back buffer
-  2. fill background, mount mainSurf    the whole shell is one surface (z=0)
-  3. configureShell + renderShellToSurface
-                                        root ui.Host: layout → focus → paint
-  4. windowManager.Render(ctx)          each FloatingWindow paints its surface
-  5. compositor.Present()               flatten z-order, blit, diff, emit ANSI
+  1. configureShell + prepareShellSurface
+                                      Host layout/focus; clean/no windows/no WM damage reuses frame
+  2. compositor.BeginFrame()          clear root children and composite back buffer
+  3. mount mainSurf + PaintRegions    one shell surface, theme-owned background
+  4. windowManager.Render(ctx)        FloatingWindow content surfaces
+  5. compositor.Composite()           flatten z-order and blit
+  6. compositor.PresentSurface()      swap/publish cells → tea.View.Surface
+Bubble Tea snapshot → UV Replace → changed-row terminal diff/output
 ```
 
-Floating windows (pickers, palettes, settings, menus, LSP popups) are
-`OverlayHost`-managed `FloatingWindow`s whose content is a `ui.ComponentWidget`.
-The original ANSI-line overlay system and the string-returning widget adapter
-were deleted. The per-frame contract — what is rebuilt every frame and what is
-cached — is specified in [the shell host](shell-host.md).
+UV `RenderBuffer.Replace` compares the latest complete grid to the last flushed
+one and preserves damage across pending/coalesced views. Primary grapheme widths,
+wide-cell continuations, colors and attributes cross directly; there is no
+full-grid ANSI encode/decode cycle on the application path. Terminal escape
+emission remains UV's responsibility, not a second direct writer in App.
+Complete opaque `Blit` rows may use value-copy only after validating actual
+backgrounds and complete grapheme spans. Transparent/default-background,
+cropped and malformed rows keep the normal inheritance/normalization path.
+For direct presentation, only Bubble Tea's owned producer `snapshotScreen`
+explicitly offers `SetCellRow`: it copies the complete converted row into its
+own storage and never retains compositor scratch. Generic UV screens still
+receive individual `SetCell` calls, preserving their damage tracking. Every
+new publication reads current source cells; there is no pointer-only frame cache.
+The compositor advances an owner-scoped snapshot generation only when publishing
+or resizing its completed grid. Repeated handoffs of that exact generation reuse
+Bubble Tea's detached copy; different producers, new generations, geometry and
+string/surface transitions always resnapshot. This avoids copying the whole grid
+on coalesced presentation opportunities without dropping source mutations. A
+fresh renderer after suspend/reset marks all retained rows damaged once, even
+when they equal the last producer snapshot.
+Physical terminal scrolling can change cells outside the producer's changed
+spans. UV therefore expands latest-buffer damage over the entire physical scroll
+region after applying a scroll, including source-unchanged exposed rows; it does
+not disable scrolling or force an unrelated whole-frame repaint.
+
+The renderer is demand-woken, not an unconditional 60 Hz empty-slot poll. A new
+frame or queued terminal command brings the single timer forward to the active
+frame deadline, paced by the last actual writer cost. The idle maximum remains
+500 ms (2 FPS); a key after an idle interval does not wait for that idle deadline.
+Update only enqueues mode/color/clear/print commands and snapshots the latest
+complete frame. The renderer executes those commands and performs terminal I/O;
+slow output cannot hold Update behind its writer mutex. Stopping or restoring a
+terminal joins that exact renderer/timer lifetime before replacing it.
+An immediate frame deadline is not source damage: admitted terminal keys retain
+sibling regions, while the focused terminal Host owns selection/cursor/prediction
+invalidation. Unknown messages keep conservative shell damage; global shortcuts
+still own their layout and overlay transitions. Mutation remains immediate and
+no terminal key waits for a presentation timer.
+
+UV cell styles carry immutable tagged scalar terminal colors: default, basic
+palette, indexed palette and RGB remain distinct even when they currently have
+the same RGB components. External `color.Color` inputs normalize once at styled
+text boundaries. Direct cells do not box colors per pixel or retain mutable
+external color objects. The native pen appends SGR parameters directly into its
+retained writer buffer, with no per-cell intermediate style strings or cache of
+video colors. The single renderer also reuses its synchronized-output envelope
+at actual observed capacity; it does not allocate another full video frame on
+each flush. The envelope remains protected by the writer mutex and never enters
+the producer handoff lifetime.
+
+Floating windows remain `OverlayHost`-managed `FloatingWindow`s whose content is
+a `ui.ComponentWidget`. Root Host retained regions do not change window ownership,
+parent-local child bounds, z-order, transparency or grapheme-atomic blits. The
+explicit `Present`/`GenerateANSI` path remains for diagnostics/string consumers.
+See [the shell host](shell-host.md#retained-component-generation-paint) for source
+invalidation, conservative fallbacks and the full `Host.Paint` oracle.
 
 ## 10. Key Design Decisions
 
@@ -1047,62 +1089,26 @@ cached — is specified in [the shell host](shell-host.md).
 
 ## 11. Character Width Handling
 
-The existing codebase already uses `github.com/rivo/uniseg` for character width
-measurement. The compositing engine will continue using this:
+All layout width uses the shared `VisibleWidth` grapheme profile; consumers do not
+call uniseg/runewidth directly or add platform-specific corrections. CellBuffer
+writes preserve the complete cluster and its measured primary width, plus width-0
+continuation cells. Blit/occlusion is grapheme-atomic: covering a primary or tail
+clears the old whole span. The direct-cell adapter passes measured widths to UV
+rather than reparsing them from ANSI. See [terminal width](../reference/terminal-width.md).
 
-```go
-import "github.com/rivo/uniseg"
+## 12. Performance and correctness boundaries
 
-// measureWidth returns the display width of a grapheme cluster.
-// Uses uniseg.GraphemeClusterCount and uniseg.StringWidth.
-func measureWidth(s string) int {
-    return uniseg.StringWidth(s)
-}
-```
+Measure mutation, projection, component paint, composition, direct-cell snapshot
+and presented output separately. A clean Host with no floating layers reuses the
+exact completed publication after geometry/focus derivation; admitted terminal
+keys invalidate only changed local selection, scroll, cursor or prediction ink.
+New source damage still requires full-grid composition/snapshot work. Unknown messages,
+geometry/mount/theme/buffer changes, overlapping regions and explicit clocks retain
+conservative paint paths. There is no universal zero-allocation or all-leaves-
+skipped claim. Compare direct/region output to the complete `Host.Paint` oracle,
+including resize, unmount, overlays, transparency, theme and Unicode width.
 
-All CellBuffer.WriteString operations use this for correct wide character handling.
-When writing a wide character (width=2), the engine:
-1. Writes Cell{Char: ch, Width: 2} at position N
-2. Writes Cell{Char: 0, Width: 0} (continuation) at position N+1
-3. If a wide char would be split at the buffer edge, it's truncated
-
-## 12. Performance Budget
-
-At 60fps (16ms per frame), the compositor must complete in under 8ms
-(leaving 8ms for widget rendering and event handling).
-
-For a 120×40 terminal (4,800 cells):
-- CellBuffer.Clear: ~5μs (fill 4800 cells)
-- Surface tree traversal: ~1μs (typically <20 surfaces)
-- Blit operations: ~50μs (compositing ~4800 cells)
-- Diff: ~100μs (comparing 4800 cells)
-- ANSI output: ~200μs (generating ~4800 cell sequences)
-- Total: ~356μs — well within budget
-
-For a 200×60 terminal (12,000 cells):
-- Total estimated: ~900μs — still well within 8ms
-
-## 13. Future Optimizations (Not in V1)
-
-These are intentionally deferred to keep V1 focused and correct:
-
-1. **Diff-based ANSI output** — Only output changed cells with cursor positioning.
-   Requires bypassing Bubble Tea's View() model for direct terminal writes.
-
-2. **Multiple damage rectangles** — Track separate dirty regions instead of
-   a single bounding box. Reduces diff work for scattered changes.
-
-3. **Occlusion culling** — Skip rendering surfaces that are fully covered
-   by windows above them. Requires bounding-box intersection tests.
-
-4. **Blit optimization** — Copy unchanged subtrees from previous frame
-   (like Claude Code Ink's blit optimization).
-
-5. **Parallel compositing** — Use goroutines to composite non-overlapping
-   surface regions in parallel.
-
-6. **Layout cache** — Cache Measure/Arrange results and only recalculate
-   when children change.
-
-7. **Incremental surface rendering** — Only re-render widgets that are
-   marked dirty, reuse previous frame's surface for unchanged widgets.
+Current benchmarks and enforced ceilings belong in [performance baselines](../reference/performance-baselines.md);
+source implementation does not establish native emulator or remote-host latency
+acceptance. Do not preserve old architectural estimates as measured results or
+raise a gate to make a regression pass.

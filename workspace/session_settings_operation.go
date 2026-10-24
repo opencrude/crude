@@ -157,3 +157,11 @@ func (owner *Session) SettingsRevision() uint64 {
 	}
 	return owner.settingsRevision
 }
+
+// ResetReplicaRevision admits a fully validated snapshot from a new core
+// revision domain without discarding the retained session or private UI state.
+func (owner *Session) ResetReplicaRevision() {
+	if owner != nil {
+		owner.settingsRevision = 0
+	}
+}

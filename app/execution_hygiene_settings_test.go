@@ -37,7 +37,7 @@ func TestExecutionHygienePreferencesPersistAndInheritAcrossRestart(t *testing.T)
 		}
 		server, wire := net.Pipe()
 		go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-		client, err := coreclient.Dial(t.Context(), wire, "hygiene-settings")
+		client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(wire), "hygiene-settings")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestExecutionHygienePreferencesPersistAndInheritAcrossRestart(t *testing.T)
 	fetch := func() coreprotocol.SettingsFetchResult {
 		t.Helper()
 		var got coreprotocol.SettingsFetchResult
-		if err := client.Call(t.Context(), id, coreprotocol.SettingsFetch, struct{}{}, &got); err != nil {
+		if err := client.Call(t.Context(), id, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &got); err != nil {
 			t.Fatal(err)
 		}
 		return got
@@ -60,10 +60,10 @@ func TestExecutionHygienePreferencesPersistAndInheritAcrossRestart(t *testing.T)
 	after := types.CloneAppSettings(before.Application)
 	zero := 0
 	after.Agents.ExecutionHygiene.RetainedCount = &zero
-	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(before.Application, after), ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(before.Application, after), ProxyURL: coreprotocol.SecretString{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Call(t.Context(), id, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"agents", "execution_hygiene", "age_hours"}, After: json.RawMessage("48")}}}, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.WorkspaceOverridesSet, &coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"agents", "execution_hygiene", "age_hours"}, After: json.RawMessage("48")}}}, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Close(); err != nil {

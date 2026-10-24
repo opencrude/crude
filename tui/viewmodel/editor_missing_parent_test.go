@@ -139,7 +139,7 @@ func TestEditorRoutesSurviveRetainedMissingParent(t *testing.T) {
 				if ed := app.EditorState.Editor; ed == nil || ed.Value() != content || ed.DocumentState().DocumentID == "" {
 					t.Fatal("entry point did not install the canonical document")
 				}
-				if !strings.Contains(ansi.Strip(app.View().Content), "EDITOR_OPEN_SURVIVED") {
+				if !strings.Contains(ansi.Strip(app.View().RenderContent()), "EDITOR_OPEN_SURVIVED") {
 					t.Fatal("opened document was not painted")
 				}
 				if route == "context window" && !app.Win.IsFloating(app.Win.ActiveGroup()) {

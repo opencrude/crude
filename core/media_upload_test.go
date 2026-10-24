@@ -45,7 +45,7 @@ func TestReferenceUploadFullSizeAndPreimage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := value.(coreprotocol.ReferenceView)
+	view := value.(*coreprotocol.ReferenceView)
 	actual, err := os.ReadFile(view.Reference.FilePath)
 	if err != nil || !bytes.Equal(actual, data) {
 		t.Fatal("large transfer truncated", err)

@@ -3,9 +3,11 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"crude/agent"
 	"crude/collaboration"
@@ -15,6 +17,152 @@ import (
 	"crude/workspace"
 	"crude/worktree"
 )
+
+// Integration and its inverse must publish the accepted document journal without
+// reentering the document mutation lock or waiting for a shell's applied ACK.
+func TestControlExecutionLiveDocumentTopicApplyAndUndo(t *testing.T) {
+	a := controlExecutionFixture(t)
+	r, err := New(func(string) (*workspace.Workspace, error) { return a.ws, nil }, filepath.Join(t.TempDir(), "receipts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	c := controlWireClient(t, r, "execution-topic")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var attached coreprotocol.AttachResult
+	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: a.ws.RootPath}, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot document.Snapshot
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: "live.txt"}, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var edited document.Receipt
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.DocumentEdit, &coreprotocol.DocumentEditRequest{ID: snapshot.ID, Revision: snapshot.Revision, Edits: []document.Edit{{Start: 0, End: 3, Text: "ONE"}}}, &edited); err != nil {
+		t.Fatal(err)
+	}
+	type publication struct {
+		header coreprotocol.TopicHeader
+		update coreprotocol.DocumentUpdate
+		ack    chan struct{}
+	}
+	updates := make(chan publication, 4)
+	sub := c.Subscribe(ctx, attached.WorkspaceID, coreprotocol.TopicDocument, snapshot.ID, func(h coreprotocol.TopicHeader, body []byte) error {
+		var update coreprotocol.DocumentUpdate
+		if err := coreprotocol.Decode(body, &update); err != nil {
+			return err
+		}
+		p := publication{h, update, make(chan struct{})}
+		select {
+		case updates <- p:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case <-p.ack:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	defer sub.Close()
+	next := func() publication {
+		t.Helper()
+		select {
+		case p := <-updates:
+			return p
+		case <-ctx.Done():
+			t.Fatal("document topic stalled", ctx.Err())
+			return publication{}
+		}
+	}
+	initial := next()
+	if !initial.header.Reset || initial.update.Snapshot == nil || string(initial.update.Snapshot.Text) != "ONE\ntwo\nthree\n" || !initial.update.Snapshot.Dirty {
+		t.Fatalf("missing dirty initial document: %+v", initial)
+	}
+	close(initial.ack)
+	sequence := 0
+	call := func(command, resource string, input any) control.Result {
+		t.Helper()
+		sequence++
+		raw, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := control.Request{ID: fmt.Sprintf("execution-topic-%d", sequence), CommandID: command, Target: control.Target{WorkspaceID: attached.WorkspaceID, ResourceID: resource}, Input: raw}
+		payload, err := coreprotocol.Marshal(coreprotocol.Ptr(request))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := c.CallRequest(ctx, coreprotocol.Request{ID: request.ID, Owner: c.Owner(), WorkspaceID: attached.WorkspaceID, Method: coreprotocol.ControlExecute, Payload: payload})
+		if err != nil || response.Error != nil {
+			t.Fatalf("%s did not complete: %v %v", command, err, response.Error)
+		}
+		var result control.Result
+		if err := coreprotocol.Decode(response.Payload, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Fault != nil {
+			t.Fatal(command, result.Fault)
+		}
+		return result
+	}
+	var execution worktree.Context
+	if err := json.Unmarshal(call("execution.create", "", map[string]any{"mode": "worktree"}).Output, &execution); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(execution.Root, "live.txt"), []byte("ONE\nTWO\nthree\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var plan worktree.PlanDelta
+	if err := json.Unmarshal(call("execution.review", execution.ID, map[string]any{"id": execution.ID}).Output, &plan); err != nil {
+		t.Fatal(err)
+	}
+	applied := call("execution.apply", execution.ID, map[string]any{"plan": plan})
+	delta := next()
+	if delta.header.Reset || delta.header.Seq != initial.header.Seq+1 || delta.update.Base != edited.Revision || delta.update.State.Revision != edited.Revision+1 || len(delta.update.Changes) != 1 || !delta.update.State.Dirty {
+		t.Fatalf("integration did not publish one contiguous delta: %+v", delta)
+	}
+	text, _, err := document.Apply(initial.update.Snapshot.Text, delta.update.Changes[0].Edits)
+	if err != nil || string(text) != "ONE\nTWO\nthree\n" {
+		t.Fatalf("integration recipient bytes=%q err=%v", text, err)
+	}
+	// Re-observe a lost reply while the recipient still holds the publication.
+	if duplicate := call("execution.apply", execution.ID, map[string]any{"plan": plan}); string(duplicate.Output) != string(applied.Output) {
+		t.Fatal("lost reply changed integration receipt")
+	}
+	close(delta.ack)
+	var receipt worktree.Receipt
+	if err := json.Unmarshal(applied.Output, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	call("execution.undo", receipt.OperationID, map[string]any{"operation_id": receipt.OperationID})
+	undone := next()
+	if undone.header.Reset || undone.header.Seq != delta.header.Seq+1 || undone.update.Base != delta.update.State.Revision || undone.update.State.Revision != delta.update.State.Revision+1 || len(undone.update.Changes) != 1 {
+		t.Fatalf("undo did not publish exactly one next revision: %+v", undone)
+	}
+	text, _, err = document.Apply(text, undone.update.Changes[0].Edits)
+	if err != nil || string(text) != "ONE\ntwo\nthree\n" {
+		t.Fatalf("undo recipient bytes=%q err=%v", text, err)
+	}
+	close(undone.ack)
+	if data, err := os.ReadFile(filepath.Join(a.ws.RootPath, "live.txt")); err != nil || string(data) != "one\ntwo\nthree\n" {
+		t.Fatalf("integration forced accepted dirty text to disk: %q %v", data, err)
+	}
+	// Closing an applied topic cannot strand a notifier or the next document read.
+	sub.Close()
+	var current document.Snapshot
+	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.DocumentRead, coreprotocol.DocumentReadRequest{ID: snapshot.ID}, &current); err != nil {
+		t.Fatal(err)
+	}
+	if string(current.Text) != "ONE\ntwo\nthree\n" || current.Revision != undone.update.State.Revision {
+		t.Fatalf("wrong canonical state after topic close: %+v", current)
+	}
+}
 
 func TestControlDomainExactCheckoutAndNativeClaims(t *testing.T) {
 	a := controlExecutionFixture(t)

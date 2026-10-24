@@ -19,7 +19,7 @@ func holdMetadataRead(t *testing.T, dbPath string) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dbPath)+"?mode=ro&_busy_timeout=1")
+	db, err := sql.Open("sqlite", fileURI(dbPath)+"?mode=ro&_busy_timeout=1")
 	if err != nil {
 		release()
 		t.Fatal(err)

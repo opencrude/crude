@@ -21,29 +21,50 @@ crude --core-stop                 # refuses active work/other clients
 A started core runs from a content-addressed copy of the executable,
 `~/.crude/bin/crude-core-<build-id>[.exe]`, never from the image that started it.
 `go run .` can therefore delete its temporary build when the shell exits and a
-rebuild can replace `crude.exe` while the previous core lingers, which Windows
-otherwise refuses. Copies of other builds are pruned on the next start once they
-no longer run. `crude --core-status` prints the image a core runs from.
+rebuild can replace `crude.exe` while the previous core lingers. Native image ID
+is not protocol identity: different images of the same source cohort attach
+without replacing the core. `crude --core-status` prints the running image.
 
-Publication is immutable: concurrent same-build starters close their complete
-private candidates, then atomically link one winner without replacing its inode.
-Losers validate and reuse the existing image. Invalid type/size/executable mode
-fails closed; this is not a same-size corruption hash check. The data filesystem
-must support hard links. Other-build pruning remains best-effort.
+Publication is immutable: concurrent starters close their complete candidates,
+then atomically hard-link one winner without replacing its inode. Losers validate
+and reuse its exact digest, type, size and executable mode. Unsupported hard-link
+filesystems fail explicitly. All staged images currently remain retained: Unix
+unlink success is not liveness proof for a core/helper/concurrent starter. Disk
+use can grow across builds; automatic pruning is not implemented.
+
+The private owner record binds its generation to the exact retained helper and
+full hash. Its lifetime lock stays held through runtime shutdown. Autostart and
+crash-left reclaim require positive absence and exclusive lifetime proof, not a
+failed handshake. A mismatched cohort/schema invokes only the verified original
+helper's graceful `--core-stop` with exact `ExpectedOwner`; it never force-stops
+or kills the core. Automatic handover refuses **any** retained workspace, attached
+shell, opening factory or incomplete status. Use explicit graceful stop from the
+original installation or an isolated development profile; do not delete owner
+records, locks or images to bypass refusal. See the
+[current protocol contract](../reference/core-client-protocol.md).
 
 ### Developing crude inside crude
 
-A shell refuses to replace a core from another build while that core has shells
-or active work, so a dev build started from a terminal inside your running crude
+A shell refuses automatic handover to another source cohort while the core has
+any retained workspace, attached shell, opening factory or incomplete status, so
+a dev build started from a terminal inside your running crude
 cannot disturb it. Run the dev build with its own profile instead:
 
 ```powershell
+go run ./internal/wiregen
+go run ./internal/wiregen -check
 $env:CRUDE_HOME = "$HOME\crude-dev"; go run .
 ```
 
 ```sh
+go run ./internal/wiregen       # explicit generation after production-source edits
+go run ./internal/wiregen -check # nonmutating freshness check
 CRUDE_HOME=~/crude-dev go run .
 ```
+
+Use the canonical native cgo environment for generation/builds. `make build`,
+`scripts/build.sh` and `scripts/release.py` check source-cohort freshness. Direct
+`go build` or `go run .` does not implicitly generate or check it.
 
 `CRUDE_HOME` (`buildinfo.Home`) replaces the home directory for every crude data
 path — core endpoint, config, workspaces, sessions, history and logs — so the dev
@@ -89,8 +110,9 @@ crude --ssh build-host --workspace /srv/projects/example \
   --client-profile remote-review
 ```
 
-The only remote command is `crude --core-stdio`; no project path enters remote
-shell command interpolation. Strict host-key checking, no PTY, no forwarding,
+SSH uses fixed inspect/install/launch helpers and `crude --core-stdio`; no
+project path enters remote shell command interpolation. Strict host-key checking,
+no PTY, no forwarding,
 no shared control session and noninteractive authentication are enforced. Do not
 work around unknown/replaced keys with verification disabled. The stdio bridge
 attaches to/autostarts the remote core; it is not an unauthenticated TCP service.
@@ -156,13 +178,17 @@ not multi-tenant isolation.
 | Private drafts and decisions | `clientstate/`, `tui/viewmodel/editor_recovery.go`, `tui/viewmodel/editor_conflict.go` |
 | Files and client desktop effects | `core/client_files.go`, `core/project_replace.go`, `tui/viewmodel/client_files.go`, `tui/viewmodel/attachment_desktop.go` |
 | Invocation secrecy | `core/invocation.go`, `workspace/invocation.go`, `coreprotocol/invocation.go` |
-| Large responses | `core/payload_transfer.go`, `coreclient/payload_transfer.go`, `coreprotocol/payload_transfer.go` |
+| Bulk reads/uploads | `core/bulk_transfer.go`, `coreclient/bulk_transfer.go`, `coreprotocol/bulk_transfer.go` |
+| Cohort and safe handover | `internal/wiregen/`, `buildinfo/cohort_gen.go`, `app/core_handover.go`, `app/core_handover_unix.go`, `app/core_handover_windows.go` |
 
-Large **responses** support at most 64 MiB raw JSON through 256 KiB chunks:
-8 MiB frames, 4 retained payloads/128 MiB per connection, 30-second inactivity expiry renewed on reads,
-immutable digest verification and explicit release. Receipts contain original
-responses, not expiring tokens. Incoming 9 MiB mutations fail before enqueue;
-there is no chunked upload. Large read support is not large edit admission.
+Large files, reference content and media use method-specific credit-controlled
+bulk streams in either direction, not JSON response payloads, response tokens or
+`payload.read` polling. Chunks are 256 KiB, with ordered offsets, whole-transfer
+digest verification and a two-minute stream lifetime. Current owner limits are
+64 MiB file reads and reference/media reads, 16 MiB editable reference uploads,
+and 16 MiB document text; media upload admission retains its separate 64 MiB cap.
+Bulk support does not bypass edit/mutation limits. Durable receipts retain typed
+outcomes; staged uploads publish only through a separate exact durable command.
 
 ## Reproduce Linux process acceptance
 
@@ -218,30 +244,16 @@ binary identity, exact requests/evidence and cleanup without credentials.
 
 ## Evidence boundary at this documentation update
 
-Parent-supplied checkpoint evidence: ten real CLI shells shared input/output;
-origin death caused one provider request; peer Yes caused two provider posts;
-peer Escape Stop caused one and retained input. Zero-client server completion
-and passive attach caused one post. Genuine nonroot loopback SSH rejected unknown
-and replaced keys and survived origin death with two CLI shells. The editor
-final harness passed all six checks (shared unsaved/disjoint edits and dirty
-markers without disk write, author undo/save, accepted text surviving origin kill,
-zero-client core restart restore, external dirty conflict visible and safe Esc
-retaining local/external bytes). Parent read the final result JSON and both core
-stop/cleanup results. The earlier conflict failure is resolved on the final binary.
+The process harnesses above were used for the earlier core/shell separation
+acceptance; their previous full-suite, race, lint, benchmark and capture results
+are **historical**, not validation of the current v2 integration. The same is true
+of earlier JSON large-response/expiry measurements: v2 removed that transfer
+path. Rerun journeys against the final checked binary before using them as current
+evidence.
 
-Source-focused normal/format/receipt/reconnect tests supplied child evidence.
-Parent reports the final full suite passed 94 packages (`go test ./... -count=1
--timeout=900s`). Final core/client/app/remote races, focused UI/private-recovery
-races, zero-issue lint, docs/design/benchmark gates and Windows cross-build pass.
-The final ten-shell and genuine loopback SSH binary reruns pass. The actual
-16 MiB Runtime/ServeConnection Open/Sync and giant request.receipt passes with
-race instrumentation: each request has its own 60-second deadline. Read-renewed
-inactivity expiry preserves active transfer evidence; immutable output is encoded
-once while all incoming JSON checks remain enforced.
-Native Windows and distinct-host SSH remain open. Final durable-edit measurements
-are in the performance reference. The private draft-backup browser is implemented
-and focused connected recovery tests pass; final desktop captures include its
-empty state at 160×40 and the conflict default at 80×24. Initial
-resource samples are recorded in [performance baselines](../reference/performance-baselines.md);
-they are not a pre/post comparison or a claim of efficiency. See the
-[active acceptance plan](../plans/core-shell-separation.md) for remaining work.
+The current v2 implementation and still-open thresholds/matrix live in the
+[active v2 acceptance plan](../plans/core-protocol-v2.md). Its checkpoint separates
+parent-reported focused results from unrun repository-wide, native and distinct-
+host gates. A source audit or documentation check is not product acceptance.
+Native Windows, distinct-host SSH, exact PTY-write latency, outer-terminal frame
+rate and per-feature visual/fuzz journeys require their own current evidence.

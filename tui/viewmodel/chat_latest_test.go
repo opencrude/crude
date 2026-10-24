@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/rendering"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestLatestDenseHydratedWidthReflowPaintsTailAndPreservesOtherPaneAndDraft(t *testing.T) {

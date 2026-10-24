@@ -4,15 +4,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/gofrs/flock"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"crude/coreprotocol"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -115,11 +117,11 @@ func openReceipts(path string) (*receiptJournal, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS core_receipts (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS receipts (
  client TEXT NOT NULL, request TEXT NOT NULL, digest BLOB NOT NULL,
  workspace TEXT NOT NULL, method TEXT NOT NULL, state TEXT NOT NULL,
  response BLOB, created INTEGER NOT NULL, PRIMARY KEY(client, request));
-UPDATE core_receipts SET state='uncertain' WHERE state='pending';`)
+UPDATE receipts SET state='uncertain' WHERE state='pending';`)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -132,14 +134,19 @@ func (s *receiptJournal) close() error {
 	return errors.Join(s.db.Close(), s.lock.Unlock())
 }
 
+// requestDigest is the identity of a request's content: workspace, method and
+// exact payload bytes, each length-prefixed. Epoch is connection ownership,
+// not operation identity: a reconnected client must be able to recover the
+// prior result using its original ID.
 func requestDigest(request coreprotocol.Request) [32]byte {
-	// Epoch is connection ownership, not operation identity. A reconnected
-	// client must be able to recover the prior result using its original ID.
-	data, _ := json.Marshal(struct {
-		Workspace, Method string
-		Payload           json.RawMessage
-	}{request.WorkspaceID, request.Method, request.Payload})
-	return sha256.Sum256(data)
+	h := sha256.New()
+	for _, part := range [][]byte{[]byte(request.WorkspaceID), []byte(request.Method), request.Payload} {
+		var size [8]byte
+		binary.BigEndian.PutUint64(size[:], uint64(len(part)))
+		h.Write(size[:])
+		h.Write(part)
+	}
+	return [32]byte(h.Sum(nil))
 }
 
 func (s *receiptJournal) begin(ctx context.Context, request coreprotocol.Request) (coreprotocol.Receipt, bool, error) {
@@ -151,7 +158,7 @@ func (s *receiptJournal) begin(ctx context.Context, request coreprotocol.Request
 	}
 	defer func() { _ = tx.Rollback() }()
 	stamp := time.Now()
-	result, err := tx.ExecContext(ctx, `INSERT INTO core_receipts(client,request,digest,workspace,method,state,created) VALUES(?,?,?,?,?,'pending',?) ON CONFLICT(client,request) DO NOTHING`, request.Owner.ClientID, request.ID, digest[:], request.WorkspaceID, request.Method, stamp.UnixNano())
+	result, err := tx.ExecContext(ctx, `INSERT INTO receipts(client,request,digest,workspace,method,state,created) VALUES(?,?,?,?,?,'pending',?) ON CONFLICT(client,request) DO NOTHING`, request.Owner.ClientID, request.ID, digest[:], request.WorkspaceID, request.Method, stamp.UnixNano())
 	if err != nil {
 		return coreprotocol.Receipt{}, false, err
 	}
@@ -159,7 +166,7 @@ func (s *receiptJournal) begin(ctx context.Context, request coreprotocol.Request
 	if err != nil {
 		return coreprotocol.Receipt{}, false, err
 	}
-	receipt, actual, err := scanReceipt(tx.QueryRowContext(ctx, `SELECT client,request,digest,workspace,method,state,response,created FROM core_receipts WHERE client=? AND request=?`, request.Owner.ClientID, request.ID))
+	receipt, actual, err := scanReceipt(tx.QueryRowContext(ctx, `SELECT client,request,digest,workspace,method,state,response,created FROM receipts WHERE client=? AND request=?`, request.Owner.ClientID, request.ID))
 	if err != nil {
 		return coreprotocol.Receipt{}, false, err
 	}
@@ -174,12 +181,13 @@ func (s *receiptJournal) begin(ctx context.Context, request coreprotocol.Request
 
 func (s *receiptJournal) complete(ctx context.Context, request coreprotocol.Request, response coreprotocol.Response) error {
 	defer receiptLatency.Since(time.Now())
-	encoded, err := json.Marshal(response)
+	response.Value = nil
+	encoded, err := coreprotocol.Marshal(&response)
 	if err != nil {
 		return err
 	}
 	digest := requestDigest(request)
-	result, err := s.db.ExecContext(ctx, `UPDATE core_receipts SET state='completed',response=? WHERE client=? AND request=? AND digest=? AND state='pending'`, encoded, request.Owner.ClientID, request.ID, digest[:])
+	result, err := s.db.ExecContext(ctx, `UPDATE receipts SET state='completed',response=? WHERE client=? AND request=? AND digest=? AND state='pending'`, encoded, request.Owner.ClientID, request.ID, digest[:])
 	if err != nil {
 		return err
 	}
@@ -194,7 +202,7 @@ func (s *receiptJournal) complete(ctx context.Context, request coreprotocol.Requ
 }
 
 func (s *receiptJournal) lookup(ctx context.Context, client, id string) (coreprotocol.Receipt, error) {
-	r, _, err := scanReceipt(s.db.QueryRowContext(ctx, `SELECT client,request,digest,workspace,method,state,response,created FROM core_receipts WHERE client=? AND request=?`, client, id))
+	r, _, err := scanReceipt(s.db.QueryRowContext(ctx, `SELECT client,request,digest,workspace,method,state,response,created FROM receipts WHERE client=? AND request=?`, client, id))
 	return r, err
 }
 
@@ -211,7 +219,7 @@ func scanReceipt(row *sql.Row) (coreprotocol.Receipt, [32]byte, error) {
 	}
 	result.CreatedAt = time.Unix(0, created)
 	if len(raw) > 0 {
-		if err = json.Unmarshal(raw, &result.Response); err != nil {
+		if err = coreprotocol.Decode(raw, &result.Response); err != nil {
 			return result, [32]byte{}, err
 		}
 	}

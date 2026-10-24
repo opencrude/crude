@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"crude/types/control"
+	"crude/types/jsondoc"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -140,7 +141,7 @@ type HostRequest struct {
 	Authorized      bool
 	Tool            Tool
 	Grant           *ToolGrant
-	Arguments       map[string]any
+	Arguments       jsondoc.Object
 	URI             string
 	Prompt          string
 	PromptArguments map[string]string

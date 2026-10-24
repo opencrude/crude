@@ -22,7 +22,7 @@ type StartupClient struct {
 
 var _ shellport.Startup = (*StartupClient)(nil)
 
-func (s *StartupClient) call(ctx context.Context, method string, in, out any) error {
+func (s *StartupClient) call(ctx context.Context, method string, in coreprotocol.Value, out coreprotocol.Target) error {
 	s.mu.Lock()
 	if s.Client == nil || s.Client.Err() != nil {
 		if s.Dial == nil {
@@ -77,6 +77,6 @@ func (s *StartupClient) Catalog(ctx context.Context, root string, hidden bool) (
 
 func (s *StartupClient) Save(ctx context.Context, edits []types.SettingEdit) (types.OnboardingSettings, error) {
 	var out types.OnboardingSettings
-	err := s.call(ctx, coreprotocol.StartupSave, coreprotocol.StartupSaveRequest{Edits: edits}, &out)
+	err := s.call(ctx, coreprotocol.StartupSave, &coreprotocol.StartupSaveRequest{Edits: edits}, &out)
 	return out, err
 }

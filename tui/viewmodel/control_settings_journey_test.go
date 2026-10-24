@@ -18,6 +18,7 @@ import (
 	"crude/types"
 	"crude/types/control"
 	"crude/workspace"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -151,7 +152,7 @@ func TestConnectedAgentsInstructionsApplyStageAndSharedSave(t *testing.T) {
 			text := "Connected " + role + " instructions acceptance"
 			value, _ := json.Marshal(text)
 			invoke("settings/agents/form/agent-instructions", ui.ControlOperation{Verb: "set_value", Value: value})
-			if !strings.Contains(ansi.Strip(one.app.View().Content), text) {
+			if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), text) {
 				t.Fatal("edited instructions not painted")
 			}
 			// The editor's Save applies the agent and persists in one step.
@@ -163,6 +164,9 @@ func TestConnectedAgentsInstructionsApplyStageAndSharedSave(t *testing.T) {
 			if body.Model().AppSettings().Agents.Categories[role].Instructions != text || len(body.Model().Edits()) != 0 {
 				t.Fatal("agent Save left the form stale or dirty")
 			}
+			remoteJourneyUntil(t, shells, func() bool {
+				return peer.app.ws.LoadAppSettings().Agents.Categories[role].Instructions == text
+			})
 			if peer.app.Input.Value() != "peer private instructions draft" || peer.app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
 				t.Fatal("shared settings changed peer private state")
 			}
@@ -211,7 +215,7 @@ func TestConnectedAgentsOffPageAuthorityDeniesApplyAndSave(t *testing.T) {
 			if r := invoke("settings/agents/tabs", ui.ControlOperation{Verb: "activate", ItemID: "instructions"}); r.State != control.Applied {
 				t.Fatal(r)
 			}
-			if strings.Contains(ansi.Strip(one.app.View().Content), "Tool access") {
+			if strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Tool access") {
 				t.Fatal("authority control remained on-page")
 			}
 			if r := invoke("settings/agents/actions/Save", ui.ControlOperation{Verb: "activate"}); r.State != control.Failed || r.Fault == nil || r.Fault.Code != control.Denied {
@@ -264,7 +268,7 @@ func TestConnectedAgentsInvalidApplyFailsAndRetainsDraft(t *testing.T) {
 	if field == nil || field.Value.String() != "not-a-number" || !field.HasErrors() {
 		t.Fatal("validation failure lost the editable draft")
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "not-a-number") {
-		t.Fatalf("invalid draft not painted: %s", ansi.Strip(one.app.View().Content))
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "not-a-number") {
+		t.Fatalf("invalid draft not painted: %s", ansi.Strip(one.app.View().RenderContent()))
 	}
 }

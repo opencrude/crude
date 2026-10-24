@@ -46,15 +46,18 @@ func (m *App) applySettingsShortcut(msg settingsShortcutResultMsg) {
 		return
 	}
 	m.ws.ApplyPreferencesSave(msg.result)
-	m.applyEditorSettings(msg.result.Effective.Editor)
-	m.applyThemePreset(themePresetFromSettings(msg.result.Effective))
+	effective := m.ws.LoadAppSettings()
+	m.applyEditorSettings(effective.Editor)
+	m.applyThemePreset(themePresetFromSettings(effective))
 	m.refreshAllSessionSettingsProjections()
 	if msg.reset != nil && m.overlayHost != nil {
 		body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings))
 		if body != nil && body.Model() == msg.reset {
 			msg.reset.FinishSave(nil)
 			application, effective, overrides := m.settingsLayers()
+			body.CancelRemoteAccess()
 			body.SetModel(msg.reset.SectionResetModel(application, effective, overrides, msg.category))
+			m.bindRemoteSettings(body)
 		}
 	}
 	m.Feedback.NotifyInfo(msg.label)

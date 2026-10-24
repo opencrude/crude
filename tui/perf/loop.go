@@ -3,6 +3,7 @@ package perf
 import (
 	"reflect"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -40,7 +41,8 @@ var (
 
 // LoopObserver records Bubble Tea loop and flush samples into metrics.
 type LoopObserver struct {
-	names map[reflect.Type]string
+	names     map[reflect.Type]string
+	displayNS atomic.Int64
 }
 
 // NewLoopObserver returns the shell's event-loop observer.
@@ -71,6 +73,15 @@ func (o *LoopObserver) ObserveLoop(sample tea.LoopSample) {
 func (o *LoopObserver) ObserveFlush(sample tea.FlushSample) {
 	renderFlush.Observe(sample.Duration)
 	renderBytes.Add(uint64(sample.Bytes))
+	if sample.Bytes > 0 {
+		o.displayNS.Store(int64(max(16*time.Millisecond, min(sample.Duration, 250*time.Millisecond))))
+	}
+}
+
+// DisplayInterval is the last measured output cost, not an idle-frame gap.
+// It is safe to read on Update while the renderer writes the next frame.
+func (o *LoopObserver) DisplayInterval() time.Duration {
+	return max(16*time.Millisecond, time.Duration(o.displayNS.Load()))
 }
 
 func (o *LoopObserver) typeName(msg tea.Msg) string {

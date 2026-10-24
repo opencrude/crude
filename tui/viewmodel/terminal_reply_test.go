@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/terminalvt"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // A real raw-mode child receives exactly one six-byte DSR reply for each of

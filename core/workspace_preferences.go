@@ -15,7 +15,7 @@ func (a *actor) prepareWorkspacePreferences(request coreprotocol.Request) (func(
 		return nil, nil, false
 	}
 	var input coreprotocol.WorkspacePreferencesRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
 	}
 	if err := types.ValidateSettingEdits(types.AppSettings{}, input.Edits); err != nil {

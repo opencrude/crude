@@ -77,18 +77,18 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 	}
 	t.Cleanup(c.Close)
 	var attached coreprotocol.AttachResult
-	if err := json.Unmarshal(callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
+	if err := coreprotocol.Decode(callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult
-	if err := json.Unmarshal(callCore(t, c, "create", attached.WorkspaceID, coreprotocol.NewSession, struct{}{}).Payload, &created); err != nil {
+	if err := coreprotocol.Decode(callCore(t, c, "create", attached.WorkspaceID, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}).Payload, &created); err != nil {
 		t.Fatal(err)
 	}
 	callCore(t, c, "input", attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: strings.Repeat("retained source ", 4_000)})
 	snapshot := func() coreprotocol.WorkspaceSnapshot {
 		t.Helper()
 		var view coreprotocol.WorkspaceSnapshot
-		if err := json.Unmarshal(callCore(t, c, "snapshot", attached.WorkspaceID, coreprotocol.Snapshot, struct{}{}).Payload, &view); err != nil {
+		if err := coreprotocol.Decode(callCore(t, c, "snapshot", attached.WorkspaceID, coreprotocol.Snapshot, coreprotocol.Empty{}).Payload, &view); err != nil {
 			t.Fatal(err)
 		}
 		return view
@@ -100,7 +100,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 		}
 		time.Sleep(time.Millisecond)
 	}
-	raw, _ := json.Marshal(coreprotocol.AgentIDRequest{AgentID: created.OrchID})
+	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AgentIDRequest{AgentID: created.OrchID}))
 	request := coreprotocol.Request{ID: "compact-once", Owner: c.Owner, WorkspaceID: attached.WorkspaceID, Method: coreprotocol.AgentCompact, Payload: raw}
 	done := make(chan coreprotocol.Response, 1)
 	go func() { done <- c.Call(t.Context(), request) }()
@@ -110,7 +110,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 		t.Fatal("extraction did not start")
 	}
 	view := snapshot()
-	badStop, _ := json.Marshal(coreprotocol.AgentRequest{AgentID: created.OrchID, Generation: view.Agents[0].TurnIdentity.Generation, OperationID: "replaced-operation"})
+	badStop, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AgentRequest{AgentID: created.OrchID, Generation: view.Agents[0].TurnIdentity.Generation, OperationID: "replaced-operation"}))
 	if response := c.Call(t.Context(), coreprotocol.Request{ID: "stale-stop", Owner: c.Owner, WorkspaceID: attached.WorkspaceID, Method: coreprotocol.CancelAgent, Payload: badStop}); response.Error == nil || response.Error.Code != "stale_operation" {
 		t.Fatalf("stale compaction Stop was accepted: %+v", response)
 	}
@@ -125,7 +125,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 		t.Fatal(first.Error)
 	}
 	var result types.CompactResultMsg
-	if err := json.Unmarshal(first.Payload, &result); err != nil || result.Error != "" {
+	if err := coreprotocol.Decode(first.Payload, &result); err != nil || result.Error != "" {
 		t.Fatalf("compaction result=%+v err=%v", result, err)
 	}
 	replay := c.Call(t.Context(), request)

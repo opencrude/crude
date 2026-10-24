@@ -47,7 +47,7 @@ func newRecursiveScrollFixture(t *testing.T, width int, hydrate bool) recursiveS
 		if hydrate {
 			messages = hydrateScrollMessages(t, pane.Messages.Messages())
 		}
-		projection.renderer.SyncMessages(messages, 1)
+		projection.renderer.SyncMessages(messages, 1, 0)
 	}
 	render := func(id string, width, maxH, frame int, expanded bool) []chatprojection.SubPaneLine {
 		return reg.Render(id, panes.Get(id), width, maxH, frame, expanded)
@@ -64,7 +64,7 @@ func newRecursiveScrollFixture(t *testing.T, width int, hydrate bool) recursiveS
 	if hydrate {
 		messages = hydrateScrollMessages(t, root)
 	}
-	main.SyncMessages(messages, 1)
+	main.SyncMessages(messages, 1, 0)
 	return recursiveScrollFixture{registry: reg, panes: panes, main: main}
 }
 

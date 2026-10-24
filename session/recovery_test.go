@@ -169,6 +169,43 @@ func TestRecoveryCancellationCannotHitAReplacementContext(t *testing.T) {
 	}
 }
 
+func TestRecoveryWakeCannotBeBankedByAnExecutingRun(t *testing.T) {
+	for _, status := range []recoverytypes.Status{
+		{ID: "incident", Generation: 1},
+		{ID: "incident", Generation: 1, State: recoverytypes.Recovering},
+		{ID: "incident", Generation: 1, State: recoverytypes.Recovered},
+		{ID: "incident", Generation: 1, State: recoverytypes.Cancelled},
+	} {
+		for _, all := range []bool{false, true} {
+			slot := &recoverySlot{id: status.ID, generation: 1, status: status, wake: make(chan struct{}, 1)}
+			s := &Session{recoverySlots: map[string]*recoverySlot{"root": slot}}
+			if all {
+				s.wakeAllRecoveries() // A configuration publication is not Retry later.
+			} else if s.wakeRecovery("root") {
+				t.Fatalf("normal run accepted a future recovery wake: %+v", status)
+			}
+			select {
+			case <-slot.wake:
+				t.Fatalf("normal activity banked a wake for a later credential failure: %+v all=%v", status, all)
+			default:
+			}
+			if s.RetryRecoveryFor("root", status.ID, 1) == nil {
+				t.Fatalf("explicit Continue banked a wake while executing: %+v", status)
+			}
+		}
+	}
+	for _, status := range []recoverytypes.Status{
+		{ID: "incident", State: recoverytypes.NeedsAttention},
+		{ID: "incident", State: recoverytypes.Recovering, RetryAt: time.Now().Add(time.Minute)},
+	} {
+		slot := &recoverySlot{id: status.ID, generation: 1, status: status, wake: make(chan struct{}, 1)}
+		s := &Session{recoverySlots: map[string]*recoverySlot{"root": slot}}
+		if !s.wakeRecovery("root") || len(slot.wake) != 1 {
+			t.Fatalf("actual waiting owner did not receive its wake: %+v", status)
+		}
+	}
+}
+
 func TestRootStopFencesContinuedReservationBeforeRecoveryRegistration(t *testing.T) {
 	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
 	if err != nil {

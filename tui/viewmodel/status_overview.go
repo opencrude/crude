@@ -119,11 +119,13 @@ func (m *App) configureFooterScreen() {
 		// footer on inactive dock controls while hiding its cancel instruction.
 		right = nil
 	}
-	m.footerScreen.SetProjection(shellfooter.Projection{Left: left, Right: right})
+	if m.footerScreen.SetProjection(shellfooter.Projection{Left: left, Right: right}) {
+		m.rootHost.MarkComponentPaint(m.footerScreen.ID())
+	}
 }
 
 func (m *App) statusHeaderRightSegments() []shellheader.Segment {
-	segments := make([]shellheader.Segment, 0, 8)
+	segments := []shellheader.Segment{{Text: m.RemoteBackendLabel(), Role: ui.ColorMuted, Action: "remotes", Priority: 0}}
 	context, metrics, target := m.activeHeaderContext()
 	if m.OverlayState.IsYolo() {
 		segments = append(segments, shellheader.Segment{Text: "! YOLO", Role: ui.ColorError, Action: "tabs", TargetID: target, Priority: 0})

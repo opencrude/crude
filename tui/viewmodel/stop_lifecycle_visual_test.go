@@ -118,7 +118,7 @@ func (m *stopLifecycleVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF9:
 			state := m.ws.AgentMgr().Get(m.id).State
-			paint := ansi.Strip(m.View().Content)
+			paint := ansi.Strip(m.View().RenderContent())
 			if m.normal.Load() < 6 || m.extraction.Load() < 1 || m.Input.Value() != "Private draft remains" || state.Cancelling || state.RecoveryStatus().CanRetry() || state.ActiveCompaction.Phase != "" || strings.Contains(paint, "<turn_context>") || strings.Contains(paint, "<workspace_event") {
 				m.t.Errorf("visual lifecycle not settled: normal=%d extraction=%d draft=%q cancelling=%v recovery=%+v compaction=%+v", m.normal.Load(), m.extraction.Load(), m.Input.Value(), state.Cancelling, state.RecoveryStatus(), state.ActiveCompaction)
 			}

@@ -84,12 +84,12 @@ func controlCheckedPath(root, raw string, missing bool) (string, error) {
 // owner. Absolute logical paths are not implicit authorization for external I/O.
 func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (coreprotocol.Request, []string, error) {
 	var paths []string
-	encode := func(v any) error { raw, err := json.Marshal(v); request.Payload = raw; return err }
+	encode := func(raw []byte, err error) error { request.Payload = raw; return err }
 	check := func(raw string, missing bool) (string, error) { return controlCheckedPath(root, raw, missing) }
 	switch request.Method {
 	case coreprotocol.DocumentOpen:
 		var in coreprotocol.DocumentOpenRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return request, nil, err
 		}
 		path, err := check(in.Path, false)
@@ -97,11 +97,15 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 			return request, nil, err
 		}
 		in.Path = path
-		return requestWithPayload(request, in)
+		raw, err := payload(request, in)
+		request.Payload = raw
+		return request, nil, err
 	case coreprotocol.DocumentRead, coreprotocol.DocumentEdit, coreprotocol.DocumentSave, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentFormat:
 		var in struct {
 			ID string `json:"id"`
 		}
+		// Only the document identity matters here; the method's own decoder
+		// validates the complete request.
 		if err := json.Unmarshal(request.Payload, &in); err != nil {
 			return request, nil, err
 		}
@@ -121,7 +125,7 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 		}
 	case coreprotocol.FilesBrowse, coreprotocol.FilesCreate, coreprotocol.FilesRename, coreprotocol.FilesDelete:
 		var in coreprotocol.FilePathRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return request, nil, err
 		}
 		path, err := check(in.Path, request.Method == coreprotocol.FilesCreate)
@@ -140,12 +144,12 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 			in.NewPath = target
 			paths = append(paths, target)
 		}
-		if err := encode(in); err != nil {
+		if err := encode(payload(request, in)); err != nil {
 			return request, nil, err
 		}
 	case coreprotocol.FilesRead:
 		var in coreprotocol.FileReadRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return request, nil, err
 		}
 		path, err := check(in.Path, false)
@@ -153,12 +157,12 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 			return request, nil, err
 		}
 		in.Path = path
-		if err := encode(in); err != nil {
+		if err := encode(payload(request, in)); err != nil {
 			return request, nil, err
 		}
 	case coreprotocol.TerminalCreate:
 		var in workspace.TerminalCreateOpts
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return request, nil, err
 		}
 		path, err := check(in.CWD, false)
@@ -166,12 +170,12 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 			return request, nil, err
 		}
 		in.CWD = path
-		if err := encode(in); err != nil {
+		if err := encode(payload(request, in)); err != nil {
 			return request, nil, err
 		}
 	case coreprotocol.GitCompare, coreprotocol.PreviewGitDiscard:
 		var in coreprotocol.GitCompareRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return request, nil, err
 		}
 		path := in.Change.Path
@@ -185,13 +189,13 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 		var comparison workspace.GitComparison
 		if request.Method == coreprotocol.GitStageReviewed {
 			var in coreprotocol.GitStageReviewedRequest
-			if err := decode(request.Payload, &in); err != nil {
+			if err := decodeRequest(request, &in); err != nil {
 				return request, nil, err
 			}
 			comparison = in.Comparison
 		} else {
 			var in coreprotocol.DiscardGitReviewedRequest
-			if err := decode(request.Payload, &in); err != nil {
+			if err := decodeRequest(request, &in); err != nil {
 				return request, nil, err
 			}
 			comparison = in.Preview.Comparison
@@ -213,12 +217,6 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 		}
 	}
 	return request, paths, nil
-}
-
-func requestWithPayload(request coreprotocol.Request, value any) (coreprotocol.Request, []string, error) {
-	raw, err := json.Marshal(value)
-	request.Payload = raw
-	return request, nil, err
 }
 
 func (a *actor) controlDomainClaims(ctx context.Context, in control.Request, paths []string) (func(), error) {

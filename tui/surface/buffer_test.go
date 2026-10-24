@@ -229,6 +229,25 @@ func TestCellBuffer_Clear(t *testing.T) {
 	}
 }
 
+func TestCellBufferBulkFillEveryCellAndTail(t *testing.T) {
+	for _, n := range []int{0, 1, 2, 3, 31, 32, 33, 7679, 7680} {
+		b := NewCellBuffer(n, 1)
+		fill := cell.Cell{Char: 'e', Content: "é", Width: 1, FG: cell.White, BG: cell.Blue, Attr: cell.AttrBold}
+		b.Fill(fill)
+		for x, got := range b.Cells() {
+			if got != fill {
+				t.Fatalf("fill length %d, cell %d: %+v", n, x, got)
+			}
+		}
+		b.Clear()
+		for x, got := range b.Cells() {
+			if got != cell.TransparentBlank() {
+				t.Fatalf("clear length %d, cell %d: %+v", n, x, got)
+			}
+		}
+	}
+}
+
 // A default background means "inherit what is under me". Inside one buffer
 // that is the fill already painted there (a popup body, a selected row); text
 // must never punch a hole through it to whatever lies below the window.

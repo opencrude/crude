@@ -298,6 +298,9 @@ func (e *Editor) UseSharedDocument(s document.Snapshot, localRevision uint64) er
 	if err := e.ResetDocument(s); err != nil {
 		return err
 	}
+	// Reviewed private discard retires the recovered command owner too. The
+	// current attachment will bind only after its fresh canonical publication.
+	p.owner = document.Owner{}
 	e.ClearSelection()
 	e.cursor.Line = min(e.cursor.Line, max(0, e.buf.LineCount()-1))
 	e.clampCursorToLine()
@@ -519,13 +522,36 @@ func (e *Editor) CompleteDocumentHistorySync() {
 	e.DrainDocumentUndo()
 }
 
-// BindDocumentOwner enables undo even before this view's first edit.
-func (e *Editor) BindDocumentOwner(owner document.Owner) error {
+// DeferDocumentUndoUntilSync returns an exact, not-yet-submitted intent to the
+// front of the input queue. The coordinator owns command admission: it may use
+// this only while awaiting an earlier publication, never for an active or unknown
+// command. No receipt or history request identity has been assigned yet.
+func (e *Editor) DeferDocumentUndoUntilSync(intent DocumentUndoIntent) error {
 	p := e.documentProjection
+	if p == nil || intent.Projection != p || !p.undoPending || intent.DocumentID != p.snapshot.ID || intent.Owner != p.owner || intent.ExpectedRevision != p.snapshot.Revision || intent.Sequence != p.undoSequence {
+		return document.ErrRequest
+	}
+	action := documentHistoryAction{redo: intent.Redo, evidence: DocumentHistoryIntent{Redo: intent.Redo}}
+	p.historyQueue = append([]documentHistoryAction{action}, p.historyQueue...)
+	p.undoPending = false
+	p.historySync = true
+	p.historyRequestID = ""
+	return nil
+}
+
+// BindDocumentOwner enables undo even before this view's first edit.
+func (p *DocumentProjection) validateOwner(owner document.Owner) error {
 	if p == nil || owner.ClientID == "" || owner.Epoch == 0 || (p.owner.ClientID != "" && (p.owner.ClientID != owner.ClientID || p.owner.Epoch > owner.Epoch || p.owner != owner && (p.inflight != nil || p.undoPending))) {
 		return document.ErrOwner
 	}
-	p.owner = owner
+	return nil
+}
+
+func (e *Editor) BindDocumentOwner(owner document.Owner) error {
+	if err := e.documentProjection.validateOwner(owner); err != nil {
+		return err
+	}
+	e.documentProjection.owner = owner
 	return nil
 }
 
@@ -598,21 +624,6 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 	if !bytes.Equal(canonical, s.Text) {
 		return document.ErrRevision
 	}
-	if c.Owner != p.owner || !p.historySync || c.RequestID != p.historyRequestID {
-		// Historical view positions are private, not canonical anchors. Do not
-		// restore stale coordinates after a collaborator or formatter changes it.
-		p.views = nil
-		p.viewOrder = nil
-		p.restoreView = nil
-	} else {
-		if view, ok := p.views[c.GroupID]; ok {
-			state := view.before
-			if p.historyRedo {
-				state = view.after
-			}
-			p.restoreView = &state
-		}
-	}
 	remote := append([]document.Edit(nil), c.Edits...)
 	pending := make([]document.Edit, 0, len(p.pending))
 	for _, local := range p.pending {
@@ -628,6 +639,31 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 		}
 		pending = append(pending, l[0])
 		remote = r
+	}
+	e.commitDocumentDelta(c, remote, pending)
+	s.Text, s.Saved = bytes.Clone(s.Text), bytes.Clone(s.Saved)
+	p.snapshot = s
+	e.installDocumentBaseline(s)
+	return nil
+}
+
+// commitDocumentDelta is infallible after complete batch admission.
+func (e *Editor) commitDocumentDelta(c document.Change, remote, pending []document.Edit) {
+	p := e.documentProjection
+	if c.Owner != p.owner || !p.historySync || c.RequestID != p.historyRequestID {
+		// Historical view positions are private, not canonical anchors. Do not
+		// restore stale coordinates after a collaborator or formatter changes it.
+		p.views = nil
+		p.viewOrder = nil
+		p.restoreView = nil
+	} else {
+		if view, ok := p.views[c.GroupID]; ok {
+			state := view.before
+			if p.historyRedo {
+				state = view.after
+			}
+			p.restoreView = &state
+		}
 	}
 	// Preserve logical view anchors by transforming their byte offsets across
 	// precisely the remote edits applied to the optimistic local buffer.
@@ -667,14 +703,164 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 		e.drag.start, e.drag.end = anchors[4], anchors[5]
 	}
 	p.pending = pending
-	s.Text = bytes.Clone(s.Text)
-	s.Saved = bytes.Clone(s.Saved)
-	p.snapshot = s
 	p.undoPending = false
 	p.conflict = nil
-	e.installDocumentBaseline(s)
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
 	e.remapGitProjection()
+}
+
+// DocumentPath reads canonical metadata without exporting text.
+func (e *Editor) DocumentPath() string {
+	if p := e.documentProjection; p != nil {
+		return p.snapshot.Path
+	}
+	return ""
+}
+
+type preparedDocumentDelta struct {
+	change          document.Change
+	remote, pending []document.Edit
+}
+
+// PreparedDocumentUpdate is an Update-owned transaction. Preparation validates
+// the entire canonical journal and optimistic rebases without exporting the live
+// PieceTable or mutating text, history, metadata, owner, or cursor state.
+type PreparedDocumentUpdate struct {
+	projection              *DocumentProjection
+	localRevision, revision uint64
+	owner                   document.Owner
+	snapshot                document.Snapshot
+	deltas                  []preparedDocumentDelta
+	reset, savepoint        bool
+}
+
+func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, changes []document.Change, state document.Snapshot, reset *document.Snapshot, savepoint bool) (*PreparedDocumentUpdate, error) {
+	p := e.documentProjection
+	if err := p.validateOwner(owner); err != nil {
+		return nil, err
+	}
+	if p.inflight != nil || p.undoPending {
+		return nil, ErrDocumentPending
+	}
+	if state.ID != p.snapshot.ID {
+		return nil, document.ErrOwner
+	}
+	if state.Revision == 0 || state.Path == "" || !filepath.IsAbs(state.Path) || filepath.Clean(state.Path) != state.Path || len(state.Text) != 0 {
+		return nil, document.ErrRevision
+	}
+	if len(state.Saved) > document.MaxBytes || !utf8.Valid(state.Saved) || !savepoint && len(state.Saved) != 0 {
+		return nil, document.ErrLimit
+	}
+	plan := &PreparedDocumentUpdate{projection: p, localRevision: e.Revision(), revision: p.snapshot.Revision, owner: owner, snapshot: state, savepoint: savepoint}
+	if reset != nil {
+		if len(changes) != 0 || reset.ID != state.ID || reset.Path != state.Path || reset.Revision != state.Revision || len(reset.Text) > document.MaxBytes || len(reset.Saved) > document.MaxBytes || !utf8.Valid(reset.Text) || !utf8.Valid(reset.Saved) {
+			return nil, document.ErrRevision
+		}
+		if reset.Revision < p.snapshot.Revision {
+			// An own receipt can advance the baseline before an initial publication.
+			// Acknowledge that older publication, retaining today's draft and metadata.
+			plan.snapshot = p.snapshot
+			plan.savepoint = false
+			return plan, nil
+		}
+		same := reset.Revision == p.snapshot.Revision && bytes.Equal(reset.Text, p.snapshot.Text)
+		if !same && (len(p.pending) != 0 || p.historySync || len(p.historyQueue) != 0) {
+			return nil, ErrDocumentPending
+		}
+		plan.snapshot = *reset
+		plan.snapshot.Text, plan.snapshot.Saved = bytes.Clone(reset.Text), bytes.Clone(reset.Saved)
+		plan.reset, plan.savepoint = !same, true
+		return plan, nil
+	}
+	if p.snapshot.Revision < base {
+		return nil, document.ErrRevision
+	}
+	next := base
+	text, pending := p.snapshot.Text, p.pending
+	for _, c := range changes {
+		if c.DocumentID != state.ID || c.BaseRevision != next || next == ^uint64(0) {
+			return nil, document.ErrRevision
+		}
+		next++
+		if c.BaseRevision < p.snapshot.Revision {
+			continue
+		}
+		var err error
+		text, _, err = document.Apply(text, c.Edits)
+		if err != nil {
+			return nil, err
+		}
+		remote := c.Edits
+		moved := make([]document.Edit, 0, len(pending))
+		for _, local := range pending {
+			l, err := document.Rebase([]document.Edit{local}, remote)
+			if err != nil {
+				return nil, err
+			}
+			r, err := document.Rebase(remote, []document.Edit{local})
+			if err != nil {
+				return nil, err
+			}
+			moved = append(moved, l[0])
+			remote = r
+		}
+		// Own the small operation vectors; text is already immutable, built once.
+		c.Edits = append([]document.Edit(nil), c.Edits...)
+		plan.deltas = append(plan.deltas, preparedDocumentDelta{c, append([]document.Edit(nil), remote...), moved})
+		pending = moved
+	}
+	if next != state.Revision {
+		return nil, document.ErrRevision
+	}
+	if state.Revision < p.snapshot.Revision {
+		// A command receipt may precede an older savepoint/delta publication.
+		// Its canonical text is already installed; only the ordered savepoint is new.
+		plan.snapshot = p.snapshot
+		if savepoint {
+			plan.snapshot.DiskHash, plan.snapshot.DiskExists = state.DiskHash, state.DiskExists
+		}
+	}
+	plan.snapshot.Text = text
+	if savepoint {
+		plan.snapshot.Saved = bytes.Clone(state.Saved)
+	} else {
+		plan.snapshot.Saved = p.snapshot.Saved
+	}
+	return plan, nil
+}
+
+// CommitDocumentUpdate checks the preparation's local generation before any
+// mutation. The coordinator preflights every view/path before committing any.
+func (e *Editor) CommitDocumentUpdate(plan *PreparedDocumentUpdate) error {
+	p := e.documentProjection
+	if plan == nil || p == nil || p != plan.projection || e.Revision() != plan.localRevision || p.snapshot.Revision != plan.revision || p.inflight != nil || p.undoPending {
+		return ErrDocumentPending
+	}
+	if err := p.validateOwner(plan.owner); err != nil {
+		return err
+	}
+	p.owner = plan.owner
+	if plan.reset {
+		e.CancelPointerCapture()
+		p.suppressed = true
+		e.buf.ReplaceAll(string(plan.snapshot.Text))
+		p.suppressed = false
+		p.views, p.viewOrder, p.restoreView = nil, nil, nil
+		p.conflict = nil
+		e.invalidateEditorCaches()
+		e.markDocumentWidthAll()
+	} else {
+		for _, delta := range plan.deltas {
+			e.commitDocumentDelta(delta.change, delta.remote, delta.pending)
+		}
+	}
+	p.snapshot = plan.snapshot
+	if plan.savepoint {
+		e.installDocumentBaseline(plan.snapshot)
+	} else if len(plan.deltas) != 0 {
+		e.buffer.NoteEdit()
+	}
+	plan.projection = nil
 	return nil
 }

@@ -424,6 +424,8 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 		if scope != captypes.ScopeWorkspace || db == nil {
 			return types.AppSettings{}, errors.New("workspace capability persistence unavailable")
 		}
+		db.settingsWriteMu.Lock()
+		defer db.settingsWriteMu.Unlock()
 		tx, err := db.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return types.AppSettings{}, err
@@ -468,6 +470,7 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 		if err = tx.Commit(); err != nil {
 			return types.AppSettings{}, err
 		}
+		db.publishSettingsRow(string(raw))
 		return effective, nil
 	}
 }

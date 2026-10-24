@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"path/filepath"
 	"sync"
 
@@ -160,42 +161,49 @@ func (w *documentWatch) run() {
 
 func (s *DocumentService) reconcile(id string) {
 	s.mu.Lock()
-	s.reconcileLocked(id)
+	_ = s.reconcileLocked(id) // Watcher ingress preserves a visible conflict fence.
 	s.mu.Unlock()
 	s.changed(id)
 }
 
 // reconcileLocked is shared by watcher ingress and checked file transactions.
-func (s *DocumentService) reconcileLocked(id string) {
+func (s *DocumentService) reconcileLocked(id string) error {
 	d := s.docs[id]
 	if d == nil || s.closed {
-		return
+		return nil
 	}
 	original := d
 	d = stageDocument(d)
 	if d.relocation != nil {
 		if err := s.recoverRelocationsLocked(); err != nil {
 			original.snapshot.Conflict = true
+			return err
 		}
-		return
+		return nil
 	}
 	text, exists, err := readLiveDocument(d.snapshot.Path)
 	if err != nil {
 		d.snapshot.Conflict = true
-		if s.persistDocument(d) == nil {
+		persistErr := s.persistDocument(d)
+		if persistErr == nil {
 			*original = *d
+		} else {
+			original.snapshot.Conflict = true
 		}
-		return
+		return errors.Join(err, persistErr)
 	}
 	hash := sha256.Sum256(text)
 	if !exists && d.snapshot.DiskExists && d.relocation == nil {
 		// Removal is not a text edit. Preserve the retained text and history;
 		// a save cannot silently recreate a deliberately removed resource.
 		d.snapshot.Conflict = true
-		if s.persistDocument(d) == nil {
+		persistErr := s.persistDocument(d)
+		if persistErr == nil {
 			*original = *d
+		} else {
+			original.snapshot.Conflict = true
 		}
-		return
+		return persistErr
 	}
 	if d.diskIntent != nil && hash == d.diskIntent.Hash && exists == d.diskIntent.Exists {
 		d.snapshot.Saved = bytes.Clone(text)
@@ -205,7 +213,7 @@ func (s *DocumentService) reconcileLocked(id string) {
 		d.snapshot.Conflict = false
 		d.diskIntent = nil
 	} else if hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists && d.diskIntent == nil {
-		return
+		return nil
 	}
 	if d.diskIntent == nil && hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists {
 		// Exact pending disk commit reconciled above.
@@ -225,13 +233,19 @@ func (s *DocumentService) reconcileLocked(id string) {
 			d.snapshot.Conflict = false
 		}
 	}
-	if s.persistDocument(d) == nil {
+	if persistErr := s.persistDocument(d); persistErr != nil {
+		// Never install unpersisted text/history, but prevent a stale clean
+		// snapshot from authorizing a save or a second history mutation.
+		original.snapshot.Conflict = true
+		return errors.Join(err, persistErr)
+	} else {
 		previousRevision := original.snapshot.Revision
 		*original = *d
 		if s.lsp != nil && d.lspOpen && d.snapshot.Revision != previousRevision {
 			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
 		}
 	}
+	return err
 }
 
 // ReconcileDisk is an off-actor explicit reconciliation barrier for callers
@@ -243,7 +257,7 @@ func (s *DocumentService) ReconcileDisk(ctx context.Context, id string) error {
 	s.mu.Lock()
 	err := s.recoverRelocationsLocked()
 	if err == nil {
-		s.reconcileLocked(id)
+		err = s.reconcileLocked(id)
 	}
 	s.mu.Unlock()
 	s.changed(id)
@@ -260,7 +274,7 @@ func (s *DocumentService) reconcilePath(path string) {
 		// A directory event invalidates every retained descendant, not just a
 		// document whose exact path happens to equal the event's name.
 		if documentUnder(path, d.snapshot.Path) {
-			s.reconcileLocked(id)
+			_ = s.reconcileLocked(id) // Failure is retained as a conflict fence.
 			changed = append(changed, id)
 		}
 	}

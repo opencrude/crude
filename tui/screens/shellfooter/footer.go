@@ -71,9 +71,13 @@ func New(th *theme.Theme, _ *ui.ActionRegistry) *Screen {
 	return &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th)}
 }
 
-func (s *Screen) Children() []ui.Component            { return nil }
-func (s *Screen) SetProjection(projection Projection) { s.projection = projection }
-func (s *Screen) SetTokens(tokens *ui.TokenSet)       { s.tokens = tokens }
+func (s *Screen) Children() []ui.Component { return nil }
+func (s *Screen) SetProjection(projection Projection) bool {
+	changed := !slices.Equal(s.projection.Left, projection.Left) || !slices.Equal(s.projection.Right, projection.Right)
+	s.projection = projection
+	return changed
+}
+func (s *Screen) SetTokens(tokens *ui.TokenSet) { s.tokens = tokens }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: 2})

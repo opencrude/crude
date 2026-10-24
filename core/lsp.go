@@ -29,7 +29,7 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 		return nil, false
 	}
 	var in coreprotocol.LSPRequest
-	if err := decode(request.Payload, &in); err != nil {
+	if err := decodeRequest(request, &in); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	manager := a.ws.LSPMgr
@@ -101,7 +101,8 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 	case coreprotocol.LSPRequestHover:
 		out.Hover, err = service.RequestHover(ctx, in.Path, in.Line, in.Col)
 	case coreprotocol.LSPRequestRename:
-		out.Edit, err = service.RequestRename(ctx, in.Path, in.Line, in.Col, in.NewName)
+		edit, renameErr := service.RequestRename(ctx, in.Path, in.Line, in.Col, in.NewName)
+		out.Edit, err = (*coreprotocol.LSPEdit)(edit), renameErr
 	}
 	return out, err
 }
@@ -111,7 +112,7 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 		return coreprotocol.LSPSnapshot{}
 	}
 	// Version precedes contents so a concurrent publication cannot be hidden:
-	// next actor tick announces it and the client reads a newer complete snapshot.
+	// the owner broadcast announces it and the client reads a newer complete snapshot.
 	out := coreprotocol.LSPSnapshot{Available: true, Version: manager.Version()}
 	out.Diagnostics = manager.AllDiagnostics()
 	out.Symbols = make(map[string][]workspace.LSPSymbol)

@@ -1,8 +1,9 @@
 package app
 
 import (
-	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"crude/core"
 	"crude/coreclient"
 	"crude/coreprotocol"
+	"crude/corewire"
 	"crude/internal/testhome"
 )
 
@@ -155,7 +157,7 @@ func TestSecondShellSharesWorkspaceAndSurvivesFirstShellExit(t *testing.T) {
 
 	_ = first.Close()
 	var snapshot coreprotocol.WorkspaceSnapshot
-	if err := second.Call(ctx, b.WorkspaceID, coreprotocol.Snapshot, struct{}{}, &snapshot); err != nil {
+	if err := second.Call(ctx, b.WorkspaceID, coreprotocol.Snapshot, &coreprotocol.Empty{}, &snapshot); err != nil {
 		t.Fatalf("remaining shell lost its workspace after the first exited: %v", err)
 	}
 	if snapshot.ID != b.WorkspaceID {
@@ -245,7 +247,37 @@ func TestCoreStdioRelaysFramedConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay := exec.Command(exe, "--core-stdio")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client, closeRelay := startCoreStdioClient(t, ctx, exe)
+	if client.LocalHost() {
+		t.Fatal("SSH relay granted local host administration")
+	}
+	var access coreprotocol.RemoteAccessView
+	err = client.Call(ctx, "", coreprotocol.RemoteAccessRead, &coreprotocol.Empty{}, &access)
+	var fault *coreprotocol.Fault
+	if !errors.As(err, &fault) || fault.Code != "forbidden" {
+		t.Fatalf("SSH session could read host administration: %v", err)
+	}
+	root := filepath.Join(home, "remote-project")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if result := attach(t, client, root); result.WorkspaceID == "" {
+		t.Fatal("attach through relay returned no workspace")
+	}
+	closeRelay()
+	status, err := CoreStatus(ctx, home)
+	if err != nil || status.Clients != 0 || len(status.Workspaces) != 1 {
+		t.Fatalf("relay shutdown affected retained core or leaked session: %+v %v", status, err)
+	}
+}
+
+// Use the actual CLI entry point and SSH stream compression, not SingleCarrier's
+// uncompressed local transport. stderr is diagnostics; stdout is binary traffic.
+func startCoreStdioClient(t *testing.T, ctx context.Context, exe string) (*coreclient.Client, func()) {
+	t.Helper()
+	relay := exec.CommandContext(ctx, exe, "--core-stdio")
 	stdin, err := relay.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -254,30 +286,120 @@ func TestCoreStdioRelaysFramedConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stderr, _ := relay.StderrPipe()
+	var diagnostic bytes.Buffer
+	relay.Stderr = &diagnostic
 	if err := relay.Start(); err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			t.Log("relay:", scanner.Text())
+	carrier := corewire.NewMux(stdioConn{Reader: stdout, WriteCloser: stdin}, corewire.CarrierSSH, true)
+	var once sync.Once
+	var client *coreclient.Client
+	closeRelay := func() {
+		t.Helper()
+		once.Do(func() {
+			if client != nil {
+				_ = client.Close()
+			} else {
+				_ = carrier.Close()
+			}
+			if err := relay.Wait(); err != nil {
+				t.Errorf("stdio relay exit: %v; stderr: %s", err, diagnostic.String())
+			} else if diagnostic.Len() != 0 {
+				t.Errorf("stdio relay diagnostics on clean exit: %s", diagnostic.String())
+			}
+		})
+	}
+	t.Cleanup(closeRelay)
+	var dialOnce sync.Once
+	client, err = coreclient.Dial(ctx, func(context.Context) (corewire.Conn, error) {
+		var conn corewire.Conn
+		dialOnce.Do(func() { conn = carrier })
+		if conn == nil {
+			return nil, coreclient.ErrNoCarrier
 		}
-	}()
-	defer func() { _ = relay.Process.Kill(); _ = relay.Wait() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	client, err := coreclient.Dial(ctx, stdioConn{Reader: stdout, WriteCloser: stdin}, core.NewClientID())
+		return conn, nil
+	}, core.NewClientID())
 	if err != nil {
 		t.Fatalf("dial through stdio relay: %v", err)
 	}
-	defer func() { _ = client.Close() }()
-	root := filepath.Join(home, "remote-project")
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	return client, closeRelay
+}
+
+func TestCoreStdioEmptyInputDoesNotStartOrDisturbCore(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(map[bool]string{false: "absent", true: "running"}[running], func(t *testing.T) {
+			home := coreTestHome(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			var owner coreOwner
+			if running {
+				client, err := ConnectCore(ctx, home, core.NewClientID())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = client.Close() }()
+				owner, err = readCoreOwner(home)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.CommandContext(ctx, exe, "--core-stdio")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			if err := cmd.Run(); err != nil || stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("empty stdio: %v; stdout bytes=%d stderr=%s", err, stdout.Len(), stderr.String())
+			}
+			if !running {
+				if _, err := os.Stat(DataDir(home)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("empty stdin created core data: %v", err)
+				}
+				return
+			}
+			current, err := readCoreOwner(home)
+			if err != nil || current != owner {
+				t.Fatalf("empty stdin changed retained owner: %+v %v", current, err)
+			}
+			if _, err := CoreStatus(ctx, home); err != nil || coreListenCount(t, home) != 1 {
+				t.Fatalf("empty stdin disturbed retained core: %v", err)
+			}
+		})
+	}
+}
+
+func TestCoreStdioReportsProtocolFaultWithoutDisturbingCore(t *testing.T) {
+	home := coreTestHome(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	client, err := ConnectCore(ctx, home, core.NewClientID())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if result := attach(t, client, root); result.WorkspaceID == "" {
-		t.Fatal("attach through relay returned no workspace")
+	defer func() { _ = client.Close() }()
+	owner, err := readCoreOwner(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, exe, "--core-stdio")
+	cmd.Stdin = bytes.NewReader([]byte{0, 255, 0}) // invalid mux frame kind
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err == nil || !strings.Contains(stderr.String(), "protocol violation") {
+		t.Fatalf("malformed stdio was not visible: %v; stderr: %s", err, stderr.String())
+	}
+	current, err := readCoreOwner(home)
+	if err != nil || current != owner {
+		t.Fatalf("invalid peer changed retained owner: %+v %v", current, err)
+	}
+	if _, err := CoreStatus(ctx, home); err != nil || coreListenCount(t, home) != 1 {
+		t.Fatalf("invalid peer disturbed retained core: %v", err)
 	}
 }
 

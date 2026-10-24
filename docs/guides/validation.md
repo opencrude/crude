@@ -23,6 +23,7 @@ Locally:
 
 ```bash
 . scripts/libghostty_env.sh          # once per shell; libghostty-vt for terminals
+go run ./internal/wiregen -check      # nonmutating source-cohort freshness
 go build ./...
 go test ./<affected packages>/...     # focused first
 go test ./... -count=1 -timeout=180s  # repository suite
@@ -56,6 +57,65 @@ hundreds of cases into one package-wide budget.
   [performance baselines](../reference/performance-baselines.md).
 - Cross-platform code also needs `GOOS=windows`/`GOOS=darwin` builds of the
   affected packages. Cross-compilation is not native-platform acceptance.
+
+### Protocol generation and v2 acceptance
+
+After production-source edits, explicitly run `go run ./internal/wiregen` in the
+canonical native cgo environment, inspect its generated diff, then run
+`go run ./internal/wiregen -check`. The check is nonmutating; it does not regenerate
+codecs or repair stale output. Make build/test/benchmark targets,
+`scripts/build.sh` and `scripts/release.py` check freshness. An arbitrary direct
+`go build` does not invoke generation or the check.
+
+The full source cohort covers production platform/tag alternatives, local forks,
+embedded assets and native pins, independent of native executable bytes. Keep the
+LF policy in `.gitattributes` intact; equality of that cohort is not authentication
+or proof of native-platform behavior. See the
+[wire identity contract](../reference/core-client-protocol.md#wire-format-and-bounded-delivery).
+
+Use the [active v2 acceptance matrix](../plans/core-protocol-v2.md#acceptance-gates)
+without raising thresholds. Record the exact measured stage: PTY-to-IPC reaction
+is not key-to-PTY-write latency, SDK carrier survival is not a native two-host
+journey, and internal grid fps is not presented outer-terminal fps. A successful
+fuzz run for one boundary does not mark every feature or native path accepted.
+Historical v1 gates do not attest the current refactor. Keep the plan open until
+every performance, per-feature visual and fuzz row has evidence.
+
+Run the bounded native protocol campaigns after the ordinary and race suites:
+
+```sh
+FUZZ_SECONDS=2 GOMAXPROCS=2 bash scripts/protocol_fuzz.sh
+# For a longer focused campaign:
+FUZZ_SECONDS=30 FUZZ_TARGETS='FuzzCoreSessionOwnership FuzzRemoteStateTopicFences' \
+  bash scripts/protocol_fuzz.sh
+```
+
+`CRUDE_TEMP_DIR` must name an evidence directory. The runner compiles instrumented
+test binaries, including the nested renderer forks, checks exact target names and
+runs from private working directories. Binaries, logs, caches and crash corpora
+stay beneath its printed evidence path; it never writes unreviewed fuzz failures
+into the checkout. Its generated short private `CRUDE_HOME` is removed on exit.
+Native terminal dependencies are required, and missing targets or invalid bounds
+fail closed. Linux Verify includes a two-second-per-target smoke campaign; wiring
+is not proof of a hosted run. Runtime-backed feature fuzzers retain real durable
+owners and are substantially slower than pure decoder targets, so report their
+actual execution counts rather than treating the same wall time as equal coverage.
+
+Run the network-impaired QUIC gate on Linux with sudo:
+
+```sh
+CRUDE_TEMP_DIR=/path/to/evidence bash scripts/protocol_netem.sh
+# Profiles are per-direction delay/loss; the default covers the 50 ms RTT gate
+# and a 160 ms RTT link above mosh's prediction trigger.
+CRUDE_NETEM_PROFILES='25ms/1% 80ms/1%' CRUDE_TEMP_DIR=... bash scripts/protocol_netem.sh
+```
+
+It creates two private network namespaces joined by one veth pair, applies netem
+to both ends, and runs the core role and the real shell-port client role as the
+invoking user. No host interface, route or qdisc changes. The client measures
+key → applied echo idle and under a terminal flood, a bulk download and both,
+plus mosh-policy prediction. Namespaces share one kernel and CPU; this is not a
+physically separate-host result.
 
 ### Startup process acceptance
 
@@ -141,6 +201,45 @@ COLS=160 ROWS=40 FONT_SIZE=11 scripts/tuishot.sh /tmp/crude-screenshots \
 and `Return` activates the highlighted Application Settings entry. The broader
 `settings` query also matches command descriptions, so an extra `Down` can
 select a different action.
+
+`TERMINAL=alacritty` (default), `TERMINAL=kitty` and `TERMINAL=tilix` select the
+actual native emulator through this same workflow, not a changed `TERM` label.
+Each launch is an independent borderless capture process; Tilix uses
+`--new-process`, never an existing user terminal. The window is selected by the
+exact capture process and visible geometry, not the latest global class match.
+Keyboard steps activate and fence that window before XTEST input: GTK/VTE ignores
+XSendEvent-based `--window` keystrokes. Verify the reported geometry
+and actual application rows before relying on pointer cell coordinates. A final
+`quit:F9` (or the journey's real exit chord) waits for a verified exit code zero
+without taking a post-exit screenshot; `key:F9` still requires the product to
+remain running and therefore deliberately rejects an unexpected exit.
+
+Autonomous terminal journeys may finish with `await-exit` instead of an exit
+chord. `record:8` records eight seconds of this exact dedicated window at a 60 Hz
+sampling rate into lossless `native-window.mkv` (`FFMPEG_BIN` selects ffmpeg).
+This is pixel evidence, not automatically a presented-FPS pass: inspect the
+actual timestamps and distinct terminal-content frames, excluding chrome/blink
+and idle output. Recording and cleanup own only that exact capture process.
+
+For video acceptance, put an independent frame number in several source-image
+bands and decode their rendered pixels. Inspect the recording's actual frame PTS,
+and use `ffmpeg -fps_mode passthrough` when exporting raw samples: default output
+rate conversion can duplicate frames to a nominal 60 Hz even when the recording
+contains fewer frames. Count distinct agreeing tags per actual timestamp window;
+exclude and report mixed/ambiguous tags. This establishes observed frame identities
+at the sampled bands, not atomicity or independent equality of every source pixel.
+
+The opt-in `scripts/terminal_native_gate.py` uses a separate core process, a
+real shell App/Program and a 200×50 PTY. Its strace correlation measures key
+enqueue to a successful PTY-master write; shell runtime metrics exclude the
+core's GC. In-kernel seccomp filtering traces only writes, avoiding ptrace stops
+on unrelated reads/futexes; write tracing overhead remains included and every
+one-byte PTY-master syscall must still match one admitted key. Content-bearing
+writer flushes are a necessary throughput check, not
+proof that an emulator displayed them. `--no-strace` is diagnostic only and
+deliberately leaves latency unverified with a nonzero result. Use the repository
+capture workflow and `--native-output` for outer-emulator evidence; record each
+boundary separately and do not equate a typed `mpv` key with application response.
 
 Linux capture profiles need a real short `CRUDE_HOME`: the canonical
 `<CRUDE_HOME>/.crude/corewire/core.sock` must fit 103 bytes, and a symlink to a

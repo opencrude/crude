@@ -165,6 +165,10 @@ type remoteWorkspaceReadyMsg struct {
 // attachment remains intact. One exact intent survives asynchronous editor
 // publication and each dirty decision without closing any existing views.
 func (m *App) attachRemoteWorkspace(root, resumeID string) tea.Cmd {
+	if m.historyOperation != nil {
+		m.showOperationFailure("Workspace could not be opened", "Finish Local History restore or check its original result before switching.")
+		return nil
+	}
 	m.pruneRemoteWorkspacePreparations()
 	if m.workspaceSwitchIntent != nil || m.asyncIOStopped.Load() {
 		return nil
@@ -219,8 +223,12 @@ func (m *App) prepareRemoteWorkspaceAttachment(intent *remoteWorkspaceSwitchInte
 	}
 	intent.attaching = true
 	sequence, owner := intent.sequence, intent.owner
-	connection := owner.(shellport.Connection)
 	root, resumeID := intent.root, intent.resumeID
+	prepare := intent.prepare
+	if prepare == nil {
+		connection := owner.(shellport.Connection)
+		prepare = func(ctx context.Context) (shellport.Workspace, error) { return connection.AttachWorkspace(ctx, root) }
+	}
 	draftRevision, draftEpoch := m.Input.DraftRevision(), m.Input.DraftEpoch()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	preparation := &remoteWorkspacePreparation{ctx: ctx, owner: owner, cancel: cancel, released: make(chan struct{}), done: make(chan struct{})}
@@ -236,7 +244,7 @@ func (m *App) prepareRemoteWorkspaceAttachment(intent *remoteWorkspaceSwitchInte
 		var next shellport.Workspace
 		err := ctx.Err()
 		if err == nil {
-			next, err = connection.AttachWorkspace(ctx, root)
+			next, err = prepare(ctx)
 		}
 		if err == nil {
 			err = ctx.Err()
@@ -333,12 +341,16 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		m.failRemoteWorkspaceSwitch("Destination preparation expired or was cancelled.")
 		return m.closeRemoteWorkspaceReady(msg)
 	}
+	backendID := msg.intent.backendID
 	m.cancelRemoteWorkspaceSwitch(false)
 	state := m.beginWorkspaceSwitch()
 	m.closeWorkspaceBoundOverlays()
 	m.discardTerminalUI()
 	old := m.ws.(shellport.Connection)
 	m.ws = msg.next
+	if m.remotes != nil && backendID != "" {
+		m.remotes.current = backendID
+	}
 	if client := m.composerDraftClient; client != nil {
 		id := connection.WorkspaceID()
 		if namespaced, ok := msg.next.(interface{ DraftWorkspaceID() string }); ok {
@@ -361,7 +373,21 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		m.presentOperationIssue(issue)
 	}
 	m.onboarding.checking = false
-	closeOld := func() tea.Msg { _ = old.Close(); return nil }
+	manager, current, root := shellport.RemoteManager(nil), "", m.ws.RootPath()
+	if m.remotes != nil {
+		manager, current = m.remotes.manager, m.remotes.current
+	}
+	closeOld := func() tea.Msg {
+		_ = old.Close()
+		if manager != nil && current != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := manager.RecordUse(ctx, current, root); err != nil {
+				return remoteRecordUseMsg{manager: manager, err: err}
+			}
+		}
+		return nil
+	}
 	if msg.resumeID != "" {
 		return tea.Batch(closeOld, m.remoteSessionCommand(msg.resumeID), m.onboardingCmd())
 	}

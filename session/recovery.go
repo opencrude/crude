@@ -285,6 +285,15 @@ func (s *Session) newRecoverySupervisor(
 			s.recoveryMu.Lock()
 			if current := s.recoverySlots[agentID]; current == slot {
 				slot.status = status
+				if !status.CanRetry() {
+					// Acknowledging a wake (or natural cooldown expiry) closes
+					// that wait. Duplicate signals cannot become permission to
+					// retry a later, unrelated failure in this same run.
+					select {
+					case <-slot.wake:
+					default:
+					}
+				}
 			}
 			s.recoveryMu.Unlock()
 		}
@@ -474,9 +483,9 @@ func (s *Session) wakeRecovery(agentID string) bool {
 		return false
 	}
 	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
 	slot := s.recoverySlots[agentID]
-	s.recoveryMu.Unlock()
-	if slot == nil {
+	if slot == nil || slot.parking || !slot.status.CanRetry() {
 		return false
 	}
 	select {
@@ -491,12 +500,11 @@ func (s *Session) wakeAllRecoveries() {
 		return
 	}
 	s.recoveryMu.Lock()
-	slots := make([]*recoverySlot, 0, len(s.recoverySlots))
+	defer s.recoveryMu.Unlock()
 	for _, slot := range s.recoverySlots {
-		slots = append(slots, slot)
-	}
-	s.recoveryMu.Unlock()
-	for _, slot := range slots {
+		if slot.parking || !slot.status.CanRetry() {
+			continue
+		}
 		select {
 		case slot.wake <- struct{}{}:
 		default:
@@ -523,16 +531,15 @@ func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64
 			s.recoveryMu.Unlock()
 			return fmt.Errorf("%w: agent %s's open incident is %s generation %d", errRecoveryStale, agentID, slot.id, slot.generation)
 		}
-		state := slot.status.State
-		wake := slot.wake
-		s.recoveryMu.Unlock()
-		if state != recoverytypes.NeedsAttention && state != recoverytypes.Recovering {
+		if !slot.status.CanRetry() {
+			s.recoveryMu.Unlock()
 			return fmt.Errorf("agent %s is executing normally; there is nothing to continue", agentID)
 		}
 		select {
-		case wake <- struct{}{}:
+		case slot.wake <- struct{}{}:
 		default:
 		}
+		s.recoveryMu.Unlock()
 		return nil
 	}
 	checkpoint, ok := s.pendingRecoveries[agentID]

@@ -17,7 +17,7 @@ func TestWorkspacePreferencesWorkerPersistsBeforeActorPublishes(t *testing.T) {
 	ws.SetAppDefaults(types.AppSettings{})
 	a := &actor{ws: ws}
 	request := coreprotocol.WorkspacePreferencesRequest{Edits: types.SettingsEdits(ws.LoadWorkspaceOverrides(), types.WorkspaceOverrides{LSP: json.RawMessage(`{"enabled":false}`)})}
-	payload, err := json.Marshal(request)
+	payload, err := coreprotocol.Marshal(coreprotocol.Ptr(request))
 	if err != nil {
 		t.Fatal(err)
 	}

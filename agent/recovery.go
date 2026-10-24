@@ -38,6 +38,9 @@ type AttentionDisposition string
 const (
 	AttentionWait        AttentionDisposition = "wait"
 	AttentionParkAttempt AttentionDisposition = "park_attempt"
+	// AttentionEndTurn reports the blocker as the turn's error and ends it,
+	// keeping accepted output. Nothing waits for a Retry that cannot help.
+	AttentionEndTurn AttentionDisposition = "end_turn"
 )
 
 type SupervisedRunState string
@@ -46,6 +49,7 @@ const (
 	SupervisedRunCompleted SupervisedRunState = "completed"
 	SupervisedRunCancelled SupervisedRunState = "cancelled"
 	SupervisedRunParked    SupervisedRunState = "parked"
+	SupervisedRunFailed    SupervisedRunState = "failed"
 )
 
 // SupervisedRunResult is the single terminal snapshot of one supervised
@@ -68,6 +72,10 @@ type RecoveryFailure struct {
 	Action         string
 	Continuation   rootprompt.RecoveryKind
 	AutomaticLimit int
+	// ProviderVerdict marks a permanent rejection returned by an actual provider
+	// request, after its inputs were already admitted to the context. Local
+	// preparation faults keep their exact pending input and are not verdicts.
+	ProviderVerdict bool
 }
 
 func TransientRecovery(err error) RecoveryFailure {
@@ -364,6 +372,35 @@ func (s *Supervisor) Resolve() error {
 	return nil
 }
 
+// Fail settles an incident whose turn ended with its blocker reported. The
+// failed incident is the turn's one durable, live and hydrated evidence row,
+// so it is recorded even when no earlier attempt was shown.
+func (s *Supervisor) Fail(failure RecoveryFailure) error {
+	if s == nil || s.status == nil {
+		return nil
+	}
+	s.visible = true
+	status := *s.status
+	status.State = recoverytypes.Failed
+	status.RetryAt = time.Time{}
+	status.Summary = "Turn failed"
+	status.Detail = failure.Summary + ": " + recoveryDiagnostic(failure.Cause)
+	status.Action = ""
+	now := s.now()
+	if status.StartedAt.IsZero() {
+		status.StartedAt = now
+	}
+	status.UpdatedAt = now
+	if s.Persist != nil {
+		if err := s.Persist(status); err != nil {
+			return err
+		}
+	}
+	s.status = &status
+	s.emit(status)
+	return nil
+}
+
 // Cancel settles the unfinished task only for explicit owner cancellation.
 func (s *Supervisor) Cancel() error {
 	if s == nil || s.status == nil {
@@ -501,7 +538,8 @@ func recoveryDiagnostic(err error) string {
 }
 
 // classifyRecoveryError owns recovery for a provider request outcome. Only
-// positive permanent evidence (provider.Permanent) waits for a human; every
+// positive permanent evidence (provider.Permanent) stops automatic recovery
+// (the owner ends the turn or parks the child with its reason); every
 // other failure, including disconnect shapes nobody has seen yet, recovers
 // automatically with a visible countdown and Retry now. Stop always works.
 func classifyRecoveryError(err error) RecoveryFailure {
@@ -516,7 +554,9 @@ func classifyRecoveryError(err error) RecoveryFailure {
 	}
 	switch provider.Classify(cause) {
 	case provider.FailurePermanent:
-		return AttentionRecovery(RecoveryFailureConfiguration, err)
+		failure := AttentionRecovery(RecoveryFailureConfiguration, err)
+		failure.ProviderVerdict = providerRequestFailure(err)
+		return failure
 	case provider.FailureUnrecognizedVerdict:
 		return VerdictRecovery(err)
 	default:
@@ -640,8 +680,19 @@ func (a *Agent) RunSupervised(
 		}
 	}
 	parkAttention := func(failure RecoveryFailure) (SupervisedRunResult, bool) {
-		if failure.AutomaticLimit != 0 || options.OnAttention == nil ||
-			options.OnAttention(failure) != AttentionParkAttempt {
+		if failure.AutomaticLimit != 0 || options.OnAttention == nil {
+			return SupervisedRunResult{}, false
+		}
+		switch options.OnAttention(failure) {
+		case AttentionEndTurn:
+			snapshot()
+			if !options.DeferSettlement {
+				_ = options.Supervisor.Fail(failure)
+			}
+			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "", "reason": "failed"}})
+			return result(SupervisedRunFailed, failure), true
+		case AttentionParkAttempt:
+		default:
 			return SupervisedRunResult{}, false
 		}
 		status := options.Supervisor.Park(failure)

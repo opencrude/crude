@@ -63,6 +63,8 @@ type mainPaneView struct {
 	editor                       *shelleditor.Screen
 	deck                         *deckMount
 	reflowContentW, reflowInnerW int
+	chatSource, chatGeneration   uint64
+	chatFrame                    int
 }
 
 func (m *App) ensureMainPanes() *mainPaneLayout {

@@ -2,11 +2,10 @@ package coreclient
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
 	"errors"
 
 	"crude/coreprotocol"
-	"crude/corewire"
 	"crude/types/control"
 )
 
@@ -15,6 +14,7 @@ type receivedControl struct {
 	readOnly  bool
 	bytes     int
 	reply     []byte
+	digest    [32]byte
 }
 
 func (c *Client) ControlRequests() <-chan coreprotocol.ControlEnvelope { return c.controls }
@@ -22,7 +22,7 @@ func (c *Client) ControlRequests() <-chan coreprotocol.ControlEnvelope { return 
 // RegisterControlShell is explicit, passive transport registration. It neither
 // starts a consumer nor authorizes external/agent control of this shell.
 func (c *Client) RegisterControlShell(ctx context.Context, workspaceID string) error {
-	return c.Call(ctx, workspaceID, coreprotocol.ControlShellRegister, struct{}{}, nil)
+	return c.Call(ctx, workspaceID, coreprotocol.ControlShellRegister, &coreprotocol.Empty{}, nil)
 }
 
 func (c *Client) ReplyControl(ctx context.Context, workspaceID string, result control.Result) error {
@@ -30,7 +30,7 @@ func (c *Client) ReplyControl(ctx context.Context, workspaceID string, result co
 	if err := coreprotocol.ValidateControlResult(result); err != nil {
 		return err
 	}
-	b, err := json.Marshal(result)
+	b, err := coreprotocol.Marshal(&result)
 	if err != nil {
 		return err
 	}
@@ -56,8 +56,8 @@ func (c *Client) ReplyControl(ctx context.Context, workspaceID string, result co
 		p.bytes = len(b)
 	}
 	c.mu.Unlock()
-	err = c.Call(ctx, workspaceID, coreprotocol.ControlShellReply, result, nil)
-	if p.readOnly {
+	err = c.Call(ctx, workspaceID, coreprotocol.ControlShellReply, &result, nil)
+	if p.readOnly && err == nil {
 		c.mu.Lock()
 		if c.controlReceived[result.RequestID] == p {
 			delete(c.controlReceived, result.RequestID)
@@ -68,28 +68,30 @@ func (c *Client) ReplyControl(ctx context.Context, workspaceID string, result co
 	return err
 }
 
-func (c *Client) receiveControl(f corewire.Frame) error {
-	size, err := corewire.FrameSize(f)
-	if err != nil || size > coreprotocol.ControlMaxEnvelopeBytes {
-		return errors.New("encoded control frame exceeds limit")
+// receiveControl admits one control request delivered on the session topic.
+func (c *Client) receiveControl(workspaceID string, envelope coreprotocol.ControlEnvelope) error {
+	size := envelope.Msgsize()
+	if workspaceID == "" || size > coreprotocol.ControlMaxEnvelopeBytes {
+		return errors.New("invalid control request")
 	}
-	if f.Kind != corewire.KindEvent || f.RequestID == "" || f.WorkspaceID == "" || f.Revision != 0 || f.Error != nil || f.Transfer != nil || len(f.Payload) > coreprotocol.ControlMaxEnvelopeBytes {
-		return errors.New("invalid control request frame")
-	}
-	var envelope coreprotocol.ControlEnvelope
-	if err := json.Unmarshal(f.Payload, &envelope); err != nil {
+	if err := envelope.ValidateTransport(workspaceID, control.ShellOwner{ClientID: c.owner.ClientID, Epoch: c.owner.Epoch}); err != nil {
 		return err
 	}
-	if envelope.Request.ID != f.RequestID {
-		return errors.New("control request ID mismatch")
-	}
-	if err := envelope.ValidateTransport(f.WorkspaceID, control.ShellOwner{ClientID: c.owner.ClientID, Epoch: c.owner.Epoch}); err != nil {
+	id := envelope.Request.ID
+	b, err := coreprotocol.Marshal(&envelope)
+	if err != nil {
 		return err
 	}
+	digest := sha256.Sum256(b)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.controlReceived[f.RequestID] != nil {
-		return errors.New("duplicate control delivery")
+	if prior := c.controlReceived[id]; prior != nil {
+		if prior.workspace != workspaceID || prior.digest != digest {
+			return errors.New("control identity reused with changed content")
+		}
+		// The existing consumer or immutable reply owns reconciliation. A
+		// duplicate delivery must never enqueue another shell effect.
+		return nil
 	}
 	mutations := 0
 	for _, receipt := range c.controlReceived {
@@ -97,13 +99,13 @@ func (c *Client) receiveControl(f corewire.Frame) error {
 			mutations++
 		}
 	}
-	if envelope.Descriptor.Effect != control.Read && mutations >= 256 || c.controlBytes+len(f.Payload) > coreprotocol.ControlMaxQueuedBytes {
+	if envelope.Descriptor.Effect != control.Read && mutations >= 256 || c.controlBytes+size > coreprotocol.ControlMaxQueuedBytes {
 		return errors.New("control receive capacity exceeded")
 	}
 	select {
 	case c.controls <- envelope.Clone():
-		c.controlReceived[f.RequestID] = &receivedControl{workspace: f.WorkspaceID, readOnly: envelope.Descriptor.Effect == control.Read, bytes: len(f.Payload)}
-		c.controlBytes += len(f.Payload)
+		c.controlReceived[id] = &receivedControl{workspace: workspaceID, readOnly: envelope.Descriptor.Effect == control.Read, bytes: size, digest: digest}
+		c.controlBytes += size
 		return nil
 	default:
 		return errors.New("control request consumer queue full")

@@ -23,7 +23,7 @@ func (a *actor) prepareSessionSettings(request coreprotocol.Request) (func(conte
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, nil, true
 	}
 	var in coreprotocol.SessionSettingsMutationRequest
-	if err := decode(request.Payload, &in); err != nil {
+	if err := decodeRequest(request, &in); err != nil {
 		return bad("invalid_request", err.Error())
 	}
 	if err := types.ValidateSettingEdits(types.SessionPreferences{}, in.Edits); err != nil {

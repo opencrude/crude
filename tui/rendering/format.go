@@ -123,6 +123,9 @@ func ToolLabel(tool, argsSummary string) string {
 }
 
 func FormatTimeLabel(t time.Time) string {
+	// Wire timestamps are UTC; SQLite hydration may carry time.Local. Paint
+	// the same instant in the viewer's zone regardless of its source encoding.
+	t = t.Local()
 	timeStr := t.Format("15:04")
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())

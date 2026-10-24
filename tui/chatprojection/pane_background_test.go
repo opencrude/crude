@@ -25,7 +25,7 @@ func TestCollaborationToolBackgroundSurvivesEveryDisplayStage(t *testing.T) {
 					InternalID: "call", Role: types.RoleTool, ToolName: name, ToolStatus: status,
 					ToolInput: `{"kind":"note","body":"Exact evidence"}`,
 					Content:   `{"message":"Exact evidence"}`,
-				}}, 1)
+				}}, 1, 0)
 				r.ToggleDisclosure("call")
 				rows, _, _ := r.ExportMessageRows(76)
 				if len(rows) != 1 || len(rows[0].Native) < 2 {
@@ -52,7 +52,7 @@ func TestSpecialOnlyActivitySummaryKeepsPaneBackground(t *testing.T) {
 	r.SyncMessages([]types.ChatMessage{
 		{InternalID: "one", Role: types.RoleThinking, Content: "First thought"},
 		{InternalID: "two", Role: types.RoleThinking, Content: "Second thought"},
-	}, 1)
+	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(76)
 	if len(rows) != 1 || len(rows[0].Native) != 2 {
 		t.Fatalf("unexpected collapsed activity: %+v", rows)

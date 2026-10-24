@@ -54,6 +54,9 @@ func sameWorkspaceRoot(current, candidate string) bool {
 // domain starts tearing down. The old tree watcher is stopped synchronously,
 // while git and launcher work already in flight becomes stale immediately.
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
+	m.cancelRemoteSettings()
+	m.cancelRemoteEditor()
+	m.fenceLiveDocumentTopics()
 	m.setWheelHost(nil)
 	comparisonReflow := m.comparisonReflow || m.comparisonReflowCancel != nil
 	m.cancelLocalDiffs()
@@ -106,6 +109,7 @@ func (state workspaceSwitchState) restore(m *App) {
 	if m == nil {
 		return
 	}
+	m.resumeLiveDocumentTopics()
 	// Bubble Tea cannot apply background completions while SwitchProject is
 	// running synchronously. Restoring these generations lets old-workspace
 	// Git/launcher work that was already queued remain valid after validation
@@ -220,14 +224,13 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	if m.activityBar != nil {
 		m.activityBar.SetBadge(activityAgents, 0)
 	}
-	m.syncPendingSteeringCount()
 	m.refreshActivityList()
 
 	// A session may have unmounted home. A new tabless workspace must recreate
 	// the launcher, not accidentally fall through to a split-pane empty state.
 	m.openLauncher()
 	m.launcherScreen.SyncFocus()
-	m.cachedOutput = ""
+	m.framePresented = false
 	m.treeGitRefreshAt = time.Time{}
 	// The header identity belongs to the new project: drop the old pacing and
 	// reconcile the replacement repository as soon as the switch settles

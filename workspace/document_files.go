@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,7 +79,10 @@ func (s *DocumentService) MutateFiles(ctx context.Context, op FileOperation, pat
 	// Reconcile even failed commits: rollback can fail and leave changed disk
 	// bytes. The canonical state must reflect that rather than trust success.
 	for _, id := range changed {
-		s.reconcileLocked(id)
+		if err := s.reconcileLocked(id); err != nil {
+			result.Err = errors.Join(result.Err, err)
+			result.Detail = "disk changed; shared publication requires reconciliation; do not replay"
+		}
 	}
 	if result.Err == nil {
 		for _, edit := range edits {

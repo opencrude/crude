@@ -17,6 +17,7 @@ import (
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types/control"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -129,7 +130,7 @@ func TestConnectedShellControlExactOwnerAndPaint(t *testing.T) {
 		t.Fatal("stale revision mutated shell", result)
 	}
 	result = requestShellForTest(t, runtime, shells, one, "settings.open", map[string]any{"scope": "application"}, nil)
-	if result.State != control.Applied || !strings.Contains(ansi.Strip(one.app.View().Content), "Settings") {
+	if result.State != control.Applied || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Settings") {
 		t.Fatal("settings did not paint", result)
 	}
 	result = requestShellForTest(t, runtime, shells, one, "tree.set_visible", map[string]any{"visible": true}, nil)
@@ -151,7 +152,7 @@ func TestConnectedShellControlFileMountAndDirtyDecision(t *testing.T) {
 	if result.State != control.Applied || len(result.ResourceIDs) != 2 || one.app.EditorState.Editor == nil || two.app.EditorState.Editor.IsOpen() {
 		t.Fatal("file receipt is not exact mount", result)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "real connected editor content") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "real connected editor content") {
 		t.Fatal("opened content not painted")
 	}
 	one.app.EditorState.Editor.InsertRune('X')

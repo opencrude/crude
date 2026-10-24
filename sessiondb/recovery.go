@@ -121,7 +121,7 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoi
 		retryAt = checkpoint.Status.RetryAt.UnixNano()
 	}
 	var endedAt any
-	if checkpoint.Status.State == recovery.Recovered || checkpoint.Status.State == recovery.Cancelled {
+	if checkpoint.Status.State.Settled() {
 		endedAt = updatedAt
 	}
 	if checkpoint.ContextGeneration == 0 {
@@ -198,9 +198,9 @@ func LoadRecoveryCheckpoint(db *sql.DB, sessionID, agentID string) (RecoveryChec
 	}
 	checkpoints, err := loadRecoveryCheckpoints(db, `SELECT `+recoveryCheckpointColumns+`
 		FROM agent_recoveries
-		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?)
+		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?, ?)
 		ORDER BY updated_at DESC LIMIT 1
-	`, sessionID, agentID, string(recovery.Recovered), string(recovery.Cancelled))
+	`, sessionID, agentID, string(recovery.Recovered), string(recovery.Cancelled), string(recovery.Failed))
 	if err != nil || len(checkpoints) == 0 {
 		return RecoveryCheckpoint{}, false, err
 	}
@@ -229,9 +229,9 @@ func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckp
 	}
 	checkpoints, err := loadRecoveryCheckpoints(db, `SELECT `+recoveryCheckpointColumns+`
 		FROM agent_recoveries
-		WHERE session_id=? AND state NOT IN (?, ?)
+		WHERE session_id=? AND state NOT IN (?, ?, ?)
 		ORDER BY updated_at, incident_id
-	`, sessionID, string(recovery.Recovered), string(recovery.Cancelled))
+	`, sessionID, string(recovery.Recovered), string(recovery.Cancelled), string(recovery.Failed))
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: load open recoveries: %w", err)
 	}
@@ -349,9 +349,9 @@ func RebindRecoveryAgent(db *sql.DB, sessionID, fromAgentID, toAgentID string) e
 	}
 	_, err := db.Exec(`
 		UPDATE agent_recoveries SET agent_id=?, updated_at=?
-		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?)
+		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?, ?)
 	`, toAgentID, time.Now().UnixNano(), sessionID, fromAgentID,
-		string(recovery.Recovered), string(recovery.Cancelled))
+		string(recovery.Recovered), string(recovery.Cancelled), string(recovery.Failed))
 	return err
 }
 

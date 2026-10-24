@@ -66,6 +66,7 @@ const (
 	ViewWorkspaces
 	ViewSkills
 	ViewMCP
+	ViewRemotes
 )
 
 func (view View) ID() string {
@@ -78,6 +79,8 @@ func (view View) ID() string {
 		return "skills"
 	case ViewMCP:
 		return "mcp"
+	case ViewRemotes:
+		return "remotes"
 	default:
 		return "files"
 	}
@@ -93,6 +96,8 @@ func (v View) Label() string {
 		return "Skills"
 	case ViewMCP:
 		return "MCP"
+	case ViewRemotes:
+		return "Remotes"
 	default:
 		return "Explorer"
 	}
@@ -115,6 +120,8 @@ func (v View) Icon(nerdFont bool) string {
 			return "\uf0b1" // nf-fa-briefcase
 		case ViewMCP:
 			return "\uf1e6"
+		case ViewRemotes:
+			return "\uf0ac"
 		default:
 			return "\uf07b" // nf-fa-folder
 		}
@@ -128,6 +135,8 @@ func (v View) Icon(nerdFont bool) string {
 		return "▦"
 	case ViewMCP:
 		return "⋈"
+	case ViewRemotes:
+		return "↔"
 	default:
 		return "▤"
 	}
@@ -147,7 +156,7 @@ func SettingsIcon(nerdFont bool) string {
 	return "⚙"
 }
 
-var views = []View{ViewFiles, ViewAgents, ViewWorkspaces, ViewSkills, ViewMCP}
+var views = []View{ViewFiles, ViewAgents, ViewWorkspaces, ViewSkills, ViewMCP, ViewRemotes}
 
 // Views returns the rail order.
 func Views() []View { return append([]View(nil), views...) }
@@ -218,6 +227,14 @@ func (screen *Screen) SetOrder(ids []string) {
 	screen.order = append(screen.order, ViewWorkspaces)
 	copy(screen.order[insert+1:], screen.order[insert:len(screen.order)-1])
 	screen.order[insert] = ViewWorkspaces
+	// Backend choice is client navigation, not a workspace-pinnable tool.
+	found := false
+	for _, view := range screen.order {
+		found = found || view == ViewRemotes
+	}
+	if !found {
+		screen.order = append(screen.order, ViewRemotes)
+	}
 	screen.hover = -1
 }
 

@@ -50,6 +50,14 @@ Read/request snapshots and publication generations are detached projections, not
 extra configuration authorities. Parent changes affect later requests without
 relabeling old output or scanning and rewriting closed sessions.
 
+A connected preference save waits for the post-save settings publication to be
+installed by its owning shell before reporting success or rebasing the form.
+The core's derivation-generation fence prevents a reset from returning an older
+snapshot while the committed replacement is still being encoded; identical
+settings also complete this fence. A durable save whose display refresh fails
+keeps the draft and explains that the settings were saved but not refreshed.
+This is an observation boundary, never a configuration revision or conflict gate.
+
 **Save as Workspace** patches only explicit eligible session role choices,
 including Memory, delegation and the sub-agent limit. It preserves unrelated
 workspace settings and the source session's choices. Session-only root identity,
@@ -425,12 +433,26 @@ expiry recovery, durable resume and safety boundaries.
 
 Application Settings has a dedicated **Network** group ordered last in the rail
 after AI, Security, and IDE:
-**Connection**, **Proxy**, and **Certificates**. Workspace scope displays these
+**Connection**, **Proxy**, **Certificates**, and **Remote access**. Workspace scope displays these
 application-owned values read-only, never a project-controlled trust or credential
 override. Connection reuse and HTTP/2, HTTP(S)/SOCKS routing, custom roots,
 exact-host leaf-certificate exceptions and mTLS identities share one transport.
 Certificate validation and preferences persistence run off the UI thread; failed
-saves retain the exact busy/draft owner. See [network transport](network.md) for
+saves retain the exact busy/draft owner.
+
+Remote access is separate host admission, not outbound HTTP trust. Only an
+immutable authenticated LocalHost attachment may edit listener opt-in, QUIC/TLS
+addresses or retained-session grace, create a private expiring pairing code, or
+confirm device revocation. Workspace scope and SSH/direct attachments remain
+read-only even if named Local. Save prepares listeners before config persistence
+and publishes admission only after durability. Administrative result generations
+preserve scalar drafts and fence replacement/closed forms; codes are not logged,
+automatically copied or admitted as session credentials. Paired devices store
+hashes on the host and revocation closes active device sessions. The Remotes rail
+owns shell-local connection metadata and credential storage, not this form. See
+[remote access](network.md#remote-core-access).
+
+See [network transport](network.md) for
 defaults, supported protocols, security boundaries and explicit limitations.
 
 ### Connection Timeouts

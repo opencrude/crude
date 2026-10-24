@@ -35,7 +35,7 @@ func seedScrollableMessages(r *Renderer, count int) {
 			Time:       now,
 		})
 	}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 }
 
 func TestRendererMainExportMutatesExtScrollOnly(t *testing.T) {
@@ -253,7 +253,7 @@ func TestPaneThenActivityHasExactlyOneGap(t *testing.T) {
 		{InternalID: "empty", Role: types.RoleAssistant},
 		{InternalID: "one", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "one.go", ToolStatus: types.ToolStatusSuccess},
 		{InternalID: "two", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "two.go", ToolStatus: types.ToolStatusSuccess},
-	}, 1)
+	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	var lines []string
 	for _, row := range rows {
@@ -326,13 +326,13 @@ func TestSyncAppendRemovesCursorFromPreviousAssistant(t *testing.T) {
 		InternalID: "assistant",
 		Role:       types.RoleAssistant,
 		Content:    "Working now.",
-	}}, 1)
+	}}, 1, 0)
 	_, _, _ = r.ExportMessageRows(60)
 
 	r.SyncMessages([]types.ChatMessage{
 		{InternalID: "assistant", Role: types.RoleAssistant, Content: "Working now."},
 		{InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "calling"},
-	}, 2)
+	}, 2, 0)
 	rows, _, _ := r.ExportMessageRows(60)
 	if got := strings.Join(rows[0].Lines, "\n"); strings.Contains(got, "█") {
 		t.Fatalf("synced assistant retained typing cursor after append: %q", got)

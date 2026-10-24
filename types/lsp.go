@@ -1,6 +1,7 @@
 package types
 
 import (
+	"crude/types/jsondoc"
 	"path/filepath"
 	"strings"
 )
@@ -12,8 +13,8 @@ type LSPServerSpec struct {
 	Args                  []string
 	RootMarkers           []string
 	Environment           map[string]string
-	Settings              map[string]any
-	InitializationOptions map[string]any
+	Settings              jsondoc.Object
+	InitializationOptions jsondoc.Object
 }
 
 // ResolveServer returns detached launch settings. AutoDetect gates only built-in

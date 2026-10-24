@@ -566,8 +566,11 @@ func (m *LSPManager) UpdateFile(_ context.Context, path, text string) {
 	if doc != nil && doc.text != text {
 		doc.text = text
 		doc.revision++
-		m.symbolCount -= len(m.docSymbols[path])
-		delete(m.docSymbols, path)
+		if len(m.docSymbols[path]) > 0 {
+			m.symbolCount -= len(m.docSymbols[path])
+			delete(m.docSymbols, path)
+			m.bumpVersionLocked()
+		}
 	}
 	if timer := m.updateTimers[path]; timer != nil {
 		timer.Stop()
@@ -592,8 +595,11 @@ func (m *LSPManager) QueueFileUpdate(path, text string) {
 	}
 	doc.text = text
 	doc.revision++
-	m.symbolCount -= len(m.docSymbols[path])
-	delete(m.docSymbols, path)
+	if len(m.docSymbols[path]) > 0 {
+		m.symbolCount -= len(m.docSymbols[path])
+		delete(m.docSymbols, path)
+		m.bumpVersionLocked()
+	}
 	if len(text) > m.settings.MaxDocumentBytes && doc.opened {
 		if state := m.states[doc.key]; state != nil && state.client != nil {
 			m.closedDocuments = append(m.closedDocuments, lspClosedDocument{path, state.client})
@@ -693,7 +699,7 @@ func (m *LSPManager) Stop() {
 		doc.opened = false
 	}
 	m.activeConnected, m.activeStatus, m.activeError, m.syncing, m.inflight = false, LSPIdle, "", false, 0
-	m.version++
+	m.bumpVersionLocked()
 	m.clearDiagnosticsLocked()
 	m.recomputeIdleReasonLocked()
 	if len(m.states) > 0 {
@@ -854,7 +860,9 @@ func (m *LSPManager) keyWantedLocked(key string) bool {
 
 // broadcastLocked wakes probes waiting for a server or document transition.
 func (m *LSPManager) broadcastLocked() {
-	close(m.stateChanged)
+	if m.stateChanged != nil {
+		close(m.stateChanged)
+	}
 	m.stateChanged = make(chan struct{})
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,10 +34,14 @@ func TestConnectedTerminalRowsCarryAnchoredHistoryAndRecoverReset(t *testing.T) 
 			t.Error(err)
 		}
 	})
+	serverContext, stopServers := context.WithCancel(context.Background())
+	var servers sync.WaitGroup
+	t.Cleanup(func() { stopServers(); servers.Wait() })
 	dial := func(ctx context.Context, id string) (*coreclient.Client, error) {
 		a, b := net.Pipe()
-		go func() { _ = core.ServeConnection(t.Context(), server, a) }()
-		return coreclient.Dial(ctx, b, id)
+		servers.Add(1)
+		go func() { defer servers.Done(); _ = core.ServeConnection(serverContext, server, a) }()
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(b), id)
 	}
 	port, err := Attach(t.Context(), Options{Root: t.TempDir(), Dial: dial})
 	if err != nil {

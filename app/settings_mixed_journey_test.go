@@ -62,7 +62,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 		}
 		s, c := net.Pipe()
 		go func() { _ = core.ServeConnection(t.Context(), r, s) }()
-		client, err := coreclient.Dial(t.Context(), c, "mixed-settings")
+		client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(c), "mixed-settings")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	}
 	r, client, application, id := start()
 	defer func() { _ = client.Close(); _ = r.Close() }()
-	call := func(method string, input, output any) {
+	call := func(method string, input coreprotocol.Value, output coreprotocol.Target) {
 		t.Helper()
 		if err := client.Call(t.Context(), id, method, input, output); err != nil {
 			t.Fatal(method, err)
@@ -83,14 +83,14 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	fetch := func() coreprotocol.SettingsFetchResult {
 		t.Helper()
 		var out coreprotocol.SettingsFetchResult
-		call(coreprotocol.SettingsFetch, struct{}{}, &out)
+		call(coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &out)
 		return out
 	}
 	edit := func(path []string, value string) types.SettingEdit {
 		return types.SettingEdit{Path: path, After: json.RawMessage(value)}
 	}
 	var created workspace.NewSessionResult
-	call(coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)
+	call(coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created)
 	if created.Error != "" {
 		t.Fatal(created.Error)
 	}
@@ -111,22 +111,22 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	}
 	saveSession := func(edits ...types.SettingEdit) {
 		t.Helper()
-		call(coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsMutationRequest{SessionID: sid, Edits: edits}, &coreprotocol.SessionSettingsResult{})
+		call(coreprotocol.SessionSettingsSave, &coreprotocol.SessionSettingsMutationRequest{SessionID: sid, Edits: edits}, &coreprotocol.SessionSettingsResult{})
 	}
 	saveWorkspace := func(edits ...types.SettingEdit) {
 		t.Helper()
-		call(coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: edits}, &coreprotocol.WorkspacePreferencesResult{})
+		call(coreprotocol.WorkspaceOverridesSet, &coreprotocol.WorkspacePreferencesRequest{Edits: edits}, &coreprotocol.WorkspacePreferencesResult{})
 	}
 	saveApp := func(edits ...types.SettingEdit) {
 		t.Helper()
-		call(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: edits, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{})
+		call(coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: edits, ProxyURL: coreprotocol.SecretString{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{})
 	}
 	// Stage a later independent session field before changing any parent scope.
 	staged := edit([]string{"overrides", "default", "ThinkingEffort"}, `"high"`)
 	saveSession(edit([]string{"overrides", "default", "Model"}, `"session-model"`), edit([]string{"overrides", "default", "context_compaction_percent"}, "63"))
 	saveWorkspace(edit([]string{"agents", "Enabled"}, "false"), edit([]string{"editor", "tab_size"}, "8"), edit([]string{"terminal", "scrollback_lines"}, "4000"))
 	proxyURL := strings.Replace(proxy.URL, "http://", "http://fixture:private-proxy@", 1)
-	call(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{edit([]string{"network", "proxy_mode"}, `"custom"`)}, ProxyURL: coreprotocol.SecretUpdate[string]{Value: &proxyURL}}, &coreprotocol.ApplicationPreferencesResult{})
+	call(coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{edit([]string{"network", "proxy_mode"}, `"custom"`)}, ProxyURL: coreprotocol.SecretString{Value: &proxyURL}}, &coreprotocol.ApplicationPreferencesResult{})
 	response, err := network.NewClient(time.Second).Get("http://settings.invalid/proof")
 	if err != nil {
 		t.Fatal(err)
@@ -135,10 +135,10 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	if proxyRequests.Load() != 1 {
 		t.Fatal("saved proxy was not used by the next client")
 	}
-	call(coreprotocol.CapabilityAction, coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "disable", Kind: captypes.KindMCP, ID: "fixture:mcp.one", Scope: captypes.ScopeWorkspace}}, &coreprotocol.CapabilityResult{})
+	call(coreprotocol.CapabilityAction, &coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "disable", Kind: captypes.KindMCP, ID: "fixture:mcp.one", Scope: captypes.ScopeWorkspace}}, &coreprotocol.CapabilityResult{})
 	saveApp(edit([]string{"agents", "Categories", "default", "Model"}, `"app-next"`), edit([]string{"ui", "context_help"}, `"expanded"`), edit([]string{"memory", "recall_limit"}, "12"))
 	saveSession(staged)
-	call(coreprotocol.SessionCapabilityToggle, coreprotocol.SessionSettingsMutationRequest{SessionID: sid, Capability: &coreprotocol.SessionCapabilityChange{ID: "fixture:mcp.one", Enabled: false}}, &coreprotocol.SessionSettingsResult{})
+	call(coreprotocol.SessionCapabilityToggle, &coreprotocol.SessionSettingsMutationRequest{SessionID: sid, Capability: &coreprotocol.SessionCapabilityChange{ID: "fixture:mcp.one", Enabled: false}}, &coreprotocol.SessionSettingsResult{})
 	assert := func() {
 		t.Helper()
 		all, s := fetch(), readSession(sid)
@@ -161,7 +161,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	}
 	assert()
 	// A second session follows the parent, not the first session's local choices.
-	call(coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)
+	call(coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created)
 	if second := readSession(created.SessionID); second.Effective.Value.Model != "app-next" || len(second.Overrides) != 0 || len(second.Effective.DisabledCapabilities) != 0 || second.Effective.Value.Agents.Enabled {
 		t.Fatal("session settings leaked into a new session")
 	}
@@ -173,7 +173,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	var otherSettings coreprotocol.SettingsFetchResult
-	if err := client.Call(t.Context(), attachment.WorkspaceID, coreprotocol.SettingsFetch, struct{}{}, &otherSettings); err != nil {
+	if err := client.Call(t.Context(), attachment.WorkspaceID, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &otherSettings); err != nil {
 		t.Fatal(err)
 	}
 	if !otherSettings.Overrides.IsEmpty() || !otherSettings.Effective.Agents.Enabled || otherSettings.Effective.Editor.TabSize != 4 || otherSettings.Effective.Capabilities.Connections["fixture:mcp.one"].Disabled {
@@ -197,7 +197,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	}
 	_ = db.Close()
 	r, client, _, id = start()
-	call(coreprotocol.OpenSession, coreprotocol.InvocationSessionRequest{SessionID: sid}, &created)
+	call(coreprotocol.OpenSession, &coreprotocol.InvocationSessionRequest{SessionID: sid}, &created)
 	if created.Error != "" {
 		t.Fatal(created.Error)
 	}
@@ -211,7 +211,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{edit([]string{"network", "ca_file"}, `"missing-fixture-ca.pem"`)}, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{})
+	bad := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{edit([]string{"network", "ca_file"}, `"missing-fixture-ca.pem"`)}, ProxyURL: coreprotocol.SecretString{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{})
 	afterBytes, _ := os.ReadFile(ConfigPath())
 	if bad == nil || string(beforeBytes) != string(afterBytes) {
 		t.Fatal("invalid trust was accepted or partly persisted")
@@ -219,7 +219,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	saveApp(edit([]string{"editor", "word_wrap"}, "true"))
 	assert()
 	// Session Reset changes no parent choice, transcript or separate opt-out.
-	call(coreprotocol.SessionSettingsReset, coreprotocol.SessionSettingsMutationRequest{SessionID: sid}, &coreprotocol.SessionSettingsResult{})
+	call(coreprotocol.SessionSettingsReset, &coreprotocol.SessionSettingsMutationRequest{SessionID: sid}, &coreprotocol.SessionSettingsResult{})
 	s := readSession(sid)
 	if len(s.Overrides) != 0 || s.Effective.Value.Model != "app-next" || s.Effective.Value.Agents.Enabled || len(s.Effective.DisabledCapabilities) != 1 {
 		t.Fatal("session reset did not restore only its preference layer")

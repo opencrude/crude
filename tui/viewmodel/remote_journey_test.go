@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,10 +44,30 @@ type remoteJourneyShell struct {
 // subscription batches; neither the fixture nor the provider fabricates nodes.
 func newRemoteJourneyShell(t *testing.T, runtime *core.Runtime, root string) remoteJourneyShell {
 	t.Helper()
+	serverContext, stopServers := context.WithCancel(context.Background())
+	var servers sync.WaitGroup
+	var serversMu sync.Mutex
+	serversClosing := false
+	// Test.Context is cancelled before Cleanup. Keep the core carrier alive
+	// through the shell's real graceful close, then cancel and join leftovers.
+	t.Cleanup(func() {
+		serversMu.Lock()
+		serversClosing = true
+		stopServers()
+		serversMu.Unlock()
+		servers.Wait()
+	})
 	dial := func(ctx context.Context, id string) (*coreclient.Client, error) {
+		serversMu.Lock()
+		if serversClosing {
+			serversMu.Unlock()
+			return nil, context.Canceled
+		}
 		server, client := net.Pipe()
-		go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-		return coreclient.Dial(ctx, client, id)
+		servers.Add(1)
+		go func() { defer servers.Done(); _ = core.ServeConnection(serverContext, runtime, server) }()
+		serversMu.Unlock()
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(client), id)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -57,6 +78,7 @@ func newRemoteJourneyShell(t *testing.T, runtime *core.Runtime, root string) rem
 	app := NewApp(port, nil)
 	app.SetPromptHistory(history.New())
 	fifo := make(chan any, 1024)
+	registerLiveTestFIFO(t, app, fifo)
 	app.eventBus.SetSink(remoteJourneySink{fifo})
 	port.StartReplica()
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -104,7 +126,7 @@ func remoteJourneyUntil(t *testing.T, shells []remoteJourneyShell, condition fun
 						t.Logf("message id=%s role=%s pending=%v content=%q", message.InternalID, message.Role, message.PendingSteering, text)
 					}
 				}
-				t.Logf("paint=%s", ansi.Strip(shell.app.View().Content))
+				t.Logf("paint=%s", ansi.Strip(shell.app.View().RenderContent()))
 			}
 			t.Fatal("remote App journey did not reach its user-visible state")
 		case <-tick.C:
@@ -251,7 +273,7 @@ func TestRemoteAppJourneySharedStreamPrivateDraftsAndDetach(t *testing.T) {
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool {
-		return strings.Contains(ansi.Strip(two.app.View().Content), "shared prefix") && strings.Contains(ansi.Strip(one.app.View().Content), "shared prefix")
+		return strings.Contains(ansi.Strip(two.app.View().RenderContent()), "shared prefix") && strings.Contains(ansi.Strip(one.app.View().RenderContent()), "shared prefix")
 	})
 	if two.app.Input.Value() != "private draft 1" {
 		t.Fatal("submission consumed the peer draft")
@@ -260,7 +282,7 @@ func TestRemoteAppJourneySharedStreamPrivateDraftsAndDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	remoteJourneyUntil(t, []remoteJourneyShell{two}, func() bool { return strings.Contains(ansi.Strip(two.app.View().Content), "retained answer") })
+	remoteJourneyUntil(t, []remoteJourneyShell{two}, func() bool { return strings.Contains(ansi.Strip(two.app.View().RenderContent()), "retained answer") })
 	if calls.Load() != 1 {
 		t.Fatalf("provider executed %d requests, want exactly one", calls.Load())
 	}
@@ -382,7 +404,7 @@ func TestRemoteAppJourneyQuestionResolvedFromPeerOnce(t *testing.T) {
 	_, answerCmd := two.app.Update(questionscreen.ResultMsg{Target: two.app.agentPrompts[0].question, Result: questionscreen.Result{Answers: map[string]string{"Choice": "Yes"}, Questions: map[string]string{"Choice": "Choose a fixture answer"}}})
 	runAppCommand(t, two.app, answerCmd)
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool {
-		return len(one.app.agentPrompts) == 0 && len(two.app.agentPrompts) == 0 && strings.Contains(ansi.Strip(one.app.View().Content), "PEER DECISION ACCEPTED") && strings.Contains(ansi.Strip(two.app.View().Content), "PEER DECISION ACCEPTED")
+		return len(one.app.agentPrompts) == 0 && len(two.app.agentPrompts) == 0 && strings.Contains(ansi.Strip(one.app.View().RenderContent()), "PEER DECISION ACCEPTED") && strings.Contains(ansi.Strip(two.app.View().RenderContent()), "PEER DECISION ACCEPTED")
 	})
 	if calls.Load() != 2 {
 		t.Fatalf("expected exactly one question request and one continuation, got %d", calls.Load())
@@ -410,12 +432,14 @@ func TestRemoteAppJourneyPeerStopRetainsAcceptedContent(t *testing.T) {
 	one.app.setFocusInput()
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
-	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool { return strings.Contains(ansi.Strip(two.app.View().Content), "ACCEPTED BEFORE PEER STOP") })
+	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool {
+		return strings.Contains(ansi.Strip(two.app.View().RenderContent()), "ACCEPTED BEFORE PEER STOP")
+	})
 	two.app.cancelAgentTurn(id)
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool {
-		return !one.app.ws.AgentTurnActive(id) && !two.app.ws.AgentTurnActive(id) && strings.Contains(ansi.Strip(one.app.View().Content), "Stopped") && strings.Contains(ansi.Strip(two.app.View().Content), "Stopped")
+		return !one.app.ws.AgentTurnActive(id) && !two.app.ws.AgentTurnActive(id) && strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Stopped") && strings.Contains(ansi.Strip(two.app.View().RenderContent()), "Stopped")
 	})
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "ACCEPTED BEFORE PEER STOP") || calls.Load() != 1 {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "ACCEPTED BEFORE PEER STOP") || calls.Load() != 1 {
 		t.Fatal("stop lost accepted output or repeated provider execution")
 	}
 	one.app.Input.SetInput("new draft must survive refused steering")

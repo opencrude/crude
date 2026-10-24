@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/shellport"
 	"crude/tui/editor"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T) {
@@ -32,6 +33,7 @@ func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T
 				_, cmd := shell.app.Update(msg)
 				if paced {
 					runAppCommand(t, shell.app, cmd)
+					liveTestSync(t, shell.app)
 					return nil
 				}
 				return cmd
@@ -44,8 +46,10 @@ func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T
 			queued = append(queued, send(tea.PasteMsg{Content: "AB\nCD"}))
 			for _, cmd := range queued {
 				runAppCommand(t, shell.app, cmd)
+				liveTestSync(t, shell.app)
 			}
 			runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+			liveTestSync(t, shell.app)
 			if ed.Value() != "    basexy\n    AB\nCD" {
 				t.Fatalf("dispatch did not edit: %q focus=%v", ed.Value(), shell.app.focusTarget())
 			}
@@ -53,6 +57,7 @@ func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T
 			for _, want := range expected {
 				_, cmd := shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 				runAppCommand(t, shell.app, cmd)
+				liveTestSync(t, shell.app)
 				if ed.Value() != want {
 					t.Fatalf("undo boundary: got %q want %q", ed.Value(), want)
 				}
@@ -60,6 +65,7 @@ func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T
 			for _, want := range []string{"    basexy", "    basexy\n    ", "    basexy\n    AB\nCD"} {
 				_, cmd := shell.app.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 				runAppCommand(t, shell.app, cmd)
+				liveTestSync(t, shell.app)
 				if ed.Value() != want {
 					t.Fatalf("redo boundary: got %q want %q", ed.Value(), want)
 				}
@@ -84,6 +90,7 @@ func TestLiveEditorHistoryDismissesStaleDiagnosticPopup(t *testing.T) {
 	shell.app.setFocusEditor()
 	_, cmd := shell.app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	ed.SetDiagnostics([]editor.LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 5, Severity: editor.DiagError, Message: "stale diagnostic"}})
 	ed.RefreshCursorHover(0, 0)
 	shell.app.updateDiagHoverPopupFromCursor()
@@ -92,6 +99,7 @@ func TestLiveEditorHistoryDismissesStaleDiagnosticPopup(t *testing.T) {
 	}
 	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "base" || shell.app.DiagPopupID != "" {
 		t.Fatalf("stale popup survived undo: %q %s", ed.Value(), shell.app.DiagPopupID)
 	}
@@ -125,6 +133,7 @@ func TestLiveEditorHistoryDelayedAcknowledgementPreservesGesturesAndTyping(t *te
 	}
 	runAppCommand(t, shell.app, held)
 	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
 	if ed.Value() != "x\nqbase" || ed.CursorLine() != 1 || ed.CursorCol() != 1 {
 		t.Fatalf("ordered undo/redo/typing: %q cursor=%d:%d state=%+v", ed.Value(), ed.CursorLine(), ed.CursorCol(), ed.DocumentState())
 	}
@@ -152,16 +161,19 @@ func TestLiveEditorHistoryCombiningAppendUsesExactSourceOffsets(t *testing.T) {
 	ed.SetCursorPosition(0, 1)
 	_, cmd := shell.app.Update(tea.KeyPressMsg{Code: '\u0301', Text: "\u0301"})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "e\u0301" || ed.CursorCol() != 1 {
 		t.Fatalf("append: %q cursor=%d", ed.Value(), ed.CursorCol())
 	}
 	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "e" || ed.CursorCol() != 1 {
 		t.Fatalf("undo removed base grapheme: %q cursor=%d", ed.Value(), ed.CursorCol())
 	}
 	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl | tea.ModShift})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "e\u0301" || ed.CursorCol() != 1 {
 		t.Fatalf("redo source bytes: %q cursor=%d", ed.Value(), ed.CursorCol())
 	}
@@ -182,16 +194,19 @@ func TestLiveEditorHistoryRestoresDeletedSelectionAndCaret(t *testing.T) {
 	ed.SetSelection(0, 1, 0, 3)
 	_, cmd := shell.app.Update(tea.PasteMsg{Content: "X"})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "aX" || ed.HasSelection() {
 		t.Fatalf("selection replacement: %q", ed.Value())
 	}
 	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "abc" || ed.SelectedText() != "bc" || ed.CursorCol() != 3 {
 		t.Fatalf("undo view: %q selected=%q cursor=%d", ed.Value(), ed.SelectedText(), ed.CursorCol())
 	}
 	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	runAppCommand(t, shell.app, cmd)
+	liveTestSync(t, shell.app)
 	if ed.Value() != "aX" || ed.HasSelection() || ed.CursorCol() != 2 {
 		t.Fatalf("redo view: %q selected=%q cursor=%d", ed.Value(), ed.SelectedText(), ed.CursorCol())
 	}

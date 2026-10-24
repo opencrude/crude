@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/internal/wiretest"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,11 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/coreprotocol"
 	"crude/provider"
 	"crude/shellport"
 	"crude/types/control"
+
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -33,7 +35,7 @@ func TestProductComposerExactOwnDraftStaging(t *testing.T) {
 	if result.State != control.Applied || m.Input.Value() != "staged own draft" || two.app.Input.Value() != "neighbor's draft" {
 		t.Fatal("wrong draft owner", result)
 	}
-	if !strings.Contains(ansi.Strip(m.View().Content), "staged own draft") {
+	if !strings.Contains(ansi.Strip(m.View().RenderContent()), "staged own draft") {
 		t.Fatal("draft not painted")
 	}
 	revision := m.Input.DraftRevision()
@@ -101,7 +103,7 @@ func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *t
 	}
 	defer external.Close()
 	call := func(name, method string, value any) coreprotocol.Response {
-		payload, err := json.Marshal(value)
+		payload, err := wiretest.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -132,7 +134,7 @@ func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *t
 		t.Fatal(response.Error)
 	}
 	var result control.Result
-	if err := json.Unmarshal(response.Payload, &result); err != nil {
+	if err := coreprotocol.Decode(response.Payload, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.State != control.Committed || one.app.Input.Value() != "" || two.app.Input.Value() != "peer private draft" {

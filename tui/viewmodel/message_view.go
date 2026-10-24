@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"crude/provider"
 	ttypes "crude/types"
+	"crude/types/command"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -164,6 +165,7 @@ func cloneCollaboration(input *provider.CollaborationAttribution) *provider.Coll
 	result := *input
 	result.RecipientIDs = append([]string(nil), input.RecipientIDs...)
 	result.RecipientNames = append([]string(nil), input.RecipientNames...)
+	result.Command = command.Clone(input.Command)
 	return &result
 }
 
@@ -191,16 +193,8 @@ func (m *App) syncAgentMessages(agentID string, scroll bool) {
 	if node.State.Messages == nil {
 		return
 	}
-	if proj.renderer.SourceVersion() == node.State.Messages.Version() {
-		m.presentThinking(proj.renderer, node.State.Messages)
-		return
-	}
-	messages, version := chatMessagesFromConversation(node.State.Messages)
-	proj.renderer.SyncMessages(messages, version)
+	m.subPaneProjections.SyncFromWorkspace(agentID, node.State.Messages, scroll)
 	m.presentThinking(proj.renderer, node.State.Messages)
-	if scroll {
-		proj.renderer.ScrollToBottom()
-	}
 }
 
 func (m *App) syncPaneMessages(paneID string, scroll bool) {
@@ -212,14 +206,10 @@ func (m *App) syncPaneMessages(paneID string, scroll bool) {
 	if proj == nil {
 		return
 	}
-	if sp.Messages == nil || proj.renderer.SourceVersion() == sp.Messages.Version() {
+	if sp.Messages == nil {
 		return
 	}
-	messages, version := chatMessagesFromConversation(sp.Messages)
-	proj.renderer.SyncMessages(messages, version)
-	if scroll {
-		proj.renderer.ScrollToBottom()
-	}
+	m.subPaneProjections.SyncFromWorkspace(paneID, sp.Messages, scroll)
 }
 
 func (m *App) appendAgentMessage(agentID string, message ttypes.ChatMessage) {

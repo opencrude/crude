@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +18,7 @@ import (
 
 func deletionRequest(t *testing.T, c *Connection, id, ws, method string, value any) coreprotocol.Request {
 	t.Helper()
-	raw, err := json.Marshal(value)
+	raw, err := testPayload(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +115,8 @@ func TestWorkspaceDeletionRetiresDetachedActorAndUndoRestoresAuthorHistory(t *te
 	}
 	currentRoot := t.TempDir()
 	current, currentID := resourceConnection(t, r, currentRoot, "deletion-current")
-	callCore(t, author, "detach-author", target, coreprotocol.Detach, struct{}{})
-	callCore(t, peer, "detach-peer", target, coreprotocol.Detach, struct{}{})
+	callCore(t, author, "detach-author", target, coreprotocol.Detach, coreprotocol.Empty{})
+	callCore(t, peer, "detach-peer", target, coreprotocol.Detach, coreprotocol.Empty{})
 	author.Close()
 	peer.Close()
 
@@ -135,8 +134,8 @@ func TestWorkspaceDeletionRetiresDetachedActorAndUndoRestoresAuthorHistory(t *te
 	}
 	// The normal catalog opens SQLite between preview and confirmation. Its
 	// transient read handles/sidecars must not make a quiescent plan stale.
-	var catalog []workspace.WorkspaceInfo
-	decodeResource(t, callCore(t, current, "catalog-between-preview-and-delete", currentID, coreprotocol.SavedWorkspaces, struct{}{}), &catalog)
+	var catalog coreprotocol.WorkspaceInfos
+	decodeResource(t, callCore(t, current, "catalog-between-preview-and-delete", currentID, coreprotocol.SavedWorkspaces, coreprotocol.Empty{}), &catalog)
 	found := false
 	for _, info := range catalog {
 		found = found || info.ID == plan.ID && info.ProjectDir == root
@@ -165,7 +164,7 @@ func TestWorkspaceDeletionRetiresDetachedActorAndUndoRestoresAuthorHistory(t *te
 		}
 	}
 	assertDeletionFile(t, path, "alpha\n")
-	callCore(t, current, "current-still-live", currentID, coreprotocol.Snapshot, struct{}{})
+	callCore(t, current, "current-still-live", currentID, coreprotocol.Snapshot, coreprotocol.Empty{})
 	var receipt coreprotocol.Receipt
 	decodeResource(t, callCore(t, current, "delete-receipt", "", coreprotocol.GetReceipt, coreprotocol.ReceiptRequest{RequestID: "delete-exactly-once"}), &receipt)
 	if receipt.ClientID != current.Owner.ClientID || receipt.Method != coreprotocol.WorkspaceDelete || receipt.WorkspaceID != currentID || receipt.State != "completed" || !bytes.Equal(receipt.Response.Payload, response.Payload) {
@@ -232,10 +231,10 @@ func TestWorkspaceDeletionRefusesCurrentPeerAndBackgroundViewsWithoutClosing(t *
 		assertDeletionActorUsable(t, r, target, targetActor)
 	}
 	checkIssue("refuse-two-views", "2 view(s)")
-	callCore(t, a, "switch-away", target, coreprotocol.Detach, struct{}{})
+	callCore(t, a, "switch-away", target, coreprotocol.Detach, coreprotocol.Empty{})
 	checkIssue("refuse-peer-view", "1 view(s)")
-	callCore(t, peer, "peer-still-live", target, coreprotocol.Snapshot, struct{}{})
-	callCore(t, peer, "peer-switch-away", target, coreprotocol.Detach, struct{}{})
+	callCore(t, peer, "peer-still-live", target, coreprotocol.Snapshot, coreprotocol.Empty{})
+	callCore(t, peer, "peer-switch-away", target, coreprotocol.Detach, coreprotocol.Empty{})
 	inspectDeletionActor(t, targetActor, func() {
 		state := workspace.NewAgentState("background-agent", workspace.NewConversation(), coreTestLogger{})
 		state.Running = true // A provider/tool gap: neither Thinking nor Streaming.
@@ -249,7 +248,7 @@ func TestWorkspaceDeletionRefusesCurrentPeerAndBackgroundViewsWithoutClosing(t *
 	}
 	observer, _ := resourceConnection(t, r, root, "background-observer")
 	var snapshot coreprotocol.WorkspaceSnapshot
-	decodeResource(t, callCore(t, observer, "background-still-visible", target, coreprotocol.Snapshot, struct{}{}), &snapshot)
+	decodeResource(t, callCore(t, observer, "background-still-visible", target, coreprotocol.Snapshot, coreprotocol.Empty{}), &snapshot)
 	if len(snapshot.Agents) != 1 || snapshot.Agents[0].ID != "background-agent" || !snapshot.Agents[0].Running {
 		t.Fatalf("refusal changed the still-running agent view: %+v", snapshot.Agents)
 	}
@@ -274,8 +273,8 @@ func TestWorkspaceDeletionRefusesInFlightResourceWithoutClosing(t *testing.T) {
 		t.Fatal("resource lane did not start")
 	}
 	result := a.Dispatch(t.Context(), deletionRequest(t, a, "pending-open", target, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: "pending.txt"}))
-	callCore(t, a, "operation-admission-barrier", target, coreprotocol.Snapshot, struct{}{})
-	callCore(t, a, "operation-switch-away", target, coreprotocol.Detach, struct{}{})
+	callCore(t, a, "operation-admission-barrier", target, coreprotocol.Snapshot, coreprotocol.Empty{})
+	callCore(t, a, "operation-switch-away", target, coreprotocol.Detach, coreprotocol.Empty{})
 	var plan workspace.WorkspaceDeletion
 	decodeResource(t, callCore(t, current, "pending-operation-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(root), ProjectDir: root}), &plan)
 	if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, "operations are still finishing") || plan.Issue.Guidance == "" {
@@ -302,13 +301,13 @@ func TestWorkspaceDeletionLateAttachWriteDetachInvalidatesPreview(t *testing.T) 
 	}
 	a, target := resourceConnection(t, r, root, "early-view")
 	current, currentID := resourceConnection(t, r, t.TempDir(), "late-write-current")
-	callCore(t, a, "early-detach", target, coreprotocol.Detach, struct{}{})
+	callCore(t, a, "early-detach", target, coreprotocol.Detach, coreprotocol.Empty{})
 	plan := deletionPreview(t, current, currentID, root)
 	late, _ := resourceConnection(t, r, root, "late-writer")
 	var snap document.Snapshot
 	decodeResource(t, callCore(t, late, "late-open", target, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}), &snap)
 	callCore(t, late, "late-edit", target, coreprotocol.DocumentEdit, coreprotocol.DocumentEditRequest{ID: snap.ID, Revision: snap.Revision, Edits: []document.Edit{{Start: 4, End: 4, Text: " accepted later"}}})
-	callCore(t, late, "late-detach", target, coreprotocol.Detach, struct{}{})
+	callCore(t, late, "late-detach", target, coreprotocol.Detach, coreprotocol.Empty{})
 	late.Close()
 	out := deletionFault(t, current, "stale-delete", currentID, coreprotocol.WorkspaceDelete, coreprotocol.WorkspaceDeleteRequest{Token: plan.Token}, "workspace_storage_failed")
 	if !strings.Contains(out.Error.Message, "changed since preview") {
@@ -387,7 +386,7 @@ func TestWorkspaceDeletionCanceledFactoryStillOpeningIsActionablyRefused(t *test
 	if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, "still opening") || !strings.Contains(plan.Issue.Guidance, "Wait") {
 		t.Fatalf("still-opening storage was not actionably refused: %+v", plan)
 	}
-	callCore(t, current, "opening-current-live", currentID, coreprotocol.Snapshot, struct{}{})
+	callCore(t, current, "opening-current-live", currentID, coreprotocol.Snapshot, coreprotocol.Empty{})
 	unblock()
 	select {
 	case <-opening.done:
@@ -395,7 +394,7 @@ func TestWorkspaceDeletionCanceledFactoryStillOpeningIsActionablyRefused(t *test
 		t.Fatal("refused factory could not finish normally")
 	}
 	later, target := resourceConnection(t, r, root, "opening-later-view")
-	callCore(t, later, "opening-later-live", target, coreprotocol.Snapshot, struct{}{})
+	callCore(t, later, "opening-later-live", target, coreprotocol.Snapshot, coreprotocol.Empty{})
 }
 
 func TestWorkspaceDeletionUndoRefusesReplacementWithoutClosingIt(t *testing.T) {
@@ -406,7 +405,7 @@ func TestWorkspaceDeletionUndoRefusesReplacementWithoutClosingIt(t *testing.T) {
 	}
 	a, target := resourceConnection(t, r, root, "before-replacement")
 	current, currentID := resourceConnection(t, r, t.TempDir(), "replacement-current")
-	callCore(t, a, "before-replacement-detach", target, coreprotocol.Detach, struct{}{})
+	callCore(t, a, "before-replacement-detach", target, coreprotocol.Detach, coreprotocol.Empty{})
 	plan := deletionPreview(t, current, currentID, root)
 	var deleted coreprotocol.WorkspaceDeletionResult
 	decodeResource(t, callCore(t, current, "before-replacement-delete", currentID, coreprotocol.WorkspaceDelete, coreprotocol.WorkspaceDeleteRequest{Token: plan.Token}), &deleted)
@@ -420,7 +419,7 @@ func TestWorkspaceDeletionUndoRefusesReplacementWithoutClosingIt(t *testing.T) {
 	var snap document.Snapshot
 	decodeResource(t, callCore(t, replacement, "replacement-open", replacementID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}), &snap)
 	callCore(t, replacement, "replacement-edit", replacementID, coreprotocol.DocumentEdit, coreprotocol.DocumentEditRequest{ID: snap.ID, Revision: snap.Revision, Edits: []document.Edit{{Start: 4, End: 4, Text: " replacement"}}})
-	callCore(t, replacement, "replacement-detach", replacementID, coreprotocol.Detach, struct{}{})
+	callCore(t, replacement, "replacement-detach", replacementID, coreprotocol.Detach, coreprotocol.Empty{})
 	deletionFault(t, current, "refuse-replacement-undo", currentID, coreprotocol.WorkspaceRestore, deleted.Deleted, "workspace_replaced")
 	assertDeletionActorUsable(t, r, replacementID, replacementActor)
 	after, err := os.ReadFile(recoveryDB)
@@ -455,7 +454,7 @@ func TestWorkspaceDeletionRefusesLiveTerminalWithoutStoppingIt(t *testing.T) {
 		Command: executable, Args: []string{"-test.run=^TestResourceEventsSilentTerminalChild$"}, CWD: root, Cols: 40, Rows: 4,
 	}), &terminal)
 	targetActor := deletionActor(t, r, target)
-	callCore(t, owner, "detach-terminal-owner", target, coreprotocol.Detach, struct{}{})
+	callCore(t, owner, "detach-terminal-owner", target, coreprotocol.Detach, coreprotocol.Empty{})
 	var plan workspace.WorkspaceDeletion
 	decodeResource(t, callCore(t, current, "terminal-use-preview", currentID, coreprotocol.WorkspaceDeletePreview, coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(root), ProjectDir: root}), &plan)
 	if plan.Token != "" || plan.Issue == nil || !strings.Contains(plan.Issue.Summary, "terminal is still running") || !strings.Contains(plan.Issue.Guidance, "No terminal was stopped") {
@@ -463,13 +462,13 @@ func TestWorkspaceDeletionRefusesLiveTerminalWithoutStoppingIt(t *testing.T) {
 	}
 	assertDeletionActorUsable(t, r, target, targetActor)
 	owner, _ = resourceConnection(t, r, root, "deletion-terminal-reopened")
-	var inventory []workspace.TerminalInfo
-	decodeResource(t, callCore(t, owner, "terminal-survives-refusal", target, coreprotocol.TerminalList, struct{}{}), &inventory)
+	var inventory coreprotocol.TerminalInfos
+	decodeResource(t, callCore(t, owner, "terminal-survives-refusal", target, coreprotocol.TerminalList, coreprotocol.Empty{}), &inventory)
 	if len(inventory) != 1 || inventory[0].ID != terminal.ID || inventory[0].PID != terminal.PID || !inventory[0].Alive {
 		t.Fatalf("deletion use-check stopped the terminal: %+v", inventory)
 	}
 	callCore(t, owner, "close-terminal-deliberately", target, coreprotocol.TerminalClose, coreprotocol.TerminalIDRequest{ID: terminal.ID})
-	callCore(t, owner, "detach-after-terminal-close", target, coreprotocol.Detach, struct{}{})
+	callCore(t, owner, "detach-after-terminal-close", target, coreprotocol.Detach, coreprotocol.Empty{})
 	plan = deletionPreview(t, current, currentID, root)
 	if plan.Token == "" {
 		t.Fatal("closing terminal did not unblock an ordinary reviewed deletion")

@@ -131,6 +131,10 @@ documents to read before changing each area.
   budgets, background compaction, lazy tool families, search providers, fast mode.
 - [Agentic control, MCP capabilities, and worktree execution](plans/agentic-control-and-capabilities.md)
   — remaining integrated and native-platform acceptance.
+- [Core protocol v2](plans/core-protocol-v2.md) — implemented refactor with measured
+  local latency/GC/wire gates, full normal/race suites and native Linux visual/fuzz
+  evidence. Native Windows, distinct-host/netem and the full per-feature visual
+  matrix remain open; exact boundaries and implementation differences are recorded.
 - [Core and shell separation](plans/core-shell-separation.md) — remaining native
   Windows, distinct-host and resource-baseline acceptance.
 - [LSP acceptance](plans/lsp-acceptance.md) — process containment and

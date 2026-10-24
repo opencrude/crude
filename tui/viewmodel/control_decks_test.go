@@ -4,6 +4,7 @@ import (
 	"context"
 	"crude/core"
 	"crude/coreprotocol"
+	"crude/internal/wiretest"
 	"crude/shellport"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
@@ -139,7 +140,7 @@ func admitDeckController(t *testing.T, runtime *core.Runtime, root string) {
 	}
 	t.Cleanup(c.Close)
 	call := func(id, ws, method string, input any) coreprotocol.Response {
-		raw, err := json.Marshal(input)
+		raw, err := wiretest.Marshal(input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,7 +152,7 @@ func admitDeckController(t *testing.T, runtime *core.Runtime, root string) {
 	}
 	r := call("attach-controller", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
 	var attached coreprotocol.AttachResult
-	if err := json.Unmarshal(r.Payload, &attached); err != nil {
+	if err := coreprotocol.Decode(r.Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
 	call("grant-controller", attached.WorkspaceID, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Write, control.Read}})
@@ -234,7 +235,7 @@ func TestConnectedQuestionControlReceiptAndFailedAckRetainsDraft(t *testing.T) {
 		t.Fatalf("review submission: %+v", r)
 	}
 	remoteJourneyUntil(t, shells, func() bool {
-		return len(one.app.agentPrompts) == 0 && len(two.app.agentPrompts) == 0 && strings.Contains(one.app.View().Content, "QUESTION RECEIPT ACCEPTED")
+		return len(one.app.agentPrompts) == 0 && len(two.app.agentPrompts) == 0 && strings.Contains(one.app.View().RenderContent(), "QUESTION RECEIPT ACCEPTED")
 	})
 	if one.app.Input.Value() != "preserved composer" || two.app.Input.Value() != "peer composer" {
 		t.Fatal("question consumed composer")

@@ -1,6 +1,7 @@
 package localhistory
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,20 @@ func TestAppliedRestoreOffersUndoViaSafetySnapshot(t *testing.T) {
 	}
 }
 
+func TestRestoreLoadingCannotIssueAnotherApply(t *testing.T) {
+	s := New(theme.DefaultDark())
+	s.Handle(ui.EventContext{}, ui.CustomEvent(PlanMsg{Plan: model.RestorePlan{ID: "review", Changes: []model.Change{{Path: "file", Action: model.ChangeRestore}}}}))
+	s.activate() // arm
+	if got := s.activate(); got.Action == nil || got.Action.ID != ActionApply {
+		t.Fatal("initial confirmed apply absent")
+	}
+	for range 4 {
+		if got := s.activate(); got.Action != nil {
+			t.Fatal("in-flight restore allowed another mutation")
+		}
+	}
+}
+
 func TestTimelineMouseActivationMatchesKeyboard(t *testing.T) {
 	s := New(theme.DefaultDark())
 	host := ui.NewHost(theme.DefaultDark(), s)
@@ -105,4 +120,48 @@ func plain(buf *surface.CellBuffer, y int) string {
 		}
 	}
 	return out
+}
+
+// An unresolved original restore allows only observation of that request; a
+// known committed partial restore keeps its safety Undo instead of a fresh Apply.
+func TestRestoreFailureEvidenceGatesFurtherMutation(t *testing.T) {
+	s := New(theme.DefaultDark())
+	review := PlanMsg{Plan: model.RestorePlan{ID: "review", Changes: []model.Change{{Path: "file", Action: model.ChangeRestore}}}}
+	s.Handle(ui.EventContext{}, ui.CustomEvent(review))
+	s.activate()
+	if got := s.activate(); got.Action == nil || got.Action.ID != ActionApply {
+		t.Fatal("initial confirmed apply absent")
+	}
+	s.Handle(ui.EventContext{}, ui.CustomEvent(AppliedMsg{RequestID: "original", Error: "transport lost · Check original result; do not repeat"}))
+	s.Handle(ui.EventContext{}, ui.CustomEvent(review))
+	for _, key := range []rune{tea.KeyEnter, 'u'} {
+		res := s.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: key}))
+		if res.Action != nil && res.Action.ID != ActionCheck {
+			t.Fatalf("unresolved restore offered %q", res.Action.ID)
+		}
+	}
+	host := ui.NewHost(theme.DefaultDark(), s)
+	host.Resize(72, 20)
+	host.Layout()
+	buf := surface.NewCellBuffer(72, 20)
+	host.Paint(buf)
+	screen := ""
+	for y := range 20 {
+		screen += plain(buf, y) + "\n"
+	}
+	if !strings.Contains(screen, "Check original restore result") || !strings.Contains(screen, "do not repeat") || strings.Contains(screen, "Apply") {
+		t.Fatalf("unresolved restore screen:\n%s", screen)
+	}
+	s.loading = false
+	if got := s.activate(); got.Action == nil || got.Action.ID != ActionCheck || got.Action.Payload != "original" {
+		t.Fatalf("check action=%+v", got.Action)
+	}
+	s.Handle(ui.EventContext{}, ui.CustomEvent(AppliedMsg{Result: model.RestoreResult{SafetySnapshotID: "safety", Paths: []string{"file"}}, Warning: "publication failed", Incomplete: true}))
+	if s.requestID != "" || !strings.Contains(s.status, "Restore incomplete") {
+		t.Fatalf("committed partial restore status=%q request=%q", s.status, s.requestID)
+	}
+	res := s.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'u'}))
+	if res.Action == nil || res.Action.ID != ActionPreview || res.Action.Payload.(PreviewRequest).SnapshotID != "safety" {
+		t.Fatalf("committed partial restore lost its safety Undo: %+v", res.Action)
+	}
 }

@@ -1,78 +1,92 @@
 package coreclient
 
 import (
+	"bytes"
 	"context"
-	"crude/coreprotocol"
-	"crude/corewire"
-	captypes "crude/types/capability"
-	"crude/types/control"
 	"encoding/json"
 	"errors"
 	"sync"
+
+	"crude/coreprotocol"
+	captypes "crude/types/capability"
+	"crude/types/control"
 )
 
+// hostInbox bounds MCP requests this shell hosts and fences their replies:
+// a lost acknowledgement may resend the same reply, never a changed one.
 type hostInbox struct {
 	mu       sync.Mutex
 	requests chan captypes.HostRequest
 	received map[string]captypes.HostRequest
 	replies  map[string][]byte
 	bytes    int
-	cleanup  sync.Once
 }
 
-var hostInboxes sync.Map
-
-func (c *Client) hostInbox() *hostInbox {
-	v, _ := hostInboxes.LoadOrStore(c, &hostInbox{requests: make(chan captypes.HostRequest, 16), received: map[string]captypes.HostRequest{}, replies: map[string][]byte{}})
-	h := v.(*hostInbox)
-	h.cleanup.Do(func() { go func() { <-c.done; hostInboxes.Delete(c) }() })
-	return h
+func newHostInbox() *hostInbox {
+	return &hostInbox{requests: make(chan captypes.HostRequest, 16), received: map[string]captypes.HostRequest{}, replies: map[string][]byte{}}
 }
-func (c *Client) CapabilityHostRequests() <-chan captypes.HostRequest { return c.hostInbox().requests }
+
 func (c *Client) RegisterCapabilityHost(ctx context.Context, workspace string) error {
-	return c.Call(ctx, workspace, coreprotocol.CapabilityHostRegister, struct{}{}, nil)
+	return c.Call(ctx, workspace, coreprotocol.CapabilityHostRegister, &coreprotocol.Empty{}, nil)
 }
-func (c *Client) ReceiveCapabilityHost(f corewire.Frame) error {
-	if f.Kind != corewire.KindEvent || f.Method != coreprotocol.CapabilityHostRequest || f.ClientID != c.owner.ClientID || f.Epoch != c.owner.Epoch || f.Error != nil || f.Transfer != nil || f.Revision != 0 || len(f.Payload) > coreprotocol.CapabilityHostMaxBytes {
-		return errors.New("invalid MCP shell frame")
+
+func (c *Client) receiveCapabilityHost(workspaceID string, r captypes.HostRequest) error {
+	size := r.Msgsize()
+	if size > coreprotocol.CapabilityHostMaxBytes {
+		return errors.New("MCP request exceeds budget")
 	}
-	var r captypes.HostRequest
-	if err := json.Unmarshal(f.Payload, &r); err != nil {
+	if err := coreprotocol.ValidateCapabilityHostRequest(r, workspaceID, control.ShellOwner{ClientID: c.owner.ClientID, Epoch: c.owner.Epoch}); err != nil {
 		return err
 	}
-	if f.RequestID != r.ID {
-		return errors.New("MCP request identity mismatch")
-	}
-	if err := coreprotocol.ValidateCapabilityHostRequest(r, f.WorkspaceID, control.ShellOwner{ClientID: c.owner.ClientID, Epoch: c.owner.Epoch}); err != nil {
-		return err
-	}
-	h := c.hostInbox()
+	h := c.hosts
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, exists := h.received[r.ID]; exists {
-		return errors.New("duplicate MCP host delivery")
+	if prior, exists := h.received[r.ID]; exists {
+		// JSON's sorted map keys provide a stable preimage; generated map wire
+		// order is not an identity and can differ on an exact redelivery.
+		old, err := json.Marshal(prior)
+		if err != nil {
+			return err
+		}
+		next, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(old, next) {
+			return errors.New("MCP request identity reused with changed content")
+		}
+		return nil // retained consumer/reply owns the original request
 	}
-	if len(h.received) >= 256 || h.bytes+len(f.Payload) > 4<<20 {
+	if len(h.received) >= 256 || h.bytes+size > 4<<20 {
 		return errors.New("MCP receive receipts exhausted")
 	}
+	encoded, err := coreprotocol.Marshal(&r)
+	if err != nil {
+		return err
+	}
+	var delivered captypes.HostRequest
+	if err := coreprotocol.Decode(encoded, &delivered); err != nil {
+		return err
+	}
 	select {
-	case h.requests <- r:
+	case h.requests <- delivered:
 		h.received[r.ID] = r
-		h.bytes += len(f.Payload)
+		h.bytes += size
 		return nil
 	default:
 		return errors.New("MCP host inbox full")
 	}
 }
+
 func (c *Client) ReplyCapabilityHost(ctx context.Context, workspace string, reply captypes.HostReply) error {
-	b, err := json.Marshal(reply)
+	b, err := coreprotocol.Marshal(&reply)
 	if err != nil {
 		return err
 	}
 	if len(b) > coreprotocol.CapabilityHostMaxBytes {
 		return errors.New("MCP reply exceeds budget")
 	}
-	h := c.hostInbox()
+	h := c.hosts
 	h.mu.Lock()
 	r, exists := h.received[reply.ID]
 	if !exists || r.WorkspaceID != workspace {
@@ -92,11 +106,10 @@ func (c *Client) ReplyCapabilityHost(ctx context.Context, workspace string, repl
 	}
 	h.replies[reply.ID] = b
 	h.mu.Unlock()
-	err = c.Call(ctx, workspace, coreprotocol.CapabilityHostReply, reply, nil)
+	err = c.Call(ctx, workspace, coreprotocol.CapabilityHostReply, &reply, nil)
 	if err == nil && captypes.HostRequestReadOnly(r) {
 		h.mu.Lock()
-		encoded, _ := json.Marshal(r)
-		h.bytes -= len(encoded) + len(h.replies[reply.ID])
+		h.bytes -= r.Msgsize() + len(h.replies[reply.ID])
 		delete(h.received, reply.ID)
 		delete(h.replies, reply.ID)
 		h.mu.Unlock()

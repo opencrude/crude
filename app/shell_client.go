@@ -19,6 +19,7 @@ import (
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/metrics"
+	"crude/remoteconn"
 	"crude/shellport/remote"
 	"crude/tui"
 	startuptui "crude/tui/startup"
@@ -72,20 +73,8 @@ func shellDialer(home string, flags CLIFlags) remote.Dialer {
 			return ConnectCore(ctx, home, clientID)
 		}
 	}
-	return func(ctx context.Context, clientID string) (*coreclient.Client, error) {
-		// The negotiation context does not own the established ssh process. Dial
-		// handles handshake cancellation by closing/joining its transport.
-		conn, err := corewire.DialSSH(context.Background(), corewire.SSHOptions{
-			Host: flags.SSHHost, User: flags.SSHUser, Port: flags.SSHPort, IdentityFile: flags.SSHIdentity})
-		if err != nil {
-			return nil, fmt.Errorf("start SSH connection: %w", err)
-		}
-		client, err := coreclient.Dial(ctx, conn, clientID)
-		if err != nil {
-			return nil, fmt.Errorf("SSH core negotiation failed: %w", err)
-		}
-		return client, nil
-	}
+	options := corewire.SSHOptions{Host: flags.SSHHost, User: flags.SSHUser, Port: flags.SSHPort, IdentityFile: flags.SSHIdentity}
+	return remoteSSHDialer(home, options)
 }
 
 func draftNamespace(flags CLIFlags, workspaceID string) string {
@@ -262,9 +251,23 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 	}
 	ws.AddStartupIssues(startupIssues)
 	ws.ConfigureInvocation(invocationSelection(flags))
+	manager, err := newRemoteBackendManager(home, profile, lg)
+	if err != nil {
+		return fmt.Errorf("open client connection store: %w", err)
+	}
+	manager.ssh = func(c remoteconn.Connection) remote.Dialer {
+		return remoteSSHDialer(home, corewire.SSHOptions{Host: c.Host, User: c.User, Port: c.Port, IdentityFile: c.IdentityFile})
+	}
+	backend, err := rememberInitialBackend(ctx, manager, flags)
+	if err != nil {
+		return fmt.Errorf("remember connected backend: %w", err)
+	}
+	if err = manager.RecordUse(ctx, backend, root); err != nil {
+		return fmt.Errorf("remember connected workspace: %w", err)
+	}
 	metrics.Start("shell")
 	terminal, err := tui.Start(ws, providerPresets(), nil, lg,
-		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()))
+		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()), tui.WithRemoteManager(manager, backend))
 	if err != nil {
 		return fmt.Errorf("start terminal UI: %w", err)
 	}
@@ -282,4 +285,24 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 	}
 	terminal.Wait() // Includes the draft flush barrier before profile release.
 	return nil
+}
+
+// CLI SSH is already authenticated and attached when it reaches the connection
+// catalog. It records that exact authority, not an untested editor draft.
+func rememberInitialBackend(ctx context.Context, manager *remoteBackendManager, flags CLIFlags) (string, error) {
+	if flags.SSHHost == "" {
+		return remoteconn.Local, nil
+	}
+	identity := fmt.Sprintf("%s\x00%s\x00%d\x00%s", flags.SSHHost, flags.SSHUser, flags.SSHPort, flags.SSHIdentity)
+	id := fmt.Sprintf("ssh-%x", sha256.Sum256([]byte(identity)))
+	snapshot, err := manager.Snapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range snapshot.Connections {
+		if c.Kind == "ssh" && c.Host == flags.SSHHost && c.User == flags.SSHUser && c.Port == flags.SSHPort && c.IdentityFile == flags.SSHIdentity {
+			return c.ID, nil
+		}
+	}
+	return id, manager.store.Save(ctx, remoteconn.Connection{ID: id, Name: flags.SSHHost, Kind: "ssh", Host: flags.SSHHost, User: flags.SSHUser, Port: flags.SSHPort, IdentityFile: flags.SSHIdentity, Carrier: "auto"})
 }

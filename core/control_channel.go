@@ -201,15 +201,15 @@ func (c *Connection) controlMethod(request coreprotocol.Request) coreprotocol.Re
 		return fault(request, "not_attached", "control workspace is not attached")
 	}
 	if request.Method == coreprotocol.ControlShellRegister {
-		var empty struct{}
-		if err := decode(request.Payload, &empty); err != nil {
+		var empty coreprotocol.Empty
+		if err := decodeRequest(request, &empty); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		c.controlRegistered[request.WorkspaceID] = true
-		return response(request, struct{}{})
+		return response(request, coreprotocol.Empty{})
 	}
 	var result control.Result
-	if err := decode(request.Payload, &result); err != nil {
+	if err := decodeRequest(request, &result); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
 	if err := coreprotocol.ValidateControlResult(result); err != nil {
@@ -225,12 +225,12 @@ func (c *Connection) controlMethod(request coreprotocol.Request) coreprotocol.Re
 		if string(old) != string(next) {
 			return fault(request, "stale_control", "control result is immutable")
 		}
-		return response(request, struct{}{})
+		return response(request, coreprotocol.Empty{})
 	}
 	b, _ := json.Marshal(result)
 	if c.controlBytes-p.bytes+len(b) > coreprotocol.ControlMaxQueuedBytes {
 		return fault(request, "busy", "control receipt byte capacity exceeded")
 	}
 	c.finishControlLocked(p, result)
-	return response(request, struct{}{})
+	return response(request, coreprotocol.Empty{})
 }

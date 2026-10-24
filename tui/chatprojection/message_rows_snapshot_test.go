@@ -16,7 +16,7 @@ func TestMessageRowsSnapshotGenerationAndStableHeightDelta(t *testing.T) {
 	r.SetChatAreaBounds(0, 10)
 	r.SetSize(60, 20)
 	messages := []types.ChatMessage{{InternalID: "a", Role: types.RoleAssistant, Content: "first", Time: time.Now()}, {InternalID: "b", Role: types.RoleAssistant, Content: "second", Time: time.Now()}}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	first := r.ExportMessageRowsSnapshot(56)
 	same := r.ExportMessageRowsSnapshot(56)
 	if first.Generation == 0 || same.Generation != first.Generation {
@@ -42,7 +42,7 @@ func TestWidthOnlyReflowLazilyUpdatesRowsAsTheyEnterViewport(t *testing.T) {
 	for i := range messages {
 		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant, Content: strings.Repeat("wide content ", 8), Time: time.Now()}
 	}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	scroll := ui.NewScrollModel()
 	r.BindScroll(scroll)
 	initial := r.ExportMessageRowsSnapshot(76)
@@ -67,7 +67,7 @@ func TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation(t *test
 	r.SetSize(80, 30)
 	messages := []types.ChatMessage{{InternalID: "static", Role: types.RoleAssistant, Content: "static"}, {InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing"}, {InternalID: "thinking", Role: types.RoleThinking, Content: "thinking", ThinkingActive: true}, {InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "streaming", ToolPreviewPhase: types.ToolPreviewStreaming}, {InternalID: "btw", Role: types.RoleUser, Content: "later", PendingSteering: true}}
 	r.SetSpinFrame(0)
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	first := r.ExportMessageRowsSnapshot(76)
 	r.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
 	second := r.ExportMessageRowsSnapshot(76)
@@ -93,11 +93,11 @@ func TestTransientLifecycleMetricsDoNotInvalidateTranscript(t *testing.T) {
 	r.SetChatAreaBounds(0, 10)
 	r.SetSize(80, 20)
 	base := types.ChatMessage{InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing", LifecycleProgress: 10, LifecycleUploadedBytes: 10, LifecycleTotalBytes: 100}
-	r.SyncMessages([]types.ChatMessage{base}, 1)
+	r.SyncMessages([]types.ChatMessage{base}, 1, 0)
 	first := r.ExportMessageRowsSnapshot(76)
 	base.LifecycleProgress = 75
 	base.LifecycleUploadedBytes = 75
-	r.SyncMessages([]types.ChatMessage{base}, 2)
+	r.SyncMessages([]types.ChatMessage{base}, 2, 0)
 	second := r.ExportMessageRowsSnapshot(76)
 	if second.Generation != first.Generation || len(second.Rows) != 0 {
 		t.Fatalf("metric delta=%+v", second)
@@ -110,7 +110,7 @@ func TestStreamingCursorDependencyChangesWithTypingState(t *testing.T) {
 	r.SetSize(60, 20)
 	r.SetStreaming(true)
 	r.SetActiveTyping(true)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "assistant", Role: types.RoleAssistant, Content: "working"}}, 1)
+	r.SyncMessages([]types.ChatMessage{{InternalID: "assistant", Role: types.RoleAssistant, Content: "working"}}, 1, 0)
 	r.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
 	solid := r.ExportMessageRowsSnapshot(56)
 	if !strings.Contains(strings.Join(solid.Rows[0].Lines, ""), "█") {
@@ -166,7 +166,7 @@ func TestLargeTranscriptMaterializesProgressivelyWithinBudget(t *testing.T) {
 		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant,
 			Content: fmt.Sprintf("## Heading %d\n\n%s\n\n- item\n- item", i, strings.Repeat("markdown *body* text ", 30)), Time: time.Now()}
 	}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 	scroll := ui.NewScrollModel()
 	scroll.SetAutoScroll(true)
 	r.BindScroll(scroll)

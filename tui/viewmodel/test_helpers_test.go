@@ -39,36 +39,68 @@ import (
 )
 
 // runAppCommand drives a command through the same message/update loop used by
-// Bubble Tea. It deliberately understands only Bubble Tea's native BatchMsg;
-// product-result messages must be handled by App.Update rather than injected or
-// decoded by a test-specific acknowledgement path.
+// Bubble Tea: commands run off Update, and the owning shell can install pushed
+// publications while a command is waiting for their application. Product-result
+// messages are handled by App.Update, never a test-specific acknowledgement path.
 func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
 	t.Helper()
-	queue := []tea.Cmd{command}
-	for steps := 0; len(queue) > 0; steps++ {
-		if steps >= 64 {
+	if command == nil {
+		return
+	}
+	var fifo <-chan any
+	if entry, ok := liveTestFIFOs.Load(app); ok {
+		fifo = entry.(liveTestFIFO).fifo
+	}
+	results := make(chan tea.Msg, 64)
+	pending, launched := 0, 0
+	launch := func(cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		launched++
+		if launched > cap(results) {
 			t.Fatal("app command journey did not settle")
 		}
-		cmd := queue[0]
-		queue = queue[1:]
-		if cmd == nil {
-			continue
-		}
-		message := cmd()
-		if message == nil {
-			continue
+		pending++
+		go func() { results <- cmd() }()
+	}
+	launch(command)
+	deadline := time.NewTimer(8 * time.Second)
+	defer deadline.Stop()
+	for pending > 0 {
+		var message tea.Msg
+		select {
+		case message = <-results:
+			pending--
+		case message = <-fifo:
+			// Fault-injection wrappers delegate this exact attachment. Match
+			// liveTestPump's owner remap, never weaken production fences.
+			if topic, ok := message.(shellport.LiveDocumentsChangedMsg); ok && topic.Owner != app.ws {
+				switch app.ws.(type) {
+				case *lostLiveResponse, *lostSnapshotResponse:
+					topic.Owner = app.ws
+					message = topic
+				}
+			}
+		case <-t.Context().Done():
+			t.Fatal("app command journey cancelled:", t.Context().Err())
+		case <-deadline.C:
+			t.Fatal("app command journey did not settle with its pushed publications")
 		}
 		if batch, ok := message.(tea.BatchMsg); ok {
-			queue = append(queue, batch...)
+			for _, cmd := range batch {
+				launch(cmd)
+			}
+			continue
+		}
+		if message == nil {
 			continue
 		}
 		model, next := app.Update(message)
 		if model != app {
 			t.Fatalf("command replaced App with %T", model)
 		}
-		if next != nil {
-			queue = append(queue, next)
-		}
+		launch(next)
 	}
 }
 
@@ -289,6 +321,7 @@ func newEditorPaintApp(t *testing.T, root string) *App {
 // paintShellFrame runs the full per-frame shell configuration and paint for
 // tests: geometry, slots, projections, and the root-host render into mainSurf.
 func (m *App) paintShellFrame() {
+	m.rootHost.MarkPaint()
 	m.configureShell()
 	m.renderShellToSurface()
 	m.syncRootFocus()

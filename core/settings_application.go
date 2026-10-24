@@ -19,13 +19,13 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response), bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, nil, true
 	}
-	var operation func(context.Context) (types.AppSettings, any, error)
+	var operation func(context.Context) (types.AppSettings, coreprotocol.Value, error)
 	var publishApp bool
 	var capabilityFailure func(error) string
 	switch request.Method {
 	case coreprotocol.AccountChange:
 		var in coreprotocol.AccountChangeRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		before, exists := a.ws.AllAccounts()[in.ID]
@@ -52,17 +52,17 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if commit == nil {
 			return bad("settings_unavailable", "application account persistence unavailable")
 		}
-		operation = func(ctx context.Context) (types.AppSettings, any, error) {
+		operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
 			s, err := commit(change)
 			if change.After == nil {
-				return s, coreprotocol.AccountView{ID: in.ID}, err
+				return s, wire(coreprotocol.AccountView{ID: in.ID}), err
 			}
-			return s, publicAccount(s.Accounts[in.ID]), err
+			return s, wire(publicAccount(s.Accounts[in.ID])), err
 		}
 		publishApp = true
 	case coreprotocol.ApplicationPreferencesSave:
 		var in coreprotocol.ApplicationPreferencesRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		before := a.ws.AppDefaults()
@@ -90,16 +90,16 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if commit == nil {
 			return bad("settings_unavailable", "application persistence unavailable")
 		}
-		operation = func(ctx context.Context) (types.AppSettings, any, error) {
+		operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
 			s, err := commit(privateEdits)
-			return s, coreprotocol.ApplicationPreferencesResult{Value: publicApp(s), Revision: entityRevision(s)}, err
+			return s, wire(coreprotocol.ApplicationPreferencesResult{Value: publicApp(s), Revision: entityRevision(s)}), err
 		}
 		publishApp = true
 	case coreprotocol.CapabilitySnapshot, coreprotocol.CapabilityAcquisitionPreview, coreprotocol.CapabilityAction:
 		appBefore := a.ws.AppDefaults()
 		appCommit := a.ws.OnAppPreferencesCommit
 		var in coreprotocol.CapabilityActionRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		overlayCommit := a.ws.PrepareCapabilityOverlayCommit(in.Action)
@@ -142,37 +142,37 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		publishApp = in.Action.Scope == captypes.ScopeApplication
 		switch request.Method {
 		case coreprotocol.CapabilitySnapshot:
-			operation = func(ctx context.Context) (types.AppSettings, any, error) {
+			operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
 				s, e := prepared.Snapshot(ctx)
-				return types.AppSettings{}, publicCapabilityResult(s, nil, ""), e
+				return types.AppSettings{}, wire(publicCapabilityResult(s, nil, "")), e
 			}
 		case coreprotocol.CapabilityAcquisitionPreview:
-			operation = func(ctx context.Context) (types.AppSettings, any, error) {
+			operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
 				p, e := prepared.Preview(ctx, in.Action)
-				return types.AppSettings{}, coreprotocol.CapabilityPreviewResult{Preview: publicCapabilityPreview(p)}, e
+				return types.AppSettings{}, wire(coreprotocol.CapabilityPreviewResult{Preview: publicCapabilityPreview(p)}), e
 			}
 		default:
 			run := prepared.PrepareAction(in.Action)
-			operation = func(ctx context.Context) (types.AppSettings, any, error) {
+			operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
 				s, entries, content, published, e := run(ctx)
 				if in.Action.Operation == "test" {
 					content = ""
 				}
-				return published, publicCapabilityResult(s, entries, content), e
+				return published, wire(publicCapabilityResult(s, entries, content)), e
 			}
 		}
 	case coreprotocol.SkillInput:
 		var in coreprotocol.SkillInputRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		run, err := a.ws.PrepareSkillActivation(in.AgentID, in.ID, in.Arguments)
 		if err != nil {
 			return bad("agent_missing", err.Error())
 		}
-		operation = func(ctx context.Context) (types.AppSettings, any, error) {
+		operation = func(ctx context.Context) (types.AppSettings, coreprotocol.Value, error) {
 			input, e := run(ctx)
-			return types.AppSettings{}, coreprotocol.SkillInputResult{Input: input}, e
+			return types.AppSettings{}, wire(coreprotocol.SkillInputResult{Input: input}), e
 		}
 	default:
 		return nil, nil, false
@@ -189,7 +189,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 				out = fault(request, "cancelled", "settings operation cancelled")
 				return
 			}
-			var value any
+			var value coreprotocol.Value
 			var err error
 			retained, value, err = operation(ctx)
 			if err != nil {
@@ -200,7 +200,7 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 				}
 				return
 			}
-			out = response(request, value)
+			out = responseValue(request, value)
 		})
 		return out
 	}

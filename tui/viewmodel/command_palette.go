@@ -456,6 +456,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleComposer()
 		return nil
 
+	case "remote.connect", "remote.switch":
+		return m.OpenRemotes()
+
 	case "settings.open":
 		m.openApplicationSettings()
 

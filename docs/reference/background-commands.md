@@ -15,6 +15,13 @@
   cleans its process group while the leader still pins the identity, then reaps;
   Windows terminates its retained Job Object, never `taskkill /PID`. Completion,
   explicit stop and session shutdown cannot signal a settled/recycled identity.
+- A process that leaves the command's session (an AppImage FUSE daemon, a
+  daemonizing server) is outside the owned tree and is never signalled, but it
+  may inherit the output pipe. Waiting on that pipe is bounded by
+  `exec.Cmd.WaitDelay` (one second) after the owned tree ends; a command whose
+  leader succeeded still completes, and its output ends with a note that a
+  detached process kept the pipe open. Settle, session close and core shutdown
+  therefore never wait on processes Crude does not own.
 - Background-job columns are content-sized with terminal-width helpers.
   Optional PID/exit telemetry yields before handles are shortened; elapsed labels
   use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.

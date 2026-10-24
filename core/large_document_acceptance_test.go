@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,26 +29,28 @@ type largeDocumentWire struct {
 	chunks, largest int
 }
 
+// Read observes the carrier's frames as the client receives them: every
+// payload must arrive in bounded data frames, never as one giant write.
 func (w *largeDocumentWire) Read(p []byte) (int, error) {
 	n, err := w.Conn.Read(p)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.buffer = append(w.buffer, p[:n]...)
-	for len(w.buffer) >= 4 {
-		size := int(binary.BigEndian.Uint32(w.buffer[:4]))
-		if size > w.largest {
-			w.largest = size
-		}
-		if size > corewire.MaxFrameSize || len(w.buffer) < size+4 {
+	for {
+		_, a := binary.Uvarint(w.buffer)
+		if a <= 0 || len(w.buffer) < a+1 {
 			break
 		}
-		// Count frame metadata without decoding the same 256 KiB base64 data
-		// a second time in this observer. The real Framer validates every byte.
-		frame := w.buffer[4 : 4+size]
-		if bytes.Contains(frame, []byte(`"kind":"response"`)) && bytes.Contains(frame, []byte(`"method":"payload.read"`)) {
-			w.chunks++
+		kind := w.buffer[a]
+		size, b := binary.Uvarint(w.buffer[a+1:])
+		if b <= 0 || len(w.buffer) < a+1+b+int(size) {
+			break
 		}
-		w.buffer = w.buffer[size+4:]
+		if kind == 2 { // data
+			w.chunks++
+			w.largest = max(w.largest, int(size))
+		}
+		w.buffer = w.buffer[a+1+b+int(size):]
 	}
 	return n, err
 }
@@ -85,12 +87,12 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- ServeConnection(ctx, r, server) }()
 	wire := &largeDocumentWire{Conn: peer}
-	c, err := coreclient.Dial(ctx, wire, "large-document-shell")
+	c, err := coreclient.Dial(ctx, coreclient.SingleCarrier(wire), "large-document-shell")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	call := func(workspaceID, method string, in, out any) error {
+	call := func(workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target) error {
 		requestCtx, stop := context.WithTimeout(ctx, 60*time.Second)
 		defer stop()
 		return c.Call(requestCtx, workspaceID, method, in, out)
@@ -104,7 +106,7 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	if err := call("", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
-	openPayload, err := json.Marshal(coreprotocol.DocumentOpenRequest{Path: path})
+	openPayload, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.DocumentOpenRequest{Path: path}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +117,7 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	}
 	t.Logf("large open completed in %v", time.Since(started))
 	var opened document.Snapshot
-	if err := json.Unmarshal(openResponse.Payload, &opened); err != nil {
+	if err := coreprotocol.Decode(openResponse.Payload, &opened); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(opened.Text, want) || !bytes.Equal(opened.Saved, want) || opened.Dirty {
@@ -128,7 +130,7 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	if !bytes.Equal(synced.Snapshot.Text, want) || !bytes.Equal(synced.Snapshot.Saved, want) {
 		t.Fatal("16 MiB sync lost byte identity")
 	}
-	payload, err := json.Marshal(coreprotocol.DocumentEditRequest{ID: opened.ID, Revision: opened.Revision, Group: "acceptance", Edits: []document.Edit{{Start: 0, End: 1, Text: "X"}}})
+	payload, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.DocumentEditRequest{ID: opened.ID, Revision: opened.Revision, Group: "acceptance", Edits: []document.Edit{{Start: 0, End: 1, Text: "X"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 		t.Fatalf("large mutation response: %v %v", err, response.Error)
 	}
 	var editReceipt document.Receipt
-	if err := json.Unmarshal(response.Payload, &editReceipt); err != nil {
+	if err := coreprotocol.Decode(response.Payload, &editReceipt); err != nil {
 		t.Fatal(err)
 	}
 	if !editReceipt.Accepted || editReceipt.RequestID != request.ID || editReceipt.DocumentID != opened.ID {
@@ -166,15 +168,15 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	if receipt.State != "completed" || !bytes.Equal(receipt.Response.Payload, openResponse.Payload) {
 		t.Fatal("giant open receipt differs from exact snapshot")
 	}
-	// Large incoming pastes have no upload protocol: reject BEFORE admission,
-	// preserve the live document and leave the connection usable.
-	oversize, err := json.Marshal(coreprotocol.DocumentEditRequest{ID: edited.ID, Revision: edited.Revision, Edits: []document.Edit{{Text: strings.Repeat("p", 9<<20)}}})
+	// A request beyond the message limit fails in the client BEFORE anything
+	// is sent, preserving the live document and leaving the session usable.
+	oversize, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.DocumentEditRequest{ID: edited.ID, Revision: edited.Revision, Edits: []document.Edit{{Text: strings.Repeat("p", corewire.MaxMessage)}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = callRequest(coreprotocol.Request{ID: "oversize-not-admitted", Owner: c.Owner(), WorkspaceID: attached.WorkspaceID, Method: coreprotocol.DocumentEdit, Payload: oversize})
-	if err == nil || err.Error() != "request frame too large" {
-		t.Fatalf("large paste did not fail before admission: %v", err)
+	if !errors.Is(err, corewire.ErrMessageTooLarge) {
+		t.Fatalf("oversized paste did not fail before admission: %v", err)
 	}
 	if err := call(attached.WorkspaceID, coreprotocol.DocumentSync, coreprotocol.DocumentSyncRequest{ID: edited.ID}, &synced); err != nil {
 		t.Fatal(err)
@@ -189,10 +191,10 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	wire.mu.Lock()
 	chunks, largest := wire.chunks, wire.largest
 	wire.mu.Unlock()
-	if chunks < 2 || largest > corewire.MaxFrameSize {
+	if chunks < 1000 || largest > 16<<10 {
 		t.Fatalf("unbounded or unchunked delivery: chunks=%d largest=%d", chunks, largest)
 	}
-	t.Logf("16 MiB snapshots and receipt delivered in %d bounded chunks; largest encoded frame=%d", chunks, largest)
+	t.Logf("16 MiB snapshots and receipt delivered in %d bounded data frames; largest=%d bytes", chunks, largest)
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}

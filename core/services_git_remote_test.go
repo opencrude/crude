@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,7 +60,7 @@ func TestGitRemoteAndConflictServicesOverCore(t *testing.T) {
 	a := &actor{ws: ws}
 	call := func(method string, in, out any) {
 		t.Helper()
-		raw, _ := json.Marshal(in)
+		raw, _ := testPayload(in)
 		run, ok := a.prepareService(coreprotocol.Request{ID: method, Method: method, Payload: raw})
 		if !ok {
 			t.Fatalf("%s is not routed", method)
@@ -71,7 +70,7 @@ func TestGitRemoteAndConflictServicesOverCore(t *testing.T) {
 			t.Fatalf("%s: %+v", method, response.Error)
 		}
 		if out != nil {
-			if err := json.Unmarshal(response.Payload, out); err != nil {
+			if err := testDecode(response.Payload, out); err != nil {
 				t.Fatal(err)
 			}
 		}

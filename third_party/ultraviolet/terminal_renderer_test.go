@@ -2,6 +2,7 @@ package uv
 
 import (
 	"bytes"
+	"fmt"
 	"image/color"
 	"strings"
 	"testing"
@@ -116,7 +117,7 @@ func TestRendererColorProfile(t *testing.T) {
 			cell := Cell{
 				Content: "X",
 				Width:   1,
-				Style:   Style{Fg: color.RGBA{R: 255, G: 0, B: 0, A: 255}},
+				Style:   Style{Fg: NewColor(color.RGBA{R: 255, G: 0, B: 0, A: 255})},
 			}
 			cellbuf.SetCell(0, 0, &cell)
 
@@ -469,13 +470,12 @@ func TestRendererTouched(t *testing.T) {
 		t.Errorf("expected 2 touched lines after setting cells, got %d", touched)
 	}
 
-	// After rendering, the Touched method still counts all lines as touched
-	// because the renderer sets all LineData to non-nil (even with FirstCell: -1, LastCell: -1)
-	// This is the actual behavior of the renderer
+	// Renderer clean-row sentinels must not count as damage. A complete
+	// unchanged direct-cell snapshot should not force every line through diff.
 	r.Render(cellbuf)
 	touched = cellbuf.TouchedLines()
-	if touched != 3 {
-		t.Errorf("expected 3 touched lines after render (all lines have LineData), got %d", touched)
+	if touched != 0 {
+		t.Errorf("expected 0 touched lines after render, got %d", touched)
 	}
 
 	// But if we check the actual touched state by looking at FirstCell/LastCell
@@ -553,9 +553,9 @@ func TestRendererStyledText(t *testing.T) {
 	// Test various styles
 	styles := []Style{
 		{Attrs: AttrBold},
-		{Fg: color.RGBA{R: 255, G: 0, B: 0, A: 255}},
-		{Bg: color.RGBA{R: 0, G: 255, B: 0, A: 255}},
-		{Attrs: AttrBold, Fg: color.RGBA{R: 0, G: 0, B: 255, A: 255}},
+		{Fg: NewColor(color.RGBA{R: 255, G: 0, B: 0, A: 255})},
+		{Bg: NewColor(color.RGBA{R: 0, G: 255, B: 0, A: 255})},
+		{Attrs: AttrBold, Fg: NewColor(color.RGBA{R: 0, G: 0, B: 255, A: 255})},
 	}
 
 	for i, style := range styles {
@@ -746,6 +746,62 @@ func TestRendererScrollOptimization(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "F") {
 		t.Errorf("expected output to contain new content 'F', got: %q", output)
+	}
+}
+
+// Hard scrolling changes terminal cells even where the producer has no source
+// damage. Re-evaluate the complete scroll region, including newly exposed rows
+// and all columns, without dirtying rows outside it.
+func TestRendererHardScrollExpandsSourceDamage(t *testing.T) {
+	for _, shift := range []int{-2, -1, 1, 2} {
+		t.Run(fmt.Sprintf("shift=%d", shift), func(t *testing.T) {
+			const width, height = 12, 9
+			const top, bottom = 2, 6
+			var output bytes.Buffer
+			r := NewTerminalRenderer(&output, []string{"TERM=xterm-256color"})
+			r.SetFullscreen(true)
+			r.SetRelativeCursor(false)
+			frame := NewRenderBuffer(width, height)
+			blank := Cell{Content: " ", Width: 1, Style: Style{Bg: NewColor(color.RGBA{R: 12, G: 23, B: 34, A: 255})}}
+			frame.Fill(&blank)
+			for y := range height {
+				frame.TouchLine(0, y, width)
+			}
+			r.Render(frame)
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			output.Reset()
+			if frame.TouchedLines() != 0 {
+				t.Fatal("initial frame retained producer damage")
+			}
+			if !r.scrolln(frame, shift, top, bottom, height-1) {
+				t.Fatal("scroll not performed")
+			}
+			for y, damage := range frame.Touched {
+				if y >= top && y <= bottom {
+					if damage == nil || damage.FirstCell != 0 || damage.LastCell != width {
+						t.Fatalf("scroll %d row %d damage %+v; full row must be re-evaluated", shift, y, damage)
+					}
+				} else if damage != nil && (damage.FirstCell != -1 || damage.LastCell != -1) {
+					t.Fatalf("scroll %d dirtied outside row %d: %+v", shift, y, damage)
+				}
+			}
+			r.Render(frame)
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			for y := range height {
+				for x := range width {
+					if !r.curbuf.CellAt(x, y).Equal(frame.CellAt(x, y)) {
+						t.Fatalf("scroll %d left stale cell (%d,%d)", shift, x, y)
+					}
+				}
+			}
+			if !strings.Contains(output.String(), "\x1b[K") {
+				t.Fatalf("scroll %d did not restore exposed theme-background cells: %q", shift, output.String())
+			}
+		})
 	}
 }
 
@@ -1041,7 +1097,7 @@ func TestRendererColorDownsampling(t *testing.T) {
 			cell := Cell{
 				Content: "C",
 				Width:   1,
-				Style:   Style{Fg: color.RGBA{R: 123, G: 234, B: 45, A: 255}},
+				Style:   Style{Fg: NewColor(color.RGBA{R: 123, G: 234, B: 45, A: 255})},
 			}
 			cellbuf.SetCell(0, 0, &cell)
 

@@ -49,3 +49,33 @@ func TestWorkspaceLocalHistoryCapturePreviewApply(t *testing.T) {
 		t.Fatalf("restore event log=%v", events)
 	}
 }
+
+func TestHistoryMutationReportsDocumentPersistenceFailure(t *testing.T) {
+	s, db, snap, _ := durableDeltaFixture(t)
+	if _, err := db.DB.Exec(`CREATE TRIGGER refuse_history_reconcile BEFORE UPDATE ON workspace_documents BEGIN SELECT RAISE(ABORT,'history reconciliation refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	err := s.WithHistoryMutation(t.Context(), []string{snap.Path}, func() error {
+		return os.WriteFile(snap.Path, []byte("restored bytes"), 0600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "history reconciliation refused") {
+		t.Fatalf("disk effect was falsely reported reconciled: %v", err)
+	}
+	if data, err := os.ReadFile(snap.Path); err != nil || string(data) != "restored bytes" {
+		t.Fatalf("known disk effect lost: %q %v", data, err)
+	}
+	got, err := s.Snapshot(snap.ID)
+	if err != nil || string(got.Text) != "original" || !got.Conflict {
+		t.Fatalf("unpersisted document was not preserved and fenced: %+v %v", got, err)
+	}
+	if _, err := db.DB.Exec(`DROP TRIGGER refuse_history_reconcile`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReconcileDisk(t.Context(), snap.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Snapshot(snap.ID)
+	if err != nil || string(got.Text) != "restored bytes" || got.Conflict || got.Dirty {
+		t.Fatalf("explicit recovery did not settle: %+v %v", got, err)
+	}
+}

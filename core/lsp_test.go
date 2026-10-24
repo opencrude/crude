@@ -7,9 +7,10 @@ import (
 	"crude/types"
 	"crude/workspace"
 	"encoding/json"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"reflect"
 	"testing"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 func TestLSPDiagnosticConsumersIndependentAndClears(t *testing.T) {
@@ -66,7 +67,7 @@ func TestLSPPrepareWorkerCaptureAndCancellation(t *testing.T) {
 	manager := workspace.NewLSPManager(nil)
 	t.Cleanup(manager.Close)
 	a := &actor{ws: &workspace.Workspace{RootPath: "/project", LSPMgr: manager}}
-	run, ok := a.prepareLSP(coreprotocol.Request{Method: coreprotocol.LSPSnapshotMethod, Payload: json.RawMessage(`{}`)})
+	run, ok := a.prepareLSP(coreprotocol.Request{Method: coreprotocol.LSPSnapshotMethod, Payload: mustTestPayload(coreprotocol.LSPRequest{})})
 	if !ok {
 		t.Fatal("snapshot unrecognized")
 	}
@@ -76,7 +77,7 @@ func TestLSPPrepareWorkerCaptureAndCancellation(t *testing.T) {
 		t.Fatal(result.Error)
 	}
 	var s coreprotocol.LSPSnapshot
-	if err := json.Unmarshal(result.Payload, &s); err != nil || !s.Available {
+	if err := coreprotocol.Decode(result.Payload, &s); err != nil || !s.Available {
 		t.Fatal(s, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

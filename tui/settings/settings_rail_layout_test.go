@@ -10,7 +10,7 @@ import (
 )
 
 // TestSettingsNetworkGroupIsLast pins the rail order: the application-owned
-// Network group (Connection / Proxy / Certificates) closes the rail, after
+// Network group (Connection / Proxy / Certificates / Remote access) closes the rail, after
 // every AI, Security, and IDE entry, rather than sitting between AI and
 // Security.
 func TestSettingsNetworkGroupIsLast(t *testing.T) {
@@ -26,9 +26,9 @@ func TestSettingsNetworkGroupIsLast(t *testing.T) {
 		if last < 3 {
 			t.Fatalf("scope %s produced too few category rows (%d)", scope, last+1)
 		}
-		// The final three category rows must be Network's pages.
-		tail := []string{items[last-2].Label, items[last-1].Label, items[last].Label}
-		if want := []string{"Connection", "Proxy", "Certificates"}; !equalStrings(tail, want) {
+		// The final four category rows must be Network's pages.
+		tail := []string{items[last-3].Label, items[last-2].Label, items[last-1].Label, items[last].Label}
+		if want := []string{"Connection", "Proxy", "Certificates", "Remote access"}; !equalStrings(tail, want) {
 			t.Fatalf("scope %s rail tail = %v, want Network last %v", scope, tail, want)
 		}
 	}

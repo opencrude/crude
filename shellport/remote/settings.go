@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"reflect"
 	"slices"
@@ -37,11 +38,11 @@ type settingsReplica struct {
 
 func (s *settingsReplica) load(ctx context.Context) (settingsSnapshot, error) {
 	var out settingsSnapshot
-	if err := s.w.call(ctx, coreprotocol.SettingsFetch, struct{}{}, &out.fetch); err != nil {
+	if err := s.w.call(ctx, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &out.fetch); err != nil {
 		return out, err
 	}
 	var overrides coreprotocol.OverridesResult
-	if err := s.w.call(ctx, coreprotocol.WorkspaceOverrides, struct{}{}, &overrides); err != nil {
+	if err := s.w.call(ctx, coreprotocol.WorkspaceOverrides, &coreprotocol.Empty{}, &overrides); err != nil {
 		return out, err
 	}
 	out.defaults = overrides.AgentDefaults
@@ -122,7 +123,7 @@ func (w *Workspace) settingsBase() coreprotocol.SettingsFetchResult {
 	return w.settings.current.fetch
 }
 
-func (w *Workspace) refreshSettings() { w.pending.add(coreprotocol.Change{Settings: true}) }
+func (w *Workspace) refreshSettings() { w.resetTopic(coreprotocol.TopicSettings) }
 
 // draft converts an edited account into a write-only draft. Unchanged stored
 // markers keep the core's credentials; anything else replaces or clears them.
@@ -155,8 +156,7 @@ func draft(after provider.Account, before coreprotocol.AccountView, exists bool)
 	case exists && len(headers) == 1 && headers[storedKey] == StoredSecret:
 		out.Headers.Keep = true
 	case len(headers) != 0:
-		copy := maps.Clone(headers)
-		out.Headers.Value = &copy
+		out.Headers.Value = maps.Clone(headers)
 	}
 	switch {
 	case exists && len(extra) == 1 && extra[storedKey] == StoredSecret:
@@ -188,57 +188,49 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 	base := w.settingsBase()
 	application := base.Application
 	return func() workspace.PreferencesSaveResult {
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		ctx, cancel := context.WithTimeout(w.ctx, callTimeout)
 		defer cancel()
 		result := workspace.PreferencesSaveResult{Scope: scope, AppSettings: application}
 		if scope == types.SettingsScopeWorkspace {
 			var out coreprotocol.WorkspacePreferencesResult
-			if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: edits}, &out); err != nil {
+			if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, &coreprotocol.WorkspacePreferencesRequest{Edits: edits}, &out); err != nil {
 				result.Err = err
 				return result
 			}
 			result.Effective = out.Effective
 			result.Overrides = out.Overrides
-			w.refreshSettings()
+			if err := w.refreshTopicApplied(ctx, coreprotocol.TopicSettings); err != nil {
+				result.Err = fmt.Errorf("settings saved, but their display could not be refreshed: %w", err)
+			}
 			return result
 		}
 		var out coreprotocol.ApplicationPreferencesResult
-		proxy := coreprotocol.SecretUpdate[string]{Keep: true}
+		proxy := coreprotocol.SecretString{Keep: true}
 		for _, edit := range edits {
 			if slices.Equal(edit.Path, []string{"network", "proxy_url"}) {
 				var url string
 				if json.Unmarshal(edit.After, &url) == nil {
-					proxy = coreprotocol.SecretUpdate[string]{Value: &url}
+					proxy = coreprotocol.SecretString{Value: &url}
 				}
 			}
 		}
-		err := w.call(ctx, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: edits, ProxyURL: proxy}, &out)
+		err := w.call(ctx, coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: edits, ProxyURL: proxy}, &out)
 		if err != nil {
 			result.Err = err
 			return result
 		}
 		result.AppSettings = out.Value
 		result.Effective = types.MergeAppWorkspace(out.Value, base.Overrides)
-		w.refreshSettings()
+		if err := w.refreshTopicApplied(ctx, coreprotocol.TopicSettings); err != nil {
+			result.Err = fmt.Errorf("settings saved, but their display could not be refreshed: %w", err)
+		}
 		return result
 	}
 }
 
-// ApplyPreferencesSave reflects a successful save until the core's refreshed
-// settings arrive.
-func (w *Workspace) ApplyPreferencesSave(result workspace.PreferencesSaveResult) {
-	if result.Err != nil {
-		return
-	}
-	w.settingsMu.Lock()
-	defer w.settingsMu.Unlock()
-	if result.Scope == types.SettingsScopeApplication {
-		w.settings.current.fetch.Application = result.AppSettings
-	} else {
-		w.settings.current.fetch.Overrides = result.Overrides
-	}
-	w.settings.current.fetch.Effective = result.Effective
-}
+// ApplyPreferencesSave does not install an unsequenced command result over a
+// newer pushed settings value. The authoritative topic announces the save.
+func (w *Workspace) ApplyPreferencesSave(workspace.PreferencesSaveResult) {}
 
 func (w *Workspace) models(request coreprotocol.AccountModelsRequest) func() ([]types.ModelEntry, error) {
 	rpc := w.rpc()
@@ -300,14 +292,14 @@ func (t toolLayout) LoadToolLayout() (workspace.ToolLayout, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	var out coreprotocol.ToolLayoutRequest
-	err := t.w.call(ctx, coreprotocol.ToolLayoutLoad, struct{}{}, &out)
+	err := t.w.call(ctx, coreprotocol.ToolLayoutLoad, &coreprotocol.Empty{}, &out)
 	return out.Layout, err
 }
 
 func (t toolLayout) SaveToolLayout(layout workspace.ToolLayout) error {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	return t.w.call(ctx, coreprotocol.ToolLayoutSave, coreprotocol.ToolLayoutRequest{Layout: layout}, &coreprotocol.BoolResult{})
+	return t.w.call(ctx, coreprotocol.ToolLayoutSave, &coreprotocol.ToolLayoutRequest{Layout: layout}, &coreprotocol.BoolResult{})
 }
 
 func (w *Workspace) LoadToolLayout() (workspace.ToolLayout, error) {

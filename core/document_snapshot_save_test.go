@@ -25,7 +25,7 @@ func TestDocumentSnapshotSaveExpectedPreimageAndCapturedAuthority(t *testing.T) 
 	a := &actor{ws: &workspace.Workspace{Documents: service}}
 	in := workspace.DocumentSaveRequest{BufferID: "buffer", Path: path, Data: []byte("replacement"), Revision: 19,
 		ExpectedExist: true, ExpectedHash: sha256.Sum256(before), Reason: workspace.DocumentSaveManual}
-	payload, err := json.Marshal(coreprotocol.DocumentSnapshotSaveRequest{Request: in})
+	payload, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.DocumentSnapshotSaveRequest{Request: in}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestDocumentSnapshotSaveExpectedPreimageAndCapturedAuthority(t *testing.T) 
 		t.Fatal(res.Error)
 	}
 	var wire coreprotocol.DocumentSnapshotSaveResult
-	if err := json.Unmarshal(res.Payload, &wire); err != nil {
+	if err := coreprotocol.Decode(res.Payload, &wire); err != nil {
 		t.Fatal(err)
 	}
 	result := wire.DocumentResult()
@@ -57,7 +57,7 @@ func TestDocumentSnapshotSaveExpectedPreimageAndCapturedAuthority(t *testing.T) 
 	}
 	// Reusing the original disk precondition cannot overwrite newer bytes.
 	res = run(context.Background())
-	if err := json.Unmarshal(res.Payload, &wire); err != nil {
+	if err := coreprotocol.Decode(res.Payload, &wire); err != nil {
 		t.Fatal(err)
 	}
 	result = wire.DocumentResult()

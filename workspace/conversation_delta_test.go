@@ -63,6 +63,15 @@ func TestConversationDeltaMutationJourney(t *testing.T) {
 		for _, message := range d.Upserts {
 			records[message.InternalID] = message
 		}
+		for _, append := range d.Appends {
+			message := records[append.InternalID]
+			if uint64(len(message.Content)) != append.Offset {
+				t.Fatal("append offset differs from independent subscriber")
+			}
+			message.Content += append.Text
+			message.ThinkingDisplay = append.ThinkingDisplay
+			records[append.InternalID] = message
+		}
 		if d.Order != nil {
 			order = d.Order
 		}
@@ -200,7 +209,7 @@ func TestConversationDeltaJournalGapAndEmptyOrder(t *testing.T) {
 	for i := 0; i < conversationJournalLimit; i++ {
 		c.AppendToken("x")
 	}
-	if d := c.ChangesSince(base); d.Reset || len(d.Upserts) != 1 || d.Order != nil {
+	if d := c.ChangesSince(base); d.Reset || len(d.Appends) != 1 || len(d.Upserts) != 0 || d.Order != nil {
 		t.Fatal("retained boundary failed incremental publication")
 	}
 	c.AppendToken("x")
@@ -248,7 +257,7 @@ func TestConversationDeltaDenseStreamAllocations(t *testing.T) {
 		base := c.Version()
 		c.AppendToken("x")
 		d := c.ChangesSince(base)
-		if d.Reset || d.Order != nil || len(d.Upserts) != 1 {
+		if d.Reset || d.Order != nil || len(d.Appends) != 1 || len(d.Upserts) != 0 {
 			t.Fatal("stream published unchanged dense transcript")
 		}
 	})

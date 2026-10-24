@@ -2,13 +2,21 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
+	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/coreclient"
+	"crude/coreprotocol"
+	"crude/fileio"
 	"crude/localhistory"
+	"crude/shellport"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -29,6 +37,24 @@ type historyCandidatesMsg struct {
 type historyOperationMsg struct {
 	Label string
 	Error string
+}
+
+type historyOperation struct {
+	owner      shellport.Workspace
+	generation uint64
+	screen     *historyscreen.Screen
+	busy       bool
+	state      historyscreen.AppliedMsg
+	cancel     context.CancelFunc
+	run        tea.Cmd
+	requestID  string
+}
+
+type historyApplyResultMsg struct {
+	operation *historyOperation
+	result    localhistory.RestoreResult
+	err       error
+	requestID string
 }
 
 func (m *App) openLocalHistory() tea.Cmd { return m.openLocalHistoryForMessage("", "", "") }
@@ -108,6 +134,13 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) t
 	win := m.newLocalHistoryWindow(screen)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() { m.historyScreen = nil })
+	if operation := m.historyOperation; operation != nil {
+		operation.screen = screen
+		if !operation.busy {
+			screen.Handle(ui.EventContext{}, ui.CustomEvent(operation.state))
+		}
+		return nil // Never replace unresolved state with a fresh Apply preview.
+	}
 	if messageID != "" {
 		return func() tea.Msg {
 			var plan localhistory.RestorePlan
@@ -237,7 +270,7 @@ func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
 }
 
 func (m *App) historyApplyCmd(request historyscreen.ApplyRequest) tea.Cmd {
-	if m.ws.HistoryService() == nil {
+	if m.ws.HistoryService() == nil || m.historyOperation != nil {
 		return nil
 	}
 	for _, choice := range request.Choices {
@@ -247,16 +280,116 @@ func (m *App) historyApplyCmd(request historyscreen.ApplyRequest) tea.Cmd {
 			}
 		}
 	}
-	return func() tea.Msg {
-		result, err := m.ws.ApplyHistoryRestoreChoices(context.Background(), request.PlanID, request.Choices)
+	operation := &historyOperation{owner: m.ws, generation: m.workspaceSwitchGen.Load(), screen: m.historyScreen, busy: true}
+	m.historyOperation = operation
+	choices := slices.Clone(request.Choices)
+	return m.historyCommand(operation, func(ctx context.Context) historyApplyResultMsg {
+		result, err := operation.owner.ApplyHistoryRestoreChoices(ctx, request.PlanID, choices)
+		return historyApplyResultMsg{operation: operation, result: result, err: err}
+	})
+}
+
+// The original command owns its cancellation/join even if its modal is closed.
+// Shutdown may observe the same once-guarded command, never replay its effect.
+func (m *App) historyCommand(operation *historyOperation, work func(context.Context) historyApplyResultMsg) tea.Cmd {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	operation.cancel = cancel
+	var once sync.Once
+	var result historyApplyResultMsg
+	operation.run = func() tea.Msg { once.Do(func() { defer cancel(); result = work(ctx) }); return result }
+	return operation.run
+}
+
+func (m *App) historyCheckCmd(id string) tea.Cmd {
+	operation := m.historyOperation
+	if operation == nil || operation.busy || operation.requestID != id {
+		return nil
+	}
+	receipts, ok := operation.owner.(shellport.HistoryRestoreReceipts)
+	if !ok {
+		return nil
+	}
+	operation.busy = true
+	return m.historyCommand(operation, func(ctx context.Context) historyApplyResultMsg {
+		msg := historyApplyResultMsg{operation: operation, requestID: id}
+		receipt, err := receipts.HistoryRestoreReceipt(ctx, id)
 		if err != nil {
-			return historyscreen.AppliedMsg{Error: err.Error()}
+			msg.err = err
+			return msg
 		}
-		warning := ""
-		if err := m.ws.AppendHistoryRestoreEvent(result); err != nil {
-			warning = "conversation event failed: " + err.Error()
+		if receipt.RequestID != id || receipt.Method != coreprotocol.HistoryApply {
+			msg.err = errors.New("original restore receipt identity does not match")
+			return msg
 		}
-		return historyscreen.AppliedMsg{Result: result, Warning: warning}
+		if receipt.State != "completed" {
+			msg.err = fmt.Errorf("original restore is %s; do not repeat", receipt.State)
+			return msg
+		}
+		if len(receipt.Response.Payload) > 0 {
+			if err := coreprotocol.Decode(receipt.Response.Payload, &msg.result); err != nil {
+				msg.err = err
+				return msg
+			}
+		}
+		msg.requestID = ""
+		if receipt.Response.Error != nil {
+			msg.err = receipt.Response.Error
+			if strings.HasPrefix(receipt.Response.Error.Code, "outcome_") {
+				msg.requestID = id
+			} else if receipt.Response.Error.Code == "publication_failed" && msg.result.SafetySnapshotID != "" {
+				msg.err = fileio.CommittedWarning(receipt.Response.Error.Message)
+			}
+		}
+		return msg
+	})
+}
+
+func (m *App) applyHistoryResult(msg historyApplyResultMsg) tea.Cmd {
+	operation := msg.operation
+	if operation == nil || m.historyOperation != operation || operation.owner != m.ws || operation.generation != m.workspaceSwitchGen.Load() {
+		return nil
+	}
+	operation.busy = false
+	state := historyscreen.AppliedMsg{Result: msg.result}
+	var uncertain *coreclient.UncertainError
+	switch {
+	case errors.As(msg.err, &uncertain):
+		state.RequestID = uncertain.RequestID
+		state.Error = msg.err.Error() + " · Check original result; do not repeat"
+	case msg.requestID != "":
+		state.RequestID = msg.requestID
+		state.Error = msg.err.Error() + " · Check original result; do not repeat"
+	case msg.err != nil && msg.result.SafetySnapshotID != "":
+		state.Warning = msg.err.Error()
+		state.Incomplete = !fileio.WriteCommitted(msg.err)
+	case msg.err != nil:
+		state.Error = msg.err.Error()
+	}
+	operation.state, operation.requestID = state, state.RequestID
+	if state.RequestID == "" {
+		m.historyOperation = nil
+	}
+	if operation.screen == m.historyScreen && m.historyScreen != nil {
+		return func() tea.Msg { return state }
+	}
+	// Closing a modal does not abandon a known effect or its safety evidence.
+	if state.RequestID != "" {
+		m.Feedback.NotifyError(state.Error)
+		return nil
+	}
+	if state.Error != "" {
+		m.Feedback.NotifyError(state.Error)
+		return nil
+	}
+	return m.applyHistoryRefresh(state.Result)
+}
+
+func (m *App) stopHistoryOperation() {
+	if operation := m.historyOperation; operation != nil && operation.cancel != nil {
+		operation.cancel()
+		if operation.run != nil {
+			operation.run()
+		}
 	}
 }
 
@@ -269,7 +402,7 @@ func (m *App) historyPathDirty(rel string) bool {
 			continue
 		}
 		resolved, err := filepath.Rel(m.ws.RootPath(), path)
-		if err == nil && filepath.ToSlash(resolved) == rel {
+		if filepath.IsAbs(filepath.FromSlash(rel)) && filepath.Clean(path) == filepath.Clean(filepath.FromSlash(rel)) || err == nil && filepath.ToSlash(resolved) == rel {
 			return true
 		}
 	}
@@ -284,7 +417,7 @@ func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
 				continue
 			}
 			rel, err := filepath.Rel(m.ws.RootPath(), path)
-			if err == nil && slices.Contains(result.Paths, filepath.ToSlash(rel)) {
+			if slices.Contains(result.Paths, filepath.ToSlash(filepath.Clean(path))) || err == nil && slices.Contains(result.Paths, filepath.ToSlash(rel)) {
 				cmds = append(cmds, m.refreshEditorDiskCmd(tab.Editor))
 			}
 		}

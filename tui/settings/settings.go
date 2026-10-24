@@ -44,6 +44,7 @@ const (
 	PromptDiscardEditor
 	PromptDiscardSettings
 	PromptRemoveCapability
+	PromptRevokeRemoteDevice
 )
 
 type PromptMsg struct {
@@ -62,6 +63,8 @@ type PromptMsg struct {
 	capabilityForm   *ui.FormModel
 	capabilityDraft  []byte
 	CapabilityAction *capability.Action
+	remoteDevice     *coreprotocol.RemoteDevice
+	remoteGeneration uint64
 }
 
 type AccountChangeMsg struct {
@@ -200,6 +203,7 @@ type Model struct {
 	collectedBase   types.AppSettings
 	layerBase       types.AppSettings
 	resetPaths      [][]string
+	remoteAccess    remoteAccessState
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents                   *types.AgentsSettings
@@ -353,6 +357,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Connection", Group: "Network", Description: "Application-wide connection timeouts, pooling, keep-alive, and HTTP protocol behavior.", Form: m.buildNetworkConnectionForm(current.Network)},
 		{Name: "Proxy", Group: "Network", Description: "Environment, direct, or custom HTTP and SOCKS proxy routing with explicit DNS behavior.", Form: m.buildNetworkProxyForm(current.Network)},
 		{Name: "Certificates", Group: "Network", Description: "System trust, custom certificate authorities, exact-host certificate exceptions, and mTLS identity.", Form: m.buildNetworkCertificatesForm(current.Network)},
+		{Name: "Remote access", Group: "Network", Description: "Opt in to direct QUIC/UDP and TLS connections, pair devices, and retain disconnected sessions.", Form: m.buildRemoteAccessForm(current.Network)},
 		{Name: "Command Safety", Group: "Security", Description: "Command severity, confirmation, and dangerous-action attention.", Form: m.buildSafetyForm(current.Safety)},
 		{Name: "Auto Review Policy", Group: "Security", Description: "Synchronized view of Auto Review Agent's bounded runtime policy.", Form: m.buildAutoReviewPolicyForm(current.Safety.AutoPermission)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
@@ -1930,6 +1935,14 @@ func (m *Model) syncAppearanceColors() {
 // the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case RemoteAccessResultMsg:
+		cmd := m.applyRemoteAccessResult(msg)
+		return *m, cmd
+	case RemotePairingExpiredMsg:
+		if msg.Target == m && msg.Generation == m.remoteAccess.generation {
+			m.remoteAccess.pairing = coreprotocol.RemotePairingCode{}
+			m.rebuildRemoteAccessStatus()
+		}
 	case CapabilityResultMsg:
 		m.applyCapabilityResult(msg)
 	case types.ModelCatalogUpdatedMsg:
@@ -2136,6 +2149,7 @@ func (m *Model) SetScope(scope types.SettingsScope) {
 		return
 	}
 	m.storeAccountForm()
+	m.cancelRemoteAccess()
 	m.scope = scope
 	if scope == types.SettingsScopeWorkspace && m.selected == catAccounts {
 		m.SelectCategory(catMain)
@@ -2233,6 +2247,10 @@ func (m *Model) rebased(application, effective types.AppSettings, overrides type
 
 func (m *Model) SelectCategory(index int) {
 	if index >= 0 && index < len(m.categories) && (index != catAccounts || m.Scope() == types.SettingsScopeApplication) {
+		if m.selected == catNetworkRemoteAccess && index != m.selected {
+			m.cancelRemoteAccess()
+			m.rebuildRemoteAccessStatus()
+		}
 		m.selected, m.pane = index, 0
 	}
 }
@@ -2476,6 +2494,7 @@ const (
 	catNetworkConnection
 	catNetworkProxy
 	catNetworkCertificates
+	catNetworkRemoteAccess
 	catSafety
 	catAutoReviewPolicy
 	catAppearance

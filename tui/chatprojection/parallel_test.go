@@ -12,7 +12,7 @@ func TestParallelUsesSameTreeAsIndividualTools(t *testing.T) {
 	input := `{"tool_uses":[{"recipient_name":"functions.execute_command","parameters":{"command":"git status --short"}},{"recipient_name":"functions.read_file","parameters":{"path":"a.go"}}]}`
 	body := `{"results":[{"recipient_name":"execute_command","result":"first line\nlast line","error":false},{"recipient_name":"read_file","result":"package main","error":false}]}`
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: input, Content: body, ToolStatus: "success", ToolPreviewPhase: "done"}}, 1)
+	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: input, Content: body, ToolStatus: "success", ToolPreviewPhase: "done"}}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ID != "activity:batch:0" {
 		t.Fatalf("batch bypasses activity tree: %+v", rows)
@@ -49,7 +49,7 @@ func TestParallelAgentHandlesStaySemanticThroughPreviewAndResult(t *testing.T) {
 		if i == 2 {
 			message.ToolStatus, message.ToolPreviewPhase = types.ToolStatusSuccess, types.ToolPreviewDone
 		}
-		r.SyncMessages([]types.ChatMessage{message}, uint64(i+1))
+		r.SyncMessages([]types.ChatMessage{message}, uint64(i+1), 0)
 		rows, _, _ := r.ExportMessageRows(100)
 		if len(rows) != 2 {
 			t.Fatalf("preview %d: child rows=%+v", i, rows)
@@ -65,7 +65,7 @@ func TestParallelAgentHandlesStaySemanticThroughPreviewAndResult(t *testing.T) {
 
 func TestParallelMutationAndFailureAreIndependent(t *testing.T) {
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: `{"tool_uses":[{"recipient_name":"read_file","parameters":{"path":"a.go"}},{"recipient_name":"write_file","parameters":{"path":"b.go"}},{"recipient_name":"exec_command","parameters":{"cmd":"go test ./..."}}]}`, Content: `{"results":[{"recipient_name":"read_file","result":"ok","error":false},{"recipient_name":"write_file","result":"Written 1 line\n+new content","error":false},{"recipient_name":"exec_command","result":"{\"exit_code\":1,\"output\":\"FAIL\\ndetail\"}","error":true}]}`, ToolStatus: "error", ToolPreviewPhase: "error"}}, 1)
+	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: `{"tool_uses":[{"recipient_name":"read_file","parameters":{"path":"a.go"}},{"recipient_name":"write_file","parameters":{"path":"b.go"}},{"recipient_name":"exec_command","parameters":{"cmd":"go test ./..."}}]}`, Content: `{"results":[{"recipient_name":"read_file","result":"ok","error":false},{"recipient_name":"write_file","result":"Written 1 line\n+new content","error":false},{"recipient_name":"exec_command","result":"{\"exit_code\":1,\"output\":\"FAIL\\ndetail\"}","error":true}]}`, ToolStatus: "error", ToolPreviewPhase: "error"}}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 3 || rows[1].ID != "batch:1" || r.disclosureState(r.activityMessages["batch:1"]) != DisclosureExpanded {
 		t.Fatalf("mutation buried in batch: %+v", rows)
@@ -89,7 +89,7 @@ func TestParallelCancellationStopsIncompleteChild(t *testing.T) {
 		t.Fatalf("stopped batch left an animated child: %+v", children)
 	}
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{msg}, 1)
+	r.SyncMessages([]types.ChatMessage{msg}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "Stopped read file a.go") {
 		t.Fatalf("stopped child painted as success: %+v", rows)
@@ -101,7 +101,7 @@ func TestParallelUnresolvedChildrenDoNotSplitOrRenumberKnownLeaves(t *testing.T)
 	msg := types.ChatMessage{InternalID: "batch", ToolID: "call", Role: types.RoleTool,
 		ToolName: "multi_tool_use.parallel", ToolStatus: types.ToolStatusStreaming,
 		ToolInput: `{"tool_uses":[{}, {"recipient_name":"functions.read_file","parameters":{"path":"a.go"}}, {"parameters":{"path":"b.go"}}]}`}
-	r.SyncMessages([]types.ChatMessage{msg}, 1)
+	r.SyncMessages([]types.ChatMessage{msg}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ID != "activity:batch:1" || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "a.go") {
 		t.Fatalf("unresolved siblings changed placement or source indices: %+v", rows)
@@ -110,7 +110,7 @@ func TestParallelUnresolvedChildrenDoNotSplitOrRenumberKnownLeaves(t *testing.T)
 		t.Fatal("unresolved siblings became display nodes")
 	}
 	msg.ToolInput = `{"tool_uses":[{}, {"recipient_name":"functions.read_file","parameters":{"path":"a.go"}}, {"recipient_name":"write_file","parameters":{"path":"b.go","content":"line one\nline two"}}, {"recipient_name":"read_file_extra","parameters":{}}]}`
-	r.SyncMessages([]types.ChatMessage{msg}, 2)
+	r.SyncMessages([]types.ChatMessage{msg}, 2, 0)
 	rows, _, _ = r.ExportMessageRows(100)
 	if len(rows) != 3 || rows[0].ID != "activity:batch:1" || rows[1].ID != "batch:2" || rows[2].ID != "batch:3" {
 		t.Fatalf("mutation/unknown tool did not start in its standalone slot: %+v", rows)
@@ -134,7 +134,7 @@ func TestParallelEmptyEnvelopeHidesOnlyLivePreparation(t *testing.T) {
 			r := newActivityRenderer()
 			r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: types.RoleTool,
 				ToolName: "multi_tool_use.parallel", ToolStatus: tc.status, ToolPreviewPhase: tc.phase,
-				ToolInput: `{"tool_uses":[{}]}`, Content: tc.content}}, 1)
+				ToolInput: `{"tool_uses":[{}]}`, Content: tc.content}}, 1, 0)
 			rows, _, _ := r.ExportMessageRows(100)
 			if tc.want == "" {
 				if len(rows) != 0 {
@@ -155,7 +155,7 @@ func TestParallelAgentWaitFailureUsesTypedRunOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(body), ToolStatus: "success", ToolPreviewPhase: "done"}}, 1)
+	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(body), ToolStatus: "success", ToolPreviewPhase: "done"}}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 {
 		t.Fatalf("parallel child rows: %+v", rows)

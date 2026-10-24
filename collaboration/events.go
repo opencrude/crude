@@ -229,45 +229,59 @@ func (store *Store) ReservePending(ctx context.Context, request ReserveRequest) 
 	if len(request.OnlyKinds) > 0 && len(request.ExcludeKinds) > 0 {
 		return nil, fmt.Errorf("%w: reserve kind filters conflict", ErrInvalid)
 	}
+	where := ` FROM collaboration_deliveries d
+		JOIN collaboration_events e ON e.id=d.event_id
+		WHERE d.recipient_id=? AND d.state='pending'`
+	arguments := []any{request.RecipientID}
+	if request.ThroughSequence > 0 {
+		where += ` AND e.sequence<=?`
+		arguments = append(arguments, request.ThroughSequence)
+	}
+	if len(request.OnlyKinds) > 0 {
+		where += ` AND e.kind IN (` + strings.TrimRight(strings.Repeat("?,", len(request.OnlyKinds)), ",") + `)`
+		for _, kind := range request.OnlyKinds {
+			arguments = append(arguments, kind)
+		}
+	}
+	if len(request.ExcludeKinds) > 0 {
+		where += ` AND e.kind NOT IN (` + strings.TrimRight(strings.Repeat("?,", len(request.ExcludeKinds)), ",") + `)`
+		for _, kind := range request.ExcludeKinds {
+			arguments = append(arguments, kind)
+		}
+	}
+	eligible := func(recipient Agent) bool {
+		allowSuspended := len(request.OnlyKinds) == 1 && request.OnlyKinds[0] == EventLifecycleControl && recipient.State == AgentSuspended
+		return (recipient.State == AgentAvailable || allowSuspended) && recipient.Presence == RuntimeAttached && recipient.RuntimeEpoch == request.RuntimeEpoch
+	}
+	// The idle control sweep is an observation, not a mutation. Never acquire
+	// SQLite's writer boundary just to discover an empty inbox. This is only a
+	// hint: a real reservation below revalidates owner and pending versions in its
+	// serialized write transaction, so a concurrent publication/withdrawal wins.
+	var pending bool
+	if err := store.readTransaction(ctx, func(tx *sql.Tx) error {
+		recipient, err := loadAgent(ctx, tx, request.RecipientID)
+		if err != nil {
+			return err
+		}
+		if !eligible(recipient) {
+			return ErrUnavailable
+		}
+		return tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1`+where+`)`, arguments...).Scan(&pending)
+	}); err != nil || !pending {
+		return nil, err
+	}
 	var result []PendingDelivery
 	err := store.transaction(ctx, func(tx *sql.Tx) error {
 		recipient, err := loadAgent(ctx, tx, request.RecipientID)
 		if err != nil {
 			return err
 		}
-		allowSuspendedControl := len(request.OnlyKinds) == 1 &&
-			request.OnlyKinds[0] == EventLifecycleControl &&
-			recipient.State == AgentSuspended
-		if (recipient.State != AgentAvailable && !allowSuspendedControl) ||
-			recipient.Presence != RuntimeAttached || recipient.RuntimeEpoch != request.RuntimeEpoch {
+		if !eligible(recipient) {
 			return ErrUnavailable
 		}
 		statement := `SELECT d.id,d.event_id,d.recipient_id,d.state,d.version,
-			d.reserved_epoch,d.context_commit_id,d.reason,d.created_at,d.updated_at,d.admitted_at,e.event_json
-			FROM collaboration_deliveries d
-			JOIN collaboration_events e ON e.id=d.event_id
-			WHERE d.recipient_id=? AND d.state='pending'
-		`
-		arguments := []any{request.RecipientID}
-		if request.ThroughSequence > 0 {
-			statement += ` AND e.sequence<=?`
-			arguments = append(arguments, request.ThroughSequence)
-		}
-		if len(request.OnlyKinds) > 0 {
-			statement += ` AND e.kind IN (` + strings.TrimRight(strings.Repeat("?,", len(request.OnlyKinds)), ",") + `)`
-			for _, kind := range request.OnlyKinds {
-				arguments = append(arguments, kind)
-			}
-		}
-		if len(request.ExcludeKinds) > 0 {
-			statement += ` AND e.kind NOT IN (` + strings.TrimRight(strings.Repeat("?,", len(request.ExcludeKinds)), ",") + `)`
-			for _, kind := range request.ExcludeKinds {
-				arguments = append(arguments, kind)
-			}
-		}
-		statement += ` ORDER BY e.sequence,d.id LIMIT ?`
-		arguments = append(arguments, request.Limit)
-		rows, err := tx.QueryContext(ctx, statement, arguments...)
+			d.reserved_epoch,d.context_commit_id,d.reason,d.created_at,d.updated_at,d.admitted_at,e.event_json` + where + ` ORDER BY e.sequence,d.id LIMIT ?`
+		rows, err := tx.QueryContext(ctx, statement, append(arguments, request.Limit)...)
 		if err != nil {
 			return err
 		}

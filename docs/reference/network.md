@@ -1,6 +1,6 @@
 # Network transport
 
-> Status: Current reference — application-owned routing, TLS trust, and client identity.
+> Status: Current reference — outbound HTTP policy and authenticated remote-core access.
 
 ## Product surface and authority
 
@@ -12,6 +12,7 @@ the AI, Security, and IDE groups:
 | Connection | TCP connect timeout, TLS handshake timeout, TCP keep-alive idle/interval/probes, idle-pool lifetime, idle connections per host, HTTP/2 compatibility and health checks |
 | Proxy | Environment / Direct / Custom URL, credential-masked proxy URL, proxy bypass |
 | Certificates | Minimum TLS version, additive custom CA file, exact leaf-certificate exception, exact-host mTLS identity |
+| Remote access | Host-local direct-access opt-in, QUIC/TLS listen addresses, retained-session grace, fingerprint, pairing and device revocation |
 
 The palette's **Network Settings** opens Connection directly. Workspace Settings
 shows the application values read-only; it cannot introduce proxy credentials,
@@ -21,8 +22,10 @@ credentials are masked and refuse clipboard commands. They are not encrypted
 inside that file. Certificate/private-key bytes are never persisted in settings;
 only their paths and exact destination hostname are stored.
 
-`network/` owns the transport and scalar settings. `app/` owns persistence and
-publishes its validated immutable default snapshot. Account connections retain their own
+`network/` owns outbound HTTP transport and scalar settings. Remote-core carriers
+have the separate mandatory pinned TLS 1.3/strict SSH trust boundary below; HTTP
+proxy or certificate settings cannot weaken core authentication. `app/` owns
+persistence and publishes its validated immutable default snapshot. Account connections retain their own
 request/progress/attempt budgets; they do not implement another proxy/TLS stack.
 New clients capture current policy. In-flight clients keep their snapshot, so a
 save cannot change TLS or routing halfway through a request. A retained MCP
@@ -54,7 +57,8 @@ using defaults. No direct fallback, reset, or trust widening occurs.
 | HTTP/2 health check timeout | 15 seconds |
 | Minimum TLS | TLS 1.2 |
 
-TLS 1.3 is an explicit stricter minimum. Disabling HTTP/2 is a compatibility
+For outbound HTTP, TLS 1.3 is an explicit stricter minimum; core QUIC/TLS
+carriers always require TLS 1.3 regardless of this HTTP minimum. Disabling HTTP/2 is a compatibility
 control, not the default. Connection establishment is distinct from model
 response waiting; the provider progress watchdog remains the sole owner of
 header/stream silence. An explicit provider/account Connect timeout overrides
@@ -152,7 +156,8 @@ ownership. Cross-compilation is not a claim of native-platform acceptance.
 
 - `network/` owns the shared outbound HTTP transport for providers, OAuth,
   catalogs, web tools, capability downloads and MCP HTTP/OAuth. Network settings
-  are application-only Connection / Proxy / Certificates pages; workspaces
+  are application-only Connection / Proxy / Certificates pages; Remote access
+  separately administers host admission. Workspaces
   cannot grant trust or client credentials. Secure system trust, exact-host leaf
   exceptions and exact-host mTLS stay isolated from proxies/unrelated origins.
   Proxy failure never falls back direct, and invalid material fails closed.
@@ -179,3 +184,115 @@ ownership. Cross-compilation is not a claim of native-platform acceptance.
   on the failed connection may be interrupted and retain normal accepted-output
   continuation safeguards. Real same-client and root/child upload tests must prove
   automatic redial plus complete payload delivery, not just a finished countdown.
+
+## Remote core access
+
+Remote-core access is distinct from provider/web HTTP policy. `app/` owns both
+application configuration and listener lifecycle; `core/` owns authenticated
+admission, retained sessions and device checks. The application prepares and
+validates new listener sockets before committing configuration under the existing
+settings lock, publishes admission/listener ownership only after durable Save, and
+aborts only newly reserved sockets on failure. It does not publish a setting that
+failed to bind, nor retire established carriers just because the listen address
+changed. Unexpected listener failure is surfaced, not silently treated as saved
+and healthy.
+
+**Network → Remote access** is application-owned and administrable only from the
+selected core's authenticated host-local session. It exposes direct-access opt-in,
+QUIC UDP and TLS TCP listen addresses, session grace (default 900 seconds), host
+fingerprint, paired-device status, explicit refresh, Generate pairing code, Hide
+code and confirmed Revoke. Workspace scope and SSH/direct attachments are
+read-only. Codes are private, non-clipboard administrative evidence for the exact
+retained form; expiry, close, replacement and workspace generations remove/fence
+it. Pairing and revocation are explicit operations, not background form polling.
+
+QUIC and TLS/TCP require TLS 1.3 and an exact SHA-256 leaf-certificate fingerprint
+learned through trusted host-local review or authenticated SSH. The certificate
+pin is mandatory on every handshake; no system-CA, hostname exception or insecure
+retry bypasses a mismatch. Device/session authentication remains separate from
+server-certificate identity. Direct Auto can try QUIC and then pinned TLS to the
+same saved authority; this never falls back to an unauthenticated connection.
+Local IPC retains OS same-user security. SSH retains strict system host-key
+verification, fixed helpers, no forwarding and no shell interpolation of project
+paths.
+
+`Hello.Pair` is a restricted enrollment handshake, answered by
+`Welcome.Paired` and then closed. The client verifies the host pin before sending
+the code; the pairing code is never a normal session credential or resume secret.
+Codes are random, single-use, expire after five minutes and have bounded online
+attempts. The host stores device-secret hashes, not reusable plaintext credentials,
+in its private current-format registry. Revocation commits durably and immediately
+closes that device's active sessions; a resume rechecks the retained device under
+the same admission boundary. Disabling direct access revokes active paired-device
+sessions; the host may retain transport endpoints for authenticated one-use SSH
+bootstrap without enabling public enrollment.
+
+Requested direct listen addresses remain user configuration, not a claim that a
+socket is bound. A cold disabled core reserves independent ephemeral loopback
+UDP/TCP listeners for authenticated SSH bootstrap; separate private profiles do
+not contend for the configured default port. The host publishes actual live
+endpoints atomically with admission policy, and bootstrap advertises those facts,
+never requested addresses or port zero. Disabled address edits preserve healthy
+listener identity and set future direct-access intent. Disabling after an enabled
+host retains its healthy endpoints (including a prior nonloopback listener) while
+revoking paired admission; it is not a listener-closure isolation promise.
+Accept failure or shutdown withdraws matching actual endpoints without rewriting
+configuration. Loopback-only bootstrap may be unreachable from a distinct host;
+the pinned direct attempt then retains the verified SSH fallback.
+
+QUIC retirement stops only its immutable accept generation, retaining the one
+transport/socket for established carriers. Returning A→B→A prepares a new accept
+generation on that retained transport instead of attempting another bind at A.
+No application handshake or command is served before settings commit. Abort
+stops that staged generation and drains unaccepted handshakes without closing
+old carriers; a stale old accept worker cannot withdraw the new endpoint. Host
+shutdown still closes each shared resource and joins its workers. Accepted
+connections across all generations receive a QUIC `CONNECTION_CLOSE` while the
+UDP socket is still writable; only then does shutdown release the transport.
+Abruptly closing a transport cannot notify a peer and would make SSH fallback
+wait for the liveness timeout. Acceptance and completed-connection cleanup are
+joined before the resource close returns.
+
+`Welcome.LocalHost` records immutable authenticated admission provenance. It is not
+inferred from a Local label, loopback address or the latest carrier: replacing an
+SSH/direct carrier with a local one cannot grant host administration.
+`Hello.SSHRelay` only narrows an OS-authenticated local bridge to SSH authority;
+a network peer cannot use it to authenticate or gain local rights. SSH bootstrap
+credentials are short-lived, single-use and scoped to their reviewed purpose.
+
+### Client connection manager
+
+The **Remotes** activity rail is the shell-host connection manager, independent of
+the selected core's settings. It retains Local and saved SSH/direct connections,
+connection state/carrier/RTT, errors, explicit Test/Connect/Disconnect and remote
+workspace browsing. Add/Edit uses shared native forms. SSH config aliases may be
+listed as suggestions; this does not import SSH passwords or disable host checks.
+Switching backends prepares the destination and applies existing dirty-editor,
+pending-command and private-draft safeguards before replacing the old attachment.
+Failure leaves the old backend usable; no peer work is stopped. Late results are
+fenced by exact backend/form generation.
+
+Connection metadata (host/user/port/identity path, carrier, pin, recent workspace
+facts) lives in the shell client's private `remotes/connections.json`, not the
+selected remote host's config. Device credentials use the OS keychain when
+available. Writing an unencrypted private 0600 credential file requires explicit
+fallback consent and a persistent visible notice; owner-only permissions are not
+encryption. Connection tests refuse to send a saved credential to changed
+host/port/fingerprint authority merely because a display ID matches. Changed authority requires new
+pairing. Pairing is never automatically retried. Removing a client entry removes
+its client credential, not a substitute for host-side device revocation.
+
+Both `Hello.Schema` and the full 64-hex source cohort `Hello.Build` must match
+before application traffic. Different native images of that same cohort are
+admitted; image hashes are installation identities, not authentication. See the
+[identity and generation contract](core-client-protocol.md#wire-format-and-bounded-delivery).
+
+A mismatched/missing SSH image uses a fixed user-consented exact-image helper,
+with expiring host/image review, digest recheck and safe staging. A running older
+core is not killed or replaced to make the new connection succeed. Unsupported
+platform/artifact sources fail explicitly; no backwards-protocol adapter is
+introduced. See [core transport and trust](core-client-protocol.md#trust-secrets-and-platform-limits).
+
+These ownership and trust rules are not evidence of native Windows, physically
+distinct-host SSH, complete install-process or resource acceptance. Those gates
+are recorded separately by the active implementation/validation plans.

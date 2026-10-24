@@ -94,7 +94,7 @@ func TestNestedPaneSameHeightUpdateClearsReplacedTargets(t *testing.T) {
 	r.SyncMessages([]types.ChatMessage{
 		{InternalID: "one", Role: types.RoleTool, SubPaneID: "pane-one"},
 		{InternalID: "two", Role: types.RoleTool, SubPaneID: "pane-two"},
-	}, 1)
+	}, 1, 0)
 	first := r.ExportMessageRowsSnapshot(50)
 	before := renders["pane-two"]
 	leaf = "replacement"
@@ -113,7 +113,7 @@ func TestNestedPaneSameHeightUpdateClearsReplacedTargets(t *testing.T) {
 	r.SyncMessages([]types.ChatMessage{
 		{InternalID: "one", Role: types.RoleTool, ToolName: "unknown_tool", ToolStatus: types.ToolStatusSuccess},
 		{InternalID: "two", Role: types.RoleTool, SubPaneID: "pane-two"},
-	}, 2)
+	}, 2, 0)
 	replaced := r.ExportMessageRowsSnapshot(50)
 	for i := 0; i < len(replaced.Rows[0].Lines); i++ {
 		if replaced.PaneLineMap[i].PaneID != "" || len(replaced.PaneLineMap[i].Ancestors) != 0 {

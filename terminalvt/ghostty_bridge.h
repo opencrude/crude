@@ -228,6 +228,93 @@ static inline crude_utf8_result crude_cell_utf8(GhosttyRenderStateRowCells cells
 	return out;
 }
 
+/* Pointer-free transfer values, not the Go Cell/string layout. Go owns both
+ * buffers and C borrows them for this call only. Text offsets address one row. */
+typedef struct {
+	size_t text_offset;
+	size_t text_len;
+	uint8_t width;
+	uint8_t fg_set, fg_r, fg_g, fg_b;
+	uint8_t bg_set, bg_r, bg_g, bg_b;
+	uint8_t bold, faint, italic, underline, strikethrough, inverse;
+} crude_export_cell;
+
+typedef struct {
+	GhosttyResult result;
+	size_t text_len;
+	bool bounds;
+} crude_export_row_result;
+
+/* Normally one call per row. If the width-sized text buffer is insufficient,
+ * finish sizing the row without writing more bytes, then let Go retry once at
+ * the exact required size. Each cell retains the adapter's 64 KiB UTF-8 limit;
+ * this never allocates a maximum-grapheme buffer for every column. */
+static inline crude_export_row_result crude_export_row(
+	GhosttyRenderStateRowCells cells, crude_export_cell *out, size_t cols,
+	uint8_t *text, size_t text_cap) {
+	crude_export_row_result result = { GHOSTTY_SUCCESS, 0, false };
+	if (cols == 0 || cols > 1000 || out == NULL || text == NULL) {
+		result.bounds = true;
+		return result;
+	}
+	result.result = ghostty_render_state_row_cells_select(cells, 0);
+	if (result.result != GHOSTTY_SUCCESS) return result;
+	bool sizing = false;
+	for (size_t x = 0; x < cols; x++) {
+		crude_export_cell *c = &out[x];
+		memset(c, 0, sizeof(*c));
+		GhosttyCell raw;
+		GhosttyCellWide wide;
+		result.result = ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw);
+		if (result.result != GHOSTTY_SUCCESS) return result;
+		result.result = ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
+		if (result.result != GHOSTTY_SUCCESS) return result;
+		c->width = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
+		if (wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD) c->width = 0;
+		crude_utf8_result enc = crude_cell_utf8(cells,
+			sizing ? NULL : text + result.text_len,
+			sizing ? 0 : text_cap - result.text_len);
+		if (enc.result != GHOSTTY_SUCCESS && enc.result != GHOSTTY_OUT_OF_SPACE) {
+			result.result = enc.result;
+			return result;
+		}
+		if (enc.len > 65536) {
+			result.bounds = true;
+			return result;
+		}
+		if (enc.result == GHOSTTY_OUT_OF_SPACE) sizing = true;
+		c->text_offset = result.text_len;
+		c->text_len = enc.len;
+		result.text_len += enc.len;
+		crude_cell_style_result s = crude_cell_style_get(cells);
+		if (s.result != GHOSTTY_SUCCESS) {
+			result.result = s.result;
+			return result;
+		}
+		c->fg_set = s.style.has_foreground;
+		c->fg_r = s.style.foreground.r;
+		c->fg_g = s.style.foreground.g;
+		c->fg_b = s.style.foreground.b;
+		c->bg_set = s.style.has_background;
+		c->bg_r = s.style.background.r;
+		c->bg_g = s.style.background.g;
+		c->bg_b = s.style.background.b;
+		c->bold = s.style.bold;
+		c->faint = s.style.faint;
+		c->italic = s.style.italic;
+		c->underline = s.style.underline;
+		c->strikethrough = s.style.strikethrough;
+		c->inverse = s.style.inverse;
+		bool next = ghostty_render_state_row_cells_next(cells);
+		if (next != (x + 1 < cols)) {
+			result.bounds = true;
+			return result;
+		}
+	}
+	result.result = sizing ? GHOSTTY_OUT_OF_SPACE : GHOSTTY_SUCCESS;
+	return result;
+}
+
 static inline GhosttyResult crude_set_default_fg(GhosttyTerminal t, uint8_t r, uint8_t g, uint8_t b) {
 	GhosttyColorRgb c;
 	c.r = r;

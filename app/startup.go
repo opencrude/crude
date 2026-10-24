@@ -63,6 +63,10 @@ func networkStartupIssue(err error) types.OperationIssue {
 	return types.OperationIssue{Title: "Network settings need repair", Summary: "Outbound network access is blocked because the saved policy is invalid.", Detail: err.Error(), Guidance: "Review Network settings and save a valid proxy, timeout, and certificate policy. Crude will not bypass it with a direct connection.", Target: types.RepairNetwork}
 }
 
+func remoteListenerIssue(err error) types.OperationIssue {
+	return types.OperationIssue{Title: "Remote access needs attention", Summary: "The local core is available, but its remote listeners could not start.", Detail: err.Error(), Guidance: "Review Application Settings › Network › Remote access and select free reachable listen addresses. Existing work and device credentials were retained.", Target: types.RepairNetwork}
+}
+
 func resumeStartupIssue(id string, err error) types.OperationIssue {
 	return types.OperationIssue{Title: "Session could not be resumed", Summary: fmt.Sprintf("Crude opened the workspace without resuming %q.", id), Detail: err.Error(), Guidance: "Choose an available session from the launcher or repair its saved account and session data.", Target: types.RepairSessionAccount}
 }

@@ -4,21 +4,95 @@ import (
 	"context"
 	"crude/core"
 	"crude/coreclient"
+	"crude/coreprotocol"
 	"crude/shellport/remote"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/document"
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
+
+func TestLiveDocumentTopicTwoEditorsPendingPeerUndoSave(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	path := filepath.Join(root, "push.txt")
+	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)
+	shells := []remoteJourneyShell{one, two}
+	a, b := liveTestOpen(t, one.app, path), liveTestOpen(t, two.app, path)
+	remoteJourneyUntil(t, shells, func() bool { return one.app.liveEditors[a].topicReady && two.app.liveEditors[b].topicReady })
+	buffer := b.DocumentBuffer()
+	b.SetCursorPosition(0, 3)
+	b.InsertRune('B') // private, not submitted
+	a.InsertRune('A')
+	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+	remoteJourneyUntil(t, shells, func() bool { return b.Value() == "AabcB" && !one.app.liveEditors[a].sync })
+	if b.DocumentBuffer() != buffer || b.Value() != "AabcB" {
+		t.Fatal("peer push replaced private projection/controller")
+	}
+	runAppCommand(t, two.app, two.app.drainLiveEditorCommands())
+	remoteJourneyUntil(t, shells, func() bool { return a.Value() == "AabcB" && !two.app.liveEditors[b].sync })
+	a.Undo()
+	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+	remoteJourneyUntil(t, shells, func() bool { return a.Value() == "abcB" && b.Value() == "abcB" && !a.DocumentState().HistoryQueued })
+	one.app.requestEditorSaveWithFormat(a, workspace.DocumentSaveManual, false, false)
+	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+	remoteJourneyUntil(t, shells, func() bool { return !a.Modified() && !b.Modified() })
+	disk, err := os.ReadFile(path)
+	if err != nil || string(disk) != "abcB" {
+		t.Fatalf("disk=%q %v", disk, err)
+	}
+}
+
+func TestLiveDocumentTopicMalformedBatchAndColdResetPreserveDraft(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	path := filepath.Join(root, "draft.txt")
+	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	ed := liveTestOpen(t, shell.app, path)
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.liveEditors[ed].topicReady })
+	snapshot := ed.DocumentSnapshot()
+	metadata := snapshot
+	metadata.Text, metadata.Saved = nil, nil
+	metadata.Revision += 2
+	var result error
+	msg := shellport.LiveDocumentsChangedMsg{Owner: shell.app.ws, DocumentID: snapshot.ID, Header: coreprotocol.TopicHeader{Seq: 2}, Update: coreprotocol.DocumentUpdate{Base: snapshot.Revision, State: metadata, Changes: []document.Change{
+		{DocumentID: snapshot.ID, BaseRevision: snapshot.Revision, Edits: []document.Edit{{Start: 0, End: 0, Text: "X"}}},
+		{DocumentID: snapshot.ID, BaseRevision: snapshot.Revision + 1, Edits: []document.Edit{{Start: 99, End: 99, Text: "bad"}}},
+	}}, Done: func(err error) { result = err }}
+	shell.app.applyDocumentTopic(msg)
+	if result == nil || ed.Value() != "abc" || ed.DocumentState().Revision != snapshot.Revision {
+		t.Fatalf("partially applied malformed batch: %q %+v %v", ed.Value(), ed.DocumentState(), result)
+	}
+	ed.InsertRune('P')
+	reset := snapshot
+	reset.Revision += 10
+	reset.Text = []byte("peer")
+	metadata = reset
+	metadata.Text, metadata.Saved = nil, nil
+	msg.Header = coreprotocol.TopicHeader{Seq: 3, Reset: true}
+	msg.Update = coreprotocol.DocumentUpdate{State: metadata, Snapshot: &reset}
+	shell.app.applyDocumentTopic(msg)
+	if result == nil || ed.Value() != "Pabc" || ed.DocumentState().PendingEdits != 1 {
+		t.Fatalf("cold reset lost private draft: %q %+v", ed.Value(), ed.DocumentState())
+	}
+}
 
 func liveTestOpen(t *testing.T, app *App, path string) *editor.Editor {
 	t.Helper()
@@ -27,12 +101,103 @@ func liveTestOpen(t *testing.T, app *App, path string) *editor.Editor {
 	if tab == nil {
 		t.Fatal("live open did not install a tab")
 	}
+	liveTestPump(t, []*App{app}, func() bool { return app.liveEditors[tab.Editor].topicReady || app.liveEditors[tab.Editor].err != nil })
+	app.View() // settle actual Host geometry after initial asynchronous publications
 	return tab.Editor
+}
+
+var liveTestFIFOs sync.Map
+
+type liveTestFIFO struct {
+	test *testing.T
+	fifo chan any
+}
+
+func registerLiveTestFIFO(t *testing.T, app *App, fifo chan any) {
+	liveTestFIFOs.Store(app, liveTestFIFO{t, fifo})
+	t.Cleanup(func() { liveTestFIFOs.Delete(app) })
+}
+
+// Pump actual pushed events through Update; no synthetic invalidation or sync RPC.
+func liveTestPump(t *testing.T, apps []*App, condition func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(8 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	quiet := time.Now()
+	for {
+		activity, pending := false, false
+		for _, app := range apps {
+			entry, ok := liveTestFIFOs.Load(app)
+			if !ok {
+				t.Fatal("live test FIFO not registered")
+			}
+			fifo := entry.(liveTestFIFO).fifo
+			for draining := true; draining; {
+				select {
+				case msg := <-fifo:
+					// Fault-injection ports delegate the same remote attachment. Only the
+					// fixture remaps its identity; production retains exact owner fencing.
+					if topic, ok := msg.(shellport.LiveDocumentsChangedMsg); ok && topic.Owner != app.ws {
+						switch app.ws.(type) {
+						case *lostLiveResponse, *lostSnapshotResponse:
+							topic.Owner = app.ws
+							msg = topic
+						}
+					}
+					_, cmd := app.Update(msg)
+					runAppCommand(t, app, cmd)
+					activity = true
+				default:
+					draining = false
+				}
+			}
+			for ed, state := range app.liveEditors {
+				if state.uncertain != nil {
+					state.recoverDue = time.Time{}
+					runAppCommand(t, app, app.drainLiveEditorCommands())
+					activity = true
+				}
+				ds := ed.DocumentState()
+				pending = pending || state.err == nil && (state.busy || state.sync || !state.topicReady || ds.InFlight || ds.UndoPending || ds.HistoryQueued || state.save)
+			}
+		}
+		if condition != nil && condition() {
+			return
+		}
+		if activity || pending {
+			quiet = time.Now()
+		}
+		if condition == nil && !pending && time.Since(quiet) >= 25*time.Millisecond {
+			return
+		}
+		select {
+		case <-deadline.C:
+			for _, app := range apps {
+				for ed, state := range app.liveEditors {
+					t.Logf("live %s: state=%+v document=%+v", ed.FilePath(), state, ed.DocumentState())
+				}
+			}
+			t.Fatal("live push did not settle")
+		case <-tick.C:
+		}
+	}
 }
 
 func liveTestSync(t *testing.T, app *App) {
 	t.Helper()
-	runAppCommand(t, app, func() tea.Msg { return shellport.LiveDocumentsChangedMsg{Owner: app.ws} })
+	var apps []*App
+	liveTestFIFOs.Range(func(key, value any) bool {
+		if value.(liveTestFIFO).test == t {
+			apps = append(apps, key.(*App))
+		}
+		return true
+	})
+	if len(apps) == 0 {
+		apps = []*App{app}
+	}
+	liveTestPump(t, apps, nil)
 }
 
 func TestLiveEditorRealAppsShareUndoSaveAndClose(t *testing.T) {
@@ -73,7 +238,7 @@ func TestLiveEditorRealAppsShareUndoSaveAndClose(t *testing.T) {
 	}
 	a.InsertRune('C')
 	one.app.showDirtyClosePrompt(path)
-	if frame := one.app.View().Content; !strings.Contains(frame, "Close view") {
+	if frame := one.app.View().RenderContent(); !strings.Contains(frame, "Close view") {
 		t.Fatal("shared close still advertises destructive discard")
 	}
 	one.app.dirtyPromptDiscard()
@@ -209,6 +374,7 @@ func TestLiveEditorSaveRetainsNewerTypingAndShutdownStartsQueuedEdit(t *testing.
 	ed := liveTestOpen(t, shell.app, path)
 	ed.InsertRune('X')
 	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
 	shell.app.requestEditorSaveWithFormat(ed, workspace.DocumentSaveManual, false, false)
 	save := shell.app.drainLiveEditorCommands()
 	ed.InsertRune('Y')
@@ -217,6 +383,7 @@ func TestLiveEditorSaveRetainsNewerTypingAndShutdownStartsQueuedEdit(t *testing.
 	if err != nil || string(data) != "Xabc" || ed.Value() != "XYabc" || !ed.Modified() {
 		t.Fatalf("save consumed newer typing: %q %q %v", data, ed.Value(), err)
 	}
+	liveTestSync(t, shell.app)
 	ed.InsertRune('Z')
 	// Admission happened, but Bubble Tea has not started the command.
 	queued := shell.app.drainLiveEditorCommands()
@@ -339,6 +506,7 @@ func TestLiveEditorLostSnapshotResponsesObserveWithoutReplay(t *testing.T) {
 			if state.uncertain != nil || seam.lookups != 1 {
 				t.Fatalf("receipt not settled: %+v %d", state, seam.lookups)
 			}
+			liveTestSync(t, shell.app)
 			expected := 1
 			if kind == "format" {
 				expected = 2
@@ -362,7 +530,7 @@ func TestLiveEditorActualPipeReconnectReopensViewAndPreservesAuthorUndo(t *testi
 		server, client := net.Pipe()
 		connections <- server
 		go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-		return coreclient.Dial(ctx, client, id)
+		return coreclient.Dial(ctx, coreclient.SingleCarrier(client), id)
 	}
 	port, err := remote.Attach(t.Context(), remote.Options{Root: root, Dial: dial})
 	if err != nil {
@@ -370,6 +538,7 @@ func TestLiveEditorActualPipeReconnectReopensViewAndPreservesAuthorUndo(t *testi
 	}
 	app := NewApp(port, nil)
 	fifo := make(chan any, 1024)
+	registerLiveTestFIFO(t, app, fifo)
 	app.eventBus.SetSink(remoteJourneySink{fifo})
 	port.StartReplica()
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -377,6 +546,7 @@ func TestLiveEditorActualPipeReconnectReopensViewAndPreservesAuthorUndo(t *testi
 	ed := liveTestOpen(t, app, path)
 	ed.InsertRune('X')
 	runAppCommand(t, app, app.drainLiveEditorCommands())
+	liveTestSync(t, app)
 	before := port.DocumentOwner()
 	first := <-connections
 	if err = first.Close(); err != nil {
@@ -386,17 +556,89 @@ func TestLiveEditorActualPipeReconnectReopensViewAndPreservesAuthorUndo(t *testi
 	ed.SetCursorPosition(0, 4)
 	ed.InsertRune('Y')
 	runAppCommand(t, app, app.drainLiveEditorCommands())
+	liveTestSync(t, app)
 	if app.liveEditors[ed].err != nil {
 		t.Fatal(app.liveEditors[ed].err)
 	}
 	ed.Undo()
 	runAppCommand(t, app, app.drainLiveEditorCommands())
+	liveTestSync(t, app)
 	if ed.Value() != "Xabc" {
 		t.Fatalf("reconnect author undo failed: %q", ed.Value())
 	}
 	ed.Undo()
 	runAppCommand(t, app, app.drainLiveEditorCommands())
+	liveTestSync(t, app)
 	if ed.Value() != "abc" {
 		t.Fatalf("prior author group lost: %q", ed.Value())
+	}
+}
+
+func TestLiveDocumentTopicRejectedEditAlreadyPushedDoesNotWait(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	path := filepath.Join(root, "stale.txt")
+	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	ed := liveTestOpen(t, shell.app, path)
+	ed.InsertRune('X')
+	change, err := ed.CaptureDocumentEdits(shell.app.ws.(shellport.LiveDocuments).DocumentOwner(), "rejected", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := shell.app.liveEditors[ed]
+	shell.app.applyLiveEditorResult(liveEditorResult{owner: shell.app.ws, generation: shell.app.workspaceSwitchGen.Load(), ed: ed, state: state, kind: "edit", receipt: document.Receipt{DocumentID: change.DocumentID, RequestID: change.RequestID, Before: 1, Revision: 1, Error: document.ErrRevision.Error()}})
+	if state.sync || ed.DocumentState().InFlight || ed.DocumentState().PendingEdits != 1 {
+		t.Fatalf("rejection parked retained edit: %+v %+v", state, ed.DocumentState())
+	}
+	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
+	if ed.Value() != "Xabc" || ed.DocumentState().Revision != 2 || state.err != nil {
+		t.Fatal("retained edit did not publish")
+	}
+}
+
+func TestLiveDocumentTopicInitialUndoAndClosedViewFence(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	path := filepath.Join(root, "initial.txt")
+	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	runAppCommand(t, shell.app, shell.app.openPaneFiles([]string{path}, shell.app.Win.ActiveGroup()))
+	ed := shell.app.EditorState.Tabs[path].Editor
+	ed.Undo() // initial topic has not reached Update; receipt cannot deadlock it
+	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	liveTestSync(t, shell.app)
+	if ed.DocumentState().UndoPending || ed.DocumentState().HistoryQueued {
+		t.Fatal("initial undo blocked first publication")
+	}
+	var held shellport.LiveDocumentsChangedMsg
+	// A fresh topic gives an exact token that the lifecycle boundary invalidates.
+	shell.app.ws.(shellport.LiveDocumentEpoch).FenceDocumentTopics()
+	shell.app.ws.(shellport.LiveDocumentEpoch).ResumeDocumentTopics()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for held.DocumentID == "" {
+		select {
+		case msg := <-shell.fifo:
+			if topic, ok := msg.(shellport.LiveDocumentsChangedMsg); ok {
+				held = topic
+			} else {
+				_, cmd := shell.app.Update(msg)
+				runAppCommand(t, shell.app, cmd)
+			}
+		case <-deadline.C:
+			t.Fatal("missing topic")
+		}
+	}
+	shell.app.closeEditorTabForce(path)
+	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	shell.app.applyDocumentTopic(held)
+	if len(shell.app.pendingDocumentTopics) != 0 || held.Valid() {
+		t.Fatal("closed editor retained stale queued topic")
 	}
 }

@@ -150,7 +150,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	}
 	app.forceFrame()
 	view := app.View()
-	painted := rendering.StripAnsi(view.Content)
+	painted := rendering.StripAnsi(view.RenderContent())
 	if !strings.Contains(painted, "KILLED") || !strings.Contains(painted, "neighbor-job") {
 		t.Fatalf("owning panel did not show the individual terminal status:\n%s", painted)
 	}

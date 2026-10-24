@@ -27,7 +27,18 @@ func (m *App) View() tea.View {
 	}
 	m.syncMemoryBrowserLifecycle()
 	if m.shouldDeferFrame() {
-		return m.newTerminalView(m.cachedOutput)
+		return m.newSurfaceTerminalView()
+	}
+	m.renderCtx.SpinFrame = m.SpinFrame
+	m.syncRenderFocus()
+	m.configureShell()
+	m.prepareShellSurface()
+	// Host generations own both source ink and mounted geometry. With no
+	// floating layers, a clean retained Host is already the complete frame;
+	// reuse its publication rather than clearing/composing/snapshotting it.
+	// Floating owners keep their ordinary independent composition path.
+	if m.framePresented && !m.rootHost.NeedsPaint() && !m.windowManager.HasWindows() && !m.windowManager.NeedsRender() {
+		return m.newSurfaceTerminalView()
 	}
 	m.compositor.BeginFrame()
 	// Fill the root with the active theme background so uncovered cells
@@ -42,14 +53,15 @@ func (m *App) View() tea.View {
 		m.compositor.Root().AddChild(m.mainSurf)
 		m.mainSurf.SetZOrder(0)
 	}
-	m.renderCtx.SpinFrame = m.SpinFrame
-	m.syncRenderFocus()
-
 	// The root tree: one Host paints the whole shell into one full-screen
 	// surface. Floating windows are rendered by the WM on top afterwards.
-	m.configureShell()
-	m.renderShellToSurface()
+	m.paintShellSurface()
 	m.paintPaneDropPreview()
+	// Preview ink is transient and drawn after Host paint. Leave its owning
+	// region damaged so moving/cancelling it restores the retained content.
+	if m.mainPanes != nil && m.mainPanes.drop != nil {
+		m.rootHost.MarkComponentPaint(m.mainPanes.ID())
+	}
 	m.syncPlanHover()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
@@ -57,11 +69,16 @@ func (m *App) View() tea.View {
 
 	m.compositor.Composite()
 
-	output := m.compositor.Present()
-	m.cachedOutput = output
+	m.compositor.PresentSurface()
 	m.noteFramePresented(time.Now())
 
-	return m.newTerminalView(output)
+	return m.newSurfaceTerminalView()
+}
+
+func (m *App) newSurfaceTerminalView() tea.View {
+	v := m.newTerminalView("")
+	v.Surface = m.compositor.CurrentSurface()
+	return v
 }
 
 func (m *App) newTerminalView(output string) tea.View {
@@ -162,6 +179,11 @@ func (m *App) computeContentLayout() contentLayout {
 // configureShell updates the root-tree slots and screen projections for one
 // frame. It must run after computeContentLayout so the rects are fresh.
 func (m *App) configureShell() {
+	// Lazy history materialization changes projected rows during configure,
+	// independently of the message that caused this presentation opportunity.
+	if m.mainPanes != nil && m.subPaneProjections.AnyMaterializing() {
+		m.rootHost.MarkComponentPaint(m.mainPanes.ID())
+	}
 	m.syncPaneWindowFocus()
 	m.syncEditorTabPresentation()
 	m.syncPaneWindows()
@@ -223,17 +245,15 @@ func (m *App) isEditorActive() bool {
 	return m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen()
 }
 
-// renderShellToSurface paints the whole root tree into the single
-// full-screen surface. Relayout is unconditional: the shell is shallow
-// (measure+layout of ~10 components), and relayouting every frame guarantees
-// the hit tree, focus registry, and paint all come from THIS frame's
-// geometry, as required by the one-geometry-source contract of the root host.
-//
-// The surface is filled with the theme background BEFORE the tree paints:
-// unmounted slots (the launcher replacing the editor, chat replacing the
-// launcher, ...) must not leave their previous opaque cells behind; every
-// cell not covered by an active slot shows the clean background.
+// renderShellToSurface re-derives the single hit/focus/paint geometry, then
+// paints only Host-owned source damage into the retained shell grid. Changed
+// geometry or mounted identity clears the full grid, including vacated cells.
 func (m *App) renderShellToSurface() {
+	m.prepareShellSurface()
+	m.paintShellSurface()
+}
+
+func (m *App) prepareShellSurface() {
 	if m.mainSurf == nil || m.rootHost == nil || m.shell == nil {
 		return
 	}
@@ -243,18 +263,21 @@ func (m *App) renderShellToSurface() {
 	m.mainSurf.SetPosition(0, 0)
 	m.mainSurf.SetVisible(true)
 	m.shell.ClearDirty()
-
-	bg := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
-	m.mainSurf.Buffer().Fill(bg)
-
 	m.rootHost.SetFrame(m.SpinFrame)
 	m.rootHost.Resize(m.width, m.height)
-	m.rootHost.MarkLayout()
+	m.rootHost.RefreshLayout()
 	// Structural tab operations can mount a different content screen. Resolve
 	// focus after that screen is registered, before the first frame paints.
 	m.rootHost.Layout()
 	m.syncRootFocus()
-	m.rootHost.Paint(m.mainSurf.Buffer())
+}
+
+func (m *App) paintShellSurface() {
+	if m.mainSurf == nil || m.rootHost == nil || m.shell == nil {
+		return
+	}
+	bg := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
+	m.rootHost.PaintRegions(m.mainSurf.Buffer(), bg)
 }
 
 // syncRootFocus maps the viewmodel focus policy (focusTarget / FocusStack)
@@ -405,8 +428,16 @@ func (m *App) configureHeaderScreen() {
 	if m.headerScreen == nil {
 		return
 	}
+	// The elapsed clock is a source even on terminal-only publications. Do not
+	// let a quiet tick queue freeze it during a continuous stream of PTY frames.
+	if start := m.ws.StartTime(); !start.IsZero() {
+		if second := int64(time.Since(start) / time.Second); second != m.headerClockSecond {
+			m.headerClockSecond = second
+			m.rootHost.MarkComponentPaint(m.headerScreen.ID())
+		}
+	}
 	frame := m.frameInsets()
-	m.headerScreen.SetProjection(shellheader.Projection{
+	if m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
 		YOLO:      m.OverlayState.IsYolo(),
 		StartTime: m.ws.StartTime(),
@@ -415,7 +446,9 @@ func (m *App) configureHeaderScreen() {
 		Width:         m.width - frame.Left - frame.Right,
 		LeftSegments:  m.statusHeaderLeftSegments(),
 		RightSegments: m.statusHeaderRightSegments(),
-	})
+	}) {
+		m.rootHost.MarkComponentPaint(m.headerScreen.ID())
+	}
 }
 
 func (m *App) configureSidebarScreen() {
@@ -550,6 +583,13 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	}
 
 	mainSBVisible := contentH > chatH
+	// The renderer owns clock-sensitive rows (including idle cursor/recovery
+	// clocks). Reuse this export's generation rather than reclassifying message
+	// roles or repainting the whole static transcript on every shell tick.
+	if view.chatFrame != m.SpinFrame && (view.chatSource != snapshot.SourceID || view.chatGeneration != snapshot.Generation || activity.Active) {
+		m.rootHost.MarkSubtreePaint(screen.ID())
+	}
+	view.chatSource, view.chatGeneration, view.chatFrame = snapshot.SourceID, snapshot.Generation, m.SpinFrame
 
 	composeParams := shellchat.ComposeParams{
 		InnerW:        renderInnerW,

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -64,11 +63,11 @@ func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testi
 	}
 	t.Cleanup(client.Close)
 	var attached coreprotocol.AttachResult
-	if err := json.Unmarshal(callCore(t, client, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
+	if err := coreprotocol.Decode(callCore(t, client, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult
-	if err := json.Unmarshal(callCore(t, client, "create", attached.WorkspaceID, coreprotocol.NewSession, struct{}{}).Payload, &created); err != nil {
+	if err := coreprotocol.Decode(callCore(t, client, "create", attached.WorkspaceID, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}).Payload, &created); err != nil {
 		t.Fatal(err)
 	}
 	callCore(t, client, "first", attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Work until I correct you"})
@@ -80,7 +79,7 @@ func TestSubmitInputSteeringReceiptReplaysWithoutPublishingAnotherInput(t *testi
 	note := coreprotocol.InputRequest{AgentID: created.OrchID, Text: "Exact correction", DraftRevision: 9}
 	first := callCore(t, client, "correction", attached.WorkspaceID, coreprotocol.SubmitInput, note)
 	var receipt coreprotocol.InputResult
-	if err := json.Unmarshal(first.Payload, &receipt); err != nil || receipt.Status != workspace.InputAdmissionSteered ||
+	if err := coreprotocol.Decode(first.Payload, &receipt); err != nil || receipt.Status != workspace.InputAdmissionSteered ||
 		receipt.Receipt.EventID == "" || receipt.Receipt.RunID == "" || receipt.Receipt.OwnerEpoch == 0 || receipt.Receipt.DraftRevision != 9 {
 		t.Fatalf("steering had no exact durable receipt: %+v err=%v", receipt, err)
 	}

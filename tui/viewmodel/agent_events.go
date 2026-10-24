@@ -235,7 +235,6 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 
 	m.Input.ClearInputAtRevision(m.Input.DraftRevision())
 	m.persistComposerDraftIfChanged()
-	m.syncPendingSteeringCount()
 	m.syncAgentMessages(sessionID, true)
 	return m.recordPrompt(text, refIDs...)
 }
@@ -327,9 +326,11 @@ func (m *App) presentAgentReduction(change workspace.AgentReduction) tea.Cmd {
 		// Delivery settlement changes only existing evidence. It is not an
 		// inventory/navigation event and must never activate or hydrate a draft.
 		for _, id := range change.ChangedAgents {
+			if node := m.ws.AgentMgr().Get(id); node != nil && node.State != nil {
+				m.reconcileThinkingPresentation(node.State, m.thinkingOwnerWidth(id))
+			}
 			m.syncAgentMessages(id, false)
 		}
-		m.syncPendingSteeringCount()
 		return nil
 	}
 	for _, id := range change.ChangedAgents {
@@ -350,7 +351,6 @@ func (m *App) presentAgentReduction(change workspace.AgentReduction) tea.Cmd {
 		m.dismissAgentPromptFor(change.AgentID)
 		m.handleSubPaneCompletion(change.AgentID)
 	}
-	m.syncPendingSteeringCount()
 	m.syncAgentWindowTabs()
 	if done := change.Effects.Done; done != nil {
 		return func() tea.Msg { return agentResultFeedbackMsg{agentID: done.AgentID, reason: done.Reason} }
@@ -380,18 +380,6 @@ func (m *App) applyAgentEffects(agentID string, effects workspace.AgentEffects) 
 	}
 	if effects.DismissPrompt {
 		m.dismissAgentPromptBlock(agentID, effects.DismissBlockID)
-	}
-}
-
-func (m *App) syncPendingSteeringCount() {
-	if m.Feedback == nil || m.ws.AgentMgr() == nil {
-		return
-	}
-	count := 0
-	for _, node := range m.ws.AgentMgr().AllNodes() {
-		if node != nil && node.State != nil && node.State.Messages != nil {
-			count += node.State.Messages.PendingSteeringCount()
-		}
 	}
 }
 

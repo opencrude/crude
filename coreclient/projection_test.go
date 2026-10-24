@@ -167,6 +167,29 @@ func TestWorkspaceViewRejectsGapAndInvalidBatchAtomically(t *testing.T) {
 	}
 }
 
+func TestWorkspaceViewTextAppendBatchAtomicAndIdentity(t *testing.T) {
+	v := newProjection(t, projectionFixture())
+	conversation := v.AgentMgr.Get("root").State.Messages
+	root := coreprotocol.AgentDelta{State: workspace.AgentSnapshot{ID: "root", SessionID: "s", ConversationRevision: 2},
+		Conversation: workspace.ConversationDelta{BaseRevision: 1, Revision: 2,
+			Appends: []workspace.ConversationTextAppend{{InternalID: "m", Offset: 1, Text: " new content"}}}}
+	child := coreprotocol.AgentDelta{State: workspace.AgentSnapshot{ID: "child", ParentID: "root", SessionID: "s", ConversationRevision: 2},
+		Conversation: workspace.ConversationDelta{BaseRevision: 1, Revision: 2,
+			Appends: []workspace.ConversationTextAppend{{InternalID: "c", Offset: 999, Text: "must fail"}}}}
+	if _, err := v.ApplyChanges(coreprotocol.AgentChangesResult{Revision: 2, Agents: []coreprotocol.AgentDelta{root, child}}); !errors.Is(err, ErrResync) {
+		t.Fatalf("invalid append accepted: %v", err)
+	}
+	if v.Revision() != 1 || conversation.Messages()[0].Content != "a" {
+		t.Fatal("batch partially applied before offset validation")
+	}
+	if _, err := v.ApplyChanges(coreprotocol.AgentChangesResult{Revision: 2, Agents: []coreprotocol.AgentDelta{root}}); err != nil {
+		t.Fatal(err)
+	}
+	if v.AgentMgr.Get("root").State.Messages != conversation || v.PaneMgr.Get("root").Messages != conversation || conversation.Messages()[0].Content != "a new content" {
+		t.Fatal("append did not update retained renderer conversation identity")
+	}
+}
+
 func TestWorkspaceViewUsageScopes(t *testing.T) {
 	snapshot := projectionFixture()
 	snapshot.Agents[1].Usage = types.UsageSummary{Requests: 2, Turns: 1, TurnsKnown: true, ContextUsed: types.UsageValue{Value: 123, Known: true},

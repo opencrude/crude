@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/localdiff"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Compare with disk must open the actual comparison in a movable main tab,

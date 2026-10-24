@@ -2,6 +2,7 @@
 package shellheader
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -91,7 +92,13 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 }
 
 // SetProjection updates header content for the next paint.
-func (s *Screen) SetProjection(p Projection) { s.proj = p }
+func (s *Screen) SetProjection(p Projection) bool {
+	old := s.proj
+	changed := old.ModelName != p.ModelName || old.YOLO != p.YOLO || old.StartTime != p.StartTime || old.Usage != p.Usage || old.ViewLabel != p.ViewLabel || old.Width != p.Width ||
+		!slices.Equal(old.LeftSegments, p.LeftSegments) || !slices.Equal(old.RightSegments, p.RightSegments)
+	s.proj = p
+	return changed
+}
 
 func (s *Screen) Children() []ui.Component { return nil }
 

@@ -37,7 +37,7 @@ func (s *statusReplica) fetch() (statusSnapshot, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	var snapshot statusSnapshot
-	err := s.w.call(ctx, coreprotocol.StatusSnapshotMethod, struct{}{}, &snapshot)
+	err := s.w.call(ctx, coreprotocol.StatusSnapshotMethod, &coreprotocol.Empty{}, &snapshot)
 	return snapshot, err
 }
 
@@ -58,7 +58,7 @@ func (s *statusReplica) resetRevision() { s.core.Version, s.version = 0, 0 }
 
 func (s *statusReplica) send(mutation coreprotocol.StatusMutation) {
 	s.w.commands.push(func(ctx context.Context) {
-		if err := s.w.call(ctx, coreprotocol.StatusMutateMethod, mutation, &coreprotocol.StatusMutationResult{}); err != nil {
+		if err := s.w.call(ctx, coreprotocol.StatusMutateMethod, &mutation, &coreprotocol.StatusMutationResult{}); err != nil {
 			s.w.logger.Warn("REMOTE", "status_mutation_failed", "op", mutation.Op, "error", err.Error())
 		}
 	})

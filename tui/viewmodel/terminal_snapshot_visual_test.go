@@ -68,7 +68,7 @@ func terminalVisualText(p workspace.TerminalProjection) string {
 
 func (m *terminalSnapshotVisualModel) checkOutput() bool {
 	text := terminalVisualText(m.latest)
-	paint := ansi.Strip(m.App.View().Content)
+	paint := ansi.Strip(m.App.View().RenderContent())
 	if !strings.Contains(text, "SNAPSHOT_READY") || !strings.Contains(paint, "SNAPSHOT_READY") {
 		m.t.Error("real PTY output marker missing from snapshot or painted App")
 		return false
@@ -96,7 +96,7 @@ func (m *terminalSnapshotVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF4:
 			m.handleTerminalAction(ui.Action{ID: shellterm.ActionTakeControl, Payload: m.latest.Info.ID})
-			paint := ansi.Strip(m.App.View().Content)
+			paint := ansi.Strip(m.App.View().RenderContent())
 			m.menu = strings.Contains(paint, "Take input control") && strings.Contains(paint, "Copy offered text")
 			if !m.menu {
 				m.t.Error("production terminal control/clipboard menu not painted")

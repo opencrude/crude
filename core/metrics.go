@@ -22,10 +22,6 @@ var (
 	coreQueue = metrics.NewGauge(metrics.Meta{Name: "core.queue", Group: metrics.GroupCore, Title: "Actor backlog", Unit: "items",
 		Help: "Requests, agent events and service events waiting for a workspace actor. A growing backlog means the actor cannot keep up.",
 		Warn: 64, Crit: 512}, nil)
-	coreResyncs = metrics.NewCounter(metrics.Meta{Name: "core.resync", Group: metrics.GroupCore, Title: "Shell resyncs",
-		Help: "A shell fell behind the change stream and must reload snapshots. Each one is a burst of work for that shell."})
-	coreChanges = metrics.NewCounter(metrics.Meta{Name: "core.changes", Group: metrics.GroupCore, Title: "Published changes",
-		Help: "Change notifications sent to shells."})
 	fileEvents = metrics.NewCounter(metrics.Meta{Name: "files.events", Group: metrics.GroupFiles, Title: "File system events",
 		Help: "Project file changes observed by the watcher. Builds and installs produce bursts."})
 	fileWatchStart = metrics.NewLatency(metrics.Meta{Name: "files.watch", Group: metrics.GroupFiles, Title: "Watcher setup",

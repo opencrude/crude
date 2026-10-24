@@ -63,6 +63,12 @@ func recoveryHeader(message types.ChatMessage, ctx renderContext) PaintLine {
 		label, role = "Run interrupted", ui.ColorMuted
 	case recovery.Cancelled:
 		label, role = "Recovery stopped", ui.ColorMuted
+	case recovery.Failed:
+		// The blocker is the turn's report; keep it readable without expanding.
+		label = "Turn failed"
+		if reason, _, _ := strings.Cut(rendering.SanitizeForTerminal(strings.TrimSpace(status.Detail)), "\n"); reason != "" {
+			label += " · " + reason
+		}
 	}
 	if status.State == recovery.Recovering {
 		if !status.RetryAt.IsZero() {

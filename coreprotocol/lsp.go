@@ -3,7 +3,6 @@ package coreprotocol
 import (
 	"crude/types"
 	"crude/workspace"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // LSP snapshot serves every synchronous shell read without remote I/O. Other
@@ -46,7 +45,7 @@ type LSPResult struct {
 	Completions []workspace.CompletionItem `json:"completions,omitempty"`
 	Symbols     []workspace.LSPSymbol      `json:"symbols,omitempty"`
 	Hover       string                     `json:"hover,omitempty"`
-	Edit        *protocol.WorkspaceEdit    `json:"edit,omitempty"`
+	Edit        *LSPEdit                   `json:"edit,omitempty"`
 }
 
 type LSPSnapshot struct {

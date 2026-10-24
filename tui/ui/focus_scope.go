@@ -35,7 +35,7 @@ func (h *Host) PushFocusScope(boundary ComponentID, modal bool) {
 	if boundary != RootID {
 		h.Focus(boundary)
 	}
-	h.needsPnt = true
+	h.MarkPaint()
 }
 
 // PopFocusScope pops the topmost scope and restores the focus it captured.
@@ -131,7 +131,7 @@ func (h *Host) FocusWithinScope(id ComponentID) bool {
 func (h *Host) restoreFocus(id ComponentID) {
 	if id == RootID {
 		h.focused = RootID
-		h.needsPnt = true
+		h.MarkPaint()
 		return
 	}
 	if _, ok := h.registry[id]; ok {
@@ -139,5 +139,5 @@ func (h *Host) restoreFocus(id ComponentID) {
 		return
 	}
 	h.focused = id
-	h.needsPnt = true
+	h.MarkPaint()
 }

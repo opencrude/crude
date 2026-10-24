@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crude/coreprotocol"
@@ -17,19 +18,34 @@ import (
 // lifetimePolicy is host-provided description and the shutdown trigger. The
 // Runtime owns the facts (clients, workspaces, work); the host owns the policy.
 type lifetimePolicy struct {
-	mu       sync.Mutex
-	server   bool
-	grace    time.Duration
-	started  time.Time
-	shutdown func()
-	idleFrom time.Time
-	buildID  string
+	mu              sync.Mutex
+	server          bool
+	grace           time.Duration
+	started         time.Time
+	shutdown        func()
+	idleFrom        time.Time
+	buildID         string
+	ownerGeneration string
+}
+
+func (r *Runtime) buildID() string {
+	r.lifetime.mu.Lock()
+	defer r.lifetime.mu.Unlock()
+	return r.lifetime.buildID
 }
 
 // SetBuildID records the executable identity reported by core.status.
 func (r *Runtime) SetBuildID(id string) {
 	r.lifetime.mu.Lock()
 	r.lifetime.buildID = id
+	r.lifetime.mu.Unlock()
+}
+
+// SetOwnerGeneration binds automatic handover to this daemon incarnation.
+// The host installs it before accepting any connections.
+func (r *Runtime) SetOwnerGeneration(generation string) {
+	r.lifetime.mu.Lock()
+	r.lifetime.ownerGeneration = generation
 	r.lifetime.mu.Unlock()
 }
 
@@ -47,8 +63,20 @@ func (r *Runtime) SetLifetimePolicy(server bool, grace time.Duration, shutdown f
 
 // inspect runs fn on the workspace's serialized actor goroutine.
 func (a *actor) inspect(ctx context.Context, fn func()) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	done := make(chan struct{})
-	command := actorCommand{inspect: func() { fn(); close(done) }}
+	// Cancellation may abandon a queued inspection, but cannot let a running
+	// callback write its caller's captured result after that caller returns.
+	// 0: queued, 1: executing/complete, 2: cancelled before execution.
+	var state atomic.Uint32
+	command := actorCommand{inspect: func() {
+		defer close(done)
+		if state.CompareAndSwap(0, 1) {
+			fn()
+		}
+	}}
 	select {
 	case a.commands <- command:
 	case <-ctx.Done():
@@ -60,8 +88,14 @@ func (a *actor) inspect(ctx context.Context, fn func()) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		if !state.CompareAndSwap(0, 2) {
+			<-done
+		}
 		return ctx.Err()
 	case <-a.stop:
+		if !state.CompareAndSwap(0, 2) {
+			<-done
+		}
 		return errors.New("workspace closed")
 	}
 }
@@ -178,7 +212,7 @@ func (r *Runtime) BeginDrain() bool {
 // administrative query, not an attached shell, so it is excluded from counts.
 func (r *Runtime) coreMethod(ctx context.Context, caller *Connection, request coreprotocol.Request) coreprotocol.Response {
 	if request.Method == coreprotocol.CoreStatusMethod {
-		if err := decode(request.Payload, &struct{}{}); err != nil {
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		status, err := r.Status(ctx)
@@ -191,8 +225,17 @@ func (r *Runtime) coreMethod(ctx context.Context, caller *Connection, request co
 		return response(request, status)
 	}
 	var input coreprotocol.ShutdownRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return fault(request, "invalid_request", err.Error())
+	}
+	r.lifetime.mu.Lock()
+	generation, hook := r.lifetime.ownerGeneration, r.lifetime.shutdown
+	r.lifetime.mu.Unlock()
+	if input.ExpectedOwner != "" && (input.Force || input.ExpectedOwner != generation) {
+		return response(request, coreprotocol.ShutdownResult{Reason: "endpoint owner changed; handover refused"})
+	}
+	if hook == nil {
+		return response(request, coreprotocol.ShutdownResult{Reason: "this core was not started as a stoppable daemon"})
 	}
 	status, err := r.Status(ctx)
 	busy := BusyWorkspaces(status)
@@ -210,12 +253,22 @@ func (r *Runtime) coreMethod(ctx context.Context, caller *Connection, request co
 		}
 		return response(request, coreprotocol.ShutdownResult{Accepted: false, Reason: reason, Busy: busy, Shells: shells})
 	}
-	r.lifetime.mu.Lock()
-	hook := r.lifetime.shutdown
-	r.lifetime.mu.Unlock()
-	if hook == nil {
-		return response(request, coreprotocol.ShutdownResult{Accepted: false, Reason: "this core was not started as a stoppable daemon"})
+	if input.ExpectedOwner != "" && len(status.Workspaces) != 0 {
+		// Retained actors can admit autonomous work without a shell. Until they
+		// expose a transactional idle fence, automatic handover never closes them.
+		return response(request, coreprotocol.ShutdownResult{Reason: "retained workspaces require an explicit graceful stop", Busy: busy})
 	}
+	r.mu.Lock()
+	otherClients := len(r.clients)
+	if caller != nil && r.clients[caller.Owner.ClientID] == caller {
+		otherClients--
+	}
+	if r.closed || r.draining || (!input.Force && (otherClients != 0 || len(r.creating) != 0 || (input.ExpectedOwner != "" && len(r.workspaces) != 0))) {
+		r.mu.Unlock()
+		return response(request, coreprotocol.ShutdownResult{Reason: "core admission changed during shutdown inspection", Shells: otherClients})
+	}
+	r.draining = true
+	r.mu.Unlock()
 	// Delay lets this response reach the requester before connections close.
 	time.AfterFunc(150*time.Millisecond, hook)
 	return response(request, coreprotocol.ShutdownResult{Accepted: true, Busy: busy})
@@ -230,5 +283,5 @@ func (r *Runtime) publishProgress(owner coreprotocol.Owner, progress coreprotoco
 	if c == nil || c.Owner != owner {
 		return
 	}
-	c.publish(coreprotocol.Change{Progress: &progress})
+	c.reportProgress(progress.RequestID, progress.Text)
 }

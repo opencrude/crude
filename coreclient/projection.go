@@ -26,7 +26,6 @@ type WorkspaceView struct {
 	InitialSettings                          types.Settings
 	revision                                 uint64
 	agents                                   map[string]workspace.AgentSnapshot
-	membership                               map[string]map[string]bool
 	appSettings                              types.AppSettings
 	connectionIssues                         map[string]string
 }
@@ -34,7 +33,7 @@ type WorkspaceView struct {
 func NewWorkspaceView(client *Client, snapshot coreprotocol.WorkspaceSnapshot) (*WorkspaceView, error) {
 	v := &WorkspaceView{Client: client, AgentMgr: workspace.NewAgentManager(), PaneMgr: workspace.NewPaneManager(),
 		SessionsByID: make(map[string]*workspace.Session), SessionsByAgent: make(map[string]*workspace.Session),
-		agents: make(map[string]workspace.AgentSnapshot), membership: make(map[string]map[string]bool)}
+		agents: make(map[string]workspace.AgentSnapshot)}
 	if err := v.InstallSnapshot(snapshot); err != nil {
 		return nil, err
 	}
@@ -241,8 +240,12 @@ func (v *WorkspaceView) validateChanges(changes coreprotocol.AgentChangesResult)
 		if d.Revision != a.ConversationRevision || d.Revision < current || !d.Reset && d.BaseRevision != current || d.Reset && d.Order == nil {
 			return fmt.Errorf("%w: conversation revision for %s", ErrResync, a.ID)
 		}
-		if err := validateMembership(v.membership[a.ID], d); err != nil {
-			return err
+		conversation := workspace.NewConversation()
+		if node := v.AgentMgr.Get(a.ID); node != nil {
+			conversation = node.State.Messages
+		}
+		if err := conversation.ValidateDelta(d); err != nil {
+			return fmt.Errorf("%w: %s: %v", ErrResync, a.ID, err)
 		}
 	}
 	for id, parent := range parents {
@@ -260,54 +263,6 @@ func (v *WorkspaceView) validateChanges(changes coreprotocol.AgentChangesResult)
 	return nil
 }
 
-func validateMembership(current map[string]bool, d workspace.ConversationDelta) error {
-	upserts, removed := make(map[string]bool), make(map[string]bool)
-	for _, message := range d.Upserts {
-		if message.InternalID == "" || upserts[message.InternalID] {
-			return fmt.Errorf("%w: duplicate/empty message", ErrResync)
-		}
-		upserts[message.InternalID] = true
-	}
-	for _, id := range d.Removed {
-		if id == "" || removed[id] || upserts[id] {
-			return fmt.Errorf("%w: conflicting message removal", ErrResync)
-		}
-		removed[id] = true
-	}
-	has := func(id string) bool { return upserts[id] || !d.Reset && current[id] && !removed[id] }
-	if d.Order == nil {
-		for id := range upserts {
-			if !current[id] {
-				return fmt.Errorf("%w: new message without order", ErrResync)
-			}
-		}
-		if len(removed) != 0 {
-			return fmt.Errorf("%w: removal without order", ErrResync)
-		}
-		return nil
-	}
-	seen := make(map[string]bool)
-	for _, id := range d.Order {
-		if id == "" || seen[id] || removed[id] || !has(id) {
-			return fmt.Errorf("%w: invalid message order", ErrResync)
-		}
-		seen[id] = true
-	}
-	for id := range upserts {
-		if !seen[id] {
-			return fmt.Errorf("%w: unordered message", ErrResync)
-		}
-	}
-	if !d.Reset {
-		for id := range current {
-			if !removed[id] && !seen[id] {
-				return fmt.Errorf("%w: omitted message", ErrResync)
-			}
-		}
-	}
-	return nil
-}
-
 func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) ([]string, error) {
 	// Ownership transfers with the batch: it was decoded from the wire by the
 	// fetch goroutine and nothing else references it, so installing it
@@ -318,7 +273,6 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 		v.AgentMgr.Remove(id)
 		v.PaneMgr.Remove(id)
 		delete(v.agents, id)
-		delete(v.membership, id)
 	}
 	// Parents need not precede children on the wire.
 	pending := append([]coreprotocol.AgentDelta(nil), deltas...)
@@ -353,18 +307,6 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 			// Bodies belong only to Conversation, not a second retained snapshot.
 			a.Messages = nil
 			v.agents[a.ID] = a
-			if delta.Conversation.Reset {
-				v.membership[a.ID] = make(map[string]bool)
-			}
-			if v.membership[a.ID] == nil {
-				v.membership[a.ID] = make(map[string]bool)
-			}
-			for _, id := range delta.Conversation.Removed {
-				delete(v.membership[a.ID], id)
-			}
-			for _, message := range delta.Conversation.Upserts {
-				v.membership[a.ID][message.InternalID] = true
-			}
 			changed = append(changed, a.ID)
 		}
 		pending = next

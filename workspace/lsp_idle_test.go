@@ -1,9 +1,11 @@
 package workspace
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"crude/types"
 )
@@ -78,5 +80,122 @@ func TestLSPUnsupportedDocumentExplainsNoMatchingServer(t *testing.T) {
 	}
 	if len(runtime.snapshot()) != 0 {
 		t.Fatal("unsupported file launched an arbitrary server")
+	}
+}
+
+func assertLSPBroadcast(t *testing.T, m *LSPManager, mutate func()) {
+	t.Helper()
+	version, wake := m.Changed()
+	_, second := m.Changed()
+	if wake == nil || second != wake {
+		t.Fatal("unchanged LSP owner did not reuse broadcast")
+	}
+	mutate()
+	select {
+	case <-wake:
+	default:
+		t.Fatal("LSP mutation did not broadcast")
+	}
+	next, nextWake := m.Changed()
+	if next <= version || nextWake == wake {
+		t.Fatal("LSP mutation did not advance fenced version")
+	}
+}
+
+func TestLSPChangedDiagnosticsClearAndStop(t *testing.T) {
+	m := NewLSPManager(nil)
+	defer m.Close()
+	assertLSPBroadcast(t, m, func() { m.setFileDiagnostics("a.go", []LSPDiagnostic{{Severity: DiagError, Message: "bad"}}) })
+	if m.ProjectInsights().Errors != 1 {
+		t.Fatal("diagnostic absent from projection")
+	}
+	assertLSPBroadcast(t, m, m.ClearDiagnostics)
+	if m.ProjectInsights().Errors != 0 || len(m.AllDiagnostics()) != 0 {
+		t.Fatal("diagnostics not cleared")
+	}
+	assertLSPBroadcast(t, m, m.Stop)
+	if m.ProjectInsights().IdleStatus != "Language servers paused" {
+		t.Fatal("stop not projected")
+	}
+}
+
+func TestLSPChangedBusyCancellationAndPanic(t *testing.T) {
+	m := NewLSPManager(nil)
+	defer m.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	entered, done := make(chan struct{}), make(chan struct{})
+	_, wake := m.Changed()
+	go func() {
+		defer close(done)
+		_ = m.trackInflight(func() error { close(entered); <-ctx.Done(); return ctx.Err() })
+	}()
+	<-entered
+	select {
+	case <-wake:
+	default:
+		t.Fatal("query busy did not broadcast")
+	}
+	if !m.ProjectInsights().ServerBusy {
+		t.Fatal("query missing busy state")
+	}
+	_, wake = m.Changed()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("query cancellation did not finish")
+	}
+	select {
+	case <-wake:
+	default:
+		t.Fatal("query cancellation did not broadcast")
+	}
+	if m.ProjectInsights().ServerBusy {
+		t.Fatal("cancelled query remained busy")
+	}
+	_, wake = m.Changed()
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("query panic swallowed")
+			}
+		}()
+		_ = m.trackInflight(func() error { panic("query failure") })
+	}()
+	select {
+	case <-wake:
+	default:
+		t.Fatal("query failure did not broadcast")
+	}
+	if m.ProjectInsights().ServerBusy {
+		t.Fatal("failed query remained busy")
+	}
+}
+
+type idleSymbolsClient struct{ LSPClient }
+
+func (idleSymbolsClient) Stop() {}
+
+func (idleSymbolsClient) RequestDocumentSymbols(context.Context, string) []LSPSymbol {
+	return []LSPSymbol{{Name: "visibleSymbol"}}
+}
+
+func TestLSPChangedSymbolsAndInvalidation(t *testing.T) {
+	m := NewLSPManager(nil)
+	defer m.Close()
+	path := filepath.Clean("symbols.go")
+	// Install a connected, already-synchronized transport so the real request
+	// path caches symbols, without starting a process or a lifecycle worker.
+	m.mu.Lock()
+	m.documents[path] = &lspDocument{key: "server", editor: true, opened: true, revision: 1, syncedRevision: 1}
+	m.states["server"] = &lspClientState{status: LSPConnected, client: idleSymbolsClient{}}
+	m.mu.Unlock()
+	assertLSPBroadcast(t, m, func() { m.RequestDocumentSymbols(t.Context(), path) })
+	if m.ProjectInsights().SymbolsCount != 1 || m.DocumentSymbols(path)[0].Name != "visibleSymbol" {
+		t.Fatal("symbol result not retained")
+	}
+	assertLSPBroadcast(t, m, func() { m.InvalidateFile(path) })
+	if m.ProjectInsights().SymbolsCount != 0 {
+		t.Fatal("invalidated symbols remained visible")
 	}
 }

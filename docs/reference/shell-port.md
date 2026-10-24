@@ -23,7 +23,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `settings.go` | `Settings`, `ToolLayoutStore` | app/workspace settings, accounts, tool layout |
 | `files.go` | `Files` | file mutations, project search; carries `Documents()` and `LSPMgr()` accessors |
 | `documents.go` | `DocumentService` | checked snapshot save infrastructure |
-| `live_documents.go`, `live_document_commands.go` | `LiveDocuments`, formatter/receipts/command interfaces | universal connected editor lifecycle, sync, exact-owner commands |
+| `live_documents.go`, `live_document_commands.go` | `LiveDocuments`, formatter/receipts/command interfaces | universal connected editor lifecycle, per-open topic, recovery sync, exact-owner commands |
 | `lsp.go` | `LSPService` | language-server manager |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
@@ -32,6 +32,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `collaboration.go` | `Collaboration` | agent Board |
 | `terminals.go` | `TerminalHost`, `TerminalService`, `TerminalManager` | PTY services |
 | `status.go` | `StatusHost`, `StatusService` | workspace status center |
+| `remotes.go`, `remote_access.go` | `RemoteManager`, `BackendLink`, `RemoteAccessAdmin` | shell-local connection catalog/backend switching; host-local admission administration |
 | `local.go`, `local_delegates.go` | `Local`, `Unwrap` | in-process adapter over `*workspace.Workspace` |
 
 ## Conventions
@@ -70,8 +71,11 @@ Attached shells read committed setup state through the same selected core.
   non-test code in `tui/`, taken when this port landed (historical, not recounted for this checkpoint). `reads/mutates` says what
   the TUI does through the member; `RPC-able` judges the signature as-is.
 - **Protocol** names the existing `coreprotocol` method, or `replica` when the
-  state is delivered by `workspace.attach` / `workspace.snapshot` /
-  `agent.changes` and read from `coreclient.WorkspaceView`, or `none` for local-only/core-internal behavior. Closure/object signatures remain local port contracts; only detached typed payloads cross the wire.
+  state is installed from acknowledged workspace/state topics and read from
+  `coreclient.WorkspaceView`, or `none` for local-only/core-internal behavior.
+  Snapshot and change commands remain explicit inspection/recovery operations,
+  not the normal replication loop. Closure/object signatures remain local port
+  contracts; only detached typed payloads cross the wire.
 
 ## Inventory
 
@@ -88,7 +92,7 @@ Runtime is the identity, lifecycle and startup surface of one project workspace.
 | `InitialModelName` | 1 | reads | yes | replica field |
 | `Logger` | 65 | reads | no: client-local sink | none; client-local logging |
 | `WorkspaceDB` | 4 | reads | no: database handle / identity token | none; identity token (see WorkspaceStore) |
-| `SetEventBus` | 1 | mutates | no: passes event sink | none; replaced by workspace.attach subscription + workspace.changed |
+| `SetEventBus` | 1 | mutates | no: passes event sink | none; sink wiring for acknowledged workspace/state topics |
 | `SwitchProject` | 1 | mutates | yes | workspace.detach + workspace.attach (shell re-attaches to the target workspace) |
 | `TakeStartupIssues` | 1 | reads | yes | workspace.startup |
 | `LastRegistryError` | 2 | reads | yes | workspace.startup |
@@ -117,16 +121,16 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
-| `AgentMgr` | 87 | reads | no: live mutable state holder (replica type; clients own a local copy) | workspace.attach / workspace.snapshot / agent.changes (replica: coreclient.WorkspaceView.AgentMgr) |
+| `AgentMgr` | 87 | reads | no: live mutable state holder (replica type; clients own a local copy) | workspace topic (replica: coreclient.WorkspaceView.AgentMgr) |
 | `PaneMgr` | 5 | reads | no: replica state holder | replica (coreclient.WorkspaceView.PaneMgr); pane state is shell-local derived data |
-| `AdvanceAgentState` | 1 | mutates | no: returns AgentReduction effects consumed locally | none; runs on the core owner loop (replica receives agent.changes) |
+| `AdvanceAgentState` | 1 | mutates | no: returns AgentReduction effects consumed locally | none; runs on the core owner loop (replica receives workspace topic) |
 | `AgentActivity` | 2 | reads | yes | replica: coreclient.WorkspaceView.AgentActivity |
 | `AgentModelIdentity` | 2 | reads | yes | replica: coreclient.WorkspaceView.AgentModelIdentity |
 | `AgentTurnActive` | 5 | reads | yes | replica: coreclient.WorkspaceView.AgentTurnActive |
 | `UsageSummary` | 4 | reads | yes | replica: coreclient.WorkspaceView.UsageSummary |
 | `YoloForAgent` | 6 | reads | yes | replica: coreclient.WorkspaceView.YoloForAgent |
 | `SetYoloForAgent` | 1 | mutates | yes | agent.yolo |
-| `ApplyAgentEvent` | 3 | mutates | no: core-side reducer with effects | none; core-side reducer. Replica side is WorkspaceView.ApplyChanges (agent.changes) |
+| `ApplyAgentEvent` | 3 | mutates | no: core-side reducer with effects | none; core-side reducer. Replica preflights and installs workspace publications |
 | `ApplyAgentStatusEvent` | 1 | mutates | no: core-side reducer | none; core-side reducer |
 | `AppendAgentMessages` | 3 | mutates | partial: bulk message payload | agent.append_messages (explicit restore/control operation; ordinary ingress is core-owned) |
 | `RegisterAgentRoot` | 1 | mutates | no: returns live *AgentNode | none; core-side inventory (session.create/open result) |
@@ -144,7 +148,7 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 | `RejectAgentRecoveryCancellation` | 1 | mutates | yes | agent.recover_reject |
 | `PrepareAsyncCommandTermination` | 1 | mutates | no: returns closure | agent.stop_command (exact AsyncCmdRef) |
 | `PrepareCompactForAgent` | 1 | mutates | no: returns live PreparedCompaction | agent.compact (request progress, no live PreparedCompaction on wire) |
-| `HydrateSubAgents` | 1 | mutates | yes | none (workspace.snapshot / agent.changes deliver hydrated children) |
+| `HydrateSubAgents` | 1 | mutates | yes | none (workspace topic delivers hydrated children) |
 | `PrepareAgentInputAdmission` | 1 | mutates | no: returns *InputAdmissionIntent (opaque handle consumed by Commit/Apply) | agent.submit (intent/commit/apply collapse into one submit + request.receipt) |
 | `CommitAgentInputAdmission` | 1 | mutates | partial: takes the opaque intent handle | agent.submit |
 | `ApplyAgentInputAdmission` | 1 | mutates | partial: takes the opaque intent handle | agent.submit (client-side reducer on the receipt) |
@@ -164,7 +168,7 @@ Sessions is the session registry, lifecycle and per-session settings surface.
 | `NewAgentSession` | 1 | mutates | partial: result is data, but the session it creates is a live object the replica must materialize | session.create |
 | `OpenAgentSession` | 1 | mutates | partial: same as NewAgentSession | session.open |
 | `BackendSession` | 1 | reads | no: returns live *session.Session backend | none; live backend (replica exposes a settings snapshot instead: settings.session.read) |
-| `SessionConnectionIssue` | 1 | reads | yes | session.snapshots replica |
+| `SessionConnectionIssue` | 1 | reads | yes | registry/workspace topic replica |
 | `PrepareMultiAgentToggle` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.toggle_multi_agent |
 | `PrepareSessionCapabilityToggle` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.toggle_capability |
 | `PrepareSessionSettingsSave` | 1 | mutates | no: returns *SessionSettingsOperation (carries Run closure) | settings.session.save |
@@ -234,17 +238,17 @@ LSPService is the workspace language-server manager.
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
-| `AllDiagnostics` | 3 | reads | yes | lsp.snapshot replica |
+| `AllDiagnostics` | 3 | reads | yes | LSP state topic replica |
 | `ClearDiagnostics` | 1 | mutates | yes | lsp.clear_diagnostics |
 | `CloseFile` | 2 | mutates | yes | lsp.close_file |
-| `DocumentSymbols` | 1 | reads | yes | lsp.snapshot replica |
-| `DiagnosticSnapshot` | 1 | reads | yes: non-destructive per-client cursor | lsp.snapshot replica + per-client consumer |
-| `FileDiagnostics` | 2 | reads | yes | lsp.snapshot replica |
+| `DocumentSymbols` | 1 | reads | yes | LSP state topic replica |
+| `DiagnosticSnapshot` | 1 | reads | yes: non-destructive per-client cursor | LSP state topic replica + per-client consumer |
+| `FileDiagnostics` | 2 | reads | yes | LSP state topic replica |
 | `FindReferences` | 1 | reads | yes | lsp.references |
 | `NotifyFileSave` | 2 | mutates | yes | lsp.notify_file_save |
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
 | `OpenFile` | 2 | mutates | yes | lsp.open_file |
-| `ProjectInsights` | 3 | reads | yes | lsp.snapshot replica |
+| `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
 | `QueueFileUpdate` | 1 | mutates | yes | lsp.queue_file_update |
 | `RequestCompletions` | 1 | reads | yes | lsp.completions |
 | `RequestDefinition` | 1 | reads | yes | lsp.definition |
@@ -252,17 +256,17 @@ LSPService is the workspace language-server manager.
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestRename` | 1 | mutates | yes: typed *protocol.WorkspaceEdit | lsp.rename (typed *protocol.WorkspaceEdit) |
 | `RestartServer` | 1 | mutates | yes | lsp.restart_server |
-| `ServerHealthSnapshots` | 3 | reads | yes | lsp.snapshot replica |
-| `ServerReady` | 2 | reads | yes | lsp.snapshot replica |
+| `ServerHealthSnapshots` | 3 | reads | yes | LSP state topic replica |
+| `ServerReady` | 2 | reads | yes | LSP state topic replica |
 | `SetActiveFile` | 1 | mutates | yes | lsp.set_active_file |
-| `Settings` | 2 | reads | yes | lsp.snapshot replica |
-| `ShowDiagnosticsInEditor` | 2 | reads | yes | lsp.snapshot replica |
-| `ShowDiagnosticsInTree` | 1 | reads | yes | lsp.snapshot replica |
+| `Settings` | 2 | reads | yes | LSP state topic replica |
+| `ShowDiagnosticsInEditor` | 2 | reads | yes | LSP state topic replica |
+| `ShowDiagnosticsInTree` | 1 | reads | yes | LSP state topic replica |
 | `StartForWorkspace` | 1 | mutates | yes | lsp.start_for_workspace |
-| `Status` | 6 | reads | accessor | lsp.snapshot replica |
+| `Status` | 6 | reads | accessor | LSP state topic replica |
 | `Stop` | 1 | mutates | yes | lsp.stop (explicit action only, never detach) |
 | `StopServer` | 1 | mutates | yes | lsp.stop_server |
-| `Version` | 1 | reads | yes | lsp.snapshot replica |
+| `Version` | 1 | reads | yes | LSP state topic replica |
 
 ### `SourceControl`
 
@@ -382,7 +386,7 @@ TerminalHost exposes the in-app PTY services.
 |--------|------:|-----|----------------|--------------|
 | `Terminals` | 4 | reads | accessor | terminal.* |
 | `EnsureTerminals` | 1 | mutates | accessor | none; core-owned (terminal.create creates) |
-| `TermMgr` | 3 | reads | accessor | terminal.list |
+| `TermMgr` | 3 | reads | accessor | terminal-inventory state topic |
 
 ### `TerminalService`
 
@@ -394,12 +398,12 @@ TerminalService owns the one parser and reply state for every PTY.
 | `Close` | 1 | mutates | yes | terminal.close |
 | `Create` | 1 | mutates | yes | terminal.create |
 | `Detach` | 1 | mutates | no: takes TerminalController interface | terminal.release |
-| `Focus` | 1 | mutates | partial: takes opaque TerminalLease | terminal.input |
-| `Key` | 1 | mutates | partial: takes opaque TerminalLease | terminal.input |
-| `Mouse` | 1 | mutates | partial: takes opaque TerminalLease | terminal.input |
-| `Paste` | 1 | mutates | partial: takes opaque TerminalLease | terminal.input |
-| `Resize` | 1 | mutates | partial: takes opaque TerminalLease | terminal.resize |
-| `Rows` | 2 | reads | yes | terminal.rows |
+| `Focus` | 1 | mutates | partial: takes opaque TerminalLease | ordered lease input stream |
+| `Key` | 1 | mutates | partial: takes opaque TerminalLease | ordered lease input stream |
+| `Mouse` | 1 | mutates | partial: takes opaque TerminalLease | ordered lease input stream |
+| `Paste` | 1 | mutates | partial: takes opaque TerminalLease | ordered lease input stream |
+| `Resize` | 1 | mutates | partial: takes opaque TerminalLease | ordered lease input stream |
+| `Rows` | 2 | reads | yes | terminal.rows (bounded on-demand history/selection); normal viewport uses grid topic |
 
 ### `TerminalManager`
 
@@ -407,8 +411,8 @@ TerminalManager owns the PTY sessions.
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
-| `Get` | 5 | reads | yes | terminal.list |
-| `List` | 4 | reads | yes | terminal.list |
+| `Get` | 5 | reads | yes | terminal-inventory state topic replica |
+| `List` | 4 | reads | yes | terminal-inventory state topic replica |
 
 ### `StatusHost`
 
@@ -416,7 +420,7 @@ StatusHost exposes the workspace status center.
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
-| `Status` | 37 | reads | accessor | status.snapshot replica |
+| `Status` | 37 | reads | accessor | status state topic replica |
 
 ### `StatusService`
 
@@ -424,21 +428,21 @@ StatusService retains workspace-scoped operations, issues and notification histo
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
-| `Agent` | 3 | reads | yes | status.snapshot replica |
-| `Agents` | 1 | reads | yes | status.snapshot replica |
+| `Agent` | 3 | reads | yes | status state topic replica |
+| `Agents` | 1 | reads | yes | status state topic replica |
 | `Dismiss` | 2 | mutates (shared store) | yes | status.mutate |
 | `FinishOperation` | 1 | mutates (shared store) | yes | status.mutate |
-| `Hydrate` | 1 | mutates | yes | status.snapshot replica |
-| `Issues` | 2 | reads | yes | status.snapshot replica |
+| `Hydrate` | 1 | mutates | yes | status state topic replica |
+| `Issues` | 2 | reads | yes | status state topic replica |
 | `LatestTransient` | 1 | reads | yes | shell-local transient |
 | `MarkRead` | 3 | mutates (shared store) | yes | status.mutate |
-| `Notifications` | 2 | reads | yes | status.snapshot replica |
+| `Notifications` | 2 | reads | yes | status state topic replica |
 | `Notify` | 6 | mutates (shared store) | yes | status.mutate |
 | `ResolveIssue` | 3 | mutates (shared store) | yes | status.mutate |
 | `SetIssue` | 2 | mutates (shared store) | yes | status.mutate |
 | `SetOperation` | 2 | mutates (shared store) | yes | status.mutate |
-| `UnreadCount` | 1 | reads | yes | status.snapshot replica |
-| `Version` | 1 | reads | yes | status.snapshot replica |
+| `UnreadCount` | 1 | reads | yes | status state topic replica |
+| `Version` | 1 | reads | yes | status state topic replica |
 
 ## Members that cannot cross a process boundary as written
 
@@ -475,12 +479,20 @@ These signatures are local port contracts, not wire payloads. The connected adap
 
 ## Connected ownership and remaining boundaries
 
-- `StatusService` uses `status.snapshot` and typed `status.mutate` operations;
-  transients remain shell-local. Settings/session/LSP/status/terminal registry
-  reads are replicas, not blocking calls on Update.
+Protocol v2 uses generated bounded MessagePack tuples on independent command,
+topic, input and bulk streams. The local/SSH/TLS mux and QUIC carrier share one
+retained-session contract; no port object, callback or database handle is a wire
+value. See [wire and delivery](core-client-protocol.md#wire-format-and-bounded-delivery).
+
+- `StatusService` reads its independent latest-state topic and uses typed
+  `status.mutate` operations; transients remain shell-local. Settings, registry,
+  LSP, status, Git, Board and terminal inventory have independent state topics,
+  not periodic fetches or blocking calls on Update.
 - Agent inventory, semantic event reduction and ticks run only on the core actor.
-  The collector coalesces notifications, workers fetch detached data, and Update
-  alone installs `ReplicaChangesMsg`. `StartReplica` follows sink installation.
+  Acknowledged subscriptions post detached `ReplicaChangesMsg` batches; Update
+  preflights the complete publication and commits atomically before releasing its
+  applied ACK. A repeated invalid publication fails after bounded reset, rather
+  than looping. `StartReplica` follows sink installation.
   Pane renderers bind canonical replica Conversations; snapshots/resync preserve
   surviving identities. Pending root activation waits for its replica and peer
   roots do not steal editor focus.
@@ -493,10 +505,15 @@ These signatures are local port contracts, not wire payloads. The connected adap
   diagnostic drain. Rename returns `*protocol.WorkspaceEdit`; no callback or
   untyped edit crosses the wire. Document views are per-client; detach releases
   those views without stopping servers.
-- `LiveDocuments` Open/Sync/Edit/Close/Save and optional Format/receipt commands
-  carry `DocumentOwner` attachment epochs. Update installs deltas and optimistic
-  state; commands run off-UI. Reconnect reopens views, observes exact receipts and
-  never replays uncertain mutations. Core SQLite retains accepted unsaved text,
+- `LiveDocuments` Open/Edit/Close/Save and optional Format/receipt commands
+  carry `DocumentOwner` attachment epochs. Each open owns a document topic with
+  snapshot, revision operations and savepoint state. Update commits a prepared
+  canonical/private rebase atomically; ordinary edits and saves do not call
+  `SyncDocument`. Sync remains explicit recovery/shutdown infrastructure. Warm
+  resume retains cursors; cold reset protects pending private work as conflict.
+  Topic tokens fence close/reopen, resolution and workspace-generation changes.
+  Reconnect observes exact receipts and never replays uncertain mutations.
+  Core SQLite retains accepted unsaved text,
   author undo and savepoints. Stable IDs survive Path rename; dirty/conflicted
   files are protected by durable batch intents.
 - Core owns project and lazy document-directory watchers. Connected tree browsing,
@@ -515,8 +532,14 @@ These signatures are local port contracts, not wire payloads. The connected adap
   client-accessible SQL handle. `Local` does not add locking and is not a second
   interactive CLI startup path.
 
-The public shell attaches through `ConnectCore`, or system SSH selected with
-`--ssh HOST --workspace REMOTE_PATH` and optional user/port/identity flags.
-Native Windows and distinct-host acceptance remain pending.
-See the [active plan](../plans/core-shell-separation.md) and
-[protocol reference](core-client-protocol.md) for release evidence and limits.
+`RemoteManager` is supplied by the shell host, not the selected core. It owns the
+local connection catalog, credential access, Test/Connect/Disconnect, remote
+workspace browsing and exact-backend switching. `RemoteAccessAdmin` is a separate
+selected-core port, gated by authenticated immutable LocalHost provenance; it
+cannot be granted by naming a connection Local. Per-form and backend generations
+fence asynchronous results.
+
+The public shell attaches through `ConnectCore`, the Remotes manager, or strict
+system SSH selected with `--ssh HOST --workspace REMOTE_PATH` and optional
+user/port/identity flags. Native-platform, distinct-host and full-process acceptance
+require separate evidence; see the [protocol reference](core-client-protocol.md).

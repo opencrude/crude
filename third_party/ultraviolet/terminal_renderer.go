@@ -552,11 +552,10 @@ func (s *TerminalRenderer) updatePen(cell *Cell) {
 	oldLink := ConvertLink(s.cur.Link, s.profile)
 
 	if !newStyle.Equal(&oldStyle) {
-		seq := newStyle.Diff(&oldStyle)
-		if newStyle.IsZero() && len(seq) > len(ansi.ResetStyle) {
-			seq = ansi.ResetStyle
-		}
-		_, _ = s.buf.WriteString(seq)
+		// AvailableBuffer borrows retained writer storage; Write commits it before
+		// any other buffer operation. No per-cell SGR string is constructed.
+		seq := AppendStyleDiff(s.buf.AvailableBuffer(), &oldStyle, &newStyle)
+		_, _ = s.buf.Write(seq)
 		s.cur.Style = cell.Style // Copy the original style
 	}
 	if !newLink.Equal(&oldLink) {

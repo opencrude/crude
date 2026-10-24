@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,21 +49,21 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 	defer client.Close()
 	attached := callCore(t, client, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
 	var attachment coreprotocol.AttachResult
-	if err := json.Unmarshal(attached.Payload, &attachment); err != nil {
+	if err := coreprotocol.Decode(attached.Payload, &attachment); err != nil {
 		t.Fatal(err)
 	}
 	wsID := attachment.WorkspaceID
 	fetch := func(id string) coreprotocol.SettingsFetchResult {
-		result := callCore(t, client, id, wsID, coreprotocol.SettingsFetch, struct{}{})
+		result := callCore(t, client, id, wsID, coreprotocol.SettingsFetch, coreprotocol.Empty{})
 		var value coreprotocol.SettingsFetchResult
-		if err := json.Unmarshal(result.Payload, &value); err != nil {
+		if err := coreprotocol.Decode(result.Payload, &value); err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
 	search := callCore(t, client, "discover", wsID, coreprotocol.CapabilityAction, coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: "discover", Kind: captypes.KindSkill, Query: "guide", Scope: captypes.ScopeApplication, Arguments: map[string]string{"source_id": "local"}}})
 	var discovered coreprotocol.CapabilityResult
-	if err := json.Unmarshal(search.Payload, &discovered); err != nil {
+	if err := coreprotocol.Decode(search.Payload, &discovered); err != nil {
 		t.Fatal(err)
 	}
 	if len(discovered.Entries) != 1 {
@@ -73,7 +72,7 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 	action := captypes.Action{Operation: "install", ID: discovered.Entries[0].ID, Kind: captypes.KindSkill, Scope: captypes.ScopeApplication}
 	previewResponse := callCore(t, client, "preview", wsID, coreprotocol.CapabilityAcquisitionPreview, coreprotocol.CapabilityActionRequest{Action: action})
 	var preview coreprotocol.CapabilityPreviewResult
-	if err := json.Unmarshal(previewResponse.Payload, &preview); err != nil {
+	if err := coreprotocol.Decode(previewResponse.Payload, &preview); err != nil {
 		t.Fatal(err)
 	}
 	passive := fetch("passive")
@@ -87,7 +86,7 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 		t.Fatal("approved exact binding did not publish")
 	}
 	// The old exact installation review cannot authorize a replacement binding.
-	raw, _ := json.Marshal(coreprotocol.CapabilityActionRequest{Action: action})
+	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.CapabilityActionRequest{Action: action}))
 	refused := client.Call(t.Context(), coreprotocol.Request{ID: "old-preview", Owner: client.Owner, WorkspaceID: wsID, Method: coreprotocol.CapabilityAction, Payload: raw})
 	if refused.Error == nil {
 		t.Fatal("changed binding accepted old preview")

@@ -68,6 +68,7 @@ type DocumentService struct {
 	closed      bool
 	watch       *documentWatch
 	bus         *EventBus
+	subscribers map[string]map[chan struct{}]bool
 }
 
 func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager, state ...*sql.DB) *DocumentService {
@@ -672,10 +673,19 @@ func (s *DocumentService) Sync(owner document.Owner, id string, after uint64) (d
 	if err != nil {
 		return document.SyncResult{}, err
 	}
-	out := document.SyncResult{Snapshot: cloneDocument(d.snapshot)}
+	out := s.syncDocumentLocked(d, after)
+	if !out.Reset {
+		out.Snapshot = cloneDocument(out.Snapshot)
+	}
+	return out, nil
+}
+
+func (s *DocumentService) syncDocumentLocked(d *liveDocument, after uint64) document.SyncResult {
+	out := document.SyncResult{Snapshot: d.snapshot}
 	if after == 0 || after > d.snapshot.Revision {
 		out.Reset = true
-		return out, nil
+		out.Snapshot = cloneDocument(d.snapshot)
+		return out
 	}
 	next := after
 	for _, op := range d.journal {
@@ -683,7 +693,8 @@ func (s *DocumentService) Sync(owner document.Owner, id string, after uint64) (d
 			if op.change.BaseRevision != next {
 				out.Reset = true
 				out.Changes = nil
-				return out, nil
+				out.Snapshot = cloneDocument(d.snapshot)
+				return out
 			}
 			out.Changes = append(out.Changes, cloneChange(op.change))
 			next = op.revision
@@ -693,13 +704,16 @@ func (s *DocumentService) Sync(owner document.Owner, id string, after uint64) (d
 		out.Reset = true
 		out.Changes = nil
 	}
-	return out, nil
+	if out.Reset {
+		out.Snapshot = cloneDocument(out.Snapshot)
+	}
+	return out
 }
 
 type DocumentChangedMsg struct{ ID string }
 
 func (s *DocumentService) SetEventBus(bus *EventBus) { s.mu.Lock(); s.bus = bus; s.mu.Unlock() }
-func (s *DocumentService) changed(id string)         { s.watch.changed(id) }
+func (s *DocumentService) changed(id string)         { s.notifyDocument(id); s.watch.changed(id) }
 
 func (s *DocumentService) Format(ctx context.Context, owner document.Owner, id, requestID string, revision uint64) (document.Snapshot, error) {
 	s.mu.Lock()

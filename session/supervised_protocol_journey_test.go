@@ -31,7 +31,9 @@ func TestRegisteredProtocolsSessionSupervisedStopDuringCooldown(t *testing.T) {
 	runSessionSupervisedProtocolMatrix(t, []string{"stop"})
 }
 
-func TestRegisteredProtocolsSessionPermanentFailuresNeedAttention(t *testing.T) {
+// A permanent provider verdict ends a root turn with its reason (Codex and
+// Claude Code semantics); a child parks so its parent can decide.
+func TestRegisteredProtocolsSessionPermanentFailuresEndRootTurnOrParkChild(t *testing.T) {
 	runSessionSupervisedProtocolMatrix(t, []string{"schema", "auth", "quota"})
 }
 
@@ -170,6 +172,7 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	partial := outcome == "complete" || outcome == "stop"
+	endsTurn := owner == "root" && !partial
 	original := "ORIGINAL-" + protocol + "-" + owner
 	accepted := "ACCEPTED-" + protocol + "-" + owner
 	partialID := "incomplete-" + protocol + "-" + owner
@@ -407,6 +410,12 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		}
 		assertSessionSupervisedJourneyMessages(t, cp.ActiveContext, original, accepted, partialID, 1)
 		assertSessionSupervisedJourneyMessages(t, cp.Archive, original, accepted, partialID, 1)
+	} else if endsTurn {
+		if cp.Status.State != recoverytypes.Failed || !cp.Status.RetryAt.IsZero() || cp.Status.CanRetry() || cp.Status.Action != "" ||
+			!strings.Contains(cp.Status.Detail, "Provider") || !strings.Contains(cp.Status.Detail, "API ") {
+			t.Fatalf("permanent %s root failure did not end its turn with the exact reason: %+v", outcome, cp.Status)
+		}
+		assertSessionSupervisedJourneyMessages(t, cp.ActiveContext, original, accepted, partialID, 0)
 	} else {
 		if cp.Status.State != recoverytypes.NeedsAttention || !cp.Status.RetryAt.IsZero() || cp.Status.Detail == "" || cp.Status.Action == "" {
 			t.Fatalf("permanent %s failure was not actionable/nonautomatic: %+v", outcome, cp.Status)
@@ -429,7 +438,19 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 			}
 		}
 	}
-	if outcome != "complete" {
+	if !partial && endsTurn {
+		select {
+		case <-time.After(1100 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("permanent-failure observation timed out")
+		}
+		if requests.Load() != 1 {
+			t.Fatalf("permanent %s root failure automatically retried: requests=%d", outcome, requests.Load())
+		}
+		if s.RetryRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation) == nil {
+			t.Fatal("a failed turn still offered Retry")
+		}
+	} else if outcome != "complete" {
 		if s.CancelRecoveryFor(ownerID, "foreign-incident", cp.Status.Generation) == nil ||
 			s.CancelRecoveryFor(ownerID, cp.Status.ID, cp.Status.Generation+1) == nil {
 			t.Fatal("stale Stop reached the real owner")
@@ -439,7 +460,9 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		}
 	}
 	wantReason := "completed"
-	if outcome != "complete" {
+	if endsTurn {
+		wantReason = "failed"
+	} else if outcome != "complete" {
 		wantReason = "cancelled"
 	}
 	waiting := true
@@ -503,7 +526,9 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		t.Fatal(err)
 	}
 	wantState := recoverytypes.Recovered
-	if outcome != "complete" {
+	if endsTurn {
+		wantState = recoverytypes.Failed
+	} else if outcome != "complete" {
 		wantState = recoverytypes.Cancelled
 	}
 	if terminal.checkpoint.Status.State != wantState || !terminal.checkpoint.Status.RetryAt.IsZero() ||
@@ -513,7 +538,9 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		t.Fatalf("terminal publication lost exact recovery/context identity: %+v", terminal.checkpoint)
 	}
 	wantTurnState := sessiondb.TurnCompleted
-	if outcome != "complete" {
+	if endsTurn {
+		wantTurnState = sessiondb.TurnFailed
+	} else if outcome != "complete" {
 		wantTurnState = sessiondb.TurnInterrupted
 	}
 	if terminal.turn == nil || terminal.turn.AgentID != ownerID || terminal.turn.Generation != cp.Status.Generation || terminal.turn.State != wantTurnState {

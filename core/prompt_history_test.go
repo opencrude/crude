@@ -29,7 +29,7 @@ func TestCoreHistoryImmutableCrossSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := value.(coreprotocol.HistoryListResult).Entries[0]
+	entry := value.(*coreprotocol.HistoryListResult).Entries[0]
 	if err := os.WriteFile(ref.FilePath, []byte("changed source"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestCoreHistoryImmutableCrossSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := value.(coreprotocol.HistoryRestoreResult)
+	restored := value.(*coreprotocol.HistoryRestoreResult)
 	if restored.Text != text || len(restored.ReferenceIDs) != 1 {
 		t.Fatalf("bad restore: %+v", restored)
 	}

@@ -131,6 +131,16 @@ func (st *asyncCmdState) killGroup() {
 	}
 }
 
+// settle maps exec.ErrWaitDelay, which Wait returns only when the command
+// otherwise succeeded, to success and records why output stopped.
+func (st *asyncCmdState) settle(err error) error {
+	if !errors.Is(err, exec.ErrWaitDelay) {
+		return err
+	}
+	_, _ = st.Write([]byte(detachedOutputNote))
+	return nil
+}
+
 func (st *asyncCmdState) Write(data []byte) (int, error) {
 	st.outputMu.Lock()
 	n, err := st.output.Write(data)
@@ -138,8 +148,17 @@ func (st *asyncCmdState) Write(data []byte) (int, error) {
 	return n, err
 }
 
+// detachedOutputNote marks output the owned tree no longer controls: the
+// command succeeded, but a process that left its session kept the pipe open.
+const detachedOutputNote = "\n[crude: a process started by this command detached and kept its output open; its later output is not captured]\n"
+
+// commandPipeGrace bounds Wait after the owned tree has ended: a process that
+// left the command's session can hold an inherited output pipe indefinitely.
+const commandPipeGrace = time.Second
+
 func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	c := exec.CommandContext(ctx, name, arg...)
+	c.WaitDelay = commandPipeGrace
 	setCmdSysProcAttr(c)
 	c.Cancel = func() error {
 		return cancelProcess(c)
@@ -445,7 +464,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		defer m.notifySettled(state)
 		defer close(state.done)
 		defer state.cleanup()
-		err := tree.wait()
+		err := state.settle(tree.wait())
 		state.mu.Lock()
 		defer state.mu.Unlock()
 		state.info.EndedAt = time.Now()
@@ -779,7 +798,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 		defer m.notifySettled(state)
 		defer close(state.done)
 		defer state.cleanup()
-		err := tree.wait()
+		err := state.settle(tree.wait())
 		if outputDone != nil {
 			// Closing a PTY after process exit is safe after its final output drains.
 			select {

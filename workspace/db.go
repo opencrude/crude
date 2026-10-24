@@ -3,9 +3,12 @@ package workspace
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"crude/memory"
@@ -31,6 +34,12 @@ type WorkspaceDB struct {
 	// Memory is the durable workspace memory store (schema owned by the
 	// crude/memory package; lives inside this same workspace.db).
 	Memory *memory.Store
+
+	// settingsWriteMu orders every workspace_settings transaction through its
+	// committed publication. Readers use immutable bytes without waiting for SQL
+	// or a writer holding this mutex. The projection belongs to this exact DB.
+	settingsWriteMu sync.Mutex
+	settingsRow     atomic.Pointer[string]
 }
 
 // OpenWorkspaceDB opens (or creates) the workspace-level database for the
@@ -94,12 +103,19 @@ func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 		return nil, fmt.Errorf("migrate memory schema: %w", err)
 	}
 
-	return &WorkspaceDB{
+	wdb := &WorkspaceDB{
 		DB:     db,
 		Path:   dbPath,
 		Dir:    dir,
 		Memory: memStore,
-	}, nil
+	}
+	var settings string
+	if err := db.QueryRow(`SELECT value FROM workspace_metadata WHERE key = ?`, workspaceSettingsKey).Scan(&settings); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		_ = db.Close()
+		return nil, fmt.Errorf("load workspace settings: %w", err)
+	}
+	wdb.publishSettingsRow(settings)
+	return wdb, nil
 }
 
 // migrateWorkspaceSchema adds workspace-level tables that don't belong in
@@ -184,6 +200,9 @@ func (wdb *WorkspaceDB) GetSetting(key string) string {
 
 // GetSettingContext is GetSetting with a context-bound query.
 func (wdb *WorkspaceDB) GetSettingContext(ctx context.Context, key string) string {
+	if key == workspaceSettingsKey {
+		return wdb.committedSettingsRow()
+	}
 	var val string
 	row := wdb.DB.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key = ?`, key)
 	_ = row.Scan(&val)
@@ -193,12 +212,32 @@ func (wdb *WorkspaceDB) GetSettingContext(ctx context.Context, key string) strin
 // SetSetting stores a workspace-level setting as a key-value pair.
 // Updates the timestamp on every write.
 func (wdb *WorkspaceDB) SetSetting(key, value string) error {
+	if key == workspaceSettingsKey {
+		wdb.settingsWriteMu.Lock()
+		defer wdb.settingsWriteMu.Unlock()
+	}
 	_, err := wdb.DB.Exec(`
 		INSERT INTO workspace_metadata (key, value, updated_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
 	`, key, value, time.Now().UnixNano())
+	if err == nil && key == workspaceSettingsKey {
+		wdb.publishSettingsRow(value)
+	}
 	return err
+}
+
+func (wdb *WorkspaceDB) committedSettingsRow() string {
+	if row := wdb.settingsRow.Load(); row != nil {
+		return *row
+	}
+	return ""
+}
+
+// publishSettingsRow is called at startup or with settingsWriteMu held, only
+// after SQL has committed. Never acquire the writer mutex from a read path.
+func (wdb *WorkspaceDB) publishSettingsRow(value string) {
+	wdb.settingsRow.Store(&value)
 }
 
 // RegisterSession records a new AI session in the workspace's session registry.

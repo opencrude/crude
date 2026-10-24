@@ -115,27 +115,19 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close() })
 	server, wire := net.Pipe()
 	go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-	client, err := coreclient.Dial(t.Context(), wire, "hygiene-live")
+	client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(wire), "hygiene-live")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	doneAgents := make(chan string, 16)
-	go func() {
-		for event := range client.Events() {
-			for _, reduction := range event.Reductions {
-				if reduction.Effects.Done != nil {
-					doneAgents <- reduction.AgentID
-				}
-			}
-		}
-	}()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	var attached coreprotocol.AttachResult
 	if err := client.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: project}, &attached); err != nil {
 		t.Fatal(err)
 	}
+	followLiveAgentCompletions(t, client, attached.WorkspaceID, doneAgents)
 	// Seed real terminal runs and managed checkouts before model admission.
 	parent, err := ws.Collaboration.RegisterAgent(ctx, collaboration.AgentRegistration{ID: "prior-parent", Name: "Previous parent", SessionID: "prior-session", OwnerInstance: "fixture"})
 	if err != nil {
@@ -189,7 +181,7 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 	}
 	goal := fmt.Sprintf("Clean the abandoned managed execution leftovers in this workspace, then continue normal work. The prior parent's completed clean child and its failed obsolete experiment can be cleaned. The obsolete experiment should not be merged. The other cold parent's parked child experiment is unwanted too: explicitly settle its parked recovery through supported tools, preserve its history, then discard and clean its checkout; do not continue that obsolete task. Its owning root session is %s. Preserve the intentional Keep worktree and the still-running child's checkout. Preserve my manual.txt and conflicting shared.txt edits exactly. Use Crude's supported execution tools, not shell/manual Git cleanup. After cleanup, run one read-only researcher child to read manual.txt and report its first line, and write ready.txt containing exactly the 13 bytes HYGIENE_READY with no trailing newline. Verify those bytes before finishing. Do not ask me to do janitorial work that Crude can do. Explain any genuinely protected work briefly. Here is the compact starting inventory: clean=%s obsolete=%s parked=%s kept=%s running=%s.", parkedSession, clean.ID, failed.ID, parked.ID, kept.ID, active.ID)
 	var created workspace.NewSessionResult
-	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, struct{}{}, &created); err != nil || created.Error != "" {
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created); err != nil || created.Error != "" {
 		t.Fatal(err, created.Error)
 	}
 	ws.BackendSession(created.SessionID).SetYolo(true)
@@ -198,7 +190,7 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 		dial := func(ctx context.Context, id string) (*coreclient.Client, error) {
 			server, wire := net.Pipe()
 			go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-			return coreclient.Dial(ctx, wire, id)
+			return coreclient.Dial(ctx, coreclient.SingleCarrier(wire), id)
 		}
 		port, err := remote.Attach(ctx, remote.Options{Root: project, Dial: dial})
 		if err != nil {
@@ -217,8 +209,12 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		terminal.Program.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	} else {
-		if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, coreprotocol.InputRequest{AgentID: created.OrchID, Text: goal, DraftRevision: 1}, nil); err != nil {
+		var admission coreprotocol.InputResult
+		if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.SubmitInput, &coreprotocol.InputRequest{AgentID: created.OrchID, Text: goal, DraftRevision: 1}, &admission); err != nil {
 			t.Fatal(err)
+		}
+		if admission.Status != session.InputAdmissionAccepted || admission.Error != "" {
+			t.Fatalf("hygiene input was not admitted: %s %s", admission.Status, admission.Error)
 		}
 	}
 	var done bool

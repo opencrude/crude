@@ -14,7 +14,7 @@ func TestThinkingPresentationRestoresWithoutSourceChange(t *testing.T) {
 	r.SetSize(80, 12)
 	r.SetChatAreaBounds(0, 12)
 	message := types.ChatMessage{InternalID: "thought", Role: types.RoleThinking, Content: "retained evidence", Time: time.Now(), ThinkingActive: true}
-	r.SyncMessages([]types.ChatMessage{message}, 1)
+	r.SyncMessages([]types.ChatMessage{message}, 1, 0)
 	r.SetThinkingPanes(map[string]string{"thought": "local-pane"})
 	if r.Messages()[0].SubPaneID != "local-pane" || message.SubPaneID != "" {
 		t.Fatal("override did not remain renderer-local")
@@ -41,10 +41,10 @@ func TestThinkingPresentationRestoresWithoutSourceChange(t *testing.T) {
 func TestThinkingPresentationStreamingKeepsLatestSourceForRestore(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	message := types.ChatMessage{InternalID: "thought", Role: types.RoleThinking, Content: "first", ThinkingActive: true}
-	r.SyncMessages([]types.ChatMessage{message}, 1)
+	r.SyncMessages([]types.ChatMessage{message}, 1, 0)
 	r.PresentThinkingPane("thought", "pane")
 	message.Content += " and continuation"
-	r.SyncMessages([]types.ChatMessage{message}, 2)
+	r.SyncMessages([]types.ChatMessage{message}, 2, 0)
 	if r.Messages()[0].SubPaneID != "pane" {
 		t.Fatal("stream sync lost local override")
 	}

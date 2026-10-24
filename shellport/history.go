@@ -3,6 +3,7 @@ package shellport
 import (
 	"context"
 
+	"crude/coreprotocol"
 	"crude/localhistory"
 )
 
@@ -12,8 +13,13 @@ type History interface {
 	LocalHistory() LocalHistoryStore
 	// HistoryService is the restore-planning service; nil when unavailable.
 	HistoryService() LocalHistoryService
-	AppendHistoryRestoreEvent(result localhistory.RestoreResult) error
 	ApplyHistoryRestoreChoices(ctx context.Context, planID string, choices []localhistory.RestoreChoice) (localhistory.RestoreResult, error)
+}
+
+// HistoryRestoreReceipts observes an earlier restore, never executes it again.
+// The caller keeps this exact port while the outcome is unresolved.
+type HistoryRestoreReceipts interface {
+	HistoryRestoreReceipt(context.Context, string) (coreprotocol.Receipt, error)
 }
 
 // LocalHistoryStore reads immutable project snapshots and plans restores.

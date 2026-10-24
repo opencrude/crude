@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/buildinfo"
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/document"
@@ -29,8 +29,6 @@ import (
 	"crude/types/control"
 	"crude/workspace"
 )
-
-const subscriberCapacity = 64
 
 // Factory belongs to the application configuration owner. It is invoked once
 // for each canonical project; it must return a newly configured, unshared owner.
@@ -54,6 +52,11 @@ type Runtime struct {
 	lifetime         lifetimePolicy
 	storageGates     map[string]*workspaceStorageGate
 	deletionPreviews map[string]workspaceDeletionPreview
+	// sessions index live sessions by session ID for resumption.
+	sessions map[string]*Connection
+	grace    time.Duration
+	remoteMu sync.Mutex // serializes remote admission with live revocation
+	remote   *RemoteAccess
 }
 
 func New(factory Factory, receiptPath string) (*Runtime, error) {
@@ -64,7 +67,7 @@ func New(factory Factory, receiptPath string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{factory: factory, receipts: journal, workspaces: make(map[string]*actor), clients: make(map[string]*Connection), epochs: make(map[string]uint64), creating: make(map[string]*workspaceCreation), uploads: NewReferenceUploads(filepath.Join(filepath.Dir(receiptPath), "media-staging"))}, nil
+	return &Runtime{factory: factory, lifetime: lifetimePolicy{buildID: buildinfo.ExecutableID()}, receipts: journal, workspaces: make(map[string]*actor), clients: make(map[string]*Connection), epochs: make(map[string]uint64), creating: make(map[string]*workspaceCreation), sessions: make(map[string]*Connection), uploads: NewReferenceUploads(filepath.Join(filepath.Dir(receiptPath), "media-staging"))}, nil
 }
 
 // SetPromptHistory installs the one application-owned history before clients
@@ -82,20 +85,23 @@ func (r *Runtime) SetPromptHistory(store *history.Store, path string) error {
 	return nil
 }
 
-// Connection is one authenticated local/SSH transport lifetime. Its queue is
-// bounded; a slow observer receives resynchronization, never domain backpressure.
+// Connection is one client session. It outlives any one carrier for the
+// session grace period. Domain replication belongs exclusively to topics;
+// bounded private admission never delays the actor or evicts owner requests.
 type Connection struct {
+	sessionState
 	runtime            *Runtime
 	Owner              coreprotocol.Owner
 	mu                 sync.Mutex
 	attached           map[string]*actor
-	events             chan coreprotocol.Change
+	privateEffects     chan coreprotocol.SessionEvent
+	privateMu          sync.Mutex
+	privateBytes       int
 	done               chan struct{}
 	ctx                context.Context
 	cancel             context.CancelFunc
-	once               sync.Once
-	publishMu          sync.Mutex
-	resync             bool
+	closeComplete      chan struct{}
+	closing            bool // protected by carrierMu
 	controls           chan coreprotocol.ControlEnvelope
 	controlRegistered  map[string]bool
 	controlExternal    map[string]map[control.Effect]bool
@@ -103,6 +109,10 @@ type Connection struct {
 	controlReceipts    map[string]*controlReceipt
 	controlOutstanding int
 	controlBytes       int
+	// Immutable after handshake admission. A resumed carrier never widens this
+	// session's original authority.
+	principal RemotePrincipal
+	localHost bool
 }
 
 func (r *Runtime) Connect(clientID string) (*Connection, error) {
@@ -118,14 +128,16 @@ func (r *Runtime) Connect(clientID string) (*Connection, error) {
 		return nil, errors.New("client identity already connected")
 	}
 	r.epochs[clientID]++
-	c := &Connection{runtime: r, Owner: coreprotocol.Owner{ClientID: clientID, Epoch: r.epochs[clientID]}, attached: make(map[string]*actor), events: make(chan coreprotocol.Change, subscriberCapacity), done: make(chan struct{})}
+	c := &Connection{runtime: r, Owner: coreprotocol.Owner{ClientID: clientID, Epoch: r.epochs[clientID]}, attached: make(map[string]*actor), privateEffects: make(chan coreprotocol.SessionEvent, coreprotocol.SessionPrivateMaxOutstanding), done: make(chan struct{}), closeComplete: make(chan struct{})}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.controls = make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding)
 	c.controlRegistered = make(map[string]bool)
 	c.controlExternal = make(map[string]map[control.Effect]bool)
 	c.controlTargets = make(map[string]*control.ShellOwner)
 	c.controlReceipts = make(map[string]*controlReceipt)
+	c.id, c.secret = randomSecret(), randomSecret()
 	r.clients[clientID] = c
+	r.sessions[c.id] = c
 	return c, nil
 }
 
@@ -149,73 +161,105 @@ func validID(id string) bool {
 	return true
 }
 
-func (c *Connection) Events() <-chan coreprotocol.Change { return c.events }
-func (c *Connection) Done() <-chan struct{}              { return c.done }
+func (c *Connection) Done() <-chan struct{} { return c.done }
 
 func (c *Connection) Close() {
-	c.once.Do(func() {
-		c.cancel()
-		close(c.done)
-		c.runtime.mu.Lock()
-		if c.runtime.clients[c.Owner.ClientID] == c {
-			delete(c.runtime.clients, c.Owner.ClientID)
-		}
-		for token, preview := range c.runtime.deletionPreviews {
-			if preview.owner == c.Owner {
-				delete(c.runtime.deletionPreviews, token)
-			}
-		}
-		c.runtime.mu.Unlock()
-		c.mu.Lock()
-		owners := c.attached
-		c.attached = make(map[string]*actor)
-		c.detachControlsLocked("")
-		c.mu.Unlock()
-		c.DetachCapabilityHosts("")
-		for _, owner := range owners {
-			owner.unsubscribe(c)
-		}
-	})
+	c.closeCarrier(nil)
 }
 
-func (c *Connection) publish(change coreprotocol.Change) {
-	c.publishMu.Lock()
-	defer c.publishMu.Unlock()
-	if c.resync {
-		if len(c.events) != 0 {
-			return
-		}
-		c.resync = false
+// closeCarrier ends the session only if expected still owns it. A delayed FIN
+// from a replaced carrier must never revoke the resumed owner's authority.
+func (c *Connection) closeCarrier(expected corewire.Conn) {
+	c.carrierMu.Lock()
+	if c.closing {
+		c.carrierMu.Unlock()
+		<-c.closeComplete
+		return
 	}
+	if expected != nil && c.carrier != expected {
+		c.carrierMu.Unlock()
+		return
+	}
+	c.closing = true
+	c.cancel()
+	close(c.done)
+	if c.grace != nil {
+		c.grace.Stop()
+	}
+	carrier, control := c.carrier, c.control
+	c.carrier, c.control = nil, nil
+	c.carrierMu.Unlock()
+	defer close(c.closeComplete)
+	c.mu.Lock()
+	owners := c.attached
+	c.attached = make(map[string]*actor)
+	c.detachControlsLocked("")
+	c.mu.Unlock()
+	c.DetachCapabilityHosts("")
+	for _, owner := range owners {
+		c.stopWorkspaceTopics(owner.id)
+		owner.unsubscribe(c)
+	}
+	c.runtime.mu.Lock()
+	if c.runtime.clients[c.Owner.ClientID] == c {
+		delete(c.runtime.clients, c.Owner.ClientID)
+	}
+	delete(c.runtime.sessions, c.id)
+	for token, preview := range c.runtime.deletionPreviews {
+		if preview.owner == c.Owner {
+			delete(c.runtime.deletionPreviews, token)
+		}
+	}
+	c.runtime.mu.Unlock()
+	if carrier != nil {
+		// Cleanup precedes the receipt. The peer consumes SessionEnd and
+		// closes its carrier, proving the queued message reached it. A lost
+		// or hostile peer cannot hold runtime shutdown indefinitely.
+		timer := time.AfterFunc(time.Second, func() { _ = carrier.Close() })
+		defer timer.Stop()
+		if control != nil && send(control, &coreprotocol.SessionEnd{Reason: "session ended by the core"}) == nil {
+			_ = control.CloseWrite()
+			<-carrier.Done()
+		}
+		_ = carrier.Close()
+	}
+}
+
+// offerClipboard admits the whole immutable offer or refuses it. It cannot
+// evict an accepted offer, control request or capability-host request.
+func (c *Connection) offerClipboard(workspaceID string, offer coreprotocol.TerminalClipboard) bool {
+	c.privateMu.Lock()
+	defer c.privateMu.Unlock()
 	select {
 	case <-c.done:
-		return
+		return false
 	default:
 	}
-	select {
-	case c.events <- change:
-		coreChanges.Inc()
-		return
-	default:
+	size := clipboardBytes(offer)
+	if len(c.privateEffects) >= coreprotocol.SessionPrivateMaxOutstanding || size > coreprotocol.SessionPrivateMaxBytes-c.privateBytes {
+		return false
 	}
-	coreResyncs.Inc()
-	metrics.Note(metrics.GroupCore, "Shell fell behind the change stream", c.Owner.ClientID,
-		"the bounded change queue overflowed; the shell reloads snapshots", "warn")
-	// Overflow invalidates the entire cursor. Empty the bounded backlog and
-	// publish one explicit resync; never pretend that dropped deltas applied.
-	for {
-		select {
-		case <-c.events:
-		default:
-			goto drained
-		}
+	offer.Clipboard = slices.Clone(offer.Clipboard)
+	for i := range offer.Clipboard {
+		offer.Clipboard[i] = bytes.Clone(offer.Clipboard[i])
 	}
-drained:
-	c.resync = true
-	select {
-	case c.events <- coreprotocol.Change{Resync: true}:
-	default:
+	c.privateBytes += size
+	c.privateEffects <- coreprotocol.SessionEvent{WorkspaceID: workspaceID, TerminalClipboard: &offer}
+	return true
+}
+
+func clipboardBytes(offer coreprotocol.TerminalClipboard) int {
+	size := len(offer.TerminalID) + 32
+	for _, value := range offer.Clipboard {
+		size += len(value) + 8
 	}
+	return size
+}
+
+func (c *Connection) takePrivateEffect(event coreprotocol.SessionEvent) {
+	c.privateMu.Lock()
+	c.privateBytes -= clipboardBytes(*event.TerminalClipboard)
+	c.privateMu.Unlock()
 }
 
 func (r *Runtime) Close() error {
@@ -230,9 +274,12 @@ func (r *Runtime) Close() error {
 		clients = append(clients, c)
 	}
 	r.mu.Unlock()
+	var clientsClosed sync.WaitGroup
 	for _, c := range clients {
-		c.Close()
+		clientsClosed.Add(1)
+		go func() { defer clientsClosed.Done(); c.Close() }()
 	}
+	clientsClosed.Wait()
 	r.factoryWG.Wait()
 	r.mu.Lock()
 	actors := make([]*actor, 0, len(r.workspaces))
@@ -269,19 +316,47 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	if request.Owner != c.Owner || !validID(request.ID) {
 		return finish(fault(request, "invalid_owner", "request owner or identity is invalid"))
 	}
+	if err := ctx.Err(); err != nil {
+		return finish(fault(request, "cancelled", err.Error()))
+	}
+	c.runtime.mu.Lock()
+	draining := c.runtime.draining
+	c.runtime.mu.Unlock()
+	if draining && request.Method != coreprotocol.CoreStatusMethod && request.Method != coreprotocol.GetReceipt {
+		return finish(fault(request, "core_draining", "core is draining; only status and receipt observation remain available"))
+	}
 	select {
 	case <-c.done:
 		return finish(fault(request, "detached", "connection is closed"))
 	default:
 	}
-	if len(request.Payload) > 8<<20 || !json.Valid(request.Payload) {
-		return finish(fault(request, "invalid_request", "invalid or oversized request payload"))
+	if len(request.Payload) > corewire.MaxMessage {
+		return finish(fault(request, "invalid_request", "oversized request payload"))
+	}
+	if result, handled := c.dispatchRemote(ctx, request); handled {
+		return finish(result)
 	}
 	if startupMethod(request.Method) {
 		return c.dispatchStartup(ctx, request)
 	}
 	if request.Method == coreprotocol.Attach {
 		return finish(c.attach(ctx, request))
+	}
+	if request.Method == coreprotocol.ApplicationPreferencesSave {
+		var in coreprotocol.ApplicationPreferencesRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return finish(fault(request, "invalid_request", err.Error()))
+		}
+		c.mu.Lock()
+		host := c.localHost
+		c.mu.Unlock()
+		if !host {
+			for _, edit := range in.Edits {
+				if remotePreference(edit.Path) {
+					return finish(fault(request, "forbidden", "remote admission settings require the authenticated local host"))
+				}
+			}
+		}
 	}
 	if request.Method == coreprotocol.ControlShellRegister || request.Method == coreprotocol.ControlShellReply {
 		return finish(c.controlMethod(request))
@@ -300,7 +375,7 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	}
 	if request.Method == coreprotocol.CoreMetricsMethod {
 		var query metrics.Query
-		if err := decode(request.Payload, &query); err != nil {
+		if err := decodeRequest(request, &query); err != nil {
 			return finish(fault(request, "invalid_request", err.Error()))
 		}
 		return finish(response(request, metrics.Take(query)))
@@ -310,7 +385,7 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	}
 	if request.Method == coreprotocol.GetReceipt {
 		var query coreprotocol.ReceiptRequest
-		if err := decode(request.Payload, &query); err != nil {
+		if err := decodeRequest(request, &query); err != nil {
 			return finish(fault(request, "invalid_request", err.Error()))
 		}
 		receipt, err := c.runtime.receipts.lookup(ctx, c.Owner.ClientID, query.RequestID)
@@ -334,8 +409,9 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 		c.detachControlsLocked(request.WorkspaceID)
 		c.mu.Unlock()
 		c.DetachCapabilityHosts(request.WorkspaceID)
+		c.stopWorkspaceTopics(request.WorkspaceID)
 		a.unsubscribe(c)
-		return finish(response(request, struct{}{}))
+		return finish(response(request, coreprotocol.Empty{}))
 	}
 	select {
 	case a.commands <- actorCommand{request: &request, client: c, result: ready}:
@@ -349,7 +425,7 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 
 func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) coreprotocol.Response {
 	var input coreprotocol.AttachRequest
-	if err := decode(request.Payload, &input); err != nil {
+	if err := decodeRequest(request, &input); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
 	root, err := inspectProject(input.Root)
@@ -509,6 +585,9 @@ type actor struct {
 	fileWatch        *coreFileWatch
 	stopGitFetch     func()
 	documentReleases []document.Owner
+	maintenance      actorMaintenance
+	topic            workspaceTopicState
+	states           workspaceStates
 }
 
 type actorCommand struct {
@@ -537,6 +616,7 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	bus.SetSink(a)
 	ws.SetEventBus(bus)
 	ws.SetEventSender(a)
+	a.startStateTopics()
 	go a.run()
 	// newActor runs in the workspace factory worker. Watcher setup/traversal
 	// never executes on the actor or any shell's Update goroutine.
@@ -575,6 +655,11 @@ func (a *actor) enqueue(event workspace.AgentEvent) {
 // Send receives service evidence independently of every shell. Only neutral
 // typed facts are projected; PTY bytes remain in TerminalService.
 func (a *actor) Send(message any) {
+	// Grid state has its own topic and pacing. PTY ingress must never wait on
+	// the workspace actor or invalidate unrelated replicas for every read.
+	if _, grid := message.(workspace.TerminalChangedMsg); grid {
+		return
+	}
 	select {
 	case <-a.stop:
 		return
@@ -594,10 +679,7 @@ func (a *actor) serviceEvent(message any) {
 		a.broadcast(coreprotocol.Change{Files: []coreprotocol.FileChange{event}})
 		return
 	case workspace.DocumentChangedMsg:
-		a.broadcast(coreprotocol.Change{Documents: []string{event.ID}})
 		return
-	case workspace.TerminalChangedMsg:
-		id = event.ID
 	case workspace.TerminalExitedMsg:
 		id = event.ID
 	case workspace.TerminalTitleMsg:
@@ -608,30 +690,45 @@ func (a *actor) serviceEvent(message any) {
 	default:
 		return
 	}
-	old := a.revision
-	a.revision++
-	for subscriber := range a.subscribers {
-		change := coreprotocol.Change{WorkspaceID: a.id, BaseRevision: old, Revision: a.revision, Terminals: []string{id}}
-		if effects != nil {
-			copy := *effects
-			copy.Effects.Replies = nil
-			copy.Effects.Clipboard = nil
-			if a.ws.Terminals != nil && a.ws.Terminals.ControlledBy(id, workspace.TerminalController{ClientID: subscriber.Owner.ClientID, Epoch: subscriber.Owner.Epoch}) {
-				for _, value := range effects.Effects.Clipboard {
-					copy.Effects.Clipboard = append(copy.Effects.Clipboard, bytes.Clone(value))
-				}
-			}
-			change.TerminalEffects = &copy
+	if effects == nil || effects.Effects.TitleChanged {
+		a.queueState(coreprotocol.TopicTerminalInventory)
+	}
+	if effects != nil {
+		shared := *effects
+		shared.Effects.Replies, shared.Effects.Clipboard = nil, nil
+		if shared.Effects.TitleChanged || shared.Effects.CWDChanged || shared.Effects.Title != "" || shared.Effects.CWD != "" || shared.Effects.Bell {
+			a.queueTopic(coreprotocol.Change{TerminalEffects: &shared})
 		}
-		subscriber.publish(change)
+	}
+	a.revision++
+	if effects == nil || len(effects.Effects.Clipboard) == 0 || a.ws.Terminals == nil {
+		return
+	}
+	for subscriber := range a.subscribers {
+		lease, ok := a.ws.Terminals.ControllerLease(id, workspace.TerminalController{ClientID: subscriber.Owner.ClientID, Epoch: subscriber.Owner.Epoch})
+		if !ok {
+			continue
+		}
+		if !subscriber.offerClipboard(a.id, coreprotocol.TerminalClipboard{TerminalID: id, Generation: lease.Generation, Clipboard: effects.Effects.Clipboard}) {
+			a.ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "terminal", Summary: "Terminal clipboard offer refused", Detail: "The controlling shell's private inbox is full or the offer exceeds its 1 MiB limit. Copy again after the shell catches up."})
+			a.queueState(coreprotocol.TopicStatus)
+		}
 	}
 }
 
 func (a *actor) run() {
 	defer close(a.done)
 	defer a.cancel()
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
+	defer a.maintenance.stop()
+	defer a.stopTopicPublication()
+	// Capture the next broadcast before publishing the current version. A
+	// mutation during publication closes that captured channel, so no generation
+	// can be swallowed between a snapshot and the next select.
+	_, statusChanged := a.ws.Status.Changed()
+	_, lspChanged := a.ws.LSPMgr.Changed()
+	a.publishStatusIfChanged()
+	a.publishLSPIfChanged()
+	a.refreshMaintenance()
 	for {
 		select {
 		case <-a.stop:
@@ -645,6 +742,7 @@ func (a *actor) run() {
 		case job := <-a.jobs:
 			start := time.Now()
 			a.finishJob(job)
+			a.refreshMaintenance()
 			method := ""
 			if job.command.request != nil {
 				method = job.command.request.Method
@@ -663,17 +761,25 @@ func (a *actor) run() {
 			}
 			if reduced := a.ws.ApplyAgentEvent(event); reduced.Accepted {
 				a.reduced(reduced)
+				a.refreshMaintenance()
 			}
 			observeActorStep(start, "agent", event)
-		case now := <-tick.C:
+		case <-statusChanged:
+			_, statusChanged = a.ws.Status.Changed()
+			a.publishStatusIfChanged()
+		case <-lspChanged:
+			_, lspChanged = a.ws.LSPMgr.Changed()
+			a.publishLSPIfChanged()
+		case now := <-a.maintenance.ready:
+			a.maintenance.ready = nil
 			a.drainDocumentReleases()
 			if reduced := a.ws.AdvanceAgentState(now); reduced.Accepted {
 				a.reduced(reduced)
 			}
-			a.publishStatusIfChanged()
-			a.publishLSPIfChanged()
-			coreQueue.Set(int64(len(a.commands) + len(a.ingress) + len(a.serviceEvents) + len(a.jobs)))
-			observeActorStep(now, "tick", nil)
+			a.refreshMaintenance()
+			observeActorStep(now, "maintenance", nil)
+		case <-a.topic.ready:
+			_ = a.flushTopic()
 		case command := <-a.commands:
 			start := time.Now()
 			retired := a.runCommand(command)
@@ -681,8 +787,51 @@ func (a *actor) run() {
 			if retired {
 				return
 			}
+			a.refreshMaintenance()
+		}
+		coreQueue.Set(int64(len(a.commands) + len(a.ingress) + len(a.serviceEvents) + len(a.jobs)))
+	}
+}
+
+// actorMaintenance has no idle deadline. Only queued tool dwell transitions or
+// a detached document release refused by the bounded resource lane need the
+// existing 100 ms retry/advance bound. Conversation remains the pending owner;
+// inspect it after semantic ingress/jobs, never from an idle polling clock.
+type actorMaintenance struct {
+	timer *time.Timer
+	ready <-chan time.Time
+}
+
+func (m *actorMaintenance) stop() {
+	if m.timer != nil {
+		m.timer.Stop()
+	}
+	m.ready = nil
+}
+
+func (a *actor) refreshMaintenance() {
+	pending := len(a.documentReleases) > 0
+	if !pending && a.ws.AgentMgr != nil {
+		for _, node := range a.ws.AgentMgr.AllNodes() {
+			if node.State != nil && node.State.Messages.HasPendingToolLifecycles() {
+				pending = true
+				break
+			}
 		}
 	}
+	if !pending {
+		a.maintenance.stop()
+		return
+	}
+	if a.maintenance.ready != nil {
+		return
+	}
+	if a.maintenance.timer == nil {
+		a.maintenance.timer = time.NewTimer(100 * time.Millisecond)
+	} else {
+		a.maintenance.timer.Reset(100 * time.Millisecond)
+	}
+	a.maintenance.ready = a.maintenance.timer.C
 }
 
 func commandKind(command actorCommand) string {
@@ -773,16 +922,7 @@ func (a *actor) broadcast(change coreprotocol.Change) {
 	old := a.revision
 	a.revision++
 	change.WorkspaceID, change.BaseRevision, change.Revision = a.id, old, a.revision
-	for subscriber := range a.subscribers {
-		select {
-		case <-subscriber.done:
-			// Detach owns removal after its immediate service fences complete.
-			// Publication must not make a closing view look fully released early.
-			continue
-		default:
-		}
-		subscriber.publish(change)
-	}
+	a.queueTopic(change)
 }
 
 func (a *actor) subscribe(ctx context.Context, c *Connection) (coreprotocol.WorkspaceSnapshot, error) {
@@ -848,6 +988,7 @@ func (a *actor) close() {
 			a.stopGitFetch()
 		}
 		<-a.done
+		a.states.wg.Wait()
 		a.resourceLane.close()
 		a.terminalLane.close()
 		for _, owner := range a.documentReleases {
@@ -878,27 +1019,109 @@ func (a *actor) drainDocumentReleases() {
 	}
 }
 
-func decode(raw []byte, value any) error {
+func decode(raw []byte, value coreprotocol.Target) error { return coreprotocol.Decode(raw, value) }
+
+// decodeRequest decodes a request's payload in the encoding it carries.
+func decodeRequest(request coreprotocol.Request, value coreprotocol.Target) error {
+	if request.JSON {
+		return decodeJSON(request.Payload, value)
+	}
+	return coreprotocol.Decode(request.Payload, value)
+}
+
+// decodeJSON strictly decodes one JSON document: unknown fields and trailing
+// values are errors.
+func decodeJSON(raw []byte, value any) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if err := d.Decode(value); err != nil {
 		return err
 	}
-	if d.Decode(new(any)) != io.EOF {
+	if d.More() {
 		return errors.New("trailing JSON")
 	}
 	return nil
 }
-func response(request coreprotocol.Request, value any) coreprotocol.Response {
-	data, err := json.Marshal(value)
+
+// payload encodes a request value in the encoding request already uses.
+func payload[T any, P interface {
+	*T
+	coreprotocol.Value
+}](request coreprotocol.Request, value T) ([]byte, error) {
+	if request.JSON {
+		return json.Marshal(value)
+	}
+	return coreprotocol.Marshal(P(&value))
+}
+
+// response encodes a result value. Any value whose pointer has a generated
+// codec is accepted, so callers pass values as they hold them.
+func response[T any, P interface {
+	*T
+	coreprotocol.Value
+}](request coreprotocol.Request, value T) coreprotocol.Response {
+	data, err := coreprotocol.Marshal(P(&value))
 	if err != nil {
 		return fault(request, "encode_failed", err.Error())
 	}
-	if len(data) > corewire.MaxPayloadSize {
-		return fault(request, "payload_limit", "result exceeds the bounded logical response limit")
+	if len(data) > corewire.MaxMessage-1024 {
+		return fault(request, "payload_limit", "result exceeds the message size limit")
 	}
-	return coreprotocol.Response{ID: request.ID, Payload: data}
+	return coreprotocol.Response{ID: request.ID, Payload: data, Value: value}
 }
+
+// wire boxes a result for a method that chooses its result type at run time;
+// the compiler still checks that the type has a generated codec.
+func wire[T any, P interface {
+	*T
+	coreprotocol.Value
+}](value T) coreprotocol.Value {
+	return P(&value)
+}
+
+// wired boxes the (result, error) pair a multiplexed method's call returns.
+func wired[T any, P interface {
+	*T
+	coreprotocol.Value
+}](value T, err error) (coreprotocol.Value, error) {
+	return P(&value), err
+}
+
+// wiredList boxes a (slice, error) pair as the named collection L.
+func wiredList[L ~[]E, E any, P interface {
+	*L
+	coreprotocol.Value
+}](values []E, err error) (coreprotocol.Value, error) {
+	list := L(values)
+	return P(&list), err
+}
+
+// resultValue reads a typed result back from an in-core response.
+func resultValue[T any](response coreprotocol.Response) (T, bool) {
+	switch v := response.Value.(type) {
+	case T:
+		return v, true
+	case *T:
+		if v != nil {
+			return *v, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+// responseValue encodes a result boxed by wire or already a codec value.
+func responseValue(request coreprotocol.Request, v coreprotocol.Value) coreprotocol.Response {
+	data, err := coreprotocol.Marshal(v)
+	if err != nil {
+		return fault(request, "encode_failed", err.Error())
+	}
+	if len(data) > corewire.MaxMessage-1024 {
+		return fault(request, "payload_limit", "result exceeds the message size limit")
+	}
+	return coreprotocol.Response{ID: request.ID, Payload: data, Value: v}
+}
+
 func fault(request coreprotocol.Request, code, message string) coreprotocol.Response {
 	return coreprotocol.Response{ID: request.ID, Error: &coreprotocol.Fault{Code: code, Message: message}}
 }
@@ -906,7 +1129,7 @@ func fault(request coreprotocol.Request, code, message string) coreprotocol.Resp
 func (a *actor) execute(request coreprotocol.Request) coreprotocol.Response {
 	if request.Method == coreprotocol.AgentChanges {
 		var query coreprotocol.AgentChangesRequest
-		if err := decode(request.Payload, &query); err != nil {
+		if err := decodeRequest(request, &query); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		out := coreprotocol.AgentChangesResult{Revision: a.revision}
@@ -927,7 +1150,7 @@ func (a *actor) execute(request coreprotocol.Request) coreprotocol.Response {
 		return response(request, a.snapshot())
 	}
 	if request.Method == coreprotocol.SessionSnapshots {
-		return response(request, a.sessionSnapshots())
+		return response(request, coreprotocol.SessionSnapshotList(a.sessionSnapshots()))
 	}
 	if result, ok := a.executeOwner(request); ok {
 		return result
@@ -960,7 +1183,7 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 	switch request.Method {
 	case coreprotocol.SteerInput:
 		var input coreprotocol.InputRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		if strings.TrimSpace(input.Text) == "" {
@@ -976,7 +1199,7 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 		return response(request, coreprotocol.DecisionResult{Accepted: accepted})
 	case coreprotocol.Decide:
 		var input coreprotocol.DecisionRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		node := a.ws.AgentMgr.Get(input.AgentID)
@@ -1000,7 +1223,7 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 		return response(request, coreprotocol.DecisionResult{Accepted: accepted})
 	case coreprotocol.CancelAgent, coreprotocol.TerminateAgent:
 		var input coreprotocol.AgentRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return fault(request, "invalid_request", err.Error())
 		}
 		node := a.ws.AgentMgr.Get(input.AgentID)
@@ -1060,6 +1283,7 @@ func (a *actor) sessionSnapshots() []coreprotocol.SessionSnapshot {
 type actorJobResult struct {
 	command   actorCommand
 	apply     func() coreprotocol.Response
+	finish    func() // owner-only release after publication and immutable receipt
 	lifecycle bool
 	journal   bool
 	admitted  bool
@@ -1106,6 +1330,7 @@ func (a *actor) bindInputExecution(input *provider.UserInput, agentID string) {
 
 func (a *actor) startJob(command actorCommand) bool {
 	request := *command.request
+	historyRestore := request.Method == coreprotocol.HistoryApply
 	if a.historyBusy && (request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession || request.Method == coreprotocol.SubmitInput || request.Method == coreprotocol.SteerInput || request.Method == coreprotocol.AgentRecover || request.Method == coreprotocol.AgentCompact) {
 		command.result <- fault(request, "restore_busy", "history restore owns admission; input and work are retained")
 		return true
@@ -1152,14 +1377,14 @@ func (a *actor) startJob(command actorCommand) bool {
 	if documentSaveKnown {
 		service, serviceKnown = documentSave, true
 	}
-	if !lifecycle && request.Method != coreprotocol.SubmitInput && request.Method != coreprotocol.ListSessions && !serviceKnown && !ownerKnown {
+	if !lifecycle && !historyRestore && request.Method != coreprotocol.SubmitInput && request.Method != coreprotocol.ListSessions && !serviceKnown && !ownerKnown {
 		return false
 	}
 	if a.inFlight >= 16 || lifecycle && a.lifecycle {
 		command.result <- fault(request, "busy", "bounded workspace operation capacity is occupied; retry with a new request identity")
 		return true
 	}
-	journal := request.Method != coreprotocol.ListSessions && ((!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
+	journal := request.Method != coreprotocol.ListSessions && (historyRestore || (!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
 	if journal {
 		prior, fresh, err := a.receipts.begin(a.ctx, request)
 		if err != nil {
@@ -1178,6 +1403,12 @@ func (a *actor) startJob(command actorCommand) bool {
 	if ownerKnown {
 		service, serviceKnown = a.prepareOwner(request)
 	}
+	var historyApply func(coreprotocol.Response) error
+	var historyFinish func()
+	if historyRestore {
+		service, historyApply, historyFinish = a.prepareHistoryApply(request)
+		serviceKnown = true
+	}
 	// Each job has its own context so its requester can cancel exactly it.
 	jobCtx, jobCancel := context.WithCancel(a.ctx)
 	if a.jobCancels == nil {
@@ -1185,7 +1416,7 @@ func (a *actor) startJob(command actorCommand) bool {
 	}
 	a.jobCancels[jobKey(request)] = jobCancel
 	fail := func(result coreprotocol.Response) bool {
-		a.finishJob(actorJobResult{command: command, apply: func() coreprotocol.Response { return result }, journal: journal})
+		a.finishJob(actorJobResult{command: command, apply: func() coreprotocol.Response { return result }, journal: journal, finish: historyFinish})
 		return true
 	}
 	var run func() func() coreprotocol.Response
@@ -1197,15 +1428,15 @@ func (a *actor) startJob(command actorCommand) bool {
 				if resourceKnown {
 					a.applyResource(request, result)
 				}
-				if filesKnown {
-					if err := a.applyFiles(request, result); err != nil {
-						return fault(request, "publication_failed", err.Error())
+				if historyApply != nil {
+					if err := historyApply(result); err != nil {
+						result.Error = &coreprotocol.Fault{Code: "publication_failed", Message: "restore committed; inspect original receipt and safety snapshot: " + err.Error()}
 					}
 				}
 				if settingsApply != nil {
 					settingsApply(result)
 				}
-				if (resourceKnown || filesKnown || referencesKnown || settingsKnown || uploadKnown) && journal && result.Error == nil {
+				if (resourceKnown || filesKnown || referencesKnown || settingsKnown || uploadKnown || historyRestore) && journal && result.Error == nil {
 					a.changed(nil)
 				}
 				if result.Error == nil {
@@ -1236,12 +1467,12 @@ func (a *actor) startJob(command actorCommand) bool {
 				a.bindControlSessions()
 				a.changed([]string{out.OrchID})
 				a.broadcast(coreprotocol.Change{Sessions: true})
-				return response(request, out)
+				return response(request, *out)
 			}
 		}
 	} else if request.Method == coreprotocol.SubmitInput {
 		var input coreprotocol.InputRequest
-		if err := decode(request.Payload, &input); err != nil {
+		if err := decodeRequest(request, &input); err != nil {
 			return fail(fault(request, "invalid_request", err.Error()))
 		}
 		if strings.TrimSpace(input.Text) == "" {
@@ -1296,7 +1527,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		run = func() func() coreprotocol.Response {
 			reader := &workspace.Workspace{RootPath: root, WorkspaceDB: db, Logger: logger}
 			out := reader.ListSessions()
-			return func() coreprotocol.Response { return response(request, out) }
+			return func() coreprotocol.Response { return response(request, coreprotocol.SessionRegistry(out)) }
 		}
 	}
 	a.inFlight++
@@ -1307,22 +1538,22 @@ func (a *actor) startJob(command actorCommand) bool {
 	work := func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				a.jobs <- actorJobResult{command: command, admitted: true, lifecycle: lifecycle, settings: settingsExclusive,
+				a.jobs <- actorJobResult{command: command, admitted: true, lifecycle: lifecycle, settings: settingsExclusive, journal: journal, finish: historyFinish,
 					apply: func() coreprotocol.Response {
 						return fault(request, "outcome_uncertain", fmt.Sprintf("operation panicked: %v; inspect receipt before retrying", recovered))
 					}}
 			}
 		}()
 		apply := run()
-		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsExclusive}
+		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsExclusive, finish: historyFinish}
 	}
-	if resourceKnown || lspKnown || (filesKnown && filesMutation(request.Method)) {
+	if resourceKnown || lspKnown || historyRestore || (filesKnown && filesMutation(request.Method)) {
 		lane := a.resourceLane
 		if terminalMethod(request.Method) {
 			lane = a.terminalLane
 		}
 		if !lane.submit(func(context.Context) { work() }) {
-			a.finishJob(actorJobResult{command: command, admitted: true, journal: journal, apply: func() coreprotocol.Response { return fault(request, "cancelled", "resource owner is closing") }})
+			a.finishJob(actorJobResult{command: command, admitted: true, journal: journal, finish: historyFinish, apply: func() coreprotocol.Response { return fault(request, "cancelled", "resource owner is closing") }})
 		}
 	} else {
 		go work()
@@ -1331,6 +1562,9 @@ func (a *actor) startJob(command actorCommand) bool {
 }
 
 func (a *actor) finishJob(job actorJobResult) {
+	if job.finish != nil {
+		defer job.finish()
+	}
 	if job.command.request != nil {
 		key := jobKey(*job.command.request)
 		if cancel := a.jobCancels[key]; cancel != nil {
@@ -1345,7 +1579,7 @@ func (a *actor) finishJob(job actorJobResult) {
 	if job.apply == nil {
 		return
 	}
-	result := job.apply()
+	result := applyActorJob(job)
 	// Effects of an applied job (an accepted prompt starting a turn) reach
 	// shells now, not on the next tick.
 	a.publishStatusIfChanged()
@@ -1384,4 +1618,19 @@ func (a *actor) finishJob(job actorJobResult) {
 			a.admitControl(command)
 		}
 	}
+}
+
+// A publication fault cannot terminate the retained actor or label a possibly
+// committed effect as refused. The original request remains the receipt owner.
+func applyActorJob(job actorJobResult) (result coreprotocol.Response) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			var request coreprotocol.Request
+			if job.command.request != nil {
+				request = *job.command.request
+			}
+			result = fault(request, "outcome_uncertain", fmt.Sprintf("publication panicked: %v; inspect original receipt before retrying", recovered))
+		}
+	}()
+	return job.apply()
 }

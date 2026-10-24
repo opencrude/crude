@@ -673,7 +673,7 @@ func (b *RenderBuffer) TouchLine(x, y, n int) {
 	}
 
 	ch := b.Touched[y]
-	if ch == nil {
+	if ch == nil || (ch.FirstCell == -1 && ch.LastCell == -1) {
 		ch = &LineData{FirstCell: x, LastCell: x + n}
 	} else {
 		ch.FirstCell = min(ch.FirstCell, x)
@@ -694,7 +694,7 @@ func (b *RenderBuffer) TouchedLines() int {
 	}
 	count := 0
 	for _, t := range b.Touched {
-		if t != nil {
+		if t != nil && (t.FirstCell != -1 || t.LastCell != -1) {
 			count++
 		}
 	}
@@ -712,6 +712,31 @@ func (b *RenderBuffer) SetCell(x, y int, c *Cell) {
 		b.TouchLine(x, y, width)
 	}
 	b.Buffer.SetCell(x, y, c)
+}
+
+// Replace copies a complete cell grid, marking only changed row spans. The
+// source must have the same dimensions and must not alias b. Unlike drawing
+// cells one at a time this preserves continuation cells verbatim and detects
+// erasure as well as writes. Damage is relative to the last consumed frame,
+// not to intermediate frames a producer may have skipped.
+func (b *RenderBuffer) Replace(src *Buffer) {
+	if b.Bounds() != src.Bounds() {
+		panic("uv: Replace requires equal buffer dimensions")
+	}
+	for y, row := range src.Lines {
+		dst := b.Lines[y]
+		first, last := len(row), -1
+		for x := range row {
+			if !dst[x].Equal(&row[x]) {
+				first = min(first, x)
+				last = x
+			}
+		}
+		if last >= first {
+			copy(dst, row)
+			b.TouchLine(first, y, last-first+1)
+		}
+	}
 }
 
 // InsertLine inserts n lines at the given line position, with the given

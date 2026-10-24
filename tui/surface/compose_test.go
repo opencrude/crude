@@ -1,10 +1,95 @@
 package surface
 
 import (
+	"math/rand/v2"
 	"testing"
 
 	"crude/tui/cell"
 )
+
+// Deliberately keep the straightforward per-cell painter independent of row
+// validation/copy helpers: this is the pre-optimization semantic oracle.
+func referenceBlit(dst *CellBuffer, x, y int, src *CellBuffer, clip *ClipStack) {
+	for sy := 0; sy < src.Height(); sy++ {
+		for sx := 0; sx < src.Width(); sx++ {
+			dx, dy := x+sx, y+sy
+			c := src.Get(sx, sy)
+			if dx < 0 || dx >= dst.Width() || dy < 0 || dy >= dst.Height() || c.Width == 0 || c.Transparent {
+				continue
+			}
+			if dx+int(c.Width) > dst.Width() {
+				continue
+			}
+			inside := true
+			for n := 0; n < int(c.Width); n++ {
+				if clip != nil && !clip.Contains(dx+n, dy) {
+					inside = false
+				}
+			}
+			if !inside {
+				continue
+			}
+			if c.BG.IsDefault() {
+				c.BG = dst.Get(dx, dy).BG
+			}
+			dst.SetSpan(dx, dy, c)
+		}
+	}
+}
+
+func TestBlitBulkRowsMatchCellPainter(t *testing.T) {
+	rng := rand.New(rand.NewPCG(47, 99))
+	for trial := 0; trial < 300; trial++ {
+		src := NewCellBuffer(19, 4)
+		dst := NewCellBuffer(19, 4)
+		src.Fill(cell.BlankCell(cell.Blue))
+		dst.Fill(cell.BlankCell(cell.Green))
+		for y := 0; y < 4; y++ {
+			src.WriteString(0, y, "a 界 é 🧑‍🌾 end", cell.White, cell.Blue, cell.AttrBold)
+			dst.WriteString(0, y, "界界界界界界界", cell.Red, cell.Green, 0)
+		}
+		if trial%3 != 0 {
+			for n := 0; n < 8; n++ {
+				x, y := rng.IntN(19), rng.IntN(4)
+				c := &src.Row(y)[x]
+				switch rng.IntN(4) {
+				case 0:
+					c.Transparent = true
+				case 1:
+					c.BG = cell.NoColor
+				case 2:
+					c.Width = uint8(rng.IntN(5))
+				case 3:
+					c.Content = "malformed tail"
+				}
+			}
+		}
+		x, y := 0, 0
+		var clip *ClipStack
+		switch trial % 4 {
+		case 1:
+			x, y = rng.IntN(9)-4, rng.IntN(5)-2
+		case 2:
+			clip = NewClipStack()
+			clip.Push(Rect{X: rng.IntN(8), Y: rng.IntN(2), W: 10, H: 2})
+		}
+		want := dst.Clone()
+		referenceBlit(want, x, y, src, clip)
+		Blit(dst, x, y, src, clip)
+		for i, got := range dst.Cells() {
+			if got != want.Cells()[i] {
+				t.Fatalf("trial %d cell %d: got %+v want %+v", trial, i, got, want.Cells()[i])
+			}
+		}
+		// A bulk copy must not retain the source's mutable backing slice.
+		src.Fill(cell.TransparentBlank())
+		for i, got := range dst.Cells() {
+			if got != want.Cells()[i] {
+				t.Fatalf("source mutation changed destination at %d", i)
+			}
+		}
+	}
+}
 
 func opaqueLetter(ch rune) cell.Cell {
 	return cell.NewCell(ch, cell.Red, cell.Blue, 0)

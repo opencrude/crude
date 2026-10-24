@@ -46,7 +46,7 @@ func ExecutionDatabaseRetention(db *sql.DB, id string) error {
 	if db == nil {
 		return fmt.Errorf("session database unavailable")
 	}
-	rows, err := db.Query(`SELECT incident_id,agent_id,generation,owner_data,pending_input_json FROM agent_recoveries WHERE state NOT IN ('recovered','cancelled')`)
+	rows, err := db.Query(`SELECT incident_id,agent_id,generation,owner_data,pending_input_json FROM agent_recoveries WHERE state NOT IN ('recovered','cancelled','failed')`)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func (s *Session) adoptExecutionRecovery(id, agentID, incident string, generatio
 		return fail()
 	}
 	var recorded int
-	if err := s.db.QueryRow(`SELECT count(*) FROM agent_recoveries WHERE incident_id=? OR (agent_id=? AND state NOT IN ('recovered','cancelled'))`, incident, agentID).Scan(&recorded); err != nil {
+	if err := s.db.QueryRow(`SELECT count(*) FROM agent_recoveries WHERE incident_id=? OR (agent_id=? AND state NOT IN ('recovered','cancelled','failed'))`, incident, agentID).Scan(&recorded); err != nil {
 		return sessiondb.RecoveryCheckpoint{}, err
 	}
 	if recorded != 0 {

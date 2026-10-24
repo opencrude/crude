@@ -697,6 +697,7 @@ func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
 	// A close request supersedes any pending page or scope navigation.
 	s.model.nextCategory, s.model.nextScope = -1, ""
 	s.capCatalog.nextOpen = nil
+	s.CancelRemoteAccess()
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
 
@@ -966,6 +967,12 @@ func (s *WorkspaceSettingsSurface) footer() pageFooter {
 		}
 	case s.formPageOpen():
 		footer.help = s.form.HelpField()
+		if s.model.selected == catNetworkRemoteAccess {
+			footer.notice, footer.ink = s.model.remoteAccess.notice, ui.ColorMuted
+			if strings.Contains(footer.notice, "unavailable:") || strings.Contains(footer.notice, "failed:") {
+				footer.ink = ui.ColorError
+			}
+		}
 	}
 	return footer
 }
@@ -1338,6 +1345,9 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 	}
 	if strings.HasPrefix(string(action.ID), "settings.capability.") {
 		return s.capCatalog.HandleAction(ui.EventContext{}, action)
+	}
+	if strings.HasPrefix(string(action.ID), "settings.remote.") {
+		return s.handleRemoteAccessAction(action)
 	}
 	switch action.ID {
 	case "settings.lsp.servers":
@@ -1774,6 +1784,8 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		return false
 	}
 	switch msg.Kind {
+	case PromptRevokeRemoteDevice:
+		return s.remoteRevokeRelevant(msg)
 	case PromptRemoveAccount:
 		current, ok := s.model.accounts[msg.ID]
 		return ok && s.accountsOpen() && s.model.accountID == msg.ID && msg.beforeAccount != nil && reflect.DeepEqual(current, *msg.beforeAccount)
@@ -1858,6 +1870,7 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 	if s.lspServersOpen() && s.lsp.draft != nil {
 		return s.lsp.back()
 	}
+	s.CancelRemoteAccess()
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
 

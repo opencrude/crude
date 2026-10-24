@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"runtime"
@@ -11,18 +10,26 @@ import (
 	"testing"
 	"time"
 
+	"crude/coreclient"
 	"crude/coreprotocol"
-	"crude/corewire"
 	"crude/terminalvt"
 	"crude/types"
 	"crude/workspace"
 )
 
+// resourceWire issues commands over a real session; send does not wait, so
+// tests can hold several commands in flight at once.
 type resourceWire struct {
-	f     *corewire.Framer
-	owner coreprotocol.Owner
-	next  int
-	close func()
+	c       *coreclient.Client
+	owner   coreprotocol.Owner
+	next    int
+	results chan resourceResult
+	close   func()
+}
+
+type resourceResult struct {
+	id       string
+	response coreprotocol.Response
 }
 
 func newResourceWire(t *testing.T, r *Runtime, id string) *resourceWire {
@@ -31,12 +38,15 @@ func newResourceWire(t *testing.T, r *Runtime, id string) *resourceWire {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	done := make(chan error, 1)
 	go func() { done <- ServeConnection(ctx, r, b) }()
-	f := corewire.NewFramer(ctx, a)
+	c, err := coreclient.Dial(ctx, coreclient.SingleCarrier(a), id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var once sync.Once
 	closeWire := func() {
 		once.Do(func() {
+			_ = c.Close()
 			cancel()
-			_ = f.Close()
 			select {
 			case <-done:
 			case <-time.After(time.Second):
@@ -45,44 +55,37 @@ func newResourceWire(t *testing.T, r *Runtime, id string) *resourceWire {
 		})
 	}
 	t.Cleanup(closeWire)
-	if _, err := f.NegotiateClient(id, corewire.MaxFrameSize); err != nil {
-		t.Fatal(err)
-	}
-	ready, err := f.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := &resourceWire{f: f, close: closeWire}
-	if err := json.Unmarshal(ready.Payload, &w.owner); err != nil {
-		t.Fatal(err)
-	}
-	return w
+	return &resourceWire{c: c, owner: c.Owner(), results: make(chan resourceResult, 64), close: closeWire}
 }
 
 func (w *resourceWire) send(t *testing.T, ws, method string, value any) string {
 	t.Helper()
 	w.next++
 	id := fmt.Sprintf("resource-%d-%d", w.owner.Epoch, w.next)
-	raw, err := json.Marshal(value)
+	raw, err := testPayload(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = w.f.Write(corewire.Frame{Version: 1, Kind: corewire.KindRequest, RequestID: id, ClientID: w.owner.ClientID, Epoch: w.owner.Epoch, WorkspaceID: ws, Method: method, Payload: raw}); err != nil {
-		t.Fatal(err)
-	}
+	go func() {
+		response, err := w.c.CallRequest(context.Background(), coreprotocol.Request{ID: id, WorkspaceID: ws, Method: method, Payload: raw})
+		if err != nil {
+			response = coreprotocol.Response{ID: id, Error: &coreprotocol.Fault{Code: "transport", Message: err.Error()}}
+		}
+		w.results <- resourceResult{id, response}
+	}()
 	return id
 }
 
-func (w *resourceWire) receive(t *testing.T, count int) map[string]corewire.Frame {
+func (w *resourceWire) receive(t *testing.T, count int) map[string]coreprotocol.Response {
 	t.Helper()
-	results := make(map[string]corewire.Frame)
+	results := make(map[string]coreprotocol.Response)
+	timeout := time.After(10 * time.Second)
 	for len(results) < count {
-		frame, err := w.f.Read()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if frame.Kind == corewire.KindResponse {
-			results[frame.RequestID] = frame
+		select {
+		case result := <-w.results:
+			results[result.id] = result.response
+		case <-timeout:
+			t.Fatalf("only %d of %d responses arrived", len(results), count)
 		}
 	}
 	return results
@@ -96,7 +99,7 @@ func (w *resourceWire) call(t *testing.T, ws, method string, input, out any) {
 		t.Fatalf("%s: %+v", method, result.Error)
 	}
 	if out != nil {
-		if err := json.Unmarshal(result.Payload, out); err != nil {
+		if err := testDecode(result.Payload, out); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -148,6 +151,16 @@ func TestResourceWireTerminalInputPreservesFrameOrder(t *testing.T) {
 	w.call(t, attached.WorkspaceID, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "stty raw -echo; printf READY; cat"}, Cols: 120, Rows: 4}, &info)
 	var lease workspace.TerminalLease
 	w.call(t, attached.WorkspaceID, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID}, &lease)
+	inputContext, cancelInput := context.WithCancel(t.Context())
+	defer cancelInput()
+	inputErrors := make(chan error, 1)
+	inputStream := w.c.OpenTerminalInput(inputContext, attached.WorkspaceID, info.ID, func(err error) {
+		select {
+		case inputErrors <- err:
+		default:
+		}
+	})
+	defer inputStream.Close()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		var p workspace.TerminalProjection
@@ -163,21 +176,23 @@ func TestResourceWireTerminalInputPreservesFrameOrder(t *testing.T) {
 	const want = "AbCdEfGhIjKl"
 	for round := 0; round < 5; round++ {
 		for i, ch := range want {
-			input := coreprotocol.TerminalInputRequest{Lease: lease, Kind: "key", Key: terminalvt.Key{Code: ch, Text: string(ch)}}
+			input := workspace.TerminalInput{Lease: lease, Kind: "key", Key: terminalvt.Key{Code: ch, Text: string(ch)}}
 			if i%2 == 1 {
 				input.Kind = "paste"
 				input.Data = []byte(string(ch))
 			}
-			w.send(t, attached.WorkspaceID, coreprotocol.TerminalInput, input)
-		}
-		for _, result := range w.receive(t, len(want)) {
-			if result.Error != nil {
-				t.Fatalf("input rejected: %+v", result.Error)
+			if err := inputStream.Submit(input); err != nil {
+				t.Fatal(err)
 			}
 		}
 	}
 	deadline = time.Now().Add(3 * time.Second)
 	for {
+		select {
+		case err := <-inputErrors:
+			t.Fatal("ordered input rejected", err)
+		default:
+		}
 		var p workspace.TerminalProjection
 		w.call(t, attached.WorkspaceID, coreprotocol.TerminalRows, coreprotocol.TerminalRowsRequest{ID: info.ID, Start: -1, Count: 4}, &p)
 		text := projectionText(p)
@@ -214,11 +229,11 @@ func TestResourceWireDetachCannotRetainQueuedAcquire(t *testing.T) {
 	}
 	<-entered
 	acquire := a.send(t, attached.WorkspaceID, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID})
-	barrier := a.send(t, attached.WorkspaceID, coreprotocol.Snapshot, struct{}{})
+	barrier := a.send(t, attached.WorkspaceID, coreprotocol.Snapshot, coreprotocol.Empty{})
 	if result, ok := a.receive(t, 1)[barrier]; !ok || result.Error != nil {
 		t.Fatal("slow resource effect blocked unrelated snapshot response")
 	}
-	detach := a.send(t, attached.WorkspaceID, coreprotocol.Detach, struct{}{})
+	detach := a.send(t, attached.WorkspaceID, coreprotocol.Detach, coreprotocol.Empty{})
 	results := a.receive(t, 1)
 	if result := results[detach]; result.Error != nil {
 		t.Fatalf("detach: %+v", result.Error)

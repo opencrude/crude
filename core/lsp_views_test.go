@@ -20,7 +20,7 @@ func TestLSPViewsCloseDetachNeverRevokesPeerDocument(t *testing.T) {
 	}
 	callCore(t, a, "lsp-close", ws, coreprotocol.LSPCloseFile, coreprotocol.LSPRequest{Path: "new.go"})
 	a.Close()
-	callCore(t, b, "barrier", ws, coreprotocol.Snapshot, struct{}{})
+	callCore(t, b, "barrier", ws, coreprotocol.Snapshot, coreprotocol.Empty{})
 	r.mu.Lock()
 	actor := r.workspaces[ws]
 	r.mu.Unlock()

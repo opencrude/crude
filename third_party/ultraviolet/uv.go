@@ -22,6 +22,34 @@ type Drawable interface {
 	Draw(scr Screen, area Rectangle)
 }
 
+// Surface is a drawable cell grid with explicit dimensions. Unlike styled
+// strings, its grapheme widths are already resolved by the producer. Draw must
+// not do I/O and must not retain the destination screen.
+type Surface interface {
+	Drawable
+	Bounds() Rectangle
+}
+
+// SnapshotOwner identifies one producer's publication lifetime. Its address,
+// not its value, is the identity; owners must not be shared by producers.
+type SnapshotOwner struct{ _ byte }
+
+// SnapshotToken identifies an immutable completed publication, not a mutable
+// buffer pointer. A producer advances Generation on every publication/resize.
+// Generation zero or a nil Owner opts out of snapshot retention.
+type SnapshotToken struct {
+	Owner      *SnapshotOwner
+	Generation uint64
+}
+
+// SnapshotSurface permits reusing an already detached snapshot when the exact
+// publication is handed off again. Draw still owns copying the first handoff;
+// consumers never retain borrowed source cells or skip a new generation.
+type SnapshotSurface interface {
+	Surface
+	SnapshotToken() SnapshotToken
+}
+
 // DrawableFunc is a function that implements the [Drawable] interface.
 type DrawableFunc func(scr Screen, rect Rectangle)
 

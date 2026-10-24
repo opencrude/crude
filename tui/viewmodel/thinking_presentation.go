@@ -184,7 +184,7 @@ func (m *App) syncLocalThinking(reg *subPaneProjectionRegistry, pane *workspace.
 		if active && thought.InternalID == key.thought {
 			p := reg.Get(pane.ID, workspace.PaneThinking)
 			p.localThinking = true
-			p.renderer.SyncMessages([]types.ChatMessage{chatMessageFromCanonical(thought)}, key.agent.Messages.Version())
+			p.renderer.SyncMessages([]types.ChatMessage{chatMessageFromCanonical(thought)}, key.agent.Messages.Version(), key.agent.Messages.SourceGeneration())
 		}
 		return true
 	}

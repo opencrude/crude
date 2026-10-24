@@ -9,15 +9,14 @@ import (
 // Compositor manages the double-buffer frame pipeline.
 //
 // Frame lifecycle:
-//  1. BeginFrame(): reset damage, keep persistent back buffer
-//  2. App renders widgets into surfaces (only dirty surfaces need re-rendering)
-//  3. Composite(): flatten surface tree, composite only dirty surfaces into back buffer
-//  4. Present(): generate ANSI output from changed regions, swap front and back
+//  1. BeginFrame(): reset damage and clear back buffer
+//  2. App renders widgets into surfaces
+//  3. Composite(): flatten surface tree into back buffer
+//  4. PresentSurface(): publish the cell grid and swap front and back
 //
-// The compositor owns the screen-sized cell buffers and manages the
-// conversion from cell buffer → ANSI escape sequences for the terminal.
-// It is the bridge between the surface tree (Layer 1) and the terminal
-// output that Bubble Tea consumes.
+// Bubble Tea snapshots the published drawable before the next Update and
+// diffs cells and writes the terminal asynchronously. Present is retained for
+// explicit ANSI consumers, not the application's presentation path.
 type Compositor struct {
 	front  *surface.CellBuffer // Currently displayed (last frame sent to terminal)
 	back   *surface.CellBuffer // Being rendered into (current frame)
@@ -25,6 +24,7 @@ type Compositor struct {
 	height int                 // Terminal height in rows
 	root   *surface.Surface    // Root of the surface tree
 	damage DamageRegion        // Tracks what changed this frame
+	direct directCells         // Reusable conversion scratch, never a frame cache
 }
 
 // NewCompositor creates a compositor for the given terminal dimensions.
@@ -61,6 +61,7 @@ func (c *Compositor) Resize(w, h int) {
 	c.front.Resize(w, h)
 	c.back.Resize(w, h)
 	c.root.Resize(w, h)
+	c.direct.generation++
 }
 
 // Root returns the root surface. All application surfaces should be
@@ -126,13 +127,8 @@ func (c *Compositor) Composite() {
 //  2. Swap front and back buffers
 //  3. Clear the dirty tree for the next frame cycle
 //
-// The returned string is always a full-frame ANSI string. Diff-based output
-// is intentionally disabled for now because the viewmodel caches the last
-// output for no-change frames, and returning a diff would corrupt that
-// cache. The main performance win comes from only compositing dirty
-// surfaces, not from diffing terminal output.
-//
-// The returned string can be passed directly to Bubble Tea's View() return value.
+// This explicit ANSI path remains for diagnostics and string consumers.
+// App.View uses PresentSurface instead; Bubble Tea owns terminal diff/output.
 func (c *Compositor) Present() string {
 	var output string
 	if c.damage.HasDamage() && c.width > 0 && c.height > 0 {
@@ -140,15 +136,16 @@ func (c *Compositor) Present() string {
 		perf.MarkANSIFrame(c.width * c.height)
 	}
 
-	// Swap buffers: front becomes the just-presented frame, back gets recycled.
-	c.front, c.back = c.back, c.front
-
-	// Clear the dirty tree: all surfaces have been composited and presented,
-	// so reset their dirty flags for the next frame cycle.
-	c.root.ClearDirtyTree()
-	c.damage.Reset()
+	c.finishFrame()
 
 	return output
+}
+
+func (c *Compositor) finishFrame() {
+	c.front, c.back = c.back, c.front
+	c.direct.generation++
+	c.root.ClearDirtyTree()
+	c.damage.Reset()
 }
 
 // FullRender performs a complete frame cycle:

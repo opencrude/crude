@@ -1,14 +1,16 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/types"
 	"crude/types/control"
@@ -51,68 +53,73 @@ func testSilentTerminalLifecycle(t *testing.T, semantic bool) {
 		}
 	})
 	root := t.TempDir()
-	creator, ws := resourceConnection(t, r, root, "silent-creator")
-	peer, _ := resourceConnection(t, r, root, "silent-peer")
-	if semantic {
-		callCore(t, creator, "control-grant", ws, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Execute, control.Delete}})
+	creator, ws := topicResourceConnection(t, r, root, "silent-creator")
+	peer, _ := topicResourceConnection(t, r, root, "silent-peer")
+	inventories := []<-chan resourcePublication[coreprotocol.WorkspaceState]{
+		resourceTopic[coreprotocol.WorkspaceState](t, creator, ws, coreprotocol.TopicTerminalInventory),
+		resourceTopic[coreprotocol.WorkspaceState](t, peer, ws, coreprotocol.TopicTerminalInventory),
 	}
-	lifecycle := func(id, method string, input, out any) {
-		t.Helper()
-		result := callCore(t, creator, id, ws, method, input)
-		if out != nil {
-			decodeResource(t, result, out)
+	for _, inventory := range inventories {
+		initial := nextResourcePublication(t, inventory, func(s coreprotocol.WorkspaceState) bool { return s.Terminals != nil })
+		if len(*initial.Terminals) != 0 {
+			t.Fatalf("initial inventory not empty: %+v", initial)
 		}
 	}
 	if semantic {
-		lifecycle = func(id, method string, input, out any) {
-			t.Helper()
-			raw, err := json.Marshal(input)
-			if err != nil {
+		resourceTopicCall(t, creator, ws, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Execute, control.Delete}}, nil)
+	}
+	lifecycle := func(id, method string, input coreprotocol.Value, out coreprotocol.Target) {
+		t.Helper()
+		if !semantic {
+			resourceTopicCall(t, creator, ws, method, input, out)
+			return
+		}
+		raw, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result control.Result
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		if _, err := creator.CallWith(ctx, ws, coreprotocol.ControlExecute, &control.Request{ID: id, CommandID: method, Input: raw}, &result, coreclient.CallOptions{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		if result.Fault != nil || result.State != control.Committed {
+			t.Fatalf("%s did not commit: %+v", method, result)
+		}
+		if out != nil {
+			if err := json.Unmarshal(result.Output, out); err != nil {
 				t.Fatal(err)
-			}
-			var result control.Result
-			decodeResource(t, callCore(t, creator, id, ws, coreprotocol.ControlExecute, control.Request{ID: id, CommandID: method, Input: raw}), &result)
-			if result.Fault != nil || result.State != control.Committed {
-				t.Fatalf("%s did not commit: %+v", method, result)
-			}
-			if out != nil {
-				if err := json.Unmarshal(result.Output, out); err != nil {
-					t.Fatal(err)
-				}
 			}
 		}
 	}
 	var info workspace.TerminalInfo
-	lifecycle("silent-create", coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{
+	lifecycle("silent-create", coreprotocol.TerminalCreate, &workspace.TerminalCreateOpts{
 		Command: executable, Args: []string{"-test.run=^TestResourceEventsSilentTerminalChild$"}, CWD: root, Cols: 40, Rows: 4,
 	}, &info)
 	if info.ID == "" || info.PID <= 0 || !info.Alive {
 		t.Fatalf("silent child was not created alive: %+v", info)
 	}
-	for _, subscriber := range []*Connection{creator, peer} {
-		nextResourceChange(t, subscriber, ws, func(ch coreprotocol.Change) bool { return slices.Contains(ch.Terminals, info.ID) })
-		var inventory []workspace.TerminalInfo
-		decodeResource(t, callCore(t, subscriber, "silent-inventory", ws, coreprotocol.TerminalList, struct{}{}), &inventory)
-		if len(inventory) != 1 || inventory[0].ID != info.ID || inventory[0].PID != info.PID || !inventory[0].Alive {
-			t.Fatalf("subscriber did not discover the same silent PTY: %+v", inventory)
+	for _, inventory := range inventories {
+		state := nextResourcePublication(t, inventory, func(s coreprotocol.WorkspaceState) bool { return s.Terminals != nil && len(*s.Terminals) > 0 })
+		infos := *state.Terminals
+		if len(infos) != 1 || infos[0].ID != info.ID || infos[0].PID != info.PID || !infos[0].Alive {
+			t.Fatalf("subscriber did not discover the same silent PTY: %+v", infos)
 		}
 	}
-	var projection workspace.TerminalProjection
-	decodeResource(t, callCore(t, peer, "silent-rows", ws, coreprotocol.TerminalRows, coreprotocol.TerminalRowsRequest{ID: info.ID, Start: -1, Count: 4}), &projection)
+	grid := resourceGrid(t, peer, ws, info.ID)
+	projection := nextResourcePublication(t, grid, func(workspace.TerminalProjection) bool { return true })
 	if !projection.Info.Alive || projection.Info.PID != info.PID || strings.TrimSpace(projectionText(projection)) != "" {
 		t.Fatalf("fixture must remain alive and silent: %+v text=%q", projection.Info, projectionText(projection))
 	}
-	lifecycle("silent-close", coreprotocol.TerminalClose, coreprotocol.TerminalIDRequest{ID: info.ID}, nil)
-	for _, subscriber := range []*Connection{creator, peer} {
-		nextResourceChange(t, subscriber, ws, func(ch coreprotocol.Change) bool { return slices.Contains(ch.Terminals, info.ID) })
-		var inventory []workspace.TerminalInfo
-		decodeResource(t, callCore(t, subscriber, "closed-inventory", ws, coreprotocol.TerminalList, struct{}{}), &inventory)
-		if len(inventory) != 0 {
-			t.Fatalf("subscriber retained closed PTY: %+v", inventory)
-		}
+	lifecycle("silent-close", coreprotocol.TerminalClose, &coreprotocol.TerminalIDRequest{ID: info.ID}, nil)
+	for _, inventory := range inventories {
+		nextResourcePublication(t, inventory, func(s coreprotocol.WorkspaceState) bool { return s.Terminals != nil && len(*s.Terminals) == 0 })
 	}
 }
 
+// Keep the direct actor helper for tests of owner/resource admission. Topic
+// acceptance uses a real net.Pipe carrier, exact-build handshake and decoded ACKs.
 func resourceConnection(t *testing.T, r *Runtime, root, id string) (*Connection, string) {
 	t.Helper()
 	c, err := r.Connect(id)
@@ -127,107 +134,240 @@ func resourceConnection(t *testing.T, r *Runtime, root, id string) (*Connection,
 
 func decodeResource(t *testing.T, response coreprotocol.Response, out any) {
 	t.Helper()
-	if err := json.Unmarshal(response.Payload, out); err != nil {
+	if err := testDecode(response.Payload, out); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func nextResourceChange(t *testing.T, c *Connection, ws string, accept func(coreprotocol.Change) bool) coreprotocol.Change {
+// topicResourceConnection intentionally does not change resourceConnection's
+// direct actor semantics, which unrelated resource and deletion tests rely on.
+func topicResourceConnection(t *testing.T, r *Runtime, root, id string) (*coreclient.Client, string) {
 	t.Helper()
-	timer := time.NewTimer(3 * time.Second)
+	c := controlWireClient(t, r, id)
+	var attached coreprotocol.AttachResult
+	resourceTopicCall(t, c, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
+	return c, attached.WorkspaceID
+}
+
+func resourceTopicCall(t *testing.T, c *coreclient.Client, ws, method string, input coreprotocol.Value, out coreprotocol.Target) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := c.Call(ctx, ws, method, input, out); err != nil {
+		t.Fatalf("%s: %v", method, err)
+	}
+}
+
+type resourcePublication[T any] struct {
+	value T
+	err   error
+}
+
+// The callback decodes and admits each immutable value before Subscribe releases
+// its application ACK. No invalidation triggers a terminal.list/rows request.
+func resourceTopic[T any](t *testing.T, c *coreclient.Client, ws, topic string) <-chan resourcePublication[T] {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	values := make(chan resourcePublication[T], 32)
+	var sequence uint64
+	sub := c.Subscribe(ctx, ws, topic, "", func(h coreprotocol.TopicHeader, body []byte) error {
+		var value T
+		err := testDecode(body, &value)
+		if err == nil && (h.Seq == 0 || h.Seq <= sequence || (sequence == 0 && !h.Reset)) {
+			err = fmt.Errorf("invalid %s sequence: %d -> %+v", topic, sequence, h)
+		}
+		if state, ok := any(value).(coreprotocol.WorkspaceState); ok && state.Fault != nil {
+			err = state.Fault
+		}
+		if update, ok := any(value).(coreprotocol.WorkspaceUpdate); ok {
+			for _, effect := range update.TerminalEffects {
+				if len(effect.Effects.Clipboard) != 0 || len(effect.Effects.Replies) != 0 {
+					err = fmt.Errorf("private clipboard/query bytes leaked to workspace topic: %+v", effect)
+				}
+			}
+		}
+		select {
+		case values <- resourcePublication[T]{value: value, err: err}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		sequence = h.Seq
+		return err
+	})
+	t.Cleanup(func() { cancel(); sub.Close() })
+	return values
+}
+
+func resourceGrid(t *testing.T, c *coreclient.Client, ws, id string) <-chan resourcePublication[workspace.TerminalProjection] {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	values := make(chan resourcePublication[workspace.TerminalProjection], 32)
+	sub := c.SubscribeTerminal(ctx, ws, id, func(p workspace.TerminalProjection, err error) {
+		select {
+		case values <- resourcePublication[workspace.TerminalProjection]{value: p, err: err}:
+		case <-ctx.Done():
+		}
+	})
+	t.Cleanup(func() { cancel(); sub.Close() })
+	return values
+}
+
+func nextResourcePublication[T any](t *testing.T, values <-chan resourcePublication[T], accept func(T) bool) T {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
-		case change := <-c.Events():
-			if change.Resync || change.WorkspaceID != ws || change.Revision <= change.BaseRevision {
-				t.Fatalf("invalid resource delta: %+v", change)
+		case publication := <-values:
+			if publication.err != nil {
+				t.Fatal(publication.err)
 			}
-			if change.TerminalEffects != nil && len(change.TerminalEffects.Effects.Replies) != 0 {
-				t.Fatalf("query reply bytes leaked to subscriber: %+v", change)
-			}
-			if accept(change) {
-				return change
+			if accept(publication.value) {
+				return publication.value
 			}
 		case <-timer.C:
-			t.Fatal("no unsolicited resource change arrived")
+			t.Fatal("no unsolicited resource publication arrived")
 		}
 	}
 }
 
+func resourceTitle(t *testing.T, updates <-chan resourcePublication[coreprotocol.WorkspaceUpdate], id, title string) workspace.TerminalEffectsMsg {
+	t.Helper()
+	var matched workspace.TerminalEffectsMsg
+	nextResourcePublication(t, updates, func(u coreprotocol.WorkspaceUpdate) bool {
+		for _, effect := range u.TerminalEffects {
+			if effect.ID == id && effect.Effects.Title == title {
+				matched = effect
+				return true
+			}
+		}
+		return false
+	})
+	return matched
+}
+
 func TestResourceEventsUnsolicitedOutputAndNaturalExit(t *testing.T) {
 	r, root := resourceRuntime(t)
-	c, ws := resourceConnection(t, r, root, "terminal-events")
+	c, ws := topicResourceConnection(t, r, root, "terminal-events")
+	updates := resourceTopic[coreprotocol.WorkspaceUpdate](t, c, ws, coreprotocol.TopicWorkspace)
+	inventory := resourceTopic[coreprotocol.WorkspaceState](t, c, ws, coreprotocol.TopicTerminalInventory)
+	nextResourcePublication(t, updates, func(u coreprotocol.WorkspaceUpdate) bool { return u.Snapshot != nil })
+	nextResourcePublication(t, inventory, func(s coreprotocol.WorkspaceState) bool { return s.Terminals != nil })
 	var info workspace.TerminalInfo
-	decodeResource(t, callCore(t, c, "create", ws, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{
+	resourceTopicCall(t, c, ws, coreprotocol.TerminalCreate, &workspace.TerminalCreateOpts{
 		Command: "/bin/sh", Args: []string{"-c", "stty -echo; printf '\033]2;ready\007'; read line; printf 'FINAL-GRID'; exit 7"}, Cols: 40, Rows: 4,
-	}), &info)
-	// The readiness event must arrive without fetching Rows or polling the core.
-	ready := nextResourceChange(t, c, ws, func(ch coreprotocol.Change) bool {
-		return ch.TerminalEffects != nil && ch.TerminalEffects.ID == info.ID && ch.TerminalEffects.Effects.Title == "ready"
-	})
-	if !slices.Contains(ready.Terminals, info.ID) {
-		t.Fatal("effects delta omitted terminal identity")
-	}
-	// Consume the initial output invalidation before admitting the exit trigger.
-	nextResourceChange(t, c, ws, func(ch coreprotocol.Change) bool {
-		return slices.Contains(ch.Terminals, info.ID) && ch.TerminalEffects == nil
-	})
+	}, &info)
+	// Readiness is a pushed semantic fact, with no Rows or inventory polling.
+	resourceTitle(t, updates, info.ID, "ready")
+	grid := resourceGrid(t, c, ws, info.ID)
+	nextResourcePublication(t, grid, func(p workspace.TerminalProjection) bool { return p.Info.ID == info.ID && p.Info.Alive })
 	var lease workspace.TerminalLease
-	decodeResource(t, callCore(t, c, "control", ws, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID}), &lease)
-	callCore(t, c, "finish", ws, coreprotocol.TerminalInput, coreprotocol.TerminalInputRequest{Lease: lease, Kind: "paste", Data: []byte("\n")})
-	// Output invalidation and the subsequent natural-exit invalidation are
-	// separate service facts. Fetch the final grid only after both arrive.
-	var last coreprotocol.Change
-	for i := 0; i < 2; i++ {
-		ch := nextResourceChange(t, c, ws, func(ch coreprotocol.Change) bool { return slices.Contains(ch.Terminals, info.ID) })
-		if i > 0 && ch.BaseRevision < last.Revision {
-			t.Fatalf("terminal cursor regressed: %+v -> %+v", last, ch)
-		}
-		last = ch
+	resourceTopicCall(t, c, ws, coreprotocol.TerminalControl, &coreprotocol.TerminalIDRequest{ID: info.ID}, &lease)
+	resourceTopicCall(t, c, ws, coreprotocol.TerminalInput, &coreprotocol.TerminalInputRequest{Lease: lease, Kind: "paste", Data: []byte("\n")}, nil)
+	// Latest-state conflation may join output and exit. Wait for the actual final
+	// grid and independent lifecycle metadata, not a count of invalidations.
+	final := nextResourcePublication(t, grid, func(p workspace.TerminalProjection) bool { return strings.Contains(projectionText(p), "FINAL-GRID") })
+	if final.Info.ID != info.ID {
+		t.Fatal("final grid changed identity", final.Info)
 	}
-	var p workspace.TerminalProjection
-	decodeResource(t, callCore(t, c, "final-rows", ws, coreprotocol.TerminalRows, coreprotocol.TerminalRowsRequest{ID: info.ID, Start: -1, Count: 4}), &p)
-	if p.Info.Alive || p.Info.ExitCode != 7 || !strings.Contains(projectionText(p), "FINAL-GRID") {
-		t.Fatalf("exit notification preceded final readable grid: %+v text=%q", p.Info, projectionText(p))
+	exited := nextResourcePublication(t, inventory, func(s coreprotocol.WorkspaceState) bool {
+		if s.Terminals == nil {
+			return false
+		}
+		for _, terminal := range *s.Terminals {
+			if terminal.ID == info.ID && !terminal.Alive {
+				return true
+			}
+		}
+		return false
+	})
+	if len(*exited.Terminals) != 1 || (*exited.Terminals)[0].ExitCode != 7 {
+		t.Fatalf("incorrect exit metadata: %+v", *exited.Terminals)
+	}
+	if final.Info.Alive {
+		final = nextResourcePublication(t, grid, func(p workspace.TerminalProjection) bool { return !p.Info.Alive })
+	}
+	if final.Info.ExitCode != 7 || !strings.Contains(projectionText(final), "FINAL-GRID") {
+		t.Fatalf("exit grid lost final output: %+v text=%q", final.Info, projectionText(final))
+	}
+}
+
+// A control request on the same stop-and-wait session journal is a deterministic
+// fence: preceding private offers have reached their inbox before this returns.
+func resourcePrivateFence(t *testing.T, r *Runtime, c *coreclient.Client, ws, id string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	envelope := shellEnvelope(id, ws, c.Owner())
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.RequestShellControl(ctx, ws, *envelope.Request.Target.Shell, envelope)
+		done <- err
+	}()
+	select {
+	case got := <-c.ControlRequests():
+		if got.Request.ID != id {
+			t.Fatalf("wrong private fence: %+v", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("private fence was not delivered", ctx.Err())
+	}
+	if err := c.ReplyControl(ctx, ws, control.Result{RequestID: id, OperationID: id, State: control.Applied, Output: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestResourceEventsClipboardOnlyExactControllerAndObserverMetadata(t *testing.T) {
 	r, root := resourceRuntime(t)
-	a, ws := resourceConnection(t, r, root, "clipboard-controller")
-	b, _ := resourceConnection(t, r, root, "clipboard-observer")
+	a, ws := topicResourceConnection(t, r, root, "clipboard-controller")
+	b, _ := topicResourceConnection(t, r, root, "clipboard-observer")
+	updates := make(map[*coreclient.Client]<-chan resourcePublication[coreprotocol.WorkspaceUpdate])
+	for _, c := range []*coreclient.Client{a, b} {
+		resourceTopicCall(t, c, ws, coreprotocol.ControlShellRegister, &coreprotocol.Empty{}, nil)
+		updates[c] = resourceTopic[coreprotocol.WorkspaceUpdate](t, c, ws, coreprotocol.TopicWorkspace)
+		nextResourcePublication(t, updates[c], func(u coreprotocol.WorkspaceUpdate) bool { return u.Snapshot != nil })
+	}
 	var info workspace.TerminalInfo
-	decodeResource(t, callCore(t, a, "create", ws, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{
+	resourceTopicCall(t, a, ws, coreprotocol.TerminalCreate, &workspace.TerminalCreateOpts{
 		Command: "/bin/sh", Args: []string{"-c", "stty -echo; printf '\033]2;ready\007'; while read line; do printf '\033]2;offered\007\033]52;c;c2VjcmV0\007\033[5n'; done"}, Cols: 40, Rows: 4,
-	}), &info)
-	for _, c := range []*Connection{a, b} {
-		nextResourceChange(t, c, ws, func(ch coreprotocol.Change) bool {
-			return ch.TerminalEffects != nil && ch.TerminalEffects.Effects.Title == "ready"
-		})
+	}, &info)
+	for _, c := range []*coreclient.Client{a, b} {
+		resourceTitle(t, updates[c], info.ID, "ready")
 	}
 	var lease workspace.TerminalLease
-	decodeResource(t, callCore(t, a, "control", ws, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID}), &lease)
-	check := func(controller, observer *Connection, inputID string, titleChanged bool) {
-		callCore(t, controller, inputID, ws, coreprotocol.TerminalInput, coreprotocol.TerminalInputRequest{Lease: lease, Kind: "paste", Data: []byte("offer\n")})
-		for _, c := range []*Connection{controller, observer} {
-			change := nextResourceChange(t, c, ws, func(ch coreprotocol.Change) bool {
-				return ch.TerminalEffects != nil && ch.TerminalEffects.Effects.Title == "offered" && len(ch.Terminals) > 0
-			})
-			effects := change.TerminalEffects.Effects
-			if change.TerminalEffects.ID != info.ID || !slices.Contains(change.Terminals, info.ID) || effects.TitleChanged != titleChanged {
-				t.Fatalf("observer lost metadata: %+v", change)
+	resourceTopicCall(t, a, ws, coreprotocol.TerminalControl, &coreprotocol.TerminalIDRequest{ID: info.ID}, &lease)
+	check := func(controller, observer *coreclient.Client, inputID string, titleChanged bool) {
+		t.Helper()
+		resourceTopicCall(t, controller, ws, coreprotocol.TerminalInput, &coreprotocol.TerminalInputRequest{Lease: lease, Kind: "paste", Data: []byte("offer\n")}, nil)
+		for _, c := range []*coreclient.Client{controller, observer} {
+			effect := resourceTitle(t, updates[c], info.ID, "offered")
+			if effect.Effects.TitleChanged != titleChanged {
+				t.Fatalf("observer lost repeated title metadata: %+v", effect)
 			}
-			if c == controller {
-				if len(effects.Clipboard) != 1 || string(effects.Clipboard[0]) != "secret" {
-					t.Fatalf("controller lost clipboard offer: %+v", effects)
-				}
-			} else if len(effects.Clipboard) != 0 {
-				t.Fatalf("observer received clipboard bytes: %+v", effects)
+		}
+		select {
+		case effect := <-controller.PrivateEffects():
+			offer := effect.TerminalClipboard
+			if effect.Error != "" || effect.WorkspaceID != ws || offer == nil || offer.TerminalID != info.ID || offer.Generation != lease.Generation || len(offer.Clipboard) != 1 || string(offer.Clipboard[0]) != "secret" {
+				t.Fatalf("controller lost exact private offer: %+v", effect)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("controller did not receive clipboard offer")
+		}
+		for _, c := range []*coreclient.Client{controller, observer} {
+			resourcePrivateFence(t, r, c, ws, inputID+"-"+c.Owner().ClientID)
+			select {
+			case effect := <-c.PrivateEffects():
+				t.Fatalf("unexpected private effect (observer leak or duplicate): %+v", effect)
+			default:
 			}
 		}
 	}
 	check(a, b, "offer-first", true)
-	callCore(t, a, "release", ws, coreprotocol.TerminalRelease, lease)
-	decodeResource(t, callCore(t, b, "takeover", ws, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID}), &lease)
+	resourceTopicCall(t, a, ws, coreprotocol.TerminalRelease, &lease, nil)
+	resourceTopicCall(t, b, ws, coreprotocol.TerminalControl, &coreprotocol.TerminalIDRequest{ID: info.ID}, &lease)
 	check(b, a, "offer-second", false)
 }

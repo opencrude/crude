@@ -26,6 +26,7 @@ const (
 	activityWorkspaces = activitybar.ViewWorkspaces
 	activitySkills     = activitybar.ViewSkills
 	activityMCP        = activitybar.ViewMCP
+	activityRemotes    = activitybar.ViewRemotes
 
 	sidebarItemNewAgent = "agent.new"
 )
@@ -101,6 +102,9 @@ func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 	if view == activityWorkspaces && !m.workspaceListLoading {
 		m.refreshLauncherAsync(m.ws.RootPath())
 	}
+	if view == activityRemotes {
+		return m.refreshRemotes()
+	}
 	return nil
 }
 
@@ -122,8 +126,14 @@ func (m *App) refreshActivityList() {
 	}
 	nerd := panelchrome.NerdFont(m.Theme)
 	m.activityList.SetLoading(m.activityView == activityWorkspaces && m.workspaceListLoading)
-	m.activityList.SetActivateOnClick(m.activityView == activityWorkspaces)
+	m.activityList.SetActivateOnClick(m.activityView == activityWorkspaces || m.activityView == activityRemotes)
 	switch m.activityView {
+	case activityRemotes:
+		m.activityList.SetHeading("Remotes")
+		m.activityList.SetIcon(activityRemotes.Icon(nerd))
+		m.activityList.SetBadge("")
+		m.activityList.SetLoading(m.remotes != nil && m.remotes.loading)
+		m.activityList.SetItems(m.remoteSidebarItems())
 	case activityWorkspaces:
 		m.activityList.SetHeading("Workspaces")
 		m.activityList.SetIcon(activityWorkspaces.Icon(nerd))
@@ -232,6 +242,9 @@ func sidebarCountBadge(items []ui.ListItem) string {
 }
 
 func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
+	if m.activityView == activityRemotes {
+		return m.handleRemoteSidebar(item)
+	}
 	switch {
 	case item.ID == sidebarItemNewWorkspace:
 		if m.activityView == activityWorkspaces && m.sidebarHostVisible() {
@@ -344,6 +357,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	case historyscreen.ActionApply:
 		request, _ := action.Payload.(historyscreen.ApplyRequest)
 		return m.historyApplyCmd(request)
+	case historyscreen.ActionCheck:
+		id, _ := action.Payload.(string)
+		return m.historyCheckCmd(id)
 	case historyscreen.ActionBack:
 		return m.openLocalHistory()
 	case ui.ActionTextPaste:

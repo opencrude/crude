@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"bytes"
-	tea "charm.land/bubbletea/v2"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
 	"crude/tui/ui"
@@ -50,7 +51,7 @@ func TestLiveEditorConflictDefaultCompareAndFencedUseShared(t *testing.T) {
 	liveTestSync(t, two.app)
 	runAppCommand(t, two.app, two.app.drainLiveEditorCommands())
 	p := conflictPrompt(t, two.app)
-	if !strings.Contains(two.app.View().Content, "Keep draft") {
+	if !strings.Contains(two.app.View().RenderContent(), "Keep draft") {
 		t.Fatal("safe default missing")
 	}
 	two.app.applyLiveConflict(liveConflictMsg{p: p, action: "keep"})

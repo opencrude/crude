@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
+	"crude/shellport"
 	ttypes "crude/types"
 	"crude/types/activity"
 	"crude/types/reasoning"
@@ -15,6 +18,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
 	id := addBackendTestOrchestrator(t, app)
+	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	data := map[string]any{
 		"request_id": "compact-status-1", "trigger": "manual", "role": "root",
 		"model_id": "aeron/model", "stage": 2, "completed_stages": 1,
@@ -22,17 +26,20 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	}
 	plan := &activity.Plan{ID: "plan", Status: "active", Total: 4, Completed: 3,
 		Current: []activity.Step{{Number: 4, Text: "Run build, tests, and whole-repo lint"}}}
+	owner := wsOf(app)
+	port := app.ws
+	app.ws = compactionPlanFixture{Workspace: app.ws, plan: plan}
+	t.Cleanup(func() { app.ws = port })
 	paint := func() string {
-		app.syncAgentStatusInventory()
-		app.configureShell()
-		view := app.ws.AgentActivity(id)
-		view.Plan = plan
-		app.chatScreen.SetActivity(view)
-		app.renderShellToSurface()
+		app.View()
 		return shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
 	}
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "context_compaction_started", Data: data})
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "context_compaction_stage", Data: data})
+	send := func(kind string, data any) {
+		_, command := app.Update(ttypes.AgentMsg{AgentID: id, Type: kind, Data: data})
+		runAppCommand(t, app, command)
+	}
+	send("context_compaction_started", data)
+	send("context_compaction_stage", data)
 	if got := paint(); !strings.Contains(got, "Compacting context") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("active compaction strip=%q", got)
 	}
@@ -42,7 +49,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	}
 	data["stage"], data["completed_stages"] = 4, 4
 	data["after_tokens"] = 20500
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "context_compacted", Data: data})
+	send("context_compacted", data)
 	for range 3 {
 		if got := paint(); !strings.Contains(got, "Context compacted") || !strings.Contains(got, "Ready to continue") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
 			t.Fatalf("settled compaction strip=%q", got)
@@ -54,25 +61,29 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	}
 	// A resumed boundary is still the authoritative latest operation even when
 	// the transient status center has no event snapshot yet.
-	wsOf(app).Status.RemoveAgent(id)
+	owner.Status.RemoveAgent(id)
+	app.Update(workspace.StatusCenterHydratedMsg{})
 	if got := paint(); !strings.Contains(got, "Context compacted") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("rehydrated boundary strip=%q", got)
 	}
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "stream_token", Data: "Ready"})
-	app.SpinFrame = int(time.Now().UnixMilli())
-	planVisible := false
-	for range 4 {
-		got := paint()
-		if strings.Contains(got, "Context compacted") {
-			t.Fatalf("old compaction displaced new turn: %q", got)
-		}
-		planVisible = planVisible || strings.Contains(got, "4/4 Run build")
-		app.SpinFrame += 6000
+	send("turn_started", ttypes.TurnIdentity{Generation: 1, ModelID: "model"})
+	send("stream_token", "Ready")
+	if got := paint(); strings.Contains(got, "Context compacted") || !strings.Contains(got, "4/4 Run build") {
+		t.Fatalf("new turn did not restore the compact current task: %q", got)
 	}
-	if !planVisible {
-		t.Fatal("new turn did not restore the compact current task")
-	}
+}
+
+// Keep a deterministic competing plan in the port's activity projection while
+// lifecycle events, frame scheduling and Host painting take their real paths.
+type compactionPlanFixture struct {
+	shellport.Workspace
+	plan *activity.Plan
+}
+
+func (w compactionPlanFixture) AgentActivity(id string) ttypes.AgentActivityView {
+	view := w.Workspace.AgentActivity(id)
+	view.Plan = w.plan
+	return view
 }
 
 func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {

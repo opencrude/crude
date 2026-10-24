@@ -40,9 +40,39 @@ type View struct {
 // Only rows already outside the previous active grid are immutable across ingress
 // generations. A former active row must be read again before copy or publication.
 func (v *View) Install(g terminalvt.Projection, generation uint64) bool {
-	if v.rows != nil && (generation < v.Generation || g.ReadSequence < v.Grid.ReadSequence) {
+	if !v.accepts(g, generation) {
 		return false
 	}
+	g = snapshotPage(g)
+	for i, row := range g.Cells {
+		g.Cells[i] = append([]terminalvt.Cell(nil), row...)
+	}
+	return v.install(g, generation)
+}
+
+// InstallImmutable retains published immutable cell rows without copying every
+// cell. The caller must never modify or recycle those rows after publication.
+// Slice headers and wrap metadata are detached, so the caller may replace its
+// outer page slices. Painting, selection and cache eviction never mutate rows.
+func (v *View) InstallImmutable(g terminalvt.Projection, generation uint64) bool {
+	if !v.accepts(g, generation) {
+		return false
+	}
+	return v.install(snapshotPage(g), generation)
+}
+
+func (v *View) accepts(g terminalvt.Projection, generation uint64) bool {
+	return v.rows == nil || generation >= v.Generation && g.ReadSequence >= v.Grid.ReadSequence
+}
+
+func snapshotPage(g terminalvt.Projection) terminalvt.Projection {
+	g.Cells = append([][]terminalvt.Cell(nil), g.Cells...)
+	g.Wrapped = append([]bool(nil), g.Wrapped...)
+	return g
+}
+
+// install owns the page headers and shares only immutable cell rows.
+func (v *View) install(g terminalvt.Projection, generation uint64) bool {
 	initial := v.rows == nil
 	reset := v.rows == nil || g.HistoryEpoch != v.Grid.HistoryEpoch || g.Cols != v.Grid.Cols || g.GridRows != v.Grid.GridRows || g.Modes.AltScreen != v.Grid.Modes.AltScreen
 	if reset {
@@ -75,15 +105,11 @@ func (v *View) Install(g terminalvt.Projection, generation uint64) bool {
 		}
 	}
 	v.Generation = generation
-	clone := g
-	clone.Cells = make([][]terminalvt.Cell, len(g.Cells))
-	clone.Wrapped = append([]bool(nil), g.Wrapped...)
 	for i, row := range g.Cells {
-		clone.Cells[i] = append([]terminalvt.Cell(nil), row...)
-		v.rows[int(g.HistoryBase)+g.Start+i] = clone.Cells[i]
-		v.wrapped[int(g.HistoryBase)+g.Start+i] = i < len(clone.Wrapped) && clone.Wrapped[i]
+		v.rows[int(g.HistoryBase)+g.Start+i] = row
+		v.wrapped[int(g.HistoryBase)+g.Start+i] = i < len(g.Wrapped) && g.Wrapped[i]
 	}
-	v.Grid = clone
+	v.Grid = g
 	if initial {
 		v.follow, v.intent = true, 1
 	}

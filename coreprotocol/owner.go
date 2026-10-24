@@ -24,7 +24,6 @@ const (
 	WorkspaceOverridesSet = "workspace.overrides_save"
 	ToolLayoutLoad        = "workspace.tool_layout"
 	ToolLayoutSave        = "workspace.tool_layout_save"
-	HistoryRestoreEvent   = "history.restore_event"
 	HistoryUndoScopes     = "history.undo_scopes"
 	GitStagePaths         = "git.stage_paths"
 	GitUnstagePaths       = "git.unstage_paths"
@@ -104,10 +103,6 @@ type OverridesResult struct {
 
 type ToolLayoutRequest struct {
 	Layout workspace.ToolLayout `json:"layout"`
-}
-
-type HistoryRestoreEventRequest struct {
-	Result localhistory.RestoreResult `json:"result"`
 }
 
 type UndoScopesRequest struct {

@@ -11,7 +11,6 @@ func (a *AgentState) InstallSnapshot(snapshot AgentSnapshot) {
 	a.runtimeIdentity = snapshot.RuntimeIdentity
 	a.ReasoningMode, a.Recovery = snapshot.ReasoningMode, snapshot.Recovery
 	a.LastTokenTime, a.ActiveCompaction = snapshot.LastTokenTime, snapshot.ActiveCompaction
-	a.TokenBuf = ""
 	a.terminal = !snapshot.Running && !snapshot.Thinking && !snapshot.Streaming
 	a.PendingBlockID = ""
 	if snapshot.Prompt != nil {

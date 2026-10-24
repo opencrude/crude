@@ -9,6 +9,7 @@ import (
 )
 
 var ErrTerminalControl = errors.New("terminal control lease is missing or stale")
+var ErrTerminalInputSequence = errors.New("terminal input sequence is invalid")
 
 // TerminalController identifies one exact client attachment, not a session or
 // selected tab. Reattachment must use a new Epoch.
@@ -42,10 +43,25 @@ type TerminalChangedMsg struct {
 	Generation uint64
 }
 type terminalResource struct {
-	engine     *terminalvt.Engine
-	lease      TerminalLease
-	generation uint64
-	err        string
+	engine        *terminalvt.Engine
+	lease         TerminalLease
+	generation    uint64
+	err           string
+	watchers      map[chan struct{}]struct{}
+	inputStream   string
+	inputSequence uint64
+	inputErrors   map[uint64]error
+}
+
+// TerminalInput is one ordered intent, encoded only by the authoritative engine.
+type TerminalInput struct {
+	Lease      TerminalLease
+	Kind       string
+	Key        terminalvt.Key
+	Mouse      terminalvt.Mouse
+	Data       []byte
+	Focused    bool
+	Cols, Rows int
 }
 
 // TerminalService owns exactly one parser and reply source per managed PTY,
@@ -114,7 +130,6 @@ func (s *TerminalService) Send(msg any) {
 	}
 	effects := r.engine.Feed(out.Data)
 	r.generation++
-	generation := r.generation
 	for _, reply := range effects.Replies {
 		if err := s.manager.Write(out.ID, reply); err != nil {
 			r.err = err.Error()
@@ -140,12 +155,86 @@ func (s *TerminalService) Send(msg any) {
 		}
 	}
 	s.manager.mu.Unlock()
+	s.notify(r)
 	s.mu.Unlock()
 	effects.Replies = nil // replies have one owner; clients cannot replay them
 	if effects.TitleChanged || effects.CWDChanged || effects.Bell || len(effects.Clipboard) > 0 {
 		s.manager.emit(TerminalEffectsMsg{ID: out.ID, Effects: effects})
 	}
-	s.manager.emit(TerminalChangedMsg{ID: out.ID, Generation: generation})
+}
+
+// Subscribe observes latest-state invalidations directly, without involving the
+// workspace actor. A slow viewer occupies one notification slot, never the PTY.
+func (s *TerminalService) Subscribe(id string) (<-chan struct{}, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[id]
+	if r == nil {
+		return nil, nil, fmt.Errorf("terminal %s not found", id)
+	}
+	ch := make(chan struct{}, 1)
+	if r.watchers == nil {
+		r.watchers = make(map[chan struct{}]struct{})
+	}
+	r.watchers[ch] = struct{}{}
+	ch <- struct{}{}
+	var once sync.Once
+	return ch, func() { once.Do(func() { s.mu.Lock(); delete(r.watchers, ch); s.mu.Unlock() }) }, nil
+}
+
+func (s *TerminalService) notify(r *terminalResource) {
+	for ch := range r.watchers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// ApplyInput acknowledges every processed sequence, including rejected intents.
+// Retransmission after a carrier failure never writes an accepted intent twice.
+// The exact lease fences a replacement controller and bounds retained log state.
+func (s *TerminalService) ApplyInput(stream string, sequence, acknowledged uint64, input TerminalInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.controlled(input.Lease)
+	if err != nil {
+		return err
+	}
+	if (r.inputStream != "" && r.inputStream != stream) || acknowledged > r.inputSequence ||
+		sequence == 0 || sequence > r.inputSequence+1 {
+		return ErrTerminalInputSequence
+	}
+	if sequence > r.inputSequence && sequence-acknowledged > 256 {
+		return ErrTerminalBackpressure
+	}
+	// Rejected ordering is not admission: it cannot claim a fresh stream or
+	// discard retained failure receipts using an otherwise plausible ACK.
+	if r.inputStream == "" {
+		r.inputStream = stream
+	}
+	for seq := range r.inputErrors {
+		if seq <= acknowledged {
+			delete(r.inputErrors, seq)
+		}
+	}
+	if sequence <= r.inputSequence && sequence != 0 {
+		err := r.inputErrors[sequence]
+		return err
+	}
+	// Admission, mode-aware encoding, nonblocking writer enqueue and receipt
+	// commit share one engine/control boundary. Releasing/reacquiring the same
+	// lock between these stages let a fullscreen export overtake one key three
+	// times and made lease replacement race the receipt commit.
+	err = s.inputLocked(r, input)
+	r.inputSequence = sequence
+	if err != nil {
+		if r.inputErrors == nil {
+			r.inputErrors = make(map[uint64]error)
+		}
+		r.inputErrors[sequence] = err
+	}
+	return err
 }
 func (s *TerminalService) Acquire(id string, owner TerminalController) (TerminalLease, error) {
 	s.mu.Lock()
@@ -168,6 +257,7 @@ func (s *TerminalService) Acquire(id string, owner TerminalController) (Terminal
 	}
 	s.leaseSequence++
 	r.lease = TerminalLease{id, owner, s.leaseSequence}
+	r.inputStream, r.inputSequence, r.inputErrors = "", 0, nil
 	return r.lease, nil
 }
 func (s *TerminalService) Detach(owner TerminalController) {
@@ -195,10 +285,20 @@ func (s *TerminalService) Release(lease TerminalLease) error {
 }
 
 func (s *TerminalService) ControlledBy(id string, owner TerminalController) bool {
+	_, ok := s.ControllerLease(id, owner)
+	return ok
+}
+
+// ControllerLease observes the exact current controller generation without
+// acquiring, renewing or otherwise changing terminal authority.
+func (s *TerminalService) ControllerLease(id string, owner TerminalController) (TerminalLease, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.items[id]
-	return r != nil && r.lease.Generation != 0 && r.lease.Owner == owner && !s.detached[owner]
+	if r == nil || r.lease.Generation == 0 || r.lease.Owner != owner || s.detached[owner] {
+		return TerminalLease{}, false
+	}
+	return r.lease, true
 }
 func (s *TerminalService) controlled(lease TerminalLease) (*terminalResource, error) {
 	r := s.items[lease.TerminalID]
@@ -219,72 +319,91 @@ func (s *TerminalService) Input(lease TerminalLease, data []byte) error {
 	return s.manager.Write(lease.TerminalID, data)
 }
 func (s *TerminalService) Key(lease TerminalLease, key terminalvt.Key) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, err := s.controlled(lease)
-	if err != nil {
-		return err
-	}
-	return s.manager.Write(lease.TerminalID, r.engine.EncodeKey(key))
+	return s.input(TerminalInput{Lease: lease, Kind: "key", Key: key})
 }
 func (s *TerminalService) Mouse(lease TerminalLease, mouse terminalvt.Mouse) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, err := s.controlled(lease)
-	if err != nil {
-		return err
-	}
-	return s.manager.Write(lease.TerminalID, r.engine.EncodeMouse(mouse))
+	return s.input(TerminalInput{Lease: lease, Kind: "mouse", Mouse: mouse})
 }
 func (s *TerminalService) Paste(lease TerminalLease, data []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, err := s.controlled(lease)
-	if err != nil {
-		return err
-	}
-	return s.manager.Write(lease.TerminalID, r.engine.EncodePaste(data))
+	return s.input(TerminalInput{Lease: lease, Kind: "paste", Data: data})
 }
 func (s *TerminalService) Focus(lease TerminalLease, focused bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, err := s.controlled(lease)
-	if err != nil {
-		return err
-	}
-	return s.manager.Write(lease.TerminalID, r.engine.EncodeFocus(focused))
+	return s.input(TerminalInput{Lease: lease, Kind: "focus", Focused: focused})
 }
 func (s *TerminalService) Resize(lease TerminalLease, cols, rows int) error {
+	return s.input(TerminalInput{Lease: lease, Kind: "resize", Cols: cols, Rows: rows})
+}
+
+func (s *TerminalService) input(input TerminalInput) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, err := s.controlled(lease)
+	r, err := s.controlled(input.Lease)
 	if err != nil {
 		return err
 	}
+	return s.inputLocked(r, input)
+}
+
+func (s *TerminalService) inputLocked(r *terminalResource, input TerminalInput) error {
+	id := input.Lease.TerminalID
+	switch input.Kind {
+	case "key":
+		return s.manager.Write(id, r.engine.EncodeKey(input.Key))
+	case "mouse":
+		return s.manager.Write(id, r.engine.EncodeMouse(input.Mouse))
+	case "paste":
+		return s.manager.Write(id, r.engine.EncodePaste(input.Data))
+	case "focus":
+		return s.manager.Write(id, r.engine.EncodeFocus(input.Focused))
+	case "resize":
+		return s.resizeLocked(r, id, input.Cols, input.Rows)
+	default:
+		return errors.New("invalid terminal input kind")
+	}
+}
+
+func (s *TerminalService) resizeLocked(r *terminalResource, id string, cols, rows int) error {
 	cols, rows = NormalizeTerminalSize(cols, rows)
 	if cols > terminalvt.MaxCols || rows > terminalvt.MaxRows {
 		return terminalvt.ErrBounds
 	}
-	if err = s.manager.Resize(lease.TerminalID, cols, rows); err != nil {
+	if err := s.manager.Resize(id, cols, rows); err != nil {
 		return err
 	}
-	if err = r.engine.Resize(cols, rows); err != nil {
+	if err := r.engine.Resize(cols, rows); err != nil {
 		r.err = err.Error()
 		return err
 	}
 	r.generation++
+	s.notify(r)
 	return nil
 }
 
 // Rows returns a detached bounded page; start=-1 requests the active grid.
 func (s *TerminalService) Rows(id string, request terminalvt.RowRequest) (TerminalProjection, error) {
+	return s.rows(id, request, false)
+}
+
+// StreamRows exports only render-dirty active rows. Historical pages remain
+// explicit bounded reads and never consume a viewer's acknowledgement state.
+func (s *TerminalService) StreamRows(id string, request terminalvt.RowRequest) (TerminalProjection, error) {
+	return s.rows(id, request, true)
+}
+
+func (s *TerminalService) rows(id string, request terminalvt.RowRequest, stream bool) (TerminalProjection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.items[id]
 	if r == nil {
 		return TerminalProjection{}, fmt.Errorf("terminal %s not found", id)
 	}
-	grid, err := r.engine.Rows(request)
+	var grid terminalvt.Projection
+	var err error
+	if stream {
+		grid, err = r.engine.StreamRows(request)
+	} else {
+		grid, err = r.engine.Rows(request)
+	}
 	if err != nil {
 		return TerminalProjection{}, err
 	}
@@ -299,6 +418,7 @@ func (s *TerminalService) Close(id string) {
 	r := s.items[id]
 	delete(s.items, id)
 	if r != nil {
+		s.notify(r)
 		r.engine.Close()
 	}
 	s.mu.Unlock()

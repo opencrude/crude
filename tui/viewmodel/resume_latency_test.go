@@ -109,7 +109,7 @@ func BenchmarkResumeHydration(b *testing.B) {
 		conversation := workspace.NewConversation()
 		app.ws.PaneMgr().Get("root").Messages = conversation
 		app.ws.AgentMgr().Get("root").State.Messages = conversation
-		app.subPaneProjections.GetExisting("root").renderer.SyncMessages(nil, 0)
+		app.subPaneProjections.GetExisting("root").renderer.SyncMessages(nil, 0, 0)
 		b.StartTimer()
 		app.handleAppMessages(ttypes.HistoryMessagesMsg(messages))
 	}

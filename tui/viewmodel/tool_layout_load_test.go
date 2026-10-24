@@ -17,7 +17,7 @@ func TestFailedToolLayoutLoadKeepsRailAndReportsError(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	railPainted := func() bool {
 		app.forceFrame()
-		lines := strings.Split(rendering.StripAnsi(app.View().Content), "\n")
+		lines := strings.Split(rendering.StripAnsi(app.View().RenderContent()), "\n")
 		for _, view := range activitybar.Views() {
 			found := false
 			for _, line := range lines {

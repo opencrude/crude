@@ -771,6 +771,8 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	m.StopRemotes()
+	m.fenceLiveDocumentTopics()
 	m.stopEditorSyntax()
 	m.stopRemoteWorkspaceSwitch()
 	if m.projectReplace != nil && m.projectReplace.cancel != nil {
@@ -802,6 +804,7 @@ func (m *App) stopAsyncIO() {
 		m.overlayHost.Close(ui.OverlayWorkspaceDelete)
 	}
 	m.cancelCapabilityOperations()
+	m.stopHistoryOperation()
 	m.cancelLocalDiffs()
 	m.cancelGitPreparation()
 	m.cancelComparisonGeometry()

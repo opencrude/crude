@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/filetree"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 	"crude/workspace"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestLauncherShellPreservesSharedPaintedEdges(t *testing.T) {

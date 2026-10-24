@@ -727,6 +727,30 @@ implementation is copied or depended on.
   its history from the recovery archive, which holds them, and they painted as
   human messages.
 
+## Replica source identity and renderer generations
+
+Accepted stream tokens mutate the canonical core Conversation immediately; there
+is no separate 100 ms token buffer. The ordered workspace log pushes detached
+conversation deltas. Display scheduling coalesces presentation, not mutations or
+accepted stochastic output. Hydration and replacement snapshots enter the same
+canonical replica owner, not a competing paint-time export.
+
+A wire `Revision` is meaningful only inside its source domain. A replacement
+snapshot can legitimately reuse the same numeric revision with different text.
+`Conversation.SourceGeneration()` advances at accepted replacement boundaries;
+the retained renderer sync key is the tuple **(source version, source
+generation)**. Renderer `Version()` is a separate local render generation for row
+structure, geometry, disclosure, theme and animation changes. Neither raw source
+revision nor source-generation equality alone authorizes skipping paint.
+
+Message comparisons include display/attribution metadata (model, provider,
+account, thinking, tool facts and canonical outcome), not only stable ID and text.
+Metadata-only updates invalidate their exact retained row; resync cannot leave a
+colliding-revision transcript or stale attribution visible. Stable message IDs
+preserve surviving row/selection identities where the data permits. Width-only
+reflow, materialization and frame-sensitive rows retain their existing local
+generation rules; no full-conversation export or JSON parsing is added to Paint.
+
 ## Data and parity
 
 The activity projector uses canonical role, outcome, duration, tool name, and stable IDs. It should not infer call completion from spinner frames or rely on wall-clock rendering order. A `reply` becomes an assistant progress message (not a second tool row) when its tool result is delivered; recovery projects that same result with the same `reply:<tool-id>` identity. Parallel results are presented in provider call order on both paths. Persist the child agent ID and result identity, including synchronous waits, so recovered parent rows link to the same child review pane as live ones; the child pane owns its display name and outcome. If any source lacks those facts, show an honest standalone row rather than guessing identity or success.

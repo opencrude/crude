@@ -43,7 +43,7 @@ func TestTerminalSynchronizedServiceJourneyDockFloatResizeAndTimeout(t *testing.
 	render := func() string {
 		t.Helper()
 		app.forceFrame()
-		out := rendering.StripAnsi(app.View().Content)
+		out := rendering.StripAnsi(app.View().RenderContent())
 		runTerminalCommand(t, app, app.drainTerminalCommands())
 		return out
 	}
@@ -125,8 +125,12 @@ func TestTerminalSynchronizedServiceJourneyDockFloatResizeAndTimeout(t *testing.
 	// ConPTY may put sync-reset, then cursor-home/show in separate reads.
 	// Projection completion must obey the same existing 16ms presentation gate
 	// as ingress. Model mutations still apply on every result.
-	baseline := app.View().Content
+	baseline := app.View().RenderContent()
 	before := app.frameGate.presented
+	// Keep this negative/deadline-message assertion independent of race-build
+	// execution time. Native presentation gates measure the real 16 ms bound;
+	// here the two completions precede an explicitly delivered deadline.
+	app.frameGate.lastPresented = time.Now().Add(time.Minute)
 	service := app.terminalService()
 	for _, chunk := range []string{"\x1b[?2026h\x1b[?25l\x1b[2J" + frame(100) + "\x1b[?25l\x1b[?2026l", "\x1b[H\x1b[?25h"} {
 		termSvc(app).Send(workspace.TerminalOutputMsg{ID: info.ID, Data: []byte(chunk)})
@@ -135,7 +139,7 @@ func TestTerminalSynchronizedServiceJourneyDockFloatResizeAndTimeout(t *testing.
 			t.Fatal(err)
 		}
 		_, _ = app.Update(terminalProjectionMsg{service: service, generation: app.workspaceSwitchGen.Load(), command: shellterm.Command{ID: info.ID, Kind: shellterm.CommandReadRows, Start: -1}, projection: p})
-		if got := app.View().Content; got != baseline {
+		if got := app.View().RenderContent(); got != baseline {
 			t.Fatal("projection completion bypassed the ingress frame deadline")
 		}
 	}
@@ -143,7 +147,7 @@ func TestTerminalSynchronizedServiceJourneyDockFloatResizeAndTimeout(t *testing.
 		t.Fatal("adjacent native end/show projections were not coalesced")
 	}
 	_, _ = app.Update(interactiveFrameMsg{generation: app.frameGate.generation})
-	if out := app.View().Content; !strings.Contains(rendering.StripAnsi(out), "movie-row-100") || app.frameGate.presented != before+1 {
+	if out := app.View().RenderContent(); !strings.Contains(rendering.StripAnsi(out), "movie-row-100") || app.frameGate.presented != before+1 {
 		t.Fatal("frame deadline did not publish the latest accepted terminal mutation")
 	}
 }
@@ -234,6 +238,11 @@ func (s *terminalJourneySink) Send(msg any) {
 
 func feedAppTerminal(t *testing.T, app *App, id string, data []byte) {
 	t.Helper()
+	dirty, unsubscribe, err := termSvc(app).Subscribe(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
 	bus := workspace.NewEventBus()
 	sink := &terminalJourneySink{}
 	bus.SetSink(sink)
@@ -251,6 +260,12 @@ func feedAppTerminal(t *testing.T, app *App, id string, data []byte) {
 	for _, msg := range messages {
 		_, cmd := app.Update(msg)
 		runTerminalCommand(t, app, cmd)
+	}
+	select {
+	case <-dirty:
+		runTerminalCommand(t, app, app.terminalRefresh(id))
+	default:
+		t.Fatal("terminal ingress failed to notify its direct subscriber")
 	}
 }
 

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -18,15 +19,18 @@ func CoreImageDir(home string) string { return filepath.Join(DataDir(home), "bin
 // stageCoreImage returns a private copy of exe named by its build ID. A core
 // outlives the shell that started it; running it from the shell's own image
 // would pin that file, so `go run` could not delete its temporary build and a
-// rebuild could not replace crude.exe while the core lingers (Windows refuses
-// to remove or overwrite a running image). Images of other builds are pruned;
-// one still running is kept by the OS and removed by a later start.
+// rebuild could not replace crude.exe on Windows. Other images are retained:
+// Unix permits unlinking a running executable, and staging cannot prove that
+// an image is unused by a core, a helper, or a concurrent starter.
 func stageCoreImage(home, exe, buildID string) (string, error) {
 	if buildID == "" || buildID == "unknown" || strings.ContainsAny(buildID, `/\.`) {
 		return "", fmt.Errorf("cannot identify the executable %s", exe)
 	}
 	dir := CoreImageDir(home)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := secureOwnerPath(dir, true); err != nil {
 		return "", err
 	}
 	target := filepath.Join(dir, coreImagePrefix+buildID+filepath.Ext(exe))
@@ -39,6 +43,13 @@ func stageCoreImage(home, exe, buildID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	digest, err := coreImageDigest(source)
+	if err != nil {
+		return "", err
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
 	if err := validateCoreImage(target, info.Size()); errors.Is(err, os.ErrNotExist) {
 		if err := copyCoreImage(source, dir, target); err != nil {
 			return "", err
@@ -46,7 +57,9 @@ func stageCoreImage(home, exe, buildID string) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	pruneCoreImages(dir, filepath.Base(target))
+	if err := verifyCoreImage(target, digest); err != nil {
+		return "", err
+	}
 	return target, nil
 }
 
@@ -89,6 +102,9 @@ func copyCoreImage(source *os.File, dir, target string) error {
 	if err := errors.Join(copyErr, modeErr, syncErr, closeErr); err != nil {
 		return err
 	}
+	if err := secureOwnerPath(temp.Name(), false); err != nil {
+		return err
+	}
 	if err := os.Link(temp.Name(), target); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return validateCoreImage(target, info.Size())
@@ -98,17 +114,37 @@ func copyCoreImage(source *os.File, dir, target string) error {
 	return nil
 }
 
-func pruneCoreImages(dir, keep string) {
-	entries, err := os.ReadDir(dir)
+func coreImageDigest(source *os.File) (string, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, source); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func verifyCoreImage(path, digest string) error {
+	info, err := os.Lstat(path)
 	if err != nil {
-		return
+		return err
 	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if name == keep || entry.IsDir() || !strings.HasPrefix(name, coreImagePrefix) {
-			continue
-		}
-		// Removal fails only while that image still runs; a later start retries.
-		_ = os.Remove(filepath.Join(dir, name))
+	if err := validateCoreImage(path, info.Size()); err != nil {
+		return err
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return fmt.Errorf("core image changed while opening %s", path)
+	}
+	actual, err := coreImageDigest(f)
+	if err != nil {
+		return err
+	}
+	if actual != digest {
+		return fmt.Errorf("core executable digest mismatch: %s", path)
+	}
+	return nil
 }

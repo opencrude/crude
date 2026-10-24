@@ -17,7 +17,7 @@ func TestRenderer_PrunesExpandedWhenMessagesRemoved(t *testing.T) {
 		{InternalID: "m1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: "out", Time: time.Now()},
 		{InternalID: "m2", Role: types.RoleThinking, Content: "reasoning", Time: time.Now()},
 	}
-	r.SyncMessages(messages, 1)
+	r.SyncMessages(messages, 1, 0)
 
 	// Expand both.
 	r.ToggleDisclosure("m1")
@@ -29,7 +29,7 @@ func TestRenderer_PrunesExpandedWhenMessagesRemoved(t *testing.T) {
 	// Remove m1 by syncing a reduced set. The renderer must prune m1's entry.
 	r.SyncMessages([]types.ChatMessage{
 		{InternalID: "m2", Role: types.RoleThinking, Content: "reasoning", Time: time.Now()},
-	}, 2)
+	}, 2, 0)
 
 	if r.DisclosureExpanded("m1") {
 		t.Fatal("expanded entry for removed message m1 must be pruned")

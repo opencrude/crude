@@ -4,10 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/tui/screens/shellchat"
 	"crude/tui/surface"
 	"crude/tui/ui"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestRecursiveWheelChangesRenderedLeafAcrossHydrationAndWindow(t *testing.T) {

@@ -2,7 +2,7 @@ package remote
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"strings"
 
 	"crude/coreclient"
@@ -28,7 +28,7 @@ func (w *Workspace) DeleteSavedWorkspace(ctx context.Context, plan workspace.Wor
 
 func (w *Workspace) RestoreDeletedWorkspace(ctx context.Context, deleted workspace.DeletedWorkspace) error {
 	var out coreprotocol.WorkspaceDeletionResult
-	if err := w.workspaceDeletionCall(ctx, coreprotocol.WorkspaceRestore, deleted, &out); err != nil {
+	if err := w.workspaceDeletionCall(ctx, coreprotocol.WorkspaceRestore, &deleted, &out); err != nil {
 		return err
 	}
 	if out.Warning != "" {
@@ -37,31 +37,25 @@ func (w *Workspace) RestoreDeletedWorkspace(ctx context.Context, deleted workspa
 	return nil
 }
 
-func (w *Workspace) workspaceDeletionCall(ctx context.Context, method string, input, output any) error {
+func (w *Workspace) workspaceDeletionCall(ctx context.Context, method string, input coreprotocol.Value, output coreprotocol.Target) error {
 	client, id := w.conn()
 	if client == nil {
 		return errDisconnected
-	}
-	payload, err := json.Marshal(input)
-	if err != nil {
-		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(w.ctx, cancel)
 	defer stop()
 	requestID := randomID()
-	result, err := client.CallRequest(ctx, coreprotocol.Request{ID: requestID, Owner: client.Owner(), WorkspaceID: id, Method: method, Payload: payload})
-	if err != nil {
-		return err
-	}
-	if result.Error != nil {
-		if strings.HasPrefix(result.Error.Code, "outcome_") {
-			return &coreclient.UncertainError{RequestID: requestID, Cause: result.Error}
+	_, err := client.CallWith(ctx, id, method, input, output, coreclient.CallOptions{ID: requestID})
+	var fault *coreprotocol.Fault
+	if errors.As(err, &fault) {
+		if strings.HasPrefix(fault.Code, "outcome_") {
+			return &coreclient.UncertainError{RequestID: requestID, Cause: fault}
 		}
-		return result.Error
+		return fault
 	}
-	if err := json.Unmarshal(result.Payload, output); err != nil {
+	if err != nil {
 		return &coreclient.UncertainError{RequestID: requestID, Cause: err}
 	}
 	return nil

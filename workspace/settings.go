@@ -39,7 +39,8 @@ func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 	return ttypes.MergeAppWorkspace(w.AppDefaults(), w.LoadWorkspaceOverrides())
 }
 
-// LoadWorkspaceOverrides reads the sparse workspace overlay from workspace.db.
+// LoadWorkspaceOverrides detaches the committed sparse overlay from the DB's
+// immutable memory projection. It performs no storage I/O or writer locking.
 // Saves store only explicit choices; the stored overlay is used as is,
 // including explicit values equal to their parent.
 func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
@@ -49,7 +50,8 @@ func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 	var overrides ttypes.WorkspaceOverrides
 	if raw := w.WorkspaceDB.GetSetting(workspaceSettingsKey); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
-			w.Logger.Warn("WORKSPACE", "workspace_settings_unreadable", "error", err.Error())
+			// A projection read must remain memory-only, including malformed rows.
+			// Do not synchronously write a log from the actor on every observation.
 			return ttypes.WorkspaceOverrides{}
 		}
 	}

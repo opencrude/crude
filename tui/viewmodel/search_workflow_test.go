@@ -5,12 +5,112 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"crude/fileio"
+	"crude/shellport"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
+
+	tea "charm.land/bubbletea/v2"
 )
+
+func TestLiveUndoWaitsForPriorEditPublicationBeforeAdmission(t *testing.T) {
+	for _, heldTopic := range []bool{false, true} {
+		name := "topic-after-gesture-drain"
+		if heldTopic {
+			name = "topic-before-gesture-drain"
+		}
+		t.Run(name, func(t *testing.T) { testLiveUndoWaitsForPriorEditPublication(t, heldTopic) })
+	}
+}
+
+func testLiveUndoWaitsForPriorEditPublication(t *testing.T, heldTopic bool) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	path := filepath.Join(root, "publication.txt")
+	if err := os.WriteFile(path, []byte("alpha"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	ed := liveTestOpen(t, shell.app, path)
+	// Deliberately hold the independent FIFO while delivering command results.
+	// The ordinary journey helper also consumes publications and therefore cannot
+	// guarantee this legal interleaving when both are ready at once.
+	runWithoutTopics := func(command tea.Cmd) {
+		queue := []tea.Cmd{command}
+		for steps := 0; len(queue) > 0; steps++ {
+			if steps >= 64 {
+				t.Fatal("held-publication command journey did not settle")
+			}
+			cmd := queue[0]
+			queue = queue[1:]
+			if cmd == nil {
+				continue
+			}
+			msg := cmd()
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				queue = append(queue, batch...)
+				continue
+			}
+			if msg != nil {
+				_, follow := shell.app.Update(msg)
+				queue = append(queue, follow)
+			}
+		}
+	}
+	ed.InsertRune('X')
+	// Decode/apply the real command receipt without consuming the independently
+	// queued topic. This ordering is legal even on a healthy local connection.
+	runWithoutTopics(shell.app.drainLiveEditorCommands())
+	state := shell.app.liveEditors[ed]
+	if !state.sync || state.pushedRevision != 1 || ed.DocumentState().Revision != 2 {
+		t.Fatalf("fixture did not separate receipt/publication clocks: %+v %+v", state, ed.DocumentState())
+	}
+	ed.Undo()
+	intent := state.undo
+	if intent == nil || !ed.DocumentState().UndoPending {
+		t.Fatal("gesture did not reach the editor history owner")
+	}
+	var queued []tea.Msg
+	if heldTopic {
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for state.topic == nil {
+			select {
+			case msg := <-shell.fifo:
+				if topic, ok := msg.(shellport.LiveDocumentsChangedMsg); ok {
+					shell.app.applyDocumentTopic(topic)
+				} else {
+					queued = append(queued, msg)
+				}
+			case <-deadline.C:
+				t.Fatal("prior edit topic did not arrive")
+			}
+		}
+	}
+	runWithoutTopics(shell.app.drainLiveEditorCommands())
+	if !heldTopic && (state.busy || state.undo != nil || ed.DocumentState().UndoPending || !ed.DocumentState().HistoryQueued || !state.sync) {
+		t.Fatalf("unsubmitted undo blocked the preceding publication: %+v %+v", state, ed.DocumentState())
+	}
+	for _, msg := range queued {
+		_, follow := shell.app.Update(msg)
+		runAppCommand(t, shell.app, follow)
+	}
+	// The prior topic can now ACK, then Undo is admitted at its resulting revision.
+	liveTestSync(t, shell.app)
+	if ed.Value() != "alpha" || ed.Modified() || ed.DocumentState().HistoryQueued || ed.DocumentState().UndoPending || state.sync || state.err != nil {
+		t.Fatalf("undo did not settle through pushed history: %q %+v %+v", ed.Value(), ed.DocumentState(), state)
+	}
+	// A retired intent is not valid against the later history generation.
+	if err := ed.DeferDocumentUndoUntilSync(*intent); err == nil {
+		t.Fatal("stale undo intent re-entered the queue")
+	}
+	canonical, err := shell.app.ws.(shellport.LiveDocuments).SyncDocument(t.Context(), ed.DocumentState().DocumentID, 0)
+	if err != nil || string(canonical.Snapshot.Text) != "alpha" || canonical.Snapshot.Revision != 3 {
+		t.Fatalf("undo was replayed or not committed: %+v %v", canonical, err)
+	}
+}
 
 func TestSearchCommandsSeedSelectedTextAndKeepModeDrafts(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
@@ -61,7 +161,7 @@ func TestSearchSelectedMultilineRegexIsLiteralAndInvalidQueryPaintsError(t *test
 	if app.FindReplace.Error == "" || app.FindReplace.MatchCount != 0 {
 		t.Fatal("invalid regex not reported")
 	}
-	if painted := app.View().Content; !strings.Contains(painted, "Invalid regex") {
+	if painted := app.View().RenderContent(); !strings.Contains(painted, "Invalid regex") {
 		t.Fatal("invalid regex absent from actual App paint")
 	}
 }

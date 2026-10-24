@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,11 +10,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/input"
 	"crude/tui/screens/capabilitypicker"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 	"crude/workspace"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -32,7 +34,7 @@ func TestCapabilitySlashCommandsOpenSimpleModalWithoutChangingDraft(t *testing.T
 		if len(commands) != 1 || commands[0] == nil || !app.overlayHost.IsOpen(ui.OverlayCapabilityPicker) || app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 			t.Fatal("slash route did not open the simple capabilities modal", route.command)
 		}
-		paint := ansi.Strip(app.View().Content)
+		paint := ansi.Strip(app.View().RenderContent())
 		if !strings.Contains(paint, route.label) || !strings.Contains(paint, "Install & manage") {
 			t.Fatalf("wrong tab or missing action for %s:\n%s", route.command, paint)
 		}
@@ -125,7 +127,7 @@ func TestConnectedCapabilityModalTogglesSessionGateOnly(t *testing.T) {
 		if one.app.capabilityPicker == nil || one.app.capabilityPicker.session != owner {
 			t.Fatal("modal is not bound to the selected session", route.command)
 		}
-		remoteJourneyUntil(t, shells, func() bool { return strings.Contains(ansi.Strip(one.app.View().Content), route.label) })
+		remoteJourneyUntil(t, shells, func() bool { return strings.Contains(ansi.Strip(one.app.View().RenderContent()), route.label) })
 		for _, enabled := range []bool{false, true} {
 			cmd, handled := one.app.handleCapabilityPickerAction(ui.Action{ID: "capability-picker.toggle", Payload: route.id})
 			if !handled || cmd == nil {
@@ -148,7 +150,7 @@ func TestConnectedCapabilityModalTogglesSessionGateOnly(t *testing.T) {
 			if caps.Skills["local:guide"].Disabled || caps.Connections["docs"].Disabled {
 				t.Fatal("session switch rewrote the registration")
 			}
-			if paint := ansi.Strip(one.app.View().Content); strings.Contains(paint, "Could not save") || one.app.Input.Value() != "untouched draft" {
+			if paint := ansi.Strip(one.app.View().RenderContent()); strings.Contains(paint, "Could not save") || one.app.Input.Value() != "untouched draft" {
 				t.Fatal("toggle did not settle cleanly", paint)
 			}
 		}

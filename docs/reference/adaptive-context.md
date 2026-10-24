@@ -42,6 +42,12 @@ roll back a later admission. Complete tool rounds are published together after
 partial checkpoints, never through successively shorter prefixes. There is no
 root write buffer or child whole-transcript replacement writer.
 
+The accepted admission checkpoint is a source for its execution, not a second
+live revision owner. A journal control can commit between acknowledgement and
+execution startup or preparation. Startup reconciles those exact facts into the
+checkpoint under the message lock; it never assigns the checkpoint's older
+revision or active-context snapshot back over the current owner.
+
 Completed tool results obtain one stable message identity before their first
 partial-round checkpoint and retain it at final publication. An unfinished native
 parallel wrapper is different: its changing leaf evidence is stored in the recovery

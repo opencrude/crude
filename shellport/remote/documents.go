@@ -103,7 +103,7 @@ func (s *documentService) Save(ctx context.Context, request workspace.DocumentSa
 		return workspace.DocumentSaveResult{Request: request, Err: context.Canceled}
 	}
 	var result coreprotocol.DocumentSnapshotSaveResult
-	if err := s.w.call(ctx, coreprotocol.DocumentSnapshotSave, coreprotocol.DocumentSnapshotSaveRequest{Request: request}, &result); err != nil {
+	if err := s.w.call(ctx, coreprotocol.DocumentSnapshotSave, &coreprotocol.DocumentSnapshotSaveRequest{Request: request}, &result); err != nil {
 		return workspace.DocumentSaveResult{Request: request, Err: err}
 	}
 	return result.DocumentResult()

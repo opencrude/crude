@@ -8,6 +8,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/types/control"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -33,7 +34,7 @@ func TestConnectedShellControlTreeRevealFilterAndPaint(t *testing.T) {
 	if node := one.app.Tree.Model.SelectedNode(); node == nil || node.Path != path {
 		t.Fatal("requested node not selected", node)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().Content), "needle.txt") {
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "needle.txt") {
 		t.Fatal("revealed leaf not painted")
 	}
 	if node := two.app.Tree.Model.SelectedNode(); node != nil && node.Path == path {
@@ -43,12 +44,12 @@ func TestConnectedShellControlTreeRevealFilterAndPaint(t *testing.T) {
 	if result.State != control.Applied {
 		t.Fatal(result)
 	}
-	paint := ansi.Strip(one.app.View().Content)
+	paint := ansi.Strip(one.app.View().RenderContent())
 	if !strings.Contains(paint, "needle.txt") || strings.Contains(paint, "unrelated.txt") {
 		t.Fatal("filter projection not painted", paint)
 	}
 	result = requestShellForTest(t, runtime, shells, one, "tree.filter", map[string]any{"query": ""}, nil)
-	if result.State != control.Applied || !strings.Contains(ansi.Strip(one.app.View().Content), "unrelated.txt") {
+	if result.State != control.Applied || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "unrelated.txt") {
 		t.Fatal("clear filter failed", result)
 	}
 	selected := one.app.Tree.Model.SelectedNode().Path

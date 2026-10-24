@@ -386,3 +386,63 @@ func TestGoalStopsAtItsTokenBudget(t *testing.T) {
 		t.Fatalf("stored goal = %+v ok=%v err=%v", stored, ok, err)
 	}
 }
+
+// A provider refusal is a genuine blocker no Retry can fix. The goal turn
+// ends with its exact reason and the goal blocks, as Codex does for a
+// non-retryable turn error; nothing waits for /retry and nothing repeats.
+func TestGoalProviderRefusalBlocksWithExactReason(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"type":"invalid_request","code":"cyber_policy","message":"This content was flagged for possible cybersecurity risk."}}`))
+	}))
+	defer server.Close()
+	home := t.TempDir()
+	s, err := NewWithSessionDir("", modelAttributionConfig(server.URL, "goal-root"), home, filepath.Join(home, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetWorkDir(t.TempDir())
+	attachDelegationTestCollaboration(t, s)
+	sender := newMockEventSender()
+	sender.ch = make(chan agentEvent, 256)
+	root, err := s.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetGoal("Finish the protocol work", 0, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var goal types.Goal
+	for {
+		goal, _ = s.Goal()
+		if goal.Status == types.GoalBlocked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refused goal turn did not block the goal: %+v requests=%d", goal, requests.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(goal.Reason, "cyber_policy") || !strings.Contains(goal.Reason, "/goal resume") {
+		t.Fatalf("blocked goal does not report the exact blocker: %q", goal.Reason)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	if requests.Load() != 1 {
+		t.Fatalf("refusal was repeated: requests=%d", requests.Load())
+	}
+	if root.TurnActive() {
+		t.Fatal("refused turn still owns the session; the next message would queue behind /retry")
+	}
+	checkpoint, found, err := sessiondb.LoadRecoveryCheckpoint(s.db, s.sessionID, root.ID)
+	if err != nil || found {
+		t.Fatalf("refused turn left an open recovery incident: %+v found=%v err=%v", checkpoint.Status, found, err)
+	}
+	if _, ok := s.goalContinuation(); ok {
+		t.Fatal("a blocked goal continued by itself")
+	}
+}

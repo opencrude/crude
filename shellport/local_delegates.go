@@ -286,12 +286,12 @@ func (l *local) CapabilitySnapshot(ctx context.Context) (captypes.Snapshot, erro
 	return l.ws.CapabilitySnapshot(ctx)
 }
 
-func (l *local) AppendHistoryRestoreEvent(result localhistory.RestoreResult) error {
-	return l.ws.AppendHistoryRestoreEvent(result)
-}
-
 func (l *local) ApplyHistoryRestoreChoices(ctx context.Context, planID string, choices []localhistory.RestoreChoice) (localhistory.RestoreResult, error) {
-	return l.ws.ApplyHistoryRestoreChoices(ctx, planID, choices)
+	result, err := l.ws.ApplyHistoryRestoreChoices(ctx, planID, choices)
+	if err == nil && result.SessionID != "" {
+		err = l.ws.AppendHistoryRestoreEvent(result)
+	}
+	return result, err
 }
 
 func (l *local) BoardSnapshot(ctx context.Context, query, thread string, since, snapshot int64) (workspace.BoardSnapshot, error) {

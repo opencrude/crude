@@ -20,7 +20,9 @@ with z-ordering.
    surface with a child content surface)
 4. `Composite()` — flattens surface tree via `FlattenZOrder()`, blits
    all surfaces bottom-to-top into the back buffer using `surface.Blit()`
-5. Blit compares old vs new back buffer, sends ANSI diff to terminal
+5. `PresentSurface()` swaps completed grids; `tea.View.Surface` hands cells to
+   Bubble Tea, which snapshots before the next Update and uses UV changed-row
+   replacement/diff for terminal output. The App does not build full-frame ANSI.
 
 ## Cell types
 
@@ -82,17 +84,26 @@ rootHost
 
 Rules:
 
-- `View()` = bg fill → re-mount `mainSurf` → `configureShell()` (geometry
-  via `computeContentLayout` + slot rects + screen projections) →
-  `renderShellToSurface()` (unconditional `MarkLayout` + `Layout` → focus sync
-  → `Paint`) → WM render → composite. `syncRootFocus()` maps `focusTarget()`
+- `View()` first configures geometry/projections, refreshes Host layout and syncs
+  focus. A clean Host with no floating layers or pending WM damage reuses the
+  completed publication;
+  no second frame-level dirty flag competes with Host source generations.
+  Otherwise: bg fill → re-mount `mainSurf` → retained `PaintRegions` → WM render
+  → composite → `PresentSurface`. `syncRootFocus()` maps `focusTarget()`
   to the root host's single focused component after the current content is
   registered, before its first frame paints.
-- `renderShellToSurface` fills `mainSurf` with the theme background BEFORE
-  the tree paints: unmounted slots (launcher replacing the editor, chat
-  replacing the launcher, ...) must not leave their previous opaque cells
-  behind — every cell not covered by an active slot shows the clean
-  background (this fixed the editor→launcher gutter artifacts).
+  WM add/remove damage survives the removal of its last window until composition
+  clears it. Header/footer projection changes mark their own Host regions, so
+  restoring focus after a menu closes cannot retain outdated labels or hints.
+- `rootHost.PaintRegions` owns the retained `mainSurf` background. Geometry,
+  mount, theme/background or target-buffer changes clear the whole grid before
+  painting; a source-only update clears its exclusive root-child region. Removed
+  slots cannot leave opaque cells behind, and uncovered cells show clean theme
+  background. Components do not keep competing frame caches.
+- Layout compares two Host-owned registry generations, then clears and reuses
+  the previous maps. Unchanged geometry does not allocate new hit/focus registries;
+  removed components are not retained in scratch, and mount/capture fences remain
+  the same as a complete recollection.
 - Mouse targeting is `rootHost.Handle` with raw screen coordinates; the
   Host computes `LocalX/LocalY` from layout geometry. `classifyShellRegion`
   remains only for viewmodel POLICY (focus-stack pushes, status row,
@@ -240,46 +251,77 @@ Rules:
 - The old `App.Overlay` inline tab system is deleted. Never reintroduce it or route
   floating windows through `PanelDeck` as a shortcut.
 
-## Unconditional main-content repaint
+## Retained component-generation paint
 
-The `m.contentDirty` flag and the main-content ANSI cache were deleted.
-`View()` rebuilds the main content surface every frame. This is safe because
-the editor's expensive syntax work is **prepared once per source revision off
-the UI thread**, with compact document spans and lazy per-line cell maps.
-Geometry has its own cache; scroll/resize never restarts the lexer. A warm editor
-repaint is a cell fill plus a cached-color walk (see `BenchmarkEditorPaint_*`
-in `tui/screens/shelleditor/` and [performance baselines](../reference/performance-baselines.md)).
+The shell retains one cell buffer under `ui.Host.PaintRegions`, not a global
+main-content dirty flag or an ANSI-string cache. The root is a paint-free layout
+container with exclusive root-child regions; all descendant ink must stay inside
+its region. `MarkComponentPaint(id)` advances the containing region's source
+generation. Presentation alone never advances it. Focus, hover and capture mark
+their actual owners. `RefreshLayout` re-derives geometry without declaring source
+change; `MarkLayout` remains conservative for component/content edits.
 
-**RULES:**
-- Never reintroduce a frame-level dirty flag for the main content. If a
-  future perf problem appears, add a benchmark first (compare against
-  `docs/reference/performance-baselines.md`) and cache at the editor level.
-- `computeContentLayout()` may be called every frame; it only computes
-  shell geometry (slot rects, chat/editor/input/deck rects) — no ANSI and NO
-  chat renderer setters or conversation export. `configurePaneChat` is the sole writer of
-  chat renderer geometry; duplicate width writers caused dense-chat resize to
-  invalidate every message twice per frame.
-- `chatprojection.Renderer` owns the generation-keyed `MessageRowsSnapshot`.
-  `shellchat.Screen` rebuilds its VirtualList only for structure/height/width
-  changes and applies stable-height row deltas by index. Never export and
-  republish the full conversation merely because a frame was presented.
-- Committed chat width changes use dynamic-height virtualization: source and
-  hydration invalidation remain eager, but width-only invalidation reflows
-  viewport plus overscan and retains offscreen estimated heights until scroll
-  exposes those rows. Never restore frame-time `EnsureHeights` for width-only
-  changes; it caused multi-second release stalls on dense resumed sessions.
-- Dynamic rows declare frame sensitivity in their rendered projection metadata;
-  the renderer tracks those item IDs and invalidates only that set when the
-  shared phase changes. Never restore role/tool-specific tick classifiers or
-  broad tick invalidation. In-place metrics update through Conversation version
-  changes and invalidate their exact row independently of animation.
-- `m.cachedOutput` is presentation-only: `frameGate` reuses it while draining
-  high-rate pointer/stream/PTY events, at most until one 16 ms deadline. Model
-  mutations are never queued or dropped. Every presented frame still performs
-  the unconditional root-shell repaint described above; idle ticks remain
-  400 ms (2.5 FPS), never zero-FPS locking.
-- `wm.FloatingWindow.contentDirty` is a separate, unrelated mechanism
-  (window-surface invalidation) — do not confuse it with the removed flag.
+Geometry, mounted identity, theme/background and target-buffer changes force a
+whole-grid clear/paint, including vacated cells. Overlapping regions also use the
+full path. Otherwise the Host clears and paints only marked regions, preserving
+untouched cells. `Host.Paint` remains the complete correctness oracle for arbitrary
+trees and regression comparisons. `LastPaintStats` counts actual component calls
+and cleared cells, not requested invalidations.
+
+`MarkSubtreePaint(id)` is the explicit narrower contract for a subtree owning all
+background and ink inside its bounds, not an arbitrary transparent control.
+After layout, the Host validates descendant and ancestor containment and sibling
+non-overlap along the complete path; unsafe geometry falls back to full paint.
+An ancestor's damage subsumes descendant requests. Default
+`MarkComponentPaint` remains conservative, so this is not a claim that every
+unchanged leaf has independent invalidation or is skipped.
+
+Unknown messages conservatively mark the shell. Tick-owned regions
+(header/footer/activity, terminal dock and applicable sidebar) are explicitly
+repainted for their clocks. Known opaque composer/editor subtrees own caret paint
+without repainting the neighbouring static transcript. The renderer's authoritative
+snapshot source/generation invalidates chat when its content or frame-sensitive
+rows actually change; active tab/loading/reveal work keeps the containing main
+pane conservative. Presentation cadence remains unchanged. Terminal grid updates mark
+the dock; floating terminal content retains its window invalidation owner. A
+scheduled frame by itself does not dirty content. Full-paint fallbacks are safety
+boundaries, not evidence that all high-rate paths are incremental.
+
+- `computeContentLayout()` only computes geometry: no ANSI, chat renderer setters
+  or conversation export. `configurePaneChat` is the sole chat width writer.
+- Expensive editor syntax is prepared once per source revision off Update/Paint;
+  geometry and lazy per-line cell maps have their own generation. Scroll/resize
+  never restarts the document lexer.
+- `chatprojection.Renderer` owns generation-keyed `MessageRowsSnapshot` data.
+  Source identity includes source version and replacement generation; local
+  renderer generations own row/geometry/disclosure/theme/animation changes.
+  `shellchat.Screen` rebuilds VirtualList only for structure/height/width changes
+  and applies stable-height row deltas by index. Presentation never exports a full
+  Conversation or makes raw source revision the paint authority.
+- Width-only chat reflow covers viewport plus overscan and retains offscreen
+  estimated heights until exposed. Never restore frame-time `EnsureHeights` on
+  every dense resumed row.
+- Dynamic rows declare frame sensitivity in projection metadata. Only their
+  tracked IDs need activity-phase invalidation; metrics/attribution changes
+  invalidate the exact row independently.
+- `frameGate` reuses the completed compositor surface while draining high-rate
+  pointer/stream/PTY events, at most until its 16 ms presentation deadline. Model
+  mutations are never dropped or replayed slowly. Idle cadence remains 400 ms
+  (2.5 FPS), not zero-FPS locking.
+- FloatingWindow content invalidation remains window-surface ownership; it is
+  neither the removed main-content flag nor a second root-shell paint owner.
+
+## Direct-cell presentation
+
+`App.View()` returns `tea.View.Surface`, a drawable borrowing the completed
+compositor front grid until the next BeginFrame/Resize. Bubble Tea synchronously
+snapshots it before another Update may mutate buffers. UV `RenderBuffer.Replace`
+compares the complete latest grid with the last flushed grid and marks changed
+row spans, preserving pending damage across skipped/coalesced frames. UV alone
+emits terminal escape output. Width, continuation cells, colors and attributes
+cross directly without full-frame ANSI generation and reparsing. The explicit
+compositor ANSI path remains available to diagnostics/string consumers, not as a
+fallback inside ordinary App presentation. See [the compositor integration](compositing-engine.md#9-integration-with-bubble-tea).
 
 ## Popup frames
 

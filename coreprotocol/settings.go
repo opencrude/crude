@@ -4,6 +4,7 @@ import (
 	"crude/provider"
 	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/jsondoc"
 )
 
 const (
@@ -62,12 +63,48 @@ type SessionCapabilityChange struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// SecretUpdate is write-only. Keep must be explicit; empty Value means clear,
-// never an implicit instruction to restore a server credential.
-type SecretUpdate[T any] struct {
-	Keep  bool `json:"keep"`
-	Value *T   `json:"value,omitempty"`
+// Secret updates are write-only. Keep must be explicit; an empty Value means
+// clear, never an implicit instruction to restore a server credential.
+type SecretString struct {
+	Keep  bool    `json:"keep"`
+	Value *string `json:"value,omitempty"`
 }
+type SecretStrings struct {
+	Keep bool `json:"keep"`
+	// Value replaces the list when it has entries; empty means clear.
+	Value []string `json:"value,omitempty"`
+}
+type SecretMap struct {
+	Keep bool `json:"keep"`
+	// Value replaces the map when it has entries; empty means clear.
+	Value map[string]string `json:"value,omitempty"`
+}
+type SecretOAuth struct {
+	Keep  bool                       `json:"keep"`
+	Value *provider.OAuthCredentials `json:"value,omitempty"`
+}
+type SecretObject struct {
+	Keep  bool            `json:"keep"`
+	Value *jsondoc.Object `json:"value,omitempty"`
+}
+
+// Update exposes each secret update to one generic resolution rule.
+func (u SecretString) Update() (bool, *string) { return u.Keep, u.Value }
+func (u SecretStrings) Update() (bool, *[]string) {
+	if len(u.Value) == 0 {
+		return u.Keep, nil
+	}
+	return u.Keep, &u.Value
+}
+func (u SecretMap) Update() (bool, *map[string]string) {
+	if len(u.Value) == 0 {
+		return u.Keep, nil
+	}
+	return u.Keep, &u.Value
+}
+func (u SecretOAuth) Update() (bool, *provider.OAuthCredentials) { return u.Keep, u.Value }
+func (u SecretObject) Update() (bool, *jsondoc.Object)           { return u.Keep, u.Value }
+
 type AccountView struct {
 	ID               string            `json:"id"`
 	ProviderID       string            `json:"provider_id"`
@@ -80,15 +117,15 @@ type AccountView struct {
 	ExtraBodyPresent bool              `json:"extra_body_present"`
 }
 type AccountDraft struct {
-	ID         string                                  `json:"id"`
-	ProviderID string                                  `json:"provider_id"`
-	Label      string                                  `json:"label"`
-	Connection provider.Template                       `json:"connection"`
-	Endpoint   SecretUpdate[string]                    `json:"endpoint"`
-	APIKey     SecretUpdate[string]                    `json:"api_key"`
-	OAuth      SecretUpdate[provider.OAuthCredentials] `json:"oauth"`
-	Headers    SecretUpdate[map[string]string]         `json:"headers"`
-	ExtraBody  SecretUpdate[map[string]any]            `json:"extra_body"`
+	ID         string            `json:"id"`
+	ProviderID string            `json:"provider_id"`
+	Label      string            `json:"label"`
+	Connection provider.Template `json:"connection"`
+	Endpoint   SecretString      `json:"endpoint"`
+	APIKey     SecretString      `json:"api_key"`
+	OAuth      SecretOAuth       `json:"oauth"`
+	Headers    SecretMap         `json:"headers"`
+	ExtraBody  SecretObject      `json:"extra_body"`
 }
 type AccountChangeRequest struct {
 	ID    string        `json:"id"`
@@ -129,15 +166,15 @@ type ConnectionSecretPresence struct {
 type CapabilityActionRequest struct {
 	Action            captypes.Action         `json:"action"`
 	ConnectionSecrets ConnectionSecretUpdates `json:"connection_secrets"`
-	SourceLocation    SecretUpdate[string]    `json:"source_location"`
+	SourceLocation    SecretString            `json:"source_location"`
 }
 type ConnectionSecretUpdates struct {
-	Endpoint      SecretUpdate[string]            `json:"endpoint"`
-	Args          SecretUpdate[[]string]          `json:"args"`
-	Environment   SecretUpdate[map[string]string] `json:"environment"`
-	Headers       SecretUpdate[map[string]string] `json:"headers"`
-	SecretRefs    SecretUpdate[map[string]string] `json:"secret_refs"`
-	CredentialRef SecretUpdate[string]            `json:"credential_ref"`
+	Endpoint      SecretString  `json:"endpoint"`
+	Args          SecretStrings `json:"args"`
+	Environment   SecretMap     `json:"environment"`
+	Headers       SecretMap     `json:"headers"`
+	SecretRefs    SecretMap     `json:"secret_refs"`
+	CredentialRef SecretString  `json:"credential_ref"`
 }
 
 type CapabilityResult struct {

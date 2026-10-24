@@ -20,6 +20,10 @@ type cursedRenderer struct {
 	buf           bytes.Buffer // updates buffer to be flushed to [w]
 	scr           *uv.TerminalRenderer
 	cellbuf       uv.ScreenBuffer
+	directbuf     uv.ScreenBuffer // producer snapshot, guarded by viewMu
+	surfaceFrame  uint64
+	snapshotToken uv.SnapshotToken
+	flushbuf      bytes.Buffer // renderer-owned envelope; retain actual frame capacity
 	lastView      *View
 	env           []string
 	term          string // the terminal type $TERM
@@ -31,8 +35,9 @@ type cursedRenderer struct {
 	profile       colorprofile.Profile
 	logger        uv.Logger
 	view          View
-	hardTabs      bool // whether to use hard tabs to optimize cursor movements
-	backspace     bool // whether to use backspace to optimize cursor movements
+	onMouseView   func(MouseMsg) Cmd // last presented handler, guarded by viewMu
+	hardTabs      bool               // whether to use hard tabs to optimize cursor movements
+	backspace     bool               // whether to use backspace to optimize cursor movements
 	mapnl         bool
 	syncdUpdates  bool // whether to use synchronized output mode for updates
 	starting      bool // indicates whether the renderer is starting after being stopped
@@ -282,72 +287,10 @@ func (s *cursedRenderer) flush(closing bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// The event loop hands frames over under viewMu only, so a slow terminal
-	// write never blocks the next Update (Crude: Windows console writes).
-	s.viewMu.Lock()
-	view := s.view
-	size := s.pendingSize
-	s.pendingSize = nil
-	s.viewMu.Unlock()
-	if size != nil {
-		s.applyResize(size[0], size[1])
-	}
 	s.written = 0
-	frameArea := uv.Rect(0, 0, s.width, s.height)
-	if len(view.Content) == 0 {
-		// If the component is nil, we should clear the screen buffer.
-		frameArea.Max.Y = 0
-	}
-
-	content := uv.NewStyledString(view.Content)
-	if !view.AltScreen {
-		// We need to resizes the screen based on the frame height and
-		// terminal width. This is because the frame height can change based on
-		// the content of the frame. For example, if the frame contains a list
-		// of items, the height of the frame will be the number of items in the
-		// list. This is different from the alt screen buffer, which has a
-		// fixed height and width.
-		frameHeight := content.Height()
-		if frameHeight != frameArea.Dy() {
-			frameArea.Max.Y = frameHeight
-		}
-	}
-
-	// Restore tab stops if we have tab optimizations enabled.
-	if s.starting && s.hardTabs {
-		_, _ = s.scr.WriteString(ansi.SetTabEvery8Columns)
-	}
-
-	if !s.starting && !closing && s.lastView != nil && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
-		// No changes, nothing to do.
+	view, unchanged := s.drawFrame(closing)
+	if unchanged {
 		return nil
-	}
-
-	// We're no longer starting.
-	s.starting = false
-
-	if frameArea != s.cellbuf.Bounds() {
-		s.scr.Erase() // Force a full redraw to avoid artifacts.
-
-		// We need to reset the touched lines buffer to match the new height.
-		s.cellbuf.Touched = nil
-
-		// Resize the screen buffer to match the frame area. This is necessary
-		// to ensure that the screen buffer is the same size as the frame area
-		// and to avoid rendering issues when the frame area is smaller than
-		// the screen buffer.
-		s.cellbuf.Resize(frameArea.Dx(), frameArea.Dy())
-	}
-
-	// Clear our screen buffer before copying the new frame into it to ensure
-	// we erase any old content.
-	s.cellbuf.Clear()
-	content.Draw(s.cellbuf, s.cellbuf.Bounds())
-
-	// If the frame height is greater than the screen height, we drop the
-	// lines from the top of the buffer.
-	if frameHeight := frameArea.Dy(); frameHeight > s.height {
-		s.cellbuf.Lines = s.cellbuf.Lines[frameHeight-s.height:]
 	}
 
 	// Alt screen mode.
@@ -548,7 +491,8 @@ func (s *cursedRenderer) flush(closing bool) error {
 	//  flickering in some terminals. It's the best effort we can do instead
 	//  of showing the cursor flying around the screen during updates.
 
-	var buf bytes.Buffer
+	s.flushbuf.Reset()
+	buf := &s.flushbuf
 	if shouldUpdateAltScreen {
 		// We always disable keyboard enhancements when switching screens
 		// because the terminal is expected to have two different keyboard
@@ -605,12 +549,15 @@ func (s *cursedRenderer) flush(closing bool) error {
 		if s.logger != nil {
 			s.logger.Printf("output: %q", buf.String())
 		}
-		if _, err := io.Copy(s.w, &buf); err != nil {
+		if _, err := io.Copy(s.w, buf); err != nil {
 			return fmt.Errorf("bubbletea: error flushing update to the writer: %w", err)
 		}
 	}
 
 	s.lastView = &view
+	s.viewMu.Lock()
+	s.onMouseView = view.OnMouse
+	s.viewMu.Unlock()
 
 	return nil
 }
@@ -618,8 +565,118 @@ func (s *cursedRenderer) flush(closing bool) error {
 // render implements renderer.
 func (s *cursedRenderer) render(v View) {
 	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	if v.Surface != nil {
+		bounds := v.Surface.Bounds()
+		w, h := max(0, bounds.Dx()), max(0, bounds.Dy())
+		var token uv.SnapshotToken
+		if versioned, ok := v.Surface.(uv.SnapshotSurface); ok {
+			token = versioned.SnapshotToken()
+		}
+		if token.Owner == nil || token.Generation == 0 || token != s.snapshotToken ||
+			s.directbuf.RenderBuffer == nil || s.directbuf.Width() != w || s.directbuf.Height() != h {
+			if s.directbuf.RenderBuffer == nil {
+				s.directbuf = uv.NewScreenBuffer(w, h)
+			} else {
+				s.directbuf.Resize(w, h)
+			}
+			s.directbuf.Method = ansi.GraphemeWidth
+			s.directbuf.Clear()
+			// Copy every new completed generation. A repeated publication reuses
+			// these detached cells, never the producer's mutable buffer.
+			v.Surface.Draw(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds())
+			s.surfaceFrame++
+		}
+		s.snapshotToken = token
+		v.surfaceFrame = s.surfaceFrame
+	} else {
+		s.snapshotToken = uv.SnapshotToken{}
+	}
+	if v.Cursor != nil {
+		cursor := *v.Cursor
+		v.Cursor = &cursor
+	}
+	if v.ProgressBar != nil {
+		progress := *v.ProgressBar
+		v.ProgressBar = &progress
+	}
 	s.view = v
-	s.viewMu.Unlock()
+}
+
+type snapshotScreen struct{ *uv.Buffer }
+
+func (snapshotScreen) WidthMethod() uv.WidthMethod { return ansi.GraphemeWidth }
+
+// SetCellRow replaces a complete, valid row in the producer snapshot. The
+// caller owns its scratch row; copy now, before it is reused for the next row
+// or Update. This deliberately is not a method on UV's damage-tracking screen.
+func (s snapshotScreen) SetCellRow(y int, row []uv.Cell) {
+	if y < 0 || y >= len(s.Lines) || len(row) != len(s.Lines[y]) {
+		return
+	}
+	copy(s.Lines[y], row)
+}
+
+// drawFrame consumes a producer snapshot while holding viewMu, never while
+// writing the terminal. render can therefore reuse producer cells immediately
+// and cannot race a flush, even when terminal output is stalled. Full snapshots
+// conflate safely: damage is computed against the last consumed frame.
+func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	view := s.view
+	resized := s.pendingSize != nil
+	if size := s.pendingSize; size != nil {
+		s.pendingSize = nil
+		s.applyResize(size[0], size[1])
+	}
+	frameArea := uv.Rect(0, 0, s.width, s.height)
+	var content *uv.StyledString
+	if view.Surface != nil {
+		if !view.AltScreen {
+			frameArea.Max.Y = s.directbuf.Height()
+		}
+	} else {
+		content = uv.NewStyledString(view.Content)
+		if len(view.Content) == 0 {
+			frameArea.Max.Y = 0
+		}
+		if !view.AltScreen {
+			frameArea.Max.Y = content.Height()
+		}
+	}
+	if s.starting && s.hardTabs {
+		_, _ = s.scr.WriteString(ansi.SetTabEvery8Columns)
+	}
+	if !resized && !s.starting && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
+		return view, true
+	}
+	s.starting = false
+	if frameArea != s.cellbuf.Bounds() {
+		s.scr.Erase()
+		s.cellbuf.Touched = nil
+		s.cellbuf.Resize(frameArea.Dx(), frameArea.Dy())
+	}
+	if view.Surface != nil {
+		if s.directbuf.Bounds() == s.cellbuf.Bounds() {
+			s.cellbuf.Replace(s.directbuf.Buffer)
+		} else {
+			// Terminal resize can precede the model's new geometry. Never
+			// retain stale cells outside the latest complete source snapshot.
+			s.cellbuf.Clear()
+			s.directbuf.Draw(s.cellbuf, s.cellbuf.Bounds())
+			for y := 0; y < s.cellbuf.Height(); y++ {
+				s.cellbuf.TouchLine(0, y, s.cellbuf.Width())
+			}
+		}
+	} else {
+		s.cellbuf.Clear()
+		content.Draw(s.cellbuf, s.cellbuf.Bounds())
+	}
+	if frameHeight := frameArea.Dy(); frameHeight > s.height {
+		s.cellbuf.Lines = s.cellbuf.Lines[frameHeight-s.height:]
+	}
+	return view, false
 }
 
 // reset implements renderer.
@@ -644,6 +701,13 @@ func reset(s *cursedRenderer) {
 	scr.SetMapNewline(s.mapnl)
 	scr.SetScrollOptim(runtime.GOOS != "windows") // disable scroll optimization on Windows due to bugs in some terminals
 	s.scr = scr
+	// A new terminal diff has no physical-screen history. The producer's
+	// retained snapshot may be byte-identical to cellbuf after resume, so
+	// Replace alone cannot mark it dirty. Repaint every retained row once;
+	// preserve inline cursor position rather than erasing unrelated output.
+	for y := 0; y < s.cellbuf.Height(); y++ {
+		s.cellbuf.TouchLine(0, y, s.cellbuf.Width())
+	}
 }
 
 // setColorProfile implements renderer.
@@ -806,8 +870,11 @@ func (s *cursedRenderer) insertAbove(str string) error {
 
 // onMouse implements renderer.
 func (s *cursedRenderer) onMouse(m MouseMsg) Cmd {
-	if s.lastView != nil && s.lastView.OnMouse != nil {
-		return s.lastView.OnMouse(m)
+	s.viewMu.Lock()
+	handler := s.onMouseView
+	s.viewMu.Unlock()
+	if handler != nil {
+		return handler(m)
 	}
 	return nil
 }
@@ -842,6 +909,8 @@ func viewEquals(a, b *View) bool {
 	}
 
 	if a.Content != b.Content ||
+		(a.Surface == nil) != (b.Surface == nil) ||
+		a.surfaceFrame != b.surfaceFrame ||
 		a.AltScreen != b.AltScreen ||
 		a.DisableBracketedPasteMode != b.DisableBracketedPasteMode ||
 		a.ReportFocus != b.ReportFocus ||

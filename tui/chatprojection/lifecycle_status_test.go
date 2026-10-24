@@ -19,7 +19,7 @@ func TestTransientLifecycleDoesNotChangeTranscriptGeometry(t *testing.T) {
 		InternalID: "turn-status", Role: types.RoleStatus,
 		LifecyclePhase: "preparing", LifecycleProgress: 42,
 		LifecycleUploadedBytes: 43008, LifecycleTotalBytes: 102400, Time: time.Now(),
-	}}, 1)
+	}}, 1, 0)
 
 	rows, _, _ := renderer.ExportMessageRows(100)
 	if len(rows) != 0 {
@@ -87,7 +87,7 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 	renderer.SyncMessages([]types.ChatMessage{{
 		InternalID: "stable-row", Role: types.RoleStatus,
 		LifecyclePhase: "waiting_provider", LifecycleProvider: "OpenAI", Time: time.Now().Add(-2 * time.Second),
-	}}, 1)
+	}}, 1, 0)
 
 	waiting, _, _ := renderer.ExportMessageRows(100)
 	if len(waiting) != 0 {
@@ -98,7 +98,7 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 		InternalID: "stable-row", Role: types.RoleTool,
 		ToolID: "tool-1", ToolName: "edit_file", ToolStatus: types.ToolStatusStreaming,
 		ToolPreviewPhase: types.ToolPreviewPreparing, ToolStartTime: time.Now(),
-	}}, 2)
+	}}, 2, 0)
 	toolRows, _, _ := renderer.ExportMessageRows(100)
 	if len(toolRows) != 1 || toolRows[0].ID != "stable-row" {
 		t.Fatalf("tool transform changed row identity: %#v", toolRows)
@@ -119,7 +119,7 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 		LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
 		LifecycleBeforeTokens: 420000, Time: time.Now().Add(-2 * time.Second),
 	}
-	renderer.SyncMessages([]types.ChatMessage{msg}, 1)
+	renderer.SyncMessages([]types.ChatMessage{msg}, 1, 0)
 	rows, _, _ := renderer.ExportMessageRows(100)
 	joined := strings.Join(rows[0].Lines, "\n")
 	if len(rows[0].Lines) != 7 || !rows[0].ContextBoundary || rows[0].ContextBoundaryStart != 1 ||
@@ -224,7 +224,7 @@ func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
 		InternalID: "auto-compact", Role: types.RoleStatus, LifecyclePhase: "compaction_completed",
 		LifecycleOperationID: "compact-auto", LifecycleTrigger: "automatic",
 		LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476, ModelID: "aeron/model",
-	}}, 1)
+	}}, 1, 0)
 	rows, _, _ := renderer.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || strings.TrimSpace(rows[0].Lines[0]) != "" {
 		t.Fatalf("automatic compaction rows = %+v", rows)
@@ -277,7 +277,7 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 	renderer.SetSize(80, 20)
 	renderer.SyncMessages([]types.ChatMessage{{
 		InternalID: "static", Role: types.RoleAssistant, Content: "ambiguous ○ text",
-	}}, 1)
+	}}, 1, 0)
 	renderer.sync.Messages[0].CachedLines = []string{"cached under old width profile"}
 	renderer.InvalidateWidthProfile()
 	if renderer.sync.Messages[0].CachedLines != nil {

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"crude/types/jsondoc"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -172,7 +173,7 @@ func TestAccountConnectionJSONRoundTrip(t *testing.T) {
 	if decoded.Connection.ProviderURL != endpoint || decoded.Connection.ExtraBody["enabled"] != false {
 		t.Fatalf("complete connection JSON round trip = %#v", decoded.Connection)
 	}
-	if !reflect.DeepEqual(DefaultTemplates()["openrouter"].ExtraBody, map[string]any{"include_reasoning": true}) {
+	if !reflect.DeepEqual(DefaultTemplates()["openrouter"].ExtraBody, jsondoc.Object{"include_reasoning": true}) {
 		t.Fatal("embedded request options were not loaded")
 	}
 }

@@ -54,7 +54,7 @@ func (a *actor) prepareUpload(request coreprotocol.Request) (func(context.Contex
 		return nil, false
 	}
 	var in coreprotocol.ReferenceUploadCommand
-	if err := decode(request.Payload, &in); err != nil {
+	if err := decodeRequest(request, &in); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	var store workspace.SessionReferences
@@ -75,7 +75,7 @@ func (a *actor) prepareUpload(request coreprotocol.Request) (func(context.Contex
 		if err != nil {
 			return fault(request, "upload_failed", err.Error())
 		}
-		return response(request, value)
+		return responseValue(request, value)
 	}, true
 }
 
@@ -119,7 +119,7 @@ func (m *ReferenceUploads) Close() error {
 	return nil
 }
 
-func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, workspaceID string, store workspace.SessionReferences, method string, in coreprotocol.ReferenceUploadCommand) (any, error) {
+func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, workspaceID string, store workspace.SessionReferences, method string, in coreprotocol.ReferenceUploadCommand) (coreprotocol.Value, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := uploadOwner{owner, workspaceID}
@@ -158,7 +158,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 			copy := *in.Create
 			in.Create = &copy
 		case coreprotocol.ReferenceUploadReplace:
-			if in.Create != nil || !validDigest(in.OriginalDigest) {
+			if in.Create != nil || !validDigest(in.OriginalDigest) || in.Size > coreprotocol.ReferenceUploadMaxBytes {
 				return nil, errors.New("exact replacement preimage is required")
 			}
 			ref, ok := store.GetReference(in.ID)
@@ -192,7 +192,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 	switch method {
 	case coreprotocol.ReferenceUploadAbort:
 		m.remove(in.UploadID)
-		return struct{}{}, nil
+		return wire(coreprotocol.Empty{}), nil
 	case coreprotocol.ReferenceUploadChunk:
 		if len(in.Data) == 0 || len(in.Data) > coreprotocol.ReferenceChunkBytes || in.Offset != u.next || u.next+int64(len(in.Data)) > u.input.Size {
 			return nil, errors.New("invalid chunk offset or size")
@@ -244,7 +244,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 			return nil, err
 		}
 		updated, _ := store.GetReference(ref.ID)
-		return referenceView(updated), nil
+		return wire(referenceView(updated)), nil
 	}
 	return nil, errors.New("unknown upload operation")
 }

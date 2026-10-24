@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -51,16 +52,21 @@ type TurnStatus struct {
 // Conversation is the canonical live message state for one agent or thinking
 // pane. It deliberately contains no rendering or interaction state.
 type Conversation struct {
-	brief         string
-	messages      []*Message
-	byID          map[string]*Message
-	toolTimelines map[*Message]*toolTimeline
-	nextID        uint64
-	version       uint64
-	turnIdentity  ttypes.TurnIdentity
-	lastRecovery  recovery.Status
-	changeJournal []conversationChange
-	pendingChange conversationChange
+	brief            string
+	messages         []*Message
+	byID             map[string]*Message
+	toolTimelines    map[*Message]*toolTimeline
+	nextID           uint64
+	version          uint64
+	sourceGeneration uint64
+	turnIdentity     ttypes.TurnIdentity
+	lastRecovery     recovery.Status
+	changeJournal    []conversationChange
+	pendingChange    conversationChange
+	// Only the currently growing row owns spare capacity, never every archived
+	// message. Builder.String publishes immutable prefixes without copying them.
+	textMessage *Message
+	textBuilder strings.Builder
 }
 
 const toolPhaseMinDwell = 120 * time.Millisecond
@@ -87,6 +93,16 @@ func (c *Conversation) Version() uint64 {
 		return 0
 	}
 	return c.version
+}
+
+// SourceGeneration distinguishes accepted replacement snapshots from ordinary
+// deltas. Protocol revisions may repeat when a new core replaces this mirror;
+// presentation caches must compare both without changing the wire cursor.
+func (c *Conversation) SourceGeneration() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.sourceGeneration
 }
 
 // BeginTurn installs the immutable identity for messages created by one
@@ -330,8 +346,19 @@ func (c *Conversation) AppendToken(token string) {
 	if last.Role != MessageRoleAssistant {
 		return
 	}
-	last.Content += token
-	c.commitChange(last)
+	offset := len(last.Content)
+	c.appendText(last, token)
+	c.commitText(last, offset)
+}
+
+func (c *Conversation) appendText(message *Message, text string) {
+	if c.textMessage != message {
+		c.textBuilder = strings.Builder{}
+		c.textBuilder.WriteString(message.Content)
+		c.textMessage = message
+	}
+	c.textBuilder.WriteString(text)
+	message.Content = c.textBuilder.String()
 }
 
 func (c *Conversation) AppendThinking(content string) {
@@ -349,8 +376,23 @@ func (c *Conversation) AppendReasoning(delta reasoning.Delta) {
 			return
 		}
 		if last.Role == MessageRoleThinking && last.ThinkingActive {
-			last.Content = last.ThinkingDisplay.Append(last.Content, delta)
-			c.commitChange(last)
+			offset := len(last.Content)
+			display := last.ThinkingDisplay
+			if offset == 0 || display.Kind == reasoning.Provisional && delta.Kind != reasoning.Provisional && delta.Kind != reasoning.Unknown {
+				display.Kind = delta.Kind
+			} else if display.Kind != delta.Kind {
+				display.Kind = reasoning.Unknown
+			}
+			if delta.BlockID != "" && display.BlockID != delta.BlockID && offset != 0 {
+				c.appendText(last, "\n\n")
+			}
+			if delta.BlockID != "" && last.ThinkingDisplay.BlockID != delta.BlockID {
+				display.Start = len(last.Content)
+				display.BlockID = delta.BlockID
+			}
+			last.ThinkingDisplay = display
+			c.appendText(last, delta.Text)
+			c.commitText(last, offset)
 			return
 		}
 	}

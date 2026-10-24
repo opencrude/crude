@@ -3,6 +3,7 @@ package shellport
 import (
 	"context"
 
+	"crude/coreprotocol"
 	"crude/document"
 	"crude/workspace"
 )
@@ -34,6 +35,18 @@ type LiveDocumentReceipts interface {
 // LiveDocumentsChangedMsg advertises committed text or savepoint changes. It is
 // not permission to replace an editor's optimistic pending edits.
 type LiveDocumentsChangedMsg struct {
-	Owner Workspace
-	IDs   []string
+	Owner      Workspace
+	DocumentID string
+	Header     coreprotocol.TopicHeader
+	Update     coreprotocol.DocumentUpdate
+	Valid      func() bool
+	Done       func(error)
+}
+
+// LiveDocumentEpoch fences queued publications at a shell lifecycle boundary.
+// ResumeDocumentTopics starts fresh subscriptions for still-open views only.
+// Both methods are nonblocking and perform no document commands on Update.
+type LiveDocumentEpoch interface {
+	FenceDocumentTopics()
+	ResumeDocumentTopics()
 }

@@ -100,7 +100,7 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 			resumed := chatprojection.NewRenderer(app.Theme)
 			resumed.SetSize(width, 40)
 			resumed.SetChatAreaBounds(0, 30)
-			resumed.SyncMessages(ChatMessagesFromViews(views), 1)
+			resumed.SyncMessages(ChatMessagesFromViews(views), 1, 0)
 			got := resumed.ExportMessageRowsSnapshot(width).Rows
 			if len(got[0].Lines) != 2 || got[0].Native[1].TextTide {
 				t.Fatal("resumed summary expanded or animated without an active turn")

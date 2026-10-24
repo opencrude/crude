@@ -67,7 +67,7 @@ func (m *agentInspectionVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, message := range state.Messages.Messages() {
 				rows = append(rows, sessiondb.MessageWithMeta{Msg: provider.ChatMessage{Role: message.Role}, Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{message}}})
 			}
-			m.subPaneProjections.GetExisting(m.owner).renderer.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(rows)), state.Messages.Version()+1)
+			m.subPaneProjections.GetExisting(m.owner).renderer.SyncMessages(ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(rows)), state.Messages.Version()+1, 0)
 			return m, nil
 		case tea.KeyF9:
 			if path := os.Getenv("CRUDE_VISUAL_PROOF"); path != "" {

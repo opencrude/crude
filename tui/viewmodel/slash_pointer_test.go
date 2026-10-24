@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -116,7 +117,7 @@ func TestSlashPointerThroughAppActivatesExactRenderedCommand(t *testing.T) {
 				t.Fatal("pointer command did not consume and fence the slash draft")
 			}
 			app.forceFrame()
-			if rendered := ansi.Strip(app.View().Content); !strings.Contains(rendered, test.visible) {
+			if rendered := ansi.Strip(app.View().RenderContent()); !strings.Contains(rendered, test.visible) {
 				t.Fatalf("/%s destination was not painted:\n%s", test.label, rendered)
 			}
 			slashAppEvent(t, app, tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})

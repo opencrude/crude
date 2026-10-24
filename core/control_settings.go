@@ -13,7 +13,6 @@ import (
 	"crude/coreprotocol"
 	"crude/types"
 	"crude/types/control"
-	"crude/workspace"
 )
 
 type controlSettingsInput struct {
@@ -38,6 +37,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	prepare := func(method string, payload any) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
 		request.Method = method
 		request.Payload, _ = json.Marshal(payload)
+		request.JSON = true
 		run, apply, handled := a.prepareSettings(request)
 		if !handled {
 			run, apply, handled = a.prepareWorkspacePreferences(request)
@@ -220,13 +220,13 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		}
 	}
 	if input.Path == "terminal.shell" {
-		if _, _, err := types.ResolveTerminalLaunch(after.Terminal, workspace.DetectTerminalShells()); err != nil {
+		if _, _, err := types.ResolveTerminalLaunch(after.Terminal, a.states.shells); err != nil {
 			return controlFailure(in, control.Invalid, err.Error())
 		}
 	}
 	if input.Scope == "application" {
 		// Entity containers remain server-owned and secrets are explicit Keep.
-		return prepare(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{{Path: strings.Split(input.Path, "."), After: input.Value}}, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}})
+		return prepare(coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{{Path: strings.Split(input.Path, "."), After: input.Value}}, ProxyURL: coreprotocol.SecretString{Keep: true}})
 	}
 	// Patch only the selected sparse leaf, preserving explicit false and all
 	// neighboring overrides. Reset removes exactly this leaf, not its section.

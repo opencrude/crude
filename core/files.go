@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,7 +12,6 @@ import (
 
 	"crude/coreprotocol"
 	"crude/fileio"
-	"crude/localhistory"
 	"crude/workspace"
 )
 
@@ -50,54 +47,28 @@ func workspaceFilePath(root, path string, missing bool) (string, error) {
 
 func readFileChunk(ctx context.Context, root string, in coreprotocol.FileReadRequest) (coreprotocol.FileChunk, error) {
 	var out coreprotocol.FileChunk
-	if in.Offset < 0 || in.Limit < 0 || in.Limit > coreprotocol.MaxFileChunk || in.Offset > 0 && in.Digest == "" {
-		return out, errors.New("invalid chunk bounds or missing continuation digest")
+	if in.Offset != 0 || in.Digest != "" || in.Limit < 0 || in.Limit > coreprotocol.MaxFileChunk {
+		return out, errors.New("file reads are complete snapshots; continuation is not supported")
 	}
-	path, err := workspaceFilePath(root, in.Path, false)
-	if err != nil {
-		return out, err
-	}
-	before, err := os.Lstat(path)
-	if err != nil {
-		return out, err
-	}
-	if !before.Mode().IsRegular() || before.Size() > coreprotocol.MaxFileRead {
-		return out, errors.New("read requires a regular file within 64 MiB")
-	}
-	f, err := os.Open(path)
+	f, err := openCheckedFile(root, in.Path, coreprotocol.MaxFileRead)
 	if err != nil {
 		return out, err
 	}
 	defer func() { _ = f.Close() }()
-	opened, err := f.Stat()
-	if err != nil || !os.SameFile(before, opened) {
-		return out, errors.New("file identity changed")
-	}
-	// Bind exact content to path and stable file metadata (never access time).
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%d\x00%d\x00", path, before.Size(), before.ModTime().UnixNano(), before.Mode())
-	limit := in.Limit
-	if limit == 0 {
-		limit = coreprotocol.MaxFileChunk
-	}
-	data := make([]byte, 0, limit)
+	var data []byte
 	buf := make([]byte, 32<<10)
-	var total int64
 	for {
 		if err = ctx.Err(); err != nil {
 			return out, err
 		}
 		n, e := f.Read(buf)
 		if n > 0 {
-			if total+int64(n) > coreprotocol.MaxFileRead {
+			if len(data)+n > coreprotocol.MaxFileRead {
 				return out, errors.New("file exceeds 64 MiB")
 			}
 			_, _ = hash.Write(buf[:n])
-			start, end := max(in.Offset, total), min(in.Offset+int64(limit), total+int64(n))
-			if end > start {
-				data = append(data, buf[start-total:end-total]...)
-			}
-			total += int64(n)
+			data = append(data, buf[:n]...)
 		}
 		if e == io.EOF {
 			break
@@ -106,25 +77,14 @@ func readFileChunk(ctx context.Context, root string, in coreprotocol.FileReadReq
 			return out, e
 		}
 	}
-	after, err := f.Stat()
-	if err != nil {
+	if err = f.verify(); err != nil {
 		return out, err
 	}
-	current, err := os.Lstat(path)
-	if err != nil {
-		return out, err
-	}
-	if _, err = workspaceFilePath(root, path, false); err != nil {
-		return out, err
-	}
-	if !os.SameFile(before, current) || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || before.Mode() != after.Mode() || total != before.Size() {
+	if int64(len(data)) != f.before.Size() {
 		return out, errors.New("file changed during read")
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
-	if in.Offset > total || in.Digest != "" && in.Digest != digest {
-		return out, errors.New("stale file continuation")
-	}
-	return coreprotocol.FileChunk{Path: path, Offset: in.Offset, NextOffset: in.Offset + int64(len(data)), Total: total, Digest: digest, Data: data, EOF: in.Offset+int64(len(data)) == total}, nil
+	return coreprotocol.FileChunk{Path: f.path, NextOffset: int64(len(data)), Total: int64(len(data)), Digest: digest, Data: data, EOF: true}, nil
 }
 
 // prepareFiles captures services/root on the actor; workers never traverse mutable
@@ -142,7 +102,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, true
 	}
-	work := func(fn func(context.Context) (any, error)) (func(context.Context) coreprotocol.Response, bool) {
+	work := func(fn func(context.Context) (coreprotocol.Value, error)) (func(context.Context) coreprotocol.Response, bool) {
 		return func(ctx context.Context) coreprotocol.Response {
 			if err := ctx.Err(); err != nil {
 				return fault(request, "cancelled", err.Error())
@@ -151,51 +111,51 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 			if err != nil {
 				return fault(request, "files_failed", err.Error())
 			}
-			return response(request, value)
+			return responseValue(request, value)
 		}, true
 	}
 	switch request.Method {
 	case coreprotocol.FilesBrowse:
 		var in coreprotocol.FilePathRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) {
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			path, err := workspaceFilePath(root, in.Path, false)
 			if err != nil {
 				return nil, err
 			}
-			return workspace.BrowseDirectoryPath(path)
+			return wired(workspace.BrowseDirectoryPath(path))
 		})
 	case coreprotocol.FilesCatalog:
 		var in coreprotocol.FileCatalogRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) {
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			if _, err := workspaceFilePath(root, root, false); err != nil {
 				return nil, err
 			}
-			return workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{Root: root, DirectoriesOnly: in.DirectoriesOnly, IncludeHidden: in.IncludeHidden})
+			return wired(workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{Root: root, DirectoriesOnly: in.DirectoriesOnly, IncludeHidden: in.IncludeHidden}))
 		})
 	case coreprotocol.FilesRead:
 		var in coreprotocol.FileReadRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) { return readFileChunk(ctx, root, in) })
+		return work(func(ctx context.Context) (coreprotocol.Value, error) { return wired(readFileChunk(ctx, root, in)) })
 	case coreprotocol.FilesSearch:
 		var in coreprotocol.FileSearchRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		// Cancellation is request-owned; never call global ProjectSearch.Begin/Cancel.
-		return work(func(ctx context.Context) (any, error) {
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			if _, err := workspaceFilePath(root, root, false); err != nil {
 				return nil, err
 			}
 			matches, err := fileio.SearchProject(ctx, root, in.Query, in.Options)
-			return coreprotocol.FileSearchResult{Matches: matches}, err
+			return wire(coreprotocol.FileSearchResult{Matches: matches}), err
 		})
 	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit:
 		if ops == nil {
@@ -204,13 +164,13 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 		var in coreprotocol.FilePathRequest
 		var edits coreprotocol.FileEditsRequest
 		if request.Method == coreprotocol.FilesEdit {
-			if err := decode(request.Payload, &edits); err != nil {
+			if err := decodeRequest(request, &edits); err != nil {
 				return bad("invalid_request", err.Error())
 			}
-		} else if err := decode(request.Payload, &in); err != nil {
+		} else if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) {
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			var result workspace.FileOperationResultMsg
 			if request.Method == coreprotocol.FilesEdit {
 				for i := range edits.Edits {
@@ -263,122 +223,106 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 			if result.Err != nil {
 				out.Error = result.Err.Error()
 			}
-			return out, nil
+			return wire(out), nil
 		})
 	case coreprotocol.SavedWorkspaces:
-		if err := decode(request.Payload, &struct{}{}); err != nil {
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) { return workspace.ListWorkspaceInfosContext(ctx) })
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
+			return wiredList[coreprotocol.WorkspaceInfos](workspace.ListWorkspaceInfosContext(ctx))
+		})
 	case coreprotocol.HistoryTimeline, coreprotocol.HistoryFile:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
 		}
 		var in coreprotocol.HistoryListRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
 		if in.Limit <= 0 || in.Limit > 1000 {
 			in.Limit = 1000
 		}
-		return work(func(context.Context) (any, error) {
+		return work(func(context.Context) (coreprotocol.Value, error) {
 			if request.Method == coreprotocol.HistoryFile {
-				return store.FileHistory(in.Path, in.Limit)
+				return wiredList[coreprotocol.SnapshotRecords](store.FileHistory(in.Path, in.Limit))
 			}
-			return store.Timeline(in.Limit)
+			return wiredList[coreprotocol.SnapshotRecords](store.Timeline(in.Limit))
 		})
 	case coreprotocol.HistoryStats:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
 		}
-		if err := decode(request.Payload, &struct{}{}); err != nil {
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(context.Context) (any, error) { return store.Stats() })
+		return work(func(context.Context) (coreprotocol.Value, error) { return wired(store.Stats()) })
 	case coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
 		}
 		var in coreprotocol.HistoryPlanRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) {
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			switch request.Method {
 			case coreprotocol.HistoryPlanPaths:
-				return store.PlanRestorePaths(ctx, in.SnapshotID, in.Options, in.Paths)
+				return wired(store.PlanRestorePaths(ctx, in.SnapshotID, in.Options, in.Paths))
 			case coreprotocol.HistoryPlanMessage:
 				if history == nil {
 					return nil, errors.New("history lifecycle service unavailable")
 				}
-				return history.PlanMessageRestore(ctx, in.SessionID, in.MessageID)
+				return wired(history.PlanMessageRestore(ctx, in.SessionID, in.MessageID))
 			case coreprotocol.HistoryPlanAgent:
 				if history == nil {
 					return nil, errors.New("history lifecycle service unavailable")
 				}
-				return history.PlanAgentRestore(ctx, in.SessionID, in.MessageID, in.AgentID)
+				return wired(history.PlanAgentRestore(ctx, in.SessionID, in.MessageID, in.AgentID))
 			default:
-				return store.PlanRestore(ctx, in.SnapshotID, in.Options)
+				return wired(store.PlanRestore(ctx, in.SnapshotID, in.Options))
 			}
 		})
-	case coreprotocol.HistoryApply:
-		// Restore must exclude new turn admission for the whole worker lifetime, not
-		// merely check active turns at preparation. The parent must install that lease.
-		return bad("ownership_blocked", "history restore requires actor-wide turn-admission exclusion through mutation and boundary publication")
 	case coreprotocol.HistoryVerify:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
 		}
 		var in coreprotocol.HistoryVerifyRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) {
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			if in.SnapshotID == "" {
-				return struct{}{}, store.VerifyAll(ctx)
+				return wire(coreprotocol.Empty{}), store.VerifyAll(ctx)
 			}
-			return struct{}{}, store.Verify(ctx, in.SnapshotID)
+			return wire(coreprotocol.Empty{}), store.Verify(ctx, in.SnapshotID)
 		})
 	case coreprotocol.HistoryPrune:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
 		}
 		var in coreprotocol.HistoryPruneRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) { return store.Prune(ctx, in.Policy) })
+		return work(func(ctx context.Context) (coreprotocol.Value, error) { return store.Prune(ctx, in.Policy) })
 	case coreprotocol.HistoryCapture:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")
 		}
 		var in coreprotocol.HistoryCaptureRequest
-		if err := decode(request.Payload, &in); err != nil {
+		if err := decodeRequest(request, &in); err != nil {
 			return bad("invalid_request", err.Error())
 		}
-		return work(func(ctx context.Context) (any, error) { return store.Snapshot(ctx, in.Options) })
+		return work(func(ctx context.Context) (coreprotocol.Value, error) { return wired(store.Snapshot(ctx, in.Options)) })
 	}
 	return nil, false
 }
 
 func filesMutation(method string) bool {
 	switch method {
-	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryApply, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent:
+	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent:
 		return true
 	}
 	return false
-}
-
-// applyFiles is the owner-only publication hook. No worker calls a workspace
-// method that traverses sessions. HistoryApply remains blocked until admission
-// exclusion is integrated; this hook must then run before completing the receipt.
-func (a *actor) applyFiles(request coreprotocol.Request, result coreprotocol.Response) error {
-	if request.Method != coreprotocol.HistoryApply || result.Error != nil {
-		return nil
-	}
-	var out localhistory.RestoreResult
-	if err := json.Unmarshal(result.Payload, &out); err != nil {
-		return err
-	}
-	return a.ws.AppendHistoryRestoreEvent(out)
 }

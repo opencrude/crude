@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux real-process acceptance; never builds or uses the user's core/tmux.
+"""Linux real-process acceptance; never builds the product or uses the user's core/tmux.
 
 Run: python3 scripts/core_shell_acceptance.py --binary /absolute/crude --out /new/evidence
 Captures are tmux text evidence, NOT screenshots. Desktop capture is a separate,
@@ -11,14 +11,12 @@ import json
 import os
 from pathlib import Path
 import shlex
-import socket
-import struct
+import select
 import subprocess
 import tempfile
 import threading
 import time
 import traceback
-import uuid
 
 
 def until(description, check, timeout=45):
@@ -90,47 +88,74 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
 
 class Observer:
-    """Read-only identity/status observer; all product actions use rendered shells."""
-    def __init__(self, home):
-        self.sock = socket.socket(socket.AF_UNIX)
-        self.sock.settimeout(15)
-        self.sock.connect(str(home / ".crude/corewire/core.sock"))
-        self.client = "acceptance-observer-" + uuid.uuid4().hex
-        self.send({"version": 1, "kind": "hello", "client_id": self.client, "payload": {"max_frame": 8 << 20}})
-        assert self.read()["kind"] == "welcome"
-        self.owner = self.read()["payload"]
-        self.sequence = 0
+    """Typed Go SDK observer; JSON lines are ONLY a local subprocess interface.
 
-    def send(self, frame):
-        data = json.dumps(frame).encode()
-        self.sock.sendall(struct.pack(">I", len(data)) + data)
+    Build the acceptance-only helper once per Python invocation. The helper owns
+    the actual v2 carrier/Hello/typed requests; Python implements no core wire
+    format. Every product action still uses native rendered shell input.
+    """
+    _binary = None
+
+    @classmethod
+    def build(cls):
+        if cls._binary is None:
+            scratch = Path(tempfile.mkdtemp(prefix="core-observer-", dir=os.environ.get("CRUDE_TEMP_DIR")))
+            binary = scratch / "observer"
+            root = Path(__file__).resolve().parent.parent
+            build = subprocess.run(["go", "build", "-o", str(binary), "scripts/core_shell_observer.go"],
+                                   cwd=root, capture_output=True, text=True, timeout=180)
+            if build.returncode:
+                raise RuntimeError("typed observer build failed: " + (build.stdout + build.stderr)[-8000:])
+            cls._binary = binary
+        return cls._binary
+
+    def __init__(self, home, binary=None):
+        env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH") if k in os.environ}
+        env.update(HOME=str(home), CRUDE_HOME=str(home))
+        self.stderr = tempfile.TemporaryFile(mode="w+t")
+        self.process = subprocess.Popen([str(binary or self.build())], env=env, stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=self.stderr, text=True)
+        try:
+            assert self.read().get("ready"), "typed observer did not become ready"
+        except Exception:
+            try:
+                self.close()
+            except Exception:
+                pass  # retain the original handshake diagnostic
+            raise
 
     def read(self):
-        def exact(n):
-            data = b""
-            while len(data) < n:
-                part = self.sock.recv(n - len(data))
-                if not part:
-                    raise EOFError("core disconnected observer")
-                data += part
-            return data
-        n = struct.unpack(">I", exact(4))[0]
-        assert 0 < n <= 8 << 20
-        return json.loads(exact(n))
+        if not select.select([self.process.stdout], [], [], 20)[0]:
+            raise TimeoutError("typed observer response timed out")
+        line = self.process.stdout.readline()
+        if not line:
+            self.stderr.seek(0)
+            raise EOFError("typed observer exited: " + self.stderr.read()[-8000:])
+        return json.loads(line)
 
     def call(self, method, payload=None, workspace=""):
-        self.sequence += 1
-        ident = str(self.sequence)
-        self.send({"version": 1, "kind": "request", "request_id": ident, "client_id": self.client,
-                   "epoch": self.owner["epoch"], "workspace_id": workspace, "method": method, "payload": payload or {}})
-        while True:
-            frame = self.read()
-            if frame.get("request_id") == ident:
-                assert not frame.get("error"), frame
-                return frame["payload"]
+        self.process.stdin.write(json.dumps({"method": method, "workspace": workspace, "payload": payload or {}}) + "\n")
+        self.process.stdin.flush()
+        response = self.read()
+        assert not response.get("error"), response
+        return response["payload"]
 
     def close(self):
-        self.sock.close()
+        if self.process.stdin.closed:
+            return
+        self.process.stdin.close()  # EOF invokes SDK Close and ends the retained session.
+        try:
+            code = self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()  # only this exact owned helper; never a core or shell
+            self.process.wait(timeout=5)
+            raise AssertionError("typed observer failed to close on stdin EOF")
+        finally:
+            self.process.stdout.close()
+            self.stderr.seek(0)
+            error = self.stderr.read()[-8000:]
+            self.stderr.close()
+        assert code == 0, ("typed observer close failed", code, error)
 
 
 def proc(pid):
@@ -139,6 +164,19 @@ def proc(pid):
     return {"pid": pid, "ticks": int(stat[11]) + int(stat[12]),
             "rss_bytes": int(stat[21]) * os.sysconf("SC_PAGE_SIZE"),
             "fds": len(list((root / "fd").iterdir()))}
+
+
+def process_identity(pid):
+    stat = (Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
+    return (pid, int(stat[19]))
+
+
+def process_alive(identity):
+    try:
+        stat = (Path("/proc") / str(identity[0]) / "stat").read_text().rsplit(")", 1)[1].split()
+        return stat[0] != "Z" and int(stat[19]) == identity[1]
+    except (FileNotFoundError, ProcessLookupError):
+        return False
 
 
 class Harness:
@@ -152,15 +190,18 @@ class Harness:
         # fixture children or saved evidence. Terminal transport needs only these
         # nonsecret platform/search-path facts plus its explicitly isolated roots.
         self.env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH", "SHELL", "USER", "LOGNAME") if k in os.environ}
-        self.env.update(HOME=str(self.home), XDG_CONFIG_HOME=str(self.home / "config"),
+        self.env.update(HOME=str(self.home), USERPROFILE=str(self.home), CRUDE_HOME=str(self.home),
+                        GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
+                        XDG_CONFIG_HOME=str(self.home / "config"),
                         XDG_DATA_HOME=str(self.home / "data"), XDG_CACHE_HOME=str(self.home / "cache"),
                         TMPDIR=str(self.home), TERM="xterm-256color")
         self.socket = str(self.home / "tmux.sock")
         self.windows = {}
+        self.processes = {}
         self.observer = None
         self.core = None
         self.result = {"passed": False, "home": str(self.home), "tmux_socket": self.socket,
-                       "checks": [], "limitations": ["No desktop screenshots; tmux captures are text evidence", "Shared-editor journey is not run by this harness"]}
+                        "checks": [], "limitations": ["No desktop screenshots; tmux captures are text evidence", "Shared-editor journey is not run by this harness", "Native Windows, netem and physically distinct-host acceptance are not run"]}
         self.state = {"lock": threading.Lock(), "mode": "stream", "release": threading.Event(),
                       "shutdown": threading.Event(), "requests": [], "errors": [],
                       "completed": {m: threading.Event() for m in ("stream", "question", "stop", "zero")}}
@@ -169,7 +210,7 @@ class Harness:
         self.provider.state = self.state
 
     def tmux(self, *args, check=True):
-        return subprocess.run(["tmux", "-S", self.socket, *args], env=self.env, check=check,
+        return subprocess.run(["tmux", "-S", self.socket, "-f", "/dev/null", *args], env=self.env, check=check,
                               capture_output=True, text=True, timeout=15).stdout.strip()
 
     def launch(self, name, root, resume=False):
@@ -185,6 +226,7 @@ class Harness:
         target = "acceptance:" + name + ".0"
         pid = int(self.tmux("display-message", "-p", "-t", target, "#{pane_pid}"))
         self.windows[name] = (target, pid)
+        self.processes[name] = process_identity(pid)
         until(name + " rendered", lambda: "fixture-model" in self.capture(name) if resume else
               "New Session" in self.capture(name) or "fixture-model" in self.capture(name))
 
@@ -200,8 +242,37 @@ class Harness:
         self.tmux("send-keys", "-t", self.windows[name][0], "-l", text)
         self.keys(name, "Enter")
 
+    def click_text(self, name, text):
+        """Click a unique painted native control via the pane's SGR mouse input."""
+        rows = self.capture(name).splitlines()
+        matches = [(row.index(text) + max(1, len(text) // 2) + 1, y + 1)
+                   for y, row in enumerate(rows) if text in row]
+        assert len(matches) == 1, (text, matches)
+        x, y = matches[0]
+        self.tmux("send-keys", "-t", self.windows[name][0], "-l", f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m")
+
     def kill(self, name):
-        os.kill(self.windows[name][1], 9)
+        identity = self.processes[name]
+        assert process_alive(identity), (name, identity)
+        os.kill(identity[0], 9)
+        until(name + " exact process died", lambda: not process_alive(identity))
+        self.tmux("kill-window", "-t", self.windows[name][0], check=False)
+        del self.windows[name]
+
+    def quit(self, name):
+        """Exercise native Ctrl+Q teardown, including the SDK session-close ACK."""
+        identity = self.processes[name]
+        assert process_alive(identity), (name, identity)
+        self.capture(name)
+        self.keys(name, "C-q")
+        # Ctrl+Q follows the product's hierarchy: first minimize the session tab
+        # to the launcher, then quit the empty shell. Do not replace native
+        # teardown with a signal or assume the first chord ends the session.
+        until(name + " launcher or process quit", lambda: not process_alive(identity) or
+              "New Session" in self.capture(name), timeout=20)
+        if process_alive(identity):
+            self.keys(name, "C-q")
+        until(name + " exact process quit", lambda: not process_alive(identity), timeout=20)
         self.tmux("kill-window", "-t", self.windows[name][0], check=False)
         del self.windows[name]
 
@@ -275,10 +346,24 @@ class Harness:
         assert self.identities(workspace) == initial
         self.count("stream", 1)
         self.result["checks"].append("origin kill retains root/session and one provider execution")
+        self.result["crash_boundary"] = {"retained_clients": self.status()["clients"],
+                                         "live_shells": len(self.windows),
+                                         "origin_dead": not process_alive(self.processes["shell-0"])}
+        # Carrier loss intentionally retains a v2 session for fifteen minutes.
+        # Reopen the ORIGINAL private profile through the real CLI: its stable
+        # client identity replaces the crash-left session, without impersonation
+        # by the observer. Later Ctrl+Q can establish a true zero-client boundary.
+        self.launch("shell-0", project, resume=True)
+        self.visible(["shell-0"], "RETAINED STREAM ANSWER")
+        until("origin profile replaces crash-left attachment", lambda: self.status()["clients"] == 10)
+        assert self.identities(workspace) == initial
         self.mode("question")
         self.submit("shell-1", "ASK PEER QUESTION")
         self.visible(list(self.windows), "Choose a fixture answer")
-        self.keys("shell-2", "Enter")  # real first Yes row activation/submit
+        self.click_text("shell-2", "○ Yes")
+        self.visible(["shell-2"], "Answer:")
+        self.visible(["shell-2"], "Submit")
+        self.click_text("shell-2", "Submit")  # explicit native review submission
         self.visible(list(self.windows), "PEER DECISION ACCEPTED")
         # The completed tool evidence intentionally retains Q1/A1 in chat. Check
         # the actual pending block and blocking deck, not absence of history text.
@@ -303,8 +388,10 @@ class Harness:
         self.submit("shell-1", "ZERO SHELL INPUT")
         self.visible(list(self.windows), "ACCEPTED ZERO PREFIX")
         for name in list(self.windows):
-            self.kill(name)
+            self.quit(name)
+        assert all(not process_alive(identity) for identity in self.processes.values())
         until("only observer remains attached", lambda: self.status()["clients"] == 0)
+        self.result["zero_boundary"] = {"status": self.status(), "all_shell_processes_dead": True}
         self.observer.close()
         self.observer = None
         # No observer at the zero-shell boundary. Response is released while
@@ -325,7 +412,8 @@ class Harness:
             name = "workspace-" + str(i)
             self.launch(name, root)
             until("workspace retained", lambda: any(w["root"] == str(root) for w in self.status()["workspaces"]))
-            self.kill(name)
+            self.quit(name)
+            until("temporary workspace shell session closed", lambda: self.status()["clients"] == 1)
         assert len(self.status()["workspaces"]) == 20
         # Add independent idle views, then report core separately from shells.
         for i in range(9):
@@ -335,7 +423,7 @@ class Harness:
         pids = {"core": self.core.pid, **{n: p for n, (_, p) in self.windows.items()}}
         before = {n: proc(p) for n, p in pids.items()}
         start = time.monotonic()
-        time.sleep(2)  # measurement interval, not synchronization/acceptance proof
+        time.sleep(5)  # mandated CPU sample, not synchronization/acceptance proof
         elapsed = time.monotonic() - start
         after = {n: proc(p) for n, p in pids.items()}
         for n, value in after.items():
@@ -343,6 +431,8 @@ class Harness:
             value["cpu_percent_one_core"] = value["cpu_seconds"] / elapsed * 100
         self.result["resources"] = {"retained_workspaces": 20, "sample_seconds": elapsed, "processes": after,
                                     "shell_rss_sum": sum(v["rss_bytes"] for n, v in after.items() if n != "core")}
+        violations = {n: v["cpu_percent_one_core"] for n, v in after.items() if v["cpu_percent_one_core"] >= 1}
+        assert not violations, ("idle per-process CPU must be <1% of one core over five seconds", violations)
         self.result["checks"].append("twenty retained workspaces and ten idle rendered shell resource sample")
         self.count("stream", 1)
         self.count("question", 2)
@@ -352,7 +442,11 @@ class Harness:
 
     def cleanup(self):
         if self.observer:
-            self.observer.close()
+            try:
+                self.observer.close()
+            except Exception as exc:
+                self.result["cleanup_observer_error"] = str(exc)
+            self.observer = None
         try:
             self.tmux("kill-server", check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -376,6 +470,7 @@ class Harness:
             (self.out / "core.log").write_bytes(core_log.read_bytes())
         self.result["provider_requests"] = self.state["requests"]
         self.result["provider_errors"] = self.state["errors"]
+        self.result["shell_process_cleanup"] = {n: not process_alive(identity) for n, identity in self.processes.items()}
         (self.out / "result.json").write_text(json.dumps(self.result, indent=2))
 
 

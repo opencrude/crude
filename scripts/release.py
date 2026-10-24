@@ -75,6 +75,9 @@ def build(args):
         raise ValueError("release builds require a native Linux/Windows x86-64 runner")
     if run("git", "status", "--porcelain"):
         raise ValueError("release builds require a clean committed checkout (including generated terminfo)")
+    # A clean commit can still contain stale generated protocol identities.
+    # Check source bytes without changing the release checkout on either host.
+    run("go", "run", "./internal/wiregen", "-check")
     goos, goarch, cgo = run("go", "env", "GOOS", "GOARCH", "CGO_ENABLED").splitlines()
     if (goos, goarch, cgo) != (target, "amd64", "1"):
         raise ValueError("source scripts/libghostty_env for this native platform; CGO_ENABLED must be 1")

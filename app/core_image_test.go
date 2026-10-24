@@ -182,7 +182,27 @@ func TestCoreImageRejectsInvalidPublishedWinner(t *testing.T) {
 	}
 }
 
-func TestStageCoreImageIsContentAddressedAndPrunesOtherBuilds(t *testing.T) {
+func TestStageCoreImageRejectsSameSizeChangedBytes(t *testing.T) {
+	home, source := t.TempDir(), filepath.Join(t.TempDir(), "crude.exe")
+	if err := os.WriteFile(source, []byte("first build"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target, err := stageCoreImage(home, source, "immutable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("other build"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageCoreImage(home, source, "immutable"); err == nil {
+		t.Fatal("staging trusted size instead of exact executable bytes")
+	}
+	if raw, err := os.ReadFile(target); err != nil || string(raw) != "other build" {
+		t.Fatalf("invalid winner was overwritten: %q %v", raw, err)
+	}
+}
+
+func TestStageCoreImageIsContentAddressedAndRetainsOtherBuilds(t *testing.T) {
 	home, source := t.TempDir(), filepath.Join(t.TempDir(), "crude.exe")
 	if err := os.WriteFile(source, []byte("first build"), 0o700); err != nil {
 		t.Fatal(err)
@@ -208,8 +228,8 @@ func TestStageCoreImageIsContentAddressedAndPrunesOtherBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(first); !os.IsNotExist(err) {
-		t.Fatalf("image of the previous build was not pruned: %v", err)
+	if _, err := os.Stat(first); err != nil {
+		t.Fatalf("image of a possibly running owner was removed: %v", err)
 	}
 	if raw, _ := os.ReadFile(second); !bytes.Equal(raw, []byte("second build")) {
 		t.Fatalf("second staged bytes = %q", raw)
@@ -244,13 +264,10 @@ func TestDetachedCoreDoesNotPinTheStartingExecutable(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// The stdio bridge starts a core and exits once its (empty) stdin closes,
-	// exactly like a shell process that started the core and quit.
-	cmd := exec.CommandContext(ctx, starter, "--core-stdio")
-	cmd.Stdin = bytes.NewReader(nil)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("starter: %v: %s", err, output)
-	}
+	// A genuine SSH session starts the core and closes cleanly, exactly like a
+	// shell process that started the core and quit. Empty input admits no session.
+	_, closeRelay := startCoreStdioClient(t, ctx, starter)
+	closeRelay()
 	status, err := CoreStatus(ctx, home)
 	if err != nil {
 		t.Fatal(err)
@@ -258,10 +275,28 @@ func TestDetachedCoreDoesNotPinTheStartingExecutable(t *testing.T) {
 	if filepath.Dir(status.Executable) != CoreImageDir(home) {
 		t.Fatalf("core runs from %s, not a staged image under %s", status.Executable, CoreImageDir(home))
 	}
+	owner, err := readCoreOwner(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := os.Stat(status.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCoreImage(status.Executable, owner.Digest); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(starter); err != nil {
 		t.Fatalf("the running core still pins the executable that started it: %v", err)
 	}
 	if _, err := CoreStatus(ctx, home); err != nil {
 		t.Fatalf("core did not survive removal of the starting executable: %v", err)
+	}
+	current, err := os.Stat(status.Executable)
+	if err != nil || !os.SameFile(image, current) {
+		t.Fatalf("retained image identity changed: %v", err)
+	}
+	if err := verifyCoreImage(status.Executable, owner.Digest); err != nil {
+		t.Fatalf("retained image bytes changed: %v", err)
 	}
 }

@@ -41,12 +41,11 @@ class EditorHarness(Harness):
         self.keys(name, "Enter")
 
     def open_file(self, name):
-        self.palette(name, "Focus File Tree")
-        # The project has exactly one file. Home selects root, Right expands it,
-        # Down selects sample.txt, Enter opens through the actual file-tree path.
-        self.keys(name, "Home", "Right", "Down", "Enter")
+        # Contextual pane/focus actions deliberately do not appear in the global
+        # palette. Open the actual painted tree entry; opening owns editor focus.
+        self.visible([name], "sample.txt")
+        self.click_text(name, "sample.txt")
         self.visible([name], "EDITOR BASELINE")
-        self.palette(name, "Focus Editor")
 
     def dirty(self, names):
         def check():
@@ -94,7 +93,9 @@ class EditorHarness(Harness):
     def run(self):
         data = self.home / ".crude"
         data.mkdir(mode=0o700)
-        config = {"agents": {"enabled": False}, "local_history": {"enabled": "off"},
+        config = {"agents": {"enabled": False},
+                  "onboarding": {"introduction_completed": True, "ai_setup_reminder_hidden": True},
+                  "local_history": {"enabled": "off"},
                   "lsp": {"enabled": False},
                   "memory": {"auto_recall": "off", "auto_extract": "off", "consolidation": "off"}}
         (data / "config.json").write_text(json.dumps(config))
@@ -140,8 +141,19 @@ class EditorHarness(Harness):
         self.assert_disk(saved)
         self.stage("origin-killed")
         self.result["checks"].append("origin SIGKILL retains peer-rendered canonical unsaved edit")
-        self.kill("editor-b")
-        until("zero rendered clients", lambda: self.status()["clients"] == 0)
+        self.result["crash_boundary"] = {"retained_clients": self.status()["clients"], "live_shells": 1}
+        # Use the same real profile to replace its crash-left retained session;
+        # then native quit closes both owners without changing the v2 grace.
+        self.launch("editor-a", self.project)
+        self.open_file("editor-a")
+        self.visible(["editor-a"], "RETAINED_ORIGIN EDITOR BASELINE")
+        for name in ("editor-a", "editor-b"):
+            self.keys(name, "C-w")
+            self.visible([name], "Shared unsaved changes")
+            self.click_text(name, "Close view")  # preserve canonical text, no disk write
+            until(name + " shared view closed", lambda: "Shared unsaved changes" not in self.capture(name))
+            self.quit(name)
+        until("zero retained shell clients after graceful quit", lambda: self.status()["clients"] == 0)
         self.stop_core()
         self.start_core()
         self.launch("editor-b", self.project)  # same stable private client profile

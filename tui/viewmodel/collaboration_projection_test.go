@@ -55,7 +55,7 @@ func TestCommandOutcomeLiveEventSQLiteHydrationParity(t *testing.T) {
 						r := chatprojection.NewRenderer(theme.DefaultDark())
 						r.SetSize(width, 40)
 						r.SetChatAreaBounds(0, 30)
-						r.SyncMessages(messages, 1)
+						r.SyncMessages(messages, 1, 0)
 						if expanded {
 							r.ToggleDisclosure(canonical.InternalID)
 						}
@@ -124,7 +124,7 @@ func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 					renderer := chatprojection.NewRenderer(themeCase.th)
 					renderer.SetSize(width, 40)
 					renderer.SetChatAreaBounds(0, 30)
-					renderer.SyncMessages(messages, 1)
+					renderer.SyncMessages(messages, 1, 0)
 					return renderer.ExportMessageRowsSnapshot(width).Rows
 				}
 				left, right := render(live), render(hydrated)
@@ -170,7 +170,7 @@ func TestRunningAgentBroadcastRendersAsRareBroadcastInsteadOfRecipientDump(t *te
 	renderer := chatprojection.NewRenderer(theme.DefaultDark())
 	renderer.SetSize(80, 24)
 	renderer.SetChatAreaBounds(0, 20)
-	renderer.SyncMessages(ChatMessagesFromViews([]workspace.ChatMessageView{message}), 1)
+	renderer.SyncMessages(ChatMessagesFromViews([]workspace.ChatMessageView{message}), 1, 0)
 	rows := renderer.ExportMessageRowsSnapshot(80).Rows
 	if len(rows) != 1 {
 		t.Fatalf("rows=%d", len(rows))

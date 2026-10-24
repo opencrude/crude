@@ -238,7 +238,12 @@ func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 			return nil
 		}
 		p.state.err = nil
-		p.state.sync = true
+		p.state.topic = nil
+		p.state.topicReady = false
+		p.state.sync = false
+		if topics, ok := m.ws.(shellport.LiveDocumentEpoch); ok {
+			topics.ResumeDocumentTopics()
+		}
 		p.state.save = false
 		p.state.format = false
 		p.state.undo = nil

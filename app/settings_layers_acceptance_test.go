@@ -40,7 +40,7 @@ func TestSettingsLayerIsolationRealCoreSaveAndRestart(t *testing.T) {
 		}
 		server, wire := net.Pipe()
 		go func() { _ = core.ServeConnection(t.Context(), runtime, server) }()
-		client, err := coreclient.Dial(t.Context(), wire, "settings-layers-test")
+		client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(wire), "settings-layers-test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +53,7 @@ func TestSettingsLayerIsolationRealCoreSaveAndRestart(t *testing.T) {
 	runtime, client, id := start()
 	fetch := func() coreprotocol.SettingsFetchResult {
 		var out coreprotocol.SettingsFetchResult
-		if err := client.Call(t.Context(), id, coreprotocol.SettingsFetch, struct{}{}, &out); err != nil {
+		if err := client.Call(t.Context(), id, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &out); err != nil {
 			t.Fatal(err)
 		}
 		return out
@@ -61,7 +61,7 @@ func TestSettingsLayerIsolationRealCoreSaveAndRestart(t *testing.T) {
 	before := fetch()
 	first := types.CloneAppSettings(before.Application)
 	first.LSP.UpdateDebounceMS = 450
-	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(before.Application, first), ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(before.Application, first), ProxyURL: coreprotocol.SecretString{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(ConfigPath())
@@ -81,17 +81,17 @@ func TestSettingsLayerIsolationRealCoreSaveAndRestart(t *testing.T) {
 	}
 	app := types.CloneAppSettings(before.Application)
 	app.Agents.Categories["default"] = types.CategorySettings{AccountID: "test", Model: "app-next", ThinkingEffort: "high"}
-	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(before.Application, app), ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(before.Application, app), ProxyURL: coreprotocol.SecretString{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Call(t.Context(), id, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"lsp", "enabled"}, After: json.RawMessage("false")}}}, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.WorkspaceOverridesSet, &coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"lsp", "enabled"}, After: json.RawMessage("false")}}}, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
 		t.Fatal(err)
 	}
 	current := fetch()
 	if len(current.Overrides.Agents) != 0 || current.Effective.Agents.Categories["default"].Model != "app-next" || current.Application.Agents.Categories["default"].Model != "app-next" {
 		t.Fatal("LSP-only edit polluted agents or Application")
 	}
-	if err := client.Call(t.Context(), id, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"agents", "Categories", "default", "Model"}, After: json.RawMessage(`"workspace-main"`)}}}, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.WorkspaceOverridesSet, &coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"agents", "Categories", "default", "Model"}, After: json.RawMessage(`"workspace-main"`)}}}, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
 		t.Fatal(err)
 	}
 	_ = client.Close()
@@ -106,7 +106,7 @@ func TestSettingsLayerIsolationRealCoreSaveAndRestart(t *testing.T) {
 	}
 	next := types.CloneAppSettings(current.Application)
 	next.Editor.TabSize = 7
-	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(current.Application, next), ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
+	if err := client.Call(t.Context(), id, coreprotocol.ApplicationPreferencesSave, &coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(current.Application, next), ProxyURL: coreprotocol.SecretString{Keep: true}}, &coreprotocol.ApplicationPreferencesResult{}); err != nil {
 		t.Fatal("fresh Application save with workspace override", err)
 	}
 	durable := LoadFileConfig()

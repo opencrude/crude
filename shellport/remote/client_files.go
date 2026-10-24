@@ -5,7 +5,6 @@ import (
 	"path"
 	"strings"
 
-	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/shellport"
 	"crude/workspace"
@@ -32,7 +31,7 @@ func (w *Workspace) browseClientDirectory(ctx context.Context, value string, ext
 	if external {
 		method = coreprotocol.ClientFilesBrowseExternal
 	}
-	var out []shellport.ClientDirectoryEntry
+	var out coreprotocol.ClientDirectoryEntries
 	err := w.call(ctx, method, coreprotocol.FilePathRequest{Path: w.CanonicalClientPath(value)}, &out)
 	return out, err
 }
@@ -56,15 +55,14 @@ func (w *Workspace) CatalogFolders(ctx context.Context, root string, includeHidd
 	return out, err
 }
 func (w *Workspace) readClientFile(ctx context.Context, value string, external bool) ([]byte, error) {
-	method := coreprotocol.FilesRead
-	if external {
-		method = coreprotocol.ClientFilesReadExternal
-	}
-	return coreclient.ReadBoundedClientFile(ctx, w.CanonicalClientPath(value), func(ctx context.Context, in coreprotocol.FileReadRequest) (coreprotocol.FileChunk, error) {
-		var out coreprotocol.FileChunk
-		err := w.call(ctx, method, in, &out)
-		return out, err
-	})
+	w.connMu.Lock()
+	client, id := w.client, w.id
+	w.connMu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(w.ctx, cancel)
+	defer stop()
+	return client.ReadClientFile(ctx, id, w.CanonicalClientPath(value), external)
 }
 func (w *Workspace) ReadClientFile(ctx context.Context, value string) ([]byte, error) {
 	return w.readClientFile(ctx, value, false)
@@ -73,7 +71,7 @@ func (w *Workspace) ReadExternalClientFile(ctx context.Context, value string) ([
 	return w.readClientFile(ctx, value, true)
 }
 func (w *Workspace) ListSavedWorkspaces(ctx context.Context) ([]workspace.WorkspaceInfo, error) {
-	var out []workspace.WorkspaceInfo
-	err := w.call(ctx, coreprotocol.SavedWorkspaces, struct{}{}, &out)
+	var out coreprotocol.WorkspaceInfos
+	err := w.call(ctx, coreprotocol.SavedWorkspaces, &coreprotocol.Empty{}, &out)
 	return out, err
 }

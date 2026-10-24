@@ -67,7 +67,7 @@ func (c Context) WithAttrs(attrs uint8) Context {
 
 // SetBackground sets the background color of the context. Use nil to reset to default.
 func (c *Context) SetBackground(bg color.Color) {
-	c.style.Bg = bg
+	c.style.Bg = uv.NewColor(bg)
 }
 
 // WithBackground returns a copy of the context with the given background color.
@@ -78,7 +78,7 @@ func (c Context) WithBackground(bg color.Color) Context {
 
 // SetForeground sets the foreground color of the context. Use nil to reset to default.
 func (c *Context) SetForeground(fg color.Color) {
-	c.style.Fg = fg
+	c.style.Fg = uv.NewColor(fg)
 }
 
 // WithForeground returns a copy of the context with the given foreground color.
@@ -226,7 +226,7 @@ func (c Context) WithUnderline(underline bool) Context {
 
 // SetUnderlineColor sets the underline color of the context. Use nil to reset to default.
 func (c *Context) SetUnderlineColor(color color.Color) {
-	c.style.UnderlineColor = color
+	c.style.UnderlineColor = uv.NewColor(color)
 }
 
 // WithUnderlineColor returns a copy of the context with the given underline color.

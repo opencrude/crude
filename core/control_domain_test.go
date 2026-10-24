@@ -54,7 +54,9 @@ func TestControlPublicationFailurePreservesCommittedEvidence(t *testing.T) {
 	mutations, publications := 0, 0
 	run, apply, _ := wrapControlOperation(in, func(context.Context) coreprotocol.Response {
 		mutations++
-		return coreprotocol.Response{ID: in.ID, Payload: json.RawMessage(`{"id":"created-file"}`)}
+		return coreprotocol.Response{ID: in.ID, Value: struct {
+			ID string `json:"id"`
+		}{"created-file"}}
 	}, func(coreprotocol.Response) error { publications++; return errors.New("replica failed") })
 	result := run(context.Background())
 	result.ResourceIDs = []string{"created-file"}

@@ -109,7 +109,7 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 							r := chatprojection.NewRenderer(themeCase.th)
 							r.SetSize(width, 40)
 							r.SetChatAreaBounds(0, 30)
-							r.SyncMessages(input, 1)
+							r.SyncMessages(input, 1, 0)
 							return r
 						}
 						left, right := render(live), render(hydrated)
@@ -168,9 +168,9 @@ func TestStructuredFamilyParallelLeavesSharePresentation(t *testing.T) {
 			}
 			r, resumed := newParityRenderer(), newParityRenderer()
 			batch := ctypes.ChatMessage{InternalID: "batch", Role: ctypes.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(output), ToolStatus: "success", ToolPreviewPhase: "done"}
-			r.SyncMessages([]ctypes.ChatMessage{batch}, 1)
+			r.SyncMessages([]ctypes.ChatMessage{batch}, 1, 0)
 			views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{workspaceMessageFromChat(batch)}}}})
-			resumed.SyncMessages(ChatMessagesFromViews(views), 1)
+			resumed.SyncMessages(ChatMessagesFromViews(views), 1, 0)
 			rows, _, _ := r.ExportMessageRows(200)
 			rrows, _, _ := resumed.ExportMessageRows(200)
 			assertSameRows(t, "batch compact", rows[0], rrows[0])
@@ -217,7 +217,7 @@ func TestStructuredFamilyPaintClickAndCopyJourney(t *testing.T) {
 			renderer := chatprojection.NewRenderer(th)
 			renderer.SetSize(width, 40)
 			renderer.SetChatAreaBounds(0, 30)
-			renderer.SyncMessages(liveToolMessages(t, "journey", projectionCase{tool: c.name, rawArgs: c.input, content: c.result}), 1)
+			renderer.SyncMessages(liveToolMessages(t, "journey", projectionCase{tool: c.name, rawArgs: c.input, content: c.result}), 1, 0)
 			rows, _, h := renderer.ExportMessageRows(width)
 			screen := shellchat.New(th)
 			mount := func() {

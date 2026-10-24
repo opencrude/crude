@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"crude/coreprotocol"
@@ -31,7 +30,7 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 	prepare := func(method string) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response)) {
 		t.Helper()
 		local := types.SessionPreferences{MainAgent: dto.MainAgent, Overrides: dto.Overrides, MultiAgent: dto.MultiAgent}
-		raw, err := json.Marshal(coreprotocol.SessionSettingsMutationRequest{SessionID: owner.SessionID, Edits: types.SettingsEdits(types.SessionPreferencesOf(initial.Effective), local)})
+		raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.SessionSettingsMutationRequest{SessionID: owner.SessionID, Edits: types.SettingsEdits(types.SessionPreferencesOf(initial.Effective), local)}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +50,7 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 		t.Fatal("worker published workspace settings")
 	}
 	var saved coreprotocol.SessionSettingsResult
-	if err := json.Unmarshal(out.Payload, &saved); err != nil {
+	if err := coreprotocol.Decode(out.Payload, &saved); err != nil {
 		t.Fatal(err)
 	}
 	if saved.Effective.MainAgent != "crafter" || saved.Effective.MultiAgent == nil || *saved.Effective.MultiAgent || saved.Overrides["root/crafter"].DeniedTools[0] != "execute_command" {

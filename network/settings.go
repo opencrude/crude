@@ -30,6 +30,12 @@ const (
 // Settings contains the process-wide network transport policy. All fields are
 // scalar so callers can persist and atomically publish a complete snapshot.
 type Settings struct {
+	// Remote admission is application-owned; workspaces cannot enable listeners.
+	RemoteAccessEnabled bool   `json:"remote_access_enabled,omitempty"`
+	RemoteQUICAddress   string `json:"remote_quic_address,omitempty"`
+	RemoteTLSAddress    string `json:"remote_tls_address,omitempty"`
+	SessionGraceSeconds int    `json:"session_grace_seconds,omitempty"`
+
 	ProxyMode string `json:"proxy_mode,omitempty"`
 	ProxyURL  string `json:"proxy_url,omitempty"`
 	NoProxy   string `json:"no_proxy,omitempty"`
@@ -64,6 +70,9 @@ type Settings struct {
 // DefaultSettings returns the secure application defaults.
 func DefaultSettings() Settings {
 	return Settings{
+		RemoteQUICAddress:          "127.0.0.1:7340",
+		RemoteTLSAddress:           "127.0.0.1:7340",
+		SessionGraceSeconds:        900,
 		ProxyMode:                  ProxyModeEnvironment,
 		ConnectTimeoutSeconds:      30,
 		TLSHandshakeTimeoutSeconds: 10,
@@ -82,6 +91,17 @@ func DefaultSettings() Settings {
 // values. It performs no filesystem or network I/O.
 func Normalize(s Settings) Settings {
 	defaults := DefaultSettings()
+	s.RemoteQUICAddress = strings.TrimSpace(s.RemoteQUICAddress)
+	if s.RemoteQUICAddress == "" {
+		s.RemoteQUICAddress = defaults.RemoteQUICAddress
+	}
+	s.RemoteTLSAddress = strings.TrimSpace(s.RemoteTLSAddress)
+	if s.RemoteTLSAddress == "" {
+		s.RemoteTLSAddress = defaults.RemoteTLSAddress
+	}
+	if s.SessionGraceSeconds == 0 {
+		s.SessionGraceSeconds = defaults.SessionGraceSeconds
+	}
 
 	s.ProxyMode = strings.ToLower(strings.TrimSpace(s.ProxyMode))
 	if s.ProxyMode == "" {
@@ -135,6 +155,26 @@ func Normalize(s Settings) Settings {
 // DNS, environment, or other external I/O.
 func (s Settings) Validate() error {
 	s = Normalize(s)
+	for _, listener := range []struct{ name, address string }{
+		{"remote_quic_address", s.RemoteQUICAddress},
+		{"remote_tls_address", s.RemoteTLSAddress},
+	} {
+		host, port, err := net.SplitHostPort(listener.address)
+		if err != nil || strings.ContainsAny(host, "\x00\r\n /@") || len(host) > 253 {
+			return fmt.Errorf("%s must be a listen host:port", listener.name)
+		}
+		if host != "" {
+			if _, err := canonicalHost(host); err != nil {
+				return fmt.Errorf("%s must contain a valid listen host", listener.name)
+			}
+		}
+		if _, err := parsePort(port); err != nil {
+			return fmt.Errorf("%s must contain a port between 1 and 65535", listener.name)
+		}
+	}
+	if err := validateBoundedInt("session_grace_seconds", s.SessionGraceSeconds, 1, 86400); err != nil {
+		return err
+	}
 
 	switch s.ProxyMode {
 	case ProxyModeEnvironment, ProxyModeDirect, ProxyModeCustom:

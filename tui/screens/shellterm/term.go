@@ -128,14 +128,24 @@ func (s *Screen) SetControlled(v bool) {
 }
 func (s *Screen) Controlled() bool { return s.controlled }
 
-// SetProjection installs a detached immutable service snapshot, rejecting older generations.
+// SetProjection detaches a snapshot, rejecting older generations.
 func (s *Screen) SetProjection(p workspace.TerminalProjection) {
+	s.setProjection(p, s.view.Install)
+}
+
+// SetImmutableProjection retains SDK-published immutable cell rows. The producer
+// must never modify or recycle those rows; mutable page injections use SetProjection.
+func (s *Screen) SetImmutableProjection(p workspace.TerminalProjection) {
+	s.setProjection(p, s.view.InstallImmutable)
+}
+
+func (s *Screen) setProjection(p workspace.TerminalProjection, install func(terminalvt.Projection, uint64) bool) {
 	if s.closed || p.Info.ID != s.termID || p.Generation < s.view.Generation {
 		return
 	}
 	changed := p.Generation != s.view.Generation
 	wasSynchronized := s.view.Grid.Synchronized
-	if !s.view.Install(p.Grid, p.Generation) {
+	if !install(p.Grid, p.Generation) {
 		return
 	}
 	if !s.view.HasSelection() {
@@ -485,7 +495,7 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 	if s.closed {
 		return ui.EventResult{Handled: true}
 	}
-	s.resetCursorBlink(time.Now())
+	paint := s.resetCursorBlink(time.Now()) && s.view.Grid.Cursor.Visible
 	ctrlShift := key.Mod == tea.ModCtrl|tea.ModShift
 	if ctrlShift {
 		switch key.Code {
@@ -526,10 +536,15 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 	if !s.controlled || s.exited {
 		return s.takeControlResult()
 	}
+	paint = paint || s.view.HasSelection() || !s.view.Pinned() || s.view.Offset != s.view.Bottom()
 	s.view.ClearSelection()
 	s.view.ScrollBottom()
 	s.requestRows()
-	return s.send(Command{Kind: CommandKey, Key: neutralKey(key)})
+	result := s.send(Command{Kind: CommandKey, Key: neutralKey(key)})
+	if !paint {
+		result.Invalidate &^= ui.InvalidatePaint
+	}
+	return result
 }
 
 func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {

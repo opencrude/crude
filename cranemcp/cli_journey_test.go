@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,18 +21,28 @@ import (
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/types/control"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type recordedReader struct {
 	io.ReadCloser
+	mu     sync.Mutex
 	output bytes.Buffer
 }
 
 func (r *recordedReader) Read(b []byte) (int, error) {
 	n, err := r.ReadCloser.Read(b)
+	r.mu.Lock()
 	_, _ = r.output.Write(b[:n])
+	r.mu.Unlock()
 	return n, err
+}
+
+func (r *recordedReader) recording() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.output.String()
 }
 
 type cliProcess struct {
@@ -60,9 +71,10 @@ func (p *cliProcess) join(t *testing.T, wantSuccess bool) {
 		p.joined = true
 		t.Error("MCP subprocess failed to exit within five seconds")
 	}
-	// Session.Close joins the SDK's reader before inspecting its recording.
+	// Session.Close requests reader shutdown, but the SDK may finish a final
+	// pipe read concurrently. The recording itself owns its synchronization.
 	_ = p.session.Close()
-	for _, line := range strings.Split(strings.TrimSpace(p.out.output.String()), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(p.out.recording()), "\n") {
 		var msg struct {
 			JSONRPC string `json:"jsonrpc"`
 		}
@@ -175,7 +187,7 @@ func TestCLIProtocolJourney(t *testing.T) {
 	for {
 		conn, err := corewire.DialLocal(ctx, filepath.Join(home, buildinfo.DataDir()))
 		if err == nil {
-			shell, err = coreclient.Dial(ctx, conn, "cli-shell-a")
+			shell, err = coreclient.Dial(ctx, coreclient.SingleCarrier(conn), "cli-shell-a")
 			if err != nil {
 				_ = conn.Close()
 				t.Fatal(err)
@@ -192,10 +204,6 @@ func TestCLIProtocolJourney(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { _ = shell.Close() })
-	go func() {
-		for range shell.Events() {
-		}
-	}()
 	var attached coreprotocol.AttachResult
 	if err := shell.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
@@ -207,16 +215,12 @@ func TestCLIProtocolJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer, err := coreclient.Dial(ctx, peerConn, "cli-shell-b")
+	peer, err := coreclient.Dial(ctx, coreclient.SingleCarrier(peerConn), "cli-shell-b")
 	if err != nil {
 		_ = peerConn.Close()
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = peer.Close() })
-	go func() {
-		for range peer.Events() {
-		}
-	}()
 	var peerAttached coreprotocol.AttachResult
 	if err := peer.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &peerAttached); err != nil {
 		t.Fatal(err)
@@ -351,7 +355,7 @@ func TestCLIProtocolJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := coreclient.Dial(ctx, adminConn, "shutdown-owner")
+	admin, err := coreclient.Dial(ctx, coreclient.SingleCarrier(adminConn), "shutdown-owner")
 	if err != nil {
 		_ = adminConn.Close()
 		t.Fatal(err)

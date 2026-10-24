@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -36,15 +35,15 @@ func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
 	}
 	t.Cleanup(client.Close)
 	var attached coreprotocol.AttachResult
-	if err := json.Unmarshal(callCore(t, client, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
+	if err := coreprotocol.Decode(callCore(t, client, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
 	var settings coreprotocol.SettingsFetchResult
-	if err := json.Unmarshal(callCore(t, client, "before", attached.WorkspaceID, coreprotocol.SettingsFetch, struct{}{}).Payload, &settings); err != nil {
+	if err := coreprotocol.Decode(callCore(t, client, "before", attached.WorkspaceID, coreprotocol.SettingsFetch, coreprotocol.Empty{}).Payload, &settings); err != nil {
 		t.Fatal(err)
 	}
 	settings.Application.Accounts = nil
-	raw, err := json.Marshal(coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{}, ProxyURL: coreprotocol.SecretUpdate[string]{Keep: true}})
+	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.ApplicationPreferencesRequest{Edits: []types.SettingEdit{}, ProxyURL: coreprotocol.SecretString{Keep: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +55,11 @@ func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
 	}
 	for i, method := range []string{coreprotocol.CapabilityRuntime, coreprotocol.CapabilitySnapshot} {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		result := client.Call(ctx, coreprotocol.Request{ID: string(rune('a' + i)), Owner: client.Owner, WorkspaceID: attached.WorkspaceID, Method: method, Payload: json.RawMessage(`{}`)})
+		payload := emptyPayload
+		if method == coreprotocol.CapabilitySnapshot {
+			payload = mustTestPayload(coreprotocol.CapabilityActionRequest{})
+		}
+		result := client.Call(ctx, coreprotocol.Request{ID: string(rune('a' + i)), Owner: client.Owner, WorkspaceID: attached.WorkspaceID, Method: method, Payload: payload})
 		cancel()
 		if result.Error != nil {
 			t.Fatalf("passive %s blocked behind writer: %v", method, result.Error)

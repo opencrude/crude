@@ -91,6 +91,16 @@ func (a *App) reloadFileConfiguration() error {
 		if err := settings.Network.ValidateFiles(); err != nil {
 			return nil, err
 		}
+		if a.remote != nil {
+			change, err := a.remote.Prepare(settings.Network)
+			if err != nil {
+				return nil, err
+			}
+			defer change.Abort()
+			if err = change.Commit(); err != nil {
+				return nil, err
+			}
+		}
 		if err := network.ConfigureDefault(settings.Network); err != nil {
 			return nil, err
 		}
@@ -112,6 +122,12 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 		a.configMu.Lock()
 		defer a.configMu.Unlock()
 		var err error
+		var listeners *remoteListenerChange
+		defer func() {
+			if listeners != nil {
+				listeners.Abort()
+			}
+		}()
 		updated, err = updateFileConfig(func(current *FileConfig) error {
 			actual := FileConfigToAppSettings(*current)
 			actual.Accounts = nil
@@ -122,6 +138,12 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 				if err := actual.Network.ValidateFiles(); err != nil {
 					return err
 				}
+				if a.remote != nil {
+					listeners, err = a.remote.Prepare(actual.Network)
+					if err != nil {
+						return err
+					}
+				}
 			}
 			return applyPreferenceEdits(current, actual, edits)
 		})
@@ -130,6 +152,11 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 		}
 		a.fc = updated
 		a.persistedAccounts = cloneAccounts(updated.Accounts)
+		if listeners != nil {
+			if err = listeners.Commit(); err != nil {
+				return nil, fmt.Errorf("settings saved but remote listeners could not be published: %w", err)
+			}
+		}
 		return updated.Accounts, nil
 	})
 	if err != nil {

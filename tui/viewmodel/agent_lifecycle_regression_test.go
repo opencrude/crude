@@ -109,7 +109,7 @@ func TestSubAgentTerminalStatusIsNamedRoleAwareAndForcesCachedFooterFrame(t *tes
 			app.AddOrchestrator("root")
 			pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
 			app.ws.AgentMgr().AddSubAgent("child", "root", "Samuel sub Rebecca", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
-			app.cachedOutput, app.frameGate.deferred, app.frameGate.due = "cached", true, false
+			app.framePresented, app.frameGate.deferred, app.frameGate.due = true, true, false
 			app.handleSubAgentCompleted(workspace.AgentEvent{Type: "sub_agent_completed", Data: map[string]string{
 				"agent_id": "child", "agent_name": "Samuel sub Rebecca", "category": "researcher", "status": tc.status,
 			}})

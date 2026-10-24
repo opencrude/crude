@@ -41,6 +41,13 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 		commands = append(commands, m.presentAgentReduction(reduction))
 	}
 	for _, follow := range applied.Follow {
+		if git, ok := follow.(shellport.GitSnapshotChangedMsg); ok {
+			if git.Owner == m.ws {
+				m.presentGitSnapshot(git.Snapshot)
+				commands = append(commands, m.prepareGitChangesIfVisible())
+			}
+			continue
+		}
 		_, command := m.update(follow)
 		commands = append(commands, command)
 	}

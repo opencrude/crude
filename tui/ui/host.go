@@ -33,32 +33,43 @@ type Host struct {
 	// screen bounds per component after last layout
 	screen map[ComponentID]Rect
 	// depth per component (root = 0) for hit-test preference
-	depth          map[ComponentID]int
-	parent         map[ComponentID]ComponentID
-	needsLay       bool
-	needsPnt       bool
-	frame          int
-	wheel          WheelGesture
-	wheelTarget    Component
-	wheelBounds    Rect
-	wheelModifiers tea.KeyMod
-	controls       map[ComponentID]*controlMount
-	controlScratch map[ComponentID]*controlMount
-	controlEpoch   uint64
+	depth                   map[ComponentID]int
+	parent                  map[ComponentID]ComponentID
+	registryScratch         map[ComponentID]Component
+	screenScratch           map[ComponentID]Rect
+	parentScratch           map[ComponentID]ComponentID
+	needsLay                bool
+	paintGeneration         uint64
+	paintedGeneration       uint64
+	fullPaintGeneration     uint64
+	componentPaint          map[ComponentID]uint64
+	paintBuffer             *surface.CellBuffer
+	paintBackground         cell.Cell
+	paintWidth, paintHeight int
+	lastPaint               PaintStats
+	frame                   int
+	wheel                   WheelGesture
+	wheelTarget             Component
+	wheelBounds             Rect
+	wheelModifiers          tea.KeyMod
+	controls                map[ComponentID]*controlMount
+	controlScratch          map[ComponentID]*controlMount
+	controlEpoch            uint64
 }
 
 // NewHost creates a host with the given theme and optional root.
 func NewHost(th *theme.Theme, root Component) *Host {
 	h := &Host{
-		theme:    th,
-		tokens:   NewTokenSet(th),
-		root:     root,
-		registry: make(map[ComponentID]Component),
-		screen:   make(map[ComponentID]Rect),
-		depth:    make(map[ComponentID]int),
-		parent:   make(map[ComponentID]ComponentID),
-		needsLay: true,
-		needsPnt: true,
+		theme:               th,
+		tokens:              NewTokenSet(th),
+		root:                root,
+		registry:            make(map[ComponentID]Component),
+		screen:              make(map[ComponentID]Rect),
+		depth:               make(map[ComponentID]int),
+		parent:              make(map[ComponentID]ComponentID),
+		needsLay:            true,
+		paintGeneration:     1,
+		fullPaintGeneration: 1,
 	}
 	if root != nil {
 		h.registry[root.ID()] = root
@@ -92,7 +103,7 @@ func (h *Host) SetTheme(th *theme.Theme) {
 	if h.tokens.MetricsChangedSince(prevMetric) {
 		h.needsLay = true
 	}
-	h.needsPnt = true
+	h.MarkPaint()
 }
 
 // SetRoot replaces the root component.
@@ -106,11 +117,12 @@ func (h *Host) SetRoot(root Component) {
 	h.screen = make(map[ComponentID]Rect)
 	h.depth = make(map[ComponentID]int)
 	h.parent = make(map[ComponentID]ComponentID)
+	h.registryScratch, h.screenScratch, h.parentScratch = nil, nil, nil
 	if root != nil {
 		h.registry[root.ID()] = root
 	}
 	h.needsLay = true
-	h.needsPnt = true
+	h.MarkPaint()
 	h.focused = RootID
 	h.hovered = RootID
 	h.scopes = nil
@@ -128,7 +140,7 @@ func (h *Host) Resize(w, hgt int) {
 	h.width = w
 	h.height = hgt
 	h.needsLay = true
-	h.needsPnt = true
+	h.MarkPaint()
 }
 
 // SetFrame sets the animation frame counter exposed to components in PaintContext.
@@ -149,8 +161,9 @@ func (h *Host) Focus(id ComponentID) bool {
 	if h.focused == id {
 		return true
 	}
+	h.MarkComponentPaint(h.focused)
 	h.focused = id
-	h.needsPnt = true
+	h.MarkComponentPaint(id)
 	return true
 }
 
@@ -177,8 +190,9 @@ func (h *Host) SetHovered(id ComponentID) {
 	if h == nil || h.hovered == id {
 		return
 	}
+	h.MarkComponentPaint(h.hovered)
 	h.hovered = id
-	h.MarkPaint()
+	h.MarkComponentPaint(id)
 }
 
 // HasPointerCapture reports whether a pointer capture is active.
@@ -207,6 +221,7 @@ func (h *Host) CapturePointer(id ComponentID, btn tea.MouseButton) bool {
 		return false
 	}
 	if h.captured != RootID && h.captured != id {
+		h.MarkComponentPaint(h.captured)
 		if c, ok := h.registry[h.captured]; ok {
 			if cc, ok := c.(PointerCaptureCanceller); ok {
 				cc.CancelPointerCapture()
@@ -215,6 +230,7 @@ func (h *Host) CapturePointer(id ComponentID, btn tea.MouseButton) bool {
 	}
 	h.captured = id
 	h.captureBtn = btn
+	h.MarkComponentPaint(id)
 	return true
 }
 
@@ -240,7 +256,7 @@ func (h *Host) CancelPointerCapture() {
 		}
 	}
 	h.clearPointerCapture()
-	h.needsPnt = true
+	h.MarkPaint()
 }
 
 // Register adds a component to the hit/focus registry (for composites).
@@ -268,11 +284,36 @@ func (h *Host) Layout() {
 	cs := Tight(h.width, h.height)
 	_ = h.root.Measure(lctx, cs)
 	h.root.Layout(lctx, Rect{X: 0, Y: 0, W: h.width, H: h.height})
-	h.screen = make(map[ComponentID]Rect)
-	h.depth = make(map[ComponentID]int)
-	h.parent = make(map[ComponentID]ComponentID)
-	h.registry = map[ComponentID]Component{h.root.ID(): h.root}
+	oldScreen, oldRegistry, oldParent := h.screen, h.registry, h.parent
+	// The current and previous layouts are two owned generations, not new
+	// registries on every presentation. Compare against the old maps before
+	// clearing them for reuse; no component/hit/focus identity escapes them.
+	h.screen, h.screenScratch = h.screenScratch, oldScreen
+	h.registry, h.registryScratch = h.registryScratch, oldRegistry
+	h.parent, h.parentScratch = h.parentScratch, oldParent
+	if h.screen == nil {
+		h.screen = make(map[ComponentID]Rect, len(oldScreen))
+		h.registry = make(map[ComponentID]Component, len(oldRegistry))
+		h.parent = make(map[ComponentID]ComponentID, len(oldParent))
+	}
+	clear(h.depth)
+	h.registry[h.root.ID()] = h.root
 	h.collectScreen(h.root, RootID, 0, 0, 0)
+	// Geometry and mounted identity, not the fact that Layout ran, invalidate
+	// the retained grid. A topology change clears vacated cells by full paint.
+	if len(oldScreen) != len(h.screen) {
+		h.MarkPaint()
+	} else {
+		for id, r := range h.screen {
+			if oldScreen[id] != r || oldRegistry[id] != h.registry[id] || oldParent[id] != h.parent[id] {
+				h.MarkPaint()
+				break
+			}
+		}
+	}
+	clear(h.screenScratch)
+	clear(h.registryScratch)
+	clear(h.parentScratch)
 	if h.focused != RootID {
 		if _, ok := h.screen[h.focused]; !ok {
 			h.focused = h.root.ID()
@@ -294,6 +335,7 @@ func (h *Host) Layout() {
 }
 
 func (h *Host) clearPointerCapture() {
+	h.MarkComponentPaint(h.captured)
 	h.captured = RootID
 	h.captureBtn = 0
 }
@@ -311,7 +353,7 @@ func (h *Host) validatePointerCapture(prevComp Component) {
 		}
 	}
 	h.clearPointerCapture()
-	h.needsPnt = true
+	h.MarkPaint()
 }
 
 func (h *Host) collectScreen(c Component, parent ComponentID, ox, oy, depth int) {
@@ -348,10 +390,12 @@ func (h *Host) Paint(buf *surface.CellBuffer) {
 		Frame:   h.frame,
 	}
 	h.paintNode(h.root, buf, 0, 0, pctx)
-	h.needsPnt = false
+	h.paintBuffer = nil // full Paint may target a diagnostic buffer, not the retained surface
+	h.paintedGeneration = h.paintGeneration
 }
 
 func (h *Host) paintNode(c Component, buf *surface.CellBuffer, ox, oy int, base PaintContext) {
+	h.lastPaint.Components++
 	pctx := base
 	pctx.Focused = h.focused == c.ID()
 	pctx.Hovered = h.hovered == c.ID()
@@ -363,6 +407,177 @@ func (h *Host) paintNode(c Component, buf *surface.CellBuffer, ox, oy int, base 
 			h.paintNode(ch, buf, ox+b.X, oy+b.Y, base)
 		}
 	}
+}
+
+// PaintStats counts actual component calls and cleared cells, not requested
+// invalidations. It describes the last PaintRegions call.
+type PaintStats struct {
+	Full       bool
+	Components int
+	Cells      int
+}
+
+func (h *Host) LastPaintStats() PaintStats { return h.lastPaint }
+
+// MarkComponentPaint advances the source generation of the root-child region
+// containing id. The Host alone owns damage; controls do not retain frame
+// caches. Unmounted identities are ignored (mounting itself invalidates layout).
+func (h *Host) MarkComponentPaint(id ComponentID) {
+	if h.root == nil || id == RootID {
+		return
+	}
+	if id == h.root.ID() {
+		h.MarkPaint()
+		return
+	}
+	if h.registry[id] == nil {
+		return
+	}
+	for parent := h.parent[id]; parent != RootID && parent != h.root.ID(); parent = h.parent[id] {
+		id = parent
+	}
+	if h.componentPaint == nil {
+		h.componentPaint = make(map[ComponentID]uint64)
+	}
+	h.paintGeneration++
+	h.componentPaint[id] = h.paintGeneration
+}
+
+// MarkSubtreePaint invalidates a subtree that owns all background and ink in
+// its bounds. Unlike MarkComponentPaint it need not repaint the containing
+// root-child region. Callers must use it only for self-contained paint owners,
+// not transparent controls that rely on an ancestor's ink. PaintRegions checks
+// containment and sibling overlap after layout and falls back to full paint
+// when independent painting is not geometrically safe.
+func (h *Host) MarkSubtreePaint(id ComponentID) {
+	if h.root == nil || h.registry[id] == nil {
+		return
+	}
+	if id == h.root.ID() {
+		h.MarkPaint()
+		return
+	}
+	if h.componentPaint == nil {
+		h.componentPaint = make(map[ComponentID]uint64)
+	}
+	h.paintGeneration++
+	h.componentPaint[id] = h.paintGeneration
+}
+
+// isolatedPaintSubtree checks the mounted tree, not just the requested leaf:
+// overflowing descendants or overlapping siblings at any depth require the
+// ordinary complete traversal to preserve paint order.
+func (h *Host) isolatedPaintSubtree(id ComponentID) bool {
+	if h.registry[id] == nil {
+		return false
+	}
+	r := h.screen[id]
+	var contained func(Component) bool
+	contained = func(c Component) bool {
+		bounds := h.screen[c.ID()]
+		if !bounds.Empty() && intersectRect(r, bounds) != bounds {
+			return false
+		}
+		if p, ok := c.(Parent); ok {
+			for _, child := range p.Children() {
+				if !contained(child) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if !contained(h.registry[id]) {
+		return false
+	}
+	for node := id; node != h.root.ID(); {
+		parent := h.parent[node]
+		bounds, exists := h.screen[parent]
+		if !exists || intersectRect(r, bounds) != r {
+			return false
+		}
+		if p, ok := h.registry[parent].(Parent); ok {
+			for _, sibling := range p.Children() {
+				if sibling.ID() != node && !intersectRect(r, h.screen[sibling.ID()]).Empty() {
+					return false
+				}
+			}
+		}
+		node = parent
+	}
+	return true
+}
+
+// RefreshLayout re-derives geometry without declaring content changed. Layout
+// compares mounted identity and bounds and invalidates only on an actual change.
+// MarkLayout remains the conservative API for component layout/content edits.
+func (h *Host) RefreshLayout() { h.needsLay = true }
+
+// PaintRegions paints into a retained buffer whose background and exclusive
+// root-child regions belong to this Host. Its root must be a paint-free layout
+// container; regions must contain their descendants' ink. Overlapping regions
+// conservatively use a full paint. Ordinary arbitrary trees use Paint instead.
+// Geometry, mount, theme and target-buffer changes always clear the whole grid,
+// including cells vacated by removed regions. Presentation never invalidates a
+// source generation.
+func (h *Host) PaintRegions(buf *surface.CellBuffer, background cell.Cell) {
+	h.Layout()
+	h.lastPaint = PaintStats{}
+	if h.root == nil || buf == nil {
+		return
+	}
+	full := h.paintBuffer != buf || h.paintWidth != buf.Width() || h.paintHeight != buf.Height() ||
+		h.paintBackground != background || h.fullPaintGeneration > h.paintedGeneration
+	p, ok := h.root.(Parent)
+	var children []Component
+	if ok {
+		children = p.Children()
+	} else {
+		full = true
+	}
+	for i, a := range children {
+		for _, b := range children[:i] {
+			if !intersectRect(h.screen[a.ID()], h.screen[b.ID()]).Empty() {
+				full = true
+			}
+		}
+	}
+	for id, generation := range h.componentPaint {
+		if generation > h.paintedGeneration && !h.isolatedPaintSubtree(id) {
+			full = true
+		}
+	}
+	ctx := PaintContext{Theme: h.theme, Frame: h.frame}
+	if full {
+		buf.Fill(background)
+		h.lastPaint.Full = true
+		h.lastPaint.Cells = buf.Width() * buf.Height()
+		h.paintNode(h.root, buf, 0, 0, ctx)
+	} else {
+		var paintDamage func(Component)
+		paintDamage = func(c Component) {
+			if h.componentPaint[c.ID()] > h.paintedGeneration {
+				r := h.screen[c.ID()]
+				if !r.Empty() {
+					buf.FillRect(r.ToSurfaceRect(), background)
+					h.lastPaint.Cells += r.W * r.H
+					bounds := c.Bounds()
+					h.paintNode(c, buf, r.X-bounds.X, r.Y-bounds.Y, ctx)
+				}
+				return // an ancestor's repaint includes all descendant damage
+			}
+			if p, ok := c.(Parent); ok {
+				for _, child := range p.Children() {
+					paintDamage(child)
+				}
+			}
+		}
+		paintDamage(h.root)
+	}
+	h.paintBuffer, h.paintBackground = buf, background
+	h.paintWidth, h.paintHeight = buf.Width(), buf.Height()
+	h.paintedGeneration = h.paintGeneration
+	clear(h.componentPaint)
 }
 
 // HitTest returns the topmost registered component containing screen (x,y).
@@ -439,8 +654,7 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 	case tea.MouseMotionMsg:
 		hit := h.HitTest(m.X, m.Y)
 		if hit != h.hovered {
-			h.hovered = hit
-			h.needsPnt = true
+			h.SetHovered(hit)
 		}
 		id := h.pointerDispatchTarget(hit, m.Button, false)
 		return h.dispatchTo(id, m.X, m.Y, msg)
@@ -601,13 +815,13 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 		}
 	}
 	if res.Invalidate&InvalidateLayout != 0 {
-		h.needsLay = true
+		h.MarkLayout()
 	}
 	if res.Invalidate&InvalidatePaint != 0 || res.Invalidate&InvalidateLayout != 0 {
-		h.needsPnt = true
+		h.MarkComponentPaint(id)
 	}
 	if res.Invalidate&InvalidateFocus != 0 {
-		h.needsPnt = true
+		h.MarkComponentPaint(id)
 	}
 	if res.Action != nil && res.Action.ID == "ui.focus" {
 		if h.needsLay {
@@ -664,6 +878,9 @@ func (h *Host) bubbleUnhandledKey(source ComponentID, sx, sy int, evt Event, res
 			ScreenY: sy,
 		}
 		childRes := parent.Handle(ectx, evt)
+		if childRes.Invalidate != 0 {
+			h.MarkComponentPaint(parentID)
+		}
 		result = result.Merge(childRes)
 		result = h.bubbleAction(parentID, sx, sy, result)
 		if childRes.Handled {
@@ -697,6 +914,9 @@ func (h *Host) bubbleAction(source ComponentID, sx, sy int, result EventResult) 
 			current = parentID
 			continue
 		}
+		if response.Invalidate != 0 {
+			h.MarkComponentPaint(parentID)
+		}
 		result = result.Merge(response)
 		result.Action = response.Action
 		action = response.Action
@@ -706,15 +926,18 @@ func (h *Host) bubbleAction(source ComponentID, sx, sy int, result EventResult) 
 }
 
 // NeedsPaint reports whether a repaint is pending.
-func (h *Host) NeedsPaint() bool { return h.needsPnt || h.needsLay }
+func (h *Host) NeedsPaint() bool { return h.paintGeneration != h.paintedGeneration || h.needsLay }
 
 // MarkPaint requests a repaint.
-func (h *Host) MarkPaint() { h.needsPnt = true }
+func (h *Host) MarkPaint() {
+	h.paintGeneration++
+	h.fullPaintGeneration = h.paintGeneration
+}
 
 // MarkLayout requests relayout.
 func (h *Host) MarkLayout() {
 	h.needsLay = true
-	h.needsPnt = true
+	h.MarkPaint()
 }
 
 // FillRect is a paint helper: fills a rect in buf with a cell.
