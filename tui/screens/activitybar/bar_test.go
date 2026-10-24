@@ -1,6 +1,7 @@
 package activitybar
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,6 +67,46 @@ func TestWorkspaceSwitcherRemainsBelowAgentsInEveryProjection(t *testing.T) {
 		}
 		if want > 0 && s.order[want] != ViewWorkspaces {
 			t.Fatalf("%v misplaced switcher: %v", ids, s.order)
+		}
+	}
+}
+
+func TestConnectionsGlobeIsFourthAndStaysBesideWorkspaces(t *testing.T) {
+	want := []View{ViewFiles, ViewAgents, ViewWorkspaces, ViewRemotes, ViewSkills, ViewMCP}
+	if got := Views(); !slices.Equal(got, want) {
+		t.Fatalf("default rail=%v, want %v", got, want)
+	}
+	for _, ids := range [][]string{
+		{"files", "agents", "workspaces", "skills", "mcp"},
+		{"files", "agents", "workspaces", "skills", "mcp", "remotes"},
+		{"remotes", "files", "agents", "skills", "mcp"},
+	} {
+		s := New(theme.DefaultDark())
+		s.SetOrder(ids)
+		if !slices.Equal(s.order, want) {
+			t.Fatalf("stored order %v projects to %v, want %v", ids, s.order, want)
+		}
+		for _, height := range []int{24, 18} {
+			s.Layout(ui.LayoutContext{}, ui.Rect{W: Width, H: height})
+			buf := surface.NewCellBuffer(Width, height)
+			s.Paint(buf, 0, 0, ui.PaintContext{})
+			if got := buf.Get(iconCol, 3*RowStride+iconRow).Char; got != []rune(ViewRemotes.Icon(s.nerdFont))[0] {
+				t.Fatalf("height=%d fourth icon=%q, want Connections", height, got)
+			}
+			for dy := range RowStride {
+				res := s.Handle(ui.EventContext{LocalY: 3*RowStride + dy}, ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+				if res.Action == nil || res.Action.Payload != ViewRemotes {
+					t.Fatalf("fourth-band click selects another destination: %+v", res)
+				}
+			}
+		}
+	}
+	for _, ids := range [][]string{{"files", "skills"}, {"skills"}, {}} {
+		s := New(theme.DefaultDark())
+		s.SetOrder(ids)
+		index := slices.Index(s.order, ViewWorkspaces)
+		if index < 0 || s.order[index+1] != ViewRemotes || slices.Index(s.order[index+2:], ViewRemotes) >= 0 {
+			t.Fatalf("primary navigation is missing, duplicated or separated: %v", s.order)
 		}
 	}
 }
@@ -222,13 +263,14 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 		{"agents raised", ViewAgents, 2, "2", 3},
 		{"files raised", ViewFiles, 1, "1", 0},
 		{"workspaces raised", ViewWorkspaces, 4, "4", 6},
-		{"skills raised", ViewSkills, 8, "8", 9},
-		{"mcp raised", ViewMCP, 9, "9", 12},
+		{"remotes raised", ViewRemotes, 3, "3", 9},
+		{"skills raised", ViewSkills, 8, "8", 12},
+		{"mcp raised", ViewMCP, 9, "9", 15},
 		{"agents two digits", ViewAgents, 10, "10", 3},
 		{"agents largest two digits", ViewAgents, 99, "99", 3},
 		{"agents overflow", ViewAgents, 100, "99+", 3},
 		{"zero absent", ViewAgents, 0, "", 3},
-		{"negative absent", ViewSkills, -1, "", 9},
+		{"negative absent", ViewSkills, -1, "", 12},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := New(theme.DefaultDark())
@@ -239,14 +281,15 @@ func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 			if got := badgeLane(buf, test.y); got != test.want {
 				t.Fatalf("badge=%q want %q", got, test.want)
 			}
-			y := int(test.view)*3 + 1
+			band := slices.Index(s.order, test.view) * RowStride
+			y := band + iconRow
 			if got := buf.Get(3, y).Char; got != []rune(test.view.Icon(s.nerdFont))[0] {
 				t.Fatalf("badge replaced the %s icon: %q", test.view.Label(), got)
 			}
 			// No tiny script glyph or baseline duplicate may remain anywhere
 			// else in the badge lane. Placement, not font glyph size, sets
 			// its level.
-			for row := int(test.view) * 3; row < (int(test.view)+1)*3; row++ {
+			for row := band; row < band+RowStride; row++ {
 				if row == test.y {
 					continue
 				}

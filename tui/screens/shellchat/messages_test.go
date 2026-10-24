@@ -8,13 +8,71 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellchat"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/wm"
 	"crude/types"
 )
+
+// Ordinary row padding must keep the window's fill, not inherit a shaded
+// transcript below it. Text, blank rows and selected padding share that rule;
+// intentional pane bands and inline styling must still keep their own colors.
+func TestWindowedChatPaddingKeepsItsBackground(t *testing.T) {
+	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
+		for _, width := range []int{48, 120} {
+			t.Run(th.Name+"/"+strconv.Itoa(width), func(t *testing.T) {
+				tokens := ui.NewTokenSet(th)
+				bg := tokens.Color(ui.ColorBg)
+				paneBG := tokens.Color(ui.ColorSubPaneBg)
+				screen := shellchat.New(th)
+				screen.SetMessages([]chatprojection.MessageRow{{
+					ID: "ordinary", Lines: []string{"Assignment", "Read parser.go", "", "Selected"},
+				}, {
+					ID: "special", Lines: []string{"Thought"},
+					Native: []chatprojection.PaintLine{{
+						Spans: []chatprojection.RowSpan{{Text: "Thought", Role: ui.ColorFg}}, PaneBackground: true,
+					}},
+				}, {
+					ID: "styled", Lines: []string{"code"},
+					Native: []chatprojection.PaintLine{{Spans: []chatprojection.RowSpan{{
+						Text: "code", Role: ui.ColorFg, BgSet: true, BgRole: ui.ColorPopupSubtleBg,
+					}}}},
+				}}, shellchat.PaintParams{
+					Compose:      shellchat.ComposeParams{InnerW: width - 6, PadLR: 2, Theme: th},
+					HasSelection: true, SelStartLine: 3, SelStartCol: 2, SelEndLine: 3, SelEndCol: 16,
+				})
+				frame := ui.NewWindowFrameWidget(th, "chat/frame", ui.FrameWindow, "Chat", screen, nil, true, width, 8)
+				frame.Frame().SetFill(ui.ColorBg)
+				window := surface.NewSurface("chat-window", width, 8, cell.TransparentBlank())
+				frame.Render(window, &wm.RenderContext{Theme: th})
+				composed := surface.NewCellBuffer(width, 8)
+				composed.Fill(cell.BlankCell(paneBG))
+				surface.Blit(composed, 0, 0, window.Buffer(), nil)
+				for row := 0; row < 6; row++ {
+					for x := 1; x < width-1; x++ {
+						want := bg
+						switch {
+						case row == 4:
+							want = paneBG
+						case row == 3 && x >= 5 && x < 19:
+							want = tokens.Color(ui.ColorTextSelection)
+						case row == 5 && x >= 3 && x < 7:
+							want = tokens.Color(ui.ColorPopupSubtleBg)
+						}
+						if got := composed.Get(x, row+1).BG; got != want {
+							t.Fatalf("row %d column %d background=%v, want %v (window padding must not show the transcript behind it)", row, x, got, want)
+						}
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestUserAndAgentHeadersPaintSubtleThemeRulesAcrossViewport(t *testing.T) {
 	for _, themeCase := range []struct {

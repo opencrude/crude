@@ -20,23 +20,24 @@ import (
 const remoteEditorOverlay ui.OverlayID = "remote-connection"
 
 type remoteManagerState struct {
-	manager  shellport.RemoteManager
-	current  string
-	snapshot remoteconn.Snapshot
-	status   map[string]shellport.RemoteStatus
-	errors   map[string]string
-	expanded map[string]bool
-	loading  bool
-	sequence uint64
-	latest   map[string]uint64
-	hosts    []string
-	jobs     map[*remoteManagerJob]struct{}
-	editor   *remotesscreen.ConnectionEditor
-	editorID string
-	cancel   context.CancelFunc
-	stopped  bool
-	notice   string
-	install  *remoteInstallConsent
+	manager   shellport.RemoteManager
+	current   string
+	snapshot  remoteconn.Snapshot
+	status    map[string]shellport.RemoteStatus
+	errors    map[string]string
+	expanded  map[string]bool
+	loading   bool
+	loadError string
+	sequence  uint64
+	latest    map[string]uint64
+	hosts     []string
+	jobs      map[*remoteManagerJob]struct{}
+	editor    *remotesscreen.ConnectionEditor
+	editorID  string
+	cancel    context.CancelFunc
+	stopped   bool
+	notice    string
+	install   *remoteInstallConsent
 }
 type remoteManagerJob struct {
 	cancel context.CancelFunc
@@ -152,6 +153,10 @@ func (m *App) refreshRemotes() tea.Cmd {
 		return nil
 	}
 	s.loading = true
+	s.loadError = ""
+	if m.activityView == activityRemotes {
+		m.refreshActivityList()
+	}
 	manager := s.manager
 	return m.remoteJob("snapshot", "", nil, func(ctx context.Context, r *remoteManagerResult) {
 		r.snapshot, r.err = manager.Snapshot(ctx)
@@ -240,9 +245,70 @@ func (m *App) remoteSidebarItems() []ui.ListItem {
 	for _, c := range s.snapshot.Connections {
 		appendConnection(c.ID, c.Name, c.Kind+" · "+c.Host)
 	}
-	items = append(items, ui.ListItem{ID: "remote.refresh", Label: "Refresh connections", Command: true, Payload: remoteSidebarAction{action: "refresh"}})
+	if s.loadError != "" {
+		items = append(items, ui.ListItem{ID: "remote.error", Label: "Couldn’t refresh · " + s.loadError, Disabled: true})
+	}
 	return items
 }
+
+func (m *App) remoteMenuAction(a remoteSidebarAction) func() {
+	s, owner, generation := m.remotes, m.ws, m.workspaceSwitchGen.Load()
+	return func() {
+		if s == nil || m.remotes != s || s.stopped || s.manager == nil || m.ws != owner || m.workspaceSwitchGen.Load() != generation {
+			return
+		}
+		if a.id != "" && a.id != remoteconn.Local {
+			if _, exists := m.remoteConnection(a.id); !exists {
+				return
+			}
+		}
+		if a.action == "remove" && a.id == s.current {
+			return
+		}
+		m.runDetachedAsyncCmd(m.handleRemoteSidebar(ui.ListItem{Payload: a}))
+	}
+}
+
+func (m *App) remoteNavigationActions() ui.ContextMenuSection {
+	unavailable := m.remotes == nil || m.remotes.manager == nil || m.remotes.stopped
+	return ui.ContextMenuSection{SectionLabel: "Connections", Items: []ui.ContextMenuItem{
+		{Label: "Add connection…", Disabled: unavailable, Action: m.remoteMenuAction(remoteSidebarAction{action: "add"})},
+		{Label: "Refresh connections", Disabled: unavailable || m.remotes.loading, Action: m.remoteMenuAction(remoteSidebarAction{action: "refresh"})},
+	}}
+}
+
+func (m *App) buildRemoteSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	menu := &ui.ContextMenuState{Title: "Remotes"}
+	if item, hit := m.activityItemAtMouse(mouse); hit {
+		if a, ok := item.Payload.(remoteSidebarAction); ok && a.id != "" {
+			connection, saved := m.remoteConnection(a.id)
+			if saved || a.id == remoteconn.Local {
+				menu.Title = connection.Name
+				if a.id == remoteconn.Local {
+					menu.Title = "Local"
+				}
+				section := ui.ContextMenuSection{SectionLabel: "Connection"}
+				add := func(action, label, root string, disabled bool) {
+					section.Items = append(section.Items, ui.ContextMenuItem{Label: label, Disabled: disabled,
+						Action: m.remoteMenuAction(remoteSidebarAction{action: action, id: a.id, root: root})})
+				}
+				add("open", "Connect / Open workspace…", a.root, false)
+				if a.id != remoteconn.Local {
+					if m.remotes.current == a.id {
+						add("disconnect", "Disconnect / Switch to Local…", "", false)
+					}
+					add("test", "Test connection", "", false)
+					add("edit", "Edit / Pair…", "", false)
+					add("remove", "Remove…", "", m.remotes.current == a.id)
+				}
+				menu.Sections = append(menu.Sections, section)
+			}
+		}
+	}
+	menu.Sections = append(menu.Sections, m.remoteNavigationActions())
+	return menu
+}
+
 func (m *App) remoteConnection(id string) (remoteconn.Connection, bool) {
 	if m.remotes != nil {
 		for _, c := range m.remotes.snapshot.Connections {
@@ -435,6 +501,7 @@ func (m *App) HandleRemoteMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if r.owner != m.ws || r.generation != m.workspaceSwitchGen.Load() {
 			if r.action == "snapshot" && s.latest["snapshot:"] == r.sequence {
 				s.loading = false
+				m.refreshActivityList()
 			}
 			return true, nil
 		}
@@ -446,11 +513,12 @@ func (m *App) HandleRemoteMessage(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if r.action == "snapshot" {
 			s.loading = false
+			s.loadError = ""
 			if r.err == nil {
 				s.snapshot = r.snapshot
 				s.hosts = r.hosts
 			} else {
-				s.notice = "Connections could not be loaded: " + r.err.Error()
+				s.loadError = r.err.Error()
 			}
 			m.refreshActivityList()
 			return true, nil

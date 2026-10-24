@@ -108,6 +108,16 @@ func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 	return nil
 }
 
+func (m *App) activityListLoading() bool {
+	switch m.activityView {
+	case activityWorkspaces:
+		return m.workspaceListLoading
+	case activityRemotes:
+		return m.remotes != nil && m.remotes.loading
+	}
+	return false
+}
+
 func (m *App) refreshActivityList() {
 	if m.activityBar != nil {
 		// The rail's accent marker tracks whether the panel is actually
@@ -125,14 +135,13 @@ func (m *App) refreshActivityList() {
 		}
 	}
 	nerd := panelchrome.NerdFont(m.Theme)
-	m.activityList.SetLoading(m.activityView == activityWorkspaces && m.workspaceListLoading)
+	m.activityList.SetLoading(m.activityListLoading())
 	m.activityList.SetActivateOnClick(m.activityView == activityWorkspaces || m.activityView == activityRemotes)
 	switch m.activityView {
 	case activityRemotes:
 		m.activityList.SetHeading("Remotes")
 		m.activityList.SetIcon(activityRemotes.Icon(nerd))
 		m.activityList.SetBadge("")
-		m.activityList.SetLoading(m.remotes != nil && m.remotes.loading)
 		m.activityList.SetItems(m.remoteSidebarItems())
 	case activityWorkspaces:
 		m.activityList.SetHeading("Workspaces")
