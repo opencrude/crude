@@ -274,6 +274,14 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
 		return m, nil
 	}
+	// Header controls are app chrome, not the sidebar/chat beneath their X
+	// coordinate. Inspecting the link must retain the draft's keyboard owner.
+	if m.headerScreen != nil {
+		if rect, ok := m.screenRectOf(m.headerScreen.ID()); ok && rect.Contains(mouse.X, mouse.Y) {
+			defer m.syncRootFocus()
+			return m, m.handleShellPointer(msg)
+		}
+	}
 	previousSession := m.ActiveSession
 	m.activatePaneAt(mouse.X, mouse.Y)
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
@@ -455,6 +463,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// original bounds until release, using one capture service for the whole shell.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		m.clearPlanHover()
+		m.clearConnectionHover()
 		res := m.rootHost.Handle(msg)
 		if cmd := m.applyHostPointerActions(res); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -465,6 +474,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
+	if m.routeConnectionHoverMotion(msg) {
+		return m, tea.Batch(cmds...)
+	}
 	if m.routePlanHoverMotion(msg) {
 		return m, tea.Batch(cmds...)
 	}

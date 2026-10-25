@@ -192,8 +192,8 @@ func TestRemotesOpenDialogAdoptsSamePathDifferentBackendAfterConsent(t *testing.
 	if manager.attaches != 1 || app.ws == old || app.remotes.current != "other" || app.workspaceSwitchIntent != nil {
 		t.Fatal("confirmed backend not adopted")
 	}
-	if !strings.Contains(app.RemoteBackendLabel(), "Development") {
-		t.Fatalf("backend identity not updated: %s", app.RemoteBackendLabel())
+	if !strings.Contains(app.remoteBackendName(), "Development") {
+		t.Fatalf("backend identity not updated: %s", app.remoteBackendName())
 	}
 	app.StopRemotes()
 }

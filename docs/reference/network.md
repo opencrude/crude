@@ -43,6 +43,37 @@ using defaults. No direct fallback, reset, or trust widening occurs.
 
 ## Connection policy
 
+### Shell-to-core link health
+
+The persistent **Crude** wordmark is the shell's quiet connection-health control.
+The former always-visible Local/connected/carrier/RTT string is removed. Healthy
+connections keep the ordinary static accent wordmark; connecting a destination
+workspace or reconnecting uses the shared `ui.TextTide` ink sweep. Reconnecting
+and measured round trips of at least 250 ms add a static warning mark; unavailable
+connections show a static error mark. Only connection work requests fast ticks;
+healthy and settled attention states keep the existing idle cadence.
+
+Hover/click opens the shared native **Connection to core** popover, also reachable
+through the palette's **Connection Details**. It shows current connection name,
+state, carrier, observed round trip and plain-language guidance, plus safe
+transport notices and **Connections** / **Close** actions. Sub-millisecond samples
+read `<1 ms`; unknown RTT is **Not measured yet**, never fabricated zero latency.
+A retained sample after loss is labelled **last observation**. This is link
+responsiveness, not provider health, throughput, packet-loss detection or proof
+that every replica update is applied. Carrier heartbeat/resume remains the only
+transport-health owner; the UI adds no probe or retry loop. The Workspace adapter
+continues to report reconnecting while its fresh-attachment owner retries after
+SDK resume expires, and closed attachments cannot report live telemetry.
+
+Hover is passive, keeps the draft and active pane, and stays open while the pointer
+enters the adjacent popover. Read-only text remains complete and scrollable on
+narrow grids. Leave, Escape, outside click, modal takeover and attachment changes
+dismiss it; explicit click/palette activation permits keyboard reading and Tab to
+the native actions. Below the usable popover size, the compact wordmark and
+existing Remotes rail/palette navigation remain available.
+
+### Outbound HTTP defaults
+
 | Setting | Default |
 |---|---|
 | TCP connect timeout | 30 seconds |

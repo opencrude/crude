@@ -11,6 +11,7 @@ import (
 	"crude/coreprotocol"
 	"crude/remoteconn"
 	"crude/shellport"
+	"crude/tui/screens/connectionpopover"
 	"crude/tui/screens/shellheader"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
@@ -63,7 +64,7 @@ func integrationSettingsField(body *settingsui.WorkspaceSettingsSurface, index i
 	return body.Model().Categories()[index].Form.Field(id)
 }
 
-func TestRemoteUIHeaderAndPaletteUseRetainedRemotes(t *testing.T) {
+func TestRemoteUIWordmarkDetailsAndPaletteUseRetainedRemotes(t *testing.T) {
 	for _, size := range [][2]int{{160, 45}, {60, 20}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			app := newFullTestApp(t)
@@ -75,14 +76,29 @@ func TestRemoteUIHeaderAndPaletteUseRetainedRemotes(t *testing.T) {
 			app.paintShellFrame()
 			r, _ := app.rootHost.ScreenRect(shellheader.ScreenID)
 			row := rowText(app, r.Y)
-			if !strings.Contains(row, "Local") || !strings.Contains(row, "quic") || !strings.Contains(row, "12 ms") {
-				t.Fatalf("backend status missing: %q", row)
+			if !strings.Contains(row, "Crude") || strings.Contains(row, "Local") || strings.Contains(row, "quic") || strings.Contains(row, "12 ms") {
+				t.Fatalf("header did not move link telemetry to the wordmark: %q", row)
 			}
-			x := strings.Index(row, "Local")
-			_, cmd := app.Update(tea.MouseClickMsg{X: x, Y: r.Y, Button: tea.MouseLeft})
+			anchor := app.connectionWordmarkRect()
+			app.Update(tea.MouseMotionMsg{X: anchor.X + 2, Y: r.Y})
+			if text := connectionPopoverText(app); !strings.Contains(text, "Local") || !strings.Contains(text, "QUIC") || !strings.Contains(text, "12 ms") {
+				t.Fatalf("wordmark details lost live telemetry: %q", text)
+			}
+			fw := app.overlayHost.Window(ui.OverlayConnectionHealth)
+			host := app.connectionHover.widget.Host()
+			bar, ok := host.ScreenRect(connectionpopover.ActionsID)
+			if !ok {
+				t.Fatal("Connections action not mounted")
+			}
+			action, ok := host.Component(connectionpopover.ActionsID).(*ui.ActionBar).ButtonBounds("connections")
+			if !ok {
+				t.Fatal("Connections button not available")
+			}
+			x, y := fw.Position()
+			_, cmd := app.Update(tea.MouseClickMsg{X: x + bar.X + action.X + 1, Y: y + bar.Y + action.Y, Button: tea.MouseLeft})
 			runAppCommand(t, app, cmd)
 			if app.activityView != activityRemotes {
-				t.Fatal("painted header click did not open retained Remotes")
+				t.Fatal("wordmark's Connections action did not open retained Remotes")
 			}
 			for _, id := range []string{"remote.connect", "remote.switch"} {
 				found := false

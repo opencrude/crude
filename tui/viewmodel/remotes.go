@@ -165,7 +165,7 @@ func (m *App) refreshRemotes() tea.Cmd {
 		}
 	})
 }
-func (m *App) RemoteBackendLabel() string {
+func (m *App) remoteBackendName() string {
 	s := m.remotes
 	if s == nil {
 		return "Local"
@@ -178,10 +178,6 @@ func (m *App) RemoteBackendLabel() string {
 				name = c.Name
 			}
 		}
-	}
-	if link, ok := m.ws.(shellport.BackendLink); ok {
-		status := link.BackendStatus()
-		return name + " · " + remoteStatusText(status)
 	}
 	return name
 }

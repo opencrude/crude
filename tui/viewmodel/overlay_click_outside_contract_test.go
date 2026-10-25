@@ -41,6 +41,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayOutline, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayDiagContext, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayPlanHover, policy: ui.PopoverPolicy(true), wantClose: true},
+	{id: ui.OverlayConnectionHealth, policy: ui.PopoverPolicy(true), wantClose: true},
 
 	{id: ui.OverlayFindReplace, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayCommandPalette, policy: ui.DefaultOverlayPolicy()},
@@ -216,8 +217,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 24 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 24", got)
+	if got := len(overlayOutsideContractMatrix); got != 25 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 25", got)
 	}
 }
 
@@ -231,6 +232,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayOutline:           ui.OutsideCloseAndRoute,
 		ui.OverlayDiagContext:       ui.OutsideCloseAndRoute,
 		ui.OverlayPlanHover:         ui.OutsideCloseAndRoute,
+		ui.OverlayConnectionHealth:  ui.OutsideCloseAndRoute,
 		ui.OverlayFindReplace:       ui.OutsideKeepAndRoute,
 		ui.OverlayCommandPalette:    ui.OutsideKeepAndRoute,
 		ui.OverlayComposer:          ui.OutsideKeepAndRoute,
@@ -250,8 +252,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayCapabilityPicker:  ui.OutsideIgnoreAndConsume,
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 24 {
-		t.Fatalf("expected opener registry len=%d want 24", len(expected))
+	if len(expected) != 25 {
+		t.Fatalf("expected opener registry len=%d want 25", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

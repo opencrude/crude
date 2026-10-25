@@ -28,7 +28,7 @@ import (
 // intentionally removed so there is one retained projection and one focus path.
 
 func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
-	segments := []shellheader.Segment{{Text: "Crude", Role: ui.ColorAccent, Priority: 0}}
+	segments := []shellheader.Segment{shellheader.Wordmark(shellheader.ConnectionReady)}
 	if m.Win != nil {
 		if label := m.mainPaneSummary(); label != "" {
 			segments = append(segments, shellheader.Segment{Text: label, Role: ui.ColorMuted, Action: "panes", Priority: 1})
@@ -125,7 +125,7 @@ func (m *App) configureFooterScreen() {
 }
 
 func (m *App) statusHeaderRightSegments() []shellheader.Segment {
-	segments := []shellheader.Segment{{Text: m.RemoteBackendLabel(), Role: ui.ColorMuted, Action: "remotes", Priority: 0}}
+	var segments []shellheader.Segment
 	context, metrics, target := m.activeHeaderContext()
 	if m.OverlayState.IsYolo() {
 		segments = append(segments, shellheader.Segment{Text: "! YOLO", Role: ui.ColorError, Action: "tabs", TargetID: target, Priority: 0})

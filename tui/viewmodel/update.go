@@ -21,6 +21,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/connectionpopover"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/editorchanges"
@@ -269,8 +270,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setTermDockFocused(false)
 		}
 		return m, nil
+	case connectionpopover.ActionMsg:
+		return m, m.handleConnectionHealthAction(msg)
 	case shellheader.ActionMsg:
 		switch msg.Action {
+		case shellheader.ConnectionAction:
+			m.openConnectionHover(m.connectionWordmarkRect())
 		case "remotes":
 			return m, m.OpenRemotes()
 		case "panes":
@@ -628,6 +633,12 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 // animation, and a permanent 16 ms tick there repaints full 160x40 frames
 // (roughly a quarter CPU on an idle floating terminal).
 func (m *App) wantsFastTick() bool {
+	if m.headerScreen != nil {
+		state := m.connectionHealth().brand
+		if state == shellheader.ConnectionConnecting || state == shellheader.ConnectionReconnecting {
+			return true
+		}
+	}
 	if m.launcherScreen != nil && m.launcherScreen.Loading() && m.launcherHostVisible() {
 		return true
 	}

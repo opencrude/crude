@@ -98,6 +98,7 @@ type App struct {
 	FilePicker                *filepickerscreen.Screen
 	DiagPopupID               string
 	planHover                 *planHoverState
+	connectionHover           *connectionHoverState
 	remotes                   *remoteManagerState
 	remoteUICommands          []tea.Cmd
 
@@ -1033,7 +1034,7 @@ func (m *App) registerOverlayHandlers() {
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
 		switch id {
-		case ui.OverlayCompletion, ui.OverlayReferences, ui.OverlayOutline, ui.OverlayPlanHover:
+		case ui.OverlayCompletion, ui.OverlayReferences, ui.OverlayOutline, ui.OverlayPlanHover, ui.OverlayConnectionHealth:
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {

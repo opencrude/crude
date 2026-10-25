@@ -63,6 +63,7 @@ func (m *App) View() tea.View {
 		m.rootHost.MarkComponentPaint(m.mainPanes.ID())
 	}
 	m.syncPlanHover()
+	m.syncConnectionHover()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	m.windowManager.ClearNeedsRender()
@@ -437,6 +438,10 @@ func (m *App) configureHeaderScreen() {
 		}
 	}
 	frame := m.frameInsets()
+	// One transport observation owns both the wordmark and its animation state.
+	health := m.connectionHealth()
+	left := m.statusHeaderLeftSegments()
+	left[0] = shellheader.Wordmark(health.brand)
 	if m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
 		YOLO:      m.OverlayState.IsYolo(),
@@ -444,8 +449,9 @@ func (m *App) configureHeaderScreen() {
 		// No ViewLabel: the active agent already has its own window tab, so
 		// the header stays on app + model only.
 		Width:         m.width - frame.Left - frame.Right,
-		LeftSegments:  m.statusHeaderLeftSegments(),
+		LeftSegments:  left,
 		RightSegments: m.statusHeaderRightSegments(),
+		Connection:    health.brand,
 	}) {
 		m.rootHost.MarkComponentPaint(m.headerScreen.ID())
 	}
