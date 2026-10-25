@@ -197,7 +197,7 @@ func (m *App) renderPromptHistory() {
 				role = ui.ColorError
 			}
 			action := ""
-			if !attachment.Unavailable && ref.FilePath != "" {
+			if !attachment.Unavailable {
 				action = "prompt:attachment:" + entry.ID + ":" + strconv.Itoa(index)
 			}
 			lines = append(lines, statusoverview.DetailLine{Label: "Attachment", Value: value, Role: role, Action: action})

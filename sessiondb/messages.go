@@ -10,6 +10,7 @@ import (
 
 	"crude/provider"
 	ttypes "crude/types"
+	"crude/types/attachment"
 	"crude/types/reasoning"
 )
 
@@ -27,19 +28,20 @@ type DisplayMeta struct {
 	// Writer inputs that session canonicalization projects into Snapshots;
 	// hydration reads only Snapshots. DisplayRole also marks assignment and
 	// hidden runtime-context rows.
-	DisplayRole     string   `json:"display_role,omitempty"`
-	DisplayContent  string   `json:"display_content,omitempty"`
-	ReferenceLabels []string `json:"reference_labels,omitempty"`
-	ToolName        string   `json:"tool_name,omitempty"`
-	ToolArgs        string   `json:"tool_args,omitempty"`
-	ToolStatus      string   `json:"tool_status,omitempty"`
-	PermTag         string   `json:"perm_tag,omitempty"`
-	ProgressLabel   string   `json:"progress_label,omitempty"`
-	DurationMs      int64    `json:"duration_ms,omitempty"`
-	EstTokens       int      `json:"est_tokens,omitempty"`
-	LinesAdded      int      `json:"lines_added,omitempty"`
-	LinesRemoved    int      `json:"lines_removed,omitempty"`
-	SubPaneID       string   `json:"sub_pane_id,omitempty"`
+	DisplayRole     string              `json:"display_role,omitempty"`
+	DisplayContent  string              `json:"display_content,omitempty"`
+	ReferenceLabels []string            `json:"reference_labels,omitempty"`
+	Attachments     []attachment.Target `json:"attachments,omitempty"`
+	ToolName        string              `json:"tool_name,omitempty"`
+	ToolArgs        string              `json:"tool_args,omitempty"`
+	ToolStatus      string              `json:"tool_status,omitempty"`
+	PermTag         string              `json:"perm_tag,omitempty"`
+	ProgressLabel   string              `json:"progress_label,omitempty"`
+	DurationMs      int64               `json:"duration_ms,omitempty"`
+	EstTokens       int                 `json:"est_tokens,omitempty"`
+	LinesAdded      int                 `json:"lines_added,omitempty"`
+	LinesRemoved    int                 `json:"lines_removed,omitempty"`
+	SubPaneID       string              `json:"sub_pane_id,omitempty"`
 }
 
 type MessageRow struct {
@@ -406,6 +408,7 @@ func transcriptPersistedProjection(value persistedMessage) persistedMessage {
 	m := value.Message
 	m.DisplayContent = ""
 	m.ReferenceLabels = nil
+	m.Attachments = nil
 	m.Refusal = ""
 	m.ReasoningDetails = nil
 	m.ReasoningDuration = 0
@@ -595,6 +598,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		}
 		m.DisplayContent = meta.DisplayContent
 		m.ReferenceLabels = append([]string(nil), meta.ReferenceLabels...)
+		m.Attachments = append([]attachment.Target(nil), meta.Attachments...)
 
 		turn := r.TurnNumber
 		if meta.DisplayRole == "" {

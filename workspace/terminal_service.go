@@ -75,6 +75,8 @@ type TerminalService struct {
 	leaseSequence uint64
 	detached      map[TerminalController]bool
 	closed        bool
+	idleFenced    bool
+	creating      int
 }
 
 func NewTerminalService(manager *TerminalManager) (*TerminalService, error) {
@@ -92,11 +94,15 @@ func NewTerminalService(manager *TerminalManager) (*TerminalService, error) {
 }
 func (s *TerminalService) Create(opts TerminalCreateOpts) (TerminalInfo, error) {
 	s.mu.Lock()
-	closed := s.closed
+	closed := s.closed || s.idleFenced
+	if !closed {
+		s.creating++
+	}
 	s.mu.Unlock()
 	if closed {
 		return TerminalInfo{}, errors.New("terminal service is closed")
 	}
+	defer func() { s.mu.Lock(); s.creating--; s.mu.Unlock() }()
 	scrollback := s.manager.Settings().ScrollbackLines
 	return s.manager.CreatePrepared(opts, func(info TerminalInfo) error {
 		e, err := terminalvt.New(terminalvt.Options{Cols: info.Cols, Rows: info.Rows, ScrollbackLines: scrollback})
@@ -239,6 +245,9 @@ func (s *TerminalService) ApplyInput(stream string, sequence, acknowledged uint6
 func (s *TerminalService) Acquire(id string, owner TerminalController) (TerminalLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.idleFenced {
+		return TerminalLease{}, ErrTerminalControl
+	}
 	r := s.items[id]
 	if r == nil {
 		return TerminalLease{}, fmt.Errorf("terminal %s not found", id)

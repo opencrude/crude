@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"crude/provider"
@@ -237,7 +238,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		meta.Snapshots = []ttypes.ConversationMessage{{
 			InternalID: internalID, Role: role, Content: content,
 			Origin: message.EffectiveOrigin(), Collaboration: cloneCollaborationAttribution(message.Collaboration),
-			ReferenceLabels: append([]string(nil), meta.ReferenceLabels...), Time: now,
+			ReferenceLabels: append([]string(nil), meta.ReferenceLabels...), Attachments: slices.Clone(meta.Attachments), Time: now,
 		}}
 	default:
 		meta.Snapshots = []ttypes.ConversationMessage{{

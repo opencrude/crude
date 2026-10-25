@@ -60,6 +60,12 @@ Each `FloatingWindow` has:
 WM must never paint borders, titles, backgrounds, or close glyphs. All product
 floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 
+Animated reveal is geometry: product callers use `WindowFrameWidget.SetReveal`
+so the owning Host relayouts before repainting and hit-testing the body. Changing
+only the inner frame's scalar can leave a newly mounted image at zero height.
+Every changed reveal step, including a delayed first tick that completes the
+animation immediately, damages the exact window; completion is not an idle frame.
+
 ## Root Host and shell surface
 
 The whole persistent shell is ONE component tree mounted on a single

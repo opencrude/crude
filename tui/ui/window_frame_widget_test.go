@@ -260,6 +260,31 @@ func TestWindowFrameRevealCollapsesContentHeight(t *testing.T) {
 	}
 }
 
+func TestWindowFrameWidgetRevealRelayoutsRetainedPaintAndHitGeometry(t *testing.T) {
+	th := theme.DefaultDark()
+	body := &testFrameBody{Base: NewBase("reveal-body")}
+	widget := NewWindowFrameWidget(th, "frame", FrameWindow, "Reveal", body, nil, true, 20, 10)
+	surf := surface.NewSurface("reveal", 20, 10, cell.TransparentBlank())
+	for _, step := range []struct {
+		progress float64
+		height   int
+	}{{0, 0}, {0.5, 4}, {1, 8}, {0, 0}, {1, 8}} {
+		widget.SetReveal(step.progress)
+		widget.Render(surf, &wm.RenderContext{Theme: th})
+		if body.Bounds().H != step.height {
+			t.Fatalf("reveal=%v retained height=%d want %d", step.progress, body.Bounds().H, step.height)
+		}
+		for y := 1; y < 9; y++ {
+			painted := surf.Buffer().Get(5, y).Char == 'X'
+			hit := widget.Host().HitTest(5, y) == body.ID()
+			want := y <= step.height
+			if painted != want || hit != want {
+				t.Fatalf("reveal=%v row=%d painted=%v hit=%v want=%v", step.progress, y, painted, hit, want)
+			}
+		}
+	}
+}
+
 func TestWindowFrameRevealScalesContentHeight(t *testing.T) {
 	body := &testFrameBody{Base: NewBase("body")}
 	frame := NewWindowFrame("frame", FrameWindow, NewTokenSet(theme.DefaultDark()))

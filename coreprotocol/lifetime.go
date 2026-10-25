@@ -1,10 +1,54 @@
 package coreprotocol
 
 import (
+	"bytes"
+	"errors"
 	"time"
 
 	"crude/workspace"
 )
+
+// Lifecycle control is deliberately outside the generated application schema.
+// These bytes are frozen: one local control stream carries a request followed
+// by a result and FIN. There is no Hello, session, application value or adapter.
+const lifecycleStop = "CRUDE-STOP\x00"
+const lifecycleResult = "CRUDE-STOP-RESULT\x00"
+const LifecycleMaxMessage = 8192
+
+func IsLifecycleStop(b []byte) bool { return bytes.HasPrefix(b, []byte(lifecycleStop)) }
+
+func EncodeLifecycleStop(force bool, expectedOwner string) ([]byte, error) {
+	if len(expectedOwner) > 256 {
+		return nil, errors.New("invalid lifecycle owner")
+	}
+	b := append([]byte(lifecycleStop), 0)
+	if force {
+		b[len(b)-1] = 1
+	}
+	return append(b, expectedOwner...), nil
+}
+
+func DecodeLifecycleStop(b []byte) (ShutdownRequest, error) {
+	if !IsLifecycleStop(b) || len(b) < len(lifecycleStop)+1 || len(b) > len(lifecycleStop)+257 || b[len(lifecycleStop)] > 1 {
+		return ShutdownRequest{}, errors.New("invalid lifecycle stop request")
+	}
+	return ShutdownRequest{Force: b[len(lifecycleStop)] == 1, ExpectedOwner: string(b[len(lifecycleStop)+1:])}, nil
+}
+
+func EncodeLifecycleResult(accepted bool, reason string) []byte {
+	b := append([]byte(lifecycleResult), 0)
+	if accepted {
+		b[len(b)-1] = 1
+	}
+	return append(b, reason[:min(len(reason), LifecycleMaxMessage-len(b))]...)
+}
+
+func DecodeLifecycleResult(b []byte) (ShutdownResult, error) {
+	if !bytes.HasPrefix(b, []byte(lifecycleResult)) || len(b) < len(lifecycleResult)+1 || len(b) > LifecycleMaxMessage || b[len(lifecycleResult)] > 1 {
+		return ShutdownResult{}, errors.New("invalid lifecycle stop result; shutdown outcome unknown")
+	}
+	return ShutdownResult{Accepted: b[len(lifecycleResult)] == 1, Reason: string(b[len(lifecycleResult)+1:])}, nil
+}
 
 // Core-level methods are not workspace-bound; the local endpoint's same-user
 // boundary is their authorization.

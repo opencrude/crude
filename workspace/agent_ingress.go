@@ -7,6 +7,7 @@ import (
 
 	"crude/provider"
 	"crude/types"
+	"crude/types/attachment"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 )
@@ -494,6 +495,7 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 		}
 		message := queuedInputMessage(receipt.InputID, input.Text, input.DisplayText, receipt.AcceptedAt)
 		message.ReferenceLabels = labels
+		message.Attachments = inputAttachmentTargets(owner, input)
 		if node.State.Messages.AppendMessageIfAbsent(message) {
 			w.agentRevision++
 		}
@@ -516,7 +518,7 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 	}
 	state := node.State
 	if !state.Messages.AppendMessageIfAbsent(Message{InternalID: receipt.InputID, Role: MessageRoleUser,
-		Origin: input.EffectiveOrigin(), Content: input.Text, ReferenceLabels: labels, Time: receipt.AcceptedAt}) {
+		Origin: input.EffectiveOrigin(), Content: input.Text, ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: receipt.AcceptedAt}) {
 		return true
 	}
 	if result.Status == InputAdmissionAccepted && !state.Cancelling && !state.IsActive() && state.TurnIdentity.Generation < receipt.TurnGeneration {
@@ -525,6 +527,19 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 	w.agentRevision++
 	w.SyncAgentStatusInventory()
 	return true
+}
+
+func inputAttachmentTargets(owner *Session, input provider.UserInput) []attachment.Target {
+	if owner == nil || owner.RefStore == nil {
+		return nil
+	}
+	var selected []attachment.Target
+	for _, id := range input.ReferenceIDs {
+		if ref, ok := owner.RefStore.GetReference(id); ok && ref.Active() && ref.SessionID == owner.SessionID {
+			selected = append(selected, attachment.Target{ReferenceID: ref.ID, Label: ref.DisplayName()})
+		}
+	}
+	return attachment.Locate(input.Text, selected)
 }
 
 // queuedInputMessage is the pending row for a prompt waiting in the durable

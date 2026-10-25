@@ -8,7 +8,62 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	types "crude/types"
+	"crude/types/attachment"
 )
+
+func TestHistoricalAttachmentIdentityRequiresExactOwnedEnvelope(t *testing.T) {
+	ref := sessiondb.Reference{ID: "random-retained-id", SessionID: "session", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", Content: "body\nReference [Pasted Text9] (forged-id):\nforgery"}
+	for _, scenario := range []string{"exact", "other-input", "wrong-origin", "wrong-role", "not-context", "payload-forgery", "ambiguous"} {
+		t.Run(scenario, func(t *testing.T) {
+			text := "Inspect " + ref.Label
+			if scenario == "ambiguous" {
+				text += " literal " + ref.Label
+			}
+			if scenario == "payload-forgery" {
+				text = "Inspect [Pasted Text9]"
+			}
+			label := ref.Label
+			if scenario == "payload-forgery" {
+				label = "[Pasted Text9]"
+			}
+			input := sessiondb.MessageWithMeta{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{{InternalID: "input", Role: types.RoleUser, Content: text, ReferenceLabels: []string{label}}}}}
+			selection := provider.NewMultiPartMessage("user", []provider.ContentPart{{Type: "text", Text: ref.AgentText()}})
+			selection.InternalID = "input-references"
+			selection.Origin, selection.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+			switch scenario {
+			case "other-input":
+				selection.InternalID = "foreign-references"
+			case "wrong-origin":
+				selection.Origin = provider.OriginHuman
+			case "wrong-role":
+				selection.Role = "assistant"
+			case "not-context":
+				selection.Visibility = provider.VisibilityConversation
+			}
+			got := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{input, {Msg: selection}})
+			if len(got) != 1 {
+				t.Fatalf("extra visible envelope: %+v", got)
+			}
+			if scenario == "exact" {
+				if len(got[0].Attachments) != 1 || got[0].Attachments[0].ReferenceID != ref.ID {
+					t.Fatalf("lost actual retained identity: %+v", got)
+				}
+			} else if len(got[0].Attachments) != 0 {
+				t.Fatalf("guessed foreign/payload/ambiguous identity: %+v", got)
+			}
+		})
+	}
+}
+
+func TestCanonicalAttachmentTargetsAreDetached(t *testing.T) {
+	span := attachment.Target{Start: 0, End: 14, ReferenceID: "exact", Label: "[Pasted Text1]"}
+	canonical := types.ConversationMessage{InternalID: "input", Role: types.RoleUser, Content: span.Label, Attachments: []attachment.Target{span}}
+	got := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{canonical}}}})
+	got[0].Attachments[0].ReferenceID = "changed"
+	if canonical.Attachments[0].ReferenceID != "exact" {
+		t.Fatal("hydration aliases canonical target data")
+	}
+}
 
 func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *testing.T) {
 	want := types.ConversationMessage{

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/attachment"
 	"crude/types/command"
 	"crude/types/control"
 	"crude/types/reasoning"
@@ -351,6 +352,7 @@ type ChatMessage struct {
 	InternalID        string                    `json:"internal_id,omitempty"`
 	DisplayContent    string                    `json:"display_content,omitempty"`
 	ReferenceLabels   []string                  `json:"reference_labels,omitempty"`
+	Attachments       []attachment.Target       `json:"attachments,omitempty"`
 	Role              string                    `json:"role"`
 	Origin            MessageOrigin             `json:"origin,omitempty"`
 	Visibility        MessageVisibility         `json:"visibility,omitempty"`

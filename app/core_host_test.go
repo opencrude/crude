@@ -181,7 +181,7 @@ func TestCoreStopRefusesAttachedShellsUnlessForced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Accepted || result.Shells != 1 {
+	if result.Accepted || !strings.Contains(result.Reason, "1 shell(s)") {
 		t.Fatalf("stop with an attached shell must be refused: %+v", result)
 	}
 	if result, err = StopCore(ctx, home, true); err != nil || !result.Accepted {

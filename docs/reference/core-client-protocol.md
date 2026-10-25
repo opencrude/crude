@@ -478,8 +478,9 @@ not a client-local resolver. It retains complete status and diagnostic metadata
 before directory pages arrive, including collapsed descendants and filtered search
 matches. Ordinary file changes as well as repository metadata arm reconciliation;
 clean snapshots and removed diagnostics clear previous markers.
-Explicit desktop opens materialize bounded client-local caches, not remote paths
-passed to local filesystem readers.
+Desktop effects use original paths only with immutable authenticated same-host
+admission provenance. Foreign-host effects require bounded client-local copies or
+a containing directory preview, never a remote path guessed to be local.
 
 Typed LSP uses per-client views and versioned diagnostics/health; document
 open/close/detach releases only that client's views, never shared servers.
@@ -517,7 +518,13 @@ owning session off-UI. A replica is not a second persistence authority.
 ## Trust, secrets and platform limits
 
 Local transport is same-user authority, not multi-tenant isolation. Unix uses a
-0700 user-owned socket directory and a 0600 socket. Windows
+0700 user-owned socket directory and a 0600 socket. It binds a random unpublished
+name no longer than `core.sock`, validates identity and private mode, then
+atomically hard-links the canonical endpoint without replacement. Dialers see
+absence or an already-private socket, never the bind-before-chmod interval.
+Unsupported socket hard-link filesystems fail explicitly; no permission relaxation,
+process-wide umask or replacement rename is used. Cleanup removes only exact owned
+inodes, and listener Addr remains canonical. Windows
 uses a user-SID/data-directory named pipe with a protected DACL granting that
 user and denying network logons. Neither mechanism restricts an already trusted
 same-user client to harmless reads.
@@ -530,13 +537,35 @@ Autostart requires positive endpoint absence and exclusive lifetime proof before
 reclaiming a crash-left record; failed admission, permission errors and incomplete
 probes never mean absence.
 
+Explicit `--core-stop` uses a frozen local lifecycle exchange before Hello, not
+the generated application schema or source cohort. On the first control stream,
+one bounded message is `CRUDE-STOP\0`, a byte (`0` graceful / `1` force), and an
+optional exact owner generation (at most 256 bytes). The immutable reply is
+`CRUDE-STOP-RESULT\0`, an accepted byte (`0` refused / `1` accepted), and an
+actionable reason, at most 8 KiB total. FIN drains the result. This creates no
+session and carries no application objects. Authenticated network and SSH carriers
+cannot use this same-user local-host channel. Ordinary Hello/schema/cohort checks
+remain strict; pre-contract cores require their retained original helper, not a
+compatibility decoder. A lost response is an unknown outcome, never permission to
+kill or replay against a replacement owner.
+
 For a mismatched cohort/schema, startup verifies and invokes only the retained
 owner image with `--core-stop`, passing the exact generation as `ExpectedOwner`.
 It does not decode foreign application traffic, force shutdown or kill the core.
-Automatic handover refuses any retained workspace (even idle), attached shell,
-opening factory or incomplete status, and rechecks admission before draining.
-Failure keeps the old core intact and directs the user to its original graceful
-stop or a separate `CRUDE_HOME`. Same-cohort native-image variants attach directly.
+Both explicit graceful stop and automatic handover refuse attached/resumable
+shells, opening factories and storage operations. Idle retained actors are allowed
+only under a transactional reservation: runtime admission closes first, then each
+actor reserves commands/control, resource lanes, every session's existing history
+admission and turn gate, autonomous child/collaboration/control work and memory
+jobs, document views, terminal creation/controllers and live PTYs. Saved-storage
+leases exclude catalog SQL readers and directory moves. Pending/queued input,
+turn finalizers, commands, compaction and active children all refuse. No active-work
+sample alone authorizes shutdown. A refusal unwinds every reservation in reverse
+order; it closes/removes no actor and changes no owner record or accepted work.
+The reason names the workspace/session/resource and next action. Accepted leases
+stay held through resource joins; the lifetime lock stays held through final data
+flush. Force is available only as an explicit user override, never handover.
+Same-cohort native-image variants attach directly.
 
 SSH transport starts system `ssh` without a local shell, enables strict host-key
 checking and disables forwarding, remote/local command overrides and shared

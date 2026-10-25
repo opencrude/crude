@@ -135,6 +135,12 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 				break
 			}
 			if time.Now().After(deadline) {
+				for _, pid := range pids {
+					proc := filepath.Join("/proc", strconv.Itoa(pid))
+					command, _ := os.ReadFile(filepath.Join(proc, "cmdline"))
+					status, _ := os.ReadFile(filepath.Join(proc, "stat"))
+					t.Logf("surviving gopls command=%q stat=%s", strings.ReplaceAll(string(command), "\x00", " "), status)
+				}
 				t.Errorf("gopls survived core shutdown: %v", pids)
 				break
 			}

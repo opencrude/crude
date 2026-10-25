@@ -79,7 +79,7 @@ func (r *Runtime) sessionGrace() time.Duration {
 func (r *Runtime) openSession(hello coreprotocol.Hello) (*Connection, bool, error) {
 	if hello.Resume != nil {
 		r.mu.Lock()
-		if r.draining {
+		if r.draining || r.stopping {
 			r.mu.Unlock()
 			return nil, false, errors.New("core is draining")
 		}
@@ -96,7 +96,7 @@ func (r *Runtime) openSession(hello coreprotocol.Hello) (*Connection, bool, erro
 		return c, true, nil
 	}
 	r.mu.Lock()
-	if r.draining {
+	if r.draining || r.stopping {
 		r.mu.Unlock()
 		return nil, false, errors.New("core is draining")
 	}

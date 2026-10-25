@@ -36,7 +36,7 @@ func (s *Session) SetMemoryStore(store *memory.Store) {
 		return
 	}
 	go func() {
-		defer s.memoryJobs.wg.Done()
+		defer s.memoryJobs.done()
 		s.refreshMemorySummary(ctx, store)
 	}()
 }

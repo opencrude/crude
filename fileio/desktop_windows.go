@@ -11,10 +11,13 @@ func platformOpenBrowser(ctx context.Context, rawURL string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return platformOpenPath(rawURL, false)
+	return platformOpenPath(ctx, rawURL, false)
 }
 
-func platformOpenPath(path string, reveal bool) error {
+func platformOpenPath(ctx context.Context, path string, reveal bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	verb, err := windows.UTF16PtrFromString("open")
 	if err != nil {
 		return err

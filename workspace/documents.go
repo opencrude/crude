@@ -66,6 +66,7 @@ type DocumentService struct {
 	epochs      map[string]uint64
 	detached    map[document.Owner]bool
 	closed      bool
+	idleFenced  bool
 	watch       *documentWatch
 	bus         *EventBus
 	subscribers map[string]map[chan struct{}]bool
@@ -100,7 +101,7 @@ func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager
 func (s *DocumentService) Open(owner document.Owner, path string) (document.Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	if s.closed || s.idleFenced {
 		return document.Snapshot{}, context.Canceled
 	}
 	if s.stateErr != nil {

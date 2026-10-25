@@ -28,6 +28,7 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/attachment"
 )
 
 // Bootstrap creates or resumes a backend session for this workspace.
@@ -583,7 +584,7 @@ func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput)
 		}
 		node.State.Messages.AppendMessageIfAbsent(Message{InternalID: input.InternalID,
 			Role: MessageRoleUser, Origin: provider.OriginHumanSteering, Content: input.Text,
-			ReferenceLabels: labels, Time: time.Now(), PendingSteering: true})
+			ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: time.Now(), PendingSteering: true})
 		w.agentRevision++
 	}
 	return InputAdmissionReceipt{SessionID: owner.SessionID, AgentID: agentID, InputID: input.InternalID,
@@ -923,6 +924,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 	var result []ChatMessageView
 
 	batchArgsByCallID := parallelBatchArguments(msgs)
+	retained := retainedAttachmentIdentities(msgs)
 
 	for _, mm := range msgs {
 		if mm.Meta.SnapshotVersion > 0 {
@@ -931,6 +933,16 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 					snapshot.ToolInput = batchArgsByCallID[snapshot.ToolID]
 				}
 				snapshot.ReferenceLabels = append([]string(nil), snapshot.ReferenceLabels...)
+				snapshot.Attachments = slices.Clone(snapshot.Attachments)
+				if snapshot.Role == ttypes.RoleUser && len(snapshot.Attachments) == 0 {
+					var exact []attachment.Target
+					for _, target := range retained[snapshot.InternalID] {
+						if slices.Contains(snapshot.ReferenceLabels, target.Label) && strings.Count(snapshot.Content, target.Label) == 1 {
+							exact = append(exact, target)
+						}
+					}
+					snapshot.Attachments = attachment.Locate(snapshot.Content, exact)
+				}
 				canonicalizeToolSnapshotForDisplay(&snapshot)
 				result = append(result, snapshot)
 			}
@@ -940,6 +952,36 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 	}
 
 	return result
+}
+
+// retainedAttachmentIdentities reads only the exact input-owned preparation
+// envelope. Each text part starts with the producer's reference header; payload
+// prose (including forged nested headers) is never searched for identities.
+func retainedAttachmentIdentities(msgs []sessiondb.MessageWithMeta) map[string][]attachment.Target {
+	out := make(map[string][]attachment.Target)
+	for _, mm := range msgs {
+		m := mm.Msg
+		if m.Role != "user" || m.EffectiveOrigin() != provider.OriginRuntimeContext || m.EffectiveVisibility() != provider.VisibilityContextOnly || !strings.HasSuffix(m.InternalID, "-references") {
+			continue
+		}
+		inputID := strings.TrimSuffix(m.InternalID, "-references")
+		for _, part := range m.Content.Parts() {
+			if part.Type != "text" || !strings.HasPrefix(part.Text, "Reference [") {
+				continue
+			}
+			header, _, _ := strings.Cut(part.Text, "\n")
+			name, suffix, ok := strings.Cut(strings.TrimPrefix(header, "Reference "), "] (")
+			if !ok {
+				continue
+			}
+			id, _, ok := strings.Cut(suffix, "):")
+			if !ok || id == "" || strings.ContainsAny(id, " \t\n\r()") {
+				continue
+			}
+			out[inputID] = append(out[inputID], attachment.Target{ReferenceID: id, Label: name + "]"})
+		}
+	}
+	return out
 }
 
 func parallelBatchArguments(msgs []sessiondb.MessageWithMeta) map[string]string {

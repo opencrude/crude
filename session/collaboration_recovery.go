@@ -98,6 +98,11 @@ func (s *Session) recoverChildCollaborators(ctx context.Context, parentID string
 }
 
 func (s *Session) admitPassiveCollaboration(o *Orchestrator, sender EventSender) error {
+	release, available := s.beginIdleWork()
+	if !available {
+		return errors.New("session is reserved for core shutdown")
+	}
+	defer release()
 	if o.passiveThrough == 0 {
 		return nil
 	}

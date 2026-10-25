@@ -158,9 +158,24 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   once in the provider request and the existing user-visible completion deadline.
 - Attachment paint and hit testing share `ReferenceChips` geometry. Filename
   bodies open; separate three-cell remove targets only detach the draft.
+  Pasted text and images open the same native reference window from composer,
+  posted transcript and Prompt History. Composer pasted text stays editable;
+  sent/history previews are read-only with Close, never Save. File-backed pasted
+  text is not an external-app hand-off. Images decode original bounded media
+  bytes off Update and paint a terminal-cell preview inside that same window;
+  connected reads use the exact reference owner's verified media download, not
+  a server path interpreted on the client. Bulk read metadata omits captured text;
+  it is validated against the complete entity's opaque revision and never replaces
+  that entity in the client replica. Preview decode is bounded to 32 Mi
+  pixels. Loads are owner/session/pane/workspace/open-epoch fenced; closing
+  cancels pending loads, workspace replacement cancels shell I/O and shutdown
+  joins it. Existing text-store reads/imports are bounded synchronous operations
+  off Update and may finish before cancellation takes effect; stale results
+  never reopen the window. Exact-content saves retain the editor on failure.
   External opens run off the UI thread through `fileio.OpenDesktopPath` (native
-  Windows associations, macOS `open`, Linux `xdg-open`). History media is copied
-  into the session before external opening, so viewers cannot edit snapshots.
+  Windows associations, macOS `open`, Linux `xdg-open`) for explicit desktop
+  actions and other file types. History previews import session-owned copies;
+  they never edit history assets.
 - Prompt history entries retain exact chip spans and immutable attachment
   snapshots, not session-local labels alone. `history.Store` is the sole recall
   source; input emits owner/generation-keyed recall events, and

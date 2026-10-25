@@ -317,6 +317,7 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 	for i := range s.msgs {
 		s.msgs[i].DisplayContent = metas[i].DisplayContent
 		s.msgs[i].ReferenceLabels = append([]string(nil), metas[i].ReferenceLabels...)
+		s.msgs[i].Attachments = slices.Clone(metas[i].Attachments)
 	}
 	s.msgTurns, s.displayMetas, s.createdAts = turns, metas, times
 	checkpoint.Archive, checkpoint.ActiveContext = archive, append([]provider.ChatMessage(nil), state.Messages...)

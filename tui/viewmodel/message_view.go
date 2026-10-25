@@ -6,6 +6,7 @@ import (
 	"crude/types/command"
 	"crude/types/recovery"
 	"crude/workspace"
+	"slices"
 )
 
 // ChatMessagesFromViews projects workspace hydration data into frontend-owned
@@ -27,6 +28,7 @@ func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage
 		Collaboration:          cloneCollaboration(view.Collaboration),
 		Recovery:               cloneRecovery(view.Recovery),
 		ReferenceLabels:        append([]string(nil), view.ReferenceLabels...),
+		Attachments:            slices.Clone(view.Attachments),
 		Time:                   view.Time,
 		TurnGeneration:         view.TurnGeneration,
 		ProviderID:             view.ProviderID,
@@ -103,6 +105,7 @@ func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
 		Collaboration:          cloneCollaboration(message.Collaboration),
 		Recovery:               cloneRecovery(message.Recovery),
 		ReferenceLabels:        append([]string(nil), message.ReferenceLabels...),
+		Attachments:            slices.Clone(message.Attachments),
 		Time:                   message.Time,
 		TurnGeneration:         message.TurnGeneration,
 		ProviderID:             message.ProviderID,

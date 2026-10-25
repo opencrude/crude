@@ -27,12 +27,14 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/attachment"
 	captypes "crude/types/capability"
 	recoverytypes "crude/types/recovery"
 	"crude/worktree"
 )
 
-func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
+func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender, initialized func()) {
+	defer initialized()
 	l := s.logger
 	l.Info("SESSION", "run_start", "orchestrator_id", o.ID)
 	s.sender = sender
@@ -48,6 +50,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		l.Warn("COLLAB", "passive_recovery_deferred", "agent_id", o.ID, "error", err.Error())
 	}
 
+	initialized()
 	var collaborationNotifications <-chan struct{}
 	unsubscribeCollaboration := func() {}
 	if store := s.CollaborationStore(); store != nil {
@@ -57,6 +60,11 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	collaborationPoll := time.NewTicker(collaborationPollInterval)
 	defer collaborationPoll.Stop()
 	startCollaborationTurn := func() bool {
+		release, ok := s.beginIdleWork()
+		if !ok {
+			return false
+		}
+		defer release()
 		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
 			return false
 		}
@@ -92,6 +100,11 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	// startGoalTurn continues an active goal when nothing else owns the agent:
 	// collaboration deliveries and queued human input always go first.
 	startGoalTurn := func() bool {
+		release, ok := s.beginIdleWork()
+		if !ok {
+			return false
+		}
+		defer release()
 		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
 			return false
 		}
@@ -1597,6 +1610,7 @@ func (s *Session) finalizeTurnLocked(
 			dm.DisplayRole = "user"
 			dm.DisplayContent = m.DisplayContent
 			dm.ReferenceLabels = append([]string(nil), m.ReferenceLabels...)
+			dm.Attachments = slices.Clone(m.Attachments)
 		case "system":
 			dm = sessiondb.DisplayMeta{
 				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
@@ -1752,6 +1766,7 @@ func (s *Session) messagesForTurnLocked(turn int) []provider.ChatMessage {
 type preparedInput struct {
 	Message          provider.ChatMessage
 	ReferenceLabels  []string
+	Attachments      []attachment.Target
 	Enrichment       []provider.ChatMessage
 	AttachmentIssues []string
 }
@@ -1761,6 +1776,19 @@ type preparedInput struct {
 func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cfg *Config, o *Orchestrator, retained ...provider.ChatMessage) (preparedInput, error) {
 	result := preparedInput{Message: inputMessage(provider.NewTextMessage("user", input.Text), input)}
 	result.Message.InternalID = input.InternalID
+	if s.db != nil && len(input.ReferenceIDs) > 0 {
+		refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
+		if err == nil {
+			var selected []attachment.Target
+			for _, ref := range refs {
+				if ref.SessionID == s.sessionID && ref.Active() {
+					selected = append(selected, attachment.Target{ReferenceID: ref.ID, Label: ref.DisplayName()})
+				}
+			}
+			result.Attachments = attachment.Locate(input.Text, selected)
+			result.Message.Attachments = slices.Clone(result.Attachments)
+		}
+	}
 	if input.InternalID == "" {
 		return result, errors.New("input preparation requires the immutable submitted input identity")
 	}

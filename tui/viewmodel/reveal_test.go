@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -77,6 +78,30 @@ func TestReveal_BeginsAtZeroAndCompletes(t *testing.T) {
 	}
 	if _, ok := app.reveals["reveal-test"]; ok {
 		t.Fatal("reveal anim should be removed after completion")
+	}
+}
+
+func TestRevealDelayedCompletionPublishesBodyLayout(t *testing.T) {
+	app := newFullTestApp(t)
+	fw := newRevealTestWindow(t, "delayed-reveal")
+	app.windowManager.AddWindow(fw)
+	app.beginReveal(fw, "delayed-reveal")
+	widget := fw.Content.(*ui.WindowFrameWidget)
+	surf := surface.NewSurface("delayed", 30, 12, cell.TransparentBlank())
+	widget.Render(surf, &wm.RenderContext{Theme: app.Theme})
+	if widget.Body().Bounds().H != 0 {
+		t.Fatal("initial reveal was not collapsed")
+	}
+	app.reveals[fw.ID] = revealAnim{id: fw.ID, startedAt: time.Now().Add(-2 * revealDuration)}
+	if app.advanceReveals(time.Now()) {
+		t.Fatal("completed animation still active")
+	}
+	if !widget.Host().NeedsPaint() {
+		t.Fatal("final reveal step did not invalidate retained geometry")
+	}
+	widget.Render(surf, &wm.RenderContext{Theme: app.Theme})
+	if widget.Body().Bounds().H != 10 || widget.Host().HitTest(4, 8) != widget.Body().ID() {
+		t.Fatal("final reveal left the body hidden or unclickable")
 	}
 }
 

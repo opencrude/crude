@@ -4,6 +4,8 @@ package corewire
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -135,35 +137,94 @@ func ListenLocal(ctx context.Context, dataDir string) (net.Listener, error) {
 		_ = lock.Close()
 		return nil, errors.New("corewire endpoint already exists; refusing replacement")
 	}
-	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: addr, Net: "unix"})
+	l, temporary, identity, err := bindUnpublishedSocket(addr)
 	if err != nil {
 		_ = lock.Close()
 		return nil, err
+	}
+	cleanup := func() error {
+		return errors.Join(removeSocketIdentity(addr, identity), removeSocketIdentity(temporary, identity), lock.Close())
+	}
+	if err := publishSocket(ctx, temporary, addr, identity); err != nil {
+		_ = l.Close()
+		return nil, errors.Join(err, cleanup())
+	}
+	return bindListenerContext(ctx, &ownedListener{Listener: &publishedUnixListener{UnixListener: l, address: addr}, cleanup: cleanup}), nil
+}
+
+// Binding first publishes only a random, noncanonical name inside the private
+// owner directory. Eight hex characters are shorter than "core.sock", so the
+// canonical 103-byte address limit also bounds the temporary bind address.
+func bindUnpublishedSocket(addr string) (*net.UnixListener, string, os.FileInfo, error) {
+	var nonce [4]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, "", nil, err
+	}
+	temporary := filepath.Join(filepath.Dir(addr), hex.EncodeToString(nonce[:]))
+	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: temporary, Net: "unix"})
+	if err != nil {
+		return nil, "", nil, err
 	}
 	l.SetUnlinkOnClose(false)
-	identity, err := os.Lstat(addr)
-	if err == nil {
-		err = os.Chmod(addr, 0600)
-	}
+	identity, err := os.Lstat(temporary)
 	if err != nil {
 		_ = l.Close()
-		_ = lock.Close()
-		return nil, err
+		return nil, "", nil, err
 	}
-	return bindListenerContext(ctx, &ownedListener{Listener: l, cleanup: func() error {
-		// Never unlink a replacement node. The lock file is deliberately persistent.
-		var e error
-		current, statErr := os.Lstat(addr)
-		if statErr == nil && os.SameFile(identity, current) {
-			e = os.Remove(addr)
-		}
-		closeErr := lock.Close()
-		if e == nil {
-			e = closeErr
-		}
-		return e
-	}}), nil
+	return l, temporary, identity, nil
 }
+
+// Hard-link publication is atomic and no-replace. A platform/filesystem which
+// cannot link its Unix socket fails explicitly; never fall back to replacing a
+// path or publishing a socket before its private mode is established.
+func publishSocket(ctx context.Context, temporary, addr string, identity os.FileInfo) error {
+	current, err := os.Lstat(temporary)
+	if err != nil {
+		return err
+	}
+	u, ok := current.Sys().(*syscall.Stat_t)
+	if !ok || !os.SameFile(identity, current) || current.Mode()&os.ModeSocket == 0 || u.Uid != uint32(os.Geteuid()) {
+		return errors.New("unpublished corewire socket identity changed")
+	}
+	if err := os.Chmod(temporary, 0600); err != nil {
+		return err
+	}
+	current, err = os.Lstat(temporary)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(identity, current) || current.Mode().Perm() != 0600 {
+		return errors.New("unpublished corewire socket privacy changed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Link(temporary, addr); err != nil {
+		return fmt.Errorf("publish private corewire socket without replacement: %w", err)
+	}
+	return removeSocketIdentity(temporary, identity)
+}
+
+func removeSocketIdentity(path string, identity os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if identity != nil && os.SameFile(identity, current) {
+		return os.Remove(path)
+	}
+	return nil // a replacement node belongs to someone else
+}
+
+type publishedUnixListener struct {
+	*net.UnixListener
+	address string
+}
+
+func (l *publishedUnixListener) Addr() net.Addr { return &net.UnixAddr{Name: l.address, Net: "unix"} }
 
 func DialLocal(ctx context.Context, dataDir string) (net.Conn, error) {
 	addr, err := privateSocketDir(dataDir)

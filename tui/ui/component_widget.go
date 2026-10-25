@@ -254,6 +254,19 @@ func (w *WindowFrameWidget) Frame() *WindowFrame {
 	return w.frame
 }
 
+// SetReveal publishes animated geometry through the frame's Host. Changing only
+// WindowFrame's scalar leaves a retained Host laid out at the previous height.
+func (w *WindowFrameWidget) SetReveal(progress float64) {
+	if w == nil || w.frame == nil {
+		return
+	}
+	before := w.frame.Reveal()
+	w.frame.SetReveal(progress)
+	if w.host != nil && before != w.frame.Reveal() {
+		w.host.MarkLayout()
+	}
+}
+
 // Body returns the component mounted inside the frame.
 // NeedsFrame also honors a frame-sensitive body: a window whose content shows
 // indeterminate progress keeps animating while focus rests on any control.

@@ -2,10 +2,13 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"context"
 	"crude/sessiondb"
+	"crude/tui/ui"
 	"crude/workspace"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type attachmentOpenedMsg struct {
@@ -24,23 +27,40 @@ func (m *App) openHistoricalAttachment(key string) tea.Cmd {
 			continue
 		}
 		attachment := entry.Attachments[index]
-		if attachment.Unavailable || attachment.Reference.FilePath == "" {
+		if attachment.Unavailable {
 			return nil
 		}
-		owner := m.ActiveSession
 		store := m.RefStore()
 		if store == nil {
 			m.Feedback.NotifyError("Open an agent session to preview attachments")
 			return nil
 		}
-		open := m.clientDesktopOpen()
-		return func() tea.Msg {
-			ref, err := store.ImportReference(attachment.Reference)
-			if err == nil {
-				err = open(ref.FilePath, false)
-			}
-			return attachmentOpenedMsg{owner: owner, err: err}
+		screen := m.sessionTextOverlay()
+		if screen == nil {
+			return nil
 		}
+		m.overlayHost.Close(ui.OverlayPromptHistory)
+		m.overlayHost.Close(ui.OverlayTextOverlay)
+		screen.OpenReadOnly(attachment.Reference.ID, attachment.Reference.DisplayName(), "Loading attachment…")
+		m.setMode(ModeTextOverlay)
+		state := &referenceOverlayState{session: m.ActiveSession, store: store, screen: screen, ref: attachment.Reference, readOnly: true, generation: m.workspaceSwitchGen.Load(), agentID: m.activeAgentTabID(), epoch: screen.OpenEpoch()}
+		state.ctx, state.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
+		m.referenceOverlay = state
+		return m.clientIOCommand(state.ctx, func(ctx context.Context) tea.Msg {
+			if err := state.ctx.Err(); err != nil {
+				return referenceContentLoadedMsg{owner: state, err: err}
+			}
+			ref, err := store.ImportReference(attachment.Reference)
+			if err != nil {
+				return referenceContentLoadedMsg{owner: state, err: err}
+			}
+			loading := *state
+			loading.ref = ref
+			loading.ctx = ctx
+			result := loadReferencePreview(&loading)
+			result.owner, result.imported = state, ref
+			return result
+		})
 	}
 	return nil
 }
@@ -54,7 +74,7 @@ func (m *App) openAttachment(id string, reveal bool) tea.Cmd {
 	if !ok || !ref.Active() {
 		return nil
 	}
-	if !reveal && (ref.FilePath == "" || ref.Kind == sessiondb.KindPastedTextFile) {
+	if !reveal && (ref.FilePath == "" || ref.Kind == sessiondb.KindPastedTextFile || ref.Kind == sessiondb.KindPastedImage) {
 		m.openReferenceOverlay(id)
 		return nil
 	}

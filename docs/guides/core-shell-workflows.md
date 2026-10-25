@@ -35,18 +35,30 @@ use can grow across builds; automatic pruning is not implemented.
 The private owner record binds its generation to the exact retained helper and
 full hash. Its lifetime lock stays held through runtime shutdown. Autostart and
 crash-left reclaim require positive absence and exclusive lifetime proof, not a
-failed handshake. A mismatched cohort/schema invokes only the verified original
-helper's graceful `--core-stop` with exact `ExpectedOwner`; it never force-stops
-or kills the core. Automatic handover refuses **any** retained workspace, attached
-shell, opening factory or incomplete status. Use explicit graceful stop from the
-original installation or an isolated development profile; do not delete owner
+failed handshake. Explicit `--core-stop` uses a frozen minimal local stop/result
+channel, independent of application schema/cohort. A mismatched cohort/schema
+invokes only the verified original helper's graceful `--core-stop` with exact
+`ExpectedOwner`; it never force-stops or kills the core. Retained idle workspaces
+can hand over only after transactional admission, session, autonomous work,
+memory, resource and storage leases prove them idle. Attached/resumable shells,
+opening factories, pending/queued turns, compaction, commands, live terminals or
+document/controller leases refuse with named actionable guidance. Refusal releases
+all reservations without stopping work or replacing owners. Finish or close the
+named work and retry, or select an isolated development profile. Only explicit
+`--core-stop --force` overrides those protections. Do not delete owner
 records, locks or images to bypass refusal. See the
 [current protocol contract](../reference/core-client-protocol.md).
+
+Unix startup publishes only an already-private socket: a short random bind name
+inside the private directory is chmod/identity-validated before atomic no-replace
+hard-link publication as `core.sock`. Dialers never need to tolerate public mode
+during startup. Unsupported socket-link filesystems fail explicitly; canonical
+address limits and exact-inode cleanup still apply.
 
 ### Developing crude inside crude
 
 A shell refuses automatic handover to another source cohort while the core has
-any retained workspace, attached shell, opening factory or incomplete status, so
+an attached shell, active/pending work or any owner that cannot be fenced idle, so
 a dev build started from a terminal inside your running crude
 cannot disturb it. Run the dev build with its own profile instead:
 

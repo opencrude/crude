@@ -240,6 +240,11 @@ func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool strin
 }
 
 func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+	release, available := r.session.beginIdleWork()
+	if !available {
+		return tools.ToolResult{}, errors.New("session is reserved for core shutdown")
+	}
+	defer release()
 	// Serialize launch admission, not the child's work. This also
 	// makes concurrent first launches share one parent/configuration snapshot.
 	r.session.delegationMu.Lock()
@@ -446,6 +451,11 @@ var goalVerifierDeniedTools = []string{"write_file", "edit_file", "apply_patch",
 // files or delegate. The runtime starts it, so the user's multi-agent
 // setting, which governs model-requested children, does not apply.
 func (r *SubAgentRunner) StartGoalVerifier(ctx context.Context, instructions string) (agent.AgentID, error) {
+	release, available := r.session.beginIdleWork()
+	if !available {
+		return "", errors.New("session is reserved for core shutdown")
+	}
+	defer release()
 	r.session.delegationMu.Lock()
 	defer r.session.delegationMu.Unlock()
 	if _, err := r.bindLaunchOwner(ctx, false); err != nil {
@@ -527,6 +537,11 @@ func deriveSubAgentName(category, description string) string {
 }
 
 func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgentSpec, profileInstructions string) (*agent.SubAgentHandle, error) {
+	release, ok := r.session.beginIdleWork()
+	if !ok {
+		return nil, errors.New("session is reserved for core shutdown")
+	}
+	defer release()
 	subSessionID := string(spec.ID)
 	resolvedModelName := spec.Model
 	resolvedThinkingEffort := spec.ThinkingEffort
@@ -961,6 +976,11 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	if r == nil || r.session == nil || len(parentCheckpoint.OwnerData) == 0 {
 		return errors.New("the child task has no recoverable owner record")
 	}
+	release, available := r.session.beginIdleWork()
+	if !available {
+		return errors.New("session is reserved for core shutdown")
+	}
+	defer release()
 	var owner childRecoveryOwner
 	if err := json.Unmarshal(parentCheckpoint.OwnerData, &owner); err != nil ||
 		string(owner.Spec.ID) != parentCheckpoint.Status.AgentID {

@@ -223,6 +223,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyPastedText(msg)
 	case referenceContentLoadedMsg:
 		m.applyReferenceContent(msg)
+	case desktopPathOpenedMsg:
+		m.applyDesktopPathOpened(msg)
 	case referenceContentSavedMsg:
 		m.applyReferenceSave(msg)
 	case statusHydrateErrMsg:

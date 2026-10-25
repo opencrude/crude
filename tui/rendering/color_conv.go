@@ -7,6 +7,17 @@ import (
 	"crude/tui/cell"
 )
 
+// ImagePixelToCell composites source image data over the semantic surface fill.
+// Source pixels are content, not UI chrome: keep their RGB/alpha conversion in
+// the rendering boundary rather than constructing raw colors in a component.
+func ImagePixelToCell(pixel color.Color, background cell.Color) cell.Color {
+	if pixel == nil {
+		return background
+	}
+	c := color.NRGBAModel.Convert(pixel).(color.NRGBA)
+	return background.Blend(cell.NewTrueColor(c.R, c.G, c.B), float32(c.A)/255)
+}
+
 // ThemeColorToHex returns "#rrggbb" for a theme color, or "" if nil/transparent.
 func ThemeColorToHex(c color.Color) string {
 	if c == nil {

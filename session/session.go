@@ -47,6 +47,7 @@ type EventSender interface {
 }
 
 type Session struct {
+	idle       idleAdmission
 	plans      atomic.Pointer[plan.Store]
 	childPlans sync.Map // exact agent ID -> *plan.Store; retained after child DB closure
 	agentName  string
@@ -1068,6 +1069,16 @@ func (s *Session) clearHardCancel() {
 }
 
 func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
+	release, available := s.beginIdleWork()
+	if !available {
+		return nil, errors.New("session is reserved for core shutdown")
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
 	s.orchMu.Lock()
 	if atomic.LoadInt32(&s.closing) == 1 {
 		s.orchMu.Unlock()
@@ -1147,9 +1158,11 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 	s.orchWg.Add(1)
 	s.orchMu.Unlock()
 
+	transferred = true
 	go func() {
 		defer s.orchWg.Done()
-		s.RunOrchestrator(o, sender)
+		defer release()
+		s.RunOrchestrator(o, sender, release)
 	}()
 
 	return o, nil

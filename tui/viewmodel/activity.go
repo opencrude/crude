@@ -304,6 +304,11 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case chatprojection.ChatAttachmentOpenActionID:
+		if payload, ok := action.Payload.(chatprojection.ChatAttachmentOpenPayload); ok {
+			return m.openChatAttachment(payload)
+		}
+		return nil
 	case input.ActionSlashCommand:
 		if event, ok := action.Payload.(input.SlashCommandEvent); ok {
 			m.persistComposerDraftIfChanged()

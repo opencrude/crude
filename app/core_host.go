@@ -509,12 +509,31 @@ func StopCore(ctx context.Context, home string, force bool) (coreprotocol.Shutdo
 			return result, err
 		}
 	}
-	client, err := dialCore(ctx, DataDir(home), core.NewClientID())
+	conn, err := corewire.DialLocal(ctx, DataDir(home))
 	if err != nil {
 		return result, fmt.Errorf("core stop unavailable: %w", err)
 	}
-	defer func() { _ = client.Close() }()
-	err = client.Call(ctx, "", coreprotocol.CoreShutdownMethod, coreprotocol.ShutdownRequest{Force: force, ExpectedOwner: expected}, &result)
+	carrier := corewire.NewMux(conn, corewire.CarrierLocal, true)
+	defer func() { _ = carrier.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = carrier.Close() })
+	defer stop()
+	stream, err := carrier.OpenStream(ctx, corewire.ClassControl)
+	if err != nil {
+		return result, err
+	}
+	body, err := coreprotocol.EncodeLifecycleStop(force, expected)
+	if err != nil {
+		return result, err
+	}
+	if err := corewire.WriteMessage(stream, body); err != nil {
+		return result, fmt.Errorf("core stop outcome unknown; inspect the original owner before retrying: %w", err)
+	}
+	body, err = corewire.NewReader(stream, coreprotocol.LifecycleMaxMessage).Next()
+	if err != nil {
+		return result, fmt.Errorf("core stop outcome unknown; inspect the original owner before retrying: %w", err)
+	}
+	result, err = coreprotocol.DecodeLifecycleResult(body)
+	_ = stream.CloseWrite()
 	return result, err
 }
 

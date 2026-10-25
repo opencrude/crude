@@ -30,6 +30,21 @@ those references rather than another historical migration checklist.
 1. **Native Windows:** execute native pipe ACL/ownership/cancellation, ConPTY,
    independent shells/shared editor, recovery and desktop-effect journeys using
    the review guide. Linux cross-build evidence is not native acceptance.
+   The 2026-10-24 lifecycle/attachment fixes also need these native checks:
+   - Build two schema/cohort variants with isolated profiles. In both directions,
+     attempt foreign-build stop with a shell attached and with active work; verify
+     named refusal, unchanged owner/data and uninterrupted work. Finish/detach,
+     hand over the retained idle session, then stop the replacement from the
+     other build. Do not use force to satisfy the graceful-stop check.
+   - Capture the shared attachment window at desktop and constrained sizes with
+     `scripts/tuishot.ps1`: editable composer text (Save/Cancel), posted text and
+     image, cold historical content, loading/error (Close), and resize/dismiss.
+     Verify a full-width footer rule and no body/action overlap. Reference reads
+     must not reopen a closed or replaced session/pane.
+   - Use the file-tree **Reveal in Explorer** action on files and directories,
+     including spaces/non-ASCII names. Verify the original same-host path and a
+     labelled client-local preview for a foreign host; never send a foreign path
+     to the shell's Explorer. Close only the test-owned windows/processes.
 2. **Distinct-host SSH:** repeat file/editor/search/rename/save/media/client-cache
    and reconnect journeys with genuinely separate filesystems and strict host-key
    rejection. Genuine loopback OpenSSH is useful but not this gate.
@@ -39,6 +54,48 @@ those references rather than another historical migration checklist.
    Do not infer a smaller footprint from ownership consolidation or loosen gates.
 
 ## Evidence ledger
+
+### Lifecycle and attachment regressions (2026-10-24)
+
+The four reported defects are implemented; current contracts are in
+[core lifecycle](../reference/core-client-protocol.md#trust-secrets-and-platform-limits),
+[attachment interaction](../reference/text-input.md#composer),
+[viewer footer](../reference/control-usage.md#buttons) and
+[file tree interaction](../reference/interaction-matrix.md#file-tree-context).
+Linux two-schema/cohort CLI checks passed in both directions using isolated
+profiles, a retained real backend and a loopback-provider turn. Foreign stop
+refused active work and attached shells without changing the owner; idle
+handover and foreign explicit stop succeeded. Focused lifecycle/socket races and
+repeated startup checks also passed, including atomic private socket publication.
+
+Sequential native Alacritty captures at 160x40 and 80x24 verified composer versus
+posted read-only text, original image pixels, cold SQLite historical identity,
+the ruled reserved footer and the tree desktop action. Rendered-click regression
+tests cover exact IDs/spans, duplicate/literal and foreign-reference negatives,
+drag precedence, file-backed full content and stale ownership. Desktop effect
+tests capture real launcher arguments for local and connected paths; they do not
+establish native Explorer selection. An actual native tree-menu click also opened
+Nemo at the exact isolated test folder; the test-owned window was closed and the
+pre-existing user window preserved. The capture exited cleanly; its first cleanup
+inventory raced an X11 BadWindow after closing the test window, so a separate
+successful inventory established cleanup. Native Windows checks above remain open.
+
+The connected regression submits text and image through the real composer/core
+admission path, attaches a second viewer and opens both retained transcript links
+without another model request or losing the peer draft. Bulk metadata strips
+Content, so the client validates its complete-entity revision rather than replacing
+canonical reference metadata with the transfer projection. Local-only viewer
+fixtures did not establish that boundary; the connected regression guards it.
+
+The exhaustive race run also exposed an existing LSP teardown ordering defect:
+`Close` could publish `closed` before retiring servers, or retirement could arrive
+after the worker's last idle reconciliation but before its exit check. The owner
+now publishes terminal admission and retirement together and drains that state
+before exit. `TestLSPCloseJoinsServersAcrossWorkerWake` fails the original source
+in all five baseline repetitions; the repaired owner and twenty repeated real
+gopls headless journeys pass under the race detector without surviving servers.
+
+### Earlier separation acceptance
 
 Parent checkpoint: ten real CLI tmux shells shared input/output, origin kill with
 one provider request, peer Yes with two posts, peer Escape Stop with one post and
