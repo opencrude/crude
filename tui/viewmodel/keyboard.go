@@ -25,6 +25,17 @@ import (
 
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	// Link details are a passive hover until explicitly clicked. Escape always
+	// dismisses them; ordinary typing keeps its original shell owner.
+	if m.connectionHover != nil {
+		focused := m.windowManager.Focused()
+		if msg.Code == tea.KeyEsc || focused == nil || focused.ID != string(ui.OverlayConnectionHealth) {
+			m.clearConnectionHover()
+			if msg.Code == tea.KeyEsc {
+				return m, nil
+			}
+		}
+	}
 	if m.projectReplace != nil && m.overlayHost != nil && m.overlayHost.Window(projectReplaceOverlay) != nil {
 		// Review is a modal decision, including global shortcuts. While the
 		// accepted transaction runs, no second action may retarget or replay it.

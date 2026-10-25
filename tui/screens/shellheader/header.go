@@ -18,6 +18,31 @@ import (
 
 const ScreenID ui.ComponentID = "shellheader"
 
+const ConnectionAction = "connection-health"
+
+// ConnectionState affects only the wordmark's ink and attention mark. The
+// viewmodel derives it from the attached transport, never agent/provider work.
+type ConnectionState uint8
+
+const (
+	ConnectionReady ConnectionState = iota
+	ConnectionConnecting
+	ConnectionReconnecting
+	ConnectionSlow
+	ConnectionOffline
+)
+
+func Wordmark(state ConnectionState) Segment {
+	text := "Crude"
+	switch state {
+	case ConnectionReconnecting, ConnectionSlow:
+		text += " ⚠"
+	case ConnectionOffline:
+		text += " ✕"
+	}
+	return Segment{Text: text, Role: ui.ColorAccent, Action: ConnectionAction}
+}
+
 // Projection is the presentation data for one header paint.
 type Projection struct {
 	ModelName     string
@@ -28,6 +53,7 @@ type Projection struct {
 	Width         int
 	LeftSegments  []Segment
 	RightSegments []Segment
+	Connection    ConnectionState
 }
 
 type Segment struct {
@@ -61,6 +87,8 @@ type Screen struct {
 	tokens *ui.TokenSet
 	proj   Projection
 	hits   []segmentHit
+	tide   ui.TextTideMotion
+	frame  int
 }
 
 // nowFunc is a test seam for deterministic paint goldens (the header renders
@@ -94,8 +122,11 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 // SetProjection updates header content for the next paint.
 func (s *Screen) SetProjection(p Projection) bool {
 	old := s.proj
-	changed := old.ModelName != p.ModelName || old.YOLO != p.YOLO || old.StartTime != p.StartTime || old.Usage != p.Usage || old.ViewLabel != p.ViewLabel || old.Width != p.Width ||
+	changed := old.ModelName != p.ModelName || old.YOLO != p.YOLO || old.StartTime != p.StartTime || old.Usage != p.Usage || old.ViewLabel != p.ViewLabel || old.Width != p.Width || old.Connection != p.Connection ||
 		!slices.Equal(old.LeftSegments, p.LeftSegments) || !slices.Equal(old.RightSegments, p.RightSegments)
+	if old.Connection != p.Connection {
+		s.tide = ui.TextTideMotion{}
+	}
 	s.proj = p
 	return changed
 }
@@ -112,15 +143,17 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) { s.SetBounds(r) }
 
-func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	b := s.Bounds()
 	if b.Empty() || buf == nil {
 		return
 	}
 	width := b.W
 	if s.proj.Width > 0 {
-		width = s.proj.Width
+		width = min(width, s.proj.Width)
 	}
+	s.frame = ctx.Frame
+	s.hits = s.hits[:0]
 	leftRail, rightRail := ui.ShellContentRail(s.tokens, width)
 	innerW := rightRail - leftRail
 	if innerW < 1 {
@@ -165,6 +198,22 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleLabel, Label: "Header"}
 }
 
+func (s *Screen) NeedsAnimation() bool {
+	return s.proj.Connection == ConnectionConnecting || s.proj.Connection == ConnectionReconnecting
+}
+
+// ActionBounds uses the same fitted, painted segment geometry as click routing.
+// It is parent-local; callers translate it through the root Host's screen rect.
+func (s *Screen) ActionBounds(action string) ui.Rect {
+	left, _ := ui.ShellContentRail(s.tokens, s.Bounds().W)
+	for _, hit := range s.hits {
+		if hit.action == action {
+			return ui.Rect{X: left + hit.start, W: hit.end - hit.start, H: 1}
+		}
+	}
+	return ui.Rect{}
+}
+
 func (s *Screen) color(role ui.SemanticColor) cell.Color {
 	if s.tokens != nil {
 		return s.tokens.Color(role)
@@ -174,7 +223,7 @@ func (s *Screen) color(role ui.SemanticColor) cell.Color {
 
 func (s *Screen) paintSegments(buf *surface.CellBuffer, x, y, innerW int) {
 	s.hits = s.hits[:0]
-	leftBudget := max(10, innerW/3)
+	leftBudget := min(innerW, max(10, innerW/3))
 	left := fitSegments(s.proj.LeftSegments, leftBudget, "  ")
 	leftW := segmentWidth(left, "  ")
 	right := fitSegments(s.proj.RightSegments, max(0, innerW-leftW-2), " · ")
@@ -197,6 +246,24 @@ func (s *Screen) paintSegmentGroup(buf *surface.CellBuffer, x, y int, segments [
 			attrs = cell.AttrBold
 		}
 		buf.WriteString(x, y, segment.Text, s.color(segment.Role), cell.NoColor, attrs)
+		if segment.Action == ConnectionAction {
+			brandW := rendering.VisibleWidth("Crude")
+			if s.NeedsAnimation() {
+				center := s.tide.Advance(s.frame, brandW, true)
+				for col := range brandW {
+					c := buf.Get(x+col, y)
+					c.FG, c.Attr = ui.TextTide(c.FG, c.Attr, s.tokens, center, col)
+					buf.Set(x+col, y, c)
+				}
+			}
+			role := ui.ColorWarning
+			if s.proj.Connection == ConnectionOffline {
+				role = ui.ColorError
+			}
+			if suffix := strings.TrimPrefix(segment.Text, "Crude"); suffix != "" {
+				buf.WriteString(x+brandW, y, suffix, s.color(role), cell.NoColor, 0)
+			}
+		}
 		width := rendering.VisibleWidth(segment.Text)
 		x, localX = x+width, localX+width
 		if segment.Action != "" {

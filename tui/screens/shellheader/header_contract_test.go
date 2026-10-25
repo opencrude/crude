@@ -10,8 +10,8 @@ import (
 )
 
 // TestShellHeaderKeyboardContract documents that the header chrome is
-// display-only: Handle is a no-op and keyboard chords route through viewmodel
-// ActionRegistry / global dispatch, not the header Screen.
+// keyboard-passive: keyboard chords route through viewmodel ActionRegistry /
+// global dispatch, not the independently clickable header segments.
 func TestShellHeaderKeyboardContract(t *testing.T) {
 	th := theme.DefaultDark()
 	screen := New(th)
