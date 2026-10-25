@@ -81,6 +81,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 		state.tree = m.Tree.Model
 	}
 	m.workspaceSwitchGen.Add(1)
+	m.cancelClientIOOperations()
 	m.resetLSPRequestContext()
 	m.gitRefreshGen.Add(1)
 	// Reads started for the old project are abandoned by that generation bump:

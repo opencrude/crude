@@ -2,6 +2,8 @@
 package textoverlay
 
 import (
+	"image"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/surface"
@@ -12,6 +14,7 @@ import (
 const (
 	ScreenID  ui.ComponentID = "textoverlay"
 	InputID   ui.ComponentID = "textoverlay/input"
+	ImageID   ui.ComponentID = "textoverlay/image"
 	ActionsID ui.ComponentID = "textoverlay/actions"
 )
 
@@ -36,6 +39,7 @@ type Screen struct {
 	th       *theme.Theme
 	tokens   *ui.TokenSet
 	input    *overlayInput
+	image    *imagePreview
 	actions  *ui.ActionBar
 	title    string
 	refID    string
@@ -55,6 +59,11 @@ func New(th *theme.Theme) *Screen {
 	area := ui.NewTextArea(InputID, tokens, true)
 	area.SetSubmitAction("")
 	s.input = &overlayInput{Base: ui.NewBase(InputID), area: area, owner: s}
+	s.image = &imagePreview{Base: ui.NewBase(ImageID), owner: s, tokens: tokens}
+	s.actions = ui.NewActionBar(ActionsID, tokens)
+	s.actions.SetShowRule(true)
+	s.actions.SetSurfaceBackground(ui.ColorPopupBg)
+	s.actions.SetCancelAction("textoverlay.cancel")
 	s.rebuildActions()
 	return s
 }
@@ -70,16 +79,26 @@ func (s *Screen) OpenReadOnly(refID, title, content string) {
 	s.open(refID, title, content, true)
 }
 
+// OpenImage previews an already-decoded immutable image in the same native
+// attachment window. The caller owns off-UI decoding and result lifetime checks;
+// it must not mutate the image after handing it to the screen.
+func (s *Screen) OpenImage(refID, title string, img image.Image) {
+	s.open(refID, title, "", true)
+	s.image.image = img
+}
+
 func (s *Screen) open(refID, title, content string, readOnly bool) {
 	s.epoch++
 	s.refID = refID
 	s.title = title
 	s.readOnly = readOnly
 	s.busy = false
+	s.image.image = nil
 	s.input.area.SetReadOnly(readOnly)
 	s.input.area.SetValue(content)
 	s.input.area.SetCursorFlat(0)
 	s.rebuildActions()
+	s.actions.FocusFirst()
 }
 
 func (s *Screen) ReadOnly() bool    { return s.readOnly }
@@ -96,6 +115,7 @@ func (s *Screen) Close() {
 	s.refID = ""
 	s.title = ""
 	s.input.area.Clear()
+	s.image.image = nil
 }
 
 func (s *Screen) RefID() string { return s.refID }
@@ -116,7 +136,7 @@ func (s *Screen) SelectedText() string { return s.input.area.SelectedText() }
 func (s *Screen) SelectionRange() (int, int) { return s.input.area.SelectionRange() }
 
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
-func (s *Screen) FocusInput()                             { s.focusID(InputID) }
+func (s *Screen) FocusInput()                             { s.focusID(s.body().ID()) }
 func (s *Screen) focusID(id ui.ComponentID) {
 	if s.focus != nil {
 		s.focus(id)
@@ -125,16 +145,15 @@ func (s *Screen) focusID(id ui.ComponentID) {
 
 func (s *Screen) rebuildActions() {
 	if s.readOnly {
-		s.actions = ui.NewActionBar(ActionsID, s.tokens,
+		s.actions.SetButtons(
 			ui.ActionBarButton{
 				ID: ui.NewID(ActionsID, "cancel"), Label: "Close", Action: "textoverlay.cancel",
 				Variant: ui.VariantSecondary, Enabled: true,
 			},
 		)
-		s.actions.SetCancelAction("textoverlay.cancel")
 		return
 	}
-	s.actions = ui.NewActionBar(ActionsID, s.tokens,
+	s.actions.SetButtons(
 		ui.ActionBarButton{
 			ID: ui.NewID(ActionsID, "save"), Label: "Save", Action: "textoverlay.save",
 			Shortcut: "ctrl+s", Variant: ui.VariantPrimary, Enabled: !s.busy,
@@ -144,16 +163,23 @@ func (s *Screen) rebuildActions() {
 			Variant: ui.VariantSecondary, Enabled: true,
 		},
 	)
-	s.actions.SetCancelAction("textoverlay.cancel")
 }
 
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.input, s.actions}
+	return []ui.Component{s.body(), s.actions}
+}
+
+func (s *Screen) body() ui.Component {
+	if s.image.image != nil {
+		return s.image
+	}
+	return s.input
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.input.SetTokens(tokens)
+	s.image.tokens = tokens
 	s.actions.SetTokens(tokens)
 }
 
@@ -163,9 +189,13 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	inputH := max(1, r.H-1)
-	s.input.Layout(ctx, ui.Rect{X: 0, Y: 0, W: r.W, H: inputH})
-	s.actions.Layout(ctx, ui.Rect{X: 0, Y: max(0, r.H-1), W: r.W, H: 1})
+	// The shared bar owns its rule, fill and button row. Reserve its measured
+	// height before giving the editor any rows; fabricating a minimum editor
+	// row would paint and hit-test over the footer on a constrained frame.
+	footer := s.actions.Measure(ctx, ui.Loose(max(0, r.W), max(0, r.H)))
+	inputH := max(0, r.H-footer.H)
+	s.body().Layout(ctx, ui.Rect{W: r.W, H: inputH})
+	s.actions.Layout(ctx, ui.Rect{Y: inputH, W: r.W, H: footer.H})
 }
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
@@ -184,7 +214,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "textoverlay.cancel":
 		return s.cancel()
 	case "actionbar.exit.backward", "actionbar.exit.forward":
-		s.focusID(InputID)
+		s.FocusInput()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return ui.EventResult{Action: &action}

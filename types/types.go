@@ -8,6 +8,7 @@ import (
 
 	"crude/network"
 	"crude/provider"
+	"crude/types/attachment"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 )
@@ -22,6 +23,7 @@ type ConversationMessage struct {
 	Origin          provider.MessageOrigin             `json:"origin,omitempty"`
 	Content         string                             `json:"content,omitempty"`
 	ReferenceLabels []string                           `json:"reference_labels,omitempty"`
+	Attachments     []attachment.Target                `json:"attachments,omitempty"`
 	Time            time.Time                          `json:"time,omitempty"`
 	TurnGeneration  uint64                             `json:"turn_generation,omitempty"`
 	ProviderID      string                             `json:"provider_id,omitempty"`
@@ -860,6 +862,7 @@ type ChatMessage struct {
 	Collaboration   *provider.CollaborationAttribution
 	Recovery        *recovery.Status
 	ReferenceLabels []string
+	Attachments     []attachment.Target
 	Time            time.Time
 	TurnGeneration  uint64
 	ProviderID      string

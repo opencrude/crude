@@ -199,11 +199,25 @@ func (r *Runtime) Idle(ctx context.Context, grace time.Duration) (bool, error) {
 // returns true the runtime accepts no client, so idleness cannot be invalidated
 // by a connection racing the shutdown.
 func (r *Runtime) BeginDrain() bool {
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.clients) != 0 || len(r.creating) != 0 {
+	if r.closed || r.draining || r.stopping || len(r.clients) != 0 || len(r.creating) != 0 || len(r.storageGates) != 0 {
+		r.mu.Unlock()
 		return false
 	}
+	r.stopping = true
+	r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	release, err := r.reserveIdle(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopping = false
+	if err != nil {
+		return false
+	}
+	r.idleRelease = release
 	r.draining = true
 	return true
 }
@@ -228,50 +242,67 @@ func (r *Runtime) coreMethod(ctx context.Context, caller *Connection, request co
 	if err := decodeRequest(request, &input); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
+	return response(request, r.shutdown(ctx, caller, input))
+}
+
+func (r *Runtime) shutdown(ctx context.Context, caller *Connection, input coreprotocol.ShutdownRequest) coreprotocol.ShutdownResult {
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
 	r.lifetime.mu.Lock()
 	generation, hook := r.lifetime.ownerGeneration, r.lifetime.shutdown
 	r.lifetime.mu.Unlock()
 	if input.ExpectedOwner != "" && (input.Force || input.ExpectedOwner != generation) {
-		return response(request, coreprotocol.ShutdownResult{Reason: "endpoint owner changed; handover refused"})
+		return coreprotocol.ShutdownResult{Reason: "endpoint owner changed; handover refused"}
 	}
 	if hook == nil {
-		return response(request, coreprotocol.ShutdownResult{Reason: "this core was not started as a stoppable daemon"})
-	}
-	status, err := r.Status(ctx)
-	busy := BusyWorkspaces(status)
-	shells := status.Clients
-	if caller != nil && shells > 0 {
-		shells--
-	}
-	if (err != nil || len(busy) > 0 || status.Opening > 0 || shells > 0) && !input.Force {
-		reason := "workspaces have active work; retry with force to stop it"
-		switch {
-		case err != nil:
-			reason = "workspace state could not be inspected (" + err.Error() + "); retry with force to stop anyway"
-		case len(busy) == 0 && status.Opening == 0:
-			reason = fmt.Sprintf("%d shell(s) are attached; close them or retry with force", shells)
-		}
-		return response(request, coreprotocol.ShutdownResult{Accepted: false, Reason: reason, Busy: busy, Shells: shells})
-	}
-	if input.ExpectedOwner != "" && len(status.Workspaces) != 0 {
-		// Retained actors can admit autonomous work without a shell. Until they
-		// expose a transactional idle fence, automatic handover never closes them.
-		return response(request, coreprotocol.ShutdownResult{Reason: "retained workspaces require an explicit graceful stop", Busy: busy})
+		return coreprotocol.ShutdownResult{Reason: "this core was not started as a stoppable daemon"}
 	}
 	r.mu.Lock()
 	otherClients := len(r.clients)
 	if caller != nil && r.clients[caller.Owner.ClientID] == caller {
 		otherClients--
 	}
-	if r.closed || r.draining || (!input.Force && (otherClients != 0 || len(r.creating) != 0 || (input.ExpectedOwner != "" && len(r.workspaces) != 0))) {
+	if r.closed || r.draining || r.stopping {
 		r.mu.Unlock()
-		return response(request, coreprotocol.ShutdownResult{Reason: "core admission changed during shutdown inspection", Shells: otherClients})
+		return coreprotocol.ShutdownResult{Reason: "core is already closing; wait for its owner to settle"}
 	}
+	if !input.Force && (otherClients != 0 || len(r.creating) != 0 || len(r.storageGates) != 0) {
+		reason := fmt.Sprintf("%d shell(s) are attached; close them or retry --core-stop --force", otherClients)
+		if otherClients == 0 {
+			reason = "workspace factory or saved-storage operation is in progress; wait for it to finish and retry"
+		}
+		r.mu.Unlock()
+		return coreprotocol.ShutdownResult{Reason: reason, Shells: otherClients}
+	}
+	r.stopping = true
+	r.mu.Unlock()
+	var release func()
+	if !input.Force {
+		var err error
+		release, err = r.reserveIdle(ctx)
+		if err != nil {
+			r.mu.Lock()
+			r.stopping = false
+			r.mu.Unlock()
+			return coreprotocol.ShutdownResult{Reason: err.Error() + "; finish or close the named work and retry, or explicitly use --core-stop --force"}
+		}
+	}
+	r.mu.Lock()
+	if err := ctx.Err(); err != nil && !input.Force {
+		r.mu.Unlock()
+		release()
+		r.mu.Lock()
+		r.stopping = false
+		r.mu.Unlock()
+		return coreprotocol.ShutdownResult{Reason: "shutdown inspection cancelled; nothing stopped"}
+	}
+	r.idleRelease = release
 	r.draining = true
+	r.stopping = false
 	r.mu.Unlock()
 	// Delay lets this response reach the requester before connections close.
 	time.AfterFunc(150*time.Millisecond, hook)
-	return response(request, coreprotocol.ShutdownResult{Accepted: true, Busy: busy})
+	return coreprotocol.ShutdownResult{Accepted: true}
 }
 
 // publishProgress sends request-scoped output to exactly the owning connection

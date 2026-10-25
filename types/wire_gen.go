@@ -5,6 +5,7 @@ package types
 import (
 	"crude/provider"
 	"crude/types/activity"
+	"crude/types/attachment"
 	"crude/types/recovery"
 	_ "embed"
 
@@ -2080,8 +2081,8 @@ func (z *CompletionItem) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ConversationMessage) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 59
-	o = append(o, 0xdc, 0x0, 0x3b)
+	// array header, size 60
+	o = append(o, 0xdc, 0x0, 0x3c)
 	o = msgp.AppendString(o, z.InternalID)
 	o = msgp.AppendString(o, z.Role)
 	o, err = z.Origin.MarshalMsg(o)
@@ -2096,6 +2097,18 @@ func (z *ConversationMessage) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.ReferenceLabels)))
 		for za0001 := range z.ReferenceLabels {
 			o = msgp.AppendString(o, z.ReferenceLabels[za0001])
+		}
+	}
+	if z.Attachments == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Attachments)))
+		for za0002 := range z.Attachments {
+			o, err = z.Attachments[za0002].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Attachments", za0002)
+				return
+			}
 		}
 	}
 	o = msgp.AppendTime(o, z.Time)
@@ -2187,8 +2200,8 @@ func (z *ConversationMessage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 59 {
-		err = msgp.ArrayError{Wanted: 59, Got: zb0001}
+	if zb0001 != 60 {
+		err = msgp.ArrayError{Wanted: 60, Got: zb0001}
 		return
 	}
 	z.InternalID, bts, err = msgp.ReadStringBytes(bts)
@@ -2234,6 +2247,33 @@ func (z *ConversationMessage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.ReferenceLabels[za0001], bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "ReferenceLabels", za0001)
+				return
+			}
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Attachments = nil
+	} else {
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Attachments")
+			return
+		}
+		if uint64(zb0003)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Attachments != nil && cap(z.Attachments) >= int(zb0003) {
+			z.Attachments = (z.Attachments)[:zb0003]
+		} else {
+			z.Attachments = make([]attachment.Target, zb0003)
+		}
+		for za0002 := range z.Attachments {
+			bts, err = z.Attachments[za0002].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Attachments", za0002)
 				return
 			}
 		}
@@ -2539,6 +2579,10 @@ func (z *ConversationMessage) Msgsize() (s int) {
 	s = 3 + msgp.StringPrefixSize + len(z.InternalID) + msgp.StringPrefixSize + len(z.Role) + z.Origin.Msgsize() + msgp.StringPrefixSize + len(z.Content) + msgp.ArrayHeaderSize
 	for za0001 := range z.ReferenceLabels {
 		s += msgp.StringPrefixSize + len(z.ReferenceLabels[za0001])
+	}
+	s += msgp.ArrayHeaderSize
+	for za0002 := range z.Attachments {
+		s += z.Attachments[za0002].Msgsize()
 	}
 	s += msgp.TimeSize + msgp.Uint64Size + msgp.StringPrefixSize + len(z.ProviderID) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.ModelID)
 	if z.Collaboration == nil {

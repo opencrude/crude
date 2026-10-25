@@ -143,9 +143,6 @@ documents to read before changing each area.
   hardening findings for the configurable shell frame.
 - [Tree picker and internal Fastwalk plan](plans/tree-picker-fastwalk-plan.md)
   — approved design replacing picker lists with bounded tree/path search.
-- [Core lifecycle and attachment issues](plans/core-lifecycle-and-attachment-issues.md)
-  — reported defects waiting for a follow-up: cross-build core stop/handover,
-  clickable chat attachments, file-tree reveal, pasted-text viewer footer.
 
 ## Documentation rules
 

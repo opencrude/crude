@@ -15,6 +15,8 @@ import (
 	"crude/core"
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/provider"
+	"crude/session"
 	"crude/workspace"
 )
 
@@ -67,9 +69,16 @@ func TestCoreHandoverMatchingHelperStopsOnlyIdleOwner(t *testing.T) {
 	}
 }
 
-func TestCoreHandoverRefusesRetainedWorkspace(t *testing.T) {
+func TestCoreHandoverFencesIdleRetainedWorkspace(t *testing.T) {
 	home := coreTestHome(t)
 	t.Setenv("CRUDE_HOME", home)
+	agents := session.DefaultAgentsConfig()
+	profile := agents.Profiles["default"]
+	profile.Categories["default"] = session.CategoryConfig{AccountID: "fixture", Model: "fixture-model"}
+	agents.Profiles["default"] = profile
+	if err := SaveFileConfig(FileConfig{Agents: &agents, Accounts: map[string]provider.Account{"fixture": {ID: "fixture", ProviderID: "openai", Connection: provider.Template{Name: "Fixture", ProviderURL: "http://127.0.0.1:1/v1", APIStandard: "openai", AuthType: provider.AuthNone}}}}); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	client, err := ConnectCore(ctx, home, core.NewClientID())
@@ -80,23 +89,50 @@ func TestCoreHandoverRefusesRetainedWorkspace(t *testing.T) {
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	attach(t, client, root)
+	attached := attach(t, client, root)
+	var created workspace.NewSessionResult
+	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{}, &created); err != nil || created.Error != "" {
+		t.Fatalf("create retained backend: %+v %v", created, err)
+	}
+	if created.SessionID == "" {
+		t.Fatal("no backend session created")
+	}
 	_ = client.Close()
 	owner, err := readCoreOwner(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := handoverCore(ctx, home); err == nil {
-		t.Fatal("automatic handover closed a retained workspace")
+	// Session creation legitimately schedules owned memory maintenance. Do not
+	// pretend that detach alone proves the retained backend is idle.
+	for {
+		status, err := CoreStatus(ctx, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(core.BusyWorkspaces(status)) == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("retained session never became idle")
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
-	status, err := CoreStatus(ctx, home)
-	if err != nil || len(status.Workspaces) != 1 {
-		t.Fatalf("workspace lost: %+v %v", status, err)
+	if err := handoverCore(ctx, home); err != nil {
+		t.Fatal("idle retained workspace refused:", err)
 	}
-	current, err := readCoreOwner(home)
-	if err != nil || owner != current {
-		t.Fatalf("owner changed: %+v %v", current, err)
+	if _, err := os.Stat(owner.Executable); err != nil {
+		t.Fatal("retained owner image lost:", err)
 	}
+	if _, err := readCoreOwner(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old owner did not settle: %v", err)
+	}
+	client, err = ConnectCore(ctx, home, core.NewClientID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	attach(t, client, root)
 }
 
 func TestCoreOwnerGenerationPreventsReplacementStop(t *testing.T) {

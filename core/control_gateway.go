@@ -243,7 +243,9 @@ func (a *actor) resolveControlAsync(command *actorControlCommand, descriptor con
 	request.Preconditions = control.Preconditions{}
 	request.Target.ResourceID = ""
 	request.Input, _ = json.Marshal(map[string]any{"component_id": input.ComponentID, "operation": input.Operation})
+	a.controlWorkers.Add(1)
 	go func() {
+		defer a.controlWorkers.Add(-1)
 		result, err := a.runtime.RequestShellControl(command.ctx, a.id, *request.Target.Shell, coreprotocol.ControlEnvelope{Request: request, Descriptor: read})
 		if err == nil && result.Fault != nil {
 			err = result.Fault
@@ -346,7 +348,9 @@ func (a *actor) admitControl(command *actorControlCommand) {
 	if err == nil && request.CommandID == "shell.control" {
 		// The actual descriptor is part of the exact authorization preimage.
 		// Resolve again off-owner, then return through the admitted internal route.
+		a.controlWorkers.Add(1)
 		go func() {
+			defer a.controlWorkers.Add(-1)
 			d, e := (&actorControlRuntime{actor: a}).Resolve(command.ctx, request)
 			if e != nil {
 				command.result <- failedControl(request, control.Denied, e.Error())
@@ -415,7 +419,9 @@ func (a *actor) admitControl(command *actorControlCommand) {
 		}
 	}
 	if descriptor.Scope == control.Shell {
+		a.controlWorkers.Add(1)
 		go func() {
+			defer a.controlWorkers.Add(-1)
 			result := a.executeShellControl(command.ctx, owner, request, descriptor)
 			command.result <- result
 		}()
@@ -477,7 +483,9 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 			command.result <- failedControl(in, control.Invalid, "exact original request_id required")
 			return true
 		}
+		a.controlWorkers.Add(1)
 		go func() {
+			defer a.controlWorkers.Add(-1)
 			receipt, err := a.receipts.lookup(command.ctx, owner.ClientID, input.RequestID)
 			if err != nil || receipt.WorkspaceID != a.id {
 				command.result <- failedControl(in, control.Unavailable, "receipt unavailable for this exact caller/workspace")

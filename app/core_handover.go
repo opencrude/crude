@@ -127,7 +127,7 @@ func prepareCoreStart(ctx context.Context, home string) error {
 type CoreHandoverError struct{ Cause error }
 
 func (e *CoreHandoverError) Error() string {
-	return fmt.Sprintf("cannot safely hand over the existing core: %v; stop it gracefully with its original installation, or select a separate profile with %s", e.Cause, buildinfo.HomeEnv)
+	return fmt.Sprintf("cannot safely hand over the existing core: %v; finish or close the named work and retry --core-stop, or select a separate profile with %s", e.Cause, buildinfo.HomeEnv)
 }
 func (e *CoreHandoverError) Unwrap() error { return e.Cause }
 

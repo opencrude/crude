@@ -756,6 +756,24 @@ generation rules; no full-conversation export or JSON parsing is added to Paint.
 
 ## Data and parity
 
+User attachment links retain exact reference IDs and rune source spans alongside
+their send-time labels. Rendering protects those source spans through Markdown
+and wrapping; the same semantic spans paint and hit-test on release. A literal
+`[Pasted Text1]` or `[Pasted IMG1]` without retained attachment metadata is not an
+open target. Drags (including moving away and back), modified selection clicks,
+foreign-session references and replaced transcript sources cannot activate a
+link. A no-drag release opens the same native reference window as the composer,
+read-only for sent/history content. Text uses Close; images show actual decoded
+pixels without an external application.
+
+Hydration reads exact identity from canonical attachment metadata, or from the
+input's exact retained `-references` runtime-context envelope and its producer
+reference headers. It never reconstructs an ID from the session and label, nor
+searches arbitrary payload prose for IDs. Historical ambiguous repeated labels
+or missing identity open an honest unavailable preview rather than guessing a
+current-store reference. Attachment content is not copied into replicated chat
+rows; original reference storage remains its owner.
+
 The activity projector uses canonical role, outcome, duration, tool name, and stable IDs. It should not infer call completion from spinner frames or rely on wall-clock rendering order. A `reply` becomes an assistant progress message (not a second tool row) when its tool result is delivered; recovery projects that same result with the same `reply:<tool-id>` identity. Parallel results are presented in provider call order on both paths. Persist the child agent ID and result identity, including synchronous waits, so recovered parent rows link to the same child review pane as live ones; the child pane owns its display name and outcome. If any source lacks those facts, show an honest standalone row rather than guessing identity or success.
 
 Regressions must compare the rendered live event journey to a session's recovered snapshots: active vs settled, communication boundaries, parallel calls, expansion/copy and disclosure, failure/cancellation, children, resize/scroll, and a settled transcript with many calls. The visible summary may be compact; expanding it must never lose the original audit trail.

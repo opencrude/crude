@@ -29,6 +29,7 @@ func contextDelta(message provider.ChatMessage, meta sessiondb.DisplayMeta, turn
 func canonicalContextMessage(message provider.ChatMessage) provider.ChatMessage {
 	message.DisplayContent = ""
 	message.ReferenceLabels = nil
+	message.Attachments = nil
 	message.Origin, message.Visibility = message.EffectiveOrigin(), message.EffectiveVisibility()
 	if len(message.ToolCalls) == 0 {
 		message.ToolCalls = nil

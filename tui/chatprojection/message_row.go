@@ -1,5 +1,14 @@
 package chatprojection
 
+import "crude/types/attachment"
+
+const ChatAttachmentOpenActionID = "chat.attachment-open"
+
+type ChatAttachmentOpenPayload struct {
+	MessageID string
+	Target    attachment.Target
+}
+
 // ChatToggleActionID is the typed action shellchat emits when the user clicks
 // a message's disclosure row (no drag). The viewmodel routes it to the active
 // renderer's ToggleDisclosure.

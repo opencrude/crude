@@ -787,6 +787,11 @@ func (s *Session) runCollaborationControls(ctx context.Context, store *collabora
 	defer ticker.Stop()
 	var lastPresenceSweep time.Time
 	process := func() {
+		release, ok := s.beginIdleWork()
+		if !ok {
+			return
+		}
+		defer release()
 		s.mu.Lock()
 		agents := make([]collaboration.Agent, 0, len(s.collaborationAgents))
 		for _, registered := range s.collaborationAgents {

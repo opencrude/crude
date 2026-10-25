@@ -144,6 +144,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		reflect.DeepEqual(current.Collaboration, incoming.Collaboration) &&
 		current.Content == incoming.Content &&
 		slices.Equal(current.ReferenceLabels, incoming.ReferenceLabels) &&
+		slices.Equal(current.Attachments, incoming.Attachments) &&
 		current.Time.Equal(incoming.Time) &&
 		current.TurnGeneration == incoming.TurnGeneration &&
 		current.ProviderID == incoming.ProviderID &&

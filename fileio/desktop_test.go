@@ -1,6 +1,8 @@
 package fileio
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -26,5 +28,13 @@ func TestDesktopCommandKeepsPathsAsArguments(t *testing.T) {
 	}
 	if err := OpenDesktopPath(path, false); err == nil {
 		t.Fatal("missing file must fail before launching an application")
+	}
+}
+
+func TestDesktopOpenCancelledBeforePathInspection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := OpenDesktopPathContext(ctx, filepath.Join(t.TempDir(), "not-there"), true); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled desktop open inspected/launched a path: %v", err)
 	}
 }

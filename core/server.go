@@ -150,6 +150,27 @@ func handshake(ctx context.Context, runtime *Runtime, conn corewire.Conn, auth A
 	if err != nil {
 		return nil, nil, err
 	}
+	if coreprotocol.IsLifecycleStop(body) {
+		// Same-user local authority only. SSH and network admission cannot use
+		// this schema-independent host lifecycle channel.
+		if auth != nil || conn.Carrier() != corewire.CarrierLocal {
+			return nil, nil, errors.New("lifecycle stop requires the local host")
+		}
+		input, err := coreprotocol.DecodeLifecycleStop(body)
+		if err != nil {
+			return nil, nil, err
+		}
+		result := runtime.shutdown(ctx, nil, input)
+		if err := corewire.WriteMessage(control, coreprotocol.EncodeLifecycleResult(result.Accepted, result.Reason)); err != nil {
+			return nil, nil, err
+		}
+		_ = control.CloseWrite()
+		_, err = reader.Next() // FIN proves consumption, not merely enqueue.
+		if !errors.Is(err, io.EOF) {
+			return nil, nil, err
+		}
+		return nil, nil, nil
+	}
 	var hello coreprotocol.Hello
 	welcome := coreprotocol.Welcome{Schema: coreprotocol.Schema, Build: buildinfo.ProtocolBuild}
 	refuse := func(code, message string) (*Connection, corewire.Stream, error) {

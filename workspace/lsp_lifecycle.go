@@ -174,8 +174,19 @@ func (m *LSPManager) runWorker(done chan struct{}) {
 		}
 		m.mu.Lock()
 		closed := m.closed
+		// Close can retire owners after reconcile's final idle result but
+		// before this check. Only exit once that same terminal state is drained.
+		retiring := len(m.closedDocuments) != 0
+		if closed {
+			for _, state := range m.states {
+				retiring = retiring || state.closing
+			}
+		}
 		m.mu.Unlock()
 		if closed {
+			if retiring {
+				continue
+			}
 			return
 		}
 		select {
@@ -690,6 +701,11 @@ func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, path string,
 // Stop is safe on Update: admission stops immediately; the worker owns teardown.
 func (m *LSPManager) Stop() {
 	m.mu.Lock()
+	m.stopLocked()
+	m.mu.Unlock()
+}
+
+func (m *LSPManager) stopLocked() {
 	m.paused, m.manualStart = true, false
 	m.cancelUpdatesLocked()
 	for _, state := range m.states {
@@ -705,16 +721,16 @@ func (m *LSPManager) Stop() {
 	if len(m.states) > 0 {
 		m.signalLocked()
 	}
-	m.mu.Unlock()
 }
 
 // Close joins all owned subprocess lifetimes at workspace teardown, off Update.
 func (m *LSPManager) Close() {
 	m.mu.Lock()
+	// Publish terminal admission and retirement together. A worker which sees
+	// closed must already see every owned server marked for joined shutdown;
+	// otherwise it can exit between this flag and a later Stop call.
 	m.closed = true
-	m.mu.Unlock()
-	m.Stop()
-	m.mu.Lock()
+	m.stopLocked()
 	if m.workerRunning {
 		m.signalLocked()
 	}

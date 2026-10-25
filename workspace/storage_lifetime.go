@@ -13,6 +13,15 @@ const workspaceStorageCapacity = 1 << 30
 
 var workspaceStorage = semaphore.NewWeighted(workspaceStorageCapacity)
 
+// TryIdleStorageLease excludes catalog SQL owners and saved-directory moves.
+// Refusal never waits for or cancels another storage user.
+func TryIdleStorageLease() (func(), bool) {
+	if !workspaceStorage.TryAcquire(workspaceStorageCapacity) {
+		return nil, false
+	}
+	return func() { workspaceStorage.Release(workspaceStorageCapacity) }, true
+}
+
 func lockWorkspaceStorage(ctx context.Context, move bool) (func(), error) {
 	weight := int64(1)
 	if move {

@@ -40,7 +40,7 @@ func (m *App) beginReveal(fw *wm.FloatingWindow, overlayID string) {
 	if frame == nil {
 		return
 	}
-	frame.SetReveal(0)
+	setWindowReveal(fw, 0)
 	if m.reveals == nil {
 		m.reveals = make(map[string]revealAnim)
 	}
@@ -69,14 +69,25 @@ func (m *App) advanceReveals(now time.Time) bool {
 		}
 		elapsed := now.Sub(anim.startedAt)
 		if elapsed >= revealDuration {
-			frame.SetReveal(1)
+			setWindowReveal(fw, 1)
 			delete(m.reveals, id)
 			continue
 		}
-		frame.SetReveal(float64(elapsed) / float64(revealDuration))
+		setWindowReveal(fw, float64(elapsed)/float64(revealDuration))
 		active = true
 	}
 	return active
+}
+
+func setWindowReveal(fw *wm.FloatingWindow, progress float64) {
+	widget, ok := fw.Content.(*ui.WindowFrameWidget)
+	if !ok || widget.Frame().Reveal() == progress {
+		return
+	}
+	widget.SetReveal(progress)
+	// The final step also damages the window: a delayed first tick can jump
+	// straight to fully revealed without ever returning an active animation.
+	fw.MarkContentDirty()
 }
 
 // stopReveal removes any reveal for the overlay (used on close).

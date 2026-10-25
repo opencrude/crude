@@ -15,6 +15,8 @@ type resourceLane struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	closed bool
+	fenced bool
+	active int
 }
 
 func newResourceLane(ctx context.Context, capacity int) *resourceLane {
@@ -30,6 +32,9 @@ func newResourceLane(ctx context.Context, capacity int) *resourceLane {
 		// work before mutation, while cleanup must still release exact owners.
 		for run := range l.queue {
 			run(l.ctx)
+			l.mu.Lock()
+			l.active--
+			l.mu.Unlock()
 		}
 	}()
 	return l
@@ -40,15 +45,26 @@ func newResourceLane(ctx context.Context, capacity int) *resourceLane {
 func (l *resourceLane) submit(run func(context.Context)) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.closed || l.ctx.Err() != nil || run == nil {
+	if l.closed || l.fenced || l.ctx.Err() != nil || run == nil {
 		return false
 	}
 	select {
 	case l.queue <- run:
+		l.active++
 		return true
 	default:
 		return false
 	}
+}
+
+func (l *resourceLane) beginIdleLease() (func(), bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || l.fenced || l.active != 0 {
+		return nil, false
+	}
+	l.fenced = true
+	return func() { l.mu.Lock(); l.fenced = false; l.mu.Unlock() }, true
 }
 
 // close cancels effects and joins every admitted completion. The actor must

@@ -10,6 +10,7 @@ import (
 // reference labels and recovery record must not alias a producer or subscriber.
 func CloneConversationMessage(message ConversationMessage) ConversationMessage {
 	message.ReferenceLabels = slices.Clone(message.ReferenceLabels)
+	message.Attachments = slices.Clone(message.Attachments)
 	if message.Collaboration != nil {
 		attribution := *message.Collaboration
 		attribution.RecipientIDs = slices.Clone(attribution.RecipientIDs)

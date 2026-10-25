@@ -23,6 +23,9 @@ type textSelection struct {
 	selEndCol     int
 	selAutoScroll bool
 	selMouseY     int
+	dragged       bool
+	sourceID      uint64
+	pressAction   *ui.Action
 }
 
 func (ts *textSelection) Clear() {
@@ -33,6 +36,8 @@ func (ts *textSelection) Clear() {
 	ts.selEndLine = 0
 	ts.selEndCol = 0
 	ts.selMouseY = 0
+	ts.dragged = false
+	ts.pressAction = nil
 }
 
 func (ts *textSelection) HasActive() bool {
@@ -160,6 +165,9 @@ func (s *Screen) handleSelectionClick(ctx ui.EventContext, msg tea.MouseClickMsg
 	s.selection.selEndCol = s.selection.selAnchorCol
 	s.selection.selMouseY = ctx.LocalY
 	s.selection.selAutoScroll = false
+	s.selection.dragged = msg.Mod != 0
+	s.selection.sourceID = s.rowsSourceID
+	s.selection.pressAction = s.inlineActionAt(lineIdx, s.selection.selAnchorCol)
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 }
 
@@ -172,6 +180,9 @@ func (s *Screen) handleSelectionMotion(ctx ui.EventContext, msg tea.MouseMotionM
 	padLR := s.layout.padLR
 
 	lineIdx, ok := s.mouseToGlobalLine(ctx.LocalY)
+	if !ok || lineIdx != s.selection.selAnchorLine || rendering.Max(0, ctx.LocalX-padLR) != s.selection.selAnchorCol {
+		s.selection.dragged = true
+	}
 	if ok {
 		s.selection.selEndLine = lineIdx
 		s.selection.selEndCol = rendering.Max(0, ctx.LocalX-padLR)
@@ -202,7 +213,7 @@ func (s *Screen) handleSelectionMotion(ctx ui.EventContext, msg tea.MouseMotionM
 }
 
 func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleaseMsg) ui.EventResult {
-	if !s.selection.selecting {
+	if !s.selection.selecting || msg.Button != tea.MouseLeft {
 		return ui.EventResult{}
 	}
 	lineIdx, ok := s.mouseToGlobalLine(ctx.LocalY)
@@ -212,12 +223,15 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	}
 	// A click without drag on a disclosure row toggles the block instead of
 	// copying an empty selection. Drags (anchor != end) always select.
-	clickNoDrag := s.selection.selAnchorLine == s.selection.selEndLine &&
+	clickNoDrag := !s.selection.dragged && s.selection.sourceID == s.rowsSourceID && s.selection.selAnchorLine == s.selection.selEndLine &&
 		s.selection.selAnchorCol == s.selection.selEndCol
 	toggleMsgID := ""
 	var inlineAction *ui.Action
 	if clickNoDrag && ok {
 		inlineAction = s.inlineActionAt(lineIdx, s.selection.selEndCol)
+		if inlineAction != s.selection.pressAction {
+			inlineAction = nil
+		}
 		toggleMsgID = s.disclosureRowAt(lineIdx)
 	}
 	s.selection.selecting = false

@@ -657,6 +657,9 @@ func (m *App) openTextOverlayWindow() {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayTextOverlay, win, ui.DefaultOverlayPolicy(), func() {
+		if m.referenceOverlay != nil && m.referenceOverlay.cancel != nil {
+			m.referenceOverlay.cancel()
+		}
 		m.referenceOverlay = nil
 		p.textOverlay.Close()
 		m.setMode(ModeChat)

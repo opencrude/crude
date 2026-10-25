@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -12,6 +13,33 @@ import (
 	"crude/history"
 	"crude/sessiondb"
 )
+
+// ReadReferenceMedia reads original bytes only for an exact, still-owned
+// reference preimage. Shell viewers use it off Update, never a server path.
+func (s *ReferenceStore) ReadReferenceMedia(ctx context.Context, expected sessiondb.Reference) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	current, ok := s.GetReference(expected.ID)
+	if !ok || !current.Active() || current != expected || current.SessionID != s.sessionID {
+		return nil, fmt.Errorf("attachment changed or belongs to another session")
+	}
+	if current.FilePath == "" {
+		return nil, fmt.Errorf("attachment has no captured media")
+	}
+	data, err := history.ReadAttachment(current.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	current, ok = s.GetReference(expected.ID)
+	if !ok || current != expected {
+		return nil, fmt.Errorf("attachment changed while reading")
+	}
+	return data, nil
+}
 
 // ReadReferenceContent returns the complete editable text for pasted text
 // references. Other file-backed references are bounded previews and read-only.

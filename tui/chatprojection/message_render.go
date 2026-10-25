@@ -76,20 +76,32 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 		ml.native = append(ml.native, header)
 	}
 
-	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
+	source, markers := attachmentSource(msg)
+	offsets := make(map[rune]int)
+	rendered, isMarkdown := renderMarkdown(source, ctx.mdRenderer)
 	if isMarkdown {
 		for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
-			pl = styleReferenceLabels(pl, referenceLabels)
-			ml.lines = append(ml.lines, pl.PlainText())
-			ml.native = append(ml.native, pl)
+			if len(markers) == 0 {
+				pl = styleReferenceLabels(pl, referenceLabels)
+			}
+			pl = restoreAttachmentSpans(pl, msg.InternalID, markers, offsets)
+			for _, row := range wrapPaintLine(pl, max(1, ctx.contentWidth)) {
+				ml.lines = append(ml.lines, row.PlainText())
+				ml.native = append(ml.native, row)
+			}
 		}
 	} else {
-		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+		wrapped := rendering.WrapText(source, ctx.contentWidth)
 		body := buildPlainBodyLines(wrapped)
 		for _, pl := range body {
-			pl = styleReferenceLabels(pl, referenceLabels)
-			ml.lines = append(ml.lines, pl.PlainText())
-			ml.native = append(ml.native, pl)
+			if len(markers) == 0 {
+				pl = styleReferenceLabels(pl, referenceLabels)
+			}
+			pl = restoreAttachmentSpans(pl, msg.InternalID, markers, offsets)
+			for _, row := range wrapPaintLine(pl, max(1, ctx.contentWidth)) {
+				ml.lines = append(ml.lines, row.PlainText())
+				ml.native = append(ml.native, row)
+			}
 		}
 	}
 	if msg.PendingSteering {

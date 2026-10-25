@@ -36,6 +36,11 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 	if s == nil || atomic.LoadInt32(&s.closing) != 0 {
 		return PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Session is closing"}
 	}
+	release, ok := s.beginIdleWork()
+	if !ok {
+		return PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Session is reserved for core shutdown"}
+	}
+	defer release()
 	if agentID == "" {
 		agentID = s.sessionID
 	}

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crude/agent"
@@ -49,6 +50,9 @@ type Runtime struct {
 	uploads          *ReferenceUploads
 	startup          StartupOwner
 	draining         bool
+	stopping         bool // reversible lifecycle reservation, under mu
+	stopMu           sync.Mutex
+	idleRelease      func() // retained until runtime resource shutdown joins
 	lifetime         lifetimePolicy
 	storageGates     map[string]*workspaceStorageGate
 	deletionPreviews map[string]workspaceDeletionPreview
@@ -121,7 +125,7 @@ func (r *Runtime) Connect(clientID string) (*Connection, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || r.draining {
+	if r.closed || r.draining || r.stopping {
 		return nil, errors.New("core is closed")
 	}
 	if r.clients[clientID] != nil {
@@ -263,6 +267,8 @@ func (c *Connection) takePrivateEffect(event coreprotocol.SessionEvent) {
 }
 
 func (r *Runtime) Close() error {
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -289,6 +295,9 @@ func (r *Runtime) Close() error {
 	r.mu.Unlock()
 	for _, a := range actors {
 		a.close()
+	}
+	if r.idleRelease != nil {
+		r.idleRelease()
 	}
 	return errors.Join(r.uploads.Close(), r.receipts.close())
 }
@@ -320,7 +329,7 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 		return finish(fault(request, "cancelled", err.Error()))
 	}
 	c.runtime.mu.Lock()
-	draining := c.runtime.draining
+	draining := c.runtime.draining || c.runtime.stopping
 	c.runtime.mu.Unlock()
 	if draining && request.Method != coreprotocol.CoreStatusMethod && request.Method != coreprotocol.GetReceipt {
 		return finish(fault(request, "core_draining", "core is draining; only status and receipt observation remain available"))
@@ -478,7 +487,7 @@ type workspaceCreation struct {
 
 func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error) {
 	r.mu.Lock()
-	if r.closed {
+	if r.closed || r.draining || r.stopping {
 		r.mu.Unlock()
 		return nil, errors.New("core is closed")
 	}
@@ -554,31 +563,33 @@ type actor struct {
 	// jobCancels cancels exactly one requester's in-flight job.
 	jobCancels map[string]context.CancelFunc
 	// progress delivers request-scoped output to the requesting connection.
-	progress      func(coreprotocol.Owner, coreprotocol.Progress)
-	runtime       *Runtime
-	id            string
-	ws            *workspace.Workspace
-	accessDB      *workspace.WorkspaceDB // immutable lifetime handle; sql.DB fences concurrent close
-	receipts      *receiptJournal
-	commands      chan actorCommand
-	ingress       chan workspace.AgentEvent
-	serviceEvents chan any
-	stop          chan struct{}
-	done          chan struct{}
-	once          sync.Once
-	subscribers   map[*Connection]struct{}
-	revision      uint64
-	ctx           context.Context
-	cancel        context.CancelFunc
-	jobs          chan actorJobResult
-	inFlight      int
-	lifecycle     bool
-	settingsBusy  bool
-	historyBusy   bool // owner-held restore exclusion through mutation and publication
-	settingsQueue []actorCommand
-	controlQueue  []*actorControlCommand
-	resourceLane  *resourceLane
-	retiring      bool // actor-owned admission fence before off-actor shutdown
+	progress       func(coreprotocol.Owner, coreprotocol.Progress)
+	runtime        *Runtime
+	id             string
+	ws             *workspace.Workspace
+	accessDB       *workspace.WorkspaceDB // immutable lifetime handle; sql.DB fences concurrent close
+	receipts       *receiptJournal
+	commands       chan actorCommand
+	ingress        chan workspace.AgentEvent
+	serviceEvents  chan any
+	stop           chan struct{}
+	done           chan struct{}
+	once           sync.Once
+	subscribers    map[*Connection]struct{}
+	revision       uint64
+	ctx            context.Context
+	cancel         context.CancelFunc
+	jobs           chan actorJobResult
+	inFlight       int
+	lifecycle      bool
+	settingsBusy   bool
+	historyBusy    bool // owner-held restore exclusion through mutation and publication
+	settingsQueue  []actorCommand
+	controlQueue   []*actorControlCommand
+	resourceLane   *resourceLane
+	retiring       bool // actor-owned admission fence before off-actor shutdown
+	idleFenced     bool
+	controlWorkers atomic.Int32
 	// terminalLane orders PTY effects independently of documents, files and
 	// language servers, so their slow work never delays a keystroke.
 	terminalLane     *resourceLane
@@ -859,6 +870,21 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 		return command.retire()
 	}
 	if command.control != nil {
+		if a.idleFenced {
+			c := command.control
+			err := errors.New("core shutdown owns workspace admission")
+			switch {
+			case c.describe != nil:
+				c.describe <- controlDescribeResult{err: err}
+			case c.resolve != nil:
+				c.resolve <- controlResolveResult{err: err}
+			case c.observe != nil:
+				c.observe <- controlObserveResult{found: true, result: failedControl(*c.request, control.Unavailable, err.Error())}
+			default:
+				c.result <- failedControl(*c.request, control.Unavailable, err.Error())
+			}
+			return false
+		}
 		a.admitControl(command.control)
 		return false
 	}
@@ -1291,7 +1317,7 @@ type actorJobResult struct {
 }
 
 func (a *actor) validClient(c *Connection) bool {
-	if c == nil || a.retiring {
+	if c == nil || a.retiring || a.idleFenced {
 		return false
 	}
 	select {

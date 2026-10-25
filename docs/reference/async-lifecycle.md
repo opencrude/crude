@@ -150,8 +150,13 @@ not keep writing caller-owned result memory after the caller has returned.
   runtime shutdown completes; closing a listener does not prove absence. Autostart
   and crash-left reclaim require positive absence plus the exclusive lock. A
   mismatched cohort uses the verified original helper and exact `ExpectedOwner`
-  graceful stop, never a kill or force. Any retained workspace, attached/opening
-  owner or incomplete status refuses automatic handover. See the
+  graceful stop, never a kill or force. Explicit stop has a frozen local minimal
+  stop/result exchange independent of Hello/schema/cohort. Retained idle actors
+  require reversible runtime/actor/session/autonomous-work/memory/resource/storage
+  reservations, not a sampled activity count. Attached/resumable shells, opening
+  factories, pending/queued input, live PTYs and document/controller leases refuse.
+  Refusal rolls back all reservations without closing an actor or changing its
+  owner; accepted reservations survive through shutdown joins. See the
   [core ownership contract](core-client-protocol.md#trust-secrets-and-platform-limits).
 - **Windows process control retains both signal and output ownership.** The
   detached core clears the inherited `CREATE_NEW_PROCESS_GROUP` Ctrl+C-ignore

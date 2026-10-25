@@ -29,7 +29,7 @@ type workspaceDeletionPreview struct {
 // No I/O or actor join runs with the runtime registry mutex held.
 func (r *Runtime) lockWorkspaceStorage(ctx context.Context, id string) (func(), error) {
 	r.mu.Lock()
-	if r.closed {
+	if r.closed || r.draining || r.stopping {
 		r.mu.Unlock()
 		return nil, errors.New("core is closing")
 	}

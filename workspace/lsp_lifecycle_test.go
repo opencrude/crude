@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,46 @@ func TestLSPBudgetWaitsForOwnedShutdownBeforeReplacement(t *testing.T) {
 	r.mu.Unlock()
 	if peak != 1 {
 		t.Fatalf("process budget peak=%d", peak)
+	}
+}
+
+func TestLSPCloseJoinsServersAcrossWorkerWake(t *testing.T) {
+	// Close races ordinary worker wakeups, as detaching the final editor and
+	// publishing server health do during real core teardown. A returned Close
+	// must mean the transport was stopped, not just that its worker disappeared.
+	root := t.TempDir()
+	for attempt := 0; attempt < 250; attempt++ {
+		r := &lifecycleRuntime{}
+		m := NewLSPManager(nil, r)
+		t.Cleanup(m.Close)
+		m.SetWorkspaceRoot(root)
+		m.OpenFile(t.Context(), filepath.Join(root, "main.go"), "package main")
+		awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
+		started, stopped := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(stopped)
+			close(started)
+			for {
+				m.mu.Lock()
+				if m.closed {
+					m.mu.Unlock()
+					return
+				}
+				m.signalLocked()
+				m.mu.Unlock()
+				runtime.Gosched()
+			}
+		}()
+		<-started
+		m.Close()
+		<-stopped
+		r.mu.Lock()
+		active := r.active
+		r.mu.Unlock()
+		if active != 0 {
+			t.Fatalf("Close returned with %d owned language servers on wake %d", active, attempt)
+		}
+		m.Close() // The terminal join is also idempotent.
 	}
 }
 

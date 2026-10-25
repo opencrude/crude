@@ -44,19 +44,29 @@ type memoryJobState struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	closed      bool
+	fenced      bool
+	active      int
 }
 
 func (j *memoryJobState) begin() (context.Context, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.closed {
+	if j.closed || j.fenced {
 		return nil, false
 	}
 	if j.ctx == nil {
 		j.ctx, j.cancel = context.WithCancel(context.Background())
 	}
 	j.wg.Add(1)
+	j.active++
 	return j.ctx, true
+}
+
+func (j *memoryJobState) done() {
+	j.mu.Lock()
+	j.active--
+	j.mu.Unlock()
+	j.wg.Done()
 }
 
 // afterTurnMemory runs post-turn memory work: mirror the finished turn into
@@ -72,7 +82,7 @@ func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, fin
 	if _, ok := s.memoryJobs.begin(); !ok {
 		return errors.New("session memory lifecycle is closed")
 	}
-	defer s.memoryJobs.wg.Done()
+	defer s.memoryJobs.done()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := store.RecordTurn(ctx, record); err != nil {
@@ -369,7 +379,7 @@ func (s *Session) maybeExtractMemories(turn int) {
 	if !ok {
 		return
 	}
-	defer s.memoryJobs.wg.Done()
+	defer s.memoryJobs.done()
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	watermark := s.extractWatermark(ctx, store, s.sessionID)
 	cancel()
@@ -385,7 +395,7 @@ func (s *Session) maybeExtractMemories(turn int) {
 		return
 	}
 	go func() {
-		defer s.memoryJobs.wg.Done()
+		defer s.memoryJobs.done()
 		defer s.memoryJobs.extracting.Store(false)
 		s.runExtraction(parent, s.sessionID, true)
 	}()
@@ -565,7 +575,7 @@ func (s *Session) StartMemoryMaintenance() {
 		return
 	}
 	go func() {
-		defer s.memoryJobs.wg.Done()
+		defer s.memoryJobs.done()
 		defer s.memoryJobs.maintaining.Store(false)
 		timer := time.NewTimer(maintenanceStartDelay)
 		defer timer.Stop()

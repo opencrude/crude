@@ -1,7 +1,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -13,6 +15,111 @@ import (
 	"crude/corewire"
 	"crude/workspace"
 )
+
+func TestLifecycleChannelFrozenBytesAndNoSession(t *testing.T) {
+	for _, attached := range []bool{false, true} {
+		t.Run(map[bool]string{false: "idle", true: "attached"}[attached], func(t *testing.T) {
+			r := transportRuntime(t)
+			r.SetOwnerGeneration("generation")
+			r.SetLifetimePolicy(true, time.Minute, func() {})
+			if attached {
+				c, err := r.Connect("actual-shell")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer c.Close()
+			}
+			a, b := net.Pipe()
+			go func() { _ = ServeConnection(t.Context(), r, b) }()
+			conn := corewire.NewMux(a, corewire.CarrierLocal, true)
+			defer conn.Close()
+			s, err := conn.OpenStream(t.Context(), corewire.ClassControl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Literal bytes are independent of the implementation's encoder and
+			// generated Hello shape, schema and source-cohort constants.
+			if err := corewire.WriteMessage(s, []byte("CRUDE-STOP\x00\x00generation")); err != nil {
+				t.Fatal(err)
+			}
+			body, err := corewire.NewReader(s, 8192).Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			prefix := []byte("CRUDE-STOP-RESULT\x00")
+			if !bytes.HasPrefix(body, prefix) || body[len(prefix)] != map[bool]byte{false: 1, true: 0}[attached] {
+				t.Fatalf("result %q", body)
+			}
+			if attached && !bytes.Contains(body, []byte("1 shell(s)")) {
+				t.Fatalf("not actionable: %q", body)
+			}
+			if r.ClientCount() != map[bool]int{false: 0, true: 1}[attached] {
+				t.Fatal("lifecycle request created a session")
+			}
+			if err := s.CloseWrite(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := corewire.NewReader(s, 8192).Next(); err != io.EOF {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestLifecycleChannelRejectsNetworkAndMalformedRequests(t *testing.T) {
+	for _, mode := range []string{"network", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			r := transportRuntime(t)
+			r.SetLifetimePolicy(true, time.Minute, func() { t.Error("invalid lifecycle stop admitted") })
+			a, b := net.Pipe()
+			var auth Authenticator
+			if mode == "network" {
+				auth = func(context.Context, coreprotocol.Hello) (RemotePrincipal, error) {
+					t.Error("lifecycle request reached app authentication")
+					return RemotePrincipal{}, nil
+				}
+			}
+			go func() { _ = ServeCarrier(t.Context(), r, corewire.NewMux(b, corewire.CarrierLocal, false), auth) }()
+			conn := corewire.NewMux(a, corewire.CarrierLocal, true)
+			defer conn.Close()
+			s, err := conn.OpenStream(t.Context(), corewire.ClassControl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := []byte("CRUDE-STOP\x00\x00")
+			if mode == "malformed" {
+				body = []byte("CRUDE-STOP\x00\x02")
+			}
+			if err := corewire.WriteMessage(s, body); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := corewire.NewReader(s, 8192).Next(); err == nil {
+				t.Fatal("invalid lifecycle request received a result")
+			}
+			if r.draining || r.stopping {
+				t.Fatal("invalid stop mutated core")
+			}
+		})
+	}
+}
+
+func TestLifecycleResultBoundsAndStrictDecoding(t *testing.T) {
+	b := coreprotocol.EncodeLifecycleResult(false, string(bytes.Repeat([]byte("x"), 16384)))
+	if len(b) != 8192 {
+		t.Fatal("unbounded result", len(b))
+	}
+	if out, err := coreprotocol.DecodeLifecycleResult(b); err != nil || out.Accepted || len(out.Reason) == 0 {
+		t.Fatal(out, err)
+	}
+	for _, bad := range [][]byte{nil, []byte("CRUDE-STOP-RESULT\x00"), []byte("CRUDE-STOP-RESULT\x00\x02"), append(b, 0)} {
+		if _, err := coreprotocol.DecodeLifecycleResult(bad); err == nil {
+			t.Fatalf("malformed result accepted: %q", bad)
+		}
+	}
+	if _, err := coreprotocol.EncodeLifecycleStop(false, string(bytes.Repeat([]byte("x"), 257))); err == nil {
+		t.Fatal("unbounded owner accepted")
+	}
+}
 
 func transportRuntime(t *testing.T) *Runtime {
 	t.Helper()

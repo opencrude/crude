@@ -155,9 +155,14 @@ func TestWireTimestampRejectsMalformedBeforeFollowingFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Time is the sixth tuple field; use the real encoded entry point and skip
-	// the preceding values rather than hard-coding their byte widths.
-	for range 5 {
+	// Wire tuples follow the declared field order. Find Time by name so adding
+	// a preceding canonical attachment field cannot move this malformed sample
+	// into an unrelated decoder and silently stop testing timestamp validation.
+	timeField, ok := reflect.TypeFor[types.ConversationMessage]().FieldByName("Time")
+	if !ok || len(timeField.Index) != 1 {
+		t.Fatal("canonical message has no direct Time field")
+	}
+	for range timeField.Index[0] {
 		remaining, err = msgp.Skip(remaining)
 		if err != nil {
 			t.Fatal(err)

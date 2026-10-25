@@ -886,6 +886,9 @@ func (r *Renderer) Messages() []*types.ChatMessage {
 	return r.sync.Messages
 }
 
+// MessageByID resolves the exact retained row for inline action validation.
+func (r *Renderer) MessageByID(id string) *types.ChatMessage { return r.sync.MsgByID[id] }
+
 func (r *Renderer) SourceVersion() uint64 {
 	return r.sync.SourceVersion()
 }

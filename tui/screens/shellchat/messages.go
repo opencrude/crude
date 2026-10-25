@@ -56,6 +56,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	sourceChanged := s.rowsSourceID != paint.SourceID
 	if sourceChanged {
 		s.ResetWheelGesture()
+		s.selection.Clear()
 	}
 	sameRows := !sourceChanged && paint.Generation != 0 && s.rowsGeneration == paint.Generation
 	starts := s.paintState.globalStart

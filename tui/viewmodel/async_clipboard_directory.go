@@ -130,6 +130,10 @@ type appAsyncIOState struct {
 	treeControlSequence     uint64
 	detachedMessageSink     func(tea.Msg)
 	desktopCaches           []string
+	clientIONext            uint64
+	clientIOEpoch           uint64
+	clientIOJobs            map[uint64]context.CancelFunc
+	clientIOWG              sync.WaitGroup
 	editorRecoveryRevisions map[string]uint64
 }
 
@@ -157,6 +161,7 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 		pathSearchIntent:    make(map[*filepickerscreen.Screen]filepickerscreen.IntentToken),
 		treePathSearch:      newTreePathSearchState(),
 		clipboardWorkerDone: make(chan struct{}),
+		clientIOJobs:        make(map[uint64]context.CancelFunc),
 	}
 	state.clipboardCond = sync.NewCond(&state.mu)
 	if m.asyncIO.CompareAndSwap(nil, state) {
@@ -848,6 +853,9 @@ func (m *App) stopAsyncIO() {
 	}
 	state.mu.Lock()
 	state.clipboardClosed = true
+	for _, cancel := range state.clientIOJobs {
+		cancel()
+	}
 	caches := state.desktopCaches
 	state.desktopCaches = nil
 	workerRunning := state.clipboardWorkerRun
@@ -879,6 +887,7 @@ func (m *App) stopAsyncIO() {
 		state.clipboardCond.Broadcast()
 	}
 	state.mu.Unlock()
+	state.clientIOWG.Wait()
 	for _, cache := range caches {
 		_ = os.RemoveAll(cache)
 	}

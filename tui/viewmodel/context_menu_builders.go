@@ -401,6 +401,7 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// Get the path under the click.
 	path := m.pathUnderMouse(mouse)
 	isDir := path != "" && m.Tree.Model.IsDir(path)
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	title := "▤ Explorer"
 	if path != "" {
 		if node := m.Tree.Model.NodeByPath(path); node != nil {
@@ -434,6 +435,11 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Reveal in tree", Disabled: path == "", Action: func() {
 				if path != "" {
 					m.Tree.Model.ExpandToPath(path)
+				}
+			}},
+			{Label: desktopRevealLabel(), Disabled: path == "", Action: func() {
+				if path != "" && m.ws == owner && generation == m.workspaceSwitchGen.Load() {
+					m.runDetachedAsyncCmd(m.revealTreePath(path, isDir))
 				}
 			}},
 		},

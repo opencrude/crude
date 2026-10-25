@@ -274,6 +274,10 @@ Tea's update goroutine (the tab-close hang).
   before a replacement at the same path opens.
 - Language settings, resource limits and lifecycle are specified in
   [settings](settings.md#lsp); merely constructing a manager launches no server.
+- Workspace shutdown publishes terminal admission and server retirement under
+  the manager's same lock, then joins the worker. A worker must never observe
+  `closed` before its owned servers are marked for shutdown: that gap can let the
+  worker exit while an actual language-server process remains alive.
 
 ## Source projections and comparisons
 

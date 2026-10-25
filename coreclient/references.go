@@ -158,12 +158,54 @@ func (r *References) ReadReferenceContent(id string) (string, bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), referenceCallTimeout)
 	defer cancel()
+	current, err := r.current(ctx, id)
+	if err != nil {
+		return "", false, err
+	}
 	result, err := view.ReadReferenceContent(ctx, session, id)
 	if err != nil {
 		return "", false, err
 	}
-	r.adopt(result.View)
+	if err := validateReferenceRead(current, result.View); err != nil {
+		return "", false, err
+	}
 	return string(result.Data), result.ReadOnly, nil
+}
+
+// Bulk metadata deliberately omits Content: those bytes travel once in the
+// verified body. It is not a complete entity and must never replace the replica
+// reference. The opaque revision still fences the entire canonical entity.
+func validateReferenceRead(expected, metadata coreprotocol.ReferenceView) error {
+	projection := expected.Reference
+	projection.Content = ""
+	if expected.Revision == "" || metadata.Revision != expected.Revision || metadata.Reference != projection {
+		return errors.New("attachment changed while reading; open its current reference again")
+	}
+	return nil
+}
+
+// ReadReferenceMedia downloads original bytes through the exact session owner;
+// remote FilePath metadata is never read as a client-local file.
+func (r *References) ReadReferenceMedia(ctx context.Context, expected sessiondb.Reference) ([]byte, error) {
+	view, session, err := r.call()
+	if err != nil {
+		return nil, err
+	}
+	current, err := r.current(ctx, expected.ID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Reference != expected || expected.SessionID != session {
+		return nil, errors.New("attachment changed or belongs to another session")
+	}
+	result, err := view.DownloadReferenceMedia(ctx, session, expected.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateReferenceRead(current, result.View); err != nil {
+		return nil, err
+	}
+	return result.Data, nil
 }
 
 func (r *References) SaveReferenceContent(expected sessiondb.Reference, original, content string) error {
