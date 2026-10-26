@@ -129,6 +129,7 @@ type appAsyncIOState struct {
 	treePathSearch          *treePathSearchState
 	treeControlSequence     uint64
 	detachedMessageSink     func(tea.Msg)
+	detachedCommands        sync.WaitGroup
 	desktopCaches           []string
 	clientIONext            uint64
 	clientIOEpoch           uint64
@@ -740,18 +741,31 @@ func (m *App) invalidateDirectoryAsyncLoad(target *filepickerscreen.Screen) {
 }
 
 func (m *App) runDetachedAsyncCmd(cmd tea.Cmd) {
-	if cmd == nil {
+	if m == nil || cmd == nil || m.asyncIOStopped.Load() {
 		return
 	}
+	state := asyncIOStateFor(m)
+	state.mu.Lock()
+	if m.asyncIOStopped.Load() {
+		state.mu.Unlock()
+		return
+	}
+	// Admit before starting the goroutine so shutdown also owns commands that
+	// have not been scheduled yet. Only the command body is joined: event-bus
+	// delivery may wait for Update, which has already exited during shutdown.
+	state.detachedCommands.Add(1)
+	state.mu.Unlock()
 	go func() {
-		msg := cmd()
+		msg := func() tea.Msg {
+			defer state.detachedCommands.Done()
+			return cmd()
+		}()
 		if msg == nil {
 			return
 		}
 		if m.asyncIOStopped.Load() {
 			return
 		}
-		state := asyncIOStateFor(m)
 		state.mu.Lock()
 		sink := state.detachedMessageSink
 		state.mu.Unlock()
@@ -888,6 +902,7 @@ func (m *App) stopAsyncIO() {
 		state.clipboardCond.Broadcast()
 	}
 	state.mu.Unlock()
+	state.detachedCommands.Wait()
 	state.clientIOWG.Wait()
 	for _, cache := range caches {
 		_ = os.RemoveAll(cache)

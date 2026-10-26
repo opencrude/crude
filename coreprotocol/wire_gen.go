@@ -3696,8 +3696,8 @@ func (z *ConversationUpdate) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CoreStatus) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 11
-	o = append(o, 0x9b)
+	// array header, size 12
+	o = append(o, 0x9c)
 	o = msgp.AppendInt(o, z.PID)
 	o = msgp.AppendString(o, z.BuildID)
 	o = msgp.AppendString(o, z.Executable)
@@ -3719,6 +3719,7 @@ func (z *CoreStatus) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	o = msgp.AppendBool(o, z.Partial)
 	o = msgp.AppendFloat64(o, z.IdleForSeconds)
 	return
 }
@@ -3735,8 +3736,8 @@ func (z *CoreStatus) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 11 {
-		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
+	if zb0001 != 12 {
+		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
 		return
 	}
 	z.PID, bts, err = msgp.ReadIntBytes(bts)
@@ -3811,6 +3812,11 @@ func (z *CoreStatus) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	z.Partial, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Partial")
+		return
+	}
 	z.IdleForSeconds, bts, err = msgp.ReadFloat64Bytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "IdleForSeconds")
@@ -3826,7 +3832,7 @@ func (z *CoreStatus) Msgsize() (s int) {
 	for za0001 := range z.Workspaces {
 		s += z.Workspaces[za0001].Msgsize()
 	}
-	s += msgp.Float64Size
+	s += msgp.BoolSize + msgp.Float64Size
 	return
 }
 
@@ -4125,6 +4131,50 @@ func (z *DecisionResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z DecisionResult) Msgsize() (s int) {
 	s = 1 + msgp.BoolSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *DiagnosticsInspectRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o, err = z.Page.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Page")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DiagnosticsInspectRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	bts, err = z.Page.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Page")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *DiagnosticsInspectRequest) Msgsize() (s int) {
+	s = 1 + z.Page.Msgsize()
 	return
 }
 
@@ -9388,6 +9438,62 @@ func (z *Owner) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z Owner) Msgsize() (s int) {
 	s = 1 + msgp.StringPrefixSize + len(z.ClientID) + msgp.Uint64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *PerformanceInspectRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o, err = z.Page.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Page")
+		return
+	}
+	o = msgp.AppendInt(o, z.Seconds)
+	o = msgp.AppendInt(o, z.Points)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *PerformanceInspectRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	bts, err = z.Page.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Page")
+		return
+	}
+	z.Seconds, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Seconds")
+		return
+	}
+	z.Points, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Points")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *PerformanceInspectRequest) Msgsize() (s int) {
+	s = 1 + z.Page.Msgsize() + msgp.IntSize + msgp.IntSize
 	return
 }
 
@@ -17908,8 +18014,8 @@ func (z *WorkspaceState) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *WorkspaceStatus) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 6
-	o = append(o, 0x96)
+	// array header, size 7
+	o = append(o, 0x97)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Root)
 	o = msgp.AppendInt(o, z.Agents)
@@ -17920,6 +18026,7 @@ func (z *WorkspaceStatus) MarshalMsg(b []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Active")
 		return
 	}
+	o = msgp.AppendString(o, z.ObservationError)
 	return
 }
 
@@ -17935,8 +18042,8 @@ func (z *WorkspaceStatus) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 6 {
-		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+	if zb0001 != 7 {
+		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -17969,13 +18076,18 @@ func (z *WorkspaceStatus) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Active")
 		return
 	}
+	z.ObservationError, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ObservationError")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *WorkspaceStatus) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Root) + msgp.IntSize + msgp.IntSize + msgp.IntSize + (*workspace.ActiveWork)(&z.Active).Msgsize()
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Root) + msgp.IntSize + msgp.IntSize + msgp.IntSize + (*workspace.ActiveWork)(&z.Active).Msgsize() + msgp.StringPrefixSize + len(z.ObservationError)
 	return
 }
 

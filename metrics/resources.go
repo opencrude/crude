@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,13 +17,34 @@ import (
 // Resources is what Crude occupies on this machine when a snapshot is taken:
 // memory and CPU of this process and every process it started (language
 // servers, terminals, commands), the machine's totals, and, from the process
-// that owns Crude's data, disk usage. It is read only by Take, which runs off
-// the UI goroutine and only while the Performance surface is visible.
+// that owns Crude's data, disk usage. It is demand sampled by Take or Inspect
+// off the UI goroutine; hidden presentation never starts a polling loop.
 type Resources struct {
+	// Complete covers required OS figures and returned source rows, including
+	// interval CPU. DiskStatus separately marks an absent or warming disk source.
+	Status         string `json:"status"`
+	MemoryComplete bool   `json:"memory_complete"`
+	CPUComplete    bool   `json:"cpu_complete"`
 	// Processes lists this process first, then its descendants by memory.
-	Processes []ProcessUsage `json:"processes,omitempty"`
-	System    SystemUsage    `json:"system"`
-	Disk      *DiskUsage     `json:"disk,omitempty"`
+	Processes        []ProcessUsage `json:"processes,omitempty"`
+	System           SystemUsage    `json:"system"`
+	Disk             *DiskUsage     `json:"disk,omitempty"`
+	Started          time.Time      `json:"started"`
+	Completed        time.Time      `json:"completed"`
+	ProcessCount     int            `json:"process_count"`
+	ProcessesListed  int            `json:"processes_listed"`
+	ProcessesOmitted int            `json:"processes_omitted"`
+	TreeComplete     bool           `json:"tree_complete"`
+	Complete         bool           `json:"complete"`
+	Errors           []string       `json:"errors,omitempty"`
+	MemoryKnown      int            `json:"memory_known"`
+	CPUKnown         int            `json:"cpu_known"`
+	// Known totals cover every sampled process, not only the listed top rows.
+	MemoryKnownBytes int64   `json:"memory_known_bytes"`
+	CPUKnownPercent  float64 `json:"cpu_known_percent"`
+	DiskStatus       string  `json:"disk_status"`
+	WorkspaceListed  int     `json:"workspace_listed"`
+	WorkspaceOmitted int     `json:"workspace_omitted"`
 }
 
 type ProcessUsage struct {
@@ -33,7 +55,12 @@ type ProcessUsage struct {
 	Memory int64 `json:"memory"`
 	// CPU is the share of one core since the previous snapshot, in percent;
 	// -1 until two snapshots exist.
-	CPU float64 `json:"cpu"`
+	CPU        float64   `json:"cpu"`
+	CreatedMS  int64     `json:"created_ms,omitempty"`
+	SampledAt  time.Time `json:"sampled_at"`
+	PreviousAt time.Time `json:"previous_at,omitzero"`
+	CPUStatus  string    `json:"cpu_status"`
+	Error      string    `json:"error,omitempty"`
 }
 
 type SystemUsage struct {
@@ -41,8 +68,12 @@ type SystemUsage struct {
 	MemoryAvailable int64 `json:"memory_available,omitempty"`
 	// CPU is the machine's busy share of all cores since the previous
 	// snapshot, in percent; -1 until two snapshots exist.
-	CPU  float64 `json:"cpu"`
-	CPUs int     `json:"cpus,omitempty"`
+	CPU        float64   `json:"cpu"`
+	CPUs       int       `json:"cpus,omitempty"`
+	SampledAt  time.Time `json:"sampled_at"`
+	PreviousAt time.Time `json:"previous_at,omitzero"`
+	CPUStatus  string    `json:"cpu_status"`
+	Error      string    `json:"error,omitempty"`
 }
 
 // DiskUsage is the space Crude's data takes. Measuring walks every saved
@@ -105,85 +136,188 @@ func SetDiskSource(source func() *DiskUsage) {
 const processLimit = 24
 
 type cpuSample struct {
-	busy float64 // CPU seconds
-	at   time.Time
+	busy    float64 // CPU seconds
+	at      time.Time
+	created int64
 }
 
 type resourceSampler struct {
-	mu        sync.Mutex
+	mu        contextMutex
 	processes map[int32]cpuSample
 	names     map[int32]string
 	system    struct {
 		busy, total float64
 		set         bool
+		at          time.Time
 	}
 }
 
 var sampler = resourceSampler{processes: map[int32]cpuSample{}, names: map[int32]string{}}
 
-func takeResources() *Resources {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// contextMutex allows a cancelled read to stop waiting for another sampler.
+type contextMutex struct {
+	once  sync.Once
+	token chan struct{}
+}
+
+func (m *contextMutex) init() {
+	m.once.Do(func() { m.token = make(chan struct{}, 1); m.token <- struct{}{} })
+}
+func (m *contextMutex) LockContext(ctx context.Context) error {
+	m.init()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.token:
+		return nil
+	}
+}
+func (m *contextMutex) Lock()   { _ = m.LockContext(context.Background()) }
+func (m *contextMutex) Unlock() { m.token <- struct{}{} }
+
+func takeResources() *Resources { return takeResourcesContext(context.Background(), false) }
+
+func takeResourcesContext(parent context.Context, all bool) *Resources {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
-	out := &Resources{System: SystemUsage{CPU: -1, CPUs: runtime.NumCPU()}}
+	out := &Resources{Started: time.Now(), Complete: true, DiskStatus: "unavailable",
+		System: SystemUsage{CPU: -1, MemoryTotal: -1, MemoryAvailable: -1, CPUs: runtime.NumCPU(), CPUStatus: "unavailable"}}
+	fail := func(err error) {
+		if err != nil {
+			out.Complete = false
+			out.Errors = append(out.Errors, err.Error())
+		}
+	}
+	if err := sampler.mu.LockContext(ctx); err != nil {
+		fail(err)
+		out.Status = "unavailable"
+		out.Completed = time.Now()
+		return out
+	}
+	defer sampler.mu.Unlock()
 	if vm, err := mem.VirtualMemoryWithContext(ctx); err == nil {
 		out.System.MemoryTotal, out.System.MemoryAvailable = int64(vm.Total), int64(vm.Available)
+	} else {
+		fail(err)
+		out.System.Error = err.Error()
 	}
 	self := int32(os.Getpid())
-	tree, _ := descendants(self)
-	sampler.mu.Lock()
-	defer sampler.mu.Unlock()
+	tree, err := descendantsContext(ctx, self)
+	out.TreeComplete = err == nil
+	fail(err)
+	out.ProcessCount = len(tree) + 1
 	if times, err := cpu.TimesWithContext(ctx, false); err == nil && len(times) == 1 {
 		t := times[0]
-		// Guest time is already counted in User on Linux.
 		busy := t.User + t.Nice + t.System + t.Irq + t.Softirq + t.Steal
 		total := busy + t.Idle + t.Iowait
-		if sampler.system.set && total > sampler.system.total {
+		out.System.SampledAt = time.Now()
+		out.System.CPUStatus = "warming_up"
+		if sampler.system.set && total > sampler.system.total && busy >= sampler.system.busy {
 			out.System.CPU = clampPercent((busy-sampler.system.busy)/(total-sampler.system.total)*100, 100)
+			out.System.PreviousAt = sampler.system.at
+			out.System.CPUStatus = "available"
 		}
-		sampler.system.busy, sampler.system.total, sampler.system.set = busy, total, true
+		sampler.system.busy, sampler.system.total, sampler.system.set, sampler.system.at = busy, total, true, out.System.SampledAt
+	} else if err != nil {
+		fail(err)
+		out.System.Error = err.Error()
 	}
-	now := time.Now()
 	seen := make(map[int32]bool, len(tree)+1)
 	read := func(pid, parent int32) ProcessUsage {
-		usage := ProcessUsage{PID: pid, Parent: parent, Memory: -1, CPU: -1}
+		usage := ProcessUsage{PID: pid, Parent: parent, Memory: -1, CPU: -1, CPUStatus: "unavailable"}
 		seen[pid] = true
 		p := &gproc.Process{Pid: pid}
+		var errors []string
+		created, identityErr := p.CreateTimeWithContext(ctx)
+		if identityErr != nil {
+			errors = append(errors, "creation identity: "+identityErr.Error())
+		}
+		usage.CreatedMS = created
+		if last, ok := sampler.processes[pid]; !ok || created == 0 || last.created != created {
+			delete(sampler.names, pid)
+			delete(sampler.processes, pid)
+		}
 		if info, err := p.MemoryInfoWithContext(ctx); err == nil {
 			usage.Memory = int64(info.RSS)
+		} else {
+			errors = append(errors, "memory: "+err.Error())
 		}
 		if times, err := p.TimesWithContext(ctx); err == nil {
-			busy := times.User + times.System
-			if last, ok := sampler.processes[pid]; ok && now.After(last.at) && busy >= last.busy {
-				usage.CPU = (busy - last.busy) / now.Sub(last.at).Seconds() * 100
+			sample := cpuSample{busy: times.User + times.System, at: time.Now(), created: created}
+			usage.SampledAt = sample.at
+			usage.CPU, usage.PreviousAt = processCPU(sampler.processes[pid], sample)
+			usage.CPUStatus = "warming_up"
+			if usage.CPU >= 0 {
+				usage.CPUStatus = "available"
 			}
-			sampler.processes[pid] = cpuSample{busy: busy, at: now}
+			if created == 0 {
+				usage.CPUStatus = "identity_unavailable"
+			}
+			sampler.processes[pid] = sample
+		} else {
+			errors = append(errors, "cpu: "+err.Error())
 		}
 		name, ok := sampler.names[pid]
 		if !ok {
-			name, _ = p.NameWithContext(ctx)
-			sampler.names[pid] = name
+			var nameErr error
+			name, nameErr = p.NameWithContext(ctx)
+			if nameErr != nil {
+				errors = append(errors, "name: "+nameErr.Error())
+			} else {
+				sampler.names[pid] = name
+			}
 		}
 		usage.Name = name
+		usage.Error = strings.Join(errors, "; ")
+		if usage.Error != "" {
+			out.Complete = false
+		}
 		return usage
 	}
-	out.Processes = append(out.Processes, read(self, 0))
+	if ctx.Err() == nil {
+		out.Processes = append(out.Processes, read(self, 0))
+	}
 	children := make([]ProcessUsage, 0, len(tree))
 	for _, node := range tree {
+		if ctx.Err() != nil {
+			break
+		}
 		children = append(children, read(node.pid, node.parent))
 	}
+	out.Processes = append(out.Processes, children...)
+	for _, p := range out.Processes {
+		if p.Memory >= 0 {
+			out.MemoryKnown++
+			out.MemoryKnownBytes += p.Memory
+		}
+		if p.CPU >= 0 {
+			out.CPUKnown++
+			out.CPUKnownPercent += p.CPU
+		}
+	}
 	slices.SortStableFunc(children, func(a, b ProcessUsage) int {
-		switch {
-		case a.Memory > b.Memory:
+		if a.Memory > b.Memory {
 			return -1
-		case a.Memory < b.Memory:
+		}
+		if a.Memory < b.Memory {
 			return 1
 		}
-		return int(a.PID - b.PID)
+		if a.PID < b.PID {
+			return -1
+		}
+		if a.PID > b.PID {
+			return 1
+		}
+		return 0
 	})
-	if len(children) > processLimit {
+	if !all && len(children) > processLimit {
 		children = children[:processLimit]
 	}
-	out.Processes = append(out.Processes, children...)
+	if len(out.Processes) > 0 {
+		out.Processes = append(out.Processes[:1], children...)
+	}
+	out.ProcessesListed = len(out.Processes)
+	out.ProcessesOmitted = out.ProcessCount - out.ProcessesListed
 	for pid := range sampler.processes {
 		if !seen[pid] {
 			delete(sampler.processes, pid)
@@ -193,10 +327,52 @@ func takeResources() *Resources {
 	diskMu.Lock()
 	source := diskSource
 	diskMu.Unlock()
-	if source != nil {
-		out.Disk = source()
+	if source != nil && ctx.Err() == nil {
+		out.Disk = source() // owner contract: prompt, latest immutable value; no synchronous scan
+		if out.Disk != nil {
+			copy := *out.Disk
+			copy.Parts = slices.Clone(copy.Parts)
+			copy.Workspaces = slices.Clone(copy.Workspaces)
+			out.Disk = &copy
+			out.WorkspaceListed = len(copy.Workspaces)
+			out.WorkspaceOmitted = max(copy.WorkspaceCount-len(copy.Workspaces), 0)
+			switch {
+			case copy.Err != "":
+				out.DiskStatus = "error"
+				out.Complete = false
+			case copy.MeasuredAt.IsZero():
+				out.DiskStatus = "warming_up"
+			case out.WorkspaceOmitted > 0:
+				out.DiskStatus = "partial"
+			default:
+				out.DiskStatus = "available"
+			}
+		}
 	}
+	fail(ctx.Err())
+	out.MemoryComplete = out.TreeComplete && out.MemoryKnown == out.ProcessCount
+	out.CPUComplete = out.TreeComplete && out.CPUKnown == out.ProcessCount
+	out.Complete = out.Complete && out.MemoryComplete && out.CPUComplete && out.System.CPU >= 0 && out.System.MemoryTotal >= 0 && out.System.MemoryAvailable >= 0
+	out.Status = "partial"
+	if out.Complete {
+		out.Status = "available"
+	} else if out.TreeComplete && out.MemoryComplete && out.CPUKnown == 0 && len(out.Errors) == 0 {
+		out.Status = "warming_up"
+	}
+	if out.ProcessesOmitted > 0 || out.DiskStatus == "partial" || out.DiskStatus == "error" {
+		out.Complete = false
+		out.Status = "partial"
+	}
+	out.Completed = time.Now()
 	return out
+}
+
+// CPU baselines are valid only for the same OS process creation identity.
+func processCPU(last, current cpuSample) (float64, time.Time) {
+	if current.created == 0 || last.created != current.created || !current.at.After(last.at) || current.busy < last.busy {
+		return -1, time.Time{}
+	}
+	return (current.busy - last.busy) / current.at.Sub(last.at).Seconds() * 100, last.at
 }
 
 func clampPercent(v, limit float64) float64 {
@@ -205,14 +381,15 @@ func clampPercent(v, limit float64) float64 {
 
 type pidParent struct{ pid, parent int32 }
 
-// descendants lists every process below root, parents before children.
-func descendants(root int32) ([]pidParent, error) {
-	parents, err := processParents()
-	if err != nil {
-		return nil, err
-	}
+// descendantsContext lists every process below root, parents before children.
+func descendantsContext(ctx context.Context, root int32) ([]pidParent, error) {
+	parents, err := processParents(ctx)
+	treeErr := err
 	children := make(map[int32][]int32)
 	for pid, parent := range parents {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if pid != parent {
 			children[parent] = append(children[parent], pid)
 		}
@@ -221,6 +398,9 @@ func descendants(root int32) ([]pidParent, error) {
 	queue := []int32{root}
 	visited := map[int32]bool{root: true}
 	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		parent := queue[0]
 		queue = queue[1:]
 		kids := children[parent]
@@ -234,5 +414,5 @@ func descendants(root int32) ([]pidParent, error) {
 			queue = append(queue, pid)
 		}
 	}
-	return out, nil
+	return out, treeErr
 }

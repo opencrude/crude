@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 
 	"github.com/tinylib/msgp/msgp"
-	_ "modernc.org/sqlite"
 )
 
 // MarshalMsg implements msgp.Marshaler

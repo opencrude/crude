@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -231,6 +232,65 @@ func TestWorkspaceSwitchAppliesTargetThemeAndClearsProjectDraft(t *testing.T) {
 	if app.FocusStack.Top() != FocusNone || app.ActiveSession != nil {
 		t.Fatal("successful workspace switch retained old shell selection or focus")
 	}
+}
+
+func TestWorkspaceSwitchShutdownJoinsDetachedCommand(t *testing.T) {
+	app := newWorkspaceSwitchLifecycleApp(t, t.TempDir())
+	if err := app.SwitchProject(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	started, release, completed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	app.runDetachedAsyncCmd(func() tea.Msg {
+		close(started)
+		<-release // Model a storage operation that cannot be interrupted mid-write.
+		close(completed)
+		return nil
+	})
+	<-started
+	defer close(release)
+
+	// Observe actual shutdown cancellation, not scheduler timing, before
+	// asserting that teardown still owns the blocked command.
+	cancelled := make(chan struct{})
+	clientStarted := make(chan struct{})
+	go app.clientIOCommand(context.Background(), func(ctx context.Context) tea.Msg {
+		close(clientStarted)
+		<-ctx.Done()
+		close(cancelled)
+		return nil
+	})()
+	<-clientStarted
+	done := make(chan struct{})
+	go func() {
+		app.StopAsyncIO()
+		close(done)
+	}()
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not cancel client I/O")
+	}
+	select {
+	case <-done:
+		t.Fatal("shutdown returned while a detached storage command was still running")
+	case <-time.After(25 * time.Millisecond):
+	}
+	// Release before the fixture's normal StopAsyncIO cleanup runs.
+	release <- struct{}{}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not join the released detached command")
+	}
+	select {
+	case <-completed:
+	default:
+		t.Fatal("shutdown finished before the detached command completed")
+	}
+	app.runDetachedAsyncCmd(func() tea.Msg {
+		t.Error("shutdown admitted a late detached command")
+		return nil
+	})
 }
 
 func TestTreeReadyReplacesAndStopsRestoredPlaceholderWatcher(t *testing.T) {

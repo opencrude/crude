@@ -83,8 +83,9 @@ the core each own a registry, and the app-level Performance surface (bottom-bar
 **Performance**, palette "Performance", `tui/screens/perfdash/`) reads both, the
 core's through `coreprotocol.CoreMetricsMethod`. An observation is a clock read,
 a ring-slot update and, past the series' stall threshold, one bounded event (about 80 ns, no
-allocation, no I/O). Snapshots are taken off `Update` and only while the surface
-is visible; the footer's Performance pill is always available, including without
+allocation, no I/O). Dashboard snapshots are taken off `Update` and only while the surface
+is visible; explicit semantic diagnostic reads collect on demand without opening
+it. The footer's Performance pill is always available, including without
 a session, and moves into **More** on narrow terminals. Recent UI stalls
 (`ui.update`, `ui.view`, `ui.blocking`) or slow input change its severity. It is
 not a session slash command. Third-party Bubble Tea
@@ -92,17 +93,17 @@ hands frames, resizes and control sequences to the renderer under `viewMu`
 only and writes the terminal under `flushMu`, so a slow console never blocks
 the next `Update` (`third_party/bubbletea/observer_test.go`).
 
-**Resources** (second tab) shows what Crude occupies on the machine: resident
+**Resources** (second tab) shows what Crude occupies on each attributable machine: resident
 memory and CPU of the shell, the core and every process they started
-(terminals, language servers, commands; the core is counted once even when
-the shell started it), the machine's memory and CPU, and Crude's data folder
+(terminals, language servers, commands; core/shell trees are deduplicated only
+when Linux boot identity and process creation time prove equivalence), the machine's memory and CPU, and Crude's data folder
 by part and by saved workspace (sessions, Local History, worktrees), with the
 workspaces whose project folder no longer exists. The Overview's Memory and
 CPU tiles are these OS figures; Go heap and runtime CPU stay under Runtime.
 Low disk space (under 10% free, critical under 5%) and memory pressure are
 findings. Process and machine figures come from gopsutil and are read only
-inside `metrics.Take` (`metrics/resources.go`), so they cost nothing while the
-surface is hidden; each platform builds the process tree in one pass
+inside demand snapshot collection (`metrics/resources.go`), so a hidden surface
+starts no periodic sampler; an explicit diagnostic read may request them. Each platform builds the process tree in one pass
 (`/proc`, one Toolhelp snapshot, or the OS process list). Disk usage walks
 every saved file, so the core's `workspace.DataUsage` measures in the
 background at most once a minute, only when a snapshot asks, and `Take`
@@ -110,6 +111,23 @@ returns the latest result; each workspace's project folder is read from its
 database once per core. On the user's 15 GB data folder (4,753 workspaces)
 the first measurement takes about 5 s in the background and later ones about
 0.25 s.
+
+Semantic `performance.core` and `performance.shell` expose the same process-owned
+histogram/counter/gauge/table aggregation, with summary-first bounded immutable
+pages and optional points. `perfdata/` owns findings and headlines for both the
+dashboard and agents; presentation does not own another diagnosis rule set.
+`core.queue` is sampled from current channel occupancy across retained actors,
+including a stalled actor, removing stopped owners. The existing metric sampler
+is its single writer, not a last-writer-wins per-actor value. Per-workspace capacities
+and applied-ACK pressure come from existing runtime/topic owners through
+`diagnostics.core`; see [diagnostic bounds](control-contract.md#on-demand-diagnostics).
+Resource samples carry timing, CPU warmup and known/omitted counts; unknown or
+cross-host figures never become a healthy zero or combined machine total.
+Diagnosis uses one-second UI busy peaks and gauge window-edge values independent
+of requested chart-point geometry. Keyed tables retain bounded row summaries for
+diagnosis beyond the top-24 display rows; the display cap cannot hide a rare slow
+owner or alter its share denominator. `UI busy` sums `ui.update` and `ui.view`,
+never double-counts attributed `ui.blocking` inside them.
 
 Measured on the user's sessions:
 

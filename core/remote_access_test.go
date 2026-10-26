@@ -49,7 +49,13 @@ func TestRemoteAccessPairAuthenticateRevokeDurable(t *testing.T) {
 	if _, err = s.Pair(t.Context(), coreprotocol.RemotePairRequest{Code: code.Code, DeviceName: "Replay"}); !errors.Is(err, ErrRemoteCredential) {
 		t.Fatalf("pair code reused: %v", err)
 	}
-	for _, bad := range []string{"", credential.Token[:len(credential.Token)-1], "x" + credential.Token[1:], credential.Token + "x"} {
+	// Change the token deterministically: a random token can itself begin with
+	// x, in which case the former negative fixture was a valid credential.
+	changed := "x"
+	if credential.Token[0] == 'x' {
+		changed = "y"
+	}
+	for _, bad := range []string{"", credential.Token[:len(credential.Token)-1], changed + credential.Token[1:], credential.Token + "x"} {
 		if _, err = s.Authenticate(t.Context(), credential.DeviceID, bad); !errors.Is(err, ErrRemoteCredential) {
 			t.Fatalf("bad token accepted: %v", err)
 		}

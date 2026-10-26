@@ -54,6 +54,7 @@ var payloadRoots = []string{
 	"crude/types.CompactResultMsg",
 	"crude/types/capability.HostReply",
 	"crude/types/control.Result",
+	"crude/types/inspect.Page",
 	"crude/sessiondb.NullInt64",
 	"crude/sessiondb.NullString",
 	"crude/workspace.BrowserCatalog",

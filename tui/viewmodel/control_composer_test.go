@@ -63,6 +63,13 @@ func TestProductComposerExactOwnDraftStaging(t *testing.T) {
 		t.Fatal("unadmitted send bypassed core admission", result)
 	}
 	m.Input, _, _ = m.Input.Update(tea.PasteMsg{Content: strings.Repeat("x", 4096)}, false, false)
+	result = productRequest(t, m, "composer.inspect", id, session, struct{}{}, nil)
+	var pending struct {
+		PendingPastes bool `json:"pending_pastes"`
+	}
+	if json.Unmarshal(result.Output, &pending) != nil || !pending.PendingPastes {
+		t.Fatal("send barrier unavailable to semantic observers", result)
+	}
 	result = productRequest(t, m, "composer.send", id, session, struct{}{}, nil)
 	if result.State != control.Failed || result.Fault.Code != control.Unavailable || m.Input.Value() != "staged own draft" || !m.Input.HasPendingPastes() {
 		t.Fatal("pending attachment barrier bypassed", result)

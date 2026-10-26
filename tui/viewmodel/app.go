@@ -48,6 +48,7 @@ import (
 	"crude/tui/wm"
 	roottypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/inspect"
 	"crude/workspace"
 )
 
@@ -65,6 +66,7 @@ type App struct {
 	shellControlRevision uint64
 	shellControlStamp    [32]byte
 	shellControlPending  int
+	diagnosticReads      inspect.Store
 
 	// Focus belongs to this shell, never to the workspace runtime. A second
 	// shell must not observe or reset another shell's navigation stack.

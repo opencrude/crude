@@ -70,10 +70,15 @@ type WorkspaceStatus struct {
 	Sessions   int        `json:"sessions"`
 	Operations int        `json:"operations"`
 	Active     ActiveWork `json:"active"`
+	// ObservationError means these counters could not be read on their owner.
+	// Unknown work is busy for every lifetime decision, never an idle zero.
+	ObservationError string `json:"observation_error,omitempty"`
 }
 
 // Busy reports active work or in-flight workspace operations.
-func (w WorkspaceStatus) Busy() bool { return w.Active.Any() || w.Operations > 0 }
+func (w WorkspaceStatus) Busy() bool {
+	return w.ObservationError != "" || w.Active.Any() || w.Operations > 0
+}
 
 type CoreStatus struct {
 	PID int `json:"pid"`
@@ -90,6 +95,7 @@ type CoreStatus struct {
 	Opening        int               `json:"opening"`
 	Draining       bool              `json:"draining"`
 	Workspaces     []WorkspaceStatus `json:"workspaces"`
+	Partial        bool              `json:"partial"`
 	IdleForSeconds float64           `json:"idle_for_seconds"`
 }
 

@@ -28,6 +28,7 @@ import (
 	"crude/provider"
 	"crude/types"
 	"crude/types/control"
+	"crude/types/inspect"
 	"crude/workspace"
 )
 
@@ -61,6 +62,9 @@ type Runtime struct {
 	grace    time.Duration
 	remoteMu sync.Mutex // serializes remote admission with live revocation
 	remote   *RemoteAccess
+	// Explicit reads retain bounded immutable evidence, never domain state.
+	inspections  inspect.Store
+	diagnosticWG sync.WaitGroup // registered under mu; joined before workspace DB close
 }
 
 func New(factory Factory, receiptPath string) (*Runtime, error) {
@@ -286,6 +290,7 @@ func (r *Runtime) Close() error {
 		go func() { defer clientsClosed.Done(); c.Close() }()
 	}
 	clientsClosed.Wait()
+	r.diagnosticWG.Wait()
 	r.factoryWG.Wait()
 	r.mu.Lock()
 	actors := make([]*actor, 0, len(r.workspaces))
@@ -387,7 +392,14 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 		if err := decodeRequest(request, &query); err != nil {
 			return finish(fault(request, "invalid_request", err.Error()))
 		}
-		return finish(response(request, metrics.Take(query)))
+		snapshot, err := metrics.TakeContext(ctx, query)
+		if err != nil {
+			return finish(fault(request, "metrics_unavailable", err.Error()))
+		}
+		return finish(response(request, snapshot))
+	}
+	if request.Method == coreprotocol.CorePerformanceInspect || request.Method == coreprotocol.CoreDiagnosticsInspect {
+		return c.dispatchDiagnostics(ctx, request)
 	}
 	if request.Method == coreprotocol.CoreStatusMethod || request.Method == coreprotocol.CoreShutdownMethod {
 		return finish(c.runtime.coreMethod(ctx, c, request))
@@ -590,6 +602,11 @@ type actor struct {
 	retiring       bool // actor-owned admission fence before off-actor shutdown
 	idleFenced     bool
 	controlWorkers atomic.Int32
+	// Independent read admission shares this actor's existing resource lifetime.
+	// No read may retain ws services after saved-workspace retirement closes them.
+	diagnosticMu      sync.Mutex
+	diagnosticClosing bool
+	diagnosticReads   sync.WaitGroup
 	// terminalLane orders PTY effects independently of documents, files and
 	// language servers, so their slow work never delays a keystroke.
 	terminalLane     *resourceLane
@@ -728,6 +745,8 @@ func (a *actor) serviceEvent(message any) {
 }
 
 func (a *actor) run() {
+	trackActorQueue(a, true)
+	defer trackActorQueue(a, false)
 	defer close(a.done)
 	defer a.cancel()
 	defer a.maintenance.stop()
@@ -800,7 +819,6 @@ func (a *actor) run() {
 			}
 			a.refreshMaintenance()
 		}
-		coreQueue.Set(int64(len(a.commands) + len(a.ingress) + len(a.serviceEvents) + len(a.jobs)))
 	}
 }
 
@@ -874,8 +892,6 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 			c := command.control
 			err := errors.New("core shutdown owns workspace admission")
 			switch {
-			case c.describe != nil:
-				c.describe <- controlDescribeResult{err: err}
 			case c.resolve != nil:
 				c.resolve <- controlResolveResult{err: err}
 			case c.observe != nil:
@@ -1008,12 +1024,16 @@ func (a *actor) call(ctx context.Context, c *Connection, request coreprotocol.Re
 }
 func (a *actor) close() {
 	a.once.Do(func() {
+		a.diagnosticMu.Lock()
+		a.diagnosticClosing = true
+		a.diagnosticMu.Unlock()
 		close(a.stop)
 		a.fileWatch.Close()
 		if a.stopGitFetch != nil {
 			a.stopGitFetch()
 		}
 		<-a.done
+		a.diagnosticReads.Wait()
 		a.states.wg.Wait()
 		a.resourceLane.close()
 		a.terminalLane.close()

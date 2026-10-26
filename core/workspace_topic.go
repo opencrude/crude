@@ -206,10 +206,12 @@ func (c *Connection) serveWorkspaceTopic(ctx context.Context, s corewire.Stream,
 	defer stop()
 	since := open.Since
 	reset := since == 0
+	resetReason := "initial_snapshot"
 	for {
 		entry, wake, covered := a.topic.hub.next(since)
 		if !covered {
 			reset = true
+			resetReason = "journal_gap"
 		}
 		if reset {
 			u, seq, err := c.workspaceTopicSnapshot(ctx, a)
@@ -220,6 +222,7 @@ func (c *Connection) serveWorkspaceTopic(ctx context.Context, s corewire.Stream,
 				return
 			}
 			since = seq
+			observeTopicSent(ctx, seq, resetReason)
 			reset = false
 		} else if entry.body != nil {
 			m := corewire.NewMessage()
@@ -231,6 +234,7 @@ func (c *Connection) serveWorkspaceTopic(ctx context.Context, s corewire.Stream,
 				return
 			}
 			since = entry.seq
+			observeTopicSent(ctx, entry.seq, "")
 		} else {
 			select {
 			case <-wake:
@@ -251,6 +255,7 @@ func (c *Connection) serveWorkspaceTopic(ctx context.Context, s corewire.Stream,
 		if coreprotocol.Decode(body, &ack) != nil || ack.Seq != since {
 			return
 		}
+		observeTopicAck(ctx, ack.Seq, ack.DisplayIntervalNS)
 		c.mu.Lock()
 		attached := c.attached[open.WorkspaceID] == a
 		c.mu.Unlock()

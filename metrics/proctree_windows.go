@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"errors"
 	"unsafe"
 
@@ -8,7 +9,7 @@ import (
 )
 
 // processParents reads every process's parent from one Toolhelp snapshot.
-func processParents() (map[int32]int32, error) {
+func processParents(ctx context.Context) (map[int32]int32, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, err
@@ -17,6 +18,9 @@ func processParents() (map[int32]int32, error) {
 	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
 	out := make(map[int32]int32)
 	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		out[int32(entry.ProcessID)] = int32(entry.ParentProcessID)
 	}
 	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {

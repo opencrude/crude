@@ -16,14 +16,15 @@ import (
 const controlReceiptLimit = 256
 
 type controlReceipt struct {
-	workspace string
-	request   control.Request
-	readOnly  bool
-	digest    [32]byte
-	done      chan struct{}
-	result    control.Result
-	finished  bool
-	bytes     int
+	workspace   string
+	request     control.Request
+	readOnly    bool
+	digest      [32]byte
+	done        chan struct{}
+	result      control.Result
+	finished    bool
+	bytes       int
+	replyDigest [32]byte
 }
 
 func (c *Connection) Controls() <-chan coreprotocol.ControlEnvelope { return c.controls }
@@ -212,14 +213,19 @@ func (c *Connection) controlMethod(request coreprotocol.Request) coreprotocol.Re
 	if err := decodeRequest(request, &result); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
-	if err := coreprotocol.ValidateControlResult(result); err != nil {
-		return fault(request, "invalid_request", err.Error())
-	}
 	p := c.controlReceipts[result.RequestID]
 	if !c.controlRegistered[request.WorkspaceID] || p == nil || p.workspace != request.WorkspaceID {
 		return fault(request, "stale_control", "reply does not own an admitted control request")
 	}
+	raw, _ := coreprotocol.Marshal(&result)
+	replyDigest := sha256.Sum256(raw)
 	if p.finished {
+		if p.replyDigest != ([32]byte{}) {
+			if p.replyDigest != replyDigest {
+				return fault(request, "stale_control", "control result is immutable")
+			}
+			return response(request, coreprotocol.Empty{})
+		}
 		old, _ := json.Marshal(p.result)
 		next, _ := json.Marshal(result)
 		if string(old) != string(next) {
@@ -227,10 +233,20 @@ func (c *Connection) controlMethod(request coreprotocol.Request) coreprotocol.Re
 		}
 		return response(request, coreprotocol.Empty{})
 	}
+	// A decoded reply from the exact admitted owner is a terminal outcome, even
+	// if its presentation data is invalid. Rejecting it without completing the
+	// waiter would hide a known effect behind an eventual timeout.
+	result = coreprotocol.BoundControlResult(p.request, result, !p.readOnly)
 	b, _ := json.Marshal(result)
 	if c.controlBytes-p.bytes+len(b) > coreprotocol.ControlMaxQueuedBytes {
-		return fault(request, "busy", "control receipt byte capacity exceeded")
+		result.Output = nil
+		result.Fault = &control.Fault{Code: control.OperationFailed, Message: "control receipt byte capacity exceeded; inspect the original operation receipt, do not repeat a mutation"}
+		result.State = control.Failed
+		if !p.readOnly {
+			result.State = control.Partial
+		}
 	}
+	p.replyDigest = replyDigest
 	c.finishControlLocked(p, result)
 	return response(request, coreprotocol.Empty{})
 }

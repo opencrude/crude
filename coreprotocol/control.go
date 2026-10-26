@@ -94,3 +94,31 @@ func ValidateControlResult(r control.Result) error {
 	}
 	return nil
 }
+
+// BoundControlResult enforces semantic value and transport limits before a final
+// reply or durable receipt is published. Valid committed identities survive a
+// malformed owner result; invalid presentation data cannot cause a reply timeout.
+func BoundControlResult(request control.Request, result control.Result, mutation bool) control.Result {
+	result = control.BoundResult(request, result, mutation)
+	if ValidateControlResult(result) == nil {
+		return result
+	}
+	out := control.Result{RequestID: request.ID, OperationID: request.ID, State: control.Failed,
+		Fault: &control.Fault{Code: control.OperationFailed, Message: "control result exceeds transport bounds; inspect the original operation receipt without repeating a mutation"}}
+	if mutation && result.State != control.Failed {
+		out.State = control.Partial
+		if result.State == control.Uncertain {
+			out.State = control.Uncertain
+		}
+	}
+	if controlID(result.OperationID, false) {
+		out.OperationID = result.OperationID
+	}
+	for _, id := range result.ResourceIDs {
+		if controlID(id, false) {
+			out.ResourceIDs = append(out.ResourceIDs, id)
+		}
+	}
+	out.Output, out.Revision = result.Output, result.Revision
+	return out
+}

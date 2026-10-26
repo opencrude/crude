@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -10,6 +11,58 @@ import (
 	"testing"
 	"time"
 )
+
+func TestWorkspaceCatalogBriefBusyPreservesCommittedMetadata(t *testing.T) {
+	setTestHome(t)
+	project := t.TempDir()
+	wdb, err := OpenWorkspaceDB(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wdb.RecordAccess(t.Context(), time.Unix(0, 123)); err != nil {
+		t.Fatal(err)
+	}
+	if err := wdb.RegisterSession("committed-session", project, "project", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	path := wdb.Path
+	if err := wdb.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := sql.Open("sqlite", fileURI(path)+"?_pragma=journal_mode(DELETE)&_pragma=locking_mode(EXCLUSIVE)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+	if _, err := writer.Exec("BEGIN EXCLUSIVE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = writer.Exec("ROLLBACK") }()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	read := make(chan *WorkspaceInfo, 1)
+	go func() { read <- readWorkspaceMetaBounded(ctx, path, 150*time.Millisecond) }()
+	select {
+	case info := <-read:
+		t.Fatalf("brief SQLite contention erased committed catalog metadata: %+v", info)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if _, err := writer.Exec("ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	// Exclusive connection mode retains the lock until the owner closes.
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case info := <-read:
+		if info == nil || info.ProjectDir != canonicalizePath(project) || info.LastAccessed != 123 || info.SessionCount != 1 {
+			t.Fatalf("catalog lost identity, recency or count after a bounded read-only retry: %+v", info)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
 
 func denseCatalogFixture(tb testing.TB) []string {
 	tb.Helper()

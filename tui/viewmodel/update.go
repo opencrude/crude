@@ -149,6 +149,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleShellControl(msg)
 	case shellControlDoneMsg:
 		return m, m.finishShellControl(msg)
+	case diagnosticControlDoneMsg:
+		return m, m.finishDiagnosticControl(msg)
 	case shellControlReplyMsg:
 		if msg.err != nil {
 			m.ws.Logger().Warn("CONTROL", "reply_failed", "error", msg.err.Error())

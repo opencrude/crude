@@ -484,8 +484,8 @@ func (z GaugePoint) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *GaugeSeries) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 9
+	o = append(o, 0x99)
 	o, err = z.Meta.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "Meta")
@@ -505,6 +505,11 @@ func (z *GaugeSeries) MarshalMsg(b []byte) (o []byte, err error) {
 	}
 	o = msgp.AppendInt64(o, z.Current)
 	o = msgp.AppendInt64(o, z.Peak)
+	o = msgp.AppendBool(o, z.Observed)
+	o = msgp.AppendTime(o, z.CurrentAt)
+	o = msgp.AppendInt64(o, z.WindowFirst)
+	o = msgp.AppendInt64(o, z.WindowLast)
+	o = msgp.AppendBool(o, z.WindowObserved)
 	return
 }
 
@@ -520,8 +525,8 @@ func (z *GaugeSeries) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	bts, err = z.Meta.UnmarshalMsg(bts)
@@ -590,13 +595,38 @@ func (z *GaugeSeries) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Peak")
 		return
 	}
+	z.Observed, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Observed")
+		return
+	}
+	z.CurrentAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CurrentAt")
+		return
+	}
+	z.WindowFirst, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WindowFirst")
+		return
+	}
+	z.WindowLast, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WindowLast")
+		return
+	}
+	z.WindowObserved, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WindowObserved")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *GaugeSeries) Msgsize() (s int) {
-	s = 1 + z.Meta.Msgsize() + msgp.ArrayHeaderSize + (len(z.Points) * (14 + msgp.Int64Size + msgp.Int64Size + msgp.BoolSize)) + msgp.Int64Size + msgp.Int64Size
+	s = 1 + z.Meta.Msgsize() + msgp.ArrayHeaderSize + (len(z.Points) * (14 + msgp.Int64Size + msgp.Int64Size + msgp.BoolSize)) + msgp.Int64Size + msgp.Int64Size + msgp.BoolSize + msgp.TimeSize + msgp.Int64Size + msgp.Int64Size + msgp.BoolSize
 	return
 }
 
@@ -856,13 +886,18 @@ func (z *Meta) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ProcessUsage) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 5
-	o = append(o, 0x95)
+	// array header, size 10
+	o = append(o, 0x9a)
 	o = msgp.AppendInt32(o, z.PID)
 	o = msgp.AppendInt32(o, z.Parent)
 	o = msgp.AppendString(o, z.Name)
 	o = msgp.AppendInt64(o, z.Memory)
 	o = msgp.AppendFloat64(o, z.CPU)
+	o = msgp.AppendInt64(o, z.CreatedMS)
+	o = msgp.AppendTime(o, z.SampledAt)
+	o = msgp.AppendTime(o, z.PreviousAt)
+	o = msgp.AppendString(o, z.CPUStatus)
+	o = msgp.AppendString(o, z.Error)
 	return
 }
 
@@ -878,8 +913,8 @@ func (z *ProcessUsage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 5 {
-		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
 	}
 	z.PID, bts, err = msgp.ReadInt32Bytes(bts)
@@ -907,13 +942,38 @@ func (z *ProcessUsage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "CPU")
 		return
 	}
+	z.CreatedMS, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CreatedMS")
+		return
+	}
+	z.SampledAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SampledAt")
+		return
+	}
+	z.PreviousAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "PreviousAt")
+		return
+	}
+	z.CPUStatus, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CPUStatus")
+		return
+	}
+	z.Error, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Error")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ProcessUsage) Msgsize() (s int) {
-	s = 1 + msgp.Int32Size + msgp.Int32Size + msgp.StringPrefixSize + len(z.Name) + msgp.Int64Size + msgp.Float64Size
+	s = 1 + msgp.Int32Size + msgp.Int32Size + msgp.StringPrefixSize + len(z.Name) + msgp.Int64Size + msgp.Float64Size + msgp.Int64Size + msgp.TimeSize + msgp.TimeSize + msgp.StringPrefixSize + len(z.CPUStatus) + msgp.StringPrefixSize + len(z.Error)
 	return
 }
 
@@ -966,8 +1026,11 @@ func (z Query) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Resources) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 3
-	o = append(o, 0x93)
+	// array header, size 21
+	o = append(o, 0xdc, 0x0, 0x15)
+	o = msgp.AppendString(o, z.Status)
+	o = msgp.AppendBool(o, z.MemoryComplete)
+	o = msgp.AppendBool(o, z.CPUComplete)
 	if z.Processes == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -994,6 +1057,28 @@ func (z *Resources) MarshalMsg(b []byte) (o []byte, err error) {
 			return
 		}
 	}
+	o = msgp.AppendTime(o, z.Started)
+	o = msgp.AppendTime(o, z.Completed)
+	o = msgp.AppendInt(o, z.ProcessCount)
+	o = msgp.AppendInt(o, z.ProcessesListed)
+	o = msgp.AppendInt(o, z.ProcessesOmitted)
+	o = msgp.AppendBool(o, z.TreeComplete)
+	o = msgp.AppendBool(o, z.Complete)
+	if z.Errors == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Errors)))
+		for za0002 := range z.Errors {
+			o = msgp.AppendString(o, z.Errors[za0002])
+		}
+	}
+	o = msgp.AppendInt(o, z.MemoryKnown)
+	o = msgp.AppendInt(o, z.CPUKnown)
+	o = msgp.AppendInt64(o, z.MemoryKnownBytes)
+	o = msgp.AppendFloat64(o, z.CPUKnownPercent)
+	o = msgp.AppendString(o, z.DiskStatus)
+	o = msgp.AppendInt(o, z.WorkspaceListed)
+	o = msgp.AppendInt(o, z.WorkspaceOmitted)
 	return
 }
 
@@ -1009,8 +1094,23 @@ func (z *Resources) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 3 {
-		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+	if zb0001 != 21 {
+		err = msgp.ArrayError{Wanted: 21, Got: zb0001}
+		return
+	}
+	z.Status, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Status")
+		return
+	}
+	z.MemoryComplete, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "MemoryComplete")
+		return
+	}
+	z.CPUComplete, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CPUComplete")
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -1061,13 +1161,110 @@ func (z *Resources) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 	}
+	z.Started, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Started")
+		return
+	}
+	z.Completed, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Completed")
+		return
+	}
+	z.ProcessCount, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ProcessCount")
+		return
+	}
+	z.ProcessesListed, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ProcessesListed")
+		return
+	}
+	z.ProcessesOmitted, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ProcessesOmitted")
+		return
+	}
+	z.TreeComplete, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TreeComplete")
+		return
+	}
+	z.Complete, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Complete")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Errors = nil
+	} else {
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Errors")
+			return
+		}
+		if uint64(zb0003)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Errors != nil && cap(z.Errors) >= int(zb0003) {
+			z.Errors = (z.Errors)[:zb0003]
+		} else {
+			z.Errors = make([]string, zb0003)
+		}
+		for za0002 := range z.Errors {
+			z.Errors[za0002], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Errors", za0002)
+				return
+			}
+		}
+	}
+	z.MemoryKnown, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "MemoryKnown")
+		return
+	}
+	z.CPUKnown, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CPUKnown")
+		return
+	}
+	z.MemoryKnownBytes, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "MemoryKnownBytes")
+		return
+	}
+	z.CPUKnownPercent, bts, err = msgp.ReadFloat64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CPUKnownPercent")
+		return
+	}
+	z.DiskStatus, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "DiskStatus")
+		return
+	}
+	z.WorkspaceListed, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WorkspaceListed")
+		return
+	}
+	z.WorkspaceOmitted, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WorkspaceOmitted")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Resources) Msgsize() (s int) {
-	s = 1 + msgp.ArrayHeaderSize
+	s = 3 + msgp.StringPrefixSize + len(z.Status) + msgp.BoolSize + msgp.BoolSize + msgp.ArrayHeaderSize
 	for za0001 := range z.Processes {
 		s += z.Processes[za0001].Msgsize()
 	}
@@ -1077,18 +1274,31 @@ func (z *Resources) Msgsize() (s int) {
 	} else {
 		s += z.Disk.Msgsize()
 	}
+	s += msgp.TimeSize + msgp.TimeSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.ArrayHeaderSize
+	for za0002 := range z.Errors {
+		s += msgp.StringPrefixSize + len(z.Errors[za0002])
+	}
+	s += msgp.IntSize + msgp.IntSize + msgp.Int64Size + msgp.Float64Size + msgp.StringPrefixSize + len(z.DiskStatus) + msgp.IntSize + msgp.IntSize
 	return
 }
 
 // MarshalMsg implements msgp.Marshaler
 func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 21
+	o = append(o, 0xdc, 0x0, 0x15)
 	o = msgp.AppendString(o, z.Process)
 	o = msgp.AppendInt(o, z.PID)
 	o = msgp.AppendTime(o, z.Started)
 	o = msgp.AppendTime(o, z.Taken)
+	o = msgp.AppendTime(o, z.Completed)
+	o = msgp.AppendString(o, z.Incarnation)
+	o = msgp.AppendString(o, z.Hostname)
+	o = msgp.AppendString(o, z.HostBootID)
+	o = msgp.AppendString(o, z.HostIdentity)
+	o = msgp.AppendInt64(o, z.First)
+	o = msgp.AppendInt(o, z.Seconds)
+	o = msgp.AppendUint64(o, z.EventsOverwritten)
 	o = msgp.AppendInt64(o, z.End)
 	o = msgp.AppendInt(o, z.Step)
 	if z.Latencies == nil { // allownil: if nil
@@ -1132,24 +1342,10 @@ func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Tables)))
 		for za0004 := range z.Tables {
-			// array header, size 2
-			o = append(o, 0x92)
-			o, err = z.Tables[za0004].Meta.MarshalMsg(o)
+			o, err = z.Tables[za0004].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "Tables", za0004, "Meta")
+				err = msgp.WrapError(err, "Tables", za0004)
 				return
-			}
-			if z.Tables[za0004].Rows == nil { // allownil: if nil
-				o = msgp.AppendNil(o)
-			} else {
-				o = msgp.AppendArrayHeader(o, uint32(len(z.Tables[za0004].Rows)))
-				for za0005 := range z.Tables[za0004].Rows {
-					o, err = z.Tables[za0004].Rows[za0005].MarshalMsg(o)
-					if err != nil {
-						err = msgp.WrapError(err, "Tables", za0004, "Rows", za0005)
-						return
-					}
-				}
 			}
 		}
 	}
@@ -1157,10 +1353,10 @@ func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Events)))
-		for za0006 := range z.Events {
-			o, err = z.Events[za0006].MarshalMsg(o)
+		for za0005 := range z.Events {
+			o, err = z.Events[za0005].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "Events", za0006)
+				err = msgp.WrapError(err, "Events", za0005)
 				return
 			}
 		}
@@ -1174,6 +1370,7 @@ func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 			return
 		}
 	}
+	o = msgp.AppendFloat64(o, z.UIBusyPeak)
 	return
 }
 
@@ -1189,8 +1386,8 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 21 {
+		err = msgp.ArrayError{Wanted: 21, Got: zb0001}
 		return
 	}
 	z.Process, bts, err = msgp.ReadStringBytes(bts)
@@ -1211,6 +1408,46 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	z.Taken, bts, err = msgp.ReadTimeBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Taken")
+		return
+	}
+	z.Completed, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Completed")
+		return
+	}
+	z.Incarnation, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Incarnation")
+		return
+	}
+	z.Hostname, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Hostname")
+		return
+	}
+	z.HostBootID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "HostBootID")
+		return
+	}
+	z.HostIdentity, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "HostIdentity")
+		return
+	}
+	z.First, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "First")
+		return
+	}
+	z.Seconds, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Seconds")
+		return
+	}
+	z.EventsOverwritten, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "EventsOverwritten")
 		return
 	}
 	z.End, bts, err = msgp.ReadInt64Bytes(bts)
@@ -1324,51 +1561,10 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.Tables = make([]TableSeries, zb0005)
 		}
 		for za0004 := range z.Tables {
-			var zb0006 uint32
-			zb0006, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			bts, err = z.Tables[za0004].UnmarshalMsg(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Tables", za0004)
 				return
-			}
-			if uint64(zb0006)*1 > uint64(len(bts)) {
-				err = msgp.ErrShortBytes
-				return
-			}
-			if zb0006 != 2 {
-				err = msgp.ArrayError{Wanted: 2, Got: zb0006}
-				return
-			}
-			bts, err = z.Tables[za0004].Meta.UnmarshalMsg(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "Tables", za0004, "Meta")
-				return
-			}
-			if msgp.IsNil(bts) {
-				bts = bts[1:]
-				z.Tables[za0004].Rows = nil
-			} else {
-				var zb0007 uint32
-				zb0007, bts, err = msgp.ReadArrayHeaderBytes(bts)
-				if err != nil {
-					err = msgp.WrapError(err, "Tables", za0004, "Rows")
-					return
-				}
-				if uint64(zb0007)*1 > uint64(len(bts)) {
-					err = msgp.ErrShortBytes
-					return
-				}
-				if z.Tables[za0004].Rows != nil && cap(z.Tables[za0004].Rows) >= int(zb0007) {
-					z.Tables[za0004].Rows = (z.Tables[za0004].Rows)[:zb0007]
-				} else {
-					z.Tables[za0004].Rows = make([]TableRow, zb0007)
-				}
-				for za0005 := range z.Tables[za0004].Rows {
-					bts, err = z.Tables[za0004].Rows[za0005].UnmarshalMsg(bts)
-					if err != nil {
-						err = msgp.WrapError(err, "Tables", za0004, "Rows", za0005)
-						return
-					}
-				}
 			}
 		}
 	}
@@ -1376,25 +1572,25 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.Events = nil
 	} else {
-		var zb0008 uint32
-		zb0008, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0006 uint32
+		zb0006, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Events")
 			return
 		}
-		if uint64(zb0008)*1 > uint64(len(bts)) {
+		if uint64(zb0006)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Events != nil && cap(z.Events) >= int(zb0008) {
-			z.Events = (z.Events)[:zb0008]
+		if z.Events != nil && cap(z.Events) >= int(zb0006) {
+			z.Events = (z.Events)[:zb0006]
 		} else {
-			z.Events = make([]Event, zb0008)
+			z.Events = make([]Event, zb0006)
 		}
-		for za0006 := range z.Events {
-			bts, err = z.Events[za0006].UnmarshalMsg(bts)
+		for za0005 := range z.Events {
+			bts, err = z.Events[za0005].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Events", za0006)
+				err = msgp.WrapError(err, "Events", za0005)
 				return
 			}
 		}
@@ -1415,13 +1611,18 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 	}
+	z.UIBusyPeak, bts, err = msgp.ReadFloat64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "UIBusyPeak")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Snapshot) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Process) + msgp.IntSize + msgp.TimeSize + msgp.TimeSize + msgp.Int64Size + msgp.IntSize + msgp.ArrayHeaderSize
+	s = 3 + msgp.StringPrefixSize + len(z.Process) + msgp.IntSize + msgp.TimeSize + msgp.TimeSize + msgp.TimeSize + msgp.StringPrefixSize + len(z.Incarnation) + msgp.StringPrefixSize + len(z.Hostname) + msgp.StringPrefixSize + len(z.HostBootID) + msgp.StringPrefixSize + len(z.HostIdentity) + msgp.Int64Size + msgp.IntSize + msgp.Uint64Size + msgp.Int64Size + msgp.IntSize + msgp.ArrayHeaderSize
 	for za0001 := range z.Latencies {
 		s += z.Latencies[za0001].Msgsize()
 	}
@@ -1435,20 +1636,18 @@ func (z *Snapshot) Msgsize() (s int) {
 	}
 	s += msgp.ArrayHeaderSize
 	for za0004 := range z.Tables {
-		s += 1 + z.Tables[za0004].Meta.Msgsize() + msgp.ArrayHeaderSize
-		for za0005 := range z.Tables[za0004].Rows {
-			s += z.Tables[za0004].Rows[za0005].Msgsize()
-		}
+		s += z.Tables[za0004].Msgsize()
 	}
 	s += msgp.ArrayHeaderSize
-	for za0006 := range z.Events {
-		s += z.Events[za0006].Msgsize()
+	for za0005 := range z.Events {
+		s += z.Events[za0005].Msgsize()
 	}
 	if z.Resources == nil {
 		s += msgp.NilSize
 	} else {
 		s += z.Resources.Msgsize()
 	}
+	s += msgp.Float64Size
 	return
 }
 
@@ -1525,12 +1724,16 @@ func (z *Summary) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *SystemUsage) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 8
+	o = append(o, 0x98)
 	o = msgp.AppendInt64(o, z.MemoryTotal)
 	o = msgp.AppendInt64(o, z.MemoryAvailable)
 	o = msgp.AppendFloat64(o, z.CPU)
 	o = msgp.AppendInt(o, z.CPUs)
+	o = msgp.AppendTime(o, z.SampledAt)
+	o = msgp.AppendTime(o, z.PreviousAt)
+	o = msgp.AppendString(o, z.CPUStatus)
+	o = msgp.AppendString(o, z.Error)
 	return
 }
 
@@ -1546,8 +1749,8 @@ func (z *SystemUsage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
 		return
 	}
 	z.MemoryTotal, bts, err = msgp.ReadInt64Bytes(bts)
@@ -1570,13 +1773,33 @@ func (z *SystemUsage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "CPUs")
 		return
 	}
+	z.SampledAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SampledAt")
+		return
+	}
+	z.PreviousAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "PreviousAt")
+		return
+	}
+	z.CPUStatus, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CPUStatus")
+		return
+	}
+	z.Error, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Error")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *SystemUsage) Msgsize() (s int) {
-	s = 1 + msgp.Int64Size + msgp.Int64Size + msgp.Float64Size + msgp.IntSize
+	s = 1 + msgp.Int64Size + msgp.Int64Size + msgp.Float64Size + msgp.IntSize + msgp.TimeSize + msgp.TimeSize + msgp.StringPrefixSize + len(z.CPUStatus) + msgp.StringPrefixSize + len(z.Error)
 	return
 }
 
@@ -1688,8 +1911,8 @@ func (z *TableRow) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *TableSeries) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 2
-	o = append(o, 0x92)
+	// array header, size 6
+	o = append(o, 0x96)
 	o, err = z.Meta.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "Meta")
@@ -1703,6 +1926,21 @@ func (z *TableSeries) MarshalMsg(b []byte) (o []byte, err error) {
 			o, err = z.Rows[za0001].MarshalMsg(o)
 			if err != nil {
 				err = msgp.WrapError(err, "Rows", za0001)
+				return
+			}
+		}
+	}
+	o = msgp.AppendInt(o, z.RowsAvailable)
+	o = msgp.AppendInt(o, z.RowsOmitted)
+	o = msgp.AppendUint64(o, z.Folded)
+	if z.DiagnosticRows == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.DiagnosticRows)))
+		for za0002 := range z.DiagnosticRows {
+			o, err = z.DiagnosticRows[za0002].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "DiagnosticRows", za0002)
 				return
 			}
 		}
@@ -1722,8 +1960,8 @@ func (z *TableSeries) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 2 {
-		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
 		return
 	}
 	bts, err = z.Meta.UnmarshalMsg(bts)
@@ -1758,6 +1996,48 @@ func (z *TableSeries) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	z.RowsAvailable, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "RowsAvailable")
+		return
+	}
+	z.RowsOmitted, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "RowsOmitted")
+		return
+	}
+	z.Folded, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Folded")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.DiagnosticRows = nil
+	} else {
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "DiagnosticRows")
+			return
+		}
+		if uint64(zb0003)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.DiagnosticRows != nil && cap(z.DiagnosticRows) >= int(zb0003) {
+			z.DiagnosticRows = (z.DiagnosticRows)[:zb0003]
+		} else {
+			z.DiagnosticRows = make([]TableRow, zb0003)
+		}
+		for za0002 := range z.DiagnosticRows {
+			bts, err = z.DiagnosticRows[za0002].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "DiagnosticRows", za0002)
+				return
+			}
+		}
+	}
 	o = bts
 	return
 }
@@ -1767,6 +2047,10 @@ func (z *TableSeries) Msgsize() (s int) {
 	s = 1 + z.Meta.Msgsize() + msgp.ArrayHeaderSize
 	for za0001 := range z.Rows {
 		s += z.Rows[za0001].Msgsize()
+	}
+	s += msgp.IntSize + msgp.IntSize + msgp.Uint64Size + msgp.ArrayHeaderSize
+	for za0002 := range z.DiagnosticRows {
+		s += z.DiagnosticRows[za0002].Msgsize()
 	}
 	return
 }

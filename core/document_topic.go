@@ -79,6 +79,11 @@ func (c *Connection) serveDocumentTopic(ctx context.Context, stream corewire.Str
 			if send(stream, &coreprotocol.TopicHeader{Seq: seq, Reset: result.Reset}, &update) != nil {
 				return
 			}
+			reason := ""
+			if result.Reset {
+				reason = "document_snapshot"
+			}
+			observeTopicSent(ctx, seq, reason)
 			body, err := reader.Next()
 			if err != nil {
 				return
@@ -87,6 +92,7 @@ func (c *Connection) serveDocumentTopic(ctx context.Context, stream corewire.Str
 			if coreprotocol.Decode(body, &ack) != nil || ack.Seq != seq {
 				return
 			}
+			observeTopicAck(ctx, ack.Seq, ack.DisplayIntervalNS)
 			c.mu.Lock()
 			attached := c.attached[open.WorkspaceID] == a
 			c.mu.Unlock()

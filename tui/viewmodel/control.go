@@ -31,7 +31,7 @@ import (
 // discovery. Registration does not authorize any of these operations.
 func ShellCommandDescriptor(id string) (control.Descriptor, bool) {
 	switch id {
-	case "shell.inspect", "shell.controls", "shell.describe_control", "tree.set_visible", "tree.set_width", "tree.reveal", "tree.filter", "pane.split", "pane.merge", "pane.focus", "pane.resize", "tab.select", "tab.close", "file.open", "editor.navigate", "editor.select", "terminal.open", "terminal.show", "terminal.hide", "terminal.resize_dock", "panel.show", "panel.hide", "settings.open":
+	case "shell.inspect", "shell.controls", "shell.describe_control", "performance.shell", "connection.inspect", "tree.set_visible", "tree.set_width", "tree.reveal", "tree.filter", "pane.split", "pane.merge", "pane.focus", "pane.resize", "tab.select", "tab.close", "file.open", "editor.navigate", "editor.select", "terminal.open", "terminal.show", "terminal.hide", "terminal.resize_dock", "panel.show", "panel.hide", "settings.open":
 		return control.Lookup(id)
 	default:
 		return productDescriptor(id)
@@ -134,7 +134,10 @@ func (m *App) inspectShell() shellInspection {
 
 func (m *App) replyShellControl(msg shellport.ControlRequestMsg, result control.Result) tea.Cmd {
 	result.RequestID = msg.Envelope.Request.ID
-	result.OperationID = result.RequestID
+	if result.OperationID == "" {
+		result.OperationID = result.RequestID
+	}
+	result = coreprotocol.BoundControlResult(msg.Envelope.Request, result, msg.Envelope.Descriptor.Effect != control.Read)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -152,6 +155,9 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 	port, ok := m.ws.(shellport.ShellControl)
 	if !ok || port != msg.Owner || m.asyncIOStopped.Load() {
 		return m.failShellControl(msg, control.Unavailable, "shell owner is detached")
+	}
+	if cmd, handled := m.handleDiagnosticControl(msg); handled {
+		return cmd
 	}
 	if cmd, handled := m.handleProductControl(msg); handled {
 		return cmd
@@ -533,13 +539,14 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 			return m.awaitShellControl(msg, cmd, nil)
 		case termdock.PanelTerminal:
 			if m.termDock.Empty() {
-				cmd := m.openNewTerminal()
-				if cmd == nil {
-					return m.failShellControl(msg, control.Unavailable, "terminal service unavailable")
-				}
-				return m.awaitShellControl(msg, cmd, nil)
+				return m.failShellControl(msg, control.Unavailable, "no docked terminal; use terminal.open to create one with execute authority, or terminal.show for an existing terminal")
 			}
 			m.toggleWorkspacePanel(in.ID)
+		case termdock.PanelPerformance:
+			// Reuse the product's lazy mount, placement and refresh lifecycle.
+			cmd := m.togglePerformancePanel()
+			m.forceFrame()
+			return tea.Batch(cmd, m.replyShellControl(msg, result))
 		case termdock.PanelProblems, termdock.PanelNotices, termdock.PanelWorkspace:
 			m.toggleWorkspacePanel(in.ID)
 		default:

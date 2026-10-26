@@ -116,6 +116,80 @@ func TestSSHProcessRoundTripAndCancellationJoins(t *testing.T) {
 	}
 }
 
+func TestSSHFastExitPreservesStdoutUntilRead(t *testing.T) {
+	for _, payload := range []string{"", "matching image", strings.Repeat("framed payload\n", 128)} {
+		t.Run(fmt.Sprintf("bytes=%d", len(payload)), func(t *testing.T) {
+			program := sshTestProgram(t, "printf '%s' '"+payload+"'\n")
+			conn, err := dialSSH(t.Context(), program, SSHOptions{Host: "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			// Let normal process exit and Wait finish before the first read. This
+			// deterministically exposes Wait closing a StdoutPipe prematurely.
+			select {
+			case <-conn.(*sshConn).done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("fast SSH process did not exit before its stdout was read")
+			}
+			// Small reads also prove that the unread suffix survives process exit.
+			got := make([]byte, len(payload))
+			for offset := 0; offset < len(got); {
+				n, err := conn.Read(got[offset : offset+1])
+				if err != nil {
+					t.Fatalf("stdout ended at %d/%d bytes: %v", offset+n, len(got), err)
+				}
+				offset += n
+			}
+			if string(got) != payload {
+				t.Fatalf("stdout changed: got %q, want %q", got, payload)
+			}
+			if n, err := conn.Read(make([]byte, 1)); n != 0 || err != io.EOF {
+				t.Fatalf("normal exit must end with EOF, got %d bytes and %v", n, err)
+			}
+		})
+	}
+}
+
+func TestSSHUnreadStdoutShutdownJoins(t *testing.T) {
+	// Produce more than the OS pipe can retain without ever draining stdout.
+	// Shutdown must not wait on a stdout-copy goroutine blocked on its reader.
+	program := sshTestProgram(t, "while :; do printf '%s' '"+strings.Repeat("x", 4096)+"'; done\n")
+	for _, shutdown := range []string{"cancel", "close"} {
+		t.Run(shutdown, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			conn, err := dialSSH(ctx, program, SSHOptions{Host: "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			select {
+			case <-conn.(*sshConn).done:
+				t.Fatal("stdout producer exited before shutdown")
+			case <-time.After(20 * time.Millisecond):
+			}
+			closed := make(chan struct{})
+			go func() {
+				if shutdown == "cancel" {
+					cancel()
+					<-conn.(*sshConn).done
+				}
+				_ = conn.Close()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+			case <-time.After(3 * time.Second):
+				t.Fatal("shutdown did not join SSH with unread stdout")
+			}
+			if conn.(*sshConn).cmd.ProcessState == nil {
+				t.Fatal("SSH process was not reaped")
+			}
+		})
+	}
+}
+
 func TestSSHProcessActionableBoundedDiagnostic(t *testing.T) {
 	program := sshTestProgram(t, "printf 'Host key verification failed. Check known_hosts.\\n' >&2\nexit 255\n")
 	conn, err := dialSSH(t.Context(), program, SSHOptions{Host: "fixture"})

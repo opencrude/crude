@@ -139,6 +139,7 @@ func (c *Connection) serveTerminalTopic(ctx context.Context, s corewire.Stream, 
 				return
 			}
 			base = view.current
+			observeTopicAck(ctx, ack, int64(display))
 			waiting = false
 			arm()
 		case <-timer.C:
@@ -164,6 +165,11 @@ func (c *Connection) serveTerminalTopic(ctx context.Context, s corewire.Stream, 
 				if send(s, &coreprotocol.TopicHeader{Seq: next.seq, Reset: reset}, &frame) != nil {
 					return
 				}
+				reason := ""
+				if reset {
+					reason = "terminal_geometry_or_base"
+				}
+				observeTopicSent(ctx, next.seq, reason)
 				pending, waiting, sent = false, true, time.Now()
 			}
 			arm()

@@ -143,3 +143,27 @@ func TestHandoverShutdownRefusesChangedOwnerOrAdmission(t *testing.T) {
 		})
 	}
 }
+
+func TestCoreStatusPreservesPartialOwnerEvidence(t *testing.T) {
+	r := transportRuntime(t)
+	stalled := &actor{id: "stalled-status", commands: make(chan actorCommand, 128), stop: make(chan struct{})}
+	r.mu.Lock()
+	r.workspaces[stalled.id] = stalled
+	r.mu.Unlock()
+	defer func() { r.mu.Lock(); delete(r.workspaces, stalled.id); r.mu.Unlock() }()
+	c, err := r.Connect("status-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := c.Call(t.Context(), coreprotocol.Request{ID: "partial-status", Owner: c.Owner, Method: coreprotocol.CoreStatusMethod, Payload: mustTestPayload(coreprotocol.Empty{})})
+	if out.Error != nil {
+		t.Fatal("status discarded partial evidence", out.Error)
+	}
+	var status coreprotocol.CoreStatus
+	if err := coreprotocol.Decode(out.Payload, &status); err != nil || !status.Partial || len(status.Workspaces) != 1 || status.Workspaces[0].ObservationError == "" || !status.Workspaces[0].Busy() {
+		t.Fatalf("partial owner not visible/busy: %+v %v", status, err)
+	}
+	if _, err := r.Status(t.Context()); err == nil {
+		t.Fatal("lifetime inspection lost fail-closed error")
+	}
+}

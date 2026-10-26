@@ -15,6 +15,9 @@ import (
 // and authorized the actual descriptor. owner is trusted gateway attribution;
 // it is never derived from request input or a claimed shell ID.
 func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owner) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
+	if run, apply, handled := a.prepareControlDiagnostics(in, owner); handled {
+		return run, apply, true
+	}
 	if strings.HasPrefix(in.CommandID, "execution.") {
 		return a.prepareControlExecution(in, owner)
 	}
