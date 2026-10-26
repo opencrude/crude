@@ -244,8 +244,8 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.gitReadsInFlight = 0
 	m.gitReadsBoundary = m.gitRefreshGen.Load()
 	m.requestGitSnapshot(time.Now())
-	m.startSourceControlMutation(m.loadToolLayoutCmd())
-	m.startSourceControlMutation(m.capabilitySnapshotCmd())
+	m.runDetachedAsyncCmd(m.loadToolLayoutCmd())
+	m.runDetachedAsyncCmd(m.capabilitySnapshotCmd())
 }
 
 func (m *App) beginWorkspaceTreeLoad(rootPath string) {

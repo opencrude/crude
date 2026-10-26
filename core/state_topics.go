@@ -298,6 +298,7 @@ func (c *Connection) serveStateTopic(ctx context.Context, s corewire.Stream, rea
 		if err != nil {
 			return
 		}
+		observeTopicSent(ctx, entry.seq, "latest_state")
 		body, err := reader.Next()
 		if err != nil {
 			return
@@ -306,6 +307,7 @@ func (c *Connection) serveStateTopic(ctx context.Context, s corewire.Stream, rea
 		if coreprotocol.Decode(body, &ack) != nil || ack.Seq != entry.seq {
 			return
 		}
+		observeTopicAck(ctx, ack.Seq, ack.DisplayIntervalNS)
 		since = entry.seq
 		display := clampDisplay(ack.DisplayIntervalNS)
 		_, rtt := c.Carrier()

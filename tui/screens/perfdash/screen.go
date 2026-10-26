@@ -94,9 +94,12 @@ func (s *Screen) syncTabs() {
 		label := section.label
 		if section.id == SectionOverview && len(s.findings) > 0 {
 			sev, _ := Verdict(s.findings)
-			if sev == SeverityCrit {
+			switch sev {
+			case SeverityCrit:
 				label = "✕ " + label
-			} else {
+			case SeverityUnknown:
+				label = "? " + label
+			default:
 				label = "⚠ " + label
 			}
 		}
@@ -320,6 +323,9 @@ func Report(d Data) string {
 	fmt.Fprintf(&b, "Verdict: %s\n", verdict)
 	for _, f := range findings {
 		mark := "warn"
+		if f.Severity == SeverityUnknown {
+			mark = "unknown"
+		}
 		if f.Severity == SeverityCrit {
 			mark = "CRIT"
 		}
@@ -328,7 +334,7 @@ func Report(d Data) string {
 	for _, t := range overviewTiles(d) {
 		fmt.Fprintf(&b, "%s: %s\n", t.label, t.value)
 	}
-	if view, ok := resources(d); ok {
+	for _, view := range resources(d) {
 		b.WriteString("\nResources\n")
 		for _, t := range resourceTiles(view) {
 			fmt.Fprintf(&b, "  %s: %s\n", t.label, t.value)
@@ -336,7 +342,7 @@ func Report(d Data) string {
 		for _, row := range processRows(view) {
 			fmt.Fprintf(&b, "  %-20s %-36s %10s cpu %s\n", row.label, row.detail, row.value, row.extra)
 		}
-		if disk := view.disk; disk != nil {
+		if disk := view.Disk; disk != nil {
 			fmt.Fprintf(&b, "  %s\n", diskHeading(disk, d.Fetched))
 			for _, row := range diskPartRows(disk) {
 				fmt.Fprintf(&b, "    %-34s %10s\n", row.label, row.value)
@@ -351,7 +357,7 @@ func Report(d Data) string {
 	}
 	for _, p := range d.processes() {
 		snapshot := d.snapshot(p)
-		fmt.Fprintf(&b, "\n%s process (pid %d)\n", p.label(), snapshot.PID)
+		fmt.Fprintf(&b, "\n%s process (pid %d)\n", p.Label(), snapshot.PID)
 		for _, series := range snapshot.Latencies {
 			if series.Window.Count == 0 {
 				continue
@@ -376,7 +382,7 @@ func Report(d Data) string {
 			if i == 20 {
 				break
 			}
-			fmt.Fprintf(&b, "  %s %s %s %s %s %s\n", event.At.Format("15:04:05"), event.process.label(), event.Title,
+			fmt.Fprintf(&b, "  %s %s %s %s %s %s\n", event.At.Format("15:04:05"), event.Process.Label(), event.Title,
 				formatMicros(event.Micros), shortKey(event.Label), event.Detail)
 		}
 	}

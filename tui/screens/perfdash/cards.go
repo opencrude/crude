@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"crude/metrics"
+	"crude/perfdata"
 )
 
 // chartKind selects how a card reads its series.
@@ -38,13 +39,7 @@ type card struct {
 }
 
 func (c *card) severity(v float64) Severity {
-	switch {
-	case c.crit > 0 && v >= c.crit:
-		return SeverityCrit
-	case c.warn > 0 && v >= c.warn:
-		return SeverityWarn
-	}
-	return SeverityOK
+	return perfdata.ThresholdSeverity(v, c.warn, c.crit)
 }
 
 // format renders a value in the card's unit.
@@ -82,7 +77,7 @@ func (c *card) readout(i int) string {
 
 func titleFor(d Data, ref seriesRef, title string) string {
 	if d.Core != nil && ref.name != busyName && sectionOfName(ref.name) == SectionRuntime {
-		return title + " · " + ref.process.label()
+		return title + " · " + ref.process.Label()
 	}
 	return title
 }
@@ -98,6 +93,9 @@ func sectionOfName(name string) string {
 // absent series.
 func buildCard(d Data, ref seriesRef) (card, bool) {
 	snapshot := d.snapshot(ref.process)
+	if snapshot == nil {
+		return card{}, false
+	}
 	c := card{ref: ref, step: max(snapshot.Step, 1), end: snapshot.End}
 	if ref.name == busyName {
 		values, ok := d.busySeries()
@@ -106,7 +104,7 @@ func buildCard(d Data, ref seriesRef) (card, bool) {
 		}
 		c.title, c.kind, c.values = "UI busy", chartPercent, values
 		c.help = "Share of wall time the UI goroutine spent in Update and frame paint. Input waits whenever it is busy."
-		c.warn, c.crit = 40, 80
+		c.warn, c.crit = perfdata.BusyWarn, perfdata.BusyCrit
 		recent := d.recentBusy()
 		c.headline, c.headSev = c.format(recent), c.severity(recent)
 		peak := 0.0
@@ -197,7 +195,7 @@ func buildTable(d Data, ref seriesRef) (tableBlockData, bool) {
 		return tableBlockData{}, false
 	}
 	out := tableBlockData{ref: ref, title: table.Meta.Title, help: table.Meta.Help, meta: table.Meta, rows: table.Rows}
-	for _, row := range table.Rows {
+	for _, row := range perfdata.DiagnosticRows(table) {
 		out.total += row.Sum
 	}
 	return out, true

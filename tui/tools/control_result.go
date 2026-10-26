@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"crude/types/control"
+	"crude/types/inspect"
 )
 
 // buildControlResult projects Crude self-control discovery and receipts. The
@@ -62,6 +63,9 @@ func buildControlResult(name, content, input string) StructuredResult {
 	}
 	result.Sections = append(result.Sections, section)
 	if len(receipt.Output) > 0 && string(receipt.Output) != "null" {
+		if appendDiagnosticResult(&result, command, receipt.Output) {
+			return result
+		}
 		output := BuildReadableResult(string(receipt.Output))
 		for _, part := range output.Sections {
 			part.Title = joinResultPath("Output", part.Title)
@@ -69,6 +73,56 @@ func buildControlResult(name, content, input string) StructuredResult {
 		}
 	}
 	return result
+}
+
+// Diagnostic receipts keep their bounded data intact, but common readings are
+// readable before a user expands source/continuation metadata and raw samples.
+// This is presentation only: it never samples, aggregates or diagnoses again.
+func appendDiagnosticResult(result *StructuredResult, command string, raw json.RawMessage) bool {
+	if !strings.HasPrefix(command, "performance.") && !strings.HasPrefix(command, "diagnostics.") {
+		return false
+	}
+	var page inspect.Page
+	if json.Unmarshal(raw, &page) != nil || page.SnapshotID == "" {
+		return false
+	}
+	result.Summary += fmt.Sprintf(" · %d/%d records", page.Returned, page.Total)
+	if !page.Complete {
+		result.Summary += " · more available"
+	}
+	for _, record := range page.Records {
+		var reading struct{ Title, Detail, Label, Value, Verdict, Role string }
+		_ = json.Unmarshal(record.Value, &reading)
+		section := ResultSection{Title: record.ID, Metadata: record.Kind}
+		switch record.Kind {
+		case "verdict":
+			section.Title = reading.Role + " performance"
+			section.Body = reading.Verdict
+		case "finding":
+			section.Title, section.Body = reading.Title, reading.Detail
+		case "headline":
+			section.Title, section.Body = reading.Label, reading.Value
+		default:
+			output := BuildReadableResult(string(record.Value))
+			for _, part := range output.Sections {
+				part.Title = joinResultPath(record.ID, part.Title)
+				part.Metadata = record.Kind
+				part.DetailOnly = true
+				result.Sections = append(result.Sections, part)
+			}
+			continue
+		}
+		result.Sections = append(result.Sections, section)
+	}
+	metadata := page
+	metadata.Records = nil
+	encoded, _ := json.Marshal(metadata)
+	for _, section := range BuildReadableResult(string(encoded)).Sections {
+		section.Title = joinResultPath("Observation", section.Title)
+		section.DetailOnly = true
+		result.Sections = append(result.Sections, section)
+	}
+	return true
 }
 
 func controlDescriptorSection(descriptor control.Descriptor) ResultSection {

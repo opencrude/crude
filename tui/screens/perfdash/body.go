@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/metrics"
+	"crude/perfdata"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -126,32 +127,34 @@ func (b *body) rebuild() {
 			push(block{kind: blockEvents, h: min(len(events), 5), events: events})
 		}
 	case SectionResources:
-		view, ok := resources(d)
-		if !ok {
+		views := resources(d)
+		if len(views) == 0 {
 			push(block{kind: blockText, h: 1, text: "Resource usage is not available yet."})
 			break
 		}
-		tiles := resourceTiles(view)
-		push(block{kind: blockTiles, h: tileRows(tiles, width), tiles: tiles})
-		gap()
-		rows := processRows(view)
-		push(block{kind: blockHeading, h: 1, text: "Processes", columns: [2]string{"memory", "cpu"}})
-		push(block{kind: blockRows, h: len(rows), rows: rows})
-		if disk := view.disk; disk != nil {
+		for _, view := range views {
+			tiles := resourceTiles(view)
+			push(block{kind: blockTiles, h: tileRows(tiles, width), tiles: tiles})
 			gap()
-			push(block{kind: blockHeading, h: 1, text: diskHeading(disk, d.Fetched), columns: [2]string{"size"}})
-			if rows := diskPartRows(disk); len(rows) > 0 {
-				push(block{kind: blockRows, h: len(rows), rows: rows})
-			}
-			if rows := workspaceRows(disk); len(rows) > 0 {
+			rows := processRows(view)
+			push(block{kind: blockHeading, h: 1, text: "Processes · " + view.Label, columns: [2]string{"memory", "cpu"}})
+			push(block{kind: blockRows, h: len(rows), rows: rows})
+			if disk := view.Disk; disk != nil {
 				gap()
-				push(block{kind: blockHeading, h: 1, text: workspacesHeading(disk), columns: [2]string{"size"}})
-				push(block{kind: blockRows, h: len(rows), rows: rows})
-			}
-			if note := orphanNote(disk); note != "" {
-				gap()
-				for _, line := range rendering.WordWrap(note, width) {
-					push(block{kind: blockText, h: 1, text: line})
+				push(block{kind: blockHeading, h: 1, text: diskHeading(disk, d.Fetched), columns: [2]string{"size"}})
+				if rows := diskPartRows(disk); len(rows) > 0 {
+					push(block{kind: blockRows, h: len(rows), rows: rows})
+				}
+				if rows := workspaceRows(disk); len(rows) > 0 {
+					gap()
+					push(block{kind: blockHeading, h: 1, text: workspacesHeading(disk), columns: [2]string{"size"}})
+					push(block{kind: blockRows, h: len(rows), rows: rows})
+				}
+				if note := orphanNote(disk); note != "" {
+					gap()
+					for _, line := range rendering.WordWrap(note, width) {
+						push(block{kind: blockText, h: 1, text: line})
+					}
 				}
 			}
 		}
@@ -231,49 +234,7 @@ func (b *body) chartPoints() int {
 	return max(8, (b.width-cardGap*(columns-1))/columns)
 }
 
-func overviewTiles(d Data) []tile {
-	var tiles []tile
-	addLatency := func(label string, p process, name string) {
-		series, ok := d.latency(p, name)
-		if !ok {
-			return
-		}
-		if series.Recent.Count == 0 {
-			tiles = append(tiles, tile{label: label, value: "idle"})
-			return
-		}
-		tiles = append(tiles, tile{label: label, value: formatMicros(series.Recent.P95), sev: severityOf(series.Recent.P95, series.Meta)})
-	}
-	addLatency("Input", processShell, "ui.input")
-	if _, ok := d.busySeries(); ok {
-		busy := d.recentBusy()
-		sev := SeverityOK
-		if busy >= 80 {
-			sev = SeverityCrit
-		} else if busy >= 40 {
-			sev = SeverityWarn
-		}
-		tiles = append(tiles, tile{label: "UI busy", value: formatValue(busy, "%"), sev: sev})
-	}
-	addLatency("Paint", processShell, "ui.view")
-	addLatency("Terminal", processShell, "render.flush")
-	if d.Core != nil {
-		addLatency("Core actor", processCore, "core.actor")
-	}
-	if view, ok := resources(d); ok {
-		tiles = append(tiles, tile{label: "Memory", value: formatBytes(float64(view.memory))})
-		if view.cpu >= 0 {
-			tiles = append(tiles, tile{label: "CPU", value: formatValue(view.cpu, "%")})
-		}
-		if sev := diskSeverity(view.disk); sev > SeverityOK {
-			tiles = append(tiles, tile{label: "Disk free", value: formatBytes(float64(view.disk.DeviceFree)), sev: sev})
-		}
-	}
-	if streams, ok := d.gauge(d.resolve(seriesRef{processCore, ""}).process, "agent.streams"); ok && lastSet(streams) > 0 {
-		tiles = append(tiles, tile{label: "Model streams", value: formatCount(float64(lastSet(streams)))})
-	}
-	return tiles
-}
+func overviewTiles(d Data) []tile { return tilesFrom(perfdata.OverviewHeadlines(perfdata.Data(d))) }
 
 func tileWidth(t tile) int {
 	return rendering.VisibleWidth(t.label) + 1 + rendering.VisibleWidth(t.value)
@@ -428,6 +389,8 @@ func (p *painter) sevColor(sev Severity) cell.Color {
 	switch sev {
 	case SeverityCrit:
 		return p.tokens.Color(ui.ColorError)
+	case SeverityUnknown:
+		return p.tokens.Color(ui.ColorMuted)
 	case SeverityWarn:
 		return p.tokens.Color(ui.ColorWarning)
 	}
@@ -438,6 +401,8 @@ func (p *painter) sevGlyph(sev Severity) string {
 	switch sev {
 	case SeverityCrit:
 		return "✕"
+	case SeverityUnknown:
+		return "?"
 	case SeverityWarn:
 		return "⚠"
 	}
@@ -569,7 +534,7 @@ func (b *body) paintBlock(p *painter, blk *block, x, y, w int) {
 			if event.Detail != "" {
 				tail += " · " + event.Detail
 			}
-			tail += " · " + event.process.label()
+			tail += " · " + event.Process.Label()
 			if now.Sub(event.At) > 2*time.Second {
 				tail += " · " + formatAgo(now, event.At)
 			}

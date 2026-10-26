@@ -120,14 +120,22 @@ func startSSH(ctx context.Context, program string, args []string) (io.ReadWriteC
 	if err != nil {
 		return nil, err
 	}
-	out, err := cmd.StdoutPipe()
+	// The connection owns the read end, not exec.Cmd.Wait: a fast SSH exit must
+	// leave all buffered stdout readable through EOF. Use an OS pipe directly
+	// so Wait neither closes the reader nor waits for a copy to a slow peer.
+	out, childOut, err := os.Pipe()
 	if err != nil {
 		_ = in.Close()
 		return nil, err
 	}
+	cmd.Stdout = childOut
 	diagnostic := &sshDiagnostic{}
 	cmd.Stderr = diagnostic
-	if err = cmd.Start(); err != nil {
+	err = cmd.Start()
+	// Start has either inherited its own writer or failed; retaining the
+	// parent's copy would hide EOF after the owned process exits.
+	_ = childOut.Close()
+	if err != nil {
 		_ = in.Close()
 		_ = out.Close()
 		return nil, err

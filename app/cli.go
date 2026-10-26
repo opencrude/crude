@@ -347,7 +347,14 @@ func handleCoreCommands(flags CLIFlags) (int, bool) {
 		fmt.Printf("core pid %d, %s, up since %s\n", status.PID, mode, status.StartedAt.Format(time.RFC3339))
 		fmt.Printf("executable: %s\n", status.Executable)
 		fmt.Printf("shells attached: %d\n", status.Clients)
+		if status.Partial {
+			fmt.Println("status is partial: unavailable workspace owners are not idle")
+		}
 		for _, w := range status.Workspaces {
+			if w.ObservationError != "" {
+				fmt.Printf("  %s  unavailable: %s\n", w.ID, w.ObservationError)
+				continue
+			}
 			fmt.Printf("  %s  agents=%d sessions=%d turns=%d children=%d commands=%d compaction=%d memory=%d operations=%d\n",
 				w.Root, w.Agents, w.Sessions, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Operations)
 		}

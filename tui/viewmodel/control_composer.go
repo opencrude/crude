@@ -47,11 +47,12 @@ func (m *App) handleComposerProduct(msg shellport.ControlRequestMsg) (tea.Cmd, b
 			return fail(control.Unavailable, "draft exceeds bounded inspection; retained unchanged")
 		}
 		result.Output, _ = json.Marshal(struct {
-			Text       string   `json:"text"`
-			References []string `json:"reference_ids"`
-			Revision   uint64   `json:"revision"`
-			Epoch      uint64   `json:"open_epoch"`
-		}{m.Input.Value(), m.Input.SnapshotReferenceIDs(), m.Input.DraftRevision(), m.Input.DraftEpoch()})
+			Text          string   `json:"text"`
+			References    []string `json:"reference_ids"`
+			Revision      uint64   `json:"revision"`
+			Epoch         uint64   `json:"open_epoch"`
+			PendingPastes bool     `json:"pending_pastes"`
+		}{m.Input.Value(), m.Input.SnapshotReferenceIDs(), m.Input.DraftRevision(), m.Input.DraftEpoch(), m.Input.HasPendingPastes()})
 	case "composer.set":
 		var in struct {
 			Text *string `json:"text"`

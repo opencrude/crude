@@ -150,16 +150,19 @@ func (r *Runtime) Status(ctx context.Context) (coreprotocol.CoreStatus, error) {
 	r.lifetime.mu.Unlock()
 	var errs []error
 	for _, a := range r.actors() {
-		var ws coreprotocol.WorkspaceStatus
-		err := a.inspect(ctx, func() {
+		ws := coreprotocol.WorkspaceStatus{ID: a.id}
+		readCtx, cancel := context.WithTimeout(ctx, diagnosticActorTimeout)
+		err := a.inspect(readCtx, func() {
 			ws = coreprotocol.WorkspaceStatus{ID: a.id, Root: a.ws.RootPath, Agents: a.ws.AgentMgr.Count(), Sessions: len(a.ws.Sessions), Operations: a.inFlight, Active: a.ws.ActiveWork()}
 			if a.lifecycle {
 				ws.Operations++
 			}
 		})
+		cancel()
 		if err != nil {
 			errs = append(errs, err)
-			continue
+			status.Partial = true
+			ws.ObservationError = "owner observation unavailable: " + err.Error()
 		}
 		status.Workspaces = append(status.Workspaces, ws)
 	}
@@ -233,9 +236,10 @@ func (r *Runtime) coreMethod(ctx context.Context, caller *Connection, request co
 		if caller != nil && status.Clients > 0 {
 			status.Clients--
 		}
-		if err != nil {
-			return fault(request, "status_incomplete", err.Error())
-		}
+		// Status() keeps its error for fail-closed lifetime callers. The read RPC
+		// preserves healthy peers plus explicit per-owner failures instead of
+		// discarding the evidence an operator needs to diagnose the stall.
+		_ = err
 		return response(request, status)
 	}
 	var input coreprotocol.ShutdownRequest

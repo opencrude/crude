@@ -491,12 +491,14 @@ func (c *Connection) serveSessionTopic(ctx context.Context, s corewire.Stream, r
 			if err := corewire.WriteMessage(s, c.sessionEvent); err != nil {
 				return
 			}
+			observeTopicSent(ctx, c.sessionSeq, "")
 			select {
 			case seq := <-acks:
 				if seq != c.sessionSeq {
 					return
 				}
 				c.sessionAck = seq
+				observeTopicAck(ctx, seq, 0)
 				c.sessionEvent = nil
 			case <-ctx.Done():
 				return

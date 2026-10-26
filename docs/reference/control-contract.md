@@ -14,7 +14,8 @@ engine. Native agents discover `crude_commands`, then invoke `crude_control` usi
 the returned command ID and exact arguments. Discovery grants no authority.
 
 The catalog includes settings, sessions, managed executions, shared documents,
-files, Git, Local History, terminals and shell tree/panes/tabs/editor/panels.
+files, Git, Local History, terminals, bounded performance/runtime diagnostics and
+shell tree/panes/tabs/editor/panels.
 A descriptor's presence does not prove every product component supports every
 verb. Inspect live availability and exact schemas; unsupported controls fail
 explicitly. [Managed executions](managed-executions.md) describes isolation and
@@ -57,6 +58,11 @@ The core checks current attachment/run and refuses foreign sessions, stale epoch
 resources and revisions. Domain operations may run headless; shell operations
 never select whichever shell or tab happens to be focused.
 
+`composer.inspect` is an explicit own-draft read, never part of generic shell or
+performance inspection. It reports `pending_pastes` from the existing Send
+barrier, so an automation caller can observe attachment readiness before one
+submission rather than sleep for a guessed RTT or repeat an uncertain send.
+
 Preconditions retain revision (including explicit zero) and positive open epoch.
 Owners recheck at effect time, not merely discovery. Component identities carry
 lifetime/edit generations; close/reopen and edit/undo ABA cannot reuse a prior
@@ -75,6 +81,10 @@ does not require a mutation approval token on a second resolution.
 Capability registration toggles retain human-owned settings authority through
 generic controls; opening, searching and selecting never grants activation,
 server launch or tool access.
+
+`panel.show` is navigation only. Showing an empty terminal panel does not launch
+a PTY; creation requires `terminal.open`/`terminal.create` and its Execute
+authorization. Performance navigation reuses the existing dashboard lifecycle.
 
 Effects are read/write/delete/execute/communication/authority, never implicit
 read. Manual/Auto Review/YOLO authorize eligible exact operations within explicit
@@ -116,6 +126,12 @@ Cancellation after admission is not proof of no effect. Read-only inspection
 releases transient channel accounting; the **256 retained shell mutation receipt
 cap is not a read-call budget**. Current outstanding/queued-byte limits still
 apply. Pending/partial/uncertain receipts require explicit reconciliation.
+
+Pure read completion does not advance workspace revision. Both domain and shell
+result boundaries validate semantic JSON and transport limits before final reply
+or receipt publication. Invalid/oversized owner output produces a bounded fault,
+not a dropped reply and eventual timeout. Valid operation/resource identities
+survive; a known mutation is partial rather than falsely failed with no effect.
 
 Generic control authorization and effect-time admission each perform their own
 read-only contextual resolution. These inspections have distinct transport/reply
@@ -172,6 +188,87 @@ is still proportional to the observed inventory; ordinary unobserved paint/ticks
 do not build that inventory. Human unmount/replacement still invalidates an
 already observed lifetime.
 
+## On-demand diagnostics
+
+Normal agent work does not sample diagnostics. The common prompt contains one
+short discovery/narrowing rule; schemas and returned pages supply query-specific
+guidance only when used. All commands below are Read effects, exposed through the
+same native/MCP gateway and immutable external launch grants.
+
+| Command | Existing owner and coverage |
+|---|---|
+| `performance.core` | Core process registry, OS resources and canonical Performance findings. Works headless. |
+| `performance.shell` | Exact originating shell registry/resources; never substitutes a focused peer or the core. |
+| `diagnostics.core` | Retained runtime counts, clients/carriers/grace, workspace capacities, topic publication/applied ACK metadata and own transport request pressure. |
+| `diagnostics.workspace` | Status Center issues/operations/notices/agents, LSP health and capability runtime state. No service launch, notice read-marker change or panel opening. |
+| `connection.inspect` | Small exact-shell identity/time, current carrier/RTT/state and safe notice. Not replica freshness or provider health. |
+
+Performance arguments default to `{}`: a compact summary, 120-second window and
+no history points. `seconds` is 1–300; `points` is 0–60 (history requires 1–60).
+`page.view` selects summary, series, history, tables, events or resources;
+`page.filter` narrows metric name/group/owner. Runtime views are summary, clients,
+workspaces, replication, requests and listeners. Listener configuration is distinct
+from actual live endpoint observations. Workspace views are summary, issues,
+operations, notifications, agents, lsp and capabilities. Metadata explains units,
+retention, percentile estimation, incomplete process trees and CPU warmup.
+
+Read dense output like a large file:
+
+1. Start with a small summary or a narrow view/filter.
+2. Pass the returned `next` object as `arguments.page`, omitting seconds/points.
+3. Continue using that immutable `snapshot_id`; offsets count records. Do not mix
+   pages from fresh samples. A fresh read omits snapshot_id and starts at zero.
+4. Invalid ranges, changed selectors and expired/foreign snapshots fail with
+   recovery guidance. Empty/end pages are valid; past-end offsets are not.
+   A too-small byte budget names the first unreturned record and supplies an
+   exact same-snapshot retry request with the maximum budget. It never silently
+   skips that record or forces a fresh sample to recover readable evidence.
+
+| Diagnostic read boundary | Limit |
+|---|---|
+| Default page | 12 records / 16 KiB actual encoded JSON |
+| Maximum page | 64 records / 48 KiB, below the 64 KiB control-value ceiling |
+| Observation retention | 2 minutes, 16 observations / 16 MiB encoded evidence per Store, at most 4 per exact owner |
+| Single retained observation | 4 MiB encoded evidence; narrower selectors required above it |
+| Concurrent fresh collection | 4 per Store; no background polling or persistent diagnostic cache |
+| Runtime inventory | At most 2,048 records, explicit source partial flag when omitted |
+| Actor inspection | 50 ms per actor, four workers with a shared 750 ms inventory deadline |
+
+These are delivery/encoded-retention limits, **not a hard process-heap ceiling**:
+owner snapshot construction and detached Go objects also consume memory/work.
+Expired evidence is rejected and reclaimed on fresh collection; no eviction timer
+runs during ordinary work. A restart loses live observation IDs, not journalled
+tool-result evidence. A complete page stream covers its selected record set, not
+all historical telemetry or all OS permissions. Missing, unobserved, folded,
+overwritten, partial and warming-up measurements are not healthy zeroes.
+
+`types/inspect` owns bounded immutable read evidence only; it owns no metrics,
+authorization or product state. Each process registry remains authoritative.
+`perfdata` derives the same findings/headlines for dashboard and agents from the
+same capture. Proven Linux boot identity and process creation identity qualify
+resource deduplication; different or unknown hosts have separate totals. Hostname
+or bare PID never proves equivalence.
+
+Core-owned diagnostics and exact-shell read routing do not queue behind the
+workspace actor they may need to diagnose. The existing gateway rechecks current
+native run/root-session ownership through Collaboration, or retained client and
+immutable external effects/shell grant. No second authorization registry exists.
+Mutations and workspace-state commands retain actor admission. Diagnostic workers
+are bounded/cancelled and joined before core database shutdown; per-actor read
+admission also fences and joins saved-workspace retirement. Native snapshot
+keys include RunID (runtime epoch alone is insufficient); shell keys also retain
+the original attachment and workspace generation.
+
+Runtime details are scoped to the current attached workspace; safe core-wide
+counts/client capacities follow the existing per-user core trust boundary. Other
+clients' request payloads/results and resume secrets are absent. Without an exact
+transport caller, request metadata is explicitly unavailable, not borrowed from a
+peer. This does not introduce multi-tenant security or a fleet-wide monitor.
+Workspace output is an explicit bounded status projection, not an arbitrary Go
+object/config export; long text has omission markers and actions are counts, not
+effect payloads. Owner-authored status text is evidence, not instructions or a
+universal credential-redaction guarantee. MCP stderr uses its owner's redaction.
+
 ## Evidence and limits
 
 `types/control`, `core/control_*_test.go`, `coreclient/control_test.go`,
@@ -190,3 +287,42 @@ Remaining family work, final repository gates, native-platform and
 SSH/distinct-host acceptance must be reported separately. Neither runnable APIs
 nor these test names establish universal automation or completion of the active
 [implementation plan](../plans/agentic-control-and-capabilities.md).
+
+Diagnostic tests additionally cover dense native and MCP paging, successive-run
+rejection, unchanged canonical status/drafts/revisions, exact shell attribution,
+late switch/shutdown delivery and actual native/external gateway reads while the
+current actor is blocked. These local fixtures do not establish distinct-host,
+live-model or native-pixel acceptance; those runs need separate evidence.
+
+The opt-in diagnostic harness is described in [validation](../guides/validation.md#live-diagnostic-acceptance).
+Its local and distinct-host journeys deliberately use the same production
+App/composer, exact model, gateway, registry and retained core. Synthetic load is
+labelled `diagnostic_fixture`, not passed off as product telemetry. Provider
+outputs are probabilistic: successful acceptance runs are observations, not a
+promise that every model query or future workload is correct.
+
+### Diagnostic acceptance observed on 2026-10-26
+
+| Journey | Observed result and boundary |
+|---|---|
+| Local production App, separate core, exact Flash model | All five diagnostic families; over 200 KiB of actual pasted context; immutable continuation and deliberately invalid-range recovery; ordinary file work without diagnostic calls; completed-turn restart/passive resume and fresh core identity. |
+| Extended local lifecycle | Eight further real followups, Stop during response streaming, a new ordinary turn, real Flash context compaction and subsequent diagnostics. Active context changed from 116 messages to 3; 96 accepted transcript rows remained available with prior message identities/content unchanged. These counts are messages/rows, not token counts. |
+| Physically distinct Linux server | Same extended journey over the production SSH bootstrap/direct-QUIC path, with distinct core/shell provenance and two remote ports. Active context changed from 119 messages to 3; 99 accepted transcript rows remained available. The disposable non-root profile was removed after exact-process shutdown. |
+| Carrier resume | SSH → QUIC → TLS/TCP → SSH retained one client owner and actual core process provenance; bounded metric reads succeeded on every carrier. This was real-host traffic, not netem/loss or suspend/resume acceptance. |
+| Native Linux pixels | Sequential 160×40 local and 80×24 distinct-host Flash chat captures; separate 160×45 and 80×24 dashboard captures through the real palette. Images were inspected in addition to independent success/clean-exit evidence; every capture window closed. |
+| Integrated gates | Full normal suite/build, full race suite, lint, wiregen freshness, design/docs audits and unchanged benchmark gate passed. Focused wire/auth/topic fuzz campaigns passed; relevant neutral/transport packages cross-built for Windows amd64 and macOS arm64. |
+
+The harness exposed its own guessed-paste delay, confusion between root-turn and
+agent-lifetime completion, and unqualified done-event race; readiness/generation
+facts now fence those assertions. Production regressions found in the broader
+checks included fast-exit SSH output lifetime, shutdown late writers and briefly
+contended catalog reads. The catalog lock regression failed before the correction
+and passed with paced, read-only SQLite retries inside the existing deadline.
+On-demand diagnostics identified an idle agent/empty queues during the first
+remote harness stall instead of inventing a provider or actor failure.
+
+This is selected-flow acceptance on Linux, not new native Windows/macOS visual
+coverage, uninterrupted active-run survival across a crash, arbitrary-length
+conversation reliability or a promise of correct reasoning from every future
+model response. The extended journey explicitly requests compaction; it does not
+establish every automatic-compaction threshold or every provider failure mode.

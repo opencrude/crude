@@ -27,6 +27,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,8 +38,9 @@ import (
 	"time"
 
 	"crude/buildinfo"
+	"crude/retry"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 // WorkspaceID returns the stable 16-hex workspace folder name for a project
@@ -300,39 +302,23 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 	return infos, nil
 }
 
-// readWorkspaceMetaBounded is readWorkspaceMeta with a hard wall-clock limit so
-// a locked/corrupt workspace.db cannot stall the launcher or tests.
-//
-// Both the read AND the goroutine's channel send are bound to the same
-// context: if the read outlives the limit, the query is cancelled (releasing
-// the DB handle), the send aborts, and the goroutine exits; it can never
-// leak an open sqlite handle (which would keep the DB file locked on
-// Windows) past the timeout.
+// readWorkspaceMetaBounded gives each SQL query a deadline and joins its handle
+// before returning. A timed-out outer read must not leave a detached SQLite
+// opener creating WAL/SHM files after workspace shutdown or storage deletion.
+// Cancellation bounds cooperative queries; it is not a hard OS-syscall timeout.
 func readWorkspaceMetaBounded(parent context.Context, dbPath string, limit time.Duration) *WorkspaceInfo {
 	ctx, cancel := context.WithTimeout(parent, limit)
-	defer cancel()
-
-	type result struct{ info *WorkspaceInfo }
-	ch := make(chan result, 1)
-	go func() {
-		select {
-		case ch <- result{info: readWorkspaceMeta(ctx, dbPath)}:
-		case <-ctx.Done():
-		}
-	}()
-	select {
-	case r := <-ch:
-		return r.info
-	case <-ctx.Done():
-		if parent.Err() != nil {
-			return nil
-		}
-		// Timed out: try a metadata-only fast path that avoids scanning
-		// workspace_sessions (the usual stall under a live writer lock).
-		lightCtx, stop := context.WithTimeout(parent, limit)
-		defer stop()
-		return readWorkspaceMetaLight(lightCtx, dbPath)
+	info := readWorkspaceMeta(ctx, dbPath)
+	timedOut := ctx.Err() != nil
+	cancel()
+	if info != nil || !timedOut || parent.Err() != nil {
+		return info
 	}
+	// Preserve the existing best-effort metadata-only retry, but only after the
+	// first reader has closed all of its resources and released its lease.
+	lightCtx, stop := context.WithTimeout(parent, limit)
+	defer stop()
+	return readWorkspaceMetaLight(lightCtx, dbPath)
 }
 
 // readWorkspaceMetaLight reads only workspace_metadata.project_dir so the
@@ -355,10 +341,10 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 	defer func() { _ = db.Close() }()
 
 	var dir, accessed string
-	if err := db.QueryRowContext(ctx, `SELECT
+	if err := workspaceMetaRow(ctx, db, `SELECT
 		COALESCE(MAX(CASE WHEN key = 'project_dir' THEN value END), ''),
 		COALESCE(MAX(CASE WHEN key = 'last_accessed_at' THEN value END), '')
-		FROM workspace_metadata WHERE key IN ('project_dir', 'last_accessed_at')`).Scan(&dir, &accessed); err != nil || dir == "" {
+		FROM workspace_metadata WHERE key IN ('project_dir', 'last_accessed_at')`, &dir, &accessed); err != nil || dir == "" {
 		return nil
 	}
 	info := &WorkspaceInfo{
@@ -404,16 +390,33 @@ func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInf
 	var accessed string
 	// One statement owns one consistent metadata/count observation and releases
 	// its rows before returning. No second query can wait on our one connection.
-	if err := db.QueryRowContext(ctx, `SELECT
+	if err := workspaceMetaRow(ctx, db, `SELECT
 		COALESCE((SELECT value FROM workspace_metadata WHERE key = 'project_dir'), ''),
 		COALESCE((SELECT value FROM workspace_metadata WHERE key = 'last_accessed_at'), ''),
 		(SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0)
-	`).Scan(&info.ProjectDir, &accessed, &info.SessionCount); err != nil || info.ProjectDir == "" {
+	`, &info.ProjectDir, &accessed, &info.SessionCount); err != nil || info.ProjectDir == "" {
 		return nil
 	}
 	info.LastAccessed, _ = strconv.ParseInt(accessed, 10, 64)
 	info.ProjectName = WorkspaceDisplayName(*info)
 	return info
+}
+
+// A read-only query is safe to retry on positive SQLite lock evidence. A one-ms
+// engine busy timeout alone made transient schema/WAL locks erase known projects
+// from the catalog. Keep the original query deadline and same owned handle;
+// neither extend the budget nor spin/reopen databases while a writer is active.
+func workspaceMetaRow(ctx context.Context, db *sql.DB, query string, dest ...any) error {
+	for attempt := 1; ; attempt++ {
+		err := db.QueryRowContext(ctx, query).Scan(dest...)
+		var locked *sqlite.Error
+		if !errors.As(err, &locked) || locked.Code()&0xff != 5 && locked.Code()&0xff != 6 {
+			return err
+		}
+		if err := retry.Wait(ctx, retry.Exponential(attempt, 2*time.Millisecond, 10*time.Millisecond)); err != nil {
+			return err
+		}
+	}
 }
 
 func canonicalizePath(p string) string {

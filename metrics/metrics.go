@@ -291,6 +291,11 @@ func (g *Gauge) Set(v int64) {
 	}
 	sec := now().Unix()
 	g.mu.Lock()
+	g.setLocked(sec, v)
+	g.mu.Unlock()
+}
+
+func (g *Gauge) setLocked(sec, v int64) {
 	slot := &g.slots[sec%HistorySeconds]
 	if slot.sec != sec {
 		*slot = gaugeSlot{sec: sec, max: v}
@@ -298,7 +303,6 @@ func (g *Gauge) Set(v int64) {
 	slot.last, slot.set = v, true
 	slot.max = max(slot.max, v)
 	g.current = v
-	g.mu.Unlock()
 }
 
 // Add moves the current level by delta (for in-flight counts).
@@ -307,9 +311,8 @@ func (g *Gauge) Add(delta int64) {
 		return
 	}
 	g.mu.Lock()
-	v := g.current + delta
+	g.setLocked(now().Unix(), g.current+delta)
 	g.mu.Unlock()
-	g.Set(v)
 }
 
 // --- Table -----------------------------------------------------------------
@@ -331,9 +334,10 @@ type tableRow struct {
 // Table is a keyed latency table (per message type, RPC method, tool): the
 // dashboard ranks keys by time consumed so the owner of a cost is named.
 type Table struct {
-	meta Meta
-	mu   sync.Mutex
-	rows map[string]*tableRow
+	meta   Meta
+	mu     sync.Mutex
+	rows   map[string]*tableRow
+	folded uint64
 }
 
 // NewTable registers (or returns the existing) keyed table.
@@ -361,6 +365,7 @@ func (t *Table) Observe(key string, d time.Duration) {
 	row := t.rows[key]
 	if row == nil {
 		if len(t.rows) >= maxTableKeys {
+			t.folded++
 			key = "other"
 			row = t.rows[key]
 		}
@@ -407,11 +412,12 @@ type Event struct {
 const maxEvents = 256
 
 var events struct {
-	mu   sync.Mutex
-	ring [maxEvents]Event
-	next int
-	n    int
-	seq  uint64
+	mu      sync.Mutex
+	ring    [maxEvents]Event
+	next    int
+	n       int
+	seq     uint64
+	dropped uint64
 }
 
 func recordEvent(event Event) {
@@ -425,6 +431,9 @@ func recordEvent(event Event) {
 		event.Detail = event.Detail[:400]
 	}
 	events.mu.Lock()
+	if events.n == maxEvents {
+		events.dropped++
+	}
 	events.ring[events.next] = event
 	events.next = (events.next + 1) % maxEvents
 	events.n = min(events.n+1, maxEvents)
@@ -486,10 +495,11 @@ func ResetForTest() {
 	for _, t := range reg.tables {
 		t.mu.Lock()
 		t.rows = make(map[string]*tableRow)
+		t.folded = 0
 		t.mu.Unlock()
 	}
 	events.mu.Lock()
-	events.ring, events.next, events.n = [maxEvents]Event{}, 0, 0
+	events.ring, events.next, events.n, events.dropped = [maxEvents]Event{}, 0, 0, 0
 	events.mu.Unlock()
 }
 

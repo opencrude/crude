@@ -293,5 +293,6 @@ var commandCatalog = func() []Descriptor {
 	// replaced by shell.describe_control's exact descriptor before validation.
 	add("shell.control", Shell, Effect(""), "Unresolved action: resolve its exact owner effect before admission.", `{"component_id":{"type":"string"},"operation":{"type":"object","properties":{"verb":{"type":"string"},"value":{},"item_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"secondary_offset":{"type":"integer","minimum":0},"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":0},"fraction":{"type":"number","minimum":0,"maximum":1}},"required":["verb"],"additionalProperties":false},"expected_action":{"type":"string"}}`, "component_id", "operation", "expected_action")
 	out = append(out, ProductCommands()...)
+	out = append(out, DiagnosticCommands()...)
 	return out
 }()

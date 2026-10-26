@@ -180,6 +180,62 @@ change.
 
 ## Visual capture
 
+### Live diagnostic acceptance
+
+`app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and
+`app/live_diagnostics_remote_test.go` exercise production diagnostics through a
+distinct server process, multiple connected ports and the actual composer.
+Ordinary tests need no provider account; `TestDiagnosticsHarnessDistinctCoreSmoke`
+covers exact process provenance, bounded continuation/range recovery and real
+shell handlers. Inference is opt-in, never part of the ordinary suite:
+
+```sh
+. scripts/libghostty_env.sh
+CRUDE_LIVE_DIAGNOSTICS=1 CRUDE_DIAGNOSTICS_CONFIG=/explicit/account-config.json \
+  CRUDE_DIAGNOSTICS_PHASE=all go test ./app \
+  -run '^TestLiveDiagnosticsActualModel$' -v -count=1 -timeout=26m
+```
+
+The requested model is exactly `deepseek/deepseek-v4.1-flash`, with no fallback.
+The private core restricts tools, disables memory/delegation/full-turn dumps and
+retains only the selected connection in a disposable 0600 configuration. `basic`
+(default) tests discovery, both process roles, link/runtime/workspace evidence and
+ordinary file work without diagnostic polling. `dense` adds more than 200 KiB of
+real pasted context, immutable continuation and an intentional range error with
+model recovery. `restart` adds completed-turn core restart/passive resume and a
+fresh-PID followup; `all` combines them. `CRUDE_DIAGNOSTICS_SOAK=1` additionally
+exercises eight real followups, Stop during streaming, normal work after Stop,
+actual context compaction using the same model, accepted transcript preservation
+and post-compaction diagnostics. This is not proof of an uninterrupted active turn
+across process death or arbitrary-length conversation reliability.
+
+`CRUDE_VISUAL_DIAGNOSTICS=1` uses `tui.Start` in a dedicated capture terminal.
+Precompile the app test binary, then use `scripts/tuishot.sh` sequentially at
+desktop and constrained sizes with its `CRUDE_BIN`/`CRUDE_ARGS` interface. A bounded
+`CRUDE_DIAGNOSTICS_VISUAL_HOLD_SECONDS` (at most 120) permits final screenshot
+inspection; the independent `CRUDE_DIAGNOSTICS_RESULT` marker and clean exit must
+also be checked. The harness waits for same-shell `composer.inspect` readiness
+before exactly one Enter; a fixed delay is not paste persistence evidence.
+
+Distinct-host runs require explicit `CRUDE_DIAGNOSTICS_REMOTE`,
+`CRUDE_DIAGNOSTICS_REMOTE_USER`, `CRUDE_DIAGNOSTICS_REMOTE_IDENTITY`,
+`CRUDE_DIAGNOSTICS_REMOTE_HOME`, `CRUDE_DIAGNOSTICS_REMOTE_IMAGE`,
+`CRUDE_DIAGNOSTICS_REMOTE_TEST_IMAGE`, `CRUDE_DIAGNOSTICS_REMOTE_QUIC` and
+`CRUDE_DIAGNOSTICS_REMOTE_TLS`. Provision a disposable **non-root** SSH user/home
+whose basename begins `crdiag`, marker `.diagnostics-test-owned` containing
+`crude-diagnostics-2026-10-26`, digest-verified matching production/test images and
+0600 `input.json` first. The harness does not install keys, bypass host verification,
+alter firewalls or attach a real user profile. It checks the SSH-observed home,
+exact process image/PID and server mode; its parent must remove the temporary user,
+key and credential copies after exact-process shutdown. Network access is explicit
+test setup, not an agent grant.
+
+`TestLiveDiagnosticsRemoteCarriers` verifies SSH/QUIC/TLS switching and retained
+owner provenance without inference. `TestLiveDiagnosticsRemoteInspectExisting`
+uses offered commands to diagnose an already-running harness without restarting
+it. Remote transcript assertions use a bounded compressed SQLite backup (including
+live WAL state), not a main-file copy or a product diagnostic data export.
+
 Use the repository capture scripts for real UI acceptance, at both a readable
 desktop size and a constrained terminal size. On Linux use `scripts/tuishot.sh`;
 on Windows follow [Windows visual capture](windows-visual-capture.md). Never use

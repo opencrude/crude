@@ -41,6 +41,8 @@ detailed contracts.
 | `safety/` | Command safety assessment and permission policy. |
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
+| `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection; no sampling or state owner. |
+| `types/inspect/` | Owner-bound immutable diagnostic pages with encoded-byte/range/retention bounds; no telemetry registry, authorization or background collector. |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
 | `search/`, `docconv/` | Web/arXiv search engines and binary document conversion for read/fetch tools. |
 | `worktree/` | Managed execution worktrees and integration plans. |
@@ -78,7 +80,7 @@ detailed contracts.
 | `tui/theme/` | Themes and design tokens; the only place for hard-coded hex. |
 | `tui/termview/` | Terminal scrollback, selection and copy projection. |
 | `tui/tools/` | Tool-result presentation helpers. |
-| `tui/screens/perfdash/` | Performance surface: sections (including Resources), charts, owner tables, plain-language findings, copyable report. |
+| `tui/screens/perfdash/` | Performance presentation: sections (including Resources), charts, owner tables and copyable report, consuming canonical `perfdata/` findings. |
 | `tui/perf/`, `tui/uitest/`, `tui/platform/`, `tui/xchroma/` | Perf logging, UI test harness, console platform shims, Chroma adapter. |
 
 ## Vendored replacements (`third_party/`)
@@ -106,6 +108,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `focus.go`, `focus_stack.go` | Shell-owned focus targets and LIFO |
 | `session_selection.go` | Shell-selected session/model and owner-fenced settings results |
 | `workspace_switch_lifecycle.go` | Workspace-switch generation boundary |
+| `control_diagnostics.go` | Exact-shell on-demand metric/connection reads with joined client-I/O work and stale completion rejection |
 | `frame_scheduler.go` | Presentation coalescing (16 ms deadline) |
 | `git_snapshot.go` | Silent Git snapshot reconciliation |
 | `slash_commands.go`, `command_palette.go` | Slash commands and palette |

@@ -19,6 +19,23 @@ type resourceLane struct {
 	active int
 }
 
+type resourceLaneObservation struct {
+	Queued   int  `json:"queued"`
+	Capacity int  `json:"queue_capacity"`
+	Active   int  `json:"active_including_queued"`
+	Closed   bool `json:"closed"`
+	Fenced   bool `json:"fenced"`
+}
+
+func (l *resourceLane) observation() *resourceLaneObservation {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return &resourceLaneObservation{len(l.queue), cap(l.queue), l.active, l.closed, l.fenced}
+}
+
 func newResourceLane(ctx context.Context, capacity int) *resourceLane {
 	if capacity < 1 {
 		panic("resource lane capacity must be positive")

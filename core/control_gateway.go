@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"crude/collaboration"
 	"crude/coreprotocol"
@@ -17,21 +18,15 @@ import (
 type actorControlRuntime struct{ actor *actor }
 
 type actorControlCommand struct {
-	caller   control.Caller
-	target   control.Target
-	query    string
-	request  *control.Request
-	result   chan control.Result
-	describe chan controlDescribeResult
-	resolve  chan controlResolveResult
-	observe  chan controlObserveResult
-	ctx      context.Context
+	caller  control.Caller
+	target  control.Target
+	request *control.Request
+	result  chan control.Result
+	resolve chan controlResolveResult
+	observe chan controlObserveResult
+	ctx     context.Context
 }
 
-type controlDescribeResult struct {
-	descriptors []control.Descriptor
-	err         error
-}
 type controlResolveResult struct {
 	descriptor control.Descriptor
 	err        error
@@ -63,21 +58,22 @@ func (r *actorControlRuntime) enqueue(ctx context.Context, command *actorControl
 }
 
 func (r *actorControlRuntime) Describe(ctx context.Context, caller control.Caller, target control.Target, query string) ([]control.Descriptor, error) {
+	release, ok := r.actor.beginIndependentRead()
+	if !ok {
+		return nil, errors.New("control core is closing")
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	if target.WorkspaceID == "" {
 		target.WorkspaceID = r.actor.id
 	}
-	ready := make(chan controlDescribeResult, 1)
-	if err := r.enqueue(ctx, &actorControlCommand{caller: caller, target: target, query: query, describe: ready, ctx: ctx}); err != nil {
+	// Discovery has no actor-owned state. Authenticate against the existing
+	// retained connection/collaboration owners, even if the actor is stalled.
+	if _, err := r.actor.controlCallerContext(ctx, caller, target); err != nil {
 		return nil, err
 	}
-	select {
-	case result := <-ready:
-		return result.descriptors, result.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-r.actor.done:
-		return nil, errors.New("control workspace closed")
-	}
+	return control.Catalog(query), nil
 }
 
 func (r *actorControlRuntime) Resolve(ctx context.Context, request control.Request) (control.Descriptor, error) {
@@ -85,6 +81,17 @@ func (r *actorControlRuntime) Resolve(ctx context.Context, request control.Reque
 		request.Target.WorkspaceID = r.actor.id
 	}
 	request = request.Clone()
+	if diagnosticIndependent(request.CommandID) {
+		release, ok := r.actor.beginIndependentRead()
+		if !ok {
+			return control.Descriptor{}, errors.New("control core is closing")
+		}
+		defer release()
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		descriptor, _, err := r.actor.resolveIndependentDiagnostic(ctx, request)
+		return descriptor, err
+	}
 	ready := make(chan controlResolveResult, 1)
 	if err := r.enqueue(ctx, &actorControlCommand{request: &request, caller: request.Caller, target: request.Target, resolve: ready, ctx: ctx}); err != nil {
 		return control.Descriptor{}, err
@@ -104,6 +111,9 @@ func (r *actorControlRuntime) Execute(ctx context.Context, request control.Reque
 		request.Target.WorkspaceID = r.actor.id
 	}
 	request = request.Clone()
+	if diagnosticIndependent(request.CommandID) {
+		return r.actor.executeIndependentDiagnostic(ctx, request)
+	}
 	// Observe an original immutable receipt before resolving a control whose
 	// component may have legitimately disappeared after Save/Close. This is not
 	// fresh operation admission and does not grant a changed payload authority.
@@ -157,30 +167,50 @@ func (r *actorControlRuntime) Execute(ctx context.Context, request control.Reque
 }
 
 func (a *actor) controlCaller(caller control.Caller, target control.Target) (coreprotocol.Owner, error) {
+	return a.controlCallerContext(a.ctx, caller, target)
+}
+
+func (a *actor) controlCallerContext(ctx context.Context, caller control.Caller, target control.Target) (coreprotocol.Owner, error) {
 	if fault := caller.Validate(); fault != nil {
 		return coreprotocol.Owner{}, fault
 	}
 	if target.WorkspaceID != a.id {
 		return coreprotocol.Owner{}, errors.New("foreign logical control workspace")
 	}
+	if err := ctx.Err(); err != nil {
+		return coreprotocol.Owner{}, err
+	}
+	select {
+	case <-a.done:
+		return coreprotocol.Owner{}, errors.New("control workspace closed")
+	default:
+	}
 	if caller.Kind == control.AgentCaller {
 		store := a.ws.Collaboration
 		if store == nil {
 			return coreprotocol.Owner{}, errors.New("control caller ownership unavailable")
 		}
-		participant, err := store.Agent(a.ctx, caller.AgentID)
+		participant, err := store.Agent(ctx, caller.AgentID)
 		if err != nil || participant.CurrentRunID != caller.RunID || participant.Presence != collaboration.RuntimeAttached {
 			return coreprotocol.Owner{}, errors.New("control caller run is no longer current")
 		}
-		run, err := store.Run(a.ctx, caller.RunID)
+		run, err := store.Run(ctx, caller.RunID)
 		if err != nil || run.State.Terminal() || run.AgentID != caller.AgentID {
 			return coreprotocol.Owner{}, errors.New("control caller run settled or changed")
 		}
-		frontend := a.ws.SessionForAgent(caller.AgentID)
-		if frontend == nil {
-			return coreprotocol.Owner{}, errors.New("control caller session unavailable")
+		// Collaboration owns exact agent ancestry and session identity. Do not
+		// read mutable frontend session/agent maps from a diagnostic worker.
+		root := participant
+		for depth := 0; root.ParentID != ""; depth++ {
+			if depth >= 64 {
+				return coreprotocol.Owner{}, errors.New("control caller ancestry exceeds bound")
+			}
+			root, err = store.Agent(ctx, root.ParentID)
+			if err != nil {
+				return coreprotocol.Owner{}, errors.New("control caller root session unavailable")
+			}
 		}
-		if target.SessionID != "" && target.SessionID != frontend.SessionID {
+		if root.SessionID == "" || target.SessionID != "" && target.SessionID != root.SessionID {
 			return coreprotocol.Owner{}, errors.New("control cannot reach a foreign session")
 		}
 		return coreprotocol.Owner{ClientID: "agent:" + caller.AgentID, Epoch: participant.RuntimeEpoch}, nil
@@ -271,8 +301,6 @@ func (a *actor) admitControl(command *actorControlCommand) {
 	owner, err := a.controlCaller(command.caller, command.target)
 	if err != nil {
 		switch {
-		case command.describe != nil:
-			command.describe <- controlDescribeResult{err: err}
 		case command.resolve != nil:
 			command.resolve <- controlResolveResult{err: err}
 		case command.observe != nil:
@@ -280,10 +308,6 @@ func (a *actor) admitControl(command *actorControlCommand) {
 		default:
 			command.result <- failedControl(*command.request, control.Denied, err.Error())
 		}
-		return
-	}
-	if command.describe != nil {
-		command.describe <- controlDescribeResult{descriptors: control.Catalog(command.query)}
 		return
 	}
 	if command.observe != nil {
@@ -455,6 +479,7 @@ func (a *actor) executeShellControl(ctx context.Context, owner coreprotocol.Owne
 	if err != nil && result.RequestID == "" {
 		result = failedControl(in, control.OperationFailed, err.Error())
 	}
+	result = coreprotocol.BoundControlResult(in, result, journal)
 	if journal {
 		if err := a.receipts.complete(context.WithoutCancel(ctx), request, coreprotocol.Response{ID: in.ID, Payload: mustPayload(&result)}); err != nil {
 			return uncertainControl(in.ID)
@@ -491,7 +516,8 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 				command.result <- failedControl(in, control.Unavailable, "receipt unavailable for this exact caller/workspace")
 				return
 			}
-			command.result <- control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: controlJSON(receipt.View())}
+			result := control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: controlJSON(receipt.View())}
+			command.result <- coreprotocol.BoundControlResult(in, result, false)
 		}()
 		return true
 	}
@@ -599,6 +625,7 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 					result = uncertainControl(in.ID)
 					result.Fault.Message = fmt.Sprintf("publication panicked: %v; inspect original receipt before retrying", recovered)
 				}
+				result = coreprotocol.BoundControlResult(in, result, journal)
 				if journal {
 					if err := a.receipts.complete(context.Background(), request, coreprotocol.Response{ID: in.ID, Payload: mustPayload(&result)}); err != nil {
 						result = uncertainControl(in.ID)
@@ -621,7 +648,7 @@ func (a *actor) startControlDomainJob(command *actorControlCommand, owner corepr
 					a.broadcast(coreprotocol.Change{Sessions: true})
 				}
 			}
-			if result.Fault == nil {
+			if result.Fault == nil && descriptor.Effect != control.Read {
 				a.changed(nil)
 				if settings {
 					a.broadcast(coreprotocol.Change{Settings: true, Sessions: true})

@@ -53,6 +53,10 @@ async/wait tool descriptions and canonical command rule say so.
 Crude's collaboration, memory/history, capability and evidence surfaces. It does
 not duplicate schemas or grant tools. Directed peer delivery is automatic;
 live-running broadcast is rare and peer-note-only.
+Diagnostics add only a short relevance/discovery/narrowing rule here. Detailed
+selectors, range/expiry errors, next-page requests and coverage facts live in the
+offered command schemas/results, not a permanent metrics manual in every prompt.
+Ordinary work must not be cluttered with automatic diagnostic sampling or results.
 Capability guidance asks for concise name/keyword discovery and exact returned
 identity activation; reading catalog files is not a durable installation. The
 tool descriptions own installed-path resolution, workspace persistence, explicit

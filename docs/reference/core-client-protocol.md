@@ -146,6 +146,27 @@ waits for replica inventory and peer-created roots preserve editor focus.
 
 ## Ownership across core and shell
 
+### Operational inspection
+
+`core.performance.inspect` and `core.diagnostics.inspect` serve bounded immutable
+pages before workspace attachment without constructing a workspace. They reuse
+the process metrics registry and retained runtime/connection/topic owners.
+Semantic agent/MCP callers use the existing control gateway's Read descriptors;
+core-owned diagnostic reads do not wait behind the workspace actor they inspect.
+Their authorization still rechecks the exact native run/root session or immutable
+external launch grant. Current-workspace capacities are read on their actor with
+bounded waits and explicit partial evidence. See [diagnostic retrieval](control-contract.md#on-demand-diagnostics).
+
+`core.status` preserves its successful per-workspace observations alongside
+`partial` and per-workspace `observation_error` facts. Internal Status callers
+still receive the inspection error; unknown workspace work is busy for lifetime
+decisions. Shutdown reservation remains fail-closed and separate from diagnostic
+partial success. Topic diagnostics copy metadata at existing send/applied-ACK,
+reset and publication boundaries, never read live encoder state or own another
+cursor. Normal replication is unchanged.
+
+### Presentation ownership
+
 Closing a shell detaches it; it never closes sessions or the retained workspace,
 and server mode retains work with zero shells. Never attach multiple Apps to one
 mutable Workspace.

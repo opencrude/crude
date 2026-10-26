@@ -27,20 +27,24 @@ type sessionState struct {
 	id     string
 	secret string
 
-	carrierMu sync.Mutex
-	carrier   corewire.Conn
-	control   corewire.Stream
-	grace     *time.Timer
+	carrierMu     sync.Mutex
+	carrier       corewire.Conn
+	control       corewire.Stream
+	grace         *time.Timer
+	graceDeadline time.Time // recorded by the carrier owner, never inferred from a timer
 
 	commandMu    sync.Mutex
 	commands     map[string]*command
 	commandBytes int
 
-	topicMu            sync.Mutex
-	topicCancel        map[string]context.CancelFunc
-	topicRunning       map[string]chan struct{}
-	terminalViews      map[string]*terminalViewState
-	documentTopicViews map[string]*documentTopicView
+	topicMu                 sync.Mutex
+	topicCancel             map[string]context.CancelFunc
+	topicRunning            map[string]chan struct{}
+	topicObservations       map[string]*topicObservation
+	topicGeneration         uint64
+	topicObservationDropped uint64
+	terminalViews           map[string]*terminalViewState
+	documentTopicViews      map[string]*documentTopicView
 	// One unacknowledged event is retained, independent of carrier writes.
 	// Stop-and-wait leaves further requests in their bounded owner inboxes.
 	sessionSeq   uint64
@@ -124,6 +128,7 @@ func (c *Connection) bind(conn corewire.Conn, control corewire.Stream) {
 	}
 	old := c.carrier
 	c.carrier, c.control = conn, control
+	c.graceDeadline = time.Time{}
 	if c.grace != nil {
 		c.grace.Stop()
 		c.grace = nil
@@ -145,7 +150,9 @@ func (c *Connection) unbind(conn corewire.Conn) {
 	if c.closing {
 		return
 	}
-	c.grace = time.AfterFunc(c.runtime.sessionGrace(), c.Close)
+	grace := c.runtime.sessionGrace()
+	c.graceDeadline = time.Now().Add(grace)
+	c.grace = time.AfterFunc(grace, c.Close)
 }
 
 // Carrier reports the current carrier kind and RTT; empty while detached.
@@ -162,10 +169,12 @@ func (c *Connection) Carrier() (corewire.Carrier, time.Duration) {
 // so a client resuming after carrier loss re-attaches by request identity
 // instead of executing the request twice.
 type command struct {
-	request  coreprotocol.Request
-	done     chan struct{}
-	response coreprotocol.Response
-	progress chan string
+	admitted  time.Time
+	completed time.Time // published by close(done), never read before completion
+	request   coreprotocol.Request
+	done      chan struct{}
+	response  coreprotocol.Response
+	progress  chan string
 }
 
 // Unacknowledged results are never evicted to admit another command. At most
@@ -195,7 +204,7 @@ func (c *Connection) admit(ctx context.Context, request coreprotocol.Request) (*
 		c.commandMu.Unlock()
 		return nil, errCommandCapacity
 	}
-	cmd := &command{request: request, done: make(chan struct{}), progress: make(chan string, 1)}
+	cmd := &command{request: request, admitted: time.Now(), done: make(chan struct{}), progress: make(chan string, 1)}
 	if c.commands == nil {
 		c.commands = make(map[string]*command)
 	}
@@ -210,6 +219,7 @@ func (c *Connection) admit(ctx context.Context, request coreprotocol.Request) (*
 		case <-c.done:
 			cmd.response = fault(request, "outcome_uncertain", "session ended; inspect the receipt before retrying")
 		}
+		cmd.completed = time.Now()
 		close(cmd.done)
 	}()
 	return cmd, nil
@@ -277,6 +287,7 @@ func (c *Connection) claimTopic(ctx context.Context, key string, closeStream ...
 	}
 	running := make(chan struct{})
 	c.topicCancel[key], c.topicRunning[key] = interrupt, running
+	ctx = c.claimTopicObservationLocked(ctx, key)
 	c.topicMu.Unlock()
 	if previous != nil {
 		// Even a cancelled replacement must join its predecessor: otherwise a
@@ -289,6 +300,9 @@ func (c *Connection) claimTopic(ctx context.Context, key string, closeStream ...
 			interrupt()
 			c.topicMu.Lock()
 			if c.topicRunning[key] == running {
+				if observation := c.topicObservations[key]; observation != nil {
+					observation.Active = false
+				}
 				delete(c.topicCancel, key)
 				delete(c.topicRunning, key)
 			}
@@ -317,6 +331,11 @@ func (c *Connection) stopWorkspaceTopics(workspaceID string) {
 		}
 	}
 	c.topicMu.Lock()
+	for key := range c.topicObservations {
+		if strings.HasPrefix(key, prefix) {
+			delete(c.topicObservations, key)
+		}
+	}
 	for key := range c.terminalViews {
 		if strings.HasPrefix(key, prefix) {
 			delete(c.terminalViews, key)

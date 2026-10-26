@@ -10,6 +10,16 @@ architecture. Terminal and network lifetimes are specified in
 
 ## The Update goroutine
 
+Detached command bodies are admitted and joined by the App's async-I/O lifetime.
+Shutdown rejects new bodies, cancels the owner and waits for admitted work before
+workspace storage closes. Event delivery is separately fenced and never joined
+while holding Update. Switch bootstrap tree/catalog/source-control reads use this
+same owner. Catalog SQL deadlines remain cooperative: returning a timeout never
+abandons a detached SQLite opener that can create WAL/SHM files after teardown.
+SSH stdout uses an explicitly owned OS pipe so a fast process exit/Wait cannot
+close unread buffered output; cancellation still closes and joins that exact SSH
+subprocess rather than a process-name search.
+
 - **`EventBus.Send` is synchronous.** Never call it from a command that is
   already executing on Bubble Tea's `Update` goroutine. File mutations return
   `FileOperationResultMsg` directly, terminal close is command-owned, and OSC
@@ -173,11 +183,14 @@ not keep writing caller-owned result memory after the caller has returned.
   it never re-registers a deleted DB. The legacy file journal is removed: undo
   is Local History operation receipts only.
 - **Launcher workspace scans are bounded and leak nothing.**
-  `readWorkspaceMetaBounded` aborts both the read and its goroutine's channel
-  send on timeout, so a stale read never leaks an open SQLite handle (which kept
-  `workspace.db` locked on Windows). Two concurrent readers load SQLite schemas
+  `readWorkspaceMetaBounded` cancels queries and joins their actual SQL handles
+  before returning or making the metadata-only retry. There is no abandoned
+  opener creating WAL files after teardown. Two concurrent readers load SQLite schemas
   without a CPU-bound open storm; one statement reads identity, recency and
-  session count under the unchanged 150 ms per-database bound. No count query
+  session count under the unchanged 150 ms query budget. Positive SQLite
+  BUSY/LOCKED evidence uses the shared paced retry policy within that same deadline,
+  not a one-ms failure that silently hides a briefly contended known project.
+  No count query
   can wait on rows held by the same single-connection pool. Read-only SQLite catalog
   handles use the shared escaped file URI; literal `#`, `%` and query delimiters
   in the profile path are filesystem content, never URI options or fragments.

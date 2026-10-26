@@ -4,18 +4,19 @@ import (
 	"slices"
 
 	"crude/metrics"
+	"crude/perfdata"
 )
 
 // Dashboard tabs.
 const (
-	SectionOverview  = "overview"
-	SectionResources = "resources"
-	SectionUI        = "ui"
-	SectionCore      = "core"
-	SectionAgents    = "agents"
-	SectionServices  = "services"
-	SectionRuntime   = "runtime"
-	SectionEvents    = "events"
+	SectionOverview  = perfdata.SectionOverview
+	SectionResources = perfdata.SectionResources
+	SectionUI        = perfdata.SectionUI
+	SectionCore      = perfdata.SectionCore
+	SectionAgents    = perfdata.SectionAgents
+	SectionServices  = perfdata.SectionServices
+	SectionRuntime   = perfdata.SectionRuntime
+	SectionEvents    = perfdata.SectionEvents
 )
 
 var sectionLabels = []struct{ id, label string }{
@@ -144,14 +145,8 @@ func sectionRefs(d Data, section string) []seriesRef {
 	return out
 }
 
-// resolve maps core refs to the shell snapshot when the core runs in this
-// process.
-func (d Data) resolve(ref seriesRef) seriesRef {
-	if ref.process == processCore && d.Core == nil {
-		ref.process = processShell
-	}
-	return ref
-}
+// resolve preserves the authoritative process source.
+func (d Data) resolve(ref seriesRef) seriesRef { return ref }
 
 func (d Data) has(ref seriesRef) bool {
 	if ref.name == busyName {
