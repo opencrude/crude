@@ -2,16 +2,19 @@ package viewmodel
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/sessiondb"
+	"crude/tui/ui"
 	"crude/types"
 	"crude/types/attachment"
 )
@@ -19,7 +22,9 @@ import (
 // Opt-in fixture for scripts/tuishot.sh with the compiled viewmodel test binary:
 // CRUDE_VISUAL_CHAT_ATTACHMENTS=1 ... -test.run=^TestChatAttachmentVisualAcceptance$
 // F2 composer text (editable), F3 posted text (Close), F4 posted image,
-// F5 cold SQLite historical text (Close), F9 quit. Esc closes each preview.
+// F5 cold SQLite historical text (Close), F6 system image app, F7 file manager,
+// F8 attachment settings, F9 quit. Esc closes each preview. An optional
+// CRUDE_VISUAL_ATTACHMENT_IMAGE source reproduces a real detailed screenshot.
 // Normal pointer clicks still enter through the actual painted App transcript.
 func TestChatAttachmentVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_CHAT_ATTACHMENTS") != "1" {
@@ -39,6 +44,14 @@ func TestChatAttachmentVisualAcceptance(t *testing.T) {
 	var data bytes.Buffer
 	if err := png.Encode(&data, img); err != nil {
 		t.Fatal(err)
+	}
+	if source := os.Getenv("CRUDE_VISUAL_ATTACHMENT_IMAGE"); source != "" {
+		original, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data.Reset()
+		data.Write(original)
 	}
 	media, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedImage, Mime: "image/png", Data: data.Bytes()})
 	if err != nil {
@@ -62,16 +75,41 @@ func TestChatAttachmentVisualAcceptance(t *testing.T) {
 	if _, err := program.Run(); err != nil {
 		t.Fatal(err)
 	}
+	if tracePath := os.Getenv("CRUDE_VISUAL_GRAPHICS_TRACE"); tracePath != "" {
+		if err := os.WriteFile(tracePath, []byte(model.trace.String()), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 type attachmentVisualModel struct {
 	*App
 	t                       *testing.T
 	text, image, historical sessiondb.Reference
+	trace                   strings.Builder
 }
 
 func (m *attachmentVisualModel) Init() tea.Cmd { return tickCmd() }
 func (m *attachmentVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer func() {
+		if os.Getenv("CRUDE_VISUAL_GRAPHICS_TRACE") == "" {
+			return
+		}
+		switch msg.(type) {
+		case tea.MouseMsg, tea.KeyPressMsg:
+			fmt.Fprintf(&m.trace, "%T %+v graphics=%+v", msg, msg, m.terminalImages)
+			if mouse, ok := msg.(tea.MouseMsg); ok {
+				pointer := mouse.Mouse()
+				fmt.Fprintf(&m.trace, " pointer=%d,%d button=%d", pointer.X, pointer.Y, pointer.Button)
+			}
+			if win := m.overlayHost.Window(ui.OverlayTextOverlay); win != nil {
+				x, y := win.Position()
+				w, h := win.Size()
+				fmt.Fprintf(&m.trace, " window=%d,%d %dx%d", x, y, w, h)
+			}
+			fmt.Fprintln(&m.trace)
+		}
+	}()
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
@@ -82,6 +120,16 @@ func (m *attachmentVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.click(m.image.Label)
 		case tea.KeyF5:
 			return m, m.click(m.historical.Label)
+		case tea.KeyF6:
+			setAttachmentDestination(m.t, m.App, types.AttachmentOpenSystem)
+			return m, m.openAttachment(m.image.ID, false)
+		case tea.KeyF7:
+			setAttachmentDestination(m.t, m.App, types.AttachmentOpenFileManager)
+			return m, m.openAttachment(m.image.ID, false)
+		case tea.KeyF8:
+			setAttachmentDestination(m.t, m.App, types.AttachmentOpenSystem)
+			m.openApplicationSettings()
+			return m, nil
 		case tea.KeyF9:
 			return m, tea.Quit
 		}

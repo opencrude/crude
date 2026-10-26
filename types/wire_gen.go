@@ -6517,8 +6517,8 @@ func (z *TurnIdentity) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 10
-	o = append(o, 0x9a)
+	// array header, size 11
+	o = append(o, 0x9b)
 	o = msgp.AppendInt(o, z.SidebarWidth)
 	o = msgp.AppendBool(o, z.ShowHiddenFiles)
 	o = msgp.AppendBool(o, z.ShowIcons)
@@ -6529,6 +6529,7 @@ func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendInt(o, z.MessageDelay)
 	o = msgp.AppendBool(o, z.AnimationsEnabled)
 	o = msgp.AppendString(o, z.ContextHelp)
+	o = msgp.AppendString(o, z.AttachmentOpen)
 	return
 }
 
@@ -6544,8 +6545,8 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 10 {
-		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
+	if zb0001 != 11 {
+		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
 		return
 	}
 	z.SidebarWidth, bts, err = msgp.ReadIntBytes(bts)
@@ -6598,13 +6599,18 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "ContextHelp")
 		return
 	}
+	z.AttachmentOpen, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AttachmentOpen")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *UISettings) Msgsize() (s int) {
-	s = 1 + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp)
+	s = 1 + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen)
 	return
 }
 

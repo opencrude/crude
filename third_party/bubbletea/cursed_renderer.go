@@ -16,31 +16,35 @@ import (
 )
 
 type cursedRenderer struct {
-	w             io.Writer
-	buf           bytes.Buffer // updates buffer to be flushed to [w]
-	scr           *uv.TerminalRenderer
-	cellbuf       uv.ScreenBuffer
-	directbuf     uv.ScreenBuffer // producer snapshot, guarded by viewMu
-	surfaceFrame  uint64
-	snapshotToken uv.SnapshotToken
-	flushbuf      bytes.Buffer // renderer-owned envelope; retain actual frame capacity
-	lastView      *View
-	env           []string
-	term          string // the terminal type $TERM
-	width, height int
-	mu            sync.Mutex
-	viewMu        sync.Mutex // guards view and pendingSize only; see flush
-	pendingSize   *[2]int
-	written       int // bytes written by the last flush
-	profile       colorprofile.Profile
-	logger        uv.Logger
-	view          View
-	onMouseView   func(MouseMsg) Cmd // last presented handler, guarded by viewMu
-	hardTabs      bool               // whether to use hard tabs to optimize cursor movements
-	backspace     bool               // whether to use backspace to optimize cursor movements
-	mapnl         bool
-	syncdUpdates  bool // whether to use synchronized output mode for updates
-	starting      bool // indicates whether the renderer is starting after being stopped
+	w              io.Writer
+	buf            bytes.Buffer // updates buffer to be flushed to [w]
+	scr            *uv.TerminalRenderer
+	cellbuf        uv.ScreenBuffer
+	directbuf      uv.ScreenBuffer // producer snapshot, guarded by viewMu
+	surfaceFrame   uint64
+	snapshotToken  uv.SnapshotToken
+	flushbuf       bytes.Buffer // renderer-owned envelope; retain actual frame capacity
+	lastView       *View
+	env            []string
+	term           string // the terminal type $TERM
+	width, height  int
+	mu             sync.Mutex
+	viewMu         sync.Mutex // guards view and pendingSize only; see flush
+	pendingSize    *[2]int
+	written        int // bytes written by the last flush
+	profile        colorprofile.Profile
+	logger         uv.Logger
+	view           View
+	onMouseView    func(MouseMsg) Cmd // last presented handler, guarded by viewMu
+	hardTabs       bool               // whether to use hard tabs to optimize cursor movements
+	backspace      bool               // whether to use backspace to optimize cursor movements
+	mapnl          bool
+	syncdUpdates   bool                           // whether to use synchronized output mode for updates
+	starting       bool                           // indicates whether the renderer is starting after being stopped
+	kittyImages    map[uint32]KittyImagePlacement // last successfully flushed resource set
+	kittyUncertain []KittyImagePlacement          // exact IDs possibly sent by a failed write
+	kittyInvalid   bool                           // clear/reset/screen switch requires reupload
+	kittyTmux      bool
 }
 
 var _ renderer = &cursedRenderer{}
@@ -50,6 +54,7 @@ func newCursedRenderer(w io.Writer, env []string, width, height int) (s *cursedR
 	s.w = w
 	s.env = env
 	s.term = uv.Environ(env).Getenv("TERM")
+	s.kittyTmux = uv.Environ(env).Getenv("TMUX") != ""
 	s.width, s.height = width, height // This needs to happen before [cursedRenderer.reset].
 	s.cellbuf = uv.NewScreenBuffer(s.width, s.height)
 	// Crude (and modern terminals: Kitty, Ghostty, WezTerm, Contour, foot,
@@ -168,6 +173,7 @@ func (s *cursedRenderer) start() {
 func (s *cursedRenderer) close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.deleteKittyImages()
 
 	// Exit the altScreen and show cursor before closing. It's important that
 	// we don't change the [cursedRenderer] altScreen and cursorHidden states
@@ -262,6 +268,7 @@ func (s *cursedRenderer) close() (err error) {
 		s.buf.Reset()
 	}
 
+	s.commitKittyImages(nil)
 	x, y := s.scr.Position()
 
 	// We want to clear the renderer state but not the cursor position. This is
@@ -295,6 +302,16 @@ func (s *cursedRenderer) flush(closing bool) error {
 
 	// Alt screen mode.
 	shouldUpdateAltScreen := (s.lastView == nil && view.AltScreen) || (s.lastView != nil && s.lastView.AltScreen != view.AltScreen)
+	oldScreenPrefix := 0
+	// Delete old-screen resources before switching. Recreate on the new screen
+	// below, before any placeholder cells. Never send a terminal-wide deletion.
+	if shouldUpdateAltScreen && (len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0) {
+		s.deleteKittyImages()
+		if err := s.scr.Flush(); err != nil {
+			return fmt.Errorf("bubbletea: error flushing image deletion: %w", err)
+		}
+		oldScreenPrefix = s.buf.Len()
+	}
 	if shouldUpdateAltScreen {
 		// We want to enter/exit altscreen mode but defer writing the actual
 		// sequences until we flush the rest of the updates. This is because we
@@ -439,6 +456,8 @@ func (s *cursedRenderer) flush(closing bool) error {
 		setProgressBar(s, view.ProgressBar)
 	}
 
+	s.reconcileKittyImages(view.Images, s.kittyInvalid || shouldUpdateAltScreen, oldScreenPrefix > 0)
+
 	// Render and queue changes to the screen buffer.
 	s.scr.Render(s.cellbuf.RenderBuffer)
 
@@ -493,6 +512,9 @@ func (s *cursedRenderer) flush(closing bool) error {
 
 	s.flushbuf.Reset()
 	buf := &s.flushbuf
+	if oldScreenPrefix > 0 {
+		buf.Write(s.buf.Next(oldScreenPrefix))
+	}
 	if shouldUpdateAltScreen {
 		// We always disable keyboard enhancements when switching screens
 		// because the terminal is expected to have two different keyboard
@@ -550,10 +572,12 @@ func (s *cursedRenderer) flush(closing bool) error {
 			s.logger.Printf("output: %q", buf.String())
 		}
 		if _, err := io.Copy(s.w, buf); err != nil {
+			s.failKittyImages(view.Images)
 			return fmt.Errorf("bubbletea: error flushing update to the writer: %w", err)
 		}
 	}
 
+	s.commitKittyImages(view.Images)
 	s.lastView = &view
 	s.viewMu.Lock()
 	s.onMouseView = view.OnMouse
@@ -599,6 +623,13 @@ func (s *cursedRenderer) render(v View) {
 	if v.ProgressBar != nil {
 		progress := *v.ProgressBar
 		v.ProgressBar = &progress
+	}
+	if len(v.Images) > 0 {
+		if kittyImagesEqual(v.Images, s.view.Images) {
+			v.Images = s.view.Images
+		} else {
+			v.Images = append([]KittyImagePlacement(nil), v.Images...)
+		}
 	}
 	s.view = v
 }
@@ -648,7 +679,7 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	if s.starting && s.hardTabs {
 		_, _ = s.scr.WriteString(ansi.SetTabEvery8Columns)
 	}
-	if !resized && !s.starting && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
+	if !resized && !s.starting && !s.kittyInvalid && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
 		return view, true
 	}
 	s.starting = false
@@ -688,10 +719,18 @@ func (s *cursedRenderer) reset() {
 
 func reset(s *cursedRenderer) {
 	s.buf.Reset()
+	s.starting = true
+	s.kittyInvalid = len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0
 	scr := uv.NewTerminalRenderer(&s.buf, s.env)
 	scr.SetColorProfile(s.profile)
 	scr.SetRelativeCursor(true) // Always start in inline mode
 	scr.SetFullscreen(false)    // Always start in inline mode
+	if s.lastView != nil && s.lastView.AltScreen {
+		// reset may happen while still on the alternate screen. close/start
+		// separately own physical mode changes during suspend/resume.
+		scr.SetFullscreen(true)
+		scr.SetRelativeCursor(false)
+	}
 	if s.hardTabs {
 		scr.SetTabStops(s.width)
 	} else {
@@ -743,6 +782,7 @@ func (s *cursedRenderer) clearScreen() {
 	// screen redraw.
 	s.scr.MoveTo(0, 0)
 	s.scr.Erase()
+	s.kittyInvalid = len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0
 	s.mu.Unlock()
 }
 
@@ -920,6 +960,9 @@ func viewEquals(a, b *View) bool {
 		a.ForegroundColor != b.ForegroundColor ||
 		a.BackgroundColor != b.BackgroundColor ||
 		a.KeyboardEnhancements != b.KeyboardEnhancements {
+		return false
+	}
+	if !kittyImagesEqual(a.Images, b.Images) {
 		return false
 	}
 

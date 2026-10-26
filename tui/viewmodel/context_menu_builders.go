@@ -16,6 +16,7 @@ import (
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	"crude/tui/window"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -699,8 +700,8 @@ func (m *App) refRangeAtMouse(mouse tea.Mouse) (input.RefRange, bool) {
 }
 
 // buildAttachmentContextMenu is the per-chip menu behind right-click on a
-// pill: preview the content, relabel it, remove it from the draft, or open
-// file-backed attachments in the editor.
+// pill: open using the preference or an explicit destination, relabel it,
+// remove it from the draft, or open file-backed attachments in the editor.
 func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState {
 	if m.RefStore() == nil {
 		return nil
@@ -712,7 +713,10 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 	title := strings.TrimSuffix(strings.TrimPrefix(ref.DisplayName(), "["), "]")
 	st := &ui.ContextMenuState{Title: title}
 	items := []ui.ContextMenuItem{
-		{Label: "Preview", Detail: "Space", Action: func() {
+		{Label: "Open", Detail: "Space", Action: func() {
+			m.runDetachedAsyncCmd(m.openAttachment(rr.ID, false))
+		}},
+		{Label: "Preview in Crude", Action: func() {
 			m.openReferenceOverlay(rr.ID)
 		}},
 		{Label: "Rename…", Action: func() {
@@ -722,12 +726,12 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 			m.removeAttachment(rr)
 		}},
 	}
+	items = append(items,
+		ui.ContextMenuItem{Label: "Open with default app", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, types.AttachmentOpenSystem)) }},
+		ui.ContextMenuItem{Label: "Show in file manager", Action: func() { m.runDetachedAsyncCmd(m.openAttachmentIn(ref.ID, types.AttachmentOpenFileManager)) }},
+	)
 	if ref.FilePath != "" {
 		path := ref.FilePath
-		items = append(items,
-			ui.ContextMenuItem{Label: "Open with default app", Action: func() { m.runDetachedAsyncCmd(m.openAttachment(ref.ID, false)) }},
-			ui.ContextMenuItem{Label: "Show in file manager", Action: func() { m.runDetachedAsyncCmd(m.openAttachment(ref.ID, true)) }},
-		)
 		items = append(items, ui.ContextMenuItem{Label: "Open in editor", Action: func() {
 			if _, err := m.openEditorTab(path); err != nil {
 				m.Feedback.NotifyError("open attachment: " + err.Error())

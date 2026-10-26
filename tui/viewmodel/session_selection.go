@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/shellport"
+	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -12,6 +13,12 @@ func (m *App) ActivateSessionByAgent(agentID string) {
 		return
 	}
 	if owner := m.ws.SessionForAgent(agentID); owner != nil {
+		if m.referenceOverlay != nil && (owner != m.referenceOverlay.session || agentID != m.referenceOverlay.agentID) {
+			m.overlayHost.Close(ui.OverlayTextOverlay)
+		}
+		if m.attachmentOpen != nil && (owner != m.attachmentOpen.session || agentID != m.attachmentOpen.agentID) {
+			m.cancelAttachmentOpen()
+		}
 		m.ActiveSession = owner
 		if owner.Settings != nil {
 			m.ModelName = owner.Settings.Effective.Model

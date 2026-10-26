@@ -374,10 +374,16 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.BoolFieldState("format-on-save", "Format on manual save", editor.FormatOnSave, "Format explicit saves only. Automatic saves always preserve the exact text you typed."),
 		)},
 		{Name: "Code Intelligence", Group: "IDE", Description: "Completions, navigation and diagnostics from language servers, and how much they may use.", Form: m.buildLSPForm(lsp)},
-		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
+		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, diagnostics, and attachment opening.", Form: formModel(
 			ui.SeparatorFieldState("workspace-chrome", "Layout"),
 			ui.SegmentedFieldState("context-help", "Shortcut hints", []ui.FormOption{{ID: "compact", Label: "Compact"}, {ID: "expanded", Label: "Expanded"}, {ID: "off", Label: "Off"}}, defaultString(uiSettings.ContextHelp, "compact"), "Shortcuts for the focused area, shown at the top of the window. Full Help (F1) is always available."),
 			ui.NumberFieldState("sidebar-width", "Sidebar width", uiSettings.SidebarWidth, "columns", "Width of the file and workspace navigation sidebar."),
+			ui.SeparatorFieldState("attachments", "Attachments"),
+			ui.SegmentedFieldState("attachment-open", "Open attachments in", []ui.FormOption{
+				{ID: types.AttachmentOpenSystem, Label: "System app"},
+				{ID: types.AttachmentOpenFileManager, Label: "File manager"},
+				{ID: types.AttachmentOpenCrude, Label: "Crude"},
+			}, uiSettings.AttachmentOpenOrDefault(), "Crude uses terminal graphics when supported; otherwise a low-resolution preview."),
 			ui.SeparatorFieldState("workspace-tree", "File tree"),
 			ui.BoolFieldState("show-hidden", "Hidden files", uiSettings.ShowHiddenFiles, "Include dotfiles in the workspace tree."),
 			ui.BoolFieldState("show-icons", "File icons", uiSettings.ShowIcons, "Show file-type icons beside names."),
@@ -2836,7 +2842,15 @@ func (m *Model) collectEditor(cfg *types.EditorSettings) {
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {
-	*cfg = types.UISettings{SidebarWidth: parseOpt(m.value(catUI, "sidebar-width"), 30), ShowHiddenFiles: m.value(catUI, "show-hidden") == "on", ShowIcons: m.value(catUI, "show-icons") == "on", UseNerdFont: m.value(catUI, "nerd-font") == "on", ShowGitStatus: m.value(catUI, "git-status") == "on", ShowDiagnostics: m.value(catUI, "diagnostics") == "on", ContextHelp: defaultString(m.value(catUI, "context-help"), "compact")}
+	*cfg = m.layerBase.UI
+	cfg.SidebarWidth = parseOpt(m.value(catUI, "sidebar-width"), 30)
+	cfg.ShowHiddenFiles = m.value(catUI, "show-hidden") == "on"
+	cfg.ShowIcons = m.value(catUI, "show-icons") == "on"
+	cfg.UseNerdFont = m.value(catUI, "nerd-font") == "on"
+	cfg.ShowGitStatus = m.value(catUI, "git-status") == "on"
+	cfg.ShowDiagnostics = m.value(catUI, "diagnostics") == "on"
+	cfg.ContextHelp = defaultString(m.value(catUI, "context-help"), "compact")
+	cfg.AttachmentOpen = m.value(catUI, "attachment-open")
 }
 
 func defaultString(value, fallback string) string {

@@ -18,6 +18,12 @@ func ImagePixelToCell(pixel color.Color, background cell.Color) cell.Color {
 	return background.Blend(cell.NewTrueColor(c.R, c.G, c.B), float32(c.A)/255)
 }
 
+// KittyImageColor encodes protocol identity, not a theme color. It must remain
+// exact RGB all the way to the output terminal's placeholder decoder.
+func KittyImageColor(id uint32) cell.Color {
+	return cell.NewTrueColor(uint8(id>>16), uint8(id>>8), uint8(id))
+}
+
 // ThemeColorToHex returns "#rrggbb" for a theme color, or "" if nil/transparent.
 func ThemeColorToHex(c color.Color) string {
 	if c == nil {

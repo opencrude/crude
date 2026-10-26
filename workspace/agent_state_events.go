@@ -398,8 +398,6 @@ func (a *AgentState) handleBlockingAuto(evt AgentEvent, target *Conversation) {
 }
 
 func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, effects *AgentEffects) {
-	wasStreaming := a.Streaming
-
 	var content, reason string
 	switch d := evt.Data.(type) {
 	case string:
@@ -436,7 +434,7 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, effects *A
 	if data, ok := evt.Data.(map[string]any); ok {
 		boundaryID, _ = data["internal_id"].(string)
 	}
-	target.Finish(content, reason, wasStreaming, boundaryID)
+	target.Finish(content, reason, boundaryID)
 
 	effects.Done = &AgentDoneResult{AgentID: a.ID, Reason: reason}
 }

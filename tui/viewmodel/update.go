@@ -88,6 +88,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if cmd, handled := m.handleTerminalImageMessage(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.handleRemoteInstallInput(msg); handled {
 		return m, cmd
 	}
@@ -345,7 +348,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// The shell surface is resized on the next View() frame by
 		// renderShellToSurface (single full-screen surface).
-		return m, nil
+		if !m.terminalImages.started {
+			return m, m.probeTerminalImages()
+		}
+		return m, tea.Raw(terminalImageSizeQuery())
 
 	case tea.TerminalWidthProfileMsg:
 		m.applyTerminalWidthProfile(msg)
@@ -707,10 +713,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyComposerDraft(msg)
 	case promptHistoryRestoredMsg:
 		m.applyPromptHistory(msg)
+	case attachmentPreparedMsg:
+		cmds = append(cmds, m.applyAttachmentPrepared(msg))
 	case attachmentOpenedMsg:
-		if msg.owner == m.ActiveSession && msg.err != nil {
-			m.Feedback.NotifyError(msg.err.Error())
-		}
+		m.applyAttachmentOpened(msg)
 	case promptHistorySavedMsg:
 		if msg.store == m.Prompts {
 			m.syncPromptRecall()
@@ -1637,6 +1643,12 @@ func (m *App) handleTabSwitch() {
 	prevAgentID := m.AgentView.ActiveID()
 	defer m.bindMainPaneFocus()
 	defer func() {
+		if m.referenceOverlay != nil && m.referenceOverlay.agentID != m.AgentView.ActiveID() {
+			m.overlayHost.Close(ui.OverlayTextOverlay)
+		}
+		if m.attachmentOpen != nil && m.attachmentOpen.agentID != m.AgentView.ActiveID() {
+			m.cancelAttachmentOpen()
+		}
 		if prevEditorPath != m.EditorState.ActiveView || prevEditor != m.EditorState.Editor {
 			if prevEditor != nil {
 				prevEditor.BreakUndoGroup()

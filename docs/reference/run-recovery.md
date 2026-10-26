@@ -110,6 +110,12 @@ session-wide sender installed later by its run loop. A Continue immediately
 after passive resume must deliver completion even before that loop is scheduled;
 it still retries only the captured persistence intent, never provider work.
 
+Successful recovery settles before the deferred terminal `done` is released.
+The live conversation acknowledges the accepted assistant row by request ownership,
+not the activity/streaming flag which recovery may already have cleared. Settlement
+must not append the final response or its continuation suffix a second time. See
+[chat source identity](chat-activity.md#replica-source-identity-and-renderer-generations).
+
 - `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
   exhaustion, deadlines, truncation, loop guards, missing reports and panics are
   not natural completion or permission to kill a task. Recover transient outages;

@@ -762,6 +762,12 @@ type LSPSettings struct {
 	Languages          map[string]LSPLanguageSettings `json:"languages,omitempty"`
 }
 
+const (
+	AttachmentOpenSystem      = "system"
+	AttachmentOpenFileManager = "file-manager"
+	AttachmentOpenCrude       = "crude"
+)
+
 type UISettings struct {
 	SidebarWidth      int  `json:"sidebar_width,omitempty"`
 	ShowHiddenFiles   bool `json:"show_hidden_files,omitempty"`
@@ -774,6 +780,18 @@ type UISettings struct {
 	AnimationsEnabled bool `json:"animations_enabled,omitempty"`
 	// ContextHelp is compact, expanded, or off. Full Help remains available.
 	ContextHelp string `json:"context_help,omitempty"`
+	// AttachmentOpen selects the destination for opening chat attachments.
+	AttachmentOpen string `json:"attachment_open,omitempty"`
+}
+
+// AttachmentOpenOrDefault returns a supported attachment destination.
+func (s UISettings) AttachmentOpenOrDefault() string {
+	switch s.AttachmentOpen {
+	case AttachmentOpenSystem, AttachmentOpenFileManager, AttachmentOpenCrude:
+		return s.AttachmentOpen
+	default:
+		return AttachmentOpenSystem
+	}
 }
 
 type ModelEntry struct {

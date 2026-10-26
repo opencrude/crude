@@ -87,6 +87,31 @@ func (s *Screen) OpenImage(refID, title string, img image.Image) {
 	s.image.image = img
 }
 
+// SetImageResource installs a terminal-owned immutable PNG prepared off Update.
+// Without confirmed terminal support, the same image keeps its cell preview.
+func (s *Screen) SetImageResource(resource *tea.KittyImage) { s.image.resource = resource }
+
+func (s *Screen) SetImageGraphics(enabled bool, cellWidth, cellHeight int) bool {
+	if s.image.graphics == enabled && s.image.cellWidth == cellWidth && s.image.cellHeight == cellHeight {
+		return false
+	}
+	s.image.graphics, s.image.cellWidth, s.image.cellHeight = enabled, cellWidth, cellHeight
+	return true
+}
+
+// ImagePlacement describes the virtual image paired with this body's cells.
+// Position and occlusion remain ordinary compositor responsibilities.
+func (s *Screen) ImagePlacement() tea.KittyImagePlacement {
+	if !s.IsOpen() || !s.image.graphics || s.image.resource == nil || s.image.image == nil {
+		return tea.KittyImagePlacement{}
+	}
+	r := s.image.imageRect()
+	if r.Empty() {
+		return tea.KittyImagePlacement{}
+	}
+	return tea.KittyImagePlacement{Image: s.image.resource, Columns: r.W, Rows: r.H}
+}
+
 func (s *Screen) open(refID, title, content string, readOnly bool) {
 	s.epoch++
 	s.refID = refID
@@ -94,6 +119,9 @@ func (s *Screen) open(refID, title, content string, readOnly bool) {
 	s.readOnly = readOnly
 	s.busy = false
 	s.image.image = nil
+	s.image.resource = nil
+	s.image.placeholders = nil
+	s.image.placeholderSize = ui.Size{}
 	s.input.area.SetReadOnly(readOnly)
 	s.input.area.SetValue(content)
 	s.input.area.SetCursorFlat(0)
@@ -116,6 +144,9 @@ func (s *Screen) Close() {
 	s.title = ""
 	s.input.area.Clear()
 	s.image.image = nil
+	s.image.resource = nil
+	s.image.placeholders = nil
+	s.image.placeholderSize = ui.Size{}
 }
 
 func (s *Screen) RefID() string { return s.refID }

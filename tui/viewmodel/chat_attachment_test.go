@@ -25,6 +25,7 @@ import (
 func newTranscriptAttachmentApp(t *testing.T) *App {
 	t.Helper()
 	app := newFullTestApp(t)
+	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 120, 36
 	app.AddOrchestrator("attachment-owner")
@@ -286,6 +287,7 @@ func attachmentTranscriptPoint(t *testing.T, app *App, label string) (int, int) 
 
 func TestPostedAttachmentRenderedClickOpensNativePreview(t *testing.T) {
 	app := newFullTestApp(t)
+	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 120, 36
 	app.AddOrchestrator("attachment-owner")

@@ -67,6 +67,10 @@ type Conversation struct {
 	// message. Builder.String publishes immutable prefixes without copying them.
 	textMessage *Message
 	textBuilder strings.Builder
+	// The current provider response's accepted assistant row survives lifecycle
+	// transitions (including recovery settlement) until a new request begins.
+	responseID      string
+	responseMessage *Message
 }
 
 const toolPhaseMinDwell = 120 * time.Millisecond
@@ -118,6 +122,7 @@ func (c *Conversation) BeginTurn(identity ttypes.TurnIdentity) bool {
 		return c.turnIdentity == identity
 	}
 	c.turnIdentity = identity
+	c.responseID, c.responseMessage = "", nil
 	return true
 }
 
@@ -348,7 +353,14 @@ func (c *Conversation) AppendToken(token string) {
 	}
 	offset := len(last.Content)
 	c.appendText(last, token)
+	c.responseMessage = last
 	c.commitText(last, offset)
+}
+
+func (c *Conversation) beginResponse(id string) {
+	if c != nil && (id == "" || id != c.responseID) {
+		c.responseID, c.responseMessage = id, nil
+	}
 }
 
 func (c *Conversation) appendText(message *Message, text string) {
@@ -1120,7 +1132,7 @@ func (c *Conversation) MarkError(reason string) {
 	})
 }
 
-func (c *Conversation) Finish(content, reason string, wasStreaming bool, boundaryID string) {
+func (c *Conversation) Finish(content, reason, boundaryID string) {
 	if c == nil {
 		return
 	}
@@ -1131,14 +1143,20 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool, boundar
 	}
 	incomplete := reason != "" && reason != "completed"
 	if content != "" && !incomplete {
-		if wasStreaming {
-			if last := c.lastNonPending(); last != nil && last.Role == MessageRoleAssistant {
-				if last.Content == "" {
-					last.Content = content
-					c.commitChange(last)
-				}
-				return
-			}
+		// Completion acknowledges accepted text, not the presentation's current
+		// streaming flag. Recovery settlement can clear that flag or add a status
+		// row between the final token and done. Only this request's accepted
+		// assistant row is acknowledged; never deduplicate historical prose or
+		// append a continuation's suffix to a row which already contains it.
+		if last := c.responseMessage; last != nil && c.byID[last.InternalID] == last &&
+			last.Role == MessageRoleAssistant && last.TurnGeneration == c.turnIdentity.Generation {
+			return
+		}
+		if last := c.lastNonPending(); last != nil && last.Role == MessageRoleAssistant &&
+			last.TurnGeneration == c.turnIdentity.Generation && last.Content == "" {
+			last.Content = content
+			c.commitChange(last)
+			return
 		}
 		c.AppendMessage(Message{
 			Role: MessageRoleAssistant, Content: content, Time: time.Now(),

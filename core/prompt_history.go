@@ -104,6 +104,20 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 	if entry.ID == "" {
 		return nil, errors.New("exact history entry is missing")
 	}
+	if method == coreprotocol.HistoryImportAttachment {
+		if store == nil || in.SessionID == "" || in.AttachmentIndex < 0 || in.AttachmentIndex >= len(entry.Attachments) {
+			return nil, errors.New("exact destination session or history attachment is unavailable")
+		}
+		selected := entry.Attachments[in.AttachmentIndex]
+		if selected.Unavailable || !selected.Reference.Active() {
+			return nil, errors.New("history attachment is unavailable")
+		}
+		ref, err := store.ImportReference(selected.Reference)
+		if err != nil {
+			return nil, err
+		}
+		return wire(referenceView(ref)), nil
+	}
 	if method == coreprotocol.HistoryRestore {
 		if store == nil {
 			return nil, errors.New("exact destination session is not open")

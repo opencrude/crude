@@ -318,6 +318,9 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	case "phase":
 		status, ok := ParseAgentPhase(evt.Data)
 		if ok {
+			if status.Phase == "preparing" {
+				target.beginResponse(agentEventString(evt.Data, "request_id"))
+			}
 			a.Running = true
 			a.Thinking = true
 			a.Streaming = false

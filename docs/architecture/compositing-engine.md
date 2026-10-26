@@ -1040,6 +1040,31 @@ explicit `Present`/`GenerateANSI` path remains for diagnostics/string consumers.
 See [the shell host](shell-host.md#retained-component-generation-paint) for source
 invalidation, conservative fallbacks and the full `Host.Paint` oracle.
 
+### Terminal image resources
+
+Attachment images use Kitty Unicode placeholders rather than a second spatial
+overlay renderer. The screen paints one-column cells containing the placeholder
+and explicit row/column/high-ID diacritics; the foreground RGB encodes the lower
+24 image-ID bits. Thus parent-local bounds, clipping, z-order and opaque window
+occlusion remain ordinary cell composition. Original PNG pixels and alpha are
+handled by the terminal, not sampled down to the character grid. The screen fits
+geometry using reported cell pixel dimensions; unsupported terminals retain the
+existing half-block body. Color-profile downsampling disables placeholders
+because changing their foreground color would corrupt image identity.
+
+`tea.NewKittyImage` copies bounded PNG bytes and assigns an immutable image ID on
+the existing off-UI attachment worker. `tea.View.Images` is the complete desired
+resource/virtual-placement set paired with the completed cell view. Bubble Tea
+snapshots descriptors synchronously but uploads/reconciles only at its single
+writer, against the last successfully flushed set. Dropped frames never upload
+their resources. An unchanged image emits no extra commands or allocations;
+geometry changes replace stable placement `p=1` without reuploading the PNG.
+Every APC uses tmux passthrough when applicable. Failed writes retain exact
+possibly transmitted IDs; close, screen changes, clear/reset and suspend/resume
+delete or recreate only owned IDs, never terminal-wide image deletion. The
+capability probe itself is an invisible one-pixel virtual placement with a
+random reply identity, bounded timeout and exact-ID cleanup.
+
 ## 10. Key Design Decisions
 
 ### 10.1 Why Flat Array for CellBuffer (not [][]Cell)?
