@@ -822,6 +822,7 @@ func (m *App) stopAsyncIO() {
 	m.asyncIOStopped.Store(true)
 	m.workspaceSwitchGen.Add(1)
 	m.treeWatcherLifeMu.Unlock()
+	m.cancelAttachmentOpen()
 	m.treeWatcherStarts.Wait()
 	if m.Tree != nil && m.Tree.Model != nil {
 		m.Tree.Model.SetOnFileChanged(nil)

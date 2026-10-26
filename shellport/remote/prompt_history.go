@@ -6,10 +6,18 @@ import (
 
 	"crude/coreprotocol"
 	"crude/history"
+	"crude/sessiondb"
 	"crude/shellport"
 )
 
 var _ shellport.PromptHistory = (*Workspace)(nil)
+var _ shellport.PromptHistoryAttachments = (*Workspace)(nil)
+
+func (w *Workspace) ImportPromptHistoryAttachment(ctx context.Context, sessionID, entryID string, index int) (sessiondb.Reference, error) {
+	var result coreprotocol.ReferenceView
+	err := w.call(ctx, coreprotocol.HistoryImportAttachment, &coreprotocol.HistoryCommand{SessionID: sessionID, EntryID: entryID, AttachmentIndex: index}, &result)
+	return result.Reference, err
+}
 
 func historyEntries(result coreprotocol.HistoryListResult) []history.Entry {
 	entries := make([]history.Entry, len(result.Entries))

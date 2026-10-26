@@ -23,7 +23,7 @@ var referenceCommandMu sync.Mutex
 
 func referenceMutation(method string) bool {
 	switch method {
-	case coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore:
+	case coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore, coreprotocol.HistoryImportAttachment:
 		return true
 	}
 	return false
@@ -38,7 +38,7 @@ func referenceView(ref sessiondb.Reference) coreprotocol.ReferenceView {
 // a client-local or workspace-local history writer is deliberately not invented.
 func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
 	switch request.Method {
-	case coreprotocol.HistoryList, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore, coreprotocol.HistoryReadMedia:
+	case coreprotocol.HistoryList, coreprotocol.HistoryRecord, coreprotocol.HistoryRestore, coreprotocol.HistoryReadMedia, coreprotocol.HistoryImportAttachment:
 		return a.prepareHistory(request), true
 	case coreprotocol.ReferenceCreate, coreprotocol.ReferenceImport, coreprotocol.ReferenceReadContent, coreprotocol.ReferenceReadMedia, coreprotocol.ReferenceSaveContent, coreprotocol.ReferenceRename, coreprotocol.ReferenceDelete, coreprotocol.ReferenceList:
 	default:

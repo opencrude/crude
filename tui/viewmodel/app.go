@@ -125,6 +125,10 @@ type App struct {
 	composerDraftStopping       atomic.Bool
 	pendingInputAdmissions      map[*workspace.InputAdmissionIntent]struct{}
 	referenceOverlay            *referenceOverlayState
+	attachmentOpen              *attachmentOpenState
+	terminalImages              terminalImageState
+	imagePlacements             [1]tea.KittyImagePlacement
+	imagePlacementCount         int
 	pastedTextRequests          []pastedTextStoredMsg
 	DirtyPromptPath             string
 	DirtyPromptChoice           int

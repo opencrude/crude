@@ -131,7 +131,7 @@ func TestConversationSnapshotDoesNotExposeMutableState(t *testing.T) {
 func TestConversationFinishCancelledPreservesContentAndAppendsStop(t *testing.T) {
 	conversation := NewConversation()
 	conversation.AppendMessage(Message{Role: MessageRoleAssistant, Content: "partial"})
-	conversation.Finish("", "cancelled", true, "stop")
+	conversation.Finish("", "cancelled", "stop")
 
 	message := conversation.Messages()[0]
 	if message.Incomplete || message.Content != "partial" || len(conversation.Messages()) != 2 || conversation.Messages()[1].LifecyclePhase != "stopped" {
@@ -224,8 +224,9 @@ func TestPendingSteeringStaysAfterProviderOutputUntilAcknowledged(t *testing.T) 
 func TestStreamCompletionWithQueuedTailDoesNotDuplicateAnswer(t *testing.T) {
 	c := NewConversation()
 	c.AppendPendingSteering(Message{InternalID: "next", Role: MessageRoleUser, Content: "next prompt"})
+	c.EnsureAssistant()
 	c.AppendToken("one accepted answer")
-	c.Finish("one accepted answer", "completed", true, "")
+	c.Finish("one accepted answer", "completed", "")
 	messages := c.Messages()
 	if len(messages) != 2 || messages[0].Role != MessageRoleAssistant || messages[0].Content != "one accepted answer" || messages[1].InternalID != "next" || !messages[1].PendingSteering {
 		t.Fatalf("completion duplicated output or consumed pending input: %+v", messages)
@@ -439,7 +440,7 @@ func TestCancellationDoesNotMarkPreviousTurnIncomplete(t *testing.T) {
 	c := NewConversation()
 	c.AppendMessage(Message{InternalID: "old", Role: MessageRoleAssistant, Content: "Prior turn completed"})
 	c.AppendMessage(Message{InternalID: "new", Role: MessageRoleUser, Content: "New request"})
-	c.Finish("", "cancelled", false, "stop")
+	c.Finish("", "cancelled", "stop")
 	msgs := c.Messages()
 	if msgs[0].Incomplete {
 		t.Fatal("cancelling a new turn invalidated previous completed work")

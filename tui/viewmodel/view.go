@@ -69,6 +69,7 @@ func (m *App) View() tea.View {
 	m.windowManager.ClearNeedsRender()
 
 	m.compositor.Composite()
+	m.captureTerminalImages()
 
 	m.compositor.PresentSurface()
 	m.noteFramePresented(time.Now())
@@ -79,7 +80,26 @@ func (m *App) View() tea.View {
 func (m *App) newSurfaceTerminalView() tea.View {
 	v := m.newTerminalView("")
 	v.Surface = m.compositor.CurrentSurface()
+	v.Images = m.imagePlacements[:m.imagePlacementCount]
 	return v
+}
+
+// Pair resources with the completed cell publication, not later source state.
+// A coalesced View must retain the resources referenced by its retained cells
+// until a newly painted frame removes/replaces both together.
+func (m *App) captureTerminalImages() {
+	m.imagePlacementCount = 0
+	if m.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+		if screen := m.sessionTextOverlay(); screen != nil {
+			if placement := screen.ImagePlacement(); placement.Image != nil {
+				m.imagePlacements[0] = placement
+				m.imagePlacementCount = 1
+			}
+		}
+	}
+	if m.imagePlacementCount == 0 {
+		m.imagePlacements[0] = tea.KittyImagePlacement{}
+	}
 }
 
 func (m *App) newTerminalView(output string) tea.View {

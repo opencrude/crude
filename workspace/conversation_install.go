@@ -58,6 +58,7 @@ func (c *Conversation) InstallDelta(delta ConversationDelta) error {
 	if delta.Reset || len(delta.Upserts) != 0 || len(delta.Removed) != 0 {
 		c.textMessage = nil
 		c.textBuilder.Reset()
+		c.responseID, c.responseMessage = "", nil
 	}
 	for _, append := range delta.Appends {
 		message := c.byID[append.InternalID]

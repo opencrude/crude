@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -19,6 +20,7 @@ func TestComposerSizingVisualAcceptance(t *testing.T) {
 		t.Skip("requires the dedicated terminal capture workflow")
 	}
 	app := newFullTestApp(t)
+	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator("draft-owner")
 	app.ActiveSession = workspace.NewSession("draft-owner", t.TempDir(), nil, stubLogger{})

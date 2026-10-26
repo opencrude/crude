@@ -7,6 +7,25 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Native attachment images (2026-10-25)
+
+`third_party/bubbletea`'s `BenchmarkKittyRendererWarmFrame` compares an
+unversioned 40×10 complete-cell handoff with no image versus one retained image.
+Three 200 ms Linux amd64 runs measured 9.716–10.236 µs/op without an image and
+9.683–11.114 µs/op with one; both retain 176 B/op and one existing cell-handoff
+allocation. This includes repeated cell snapshot work, not actual emulator pixel
+presentation. `TestKittyRendererWarmHandoffAndReconcileAllocateNothing` separately
+asserts zero extra resource-handoff/reconciliation allocations and no terminal
+commands for unchanged resources and empty resource sets.
+
+PNG decoding/normalization and immutable resource construction happen once on
+the attachment worker. Upload is single-writer work; move reuses source data and
+resize replaces only virtual geometry. Placeholder strings are cached by image
+identity and fitted geometry; no PNG encode or per-pixel color conversion occurs
+in a graphics frame. Frame conflation keeps image descriptors paired with the
+completed cell publication, not the newest unpainted screen state. Existing
+bench-gate ceilings are unchanged.
+
 ## Protocol v2 terminal hot paths (2026-10-23)
 
 Measured Linux amd64, i7-10750H, native libghostty-vt, Go 1.25.9. These are

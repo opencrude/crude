@@ -48,7 +48,7 @@ func TestBuildAttachmentContextMenu(t *testing.T) {
 			labels[item.Label] = true
 		}
 	}
-	for _, want := range []string{"Preview", "Rename…", "Remove", "Open in editor"} {
+	for _, want := range []string{"Open", "Preview in Crude", "Open with default app", "Show in file manager", "Rename…", "Remove", "Open in editor"} {
 		if !labels[want] {
 			t.Fatalf("attachment menu missing %q: %v", want, labels)
 		}

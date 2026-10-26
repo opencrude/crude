@@ -8,7 +8,7 @@ import (
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"strings"
 	"time"
 
@@ -42,7 +42,7 @@ type referenceContentLoadedMsg struct {
 	readOnly bool
 	err      error
 	image    image.Image
-	imported sessiondb.Reference
+	resource *tea.KittyImage
 }
 
 type referenceContentSavedMsg struct {
@@ -71,6 +71,7 @@ func (m *App) beginReferencePreview(ref sessiondb.Reference, readOnly bool) tea.
 	if store == nil || screen == nil || m.ActiveSession == nil || !ref.Active() || ref.SessionID != m.ActiveSession.SessionID {
 		return nil
 	}
+	m.cancelAttachmentOpen()
 	// Close the old owner before opening new content; closing the old frame
 	// after Open would clear this same retained screen's new value.
 	m.overlayHost.Close(ui.OverlayTextOverlay)
@@ -119,7 +120,23 @@ func loadReferencePreview(state *referenceOverlayState) referenceContentLoadedMs
 			err = ctx.Err()
 			img = nil
 		}
-		return referenceContentLoadedMsg{owner: state, image: img, readOnly: true, err: err}
+		var resource *tea.KittyImage
+		if err == nil {
+			// Keep original PNG bytes; other decoded formats become PNG once on
+			// this existing off-UI read worker, never during Paint or resize.
+			if !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
+				var encoded bytes.Buffer
+				err = png.Encode(&encoded, img)
+				data = encoded.Bytes()
+			}
+			if err == nil && ctx.Err() == nil {
+				resource = tea.NewKittyImage(data)
+			}
+		}
+		if ctx.Err() != nil {
+			err, img, resource = ctx.Err(), nil, nil
+		}
+		return referenceContentLoadedMsg{owner: state, image: img, resource: resource, readOnly: true, err: err}
 	}
 	content, readOnly, err := state.store.ReadReferenceContent(state.ref.ID)
 	if ctx.Err() != nil {
@@ -158,7 +175,7 @@ func (m *App) openChatAttachment(payload chatprojection.ChatAttachmentOpenPayloa
 	}
 	if store := m.RefStore(); store != nil {
 		if ref, ok := store.GetReference(payload.Target.ReferenceID); ok && ref.Active() && m.ActiveSession != nil && ref.SessionID == m.ActiveSession.SessionID {
-			return m.beginReferencePreview(ref, true)
+			return m.openReferenceIn(ref, true, m.attachmentDestination())
 		}
 	}
 	m.showUnavailableReference(payload.Target)
@@ -202,9 +219,6 @@ func (m *App) applyReferenceContent(msg referenceContentLoadedMsg) {
 	if state.cancel != nil {
 		state.cancel()
 	}
-	if msg.imported.Active() {
-		state.ref = msg.imported
-	}
 	if msg.err != nil {
 		state.screen.OpenReadOnly(state.ref.ID, state.ref.DisplayName(), "Attachment could not be opened.\n"+msg.err.Error())
 		m.Feedback.NotifyError("Could not open attachment: " + msg.err.Error())
@@ -218,6 +232,8 @@ func (m *App) applyReferenceContent(msg referenceContentLoadedMsg) {
 		state.original, state.loaded = msg.content, true
 		if msg.image != nil {
 			state.screen.OpenImage(state.ref.ID, state.ref.DisplayName(), msg.image)
+			state.screen.SetImageResource(msg.resource)
+			m.configureReferenceGraphics(state.screen)
 		} else if msg.readOnly || state.readOnly {
 			state.screen.OpenReadOnly(state.ref.ID, state.ref.DisplayName(), msg.content)
 		} else {

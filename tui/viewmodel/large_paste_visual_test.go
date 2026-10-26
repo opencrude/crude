@@ -66,8 +66,7 @@ func (m *largePasteVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		case tea.KeyF4:
 			for _, ref := range m.RefStore().ListReferences() {
-				m.openAttachment(ref.ID, false)
-				break
+				return m, m.beginReferenceOverlay(ref.ID)
 			}
 			return m, nil
 		case tea.KeyF9:

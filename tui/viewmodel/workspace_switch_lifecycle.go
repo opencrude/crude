@@ -82,6 +82,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 		state.tree = m.Tree.Model
 	}
 	m.workspaceSwitchGen.Add(1)
+	m.cancelAttachmentOpen()
 	m.cancelClientIOOperations()
 	m.resetLSPRequestContext()
 	m.gitRefreshGen.Add(1)

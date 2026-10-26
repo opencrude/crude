@@ -738,6 +738,22 @@ conversation deltas. Display scheduling coalesces presentation, not mutations or
 accepted stochastic output. Hydration and replacement snapshots enter the same
 canonical replica owner, not a competing paint-time export.
 
+Terminal `done` acknowledges the current provider request's accepted assistant
+row. It must not infer whether text arrived from the agent's `Streaming` flag:
+recovery settlement clears that presentation flag before the terminal event is
+released. `Conversation` retains only the exact request/row identity, reset by a
+new provider request or turn, independently from the append builder and live
+activity state. A recovered completion never appends the already accepted final
+response (or a continuation's suffix) again. Done-only output still creates a
+row; matching prose from a different request/turn is not deduplicated. Cancellation
+and incomplete outcomes keep their existing retained-evidence behavior.
+
+This distinction fixes live duplicate answers which disappeared on cold resume:
+the extra row came from the live completion reducer, while the immutable provider
+transcript and model context retained one copy. Tests cover root and child ingress,
+two connected shells, real supervisor recovery, native terminal output and cold
+resume; no saved conversation rewrite is part of this correction.
+
 A wire `Revision` is meaningful only inside its source domain. A replacement
 snapshot can legitimately reuse the same numeric revision with different text.
 `Conversation.SourceGeneration()` advances at accepted replacement boundaries;
@@ -762,9 +778,41 @@ and wrapping; the same semantic spans paint and hit-test on release. A literal
 `[Pasted Text1]` or `[Pasted IMG1]` without retained attachment metadata is not an
 open target. Drags (including moving away and back), modified selection clicks,
 foreign-session references and replaced transcript sources cannot activate a
-link. A no-drag release opens the same native reference window as the composer,
-read-only for sent/history content. Text uses Close; images show actual decoded
-pixels without an external application.
+link. A no-drag release follows the same **Open attachments in** preference as
+composer clicks, Space/Enter and prompt-history attachments (Settings → Interface
+→ Attachments). **System app** is the default and opens the OS-associated image
+viewer/editor; **File manager** reveals the attachment; **Crude** opens the native
+reference window, read-only for sent/history content. The composer's context menu
+also exposes explicit **Preview in Crude**, **Open with default app**, and **Show
+in file manager** actions independent of the preference.
+
+Crude's optional image preview uses original-pixel Kitty graphics after an
+invisible virtual-placement probe succeeds and the output terminal reports its
+cell geometry. This is capability-based, not a `TERM`/terminal-name guess.
+Unicode-placeholder cells carry image identity and source coordinates through
+the ordinary compositor, so moving, resizing, clipping and overlapping windows
+use the same ownership and paint path as text. The single terminal writer uploads
+an immutable PNG once, replaces virtual geometry on resize, and deletes only its
+exact image IDs on close/reset/suspend. Decoding and JPEG/GIF-to-PNG preparation
+run off Update with the existing reference owner/epoch checks. Byte limits are
+64 MiB and decoded images are bounded to 32 million pixels.
+
+The earlier blockiness came from Crude's `▀` approximation (two nearest-neighbor
+source samples per character), not corrupt attachment bytes or Kitty settings.
+That preview remains the fallback for unsupported/nonresponsive terminals,
+unknown cell geometry, non-true-color output or an unrepresentable placeholder
+grid. No Sixel or iTerm renderer is added. tmux transports image commands using
+passthrough; it needs `allow-passthrough on` and an outer terminal supporting
+Kitty Unicode placeholders. Without a successful probe Crude falls back safely.
+System app remains the default and is useful for full-size viewing; images that
+were already pixelated before attaching cannot gain missing detail.
+
+Captured attachments and foreign-core files open as bounded private client-local
+copies with their original file extension, retained until shell shutdown. Inline
+text is materialized as a text file. Editing such a copy does not modify the
+canonical attachment. Authenticated local-host selected files may open/reveal the
+actual source path. Downloads/imports and desktop launches run off Update with
+workspace/session/pane ownership checks; stale results cannot launch an app.
 
 Hydration reads exact identity from canonical attachment metadata, or from the
 input's exact retained `-references` runtime-context envelope and its producer

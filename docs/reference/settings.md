@@ -906,6 +906,19 @@ edge marks a section with workspace choices; the existing subtitle explains
 workspace values into the Application form, changes geometry or opens a prompt.
 The unsaved `●` takes precedence. Workspace scope does not repeat the marker.
 
+**Interface → Attachments → Open attachments in** is an application/workspace
+preference (`ui.attachment_open`). **System app** (`system`, default) opens the
+OS-associated viewer/editor, **File manager** (`file-manager`) reveals the file,
+and **Crude** (`crude`) uses the native reference window. It applies to composer
+chips, keyboard activation, posted/resumed chat links and prompt-history
+attachments. Crude uses original-pixel Kitty graphics when its invisible
+virtual-placement probe succeeds, terminal cell geometry is known, and true-color
+output is available. Unsupported terminals keep the low-resolution half-block
+preview. System app remains the default. Explicit context-menu destinations remain
+available regardless of the preference. Captured attachments and remote files are opened as private
+client-local copies, never passed to a local app as a foreign-core path. See
+[attachment identity and opening](chat-activity.md#data-and-parity).
+
 Session settings stay on the per-session Panel Deck (`/settings`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
 for any depth. The root page is a compact agent table (model, then
 provider, aligned `·` columns) with **Multi Agent** last after a blank

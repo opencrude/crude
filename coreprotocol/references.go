@@ -14,6 +14,7 @@ const (
 	HistoryList             = "history.list"
 	HistoryRecord           = "history.record"
 	HistoryRestore          = "history.restore"
+	HistoryImportAttachment = "history.import-attachment"
 	HistoryReadMedia        = "history.read-media"
 	ReferenceMaxBytes       = 64 << 20
 	ReferenceUploadMaxBytes = 16 << 20

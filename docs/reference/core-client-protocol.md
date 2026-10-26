@@ -364,7 +364,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Files | browse/catalog, chunked reads, create/folder/rename/delete/edit/search, canonical `files.replace_plan` and saved workspace listing |
 | Local History | timeline/file/stats, operation/path/message/agent plans, apply/verify/prune/capture |
 | References | create/import/list, content/media reads, exact content save, rename/delete |
-| Prompt history | `history.list`, `.record`, `.restore`, `.read-media` |
+| Prompt history | `history.list`, `.record`, `.restore`, `.import-attachment`, `.read-media` |
 | Git | snapshot/comparison/annotation, reviewed stage/unstage and hunks, staged commit, commit inspection, checkout and reviewed discard |
 | Memory/Board | search/episodes/inspect, revision-fenced pin/forget/correct; Board snapshot/read acknowledgement |
 | Settings | redacted fetch, session read/save/reset/delegation toggle, account change/models, application preference save; `workspace.overrides`, `.overrides_save`, `.startup`, `.tool_layout`, `.tool_layout_save` |
@@ -514,6 +514,10 @@ manual alignment outside product code, not automatic conversion.
 Prompt history is core-owned (`history.*`); shells install detached lists through
 `history.InstallReplica`, record via RPC and restore attachments into the exact
 owning session off-UI. A replica is not a second persistence authority.
+Opening one history attachment uses `history.import-attachment` with the exact
+immutable entry ID and attachment index. The core resolves its retained snapshot
+and imports only that item into the addressed session; neither a destination-session
+reference lookup nor a client-provided source path may stand in for history.
 
 ## Trust, secrets and platform limits
 

@@ -17,14 +17,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// clientDesktopOpen captures the owning port before the command runs. Connected
-// foreign-host source paths are never handed to local desktop applications.
-// Explicit opens materialize private, bounded bytes and retain them until shell
-// shutdown. Authenticated local-host attachments can reveal the original path.
-func (m *App) clientDesktopOpen() func(string, bool) error {
-	return m.clientDesktopOpener(false)
-}
-
+// clientDesktopOpener captures the owning port before the command runs. Foreign
+// paths materialize private bounded previews retained until shell shutdown;
+// authenticated local-host attachments can reveal the original path.
 func (m *App) clientDesktopOpener(directory bool) func(string, bool) error {
 	files, remote := m.ws.(shellport.ClientFiles)
 	if host, ok := m.ws.(shellport.LocalHostAuthority); ok && host.LocalHost() {
@@ -77,10 +72,9 @@ func (m *App) clientDesktopOpener(directory bool) func(string, bool) error {
 	}
 }
 
-// A remote directory cannot be handed to the local OS or silently presented as
-// a cloned project. Its local preview folder contains an explicit source/listing
-// note; revealing a file materializes only that exact file, with its own name.
-func cacheDesktopTarget(ctx context.Context, files shellport.ClientFiles, source, cache string, directory bool) (string, error) {
+// desktopTargetName treats both host path dialects as data and preserves the
+// extension for OS file associations, without creating special Windows names.
+func desktopTargetName(source string) string {
 	name := path.Base(strings.ReplaceAll(source, "\\", "/"))
 	name = strings.Map(func(r rune) rune {
 		if r < ' ' || strings.ContainsRune(`<>:"/\|?*`, r) {
@@ -93,7 +87,12 @@ func cacheDesktopTarget(ctx context.Context, files shellport.ClientFiles, source
 		name = "preview"
 	}
 	// A fixed prefix also keeps Windows device names (CON, NUL, COM1…) ordinary.
-	local := filepath.Join(cache, "preview-"+name)
+	return "preview-" + name
+}
+
+// A remote directory is an explicit local listing, never a pretend project clone.
+func cacheDesktopTarget(ctx context.Context, files shellport.ClientFiles, source, cache string, directory bool) (string, error) {
+	local := filepath.Join(cache, desktopTargetName(source))
 	if directory {
 		entries, err := files.BrowseExternalDirectory(ctx, source)
 		if err != nil {

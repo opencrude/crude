@@ -15,7 +15,7 @@ import (
 func TestLiveFinishAndHydratedStopPreserveContentWithoutTranscriptNotice(t *testing.T) {
 	conversation := workspace.NewConversation()
 	conversation.AppendMessage(workspace.Message{InternalID: "partial", Role: types.RoleAssistant, Content: "Accepted partial investigation"})
-	conversation.Finish("", "cancelled", true, "stop")
+	conversation.Finish("", "cancelled", "stop")
 	live, version := chatMessagesFromConversation(conversation)
 	if len(live) != 2 || live[1].LifecyclePhase != "stopped" || live[1].LifecycleOperationID != "stop" {
 		t.Fatalf("real Finish path did not retain its canonical boundary: %+v", live)

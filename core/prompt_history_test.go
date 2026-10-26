@@ -66,3 +66,60 @@ func TestCoreHistoryImmutableCrossSession(t *testing.T) {
 		t.Fatal("stale reference downgraded")
 	}
 }
+
+func TestCoreHistoryImportsOnlyExactSelectedSnapshot(t *testing.T) {
+	h := history.New()
+	path := filepath.Join(t.TempDir(), "history.json")
+	source := workspace.NewReferenceStore("source", t.TempDir(), nil)
+	destination := workspace.NewReferenceStore("destination", t.TempDir(), nil)
+	one, err := source.CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Content: "not selected"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := source.CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedTextFile, Content: "EXACT HISTORICAL SNAPSHOT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := one.Label + " " + two.Label
+	value, err := runHistoryCommand(h, path, source, coreprotocol.HistoryRecord, coreprotocol.HistoryCommand{SessionID: "source", Text: text, Attachments: []coreprotocol.HistoryAttachment{
+		{Start: 0, End: len(one.Label), Reference: referenceView(one)},
+		{Start: len(one.Label) + 1, End: len(text), Reference: referenceView(two)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := value.(*coreprotocol.HistoryListResult).Entries[0]
+	if err := os.WriteFile(two.FilePath, []byte("WRONG CURRENT CONTENT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{-1, 2} {
+		if _, err := runHistoryCommand(h, path, destination, coreprotocol.HistoryImportAttachment, coreprotocol.HistoryCommand{SessionID: "destination", EntryID: entry.ID, AttachmentIndex: index}); err == nil {
+			t.Fatal("invalid history index imported a reference")
+		}
+	}
+	if len(destination.ListReferences()) != 0 {
+		t.Fatal("invalid history preview mutated destination")
+	}
+	value, err = runHistoryCommand(h, path, destination, coreprotocol.HistoryImportAttachment, coreprotocol.HistoryCommand{SessionID: "destination", EntryID: entry.ID, AttachmentIndex: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := value.(*coreprotocol.ReferenceView).Reference
+	data, err := os.ReadFile(ref.FilePath)
+	if err != nil || string(data) != "EXACT HISTORICAL SNAPSHOT" || ref.ID == two.ID || ref.SessionID != "destination" || len(destination.ListReferences()) != 1 {
+		t.Fatalf("single attachment resolved by current-session identity instead of retained history: %+v %q %v", ref, data, err)
+	}
+	if err := os.WriteFile(ref.FilePath, []byte("edited imported copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(entry.Attachments[1].Reference.Reference.FilePath)
+	if err != nil || string(data) != "EXACT HISTORICAL SNAPSHOT" {
+		t.Fatal("import mutated history media")
+	}
+	if err := os.Remove(entry.Attachments[1].Reference.Reference.FilePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runHistoryCommand(h, path, destination, coreprotocol.HistoryImportAttachment, coreprotocol.HistoryCommand{SessionID: "destination", EntryID: entry.ID, AttachmentIndex: 1}); err == nil || len(destination.ListReferences()) != 1 {
+		t.Fatal("missing history media imported a broken reference")
+	}
+}

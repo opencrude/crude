@@ -246,6 +246,7 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 
 func TestPastedTextFileChipOpensCompleteEditableOverlayAndSaves(t *testing.T) {
 	app := newFullTestApp(t)
+	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 80, 24
 	app.AddOrchestrator("paste-owner")
@@ -267,17 +268,9 @@ func TestPastedTextFileChipOpensCompleteEditableOverlayAndSaves(t *testing.T) {
 	if len(chips) != 1 {
 		t.Fatal("paste has no attachment chip")
 	}
-	messages := make(chan tea.Msg, 2)
-	restore := installDetachedMessageSinkForTest(app, func(msg tea.Msg) { messages <- msg })
-	defer restore()
 	x, y := app.inputRect.X+chips[0].Body.X+1, app.inputRect.Y+chips[0].Body.Y
-	_, _ = app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-	select {
-	case msg := <-messages:
-		_, _ = app.Update(msg)
-	case <-time.After(3 * time.Second):
-		t.Fatal("click did not load the pasted-text viewer")
-	}
+	_, open := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	runAppCommand(t, app, open)
 	screen := app.sessionTextOverlay()
 	if screen == nil || screen.ReadOnly() || screen.Value() != content {
 		t.Fatal("file-backed pasted text did not open completely in the native editor")
