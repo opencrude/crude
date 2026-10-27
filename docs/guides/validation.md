@@ -9,16 +9,19 @@ passing.
 
 ## Gates
 
-Optional manual CI (`.github/workflows/tui.yml`, reusable
+Command-only CI (`.github/workflows/tui.yml`, reusable
 `.github/workflows/verify.yml`) runs
-Linux workflow/installer checks, full-repo lint, design/docs/performance gates,
-build, full tests and full race tests. A native Windows job builds/tests with
-cgo and exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these
-checks; see [releases](releases.md). Native CI configuration is not proof that
-the corresponding run has passed. Push, pull-request and tag triggers are removed;
-repository Actions is disabled. Local checks and manual publication do not require
-a hosted workflow. Explicitly re-enable Actions before deliberately dispatching
-one; see the [manual release path](releases.md#manual-local-publication).
+Linux workflow/installer checks, the mandatory shadcn website lint/build and
+acceptance test, full-repo lint, design/docs/performance gates, build, full
+tests and full race tests. A native Windows job builds/tests with cgo and
+exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these checks;
+see [releases](releases.md). Native CI configuration is not proof that the
+corresponding run has passed. Push, pull-request, tag and schedule triggers are
+absent; a workflow starts only from an explicit dispatch. Local checks and
+manual publication do not require a hosted workflow. The `instant` release mode
+skips this chain by design and is not acceptance evidence for the skipped
+gates. See the [release modes](releases.md#release-modes) and the
+[website guide](website.md).
 Locally:
 
 ```bash
@@ -32,6 +35,7 @@ make design-audit                     # layer boundary, raw SGR, hard-coded hex
 make docs-check                       # documentation acceptance gate
 make bench-gate                       # allocation ceilings and work budgets
 make test-race-tui                    # race-clean full repo (go test -race ./...)
+make site-check                       # shadcn lint, Vite build and site acceptance
 ```
 
 CI uses `python scripts/test_race.py` for the full race suite. It runs every

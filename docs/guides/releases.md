@@ -2,7 +2,7 @@
 
 > Status: Current guide for installation and release maintenance.
 
-[Download the latest release](https://github.com/uoosef403/crude/releases/latest).
+[Download the latest release](https://github.com/opencrude/crude/releases/latest).
 
 ## Supported packages
 
@@ -96,6 +96,38 @@ checksums and file operations while intercepting transport. Native release jobs
 also install/repeat the actual platform package. Portable PowerShell fixtures do
 not establish native Windows registry, executable-lock or ConPTY acceptance.
 
+## Release modes
+
+Releases are deliberately two different products:
+
+| Mode | What runs | When to use it |
+|---|---|---|
+| `verified` (default) | Source validation, the complete `verify.yml` chain (Linux lint/design/docs/performance/build/tests/race/fuzz and native Windows tests), native builds, installer checks, exact inventory, draft creation | Any release you intend to publish as a normal build |
+| `instant` | Source validation, native builds, installer checks, exact inventory, draft creation | A time-sensitive build when the full chain is impractical; it deliberately skips `verify.yml` |
+
+`instant` is not a weaker verification label on the same evidence: it has no
+full-chain evidence at all. It still validates the immutable tag/commit,
+performs native Linux/Windows packaging smoke checks, verifies the release
+inventory and checksums, and creates a **draft** with an explicit `Instant
+release` warning in the body and an `(instant)` title suffix. Never publish an
+instant draft as a normal release without inspecting it and recording what was
+skipped.
+
+Dispatch either mode with the tag selected as the ref so the workflow code and
+the packaged source are the same immutable revision:
+
+```bash
+# ordinary release: full verification chain
+gh workflow run release.yml --ref v0.2.0 -f tag=v0.2.0 -f mode=verified
+
+# time-sensitive release: deliberately skips the full verification chain
+gh workflow run release.yml --ref v0.2.0 -f tag=v0.2.0 -f mode=instant
+```
+
+The selected tag must already contain this workflow revision. The workflow
+still creates only a draft; publishing remains a separate deliberate
+`gh release edit --draft=false` after the assets and notes have been inspected.
+
 ## Manual local publication
 
 Build the native platform on the local machine from a clean, committed checkout:
@@ -125,19 +157,31 @@ with explicit assets, download it and verify hashes, then publish it deliberatel
 using `gh release edit`. Local artifacts are not a release until the uploaded
 assets and exact tag are verified. Never overwrite a prior release or move a tag.
 
-## Optional manual GitHub workflows
+## Command-only GitHub workflows
 
-Repository Actions is disabled, including generated hosted workflows. No jobs
-start on pushes, PRs or tag creation. The source workflows are manual-only so
-re-enabling Actions does not restore automatic CI/CD. Re-enable it only for an
-explicitly requested dispatch; local publication needs no Actions runs.
+Repository Actions is command-only. No workflow starts on a push, pull request,
+tag creation or schedule. Every source workflow is either an explicit
+`workflow_dispatch` entry point or the reusable `workflow_call` chain used by
+those entry points. The release and website workflows cannot run by accident.
+
+Use the exact entry points:
+
+```bash
+gh workflow run tui.yml
+gh workflow run native-preflight.yml
+gh workflow run public-install-smoke.yml -f tag=v0.2.0 -f commit=<full-sha>
+gh workflow run release.yml --ref v0.2.0 -f tag=v0.2.0 -f mode=verified
+gh workflow run release.yml --ref v0.2.0 -f tag=v0.2.0 -f mode=instant
+gh workflow run pages.yml
+```
 
 When deliberately dispatched, `.github/workflows/tui.yml` calls
 `.github/workflows/verify.yml`.
-Linux runs lint, design/docs/performance gates, build, full tests and full race
-tests. Windows builds/tests with native cgo and runs installer fixtures on both
-Windows PowerShell 5.1 and PowerShell 7. Actions are pinned by SHA; Zig downloads
-have pinned SHA-256 checksums. No pull_request_target or inherited secrets.
+Linux runs the website lint/build, full-repo lint, design/docs/performance
+gates, build, full tests and full race tests. Windows builds/tests with native
+cgo and runs installer fixtures on both Windows PowerShell 5.1 and PowerShell 7.
+Actions are pinned by SHA; Zig downloads have pinned SHA-256 checksums. No
+pull_request_target or inherited secrets.
 
 Native Zig/Ghostty dependencies are cached by platform, architecture, exact pins
 and bootstrap/action source. Bootstrap still validates the installed pin and
@@ -157,11 +201,14 @@ it exercises the failing path/watch/control/recovery cases three times and both
 native Windows installer shells. It does not replace the full publication gate.
 
 `.github/workflows/release.yml` accepts an existing v-prefixed tag through
-workflow_dispatch with **that tag selected as the ref**. Tag and verification
-commit must match, and be reachable from master. It runs the same verification,
-builds/tests native archives, and creates a **draft only** with both packages,
-checksums and the installer scripts. Only the final draft job has contents:write.
-It never overwrites an existing release or silently promotes a prerelease.
+workflow_dispatch with **that tag selected as the ref** and an explicit
+`verified` or `instant` mode. Tag and build commit must match, and be reachable
+from master. In `verified` mode it runs the same `verify.yml` chain; in
+`instant` mode that job is skipped and the missing evidence is recorded on the
+draft. Both modes build/test native archives and create a **draft only** with
+both packages, checksums and the installer scripts. Only the final draft job has
+contents:write. It never overwrites an existing release or silently promotes a
+prerelease.
 
 `public-install-smoke.yml` performs post-publication checks on standard Linux and
 Windows runners, including Windows PowerShell 5.1 and PowerShell 7. It downloads
@@ -169,6 +216,14 @@ the real latest installers anonymously, installs with the beta-risk opt-in, and
 repeats with the explicit tag. It verifies source identity, retained application
 data, redistribution notices and user-local PATH. No mocked transport, checkout,
 credential or product timeout change is used.
+
+`.github/workflows/pages.yml` deploys the reviewed shadcn/ui site to GitHub
+Pages. It is `workflow_dispatch` only: a push never publishes the website. The
+job installs from `site/package-lock.json`, runs the mandatory
+`@shadcn/lint` gate, builds `site/dist`, validates the built artifact, uploads
+only that directory and uses the official Pages actions pinned by commit. The
+site uses relative URLs so it works at the project URL without a custom domain.
+See the [website guide](website.md).
 
 Before any public launch:
 

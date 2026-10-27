@@ -11,8 +11,8 @@ into one terminal-native workspace on Linux and Windows. Use your **mouse or
 keyboard**: click, drag, browse menus, or take a shortcut when it helps. It's 2026;
 you shouldn't need to memorize a thousand keybindings to get work done.
 
-[Documentation](docs/README.md) · [Releases](https://github.com/uoosef403/crude/releases) ·
-[Report a bug](https://github.com/uoosef403/crude/issues) · [Apache-2.0](LICENSE-APACHE)
+[Website](https://opencrude.github.io/crude/) · [Documentation](docs/README.md) · [Releases](https://github.com/opencrude/crude/releases) ·
+[Report a bug](https://github.com/opencrude/crude/issues) · [Apache-2.0](LICENSE-APACHE)
 
 ![Crude editing its own Go source with syntax highlighting, file navigation and an embedded terminal](assets/crude-source.png)
 
@@ -52,7 +52,7 @@ a local screenshot fixture, not a claim of a live model's output.
 
 ## Install or update
 
-[Download the latest release](https://github.com/uoosef403/crude/releases/latest).
+[Download the latest release](https://github.com/opencrude/crude/releases/latest).
 
 Open a fresh terminal, run `crude` in your project, and add a provider account in
 **Tools → Settings → Accounts**. Select its model under **Agents**. Use

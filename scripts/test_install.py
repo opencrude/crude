@@ -43,7 +43,7 @@ assert url.startswith('https://github.com/')
 with open(os.environ['REQUEST_LOG'], 'a') as f: f.write(url+'\\n')
 if os.environ.get('NETWORK_FAIL'): sys.exit(22)
 if '--head' in a:
-    print('https://github.com/uoosef403/crude/releases/tag/'+os.environ['LATEST'], end='')
+    print('https://github.com/opencrude/crude/releases/tag/'+os.environ['LATEST'], end='')
     sys.exit(0)
 source = pathlib.Path(os.environ['FIXTURES']) / url.rsplit('/', 1)[-1]
 if not source.exists(): sys.exit(22)
