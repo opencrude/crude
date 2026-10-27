@@ -351,6 +351,12 @@ parallel wrapper made only of them) cannot violate rules and run now, sparing a
 round trip. The next model request receives the new rules with those results
 and can issue revised calls. Unreadable guidance defers the whole batch.
 
+Deferral is a completed tool-error result, not a missing outcome. The collector
+assigns its immutable message identity through the same acceptance path as an
+executed call before any allowed sibling checkpoints. Partial and completed
+rounds retain identical deferral evidence; guidance discovery must not poison
+the recovery context with blank placeholder messages.
+
 Current path discovery inspects recognized path/cwd arguments, parallel-call
 parameters and parsed native patch operands. It is not an arbitrary shell-script
 or remote-tool effects analyzer. New path-bearing tools must extend the actual

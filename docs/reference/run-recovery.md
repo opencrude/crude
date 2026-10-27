@@ -154,6 +154,10 @@ must not append the final response or its continuation suffix a second time. See
   collaboration settlement must succeed before acknowledging natural completion.
   Finished parallel leaves checkpoint while siblings run, including native batches;
   completed results receive their stable message IDs before their first checkpoint.
+  Executed, guidance-deferred and cancelled calls share one result-acceptance
+  path: materialize their complete immutable result before marking them received.
+  A mixed batch must never checkpoint an empty placeholder for a deferred call
+  when its permitted read sibling finishes.
   Evolving native-batch evidence lives in `RecoveryCheckpoint.InFlightTools`, not
   the immutable active-message prefix. Completion clears only its exact evidence;
   passive interruption preserves finished leaves and marks the remainder unknown.
@@ -463,6 +467,12 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
 
 ## Regression acceptance
 
+- `session/guidance_checkpoint_regression_test.go`: actual HTTP tool batches and
+  SQLite publication for root/child owners, mixed deferred effects and allowed
+  reads in both orders, native read wrappers, all-deferred/read-only controls,
+  stable result identities and next-request guidance. A real root/file-tool
+  journey covers completion, Stop, unchanged cold-resume transcript and fresh
+  input without replaying a deferred effect.
 - `provider/upload_retry_network_test.go`: actual HTTP/2 TLS through a local TCP
   blackhole; upload and header stalls automatically redial after cooldown and
   send the complete byte-identical original payload without a reset/wake. Accepted
