@@ -262,6 +262,13 @@ func TestChildScopeRejectionKeepsLoopAliveAndParentWidensLiveScope(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A resumed session may restore its runner before the workspace binds the
+	// shared capability/ownership service. Exercise that production ordering,
+	// not just a bare Session whose ownership pointer never changes.
+	if !s.initSubAgentRunner() {
+		t.Fatal("cannot prepare resumed runner before workspace binding")
+	}
+	s.SetCapabilities(nil, agent.NewFileOwnership())
 	if !root.SubmitInput(provider.UserInput{InternalID: "claim-repair-human", Text: task}) {
 		t.Fatal("real root input was rejected")
 	}

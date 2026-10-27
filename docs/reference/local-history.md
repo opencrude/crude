@@ -26,6 +26,15 @@
 - Snapshot, SQLite, verification, pruning, and restore work always runs in a
   command/background service, never Bubble Tea `Update`. Project switch and
   shutdown wait for active restore ownership.
+- Integration apply/undo capture their safety snapshot and register its existing
+  message scope under one Store/process mutation gate (`SnapshotMessageScope`).
+  Retention cannot prune the preimage between those steps. Prepared, committed
+  and restart-ambiguous `execution_apply`/`execution_undo` operation journals keep
+  their scope's before/after snapshots and operation paths even after the scope
+  closes; aborted operations and ordinary closed scopes remain prunable.
+  Retention verifies referenced execution evidence before deleting anything.
+  A missing index, manifest or object fails closed; a new snapshot never repairs
+  an old receipt's immutable identity.
 - A stored snapshot reuses the previous scan's entry for a file whose size,
   mtime, change key and file identity are unchanged, whose object still exists,
   and whose observation is older than the timestamp granule (a same-granule

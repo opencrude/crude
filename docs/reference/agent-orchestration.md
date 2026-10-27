@@ -75,6 +75,10 @@ safe request boundary. Directed notes, requests, report publications and termina
 outcomes need no Board polling or acknowledgement tool for transport. Delivery
 works while an agent is idle and during an active turn without replaying accepted
 model output. Reading an interim report never suppresses a later terminal outcome.
+An active `agent_wait` ends on any addressed communication, not just the waited
+child's completion, so a blocker or a peer's request can be handled promptly.
+The wait observes journal facts; it never consumes the normal delivery or marks
+the requested run/report condition successful merely because a message arrived.
 
 An interim report also never satisfies the mandatory final deliverable. The final
 artifact must belong to the child and its actual run and address the exact parent;

@@ -66,6 +66,9 @@ always resolves — including for installed binaries with no repository
 checkout.
 
 `go build` / `go test` then link via cgo `#cgo` paths relative to `terminalvt`.
+An isolated worktree does not inherit this ignored install prefix. Run the same
+bootstrap there (or provision matching pinned headers/static library explicitly);
+changing `PKG_CONFIG_PATH` alone cannot replace these checkout-relative paths.
 `CGO_ENABLED=0` builds compile a stub that returns an error from
 `terminalvt.New`; they do not silently keep the old parser or advertise
 working `TERM=xterm-ghostty` emulation.

@@ -258,7 +258,7 @@ func TestParkedChildIsActionableOnlyAfterAttemptTeardown(t *testing.T) {
 	// Retain an ordinary write lease to stop deferred claim release. This
 	// exposes the real teardown window deterministically, without a sleep in
 	// production or a test-only runtime callback.
-	release, err := runner.fileOwnership.BeginWrite(agent.AgentID(child), nil)
+	release, err := runner.FileOwnership().BeginWrite(agent.AgentID(child), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

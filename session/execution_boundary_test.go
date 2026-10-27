@@ -40,7 +40,7 @@ func TestManagedChildNativeWritesCannotEscapeCheckout(t *testing.T) {
 			spec := agent.SubAgentSpec{ID: "child", Name: "Child", Isolation: string(worktree.Isolated), ExecutionRoot: checkout, Policy: safety.DefaultPolicy()}
 			if scoped {
 				spec.FileOwnership = []string{logical, checkout}
-				if err := r.fileOwnership.PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
+				if err := r.FileOwnership().PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
 					t.Fatal(err)
 				}
 			}

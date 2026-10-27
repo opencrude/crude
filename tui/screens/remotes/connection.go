@@ -5,10 +5,13 @@ package remotes
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/remoteconn"
 	"crude/shellport"
+	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -29,49 +32,59 @@ type ConnectionEditor struct {
 	Actions            *ui.ActionBar
 	status             *ui.TextArea
 	scrollbar          *ui.ScrollbarControl
+	tokens             *ui.TokenSet
+	headerRect         ui.Rect
+	helpRect           ui.Rect
+	statusText         string
 	connection         remoteconn.Connection
 	open, busy, remove bool
 }
 
 func NewConnection(th *theme.Theme, c remoteconn.Connection, open bool) *ConnectionEditor {
+	if th == nil {
+		th = theme.DefaultDark()
+	}
 	tokens := ui.NewTokenSet(th)
-	s := &ConnectionEditor{Base: ui.NewBase("remotes/editor"), Model: ui.NewFormModel(), connection: c, open: open}
-	add := func(id, label, value string, kind ui.FieldType) {
-		s.Model.AddField(&ui.FieldState{ID: id, Label: label, Type: kind, Value: ui.StringValue(value), Initial: ui.StringValue(value)})
+	s := &ConnectionEditor{Base: ui.NewBase("remotes/editor"), Model: ui.NewFormModel(), connection: c, open: open, tokens: tokens}
+	add := func(id, label, value, description string, kind ui.FieldType) {
+		s.Model.AddField(&ui.FieldState{ID: id, Label: label, Description: description, Type: kind, Value: ui.StringValue(value), Initial: ui.StringValue(value)})
 	}
 	if !open {
-		add("name", "Name", c.Name, ui.FieldText)
-		add("kind", "Connection type", c.Kind, ui.FieldCycle)
-		s.Model.Field("kind").Options = []ui.FormOption{{ID: "ssh", Label: "SSH"}, {ID: "direct", Label: "Direct"}}
-		add("host", "Host / SSH alias", c.Host, ui.FieldText)
+		add("name", "Name", c.Name, "Choose a name for this connection on this client.", ui.FieldText)
+		s.Model.AddField(ui.SegmentedFieldState("kind", "Connection type", []ui.FormOption{{ID: "ssh", Label: "SSH"}, {ID: "direct", Label: "Direct"}}, c.Kind, "SSH uses your system SSH configuration; Direct connects to the host's remote listener."))
+		add("host", "Host or alias", c.Host, "Enter a host name, IP address or SSH alias; SSH verifies known hosts strictly.", ui.FieldText)
+		s.Model.Field("host").Placeholder = "example.com"
 		port := ""
 		if c.Port != 0 {
 			port = strconv.Itoa(c.Port)
 		}
-		add("port", "Port", port, ui.FieldText)
-		add("user", "SSH user", c.User, ui.FieldText)
-		add("identity", "SSH identity file", c.IdentityFile, ui.FieldText)
-		add("carrier", "Carrier", c.Carrier, ui.FieldCycle)
+		add("port", "Port", port, "Leave blank to use your SSH configuration; Direct requires the listener's port.", ui.FieldText)
+		s.Model.Field("port").Numeric = true
+		add("user", "SSH user", c.User, "Leave blank to use your SSH configuration; leave empty for Direct.", ui.FieldText)
+		add("identity", "SSH identity file", c.IdentityFile, "Optional private-key path for SSH; leave empty for Direct. No password is stored.", ui.FieldText)
+		s.Model.AddField(&ui.FieldState{ID: "security", Label: "Trust & pairing", Type: ui.FieldSeparator})
+		add("carrier", "Transport", c.Carrier, "Automatic chooses an available transport; the SSH transport is only valid for SSH connections.", ui.FieldSelect)
 		s.Model.Field("carrier").Options = []ui.FormOption{{ID: "auto", Label: "Automatic"}, {ID: "ssh", Label: "SSH"}, {ID: "quic", Label: "QUIC"}, {ID: "tls", Label: "TLS"}}
-		add("fingerprint", "Trusted SHA-256 fingerprint", c.Fingerprint, ui.FieldText)
-		s.Model.Field("fingerprint").Description = "Copy the 64 lower-case hexadecimal fingerprint from the host through a trusted channel. Unknown certificates are never accepted."
-		add("code", "One-time pairing code", "", ui.FieldPassword)
-		s.Model.AddField(&ui.FieldState{ID: "fallback", Label: "Allow private 0600 credential file if keychain unavailable", Type: ui.FieldCheckbox, Value: ui.BoolValue(false)})
+		add("fingerprint", "Certificate pin", c.Fingerprint, "Verify the host's 64 lowercase SHA-256 hex digits through a trusted channel; required for Direct.", ui.FieldText)
+		add("code", "Pairing code", "", "Enter the host's one-time code, then use Test & save to pair this device.", ui.FieldPassword)
+		s.Model.AddField(ui.BoolFieldState("fallback", "Credential file", false, "Allow a private 0600 credential file only if the system keychain is unavailable."))
 	} else {
-		add("root", "Workspace path on destination", "", ui.FieldText)
+		add("root", "Workspace path", "", "Enter the full workspace path on the destination backend, not this client.", ui.FieldText)
 	}
 	s.Form = ui.NewForm(FormID, s.Model, "", "", tokens)
+	s.Form.SetFieldGap(1)
+	s.Form.SetHideDescriptions(true)
 	s.scrollbar = ui.NewScrollbarControl("remotes/form-scroll", s.Form.Scroll(), tokens)
+	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
+	s.scrollbar.SetPointerTargetSize(1)
 	s.Form.SetArrowExitsForm(true)
 	s.status = ui.NewTextArea("remotes/status", tokens, true)
 	s.status.SetReadOnly(true)
 	if open {
-		s.status.SetValue("Destination attaches before the current workspace is released. Dirty editors and private drafts use the existing workspace-switch checks.")
-	} else {
-		s.status.SetValue("SSH uses system config aliases and strict known-host checks; no passwords are stored. Direct pairing requires a fingerprint verified on the host. Save tests the exact connection first.")
+		s.SetStatus("Destination attaches before the current workspace is released. Dirty editors and private drafts use the existing workspace-switch checks.")
 	}
 	s.Actions = ui.NewActionBar(ActionsID, tokens)
-	s.Actions.SetAlignEnd(false)
+	s.Actions.SetShowRule(true)
 	s.Actions.SetCancelAction("cancel")
 	s.buttons()
 	return s
@@ -81,11 +94,22 @@ func (s *ConnectionEditor) SetSSHHosts(hosts []string) {
 	if len(hosts) == 0 || s.open {
 		return
 	}
-	f := &ui.FieldState{ID: "ssh-config", Label: "SSH config hosts", Type: ui.FieldCycle, Value: ui.StringValue(""), Options: []ui.FormOption{{ID: "", Label: "Enter host manually"}}}
+	f := &ui.FieldState{ID: "ssh-config", Label: "Saved SSH host", Description: "Choose an alias from your system SSH configuration, or enter the host manually.", Type: ui.FieldSelect, Value: ui.StringValue(""), Options: []ui.FormOption{{ID: "", Label: "Enter host manually"}}}
 	for _, host := range hosts {
 		f.Options = append(f.Options, ui.FormOption{ID: host, Label: host})
 	}
-	s.Model.AddField(f)
+	// Keep discovered aliases beside the host, not after the security controls.
+	model := ui.NewFormModel()
+	for _, field := range s.Model.Fields() {
+		if field.ID == "ssh-config" {
+			continue
+		}
+		model.AddField(field)
+		if field.ID == "kind" {
+			model.AddField(f)
+		}
+	}
+	s.Model = model
 	s.Model.OnChanged(func(id string) {
 		if id == "ssh-config" {
 			if host := s.Model.Field(id).Value.String(); host != "" {
@@ -119,7 +143,7 @@ func (s *ConnectionEditor) buttons() {
 }
 func (s *ConnectionEditor) ConfirmRemove() {
 	s.remove = true
-	s.status.SetValue("Remove the saved connection and its device credential from this client? This does not revoke the device on the host. You can add and pair it again later.")
+	s.SetStatus("Remove the saved connection and its device credential from this client? This does not revoke the device on the host. You can add and pair it again later.")
 	s.buttons()
 }
 func (s *ConnectionEditor) SetBusy(b bool) {
@@ -130,8 +154,11 @@ func (s *ConnectionEditor) SetBusy(b bool) {
 	s.Form.SetForm(s.Model, "", "")
 	s.buttons()
 }
-func (s *ConnectionEditor) SetStatus(text string) { s.status.SetValue(text) }
-func (s *ConnectionEditor) Root() string          { return s.Model.Field("root").Value.String() }
+func (s *ConnectionEditor) SetStatus(text string) {
+	s.statusText = text
+	s.status.SetValue(text)
+}
+func (s *ConnectionEditor) Root() string { return s.Model.Field("root").Value.String() }
 func (s *ConnectionEditor) SetRoot(root string) {
 	s.Model.SetValue("root", ui.StringValue(root))
 	s.Form.SetForm(s.Model, "", "")
@@ -151,7 +178,7 @@ func (s *ConnectionEditor) Draft() (shellport.RemoteConnectionDraft, error) {
 	if err := c.Validate(); err != nil {
 		return shellport.RemoteConnectionDraft{}, err
 	}
-	return shellport.RemoteConnectionDraft{Connection: c, PairCode: v("code"), AllowFileFallback: s.Model.Field("fallback").Value.Bool()}, nil
+	return shellport.RemoteConnectionDraft{Connection: c, PairCode: v("code"), AllowFileFallback: ui.BoolFieldValue(s.Model.Field("fallback"))}, nil
 }
 func (s *ConnectionEditor) ClearPairCode() {
 	if f := s.Model.Field("code"); f != nil {
@@ -160,26 +187,78 @@ func (s *ConnectionEditor) ClearPairCode() {
 	}
 }
 func (s *ConnectionEditor) Children() []ui.Component {
-	return []ui.Component{s.Form, s.scrollbar, s.status, s.Actions}
+	children := []ui.Component{s.status, s.Actions}
+	if !s.remove {
+		children = append(children, s.Form)
+		if s.scrollbar.Needed() {
+			children = append(children, s.scrollbar)
+		}
+	}
+	return children
 }
 func (s *ConnectionEditor) Measure(_ ui.LayoutContext, c ui.Constraints) ui.Size {
 	return c.ClampSize(ui.Size{W: c.MaxW, H: c.MaxH})
 }
 func (s *ConnectionEditor) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	statusH := min(3, max(0, r.H-2))
-	formH := max(0, r.H-statusH-2)
+	// Footer decisions survive short grids. The shared settings rhythm is a
+	// three-row header, scrollable body, field-help row, then rule + decisions.
+	footerH := min(2, max(0, r.H))
+	bodyEnd := max(0, r.H-footerH)
+	headerH := min(3, bodyEnd)
+	s.headerRect = ui.Rect{W: r.W, H: headerH}
+	helpH := min(1, max(0, bodyEnd-headerH))
+	statusH := 0
+	if s.statusText != "" {
+		statusH = min(3, max(0, bodyEnd-headerH-helpH-1))
+	}
+	formH := max(0, bodyEnd-headerH-helpH-statusH)
 	if s.remove {
-		statusH = max(0, r.H-2)
+		helpH = 0
+		statusH = max(0, bodyEnd-headerH)
 		formH = 0
 	}
-	s.Form.Layout(ctx, ui.Rect{W: max(0, r.W-1), H: formH})
-	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), W: min(1, r.W), H: formH})
-	s.status.Layout(ctx, ui.Rect{Y: formH, W: r.W, H: statusH})
-	s.Actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: min(1, r.H)})
+	formW := r.W
+	s.Form.Layout(ctx, ui.Rect{Y: headerH, W: formW, H: formH})
+	if s.scrollbar.Needed() {
+		formW = max(0, r.W-1)
+		s.Form.Layout(ctx, ui.Rect{Y: headerH, W: formW, H: formH})
+	}
+	s.scrollbar.Layout(ctx, ui.Rect{X: formW, Y: headerH, W: min(1, max(0, r.W-formW)), H: formH})
+	s.status.Layout(ctx, ui.Rect{Y: headerH + formH, W: r.W, H: statusH})
+	s.helpRect = ui.Rect{Y: bodyEnd - helpH, W: r.W, H: helpH}
+	s.Actions.SetShowRule(footerH > 1)
+	s.Actions.Layout(ctx, ui.Rect{Y: bodyEnd, W: r.W, H: footerH})
 }
-func (s *ConnectionEditor) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
+func (s *ConnectionEditor) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+	r := s.Bounds()
+	bg := s.tokens.Color(ui.ColorPopupBg)
+	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	x, y := ox+r.X, oy+r.Y
+	title, subtitle := "Connection details", "Save tests this exact connection before storing it on this client."
+	if s.open {
+		title, subtitle = "Workspace destination", "Open a workspace on the selected backend."
+	}
+	if s.remove {
+		title, subtitle = "Remove connection", "The host and its workspaces are not deleted."
+	}
+	if s.headerRect.H > 0 {
+		buf.WriteString(x, y, rendering.TruncateVisual(title, r.W, "…"), s.tokens.Color(ui.ColorAccent), bg, cell.AttrBold)
+	}
+	if s.headerRect.H > 1 {
+		buf.WriteString(x, y+1, rendering.TruncateVisual(subtitle, r.W, "…"), s.tokens.Color(ui.ColorMuted), bg, 0)
+	}
+	if field := s.Form.HelpField(); field != nil && !s.helpRect.Empty() {
+		text, ink := field.Description, ui.ColorMuted
+		if len(field.Errors) > 0 {
+			text, ink = strings.Join(field.Errors, " · "), ui.ColorError
+		}
+		text = strings.Join(strings.Fields(text), " ")
+		buf.WriteString(x+s.helpRect.X, y+s.helpRect.Y, rendering.TruncateVisual(text, s.helpRect.W, "…"), s.tokens.Color(ink), bg, 0)
+	}
+}
 func (s *ConnectionEditor) SetTokens(t *ui.TokenSet) {
+	s.tokens = t
 	s.Form.SetTokens(t)
 	s.scrollbar.SetTokens(t)
 	s.status.SetTokens(t)
@@ -200,6 +279,9 @@ func (s *ConnectionEditor) HandleAction(_ ui.EventContext, a ui.Action) ui.Event
 		s.Actions.FocusLast()
 		return focus(ActionsID)
 	case "actionbar.exit.forward", "actionbar.exit.backward":
+		if s.remove {
+			return focus(ActionsID)
+		}
 		s.Form.FocusFirst()
 		return focus(FormID)
 	case "form.cancel":
