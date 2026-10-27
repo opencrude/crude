@@ -1240,6 +1240,16 @@ steps:
 		}
 		receivedResults := make([]bool, len(toolCalls))
 		partialResults := make(map[int]execResult)
+		// Executed, deferred and cancelled calls have the same completion
+		// boundary. Materialize the immutable result before marking it received:
+		// any sibling's next checkpoint may include it immediately.
+		acceptResult := func(result execResult) {
+			results[result.index] = result
+			message := toolResultMessage(result, len(results))
+			message.InternalID = resultIDs[result.index]
+			resultMessages[result.index] = message
+			receivedResults[result.index] = true
+		}
 		checkpointResults := func() {
 			if a.Checkpoint == nil && a.CheckpointTools == nil {
 				return
@@ -1286,8 +1296,7 @@ steps:
 					runIndex = append(runIndex, i)
 					continue
 				}
-				results[i] = execResult{index: i, id: call.ID, name: call.Function.Name, result: tools.ToolResult{Content: message}, toolError: true}
-				receivedResults[i] = true
+				acceptResult(execResult{index: i, id: call.ID, name: call.Function.Name, result: tools.ToolResult{Content: message}, toolError: true})
 				requestEmit(AgentEvent{Type: "tool_result", Data: map[string]any{"tool_id": call.ID, "name": call.Function.Name, "result": message, "error": "true"}})
 			}
 		} else {
@@ -1351,10 +1360,7 @@ steps:
 					}
 				}
 				if r.index >= 0 && r.index < len(results) {
-					results[r.index] = r
-					resultMessages[r.index] = toolResultMessage(r, len(results))
-					resultMessages[r.index].InternalID = resultIDs[r.index]
-					receivedResults[r.index] = true
+					acceptResult(r)
 					// Retain each finished sibling before waiting for the rest.
 					// Partial snapshots stay call-ordered and never invent outcomes
 					// for tools that are still running.
@@ -1375,7 +1381,7 @@ steps:
 			if receivedResults[i] {
 				continue
 			}
-			results[i] = execResult{
+			acceptResult(execResult{
 				index: i,
 				id:    toolCalls[i].ID,
 				name:  toolCalls[i].Function.Name,
@@ -1383,22 +1389,13 @@ steps:
 					Content: "Turn cancelled by user.",
 				},
 				toolError: true,
-			}
+			})
 		}
 
 		var lastToolResultIdx int
-		toolMessages := make([]provider.ChatMessage, 0, len(results))
-		for _, result := range results {
-			message := resultMessages[result.index]
-			if message.InternalID == "" {
-				message = toolResultMessage(result, len(results))
-				message.InternalID = resultIDs[result.index]
-			}
-			toolMessages = append(toolMessages, message)
-		}
 		// Collection already checkpointed finished siblings. Publish the complete
 		// round together instead of temporarily regressing to its first result.
-		appendWire(toolMessages...)
+		appendWire(resultMessages...)
 		for _, r := range results {
 			toolError := r.toolError || IsToolError(r.result.Content)
 			if a.ToolResultAccepted != nil && !toolError {
