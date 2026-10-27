@@ -35,6 +35,13 @@ logical-workspace document overlays. Missing/foreign/unready source contexts fai
 closed. Absolute logical-checkout file claims cannot silently rebase into a new
 checkout; relative claims bind its exact resolved root.
 
+Ignored build dependencies are not provisioned by isolation. Use the repository's
+existing build/bootstrap workflow in the resolved checkout, or explicitly
+provision a verified matching dependency there before running native checks.
+A dependency failure is not a reason to widen source ownership, share mutable
+build state through a symlink, disable native functionality, or add another
+execution/setup authority. See [the native build prerequisites](../../deps/README.md).
+
 Native file mutations in a managed checkout are checked against that checkout
 independently of optional file ownership. Absolute shared-checkout operands,
 `..` escapes and symlink-resolved escapes are rejected before claims or effects;
@@ -84,6 +91,13 @@ operation-scoped inverse integration with current preimage checks and safety
 history, not checkout/reset or whole-project restoration. Explicit recovery
 reconciles the original journal; passive startup never replays prepared effects.
 Unfinished integration blocks new creation/apply until explicit recovery.
+Integration safety capture and scope registration are atomic against Local
+History pruning. The existing operation journal protects apply/undo safety
+evidence beyond scope closure, including restart-ambiguous operations; it does
+not create a second execution pin store. Missing or corrupt safety evidence
+still refuses cleanup and retains the checkout rather than weakening the receipt
+or manufacturing a replacement backup. Preserve that evidence with an explicit
+Keep reason when exact backed-up history cannot be recovered.
 
 ## Parent ownership and workspace hygiene
 

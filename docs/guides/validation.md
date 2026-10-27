@@ -180,6 +180,34 @@ change.
 
 ## Visual capture
 
+### Live agent-wait acceptance
+
+`app/live_agent_wait_test.go` is opt-in actual-model acceptance with
+`deepseek/deepseek-v4.1-flash` for both parent and child, no fallback. It creates
+a private App/core with framed clients, never attaches the user's retained core,
+and retains only the explicitly selected API-key account in memory. Ordinary
+tests exercise only its offline fixture/config checks.
+
+```sh
+. scripts/libghostty_env.sh
+CRUDE_LIVE_AGENT_WAIT=1 CRUDE_WAIT_CONFIG=/explicit/config.json \
+  CRUDE_WAIT_RESULT="$CRUDE_TEMP_DIR/wait-result.txt" \
+  go test ./app -run '^TestLiveAgentWaitDirectedEventJourney$' -count=1 -v -timeout=10m
+```
+
+Optional `CRUDE_WAIT_ACCOUNT` selects an exact account. The child sends a blocker
+while the parent waits, the parent replies before the child can finish, then
+reads the exact final report and separately observes the terminal outcome.
+Assertions check the nonterminal `directed_event`, normal exactly-once context
+admission/receipts, selected model usage and an ordinary follow-up.
+
+For native visual acceptance, precompile the app test binary and run it through
+`scripts/tuishot.sh` with `CRUDE_VISUAL_WAIT=1` at desktop and constrained sizes,
+sequentially. `CRUDE_WAIT_VISUAL_HOLD_SECONDS` is capped at 120; inspect captures,
+the sanitized result marker and a clean test exit independently. The connected
+TUI paints the same private core's event log; this is not distinct-host or
+cross-process-core acceptance.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

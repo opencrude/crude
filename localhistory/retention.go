@@ -2,6 +2,7 @@ package localhistory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,12 +54,12 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 	if err != nil {
 		return PruneResult{}, err
 	}
-	if len(records) <= 1 {
-		return PruneResult{}, nil
-	}
-	protected, err := s.protectedSnapshots()
+	protected, err := s.protectedSnapshots(ctx)
 	if err != nil {
 		return PruneResult{}, err
+	}
+	if len(records) <= 1 {
+		return PruneResult{}, nil
 	}
 	keep := make(map[string]bool, len(protected)+1)
 	for id := range protected {
@@ -190,8 +191,11 @@ func (s *Store) removeStalePlans() error {
 	return nil
 }
 
-func (s *Store) protectedSnapshots() (map[string]bool, error) {
-	protected := make(map[string]bool)
+func (s *Store) protectedSnapshots(ctx context.Context) (map[string]bool, error) {
+	protected, err := s.executionSafetySnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
 	queries := []string{
 		`SELECT before_snapshot_id FROM history_message_scopes WHERE state<>'closed' UNION SELECT after_snapshot_id FROM history_message_scopes WHERE state<>'closed' AND after_snapshot_id<>''`,
 		`SELECT target_snapshot_id FROM history_restore_plans WHERE state='preview'`,
@@ -215,6 +219,63 @@ func (s *Store) protectedSnapshots() (map[string]bool, error) {
 		}
 		if err := rows.Close(); err != nil {
 			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return protected, nil
+}
+
+// Execution receipts outlive their closed message scopes. Retain their safety
+// snapshots from the existing operation journal, including interrupted effects
+// whose prepared status becomes ambiguous on restart. Only an aborted operation
+// relinquishes this evidence; ordinary closed scopes still follow retention.
+func (s *Store) executionSafetySnapshots(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT o.operation_id,o.status,
+COALESCE(s.before_snapshot_id,''),COALESCE(s.after_snapshot_id,''),COALESCE(s.state,'')
+FROM history_agent_operations o
+LEFT JOIN history_message_scopes s ON s.session_id=o.session_id AND s.message_id=o.message_id
+WHERE o.source IN ('execution_apply','execution_undo') AND o.status<>'aborted'`)
+	if err != nil {
+		return nil, err
+	}
+	protected := make(map[string]bool)
+	for rows.Next() {
+		var operation, status, before, after, state string
+		if err := rows.Scan(&operation, &status, &before, &after, &state); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if (status != "prepared" && status != "committed" && status != "ambiguous") ||
+			(state != "active" && state != "interrupted" && state != "closed") ||
+			!validID(before) || (after != "" && !validID(after)) || (state == "closed" && after == "") {
+			_ = rows.Close()
+			return nil, fmt.Errorf("localhistory: execution safety scope unavailable for %s", operation)
+		}
+		protected[before] = true
+		if after != "" {
+			protected[after] = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Validate before deleting any history. Missing index/immutable data is not
+	// permission to prune further or silently forget the operation's evidence.
+	for id := range protected {
+		var indexed bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM history_snapshots WHERE snapshot_id=?)`, id).Scan(&indexed); err != nil {
+			return nil, err
+		}
+		if !indexed {
+			return nil, fmt.Errorf("localhistory: execution safety snapshot %s is not indexed", id)
+		}
+		if err := s.verify(ctx, id); err != nil {
+			return nil, fmt.Errorf("localhistory: execution safety snapshot %s: %w", id, err)
 		}
 	}
 	return protected, nil

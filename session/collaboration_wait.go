@@ -28,7 +28,17 @@ type collaborationWaitObservation struct {
 
 var errCollaborationWaitElapsed = errors.New("collaboration wait duration elapsed")
 
-func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration.Store, params map[string]any) (any, error) {
+// Waiting only observes; the runtime's normal context admission remains the sole
+// owner of delivery reservations, receipts, and context/checkpoint publication.
+type collaborationWaitStore interface {
+	Subscribe() (<-chan struct{}, func())
+	Agent(context.Context, string) (collaboration.Agent, error)
+	Run(context.Context, string) (collaboration.Run, error)
+	Artifact(context.Context, string, int) (collaboration.Artifact, error)
+	Page(context.Context, collaboration.PageQuery) (collaboration.Page, error)
+}
+
+func (s *Session) waitForCollaboration(ctx context.Context, store collaborationWaitStore, params map[string]any) (any, error) {
 	agentID := getStrParam(params, "agent_id")
 	runID := getStrParam(params, "run_id")
 	artifactID := getStrParam(params, "artifact_id")
@@ -47,11 +57,12 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 	if err := ctx.Err(); err != nil {
 		return collaborationWaitObservation{Status: "caller_interrupted", Reason: context.Cause(ctx).Error()}, nil
 	}
-	notifications, unsubscribe := store.Subscribe()
-	defer unsubscribe()
 	var snapshot int64
+	var pendingEvent *collaboration.Event
 	if identity.AgentID != "" {
-		fence, err := store.Page(waitCtx, collaboration.PageQuery{RecipientID: identity.AgentID, Limit: 1})
+		initial, err := store.Page(waitCtx, collaboration.PageQuery{
+			RecipientID: identity.AgentID, Unadmitted: true, Limit: 1,
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return collaborationWaitObservation{Status: "caller_interrupted", Reason: context.Cause(ctx).Error(), ElapsedMs: time.Since(started).Milliseconds(), ObservedAt: time.Now(), Source: "wait_control"}, nil
@@ -61,8 +72,13 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 			}
 			return nil, err
 		}
-		snapshot = fence.LatestSequence
+		snapshot = initial.Snapshot
+		if len(initial.Events) != 0 {
+			pendingEvent = &initial.Events[0]
+		}
 	}
+	notifications, unsubscribe := store.Subscribe()
+	defer unsubscribe()
 	observe := func(readCtx context.Context) (collaborationWaitObservation, bool, error) {
 		result := collaborationWaitObservation{Status: "ready", ElapsedMs: time.Since(started).Milliseconds(), Snapshot: snapshot, ObservedAt: time.Now(), Source: "collaboration_store"}
 		if agentID != "" {
@@ -118,38 +134,37 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 		if identity.AgentID == "" {
 			return nil
 		}
-		for {
-			page, err := store.Page(readCtx, collaboration.PageQuery{Since: snapshot, RecipientID: identity.AgentID, Limit: collaboration.MaxPageLimit})
+		// The initial snapshot retains outstanding delivery obligations. After
+		// that boundary, observe every addressed publication even if normal
+		// admission has already committed it. Re-reading the journal after
+		// subscribing closes the snapshot/subscribe gap without consuming events.
+		event := pendingEvent
+		if event == nil {
+			page, err := store.Page(readCtx, collaboration.PageQuery{
+				Since: snapshot, RecipientID: identity.AgentID, Limit: 1,
+			})
 			if err != nil {
 				return err
 			}
-			for i := range page.Events {
-				event := page.Events[i]
-				status := ""
-				targetAgentID := agentID
-				if targetAgentID == "" && result.Run != nil {
-					targetAgentID = result.Run.AgentID
-				}
-				switch {
-				case event.Origin == collaboration.OriginHuman, event.Kind == collaboration.EventLifecycleControl:
-					status = "directed_event"
-				case event.SenderID == targetAgentID && hasCollaborationReference(event.References, "recovery_incident"):
-					status = "needs_attention"
-				}
-				if status != "" {
-					result.Status, result.Event, result.Snapshot = status, &event, event.Sequence
-					result.Reason = "a new addressed event requires normal runtime handling"
-					result.Guidance = "Inspect the exact event and lifecycle state before continuing, repairing, retrying, or stopping."
-					snapshot = page.Snapshot
-					return nil
-				}
+			snapshot, result.Snapshot = page.Snapshot, page.Snapshot
+			if len(page.Events) != 0 {
+				event = &page.Events[0]
 			}
-			if !page.HasMore {
-				snapshot, result.Snapshot = page.Snapshot, page.Snapshot
-				return nil
-			}
-			snapshot = page.Cursor
 		}
+		if event != nil {
+			result.Status, result.Event = "directed_event", event
+			targetAgentID := agentID
+			if targetAgentID == "" && result.Run != nil {
+				targetAgentID = result.Run.AgentID
+			}
+			if event.Origin != collaboration.OriginHuman && event.Kind != collaboration.EventLifecycleControl &&
+				event.SenderID == targetAgentID && hasCollaborationReference(event.References, "recovery_incident") {
+				result.Status = "needs_attention"
+			}
+			result.Reason = "an addressed event requires normal runtime handling"
+			result.Guidance = "The runtime delivers this event at its normal safe boundary; waiting does not consume it. Inspect the exact event and lifecycle state before continuing."
+		}
+		return nil
 	}
 	observeAll := func(readCtx context.Context) (collaborationWaitObservation, bool, error) {
 		result, ready, err := observe(readCtx)
@@ -165,7 +180,7 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 		recovery, parking := s.agentRecoveryState(targetAgentID)
 		if parking {
 			result.Unmet = append(result.Unmet, "attempt_teardown")
-			return result, false, nil
+			ready = false
 		}
 		if recovery != nil {
 			result.Recovery = recovery
@@ -176,7 +191,7 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 				return result, true, nil
 			}
 		}
-		if result.Agent != nil {
+		if !parking && result.Agent != nil {
 			switch {
 			case result.Agent.State == collaboration.AgentClosed:
 				result.Status, result.Reason = "closed", "the exact agent is closed"
@@ -199,7 +214,7 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 		if result.Event != nil {
 			return result, true, nil
 		}
-		if result.Run != nil && result.Run.State.Terminal() {
+		if !parking && result.Run != nil && result.Run.State.Terminal() {
 			result.Status = "terminal_without_match"
 			result.Reason = "the exact run is terminal but another requested condition remains unmet"
 			result.Guidance = "Inspect the terminal outcome and unmet conditions; report publication is separate from run completion."

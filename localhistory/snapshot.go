@@ -31,6 +31,34 @@ func (s *Store) Snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, e
 	return s.snapshot(ctx, opts)
 }
 
+// SnapshotMessageScope captures the safety preimage and registers its existing
+// message-scope reference under the same mutation gate as pruning. Callers must
+// not expose an unreferenced safety snapshot between capture and scope creation.
+func (s *Store) SnapshotMessageScope(ctx context.Context, sessionID, messageID string, opts SnapshotOptions) (Manifest, error) {
+	if sessionID == "" || messageID == "" {
+		return Manifest{}, errors.New("localhistory: invalid message scope")
+	}
+	if err := s.beginOperation(); err != nil {
+		return Manifest{}, err
+	}
+	defer s.endOperation()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockMutation(ctx)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer unlock()
+	manifest, err := s.snapshot(ctx, opts)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if err := s.BeginMessageScope(sessionID, messageID, manifest.ID, time.Now()); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
 func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Manifest, bool, error) {
 	if err := s.beginOperation(); err != nil {
 		return Manifest{}, false, err

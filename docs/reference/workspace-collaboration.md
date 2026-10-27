@@ -120,8 +120,21 @@ outcome. Gratuitous acknowledgements create message loops rather than progress.
 `agent_wait` checks **all** supplied run/report conditions and rejects mismatched
 agent, run and artifact identities. A requested run returns its typed terminal
 outcome; report-only waits return the artifact. A report becoming available is
-never interpreted as execution success. Human/lifecycle cancellation still
-interrupts the wait.
+never interpreted as execution success.
+
+Any communication addressed to the waiting agent ends an unmet wait as
+`directed_event`, including notes, replies, work requests/dispositions, reports,
+terminal outcomes and runtime notices. The sender need not be the waited agent.
+Human/lifecycle cancellation and actionable recovery retain their existing
+handling. The result preserves unmet conditions: waking is not completion.
+
+Waiting observes the existing journal, never reserves or admits deliveries,
+marks human history read, or writes context/checkpoints. An atomic initial page
+captures pending/admitting obligations and the publication sequence; a journal
+read after subscription observes later addressed publications even if normal
+admission already committed them. This closes both entry/subscription gaps
+without replaying previously admitted history on the next wait. Normal safe-boundary
+context admission remains the only delivery authority.
 
 ## Work requests
 
@@ -271,6 +284,10 @@ child's scope; the only bound is that it must not overlap another agent's active
 claims. Managed-checkout children also remain bounded to their execution checkout:
 relative claim repairs bind that checkout and absolute external claims are rejected,
 not rebased. A scope update never makes a provider call, file effect or wake.
+Session binding supplies the ownership service to restored runners as well as
+new ones. Runners resolve it from the Session rather than retaining an earlier
+provisional owner; repair, native-write guards and in-flight effect leases must
+observe the same committed projection after resume.
 
 A child that stops for attention (a run-level fault such as rejected
 credentials, storage, compaction or exhausted bounded recovery) is never a dead

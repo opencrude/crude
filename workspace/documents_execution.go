@@ -416,15 +416,12 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 	for _, p := range j.Directories {
 		paths = append(paths, localhistory.OperationPath{Path: p, After: &localhistory.OperationState{Type: localhistory.EntryDirectory, Mode: 0755}})
 	}
-	safety, err := history.store.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before integration " + plan.ContextID, DisableGitIgnore: true, IncludePaths: include})
+	sessionID := "execution/" + plan.Owner.AgentID
+	safety, err := history.store.SnapshotMessageScope(ctx, sessionID, id, localhistory.SnapshotOptions{Kind: "safety", Label: "Before integration " + plan.ContextID, DisableGitIgnore: true, IncludePaths: include})
 	if err != nil {
 		return worktree.Receipt{}, err
 	}
 	j.Receipt.SafetySnapshotID = safety.ID
-	sessionID := "execution/" + plan.Owner.AgentID
-	if err = history.store.BeginMessageScope(sessionID, id, safety.ID, time.Now()); err != nil {
-		return worktree.Receipt{}, err
-	}
 	if err = history.store.RecordAgentOperation(ctx, localhistory.AgentOperation{ID: id, SessionID: sessionID, MessageID: id, AgentID: plan.Owner.AgentID, Source: "execution_apply", Paths: paths}); err != nil {
 		return worktree.Receipt{}, err
 	}
@@ -625,15 +622,12 @@ func (s *DocumentService) undoExecution(ctx context.Context, service *worktree.S
 		}
 		paths = append(paths, localhistory.OperationPath{Path: ch.Path, Before: toState(current), After: toState(target)})
 	}
-	safety, err := history.store.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before integration undo", DisableGitIgnore: true})
+	sessionID := "execution/" + j.Plan.Owner.AgentID
+	safety, err := history.store.SnapshotMessageScope(ctx, sessionID, inverse.Receipt.OperationID, localhistory.SnapshotOptions{Kind: "safety", Label: "Before integration undo", DisableGitIgnore: true})
 	if err != nil {
 		return worktree.Receipt{}, err
 	}
 	inverse.Receipt.SafetySnapshotID = safety.ID
-	sessionID := "execution/" + j.Plan.Owner.AgentID
-	if err = history.store.BeginMessageScope(sessionID, inverse.Receipt.OperationID, safety.ID, time.Now()); err != nil {
-		return worktree.Receipt{}, err
-	}
 	if err = history.store.RecordAgentOperation(ctx, localhistory.AgentOperation{ID: inverse.Receipt.OperationID, SessionID: sessionID, MessageID: inverse.Receipt.OperationID, AgentID: j.Plan.Owner.AgentID, Source: "execution_undo", Paths: paths}); err != nil {
 		return worktree.Receipt{}, err
 	}

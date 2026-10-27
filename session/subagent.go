@@ -41,7 +41,6 @@ type SubAgentRunner struct {
 	orchestratorID string
 	effectiveCfg   *Config // per-orchestrator effective config (nil = use base)
 	mgr            *agent.SubAgentManager
-	fileOwnership  *agent.FileOwnership
 	rateLimiter    *agent.RateLimiter
 	sender         EventSender
 	parentToolMu   sync.RWMutex
@@ -91,7 +90,6 @@ func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
 	return &SubAgentRunner{
 		session:       s,
 		mgr:           agent.NewSubAgentManager(maxConcurrent),
-		fileOwnership: s.FileOwnership(),
 		rateLimiter:   agent.NewRateLimiter(),
 		sessionCtx:    ctx,
 		sessionCancel: cancel,
@@ -105,7 +103,9 @@ func (r *SubAgentRunner) Manager() *agent.SubAgentManager {
 }
 
 func (r *SubAgentRunner) FileOwnership() *agent.FileOwnership {
-	return r.fileOwnership
+	// Session binding can replace the provisional owner during resume. Never
+	// cache it here: claim repair, tool guards and effect leases share one owner.
+	return r.session.FileOwnership()
 }
 
 func (r *SubAgentRunner) Wait() {
@@ -426,7 +426,7 @@ func (r *SubAgentRunner) admitAndLaunch(ctx context.Context, spec agent.SubAgent
 
 	handle, err := r.launchSubAgent(ctx, spec, profileInstructions)
 	if err != nil {
-		r.fileOwnership.Release(spec.ID)
+		r.FileOwnership().Release(spec.ID)
 		return nil, tools.ToolResult{Content: fmt.Sprintf("Error launching sub-agent: %s", err)}, fmt.Errorf("launch: %w", err)
 	}
 	return handle, tools.ToolResult{}, nil
@@ -696,7 +696,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category, subDB)
 	if err != nil {
-		r.fileOwnership.Release(spec.ID)
+		r.FileOwnership().Release(spec.ID)
 		if subDB != nil {
 			_ = sessiondb.CloseSession(subDB, subSessionID)
 			_ = subDB.Close()
@@ -721,7 +721,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 			}
 		}
 		r.releaseExecutionPin(spec, handle)
-		r.fileOwnership.Release(spec.ID)
+		r.FileOwnership().Release(spec.ID)
 		_ = subDB.Close()
 		r.session.detachCollaborator(context.Background(), string(spec.ID))
 	}()
@@ -732,7 +732,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		})
 		if runErr != nil {
 			r.session.detachCollaborator(context.Background(), string(spec.ID))
-			r.fileOwnership.Release(spec.ID)
+			r.FileOwnership().Release(spec.ID)
 			if subDB != nil {
 				_ = sessiondb.CloseSession(subDB, subSessionID)
 				_ = subDB.Close()
@@ -756,7 +756,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 				DelegatorID: string(spec.ParentID),
 			})
 			if err != nil {
-				r.fileOwnership.Release(spec.ID)
+				r.FileOwnership().Release(spec.ID)
 				if subDB != nil {
 					_ = subDB.Close()
 				}
@@ -770,14 +770,14 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 				for _, claim := range acquired.Transferred {
 					transferred = append(transferred, claim.Path)
 				}
-				r.fileOwnership.ReleasePaths(spec.ParentID, transferred)
+				r.FileOwnership().ReleasePaths(spec.ParentID, transferred)
 				r.session.logger.Info("SUBAGENT", "claims_delegated", "agent_id", spec.ID, "parent_id", spec.ParentID, "paths", strings.Join(transferred, ","))
 			}
 		}
 		// Publish the local projection after the durable hand-over. A failure
 		// here aborts the launch; finishing the aborted run releases the child's
 		// claims, and the parent re-acquires any transferred path on its next write.
-		if err := r.fileOwnership.PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
+		if err := r.FileOwnership().PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
 			return nil, err
 		}
 	} else {
@@ -882,7 +882,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	r.session.bindAgentRuntime(subCtx, a, captypes.RuntimeActor{ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: subSessionID, AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes}, spec.Name)
 
 	if err := ctx.Err(); err != nil {
-		r.fileOwnership.Release(spec.ID)
+		r.FileOwnership().Release(spec.ID)
 		if subDB != nil {
 			_ = sessiondb.CloseSession(subDB, subSessionID)
 			_ = subDB.Close()
@@ -891,7 +891,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		return nil, err
 	}
 	if err := r.mgr.Register(handle); err != nil {
-		r.fileOwnership.Release(spec.ID)
+		r.FileOwnership().Release(spec.ID)
 		if subDB != nil {
 			_ = sessiondb.CloseSession(subDB, subSessionID)
 			subDB.Close()
@@ -1070,7 +1070,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 			return fail(fmt.Errorf("restore the child's checkout scope: %w", err))
 		}
 	}
-	if err := r.fileOwnership.ReplaceClaims(spec.ID, spec.Name, spec.FileOwnership); err != nil {
+	if err := r.FileOwnership().ReplaceClaims(spec.ID, spec.Name, spec.FileOwnership); err != nil {
 		return fail(fmt.Errorf("restore the child's file scope: %w", err))
 	}
 	updatedOwnerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: owner.ProfileInstructions})
@@ -1366,7 +1366,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	}
 
 	defer func() {
-		r.fileOwnership.Release(handle.Spec.ID)
+		r.FileOwnership().Release(handle.Spec.ID)
 
 		if rec := recover(); rec != nil {
 			stack := debug.Stack()
@@ -2252,8 +2252,8 @@ func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs 
 		Status:       status,
 		SummaryGist:  gist,
 		LogPath:      logPath,
-		FilesRead:    r.fileOwnership.ReadClaimsByAgent(handle.Spec.ID),
-		FilesWritten: r.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
+		FilesRead:    r.FileOwnership().ReadClaimsByAgent(handle.Spec.ID),
+		FilesWritten: r.FileOwnership().WriteClaimsByAgent(handle.Spec.ID),
 		DurationMs:   time.Since(handle.StartedAt).Milliseconds(),
 		Errors:       errs,
 		PromptTokens: promptTokens,
@@ -2316,7 +2316,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			return r.executeSubAgentPlanningTool(handle, tool, params)
 		}
 		if tool == "read_file" {
-			r.fileOwnership.RecordRead(spec.ID, getStrParam(params, "path"))
+			r.FileOwnership().RecordRead(spec.ID, getStrParam(params, "path"))
 		}
 
 		if isWriteTool(tool) {
@@ -2335,14 +2335,14 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 				// which its parent may replace while it runs.
 				if len(spec.FileOwnership) > 0 {
 					for _, target := range targets {
-						if !r.fileOwnership.WriteScopeAllows(spec.ID, target) {
-							scope := r.fileOwnership.WriteClaimsByAgent(spec.ID)
+						if !r.FileOwnership().WriteScopeAllows(spec.ID, target) {
+							scope := r.FileOwnership().WriteClaimsByAgent(spec.ID)
 							r.notifyParentOfRejectedWrite(ctx, spec, handle, target, fmt.Sprintf("outside its file scope (%s)", strings.Join(scope, ", ")))
 							return tools.ToolResult{}, fmt.Errorf("write to %q was rejected: it is outside your file scope (%s). Nothing was changed and your run continues. Work within your scope, use your temporary directory (%s) for scratch files, or ask your parent with agent_send to extend your scope via agent_update_claims", target, strings.Join(scope, ", "), privateDir)
 						}
 					}
 				}
-				if err := r.fileOwnership.CommitClaimAll(spec.ID, spec.Name, targets, true, func() error {
+				if err := r.FileOwnership().CommitClaimAll(spec.ID, spec.Name, targets, true, func() error {
 					store := r.session.CollaborationStore()
 					if store == nil {
 						return errors.New("workspace collaboration runtime is unavailable")
@@ -2373,7 +2373,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 					r.notifyParentOfRejectedWrite(ctx, spec, handle, strings.Join(targets, ", "), err.Error())
 					return tools.ToolResult{}, fmt.Errorf("write was rejected: %w. Nothing was changed and your run continues. Coordinate with the owning agent or ask your parent with agent_send", err)
 				}
-				releaseWrite, err := r.fileOwnership.BeginWrite(spec.ID, targets)
+				releaseWrite, err := r.FileOwnership().BeginWrite(spec.ID, targets)
 				if err != nil {
 					return tools.ToolResult{}, fmt.Errorf("write was rejected: %w (your scope changed during this call). Nothing was changed and your run continues", err)
 				}

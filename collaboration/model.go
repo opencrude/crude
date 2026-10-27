@@ -350,6 +350,9 @@ type PageQuery struct {
 	RecipientID string
 	Kind        EventKind
 	Limit       int
+	// Unadmitted restricts a recipient's page to pending or admitting
+	// obligations. It observes delivery state without reserving or consuming it.
+	Unadmitted bool
 }
 
 type Page struct {

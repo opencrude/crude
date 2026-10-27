@@ -496,6 +496,9 @@ func (store *Store) Page(ctx context.Context, query PageQuery) (Page, error) {
 	if query.Since < 0 || query.Snapshot < 0 {
 		return Page{}, fmt.Errorf("%w: negative cursor", ErrInvalid)
 	}
+	if query.Unadmitted && query.RecipientID == "" {
+		return Page{}, fmt.Errorf("%w: unadmitted events require a recipient", ErrInvalid)
+	}
 	if query.Limit <= 0 {
 		query.Limit = DefaultPageLimit
 	}
@@ -548,6 +551,9 @@ func (store *Store) Page(ctx context.Context, query PageQuery) (Page, error) {
 		if query.RecipientID != "" {
 			statement += ` AND d.recipient_id=?`
 			arguments = append(arguments, query.RecipientID)
+		}
+		if query.Unadmitted {
+			statement += ` AND d.state IN ('pending','admitting')`
 		}
 		if query.Kind != "" {
 			statement += ` AND e.kind=?`
