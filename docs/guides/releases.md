@@ -102,7 +102,7 @@ Releases are deliberately two different products:
 
 | Mode | What runs | When to use it |
 |---|---|---|
-| `verified` (default) | Source validation, the complete `verify.yml` chain (Linux lint/design/docs/performance/build/tests/race/fuzz and native Windows tests), native builds, installer checks, exact inventory, draft creation | Any release you intend to publish as a normal build |
+| `verified` (default) | Source validation, the complete `verify.yml` chain (website lint/build, Linux lint/design/docs/performance/build/tests/race/fuzz, installer fixtures and native Windows tests), native builds, installer checks, exact inventory, draft creation | Any release you intend to publish as a normal build |
 | `instant` | Source validation, native builds, installer checks, exact inventory, draft creation | A time-sensitive build when the full chain is impractical; it deliberately skips `verify.yml` |
 
 `instant` is not a weaker verification label on the same evidence: it has no
