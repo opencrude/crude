@@ -147,3 +147,7 @@ replace github.com/charmbracelet/x/powernap => ./third_party/powernap
 replace github.com/quic-go/quic-go => ./third_party/quic-go
 
 replace github.com/tinylib/msgp => ./third_party/msgp
+
+// Website npm dependencies may contain unrelated Go packages; keep
+// `go list ./...`, tests and lint scoped to the product module.
+ignore site/node_modules

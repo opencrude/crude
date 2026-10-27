@@ -163,7 +163,7 @@ jobs:
             gh release view "$RELEASE_TAG" --json body --jq .body > "$notes"
             {
               printf '\n\n---\n'
-              printf '%s\n' '**Instant release.** This build deliberately skipped the full verification chain: full-repository lint, design/documentation/performance gates, the full test and race suites, and the Windows test suite. Source identity, native packaging, installer checks and the release inventory were still verified. Treat this draft as an unreviewed build until you inspect it and publish deliberately.'
+              printf '%s\n' '**Instant release.** This build deliberately skipped the full verification chain: website lint/build, full-repository lint, design/documentation/performance gates, the full test and race suites, bounded protocol fuzz campaigns, and the Windows test suite and installer fixtures. Source identity, native packaging, installer checks and the release inventory were still verified. Treat this draft as an unreviewed build until you inspect it and publish deliberately.'
             } >> "$notes"
             gh release edit "$RELEASE_TAG" --notes-file "$notes"
           fi

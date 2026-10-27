@@ -117,6 +117,10 @@ python3 scripts/test_site.py -v
 | `site/public/` | Product captures, Open Graph image, favicon, robots, sitemap, 404 redirect |
 | `site/dist/` | Generated build; never committed and never edited by hand |
 
+The root module has `ignore site/node_modules` in `go.mod`, so `go list ./...`,
+the Go tests and `golangci-lint run ./...` never traverse npm dependency code.
+Keep that directive when changing the website toolchain.
+
 ## Local preview and checks
 
 ```bash
