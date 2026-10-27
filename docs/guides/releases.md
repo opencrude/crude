@@ -164,6 +164,12 @@ tag creation or schedule. Every source workflow is either an explicit
 `workflow_dispatch` entry point or the reusable `workflow_call` chain used by
 those entry points. The release and website workflows cannot run by accident.
 
+GitHub also lists a generated **Dependency Graph** workflow outside
+`.github/workflows`. It is a GitHub-managed supply-chain workflow, not a source
+workflow. If the repository must have no automatic workflow at all, disable
+Dependency graph under Settings → Advanced Security; the source workflows here
+remain dispatch-only either way.
+
 Use the exact entry points:
 
 ```bash
