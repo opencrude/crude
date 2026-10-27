@@ -199,6 +199,7 @@ most often broken there.
 | Performance work | [performance baselines](docs/reference/performance-baselines.md) | Benchmark first; never raise a ceiling to land |
 | Performance dashboard, `metrics/` | [performance baselines](docs/reference/performance-baselines.md#performance-dashboard-and-dense-session-freezes-2026-10-22) | An observation never allocates or does I/O; snapshot only while visible |
 | Gates, tests, visual capture | [validation](docs/guides/validation.md), [Windows capture](docs/guides/windows-visual-capture.md) | Never two captures at once; close the window |
+| Website, shadcn/ui, GitHub Pages | [website](docs/guides/website.md) | `npm --prefix site run lint` is mandatory; relative URLs only; Pages deploys only by explicit dispatch |
 
 Active plans are listed in the [docs index](docs/README.md#plans-active-work-only).
 Treat a plan as remaining work, not as a description of current behavior.
@@ -210,6 +211,7 @@ go build ./...
 go test ./<affected>/... && go test ./... -count=1 -timeout=180s
 golangci-lint run ./...
 make design-audit docs-check bench-gate
+make site-check
 ```
 
 Do not update golden output unless the visual change is intentional and

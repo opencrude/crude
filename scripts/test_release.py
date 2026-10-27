@@ -82,6 +82,7 @@ class ReleaseTests(unittest.TestCase):
             "release.yml": {"workflow_dispatch"},
             "native-preflight.yml": {"workflow_dispatch"},
             "public-install-smoke.yml": {"workflow_dispatch"},
+            "pages.yml": {"workflow_dispatch"},
             "verify.yml": {"workflow_call"},
         }
         workflows = release.ROOT / ".github/workflows"
@@ -91,6 +92,40 @@ class ReleaseTests(unittest.TestCase):
                 text = (workflows / name).read_text()
                 events = text.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
                 self.assertEqual(set(re.findall(r"^  ([a-z_]+):", events, re.MULTILINE)), triggers)
+
+    def test_release_has_explicit_verified_and_instant_modes(self):
+        workflow = (release.ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("mode:", workflow)
+        self.assertIn("default: verified", workflow)
+        self.assertIn("          - verified\n", workflow)
+        self.assertIn("          - instant\n", workflow)
+        self.assertIn("if: ${{ inputs.mode == 'verified' }}", workflow)
+        self.assertIn("inputs.mode == 'instant'", workflow)
+        self.assertIn("needs.verify.result == 'skipped'", workflow)
+        self.assertIn("(instant)", workflow)
+        self.assertIn("Instant release.", workflow)
+        self.assertIn("deliberately skipped the full verification chain", workflow)
+
+    def test_pages_deploys_only_the_reviewed_site_artifact(self):
+        workflow = (release.ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("npm --prefix site run lint", workflow)
+        self.assertIn("npm --prefix site run build", workflow)
+        self.assertIn("python3 scripts/test_site.py -v", workflow)
+        self.assertIn("path: site/dist", workflow)
+        self.assertIn("actions/deploy-pages@", workflow)
+        self.assertIn("permissions:\n      pages: write", workflow)
+        self.assertIn("id-token: write", workflow)
+
+    def test_every_external_action_is_pinned_to_a_full_commit(self):
+        workflows = release.ROOT / ".github/workflows"
+        for path in sorted(workflows.glob("*.yml")):
+            for reference in re.findall(r"^\s*-?\s*uses:\s*(\S+)", path.read_text(encoding="utf-8"), re.MULTILINE):
+                if reference.startswith("./"):
+                    continue
+                name, _, revision = reference.partition("@")
+                with self.subTest(workflow=path.name, action=name):
+                    self.assertRegex(revision, r"^[0-9a-f]{40}$", "actions must be pinned by commit")
 
 
 if __name__ == "__main__":

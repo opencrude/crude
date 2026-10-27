@@ -1,6 +1,6 @@
 name: Release
 
-# Optional manual build: dispatch with the immutable tag selected as ref.
+# Command-only build: dispatch with the immutable tag selected as ref.
 # Pushes, pull requests and tags never start this workflow automatically.
 on:
   workflow_dispatch:
@@ -9,6 +9,14 @@ on:
         description: Existing vMAJOR.MINOR.PATCH[-prerelease] tag to build as a draft
         required: true
         type: string
+      mode:
+        description: verified runs the full chain; instant deliberately skips full verification
+        required: true
+        default: verified
+        type: choice
+        options:
+          - verified
+          - instant
 
 permissions:
   contents: read
@@ -32,8 +40,13 @@ jobs:
         id: source
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
+          case "$RELEASE_MODE" in
+            verified|instant) ;;
+            *) echo "release: unknown mode '$RELEASE_MODE'" >&2; exit 1 ;;
+          esac
           python3 -c 'import os,sys; sys.path.insert(0,"scripts"); from release import validate_version; validate_version(os.environ["RELEASE_TAG"])'
           commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
           # Reusable verification runs on this workflow's commit. Never package
@@ -44,9 +57,11 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
   verify:
     needs: source
+    if: ${{ inputs.mode == 'verified' }}
     uses: ./.github/workflows/verify.yml
   build:
     needs: [source, verify]
+    if: ${{ !cancelled() && needs.source.result == 'success' && (needs.verify.result == 'success' || (inputs.mode == 'instant' && needs.verify.result == 'skipped')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +78,9 @@ jobs:
           ref: ${{ needs.source.outputs.commit }}
           persist-credentials: false
       - uses: ./.github/actions/setup-native
+      - name: Record release mode
+        run: |
+          echo "release mode: ${{ inputs.mode }} (verify: ${{ needs.verify.result }})"
       - name: Install pinned Go dependency notice collector
         run: go install github.com/google/go-licenses/v2@v2.0.1
       - name: Build Linux release
@@ -99,6 +117,7 @@ jobs:
           retention-days: 14
   draft:
     needs: [source, build]
+    if: ${{ !cancelled() && needs.source.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -126,13 +145,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          RELEASE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          title="Crude $RELEASE_TAG"
+          if [[ "$RELEASE_MODE" == "instant" ]]; then title="$title (instant)"; fi
           # Existing releases deliberately fail; no --clobber or overwrite.
           gh release create "$RELEASE_TAG" \
             "dist/crude_${RELEASE_TAG}_linux_amd64.tar.gz" \
             "dist/crude_${RELEASE_TAG}_windows_amd64.zip" dist/SHA256SUMS \
             install.sh install.ps1 install.bat \
-            --verify-tag --draft --title "Crude $RELEASE_TAG" --generate-notes "${flags[@]}"
+            --verify-tag --draft --title "$title" --generate-notes "${flags[@]}"
+          if [[ "$RELEASE_MODE" == "instant" ]]; then
+            notes="$RUNNER_TEMP/instant-notes.md"
+            gh release view "$RELEASE_TAG" --json body --jq .body > "$notes"
+            {
+              printf '\n\n---\n'
+              printf '%s\n' '**Instant release.** This build deliberately skipped the full verification chain: full-repository lint, design/documentation/performance gates, the full test and race suites, and the Windows test suite. Source identity, native packaging, installer checks and the release inventory were still verified. Treat this draft as an unreviewed build until you inspect it and publish deliberately.'
+            } >> "$notes"
+            gh release edit "$RELEASE_TAG" --notes-file "$notes"
+          fi

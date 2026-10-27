@@ -11,7 +11,7 @@ into one terminal-native workspace on Linux and Windows. Use your **mouse or
 keyboard**: click, drag, browse menus, or take a shortcut when it helps. It's 2026;
 you shouldn't need to memorize a thousand keybindings to get work done.
 
-[Documentation](docs/README.md) · [Releases](https://github.com/opencrude/crude/releases) ·
+[Website](https://opencrude.github.io/crude/) · [Documentation](docs/README.md) · [Releases](https://github.com/opencrude/crude/releases) ·
 [Report a bug](https://github.com/opencrude/crude/issues) · [Apache-2.0](LICENSE-APACHE)
 
 ![Crude editing its own Go source with syntax highlighting, file navigation and an embedded terminal](assets/crude-source.png)
