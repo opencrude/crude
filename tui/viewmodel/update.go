@@ -950,6 +950,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if cmd := m.beginPickerPathSearch(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case filepickerscreen.CreateFolderMsg:
+		if cmd := m.beginPickerCreateFolder(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case pickerCreateFolderResultMsg:
+		if cmd := m.applyPickerCreateFolderResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case filepickerscreen.ToggleMsg:
 		if !msg.ValidFor(m.FilePicker) {
 			break

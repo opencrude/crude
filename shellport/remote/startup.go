@@ -75,6 +75,12 @@ func (s *StartupClient) Catalog(ctx context.Context, root string, hidden bool) (
 	return out, err
 }
 
+func (s *StartupClient) CreateWorkspaceFolder(ctx context.Context, parent, name string) (string, error) {
+	var out coreprotocol.StartupCreateFolderResult
+	err := s.call(ctx, coreprotocol.StartupCreateFolder, coreprotocol.StartupCreateFolderRequest{Parent: parent, Name: name}, &out)
+	return out.Path, err
+}
+
 func (s *StartupClient) Save(ctx context.Context, edits []types.SettingEdit) (types.OnboardingSettings, error) {
 	var out types.OnboardingSettings
 	err := s.call(ctx, coreprotocol.StartupSave, &coreprotocol.StartupSaveRequest{Edits: edits}, &out)

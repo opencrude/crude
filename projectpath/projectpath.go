@@ -1,5 +1,5 @@
 // Package projectpath distinguishes project directories from navigation-only
-// locations on the core host. It never creates directories or project state.
+// locations on the core host, and supports explicit creation of project folders.
 package projectpath
 
 import (

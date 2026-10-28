@@ -32,7 +32,7 @@ func (r *Runtime) SetStartupOwner(owner StartupOwner) error {
 
 func startupMethod(method string) bool {
 	switch method {
-	case coreprotocol.StartupInspect, coreprotocol.StartupBrowse, coreprotocol.StartupCatalog, coreprotocol.StartupSave, coreprotocol.StartupOnboarding:
+	case coreprotocol.StartupInspect, coreprotocol.StartupBrowse, coreprotocol.StartupCatalog, coreprotocol.StartupCreateFolder, coreprotocol.StartupSave, coreprotocol.StartupOnboarding:
 		return true
 	}
 	return false
@@ -56,7 +56,28 @@ func (c *Connection) dispatchStartup(ctx context.Context, request coreprotocol.R
 		stop := context.AfterFunc(c.ctx, cancel)
 		defer cancel()
 		defer stop()
-		result <- c.startupCall(ctx, request)
+		if request.Method != coreprotocol.StartupCreateFolder {
+			result <- c.startupCall(ctx, request)
+			return
+		}
+		prior, fresh, err := c.runtime.receipts.begin(ctx, request)
+		if err != nil {
+			result <- fault(request, "receipt_failed", err.Error())
+			return
+		}
+		if !fresh {
+			if prior.State == "completed" {
+				result <- prior.Response
+			} else {
+				result <- fault(request, "outcome_"+prior.State, "Folder creation may have completed; inspect the original receipt, not a repeated request.")
+			}
+			return
+		}
+		out := c.startupCall(ctx, request)
+		if err := c.runtime.receipts.complete(context.WithoutCancel(ctx), request, out); err != nil {
+			out = fault(request, "outcome_uncertain", "Folder creation may have completed; inspect the original receipt: "+err.Error())
+		}
+		result <- out
 	}()
 	return result
 }
@@ -144,6 +165,19 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 			return bad(err)
 		}
 		return response(request, catalog)
+	case coreprotocol.StartupCreateFolder:
+		var in coreprotocol.StartupCreateFolderRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return fault(request, "invalid_request", err.Error())
+		}
+		path, err := projectpath.CreateFolder(ctx, in.Parent, in.Name)
+		if err != nil {
+			if errors.Is(err, projectpath.ErrParentMovedAfterCreate) {
+				return fault(request, "outcome_uncertain", err.Error())
+			}
+			return bad(err)
+		}
+		return response(request, coreprotocol.StartupCreateFolderResult{Path: path})
 	case coreprotocol.StartupSave:
 		var in coreprotocol.StartupSaveRequest
 		if err := decodeRequest(request, &in); err != nil {

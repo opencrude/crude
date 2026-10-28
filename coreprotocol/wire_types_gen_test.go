@@ -239,6 +239,8 @@ var wireTypes = []any{
 	new(p1.StartupBrowseRequest),
 	new(p1.StartupBrowseResult),
 	new(p1.StartupCatalogRequest),
+	new(p1.StartupCreateFolderRequest),
+	new(p1.StartupCreateFolderResult),
 	new(p1.StartupInspectRequest),
 	new(p1.StartupResult),
 	new(p1.StartupSaveRequest),

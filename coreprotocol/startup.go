@@ -7,11 +7,12 @@ import (
 
 // Startup methods require a connected core, not an attached workspace.
 const (
-	StartupInspect    = "startup.inspect"
-	StartupBrowse     = "startup.browse"
-	StartupCatalog    = "startup.catalog"
-	StartupSave       = "startup.save"
-	StartupOnboarding = "startup.onboarding"
+	StartupInspect      = "startup.inspect"
+	StartupBrowse       = "startup.browse"
+	StartupCatalog      = "startup.catalog"
+	StartupCreateFolder = "startup.create_folder"
+	StartupSave         = "startup.save"
+	StartupOnboarding   = "startup.onboarding"
 )
 
 type StartupInspectRequest struct {
@@ -47,6 +48,16 @@ type StartupBrowseResult struct {
 type StartupCatalogRequest struct {
 	Root          string `json:"root"`
 	IncludeHidden bool   `json:"include_hidden"`
+}
+
+// StartupCreateFolderRequest names one new child of an existing browsed folder.
+type StartupCreateFolderRequest struct {
+	Parent string `json:"parent"`
+	Name   string `json:"name"`
+}
+
+type StartupCreateFolderResult struct {
+	Path string `json:"path"`
 }
 
 type StartupSaveRequest struct {
