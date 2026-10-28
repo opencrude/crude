@@ -178,7 +178,7 @@ gh workflow run native-preflight.yml
 gh workflow run public-install-smoke.yml -f tag=v0.2.0 -f commit=<full-sha>
 gh workflow run release.yml --ref v0.2.0 -f tag=v0.2.0 -f mode=verified
 gh workflow run release.yml --ref v0.2.0 -f tag=v0.2.0 -f mode=instant
-gh workflow run pages.yml
+gh workflow run pages.yml -R opencrude/opencrude.github.io
 ```
 
 When deliberately dispatched, `.github/workflows/tui.yml` calls
@@ -223,13 +223,14 @@ repeats with the explicit tag. It verifies source identity, retained application
 data, redistribution notices and user-local PATH. No mocked transport, checkout,
 credential or product timeout change is used.
 
-`.github/workflows/pages.yml` deploys the reviewed shadcn/ui site to GitHub
-Pages. It is `workflow_dispatch` only: a push never publishes the website. The
-job installs from `site/package-lock.json`, runs the mandatory
-`@shadcn/lint` gate, builds `site/dist`, validates the built artifact, uploads
-only that directory and uses the official Pages actions pinned by commit. The
-site uses relative URLs so it works at the project URL without a custom domain.
-See the [website guide](website.md).
+The website deploys from the organization site repository
+`opencrude/opencrude.github.io`, which serves the root URL
+<https://opencrude.github.io/>. Its `pages.yml` is `workflow_dispatch` only: a
+push never publishes the website. The job checks out `site/` from this
+repository at the requested ref, installs from `site/package-lock.json`, runs
+the mandatory `@shadcn/lint` gate, builds `site/dist`, validates the built
+artifact, uploads only that directory and uses the official Pages actions
+pinned by commit. See the [website guide](website.md).
 
 Before any public launch:
 

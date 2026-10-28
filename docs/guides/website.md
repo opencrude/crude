@@ -1,14 +1,16 @@
 # Website, shadcn/ui and GitHub Pages
 
-> Status: Current guide for the shadcn/ui website, its mandatory lint gate, the Vite build and command-only Pages deployment.
+> Status: Current guide for the shadcn/ui website, its mandatory lint gate, the Vite build, product captures and command-only Pages deployment from the organization site repository.
 
-Canonical site: <https://opencrude.github.io/crude/>
+Canonical site: <https://opencrude.github.io/>
 
 The website source lives in [`site/`](../../site) and is a React 19 + Vite 7
 project. It uses **Tailwind CSS v4** and **shadcn/ui** components, with the
 **Geist Variable** sans and **Geist Mono** fonts self-hosted from
 `@fontsource-variable`. The built artifact is `site/dist`; GitHub Pages serves
-exactly that reviewed directory as a project site under `/crude/`.
+exactly that reviewed directory at the organization root. The source stays
+here; the organization site repository `opencrude/opencrude.github.io` only
+owns the deploy workflow (see [Deploy](#deploy)).
 
 ## Why GitHub Pages
 
@@ -57,10 +59,11 @@ Rules for changes:
   values that the components own.
 - Keep the site static and self-contained. Do not add external scripts, fonts,
   analytics or cookies without a deliberate privacy and performance decision.
-- Internal URLs are relative. Never add a root-relative `/...` link: a project
-  site is served under `/crude/`, and a root URL escapes the site.
+- Internal URLs are relative. Never add a root-relative `/...` link: the build
+  must work at any base path, including a local preview and a future domain.
 - Use the product's real captures. Do not invent a UI screenshot or present a
-  fixture conversation as live model output.
+  fixture conversation as live model output. See
+  [Product captures](#product-captures).
 - Keep the beta warning and explicit installer consent visible.
 - Preserve `lang`, one `h1` per page, image `alt` text, skip links, keyboard
   focus and reduced-motion handling.
@@ -114,12 +117,39 @@ python3 scripts/test_site.py -v
 | `site/src/components/ui/` | Button, Card, Badge, Tabs, Accordion and Separator |
 | `site/src/index.css` | Tailwind import, dark shadcn tokens, Geist font stack, grid utility |
 | `site/src/main.tsx` | React entry point and self-hosted Geist imports |
-| `site/public/` | Product captures, Open Graph image, favicon, robots, sitemap, 404 redirect |
+| `site/public/` | Icon (`favicon.svg`, `apple-touch-icon.png`), robots, sitemap, 404 redirect |
+| `site/public/assets/` | Tour captures (`<scene>.webp`, 1920×1056 lossless) and the 1200×630 `og.png` |
 | `site/dist/` | Generated build; never committed and never edited by hand |
 
 The root module has `ignore site/node_modules` in `go.mod`, so `go list ./...`,
 the Go tests and `golangci-lint run ./...` never traverse npm dependency code.
 Keep that directive when changing the website toolchain.
+
+## Icon
+
+The Crude icon is a glossy crude-oil drop holding a terminal prompt on an
+orange tile. The canonical source is `assets/crude-icon.svg`; `site/public/favicon.svg`
+is an identical copy, and `assets/crude-icon-512.png` and
+`site/public/apple-touch-icon.png` are rasterized from it with `rsvg-convert`.
+Change the SVG first, then regenerate every raster in the same change.
+
+## Product captures
+
+The README (`assets/crude-*.png`) and the Tour (`site/public/assets/*.webp`)
+show the real product, captured with [`scripts/tuishot.sh`](validation.md) on a
+disposable clone of this repository with a live model. Rules:
+
+- Use an isolated short `CRUDE_HOME` and a disposable clone, never the working
+  checkout. Link the user's fonts (`~/.local/share/fonts`) into the isolated
+  home and give Alacritty a config with `JetBrainsMono Nerd Font`; otherwise
+  `HOME` isolation silently falls back to a default font.
+- Capture at `COLS=180 ROWS=48 FONT_SIZE=11` (1920×1056 after cropping the
+  window's partial last row). Move the pointer off the header first
+  (`move:100,30`): resting on the wordmark opens the connection popover.
+- Drive the scene with real work: let the agent finish, then capture. Never
+  edit pixels or text.
+- Export the site copies as lossless WebP and keep `SHOT_WIDTH`/`SHOT_HEIGHT`
+  in `App.tsx` equal to the capture size; `scripts/test_site.py` enforces it.
 
 ## Local preview and checks
 
@@ -149,21 +179,23 @@ not the website; use the browser directly for pages.
 
 ## Deploy
 
-Enable Pages once for the repository with **Build and deployment → Source:
-GitHub Actions**. Then deploy deliberately:
+GitHub serves the organization root only from a repository named
+`opencrude.github.io`. That repository holds one dispatch-only workflow and no
+site source. Push the site change here first, then deploy deliberately:
 
 ```bash
-gh workflow run pages.yml
-gh run watch
+gh workflow run pages.yml -R opencrude/opencrude.github.io        # master
+gh workflow run pages.yml -R opencrude/opencrude.github.io -f ref=<sha>
+gh run watch -R opencrude/opencrude.github.io
 ```
 
-The workflow installs from `site/package-lock.json`, runs the mandatory lint,
-builds `site/dist`, validates the built site, uploads only that directory and
-deploys with the official Pages actions pinned by commit. It never runs on a
-push. The `github-pages` environment records the deployment URL.
-
-If Pages is not enabled, the deploy step fails closed; enabling Pages is a
-repository setting, not a workflow side effect.
+The workflow checks out this public repository at `ref`, installs from
+`site/package-lock.json`, runs the mandatory lint, builds `site/dist`,
+validates the built site with `scripts/test_site.py`, uploads only that
+directory and deploys with the official Pages actions pinned by commit. It
+needs no secret and never runs on a push. Pages on `opencrude/crude` is
+disabled, so old `/crude/` links reach the root `404.html`, which redirects
+to the home page.
 
 ## Custom domain
 
@@ -173,7 +205,8 @@ A custom domain can be added later without rebuilding the site:
    example `crude.dev`). Vite copies it into `dist`.
 2. In DNS, point a subdomain at `opencrude.github.io` with a `CNAME` record, or
    use the GitHub-provided `A`/`AAAA` records for an apex domain.
-3. Set the custom domain in the repository's Pages settings and enable HTTPS.
+3. Set the custom domain in the Pages settings of `opencrude/opencrude.github.io`
+   and enable HTTPS.
 4. Update the canonical URL, Open Graph/Twitter URLs, `robots.txt`, `sitemap.xml`
    and the `CANONICAL` constant in `scripts/test_site.py` in the same change.
 

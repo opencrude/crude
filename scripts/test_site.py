@@ -16,8 +16,10 @@ import xml.etree.ElementTree as ElementTree
 ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 DIST = Path(os.environ.get("SITE_DIST", SITE / "dist")).resolve()
-CANONICAL = "https://opencrude.github.io/crude/"
+CANONICAL = "https://opencrude.github.io/"
 REPOSITORY = "https://github.com/opencrude/crude"
+# Real product captures shown in the hero and the Tour, one per scene.
+TOUR_SCENES = ("workspace", "agents", "review", "skills", "palette", "settings")
 SHADCN_RULES = (
     "shadcn/no-restyle",
     "shadcn/no-raw-colors",
@@ -70,6 +72,28 @@ def png_dimensions(path):
     return struct.unpack(">II", header[16:24])
 
 
+def webp_dimensions(path):
+    with path.open("rb") as stream:
+        header = stream.read(30)
+    if header[:4] != b"RIFF" or header[8:12] != b"WEBP":
+        raise AssertionError(f"not a WebP: {path}")
+    chunk = header[12:16]
+    if chunk == b"VP8L":
+        bits = int.from_bytes(header[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    if chunk == b"VP8X":
+        return (
+            int.from_bytes(header[24:27], "little") + 1,
+            int.from_bytes(header[27:30], "little") + 1,
+        )
+    if chunk == b"VP8 ":
+        return (
+            int.from_bytes(header[26:28], "little") & 0x3FFF,
+            int.from_bytes(header[28:30], "little") & 0x3FFF,
+        )
+    raise AssertionError(f"unknown WebP chunk {chunk!r}: {path}")
+
+
 def local_target(reference, base=DIST):
     reference = reference.strip()
     if not reference or reference.startswith("#"):
@@ -115,9 +139,9 @@ class SiteTests(unittest.TestCase):
 
     def test_built_site_is_complete(self):
         for name in (
-            "index.html", "404.html", "favicon.svg", "robots.txt", "sitemap.xml",
-            ".nojekyll", "assets/crude-source.png", "assets/crude-source.webp",
-            "assets/crude-agents.png", "assets/crude-agents.webp", "assets/og.png",
+            "index.html", "404.html", "favicon.svg", "apple-touch-icon.png",
+            "robots.txt", "sitemap.xml", ".nojekyll", "assets/og.png",
+            *(f"assets/{scene}.webp" for scene in TOUR_SCENES),
         ):
             with self.subTest(name=name):
                 self.assertTrue((DIST / name).is_file(), f"missing built site file: {name}")
@@ -231,21 +255,20 @@ class SiteTests(unittest.TestCase):
             with self.subTest(component=component):
                 self.assertIn(f'from "@/components/ui/{component}"', self.app)
         self.assertEqual(self.app.count("<h1"), 1, "the page needs exactly one h1")
-        for phrase in (
-            "Your editor, terminal and agents.",
-            "One workspace.",
-            "An IDE that keeps humans and agents in the same room.",
-            "Delegate the work. Keep the context.",
-            "Trust comes from evidence, not vibes.",
-            "One command. No compiler.",
-            "Before you dive in.",
-            "Skip to content",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, self.app)
-        self.assertIn("width={1440}", self.app)
-        self.assertIn("height={966}", self.app)
+        for anchor in ("tour", "why", "capabilities", "install", "faq"):
+            with self.subTest(anchor=anchor):
+                self.assertIn(f'id="{anchor}"', self.app)
+        for scene in TOUR_SCENES:
+            with self.subTest(scene=scene):
+                self.assertIn(f'image: "{scene}.webp"', self.app)
+        self.assertIn("Skip to content", self.app)
         self.assertIn("alt={alt}", self.app)
+        # Declared image geometry must match the captures, or the layout shifts.
+        width = int(re.search(r"SHOT_WIDTH = (\d+);", self.app).group(1))
+        height = int(re.search(r"SHOT_HEIGHT = (\d+);", self.app).group(1))
+        for scene in TOUR_SCENES:
+            with self.subTest(capture=scene):
+                self.assertEqual(webp_dimensions(DIST / f"assets/{scene}.webp"), (width, height))
 
     def test_install_commands_use_the_canonical_repository(self):
         self.assertIn(REPOSITORY, self.app)
