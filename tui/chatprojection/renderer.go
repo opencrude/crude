@@ -40,6 +40,8 @@ type Renderer struct {
 	spinFrame    int
 	activeTyping bool
 	phase        string
+	projectRoot  string
+	projectPaths *tools.ProjectPaths
 
 	lastScrollbarW   int
 	subPaneContentFn SubPaneContentFn
@@ -291,6 +293,20 @@ func (r *Renderer) SetUsername(name string) {
 	if r.username != name {
 		r.username = name
 		r.InvalidateAllMessages()
+	}
+}
+
+// SetProjectRoot binds display-only tool paths to this workspace. A root
+// change invalidates retained rows; clock ticks and ordinary renders do not.
+func (r *Renderer) SetProjectRoot(root string) {
+	if r.projectRoot == root {
+		return
+	}
+	r.projectRoot = root
+	r.projectPaths = tools.NewProjectPaths(root)
+	if len(r.sync.Messages) > 0 {
+		r.InvalidateAllMessages()
+		r.bumpVersion()
 	}
 }
 
@@ -1557,6 +1573,7 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 		isLastMsg:        r.isLastMessage(msg),
 		phase:            r.phase,
 		mdRenderer:       r.MdRenderer(),
+		projectPaths:     r.projectPaths,
 		disclosure:       r.disclosureState(msg),
 		thinkingBodyOnly: r.thinkingBodyOnly,
 		planSuperseded:   r.planMessageSuperseded(msg),

@@ -65,7 +65,7 @@ func TestCompactNativeRowPaintGutterAlignment(t *testing.T) {
 }
 
 func TestCompactNativeSelectionPlainText(t *testing.T) {
-	lines, _ := chatprojection.BuildSubPaneToolLines([]*types.ChatMessage{{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolPreviewPhase: "done", ToolStatus: "success"}}, 30, 0)
+	lines, _ := chatprojection.NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*types.ChatMessage{{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolPreviewPhase: "done", ToolStatus: "success"}}, 30, 0)
 	tool := lines[0]
 
 	rows := []chatprojection.MessageRow{{

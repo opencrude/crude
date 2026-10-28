@@ -332,7 +332,7 @@ func TestCompactAgentWaitKeepsNameAndIdentityWithoutJSON(t *testing.T) {
 		ToolInput:  `{"agent_id":"agent-8f21"}`,
 		Content:    `{"id":"agent-8f21","name":"Lily sub Dawn","category":"researcher","state":"available","presence":"attached","runtime_epoch":1}`,
 		ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
-	lines, _ := BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
+	lines, _ := NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
 	var text strings.Builder
 	for _, line := range lines {
 		text.WriteString(line.PlainText())

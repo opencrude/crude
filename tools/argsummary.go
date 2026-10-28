@@ -105,7 +105,7 @@ func SummarizeArgs(tool, argsStr string) string {
 			input = ExtractArg(argsStr, "input")
 		}
 		if patch, err := codexio.Parse(input); err == nil {
-			return strings.Join(patch.Paths(""), ", ")
+			return strings.Join(patchOperandPaths(patch), ", ")
 		}
 		if strings.Contains(input, "*** Begin Patch") {
 			paths, _, _ := codexio.Preview(input)
@@ -290,6 +290,26 @@ func SummarizeArgs(tool, argsStr string) string {
 		return "" // no structured payload is a safe fallback title
 	}
 	return truncateLabel(argsStr, 60)
+}
+
+// Patch titles describe the submitted operands, not filesystem-normalized
+// paths. The summarizer can run on a shell with a different OS from the core.
+func patchOperandPaths(patch *codexio.Patch) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, operation := range patch.Operations {
+		for _, path := range []string{operation.Path, operation.MoveTo} {
+			if path == "" {
+				continue
+			}
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func subAgentCategoryLabel(category string) string {

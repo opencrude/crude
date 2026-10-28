@@ -160,8 +160,9 @@ func subAgentDisplayStatus(status string) (string, bool) {
 	}
 }
 
-// BuildSubPaneToolLines uses the same semantic titles as ordinary tool leaves.
-func BuildSubPaneToolLines(messages []*types.ChatMessage, width, frame int) ([]SubPaneLine, bool) {
+// BuildSubPaneToolLines uses this renderer's workspace root and the same
+// semantic titles as ordinary tool leaves.
+func (r *Renderer) BuildSubPaneToolLines(messages []*types.ChatMessage, width, frame int) ([]SubPaneLine, bool) {
 	var lines []SubPaneLine
 	active := false
 	for _, msg := range messages {
@@ -170,13 +171,13 @@ func BuildSubPaneToolLines(messages []*types.ChatMessage, width, frame int) ([]S
 		}
 		active = active || toolRowFrameSensitive(*msg)
 		if tools.IsStructuredTool(msg.ToolName) {
-			body := renderToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12, msg.ToolPreviewPhase, DisclosureCollapsed)
+			body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12, msg.ToolPreviewPhase, DisclosureCollapsed, r.projectPaths)
 			for _, line := range body.native {
 				lines = append(lines, NativeLine(padPaintLine(line, width)))
 			}
 			continue
 		}
-		for _, pl := range wrapToolTitle(buildToolTitleLine(*msg, msg.ToolPreviewPhase, frame), width) {
+		for _, pl := range wrapToolTitle(buildProjectToolTitleLine(*msg, msg.ToolPreviewPhase, frame, r.projectPaths), width) {
 			lines = append(lines, NativeLine(padPaintLine(pl, width)))
 		}
 	}

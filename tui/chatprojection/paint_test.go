@@ -91,7 +91,8 @@ func TestBuildSubPaneToolStates(t *testing.T) {
 		{Role: types.RoleTool, ToolName: "write_file", ToolArgs: "fail", ToolPreviewPhase: "error", ToolStatus: "error"},
 		{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "next", ToolPreviewPhase: "streaming", ToolStatus: "streaming"},
 	}
-	lines, active := chatprojection.BuildSubPaneToolLines(messages, 24, 0)
+	r := chatprojection.NewRenderer(theme.DefaultDark())
+	lines, active := r.BuildSubPaneToolLines(messages, 24, 0)
 	if !active {
 		t.Fatal("compact projection lost its active frame sensitivity")
 	}
@@ -112,7 +113,7 @@ func TestBuildSubPaneToolStates(t *testing.T) {
 	if !strings.Contains(lines[3].PlainText(), "●") {
 		t.Fatalf("streaming line %q", lines[3].PlainText())
 	}
-	next, _ := chatprojection.BuildSubPaneToolLines(messages, 24, ui.ActivityBlinkPhaseMillis)
+	next, _ := r.BuildSubPaneToolLines(messages, 24, ui.ActivityBlinkPhaseMillis)
 	if !strings.Contains(next[3].PlainText(), "○") || next[0].PlainText() != lines[0].PlainText() {
 		t.Fatal("compact blink changed a completed row or failed to animate active work")
 	}

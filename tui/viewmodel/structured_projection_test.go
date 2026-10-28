@@ -141,8 +141,8 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 								t.Fatalf("bare envelope or arbitrary elision: %s", text)
 							}
 						}
-						lp, _ := chatprojection.BuildSubPaneToolLines([]*ctypes.ChatMessage{&live[0]}, width, 0)
-						rp, _ := chatprojection.BuildSubPaneToolLines([]*ctypes.ChatMessage{&hydrated[0]}, width, 0)
+						lp, _ := left.BuildSubPaneToolLines([]*ctypes.ChatMessage{&live[0]}, width, 0)
+						rp, _ := right.BuildSubPaneToolLines([]*ctypes.ChatMessage{&hydrated[0]}, width, 0)
 						if len(lp) != len(rp) {
 							t.Fatal("compact child projection changed on resume")
 						}
