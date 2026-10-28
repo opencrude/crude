@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://opencrude.github.io/crude/sitemap.xml
+Sitemap: https://opencrude.github.io/sitemap.xml
