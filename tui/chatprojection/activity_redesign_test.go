@@ -187,3 +187,30 @@ func BenchmarkDenseActivityPresentedFrame(b *testing.B) {
 		r.ExportMessageRows(100)
 	}
 }
+
+func BenchmarkDenseProjectPathsPresentedFrame(b *testing.B) {
+	for _, tc := range []struct {
+		name, root string
+	}{{"absolute", ""}, {"relative", "/home/example/large-project"}} {
+		b.Run(tc.name, func(b *testing.B) {
+			r := newActivityRenderer()
+			r.SetProjectRoot(tc.root)
+			messages := make([]types.ChatMessage, 4001)
+			for i := range 4000 {
+				messages[i] = types.ChatMessage{InternalID: fmt.Sprint(i), Role: types.RoleTool, ToolName: "read_file",
+					ToolArgs: "/home/example/large-project/src/file.go", ToolStatus: types.ToolStatusSuccess,
+					ToolPreviewPhase: types.ToolPreviewDone, Content: strings.Repeat("source line\n", 40)}
+			}
+			messages[4000] = types.ChatMessage{InternalID: "active", Role: types.RoleTool, ToolName: "read_file",
+				ToolArgs: "/home/example/large-project/src/active.go", ToolStatus: types.ToolStatusCalling, ToolPreviewPhase: types.ToolPreviewStreaming}
+			r.SyncMessages(messages, 1, 0)
+			r.ExportMessageRows(100)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				r.SetSpinFrame(i * 400)
+				r.ExportMessageRows(100)
+			}
+		})
+	}
+}

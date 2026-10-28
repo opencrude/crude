@@ -56,6 +56,7 @@ type subPaneProjectionRegistry struct {
 	owners         map[string]*subPaneProjectionRegistry
 	embedded       bool
 	username       string
+	projectRoot    string
 	thinkingWidths map[*workspace.AgentState]int
 	thinkingRoots  map[*workspace.AgentState]bool
 }
@@ -79,6 +80,7 @@ func (reg *subPaneProjectionRegistry) ForOwner(owner string) *subPaneProjectionR
 	child := newSubPaneProjectionRegistry(reg.theme)
 	child.embedded = true
 	child.username = reg.username
+	child.projectRoot = reg.projectRoot
 	reg.owners[owner] = child
 	return child
 }
@@ -124,6 +126,7 @@ func (reg *subPaneProjectionRegistry) Get(paneID string, paneType workspace.Pane
 		p.renderer.SetThinkingBodyOnly(true)
 	}
 	p.renderer.SetUsername(reg.username)
+	p.renderer.SetProjectRoot(reg.projectRoot)
 	p.scroll.SetAutoScroll(true)
 	p.renderer.BindPaneScroll(p.scroll)
 	reg.projections[paneID] = p
@@ -158,6 +161,22 @@ func (reg *subPaneProjectionRegistry) SetUsername(name string) {
 	}
 	for _, p := range reg.projections {
 		p.renderer.SetUsername(name)
+	}
+}
+
+// SetProjectRoot publishes the current logical workspace root to every
+// retained renderer, including embedded compact panes.
+func (reg *subPaneProjectionRegistry) SetProjectRoot(root string) {
+	if reg.projectRoot == root {
+		return
+	}
+	reg.projectRoot = root
+	for _, child := range reg.owners {
+		child.SetProjectRoot(root)
+	}
+	for _, p := range reg.projections {
+		p.renderer.SetProjectRoot(root)
+		p.compactToolLines = nil
 	}
 }
 
@@ -527,7 +546,7 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	if p.compactToolLines != nil && p.compactMsgVersion == msgVersion && p.compactMsgCount == len(msgs) && p.compactCacheWidth == width && (!p.compactAnimating || p.compactDot == dot) {
 		allToolLines = p.compactToolLines
 	} else {
-		allToolLines, p.compactAnimating = chatprojection.BuildSubPaneToolLines(msgs, width, spinFrame)
+		allToolLines, p.compactAnimating = p.renderer.BuildSubPaneToolLines(msgs, width, spinFrame)
 		p.compactDot = dot
 		p.compactToolLines = allToolLines
 		p.compactMsgVersion = msgVersion

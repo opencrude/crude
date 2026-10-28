@@ -166,6 +166,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	}
 	m.sessionProjections = newSessionProjectionRegistry(m.Theme)
 	m.subPaneProjections = newSubPaneProjectionRegistry(m.Theme)
+	m.subPaneProjections.SetProjectRoot(m.ws.RootPath())
 
 	if m.chatScreen != nil {
 		m.chatScreen.CancelPointerCapture()

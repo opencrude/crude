@@ -26,8 +26,9 @@ func hasTitleReason(msg types.ChatMessage) bool {
 	return tools.ToolErrorReason(msg.ToolName, msg.Content) != ""
 }
 
-func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int) PaintLine {
+func buildProjectToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int, paths *tools.ProjectPaths) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
+	title.Operand = paths.ToolOperand(&msg, title.Operand)
 	isActive := toolRowFrameSensitive(msg)
 	settled := msg.ToolPreviewPhase == types.ToolPreviewDone || msg.ToolPreviewPhase == types.ToolPreviewError
 	return paintToolTitle(title, msg.ToolStatus, isActive, settled, spinFrame, tools.PermTagSuffix(msg.PermTag))
@@ -72,8 +73,8 @@ func paintToolTitle(title tools.ToolTitle, status string, active, settled bool, 
 	return PaintLine{Spans: spans}
 }
 
-func buildToolTitleLines(msg types.ChatMessage, phase string, frame, width int, disclosure DisclosureState) []PaintLine {
-	header := buildToolTitleLine(msg, phase, frame)
+func buildProjectToolTitleLines(msg types.ChatMessage, phase string, frame, width int, disclosure DisclosureState, paths *tools.ProjectPaths) []PaintLine {
+	header := buildProjectToolTitleLine(msg, phase, frame, paths)
 	if toolSupportsDisclosure(msg.ToolName) && (msg.Content != "" || msg.ToolCommand != "" || msg.ToolInput != "") {
 		glyph := " ▸"
 		if disclosure == DisclosureExpanded {
@@ -134,7 +135,7 @@ func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 	return tools.IsPatchCardTool(msg.ToolName) && tools.IsDiffContent(resultContent)
 }
 
-func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState) messageLines {
+func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState, paths *tools.ProjectPaths) messageLines {
 	// A failure's trailing hint addresses the model's next call, not the reader.
 	msg.Content = types.StripToolHint(msg.Content)
 	commandResult, commandOK := toolargs.ParseCommandResult(msg.ToolName, msg.Content)
@@ -163,7 +164,7 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	var out messageLines
 	out.frameSensitive = toolRowFrameSensitive(msg)
 	expanded := disclosure == DisclosureExpanded
-	for _, line := range buildToolTitleLines(msg, titlePhase, spinFrame, innerW, disclosure) {
+	for _, line := range buildProjectToolTitleLines(msg, titlePhase, spinFrame, innerW, disclosure, paths) {
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
 	}

@@ -51,3 +51,10 @@ func TestPatchRawPreviewAndSummary(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestPatchSummaryKeepsOriginalPathSpelling(t *testing.T) {
+	input := "*** Begin Patch\n*** Update File: /project/link/../a.go\n*** Move to: C:/Work/project/b.go\n@@\n-old\n+new\n*** End Patch\n"
+	if got := SummarizeArgs("apply_patch", input); got != "/project/link/../a.go, C:/Work/project/b.go" {
+		t.Fatalf("patch title rewrote the original path operands: %q", got)
+	}
+}

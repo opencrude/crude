@@ -51,6 +51,7 @@ type renderContext struct {
 	isLastMsg    bool
 	phase        string
 	mdRenderer   *rendering.MarkdownRenderer
+	projectPaths *tools.ProjectPaths
 	// disclosure is the resolved expand/collapse mode for this message
 	// (see disclosure.go). Deterministic defaults keep live and hydrated
 	// sessions rendering the same shape.
@@ -975,7 +976,7 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 		if ctx.planSuperseded && ctx.disclosure != DisclosureExpanded {
 			msg.Content = ""
 		}
-		ml = renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
+		ml = renderProjectToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure, ctx.projectPaths)
 	case types.RoleError:
 		ml = renderErrorMessage(msg, ctx)
 	case types.RoleStatus:

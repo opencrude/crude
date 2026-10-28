@@ -404,6 +404,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	// prior focus path (Phase 5 focus scopes).
 	overlay.SetFocusHost(rootHost)
 	subPaneProjections := newSubPaneProjectionRegistry(th)
+	subPaneProjections.SetProjectRoot(ws.RootPath())
 	sessionProjections := newSessionProjectionRegistry(th)
 
 	mainSurf := surface.NewSurface("main-shell", 80, 24, cell.TransparentBlank())

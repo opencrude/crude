@@ -7,6 +7,19 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Tool-title project paths (2026-10-28)
+
+The renderer prepares one lexical project-root matcher per renderer; it does no
+filesystem I/O or path derivation during paint. On Linux amd64, i7-10750H, three
+`BenchmarkProjectPathSimpleOperand` runs measured 24.16–25.32 ns/op and zero
+allocations for an in-project POSIX path. `BenchmarkDenseProjectPathsPresentedFrame`
+exports a warmed 4,001-tool activity projection with one animated read leaf:
+absolute titles measured 41.88–42.08 µs and 267 allocations per export; relative
+titles measured 38.15–38.33 µs and 267 allocations. This is retained-row export,
+not terminal presentation or mutation latency. Shorter labels account for less
+rendered text; the comparison is not a claim about all workloads or native
+Windows/macOS runtime performance. Existing gates are unchanged.
+
 ## Native attachment images (2026-10-25)
 
 `third_party/bubbletea`'s `BenchmarkKittyRendererWarmFrame` compares an

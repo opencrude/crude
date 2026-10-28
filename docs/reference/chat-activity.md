@@ -180,9 +180,21 @@ truncated JSON, including unknown tools, missing operands, invalid/partial
 arguments, parallel children, structured progress labels, invalid tool names,
 and structured error reasons. Use one semantic
 operand projection for live events and resumed snapshots; if no safe operand
-exists, show only the action. Preserve genuine extracted commands, paths and
-queries verbatim, even if they themselves contain JSON text. Do not fix one
-widget by stripping braces: producer, batch projection, main chat, compact pane,
+exists, show only the action. Tool-title path operands lexically inside the
+logical workspace root are displayed relative to that root, including parallel
+leaves and compact agent panes. The root comes from the workspace, not the
+shell's working directory; a workspace switch replaces the projection. The
+comparison handles POSIX paths and Windows drive/UNC paths independently of
+the shell's OS, with no filesystem access or symlink resolution. Paths outside
+the workspace, ambiguous parent traversals, and already-relative paths retain
+their original spelling. Patch summaries retain the submitted path spelling
+instead of cleaning it with the shell's OS-specific filepath rules. An
+isolated execution's checkout outside the logical workspace stays absolute:
+the transcript does not carry a per-call checkout root, and the projection
+must not guess one from a directory name. This rule does not rewrite commands,
+queries, tool inputs, results, diffs or disclosed audit evidence. Genuine extracted
+operands remain readable even if they themselves contain JSON text. Do not fix
+one widget by stripping braces: producer, batch projection, main chat, compact pane,
 and resume must share the same source rule. For every tool schema or new argument
 encoding, test identical live and hydrated rows (collapsed and expanded),
 disclosure and result evidence, with no raw API field names in any title.
@@ -503,7 +515,9 @@ not change table widths, wrapping, selection text, or the painted transcript.
   operand authority for live events, child projections, and resumed snapshots.
   Missing, malformed, nested, and unfamiliar argument shapes fail closed to a
   name-only title, not a truncated JSON fallback; a real command/query/path
-  extracted from a field remains readable. The shared title painter must also
+  extracted from a field remains readable. Only identified path operands are
+  shortened relative to the logical workspace; result bodies remain literal.
+  The shared title painter must also
   guard raw structured progress labels, unsafe tool identifiers, and nested
   structured error reasons. Every new tool schema needs live,
   parallel (when applicable), and hydrated tests asserting the same title,
