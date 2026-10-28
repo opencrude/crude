@@ -15,7 +15,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/coreclient"
 	"crude/coreprotocol"
+	"crude/projectpath"
 	"crude/shellport"
 	"crude/tui/cell"
 	"crude/tui/compositor"
@@ -91,6 +93,14 @@ type inspectResult struct {
 	intent   filepicker.IntentToken
 	snapshot coreprotocol.StartupSnapshot
 	err      error
+}
+type createFolderResult struct {
+	target *filepicker.Screen
+	intent filepicker.IntentToken
+	gen    uint64
+	path   string
+	name   string
+	err    error
 }
 type savedMsg struct{ err error }
 type tickMsg struct{}
@@ -269,6 +279,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.search(v)
 		}
 		return m, nil
+	case filepicker.CreateFolderMsg:
+		if v.ValidFor(m.picker) {
+			return m, m.createFolder(v)
+		}
+		return m, nil
 	case filepicker.SelectMsg:
 		if v.ValidFor(m.picker) {
 			return m, m.inspect(v.Path, m.picker, v.Intent())
@@ -351,6 +366,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.layout()
 		return m, nil
+	case createFolderResult:
+		if !m.pickerCurrent(v.target, v.intent, v.gen) {
+			return m, nil
+		}
+		m.requestCancel()
+		m.requestCancel = nil
+		if v.err == nil && v.path == "" {
+			v.err = fmt.Errorf("%w; cancel and check the parent folder before retrying", filepicker.ErrFolderCreationUnknown)
+		}
+		if !m.picker.CompleteCreateFolderFor(v.intent, v.err) {
+			return m, nil
+		}
+		m.layout()
+		if v.err != nil {
+			return m, nil
+		}
+		m.root.pickerNotice = "Created folder: " + v.name
+		return m, m.browse(v.path, 0, false, v.intent)
 	case inspectResult:
 		if v.gen != m.gen || (v.target != nil && !m.pickerCurrent(v.target, v.intent, v.gen)) {
 			return m, nil
@@ -395,16 +428,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.root.mode == introduction && v.Code == tea.KeyEsc {
 			return m, m.quit()
 		}
-		if m.root.mode == picking && v.String() == "ctrl+o" {
+		if m.root.mode == picking && !m.picker.CreatingFolder() && v.String() == "ctrl+o" {
 			return m, m.picker.ConfirmSelection().Cmd
 		}
-		if m.root.mode == picking && v.String() == "ctrl+l" {
+		if m.root.mode == picking && !m.picker.CreatingFolder() && v.String() == "ctrl+l" {
 			m.host.Focus(pathID)
 			return m, nil
 		}
 		// The shared action bar owns its individual buttons and Tab/Shift+Tab
 		// between them. Do not steal those keys at the page boundary.
-		if v.Code == tea.KeyTab && (m.root.mode != picking || m.host.Focused() != filepicker.ActionsID) {
+		if v.Code == tea.KeyTab && !m.picker.CreatingFolder() && (m.root.mode != picking || m.host.Focused() != filepicker.ActionsID) {
 			m.cycleFocus(v.Mod.Contains(tea.ModShift))
 			return m, nil
 		}
@@ -414,7 +447,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	previousFocus := m.host.Focused()
 	r := m.host.Handle(msg)
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyTab && m.root.mode == picking && previousFocus == filepicker.ActionsID && m.host.Focused() != previousFocus {
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyTab && m.root.mode == picking && !m.picker.CreatingFolder() && previousFocus == filepicker.ActionsID && m.host.Focused() != previousFocus {
 		// The picker has finished traversing its own action buttons. Rejoin
 		// this page's cycle so path controls and the issue reader stay reachable.
 		m.host.Focus(previousFocus)
@@ -602,6 +635,19 @@ func (m *Model) browse(path string, offset int, expand bool, intent filepicker.I
 	return m.owner.command(ctx, func(ctx context.Context) tea.Msg {
 		page, err := m.service.Browse(ctx, coreprotocol.StartupBrowseRequest{Path: path, Offset: offset})
 		return browseResult{target: target, intent: intent, gen: gen, path: path, offset: offset, expand: expand, page: page, err: err}
+	})
+}
+
+func (m *Model) createFolder(v filepicker.CreateFolderMsg) tea.Cmd {
+	ctx, gen := m.request()
+	m.root.more.SetDisabled(true)
+	return m.owner.command(ctx, func(ctx context.Context) tea.Msg {
+		path, err := m.service.CreateWorkspaceFolder(ctx, v.Parent, v.Name)
+		var uncertain *coreclient.UncertainError
+		if err != nil && (ctx.Err() != nil || errors.As(err, &uncertain) || errors.Is(err, projectpath.ErrParentMovedAfterCreate)) {
+			err = fmt.Errorf("%w; cancel and check the parent folder before retrying: %v", filepicker.ErrFolderCreationUnknown, err)
+		}
+		return createFolderResult{target: v.Target, intent: v.Intent(), gen: gen, path: path, name: v.Name, err: err}
 	})
 }
 func (m *Model) search(v filepicker.SearchMsg) tea.Cmd {

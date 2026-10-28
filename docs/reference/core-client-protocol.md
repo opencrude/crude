@@ -49,6 +49,7 @@ Previously attached work and peer shells remain unchanged.
 | `startup.inspect` | Return path classification, introduction eligibility, theme, profile choices, issues, and relevant previous-workspace metadata. No workspace creation. |
 | `startup.browse` | Read directory-only pages from a requested path. Offsets count raw entries, including files. |
 | `startup.catalog` | Discover directories for an explicit, non-empty picker query. Request-owned work reads no file contents. |
+| `startup.create_folder` | Create exactly one named child of an existing browsed directory on the core host, without attaching a workspace. The opened parent anchors the operation; names cannot escape it, existing entries are never overwritten, and the request has a durable receipt. An uncertain outcome is not replayed. |
 | `startup.save` | Save only the two application-owned onboarding choices through sparse field edits. |
 | `startup.onboarding` | Read committed application settings and redacted accounts from the selected core. |
 
@@ -66,6 +67,9 @@ Limit results show an explicit notice and preserve more-specific path navigation
 Directory symlinks remain browsable, but catalog discovery does not follow them.
 The catalog skips dependency, build, Git, and Crude data directories.
 Shutdown cancels and joins started startup requests before attachment.
+The same folder-creation operation is available from an attached shell for
+workspace destinations outside its current project. Successful creation browses
+the new directory; it does not attach or bypass workspace-switch confirmation.
 These bounds do not establish native Windows or distinct-host SSH acceptance.
 
 See [settings](settings.md#first-use-profile-choices-and-ai-setup) for introduction and AI setup behavior.

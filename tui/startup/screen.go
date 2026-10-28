@@ -299,9 +299,15 @@ func (b *pickerBody) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s := b.owner
 	goW, moreW := min(8, r.W), min(18, max(0, r.W-8))
 	fieldW := max(0, r.W-goW-moreW-2)
-	s.path.Layout(ctx, ui.Rect{W: fieldW, H: 1})
-	s.pathGo.Layout(ctx, ui.Rect{X: fieldW + 1, W: goW, H: 1})
-	s.more.Layout(ctx, ui.Rect{X: fieldW + goW + 2, W: moreW, H: 1})
+	if s.picker.CreatingFolder() {
+		s.path.Layout(ctx, ui.Rect{})
+		s.pathGo.Layout(ctx, ui.Rect{})
+		s.more.Layout(ctx, ui.Rect{})
+	} else {
+		s.path.Layout(ctx, ui.Rect{W: fieldW, H: 1})
+		s.pathGo.Layout(ctx, ui.Rect{X: fieldW + 1, W: goW, H: 1})
+		s.more.Layout(ctx, ui.Rect{X: fieldW + goW + 2, W: moreW, H: 1})
+	}
 	issueH := 0
 	if s.issues.Value() != "" {
 		issueH = min(6, max(0, r.H-7))
@@ -318,7 +324,11 @@ func (b *pickerBody) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContex
 	if s.issues.Value() != "" {
 		buf.WriteString(ox+r.X, oy+r.Y+max(0, s.issues.Bounds().Y-1), rendering.TruncateVisual("Startup issues · Tab to read · Arrow keys to scroll", r.W, "…"), s.tokens.Color(ui.ColorWarning), bg, cell.AttrBold)
 	}
-	lines := []string{s.pickerNotice, "Ctrl+L path · Enter browse · Ctrl+O open selection · Esc clear / back"}
+	hint := "Ctrl+L path · Enter browse · Ctrl+O open selection · Esc clear / back"
+	if s.picker.CreatingFolder() {
+		hint = "Enter create · Esc cancel"
+	}
+	lines := []string{s.pickerNotice, hint}
 	for i, line := range lines {
 		buf.WriteString(ox+r.X, oy+r.Y+max(0, r.H-2)+i, rendering.TruncateVisual(strings.TrimSpace(line), r.W, "…"), s.tokens.Color(ui.ColorMuted), bg, 0)
 	}

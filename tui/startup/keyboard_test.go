@@ -89,8 +89,9 @@ func TestPickerKeyboardCycleSkipsDisabledMoreAndReachesCancel(t *testing.T) {
 	assertStartupFocus(t, m, filepicker.ListID)
 	send(t, m, key(tea.KeyTab))
 	assertStartupFocus(t, m, filepicker.ActionsID)
-	// The action bar owns two decisions. Tab must visit Cancel, not jump
-	// straight out of the bar and make Cancel keyboard-inaccessible.
+	// The action bar owns all three decisions; Tab visits New Folder then Cancel.
+	send(t, m, key(tea.KeyTab))
+	assertStartupFocus(t, m, filepicker.ActionsID)
 	send(t, m, key(tea.KeyTab))
 	assertStartupFocus(t, m, filepicker.ActionsID)
 	send(t, m, key(tea.KeyEnter))
@@ -131,8 +132,9 @@ func TestPickerReverseTabVisitsBothActionButtons(t *testing.T) {
 	back := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	send(t, m, back)
 	assertStartupFocus(t, m, filepicker.ActionsID)
-	// Entering backwards lands on Cancel. Shift+Tab then visits Open,
-	// and only the following Shift+Tab leaves for the tree.
+	// Entering backwards lands on Cancel, then New Folder and Open.
+	send(t, m, back)
+	assertStartupFocus(t, m, filepicker.ActionsID)
 	send(t, m, back)
 	assertStartupFocus(t, m, filepicker.ActionsID)
 	send(t, m, back)

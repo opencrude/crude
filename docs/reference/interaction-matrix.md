@@ -333,8 +333,8 @@ Detached startup is fully keyboard navigable. Enter/Space activates **Let's go!*
 On the workspace chooser, Up/Down traverses Open Workspace, previous-workspace
 rows, and Quit; Home/End and PageUp/PageDown remain list-owned. Tab/Shift+Tab
 visits controls in either direction, skipping the empty list and disabled
-**More folders**. Inside the picker, both **Open Workspace** and **Cancel** are
-individual Tab stops owned by the shared ActionBar. Ctrl+L focuses the path,
+**More folders**. Inside the picker, **Open Workspace**, **New Folder**, and
+**Cancel** are individual Tab stops owned by the shared ActionBar. Ctrl+L focuses the path,
 Ctrl+O confirms the folder, and Esc follows the ordinary picker back ladder.
 An issue reader retains its own arrow scrolling and is reachable by Tab.
 
@@ -347,6 +347,7 @@ An issue reader retains its own arrow scrolling and is reachable by Tab.
 | Backspace in search | Edit text only. An empty search does not navigate. |
 | Backspace in the tree or action controls | Navigate to the parent of the current root. A filesystem root is a no-op. |
 | Open Workspace or Ctrl+O | Confirm the highlighted directory. Without a highlighted directory, confirm the current root. |
+| New Folder | Enter a single folder name under the highlighted directory, or the current root without a highlight. Create runs on the selected core; success browses the new empty folder without opening it. Open Workspace remains explicit and in-project switching still asks for consent. Errors retain the name; Esc/Cancel returns to the prior picker. While creation is pending it cannot be submitted twice; an unknown outcome requires returning to inspect the parent before trying again. |
 | Esc | Clear search, then clear the row highlight, then close. Skip empty stages. |
 
 Initial display and root navigation do not implicitly highlight the first child.

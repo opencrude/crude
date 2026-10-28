@@ -11,6 +11,7 @@ import (
 )
 
 var _ shellport.ClientFiles = (*Workspace)(nil)
+var _ shellport.WorkspaceFolderCreator = (*Workspace)(nil)
 
 // CanonicalClientPath is lexical and uses the core root, never local Getwd/Abs.
 // Slash normalization also preserves drive-qualified core paths on Unix clients.
@@ -53,6 +54,12 @@ func (w *Workspace) CatalogFolders(ctx context.Context, root string, includeHidd
 	var out workspace.BrowserCatalog
 	err := w.call(ctx, coreprotocol.StartupCatalog, coreprotocol.StartupCatalogRequest{Root: root, IncludeHidden: includeHidden}, &out)
 	return out, err
+}
+
+func (w *Workspace) CreateWorkspaceFolder(ctx context.Context, parent, name string) (string, error) {
+	var out coreprotocol.StartupCreateFolderResult
+	err := w.call(ctx, coreprotocol.StartupCreateFolder, coreprotocol.StartupCreateFolderRequest{Parent: parent, Name: name}, &out)
+	return out.Path, err
 }
 func (w *Workspace) readClientFile(ctx context.Context, value string, external bool) ([]byte, error) {
 	w.connMu.Lock()

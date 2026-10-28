@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -25,8 +26,15 @@ type fakeStartup struct {
 	catalog func(context.Context, string, bool) (workspace.BrowserCatalog, error)
 	inspect func(context.Context, string) (coreprotocol.StartupSnapshot, error)
 	save    func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error)
+	create  func(context.Context, string, string) (string, error)
 }
 
+func (f *fakeStartup) CreateWorkspaceFolder(ctx context.Context, parent, name string) (string, error) {
+	if f.create != nil {
+		return f.create(ctx, parent, name)
+	}
+	return filepath.Join(parent, name), nil
+}
 func (f *fakeStartup) Browse(ctx context.Context, r coreprotocol.StartupBrowseRequest) (coreprotocol.StartupBrowseResult, error) {
 	if f.browse != nil {
 		return f.browse(ctx, r)

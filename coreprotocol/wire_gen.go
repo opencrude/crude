@@ -14695,6 +14695,92 @@ func (z StartupCatalogRequest) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z StartupCreateFolderRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.Parent)
+	o = msgp.AppendString(o, z.Name)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *StartupCreateFolderRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Parent, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Parent")
+		return
+	}
+	z.Name, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Name")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z StartupCreateFolderRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Parent) + msgp.StringPrefixSize + len(z.Name)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z StartupCreateFolderResult) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o = msgp.AppendString(o, z.Path)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *StartupCreateFolderResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	z.Path, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Path")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z StartupCreateFolderResult) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Path)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z StartupInspectRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 1

@@ -2,6 +2,7 @@
 package filepicker
 
 import (
+	"errors"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/projectpath"
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
@@ -18,15 +20,19 @@ import (
 	"crude/tui/ui"
 )
 
+// ErrFolderCreationUnknown prevents replay of a possibly committed mutation.
+var ErrFolderCreationUnknown = errors.New("creation outcome unknown")
+
 const (
 	ScreenID     ui.ComponentID = "filepicker"
 	FilterID     ui.ComponentID = "filepicker/filter"
 	BreadcrumbID ui.ComponentID = "filepicker/breadcrumb"
 	// ListID is retained as the public focus target name for callers and tests;
 	// its implementation is now the native file tree.
-	ListID      ui.ComponentID = "filepicker/list"
-	ScrollbarID ui.ComponentID = "filepicker/scrollbar"
-	ActionsID   ui.ComponentID = "filepicker/actions"
+	ListID       ui.ComponentID = "filepicker/list"
+	ScrollbarID  ui.ComponentID = "filepicker/scrollbar"
+	ActionsID    ui.ComponentID = "filepicker/actions"
+	FolderNameID ui.ComponentID = "filepicker/folder-name"
 )
 
 type Mode uint8
@@ -105,6 +111,23 @@ type CancelMsg struct {
 	Sequence uint64
 }
 
+// CreateFolderMsg requests one explicitly named child of the chosen folder.
+type CreateFolderMsg struct {
+	Target   *Screen
+	Parent   string
+	Name     string
+	Epoch    uint64
+	Sequence uint64
+}
+
+func (m CreateFolderMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m CreateFolderMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.creating && target.createPending && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
+
 func (m NavigateMsg) Intent() IntentToken {
 	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
 }
@@ -175,6 +198,10 @@ type Screen struct {
 	// A child load marks its node before its LoadMsg reaches the host. Retain
 	// that ownership so superseding the queued request releases Loading too.
 	pendingChildPath string
+	creating         bool
+	createPending    bool
+	createUnknown    bool
+	createParent     string
 
 	model        *filetree.FileTreeModel
 	browseModel  *filetree.FileTreeModel
@@ -182,10 +209,12 @@ type Screen struct {
 	searchQuery  string
 	showHidden   bool
 	filter       *pickerFilter
+	folderName   *ui.TextField
 	breadcrumb   *pickerBreadcrumb
 	tree         *pickerTree
 	scrollbar    *ui.ScrollbarControl
 	actions      *ui.ActionBar
+	actionConfig string
 	focus        func(ui.ComponentID)
 	selected     map[string]bool
 }
@@ -247,6 +276,9 @@ func New(th *theme.Theme) *Screen {
 		}
 		s.sync()
 	})
+	s.folderName = ui.NewTextField(FolderNameID, tokens)
+	s.folderName.SetPlaceholder("Folder name")
+	s.folderName.SetSubmitAction("filepicker.create.submit")
 	s.breadcrumb = &pickerBreadcrumb{
 		Base:   ui.NewBase(BreadcrumbID),
 		owner:  s,
@@ -273,6 +305,12 @@ func (s *Screen) Open(root string, mode Mode, entries []Entry) {
 	s.current = s.root
 	s.active = true
 	s.errText = ""
+	s.creating = false
+	s.createPending = false
+	s.createUnknown = false
+	s.createParent = ""
+	s.folderName.SetValue("")
+	s.folderName.SetReadOnly(false)
 	s.selected = make(map[string]bool)
 	s.searchActive = false
 	s.searchQuery = ""
@@ -349,6 +387,11 @@ func (s *Screen) Close() {
 	s.discardAsyncDirectoryLoad()
 	s.active = false
 	s.errText = ""
+	s.creating = false
+	s.createPending = false
+	s.createUnknown = false
+	s.createParent = ""
+	s.folderName.SetReadOnly(false)
 	s.openEpoch++
 	s.selected = make(map[string]bool)
 	s.entries = nil
@@ -361,7 +404,8 @@ func (s *Screen) Close() {
 	s.sync()
 }
 
-func (s *Screen) IsOpen() bool { return s != nil && s.active }
+func (s *Screen) IsOpen() bool         { return s != nil && s.active }
+func (s *Screen) CreatingFolder() bool { return s != nil && s.creating }
 func (s *Screen) Mode() Mode {
 	if s == nil {
 		return ModeFile
@@ -549,7 +593,7 @@ func (s *Screen) IsCurrentIntent(epoch, sequence uint64) bool {
 }
 
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.filter, s.breadcrumb, s.tree, s.scrollbar, s.actions}
+	return []ui.Component{s.filter, s.folderName, s.breadcrumb, s.tree, s.scrollbar, s.actions}
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -561,6 +605,7 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 		s.th = th
 	}
 	s.filter.SetTokens(tokens)
+	s.folderName.SetTokens(tokens)
 	s.breadcrumb.SetTokens(tokens)
 	s.tree.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
@@ -577,11 +622,23 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
+	content := ui.Rect{W: r.W, H: maxInt(0, r.H-1)}
+	if s.creating {
+		s.filter.Layout(ctx, ui.Rect{})
+		s.tree.Layout(ctx, ui.Rect{})
+		s.scrollbar.Layout(ctx, ui.Rect{})
+		s.breadcrumb.Layout(ctx, pickerRect(content, 1, 4, r.W-2, 1))
+		s.folderName.Layout(ctx, pickerRect(content, 1, 6, r.W-2, 1))
+		s.actions.Layout(ctx, pickerRect(r, 0, r.H-1, r.W, 1))
+		s.sync()
+		return
+	}
+	s.folderName.Layout(ctx, ui.Rect{})
 	const headerRows = 3
 	filterY, breadcrumbY, treeY := headerRows, headerRows+2, headerRows+4
-	s.filter.Layout(ctx, ui.Rect{X: 1, Y: filterY, W: maxInt(1, r.W-2), H: 1})
-	s.breadcrumb.Layout(ctx, ui.Rect{X: 1, Y: breadcrumbY, W: maxInt(1, r.W-2), H: 1})
-	treeH := maxInt(1, r.H-treeY-2)
+	s.filter.Layout(ctx, pickerRect(content, 1, filterY, r.W-2, 1))
+	s.breadcrumb.Layout(ctx, pickerRect(content, 1, breadcrumbY, r.W-2, 1))
+	treeH := maxInt(0, r.H-treeY-2)
 	if s.model != nil {
 		s.model.Update(filetree.TreeHeightMsg{Height: treeH})
 	}
@@ -592,10 +649,17 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.scrollbar.NeededForViewport(treeH) {
 		barW = minInt(ui.ScrollbarWidth, maxInt(0, r.W-1))
 	}
-	s.tree.Layout(ctx, ui.Rect{X: 1, Y: treeY, W: maxInt(1, r.W-1-barW), H: treeH})
-	s.scrollbar.Layout(ctx, ui.Rect{X: maxInt(0, r.W-barW), Y: treeY, W: barW, H: treeH})
-	s.actions.Layout(ctx, ui.Rect{Y: maxInt(0, r.H-1), W: r.W, H: 1})
+	s.tree.Layout(ctx, pickerRect(content, 1, treeY, r.W-1-barW, treeH))
+	s.scrollbar.Layout(ctx, pickerRect(content, r.W-barW, treeY, barW, treeH))
+	s.actions.Layout(ctx, pickerRect(r, 0, r.H-1, r.W, 1))
 	s.sync()
+}
+
+// pickerRect clamps child geometry to the picker's actual parent-local bounds.
+func pickerRect(parent ui.Rect, x, y, w, h int) ui.Rect {
+	x = minInt(maxInt(0, x), maxInt(0, parent.W))
+	y = minInt(maxInt(0, y), maxInt(0, parent.H))
+	return ui.Rect{X: x, Y: y, W: minInt(maxInt(0, w), maxInt(0, parent.W-x)), H: minInt(maxInt(0, h), maxInt(0, parent.H-y))}
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
@@ -610,7 +674,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
 	x := ox + r.X + 1
 	y := oy + r.Y
-	x = buf.WriteString(x, y, "◆ crude", accent, bg, cell.AttrBold)
+	if r.W > 2 && r.H > 0 {
+		x = buf.WriteString(x, y, rendering.TruncateVisual("◆ crude", r.W-2, "…"), accent, bg, cell.AttrBold)
+	}
 	label := "ATTACH FILES"
 	subtitle := "Choose files to add to this conversation · fuzzy-search as you type"
 	switch s.mode {
@@ -621,20 +687,61 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		label = "OPEN FILE"
 		subtitle = "Choose a file to open in this pane · fuzzy-search as you type"
 	}
-	if x < ox+r.X+r.W-1 {
-		buf.WriteString(x, y, "  "+label, fg, bg, cell.AttrBold)
+	if s.creating {
+		label = "NEW FOLDER"
+		subtitle = "Create a folder inside the chosen location"
 	}
-	if r.H > 1 {
-		buf.WriteString(ox+r.X+1, y+1, rendering.TruncateLine(subtitle, maxInt(1, r.W-2)), muted, bg, 0)
+	if r.H > 0 && x < ox+r.X+r.W-1 {
+		buf.WriteString(x, y, rendering.TruncateVisual("  "+label, ox+r.X+r.W-1-x, "…"), fg, bg, cell.AttrBold)
+	}
+	if r.H > 1 && r.W > 2 {
+		buf.WriteString(ox+r.X+1, y+1, rendering.TruncateVisual(subtitle, r.W-2, "…"), muted, bg, 0)
 	}
 	if r.H > 2 {
 		line := strings.Repeat(string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─')), maxInt(0, r.W))
 		buf.WriteString(ox+r.X, y+2, line, s.tokens.Color(ui.ColorPopupDivider), bg, 0)
 	}
+	if s.creating {
+		write := func(row int, text string, color ui.SemanticColor) {
+			if row >= 0 && row < r.H-1 && r.W > 2 {
+				buf.WriteString(ox+r.X+1, y+row, rendering.TruncateVisual(text, r.W-2, "…"), s.tokens.Color(color), bg, 0)
+			}
+		}
+		write(3, "Create in", ui.ColorMuted)
+		write(5, "Folder name", ui.ColorFg)
+		if s.createPending {
+			write(8, "Creating folder…", ui.ColorMuted)
+		} else if s.errText != "" {
+			lines := rendering.WordWrap(s.errText, maxInt(1, r.W-2))
+			for i, line := range lines {
+				if 8+i >= r.H-1 {
+					break
+				}
+				write(8+i, line, ui.ColorError)
+			}
+		}
+	}
 }
 
 func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.IsKey() {
+		if s.creating {
+			switch {
+			case evt.Key.Code == tea.KeyEsc:
+				return s.cancelCreateFolder()
+			case evt.Key.Code == tea.KeyTab:
+				if evt.Key.Mod.Contains(tea.ModShift) {
+					s.actions.FocusLast()
+				} else {
+					s.actions.FocusFirst()
+				}
+				s.focusID(ActionsID)
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+			case evt.Key.String() == "ctrl+o":
+				return ui.EventResult{Handled: true}
+			}
+			return ui.EventResult{}
+		}
 		switch {
 		case evt.Key.Code == tea.KeyBackspace:
 			return s.navigateParent()
@@ -649,6 +756,12 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
+	case "filepicker.new-folder":
+		return s.beginCreateFolder()
+	case "filepicker.create.submit":
+		return s.submitCreateFolder()
+	case "filepicker.create.cancel":
+		return s.cancelCreateFolder()
 	case "filepicker.entry.activate":
 		if s.AsyncDirectoryLoading() {
 			return ui.EventResult{Handled: true}
@@ -666,6 +779,9 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		}
 		return ui.EventResult{Handled: true, Cmd: s.requestFileActivation(entry.Path), Invalidate: ui.InvalidatePaint}
 	case "filepicker.breadcrumb.navigate":
+		if s.creating {
+			return ui.EventResult{Handled: true}
+		}
 		path, ok := action.Payload.(string)
 		if !ok || path == "" {
 			return ui.EventResult{Handled: true}
@@ -676,6 +792,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "filepicker.cancel":
 		return s.cancel()
 	case "actionbar.exit.backward":
+		if s.creating {
+			s.focusID(FolderNameID)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
 		if s.VisibleCount() > 0 {
 			s.FocusTree()
 		} else {
@@ -683,6 +803,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "actionbar.exit.forward":
+		if s.creating {
+			s.focusID(FolderNameID)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
 		s.FocusFilter()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
@@ -707,19 +831,39 @@ func (s *Screen) rebuildActions() {
 	case ModeOpenFile:
 		primary = "Open File"
 	}
-	if !s.actions.SetLabel("filepicker.select", primary) {
-		s.actions = ui.NewActionBar(ActionsID, s.tokens,
-			ui.ActionBarButton{ID: ui.NewID(ActionsID, "select"), Label: primary, Action: "filepicker.select", Variant: ui.VariantPrimary, Enabled: false},
-			ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "filepicker.cancel", Variant: ui.VariantSecondary, Enabled: true},
-		)
-		s.actions.SetCancelAction("filepicker.cancel")
+	if s.creating {
+		if s.actionConfig != "create" {
+			s.actions.SetButtons(
+				ui.ActionBarButton{ID: ui.NewID(ActionsID, "create"), Label: "Create", Action: "filepicker.create.submit", Variant: ui.VariantPrimary, Enabled: true},
+				ui.ActionBarButton{ID: ui.NewID(ActionsID, "create-cancel"), Label: "Cancel", Action: "filepicker.create.cancel", Variant: ui.VariantSecondary, Enabled: true},
+			)
+			s.actions.SetCancelAction("filepicker.create.cancel")
+			s.actionConfig = "create"
+		}
+		s.actions.SetEnabled("filepicker.create.submit", !s.createPending && !s.createUnknown)
+		s.actions.SetEnabled("filepicker.create.cancel", !s.createPending)
+		return
 	}
 	enabled := s.mode == ModeFolder || len(s.SelectedPaths()) > 0
 	if s.mode == ModeOpenFile {
 		entry, ok := s.Selected()
 		enabled = ok && !entry.IsDir
 	}
+	config := primary
+	if s.actionConfig != config {
+		buttons := []ui.ActionBarButton{
+			{ID: ui.NewID(ActionsID, "select"), Label: primary, Action: "filepicker.select", Variant: ui.VariantPrimary, Enabled: true},
+		}
+		if s.mode == ModeFolder {
+			buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "new-folder"), Label: "New Folder", Action: "filepicker.new-folder", Variant: ui.VariantSecondary, Enabled: true})
+		}
+		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "filepicker.cancel", Variant: ui.VariantSecondary, Enabled: true})
+		s.actions.SetButtons(buttons...)
+		s.actions.SetCancelAction("filepicker.cancel")
+		s.actionConfig = config
+	}
 	s.actions.SetEnabled("filepicker.select", s.active && !s.AsyncDirectoryLoading() && enabled)
+	s.actions.SetEnabled("filepicker.new-folder", s.active && !s.AsyncDirectoryLoading())
 }
 
 func (s *Screen) sync() {
@@ -730,8 +874,15 @@ func (s *Screen) sync() {
 		s.tree.sync()
 	}
 	if s.breadcrumb != nil {
-		s.breadcrumb.SetPath(s.current)
+		path := s.current
+		if s.creating {
+			path = s.createParent
+		}
+		s.breadcrumb.SetPath(path)
 		status := s.statusText()
+		if s.creating {
+			status = ""
+		}
 		s.breadcrumb.SetStatus(status)
 	}
 	if s.actions != nil {
@@ -897,12 +1048,98 @@ func (s *Screen) navigate(path string) ui.EventResult {
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 }
 
+func (s *Screen) beginCreateFolder() ui.EventResult {
+	if s == nil || !s.active || s.mode != ModeFolder || s.creating || s.AsyncDirectoryLoading() {
+		return ui.EventResult{Handled: true}
+	}
+	parent := s.FocusedPath()
+	if _, ok := s.nextIntent(); !ok {
+		return ui.EventResult{Handled: true}
+	}
+	s.creating = true
+	s.createPending = false
+	s.createUnknown = false
+	s.createParent = parent
+	s.errText = ""
+	s.folderName.SetValue("")
+	s.folderName.SetReadOnly(false)
+	s.rebuildActions()
+	s.actions.FocusFirst()
+	s.sync()
+	s.focusID(FolderNameID)
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
+}
+
+func (s *Screen) submitCreateFolder() ui.EventResult {
+	if s == nil || !s.creating || s.createPending || s.createUnknown {
+		return ui.EventResult{Handled: true}
+	}
+	name := s.folderName.Value()
+	if err := projectpath.ValidateFolderName(name); err != nil {
+		s.errText = err.Error()
+		s.focusID(FolderNameID)
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
+	}
+	intent, ok := s.nextIntent()
+	if !ok {
+		return ui.EventResult{Handled: true}
+	}
+	s.createPending = true
+	s.errText = ""
+	s.folderName.SetReadOnly(true)
+	s.sync()
+	message := CreateFolderMsg{Target: s, Parent: s.createParent, Name: name, Epoch: intent.Epoch, Sequence: intent.Sequence}
+	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
+}
+
+func (s *Screen) cancelCreateFolder() ui.EventResult {
+	if s == nil || !s.creating || s.createPending {
+		return ui.EventResult{Handled: true}
+	}
+	s.creating = false
+	s.createParent = ""
+	s.createUnknown = false
+	s.errText = ""
+	s.folderName.SetReadOnly(false)
+	s.rebuildActions()
+	s.actions.FocusFirst()
+	s.sync()
+	s.FocusFilter()
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
+}
+
+// CompleteCreateFolderFor settles only the exact submitted operation. On
+// failure the name stays editable; success leaves navigation to the host.
+func (s *Screen) CompleteCreateFolderFor(intent IntentToken, err error) bool {
+	if s == nil || !s.creating || !s.createPending || !s.IsCurrentIntent(intent.Epoch, intent.Sequence) {
+		return false
+	}
+	s.createPending = false
+	s.folderName.SetReadOnly(false)
+	if err != nil {
+		s.createUnknown = errors.Is(err, ErrFolderCreationUnknown)
+		s.errText = err.Error()
+		s.rebuildActions()
+		s.sync()
+		s.focusID(FolderNameID)
+		return true
+	}
+	s.creating = false
+	s.createParent = ""
+	s.errText = ""
+	s.rebuildActions()
+	s.actions.FocusFirst()
+	s.sync()
+	s.FocusFilter()
+	return true
+}
+
 // ConfirmSelection confirms the highlighted folder, or the current root when
 // no row is highlighted. All hosts and controls share this confirmation owner.
 func (s *Screen) ConfirmSelection() ui.EventResult { return s.confirm() }
 
 func (s *Screen) confirm() ui.EventResult {
-	if s == nil || !s.active || s.AsyncDirectoryLoading() {
+	if s == nil || !s.active || s.creating || s.AsyncDirectoryLoading() {
 		return ui.EventResult{Handled: true}
 	}
 	if s.mode == ModeFolder {
