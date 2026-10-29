@@ -210,6 +210,22 @@ func TestPillNavigationPreservesGuidanceAndFeedback(t *testing.T) {
 	}
 }
 
+func TestNarrowFooterKeepsTheStartOfLongFeedback(t *testing.T) {
+	right := []Segment{
+		{Text: "Notices", Pill: true, Action: "notices"},
+		{Text: "Workspace", Pill: true, Action: "workspace"},
+	}
+	for _, width := range []int{40, 60} {
+		_, row := paintFooter(t, Projection{
+			Left:  []Segment{{Text: "Fast mode on for the next request and billed at the provider's rate"}},
+			Right: right,
+		}, width)
+		if !strings.Contains(row, "Fast mode on") || !strings.Contains(row, "…") {
+			t.Fatalf("width %d lost the feedback instead of truncating it: %q", width, row)
+		}
+	}
+}
+
 func BenchmarkFooterOverflowPaint(b *testing.B) {
 	screen := New(theme.DefaultDark(), ui.DefaultRegistry())
 	screen.SetProjection(Projection{

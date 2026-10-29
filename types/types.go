@@ -322,6 +322,18 @@ func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]Agent
 	return out
 }
 
+// FastMode describes the configured next-request tier, not a provider's
+// reported serving tier. Unsupported means the selected protocol cannot send
+// a retained fast choice; unavailable means its connection is missing or invalid.
+type FastMode string
+
+const (
+	FastModeOff         FastMode = ""
+	FastModeOn          FastMode = "on"
+	FastModeUnsupported FastMode = "unsupported"
+	FastModeUnavailable FastMode = "unavailable"
+)
+
 type Settings struct {
 	// SessionEdits are addressed stored edits from the form's original layer.
 	SessionEdits []SettingEdit `json:"-"`
@@ -336,6 +348,7 @@ type Settings struct {
 	ProviderAPIKey   string
 	APIStandard      string
 	ThinkingEffort   string
+	FastMode         FastMode `json:"fast_mode,omitempty"`
 	TurnLogsEnabled  string
 	Agents           AgentsSettings
 	Memory           MemorySettings              `json:"memory,omitempty"`

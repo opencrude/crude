@@ -56,6 +56,9 @@ func TestSelectedSettingsResultCannotOverwriteAnotherSession(t *testing.T) {
 	if app.ModelName != "second-model" || app.LastSettings.Model != "second-model" || app.ActiveSession != second {
 		t.Fatal("background settings result replaced selected session telemetry")
 	}
+	if notices := app.ws.Status().Notifications(false); len(notices) != 0 {
+		t.Fatalf("background settings feedback leaked into the selected session: %+v", notices)
+	}
 	app.workspaceSwitchGen.Add(1)
 	app.ActiveSession = first
 	app.applySelectedSessionSettings(result)
