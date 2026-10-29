@@ -33,6 +33,10 @@ and compaction state as applicable. Full immutable identities retain facts absen
 from the presentation transcript. Transcript comparisons use its actual persisted
 representation; they never replace the full identity check or restamp an existing
 message's metadata, turn, owner or timestamp.
+Provider replay items in that transcript comparison use the JSON encoding written
+to their column, not the provider's original JSON whitespace or HTML escaping.
+This does not normalize or mutate opaque replay data in the active context, and
+changed replay values, scope, order or provenance still fail the immutable checks.
 
 Root publishers serialize publication and live-state installation under the
 session message lock. A checkpoint can add accepted output between committed
