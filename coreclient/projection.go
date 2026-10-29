@@ -385,6 +385,10 @@ func (v *WorkspaceView) GoalForAgent(id string) (types.Goal, bool) {
 	return types.Goal{}, false
 }
 
+func (v *WorkspaceView) LoopsForAgent(id string) []types.Loop {
+	return slices.Clone(v.agents[id].Loops)
+}
+
 // SetYolo reflects a requested YOLO change across the owning root's subtree
 // until the core's next delta confirms or replaces it.
 func (v *WorkspaceView) SetYolo(id string, enabled bool) {

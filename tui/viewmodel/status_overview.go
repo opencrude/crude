@@ -138,6 +138,23 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 		if text := m.goalHeaderText(agentID); text != "" {
 			segments = append(segments, shellheader.Segment{Text: text, Role: ui.ColorAccent, Action: "goal", TargetID: target, Priority: 0})
 		}
+		if loops := m.ws.LoopsForAgent(agentID); len(loops) > 0 {
+			active := 0
+			for _, loop := range loops {
+				if !loop.Paused {
+					active++
+				}
+			}
+			label := "Loop · paused"
+			if active > 0 {
+				label = fmt.Sprintf("Loop · %d active", active)
+				goal, hasGoal := m.ws.GoalForAgent(agentID)
+				if m.ws.PlanModeForAgent(agentID) || hasGoal && goal.Status == ttypes.GoalActive {
+					label = fmt.Sprintf("Loop · %d waiting", active)
+				}
+			}
+			segments = append(segments, shellheader.Segment{Text: label, Role: ui.ColorAccent, Action: "loops", TargetID: target, Priority: 0})
+		}
 		if node := m.ws.AgentMgr().Get(agentID); node != nil {
 			usage, _ := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
 			identity := m.ws.AgentModelIdentity(node.ID)
@@ -382,7 +399,11 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 		_, _, target := m.activeHeaderContext()
 		fastVisible := false
 		if strings.HasPrefix(target, "agent:") {
-			switch m.fastModeForAgent(strings.TrimPrefix(target, "agent:")) {
+			agentID := strings.TrimPrefix(target, "agent:")
+			if m.ws.PlanModeForAgent(agentID) {
+				segments = append(segments, shellfooter.Segment{Text: "Plan · next turn", Role: ui.ColorAccent2, Priority: 0})
+			}
+			switch m.fastModeForAgent(agentID) {
 			case ttypes.FastModeOn:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast", Role: ui.ColorAccent2, Priority: 0})
 				fastVisible = true

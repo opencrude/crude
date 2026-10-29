@@ -50,6 +50,13 @@ func (m *App) applyPlanModeResult(msg planModeResultMsg) tea.Cmd {
 		m.Feedback.NotifyError("Plan mode was not changed: " + msg.err.Error())
 		return nil
 	}
+	if m.ActiveSession != nil && m.ws.SessionsByAgent()[msg.agentID] == m.ActiveSession {
+		label := "Plan off · next turn"
+		if msg.enabled {
+			label = "Plan on · next turn is read-only"
+		}
+		m.Feedback.NotifyInfo(label)
+	}
 	// The session records the change's transcript row for every shell.
 	if msg.prompt.Text != "" {
 		return m.submitPreparedInput(msg.agentID, msg.prompt, 0)
@@ -61,20 +68,28 @@ func (m *App) applyPlanModeResult(msg planModeResultMsg) tea.Cmd {
 // proposed plan: implement it here, implement it in a new session that starts
 // from the plan alone, or keep planning by answering in the composer. It asks
 // only in the session the user is looking at.
-func (m *App) offerPlanImplementation(agentID string) {
+func (m *App) offerPlanImplementation(agentID string, generation uint64) {
 	if !m.ws.PlanModeForAgent(agentID) || m.ActiveSession == nil || m.ws.SessionsByAgent()[agentID] != m.ActiveSession {
 		return
 	}
 	node := m.ws.AgentMgr().Get(agentID)
-	if node == nil || node.State == nil || node.State.Messages == nil {
+	if generation == 0 || node == nil || node.State == nil || node.State.Messages == nil || node.State.TurnIdentity.Generation != generation {
 		return
 	}
 	messages := node.State.Messages.Messages()
 	reply := ""
 	for index := len(messages) - 1; index >= 0; index-- {
 		if messages[index].Role == types.RoleAssistant {
+			if messages[index].TurnGeneration != generation {
+				return
+			}
 			reply = messages[index].Content
 			break
+		}
+		if messages[index].Role == types.RoleUser {
+			// A previous proposal cannot be offered as the result of a later
+			// turn that produced no assistant response.
+			return
 		}
 	}
 	plan, ok := proposedPlan(reply)

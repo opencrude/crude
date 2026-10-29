@@ -47,6 +47,7 @@ func TestSlashPointerActivatesRenderedSuggestion(t *testing.T) {
 	}{
 		{"different row", "/", "sessions", false},
 		{"filtered row", "/se", "sessions", false},
+		{"filtered loop", "/lo", "loop", false},
 		{"scrolled row", "/", "skills", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -13,6 +13,7 @@ const (
 	AgentYolo             = "agent.yolo"
 	AgentPlanMode         = "agent.plan_mode"
 	AgentGoal             = "agent.goal"
+	AgentLoop             = "agent.loop"
 	AgentAppendMessages   = "agent.append_messages"
 	AgentRecover          = "agent.recover"
 	AgentRecoverCancel    = "agent.recover_cancel"
@@ -60,6 +61,16 @@ type AgentGoalRequest struct {
 type AgentGoalResult struct {
 	Goal  *types.Goal `json:"goal,omitempty"`
 	Error string      `json:"error,omitempty"`
+}
+
+// AgentLoopRequest applies an explicit user action to an exact session loop.
+// Interval is a time.Duration in nanoseconds, not a wall-clock deadline.
+type AgentLoopRequest struct {
+	AgentID  string `json:"agent_id"`
+	Action   string `json:"action"`
+	ID       string `json:"id,omitempty"`
+	Prompt   string `json:"prompt,omitempty"`
+	Interval int64  `json:"interval,omitempty"`
 }
 
 type AppendMessagesRequest struct {

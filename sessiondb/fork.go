@@ -23,9 +23,9 @@ var forkDroppedTables = []string{
 	"agent_recoveries", "collaboration_admissions", "file_claims", "sub_agent_results", "usage_requests",
 }
 
-// forkDroppedRuntimeKeys are per-session runtime records of the same kind:
-// input queued for the source's agent and its unsent composer draft.
-var forkDroppedRuntimeKeys = []string{"queued_inputs", "composer_draft"}
+// forkDroppedRuntimeKeys are source-owned pending input, drafts and schedules
+// that must not create duplicate work in the fork.
+var forkDroppedRuntimeKeys = []string{"queued_inputs", "composer_draft", "scheduled_loops"}
 
 // Fork writes a consistent copy of the live session database src to path
 // under identity. The copy keeps the transcript, the model context, plans,

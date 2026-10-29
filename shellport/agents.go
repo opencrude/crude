@@ -47,6 +47,10 @@ type Agents interface {
 	// GoalAction applies a workspace.Goal* action; it does I/O, so shells call
 	// it from a command. present is false once the goal is cleared.
 	GoalAction(agentID, action, objective string) (goal types.Goal, present bool, err error)
+	// LoopsForAgent reads the core's detached session schedule projection.
+	LoopsForAgent(agentID string) []types.Loop
+	// LoopAction persists a user action outside the UI thread.
+	LoopAction(agentID, action, id, task string, interval time.Duration) error
 	// ApplyAgentEvent is the single semantic ingress for already-owned backend
 	// events. It never uses focus, terminal width, a renderer or a client's clock.
 	// Identity-free service events are admitted only for existing owners, except

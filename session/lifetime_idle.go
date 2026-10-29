@@ -54,6 +54,11 @@ func (s *Session) BeginIdleLease(ctx context.Context) (func(), error) {
 	if goal, present := s.Goal(); present && goal.Status == types.GoalActive {
 		return failed(errors.New("active goal can continue autonomously; pause or finish the goal"))
 	}
+	for _, loop := range s.Loops() {
+		if !loop.Paused {
+			return failed(errors.New("an active loop can start work; pause or clear it"))
+		}
+	}
 	history, err := s.BeginHistoryRestoreLease(ctx)
 	if err != nil {
 		return failed(err)

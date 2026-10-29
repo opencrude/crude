@@ -123,12 +123,20 @@ type Session struct {
 	lastTurnPlanMode atomic.Bool
 	goalMu           sync.Mutex
 	goal             goalRuntime
+	// goalPlanAccounting tracks the mode of the current turn, or the next
+	// turn while idle, independently of a mid-turn mode toggle.
+	goalPlanAccounting bool
 	// goalWake prompts the run loop to reconsider continuing the goal.
 	goalWake chan struct{}
 	// goalShownMu orders goal publications; goalShown is the last goal the
 	// transcript was told about, from which each change derives its row.
 	goalShownMu sync.Mutex
 	goalShown   *ttypes.Goal
+	// loopOpMu serializes schedule commits and their publications; loopMu
+	// protects detached reads without holding a lock during event delivery.
+	loopOpMu sync.Mutex
+	loopMu   sync.Mutex
+	loops    []ttypes.Loop
 
 	usageMu       sync.RWMutex
 	usageRecords  map[string]sessiondb.UsageRecord
@@ -587,7 +595,7 @@ func (s *Session) Close() {
 	// provider work resumes from durable watermarks on the next open.
 	s.finishMemoryJobs()
 
-	hasMsgs := s.HasMessages() || len(s.QueuedInputs()) != 0
+	hasMsgs := s.HasMessages() || len(s.QueuedInputs()) != 0 || len(s.Loops()) != 0
 	// A preflight-blocked turn may own an exact pending input without a
 	// transcript yet. Never prune its recovery DB as an empty session.
 	if s.db != nil && !hasMsgs {

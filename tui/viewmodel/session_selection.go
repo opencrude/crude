@@ -13,6 +13,11 @@ func (m *App) ActivateSessionByAgent(agentID string) {
 		return
 	}
 	if owner := m.ws.SessionForAgent(agentID); owner != nil {
+		if owner != m.ActiveSession {
+			if screen := m.sessionTextOverlay(); screen != nil && screen.RefID() == "session-info" {
+				m.overlayHost.Close(ui.OverlayTextOverlay)
+			}
+		}
 		if m.referenceOverlay != nil && (owner != m.referenceOverlay.session || agentID != m.referenceOverlay.agentID) {
 			m.overlayHost.Close(ui.OverlayTextOverlay)
 		}

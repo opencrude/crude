@@ -162,7 +162,7 @@ func (r *Runtime) retireSavedWorkspace(ctx context.Context, id string) (*types.O
 		}
 		active := target.ws.ActiveWork()
 		if active.Any() {
-			out.issue = deletionIssue("This workspace still has background work.", fmt.Sprintf("%d agent turn(s), %d child agent(s), %d command(s), %d compaction(s), %d memory job(s).", active.Turns, active.Children, active.AsyncCommands, active.Compaction, active.MemoryJobs), "Open this workspace to finish or stop its work, switch away, then review deletion again. Nothing was stopped.")
+			out.issue = deletionIssue("This workspace still has background work.", fmt.Sprintf("%d agent turn(s), %d child agent(s), %d command(s), %d compaction(s), %d memory job(s), %d goal(s), %d loop(s).", active.Turns, active.Children, active.AsyncCommands, active.Compaction, active.MemoryJobs, active.Goals, active.Loops), "Open this workspace to finish or stop its work, switch away, then review deletion again. Nothing was stopped.")
 			return false
 		}
 		if target.ws.TermMgr != nil {

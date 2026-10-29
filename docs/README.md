@@ -55,8 +55,8 @@ documents to read before changing each area.
   baselines, exact run/tool roots, guarded integration and retention.
 - [Background commands](reference/background-commands.md) — tracked command
   lifetime, termination, completion delivery and bounded output.
-- [Session commands](reference/session-commands.md) — Plan mode, goals with
-  independent verification, session fork and where commands live.
+- [Session commands](reference/session-commands.md) — Plan mode, verified goals,
+  core-owned scheduled loops, session fork and where commands live.
 - [Local history](reference/local-history.md) — immutable snapshots,
   operation-scoped agent undo and precondition-checked restore.
 - [Codex tool adapters](reference/codex-tools.md) — native patch, command,

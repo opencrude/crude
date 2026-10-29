@@ -379,7 +379,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 |---|---|
 | Detached startup | `startup.inspect`, `.browse`, `.catalog`, `.save`, `.onboarding` |
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
-| Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
+| Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
 | LSP | `lsp.snapshot`, `.open_file`, `.close_file`, `.queue_file_update`, `.notify_file_save`, `.notify_watched_files_changed`, `.set_active_file`, `.clear_diagnostics`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.rename` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |

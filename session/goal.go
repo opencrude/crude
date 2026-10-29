@@ -136,9 +136,50 @@ func (s *Session) goalAccountLocked(total int64) {
 		g.record.Goal.TokensUsed += max(0, total-g.tokenBase)
 		g.activeSince = time.Time{}
 	}
-	if g.present && g.record.Goal.Status == types.GoalActive && !g.record.Goal.Waiting {
+	if g.present && g.record.Goal.Status == types.GoalActive && !g.record.Goal.Waiting && !s.goalPlanAccounting {
 		g.activeSince, g.tokenBase = now, total
 	}
+}
+
+// syncGoalPlanAccounting changes the accounting boundary without changing the
+// goal's lifecycle. A nil mode reads the selected next-turn mode under the
+// goal lock; a non-nil mode is the immutable mode of the starting turn.
+func (s *Session) syncGoalPlanAccounting(mode *bool) {
+	s.goalMu.Lock()
+	planMode := s.PlanMode()
+	if mode != nil {
+		planMode = *mode
+	}
+	if s.goalPlanAccounting == planMode {
+		s.goalMu.Unlock()
+		return
+	}
+	s.goalMu.Unlock()
+	total := s.tokenTotal()
+	s.goalMu.Lock()
+	planMode = s.PlanMode()
+	if mode != nil {
+		planMode = *mode
+	}
+	if s.goalPlanAccounting == planMode {
+		s.goalMu.Unlock()
+		return
+	}
+	s.goalAccountLocked(total)
+	s.goalPlanAccounting = planMode
+	if !s.goal.present {
+		s.goalMu.Unlock()
+		return
+	}
+	goal, err := s.commitGoalLocked(total)
+	s.goalMu.Unlock()
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("GOAL", "plan_accounting_save_failed", "error", err.Error())
+		}
+		return
+	}
+	s.publishGoal(goal, true)
 }
 
 // commitGoalLocked persists the record and returns the view to publish.

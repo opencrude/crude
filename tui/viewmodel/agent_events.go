@@ -353,7 +353,13 @@ func (m *App) presentAgentReduction(change workspace.AgentReduction) tea.Cmd {
 	}
 	m.syncAgentWindowTabs()
 	if done := change.Effects.Done; done != nil {
-		return func() tea.Msg { return agentResultFeedbackMsg{agentID: done.AgentID, reason: done.Reason} }
+		var generation uint64
+		if node := m.ws.AgentMgr().Get(done.AgentID); node != nil && node.State != nil {
+			generation = node.State.TurnIdentity.Generation
+		}
+		return func() tea.Msg {
+			return agentResultFeedbackMsg{agentID: done.AgentID, reason: done.Reason, generation: generation}
+		}
 	}
 	return nil
 }
@@ -423,14 +429,18 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 }
 
 type agentResultFeedbackMsg struct {
-	agentID string
-	reason  string
+	agentID    string
+	reason     string
+	generation uint64
 }
 
 func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 	node := m.ws.AgentMgr().Get(msg.agentID)
 	if node == nil || node.Parent != nil || msg.reason == "" || msg.reason == "cancelled" {
 		return // child terminal feedback is richer in sub_agent_completed
+	}
+	if msg.generation != 0 && (node.State == nil || node.State.TurnIdentity.Generation != msg.generation) {
+		return // a later turn owns the selected agent now
 	}
 	label := workspace.AgentDisplayLabel(node)
 	if label == "" {
@@ -443,7 +453,7 @@ func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 	}
 	m.Feedback.NotifyAgentTransient(msg.agentID, message, severity)
 	if msg.reason == "completed" {
-		m.offerPlanImplementation(msg.agentID)
+		m.offerPlanImplementation(msg.agentID, msg.generation)
 	}
 	m.forceFrame()
 }

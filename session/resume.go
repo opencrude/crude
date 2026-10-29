@@ -353,6 +353,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if err := sess.loadGoal(); err != nil {
 		return nil, fmt.Errorf("resume: load goal: %w", err)
 	}
+	if err := sess.loadLoops(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 	if err := sess.loadQueuedInputs(); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}

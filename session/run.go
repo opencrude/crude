@@ -164,17 +164,17 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender, initializ
 					}
 					s.processTurnOrchestrator(request, o, sender, l)
 				case <-collaborationNotifications:
-					if startCollaborationTurn() || startGoalTurn() {
+					if startCollaborationTurn() || s.startLoopTurn(o, time.Now()) || startGoalTurn() {
 						request := <-o.inputCh
 						s.processTurnOrchestrator(request, o, sender, l)
 					}
 				case <-collaborationPoll.C:
-					if startCollaborationTurn() || startGoalTurn() {
+					if startCollaborationTurn() || s.startLoopTurn(o, time.Now()) || startGoalTurn() {
 						request := <-o.inputCh
 						s.processTurnOrchestrator(request, o, sender, l)
 					}
 				case <-s.goalWake:
-					if startCollaborationTurn() || startGoalTurn() {
+					if startCollaborationTurn() || s.startLoopTurn(o, time.Now()) || startGoalTurn() {
 						request := <-o.inputCh
 						s.processTurnOrchestrator(request, o, sender, l)
 					}
@@ -217,6 +217,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if supervisorErr != nil {
 		l.Warn("RECOVERY", "supervisor_unavailable", "agent_id", o.ID, "error", supervisorErr.Error())
 		o.endTurn(turnGeneration)
+		s.loopTurnEnd(userInput, false, true, false, supervisorErr.Error())
 		return
 	}
 	currentMsgID := newMessageID()
@@ -289,6 +290,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if err != nil {
 			l.Warn("INPUT", "local_admission_failed", "agent_id", o.ID)
 			o.endTurn(turnGeneration)
+			s.loopTurnEnd(userInput, false, true, false, err.Error())
 			return
 		}
 		recoveryState.setInputAdmitted(true)
@@ -374,6 +376,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// The turn context is always cancelled once the turn ends; only the
 		// final state says whether the user stopped it.
 		s.goalTurnEnd(goalProgress, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, turnFailure, recoveryParked)
+		s.syncGoalPlanAccounting(nil)
+		s.loopTurnEnd(userInput, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, recoveryParked, turnFailure)
 	}()
 	defer func() {
 		// Parking during unwind must not advertise Retry while the old turn
@@ -839,6 +843,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// Plan mode is fixed for the whole turn; a toggle applies from the next one.
 	planMode := s.PlanMode()
 	planModeEnded := s.notePlanModeTurn(planMode)
+	s.syncGoalPlanAccounting(&planMode)
 	goalProgress = s.goalTurnBegin(userInput, planMode)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	ag.WorkDir = executionRoot

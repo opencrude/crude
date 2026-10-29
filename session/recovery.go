@@ -580,6 +580,12 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		return errors.New("cancel requires an exact agent, recovery_id and recovery_generation")
 	}
 	s.lifecycleMu.Lock()
+	var stoppedInput provider.UserInput
+	s.recoveryMu.Lock()
+	if checkpoint, ok := s.pendingRecoveries[agentID]; ok && checkpoint.Status.ID == recoveryID && checkpoint.Status.Generation == generation {
+		stoppedInput = cloneUserInput(checkpoint.PendingInput)
+	}
+	s.recoveryMu.Unlock()
 	err := s.cancelRecoveryFor(agentID, recoveryID, generation)
 	s.lifecycleMu.Unlock()
 	if err == nil {
@@ -590,6 +596,9 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		s.orchMu.Unlock()
 		if goal, ok := s.Goal(); root && ok && goal.Status == ttypes.GoalActive {
 			_, _ = s.PauseGoal("Paused because the unfinished run was stopped. Resume it with /goal resume.")
+		}
+		if root {
+			s.loopTurnEnd(stoppedInput, true, false, false, "")
 		}
 	}
 	return err

@@ -129,6 +129,9 @@ func (a *AgentState) applySessionFact(evt AgentEvent) bool {
 	switch evt.Type {
 	case "goal":
 		a.applyGoalEvent(evt.Data)
+	case "loops":
+		// The session remains authoritative; this event invalidates the
+		// detached agent snapshot for all connected shells.
 	case "status_row":
 		if row, ok := evt.Data.(sessiondb.StatusRow); ok && a.Messages != nil {
 			a.Messages.AppendMessageIfAbsent(messageFromView(statusRowView(row)))

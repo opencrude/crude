@@ -72,6 +72,28 @@ func (w *Workspace) GoalAction(agentID, action, objective string) (types.Goal, b
 	return *out.Goal, true, nil
 }
 
+func (w *Workspace) LoopsForAgent(agentID string) []types.Loop {
+	return w.view.LoopsForAgent(agentID)
+}
+
+func (w *Workspace) LoopAction(agentID, action, id, task string, interval time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*callTimeout)
+	defer cancel()
+	var out coreprotocol.BoolResult
+	if err := w.call(ctx, coreprotocol.AgentLoop, &coreprotocol.AgentLoopRequest{
+		AgentID: agentID, Action: action, ID: id, Prompt: task, Interval: int64(interval),
+	}, &out); err != nil {
+		return err
+	}
+	if out.Error != "" {
+		return errors.New(out.Error)
+	}
+	if !out.OK {
+		return errors.New("loop action was not accepted")
+	}
+	return nil
+}
+
 func (w *Workspace) SetYoloForAgent(agentID string, enabled bool) bool {
 	if w.view.AgentMgr.OrchestratorFor(agentID) == nil {
 		return false

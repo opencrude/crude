@@ -127,6 +127,8 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 | `AgentActivity` | 2 | reads | yes | replica: coreclient.WorkspaceView.AgentActivity |
 | `AgentModelIdentity` | 2 | reads | yes | replica: coreclient.WorkspaceView.AgentModelIdentity |
 | `AgentTurnActive` | 5 | reads | yes | replica: coreclient.WorkspaceView.AgentTurnActive |
+| `PlanModeForAgent`, `GoalForAgent`, `LoopsForAgent` | session modes | reads | yes | agent snapshot replica |
+| `SetPlanModeForAgent`, `GoalAction`, `LoopAction` | session modes | mutates | yes | `agent.plan_mode`, `agent.goal`, `agent.loop` |
 | `UsageSummary` | 4 | reads | yes | replica: coreclient.WorkspaceView.UsageSummary |
 | `YoloForAgent` | 6 | reads | yes | replica: coreclient.WorkspaceView.YoloForAgent |
 | `SetYoloForAgent` | 1 | mutates | yes | agent.yolo |

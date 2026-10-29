@@ -355,8 +355,8 @@ func handleCoreCommands(flags CLIFlags) (int, bool) {
 				fmt.Printf("  %s  unavailable: %s\n", w.ID, w.ObservationError)
 				continue
 			}
-			fmt.Printf("  %s  agents=%d sessions=%d turns=%d children=%d commands=%d compaction=%d memory=%d operations=%d\n",
-				w.Root, w.Agents, w.Sessions, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Operations)
+			fmt.Printf("  %s  agents=%d sessions=%d turns=%d children=%d commands=%d compaction=%d memory=%d goals=%d loops=%d operations=%d\n",
+				w.Root, w.Agents, w.Sessions, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Active.Goals, w.Active.Loops, w.Operations)
 		}
 		return 0, true
 	case flags.CoreStop:
@@ -370,8 +370,8 @@ func handleCoreCommands(flags CLIFlags) (int, bool) {
 		if !result.Accepted {
 			fmt.Fprintf(os.Stderr, "crude: core stop refused: %s\n", result.Reason)
 			for _, w := range result.Busy {
-				fmt.Fprintf(os.Stderr, "  %s  turns=%d children=%d commands=%d compaction=%d memory=%d operations=%d\n",
-					w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Operations)
+				fmt.Fprintf(os.Stderr, "  %s  turns=%d children=%d commands=%d compaction=%d memory=%d goals=%d loops=%d operations=%d\n",
+					w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Active.Goals, w.Active.Loops, w.Operations)
 			}
 			return 2, true
 		}

@@ -7,11 +7,13 @@ type ActiveWork struct {
 	AsyncCommands int `json:"async_commands"`
 	Compaction    int `json:"compaction"`
 	MemoryJobs    int `json:"memory_jobs"`
+	Goals         int `json:"goals"`
+	Loops         int `json:"loops"`
 }
 
 // Any reports whether any counted work is active.
 func (a ActiveWork) Any() bool {
-	return a.Turns+a.Children+a.AsyncCommands+a.Compaction+a.MemoryJobs > 0
+	return a.Turns+a.Children+a.AsyncCommands+a.Compaction+a.MemoryJobs+a.Goals+a.Loops > 0
 }
 
 // ActiveWork inspects every open session. Callers serialize it with workspace
@@ -31,6 +33,9 @@ func (w *Workspace) ActiveWork() ActiveWork {
 		out.AsyncCommands += a.AsyncCommands
 		out.Compaction += a.Compaction
 		out.MemoryJobs += a.MemoryJobs
+		goals, loops := frontend.backend.AutonomousWork()
+		out.Goals += goals
+		out.Loops += loops
 	}
 	if w.AgentMgr != nil && out.Turns == 0 && w.AgentMgr.AnyActive() {
 		out.Turns = 1
