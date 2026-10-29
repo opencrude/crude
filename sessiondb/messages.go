@@ -1,6 +1,7 @@
 package sessiondb
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -399,7 +400,24 @@ func decodePersistedMessage(r MessageRow) (persistedMessage, error) {
 	return persistedMessage{Message: m, Meta: meta, Turn: r.TurnNumber, CreatedAt: r.CreatedAt, AgentID: r.AgentID.String}, nil
 }
 
-func persistedMessageEqual(a, b persistedMessage) bool { return reflect.DeepEqual(a, b) }
+// persistedMessageEqual compares the transcript's actual stored representation.
+// ProviderItems contain RawMessage JSON: json.Marshal compacts whitespace and
+// escapes HTML when writing the column. Compare that encoding, not the provider's
+// original formatting. All other fields (including provenance) remain exact;
+// the separate immutable identity check still guards the complete message.
+func persistedMessageEqual(a, b persistedMessage) bool {
+	aItems, bItems := a.Message.ProviderItems, b.Message.ProviderItems
+	a.Message.ProviderItems, b.Message.ProviderItems = nil, nil
+	if !reflect.DeepEqual(a, b) {
+		return false
+	}
+	if reflect.DeepEqual(aItems, bItems) {
+		return true
+	}
+	aJSON, aErr := json.Marshal(aItems)
+	bJSON, bErr := json.Marshal(bItems)
+	return aErr == nil && bErr == nil && bytes.Equal(aJSON, bJSON)
+}
 
 // transcriptPersistedProjection limits transcript equality to the fields the
 // messages table owns. Full immutable ChatMessage identity is verified by

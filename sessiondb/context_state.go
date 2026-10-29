@@ -285,7 +285,7 @@ func validateReplacementMessagesTx(tx *sql.Tx, sessionID, agentID string, messag
 		}
 		canonicalMessage := canonicalPersistedMessage(persistedMessage{Message: *message}).Message
 		transcriptProjection := transcriptPersistedProjection(persistedMessage{Message: canonicalMessage}).Message
-		if exists && !reflect.DeepEqual(transcript.Message, transcriptProjection) {
+		if exists && !persistedMessageEqual(persistedMessage{Message: transcript.Message}, persistedMessage{Message: transcriptProjection}) {
 			return &ContextMessageConflictError{message.InternalID, "transcript"}
 		}
 	}
