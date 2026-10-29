@@ -177,9 +177,9 @@ func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 }
 
 // toggleSessionFastTier switches this session's main agent between the
-// provider's fast tier and the account's own setting. It is a session override
-// like any other: revision-fenced, persisted, applied at the next request, and
-// ignored by connections whose protocol has no fast tier.
+// provider's fast tier and its inherited role/account setting. It is a session
+// override like any other: persisted, applied at the next request, and ignored
+// by connections whose protocol has no fast tier.
 func (m *App) toggleSessionFastTier() tea.Cmd {
 	owner, runtime := m.ActiveSession, m.ws
 	if owner == nil || runtime == nil || owner.Settings == nil {
@@ -211,12 +211,21 @@ func (m *App) toggleSessionFastTier() tea.Cmd {
 		m.Feedback.NotifyError(err.Error())
 		return nil
 	}
-	label := "Fast tier off; the account's tier applies from the next request"
-	if enable {
-		label = "Fast tier on for this session's main agent from its next request; it bills at the provider's fast rate where offered"
-	}
 	generation := m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
-		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: operation.Run(), label: label}
+		result := operation.Run()
+		label := "Fast off · inherited speed"
+		switch result.Snapshot.Effective.FastMode {
+		case ttypes.FastModeOn:
+			label = "⚡ Fast on · next request (premium)"
+			if !enable {
+				label = "⚡ Fast still on · inherited speed"
+			}
+		case ttypes.FastModeUnsupported:
+			label = "⚡ Fast unsupported"
+		case ttypes.FastModeUnavailable:
+			label = "⚡ Fast unavailable"
+		}
+		return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: result, label: label}
 	}
 }

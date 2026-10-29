@@ -265,6 +265,17 @@ func (f *segmentFit) fit(segments []Segment, width int, separator string) []Segm
 			f.kept[index], used, count = true, used+needed, count+1
 		}
 	}
+	// A transient notice is a single, non-actionable priority-zero segment.
+	// On a narrow rail, retain its leading meaning instead of dropping the
+	// whole notice and letting the navigation strip take its space.
+	if count == 0 && len(f.indices) == 1 {
+		segment := segments[f.indices[0]]
+		if segment.Priority == 0 && !segment.Pill && segment.Action == "" {
+			segment.Text = rendering.TruncateLine(segment.Text, width)
+			f.segments = append(f.segments, segment)
+			return f.segments
+		}
+	}
 	for index, segment := range segments {
 		if f.kept[index] {
 			f.segments = append(f.segments, segment)

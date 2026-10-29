@@ -2892,6 +2892,34 @@ func (z *ExecutionHygieneSettings) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z FastMode) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	o = msgp.AppendString(o, string(z))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *FastMode) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	{
+		var zb0001 string
+		zb0001, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = FastMode(zb0001)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z FastMode) Msgsize() (s int) {
+	s = msgp.StringPrefixSize + len(string(z))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *Goal) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 11
@@ -5723,8 +5751,8 @@ func (z *SettingEdit) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Settings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 18
-	o = append(o, 0xdc, 0x0, 0x12)
+	// array header, size 19
+	o = append(o, 0xdc, 0x0, 0x13)
 	o = msgp.AppendString(o, z.APIKey)
 	o = msgp.AppendString(o, z.Model)
 	o = msgp.AppendString(o, z.ProviderID)
@@ -5733,6 +5761,7 @@ func (z *Settings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.ProviderAPIKey)
 	o = msgp.AppendString(o, z.APIStandard)
 	o = msgp.AppendString(o, z.ThinkingEffort)
+	o = msgp.AppendString(o, string(z.FastMode))
 	o = msgp.AppendString(o, z.TurnLogsEnabled)
 	o, err = z.Agents.MarshalMsg(o)
 	if err != nil {
@@ -5794,8 +5823,8 @@ func (z *Settings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 18 {
-		err = msgp.ArrayError{Wanted: 18, Got: zb0001}
+	if zb0001 != 19 {
+		err = msgp.ArrayError{Wanted: 19, Got: zb0001}
 		return
 	}
 	z.APIKey, bts, err = msgp.ReadStringBytes(bts)
@@ -5837,6 +5866,15 @@ func (z *Settings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	if err != nil {
 		err = msgp.WrapError(err, "ThinkingEffort")
 		return
+	}
+	{
+		var zb0002 string
+		zb0002, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "FastMode")
+			return
+		}
+		z.FastMode = FastMode(zb0002)
 	}
 	z.TurnLogsEnabled, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
@@ -5894,7 +5932,7 @@ func (z *Settings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Settings) Msgsize() (s int) {
-	s = 3 + msgp.StringPrefixSize + len(z.APIKey) + msgp.StringPrefixSize + len(z.Model) + msgp.StringPrefixSize + len(z.ProviderID) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.ProviderURL) + msgp.StringPrefixSize + len(z.ProviderAPIKey) + msgp.StringPrefixSize + len(z.APIStandard) + msgp.StringPrefixSize + len(z.ThinkingEffort) + msgp.StringPrefixSize + len(z.TurnLogsEnabled) + z.Agents.Msgsize() + z.Memory.Msgsize() + z.Capabilities.Msgsize() + z.Safety.Msgsize() + z.LocalHistory.Msgsize() + z.Theme.Msgsize() + z.Editor.Msgsize() + z.LSP.Msgsize() + z.UI.Msgsize()
+	s = 3 + msgp.StringPrefixSize + len(z.APIKey) + msgp.StringPrefixSize + len(z.Model) + msgp.StringPrefixSize + len(z.ProviderID) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.ProviderURL) + msgp.StringPrefixSize + len(z.ProviderAPIKey) + msgp.StringPrefixSize + len(z.APIStandard) + msgp.StringPrefixSize + len(z.ThinkingEffort) + msgp.StringPrefixSize + len(string(z.FastMode)) + msgp.StringPrefixSize + len(z.TurnLogsEnabled) + z.Agents.Msgsize() + z.Memory.Msgsize() + z.Capabilities.Msgsize() + z.Safety.Msgsize() + z.LocalHistory.Msgsize() + z.Theme.Msgsize() + z.Editor.Msgsize() + z.LSP.Msgsize() + z.UI.Msgsize()
 	return
 }
 

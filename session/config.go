@@ -582,7 +582,8 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	mainCat := cfg.GetActiveDefaultCategory()
 	mainProviderID := cfg.providerIDForAccount(mainCat.AccountID)
 	var mainTemplate provider.Template
-	if resolved, err := cfg.connectionForAccountID(mainCat.AccountID); err == nil {
+	resolved, connectionErr := cfg.connectionForAccountID(mainCat.AccountID)
+	if connectionErr == nil {
 		mainTemplate = resolved
 	}
 
@@ -629,12 +630,47 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		ProviderURL:      mainTemplate.ProviderURL,
 		APIStandard:      mainTemplate.APIStandard,
 		ThinkingEffort:   mainCat.ThinkingEffort,
+		FastMode:         configuredFastMode(mainProviderID, mainTemplate, mainCat.ServiceTier, connectionErr),
 		TurnLogsEnabled:  turnLogs,
 		Agents:           agentsSettings,
 		Memory:           cfg.Memory,
 		Capabilities:     captypes.Clone(cfg.Capabilities),
 		Safety:           safetySettings,
 	}
+}
+
+// configuredFastMode reflects the next request's role/account configuration.
+// It does not claim the provider actually served a request at that tier.
+func configuredFastMode(providerID string, connection provider.Template, roleTier string, connectionErr error) ttypes.FastMode {
+	accountFast := connection.Protocol != nil && connection.Protocol.ServiceTier == "fast"
+	if roleTier != "fast" && !accountFast {
+		return ttypes.FastModeOff
+	}
+	if connectionErr != nil || connection.Validate() != nil {
+		if roleTier == "fast" || roleTier == "" && accountFast {
+			return ttypes.FastModeUnavailable
+		}
+		return ttypes.FastModeOff
+	}
+	p := &provider.Provider{ID: providerID}
+	if p.SetProtocolID(connection.APIStandard) != nil {
+		if roleTier == "fast" {
+			return ttypes.FastModeUnavailable
+		}
+		return ttypes.FastModeOff
+	}
+	if roleTier == "fast" && !p.SupportsServiceTier("fast") {
+		return ttypes.FastModeUnsupported
+	}
+	p.SetProtocolSettings(connection.Protocol)
+	p.SetServiceTier(roleTier)
+	if roleTier == "fast" {
+		return ttypes.FastModeOn
+	}
+	if settings := p.ProtocolSettings(); settings != nil && settings.ServiceTier == "fast" && p.SupportsServiceTier("fast") {
+		return ttypes.FastModeOn
+	}
+	return ttypes.FastModeOff
 }
 
 // categoryToSettings exposes provider details only as a projection of the

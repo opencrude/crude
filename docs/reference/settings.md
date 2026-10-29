@@ -964,8 +964,13 @@ setting), Standard, Fast, Priority or Flex (`service_tier`). The tier applies on
 where the connection's protocol offers it and is otherwise ignored, so a choice
 never breaks a backend without tiers. Children use their role's tier. `/fast`
 toggles the fast tier for the session's main agent as an ordinary explicit
-session override. Requests served at a premium tier report their cost as unknown
-rather than at the standard rate. See [adaptive context handling](adaptive-context.md).
+session override. The focused main-agent header and composer guidance indicate
+the configured next-request fast tier, including inherited account/role choices;
+unsupported connections are labelled as such rather than presented as fast.
+The provider may still serve a different tier. Requests served at a premium tier
+report their cost as unknown rather than at the standard rate. See
+[session commands](session-commands.md#fast-mode-fast) and
+[adaptive context handling](adaptive-context.md).
 Leftover width is distributed as space after the label and before
 inherited text (not filler periods). `·` is a column separator only.
 Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.

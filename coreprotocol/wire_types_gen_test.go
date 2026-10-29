@@ -378,6 +378,7 @@ var wireTypes = []any{
 	new(p14.CostValue),
 	new(p14.EditorSettings),
 	new(p14.ExecutionHygieneSettings),
+	new(p14.FastMode),
 	new(p14.Goal),
 	new(p14.GoalStatus),
 	new(p14.IssueSnapshot),

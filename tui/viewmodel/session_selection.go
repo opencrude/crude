@@ -65,6 +65,10 @@ func (m *App) applySelectedSessionSettings(result selectedSessionSettingsResult)
 	if m.ActiveSession == result.owner {
 		m.ModelName = result.result.Snapshot.Effective.Model
 		m.LastSettings = result.result.Snapshot.Effective
+	} else {
+		// A completed save belongs to its captured session, not the tab that
+		// happened to become active while the operation was in flight.
+		return
 	}
 	label := result.label
 	if label == "" {

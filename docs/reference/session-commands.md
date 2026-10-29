@@ -10,6 +10,24 @@ Help window and no `/model` (model choice lives in `/settings`). Plan mode,
 goals and fork follow the established Codex contracts (`/plan`, `/goal`,
 `/fork`); Crude adds runtime enforcement and an independent goal verifier.
 
+## Fast mode (`/fast`)
+
+`/fast` toggles a session override for the main agent's next request. A short
+footer notice confirms the save; while fast is configured and supported, the
+composer's guidance row starts with **⚡ Fast** and the focused main-agent
+header appends **fast** to its model. Other sessions and child-agent headers do
+not borrow that indicator. Clearing the override returns to the inherited speed,
+which can itself still be fast; the notice says so rather than claiming it is
+off. Session settings and account-level fast choices use the same projection.
+
+These are requested settings, not proof of the tier the provider actually
+served; fast processing can bill at a premium rate. If the selected connection
+cannot send the fast tier, the footer says
+**⚡ Fast unsupported**, and the model is not labelled fast. The retained
+choice is ignored by that connection until a supporting one is selected. If the
+connection is missing or invalid, the footer says **⚡ Fast unavailable** instead
+of guessing its capabilities.
+
 ## Plan mode (`/plan`)
 
 - `/plan` toggles Plan mode for the session; `/plan <prompt>` turns it on and

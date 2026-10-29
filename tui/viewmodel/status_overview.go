@@ -142,6 +142,9 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 			usage, _ := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
 			identity := m.ws.AgentModelIdentity(node.ID)
 			if model := firstNonempty(identity.ModelID, m.ModelName); model != "" {
+				if m.fastModeForAgent(node.ID) == ttypes.FastModeOn {
+					model += " fast"
+				}
 				segments = append(segments, shellheader.Segment{Text: model, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
 			}
 			// A previous model's last request is not the new model's context.
@@ -167,6 +170,20 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 		segments = append(segments, shellheader.Segment{Text: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted, Action: "workspace", TargetID: "workspace:summary", Priority: 2})
 	}
 	return segments
+}
+
+// The main agent owns the configured next-request tier. A child has its own
+// connection and must never borrow the root's indicator.
+func (m *App) fastModeForAgent(agentID string) ttypes.FastMode {
+	node := m.ws.AgentMgr().Get(agentID)
+	if node == nil || node.Parent != nil {
+		return ttypes.FastModeOff
+	}
+	owner := m.ws.SessionForAgent(agentID)
+	if owner == nil || owner.Settings == nil {
+		return ttypes.FastModeOff
+	}
+	return owner.Settings.Effective.FastMode
 }
 
 func agentHeaderUsageSegments(usage ttypes.UsageSummary, target string) []shellheader.Segment {
@@ -362,9 +379,28 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 		}
 	}
 	if len(segments) == 0 {
+		_, _, target := m.activeHeaderContext()
+		fastVisible := false
+		if strings.HasPrefix(target, "agent:") {
+			switch m.fastModeForAgent(strings.TrimPrefix(target, "agent:")) {
+			case ttypes.FastModeOn:
+				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast", Role: ui.ColorAccent2, Priority: 0})
+				fastVisible = true
+			case ttypes.FastModeUnsupported:
+				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast unsupported", Role: ui.ColorWarning, Priority: 0})
+				fastVisible = true
+			case ttypes.FastModeUnavailable:
+				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast unavailable", Role: ui.ColorWarning, Priority: 0})
+				fastVisible = true
+			}
+		}
 		for _, hint := range m.compactContextHelpSegments() {
 			if text := m.hintSegmentText(hint); text != "" {
-				segments = append(segments, shellfooter.Segment{Text: text, Role: ui.ColorMuted, Priority: 3})
+				priority := 3
+				if fastVisible && hint.ActionID == "input.history" {
+					priority = 1
+				}
+				segments = append(segments, shellfooter.Segment{Text: text, Role: ui.ColorMuted, Priority: priority})
 			}
 		}
 	}
