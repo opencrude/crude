@@ -73,8 +73,9 @@ codecs or repair stale output. Make build/test/benchmark targets,
 
 The full source cohort covers production platform/tag alternatives, local forks,
 embedded assets and native pins, independent of native executable bytes. Keep the
-LF policy in `.gitattributes` intact; equality of that cohort is not authentication
-or proof of native-platform behavior. See the
+LF and byte-preservation policy in `.gitattributes` intact; the wiregen checkout
+test exercises `core.autocrlf=true` with both text and binary inputs. Equality of
+that cohort is not authentication or proof of native-platform behavior. See the
 [wire identity contract](../reference/core-client-protocol.md#wire-format-and-bounded-delivery).
 
 Use the [active v2 acceptance matrix](../plans/core-protocol-v2.md#acceptance-gates)

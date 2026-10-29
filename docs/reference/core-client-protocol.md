@@ -262,9 +262,11 @@ source, not the native image ID. `internal/wiregen/` includes all platform/tag
 alternatives, checked-in local forks, embedded assets, prompt templates, module
 manifests, generated codecs and native dependency pins; it does not hash local
 native archives or executable bytes. Supported builds use the canonical cgo/native
-profile. Broad LF rules in `.gitattributes` keep checked-out source bytes stable
-across hosts. This establishes source equality, not user authentication or proof
-that an arbitrary binary was built correctly.
+profile. `.gitattributes` normalizes known text formats to LF and preserves
+unlisted files byte-for-byte, including arbitrary embedded assets. This keeps
+checked-out cohort inputs stable across hosts without treating binary data as
+text. This establishes source equality, not user authentication or proof that an
+arbitrary binary was built correctly.
 
 Regenerate explicitly with `go run ./internal/wiregen` after production-source
 changes. `go run ./internal/wiregen -check` verifies the cohort without writing or
