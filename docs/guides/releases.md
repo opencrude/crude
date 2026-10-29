@@ -43,7 +43,8 @@ Admission compares exact `Hello.Schema` and the full 64-hex
 `buildinfo.ProtocolBuild` source cohort. That cohort covers production platform/tag
 alternatives, local forks, embedded assets and native pins; canonical native cgo
 builds of the same source may have different executable IDs. Broad LF attributes
-keep source bytes stable across checkouts. This is source equality, not user
+keep known text formats LF and preserve unlisted files byte-for-byte across
+checkouts, including embedded assets. This is source equality, not user
 authentication, release signing or native-platform acceptance. Local `BuildID` /
 `ExecutableID` identify staging/status images, not protocol cohorts. See the
 [protocol reference](../reference/core-client-protocol.md#wire-format-and-bounded-delivery).

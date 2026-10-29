@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -106,6 +107,62 @@ func TestCohortCanonicalCorpus(t *testing.T) {
 		if mustCohort(t, first) != original || mustCohort(t, second) != original {
 			t.Fatalf("host-dependent corpus on %s", goos)
 		}
+	}
+}
+
+func TestCohortCanonicalGitCheckout(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is required to test checkout conversion")
+	}
+	root := cohortFixture(t, false)
+	attributes, err := os.ReadFile(filepath.Join("..", "..", ".gitattributes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	putCohortFile(t, root, ".gitattributes", string(attributes))
+	putCohortFile(t, root, "data/embed_generic.go", "package data\nimport _ \"embed\"\n//go:embed grammar.lark future_payload binary.dat\nvar resources embed.FS\n")
+	putCohortFile(t, root, "data/grammar.lark", "start: item\nitem: \"value\"\n")
+	putCohortFile(t, root, "data/future_payload", "unlisted embedded text\n")
+	putCohortFile(t, root, "data/binary.dat", "binary\x00\r\nbytes")
+
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(git, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	runGit(root, "init", "-q")
+	runGit(root, "-c", "core.autocrlf=false", "add", "--all")
+	runGit(root, "-c", "user.name=Cohort Test", "-c", "user.email=cohort@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture")
+	parent := t.TempDir()
+	checkout := filepath.Join(parent, "checkout")
+	runGit(parent, "-c", "core.autocrlf=true", "clone", "-q", "--no-hardlinks", root, checkout)
+
+	want := mustCohort(t, root)
+	got := mustCohort(t, checkout)
+	if got != want {
+		names, err := cohortFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			original, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			converted, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(name)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(original, converted) {
+				t.Errorf("checkout changed cohort input %s", name)
+			}
+		}
+		t.Fatalf("source cohort changed with core.autocrlf=true: got %s, want %s", got, want)
 	}
 }
 
