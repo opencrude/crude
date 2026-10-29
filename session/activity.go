@@ -1,6 +1,9 @@
 package session
 
-import "crude/fileio"
+import (
+	"crude/fileio"
+	"crude/types"
+)
 
 // Activity is a point-in-time count of work that must not be abandoned by a
 // core lifetime decision. It never blocks on, signals or advances that work.
@@ -48,4 +51,25 @@ func (s *Session) Activity() Activity {
 		out.Turns = 1
 	}
 	return out
+}
+
+// AutonomousWork counts retained schedules and goals that can own future work.
+// It reads only session memory and does not advance either owner.
+func (s *Session) AutonomousWork() (goals, loops int) {
+	if s == nil {
+		return 0, 0
+	}
+	s.goalMu.Lock()
+	if s.goal.present && s.goal.record.Goal.Status == types.GoalActive {
+		goals = 1
+	}
+	s.goalMu.Unlock()
+	s.loopMu.Lock()
+	for _, loop := range s.loops {
+		if !loop.Paused {
+			loops++
+		}
+	}
+	s.loopMu.Unlock()
+	return goals, loops
 }

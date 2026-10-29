@@ -39,6 +39,9 @@ func (s *Session) SetPlanMode(enabled bool) error {
 	if s.planMode.Swap(enabled) == enabled {
 		return nil
 	}
+	if !s.IsTurnActive() {
+		s.syncGoalPlanAccounting(nil)
+	}
 	if s.logger != nil {
 		s.logger.Info("SESSION", "plan_mode", "enabled", enabled)
 	}
@@ -53,6 +56,7 @@ func (s *Session) loadPlanMode() error {
 	}
 	s.planMode.Store(len(value) != 0)
 	s.lastTurnPlanMode.Store(len(value) != 0)
+	s.goalPlanAccounting = len(value) != 0
 	return nil
 }
 

@@ -33,6 +33,10 @@ func (m *App) executeSlashCommandWithRefs(cmd string, referenceIDs []string) tea
 	if cmdName == "" {
 		return nil
 	}
+	if len(referenceIDs) > 0 && (cmdName == "/goal" || cmdName == "/loop") {
+		m.Feedback.NotifyError("Goals and loops cannot retain attachments. Your draft is kept; describe the task in text or remove the attachment.")
+		return nil
+	}
 
 	var cmds []tea.Cmd
 	agentID := m.AgentView.ActiveID()
@@ -44,6 +48,8 @@ func (m *App) executeSlashCommandWithRefs(cmd string, referenceIDs []string) tea
 		return m.forkSessionCommand()
 	case "/goal":
 		return m.goalCommand(agentID, remainder)
+	case "/loop":
+		return m.loopCommand(agentID, remainder)
 	case "/plan":
 		return m.planModeCommand(agentID, provider.InputWithRefs(remainder, referenceIDs))
 	case "/skills":

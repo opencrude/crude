@@ -67,6 +67,7 @@ var availableCmds = []CmdInfo{
 	{Name: "undo", Label: "undo", Desc: "Revert this agent's files; retain conversation history"},
 	{Name: "history", Label: "history", Desc: "Search and reuse prompts with their attachments"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
+	{Name: "loop", Label: "loop", Desc: "Schedule and manage recurring session prompts in the core"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
 	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills"},
 	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs"},

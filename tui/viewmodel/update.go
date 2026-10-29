@@ -209,6 +209,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyRemoteWorkspace(msg)
 	case planModeResultMsg:
 		return m, m.applyPlanModeResult(msg)
+	case loopActionResultMsg:
+		m.applyLoopActionResult(msg)
+		return m, nil
 	case goalActionResultMsg:
 		m.applyGoalActionResult(msg)
 		return m, nil
@@ -297,6 +300,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.toggleGitPanel()
 		case "goal":
 			return m, m.goalCommand(strings.TrimPrefix(msg.TargetID, "agent:"), "")
+		case "loops":
+			return m, m.loopCommand(strings.TrimPrefix(msg.TargetID, "agent:"), "")
 		case "git-branch":
 			return m, m.openBranchSwitcher()
 		case "git-changes":

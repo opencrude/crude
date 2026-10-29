@@ -156,6 +156,36 @@ func TestSlashAppKeyboardPointerParity(t *testing.T) {
 	}
 }
 
+func TestLoopSlashSuggestionOpensItsReaderByKeyboardAndPointer(t *testing.T) {
+	for _, path := range []string{"keyboard", "pointer"} {
+		t.Run(path, func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.width, app.height = 100, 32
+			wsOf(app).Logger = stubLogger{}
+			id := addBackendTestOrchestrator(t, app)
+			t.Cleanup(wsOf(app).CloseAllSessions)
+			app.switchToAgentView(id)
+			app.setFocusInput()
+			app.Input.SetInput("/lo")
+			app.paintShellFrame()
+			if path == "keyboard" {
+				slashAppEvent(t, app, tea.KeyPressMsg{Code: tea.KeyEnter})
+			} else {
+				x, y, found := renderedSlashPoint(t, app, "loop")
+				if !found {
+					t.Fatal("filtered /loop suggestion was not rendered")
+				}
+				slashAppEvent(t, app, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			}
+			screen := app.sessionTextOverlay()
+			if !app.overlayHost.IsOpen(ui.OverlayTextOverlay) || screen == nil || screen.Title() != "Scheduled loops" ||
+				!strings.Contains(screen.Value(), "No scheduled loops") {
+				t.Fatalf("%s did not open the real loop reader", path)
+			}
+		})
+	}
+}
+
 func TestSlashAppIgnoresRightClickAndComposerBlank(t *testing.T) {
 	for _, point := range []string{"right click", "separator", "padding"} {
 		t.Run(point, func(t *testing.T) {

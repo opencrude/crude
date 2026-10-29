@@ -74,6 +74,21 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			}
 			return response(request, out)
 		}, true
+	case coreprotocol.AgentLoop:
+		var in coreprotocol.AgentLoopRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad(err)
+		}
+		run, err := ws.PrepareLoopAction(in.AgentID, in.Action, in.ID, in.Prompt, time.Duration(in.Interval))
+		if err != nil {
+			return done(coreprotocol.BoolResult{Error: err.Error()})
+		}
+		return func(context.Context) coreprotocol.Response {
+			if err := run(); err != nil {
+				return response(request, coreprotocol.BoolResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.BoolResult{OK: true})
+		}, true
 	case coreprotocol.AgentStopCommand:
 		var in coreprotocol.StopCommandRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -205,7 +220,7 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 // ownerMutation reports which owner operations are journaled.
 func ownerMutation(method string) bool {
 	switch method {
-	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal,
+	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
 		return true
@@ -215,7 +230,7 @@ func ownerMutation(method string) bool {
 
 func ownerOperation(method string) bool {
 	switch method {
-	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal,
+	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryUndoScopes,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true

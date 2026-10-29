@@ -387,6 +387,47 @@ func TestGoalStopsAtItsTokenBudget(t *testing.T) {
 	}
 }
 
+func TestGoalAccountingExcludesPlanTurnsAndKeepsMidTurnPolicy(t *testing.T) {
+	s, err := NewWithSessionDir("", testConfig(), t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if _, err := s.SetGoal("Finish the work", 100, false); err != nil {
+		t.Fatal(err)
+	}
+	addUsage := func(id string, tokens int) {
+		s.usageMu.Lock()
+		s.usageRecords[id] = sessiondb.UsageRecord{RequestID: id, PromptTokens: tokens}
+		s.usageMu.Unlock()
+	}
+	addUsage("normal-before", 30)
+	// Toggling Plan mode during an ordinary turn must not stop counting that
+	// turn. The boundary moves only once that turn has settled.
+	s.activeTurns.Store(1)
+	if err := s.SetPlanMode(true); err != nil {
+		t.Fatal(err)
+	}
+	addUsage("normal-after-toggle", 15)
+	if goal, _ := s.Goal(); goal.TokensUsed != 45 {
+		t.Fatalf("mid-turn toggle lost ordinary work: %+v", goal)
+	}
+	s.activeTurns.Store(0)
+	s.syncGoalPlanAccounting(nil)
+	addUsage("planning", 200)
+	s.enforceGoalBudget()
+	if goal, _ := s.Goal(); goal.TokensUsed != 45 || goal.Status != types.GoalActive {
+		t.Fatalf("planning consumed the goal budget: %+v", goal)
+	}
+	if err := s.SetPlanMode(false); err != nil {
+		t.Fatal(err)
+	}
+	addUsage("normal-after", 10)
+	if goal, _ := s.Goal(); goal.TokensUsed != 55 {
+		t.Fatalf("accounting did not resume after planning: %+v", goal)
+	}
+}
+
 // A provider refusal is a genuine blocker no Retry can fix. The goal turn
 // ends with its exact reason and the goal blocks, as Codex does for a
 // non-retryable turn error; nothing waits for /retry and nothing repeats.

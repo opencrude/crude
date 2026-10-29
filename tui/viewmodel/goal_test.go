@@ -7,14 +7,17 @@ import (
 	"crude/types"
 )
 
-func TestGoalSummaryShowsTheBudget(t *testing.T) {
+func TestGoalDetailsShowsTheBudget(t *testing.T) {
 	goal := types.Goal{Objective: "Ship it", Status: types.GoalBudgetLimited, TokensUsed: 51_200, TokenBudget: 50_000, Reason: "The goal used its token budget of 50000 tokens."}
-	if got := goalSummary(goal); got != "Goal limited by budget · 51.2k/50.0k tokens: Ship it — The goal used its token budget of 50000 tokens." {
-		t.Fatalf("summary = %q", got)
+	got := goalDetails(goal, false)
+	for _, want := range []string{"Status: limited by budget", "Tokens: 51.2k / 50.0k", "Ship it", "The goal used its token budget of 50000 tokens."} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("goal details omit %q: %q", want, got)
+		}
 	}
 	goal.TokenBudget = 0
 	goal.Status = types.GoalActive
-	if got := goalSummary(goal); !strings.HasPrefix(got, "Goal active · 51.2k tokens: ") {
-		t.Fatalf("unbudgeted summary = %q", got)
+	if got := goalDetails(goal, false); !strings.Contains(got, "Status: active") || !strings.Contains(got, "Tokens: 51.2k\n") {
+		t.Fatalf("unbudgeted goal details = %q", got)
 	}
 }

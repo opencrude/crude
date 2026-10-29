@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/history"
+	"crude/sessiondb"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
@@ -59,6 +60,37 @@ func TestSlashSelectionKeyboardPointerDraftParity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGoalAndLoopWithAttachmentsKeepTheOriginalDraft(t *testing.T) {
+	for _, command := range []string{"/goal finish ", "/loop 5m check "} {
+		model := NewModel(theme.DefaultDark())
+		ref := sessiondb.Reference{ID: "ref-1", Label: "[Pasted Text1]", Kind: sessiondb.KindPastedText}
+		model.SetReferenceStore(&pasteReferenceStore{references: []sessiondb.Reference{ref}})
+		model.SetInput(command + ref.Label)
+		model.UseReferenceIDs([]string{ref.ID})
+		model.SetSelection(2, 5)
+		before, epoch, revision := model.input.EditState(), model.DraftEpoch(), model.DraftRevision()
+		updated, _, event := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
+		slash, ok := event.(SlashCommandEvent)
+		if !ok || len(slash.ReferenceIDs) != 1 || slash.ReferenceIDs[0] != ref.ID {
+			t.Fatalf("%q lost the attachment event: %#v", command, event)
+		}
+		if updated.input.EditState() != before || updated.DraftEpoch() != epoch || updated.DraftRevision() != revision {
+			t.Fatalf("%q changed the rejected draft", command)
+		}
+	}
+}
+
+func TestSlashNameMatchTakesPriorityOverRetainedDescription(t *testing.T) {
+	model := NewModel(theme.DefaultDark())
+	model.SetInput("/")
+	model.SetInput("/lo") // "plan" still matches "explore", but "loop" is the name prefix.
+	updated, _, event := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
+	slash, ok := event.(SlashCommandEvent)
+	if !ok || slash.Command != "/loop" || updated.Value() != "" {
+		t.Fatalf("Enter selected a lower-priority description match: event=%#v text=%q", event, updated.Value())
 	}
 }
 

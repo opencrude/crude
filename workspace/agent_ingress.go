@@ -392,6 +392,7 @@ type AgentSnapshot struct {
 	PlanMode                                            bool
 	// Goal is the main agent's session goal; children have none.
 	Goal                 *types.Goal
+	Loops                []types.Loop
 	ActiveCompaction     TurnStatus
 	LastTokenTime        time.Time
 	Messages             []Message
@@ -454,6 +455,7 @@ func (w *Workspace) snapshotAgent(node *AgentNode, includeMessages bool) AgentSn
 	if goal, ok := w.GoalForAgent(node.ID); ok {
 		snapshot.Goal = &goal
 	}
+	snapshot.Loops = w.LoopsForAgent(node.ID)
 	if includeMessages {
 		snapshot.Messages = state.Messages.Messages()
 	}

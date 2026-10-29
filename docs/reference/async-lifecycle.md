@@ -168,6 +168,9 @@ not keep writing caller-owned result memory after the caller has returned.
   Refusal rolls back all reservations without closing an actor or changing its
   owner; accepted reservations survive through shutdown joins. See the
   [core ownership contract](core-client-protocol.md#trust-secrets-and-platform-limits).
+  Active session goals and scheduled loops are reported in core status and count
+  as autonomous work even between turns. Their admission reservations prevent an
+  idle handover from racing a newly scheduled task.
 - **Windows process control retains both signal and output ownership.** The
   detached core clears the inherited `CREATE_NEW_PROCESS_GROUP` Ctrl+C-ignore
   policy before spawning terminal children, without joining a shell console.

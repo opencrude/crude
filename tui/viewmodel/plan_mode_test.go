@@ -37,9 +37,10 @@ func TestPlanDecisionOffersImplementationInANewSession(t *testing.T) {
 	if err := app.ws.SetPlanModeForAgent(id, true); err != nil {
 		t.Fatal(err)
 	}
+	app.ws.AgentMgr().Get(id).State.TurnIdentity.Generation = 1
 	reply := "Explored.\n<proposed_plan>\n# Fix add\n\n- Return a + b\n</proposed_plan>"
-	app.ws.AppendAgentMessages(id, []workspace.Message{{Role: types.RoleAssistant, Content: reply, Time: time.Now()}}, false)
-	app.offerPlanImplementation(id)
+	app.ws.AppendAgentMessages(id, []workspace.Message{{Role: types.RoleAssistant, Content: reply, Time: time.Now(), TurnGeneration: 1}}, false)
+	app.offerPlanImplementation(id, 1)
 	projection := app.activeSessionProjection()
 	if projection == nil || projection.decisionAgentID != id || projection.decision.Purpose() != "implement_plan" || projection.decisionData != "# Fix add\n\n- Return a + b" {
 		t.Fatalf("plan decision not offered with its plan: %+v", projection)
@@ -57,5 +58,31 @@ func TestPlanDecisionOffersImplementationInANewSession(t *testing.T) {
 	}
 	if !app.ws.PlanModeForAgent(id) {
 		t.Fatal("implementing elsewhere turned off the planning session's Plan mode")
+	}
+}
+
+func TestPlanDecisionDoesNotReuseAnEarlierTurn(t *testing.T) {
+	app := newFullTestApp(t)
+	wsOf(app).Logger = stubLogger{}
+	id := addBackendTestOrchestrator(t, app)
+	t.Cleanup(wsOf(app).CloseAllSessions)
+	app.ActiveSession = app.ws.SessionsByAgent()[id]
+	app.AgentView.SetActive(id)
+	if err := app.ws.SetPlanModeForAgent(id, true); err != nil {
+		t.Fatal(err)
+	}
+	app.ws.AgentMgr().Get(id).State.TurnIdentity.Generation = 2
+	app.ws.AppendAgentMessages(id, []workspace.Message{
+		{Role: types.RoleAssistant, Content: "<proposed_plan>\n# Earlier proposal\n</proposed_plan>", Time: time.Now(), TurnGeneration: 1},
+	}, false)
+	// A context-only later turn can finish without a visible user message.
+	app.offerPlanImplementation(id, 2)
+	if projection := app.activeSessionProjection(); projection != nil && projection.decision.Purpose() == "implement_plan" {
+		t.Fatal("offered an earlier turn's plan after a later user request")
+	}
+	// A delayed feedback message for turn 1 cannot claim turn 2's owner.
+	app.handleAgentResultFeedback(agentResultFeedbackMsg{agentID: id, reason: "completed", generation: 1})
+	if projection := app.activeSessionProjection(); projection != nil && projection.decision.Purpose() == "implement_plan" {
+		t.Fatal("offered a stale turn's plan after a newer turn started")
 	}
 }

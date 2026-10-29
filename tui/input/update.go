@@ -229,7 +229,10 @@ func (m *Model) setSlashFilter(filter string) {
 	m.slashList.SetItems(items)
 	if prevID != "" {
 		for i, it := range items {
-			if it.ID == prevID {
+			// A retained description match must not override an exact name
+			// prefix as the query changes. Keep selection only within the
+			// highest available relevance tier.
+			if it.ID == prevID && (len(named) == 0 || i < len(named)) {
 				m.slashList.SelectIndex(i)
 				break
 			}
@@ -252,6 +255,14 @@ func (m *Model) activateSlashSelection(action *ui.Action) (SlashCommandEvent, bo
 
 func (m *Model) commitSlashCommand(command string) SlashCommandEvent {
 	event := SlashCommandEvent{Command: command, ReferenceIDs: m.ReferencedIDs()}
+	fields := strings.Fields(command)
+	if len(fields) > 0 && len(event.ReferenceIDs) > 0 &&
+		(strings.EqualFold(fields[0], "/goal") || strings.EqualFold(fields[0], "/loop")) {
+		// These session commands store plain text only. Let the shell explain
+		// the refusal while the original draft and attachment identities stay.
+		m.slashActive = false
+		return event
+	}
 	m.ClearInput()
 	return event
 }

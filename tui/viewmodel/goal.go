@@ -40,10 +40,10 @@ func (m *App) goalCommand(agentID, argument string) tea.Cmd {
 	switch strings.ToLower(verb) {
 	case "":
 		if !exists {
-			m.Feedback.NotifyInfo("No goal is set. " + goalUsage)
+			m.openSessionInfo("Goal", "No goal is set.\n\n"+goalUsage+"\n\nA goal continues across turns and completes only after independent verification.")
 			return nil
 		}
-		m.Feedback.NotifyInfo(goalSummary(goal))
+		m.openSessionInfo("Goal", goalDetails(goal, m.ws.PlanModeForAgent(agentID)))
 		return nil
 	case workspace.GoalPause, workspace.GoalResume, workspace.GoalClear:
 		if rest == "" {
@@ -133,22 +133,27 @@ func goalStatusLabel(goal types.Goal) string {
 	return string(goal.Status)
 }
 
-func goalSummary(goal types.Goal) string {
-	parts := []string{"Goal " + goalStatusLabel(goal)}
+func goalDetails(goal types.Goal, planMode bool) string {
+	status := goalStatusLabel(goal)
+	if planMode && goal.Status == types.GoalActive && !goal.Verifying && !goal.Waiting {
+		status = "active; automatic continuation waits for Plan mode to end"
+	}
+	var text strings.Builder
+	fmt.Fprintf(&text, "Snapshot · reopen /goal to refresh\n\nStatus: %s\n", status)
 	if goal.TimeUsed >= time.Second {
-		parts = append(parts, formatGoalDuration(goal.TimeUsed))
+		fmt.Fprintf(&text, "Active time: %s\n", formatGoalDuration(goal.TimeUsed))
 	}
-	switch {
-	case goal.TokenBudget > 0:
-		parts = append(parts, formatGoalTokens(goal.TokensUsed)+"/"+formatGoalTokens(goal.TokenBudget)+" tokens")
-	case goal.TokensUsed > 0:
-		parts = append(parts, formatGoalTokens(goal.TokensUsed)+" tokens")
+	if goal.TokenBudget > 0 {
+		fmt.Fprintf(&text, "Tokens: %s / %s\n", formatGoalTokens(goal.TokensUsed), formatGoalTokens(goal.TokenBudget))
+	} else if goal.TokensUsed > 0 {
+		fmt.Fprintf(&text, "Tokens: %s\n", formatGoalTokens(goal.TokensUsed))
 	}
-	summary := strings.Join(parts, " · ") + ": " + goal.Objective
+	text.WriteString("\nObjective\n" + goal.Objective)
 	if goal.Reason != "" {
-		summary += " — " + goal.Reason
+		text.WriteString("\n\n" + goal.Reason)
 	}
-	return summary
+	text.WriteString("\n\n" + goalUsage)
+	return text.String()
 }
 
 func formatGoalDuration(d time.Duration) string {
@@ -180,8 +185,9 @@ func (m *App) goalHeaderText(agentID string) string {
 	if !ok {
 		return ""
 	}
-	if label := goalStatusLabel(goal); label != string(types.GoalActive) {
-		return "Goal · " + label
+	label := goalStatusLabel(goal)
+	if m.ws.PlanModeForAgent(agentID) && goal.Status == types.GoalActive && !goal.Verifying && !goal.Waiting {
+		label = "plan wait"
 	}
-	return "Goal"
+	return "Goal · " + label
 }

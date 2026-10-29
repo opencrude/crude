@@ -178,6 +178,14 @@ func (l *local) GoalAction(agentID, action, objective string) (types.Goal, bool,
 	return l.ws.GoalAction(agentID, action, objective)
 }
 
+func (l *local) LoopsForAgent(agentID string) []types.Loop {
+	return l.ws.LoopsForAgent(agentID)
+}
+
+func (l *local) LoopAction(agentID, action, id, task string, interval time.Duration) error {
+	return l.ws.LoopAction(agentID, action, id, task, interval)
+}
+
 func (l *local) SetYoloForAgent(agentID string, enabled bool) bool {
 	return l.ws.SetYoloForAgent(agentID, enabled)
 }

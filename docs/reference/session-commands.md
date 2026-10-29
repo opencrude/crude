@@ -1,8 +1,8 @@
-# Session Commands: Plan, Goal and Fork
+# Session Commands: Plan, Goal, Loop and Fork
 
-> Status: Current reference — Plan mode, session goals with independent verification, session fork, and where commands live.
+> Status: Current reference — Plan mode, verified goals, scheduled loops, session fork, and where commands live.
 
-The composer's slash commands act on the selected session (`/plan`, `/goal`,
+The composer's slash commands act on the selected session (`/plan`, `/goal`, `/loop`,
 `/fork`, `/compact`, `/retry`, `/undo`, `/history`, `/sessions`, `/memory`,
 `/skills`, `/mcps`, `/settings`, `/fast`, `/yolo`). The command palette
 (Ctrl+Alt+P) lists only global commands with their live shortcuts; there is no
@@ -54,20 +54,28 @@ of guessing its capabilities.
   `prompt.PlanImplementationFreshContext` with the plan's Markdown and nothing
   of the planning conversation, leaving the planning session as it was;
   **Keep planning** leaves the mode on. A connected shell holds that first
-  message until the new session reaches it (`pendingFirstInputs`).
-- The header shows **Plan mode** for the selected session.
+  message until the new session reaches it (`pendingFirstInputs`). The offer
+  is bound to the completed turn generation; a stale proposal or delayed
+  completion cannot be offered as a later turn's result.
+- The header shows **Plan mode** for the selected session. The footer confirms
+  both toggles and retains **Plan · next turn** while enabled; an already
+  running turn keeps the policy it started with.
 
 ## Goals (`/goal`)
 
 A goal is one objective the session's main agent pursues across turns until
 an independent verifier confirms it, or the user or a stop rule ends it.
 
-- Commands: `/goal` shows a one-line summary; `/goal <objective>` sets it and
+- Commands: `/goal` opens a scrollable, selectable status snapshot with the full
+  objective, state, reason, usage and management commands; `/goal <objective>` sets it and
   asks **Replace the current goal?** while an unfinished one exists; `/goal
   pause`, `resume`, `clear`; `/goal edit` puts the current objective in the
   composer and `/goal edit <objective>` changes it without restarting. The
   header shows **Goal** with its state (checking, waiting, paused, blocked,
-  limited by budget, complete); clicking it shows the summary.
+  limited by budget, complete); clicking it opens the same reader. Reopen the
+  snapshot to refresh it. The reader closes on session switch and never consumes
+  a composer draft. Goals take text, not composer attachments; an attempted
+  attached goal is refused with its draft intact.
 - State: one row per session in `session_goal` (objective, status
   `active|paused|blocked|budget_limited|complete`, reason, tokens, token
   budget, active time, waiting, running verifier). Shells read it through
@@ -77,7 +85,8 @@ an independent verifier confirms it, or the user or a stop rule ends it.
   the agent is idle, after collaboration deliveries and queued human input,
   with no pending recovery or compaction, and never in Plan mode. The turn's
   input is context-only runtime input (`prompt.GoalContinuation`), never a
-  human message in the transcript. Plan mode turns do not count.
+  human message in the transcript. Plan mode turns do not count toward goal
+  time or token budget; a mid-turn mode toggle takes effect at the turn boundary.
 - Stop rules: Stop on a goal turn, or stopping its unfinished run, pauses the
   goal; a terminal turn failure blocks it with the failure's exact reason (a
   permanent provider verdict such as a policy refusal ends the turn rather than
@@ -111,16 +120,61 @@ an independent verifier confirms it, or the user or a stop rule ends it.
   blocker repeated three goal turns, `paused` only on the user's request).
   Children have none.
 
+## Scheduled loops (`/loop`)
+
+`/loop 5m <prompt>` schedules an explicitly supplied task in the selected
+session's retained core. It starts once as soon as that agent is eligible, then
+no more often than the fixed interval after each admitted start. Intervals use
+Go duration notation (`1m`, `90m`, `2h`) or whole days (`1d`–`7d`), with a
+one-minute minimum and seven-day maximum. Up to ten schedules may coexist.
+This is fixed-interval scheduling, not Claude Code's dynamic `/loop` or a
+general cron service; a bare `/loop` inspects rather than invents a task.
+
+- `/loop` and the header's **Loop** label open a scrollable snapshot with full
+  prompts, exact IDs, next times, expiry, state and reasons. The header reports
+  when active schedules are waiting for Plan mode or an active goal. Reopen to
+  refresh.
+  `/loop pause <id>`, `/loop resume <id>` and `/loop clear <id>` address exactly
+  one schedule; use `/loop` to find its ID. Pause and clear prevent future
+  iterations but do not cancel a turn already admitted. Esc/Stop of a running
+  loop iteration pauses that loop. Resuming schedules the next run one interval
+  later rather than replaying old occurrences. If persisting a stop fails, the
+  loop stays visibly paused in this runtime and the error asks for a retry;
+  a cold reopen also restores it paused.
+- The session owns the schedule, persisted in its own database and replicated
+  through `AgentSnapshot.Loops`; shells only issue `agent.loop` actions and
+  render snapshots. Scheduled input is attributed as context-only runtime input,
+  not a new human message. The transcript records the task when scheduled and
+  identifies each iteration by ID, plus pause, expiry and clear. Usual session
+  permissions, approvals and recovery apply; scheduling does not grant additional
+  authority. Attachments are not supported and an attempted attached loop retains
+  the original draft.
+- Human and collaboration input, compaction and recovery retain their existing
+  admission priority. Due iterations wait while the agent is busy, while Plan
+  mode is on, or while an active goal owns automatic continuation. Missed
+  intervals coalesce into one iteration; there is no backlog of repeated calls.
+  When several schedules are due, the oldest deadline is admitted first.
+  A stopped or failed iteration pauses the schedule. A parked recovery retains
+  ownership until explicitly continued or stopped.
+- Active loops keep the core from being considered idle even with no shells
+  attached. They run only while the owning session and core are running; they
+  are not machine-wide jobs. Schedules expire after seven days and require a new
+  `/loop` to continue. On a cold session reopen they are restored paused, with
+  no catch-up; a fork never copies schedules. The scheduler durably advances an
+  occurrence before admitting its turn: a crash at that boundary can miss that
+  occurrence, but it is not blindly replayed. As with any model work, scheduled
+  turns can incur token charges.
+
 ## Status rows
 
-Plan mode, YOLO and goal changes are transcript rows owned by the session,
+Plan mode, YOLO, goal and loop changes are transcript rows owned by the session,
 never by a shell: the session stores each in `session_status_rows` and sends
 it as a `status_row` event (`recordStatusRow`), so every shell shows it and a
 reopened session hydrates the same rows in time order (`statusRowView` serves
 both paths). A row is recorded only when the value changes; goal rows derive
 from the last goal published (`goalTransitionRow`), so accounting updates and
-a reopen add none. Session facts (`status_row`, `goal`) apply whatever state
-the agent's turn is in.
+a reopen add none. Session facts (`status_row`, `goal`, `loops`) apply whatever
+state the agent's turn is in.
 
 ## Fork (`/fork`)
 
@@ -132,7 +186,7 @@ the agent's turn is in.
   snapshot) under the source's turn locks, rewrites the session identity and
   the root context key, gives the fork its own agent name, and drops
   runtime-owned rows: recoveries, collaboration admissions, file claims, child
-  results, billed usage, queued input and the composer draft. Plans, settings,
+  results, billed usage, queued input, schedules and the composer draft. Plans, settings,
   references, Plan mode and the selected execution are kept; execution hygiene
   scans every session database, so the shared checkout stays protected.
 - An active goal is kept but waits for the user in the fork.

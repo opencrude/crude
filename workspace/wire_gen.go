@@ -17,13 +17,15 @@ import (
 // MarshalMsg implements msgp.Marshaler
 func (z *ActiveWork) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 5
-	o = append(o, 0x95)
+	// array header, size 7
+	o = append(o, 0x97)
 	o = msgp.AppendInt(o, z.Turns)
 	o = msgp.AppendInt(o, z.Children)
 	o = msgp.AppendInt(o, z.AsyncCommands)
 	o = msgp.AppendInt(o, z.Compaction)
 	o = msgp.AppendInt(o, z.MemoryJobs)
+	o = msgp.AppendInt(o, z.Goals)
+	o = msgp.AppendInt(o, z.Loops)
 	return
 }
 
@@ -39,8 +41,8 @@ func (z *ActiveWork) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 5 {
-		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+	if zb0001 != 7 {
+		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
 		return
 	}
 	z.Turns, bts, err = msgp.ReadIntBytes(bts)
@@ -68,13 +70,23 @@ func (z *ActiveWork) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "MemoryJobs")
 		return
 	}
+	z.Goals, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Goals")
+		return
+	}
+	z.Loops, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Loops")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ActiveWork) Msgsize() (s int) {
-	s = 1 + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize
+	s = 1 + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize
 	return
 }
 
@@ -734,8 +746,8 @@ func (z *AgentReduction) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AgentSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 26
-	o = append(o, 0xdc, 0x0, 0x1a)
+	// array header, size 27
+	o = append(o, 0xdc, 0x0, 0x1b)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.ParentID)
 	o = msgp.AppendString(o, z.SessionID)
@@ -779,6 +791,18 @@ func (z *AgentSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 			return
 		}
 	}
+	if z.Loops == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Loops)))
+		for za0001 := range z.Loops {
+			o, err = z.Loops[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Loops", za0001)
+				return
+			}
+		}
+	}
 	o, err = z.ActiveCompaction.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "ActiveCompaction")
@@ -789,10 +813,10 @@ func (z *AgentSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Messages)))
-		for za0001 := range z.Messages {
-			o, err = (*ttypes.ConversationMessage)(&z.Messages[za0001]).MarshalMsg(o)
+		for za0002 := range z.Messages {
+			o, err = (*ttypes.ConversationMessage)(&z.Messages[za0002]).MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "Messages", za0001)
+				err = msgp.WrapError(err, "Messages", za0002)
 				return
 			}
 		}
@@ -832,8 +856,8 @@ func (z *AgentSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 26 {
-		err = msgp.ArrayError{Wanted: 26, Got: zb0001}
+	if zb0001 != 27 {
+		err = msgp.ArrayError{Wanted: 27, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -942,6 +966,33 @@ func (z *AgentSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Loops = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Loops")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Loops != nil && cap(z.Loops) >= int(zb0002) {
+			z.Loops = (z.Loops)[:zb0002]
+		} else {
+			z.Loops = make([]types.Loop, zb0002)
+		}
+		for za0001 := range z.Loops {
+			bts, err = z.Loops[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Loops", za0001)
+				return
+			}
+		}
+	}
 	bts, err = z.ActiveCompaction.UnmarshalMsg(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "ActiveCompaction")
@@ -956,25 +1007,25 @@ func (z *AgentSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.Messages = nil
 	} else {
-		var zb0002 uint32
-		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Messages")
 			return
 		}
-		if uint64(zb0002)*1 > uint64(len(bts)) {
+		if uint64(zb0003)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Messages != nil && cap(z.Messages) >= int(zb0002) {
-			z.Messages = (z.Messages)[:zb0002]
+		if z.Messages != nil && cap(z.Messages) >= int(zb0003) {
+			z.Messages = (z.Messages)[:zb0003]
 		} else {
-			z.Messages = make([]Message, zb0002)
+			z.Messages = make([]Message, zb0003)
 		}
-		for za0001 := range z.Messages {
-			bts, err = (*ttypes.ConversationMessage)(&z.Messages[za0001]).UnmarshalMsg(bts)
+		for za0002 := range z.Messages {
+			bts, err = (*ttypes.ConversationMessage)(&z.Messages[za0002]).UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Messages", za0001)
+				err = msgp.WrapError(err, "Messages", za0002)
 				return
 			}
 		}
@@ -1022,9 +1073,13 @@ func (z *AgentSnapshot) Msgsize() (s int) {
 	} else {
 		s += z.Goal.Msgsize()
 	}
+	s += msgp.ArrayHeaderSize
+	for za0001 := range z.Loops {
+		s += z.Loops[za0001].Msgsize()
+	}
 	s += z.ActiveCompaction.Msgsize() + msgp.TimeSize + msgp.ArrayHeaderSize
-	for za0001 := range z.Messages {
-		s += (*ttypes.ConversationMessage)(&z.Messages[za0001]).Msgsize()
+	for za0002 := range z.Messages {
+		s += (*ttypes.ConversationMessage)(&z.Messages[za0002]).Msgsize()
 	}
 	s += msgp.Uint64Size
 	if z.Prompt == nil {

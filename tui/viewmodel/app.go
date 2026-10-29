@@ -627,6 +627,21 @@ func (m *App) Init() tea.Cmd {
 	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
 }
 
+// openSessionInfo uses the native read-only text reader for a session fact.
+// It does not modify the composer or the underlying session.
+func (m *App) openSessionInfo(title, content string) {
+	if m.overlayHost == nil {
+		return
+	}
+	m.overlayHost.Close(ui.OverlayTextOverlay)
+	screen := m.sessionTextOverlay()
+	if screen == nil {
+		return
+	}
+	screen.OpenReadOnly("session-info", title, content)
+	m.setMode(ModeTextOverlay)
+}
+
 // openTextOverlayWindow opens the text overlay as a floating window.
 func (m *App) openTextOverlayWindow() {
 	m.overlayHost.Close(ui.OverlayTextOverlay)
@@ -640,6 +655,16 @@ func (m *App) openTextOverlayWindow() {
 		title = "Edit"
 	}
 	w, h := fitFloatingSize(m.width, m.height, 96, 30, 32, 8)
+	if p.textOverlay.RefID() == "session-info" {
+		// A short session fact should not occupy an attachment editor's full
+		// 30 rows. Long facts retain the same scrollable reader and height cap.
+		w, _ = fitFloatingSize(m.width, m.height, 80, 30, 32, 8)
+		rows := 0
+		for _, line := range strings.Split(p.textOverlay.Value(), "\n") {
+			rows += len(rendering.WordWrap(line, max(1, w-4)))
+		}
+		w, h = fitFloatingSize(m.width, m.height, w, min(30, rows+4), 32, 8)
+	}
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "textoverlay-frame"),

@@ -4275,6 +4275,82 @@ func (z *LocalHistorySettings) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *Loop) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 7
+	o = append(o, 0x97)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendString(o, z.Prompt)
+	o = msgp.AppendDuration(o, z.Interval)
+	o = msgp.AppendTime(o, z.NextAt)
+	o = msgp.AppendTime(o, z.ExpiresAt)
+	o = msgp.AppendBool(o, z.Paused)
+	o = msgp.AppendString(o, z.Reason)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *Loop) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 7 {
+		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Prompt, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Prompt")
+		return
+	}
+	z.Interval, bts, err = msgp.ReadDurationBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Interval")
+		return
+	}
+	z.NextAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "NextAt")
+		return
+	}
+	z.ExpiresAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExpiresAt")
+		return
+	}
+	z.Paused, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Paused")
+		return
+	}
+	z.Reason, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Reason")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *Loop) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Prompt) + msgp.DurationSize + msgp.TimeSize + msgp.TimeSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.Reason)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *MemorySettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 7
