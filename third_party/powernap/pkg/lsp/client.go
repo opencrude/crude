@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
@@ -67,6 +66,9 @@ const (
 
 // NewClient creates a new LSP client with the given configuration.
 func NewClient(config ClientConfig) (*Client, error) {
+	if !config.Configuration.boundTo(config.RootURI) {
+		return nil, ErrConfiguration
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	client := &Client{
@@ -76,7 +78,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 		cancel:           cancel,
 		rootURI:          config.RootURI,
 		workspaceFolders: config.WorkspaceFolders,
-		config:           config.Settings,
+		config:           config.Configuration,
 		initOptions:      config.InitOptions,
 		offsetEncoding:   UTF16, // Default to UTF16
 	}
@@ -177,7 +179,7 @@ func (c *Client) Initialize(ctx context.Context, enableSnippets bool) error {
 
 	c.initialized.Store(true)
 
-	if err := c.NotifyWorkspaceDidChangeConfiguration(ctx, c.config); err != nil {
+	if err := c.NotifyWorkspaceDidChangeConfiguration(ctx, c.config.global); err != nil {
 		return err
 	}
 
@@ -665,18 +667,7 @@ func parseOffsetEncoding(positionEncoding *protocol.PositionEncodingKind, offset
 func (c *Client) setupHandlers() {
 	// Handle workspace/configuration requests
 	c.conn.RegisterHandler(MethodWorkspaceConfiguration, func(_ context.Context, _ string, params json.RawMessage) (any, error) {
-		var configParams protocol.ConfigurationParams
-		if err := json.Unmarshal(params, &configParams); err != nil {
-			return nil, err //nolint:wrapcheck
-		}
-
-		// Return configuration for each requested item
-		result := make([]any, len(configParams.Items))
-		for i := range configParams.Items {
-			result[i] = configurationSection(c.config, configParams.Items[i].Section)
-		}
-
-		return result, nil
+		return c.config.answer(params)
 	})
 
 	// Handle other common server requests
@@ -684,24 +675,6 @@ func (c *Client) setupHandlers() {
 }
 
 // makeClientCapabilities creates the client capabilities for initialization.
-func configurationSection(config map[string]any, section string) any {
-	if section == "" {
-		return config
-	}
-	if value, ok := config[section]; ok {
-		return value
-	}
-	var value any = config
-	for _, part := range strings.Split(section, ".") {
-		object, ok := value.(map[string]any)
-		if !ok {
-			return nil
-		}
-		value = object[part]
-	}
-	return value
-}
-
 func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		fieldTextDocument: map[string]any{

@@ -80,7 +80,7 @@ type Client struct {
 	offsetEncoding   OffsetEncoding
 	rootURI          string
 	workspaceFolders []protocol.WorkspaceFolder
-	config           map[string]any
+	config           Configuration
 	initOptions      map[string]any
 }
 
@@ -96,7 +96,7 @@ type ClientConfig struct {
 	RootURI          string
 	WorkspaceFolders []protocol.WorkspaceFolder
 	InitOptions      map[string]any
-	Settings         map[string]any
+	Configuration    Configuration
 	Environment      map[string]string
 	Timeout          time.Duration
 }

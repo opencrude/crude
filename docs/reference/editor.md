@@ -288,6 +288,17 @@ Tea's update goroutine (the tab-close hang).
   `RestartServer`, which re-resolves the command on the next start, so
   installing the server and choosing Retry is enough.
 - `LSPIntegration.WithServerEnv` sets the server subprocess environment.
+- `LSPServerSpec.ConfigurationScopes` carries complete effective module settings
+  through the workspace runtime to one immutable, root-bound transport table.
+  `workspace/configuration` respects each item's `scopeUri`, selects its longest
+  directory match and preserves order, missing sections and null results. Module
+  values never implicitly merge with another configuration. Unscoped requests
+  use global settings; invalid or outside-root scope URIs return null.
+  Preparation detaches caller maps and refuses invalid/ambiguous bindings before
+  launch admission. URI matching is lexical, not native filesystem identity or
+  permission. The [fork contract](../../third_party/powernap/README.md#launch-bound-configuration)
+  defines encoded request/table/response bounds. Selecting and populating these
+  bindings from a retained project model remains open.
 - The client advertises `window.workDoneProgress`, answers
   `window/workDoneProgress/create` and tracks `$/progress` tokens.
   `AwaitDiagnostics` waits until the server's work settles (no active progress
@@ -388,6 +399,15 @@ Root-bound workspace Trust and shared LSP process admission are implemented.
 General destination qualification, completion/hover/rename fact contracts,
 project modeling, broader analysis work classes, pressure management and native
 CPU/RSS containment remain open.
+
+`insight/project` now provides passive compilation-database observations: a
+bounded streaming parser retains exact artifact byte identity, multiple rows per
+file, detached argv and opaque command-only spellings. It does not resolve paths,
+tokenize shell commands, execute compiler drivers, authorize external reads or
+prove freshness, artifact-set consistency, generated-input provenance or complete
+project coverage. Retained discovery, configuration selection and provider binding
+must supply those owners and preserve unknown inputs; parser success is not a
+new current semantic fact.
 
 ### Diagnostic positions
 

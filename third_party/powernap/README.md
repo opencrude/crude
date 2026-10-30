@@ -3,6 +3,26 @@
 This replacement module retains Crude's LSP transport hooks, UTF-16 position
 contract, document-save capability handling, and owned subprocess lifetime.
 
+## Launch-bound configuration
+
+`NewConfiguration` builds one detached, immutable settings table before process
+construction. `ClientConfig.Configuration` must match the client's root URI.
+Server `workspace/configuration` requests select the longest matching directory
+scope and preserve item order and null results. Each scope supplies a complete
+effective object, not a sparse overlay. Unscoped requests use the global object;
+invalid or outside-root scopes return null instead of another project's settings.
+URI host, escaping and drive-letter syntax are normalized without filesystem I/O;
+other path case is not guessed to be equivalent.
+
+Tables admit at most 128 directory scopes and 1 MiB of encoded settings/URI data.
+Requests admit at most 128 items and 64 KiB of encoded parameters; responses are
+bounded to 1 MiB and fail atomically if they exceed it. These are encoded-data
+bounds, not a hard heap limit or a bound on arbitrary caller `MarshalJSON` code.
+The table validates and detaches settings at preparation; replies own their
+encoded bytes. Root/configuration replacement requires a new launch-bound table.
+This transport contract does not discover modules, infer build configurations,
+authorize execution, or establish semantic coverage.
+
 ## Process and transport lifetime
 
 `Client.Kill() error` cancels the client and joins connection teardown.

@@ -74,6 +74,20 @@ func TestProtocolServerHelper(t *testing.T) {
 			}
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"capabilities": map[string]any{}}})
 		case "initialized":
+			if mode == "scoped-configuration" {
+				root, _ := os.Getwd()
+				scope := func(rel string) string { return string(protocol.URIFromPath(filepath.Join(root, rel))) }
+				write(map[string]any{"jsonrpc": "2.0", "id": "configuration", "method": "workspace/configuration",
+					"params": map[string]any{"items": []any{
+						map[string]any{"scopeUri": scope("module-a/main.go"), "section": "engine.mode"},
+						map[string]any{"scopeUri": scope("module-b/main.go"), "section": "engine.mode"},
+						map[string]any{"scopeUri": scope("module-a-other/main.go"), "section": "engine.mode"},
+						map[string]any{"scopeUri": scope("module-a/main.go"), "section": "engine.rootOnly"},
+						map[string]any{"scopeUri": "", "section": "engine.mode"},
+						map[string]any{"section": "engine.mode"},
+					}}})
+				continue
+			}
 			write(map[string]any{"jsonrpc": "2.0", "id": "configuration", "method": "workspace/configuration", "params": map[string]any{"items": []any{map[string]any{"section": "python.analysis"}, map[string]any{"section": "missing"}, map[string]any{"section": ""}}}})
 		case "textDocument/hover":
 			if mode == "stale" {

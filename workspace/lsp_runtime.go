@@ -28,6 +28,7 @@ func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string, sta
 	return &runtimeLSPClient{LSPIntegration: lspclient.NewLSPIntegration(
 		spec.Command, spec.Args, rootURI,
 		lspclient.WithServerConfiguration(spec.Environment, spec.Settings, spec.InitializationOptions),
+		lspclient.WithConfigurationScopes(spec.ConfigurationScopes),
 		lspclient.WithStartAdmission(startAdmission),
 	)}
 }
