@@ -333,7 +333,7 @@ func TestLiveEditorAsyncNavigationAndStaleOpenOwnership(t *testing.T) {
 	}
 	shell := newRemoteJourneyShell(t, runtime, root)
 	a := liveTestOpen(t, shell.app, aPath)
-	shell.app.jumpToDiagnostic(bPath, editor.LSPDiagnostic{Line: 1, Col: 2, EndLine: 1, EndCol: 3})
+	shell.app.queueLiveNavigation(bPath, editor.LSPDiagnostic{Line: 1, Col: 2, EndLine: 1, EndCol: 3})
 	if a.CursorLine() != 0 || a.CursorCol() != 0 {
 		t.Fatal("async navigation moved previous editor")
 	}

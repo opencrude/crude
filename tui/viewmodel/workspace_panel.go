@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	statusoverview "crude/tui/screens/statusoverview"
@@ -173,7 +174,8 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			{Label: "Errors", Value: fmt.Sprintf("%d", insights.Errors), Role: mapBool(insights.Errors > 0, ui.ColorError, ui.ColorMuted)},
 			{Label: "Warnings", Value: fmt.Sprintf("%d", insights.Warnings), Role: mapBool(insights.Warnings > 0, ui.ColorWarning, ui.ColorMuted)},
 			{Label: "Affected files", Value: fmt.Sprintf("%d", insights.FilesAffected), Role: ui.ColorMuted},
-			{Label: "Tracked files", Value: fmt.Sprintf("%d", insights.FilesTracked), Role: ui.ColorMuted},
+			{Label: "Observed source units", Value: fmt.Sprintf("%d", insights.DiagnosticsObserved), Role: ui.ColorMuted},
+			{Label: "Coverage", Value: diagnosticCoverage(insights), Role: ui.ColorWarning},
 			{Label: "Uptime", Value: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted},
 		},
 	}}
@@ -198,7 +200,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: server.Status, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines, Actions: lspServerActions(server)})
 	}
 
-	diagnostics := m.ws.LSPMgr().AllDiagnostics()
+	diagnostics := m.lspFacts
 	if len(diagnostics) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-problems", Label: "Problems", Header: true})
 	}
@@ -208,8 +210,20 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		items = append(items, statusoverview.Item{ID: "problem-file:" + path, Label: filepath.Base(path), Summary: fmt.Sprintf("%d problems", len(diagnostics[path])), Header: true})
-		for index, diagnostic := range diagnostics[path] {
+		facts := diagnostics[path]
+		qualification := diagnosticQualification(facts)
+		if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil && facts.HasExactSource() && !tab.Editor.MatchesDiagnosticSource(facts) {
+			qualification = "stale · " + strings.TrimPrefix(qualification, "observed exact source · ")
+		}
+		items = append(items, statusoverview.Item{ID: "problem-file:" + path, Label: filepath.Base(path), Summary: fmt.Sprintf("%d problems · %s", len(facts.Diagnostics), qualification),
+			Lines: []statusoverview.DetailLine{
+				{Label: "Fact", Value: facts.ID, Role: ui.ColorMuted},
+				{Label: "Producer", Value: facts.Boundary.Producer.Provider + " · " + facts.Boundary.Producer.InstanceID + " · " + facts.Boundary.Producer.ToolIdentity, Role: ui.ColorMuted},
+				{Label: "Observed revision", Value: fmt.Sprintf("%d · %s · %s", facts.Boundary.Source.Revision, facts.Boundary.Source.DocumentID, facts.Boundary.Source.Lifetime), Role: ui.ColorMuted},
+				{Label: "Context", Value: diagnosticContext(facts), Role: ui.ColorWarning},
+				{Label: "Coverage", Value: qualification + " · " + facts.Detail, Role: ui.ColorWarning},
+			}})
+		for index, diagnostic := range facts.Diagnostics {
 			severity, role := "Hint", ui.ColorMuted
 			switch diagnostic.Severity {
 			case workspace.DiagError:
@@ -220,10 +234,11 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 				severity = "Information"
 			}
 			items = append(items, statusoverview.Item{
-				ID: fmt.Sprintf("problem:%s:%d:%d:%d", path, diagnostic.Line, diagnostic.Col, index), Label: diagnostic.Message,
-				Summary: fmt.Sprintf("%d:%d  %s", diagnostic.Line+1, diagnostic.Col+1, severity), Icon: severityIconFromRole(role),
+				ID: fmt.Sprintf("problem:%s:%d", facts.ID, index), Label: diagnostic.Message,
+				Summary: fmt.Sprintf("%d:%d  %s", diagnostic.Line+1, diagnostic.Col+1, severity) + " · " + qualification, Icon: severityIconFromRole(role),
 				Owner: ttypes.ResourceRef{Kind: ttypes.ResourceEditor, ID: path}, Subtitle: path,
-				Lines: []statusoverview.DetailLine{{Label: "Severity", Value: severity, Role: role}, {Label: "Location", Value: fmt.Sprintf("Ln %d, Col %d", diagnostic.Line+1, diagnostic.Col+1), Role: ui.ColorFg}, {Blank: true}, {Value: diagnostic.Message, Role: ui.ColorFg}},
+				PrimaryAction: fmt.Sprintf("diagnostic:%s:%d:%s", facts.ID, index, path), PrimaryLabel: "Go to diagnostic", PrimaryEnabled: m.canNavigateDiagnostic(path, facts),
+				Lines: []statusoverview.DetailLine{{Label: "Fact", Value: facts.ID, Role: ui.ColorMuted}, {Label: "Producer", Value: facts.Boundary.Producer.Provider, Role: ui.ColorMuted}, {Label: "Observed revision", Value: fmt.Sprintf("%d", facts.Boundary.Source.Revision), Role: ui.ColorMuted}, {Label: "Context", Value: diagnosticContext(facts), Role: ui.ColorWarning}, {Label: "Coverage", Value: qualification, Role: ui.ColorWarning}, {Label: "Severity", Value: severity, Role: role}, {Label: "Location", Value: fmt.Sprintf("Ln %d, Col %d", diagnostic.Line+1, diagnostic.Col+1), Role: ui.ColorFg}, {Blank: true}, {Value: diagnostic.Message, Role: ui.ColorFg}},
 			})
 		}
 	}

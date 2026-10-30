@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"crude/types"
 )
 
 // This file proves the async LSP pipe fix end-to-end with a REAL subprocess
@@ -128,7 +130,7 @@ func newFakeLSPServerIntegration(t *testing.T, root string) *LSPIntegration {
 		rootURI,
 		WithServerEnv(map[string]string{"CRUDE_FAKE_LSP_SERVER": "1"}),
 	)
-	integration.OnDiagnostics(func(string, []LSPDiagnostic) {})
+	integration.OnDiagnostics(func(types.InsightDiagnosticPublication) {})
 	return integration
 }
 
@@ -151,13 +153,16 @@ func TestLSPIntegration_CloseFileNeverBlocksOnWedgedServer(t *testing.T) {
 
 	// Open a large file so subsequent writes exceed the OS pipe buffer.
 	big := strings.Repeat("package main\n\nfunc f() {}\n", 6000)
-	openDone := make(chan struct{})
+	openDone := make(chan error, 1)
 	go func() {
-		integration.OpenFile(ctx, root+"/big.go", "go", big)
-		close(openDone)
+		_, err := integration.OpenFile(ctx, root+"/big.go", "go", big, testBoundary(root+"/big.go"))
+		openDone <- err
 	}()
 	select {
-	case <-openDone:
+	case err := <-openDone:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("OpenFile blocked on the wedged server")
 	}

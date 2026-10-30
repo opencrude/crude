@@ -22,11 +22,14 @@ type Owner struct {
 	Epoch    uint64
 }
 type Snapshot struct {
-	ID, Path                    string
-	Revision                    uint64
-	Text, Saved                 []byte
-	DiskHash                    [32]byte
-	DiskExists, Dirty, Conflict bool
+	ID, Path string
+	Revision uint64
+	// Runtime analysis identity is published with canonical text, never used as
+	// an edit revision or permission token and never reused after a core restart.
+	AnalysisGeneration, AnalysisLifetime string
+	Text, Saved                          []byte
+	DiskHash                             [32]byte
+	DiskExists, Dirty, Conflict          bool
 }
 
 // Edit offsets are UTF-8 byte boundaries in the same pre-change snapshot.

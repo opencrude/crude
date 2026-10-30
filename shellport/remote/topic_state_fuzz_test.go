@@ -54,7 +54,8 @@ func stateFenceValue(topic, value int, version uint64) coreprotocol.WorkspaceSta
 		return coreprotocol.WorkspaceState{LSP: &coreprotocol.LSPSnapshot{
 			Version: uint64(value), Available: true, Connected: true, Ready: true,
 			Status: types.LSPConnected, ShowInEditor: true,
-			Diagnostics: map[string][]workspace.LSPDiagnostic{"/fuzz.go": {{Message: label, Line: value, Severity: types.DiagWarning}}},
+			Generation:  "fuzz-owner",
+			Diagnostics: map[string]types.InsightDiagnostics{"/fuzz.go": {ID: label, Diagnostics: []types.LSPDiagnostic{{Message: label, Line: value, Severity: types.DiagWarning}}}},
 		}}
 	case 3:
 		infos := coreprotocol.TerminalInfos{{ID: "terminal", Title: label, Cols: 80, Rows: 24, Alive: value%2 == 0}}
@@ -118,9 +119,10 @@ func (a *stateFenceOracle) check(t *testing.T, w *Workspace) {
 		t.Fatal("unchanged write-only markers became secret writes")
 	}
 	diagnostics := w.LSPMgr().DiagnosticSnapshot()
-	ds := diagnostics.Diagnostics["/fuzz.go"]
+	batch := diagnostics.Diagnostics["/fuzz.go"]
+	ds := batch.Diagnostics
 	connected, status, problem := w.LSPMgr().Status()
-	if diagnostics.Version != uint64(a.values[2]) || len(diagnostics.Diagnostics) != 1 || len(ds) != 1 || ds[0].Message != stateFenceLabel(a.values[2]) || ds[0].Line != a.values[2] || ds[0].Severity != types.DiagWarning || !connected || status != types.LSPConnected || problem != "" || !w.LSPMgr().ServerReady() || !w.LSPMgr().ShowDiagnosticsInEditor() || w.LSPMgr().ShowDiagnosticsInTree() {
+	if diagnostics.Generation != "fuzz-owner" || batch.ID != stateFenceLabel(a.values[2]) || diagnostics.Version != uint64(a.values[2]) || len(diagnostics.Diagnostics) != 1 || len(ds) != 1 || ds[0].Message != stateFenceLabel(a.values[2]) || ds[0].Line != a.values[2] || ds[0].Severity != types.DiagWarning || !connected || status != types.LSPConnected || problem != "" || !w.LSPMgr().ServerReady() || !w.LSPMgr().ShowDiagnosticsInEditor() || w.LSPMgr().ShowDiagnosticsInTree() {
 		t.Fatal("LSP projection diverged")
 	}
 	infos := w.TermMgr().List()

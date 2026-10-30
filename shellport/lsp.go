@@ -15,31 +15,22 @@ type LSPService interface {
 	// files the LSP server has reported on. The returned map is a copy; mutating
 	// it does not affect internal state. Used by the status bar's "Goto first
 	// error" action and similar cross-file navigation features.
-	AllDiagnostics() map[string][]workspace.LSPDiagnostic
-	// ClearDiagnostics removes all cached diagnostics, document symbols, per-file
-	// sync timestamps, and the top-issue tally. Call this when a server restart
-	// should produce a clean slate rather than showing stale results from the
-	// previous session.
-	ClearDiagnostics()
-	CloseFile(_ context.Context, path string)
+	AllDiagnostics() map[string]types.InsightDiagnostics
 	// DocumentSymbols returns the cached document outline for a file,
 	// if any. Callers should not assume the cache is fresh; refresh via
 	// RequestDocumentSymbols when the file's content has changed materially.
 	DocumentSymbols(filePath string) []workspace.LSPSymbol
 	// DiagnosticSnapshot is a non-destructive, versioned read for each shell.
 	DiagnosticSnapshot() LSPDiagnosticSnapshot
-	FileDiagnostics(filePath string) []workspace.LSPDiagnostic
+	DiagnosticCursor() (generation string, version uint64)
+	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
 	// FindReferences routes a "find references" request to the right client.
 	FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []workspace.LSPLocation
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.
 	NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int)
-	// OpenFile registers editor intent synchronously; no root probing or pipe I/O
-	// runs here. Closing before initialization completes prevents a late didOpen.
-	OpenFile(_ context.Context, path, text string)
-	// ProjectInsights returns a whole-project snapshot suitable for the
-	// bottom-left status bar. Always reflects the state of every file the LSP
-	// server knows about, regardless of which file (if any) is open in the editor.
+	// ProjectInsights combines producer health with qualified observed-unit
+	// counts. It is not an exhaustive project check or coverage denominator.
 	ProjectInsights() workspace.ProjectInsights
 	// RequestCompletions routes a completion request to the right client.
 	RequestCompletions(ctx context.Context, filePath string, line, col int) []workspace.CompletionItem
@@ -79,37 +70,43 @@ type LSPService interface {
 
 // LSPDiagnosticSnapshot is detached and complete; absent paths mean cleared diagnostics.
 type LSPDiagnosticSnapshot struct {
+	Generation  string
 	Version     uint64
-	Diagnostics map[string][]workspace.LSPDiagnostic
+	Diagnostics map[string]types.InsightDiagnostics
 }
 
 // LSPDiagnosticConsumer retains a cursor per shell, not per shared manager.
 // A complete snapshot allows clears and resynchronization without destructive drains.
 type LSPDiagnosticConsumer struct {
 	initialized bool
+	generation  string
 	version     uint64
-	previous    map[string][]workspace.LSPDiagnostic
+	previous    map[string]types.InsightDiagnostics
 }
 
-func (c *LSPDiagnosticConsumer) Consume(s LSPDiagnosticSnapshot) map[string][]workspace.LSPDiagnostic {
-	if c.initialized && s.Version == c.version {
+func (c *LSPDiagnosticConsumer) NeedsSnapshot(generation string, version uint64) bool {
+	return !c.initialized || c.generation != generation || c.version != version
+}
+
+func (c *LSPDiagnosticConsumer) Consume(s LSPDiagnosticSnapshot) map[string]types.InsightDiagnostics {
+	if c.initialized && s.Generation == c.generation && s.Version == c.version {
 		return nil
 	}
-	out := make(map[string][]workspace.LSPDiagnostic)
+	out := make(map[string]types.InsightDiagnostics)
 	for path, ds := range s.Diagnostics {
 		if !c.initialized || !reflect.DeepEqual(ds, c.previous[path]) {
-			out[path] = append([]workspace.LSPDiagnostic(nil), ds...)
+			out[path] = types.CloneInsightDiagnostics(ds)
 		}
 	}
 	for path := range c.previous {
 		if _, ok := s.Diagnostics[path]; !ok {
-			out[path] = nil
+			out[path] = types.InsightDiagnostics{}
 		}
 	}
-	c.previous = make(map[string][]workspace.LSPDiagnostic, len(s.Diagnostics))
+	c.previous = make(map[string]types.InsightDiagnostics, len(s.Diagnostics))
 	for path, ds := range s.Diagnostics {
-		c.previous[path] = append([]workspace.LSPDiagnostic(nil), ds...)
+		c.previous[path] = types.CloneInsightDiagnostics(ds)
 	}
-	c.initialized, c.version = true, s.Version
+	c.initialized, c.generation, c.version = true, s.Generation, s.Version
 	return out
 }

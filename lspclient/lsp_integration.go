@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -44,13 +45,14 @@ type LSPIntegration struct {
 
 	openFiles      map[string]*openFileState // filePath -> state
 	versionCounter int
+	sequence       uint64 // never reset across launches in this integration
 
 	// progress holds the server's active work-done tokens; changed is closed
 	// and replaced whenever progress or a document's diagnostics change.
 	progress map[string]bool
 	changed  chan struct{}
 
-	onDiagnostics func(filePath string, diags []LSPDiagnostic)
+	onDiagnostics func(model.InsightDiagnosticPublication)
 }
 
 // LSPIntegrationOption configures a new LSPIntegration.
@@ -93,15 +95,16 @@ type openFileState struct {
 	uri        string
 	languageID string
 	text       string
-	// syncedAt is when this version was sent; publishedAt and diagnostics
+	boundary   model.InsightBoundary
+	// syncedAt is when this version was admitted; publishedAt and publication
 	// record the latest publication for exactly this version.
 	syncedAt    time.Time
 	publishedAt time.Time
-	diagnostics []LSPDiagnostic
+	publication model.InsightDiagnosticPublication
 }
 
 // OnDiagnostics sets the callback for receiving diagnostics for open files.
-func (l *LSPIntegration) OnDiagnostics(fn func(filePath string, diags []LSPDiagnostic)) {
+func (l *LSPIntegration) OnDiagnostics(fn func(model.InsightDiagnosticPublication)) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.onDiagnostics = fn
@@ -266,55 +269,94 @@ func (l *LSPIntegration) Done() <-chan struct{} {
 	return l.pipe.Done()
 }
 
-func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, text string) {
+// OpenFile admits source synchronization and returns its actual LSP wire version.
+// Admission to the asynchronous write queue is not an analysis acknowledgement.
+func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, text string, boundary model.InsightBoundary) (int, error) {
+	fp, err := diagnosticPath(filePath, boundary)
+	if err != nil {
+		return 0, err
+	}
+	if languageID == "" {
+		return 0, errors.New("language ID is empty")
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.client == nil {
-		return
+	if err := l.availableLocked(ctx); err != nil {
+		return 0, err
 	}
-	fp := filepath.Clean(filePath)
+	if state := l.openFiles[fp]; state != nil {
+		return l.updateFileLocked(ctx, state, text, boundary)
+	}
+	if l.versionCounter == math.MaxInt32 {
+		return 0, errors.New("LSP wire version exhausted")
+	}
 	uri := string(protocol.URIFromPath(fp))
 	version := l.versionCounter + 1
-	if state := l.openFiles[fp]; state != nil {
-		if state.text == text {
-			return
-		}
-		if l.client.NotifyDidChangeTextDocument(ctx, state.uri, version, []protocol.TextDocumentContentChangeEvent{{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}}}) == nil {
-			state.text = text
-			state.resetVersion(version)
-			l.versionCounter = version
-			l.signalLocked()
-		}
-		return
+	if err := l.client.NotifyDidOpenTextDocument(ctx, uri, languageID, version, text); err != nil {
+		return 0, fmt.Errorf("send didOpen: %w", err)
 	}
-	if l.client.NotifyDidOpenTextDocument(ctx, uri, languageID, version, text) == nil {
-		l.versionCounter = version
-		state := &openFileState{uri: uri, languageID: languageID, text: text}
-		state.resetVersion(version)
-		l.openFiles[fp] = state
-		l.signalLocked()
-	}
+	// The notification reader uses mu too: it cannot observe this admission
+	// until the immutable input and version have been installed together.
+	state := &openFileState{uri: uri, languageID: languageID, text: text, boundary: cloneBoundary(boundary)}
+	state.resetVersion(version)
+	l.openFiles[fp] = state
+	l.versionCounter = version
+	l.signalLocked()
+	return version, nil
 }
 
-func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string) {
+func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string, boundary model.InsightBoundary) (int, error) {
+	fp, err := diagnosticPath(filePath, boundary)
+	if err != nil {
+		return 0, err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	fp := filepath.Clean(filePath)
-	state, ok := l.openFiles[fp]
-	if l.client == nil || !ok || state.text == text {
-		return
+	if err := l.availableLocked(ctx); err != nil {
+		return 0, err
+	}
+	state := l.openFiles[fp]
+	if state == nil {
+		return 0, errors.New("LSP document is not open")
+	}
+	return l.updateFileLocked(ctx, state, text, boundary)
+}
+
+func (l *LSPIntegration) updateFileLocked(ctx context.Context, state *openFileState, text string, boundary model.InsightBoundary) (int, error) {
+	if state.text == text && equalBoundary(state.boundary, boundary) {
+		return state.version, nil
+	}
+	if l.versionCounter == math.MaxInt32 {
+		return 0, errors.New("LSP wire version exhausted")
 	}
 	version := l.versionCounter + 1
-	uri := state.uri
-
-	if err := l.client.NotifyDidChangeTextDocument(ctx, uri, version, []protocol.TextDocumentContentChangeEvent{
+	if err := l.client.NotifyDidChangeTextDocument(ctx, state.uri, version, []protocol.TextDocumentContentChangeEvent{
 		{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}},
-	}); err == nil {
-		state.text = text
-		state.resetVersion(version)
-		l.versionCounter = version
-		l.signalLocked()
+	}); err != nil {
+		return 0, fmt.Errorf("send didChange: %w", err)
 	}
+	state.text, state.boundary = text, cloneBoundary(boundary)
+	state.resetVersion(version)
+	l.versionCounter = version
+	l.signalLocked()
+	return version, nil
+}
+
+func (l *LSPIntegration) availableLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.client == nil {
+		return errors.New("LSP client is unavailable")
+	}
+	if l.pipe != nil {
+		select {
+		case <-l.pipe.Done():
+			return errors.New("LSP connection is closed")
+		default:
+		}
+	}
+	return nil
 }
 
 func (l *LSPIntegration) CloseFile(ctx context.Context, filePath string) {
@@ -326,6 +368,7 @@ func (l *LSPIntegration) CloseFile(ctx context.Context, filePath string) {
 		return
 	}
 	delete(l.openFiles, fp)
+	l.signalLocked()
 	uri := state.uri
 	client := l.client
 
@@ -793,29 +836,53 @@ func (l *LSPIntegration) uriToPath(uri protocol.DocumentURI) string {
 func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.DocumentURI, version *int32, diags []protocol.Diagnostic) {
 	filePath := l.uriToPath(uri)
 	l.mu.Lock()
-	if l.launch != launch {
+	if launch == nil || l.launch != launch || l.client == nil {
 		l.mu.Unlock()
 		return
 	}
+	client := l.client
 	state := l.openFiles[filePath]
-	if state == nil || (version != nil && int(*version) != state.version) {
+	if state == nil || (version != nil && int(*version) != state.version) || l.sequence == math.MaxUint64 {
 		l.mu.Unlock()
 		return
 	}
-	out := make([]LSPDiagnostic, 0, len(diags))
-	for _, d := range diags {
-		out = append(out, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity), Source: d.Source, Code: diagnosticCode(d.Code)})
+	publication := model.InsightDiagnosticPublication{
+		Boundary: cloneBoundary(state.boundary), WireVersion: state.version,
+		Sequence: l.sequence + 1,
 	}
-	state.publishedAt, state.diagnostics = time.Now(), out
+	if version != nil {
+		reported := int(*version)
+		publication.ReportedVersion = &reported
+	}
+	// Only one bounded transient publication per synchronized document is kept
+	// for protocol waiters. Product fact identity and validity live upstream.
+	bytes := 0
+	for _, d := range diags {
+		code := diagnosticCode(d.Code)
+		size := len(d.Message) + len(d.Source) + len(code)
+		if len(publication.Diagnostics) == maxTransportDiagnostics || size > maxTransportDiagnosticBytes-bytes {
+			publication.Limited = true
+			publication.Detail = "LSP transport publication exceeded 4096 diagnostics or 1 MiB of diagnostic text"
+			break
+		}
+		bytes += size
+		publication.Diagnostics = append(publication.Diagnostics, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity), Source: d.Source, Code: code})
+	}
+	l.sequence = publication.Sequence
+	state.publishedAt, state.publication = time.Now(), publication
 	l.signalLocked()
 	cb := l.onDiagnostics
+	// The callback gets its own mutable containers, not the waiter's storage.
+	publication = clonePublication(publication)
 	l.mu.Unlock()
 	if cb != nil {
 		l.mu.Lock()
-		current := l.launch == launch && l.openFiles[filePath] == state && (version == nil || state.version == int(*version))
+		current := l.launch == launch && l.client == client && l.openFiles[filePath] == state &&
+			state.version == publication.WireVersion && equalBoundary(state.boundary, publication.Boundary) &&
+			state.publication.Sequence == publication.Sequence
 		l.mu.Unlock()
 		if current {
-			cb(filePath, out)
+			cb(publication)
 		}
 	}
 }
@@ -836,7 +903,7 @@ func diagnosticCode(code any) string {
 
 func (s *openFileState) resetVersion(version int) {
 	s.version, s.syncedAt = version, time.Now()
-	s.publishedAt, s.diagnostics = time.Time{}, nil
+	s.publishedAt, s.publication = time.Time{}, model.InsightDiagnosticPublication{}
 }
 
 func (l *LSPIntegration) signalLocked() {
@@ -869,34 +936,41 @@ const (
 	maxDiagnosticsQuiet = time.Second
 )
 
-// AwaitDiagnostics waits until the server has published diagnostics for the
-// document's current version, reports no work in progress, and has stayed
-// quiet for as long as it took to answer. It returns the published
-// diagnostics and whether they settled before ctx ended; an unsettled result
-// may be partial and must be presented as such.
-func (l *LSPIntegration) AwaitDiagnostics(ctx context.Context, filePath string) ([]LSPDiagnostic, bool) {
+// AwaitDiagnostics returns the literal latest publication for the source pinned
+// at entry. Settled means observed quiescence only, not exact source attribution
+// (ReportedVersion can be nil) or complete project context.
+func (l *LSPIntegration) AwaitDiagnostics(ctx context.Context, filePath string) (model.InsightDiagnosticPublication, bool) {
 	fp := filepath.Clean(filePath)
+	l.mu.Lock()
+	state, client, launch := l.openFiles[fp], l.client, l.launch
+	version := stateVersion(state)
+	l.mu.Unlock()
 	for {
 		l.mu.Lock()
-		state := l.openFiles[fp]
-		if state == nil || l.client == nil {
+		if state == nil || client == nil || l.client != client || l.launch != launch ||
+			l.openFiles[fp] != state || state.version != version {
 			l.mu.Unlock()
-			return nil, false
+			return model.InsightDiagnosticPublication{}, false
 		}
 		published, synced, busy, changed := state.publishedAt, state.syncedAt, len(l.progress) > 0, l.changed
-		diagnostics := append([]LSPDiagnostic(nil), state.diagnostics...)
-		l.mu.Unlock()
+		publication := clonePublication(state.publication)
+		if ctx.Err() != nil {
+			l.mu.Unlock()
+			return publication, false
+		}
 		var timer *time.Timer
 		var fired <-chan time.Time
 		if !published.IsZero() && !busy {
 			quiet := min(max(published.Sub(synced), minDiagnosticsQuiet), maxDiagnosticsQuiet)
 			remaining := quiet - time.Since(published)
 			if remaining <= 0 {
-				return diagnostics, true
+				l.mu.Unlock()
+				return publication, true
 			}
 			timer = time.NewTimer(remaining)
 			fired = timer.C
 		}
+		l.mu.Unlock()
 		select {
 		case <-ctx.Done():
 		case <-changed:
@@ -904,9 +978,6 @@ func (l *LSPIntegration) AwaitDiagnostics(ctx context.Context, filePath string) 
 		}
 		if timer != nil {
 			timer.Stop()
-		}
-		if ctx.Err() != nil {
-			return diagnostics, false
 		}
 	}
 }

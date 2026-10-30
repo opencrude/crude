@@ -230,7 +230,7 @@ func TestSetDiagnostics_StoresAndCounts(t *testing.T) {
 		{Line: 2, Col: 0, EndCol: 1, Severity: DiagInfo, Message: "info1"},
 		{Line: 0, Col: 10, EndCol: 15, Severity: DiagHint, Message: "hint1"},
 	}
-	e.SetDiagnostics(diags)
+	setTestDiagnostics(e, diags)
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
 	assert.Equal(t, 1, warns)
@@ -239,7 +239,7 @@ func TestSetDiagnostics_StoresAndCounts(t *testing.T) {
 
 func TestSetDiagnostics_Empty(t *testing.T) {
 	e := editorWithTheme()
-	e.SetDiagnostics(nil)
+	setTestDiagnostics(e, nil)
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 0, errs)
 	assert.Equal(t, 0, warns)
@@ -252,7 +252,7 @@ func TestSetDiagnostics_MultipleSameLine(t *testing.T) {
 		{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "e1"},
 		{Line: 0, Col: 5, EndCol: 8, Severity: DiagError, Message: "e2"},
 	}
-	e.SetDiagnostics(diags)
+	setTestDiagnostics(e, diags)
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 2, errs)
 	assert.Equal(t, 0, warns)
@@ -261,8 +261,8 @@ func TestSetDiagnostics_MultipleSameLine(t *testing.T) {
 
 func TestSetDiagnostics_ReplacesPrevious(t *testing.T) {
 	e := editorWithTheme()
-	e.SetDiagnostics([]LSPDiagnostic{{Severity: DiagError, Message: "old"}})
-	e.SetDiagnostics([]LSPDiagnostic{{Severity: DiagWarning, Message: "new"}})
+	setTestDiagnostics(e, []LSPDiagnostic{{Severity: DiagError, Message: "old"}})
+	setTestDiagnostics(e, []LSPDiagnostic{{Severity: DiagWarning, Message: "new"}})
 	errs, warns, _ := e.DiagnosticCounts()
 	assert.Equal(t, 0, errs, "old errors should be replaced")
 	assert.Equal(t, 1, warns, "new warning should be counted")
@@ -270,12 +270,12 @@ func TestSetDiagnostics_ReplacesPrevious(t *testing.T) {
 
 func TestSetDiagnostics_ThreadSafety(t *testing.T) {
 	e := editorWithTheme()
+	setTestDiagnostics(e, nil)
+	facts := testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, EndCol: 0, Severity: DiagError, Message: "race"}})
 	done := make(chan bool)
 	go func() {
 		for i := 0; i < 100; i++ {
-			e.SetDiagnostics([]LSPDiagnostic{
-				{Line: 0, Col: 0, EndCol: 1, Severity: DiagError, Message: "race"},
-			})
+			e.SetDiagnostics(facts)
 		}
 		done <- true
 	}()
@@ -296,7 +296,7 @@ func TestLineDiagnostics_ByLine(t *testing.T) {
 		{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "e"},
 		{Line: 1, Col: 0, EndLine: 1, EndCol: 3, Severity: DiagWarning, Message: "w"},
 	}
-	e.SetDiagnostics(diags)
+	setTestDiagnostics(e, diags)
 	line0 := e.lineDiagnostics(0)
 	assert.Len(t, line0, 1)
 	assert.Equal(t, DiagError, line0[0].severity)
@@ -317,7 +317,7 @@ func TestLineDiagnostics_Span(t *testing.T) {
 	e := editorWithTheme()
 	_, err := e.buf.Insert(Position{}, []byte("abcdefgh"))
 	assert.NoError(t, err)
-	e.SetDiagnostics([]LSPDiagnostic{
+	setTestDiagnostics(e, []LSPDiagnostic{
 		{Line: 0, Col: 3, EndCol: 7, Severity: DiagError},
 	})
 	spans := e.lineDiagnostics(0)
@@ -331,7 +331,7 @@ func TestLineDiagnostics_TabConversion(t *testing.T) {
 	e := editorWithTheme()
 	_, err := e.buf.Insert(Position{}, []byte("\t\tfoo\nbar"))
 	assert.NoError(t, err)
-	e.SetDiagnostics([]LSPDiagnostic{
+	setTestDiagnostics(e, []LSPDiagnostic{
 		{Line: 0, Col: 2, EndCol: 5, Severity: DiagError, Message: "on-foo"},
 		{Line: 1, Col: 1, EndLine: 1, EndCol: 4, Severity: DiagWarning, Message: "on-bar"},
 	})
@@ -553,7 +553,7 @@ func TestEditorDiagnosticPipeline(t *testing.T) {
 		{Line: 1, Col: 3, EndCol: 8, Severity: DiagWarning, Message: "unused variable"},
 		{Line: 2, Col: 0, EndCol: 5, Severity: DiagInfo, Message: "info"},
 	}
-	e.SetDiagnostics(diags)
+	setTestDiagnostics(e, diags)
 
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
@@ -581,15 +581,15 @@ func TestEditorDiagnosticPipeline(t *testing.T) {
 func TestEditorDiagnosticPipeline_Replace(t *testing.T) {
 	e := editorWithTheme()
 
-	e.SetDiagnostics([]LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagError}})
+	setTestDiagnostics(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagError}})
 	errs, _, _ := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
 
-	e.SetDiagnostics(nil)
+	setTestDiagnostics(e, nil)
 	errs, _, _ = e.DiagnosticCounts()
 	assert.Equal(t, 0, errs)
 
-	e.SetDiagnostics([]LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagWarning}})
+	setTestDiagnostics(e, []LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagWarning}})
 	_, warns, _ := e.DiagnosticCounts()
 	assert.Equal(t, 1, warns)
 }

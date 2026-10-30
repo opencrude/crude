@@ -122,6 +122,12 @@ agent, run and artifact identities. A requested run returns its typed terminal
 outcome; report-only waits return the artifact. A report becoming available is
 never interpreted as execution success.
 
+Committed run transitions and agent availability/presence changes independently
+wake store subscribers after their transaction commits. A report observed before
+terminal settlement cannot be the only wake for a combined wait. These signals
+are coalesced observations, not fabricated Board events or delivery admissions;
+ordinary reads, rejected writes and timestamp-only heartbeats do not signal.
+
 Any communication addressed to the waiting agent ends an unmet wait as
 `directed_event`, including notes, replies, work requests/dispositions, reports,
 terminal outcomes and runtime notices. The sender need not be the waited agent.

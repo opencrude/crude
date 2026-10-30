@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"crude/types"
 )
 
 //  ─ Mode enum
@@ -56,14 +58,12 @@ const (
 // the EventBus so all mutations happen on the main goroutine and the event
 // flow is traceable.
 
-// LSPDiagnosticsMsg carries LSP diagnostics for a file. The LSP server's
-// diagnostic callback (running on the server's reader goroutine) sends this
-// through the EventBus. The handler in update.go applies the diagnostics to
-// the file tree and active editor on the main goroutine.
+// LSPDiagnosticsMsg projects the shared fact owner's qualified publication.
+// It never installs an unqualified transport callback against current text.
 type LSPDiagnosticsMsg struct {
-	Generation  uint64
-	FilePath    string
-	Diagnostics []LSPDiagnostic
+	Generation uint64
+	FilePath   string
+	Facts      types.InsightDiagnostics
 }
 
 // FileWatcherMsg carries a file system watcher event. The file tree's watcher
@@ -167,7 +167,7 @@ func (b *EventBus) appendLog(msg any) {
 func msgDetail(msg any) string {
 	switch m := msg.(type) {
 	case LSPDiagnosticsMsg:
-		return fmt.Sprintf("file=%s diags=%d", m.FilePath, len(m.Diagnostics))
+		return fmt.Sprintf("file=%s fact=%s state=%s diags=%d", m.FilePath, m.Facts.ID, m.Facts.State, len(m.Facts.Diagnostics))
 	case FileWatcherMsg:
 		return fmt.Sprintf("file=%s change=%d", m.FilePath, m.ChangeType)
 	case ProjectSearchCompletedMsg:

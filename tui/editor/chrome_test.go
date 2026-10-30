@@ -251,7 +251,7 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetDiagnostics([]LSPDiagnostic{{
+	setTestDiagnostics(ed, []LSPDiagnostic{{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
 	}})
 	ed.SetQuery("alpha")
@@ -593,7 +593,7 @@ func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetDiagnostics([]LSPDiagnostic{{
+	setTestDiagnostics(ed, []LSPDiagnostic{{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
 	}})
 	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{{NewLines: []string{"alpha\n"}}, {NewStart: 1, OldStart: 1, NewLines: []string{"beta\n"}, OldLines: []string{"before\n"}}}, nil, false)

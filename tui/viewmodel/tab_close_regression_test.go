@@ -63,12 +63,16 @@ func (noopLSPRuntime) NewClient(model.LSPServerSpec, string) workspace.LSPClient
 	return noopLSPClient{}
 }
 
-func (noopLSPClient) OnDiagnostics(func(string, []workspace.LSPDiagnostic)) {}
-func (noopLSPClient) Start(context.Context) error                           { return nil }
-func (noopLSPClient) Stop() error                                           { return nil }
-func (noopLSPClient) Done() <-chan struct{}                                 { return nil }
-func (noopLSPClient) OpenFile(context.Context, string, string, string)      {}
-func (noopLSPClient) UpdateFile(context.Context, string, string)            {}
+func (noopLSPClient) OnDiagnostics(func(model.InsightDiagnosticPublication)) {}
+func (noopLSPClient) Start(context.Context) error                            { return nil }
+func (noopLSPClient) Stop() error                                            { return nil }
+func (noopLSPClient) Done() <-chan struct{}                                  { return nil }
+func (noopLSPClient) OpenFile(context.Context, string, string, string, model.InsightBoundary) (int, error) {
+	return 1, nil
+}
+func (noopLSPClient) UpdateFile(context.Context, string, string, model.InsightBoundary) (int, error) {
+	return 1, nil
+}
 func (noopLSPClient) CloseFile(context.Context, string)                     {}
 func (noopLSPClient) NotifySave(context.Context, string, string, int, bool) {}
 func (noopLSPClient) NotifyWatchedFilesChanged(context.Context, string, int) {
@@ -252,6 +256,6 @@ func TestEditorLastTabCloseSwitchesToLauncher(t *testing.T) {
 	t.Log("editor last-tab close OK")
 }
 
-func (noopLSPClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
-	return nil, true
+func (noopLSPClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
+	return model.InsightDiagnosticPublication{}, true
 }

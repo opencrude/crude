@@ -9,18 +9,50 @@ import (
 )
 
 func BenchmarkProjectInsightsCached10kDiagnostics(b *testing.B) {
-	manager := NewLSPManager(nil)
-	diagnostics := make([]LSPDiagnostic, 100)
-	for index := range diagnostics {
-		diagnostics[index] = LSPDiagnostic{Line: index, Severity: 1 + index%4, Message: fmt.Sprintf("issue-%d", index)}
-	}
-	for file := range 100 {
-		manager.setFileDiagnostics(fmt.Sprintf("file-%d.go", file), diagnostics)
-	}
+	manager := diagnosticSummaryFixture(b)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		_ = manager.ProjectInsights()
+	}
+}
+
+func diagnosticSummaryFixture(b testing.TB) *LSPManager {
+	b.Helper()
+	manager := NewLSPManager(nil)
+	docs := NewDocumentService(b.TempDir(), nil, manager)
+	b.Cleanup(manager.Close)
+	b.Cleanup(docs.Close)
+	diagnostics := make([]LSPDiagnostic, 100)
+	for index := range diagnostics {
+		diagnostics[index] = LSPDiagnostic{Line: index, EndLine: index, Severity: 1 + index%4, Message: fmt.Sprintf("issue-%d", index)}
+	}
+	for file := range 100 {
+		path := fmt.Sprintf("file-%d.go", file)
+		boundary := types.InsightBoundary{
+			Source:   types.InsightSource{WorkspaceGeneration: docs.Insight.generation, DocumentID: path, Path: path, Lifetime: "fixture", Revision: 1, Kind: "canonical"},
+			Context:  types.InsightContext{ID: "fixture", Root: "project", Generation: 1, UnknownInputs: []string{"Incomplete build graph"}},
+			Producer: types.InsightProducer{InstanceID: "fixture", Provider: "fixture", ToolIdentity: "fixture"},
+		}
+		if err := docs.Insight.diagnostics.Observe(boundary); err != nil {
+			b.Fatal(err)
+		}
+		v := 7
+		if _, err := docs.Insight.diagnostics.Publish(types.InsightDiagnosticPublication{Boundary: boundary, Sequence: 1, WireVersion: 7, ReportedVersion: &v, Diagnostics: diagnostics}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	view := manager.ProjectInsights()
+	if view.Errors != 2500 || view.Warnings != 2500 || view.DiagnosticsObserved != 100 || view.DiagnosticsUnverified != 100 {
+		b.Fatalf("qualified dense fixture not observed: %+v", view)
+	}
+	return manager
+}
+
+func TestProjectInsightsUnchangedReadDoesNotExportDenseFacts(t *testing.T) {
+	manager := diagnosticSummaryFixture(t)
+	if allocations := testing.AllocsPerRun(20, func() { _ = manager.ProjectInsights() }); allocations != 0 {
+		t.Fatalf("unchanged status read allocated %.0f times", allocations)
 	}
 }
 

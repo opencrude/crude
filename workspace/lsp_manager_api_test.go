@@ -16,36 +16,37 @@ func TestLSPManager_IsConfigured_FreshManager(t *testing.T) {
 func TestLSPManager_AllDiagnostics_Empty(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	all := m.AllDiagnostics()
-	assert.NotNil(t, all)
 	assert.Empty(t, all)
 }
 
 func TestLSPManager_AllDiagnostics_ReturnsCopy(t *testing.T) {
-	m := NewLSPManager(testLogger{})
-	// Seed some diagnostics directly via the internal setter.
-	m.setFileDiagnostics("/tmp/foo.go", []model.LSPDiagnostic{
-		{Line: 1, Col: 2, Severity: model.DiagError, Message: "boom"},
-	})
+	m, client, snapshot := diagnosticFixture(t)
+	client.emit(client.publication(snapshot.Path, []model.LSPDiagnostic{
+		{Line: 1, Col: 2, EndLine: 1, EndCol: 3, Severity: model.DiagError, Message: "boom"},
+	}))
 	got := m.AllDiagnostics()
 	assert.Len(t, got, 1)
 
 	// Mutating the returned map must not affect internal state.
-	got["/tmp/other.go"] = []model.LSPDiagnostic{{Message: "injected"}}
-	assert.Empty(t, m.AllDiagnostics()["/tmp/other.go"])
+	batch := got[snapshot.Path]
+	batch.Diagnostics[0].Message = "injected"
+	batch.Boundary.Context.UnknownInputs[0] = "injected"
+	*batch.ReportedVersion = -1
+	delete(got, snapshot.Path)
+	actual := requireDiagnostic(t, m, snapshot.Path, "boom")
+	assert.NotEqual(t, "injected", actual.Boundary.Context.UnknownInputs[0])
 }
 
-func TestLSPManager_ClearDiagnostics(t *testing.T) {
-	m := NewLSPManager(testLogger{})
-	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
-		{Line: 0, Severity: model.DiagError, Message: "x"},
-	})
-	m.setFileDiagnostics("/tmp/b.go", []model.LSPDiagnostic{
-		{Line: 0, Severity: model.DiagError, Message: "y"},
-	})
-	assert.Len(t, m.AllDiagnostics(), 2)
-
-	m.ClearDiagnostics()
-	assert.Empty(t, m.AllDiagnostics())
+func TestLSPManager_InvalidateDiagnosticsRetainsEvidence(t *testing.T) {
+	m, client, snapshot := diagnosticFixture(t)
+	client.emit(client.publication(snapshot.Path, []model.LSPDiagnostic{{Severity: model.DiagError, Message: "x"}}))
+	before := requireDiagnostic(t, m, snapshot.Path, "x")
+	m.InvalidateFile(snapshot.Path)
+	after, ok := m.FileDiagnostics(snapshot.Path)
+	assert.True(t, ok)
+	assert.Equal(t, before.ID, after.ID)
+	assert.Equal(t, model.InsightStale, after.State)
+	assert.False(t, after.HasExactSource())
 }
 
 func TestLSPManager_Stop_ResetsState(t *testing.T) {
@@ -62,9 +63,4 @@ func TestLSPManager_Stop_ResetsState(t *testing.T) {
 	assert.Empty(t, m.activeError, "Stop should clear error")
 	assert.Equal(t, 0, m.inflight, "Stop should reset in-flight count")
 	assert.False(t, m.syncing, "Stop should clear syncing flag")
-}
-
-func TestLSPManager_FileLastSync_NoEntry(t *testing.T) {
-	m := NewLSPManager(testLogger{})
-	assert.Equal(t, int64(0), m.FileLastSync("/tmp/nonexistent.go"))
 }

@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/document"
+	"crude/types"
 )
 
 var ErrDocumentPending = errors.New("document command pending; retain edits and retry after acknowledgement")
@@ -151,6 +152,11 @@ type DocumentState struct {
 }
 
 func (e *Editor) detachDocument() {
+	e.diagMu.Lock()
+	e.diagnosticFacts = types.InsightDiagnostics{}
+	e.diagnosticProjectedID = ""
+	e.diagnostics, e.diagByLine = nil, nil
+	e.diagMu.Unlock()
 	if e.documentProjection != nil && e.buf != nil {
 		e.buf.mutationObserver = nil
 	}
@@ -213,9 +219,17 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 }
 
 func (e *Editor) installDocumentBaseline(s document.Snapshot) {
-	e.buffer.savepoint = snapshotBytes(s.Saved)
-	e.buffer.diskHash, e.buffer.diskExists = s.DiskHash, s.DiskExists
-	e.buffer.diskGeneration++
+	savepoint := snapshotBytes(s.Saved)
+	// The private Save receipt and ordered topic can describe the same baseline.
+	// Re-observing it is not another disk mutation: that would invalidate a
+	// workspace-switch preimage captured between the two deliveries.
+	if e.buffer.diskHash != s.DiskHash || e.buffer.diskExists != s.DiskExists || !e.buffer.savepoint.equal(savepoint) {
+		e.buffer.savepoint = savepoint
+		e.buffer.diskHash, e.buffer.diskExists = s.DiskHash, s.DiskExists
+		e.buffer.diskGeneration++
+	}
+	// A text-only canonical delta still needs dirty-state derivation even when
+	// no savepoint changed.
 	e.buffer.NoteEdit()
 }
 

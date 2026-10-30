@@ -9,9 +9,6 @@ import (
 // methods are explicit worker requests; detach never stops shared intelligence.
 const (
 	LSPSnapshotMethod            = "lsp.snapshot"
-	LSPClearDiagnostics          = "lsp.clear_diagnostics"
-	LSPOpenFile                  = "lsp.open_file"
-	LSPCloseFile                 = "lsp.close_file"
 	LSPNotifyWatchedFilesChanged = "lsp.notify_watched_files_changed"
 	LSPSetActiveFile             = "lsp.set_active_file"
 	LSPStartForWorkspace         = "lsp.start_for_workspace"
@@ -28,7 +25,6 @@ const (
 
 type LSPRequest struct {
 	Path               string                       `json:"path,omitempty"`
-	Text               string                       `json:"text,omitempty"`
 	Line               int                          `json:"line,omitempty"`
 	Col                int                          `json:"col,omitempty"`
 	IncludeDeclaration bool                         `json:"include_declaration,omitempty"`
@@ -49,17 +45,18 @@ type LSPResult struct {
 }
 
 type LSPSnapshot struct {
-	Version      uint64                               `json:"version"`
-	Available    bool                                 `json:"available"`
-	Diagnostics  map[string][]workspace.LSPDiagnostic `json:"diagnostics"`
-	Symbols      map[string][]workspace.LSPSymbol     `json:"symbols"`
-	Insights     workspace.ProjectInsights            `json:"insights"`
-	Health       []types.LSPServerHealth              `json:"health"`
-	Settings     types.LSPSettings                    `json:"settings"`
-	Connected    bool                                 `json:"connected"`
-	Ready        bool                                 `json:"ready"`
-	Status       workspace.LSPStatus                  `json:"status"`
-	Error        string                               `json:"error,omitempty"`
-	ShowInEditor bool                                 `json:"show_in_editor"`
-	ShowInTree   bool                                 `json:"show_in_tree"`
+	Generation   string                              `json:"generation"`
+	Version      uint64                              `json:"version"`
+	Available    bool                                `json:"available"`
+	Diagnostics  map[string]types.InsightDiagnostics `json:"diagnostics"`
+	Symbols      map[string][]workspace.LSPSymbol    `json:"symbols"`
+	Insights     workspace.ProjectInsights           `json:"insights"`
+	Health       []types.LSPServerHealth             `json:"health"`
+	Settings     types.LSPSettings                   `json:"settings"`
+	Connected    bool                                `json:"connected"`
+	Ready        bool                                `json:"ready"`
+	Status       workspace.LSPStatus                 `json:"status"`
+	Error        string                              `json:"error,omitempty"`
+	ShowInEditor bool                                `json:"show_in_editor"`
+	ShowInTree   bool                                `json:"show_in_tree"`
 }

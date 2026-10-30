@@ -123,7 +123,10 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 		m.applyDocumentTopic(msg)
 	}
 	if lsp := m.ws.LSPMgr(); lsp != nil {
-		ed.SetDiagnostics(lsp.FileDiagnostics(s.Path))
+		if facts, ok := lsp.FileDiagnostics(s.Path); ok {
+			ed.SetDiagnosticsVisible(lsp.ShowDiagnosticsInEditor())
+			ed.SetDiagnostics(facts)
+		}
 	}
 	return nil
 }

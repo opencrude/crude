@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/shellport"
@@ -24,10 +25,13 @@ type immediateTreeDiagRuntime struct {
 }
 
 type immediateTreeDiagClient struct {
-	filePath string
-	diags    []workspace.LSPDiagnostic
-	mu       sync.Mutex
-	publish  func(string, []workspace.LSPDiagnostic)
+	filePath    string
+	diags       []workspace.LSPDiagnostic
+	mu          sync.Mutex
+	publish     func(model.InsightDiagnosticPublication)
+	boundary    model.InsightBoundary
+	wireVersion int
+	sequence    uint64
 }
 
 func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI string) workspace.LSPClient {
@@ -38,28 +42,44 @@ func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI stri
 	return r.client
 }
 
-func (c *immediateTreeDiagClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnostic)) {
+func (c *immediateTreeDiagClient) OnDiagnostics(fn func(model.InsightDiagnosticPublication)) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.publish = fn
-	c.mu.Unlock()
-	fn(c.filePath, c.diags)
 }
 
 func (c *immediateTreeDiagClient) publishDiagnostics(diags []workspace.LSPDiagnostic) {
 	c.mu.Lock()
 	fn := c.publish
+	c.sequence++
+	version := c.wireVersion
+	publication := model.InsightDiagnosticPublication{Boundary: c.boundary, Sequence: c.sequence, WireVersion: version, ReportedVersion: &version, Diagnostics: append([]workspace.LSPDiagnostic(nil), diags...)}
 	c.mu.Unlock()
 	if fn != nil {
-		fn(c.filePath, diags)
+		fn(publication)
 	}
+}
+
+func (c *immediateTreeDiagClient) syncBoundary(boundary model.InsightBoundary) (int, error) {
+	c.mu.Lock()
+	c.boundary = boundary
+	c.wireVersion++
+	version := c.wireVersion
+	diags := append([]workspace.LSPDiagnostic(nil), c.diags...)
+	c.mu.Unlock()
+	c.publishDiagnostics(diags)
+	return version, nil
 }
 
 func (c *immediateTreeDiagClient) Start(context.Context) error { return nil }
 func (c *immediateTreeDiagClient) Stop() error                 { return nil }
 func (c *immediateTreeDiagClient) Done() <-chan struct{}       { return nil }
-func (c *immediateTreeDiagClient) OpenFile(context.Context, string, string, string) {
+func (c *immediateTreeDiagClient) OpenFile(_ context.Context, _, _, _ string, boundary model.InsightBoundary) (int, error) {
+	return c.syncBoundary(boundary)
 }
-func (c *immediateTreeDiagClient) UpdateFile(context.Context, string, string)            {}
+func (c *immediateTreeDiagClient) UpdateFile(_ context.Context, _, _ string, boundary model.InsightBoundary) (int, error) {
+	return c.syncBoundary(boundary)
+}
 func (c *immediateTreeDiagClient) CloseFile(context.Context, string)                     {}
 func (c *immediateTreeDiagClient) NotifySave(context.Context, string, string, int, bool) {}
 func (c *immediateTreeDiagClient) NotifyWatchedFilesChanged(context.Context, string, int) {
@@ -84,7 +104,7 @@ func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, in
 	return nil
 }
 
-func TestInitWiresDiagnosticsBeforeWorkspaceLSPStart(t *testing.T) {
+func TestLocalEditorCannotInventCanonicalDiagnosticAuthority(t *testing.T) {
 	dir, mainGo := createDiagnosticsProject(t)
 	app := newDiagnosticsTreeApp(t, dir)
 	runtime := &immediateTreeDiagRuntime{
@@ -101,25 +121,38 @@ func TestInitWiresDiagnosticsBeforeWorkspaceLSPStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	awaitTreeLSP(t, app, mainGo)
-
-	assertLSPStartedForRoot(t, runtime, dir)
+	if len(runtime.rootURIs) != 0 {
+		t.Fatal("standalone buffer fabricated canonical LSP authority")
+	}
 	node := app.Tree.Model.NodeByPath(mainGo)
 	if node == nil {
 		t.Fatalf("node not found at %q", mainGo)
 	}
-	if node.DiagErrors != 1 || node.DiagnosticCount != 1 {
+	if node.DiagErrors != 0 || node.DiagnosticCount != 0 {
 		t.Fatalf("tree diagnostics not replayed: total=%d errors=%d", node.DiagnosticCount, node.DiagErrors)
 	}
 }
 
-func TestSwitchProjectRewiresDiagnosticsForNewLSPManager(t *testing.T) {
+func TestSwitchProjectLocalEditorCannotStartRawDiagnosticSource(t *testing.T) {
 	oldDir, _ := createDiagnosticsProject(t)
 	newDir, mainGo := createDiagnosticsProject(t)
 	app := newDiagnosticsTreeApp(t, oldDir)
+	detached := make(chan tea.Msg, 16)
+	restore := installDetachedMessageSinkForTest(app, func(msg tea.Msg) { detached <- msg })
+	defer restore()
 
 	if err := app.SwitchProject(newDir); err != nil {
 		t.Fatal(err)
+	}
+	deadline := time.After(3 * time.Second)
+	for app.Tree.Model.NodeByPath(mainGo) == nil {
+		select {
+		case msg := <-detached:
+			_, cmd := app.Update(msg)
+			runAppCommand(t, app, cmd)
+		case <-deadline:
+			t.Fatal("replacement workspace tree never loaded")
+		}
 	}
 	runtime := &immediateTreeDiagRuntime{
 		filePath: mainGo,
@@ -132,14 +165,14 @@ func TestSwitchProjectRewiresDiagnosticsForNewLSPManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	awaitTreeLSP(t, app, mainGo)
-
-	assertLSPStartedForRoot(t, runtime, newDir)
+	if len(runtime.rootURIs) != 0 {
+		t.Fatal("workspace switch fabricated canonical LSP authority")
+	}
 	node := app.Tree.Model.NodeByPath(mainGo)
 	if node == nil {
 		t.Fatalf("node not found at %q", mainGo)
 	}
-	if node.DiagWarnings != 1 || node.DiagnosticCount != 1 {
+	if node.DiagWarnings != 0 || node.DiagnosticCount != 0 {
 		t.Fatalf("new workspace tree diagnostics not updated: total=%d warnings=%d", node.DiagnosticCount, node.DiagWarnings)
 	}
 }
@@ -190,18 +223,6 @@ func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, di
 	}
 }
 
-func awaitTreeLSP(t *testing.T, app *App, path string) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for !wsOf(app).LSPMgr.HasFileDiagnostics(path) {
-		if time.Now().After(deadline) {
-			t.Fatal("diagnostics never arrived")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	app.drainLSPDiagnostics()
-}
-
-func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
-	return nil, true
+func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
+	return model.InsightDiagnosticPublication{}, true
 }

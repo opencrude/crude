@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,30 +35,35 @@ func TestProbeAgainstRealGopls(t *testing.T) {
 	main := write("main.go", "package probe\n\nvar x int = Answer() + missing\n")
 	m := NewLSPManager(nil)
 	t.Cleanup(m.Close)
+	probeSources(t, m, root)
 	m.SetWorkspaceRoot(root)
 	settings := editorDisabledSettings()
 	m.SetSettings(settings)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	diags, settled, _, err := m.ProbeDiagnostics(ctx, main)
+	diags, settled, view, err := m.ProbeDiagnostics(ctx, main)
 	if err != nil || !settled {
 		t.Fatalf("diagnostics err=%v settled=%v", err, settled)
 	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "missing") || diags[0].Line != 2 {
+	if len(diags.Diagnostics) != 1 || !strings.Contains(diags.Diagnostics[0].Message, "missing") || diags.Diagnostics[0].Line != 2 {
 		t.Fatalf("diagnostics = %+v", diags)
+	}
+	if diags.ID == "" || diags.Boundary.Source != view.Source || view.SourceText != "package probe\n\nvar x int = Answer() + missing\n" ||
+		diags.State != types.InsightProvisional || len(diags.Boundary.Context.UnknownInputs) == 0 {
+		t.Fatalf("real server quiescence lost source or implied complete context: answer=%+v view=%+v", diags, view)
 	}
 
 	write("main.go", "package probe\n\nvar x int = Answer() + 1\n")
-	if diags, settled, _, err = m.ProbeDiagnostics(ctx, main); err != nil || !settled || len(diags) != 0 {
+	if diags, settled, _, err = m.ProbeDiagnostics(ctx, main); err != nil || !settled || len(diags.Diagnostics) != 0 {
 		t.Fatalf("after the fix: %+v settled=%v err=%v", diags, settled, err)
 	}
 
-	locs, _, err := m.ProbeDefinition(ctx, main, 2, strings.Index("var x int = Answer() + 1", "Answer"))
+	locs, _, err := m.ProbeDefinition(ctx, main, types.LSPSourcePosition{Line: 3, Symbol: "Answer"})
 	if err != nil || len(locs) != 1 || filepath.Clean(locs[0].Path) != lib || locs[0].Line != 2 {
 		t.Fatalf("definition = %+v err=%v", locs, err)
 	}
-	refs, _, err := m.ProbeReferences(ctx, lib, 2, strings.Index("func Answer() int { return 42 }", "Answer"))
+	refs, _, err := m.ProbeReferences(ctx, lib, types.LSPSourcePosition{Line: 3, Symbol: "Answer"})
 	if err != nil || len(refs) != 2 {
 		t.Fatalf("references = %+v err=%v", refs, err)
 	}

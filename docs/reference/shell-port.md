@@ -237,22 +237,21 @@ ordinary connected editor uses `LiveDocuments`, not these snapshot-save calls.
 
 ### `LSPService`
 
-LSPService is the workspace language-server manager.
+LSPService projects producer health and shared qualified diagnostic batches.
+Only canonical live documents acquire/release source views and publish text;
+the shell has no raw open/close/update/save or diagnostic-clear RPC path.
+Generation/version cursors avoid unchanged-frame full snapshot copies.
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
 | `AllDiagnostics` | 3 | reads | yes | LSP state topic replica |
-| `ClearDiagnostics` | 1 | mutates | yes | lsp.clear_diagnostics |
-| `CloseFile` | 2 | mutates | yes | lsp.close_file |
 | `DocumentSymbols` | 1 | reads | yes | LSP state topic replica |
 | `DiagnosticSnapshot` | 1 | reads | yes: non-destructive per-client cursor | LSP state topic replica + per-client consumer |
+| `DiagnosticCursor` | current | reads | yes: generation/version only | LSP state topic replica |
 | `FileDiagnostics` | 2 | reads | yes | LSP state topic replica |
 | `FindReferences` | 1 | reads | yes | lsp.references |
-| `NotifyFileSave` | 2 | mutates | yes | lsp.notify_file_save |
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
-| `OpenFile` | 2 | mutates | yes | lsp.open_file |
 | `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
-| `QueueFileUpdate` | 1 | mutates | yes | lsp.queue_file_update |
 | `RequestCompletions` | 1 | reads | yes | lsp.completions |
 | `RequestDefinition` | 1 | reads | yes | lsp.definition |
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |

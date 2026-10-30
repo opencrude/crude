@@ -5,9 +5,14 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/types"
+	"strings"
 )
 
 func editorInsightSummary(ed *editor.Editor) string {
+	return strings.TrimPrefix(editorSyntaxSummary(ed)+" · "+ed.DiagnosticStatus(), " · ")
+}
+
+func editorSyntaxSummary(ed *editor.Editor) string {
 	state, _ := ed.InsightStatus()
 	switch state {
 	case types.InsightCurrent:

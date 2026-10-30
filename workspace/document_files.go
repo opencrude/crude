@@ -280,8 +280,9 @@ func (s *DocumentService) recoverRelocationsLocked() error {
 				}
 				if s.lsp != nil && d.lspOpen {
 					s.lsp.CloseFile(context.Background(), old)
-					s.lsp.OpenFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
+					s.lsp.OpenFile(context.Background(), s.analysisIdentityLocked(d), string(d.snapshot.Text))
 				}
+				s.observeAnalysisLocked(d)
 			}
 		}
 		if !valid {

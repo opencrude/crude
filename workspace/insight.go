@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"crude/document"
+	"crude/insight/facts"
 	"crude/syntax"
 	"crude/types"
 )
@@ -31,23 +32,31 @@ type insightEntry struct {
 // mutation only offers identities; the worker reads immutable text off-thread.
 // No parser, query, I/O or full-text copy runs in the mutation path.
 type InsightService struct {
-	documents  *DocumentService
-	mu         sync.Mutex
-	entries    map[string]*insightEntry
-	queue      []*insightEntry
-	version    uint64
-	generation string
-	bytes      int
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wake       chan struct{}
-	done       chan struct{}
+	documents                *DocumentService
+	mu                       sync.Mutex
+	entries                  map[string]*insightEntry
+	queue                    []*insightEntry
+	version                  uint64
+	generation               string
+	bytes                    int
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	wake                     chan struct{}
+	done                     chan struct{}
+	diagnostics              *facts.Store
+	diagnosticDetail         string
+	diagnosticSummaryVersion uint64
+	diagnosticSummaryEnabled bool
+	diagnosticSummaryFloor   string
+	diagnosticSummaryCached  bool
+	diagnosticSummary        types.ProjectInsights
 }
 
 func newInsightService(documents *DocumentService) *InsightService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &InsightService{documents: documents, entries: make(map[string]*insightEntry), generation: rand.Text(),
 		ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	s.diagnostics, _ = facts.New(4096, 32768)
 	go s.run()
 	return s
 }

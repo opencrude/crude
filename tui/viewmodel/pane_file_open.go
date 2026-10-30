@@ -14,6 +14,7 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/window"
+	"crude/types"
 )
 
 type paneFilePrepared struct {
@@ -35,6 +36,7 @@ type paneFilesOpenedMsg struct {
 	files            []paneFilePrepared
 	landing          *fileio.ProjectSearchMatch
 	refs             *liveDocumentRefs
+	diagnosticFacts  *types.InsightDiagnostics
 	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
 	// window opens the landed tab in its own window (Open in window).
 	window bool
@@ -187,7 +189,14 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	m.handleTabSwitch()
 	if p := msg.position; p != nil && m.EditorState.Editor != nil {
 		ed := m.EditorState.Editor
-		if err := ed.SetLSPDiagnosticPosition(*p); err != nil {
+		valid := true
+		if f := msg.diagnosticFacts; f != nil {
+			current, ok := m.ws.LSPMgr().FileDiagnostics(ed.FilePath())
+			valid = ok && current.ID == f.ID && ed.MatchesDiagnosticSource(current) && ed.MatchesDiagnosticSource(*f)
+		}
+		if !valid {
+			m.Feedback.NotifyInfo("Diagnostic source changed; location not applied")
+		} else if err := ed.SetLSPDiagnosticPosition(*p); err != nil {
 			m.Feedback.NotifyError(err.Error())
 		}
 		ed.ScrollToCursor()

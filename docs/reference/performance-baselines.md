@@ -7,6 +7,23 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Qualified diagnostic summaries (2026-10-30)
+
+Linux amd64, i7-10750H, Go 1.25.9, GOMAXPROCS=2, three 200 ms runs:
+`BenchmarkProjectInsightsCached10kDiagnostics` measured 119.2-125.4 ns/op,
+0 B/op and 0 allocations/op with 10,000 diagnostics across 100 observed units.
+The fixture now seeds qualified facts with explicit unknown build context and
+independently checks the observed counts before timing. The existing zero-byte,
+zero-allocation ceiling is unchanged.
+
+`TestProjectInsightsUnchangedReadDoesNotExportDenseFacts` guards repeated status
+reads; a negative overlay forcing full diagnostic export on every read fails
+that regression. Summaries cache by fact generation and severity/display policy,
+not frame, focus or tab. This measures unchanged derived reads only, not source
+mutation, first summary derivation, core publication, native server latency or
+keystroke-to-screen presentation. The shared fact store's accounted 16 MiB bound
+is not a native LSP process RSS limit.
+
 ## Native syntax foundation (2026-10-30)
 
 Exploratory Linux amd64, i7-10750H, Go 1.25.9, GCC 13.3, GOMAXPROCS=2,

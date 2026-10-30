@@ -10,8 +10,35 @@ import (
 	"testing"
 	"time"
 
+	"crude/document"
 	model "crude/types"
 )
+
+func probeSources(t *testing.T, manager *LSPManager, root string) *DocumentService {
+	t.Helper()
+	sources := NewDocumentService(root, nil, manager)
+	t.Cleanup(sources.Close)
+	return sources
+}
+
+func probeManager(t *testing.T) (*LSPManager, *lifecycleRuntime, string) {
+	t.Helper()
+	manager, runtime, root := lifecycleManager(t)
+	probeSources(t, manager, root)
+	return manager, runtime, root
+}
+
+func probeEditor(t *testing.T, manager *LSPManager, path, text string) {
+	t.Helper()
+	owner := document.Owner{ClientID: "probe-editor", Epoch: 1}
+	snapshot, err := manager.sources.Open(owner, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(snapshot.Text) != text {
+		documentEdit(t, manager.sources, owner, snapshot.ID, "replace-"+text, snapshot.Revision, 0, len(snapshot.Text), text)
+	}
+}
 
 func editorDisabledSettings() model.LSPSettings {
 	settings := model.DefaultLSPSettings()
@@ -22,14 +49,14 @@ func editorDisabledSettings() model.LSPSettings {
 // An agent probe works while the editor's own LSP is off, starts only the one
 // server it needs, and closes the document it borrowed afterwards.
 func TestProbeServesAgentsWhileEditorLSPIsOff(t *testing.T) {
-	m, r, root := lifecycleManager(t)
+	m, r, root := probeManager(t)
 	m.SetSettings(editorDisabledSettings())
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\nvar x = y\n")
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	diags, settled, view, err := m.ProbeDiagnostics(ctx, path)
-	if err != nil || !settled || len(diags) != 1 || view.BufferDiffers {
+	if err != nil || !settled || len(diags.Diagnostics) != 1 || view.BufferDiffers {
 		t.Fatalf("ProbeDiagnostics = %+v settled=%v view=%+v err=%v", diags, settled, view, err)
 	}
 	clients := r.snapshot()
@@ -51,11 +78,11 @@ func TestProbeServesAgentsWhileEditorLSPIsOff(t *testing.T) {
 // The editor's unsaved buffer is what the agent is told about, and releasing
 // the probe never closes the editor's own view.
 func TestProbeUsesEditorBufferAndKeepsEditorView(t *testing.T) {
-	m, r, root := lifecycleManager(t)
+	m, r, root := probeManager(t)
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\n")
-	m.OpenFile(t.Context(), path, "package main\nfunc unsaved() {}\n")
-	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
+	probeEditor(t, m, path, "package main\nfunc unsaved() {}\n")
+	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) > 0 })
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	_, _, view, err := m.ProbeDiagnostics(ctx, path)
@@ -71,11 +98,11 @@ func TestProbeUsesEditorBufferAndKeepsEditorView(t *testing.T) {
 // With the editor's LSP off, a file the editor has open is opened for the
 // probe and closed again, so the server can go idle.
 func TestProbeClosesEditorHeldViewWhenEditorLSPIsOff(t *testing.T) {
-	m, r, root := lifecycleManager(t)
+	m, r, root := probeManager(t)
 	m.SetSettings(editorDisabledSettings())
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\n")
-	m.OpenFile(t.Context(), path, "package main\n")
+	probeEditor(t, m, path, "package main\n")
 	time.Sleep(20 * time.Millisecond)
 	if len(r.snapshot()) != 0 {
 		t.Fatal("editor document started a server while editor LSP was off")
@@ -96,7 +123,7 @@ func TestProbeClosesEditorHeldViewWhenEditorLSPIsOff(t *testing.T) {
 }
 
 func TestProbeRespectsHumanStopAndFeatureGates(t *testing.T) {
-	m, r, root := lifecycleManager(t)
+	m, r, root := probeManager(t)
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\n")
 	m.Stop()
@@ -110,7 +137,7 @@ func TestProbeRespectsHumanStopAndFeatureGates(t *testing.T) {
 	settings := model.DefaultLSPSettings()
 	settings.References = false
 	m.SetSettings(settings)
-	if _, _, err := m.ProbeReferences(t.Context(), path, 0, 0); err == nil || !strings.Contains(err.Error(), "Find references is turned off") {
+	if _, _, err := m.ProbeReferences(t.Context(), path, model.LSPSourcePosition{}); err == nil || !strings.Contains(err.Error(), "Find references is turned off") {
 		t.Fatalf("gated references = %v", err)
 	}
 	if _, _, _, err := m.ProbeDiagnostics(t.Context(), filepath.Join(root, "notes.unknownext")); err == nil || !strings.Contains(err.Error(), "no enabled language server") {
@@ -120,7 +147,7 @@ func TestProbeRespectsHumanStopAndFeatureGates(t *testing.T) {
 
 // A failed start is reported at once, not after the caller's deadline.
 func TestProbeReportsStartFailureImmediately(t *testing.T) {
-	m, _, root := lifecycleManager(t)
+	m, _, root := probeManager(t)
 	m.SetRuntime(failingRuntime{})
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\n")
@@ -147,32 +174,41 @@ func (*failingClient) Start(context.Context) error {
 
 type probeSyncClient struct {
 	reapableClient
-	mu      sync.Mutex
-	text    string
-	opened  bool
-	entered chan string
-	release chan struct{}
-	closed  chan struct{}
+	mu          sync.Mutex
+	text        string
+	opened      bool
+	boundary    model.InsightBoundary
+	version     int
+	publication model.InsightDiagnosticPublication
+	entered     chan string
+	release     chan struct{}
+	closed      chan struct{}
 }
 
-func (c *probeSyncClient) send(ctx context.Context, operation, text string) {
+func (c *probeSyncClient) send(ctx context.Context, operation, text string, boundary model.InsightBoundary) (int, error) {
 	c.entered <- operation + ":" + text
 	select {
 	case <-c.release:
 	case <-ctx.Done():
-		return
+		return 0, ctx.Err()
 	}
 	c.mu.Lock()
 	c.text, c.opened = text, true
+	c.boundary = boundary
+	c.version++
+	v := c.version
+	c.publication = model.InsightDiagnosticPublication{Boundary: boundary, Sequence: uint64(v), WireVersion: v, ReportedVersion: &v,
+		Diagnostics: []LSPDiagnostic{{Message: text, Severity: model.DiagError}}}
 	c.mu.Unlock()
+	return v, nil
 }
 
-func (c *probeSyncClient) OpenFile(ctx context.Context, _, _, text string) {
-	c.send(ctx, "open", text)
+func (c *probeSyncClient) OpenFile(ctx context.Context, _, _, text string, boundary model.InsightBoundary) (int, error) {
+	return c.send(ctx, "open", text, boundary)
 }
 
-func (c *probeSyncClient) UpdateFile(ctx context.Context, _, text string) {
-	c.send(ctx, "change", text)
+func (c *probeSyncClient) UpdateFile(ctx context.Context, _, text string, boundary model.InsightBoundary) (int, error) {
+	return c.send(ctx, "change", text, boundary)
 }
 
 func (c *probeSyncClient) CloseFile(context.Context, string) {
@@ -184,13 +220,13 @@ func (c *probeSyncClient) CloseFile(context.Context, string) {
 	}
 }
 
-func (c *probeSyncClient) AwaitDiagnostics(context.Context, string) ([]LSPDiagnostic, bool) {
+func (c *probeSyncClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.opened {
-		return nil, false
+		return model.InsightDiagnosticPublication{}, false
 	}
-	return []LSPDiagnostic{{Message: c.text}}, true
+	return c.publication, true
 }
 
 type probeSyncRuntime struct{ client *probeSyncClient }
@@ -206,6 +242,7 @@ func TestProbeWaitsForDocumentSynchronization(t *testing.T) {
 	c := &probeSyncClient{entered: make(chan string, 8), release: make(chan struct{})}
 	m := NewLSPManager(nil, probeSyncRuntime{c})
 	t.Cleanup(m.Close)
+	probeSources(t, m, root)
 	t.Cleanup(func() { close(c.release) })
 	m.SetWorkspaceRoot(root)
 	path := filepath.Join(root, "main.go")
@@ -213,7 +250,7 @@ func TestProbeWaitsForDocumentSynchronization(t *testing.T) {
 	latest := "package main\nvar latest = missing\n"
 	newest := "package main\nvar newest = missing\n"
 	createFile(t, path, initial)
-	m.OpenFile(t.Context(), path, initial)
+	probeEditor(t, m, path, initial)
 	awaitSend := func(want string) {
 		t.Helper()
 		select {
@@ -230,17 +267,17 @@ func TestProbeWaitsForDocumentSynchronization(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 		defer cancel()
 		diags, settled, _, err := m.ProbeDiagnostics(ctx, path)
-		if !errors.Is(err, context.DeadlineExceeded) || settled || len(diags) != 0 {
+		if !errors.Is(err, context.DeadlineExceeded) || settled || len(diags.Diagnostics) != 0 {
 			t.Fatalf("probe escaped pending transport send: diagnostics=%+v settled=%v err=%v", diags, settled, err)
 		}
 	}
 	awaitSend("open:" + initial)
 	assertProbeWaits()
-	m.OpenFile(t.Context(), path, latest)
+	probeEditor(t, m, path, latest)
 	c.release <- struct{}{}
 	awaitSend("change:" + latest)
 	assertProbeWaits()
-	m.OpenFile(t.Context(), path, newest)
+	probeEditor(t, m, path, newest)
 	c.release <- struct{}{}
 	awaitSend("change:" + newest)
 	assertProbeWaits()
@@ -248,7 +285,7 @@ func TestProbeWaitsForDocumentSynchronization(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	diags, settled, view, err := m.ProbeDiagnostics(ctx, path)
-	if err != nil || !settled || len(diags) != 1 || diags[0].Message != newest || !view.BufferDiffers {
+	if err != nil || !settled || len(diags.Diagnostics) != 1 || diags.Diagnostics[0].Message != newest || !view.BufferDiffers {
 		t.Fatalf("probe after transport sync: diagnostics=%+v settled=%v view=%+v err=%v", diags, settled, view, err)
 	}
 }
@@ -261,6 +298,7 @@ func TestProbeReleasesDocumentWhenCanceledDuringOpen(t *testing.T) {
 	c := &probeSyncClient{entered: make(chan string, 1), release: make(chan struct{}), closed: make(chan struct{}, 1)}
 	m := NewLSPManager(nil, probeSyncRuntime{c})
 	t.Cleanup(m.Close)
+	probeSources(t, m, root)
 	t.Cleanup(func() { close(c.release) })
 	m.SetWorkspaceRoot(root)
 	m.SetSettings(editorDisabledSettings())
@@ -309,12 +347,13 @@ func TestProbeWaitsForReplacementClientDocument(t *testing.T) {
 	next := &probeSyncClient{entered: make(chan string, 1), release: make(chan struct{})}
 	m := NewLSPManager(nil, probeSyncRuntime{old})
 	t.Cleanup(m.Close)
+	probeSources(t, m, root)
 	t.Cleanup(func() { close(old.release); close(next.release) })
 	m.SetWorkspaceRoot(root)
 	path := filepath.Join(root, "main.go")
 	text := "package main\nvar x = missing\n"
 	createFile(t, path, text)
-	m.OpenFile(t.Context(), path, text)
+	probeEditor(t, m, path, text)
 	select {
 	case <-old.entered:
 	case <-time.After(3 * time.Second):
@@ -337,7 +376,7 @@ func TestProbeWaitsForReplacementClientDocument(t *testing.T) {
 	ctx, cancel = context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	diags, settled, _, err := m.ProbeDiagnostics(ctx, path)
-	if err != nil || !settled || len(diags) != 1 || diags[0].Message != text {
+	if err != nil || !settled || len(diags.Diagnostics) != 1 || diags.Diagnostics[0].Message != text {
 		t.Fatalf("replacement probe: diagnostics=%+v settled=%v err=%v", diags, settled, err)
 	}
 }

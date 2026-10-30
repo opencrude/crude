@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"crude/types"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -108,6 +111,11 @@ func TestProtocolServerHelper(t *testing.T) {
 		case "exit":
 			os.Exit(0)
 		case "textDocument/didOpen":
+			if strings.HasPrefix(mode, "publication-") {
+				doc := msg["params"].(map[string]any)["textDocument"].(map[string]any)
+				writeProtocolPublications(write, mode, doc)
+				continue
+			}
 			if mode != "progress" {
 				continue
 			}
@@ -122,10 +130,32 @@ func TestProtocolServerHelper(t *testing.T) {
 			write(map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{"token": 7, "value": map[string]any{"kind": "end"}}})
 		case "textDocument/didChange":
 			doc := msg["params"].(map[string]any)["textDocument"].(map[string]any)
+			if strings.HasPrefix(mode, "publication-") {
+				writeProtocolPublications(write, mode, doc)
+				continue
+			}
 			for _, version := range []float64{doc["version"].(float64) - 1, doc["version"].(float64)} {
 				write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": map[string]any{"uri": doc["uri"], "version": version, "diagnostics": []any{map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 3}, "end": map[string]any{"line": 0, "character": 4}}, "message": "wire diagnostic"}}}})
 			}
 		}
+	}
+}
+
+func writeProtocolPublications(write func(any), mode string, doc map[string]any) {
+	// A known obsolete explicit version must never be mistaken for the new
+	// source, including equal-text revisions and close/reopen.
+	for i := 0; i < 2; i++ {
+		p := map[string]any{"uri": doc["uri"], "diagnostics": []any{
+			map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 3},
+				"end": map[string]any{"line": 0, "character": 4}}, "message": "current input", "source": "test", "code": 42},
+		}}
+		if i == 0 {
+			p["version"] = doc["version"].(float64) - 1
+			p["diagnostics"].([]any)[0].(map[string]any)["message"] = "obsolete input"
+		} else if mode == "publication-versioned" {
+			p["version"] = doc["version"]
+		}
+		write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": p})
 	}
 }
 
@@ -157,14 +187,14 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 	}
 	path := filepath.Join(root, "test.py")
 	diagnostics := make(chan []LSPDiagnostic, 2)
-	l.OnDiagnostics(func(file string, ds []LSPDiagnostic) {
-		if file == path {
-			diagnostics <- ds
+	l.OnDiagnostics(func(p types.InsightDiagnosticPublication) {
+		if p.Boundary.Source.Path == path {
+			diagnostics <- p.Diagnostics
 		}
 	})
-	l.OpenFile(ctx, path, "python", "a😀b")
-	l.OpenFile(ctx, path, "python", "a😀b")
-	l.OpenFile(ctx, path, "python", "a😀bc")
+	openTestFile(t, l, ctx, path, "python", "a😀b")
+	openTestFile(t, l, ctx, path, "python", "a😀b")
+	openTestFile(t, l, ctx, path, "python", "a😀bc")
 	definitions := l.RequestDefinition(ctx, path, 0, 3)
 	if len(definitions) != 1 || definitions[0].Path != path || definitions[0].Col != 3 {
 		t.Fatalf("LocationLink result: %v", definitions)
@@ -307,11 +337,12 @@ func TestLSPProtocolCancelledStartDoesNotInstall(t *testing.T) {
 func TestLSPDiagnosticsVersionsAndUTF16Columns(t *testing.T) {
 	l := NewLSPIntegration("unused", nil, "")
 	launch := &lspLaunch{}
-	l.launch = launch
+	l.launch, l.client = launch, &lsp.Client{}
 	path := filepath.Join(t.TempDir(), "test.go")
-	l.openFiles[path] = &openFileState{text: "a😀bc", version: 3}
+	l.openFiles[path] = &openFileState{text: "a😀bc", version: 3, boundary: testBoundary(path)}
 	called := 0
-	l.OnDiagnostics(func(_ string, ds []LSPDiagnostic) {
+	l.OnDiagnostics(func(p types.InsightDiagnosticPublication) {
+		ds := p.Diagnostics
 		called++
 		if ds[0].Col != 3 || ds[0].EndCol != 4 {
 			t.Fatalf("diagnostic columns = %v", ds)
@@ -326,7 +357,9 @@ func TestLSPDiagnosticsVersionsAndUTF16Columns(t *testing.T) {
 	l.updateDiagnostics(&lspLaunch{}, protocol.URIFromPath(path), &v, ds)
 	delete(l.openFiles, path)
 	l.updateDiagnostics(launch, protocol.URIFromPath(path), nil, ds)
-	l.openFiles[path] = &openFileState{text: "a😀bc", version: 4}
+	reopened := testBoundary(path)
+	reopened.Source.Lifetime = "open-2"
+	l.openFiles[path] = &openFileState{text: "a😀bc", version: 4, boundary: reopened}
 	l.updateDiagnostics(launch, protocol.URIFromPath(path), nil, ds)
 	l.updateDiagnostics(launch, protocol.URIFromPath(path), &v, ds)
 	if called != 2 {
@@ -342,17 +375,36 @@ func TestLSPVersionsAdvanceOnlyOnAdmittedWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "test.go")
-	l.OpenFile(ctx, path, "go", "hello")
-	l.OpenFile(ctx, path, "go", "hello")
+	openTestFile(t, l, ctx, path, "go", "hello")
+	openTestFile(t, l, ctx, path, "go", "hello")
 	if l.versionCounter != 1 {
 		t.Fatalf("duplicate open advanced version: %d", l.versionCounter)
 	}
 	if err := l.client.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	l.UpdateFile(ctx, path, "changed")
+	if version, err := l.UpdateFile(ctx, path, "changed", testBoundary(path)); err == nil || version != 0 {
+		t.Fatalf("failed write = %d, %v", version, err)
+	}
+	// Exercise Notify's own failure too, as when the connection dies between
+	// the availability check and the send. This is still the real dead client.
+	l.mu.Lock()
+	l.pipe = nil
+	l.mu.Unlock()
+	if version, err := l.UpdateFile(ctx, path, "changed", testBoundary(path)); err == nil || version != 0 ||
+		!strings.Contains(err.Error(), "send didChange") {
+		t.Fatalf("failed didChange = %d, %v", version, err)
+	}
+	other := filepath.Join(filepath.Dir(path), "other.go")
+	if version, err := l.OpenFile(ctx, other, "go", "hello", testBoundary(other)); err == nil || version != 0 ||
+		!strings.Contains(err.Error(), "send didOpen") {
+		t.Fatalf("failed didOpen = %d, %v", version, err)
+	}
 	if l.versionCounter != 1 || l.openFiles[path].text != "hello" {
 		t.Fatal("failed write admitted state")
+	}
+	if l.openFiles[other] != nil {
+		t.Fatal("failed open installed document")
 	}
 }
 
@@ -400,12 +452,12 @@ func TestLSPProtocolRequestCannotAttachAfterCloseReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "test.go")
-	l.OpenFile(ctx, path, "go", "a😀b")
+	openTestFile(t, l, ctx, path, "go", "a😀b")
 	result := make(chan error, 1)
 	go func() { _, err := l.RequestHover(ctx, path, 0, 3); result <- err }()
 	waitProtocolFile(t, filepath.Join(root, "requested"))
 	l.CloseFile(ctx, path)
-	l.OpenFile(ctx, path, "go", "a😀b")
+	openTestFile(t, l, ctx, path, "go", "a😀b")
 	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +475,7 @@ func TestLSPProtocolStdoutDeathWithoutWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "test.go")
-	l.OpenFile(ctx, path, "go", "hello")
+	openTestFile(t, l, ctx, path, "go", "hello")
 	_, _ = l.RequestHover(ctx, path, 0, 0)
 	select {
 	case <-l.Done():

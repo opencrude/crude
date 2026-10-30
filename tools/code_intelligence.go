@@ -9,10 +9,10 @@ var CodeIntelligenceTool = ToolDef{
 	Function: ToolFuncDef{
 		Name: "lsp",
 		Description: "Ask the workspace's language servers about source code. " +
-			"diagnostics: compiler and linter problems in files after analysis settles (use after edits instead of a full build when one file or package changed). " +
+			"diagnostics: shared source-qualified diagnostic batches with fact identity, revision, producer and explicit coverage limits. Quiescence and zero reported diagnostics are not a complete-project verdict. " +
 			"definition / references / hover: resolve the identifier named by symbol on a 1-based line. " +
 			"symbols: outline of a file's declarations. " +
-			"Results use 1-based lines and columns and quote the source line.",
+			"Results quote only the immutable source actually queried; unqualified destination positions remain labelled UTF-16.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{

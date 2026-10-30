@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"unicode/utf8"
 
 	ttypes "crude/types"
 )
@@ -22,9 +20,12 @@ type LSPProbeView = ttypes.LSPProbeView
 // text is sent and the view is released afterwards. Agent probes are admitted
 // independently of the editor's own enable switch (the session decides), but
 // never while the human has stopped language servers.
-func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LSPSettings) bool, gateName string, fn func(context.Context, LSPClient) error) (LSPProbeView, error) {
+func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LSPSettings) bool, gateName string, fn func(context.Context, LSPClient, string, LSPProbeView) error) (LSPProbeView, error) {
 	path = filepath.Clean(path)
 	m.mu.Lock()
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(m.workspaceRoot, path)
+	}
 	if m.closed {
 		m.mu.Unlock()
 		return LSPProbeView{}, context.Canceled
@@ -39,35 +40,82 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 	}
 	spec, ok := m.resolveServerLocked(path)
 	limit := m.settings.MaxDocumentBytes
+	sources := m.sources
 	m.mu.Unlock()
 	if !ok {
 		return LSPProbeView{}, fmt.Errorf("no enabled language server handles %s files", languageLabel(path))
 	}
-	disk, err := readProbeText(path, limit)
+	if sources == nil {
+		return LSPProbeView{}, errors.New("canonical analysis source authority is unavailable")
+	}
+	source, err := sources.acquireAnalysisSource(ctx, path)
 	if err != nil {
 		return LSPProbeView{}, err
 	}
+	defer source.release()
+	if limit > 0 && len(source.snapshot.Text) > limit {
+		return LSPProbeView{}, fmt.Errorf("%s is above the %d-byte language server document limit", path, limit)
+	}
 
+	// Respect the same document -> producer lock order as canonical mutation.
+	// A source acquired before an edit must never roll back its newer send intent.
+	sources.mu.Lock()
+	if err := source.validateLocked(); err != nil {
+		sources.mu.Unlock()
+		return LSPProbeView{}, err
+	}
 	m.mu.Lock()
 	doc := m.documents[path]
 	if doc == nil {
-		doc = &lspDocument{text: disk, revision: 1}
+		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1}
 		m.documents[path] = doc
-	} else if !doc.editor && doc.text != disk {
-		doc.text = disk
+		m.advanceContextLocked("Analysis source view opened; dependent context needs reanalysis.")
+	} else if doc.text != string(source.snapshot.Text) || doc.source != source.ref {
+		doc.text = string(source.snapshot.Text)
+		doc.source = source.ref
 		doc.revision++
+		m.advanceContextLocked("Requested analysis source changed.")
 	}
-	view := LSPProbeView{BufferDiffers: doc.editor && doc.text != disk, Server: spec.Command}
+	view := LSPProbeView{BufferDiffers: source.snapshot.Dirty || source.snapshot.Conflict || !source.snapshot.DiskExists,
+		Server: spec.Command, Source: source.ref, SourceText: string(source.snapshot.Text)}
 	doc.probes++
 	m.signalLocked()
 	m.mu.Unlock()
+	sources.mu.Unlock()
 	defer m.releaseProbe(path, doc)
 
 	client, err := m.awaitProbeClient(ctx, path, doc)
 	if err != nil {
 		return view, err
 	}
-	return view, fn(ctx, client)
+	m.mu.Lock()
+	boundary := doc.boundary
+	m.mu.Unlock()
+	if err := fn(ctx, client, path, view); err != nil {
+		return view, err
+	}
+	if err := source.validate(ctx); err != nil {
+		return view, err
+	}
+	// Canonical source and producer are adjudicated in one authority ordering.
+	// An edit between an unlocked source check and the producer check must not
+	// make an older answer escape as the just-observed source.
+	sources.mu.Lock()
+	if err := source.validateLocked(); err != nil {
+		sources.mu.Unlock()
+		return LSPProbeView{}, err
+	}
+	m.mu.Lock()
+	current := m.documents[path] == doc && doc.source == source.ref && !m.paused && !m.closed &&
+		doc.opened && doc.syncedContext == m.contextGeneration && sameInsightBoundary(boundary, doc.boundary) &&
+		m.states[doc.key] != nil && m.states[doc.key].client == client && !m.states[doc.key].closing &&
+		!m.states[doc.key].stopped && m.states[doc.key].status == LSPConnected
+	m.mu.Unlock()
+	sources.mu.Unlock()
+	if !current {
+		return view, errors.New("analysis source or producer context changed during the request")
+	}
+	return view, nil
 }
 
 func languageLabel(path string) string {
@@ -75,27 +123,6 @@ func languageLabel(path string) string {
 		return ext
 	}
 	return filepath.Base(path)
-}
-
-func readProbeText(path string, limit int) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", path)
-	}
-	if limit > 0 && info.Size() > int64(limit) {
-		return "", fmt.Errorf("%s is %d bytes, above the %d-byte language server document limit", path, info.Size(), limit)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	if !utf8.Valid(data) {
-		return "", fmt.Errorf("%s is not UTF-8 text", path)
-	}
-	return string(data), nil
 }
 
 // awaitProbeClient waits for the document's server to connect and receive the
@@ -127,7 +154,7 @@ func (m *LSPManager) awaitProbeClient(ctx context.Context, path string, doc *lsp
 			err := errors.New(state.err)
 			m.mu.Unlock()
 			return nil, err
-		case state.status == LSPConnected && state.client != nil && !state.closing && doc.opened && doc.syncedRevision == doc.revision:
+		case state.status == LSPConnected && state.client != nil && !state.closing && doc.opened && doc.syncedRevision == doc.revision && doc.syncedContext == m.contextGeneration:
 			client := state.client
 			m.mu.Unlock()
 			return client, nil
@@ -161,7 +188,7 @@ func (m *LSPManager) releaseProbe(path string, doc *lspDocument) {
 		m.closedDocuments = append(m.closedDocuments, lspClosedDocument{path, state.client})
 	}
 	doc.key, doc.opened, doc.syncedRevision = "", false, 0
-	m.setFileDiagnosticsLocked(m.fileDiagnosticServer[path], path, nil)
+	m.advanceContextLocked("Borrowed producer view released; retained facts are stale.")
 	m.recomputeActiveStatusLocked()
 	m.signalLocked()
 }
@@ -169,44 +196,86 @@ func (m *LSPManager) releaseProbe(path string, doc *lspDocument) {
 // ProbeDiagnostics returns the server's diagnostics for path once analysis has
 // settled. settled=false means the server was still working when ctx ended and
 // the list may be incomplete.
-func (m *LSPManager) ProbeDiagnostics(ctx context.Context, path string) (diags []LSPDiagnostic, settled bool, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Diagnostics }, "Diagnostics", func(ctx context.Context, client LSPClient) error {
-		diags, settled = client.AwaitDiagnostics(ctx, path)
+func (m *LSPManager) ProbeDiagnostics(ctx context.Context, path string) (answer ttypes.InsightDiagnostics, settled bool, view LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Diagnostics }, "Diagnostics", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+		publication, quiet := client.AwaitDiagnostics(ctx, path)
+		settled = quiet
+		m.mu.Lock()
+		doc := m.documents[path]
+		var key string
+		var state *lspClientState
+		if doc != nil {
+			key, state = doc.key, m.states[doc.key]
+		}
+		m.mu.Unlock()
+		if publication.Sequence != 0 && state != nil {
+			m.receiveDiagnostics(key, state, publication)
+		}
+		answer, _ = m.probeDiagnosticFacts(view.Source)
 		return nil
 	})
-	return diags, settled, view, err
+	if err != nil {
+		answer, settled = ttypes.InsightDiagnostics{}, false
+	} else if answer.ID == "" {
+		settled = false
+	}
+	return answer, settled, view, err
 }
 
-func (m *LSPManager) ProbeDefinition(ctx context.Context, path string, line, col int) (locs []LSPLocation, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Definition }, "Go to definition", func(ctx context.Context, client LSPClient) error {
+func (m *LSPManager) ProbeDefinition(ctx context.Context, path string, position ttypes.LSPSourcePosition) (locs []LSPLocation, view LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Definition }, "Go to definition", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+		line, col, err := position.Resolve(view.SourceText)
+		if err != nil {
+			return err
+		}
 		locs = client.RequestDefinition(ctx, path, line, col)
 		return nil
 	})
+	if err != nil {
+		locs = nil
+	}
 	return locs, view, err
 }
 
-func (m *LSPManager) ProbeReferences(ctx context.Context, path string, line, col int) (locs []LSPLocation, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.References }, "Find references", func(ctx context.Context, client LSPClient) error {
+func (m *LSPManager) ProbeReferences(ctx context.Context, path string, position ttypes.LSPSourcePosition) (locs []LSPLocation, view LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.References }, "Find references", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+		line, col, err := position.Resolve(view.SourceText)
+		if err != nil {
+			return err
+		}
 		locs = client.FindReferences(ctx, path, line, col, true)
 		return nil
 	})
+	if err != nil {
+		locs = nil
+	}
 	return locs, view, err
 }
 
-func (m *LSPManager) ProbeHover(ctx context.Context, path string, line, col int) (text string, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Hover }, "Hover", func(ctx context.Context, client LSPClient) error {
+func (m *LSPManager) ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (text string, view LSPProbeView, err error) {
+	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Hover }, "Hover", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+		line, col, err := position.Resolve(view.SourceText)
+		if err != nil {
+			return err
+		}
 		var hoverErr error
 		text, hoverErr = client.RequestHover(ctx, path, line, col)
 		return hoverErr
 	})
+	if err != nil {
+		text = ""
+	}
 	return text, view, err
 }
 
 func (m *LSPManager) ProbeSymbols(ctx context.Context, path string) (symbols []LSPSymbol, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Outline }, "Document outline", func(ctx context.Context, client LSPClient) error {
+	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Outline }, "Document outline", func(ctx context.Context, client LSPClient, path string, _ LSPProbeView) error {
 		symbols = client.RequestDocumentSymbols(ctx, path)
 		return nil
 	})
+	if err != nil {
+		symbols = nil
+	}
 	return symbols, view, err
 }
 

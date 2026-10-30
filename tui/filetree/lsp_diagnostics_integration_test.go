@@ -1,249 +1,83 @@
 package filetree
 
 import (
-	"context"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"path/filepath"
-	"sync"
 	"testing"
-	"time"
 
-	model "crude/types"
-	"crude/workspace"
+	"crude/shellport"
+	"crude/types"
 )
 
-type treeLSPTestLogger struct{}
-
-func (treeLSPTestLogger) Info(tag, msg string, pairs ...any)  {}
-func (treeLSPTestLogger) Warn(tag, msg string, pairs ...any)  {}
-func (treeLSPTestLogger) Error(tag, msg string, pairs ...any) {}
-func (treeLSPTestLogger) Debug(tag, msg string, pairs ...any) {}
-
-type treeLSPTestClient struct {
-	ready         chan struct{}
-	onDiagnostics func(string, []workspace.LSPDiagnostic)
-}
-
-func (c *treeLSPTestClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnostic)) {
-	c.onDiagnostics = fn
-}
-
-func (c *treeLSPTestClient) Start(context.Context) error { close(c.ready); return nil }
-func (c *treeLSPTestClient) Stop() error                 { return nil }
-func (c *treeLSPTestClient) Done() <-chan struct{}       { return nil }
-func (c *treeLSPTestClient) OpenFile(context.Context, string, string, string) {
-}
-func (c *treeLSPTestClient) UpdateFile(context.Context, string, string)            {}
-func (c *treeLSPTestClient) CloseFile(context.Context, string)                     {}
-func (c *treeLSPTestClient) NotifySave(context.Context, string, string, int, bool) {}
-func (c *treeLSPTestClient) NotifyWatchedFilesChanged(context.Context, string, int) {
-}
-func (c *treeLSPTestClient) SyncFileFromDisk(context.Context, string, int) {}
-func (c *treeLSPTestClient) RequestDefinition(context.Context, string, int, int) []workspace.LSPLocation {
-	return nil
-}
-func (c *treeLSPTestClient) FindReferences(context.Context, string, int, int, bool) []workspace.LSPLocation {
-	return nil
-}
-func (c *treeLSPTestClient) RequestDocumentSymbols(context.Context, string) []workspace.LSPSymbol {
-	return nil
-}
-func (c *treeLSPTestClient) RequestHover(context.Context, string, int, int) (string, error) {
-	return "", nil
-}
-func (c *treeLSPTestClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
-	return nil, nil
-}
-func (c *treeLSPTestClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
-	return nil
-}
-
-func (c *treeLSPTestClient) EmitDiagnostics(filePath string, diags []workspace.LSPDiagnostic) {
-	if c.onDiagnostics != nil {
-		c.onDiagnostics(filePath, diags)
-	}
-}
-
-type treeLSPTestRuntime struct {
-	mu     sync.Mutex
-	client *treeLSPTestClient
-}
-
-func (r *treeLSPTestRuntime) NewClient(model.LSPServerSpec, string) workspace.LSPClient {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.client = &treeLSPTestClient{ready: make(chan struct{})}
-	return r.client
-}
-
-func newTreeDiagnosticsManager(t *testing.T, tree *FileTreeModel) (*workspace.LSPManager, *treeLSPTestRuntime, *bool) {
-	t.Helper()
-	runtime := &treeLSPTestRuntime{}
-	mgr := workspace.NewLSPManager(treeLSPTestLogger{}, runtime)
-	treeUpdated := false
-	mgr.SetOnDiagnostics(func(filePath string, diags []workspace.LSPDiagnostic) {
-		treeUpdated = true
-		errs, warns, hints := 0, 0, 0
-		for _, diag := range diags {
-			switch diag.Severity {
-			case model.DiagError:
-				errs++
-			case model.DiagWarning:
-				warns++
-			default:
-				hints++
-			}
-		}
-		tree.SetDiagnostics(filePath, errs, warns, hints)
-	})
-	t.Cleanup(mgr.Close)
-	return mgr, runtime, &treeUpdated
-}
-
-func openTreeDiagnosticsFile(t *testing.T, mgr *workspace.LSPManager, runtime *treeLSPTestRuntime, filePath string) {
-	t.Helper()
-	mgr.OpenFile(context.Background(), filePath, "")
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		runtime.mu.Lock()
-		client := runtime.client
-		runtime.mu.Unlock()
-		if client != nil {
-			select {
-			case <-client.ready:
-				return
-			default:
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("LSP client not ready")
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-}
-
-func TestLSPManager_TreeDiagnosticsIntegration(t *testing.T) {
-	dir := t.TempDir()
-	mainGo := filepath.Join(dir, "main.go")
-	createFileForTest(t, mainGo, "package main")
-
-	tree := NewFileTreeModel(dir)
-	mgr, runtime, treeUpdated := newTreeDiagnosticsManager(t, tree)
-	openTreeDiagnosticsFile(t, mgr, runtime, mainGo)
-	runtime.client.EmitDiagnostics(mainGo, []workspace.LSPDiagnostic{
-		{Severity: model.DiagError, Message: "test1"},
-	})
-
-	if !*treeUpdated {
-		t.Fatal("tree update callback was not invoked")
-	}
-
-	node := tree.NodeByPath(mainGo)
-	if node == nil {
-		t.Fatalf("node not found at %q", mainGo)
-	}
-	if node.DiagErrors != 1 {
-		t.Errorf("node DiagErrors = %d, want 1", node.DiagErrors)
-	}
-	if node.DiagnosticCount != 1 {
-		t.Errorf("node DiagnosticCount = %d, want 1", node.DiagnosticCount)
-	}
-	if tree.Root.DiagErrors != 1 {
-		t.Errorf("root DiagErrors = %d, want 1", tree.Root.DiagErrors)
-	}
-}
-
-func TestLSPManager_TreeDiagnostics_UncleanedPath(t *testing.T) {
-	dir := t.TempDir()
-	mainGo := filepath.Join(dir, "main.go")
-	createFileForTest(t, mainGo, "package main")
-
-	tree := NewFileTreeModel(dir)
-	mgr, runtime, _ := newTreeDiagnosticsManager(t, tree)
-	openTreeDiagnosticsFile(t, mgr, runtime, mainGo)
-
-	// Simulate an LSP server sending a path with trailing components.
-	runtime.client.EmitDiagnostics(mainGo+"/./.", []workspace.LSPDiagnostic{
-		{Severity: model.DiagError, Message: "uncleaned"},
-	})
-
-	node := tree.NodeByPath(mainGo)
-	if node == nil {
-		t.Fatalf("node not found at %q", mainGo)
-	}
-	if node.DiagErrors != 1 {
-		t.Errorf("node DiagErrors = %d, want 1 (uncleaned path)", node.DiagErrors)
-	}
-}
-
-func TestLSPManager_TreeDiagnostics_MultipleFiles(t *testing.T) {
-	dir := t.TempDir()
-	a := filepath.Join(dir, "a.go")
-	b := filepath.Join(dir, "b.go")
-	createFileForTest(t, a, "package a")
-	createFileForTest(t, b, "package b")
-
-	tree := NewFileTreeModel(dir)
-	mgr, runtime, _ := newTreeDiagnosticsManager(t, tree)
-	openTreeDiagnosticsFile(t, mgr, runtime, a)
-	runtime.client.EmitDiagnostics(a, []workspace.LSPDiagnostic{{Severity: model.DiagError}})
-	runtime.client.EmitDiagnostics(b, []workspace.LSPDiagnostic{{Severity: model.DiagWarning}, {Severity: model.DiagHint}})
-
-	na := tree.NodeByPath(a)
-	nb := tree.NodeByPath(b)
-	if na == nil || nb == nil {
-		t.Fatal("nodes not found")
-	}
-	if na.DiagErrors != 1 {
-		t.Errorf("a.go DiagErrors = %d, want 1", na.DiagErrors)
-	}
-	if nb.DiagWarnings != 1 {
-		t.Errorf("b.go DiagWarnings = %d, want 1", nb.DiagWarnings)
-	}
-	if nb.DiagHints != 1 {
-		t.Errorf("b.go DiagHints = %d, want 1", nb.DiagHints)
-	}
-	if tree.Root.DiagnosticCount != 3 {
-		t.Errorf("root DiagnosticCount = %d, want 3", tree.Root.DiagnosticCount)
-	}
-}
-
-func TestLSPManager_TreeDiagnostics_AfterExpand(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "sub")
+// The tree owns counters only. Canonical source qualification belongs to the
+// viewmodel adapter, exercised by the connected multi-shell diagnostic journey.
+// This projection test uses detached facts, not a second raw manager callback.
+func TestSharedDiagnosticProjectionRetainsTreePathsAndExpansion(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
 	mkdirForTest(t, sub)
-	deepGo := filepath.Join(sub, "deep.go")
-	createFileForTest(t, deepGo, "package deep")
-
-	tree := NewFileTreeModel(dir)
-	mgr, runtime, _ := newTreeDiagnosticsManager(t, tree)
-	openTreeDiagnosticsFile(t, mgr, runtime, deepGo)
-
-	// Send diagnostics for deep.go before expanding sub/.
-	runtime.client.EmitDiagnostics(deepGo, []workspace.LSPDiagnostic{{Severity: model.DiagError}})
-	if node := tree.NodeByPath(deepGo); node != nil {
-		t.Log("deep.go node exists before expand (unexpected but OK)")
+	a, b, deep := filepath.Join(root, "a.go"), filepath.Join(root, "b.go"), filepath.Join(sub, "deep.go")
+	for _, path := range []string{a, b, deep} {
+		createFileForTest(t, path, "package main\n")
 	}
-
+	tree := NewFileTreeModel(root)
+	v := 7
+	makeFact := func(id, path string, severities ...int) types.InsightDiagnostics {
+		ds := make([]types.LSPDiagnostic, 0, len(severities))
+		for _, severity := range severities {
+			ds = append(ds, types.LSPDiagnostic{Severity: severity})
+		}
+		return types.InsightDiagnostics{ID: id, Binding: "exact-version", WireVersion: 7, ReportedVersion: &v, State: types.InsightProvisional,
+			Boundary: types.InsightBoundary{Source: types.InsightSource{Path: path}, Context: types.InsightContext{UnknownInputs: []string{"Build graph unknown"}}}, Diagnostics: ds}
+	}
+	snapshot := shellport.LSPDiagnosticSnapshot{Generation: "canonical-workspace", Version: 1, Diagnostics: map[string]types.InsightDiagnostics{
+		a: makeFact("fact-a", a, types.DiagError), b: makeFact("fact-b", b, types.DiagWarning, types.DiagHint), deep: makeFact("fact-deep", deep, types.DiagError),
+	}}
+	var consumer shellport.LSPDiagnosticConsumer
+	project := func(snapshot shellport.LSPDiagnosticSnapshot) {
+		for path, fact := range consumer.Consume(snapshot) {
+			errs, warns, hints := 0, 0, 0
+			if fact.HasExactSource() {
+				for _, d := range fact.Diagnostics {
+					switch d.Severity {
+					case types.DiagError:
+						errs++
+					case types.DiagWarning:
+						warns++
+					default:
+						hints++
+					}
+				}
+			}
+			tree.SetDiagnostics(path, errs, warns, hints)
+		}
+	}
+	project(snapshot)
+	if node := tree.NodeByPath(a); node == nil || node.DiagErrors != 1 || node.DiagnosticCount != 1 {
+		t.Fatal("observed error lost in tree")
+	}
+	if node := tree.NodeByPath(b); node == nil || node.DiagWarnings != 1 || node.DiagHints != 1 {
+		t.Fatal("second source counters lost")
+	}
 	tree.Expand(sub)
-
-	node := tree.NodeByPath(deepGo)
-	if node == nil {
-		t.Fatal("deep.go node not found after expand")
+	if node := tree.NodeByPath(deep); node == nil || node.DiagErrors != 1 {
+		t.Fatal("pre-expansion projection lost")
 	}
-	if node.DiagErrors != 1 {
-		t.Errorf("deep.go DiagErrors after expand = %d, want 1", node.DiagErrors)
+	if tree.Root.DiagnosticCount != 4 {
+		t.Fatalf("root counter=%d", tree.Root.DiagnosticCount)
 	}
-	subNode := tree.NodeByPath(sub)
-	if subNode == nil {
-		t.Fatal("sub node not found")
+	// Tree path normalization remains independent of producer/source identity.
+	tree.SetDiagnostics(a+"/./.", 2, 0, 0)
+	if tree.NodeByPath(a).DiagErrors != 2 {
+		t.Fatal("tree counter key was not normalized")
 	}
-	if subNode.DiagnosticCount != 1 {
-		t.Errorf("sub DiagnosticCount after expand = %d, want 1", subNode.DiagnosticCount)
+	// Stop keeps stale evidence in Problems, but a stale source is not a current
+	// file-tree badge. The fact itself is never cleared or rewritten by the tree.
+	stale := snapshot.Diagnostics[a]
+	stale.State = types.InsightStale
+	snapshot.Diagnostics[a] = stale
+	snapshot.Version++
+	project(snapshot)
+	if tree.NodeByPath(a).DiagnosticCount != 0 || snapshot.Diagnostics[a].ID != "fact-a" || len(snapshot.Diagnostics[a].Diagnostics) != 1 {
+		t.Fatal("stale projection lost provenance or painted current")
 	}
-}
-
-func (*treeLSPTestClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
-	return nil, true
 }

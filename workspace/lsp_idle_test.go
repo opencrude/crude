@@ -22,7 +22,7 @@ func TestLSPIdleReasonsExplainLazyStartupAndPolicy(t *testing.T) {
 		t.Fatalf("disabled reason=%+v", got)
 	}
 	path := filepath.Join(root, "main.go")
-	m.OpenFile(t.Context(), path, "package main\n")
+	editorSource(t, m, path, "package main\n")
 	if len(runtime.snapshot()) != 0 {
 		t.Fatal("disabled editor launched a server")
 	}
@@ -48,7 +48,7 @@ func TestLSPSettingsEnableStartsAlreadyOpenDocumentWithoutReopen(t *testing.T) {
 	settings.Enabled = false
 	m.SetSettings(settings)
 	path := filepath.Join(root, "main.go")
-	m.OpenFile(t.Context(), path, "package main\nvar _ = acceptedUnsavedText\n")
+	editorSource(t, m, path, "package main\nvar _ = acceptedUnsavedText\n")
 	settings.Enabled = true
 	m.SetSettings(settings)
 	awaitLSP(t, func() bool {
@@ -74,7 +74,7 @@ func TestLSPIdleResumeWithoutDocumentsRefreshesReason(t *testing.T) {
 
 func TestLSPUnsupportedDocumentExplainsNoMatchingServer(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
-	m.OpenFile(t.Context(), filepath.Join(root, "readme.md"), "# No configured Markdown server\n")
+	editorSource(t, m, filepath.Join(root, "readme.md"), "# No configured Markdown server\n")
 	if got := m.ProjectInsights(); got.IdleStatus != "No matching language server" || !strings.Contains(got.IdleReason, "Settings → Language Servers") {
 		t.Fatalf("unmatched source reason=%+v", got)
 	}
@@ -103,15 +103,16 @@ func assertLSPBroadcast(t *testing.T, m *LSPManager, mutate func()) {
 }
 
 func TestLSPChangedDiagnosticsClearAndStop(t *testing.T) {
-	m := NewLSPManager(nil)
-	defer m.Close()
-	assertLSPBroadcast(t, m, func() { m.setFileDiagnostics("a.go", []LSPDiagnostic{{Severity: DiagError, Message: "bad"}}) })
+	m, client, snapshot := diagnosticFixture(t)
+	assertLSPBroadcast(t, m, func() {
+		client.emit(client.publication(snapshot.Path, []LSPDiagnostic{{Severity: DiagError, Message: "bad"}}))
+	})
 	if m.ProjectInsights().Errors != 1 {
 		t.Fatal("diagnostic absent from projection")
 	}
-	assertLSPBroadcast(t, m, m.ClearDiagnostics)
-	if m.ProjectInsights().Errors != 0 || len(m.AllDiagnostics()) != 0 {
-		t.Fatal("diagnostics not cleared")
+	assertLSPBroadcast(t, m, func() { m.InvalidateFile(snapshot.Path) })
+	if batch, ok := m.FileDiagnostics(snapshot.Path); !ok || batch.State != types.InsightStale || m.ProjectInsights().Errors != 0 {
+		t.Fatal("diagnostic retirement lost provenance or retained current counts")
 	}
 	assertLSPBroadcast(t, m, m.Stop)
 	if m.ProjectInsights().IdleStatus != "Language servers paused" {

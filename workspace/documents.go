@@ -8,11 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
-	"unicode/utf8"
 
 	"crude/document"
 	"crude/fileio"
@@ -97,6 +95,18 @@ func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager
 		}
 	}
 	s.Insight = newInsightService(s)
+	for _, d := range s.docs {
+		s.analysisIdentityLocked(d)
+	}
+	if lsp != nil {
+		lsp.mu.Lock()
+		if lsp.sources != nil {
+			s.stateErr = errors.Join(s.stateErr, errors.New("language service already has a canonical source authority"))
+		} else {
+			lsp.sources = s
+		}
+		lsp.mu.Unlock()
+	}
 	return s
 }
 
@@ -176,8 +186,9 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 	s.epochs[owner.ClientID] = owner.Epoch
 	d.owners[owner] = true
 	s.ownerMu.Unlock()
+	source := s.analysisIdentityLocked(d)
 	if !d.lspOpen && s.lsp != nil {
-		s.lsp.OpenFile(context.Background(), path, string(d.snapshot.Text))
+		s.lsp.OpenFile(context.Background(), source, string(d.snapshot.Text))
 		d.lspOpen = true
 	}
 	s.Insight.observeLocked(d)
@@ -185,35 +196,11 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 }
 
 func readLiveDocument(path string) ([]byte, bool, error) {
-	info, err := os.Lstat(path)
+	text, info, err := readAnalysisDisk(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
-	if err != nil {
-		return nil, false, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, true, errors.New("document is not a regular file")
-	}
-	if info.Size() > document.MaxBytes {
-		return nil, true, document.ErrLimit
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, true, err
-	}
-	defer func() { _ = f.Close() }()
-	text, err := io.ReadAll(io.LimitReader(f, document.MaxBytes+1))
-	if err != nil {
-		return nil, true, err
-	}
-	if len(text) > document.MaxBytes {
-		return nil, true, document.ErrLimit
-	}
-	if !utf8.Valid(text) {
-		return nil, true, errors.New("document is not UTF-8")
-	}
-	return text, true, nil
+	return text, info != nil, err
 }
 
 func cloneDocument(s document.Snapshot) document.Snapshot {
@@ -327,8 +314,8 @@ func (s *DocumentService) command(kind string, c document.Change, run func(*live
 	}
 	*d = *trial
 	s.cacheDocumentRequest(d, key, request)
-	if err == nil && s.lsp != nil && d.lspOpen {
-		s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
+	if err == nil {
+		s.observeAnalysisLocked(d)
 	}
 	return r, err
 }

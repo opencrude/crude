@@ -15,10 +15,11 @@ type loadProbeClient struct {
 	opened []string
 }
 
-func (c *loadProbeClient) OpenFile(_ context.Context, path, _, _ string) {
+func (c *loadProbeClient) OpenFile(_ context.Context, path, _, _ string, _ model.InsightBoundary) (int, error) {
 	c.mu.Lock()
 	c.opened = append(c.opened, path)
 	c.mu.Unlock()
+	return 1, nil
 }
 
 type loadProbeRuntime struct{ client *loadProbeClient }

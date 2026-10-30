@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"crude/coreprotocol"
+	"crude/document"
 	"crude/localhistory"
 	"crude/types"
 	"crude/workspace"
@@ -250,9 +251,12 @@ func FuzzCoreGitReviewedMutations(f *testing.F) {
 // The real manager owns lifecycle/admission; only the language engine is fake.
 // This deliberately does not claim stdio framing, parser or real server coverage.
 type semanticLSPClient struct {
-	mu    sync.Mutex
-	calls []coreprotocol.LSPRequest
-	edit  *protocol.WorkspaceEdit
+	mu          sync.Mutex
+	calls       []coreprotocol.LSPRequest
+	edit        *protocol.WorkspaceEdit
+	boundary    types.InsightBoundary
+	version     int
+	diagnostics []types.LSPDiagnostic
 }
 
 type semanticLSPRuntime struct{ client *semanticLSPClient }
@@ -260,17 +264,28 @@ type semanticLSPRuntime struct{ client *semanticLSPClient }
 func (r semanticLSPRuntime) NewClient(types.LSPServerSpec, string) workspace.LSPClient {
 	return r.client
 }
-func (*semanticLSPClient) OnDiagnostics(func(string, []workspace.LSPDiagnostic))  {}
+func (*semanticLSPClient) OnDiagnostics(func(types.InsightDiagnosticPublication)) {}
 func (*semanticLSPClient) Start(context.Context) error                            { return nil }
 func (*semanticLSPClient) Stop() error                                            { return nil }
 func (*semanticLSPClient) Done() <-chan struct{}                                  { return nil }
-func (*semanticLSPClient) OpenFile(context.Context, string, string, string)       {}
-func (*semanticLSPClient) UpdateFile(context.Context, string, string)             {}
+func (c *semanticLSPClient) OpenFile(_ context.Context, _, _, _ string, boundary types.InsightBoundary) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.boundary = boundary
+	c.version++
+	return c.version, nil
+}
+func (c *semanticLSPClient) UpdateFile(ctx context.Context, path, text string, boundary types.InsightBoundary) (int, error) {
+	return c.OpenFile(ctx, path, "", text, boundary)
+}
 func (*semanticLSPClient) CloseFile(context.Context, string)                      {}
 func (*semanticLSPClient) NotifySave(context.Context, string, string, int, bool)  {}
 func (*semanticLSPClient) NotifyWatchedFilesChanged(context.Context, string, int) {}
-func (*semanticLSPClient) AwaitDiagnostics(context.Context, string) ([]workspace.LSPDiagnostic, bool) {
-	return nil, true
+func (c *semanticLSPClient) AwaitDiagnostics(context.Context, string) (types.InsightDiagnosticPublication, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v := c.version
+	return types.InsightDiagnosticPublication{Boundary: c.boundary, Sequence: 1, WireVersion: v, ReportedVersion: &v, Diagnostics: append([]types.LSPDiagnostic{}, c.diagnostics...)}, true
 }
 func (c *semanticLSPClient) record(path string, line, col int, name string, include bool) {
 	c.mu.Lock()
@@ -327,7 +342,11 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		manager := workspace.NewLSPManager(nil, semanticLSPRuntime{client})
 		defer manager.Close()
 		manager.SetWorkspaceRoot(root)
-		manager.OpenFile(t.Context(), path, "package main\n")
+		docs := workspace.NewDocumentService(root, nil, manager)
+		defer docs.Close()
+		if _, err := docs.Open(document.Owner{ClientID: "fuzz", Epoch: 1}, path); err != nil {
+			t.Fatal(err)
+		}
 		// Probe waits for the manager's exact document synchronization boundary,
 		// without sleeping/polling or starting an external executable.
 		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)

@@ -44,10 +44,10 @@ func cloneLSPSymbols(in []workspace.LSPSymbol) []workspace.LSPSymbol {
 	}
 	return out
 }
-func cloneLSPDiagnostics(in map[string][]workspace.LSPDiagnostic) map[string][]workspace.LSPDiagnostic {
-	out := make(map[string][]workspace.LSPDiagnostic, len(in))
+func cloneLSPDiagnostics(in map[string]types.InsightDiagnostics) map[string]types.InsightDiagnostics {
+	out := make(map[string]types.InsightDiagnostics, len(in))
 	for path, ds := range in {
-		out[path] = append([]workspace.LSPDiagnostic(nil), ds...)
+		out[path] = types.CloneInsightDiagnostics(ds)
 	}
 	return out
 }
@@ -77,14 +77,18 @@ func (l *lspReplica) query(ctx context.Context, method string, input coreprotoco
 	return out, err
 }
 
-func (l *lspReplica) AllDiagnostics() map[string][]workspace.LSPDiagnostic {
+func (l *lspReplica) AllDiagnostics() map[string]types.InsightDiagnostics {
 	return cloneLSPDiagnostics(l.snapshot.Diagnostics)
 }
 func (l *lspReplica) DiagnosticSnapshot() shellport.LSPDiagnosticSnapshot {
-	return shellport.LSPDiagnosticSnapshot{Version: l.snapshot.Version, Diagnostics: l.AllDiagnostics()}
+	return shellport.LSPDiagnosticSnapshot{Generation: l.snapshot.Generation, Version: l.snapshot.Version, Diagnostics: l.AllDiagnostics()}
 }
-func (l *lspReplica) FileDiagnostics(path string) []workspace.LSPDiagnostic {
-	return append([]workspace.LSPDiagnostic(nil), l.snapshot.Diagnostics[filepath.Clean(path)]...)
+func (l *lspReplica) DiagnosticCursor() (string, uint64) {
+	return l.snapshot.Generation, l.snapshot.Version
+}
+func (l *lspReplica) FileDiagnostics(path string) (types.InsightDiagnostics, bool) {
+	batch, ok := l.snapshot.Diagnostics[filepath.Clean(path)]
+	return types.CloneInsightDiagnostics(batch), ok
 }
 func (l *lspReplica) DocumentSymbols(path string) []workspace.LSPSymbol {
 	return cloneLSPSymbols(l.snapshot.Symbols[filepath.Clean(path)])
@@ -101,15 +105,6 @@ func (l *lspReplica) Status() (bool, workspace.LSPStatus, string) {
 	return l.snapshot.Connected, l.snapshot.Status, l.snapshot.Error
 }
 func (l *lspReplica) Version() uint64 { return l.snapshot.Version }
-func (l *lspReplica) ClearDiagnostics() {
-	l.send(coreprotocol.LSPClearDiagnostics, coreprotocol.LSPRequest{})
-}
-func (l *lspReplica) OpenFile(_ context.Context, path, text string) {
-	l.send(coreprotocol.LSPOpenFile, coreprotocol.LSPRequest{Path: path, Text: text})
-}
-func (l *lspReplica) CloseFile(_ context.Context, path string) {
-	l.send(coreprotocol.LSPCloseFile, coreprotocol.LSPRequest{Path: path})
-}
 func (l *lspReplica) NotifyWatchedFilesChanged(_ context.Context, path string, changeType int) {
 	l.send(coreprotocol.LSPNotifyWatchedFilesChanged, coreprotocol.LSPRequest{Path: path, ChangeType: changeType})
 }

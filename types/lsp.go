@@ -115,7 +115,9 @@ type LSPProbeView struct {
 	// that differs from disk; answers then describe the editor buffer.
 	BufferDiffers bool
 	// Server names the language server command that answered.
-	Server string
+	Server     string
+	Source     InsightSource
+	SourceText string
 }
 
 type LSPLocation struct {
@@ -176,4 +178,11 @@ type ProjectInsights struct {
 	SymbolsCount  int
 	TopIssue      string
 	LastSync      int64
+	// These count observed diagnostic units, not all files in the project.
+	// The denominator and complete build context may remain unknown.
+	DiagnosticsObserved   int
+	DiagnosticsStale      int
+	DiagnosticsUnverified int
+	DiagnosticsLimited    int
+	CoverageDetail        string
 }

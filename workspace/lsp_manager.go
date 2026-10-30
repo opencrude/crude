@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,47 +17,37 @@ import (
 // Expensive root discovery, startup, synchronization and shutdown run on its
 // serialized worker; merely enabling intelligence never scans or opens sources.
 type LSPManager struct {
-	mu                                                                    sync.Mutex
-	documentSend                                                          sync.Mutex
-	states                                                                map[string]*lspClientState
-	documents                                                             map[string]*lspDocument
-	updateTimers                                                          map[string]*time.Timer
-	runtime                                                               LSPRuntime
-	settings                                                              ttypes.LSPSettings
-	logger                                                                Logger
-	workspaceRoot                                                         string
-	activeFilePath                                                        string
-	activeRootURI                                                         string
-	activeConnected                                                       bool
-	activeError                                                           string
-	activeStatus                                                          LSPStatus
-	idleStatus, idleReason                                                string
-	paused, manualStart, closed                                           bool
-	workerRunning                                                         bool
-	wake                                                                  chan struct{}
-	workerDone                                                            chan struct{}
-	diagnosticChanges                                                     map[string]bool
-	closedDocuments                                                       []lspClosedDocument
-	settingsGeneration                                                    uint64
-	onDiagnostics                                                         func(string, []LSPDiagnostic)
-	fileDiagnostics                                                       map[string][]LSPDiagnostic
-	docSymbols                                                            map[string][]LSPSymbol
-	fileLastSync                                                          map[string]int64
-	fileDiagnosticServer                                                  map[string]string
-	serverDiagnosticCounts                                                map[string]diagnosticAggregate
-	issueCount                                                            map[string]int
-	symbolsCached                                                         bool
-	diagnosticErrors, diagnosticWarnings, diagnosticInfo, diagnosticHints int
-	filesAffected, symbolCount                                            int
-	projectLastSync                                                       int64
-	topIssue                                                              string
-	syncing                                                               bool
-	inflight                                                              int
-	version                                                               uint64
-	stateChanged                                                          chan struct{}
+	contextGeneration           uint64
+	sources                     *DocumentService
+	mu                          sync.Mutex
+	documentSend                sync.Mutex
+	states                      map[string]*lspClientState
+	documents                   map[string]*lspDocument
+	updateTimers                map[string]*time.Timer
+	runtime                     LSPRuntime
+	settings                    ttypes.LSPSettings
+	logger                      Logger
+	workspaceRoot               string
+	activeFilePath              string
+	activeRootURI               string
+	activeConnected             bool
+	activeError                 string
+	activeStatus                LSPStatus
+	idleStatus, idleReason      string
+	paused, manualStart, closed bool
+	workerRunning               bool
+	wake                        chan struct{}
+	workerDone                  chan struct{}
+	closedDocuments             []lspClosedDocument
+	settingsGeneration          uint64
+	docSymbols                  map[string][]LSPSymbol
+	symbolCount                 int
+	symbolsCached               bool
+	syncing                     bool
+	inflight                    int
+	version                     uint64
+	stateChanged                chan struct{}
 }
-
-type diagnosticAggregate struct{ files, errors, warnings, information, hints int }
 
 func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) {
 	m.mu.Lock()
@@ -206,64 +195,6 @@ func (m *LSPManager) IsConfigured() bool {
 	return m.activeStatus != LSPIdle
 }
 
-// AllDiagnostics returns a snapshot of every cached diagnostic across
-// all files the LSP server has reported on. The returned map is a
-// copy; mutating it does not affect internal state. Used by the
-// status bar's "Goto first error" action and similar cross-file
-// navigation features.
-func (m *LSPManager) AllDiagnostics() map[string][]LSPDiagnostic {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make(map[string][]LSPDiagnostic, len(m.fileDiagnostics))
-	for k, v := range m.fileDiagnostics {
-		out[k] = append([]LSPDiagnostic(nil), v...)
-	}
-	return out
-}
-
-// ClearDiagnostics removes all cached diagnostics, document symbols,
-// per-file sync timestamps, and the top-issue tally. Call this when
-// a server restart should produce a clean slate rather than showing
-// stale results from the previous session.
-func (m *LSPManager) ClearDiagnostics() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.clearDiagnosticsLocked()
-}
-
-func (m *LSPManager) clearDiagnosticsLocked() {
-	for path := range m.fileDiagnostics {
-		m.diagnosticChanges[path] = true
-	}
-	m.fileDiagnostics = make(map[string][]LSPDiagnostic)
-	m.docSymbols = make(map[string][]LSPSymbol)
-	m.fileLastSync = make(map[string]int64)
-	m.fileDiagnosticServer = make(map[string]string)
-	m.serverDiagnosticCounts = make(map[string]diagnosticAggregate)
-	m.issueCount = make(map[string]int)
-	m.symbolsCached = false
-	m.diagnosticErrors, m.diagnosticWarnings = 0, 0
-	m.diagnosticInfo, m.diagnosticHints = 0, 0
-	m.filesAffected, m.symbolCount, m.projectLastSync, m.topIssue = 0, 0, 0, ""
-	m.bumpVersionLocked()
-}
-
-// DrainDiagnosticChanges coalesces server notifications into one UI projection
-// per tick. It never performs I/O or blocks the server's protocol reader.
-func (m *LSPManager) DrainDiagnosticChanges() map[string][]LSPDiagnostic {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.diagnosticChanges) == 0 {
-		return nil
-	}
-	out := make(map[string][]LSPDiagnostic, len(m.diagnosticChanges))
-	for path := range m.diagnosticChanges {
-		out[path] = append([]LSPDiagnostic(nil), m.fileDiagnostics[path]...)
-	}
-	clear(m.diagnosticChanges)
-	return out
-}
-
 // Changed atomically captures the version and the next state broadcast. The
 // same channel wakes document probes and retained-core publication.
 func (m *LSPManager) Changed() (uint64, <-chan struct{}) {
@@ -292,50 +223,29 @@ func (m *LSPManager) Version() uint64 {
 	return m.version
 }
 
-// FileLastSync returns the UnixNano timestamp of the most recent
-// diagnostic publish for the given file, or 0 if the server has
-// never reported on it. Lets navigation features skip stale entries.
-func (m *LSPManager) FileLastSync(filePath string) int64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.fileLastSync[filepath.Clean(filePath)]
-}
-
-// ProjectDiagnosticCounts aggregates diagnostics across all tracked files.
-func (m *LSPManager) ProjectDiagnosticCounts() (errors, warnings, hints int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.diagnosticErrors, m.diagnosticWarnings, m.diagnosticInfo + m.diagnosticHints
-}
-
-// ProjectInsights returns a whole-project snapshot suitable for the bottom-left
-// status bar. Always reflects the state of every file the LSP server knows
-// about, regardless of which file (if any) is open in the editor.
+// ProjectInsights combines lifecycle health with qualified, observed facts.
 func (m *LSPManager) ProjectInsights() ProjectInsights {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	ins := ProjectInsights{
-		ServerName:     m.activeServerNameLocked(),
-		ServerReady:    m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
-		ServerBusy:     m.inflight > 0,
-		ServerStarting: m.activeStatus == LSPStarting,
-		ServerSyncing:  m.syncing,
-		ServerFailed:   m.isFailedLocked(),
-		ServerError:    m.activeError,
-		IdleStatus:     m.idleStatus,
-		IdleReason:     m.idleReason,
-		FilesTracked:   len(m.fileDiagnostics),
-		FilesAffected:  m.filesAffected,
-		Errors:         m.diagnosticErrors,
-		Warnings:       m.diagnosticWarnings,
-		Info:           m.diagnosticInfo,
-		Hints:          m.diagnosticHints,
-		SymbolsCount:   m.symbolCount,
-		LastSync:       m.projectLastSync,
-		TopIssue:       m.topIssue,
+	ins := ProjectInsights{ServerName: m.activeServerNameLocked(), ServerReady: m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
+		ServerBusy: m.inflight > 0, ServerStarting: m.activeStatus == LSPStarting, ServerSyncing: m.syncing,
+		ServerFailed: m.isFailedLocked(), ServerError: m.activeError, IdleStatus: m.idleStatus, IdleReason: m.idleReason, SymbolsCount: m.symbolCount}
+	settings := ttypes.LSPSettings{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
+	sources := m.sources
+	m.mu.Unlock()
+	summary := ProjectInsights{}
+	if sources != nil && sources.Insight != nil {
+		summary = sources.Insight.diagnosticSummaryFor(settings)
+	} else {
+		summary.CoverageDetail = "No canonical source authority; project coverage is unverified."
 	}
-	return ins
+	summary.ServerName, summary.ServerReady, summary.ServerBusy = ins.ServerName, ins.ServerReady, ins.ServerBusy
+	summary.ServerStarting, summary.ServerSyncing, summary.ServerFailed = ins.ServerStarting, ins.ServerSyncing, ins.ServerFailed
+	summary.ServerError, summary.IdleStatus, summary.IdleReason, summary.SymbolsCount = ins.ServerError, ins.IdleStatus, ins.IdleReason, ins.SymbolsCount
+	return summary
+}
+func (m *LSPManager) ProjectDiagnosticCounts() (int, int, int) {
+	view := m.ProjectInsights()
+	return view.Errors, view.Warnings, view.Info + view.Hints
 }
 
 // ServerHealthSnapshots exposes every configured/attempted server separately.
@@ -347,16 +257,12 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 	m.mu.Lock()
 	out := make([]ttypes.LSPServerHealth, 0, len(m.states))
 	for id, state := range m.states {
-		diagnostics := m.serverDiagnosticCounts[id]
 		health := ttypes.LSPServerHealth{
 			ID: id, Name: filepath.Base(state.cmd), RootURI: state.rootURI,
 			Status: lspStatusLabel(state.status), Error: state.err,
 			Connected: state.status == LSPConnected,
 			Starting:  state.status == LSPStarting,
 			Syncing:   m.syncing, Busy: m.inflight > 0,
-			FilesAffected: diagnostics.files,
-			Errors:        diagnostics.errors, Warnings: diagnostics.warnings,
-			Information: diagnostics.information, Hints: diagnostics.hints,
 		}
 		if state.waiting {
 			health.Status = "Waiting for slot"
@@ -418,159 +324,10 @@ func (m *LSPManager) isFailedLocked() bool {
 	return m.activeStatus == LSPFailed || (m.activeError != "" && m.activeStatus != LSPConnected)
 }
 
-func (m *LSPManager) lastSyncLocked() int64 {
-	var latest int64
-	for _, t := range m.fileLastSync {
-		if t > latest {
-			latest = t
-		}
-	}
-	return latest
-}
-
 func (m *LSPManager) HasActiveFile() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.activeFilePath != ""
-}
-
-func (m *LSPManager) setFileDiagnostics(filePath string, diags []LSPDiagnostic) {
-	m.setFileDiagnosticsForServer("", filePath, diags)
-}
-
-func (m *LSPManager) setFileDiagnosticsForServer(serverID, filePath string, diags []LSPDiagnostic) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.setFileDiagnosticsLocked(serverID, filePath, diags)
-}
-
-func (m *LSPManager) setFileDiagnosticsLocked(serverID, filePath string, diags []LSPDiagnostic) {
-	fp := filepath.Clean(filePath)
-	// Protocol output is untrusted. Bound retained diagnostics independently of
-	// the server heap hint, and avoid walking a growing cache on idle UI frames.
-	if len(diags) > 1000 {
-		diags = diags[:1000]
-	}
-	if _, exists := m.fileDiagnostics[fp]; !exists && len(diags) > 0 && len(m.fileDiagnostics) >= 10000 {
-		return
-	}
-	m.diagnosticChanges[fp] = true
-
-	if !m.settings.Enabled || !m.settings.Diagnostics {
-		diags = nil
-	} else if len(diags) > 0 {
-		filtered := make([]LSPDiagnostic, 0, len(diags))
-		for _, d := range diags {
-			if m.settings.SeverityAtLeast(d.Severity) {
-				filtered = append(filtered, d)
-			}
-		}
-		diags = filtered
-		if len(diags) == 0 {
-			diags = nil
-		}
-	}
-
-	// Subtract the old diagnostic messages from the global issue counter so
-	// the "top issue" only reflects the current snapshot. Skipping this
-	// would let stale messages keep "winning" the top slot forever.
-	if prev, ok := m.fileDiagnostics[fp]; ok {
-		oldServer := m.fileDiagnosticServer[fp]
-		aggregate := m.serverDiagnosticCounts[oldServer]
-		if len(prev) > 0 {
-			m.filesAffected--
-			aggregate.files--
-		}
-		for _, d := range prev {
-			m.adjustDiagnosticCountLocked(d.Severity, -1)
-			adjustDiagnosticAggregate(&aggregate, d.Severity, -1)
-			if msg := strings.TrimSpace(d.Message); msg != "" {
-				if c := m.issueCount[msg]; c <= 1 {
-					delete(m.issueCount, msg)
-				} else {
-					m.issueCount[msg] = c - 1
-				}
-			}
-		}
-		m.serverDiagnosticCounts[oldServer] = aggregate
-	}
-
-	if diags == nil {
-		delete(m.fileDiagnostics, fp)
-		delete(m.fileLastSync, fp)
-		delete(m.fileDiagnosticServer, fp)
-	} else {
-		m.fileDiagnostics[fp] = append([]LSPDiagnostic(nil), diags...)
-		m.fileDiagnosticServer[fp] = serverID
-		aggregate := m.serverDiagnosticCounts[serverID]
-		if len(diags) > 0 {
-			m.filesAffected++
-			aggregate.files++
-		}
-		now := time.Now().UnixNano()
-		m.fileLastSync[fp], m.projectLastSync = now, max(m.projectLastSync, now)
-		for _, d := range diags {
-			m.adjustDiagnosticCountLocked(d.Severity, 1)
-			adjustDiagnosticAggregate(&aggregate, d.Severity, 1)
-			if msg := strings.TrimSpace(d.Message); msg != "" {
-				m.issueCount[msg]++
-			}
-		}
-		m.serverDiagnosticCounts[serverID] = aggregate
-	}
-	if diags == nil {
-		m.projectLastSync = m.lastSyncLocked()
-	}
-	m.recomputeTopIssueLocked()
-	m.bumpVersionLocked()
-}
-
-func adjustDiagnosticAggregate(aggregate *diagnosticAggregate, severity, delta int) {
-	switch severity {
-	case DiagError:
-		aggregate.errors += delta
-	case DiagWarning:
-		aggregate.warnings += delta
-	case DiagInfo:
-		aggregate.information += delta
-	default:
-		aggregate.hints += delta
-	}
-}
-
-func (m *LSPManager) adjustDiagnosticCountLocked(severity int, delta int) {
-	switch severity {
-	case DiagError:
-		m.diagnosticErrors += delta
-	case DiagWarning:
-		m.diagnosticWarnings += delta
-	case DiagInfo:
-		m.diagnosticInfo += delta
-	default:
-		m.diagnosticHints += delta
-	}
-}
-
-func (m *LSPManager) recomputeTopIssueLocked() {
-	m.topIssue = ""
-	count := 0
-	for issue, occurrences := range m.issueCount {
-		if occurrences > count || occurrences == count && issue < m.topIssue {
-			m.topIssue, count = issue, occurrences
-		}
-	}
-}
-
-func (m *LSPManager) FileDiagnostics(filePath string) []LSPDiagnostic {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]LSPDiagnostic(nil), m.fileDiagnostics[filepath.Clean(filePath)]...)
-}
-
-func (m *LSPManager) HasFileDiagnostics(filePath string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.fileDiagnostics[filepath.Clean(filePath)]) > 0
 }
 
 // InflightRequests returns the number of LSP requests currently in flight.
@@ -798,7 +555,7 @@ func (m *LSPManager) InvalidateFile(filePath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fp := filepath.Clean(filePath)
-	m.setFileDiagnosticsLocked(m.fileDiagnosticServer[fp], fp, nil)
+	m.invalidateDiagnosticsLocked("Source path invalidated.")
 	m.symbolCount -= len(m.docSymbols[fp])
 	delete(m.docSymbols, fp)
 }

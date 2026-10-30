@@ -696,6 +696,10 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		Text: titleStr,
 		Kind: ui.DiagLineTitle,
 	})
+	diagLines = append(diagLines,
+		ui.DiagLine{Text: m.EditorState.Editor.DiagnosticStatus(), Kind: ui.DiagLineBody},
+		ui.DiagLine{Text: m.EditorState.Editor.DiagnosticProvenance(), Kind: ui.DiagLineBody},
+	)
 	if sourceLine != "" {
 		diagLines = append(diagLines, ui.DiagLine{
 			Text: sourceLine,
