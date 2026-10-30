@@ -101,7 +101,7 @@ func cohortFiles(root string) ([]string, error) {
 			return nil, err
 		}
 	}
-	for _, name := range []string{"deps/GHOSTTY_PIN", "deps/GHOSTTY_PIN.ps1"} {
+	for _, name := range []string{"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1"} {
 		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name))); os.IsNotExist(err) {
 			continue // Tiny fixture/module roots need not use the native dependency.
 		}
@@ -179,7 +179,7 @@ func skipCohortDir(name string) bool {
 		return true
 	}
 	switch name {
-	case "third_party", "deps", "vendor", "node_modules", "testdata", "tests", "test", "dist", "build", "artifacts", "tmp", "temp", "cache":
+	case "third_party", "vendor", "node_modules", "testdata", "tests", "test", "dist", "build", "artifacts", "tmp", "temp", "cache":
 		return true
 	}
 	return false

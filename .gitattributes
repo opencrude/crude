@@ -35,4 +35,4 @@
 *.tpl text eol=lf
 *.lark text eol=lf
 *.html text eol=lf
-deps/GHOSTTY_PIN text eol=lf
+third_party/libghostty-vt/GHOSTTY_PIN text eol=lf

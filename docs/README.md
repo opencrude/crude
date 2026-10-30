@@ -141,6 +141,9 @@ documents to read before changing each area.
   matrix remain open; exact boundaries and implementation differences are recorded.
 - [Core and shell separation](plans/core-shell-separation.md) — remaining native
   Windows, distinct-host and resource-baseline acceptance.
+- [Autonomous code intelligence](plans/autonomous-code-intelligence.md) —
+  proposed: zero-install, self-acquiring, verified and resource-governed
+  whole-project intelligence; folds in LSP acceptance.
 - [LSP acceptance](plans/lsp-acceptance.md) — process containment and
   installed-server acceptance.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open

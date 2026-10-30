@@ -1,6 +1,6 @@
 # bootstrap_libghostty.ps1
 # Download/check the pinned Ghostty revision and install libghostty-vt into
-# deps/libghostty-vt. Requires Zig 0.16.x (see deps/GHOSTTY_PIN).
+# third_party/libghostty-vt. Requires Zig 0.16.x (see third_party/libghostty-vt/GHOSTTY_PIN).
 #
 # Windows counterpart to scripts/bootstrap_libghostty.sh. The terminfo step
 # is skipped: the compiled xterm-ghostty entry is already committed under
@@ -17,9 +17,9 @@ param()
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-. (Join-Path $Root "deps/GHOSTTY_PIN.ps1")
+. (Join-Path $Root "third_party/libghostty-vt/GHOSTTY_PIN.ps1")
 
-$Prefix = Join-Path $Root "deps/libghostty-vt"
+$Prefix = Join-Path $Root "third_party/libghostty-vt"
 $Src = if ($env:GHOSTTY_SRC) { $env:GHOSTTY_SRC } else { Join-Path $HOME "tools/src/ghostty" }
 $Stamp = Join-Path $Prefix ".crude-pin"
 

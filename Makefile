@@ -16,7 +16,7 @@ libghostty:
 	./scripts/bootstrap_libghostty.sh
 
 ensure-libghostty:
-	@if [ ! -f deps/libghostty-vt/lib/libghostty-vt.a ]; then ./scripts/bootstrap_libghostty.sh; fi
+	@if [ ! -f third_party/libghostty-vt/lib/libghostty-vt.a ]; then ./scripts/bootstrap_libghostty.sh; fi
 
 build: ensure-libghostty protocol-check
 	. scripts/libghostty_env.sh && go build ./... && go build -o crude .
@@ -55,7 +55,7 @@ libghostty-windows:
 	pwsh scripts/bootstrap_libghostty.ps1
 
 ensure-libghostty-windows:
-	@if (-not (Test-Path deps/libghostty-vt/lib/ghostty-vt-static.lib)) { pwsh scripts/bootstrap_libghostty.ps1 }
+	@if (-not (Test-Path third_party/libghostty-vt/lib/ghostty-vt-static.lib)) { pwsh scripts/bootstrap_libghostty.ps1 }
 
 build-windows: ensure-libghostty-windows protocol-check
 	. scripts/libghostty_env.ps1; go build ./...

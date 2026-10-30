@@ -2,7 +2,7 @@ Third-party notices for the pinned native terminal library
 ========================================================
 
 Crude is Apache-2.0. These upstream notices are retained under their own terms.
-Ghostty: d2c70a8c7b9b6893c13640c02d7b6f9a1624f3f0 (deps/GHOSTTY_PIN)
+Ghostty: d2c70a8c7b9b6893c13640c02d7b6f9a1624f3f0 (third_party/libghostty-vt/GHOSTTY_PIN)
 Highway: 66486a10623fa0d72fe91260f96c892e41aceb06, Apache-2.0 / BSD-3-Clause
 simdutf: vendored by the pinned Ghostty revision; MIT notice from v5.2.8
 uucode: 2826a37a4562284fdacd8fa029d49509cc9bffcd, MIT plus included notices

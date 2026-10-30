@@ -15,8 +15,12 @@ runs:
       with:
         path: |
           ~/tools/zig-0.16.0
-          deps/libghostty-vt
-        key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps/GHOSTTY_PIN*', 'scripts/bootstrap_libghostty.*', '.github/actions/setup-native/action.yml') }}
+          third_party/libghostty-vt/include
+          third_party/libghostty-vt/lib
+          third_party/libghostty-vt/share
+          third_party/libghostty-vt/.crude-pin
+          third_party/libghostty-vt/.crude-cpu
+        key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/libghostty-vt/GHOSTTY_PIN*', 'scripts/bootstrap_libghostty.*', '.github/actions/setup-native/action.yml') }}
     - name: Linux native dependencies
       if: runner.os == 'Linux'
       shell: bash
@@ -83,5 +87,9 @@ runs:
       with:
         path: |
           ~/tools/zig-0.16.0
-          deps/libghostty-vt
+          third_party/libghostty-vt/include
+          third_party/libghostty-vt/lib
+          third_party/libghostty-vt/share
+          third_party/libghostty-vt/.crude-pin
+          third_party/libghostty-vt/.crude-cpu
         key: ${{ steps.native-cache.outputs.cache-primary-key }}

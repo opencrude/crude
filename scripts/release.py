@@ -81,8 +81,8 @@ def build(args):
     goos, goarch, cgo = run("go", "env", "GOOS", "GOARCH", "CGO_ENABLED").splitlines()
     if (goos, goarch, cgo) != (target, "amd64", "1"):
         raise ValueError("source scripts/libghostty_env for this native platform; CGO_ENABLED must be 1")
-    pin = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (ROOT / "deps/GHOSTTY_PIN").read_text(), re.MULTILINE).group(1)
-    prefix = ROOT / "deps/libghostty-vt"
+    pin = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (ROOT / "third_party/libghostty-vt/GHOSTTY_PIN").read_text(), re.MULTILINE).group(1)
+    prefix = ROOT / "third_party/libghostty-vt"
     library = "ghostty-vt-static.lib" if target == "windows" else "libghostty-vt.a"
     if (prefix / ".crude-pin").read_text().strip() != pin or (prefix / ".crude-cpu").read_text().strip() != "baseline" or not (prefix / "lib" / library).is_file():
         raise ValueError("bootstrap the pinned native libghostty-vt before building")
@@ -105,8 +105,8 @@ def build(args):
         # rather than silently shipping an incomplete Go dependency bundle.
         subprocess.run(["go-licenses", "save", ".", "--ignore=crude", f"--save_path={stage / 'licenses/go'}"], cwd=ROOT, check=True)
         (stage / "licenses/ghostty").mkdir(parents=True)
-        shutil.copyfile(ROOT / "deps/GHOSTTY-LICENSE", stage / "licenses/ghostty/LICENSE")
-        shutil.copyfile(ROOT / "deps/NATIVE-NOTICES", stage / "licenses/NATIVE-NOTICES")
+        shutil.copyfile(ROOT / "third_party/libghostty-vt/GHOSTTY-LICENSE", stage / "licenses/ghostty/LICENSE")
+        shutil.copyfile(ROOT / "third_party/libghostty-vt/NATIVE-NOTICES", stage / "licenses/NATIVE-NOTICES")
         shutil.copyfile(ROOT / "NOTICE", stage / "licenses/CRUDE-NOTICE")
         shutil.copyfile(ROOT / "codexio/NOTICE", stage / "licenses/CODEX-NOTICE")
         shutil.copyfile(ROOT / "third_party/pathwalk/LICENSE", stage / "licenses/PATHWALK-LICENSE")

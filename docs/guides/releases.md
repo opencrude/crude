@@ -13,7 +13,7 @@
 
 No macOS, ARM64, 32-bit or Alpine/musl release artifacts are advertised. The
 embedded terminal requires cgo; a stub-only build is not a release. See
-[native dependency bootstrap](../../deps/README.md) and
+[native dependency bootstrap](../../third_party/libghostty-vt/README.md) and
 [terminal contracts](../reference/in-app-terminals.md).
 
 The single build tool is `scripts/release.py`: native `build --version <tag>`
