@@ -23,6 +23,37 @@ encoded bytes. Root/configuration replacement requires a new launch-bound table.
 This transport contract does not discover modules, infer build configurations,
 authorize execution, or establish semantic coverage.
 
+## Complete analyzer environment
+
+`ClientConfig.Environment` is a prepared `ProcessEnvironment`, not an ambient
+overlay. Its zero value is refused before executable or transport construction.
+`NewProcessEnvironment(nil)` prepares an explicitly empty table; `Env()` returns
+a detached, nonnil list even when empty. Formatting and JSON redact its contents.
+No environment fingerprint is published. The constructor does no filesystem
+I/O and admits at most 256 entries, 128 KiB of encoded `KEY=value` data, 256-byte
+ASCII identifier keys and 32-KiB UTF-8, NUL-free values. These encoded bounds are
+not OS launchability or heap guarantees.
+
+An explicit PATH admits at most 64 absolute native directories of at most 4096
+bytes each, without empty/relative entries, control characters or dot components.
+Exact duplicates preserve the first position. Immediately before construction,
+the existing subprocess owner resolves only this PATH or a native absolute
+executable, then passes that absolute result and the complete environment to
+`os/exec`. There is no ambient PATH/PATHEXT lookup, implicit shell or current
+directory fallback. Windows resolves only native EXE/COM candidates and refuses
+BAT/CMD interpretation; an explicit absolute SystemRoot is required so Go cannot
+inject an ambient one. This requirement is not a claim of native Windows
+acceptance. Missing/invalid executable lookup retains the missing-command error
+classification without echoing search directories or environment values.
+
+Lookup observes a regular file and, on Unix, execute mode bits. It follows
+symlinks and does not attest immutable executable bytes, effective access,
+noexec/ACL state, authorization, containment or freedom from path races.
+The caller owns positive OS/toolchain inheritance and explicit launch choices;
+the transport never reads `os.Environ` to fill missing data. Trusted analyzers
+still have native filesystem/network access and may discover credentials there.
+Environment minimization is not a credential sandbox or a change to MCP.
+
 ## Process and transport lifetime
 
 `Client.Kill() error` cancels the client and joins connection teardown.

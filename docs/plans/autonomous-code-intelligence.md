@@ -556,6 +556,12 @@ installer.
   toolchain variables while withholding Crude/provider secrets; disclose any
   unavoidable limitations. This is a new analyzer-process contract, not a
   change to the existing MCP environment contract.
+  The initial positive inheritance and complete launch table are implemented:
+  framed subprocess tests cover unknown ambient variables, detached explicit
+  choices, configured-PATH lookup and pre-admission rejection. Environment
+  minimization is not a sandbox and does not prevent trusted tools reading
+  credentials from home/configuration files. Native Windows/macOS runtime and
+  the consolidated checkpoint gates remain separate acceptance.
 
 ### Policy and control
 

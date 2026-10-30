@@ -148,7 +148,7 @@ func (m *App) handleProductControl(msg shellport.ControlRequestMsg) (tea.Cmd, bo
 		if in.ID != r.Target.ResourceID || m.termMgr() == nil || m.termDock == nil || m.overlayHost == nil {
 			return fail(control.Unavailable, "terminal owner unavailable")
 		}
-		if _, ok := m.termMgr().Get(in.ID); !ok {
+		if _, ok := m.terminalInfo(in.ID); !ok {
 			return fail(control.Unavailable, "terminal missing")
 		}
 		if focused := m.windowManager.Focused(); focused != nil && focused.ID != string(ui.TerminalOverlayID(in.ID)) {

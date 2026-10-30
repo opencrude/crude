@@ -48,9 +48,10 @@ type terminalInputFailure struct {
 }
 
 var (
-	_ shellport.TerminalService    = (*terminalReplica)(nil)
-	_ shellport.TerminalManager    = (*terminalReplica)(nil)
-	_ shellport.StreamingTerminals = (*terminalReplica)(nil)
+	_ shellport.TerminalService          = (*terminalReplica)(nil)
+	_ shellport.TerminalManager          = (*terminalReplica)(nil)
+	_ shellport.StreamingTerminals       = (*terminalReplica)(nil)
+	_ shellport.TerminalInventoryBarrier = (*terminalReplica)(nil)
 )
 
 func (w *Workspace) Terminals() shellport.TerminalService { return w.terminals }
@@ -154,11 +155,20 @@ func (t *terminalReplica) Detach(workspace.TerminalController) {
 func (t *terminalReplica) Create(opts workspace.TerminalCreateOpts) (workspace.TerminalInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	info, err := t.w.rpc().CreateTerminal(ctx, opts)
-	if err == nil {
-		t.w.requestTerminalRefresh()
+	return t.w.rpc().CreateTerminal(ctx, opts)
+}
+
+// AwaitInventory reuses the topic's one applied-publication barrier. It does not
+// fetch state, write the replica, or turn a private create receipt into inventory.
+func (t *terminalReplica) AwaitInventory(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, callTimeout)
+	defer cancel()
+	stop := context.AfterFunc(t.w.ctx, cancel)
+	defer stop()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return info, err
+	return t.w.refreshTopicApplied(ctx, coreprotocol.TopicTerminalInventory)
 }
 
 func (t *terminalReplica) Close(id string) {
@@ -416,8 +426,4 @@ func (t *terminalReplica) stopStreamsLocked(id string) {
 	if input != nil {
 		input.Cancel()
 	}
-}
-
-func (w *Workspace) requestTerminalRefresh() {
-	w.resetTopic(coreprotocol.TopicTerminalInventory)
 }

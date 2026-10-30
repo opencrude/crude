@@ -407,6 +407,15 @@ TerminalService owns the one parser and reply state for every PTY.
 | `Resize` | 1 | mutates | partial: takes opaque TerminalLease | ordered lease input stream |
 | `Rows` | 2 | reads | yes | terminal.rows (bounded on-demand history/selection); normal viewport uses grid topic |
 
+Connected asynchronous terminal services also expose `TerminalInventoryBarrier`.
+Its `AwaitInventory(context.Context)` waits off Update for a post-call inventory
+subscription value to be applied by the existing replica owner. Interactive
+creation uses it before reporting a mounted terminal; direct SDK `Create` remains
+a resource receipt and does not require a UI pump. Caller, workspace-switch and
+attachment cancellation release the wait. Local synchronous managers need no
+extra publication contract. This barrier never fetches or writes a second
+inventory, and no terminal is recreated on a cancelled mount.
+
 ### `TerminalManager`
 
 TerminalManager owns the PTY sessions.

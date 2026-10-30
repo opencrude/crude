@@ -97,6 +97,8 @@ type ClientConfig struct {
 	WorkspaceFolders []protocol.WorkspaceFolder
 	InitOptions      map[string]any
 	Configuration    Configuration
-	Environment      map[string]string
-	Timeout          time.Duration
+	// Environment is the complete prepared launch environment, never an overlay
+	// on the host's environment. Its zero value is refused before construction.
+	Environment ProcessEnvironment
+	Timeout     time.Duration
 }

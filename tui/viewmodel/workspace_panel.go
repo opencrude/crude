@@ -141,7 +141,7 @@ func (app *App) openTerminalPicker() {
 	if app.termDock != nil {
 		nextNumber += len(app.termDock.IDs())
 	}
-	for _, terminal := range manager.List() {
+	for _, terminal := range app.terminalInfos() {
 		id := terminal.ID
 		title := terminal.Title
 		if title == "" {

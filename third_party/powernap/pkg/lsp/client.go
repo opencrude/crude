@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
@@ -68,6 +70,9 @@ const (
 func NewClient(config ClientConfig) (*Client, error) {
 	if !config.Configuration.boundTo(config.RootURI) {
 		return nil, ErrConfiguration
+	}
+	if err := validateLaunchEnvironment(config.Environment); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -695,22 +700,24 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 
 // startServerProcess starts the language server process.
 func startServerProcess(ctx context.Context, config ClientConfig) (_ io.ReadWriteCloser, resultErr error) {
-	cmd := exec.Command(config.Command, config.Args...) //nolint:gosec
+	if err := validateLaunchEnvironment(config.Environment); err != nil {
+		return nil, err
+	}
+	command, err := config.Environment.resolve(config.Command)
+	if err != nil {
+		// Preserve missing-executable classification without disclosing PATH
+		// values or reintroducing exec.LookPath's ambient search.
+		return nil, fmt.Errorf("executable unavailable in prepared analyzer environment: %w", exec.ErrNotFound)
+	}
+	cmd := exec.Command(command, config.Args...) //nolint:gosec
+	cmd.Env = config.Environment.Env()           // nonnil even for an explicit empty table
 
 	if config.RootURI != "" {
 		root, err := protocol.DocumentURI(config.RootURI).Path()
 		if err != nil {
-			return nil, fmt.Errorf("invalid root URI: %w", err)
+			return nil, errors.New("invalid language server root URI")
 		}
 		cmd.Dir = root
-	}
-
-	// Set environment variables
-	if config.Environment != nil {
-		cmd.Env = os.Environ()
-		for k, v := range config.Environment {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
 	}
 
 	// Create pipes
@@ -739,7 +746,20 @@ func startServerProcess(ctx context.Context, config ClientConfig) (_ io.ReadWrit
 	prepareProcess(cmd)
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start process: %w", err)
+		// PathError may contain an executable selected from a sensitive PATH.
+		// Keep the native failure category, never its path or environment.
+		var pathError *os.PathError
+		if errors.As(err, &pathError) {
+			err = pathError.Err
+		}
+		var executableError *exec.Error
+		if errors.As(err, &executableError) {
+			err = executableError.Err
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			err = exec.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to start language server process: %w", err)
 	}
 
 	tree, err := ownProcess(cmd)
@@ -781,6 +801,25 @@ func startServerProcess(ctx context.Context, config ClientConfig) (_ io.ReadWrit
 		reader, writer = config.TransportWrap(reader, writer)
 	}
 	return transport.NewStreamTransport(reader, writer, closer), nil
+}
+
+func validateLaunchEnvironment(environment ProcessEnvironment) error {
+	if !environment.prepared() {
+		return ErrProcessEnvironment
+	}
+	if runtime.GOOS == "windows" {
+		// os/exec otherwise injects the ambient SYSTEMROOT even for a complete
+		// nonnil environment. Require its explicit value, rather than allowing
+		// that second hidden environment owner.
+		for _, entry := range environment.Env() {
+			key, value, _ := strings.Cut(entry, "=")
+			if strings.EqualFold(key, "SYSTEMROOT") && validProcessAbsolutePath(value) {
+				return nil
+			}
+		}
+		return ErrProcessEnvironment
+	}
+	return nil
 }
 
 type processCloser struct {

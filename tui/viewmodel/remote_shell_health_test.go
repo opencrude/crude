@@ -254,7 +254,7 @@ func TestCapabilityRefreshCancelCannotInvalidateNewerPoll(t *testing.T) {
 	}
 }
 
-func TestRemoteShellTerminalCreateReceiptBeforeInventoryChangesPanel(t *testing.T) {
+func TestRemoteShellTerminalInventoryBeforePanelChange(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("SHELL", "/bin/sh")
 	t.Setenv("ENV", "")
@@ -262,25 +262,39 @@ func TestRemoteShellTerminalCreateReceiptBeforeInventoryChangesPanel(t *testing.
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	shell.app.toggleWorkspacePanel(termdock.PanelNotices)
 	command := shell.app.openNewTerminal()
-	created, ok := command().(terminalCreatedMsg)
-	if !ok || created.err != nil {
-		t.Fatalf("terminal creation: %+v", created)
-	}
-	if _, installed := shell.app.ws.TermMgr().Get(created.info.ID); installed {
-		t.Fatal("test failed to hold the inventory replica behind the create receipt")
-	}
-	_, next := shell.app.Update(created)
-	if !shell.app.termDock.TerminalActive() || shell.app.termDock.ActiveID() != created.info.ID {
-		t.Fatal("create receipt left Notices painted while terminal inventory was pending")
-	}
-	runTerminalCommand(t, shell.app, next)
-	if !shell.app.terminalDockOwnsKeys() {
-		t.Fatal("receipt-mounted terminal did not receive keyboard focus")
-	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- command() }()
+	var created terminalCreatedMsg
+	completed := false
+	// Like the real Program, apply replica ingress while creation waits off
+	// Update. A private RPC receipt must not mount ahead of its inventory.
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-		_, exists := shell.app.ws.TermMgr().Get(created.info.ID)
-		return exists
+		select {
+		case result := <-done:
+			var ok bool
+			created, ok = result.(terminalCreatedMsg)
+			if !ok || created.err != nil {
+				t.Fatalf("terminal creation: %+v", created)
+			}
+			if _, installed := shell.app.ws.TermMgr().Get(created.info.ID); !installed {
+				t.Fatal("terminal creation completed before inventory application")
+			}
+			if shell.app.termDock.ActivePanel() != termdock.PanelNotices {
+				t.Fatal("inventory publication alone displaced the selected Notices panel")
+			}
+			_, next := shell.app.Update(created)
+			runTerminalCommand(t, shell.app, next)
+			completed = true
+		default:
+		}
+		return completed
 	})
+	if !shell.app.termDock.TerminalActive() || shell.app.termDock.ActiveID() != created.info.ID {
+		t.Fatal("applied terminal creation left Notices painted")
+	}
+	if !shell.app.terminalDockOwnsKeys() {
+		t.Fatal("inventory-mounted terminal did not receive keyboard focus")
+	}
 	shell.app.toggleWorkspacePanel(termdock.PanelNotices)
 	shell.app.toggleWorkspacePanel(termdock.PanelTerminal)
 	if !shell.app.termDock.TerminalActive() || strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Notifications") {

@@ -1079,6 +1079,19 @@ explanations; actual startup failures remain failures with their original reason
 their executables. The server must already be installed on the core host and
 available to its process environment.
 
+The environment table supplies explicit choices over the analyzer's positive
+OS/toolchain inheritance policy, not over every variable in the core's process.
+Arbitrary ambient credentials, agent sockets, proxy credentials and executable
+flag variables are withheld. An explicit PATH must contain only bounded absolute
+native directories; an empty/relative PATH is rejected. Ambient workspace and
+relative PATH entries are omitted, not silently searched. Executable lookup
+uses the prepared table at each start, so an explicit PATH controls Retry too.
+See the [analyzer environment contract](editor.md#language-server-transport)
+for ownership and limits. This is not a filesystem/network sandbox: a trusted
+tool may read home/configuration files, and explicitly configured values may
+deliberately expose sensitive data. MCP and terminal environment contracts are
+unchanged.
+
 The default subprocess transport is `lspclient/`, independent of the editor/TUI.
 The workspace supplies it by default; merely constructing a manager launches no
 server. Test transports may override that factory. Connected LSP has typed worker requests, replicated diagnostics/health and

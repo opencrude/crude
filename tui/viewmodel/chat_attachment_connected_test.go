@@ -150,7 +150,11 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	}
 	third := newRemoteJourneyShell(t, runtime, root)
 	remoteJourneyUntil(t, []remoteJourneyShell{first, second, third}, func() bool {
-		return third.app.AgentView.ActiveID() == agentID && third.app.ws.LoadAppSettings().UI.AttachmentOpen == types.AttachmentOpenSystem
+		// Registry selection and settings are independent of transcript
+		// hydration. A human cannot click the reattached link until it paints.
+		return third.app.AgentView.ActiveID() == agentID &&
+			third.app.ws.LoadAppSettings().UI.AttachmentOpen == types.AttachmentOpenSystem &&
+			strings.Contains(third.app.View().RenderContent(), media.DisplayName())
 	})
 	clickTranscriptAttachment(t, third.app, media.DisplayName())
 	if third.app.overlayHost.IsOpen(ui.OverlayTextOverlay) || calls.Load() != 1 || second.app.Input.Value() != "PEER DRAFT MUST SURVIVE PREVIEWS" {

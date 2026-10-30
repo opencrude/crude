@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -36,6 +37,8 @@ type LSPIntegration struct {
 	scopes      []ConfigurationScope
 	config      lsp.Configuration
 	configErr   error
+	environment lsp.ProcessEnvironment
+	envErr      error
 	// startAdmission is the runtime owner's launch-epoch check. It must be
 	// memory-only; construction and joined cancellation still belong here.
 	startAdmission func() error
@@ -64,8 +67,9 @@ type LSPIntegration struct {
 // LSPIntegrationOption configures a new LSPIntegration.
 type LSPIntegrationOption func(*LSPIntegration)
 
-// WithServerEnv adds environment variables to the language server
-// subprocess (merged over the inherited environment).
+// WithServerEnv supplies explicit analyzer launch choices over a positive
+// OS/toolchain inheritance policy, never the whole ambient core environment.
+// Choices are detached and validated at construction; they grant no Trust.
 func WithServerEnv(env map[string]string) LSPIntegrationOption {
 	return func(l *LSPIntegration) {
 		l.serverEnv = env
@@ -136,7 +140,7 @@ func (l *LSPIntegration) OnDiagnostics(fn func(model.InsightDiagnosticPublicatio
 func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string, opts ...LSPIntegrationOption) *LSPIntegration {
 	l := &LSPIntegration{
 		serverCmd:  serverCmd,
-		serverArgs: serverArgs,
+		serverArgs: append([]string(nil), serverArgs...),
 		rootURI:    rootURI,
 		openFiles:  make(map[string]*openFileState),
 		progress:   make(map[string]bool),
@@ -155,6 +159,12 @@ func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string, op
 		l.config, l.configErr = lsp.NewConfiguration(rootURI, l.settings, scopes)
 	}
 	l.settings, l.scopes = nil, nil // only the immutable launch table remains
+	environment, err := analyzerEnvironment(os.Environ(), l.serverEnv, rootURI)
+	if err == nil {
+		l.environment, err = lsp.NewProcessEnvironment(environment)
+	}
+	l.envErr = err
+	l.serverEnv = nil // no caller-owned maps survive preparation
 	return l
 }
 
@@ -174,6 +184,10 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		if l.configErr != nil {
 			l.mu.Unlock()
 			return l.configErr
+		}
+		if l.envErr != nil {
+			l.mu.Unlock()
+			return l.envErr
 		}
 		stopping := l.stop
 		if stopping == nil {
@@ -230,7 +244,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	if err == nil {
 		client, err = lsp.NewClient(lsp.ClientConfig{
 			Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
-			Environment: l.serverEnv, Configuration: l.config, InitOptions: l.initOptions,
+			Environment: l.environment, Configuration: l.config, InitOptions: l.initOptions,
 			TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
 				nr, nw, mon := wrapLSPPipe(reader, writer)
 				pipe = mon

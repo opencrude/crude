@@ -287,7 +287,24 @@ Tea's update goroutine (the tab-close hang).
   while failed or stopped and **Restart** / **Stop** while running; Retry is
   `RestartServer`, which re-resolves the command on the next start, so
   installing the server and choosing Retry is enough.
-- `LSPIntegration.WithServerEnv` sets the server subprocess environment.
+- `LSPIntegration.WithServerEnv` supplies explicit launch choices over one
+  positive OS/toolchain inheritance policy in `lspclient/lsp_environment.go`.
+  Arbitrary ambient variables, including unknown provider credentials, agent
+  sockets, proxy credentials, loader options and tool-execution flags, are not
+  inherited. Ambient PATH keeps only absolute directories outside the lexical
+  workspace, with stable deduplication; symlink identity is not inferred.
+  Explicit PATH must pass strict native validation. Environment maps and
+  command arguments detach during preparation. Invalid environment data fails
+  before Trust admission; the existing transport owner resolves the executable
+  immediately before construction from that complete table, never ambient PATH.
+  Missing executables retain Retry guidance. The
+  [fork environment contract](../../third_party/powernap/README.md#complete-analyzer-environment)
+  defines bounds, native search and Windows SystemRoot requirements.
+  Explicit human choices can intentionally contain sensitive values; no raw
+  environment or environment fingerprint is published. This is minimization,
+  not a sandbox: trusted tools can still read home/configuration files and use
+  native network access. Neither Trust nor a successful launch proves complete
+  project context or credential isolation.
 - `LSPServerSpec.ConfigurationScopes` carries complete effective module settings
   through the workspace runtime to one immutable, root-bound transport table.
   `workspace/configuration` respects each item's `scopeUri`, selects its longest
@@ -408,6 +425,15 @@ prove freshness, artifact-set consistency, generated-input provenance or complet
 project coverage. Retained discovery, configuration selection and provider binding
 must supply those owners and preserve unknown inputs; parser success is not a
 new current semantic fact.
+
+`insight/project/cmake` adds passive CMake File API index, codemodel-v2 and
+target observations over a caller-supplied bounded artifact set. It preserves
+exact per-artifact identity and opaque compile fragments, validates references
+and source/compile-group bindings, and returns detached observations for multiple
+configurations. It performs no filesystem discovery, path resolution, CMake
+execution or coverage attestation. A missing artifact or unsupported binding
+cannot be an empty clean project. Retained discovery, freshness, configuration
+selection and provider wiring remain separate work.
 
 ### Diagnostic positions
 
