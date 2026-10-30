@@ -101,6 +101,9 @@ func (m *App) applyGoalActionResult(msg goalActionResultMsg) {
 // worked on (paused, blocked, or waiting after a reopen or fork), whether to
 // continue it.
 func (m *App) offerGoalResume(agentID string) {
+	if m.queueCoreRestartStartup(agentID) {
+		return
+	}
 	goal, ok := m.ws.GoalForAgent(agentID)
 	resumable := goal.Status == types.GoalPaused || goal.Status == types.GoalBlocked || goal.Status == types.GoalActive && goal.Waiting
 	if !ok || !resumable {

@@ -40,6 +40,10 @@ not the first test and is not itself an acceptance result.
   Extend that workflow for long, observe/act journeys and multi-client sessions
   rather than substituting a new screenshot/computer-use package. The current
   step driver is not a ready-made autonomous developer or multi-client recorder.
+- Reuse [checkpointed core restart](../reference/core-restart.md) for admitted
+  local original-terminal handoffs. Its isolated Linux draft/goal preservation
+  evidence covers a prerequisite, not the whole C8 workflow, a remote/device
+  campaign or permission to restart the current pre-feature developer core.
 - Implement a bounded runner, exact-client input/observation adapter, task
   manifests, independent oracle runner and evidence index. Reuse existing
   lifecycle and metrics APIs. Do not write a second document or LSP owner.
@@ -586,6 +590,18 @@ capacity budgets, not an assumed pass because RAM is plentiful.
   source/build directories only. Archive failures first, settle unknown
   mutations and retained work, then stop/join owned resources and verify
   cleanup. Never infer that an old or disconnected process is abandoned.
+
+## Milestone discipline
+
+After a required checkpoint is fully verified, commit its coherent tested tree
+and push the milestone without force. Compare the remote commit identity; a
+successful local commit is not evidence that it was pushed. Keep credentials,
+private permits, incomplete child work and generated evidence outside commits.
+
+Restarting is not a checkpoint shortcut. Retain the exact intent/receipt,
+settle its accepted work and resume only through its owned continuation permit.
+The initial pre-feature-core bootstrap remains an explicit owner action, not
+terminal-input simulation or a delayed force kill.
 
 ## Remaining implementation work
 

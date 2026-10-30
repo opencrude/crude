@@ -296,6 +296,7 @@ type App struct {
 	asyncIO                atomic.Pointer[appAsyncIOState]
 	asyncIOStopped         atomic.Bool
 	asyncIOStopOnce        sync.Once
+	coreRestart            *coreRestartController
 	treeWatcherLifeMu      sync.Mutex // fences startup admission against UI shutdown
 	treeWatcherStarts      sync.WaitGroup
 	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load

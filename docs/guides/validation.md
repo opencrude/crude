@@ -73,6 +73,13 @@ hundreds of cases into one package-wide budget.
   cover process groups or Job Objects on the executing platform; cross-built
   tests do not attest Windows/macOS behavior. Pure-Go data/transport checks
   prevent a syntax result type from pulling the native parser into all clients.
+- Checkpointed restart changes exercise the `^TestCoreRestart` and
+  `^TestGoalHandover` test-name filters across `app`, `core`, `session`,
+  `sessiondb` and `tui/viewmodel`, including race
+  checks. Use an isolated short real `CRUDE_HOME` for native capture; never stop
+  the developer's current core as a test. Keep schedule, natural checkpoint,
+  predecessor settlement, successor activation and clean foreground exit evidence
+  separate. See [the restart contract](../reference/core-restart.md).
 
 ### Protocol generation and v2 acceptance
 

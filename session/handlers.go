@@ -136,6 +136,16 @@ func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status tt
 }
 
 func (s *Session) SetYolo(enabled bool) {
+	if s.YoloEnabled() == enabled {
+		return
+	}
+	if err := s.beginSettingsOperation(); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("SAFETY", "yolo_change_refused", "error", err.Error())
+		}
+		return
+	}
+	defer s.endSettingsOperation()
 	if s.yolo.Swap(enabled) == enabled {
 		return
 	}
@@ -458,7 +468,7 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 	if err := s.beginSettingsOperation(); err != nil {
 		return
 	}
-	defer s.settingsOperationMu.Unlock()
+	defer s.endSettingsOperation()
 	s.delegationMu.Lock()
 	defer s.delegationMu.Unlock()
 	s.mu.Lock()

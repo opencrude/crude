@@ -69,6 +69,8 @@ documents to read before changing each area.
 - [Core client protocol](reference/core-client-protocol.md) — connected CLI,
   retained actors, core/shell ownership, shared editors and SSH, with explicit
   acceptance limits.
+- [Checkpointed core restart](reference/core-restart.md): exact original-terminal
+  handoff, durable goal permits, receipts and the explicit bootstrap boundary.
 - [Shell port](reference/shell-port.md) — the `shellport.Workspace` interface the
   TUI consumes and the matching `coreprotocol` methods.
 - [Async ownership and lifecycle](reference/async-lifecycle.md) — the Update

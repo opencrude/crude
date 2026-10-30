@@ -17,6 +17,7 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 	"crude/types"
+	"crude/types/control"
 )
 
 // A session's /goal is one objective its main agent pursues across turns.
@@ -94,6 +95,10 @@ func (s *Session) loadGoal() error {
 	}
 	s.goalMu.Lock()
 	s.goal = goalRuntime{record: record, present: true}
+	if err := s.restoreGoalHandoverLocked(); err != nil {
+		s.goalMu.Unlock()
+		return err
+	}
 	s.goalMu.Unlock()
 	shown := record.Goal
 	s.goalShownMu.Lock()
@@ -187,7 +192,7 @@ func (s *Session) commitGoalLocked(total int64) (types.Goal, error) {
 	s.goalAccountLocked(total)
 	s.goal.record.Goal.UpdatedAt = time.Now()
 	s.goal.record.Goal.Verifying = s.goal.record.VerifierID != ""
-	if err := sessiondb.SaveGoal(s.db, s.sessionID, s.goal.record); err != nil {
+	if err := s.saveGoalWithHandoverLocked(); err != nil {
 		return types.Goal{}, err
 	}
 	return s.goal.record.Goal, nil
@@ -252,6 +257,13 @@ func (s *Session) SetGoal(objective string, tokenBudget int64, replace bool) (ty
 	if tokenBudget < 0 {
 		return types.Goal{}, errors.New("a token budget must be positive")
 	}
+	release, ok := s.beginIdleWork()
+	if !ok {
+		return types.Goal{}, errors.New("session lifetime admission is fenced")
+	}
+	defer release()
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	total := s.tokenTotal()
 	s.goalMu.Lock()
 	if s.goal.present && s.goal.record.Goal.Unfinished() && !replace {
@@ -283,6 +295,13 @@ func (s *Session) EditGoal(objective string) (types.Goal, error) {
 	if err != nil {
 		return types.Goal{}, err
 	}
+	release, ok := s.beginIdleWork()
+	if !ok {
+		return types.Goal{}, errors.New("session lifetime admission is fenced")
+	}
+	defer release()
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	total := s.tokenTotal()
 	s.goalMu.Lock()
 	if !s.goal.present {
@@ -334,10 +353,21 @@ func (s *Session) ResumeGoal() (types.Goal, error) {
 
 // ClearGoal removes the goal and stops any verifier it started.
 func (s *Session) ClearGoal() error {
+	release, ok := s.beginIdleWork()
+	if !ok {
+		return errors.New("session lifetime admission is fenced")
+	}
+	defer release()
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	s.goalMu.Lock()
 	if !s.goal.present {
 		s.goalMu.Unlock()
 		return errNoGoal
+	}
+	if err := s.invalidateGoalHandoverLocked("The goal was cleared."); err != nil {
+		s.goalMu.Unlock()
+		return err
 	}
 	if err := sessiondb.DeleteGoal(s.db, s.sessionID); err != nil {
 		s.goalMu.Unlock()
@@ -353,6 +383,13 @@ func (s *Session) ClearGoal() error {
 
 // settleGoal applies one status change and its stop of any running verifier.
 func (s *Session) settleGoal(change func(*goalRuntime) error) (types.Goal, error) {
+	release, ok := s.beginIdleWork()
+	if !ok {
+		return types.Goal{}, errors.New("session lifetime admission is fenced")
+	}
+	defer release()
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	total := s.tokenTotal()
 	s.goalMu.Lock()
 	if !s.goal.present {
@@ -550,13 +587,29 @@ func (s *Session) goalContinuation() (provider.UserInput, bool) {
 		return provider.UserInput{}, false
 	}
 	s.goalMu.Lock()
+	if !s.goal.present || s.goal.record.Goal.Status != types.GoalActive || s.goal.record.Goal.Waiting || s.goal.record.VerifierID != "" {
+		s.goalMu.Unlock()
+		return provider.UserInput{}, false
+	}
+	if handoverLive(s.goalHandover.State.Phase) {
+		if err := s.expireGoalHandoverLocked(); err != nil || handoverLive(s.goalHandover.State.Phase) {
+			s.goalMu.Unlock()
+			return provider.UserInput{}, false
+		}
+	}
 	findings := s.goal.findings
 	s.goal.findings = ""
+	var target *control.Target
+	if s.goalHandoverTarget != nil {
+		bound := s.goalHandoverTarget.Clone()
+		target = &bound
+	}
 	s.goalMu.Unlock()
 	return provider.UserInput{
-		InternalID: fmt.Sprintf("%s%d", goalContinuationPrefix, time.Now().UnixNano()),
-		Text:       rootprompt.GoalContinuation(goal.Objective, goal.TokensUsed, goal.TokenBudget, goal.TimeUsed, findings),
-		Origin:     provider.OriginRuntimeContext,
+		InternalID:    fmt.Sprintf("%s%d", goalContinuationPrefix, time.Now().UnixNano()),
+		Text:          rootprompt.GoalContinuation(goal.Objective, goal.TokensUsed, goal.TokenBudget, goal.TimeUsed, findings),
+		Origin:        provider.OriginRuntimeContext,
+		ControlTarget: target,
 	}, true
 }
 

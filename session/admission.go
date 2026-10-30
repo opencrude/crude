@@ -192,6 +192,9 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 			return intent.result
 		}
 		defer unlock()
+		if err := s.invalidateGoalHandover("New queued human input was accepted."); err != nil {
+			return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}
+		}
 		receipt, err := s.queueInput(intent.AgentID, intent.request.input, intent.DraftRevision)
 		intent.committed = true
 		if err != nil {
@@ -221,6 +224,10 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		return intent.result
 	}
 	defer unlock()
+	if err := s.invalidateGoalHandover("New human input was accepted."); err != nil {
+		intent.orchestrator.endTurn(intent.TurnGeneration)
+		return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}

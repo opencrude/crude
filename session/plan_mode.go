@@ -27,6 +27,10 @@ func (s *Session) PlanMode() bool {
 // SetPlanMode persists the mode; it applies from the next turn, never to a
 // turn that is already running.
 func (s *Session) SetPlanMode(enabled bool) error {
+	if err := s.beginSettingsOperation(); err != nil {
+		return err
+	}
+	defer s.endSettingsOperation()
 	var err error
 	if enabled {
 		err = sessiondb.SaveRuntimeState(context.Background(), s.db, planModeKey, []byte("on"))

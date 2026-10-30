@@ -375,6 +375,14 @@ CREATE TABLE IF NOT EXISTS session_goal (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+-- Private single-owner permit; fork deliberately drops this sidecar.
+CREATE TABLE IF NOT EXISTS session_goal_handover (
+    session_id TEXT PRIMARY KEY,
+    lifecycle_epoch INTEGER NOT NULL,
+    record BLOB NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS plans (
     id          TEXT PRIMARY KEY,
     session_id  TEXT NOT NULL,

@@ -77,6 +77,9 @@ func (s *Session) PublishHumanSteering(ctx context.Context, agentID string, requ
 		if orchestrator.closing.Load() || orchestrator.turnCancel == nil || orchestrator.turnCancelling || orchestrator.turnSealed || orchestrator.RunID != request.RunID {
 			return collaboration.PublishResult{}, collaboration.ErrUnavailable
 		}
+		if err := s.invalidateGoalHandover("New human steering was accepted."); err != nil {
+			return collaboration.PublishResult{}, err
+		}
 	} else {
 		runner := s.SubAgentRunner()
 		if runner == nil {
@@ -88,6 +91,9 @@ func (s *Session) PublishHumanSteering(ctx context.Context, agentID string, requ
 		}
 		var result collaboration.PublishResult
 		err := handle.WithSteeringAdmission(request.RunID, func() error {
+			if err := s.invalidateGoalHandover("New human steering was accepted."); err != nil {
+				return err
+			}
 			var err error
 			result, err = store.Publish(ctx, request)
 			return err

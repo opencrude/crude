@@ -72,6 +72,11 @@ func (s *Session) loadExecutionSelection() error {
 // SelectExecution runs off the actor/UI and persists before acknowledging. The
 // admission mutex is also the immutable input capture boundary.
 func (s *Session) SelectExecution(ctx context.Context, id string, revision uint64) (ExecutionSelection, error) {
+	release, ok := s.beginIdleWork()
+	if !ok {
+		return ExecutionSelection{}, errors.New("session lifetime admission is fenced")
+	}
+	defer release()
 	unlock, err := fileio.LockMutationContext(ctx)
 	if err != nil {
 		return ExecutionSelection{}, err
@@ -79,6 +84,9 @@ func (s *Session) SelectExecution(ctx context.Context, id string, revision uint6
 	defer unlock()
 	s.admissionMu.Lock()
 	defer s.admissionMu.Unlock()
+	if err := s.ValidateHistoryAdmission(); err != nil {
+		return ExecutionSelection{}, err
+	}
 	if ctx.Err() != nil || atomic.LoadInt32(&s.closing) != 0 {
 		return ExecutionSelection{}, errors.New("session execution selection is cancelled or closing")
 	}
@@ -108,6 +116,9 @@ func (s *Session) SelectExecution(ctx context.Context, id string, revision uint6
 	}
 	if s.db == nil {
 		return ExecutionSelection{}, errors.New("session execution selection storage unavailable")
+	}
+	if err := s.invalidateGoalHandover("The execution selection changed."); err != nil {
+		return ExecutionSelection{}, err
 	}
 	if err := sessiondb.SaveRuntimeState(ctx, s.db, executionSelectionKey, raw); err != nil {
 		return ExecutionSelection{}, err

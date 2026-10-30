@@ -30,11 +30,12 @@ import (
 // The TUI does NOT own business state; it delegates everything to the
 // workspace via the embedded viewmodel.App.
 type TUI struct {
-	app      *viewmodel.App
-	Program  *tea.Program
-	outbound *programMessagePump
-	doneCh   chan struct{}
-	stopOnce sync.Once
+	app                    *viewmodel.App
+	Program                *tea.Program
+	outbound               *programMessagePump
+	doneCh                 chan struct{}
+	stopOnce               sync.Once
+	coreRestartOperationID string // published by doneCh only after successful teardown
 
 	// OnQuit is called when the TUI program exits.
 	OnQuit func()
@@ -263,6 +264,12 @@ func WithComposerDrafts(store *clientstate.Store, attachment clientstate.Attachm
 	}
 }
 
+// WithCoreRestart binds the original terminal's application-owned handover host.
+// Configuration happens before Update starts and performs no restart itself.
+func WithCoreRestart(host shellport.CoreRestartHost) StartOption {
+	return func(a *viewmodel.App) error { return a.ConfigureCoreRestart(host) }
+}
+
 // WithRemoteManager binds this client's saved connections before the first frame.
 func WithRemoteManager(manager shellport.RemoteManager, initialBackend string) StartOption {
 	return func(a *viewmodel.App) error {
@@ -314,8 +321,9 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 	ws.SetEventSender(t)
 
 	go func() {
-		if _, err := program.Run(); err != nil {
-			lg.Error("TUI", "program_error", "error", err.Error())
+		_, runErr := program.Run()
+		if runErr != nil {
+			lg.Error("TUI", "program_error", "error", runErr.Error())
 		}
 		t.outbound.close()
 		t.outbound.wait()
@@ -326,6 +334,8 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 			}
 			if err := t.app.CloseWorkspaceAttachment(); err != nil {
 				lg.Warn("TUI", "detach_failed", "error", err.Error())
+			} else if runErr == nil {
+				t.coreRestartOperationID = t.app.CoreRestartOperationID()
 			}
 		}
 		if t.OnQuit != nil {
@@ -354,6 +364,20 @@ func (t *TUI) Stop() {
 
 func (t *TUI) Wait() {
 	<-t.doneCh
+}
+
+// CoreRestartOperationID is available only after Wait's draft flush and detach
+// barrier. It is a nonsecret exact operation identity, never a resume token.
+func (t *TUI) CoreRestartOperationID() string {
+	if t == nil || t.doneCh == nil {
+		return ""
+	}
+	select {
+	case <-t.doneCh:
+		return t.coreRestartOperationID
+	default:
+	}
+	return ""
 }
 
 func (t *TUI) ReleaseTerminal() {

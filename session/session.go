@@ -123,6 +123,13 @@ type Session struct {
 	lastTurnPlanMode atomic.Bool
 	goalMu           sync.Mutex
 	goal             goalRuntime
+	// goalMu owns the private handover sidecar and its one-runtime admission
+	// permit. A cold load never reconstructs the permit from a consumed record.
+	goalHandover         sessiondb.GoalHandoverRecord
+	goalHandoverLoaded   bool
+	goalHandoverSource   goalHandoverSource
+	goalHandoverTarget   *control.Target
+	goalHandoverBoundary *goalHandoverBoundary
 	// goalPlanAccounting tracks the mode of the current turn, or the next
 	// turn while idle, independently of a mid-turn mode toggle.
 	goalPlanAccounting bool
