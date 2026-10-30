@@ -93,9 +93,16 @@ an independent verifier confirms it, or the user or a stop rule ends it.
   waiting for Retry; see [run recovery](run-recovery.md)); three consecutive automatic turns
   that are empty, or whose tool calls all failed, block it. A turn parked for
   recovery changes nothing: recovery owns it and no goal turn can start until
-  it settles. A reopened session never restarts work by itself: an active
+  it settles. An ordinary reopened session never restarts work by itself: an active
   goal waits until the user resumes it or sends a message, and the session
   offers **Resume the goal?** for waiting, paused and blocked goals.
+- A separately authorized [checkpointed core restart](core-restart.md) can consume
+  one private, exact-goal continuation permit after a successful natural boundary.
+  It releases only its own handover wait through the normal runtime scheduler,
+  never broad user resume. New input, goal/settings/mode/selection changes, expiry,
+  recovery or failed settlement revoke that authorization. Cold open without the
+  permit stays passive, forks drop it, and consumption cannot override a later
+  user pause or start twice.
 - Token budget (Codex semantics): `/goal` never sets one; `create_goal` takes
   an optional `token_budget` only when the user explicitly asks for one. The
   continuation states the budget and remaining tokens. When the goal's tokens

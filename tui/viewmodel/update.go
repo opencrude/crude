@@ -66,6 +66,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainEditorSyntaxCommands())
 	command = tea.Batch(command, m.drainComparisonGeometry())
 	command = tea.Batch(command, m.drainComparisonSearch())
+	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -84,6 +85,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
 		command = tea.Batch(command, m.requestEditorSave(previousEditor, workspace.DocumentSaveFocusOut, false))
 	}
+	command = tea.Batch(command, m.finishCoreRestartUpdate())
 	return model, command
 }
 
@@ -147,6 +149,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case shellport.ControlRequestMsg:
 		return m, m.handleShellControl(msg)
+	case coreRestartResultMsg:
+		return m, m.applyCoreRestartResult(msg)
+	case coreRestartPollMsg:
+		return m, m.pollCoreRestart(msg)
 	case shellControlDoneMsg:
 		return m, m.finishShellControl(msg)
 	case diagnosticControlDoneMsg:

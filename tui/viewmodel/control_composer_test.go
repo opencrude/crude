@@ -98,10 +98,16 @@ func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *t
 	two := newRemoteJourneyShell(t, runtime, root)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool {
-		return two.app.ws.AgentMgr().Get(id) != nil && one.app.composerHydratedFor == one.app.ActiveSession && !one.app.draftOwner(one.app.ActiveSession).loading
+		// Inventory delivery can precede mounting the peer's root session.
+		// A draft typed into its launcher is not a draft for this session.
+		return two.app.ws.AgentMgr().Get(id) != nil &&
+			two.app.ActiveSession != nil && two.app.ActiveSession.SessionID == one.app.ActiveSession.SessionID &&
+			two.app.composerHydratedFor == two.app.ActiveSession && !two.app.draftOwner(two.app.ActiveSession).loading &&
+			one.app.composerHydratedFor == one.app.ActiveSession && !one.app.draftOwner(one.app.ActiveSession).loading
 	})
 	one.app.Input.SetInput("externally submitted captured draft")
 	two.app.Input.SetInput("peer private draft")
+	peerSession, peerEpoch := two.app.ActiveSession, two.app.Input.DraftEpoch()
 	target := one.app.ws.(shellport.ShellControl).ControlIdentity()
 	target.SessionID, target.ResourceID = one.app.ActiveSession.SessionID, id
 	external, err := runtime.Connect("composer-external")
@@ -145,7 +151,8 @@ func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *t
 		t.Fatal(err)
 	}
 	if result.State != control.Committed || one.app.Input.Value() != "" || two.app.Input.Value() != "peer private draft" {
-		t.Fatal("receipt or draft owner incorrect", result)
+		t.Fatalf("receipt or draft owner incorrect: state=%s own=%q peer=%q peer_session=%p->%p peer_epoch=%d->%d",
+			result.State, one.app.Input.Value(), two.app.Input.Value(), peerSession, two.app.ActiveSession, peerEpoch, two.app.Input.DraftEpoch())
 	}
 	remoteJourneyUntil(t, shells, func() bool { return calls.Load() == 1 })
 	request := <-requests

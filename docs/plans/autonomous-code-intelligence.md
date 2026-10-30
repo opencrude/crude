@@ -21,6 +21,11 @@ documents the selected parser/query foundation, shared scheduling and initial
 editor integration. Focused syntax tests and native captures do not establish
 semantic product parity, provider assembly or multi-device acceptance.
 
+The local [checkpointed core restart](../reference/core-restart.md) prerequisite
+now owns exact-image staging, natural settlement and one-shot goal continuation.
+Its isolated Linux TUI evidence is not a corpus, semantic-feature or device
+campaign pass, and the pre-feature running core still needs its bootstrap.
+
 ## Problem
 
 Crude has shared documents, asynchronous LSP lifecycle ownership, editor

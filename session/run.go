@@ -108,8 +108,27 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender, initializ
 		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
 			return false
 		}
+		// Serialize the one-use successor target against human reservations.
+		s.reconsiderGoalHandover()
+		s.admissionMu.Lock()
+		defer s.admissionMu.Unlock()
+		s.settingsOperationMu.Lock()
+		defer s.settingsOperationMu.Unlock()
 		input, ok := s.goalContinuation()
-		return ok && o.SubmitInput(input)
+		if !ok {
+			return false
+		}
+		submitted := o.SubmitInput(input)
+		s.goalMu.Lock()
+		if s.goalHandoverTarget != nil {
+			if submitted {
+				s.goalHandoverTarget = nil
+			} else {
+				_ = s.invalidateGoalHandoverLocked("The consumed handover could not admit its turn; recover manually.")
+			}
+		}
+		s.goalMu.Unlock()
+		return submitted
 	}
 
 	asyncPollingStop := make(chan struct{})
@@ -372,12 +391,22 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// completed, failed, was stopped or parked for recovery.
 	var goalProgress *goalTurn
 	var turnFailure string
+	var handoverSource goalHandoverSource
+	var handoverNatural bool
+	var handoverRevision uint64
 	defer func() {
 		// The turn context is always cancelled once the turn ends; only the
 		// final state says whether the user stopped it.
 		s.goalTurnEnd(goalProgress, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, turnFailure, recoveryParked)
 		s.syncGoalPlanAccounting(nil)
 		s.loopTurnEnd(userInput, turnFinalState == sessiondb.TurnInterrupted, turnFinalState == sessiondb.TurnFailed, recoveryParked, turnFailure)
+		s.readyGoalHandover(handoverSource, collaborationRun, handoverRevision,
+			handoverNatural && turnFinished && turnFinalState == sessiondb.TurnCompleted && !recoveryParked)
+		s.goalMu.Lock()
+		if s.goalHandoverSource.runID == handoverSource.runID {
+			s.goalHandoverSource = goalHandoverSource{}
+		}
+		s.goalMu.Unlock()
 	}()
 	defer func() {
 		// Parking during unwind must not advertise Retry while the old turn
@@ -845,6 +874,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	planModeEnded := s.notePlanModeTurn(planMode)
 	s.syncGoalPlanAccounting(&planMode)
 	goalProgress = s.goalTurnBegin(userInput, planMode)
+	handoverSource = goalHandoverSource{agentID: o.ID, runID: collaborationRun.ID, inputID: currentMsgID, epoch: o.RuntimeEpoch, generation: turnGeneration}
+	if userInput.ControlTarget != nil {
+		handoverSource.target = userInput.ControlTarget.Clone()
+	}
+	s.goalMu.Lock()
+	s.goalHandoverSource = handoverSource
+	s.goalMu.Unlock()
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	ag.WorkDir = executionRoot
 	ag.ToolFn = s.buildToolFnAtRoot(effectiveCfg.IsMultiAgentEnabled(), turnProvider, activeCfg.ModelModalities, executionRoot)
@@ -1238,6 +1274,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 				return
 			}
 		}
+		handoverNatural = supervisor.CheckpointStatus().Attempt == 0
+		s.msgsMu.Lock()
+		handoverRevision = s.contextRevision
+		s.msgsMu.Unlock()
 	}
 	o.endTurn(turnGeneration)
 	if terminalDone != nil {

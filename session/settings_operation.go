@@ -33,7 +33,26 @@ func (s *Session) beginSettingsOperation() error {
 		s.settingsOperationMu.Unlock()
 		return ErrSettingsSessionClosing
 	}
+	s.idle.mu.Lock()
+	if s.idle.fenced {
+		s.idle.mu.Unlock()
+		s.settingsOperationMu.Unlock()
+		return errors.New("session lifetime admission is fenced")
+	}
+	s.idle.active++
+	s.idle.mu.Unlock()
+	if err := s.invalidateGoalHandover("Session settings or inherited controls changed."); err != nil {
+		s.endSettingsOperation()
+		return err
+	}
 	return nil
+}
+
+func (s *Session) endSettingsOperation() {
+	s.idle.mu.Lock()
+	s.idle.active--
+	s.idle.mu.Unlock()
+	s.settingsOperationMu.Unlock()
 }
 
 func (s *Session) settingsSnapshotSetLocked() SettingsSnapshotSet {
@@ -81,7 +100,7 @@ func (s *Session) withSettingsSnapshot(mutate func() error) (SettingsSnapshotSet
 	if err := s.beginSettingsOperation(); err != nil {
 		return SettingsSnapshotSet{}, err
 	}
-	defer s.settingsOperationMu.Unlock()
+	defer s.endSettingsOperation()
 	s.delegationMu.Lock()
 	defer s.delegationMu.Unlock()
 	s.mu.Lock()

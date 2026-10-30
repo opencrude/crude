@@ -294,5 +294,17 @@ var commandCatalog = func() []Descriptor {
 	add("shell.control", Shell, Effect(""), "Unresolved action: resolve its exact owner effect before admission.", `{"component_id":{"type":"string"},"operation":{"type":"object","properties":{"verb":{"type":"string"},"value":{},"item_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"secondary_offset":{"type":"integer","minimum":0},"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":0},"fraction":{"type":"number","minimum":0,"maximum":1}},"required":["verb"],"additionalProperties":false},"expected_action":{"type":"string"}}`, "component_id", "operation", "expected_action")
 	out = append(out, ProductCommands()...)
 	out = append(out, DiagnosticCommands()...)
+	for _, restart := range []struct {
+		id, description, properties string
+		effect                      Effect
+		required                    []string
+	}{
+		{"core.restart", "Schedule an exact-image restart in this original local terminal after the source root finishes naturally. Committed means scheduled, not restarted. Requires exact shell, session, revision and open epoch; never stops a run.", `{"executable":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},"goal_id":{"type":"string","minLength":1},"delay_seconds":{"type":"integer","minimum":0,"maximum":300}}`, Execute, []string{"executable", "sha256", "goal_id", "delay_seconds"}},
+		{"core.restart.inspect", "Inspect one exact original-terminal restart operation. No private continuation token is returned.", `{"operation_id":{"type":"string","minLength":1}}`, Read, []string{"operation_id"}},
+		{"core.restart.cancel", "Cancel one exact original-terminal restart operation, retaining the session, drafts and normal user controls.", `{"operation_id":{"type":"string","minLength":1}}`, Write, []string{"operation_id"}},
+	} {
+		add(restart.id, Shell, restart.effect, restart.description, restart.properties, restart.required...)
+		out[len(out)-1].Requires = Requirements{Session: true, Revision: restart.effect != Read, OpenEpoch: restart.effect != Read}
+	}
 	return out
 }()

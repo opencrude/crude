@@ -31,7 +31,7 @@ import (
 // discovery. Registration does not authorize any of these operations.
 func ShellCommandDescriptor(id string) (control.Descriptor, bool) {
 	switch id {
-	case "shell.inspect", "shell.controls", "shell.describe_control", "performance.shell", "connection.inspect", "tree.set_visible", "tree.set_width", "tree.reveal", "tree.filter", "pane.split", "pane.merge", "pane.focus", "pane.resize", "tab.select", "tab.close", "file.open", "editor.navigate", "editor.select", "terminal.open", "terminal.show", "terminal.hide", "terminal.resize_dock", "panel.show", "panel.hide", "settings.open":
+	case "core.restart", "core.restart.inspect", "core.restart.cancel", "shell.inspect", "shell.controls", "shell.describe_control", "performance.shell", "connection.inspect", "tree.set_visible", "tree.set_width", "tree.reveal", "tree.filter", "pane.split", "pane.merge", "pane.focus", "pane.resize", "tab.select", "tab.close", "file.open", "editor.navigate", "editor.select", "terminal.open", "terminal.show", "terminal.hide", "terminal.resize_dock", "panel.show", "panel.hide", "settings.open":
 		return control.Lookup(id)
 	default:
 		return productDescriptor(id)
@@ -83,6 +83,7 @@ type shellInspection struct {
 	Height      int                  `json:"height"`
 	Revision    uint64               `json:"revision"`
 	OpenEpoch   uint64               `json:"open_epoch"`
+	CoreRestart control.Availability `json:"core_restart"`
 }
 type shellTabInspection struct {
 	ID       window.TabID   `json:"id"`
@@ -95,6 +96,7 @@ type shellTabInspection struct {
 
 func (m *App) inspectShell() shellInspection {
 	s := shellInspection{Width: m.width, Height: m.height, DockRows: m.termDockHeight, OpenEpoch: m.workspaceSwitchGen.Load() + 1}
+	s.CoreRestart = m.coreRestartAvailability()
 	if m.Tree != nil {
 		s.TreeVisible = m.Tree.Visible
 		s.TreeWidth = m.Tree.Width
@@ -243,6 +245,8 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 	invalid := func(err error) tea.Cmd { return m.failShellControl(msg, control.Invalid, err.Error()) }
 	empty := func() error { return decodeShellInput(r.Input, &struct{}{}) }
 	switch r.CommandID {
+	case "core.restart", "core.restart.inspect", "core.restart.cancel":
+		return m.handleCoreRestartControl(msg)
 	case "shell.describe_control":
 		resolved, node, err := m.describeShellControl(*generic, current.Target)
 		if err != nil {

@@ -13,6 +13,9 @@ import (
 // prepareOwner serves owner operations whose exact target is resolved on the
 // actor (where the local shell resolved it) but whose I/O runs on a worker.
 func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
+	if run, handled := a.prepareCoreRestart(request); handled {
+		return run, true
+	}
 	ws := a.ws
 	bad := func(err error) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
@@ -219,6 +222,9 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 
 // ownerMutation reports which owner operations are journaled.
 func ownerMutation(method string) bool {
+	if coreRestartMethod(method) {
+		return method != coreprotocol.CoreRestartInspect
+	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave,
@@ -229,6 +235,9 @@ func ownerMutation(method string) bool {
 }
 
 func ownerOperation(method string) bool {
+	if coreRestartMethod(method) {
+		return true
+	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryUndoScopes,

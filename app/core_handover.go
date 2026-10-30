@@ -17,11 +17,17 @@ import (
 	"crude/buildinfo"
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/retry"
 
 	"github.com/gofrs/flock"
 )
 
 const expectedCoreOwnerEnv = "CRUDE_EXPECT_CORE_OWNER"
+
+// Only the owned helper's decoded Accepted=false branch emits this status.
+// Go runtime panics exit 2; that status must remain an uncertain one-attempt
+// outcome, not evidence that a lifecycle request had no effect.
+const coreHandoverRefusedExit = 75
 
 // coreOwner is the current local endpoint owner's external installation record,
 // not a protocol decoder. Only the exact owning executable speaks to its core.
@@ -267,11 +273,47 @@ func coreProfileEnv(home, generation string) []string {
 }
 
 func handoverCore(ctx context.Context, home string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	owner, err := readCoreOwner(home)
 	if err != nil {
 		return &CoreHandoverError{err}
+	}
+	return stopOwnedCore(ctx, home, owner)
+}
+
+// Scheduled operations retain a specific predecessor. Its generation and image
+// are rechecked before selecting the helper, so a replacement is never stopped.
+func handoverOwnedCore(ctx context.Context, home string, owner coreOwner) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// Closing a shell can leave an exact, already-fenced resource release in its
+	// joined lane. Retry only the helper's explicit refused/no-effect exit, never
+	// an unknown reply or accepted shutdown. Each attempt rechecks the same owner.
+	for attempt := 1; ; attempt++ {
+		err := stopOwnedCore(ctx, home, owner)
+		var refused *coreHandoverRefusal
+		if !errors.As(err, &refused) || attempt >= 8 {
+			return err
+		}
+		if err := retry.Wait(ctx, retry.Exponential(attempt, 25*time.Millisecond, 250*time.Millisecond)); err != nil {
+			return &CoreHandoverError{err}
+		}
+	}
+}
+
+type coreHandoverRefusal struct{ reason error }
+
+func (e *coreHandoverRefusal) Error() string { return e.reason.Error() }
+func (e *coreHandoverRefusal) Unwrap() error { return e.reason }
+
+func stopOwnedCore(ctx context.Context, home string, owner coreOwner) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	current, err := readCoreOwner(home)
+	if err != nil {
+		return &CoreHandoverError{err}
+	}
+	if current != owner {
+		return &CoreHandoverError{errors.New("endpoint owner changed before the scheduled handover")}
 	}
 	if err := validateOwnerPath(CoreImageDir(home), true); err != nil {
 		return &CoreHandoverError{err}
@@ -294,7 +336,12 @@ func handoverCore(ctx context.Context, home string) error {
 	output := &coreHelperOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Run(); err != nil {
-		return &CoreHandoverError{fmt.Errorf("matching owner helper failed: %w: %s", errors.Join(err, ctx.Err()), strings.TrimSpace(string(output.data)))}
+		cause := fmt.Errorf("matching owner helper failed: %w: %s", errors.Join(err, ctx.Err()), strings.TrimSpace(string(output.data)))
+		var exit *exec.ExitError
+		if ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == coreHandoverRefusedExit {
+			return &CoreHandoverError{&coreHandoverRefusal{cause}}
+		}
+		return &CoreHandoverError{cause}
 	}
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()

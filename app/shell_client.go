@@ -23,7 +23,6 @@ import (
 	"crude/shellport/remote"
 	"crude/tui"
 	startuptui "crude/tui/startup"
-	"crude/types"
 )
 
 // ErrClientProfileBusy is a safe refusal, never permission to displace a shell.
@@ -68,6 +67,9 @@ func invocationSelection(flags CLIFlags) coreprotocol.InvocationSelection {
 }
 
 func shellDialer(home string, flags CLIFlags) remote.Dialer {
+	if flags.CoreHandover != "" {
+		return newCoreRestartDialer(home, flags.CoreHandover)
+	}
 	if flags.SSHHost == "" {
 		return func(ctx context.Context, clientID string) (*coreclient.Client, error) {
 			return ConnectCore(ctx, home, clientID)
@@ -173,7 +175,25 @@ func (p *shellDraftProfile) Close() error {
 	return errors.Join(err, p.store.Close(), p.lock.Unlock())
 }
 
-func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (result error) {
+type coreRestartExit struct {
+	host *coreRestartHost
+	id   string
+}
+
+func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) error {
+	var next coreRestartExit
+	if err := runConnectedShellAttachment(home, root, resumeID, profile, flags, &next); err != nil {
+		return err
+	}
+	if next.host == nil || next.id == "" {
+		return nil
+	}
+	// The attachment function has returned through all close/flush barriers.
+	// This foreground application process survives the core it is replacing.
+	return next.host.RunReady(context.Background(), next.id)
+}
+
+func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLIFlags, next *coreRestartExit) (result error) {
 	if err := validateConnectedInvocation(flags); err != nil {
 		return err
 	}
@@ -213,38 +233,26 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 	if err != nil {
 		return fmt.Errorf("inspect launch folder: %w", err)
 	}
-	var ws *remote.Workspace
-	startupIssues := append([]types.OperationIssue(nil), selection.Issues...)
-	for {
-		if selection.ShowIntroduction || selection.FolderKind != "" || selection.PathError != "" {
-			selected, selectErr := startuptui.Run(ctx, navigation, selection)
-			if selectErr != nil {
-				return fmt.Errorf("select project: %w", selectErr)
-			}
-			if selected.Root == "" {
-				return nil
-			}
-			startupIssues = selected.Issues
-			if selected.Root != selection.Root {
+	selectedRoot, ws, startupIssues, err := attachStartupSelection(ctx, root, flags.CoreHandover != "", selection,
+		func(ctx context.Context, initial coreprotocol.StartupSnapshot) (startuptui.Selection, error) {
+			selected, err := startuptui.Run(ctx, navigation, initial)
+			if err == nil && selected.Root != "" && selected.Root != initial.Root {
 				resumeID = ""
 			}
-			root = selected.Root
-		} else {
-			root = selection.Root
-		}
-		attachCtx, attachCancel := context.WithTimeout(ctx, 30*time.Second)
-		ws, err = remote.Attach(attachCtx, remote.Options{Root: root, Logger: lg, Dial: dial,
-			Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
-		attachCancel()
-		if err == nil {
-			break
-		}
-		// Keep navigation usable when the destination disappears or initialization
-		// fails after selection. No old attachment or private draft is discarded.
-		selection.Root, selection.PathError = root, err.Error()
-		selection.ShowIntroduction = false
-		selection.Issues = startupIssues
+			return selected, err
+		}, func(ctx context.Context, root string) (*remote.Workspace, error) {
+			attachCtx, attachCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer attachCancel()
+			return remote.Attach(attachCtx, remote.Options{Root: root, Logger: lg, Dial: dial,
+				Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
+		})
+	if err != nil {
+		return err
 	}
+	if ws == nil {
+		return nil
+	}
+	root = selectedRoot
 	defer func() { result = errors.Join(result, ws.Close()) }()
 	if err := navigation.Close(); err != nil {
 		return err
@@ -266,8 +274,30 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 		return fmt.Errorf("remember connected workspace: %w", err)
 	}
 	metrics.Start("shell")
-	terminal, err := tui.Start(ws, providerPresets(), nil, lg,
-		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()), tui.WithRemoteManager(manager, backend))
+	options := []tui.StartOption{
+		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()), tui.WithRemoteManager(manager, backend),
+	}
+	var restart *coreRestartHost
+	if flags.SSHHost == "" {
+		if flags.CoreHandover != "" {
+			restart, err = newCoreRestartHostFromManifest(home, root, profile, ws.ControlIdentity(), ws, flags.CoreHandover)
+		} else {
+			restart, err = newCoreRestartHost(home, root, profile, ws.ControlIdentity(), ws)
+		}
+		if err != nil {
+			if flags.CoreHandover != "" {
+				return fmt.Errorf("prepare local checkpoint handover: %w", err)
+			}
+			// Optional automation storage must not prevent an otherwise usable
+			// IDE from opening. Its control surface remains explicitly unavailable.
+			lg.Warn("CORE", "checkpoint_restart_unavailable", "error", err.Error())
+			restart = nil
+		}
+		if restart != nil {
+			options = append(options, tui.WithCoreRestart(restart))
+		}
+	}
+	terminal, err := tui.Start(ws, providerPresets(), nil, lg, options...)
 	if err != nil {
 		return fmt.Errorf("start terminal UI: %w", err)
 	}
@@ -284,6 +314,9 @@ func runConnectedShell(home, root, resumeID, profile string, flags CLIFlags) (re
 		terminal.ResumeStartupSession(resumeID)
 	}
 	terminal.Wait() // Includes the draft flush barrier before profile release.
+	if id := terminal.CoreRestartOperationID(); id != "" {
+		next.host, next.id = restart, id
+	}
 	return nil
 }
 

@@ -3758,6 +3758,204 @@ func (z *ConversationUpdate) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z CoreRestartPermitRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.SessionID)
+	o = msgp.AppendString(o, z.OperationID)
+	o = msgp.AppendString(o, z.Token)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CoreRestartPermitRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.SessionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SessionID")
+		return
+	}
+	z.OperationID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "OperationID")
+		return
+	}
+	z.Token, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Token")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z CoreRestartPermitRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.SessionID) + msgp.StringPrefixSize + len(z.OperationID) + msgp.StringPrefixSize + len(z.Token)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CoreRestartReservationRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.ControlRequestID)
+	o = msgp.AppendString(o, z.SessionID)
+	o, err = z.Reservation.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Reservation")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CoreRestartReservationRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.ControlRequestID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ControlRequestID")
+		return
+	}
+	z.SessionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SessionID")
+		return
+	}
+	bts, err = z.Reservation.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Reservation")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CoreRestartReservationRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ControlRequestID) + msgp.StringPrefixSize + len(z.SessionID) + z.Reservation.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CoreRestartResult) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o, err = z.State.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "State")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CoreRestartResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	bts, err = z.State.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "State")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CoreRestartResult) Msgsize() (s int) {
+	s = 1 + z.State.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z CoreRestartStateRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.SessionID)
+	o = msgp.AppendString(o, z.OperationID)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CoreRestartStateRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.SessionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SessionID")
+		return
+	}
+	z.OperationID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "OperationID")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z CoreRestartStateRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.SessionID) + msgp.StringPrefixSize + len(z.OperationID)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *CoreStatus) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 12

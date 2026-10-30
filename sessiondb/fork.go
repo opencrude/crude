@@ -20,7 +20,7 @@ type ForkIdentity struct {
 // usage it was billed for. A fork that kept them would resume someone else's
 // work or fail to bind children whose parent is the source.
 var forkDroppedTables = []string{
-	"agent_recoveries", "collaboration_admissions", "file_claims", "sub_agent_results", "usage_requests",
+	"agent_recoveries", "collaboration_admissions", "file_claims", "sub_agent_results", "usage_requests", "session_goal_handover",
 }
 
 // forkDroppedRuntimeKeys are source-owned pending input, drafts and schedules

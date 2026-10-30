@@ -20,6 +20,10 @@ func LoadGoal(db *sql.DB, sessionID string) (GoalRecord, bool, error) {
 	if db == nil {
 		return GoalRecord{}, false, nil
 	}
+	return loadGoal(db, sessionID)
+}
+
+func loadGoal(db interface{ QueryRow(string, ...any) *sql.Row }, sessionID string) (GoalRecord, bool, error) {
 	var record GoalRecord
 	var status string
 	var timeUsed, created, updated int64
@@ -45,6 +49,12 @@ func SaveGoal(db *sql.DB, sessionID string, record GoalRecord) error {
 	if db == nil {
 		return nil
 	}
+	return saveGoal(db, sessionID, record)
+}
+
+func saveGoal(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, sessionID string, record GoalRecord) error {
 	goal := record.Goal
 	_, err := db.Exec(`INSERT INTO session_goal (session_id, goal_id, objective, status, reason, tokens_used, token_budget, time_used_ms, waiting, verifier_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

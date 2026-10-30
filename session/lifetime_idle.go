@@ -2,10 +2,10 @@ package session
 
 import (
 	"context"
-	"crude/types"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // idleAdmission covers autonomous operations which can run without a turn.
@@ -20,7 +20,7 @@ type idleAdmission struct {
 func (s *Session) beginIdleWork() (func(), bool) {
 	s.idle.mu.Lock()
 	defer s.idle.mu.Unlock()
-	if s.idle.fenced {
+	if s.idle.fenced || atomic.LoadInt32(&s.closing) != 0 {
 		return nil, false
 	}
 	s.idle.active++
@@ -51,7 +51,7 @@ func (s *Session) BeginIdleLease(ctx context.Context) (func(), error) {
 	if activity := s.Activity(); activity.Any() {
 		return failed(fmt.Errorf("active work: %d turns, %d children, %d commands, %d compactions, %d memory jobs", activity.Turns, activity.Children, activity.AsyncCommands, activity.Compaction, activity.MemoryJobs))
 	}
-	if goal, present := s.Goal(); present && goal.Status == types.GoalActive {
+	if !s.goalAllowsIdleHandover() {
 		return failed(errors.New("active goal can continue autonomously; pause or finish the goal"))
 	}
 	for _, loop := range s.Loops() {
@@ -68,6 +68,11 @@ func (s *Session) BeginIdleLease(ctx context.Context) (func(), error) {
 		return failed(errors.New("turn or compaction is still finishing"))
 	}
 	releases = append(releases, s.turnGate.Unlock)
+	// Recheck the exact unexpired permit under final turn/history exclusion.
+	// A sampled Ready is not permission to abandon a subsequently expired goal.
+	if !s.goalAllowsIdleHandover() {
+		return failed(errors.New("active goal no longer owns an unexpired ready handover"))
+	}
 	if len(s.QueuedInputs()) != 0 {
 		return failed(errors.New("queued input awaits admission"))
 	}

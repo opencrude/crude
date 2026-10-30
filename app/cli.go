@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crude/buildinfo"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"maps"
@@ -29,23 +30,25 @@ type CLIFlags struct {
 	DeleteSession string
 
 	// Core process routes. A shell is a client of the per-user core.
-	Core          bool
-	Server        bool
-	CoreGrace     time.Duration
-	CoreStatus    bool
-	CoreStop      bool
-	Force         bool
-	CoreStdio     bool
-	ClientProfile string
-	SSHHost       string
-	SSHUser       string
-	SSHPort       int
-	SSHIdentity   string
-	Workspace     string
-	MCP           bool
-	MCPEffects    string
-	MCPShell      string
-	MCPShellEpoch uint64
+	Core                 bool
+	Server               bool
+	CoreGrace            time.Duration
+	CoreStatus           bool
+	CoreStop             bool
+	Force                bool
+	CoreStdio            bool
+	CoreHandover         string
+	CoreHandoverIdentity bool
+	ClientProfile        string
+	SSHHost              string
+	SSHUser              string
+	SSHPort              int
+	SSHIdentity          string
+	Workspace            string
+	MCP                  bool
+	MCPEffects           string
+	MCPShell             string
+	MCPShellEpoch        uint64
 }
 
 // ParseFlags parses os.Args flags into CLIFlags.
@@ -68,6 +71,8 @@ func ParseFlags() CLIFlags {
 	coreStopFlag := flag.Bool("core-stop", false, "Stop the running core (refused while work is active unless --force)")
 	forceFlag := flag.Bool("force", false, "With --core-stop: stop even though work is active")
 	coreStdioFlag := flag.Bool("core-stdio", false, "Relay one core connection over stdin/stdout (remote attach)")
+	coreHandoverFlag := flag.String("core-handover", "", "Continue one exact private checkpoint handover in this terminal")
+	coreHandoverIdentityFlag := flag.Bool("core-handover-identity", false, "Print bounded read-only handover image identity as JSON")
 	clientProfileFlag := flag.String("client-profile", "", "Private durable composer profile (exclusive while this shell is running)")
 	sshHostFlag := flag.String("ssh", "", "Attach to a remote core through system SSH (host or configured alias)")
 	sshUserFlag := flag.String("ssh-user", "", "SSH login user")
@@ -81,34 +86,36 @@ func ParseFlags() CLIFlags {
 	flag.Parse()
 
 	return CLIFlags{
-		Version:       *versionFlag,
-		APIKey:        *apiKeyFlag,
-		Account:       *accountFlag,
-		Model:         *modelFlag,
-		Provider:      *providerFlag,
-		SystemPrompt:  *sysPromptFlag,
-		Resume:        *resumeFlag,
-		ListSessions:  *listSessionsFlag,
-		Limit:         *limitFlag,
-		Offset:        *offsetFlag,
-		DeleteSession: *deleteSessionFlag,
-		Core:          *coreFlag,
-		Server:        *serverFlag,
-		CoreGrace:     *graceFlag,
-		CoreStatus:    *coreStatusFlag,
-		CoreStop:      *coreStopFlag,
-		Force:         *forceFlag,
-		CoreStdio:     *coreStdioFlag,
-		ClientProfile: *clientProfileFlag,
-		SSHHost:       *sshHostFlag,
-		SSHUser:       *sshUserFlag,
-		SSHPort:       *sshPortFlag,
-		SSHIdentity:   *sshIdentityFlag,
-		Workspace:     *workspaceFlag,
-		MCP:           *mcpFlag,
-		MCPEffects:    *mcpEffectsFlag,
-		MCPShell:      *mcpShellFlag,
-		MCPShellEpoch: *mcpShellEpochFlag,
+		Version:              *versionFlag,
+		APIKey:               *apiKeyFlag,
+		Account:              *accountFlag,
+		Model:                *modelFlag,
+		Provider:             *providerFlag,
+		SystemPrompt:         *sysPromptFlag,
+		Resume:               *resumeFlag,
+		ListSessions:         *listSessionsFlag,
+		Limit:                *limitFlag,
+		Offset:               *offsetFlag,
+		DeleteSession:        *deleteSessionFlag,
+		Core:                 *coreFlag,
+		Server:               *serverFlag,
+		CoreGrace:            *graceFlag,
+		CoreStatus:           *coreStatusFlag,
+		CoreStop:             *coreStopFlag,
+		Force:                *forceFlag,
+		CoreStdio:            *coreStdioFlag,
+		CoreHandover:         *coreHandoverFlag,
+		CoreHandoverIdentity: *coreHandoverIdentityFlag,
+		ClientProfile:        *clientProfileFlag,
+		SSHHost:              *sshHostFlag,
+		SSHUser:              *sshUserFlag,
+		SSHPort:              *sshPortFlag,
+		SSHIdentity:          *sshIdentityFlag,
+		Workspace:            *workspaceFlag,
+		MCP:                  *mcpFlag,
+		MCPEffects:           *mcpEffectsFlag,
+		MCPShell:             *mcpShellFlag,
+		MCPShellEpoch:        *mcpShellEpochFlag,
 	}
 }
 
@@ -263,6 +270,21 @@ func Main() int {
 		fmt.Println(buildinfo.VersionString())
 		return 0
 	}
+	if err := validateCoreRestartInvocation(flags); err != nil {
+		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
+		return 1
+	}
+	if flags.CoreHandoverIdentity {
+		identity, err := CoreRestartIdentityForCurrent()
+		if err == nil {
+			err = json.NewEncoder(os.Stdout).Encode(identity)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crude handover identity: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if err := validateMCPInvocation(flags); err != nil {
 		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
 		return 1
@@ -289,7 +311,19 @@ func Main() int {
 		return code
 	}
 
-	home, _ := buildinfo.Home()
+	home, homeErr := buildinfo.Home()
+	if homeErr != nil {
+		fmt.Fprintf(os.Stderr, "crude: %v\n", homeErr)
+		return 1
+	}
+	if flags.CoreHandover != "" {
+		startup, err := ReadCoreRestartStartup(home, flags.CoreHandover)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crude handover: %v\n", err)
+			return 1
+		}
+		flags.ClientProfile, flags.Workspace, flags.Resume = startup.Profile, startup.Root, startup.SessionID
+	}
 	projectDir, err := invocationRoot(flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -372,6 +406,9 @@ func handleCoreCommands(flags CLIFlags) (int, bool) {
 			for _, w := range result.Busy {
 				fmt.Fprintf(os.Stderr, "  %s  turns=%d children=%d commands=%d compaction=%d memory=%d goals=%d loops=%d operations=%d\n",
 					w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Active.Goals, w.Active.Loops, w.Operations)
+			}
+			if os.Getenv(expectedCoreOwnerEnv) != "" {
+				return coreHandoverRefusedExit, true
 			}
 			return 2, true
 		}

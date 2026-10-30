@@ -607,6 +607,19 @@ stay held through resource joins; the lifetime lock stays held through final dat
 flush. Force is available only as an explicit user override, never handover.
 Same-cohort native-image variants attach directly.
 
+An explicitly admitted [checkpointed restart](core-restart.md) is a separate
+local original-terminal path. It stages an exact image, waits for its root's
+durable natural checkpoint, then releases the original shell before this same
+idle-reserved stop. Only the exact unexpired Ready goal reservation can satisfy
+active-goal protection. It never exempts peer work or resource joins. The
+scheduled helper can retry up to eight dedicated refused/no-effect exits while
+detached resource releases finish; it never retries an unknown or accepted stop,
+and rechecks the same owner before every attempt. Internal status 75 is emitted
+only after a decoded refusal; Go panic status 2 is never retried. Ordinary mismatch startup
+retains its existing immediate-refusal behavior. Successor admission is exact
+image/generation checked, not ordinary same-cohort attach, and an opaque
+single-use permit authorizes only the original session's fresh continuation.
+
 SSH transport starts system `ssh` without a local shell, enables strict host-key
 checking and disables forwarding, remote/local command overrides and shared
 control sessions. Fixed helper commands inspect/install/launch the exact image;

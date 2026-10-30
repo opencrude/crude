@@ -134,6 +134,10 @@ func (s *Session) CreateLoop(interval time.Duration, task string) (types.Loop, e
 	now := time.Now()
 	loop := types.Loop{ID: id, Prompt: task, Interval: interval, NextAt: now, ExpiresAt: now.Add(loopLifetime)}
 	next := append(slices.Clone(s.loops), loop)
+	if err := s.invalidateGoalHandover("A new scheduled loop was accepted."); err != nil {
+		s.loopMu.Unlock()
+		return types.Loop{}, err
+	}
 	err := s.saveLoopsLocked(next)
 	s.loopMu.Unlock()
 	if err != nil {
@@ -183,6 +187,10 @@ func (s *Session) ChangeLoop(action, id string) error {
 	default:
 		s.loopMu.Unlock()
 		return errors.New("unknown loop action")
+	}
+	if err := s.invalidateGoalHandover("Scheduled loop controls changed."); err != nil {
+		s.loopMu.Unlock()
+		return err
 	}
 	err := s.saveLoopsLocked(next)
 	if err != nil && (action == "pause" || action == "clear") {

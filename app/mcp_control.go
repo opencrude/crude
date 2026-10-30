@@ -28,7 +28,7 @@ func NeedsInteractiveConsole(args []string) bool {
 		}
 		name, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		switch name {
-		case "version", "help", "h", "mcp", "core", "core-stdio", "core-status", "core-stop":
+		case "version", "help", "h", "mcp", "core", "core-stdio", "core-status", "core-stop", "core-handover-identity":
 			if !hasValue {
 				return false
 			}
@@ -80,7 +80,7 @@ func validateMCPInvocation(flags CLIFlags) error {
 		}
 		return nil
 	}
-	if flags.Core || flags.CoreStdio || flags.CoreStatus || flags.CoreStop || flags.Server || flags.Force || flags.ListSessions || flags.DeleteSession != "" || flags.Resume != "" || flags.ClientProfile != "" || flags.APIKey != "" || flags.Account != "" || flags.Model != "" || flags.Provider != "" || flags.SystemPrompt != "" {
+	if flags.Core || flags.CoreStdio || flags.CoreStatus || flags.CoreStop || flags.CoreHandover != "" || flags.CoreHandoverIdentity || flags.Server || flags.Force || flags.ListSessions || flags.DeleteSession != "" || flags.Resume != "" || flags.ClientProfile != "" || flags.APIKey != "" || flags.Account != "" || flags.Model != "" || flags.Provider != "" || flags.SystemPrompt != "" {
 		return errors.New("--mcp cannot be combined with interactive session selectors or core/session administration")
 	}
 	_, err := mcpGrant(flags)
