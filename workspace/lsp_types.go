@@ -60,7 +60,7 @@ type LSPClient interface {
 
 // LSPRuntime creates transport clients; language and project policy stay in the workspace.
 type LSPRuntime interface {
-	NewClient(spec model.LSPServerSpec, rootURI string) LSPClient
+	NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient
 }
 
 func fileURI(path string) string {

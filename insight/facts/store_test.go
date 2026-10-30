@@ -188,6 +188,47 @@ func TestPendingProvisionalEmptyAndInvalidatedAreDistinct(t *testing.T) {
 	}
 }
 
+func TestRepeatedInactiveInvalidationPreservesFirstStaleEvidence(t *testing.T) {
+	s, b := store(t, 1, 4), boundary()
+	observe(t, s, b)
+	publish(t, s, publication(b, 1))
+	if !s.InvalidateAll("Language service stopped.") {
+		t.Fatal("Stop did not immediately retire the diagnostic answer")
+	}
+	stopped, version := snapshot(t, s, "doc-1"), s.Version()
+	if stopped.State != types.InsightStale || stopped.HasExactSource() || len(stopped.Diagnostics) != 1 {
+		t.Fatal("Stop hid evidence or left it current", stopped)
+	}
+	// Joined process teardown may finish between two shells' snapshot reads.
+	// That is not another publication or another active boundary to invalidate.
+	if s.InvalidateAll("Language server teardown completed.") {
+		t.Fatal("asynchronous cleanup restamped an already inactive diagnostic fact")
+	}
+	changed := b.Source
+	changed.Revision++
+	if s.InvalidateSource(changed) {
+		t.Fatal("a later source edit restamped the already inactive answer")
+	}
+	if err := s.Invalidate("doc-1", "Workspace is closing."); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshot(t, s, "doc-1"); !reflect.DeepEqual(after, stopped) || s.Version() != version {
+		t.Fatal("inactive retirement changed retained provenance, warning or first stale reason", after)
+	}
+	if _, err := s.Publish(publication(b, 2)); !errors.Is(err, facts.ErrBoundary) {
+		t.Fatal("idempotent retirement reopened publication admission", err)
+	}
+	// Explicitly observing a new active boundary permits a new invalidation.
+	// It still cannot revive the retained payload without a new publication.
+	observe(t, s, b)
+	if err := s.Invalidate("doc-1", "The resumed producer failed."); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshot(t, s, "doc-1"); after.ID != stopped.ID || after.Detail != "The resumed producer failed." || after.State != types.InsightStale {
+		t.Fatal("a new active boundary lost its failure or revived old evidence", after)
+	}
+}
+
 func TestBoundsRetainWarningsAndExposeLimits(t *testing.T) {
 	if _, err := facts.New(0, 1); !errors.Is(err, facts.ErrInvalid) {
 		t.Fatal("invalid document capacity accepted")

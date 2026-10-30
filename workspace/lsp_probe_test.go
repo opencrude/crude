@@ -162,7 +162,7 @@ func TestProbeReportsStartFailureImmediately(t *testing.T) {
 
 type failingRuntime struct{}
 
-func (failingRuntime) NewClient(model.LSPServerSpec, string) LSPClient {
+func (failingRuntime) NewClient(model.LSPServerSpec, string, func() error) LSPClient {
 	return &failingClient{reapableClient{done: make(chan struct{})}}
 }
 
@@ -231,7 +231,9 @@ func (c *probeSyncClient) AwaitDiagnostics(context.Context, string) (model.Insig
 
 type probeSyncRuntime struct{ client *probeSyncClient }
 
-func (r probeSyncRuntime) NewClient(model.LSPServerSpec, string) LSPClient { return r.client }
+func (r probeSyncRuntime) NewClient(model.LSPServerSpec, string, func() error) LSPClient {
+	return r.client
+}
 
 // A connected process is not enough: probes must wait until the transport has
 // installed the document's exact text. Gate sends to reproduce both an absent
@@ -245,6 +247,7 @@ func TestProbeWaitsForDocumentSynchronization(t *testing.T) {
 	probeSources(t, m, root)
 	t.Cleanup(func() { close(c.release) })
 	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
 	path := filepath.Join(root, "main.go")
 	initial := "package main\nvar initial = missing\n"
 	latest := "package main\nvar latest = missing\n"
@@ -301,6 +304,7 @@ func TestProbeReleasesDocumentWhenCanceledDuringOpen(t *testing.T) {
 	probeSources(t, m, root)
 	t.Cleanup(func() { close(c.release) })
 	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
 	m.SetSettings(editorDisabledSettings())
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\n")
@@ -350,6 +354,7 @@ func TestProbeWaitsForReplacementClientDocument(t *testing.T) {
 	probeSources(t, m, root)
 	t.Cleanup(func() { close(old.release); close(next.release) })
 	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
 	path := filepath.Join(root, "main.go")
 	text := "package main\nvar x = missing\n"
 	createFile(t, path, text)

@@ -76,6 +76,7 @@ func TestLSPManager_StartForWorkspace_NotFound(t *testing.T) {
 func TestLSPManager_FeatureGates(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	t.Cleanup(m.Close)
+	trustAnalysis(t, m, t.TempDir())
 	if !m.ShowDiagnosticsInEditor() || !m.ShowDiagnosticsInTree() || !m.ShowDiagnosticsInStatus() {
 		t.Fatal("default LSP settings should show diagnostics in editor, tree, and status")
 	}
@@ -163,6 +164,7 @@ func TestLSPManager_StartForWorkspace_NotPanic(t *testing.T) {
 func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	t.Cleanup(m.Close)
+	trustAnalysis(t, m, t.TempDir())
 	m.mu.Lock()
 	m.states["go"] = &lspClientState{
 		rootURI: "file:///project",
@@ -187,6 +189,7 @@ func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.
 func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	t.Cleanup(m.Close)
+	trustAnalysis(t, m, t.TempDir())
 	m.mu.Lock()
 	m.activeFilePath = "/project/data.json"
 	// Compute the rootURI the same way the production code does so the

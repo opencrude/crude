@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"crude/insight/governor"
 	ttypes "crude/types"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
@@ -17,6 +18,15 @@ import (
 // Expensive root discovery, startup, synchronization and shutdown run on its
 // serialized worker; merely enabling intelligence never scans or opens sources.
 type LSPManager struct {
+	analysisSettings            ttypes.WorkspaceAnalysisSettings
+	analysisRootIdentity        string
+	analysisBlocked             string
+	analysisGovernor            *governor.Governor
+	analysisWorkspace           string
+	analysisGeneration          string
+	analysisGovernorError       string
+	analysisRetained            bool
+	analysisIdentity            func(string) (string, error)
 	contextGeneration           uint64
 	sources                     *DocumentService
 	mu                          sync.Mutex
@@ -70,7 +80,7 @@ func (m *LSPManager) recomputeActiveStatusLocked() {
 		m.applyAggregateStateLocked(*m.states[failedKey])
 		return
 	}
-	if m.paused || m.closed || !m.settings.Enabled {
+	if m.paused || m.closed || m.analysisErrorLocked() != nil || !m.settings.Enabled {
 		m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
 		return
 	}
@@ -122,6 +132,8 @@ func (m *LSPManager) recomputeIdleReasonLocked() {
 		return
 	}
 	switch {
+	case m.analysisErrorLocked() != nil:
+		m.idleStatus, m.idleReason = "Static only", m.analysisErrorLocked().Error()
 	case !m.settings.Enabled:
 		m.idleStatus, m.idleReason = "Language intelligence off", "Enable Language intelligence in Settings → Code Intelligence."
 	case m.paused || m.closed:
@@ -366,7 +378,7 @@ func (m *LSPManager) trackInflight(fn func() error) error {
 func (m *LSPManager) featureOn(pred func(ttypes.LSPSettings) bool) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.settings.Enabled && pred(m.settings)
+	return m.analysisErrorLocked() == nil && m.settings.Enabled && pred(m.settings)
 }
 
 func (m *LSPManager) ShowDiagnosticsInEditor() bool {
@@ -429,6 +441,14 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Outline }) {
 		return nil
 	}
+	path := filepath.Clean(filePath)
+	m.mu.Lock()
+	epoch, owner := m.settingsGeneration, m.documents[path]
+	var revision uint64
+	if owner != nil {
+		revision = owner.revision
+	}
+	m.mu.Unlock()
 	var out []LSPSymbol
 	_ = m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
@@ -442,7 +462,12 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 		}
 		if out != nil {
 			m.mu.Lock()
-			path := filepath.Clean(filePath)
+			if m.analysisErrorLocked() != nil || m.closed || m.paused || !m.settings.Enabled || !m.settings.Outline ||
+				m.settingsGeneration != epoch || owner == nil || m.documents[path] != owner || owner.revision != revision {
+				out = nil
+				m.mu.Unlock()
+				return nil
+			}
 			m.symbolCount -= len(m.docSymbols[path])
 			m.docSymbols[path] = out
 			m.symbolCount += len(out)
@@ -495,6 +520,7 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 		var requestErr error
 		out, requestErr = client.RequestHover(requestCtx, filePath, line, col)
 		if !valid() {
+			out = ""
 			return fmt.Errorf("LSP document changed during hover")
 		}
 		return requestErr

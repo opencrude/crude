@@ -13,10 +13,15 @@ import (
 	"sort"
 	"time"
 
+	"crude/fileio"
+	"crude/insight/governor"
 	ttypes "crude/types"
 )
 
 type lspClientState struct {
+	ticket      *governor.Ticket
+	lease       *governor.Lease
+	epoch       uint64
 	instance    string
 	rootURI     string
 	cmd         string
@@ -60,6 +65,7 @@ type lspClosedDocument struct {
 func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 	m := &LSPManager{
 		logger: logger, settings: ttypes.DefaultLSPSettings(), runtime: defaultLSPRuntime{},
+		analysisSettings: ttypes.DefaultWorkspaceAnalysisSettings(), analysisIdentity: fileio.DirectoryIdentity,
 		states: make(map[string]*lspClientState), documents: make(map[string]*lspDocument),
 		updateTimers: make(map[string]*time.Timer), wake: make(chan struct{}, 1),
 		docSymbols: make(map[string][]LSPSymbol), stateChanged: make(chan struct{}), contextGeneration: 1,
@@ -137,6 +143,12 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 	}
 	viewOnly := sameLSPProducerSettings(m.settings, settings)
 	m.settings = settings
+	if m.analysisGovernor != nil {
+		m.analysisGovernorError = ""
+		if err := m.analysisGovernor.ConfigureWorkspace(m.analysisWorkspace, settings.MaxServers); err != nil {
+			m.analysisGovernorError = err.Error()
+		}
+	}
 	if viewOnly {
 		m.bumpVersionLocked()
 		m.mu.Unlock()
@@ -164,6 +176,8 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 // Visibility/severity and request feature gates do not change a producer's
 // source or launch configuration. They must not restart it or restamp facts.
 func sameLSPProducerSettings(a, b ttypes.LSPSettings) bool {
+	// Quota changes govern new admission, never forcibly evict live producers.
+	a.MaxServers = b.MaxServers
 	a.Diagnostics, a.Completions, a.Hover, a.Definition = b.Diagnostics, b.Completions, b.Hover, b.Definition
 	a.References, a.Outline, a.Rename = b.References, b.Outline, b.Rename
 	a.DiagInEditor, a.DiagInTree, a.DiagInStatus = b.DiagInEditor, b.DiagInTree, b.DiagInStatus
@@ -232,10 +246,28 @@ func (m *LSPManager) runWorker(done chan struct{}) {
 			}
 			return
 		}
-		select {
-		case <-m.wake:
-		case <-ticker.C:
+		// Observe each exact ticket before sleeping. Capacity changes wake the
+		// existing joined worker, never a detached waiter or a busy retry loop.
+		m.mu.Lock()
+		cases := []reflect.SelectCase{
+			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.wake)},
+			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ticker.C)},
 		}
+		for _, state := range m.states {
+			if state.ticket != nil && state.lease == nil && !state.closing {
+				observation, changed := state.ticket.Observe()
+				switch observation.State {
+				case governor.Queued:
+					cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(changed)})
+				case governor.Granted:
+					// It changed since reconcile's observation. Do not lose the
+					// grant by waiting on its new (not yet closed) broadcast.
+					m.signalLocked()
+				}
+			}
+		}
+		m.mu.Unlock()
+		reflect.Select(cases)
 	}
 }
 
@@ -254,6 +286,9 @@ func (m *LSPManager) reconcile() bool {
 	}
 	// Always finish an old lifetime before admitting another launch.
 	for key, state := range m.states {
+		if state.ticket != nil && state.lease == nil && !m.keyWantedLocked(key) {
+			m.retireLocked(state)
+		}
 		if !state.closing {
 			continue
 		}
@@ -289,7 +324,7 @@ func (m *LSPManager) reconcile() bool {
 		m.mu.Unlock()
 		return true
 	}
-	if m.closed || m.paused || m.runtime == nil || !m.anyWantedLocked() {
+	if m.closed || m.paused || m.analysisErrorLocked() != nil || m.runtime == nil || !m.anyWantedLocked() {
 		m.mu.Unlock()
 		return false
 	}
@@ -338,11 +373,19 @@ func (m *LSPManager) reconcile() bool {
 			continue
 		}
 		root, generation := m.workspaceRoot, m.settingsGeneration
+		if !m.checkAnalysisRootLocked() {
+			m.mu.Unlock()
+			return true
+		}
+		if m.documents[path] != doc || generation != m.settingsGeneration || !m.wantedLocked(doc) {
+			m.mu.Unlock()
+			return true
+		}
 		m.mu.Unlock()
 		rootURI := resolveLSPRoot(path, root, spec.RootMarkers)
 		key := lspServerKey(rootURI, spec)
 		m.mu.Lock()
-		if m.documents[path] != doc || generation != m.settingsGeneration || m.paused || m.closed {
+		if m.documents[path] != doc || generation != m.settingsGeneration || m.paused || m.closed || !m.wantedLocked(doc) {
 			m.mu.Unlock()
 			return true
 		}
@@ -387,19 +430,61 @@ func (m *LSPManager) reconcile() bool {
 				m.mu.Unlock()
 				return true
 			}
+		}
+		if state.ticket == nil {
+			state.instance = rand.Text()
+			ticket, err := m.analysisGovernor.Submit(governor.Request{
+				Owner:          governor.Owner{Workspace: m.analysisWorkspace, Generation: m.analysisGeneration, Producer: state.instance},
+				WorkspaceLimit: m.settings.MaxServers,
+			})
+			if err != nil {
+				state.status, state.err = LSPFailed, "Analysis process admission failed; check core capacity and workspace limits: "+err.Error()
+				m.recomputeActiveStatusLocked()
+				continue
+			}
+			state.ticket = ticket
+			m.analysisRetained = true
+		}
+		observation, _ := state.ticket.Observe()
+		if observation.State == governor.Queued {
 			if !state.waiting {
 				state.status, state.waiting = LSPIdle, true
-				state.err = "Server limit reached; close another language's files or increase Maximum servers."
+				state.err = "Waiting for analysis process capacity; close another language's files or increase the core/workspace server limit."
 				m.recomputeActiveStatusLocked()
 			}
 			continue
 		}
+		if observation.State != governor.Granted {
+			state.status, state.err, state.waiting = LSPFailed, "Analysis admission was cancelled; restart the language server after checking core capacity.", false
+			m.recomputeActiveStatusLocked()
+			continue
+		}
+		epoch, key := m.settingsGeneration, doc.key
+		// A grant may have waited behind another workspace for arbitrarily long.
+		// Observe the bound root again for every new launch, off the owner lock.
+		if !m.checkAnalysisRootLocked() {
+			m.mu.Unlock()
+			return true
+		}
+		if m.states[key] != state || m.documents[path] != doc || m.settingsGeneration != epoch ||
+			state.closing || state.stopped || !m.wantedLocked(doc) {
+			m.mu.Unlock()
+			return true
+		}
+		lease, err := state.ticket.Begin()
+		if err != nil {
+			state.status, state.err, state.waiting = LSPFailed, "Analysis start admission failed: "+err.Error(), false
+			m.recomputeActiveStatusLocked()
+			continue
+		}
+		state.lease, state.epoch = lease, epoch
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		state.status, state.err, state.waiting, state.cancel = LSPStarting, "", false, cancel
-		key, runtime := doc.key, m.runtime
+		runtime := m.runtime
+		admission := m.startAdmission(key, state, epoch)
 		m.recomputeActiveStatusLocked()
 		m.mu.Unlock()
-		client := runtime.NewClient(state.spec, state.rootURI)
+		client := runtime.NewClient(state.spec, state.rootURI, admission)
 		if client == nil {
 			cancel()
 			m.finishStart(key, state, nil, fmt.Errorf("LSP transport is unavailable"))
@@ -407,10 +492,9 @@ func (m *LSPManager) reconcile() bool {
 		}
 		m.mu.Lock()
 		state.client = client
-		state.instance = rand.Text()
 		m.mu.Unlock()
 		client.OnDiagnostics(func(p ttypes.InsightDiagnosticPublication) { m.receiveDiagnostics(key, state, p) })
-		err := client.Start(ctx)
+		err = client.Start(ctx)
 		cancel()
 		m.finishStart(key, state, client, err)
 		return true
@@ -421,7 +505,8 @@ func (m *LSPManager) reconcile() bool {
 
 func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPClient, err error) {
 	m.mu.Lock()
-	stale := m.states[key] != state || state.closing || m.closed || m.paused || !m.keyWantedLocked(key)
+	stale := m.states[key] != state || state.closing || m.closed || m.paused ||
+		m.analysisErrorLocked() != nil || state.epoch != m.settingsGeneration || !m.keyWantedLocked(key)
 	if stale || err != nil {
 		m.mu.Unlock()
 		var stopErr error
@@ -437,6 +522,8 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 		if !stale {
 			state.status, state.err = LSPFailed, lspStartError(state.cmd, err)
 			m.clearServerDiagnosticsLocked(key)
+		} else if m.states[key] == state && !state.closing {
+			m.retireLocked(state)
 		}
 	} else {
 		state.status, state.err, state.lastUsed = LSPConnected, "", time.Now()
@@ -481,6 +568,10 @@ func (m *LSPManager) retireLocked(state *lspClientState) {
 		return
 	}
 	state.closing = true
+	state.waiting = false
+	if state.ticket != nil {
+		state.ticket.Cancel() // No effect after Begin; the exact lease stays retained.
+	}
 	if state.cancel != nil {
 		state.cancel()
 	}
@@ -491,7 +582,18 @@ func (m *LSPManager) retireLocked(state *lspClientState) {
 // PID or admitting replacements against an unverified resource budget.
 func (m *LSPManager) retainUnverifiedStopLocked(key string, state *lspClientState, err error) bool {
 	if err == nil {
+		if state.lease != nil {
+			state.lease.Release()
+			state.lease = nil
+		}
+		if state.ticket != nil {
+			state.ticket.Cancel()
+			state.ticket = nil
+		}
 		return false
+	}
+	if state.lease != nil {
+		state.lease.Retain("Language server teardown is unverified; inspect the retained producer before restarting.")
 	}
 	state.teardownErr = err
 	state.closing, state.waiting, state.cancel = false, false, nil
@@ -667,7 +769,7 @@ func (m *LSPManager) dropDocumentLocked(path string, doc *lspDocument) {
 	if doc != nil {
 		if state := m.states[doc.key]; state != nil {
 			state.lastUsed = time.Now()
-			if state.status == LSPStarting && m.documentCountLocked(doc.key) == 0 {
+			if (state.status == LSPStarting || state.ticket != nil && state.lease == nil) && m.documentCountLocked(doc.key) == 0 {
 				m.retireLocked(state)
 			}
 			if doc.opened && !state.closing {
@@ -781,7 +883,7 @@ func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, path string,
 	m.advanceContextLocked("Observed project input changed; dependent context is unverified.")
 	m.signalLocked()
 	var clients []LSPClient
-	if !m.paused {
+	if !m.paused && !m.closed && m.analysisErrorLocked() == nil {
 		for _, state := range m.states {
 			if state.status == LSPConnected && !state.closing && pathWithin(filePathFromURI(state.rootURI), path) {
 				clients = append(clients, state.client)
@@ -841,7 +943,7 @@ func (m *LSPManager) RestartServer(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.states[id]
-	if state == nil || m.closed {
+	if state == nil || m.closed || m.analysisErrorLocked() != nil {
 		return false
 	}
 	m.paused, m.manualStart = false, true
@@ -908,11 +1010,11 @@ func lspServerKey(root string, spec ttypes.LSPServerSpec) string {
 // editorActiveLocked reports whether the editor's own documents may use
 // language servers. Agent probes are admitted separately by their callers.
 func (m *LSPManager) editorActiveLocked() bool {
-	return m.settings.Enabled && (m.settings.StartOnOpen || m.manualStart)
+	return m.analysisErrorLocked() == nil && m.settings.Enabled && (m.settings.StartOnOpen || m.manualStart)
 }
 
 func (m *LSPManager) wantedLocked(doc *lspDocument) bool {
-	return doc != nil && (doc.probes > 0 || doc.editor && m.editorActiveLocked())
+	return m.analysisErrorLocked() == nil && doc != nil && (doc.probes > 0 || doc.editor && m.editorActiveLocked())
 }
 
 func (m *LSPManager) anyWantedLocked() bool {
@@ -928,7 +1030,7 @@ func (m *LSPManager) anyWantedLocked() bool {
 
 func (m *LSPManager) keyWantedLocked(key string) bool {
 	for _, doc := range m.documents {
-		if doc.key == key && m.wantedLocked(doc) {
+		if doc.key == key && m.wantedLocked(doc) && len(doc.text) <= m.settings.MaxDocumentBytes {
 			return true
 		}
 	}

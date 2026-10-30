@@ -69,6 +69,9 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		if err := types.ValidateSettingEdits(types.AppSettings{}, in.Edits); err != nil {
 			return bad("invalid_request", err.Error())
 		}
+		if err := types.ValidateAnalysisSettingEdits(types.SettingsScopeApplication, in.Edits); err != nil {
+			return bad("invalid_request", err.Error())
+		}
 		for _, edit := range in.Edits {
 			if len(edit.Path) == 0 || edit.Path[0] == "accounts" || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
 				return bad("invalid_request", "accounts and capabilities require entity operations")

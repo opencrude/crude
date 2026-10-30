@@ -12,7 +12,7 @@ import (
 
 // These are persisted JSON leaves from the collectors, not accessible labels.
 var controlFieldPaths = map[int]map[string]string{
-	catLSP:        {"enabled": "lsp.enabled", "auto-detect": "lsp.auto_detect", "start-on-open": "lsp.start_on_open", "debounce": "lsp.update_debounce_ms", "diagnostics": "lsp.diagnostics", "completions": "lsp.completions", "auto-complete": "lsp.auto_complete", "hover": "lsp.hover", "goto-definition": "lsp.goto_definition", "find-references": "lsp.find_references", "outline": "lsp.document_outline", "rename": "lsp.rename", "min-severity": "lsp.min_severity", "diag-editor": "lsp.diag_in_editor", "diag-tree": "lsp.diag_in_tree", "diag-status": "lsp.diag_in_status", "max-servers": "lsp.max_servers", "idle-timeout": "lsp.idle_timeout_seconds", "max-document": "lsp.max_document_bytes", "server-threads": "lsp.server_threads", "server-memory": "lsp.server_memory_mb"},
+	catLSP:        {fieldAnalysisTrust: "analysis.trust", "enabled": "lsp.enabled", "auto-detect": "lsp.auto_detect", "start-on-open": "lsp.start_on_open", "debounce": "lsp.update_debounce_ms", "diagnostics": "lsp.diagnostics", "completions": "lsp.completions", "auto-complete": "lsp.auto_complete", "hover": "lsp.hover", "goto-definition": "lsp.goto_definition", "find-references": "lsp.find_references", "outline": "lsp.document_outline", "rename": "lsp.rename", "min-severity": "lsp.min_severity", "diag-editor": "lsp.diag_in_editor", "diag-tree": "lsp.diag_in_tree", "diag-status": "lsp.diag_in_status", "max-servers": "lsp.max_servers", "idle-timeout": "lsp.idle_timeout_seconds", "max-document": "lsp.max_document_bytes", "server-threads": "lsp.server_threads", "server-memory": "lsp.server_memory_mb"},
 	catEditor:     {"tab-size": "editor.tab_size", "word-wrap": "editor.word_wrap", "line-numbers": "editor.line_numbers", "syntax-theme": "editor.syntax_theme", "render-whitespace": "editor.render_whitespace", "auto-save": "editor.auto_save", "auto-save-delay": "editor.auto_save_delay", "format-on-save": "editor.format_on_save"},
 	catAppearance: {"preset": "theme.preset", "frame-top": "theme.pad_top", "frame-bottom": "theme.pad_bottom", "frame-left": "theme.pad_left", "frame-right": "theme.pad_right"},
 	catUI:         {"context-help": "ui.context_help", "attachment-open": "ui.attachment_open", "sidebar-width": "ui.sidebar_width", "show-hidden": "ui.show_hidden_files", "show-icons": "ui.show_icons", "nerd-font": "ui.use_nerd_font", "git-status": "ui.show_git_status", "diagnostics": "ui.show_diagnostics"},
@@ -167,6 +167,11 @@ func (s *WorkspaceSettingsSurface) ControlMetadata(id ui.ComponentID, action str
 		return control.Write, false, nil
 	}
 	switch action {
+	case "settings.reset":
+		// Reset can discard a person's draft and removes stored choices.
+		// Keep the existing generic-control exclusion explicit, even when the
+		// authority draft is on a different page.
+		return control.Authority, true, nil
 	case "settings.save":
 		var before, after any
 		if err := json.Unmarshal(s.model.preferencesBase, &before); err != nil {

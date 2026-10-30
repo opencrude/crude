@@ -32,13 +32,14 @@ type immediateTreeDiagClient struct {
 	boundary    model.InsightBoundary
 	wireVersion int
 	sequence    uint64
+	admit       func() error
 }
 
-func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI string) workspace.LSPClient {
+func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI string, startAdmission func() error) workspace.LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.rootURIs = append(r.rootURIs, rootURI)
-	r.client = &immediateTreeDiagClient{filePath: r.filePath, diags: r.diags}
+	r.client = &immediateTreeDiagClient{filePath: r.filePath, diags: r.diags, admit: startAdmission}
 	return r.client
 }
 
@@ -71,7 +72,7 @@ func (c *immediateTreeDiagClient) syncBoundary(boundary model.InsightBoundary) (
 	return version, nil
 }
 
-func (c *immediateTreeDiagClient) Start(context.Context) error { return nil }
+func (c *immediateTreeDiagClient) Start(context.Context) error { return c.admit() }
 func (c *immediateTreeDiagClient) Stop() error                 { return nil }
 func (c *immediateTreeDiagClient) Done() <-chan struct{}       { return nil }
 func (c *immediateTreeDiagClient) OpenFile(_ context.Context, _, _, _ string, boundary model.InsightBoundary) (int, error) {

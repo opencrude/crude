@@ -321,7 +321,9 @@ func (c *earlyPublicationClient) OpenFile(ctx context.Context, path, language, t
 
 type earlyPublicationRuntime struct{ client *earlyPublicationClient }
 
-func (r earlyPublicationRuntime) NewClient(types.LSPServerSpec, string) LSPClient { return r.client }
+func (r earlyPublicationRuntime) NewClient(types.LSPServerSpec, string, func() error) LSPClient {
+	return r.client
+}
 
 func TestInsightDiagnosticsStageCallbackBeforeSendReceiptExactlyOnce(t *testing.T) {
 	c := &earlyPublicationClient{lifecycleClient: lifecycleClient{runtime: &lifecycleRuntime{}},
@@ -330,6 +332,7 @@ func TestInsightDiagnosticsStageCallbackBeforeSendReceiptExactlyOnce(t *testing.
 	m := NewLSPManager(nil, earlyPublicationRuntime{c})
 	t.Cleanup(m.Close)
 	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
 	initial := editorSource(t, m, filepath.Join(root, "main.go"), "package main\n")
 	select {
 	case <-c.entered:

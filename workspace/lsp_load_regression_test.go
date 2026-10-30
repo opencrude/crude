@@ -24,7 +24,9 @@ func (c *loadProbeClient) OpenFile(_ context.Context, path, _, _ string, _ model
 
 type loadProbeRuntime struct{ client *loadProbeClient }
 
-func (r loadProbeRuntime) NewClient(model.LSPServerSpec, string) LSPClient { return r.client }
+func (r loadProbeRuntime) NewClient(model.LSPServerSpec, string, func() error) LSPClient {
+	return r.client
+}
 
 func TestLSPEnabledUnusedWorkspaceDoesNotOpenSources(t *testing.T) {
 	root := t.TempDir()
@@ -36,6 +38,7 @@ func TestLSPEnabledUnusedWorkspaceDoesNotOpenSources(t *testing.T) {
 	client := &loadProbeClient{}
 	m := NewLSPManager(nil, loadProbeRuntime{client})
 	t.Cleanup(m.Close)
+	trustAnalysis(t, m, root)
 	m.StartForWorkspace(root)
 	time.Sleep(100 * time.Millisecond)
 	client.mu.Lock()

@@ -391,10 +391,12 @@ func SessionPreferencesOf(s Settings) SessionPreferences {
 }
 
 type AppSettings struct {
-	Onboarding   OnboardingSettings          `json:"onboarding,omitempty"`
-	Theme        ThemeSettings               `json:"theme,omitempty"`
-	Editor       EditorSettings              `json:"editor,omitempty"`
-	LSP          LSPSettings                 `json:"lsp,omitempty"`
+	Onboarding OnboardingSettings `json:"onboarding,omitempty"`
+	Theme      ThemeSettings      `json:"theme,omitempty"`
+	Editor     EditorSettings     `json:"editor,omitempty"`
+	LSP        LSPSettings        `json:"lsp,omitempty"`
+	// Analysis is workspace-owned despite sharing this effective/schema carrier.
+	Analysis     WorkspaceAnalysisSettings   `json:"analysis,omitempty"`
 	UI           UISettings                  `json:"ui,omitempty"`
 	Accounts     map[string]provider.Account `json:"accounts,omitempty"`
 	Agents       AgentsSettings              `json:"agents,omitempty"`

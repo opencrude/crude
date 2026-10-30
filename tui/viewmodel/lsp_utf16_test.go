@@ -121,6 +121,7 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 	authority := make(chan *workspace.LSPManager, 1)
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		w.LSPMgr.SetRuntime(server)
+		grantSemanticFixture(t, w)
 		authority <- w.LSPMgr
 	})
 	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)

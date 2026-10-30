@@ -31,6 +31,7 @@ func TestConnectedEditorTypingKeepsUnchangedPresentation(t *testing.T) {
 				// source-current tree counters (covered by the three-shell test).
 				settings.LSP.DiagInTree = false
 				w.SetAppDefaults(settings)
+				grantSemanticFixture(t, w)
 			})
 			root := t.TempDir()
 			path := filepath.Join(root, "typing.go")

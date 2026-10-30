@@ -39,12 +39,13 @@ type lifecycleClient struct {
 	startGate, stopGate <-chan struct{}
 	started, stopped    bool
 	startErr, stopErr   error
+	startAdmission      func() error
 }
 
-func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string) LSPClient {
+func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string, startAdmission func() error) LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := &lifecycleClient{runtime: r, startGate: r.startGate, stopGate: r.stopGate, stopErr: r.stopErr, reapableClient: reapableClient{done: make(chan struct{})}}
+	c := &lifecycleClient{runtime: r, startGate: r.startGate, stopGate: r.stopGate, stopErr: r.stopErr, startAdmission: startAdmission, reapableClient: reapableClient{done: make(chan struct{})}}
 	if len(r.startErrs) > 0 {
 		c.startErr, r.startErrs = r.startErrs[0], r.startErrs[1:]
 	}
@@ -68,6 +69,11 @@ func (c *lifecycleClient) Start(ctx context.Context) error {
 	}
 	if c.startErr != nil {
 		return c.startErr
+	}
+	if c.startAdmission != nil {
+		if err := c.startAdmission(); err != nil {
+			return err
+		}
 	}
 	c.mu.Lock()
 	c.started = true
@@ -189,6 +195,7 @@ func lifecycleManager(t *testing.T) (*LSPManager, *lifecycleRuntime, string) {
 	m := NewLSPManager(nil, r)
 	root := t.TempDir()
 	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
 	t.Cleanup(m.Close)
 	return m, r, root
 }
@@ -327,6 +334,7 @@ func TestLSPCloseJoinsServersAcrossWorkerWake(t *testing.T) {
 		m := NewLSPManager(nil, r)
 		t.Cleanup(m.Close)
 		m.SetWorkspaceRoot(root)
+		trustAnalysis(t, m, root)
 		editorSource(t, m, filepath.Join(root, "main.go"), "package main")
 		awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 		started, stopped := make(chan struct{}), make(chan struct{})

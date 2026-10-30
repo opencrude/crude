@@ -93,8 +93,10 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 			Enabled: true, Command: gopls, Args: []string{"serve"}, RootMarkers: []string{"go.mod"},
 			Environment: map[string]string{"HOME": home, "GOROOT": strings.TrimSpace(string(goroot)), "GOPATH": filepath.Join(home, "go"), "GOCACHE": filepath.Join(home, "cache"), "GOENV": "off", "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local"},
 		}}
-		// Fixture-private in-memory defaults; no application config or consent write.
+		// Launch settings are fixture-private. Execution separately requires a
+		// durable explicit grant for this exact temporary workspace directory.
 		w.SetAppDefaults(settings)
+		grantSemanticFixture(t, w)
 	})
 	shell := newRemoteJourneyShell(t, coreRuntime, root)
 	m := &lspVisualModel{featureVisualModel: &featureVisualModel{

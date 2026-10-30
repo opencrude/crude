@@ -342,7 +342,11 @@ func cloneTheme(theme types.ThemeSettings) types.ThemeSettings {
 	}
 	return theme
 }
-func (v *WorkspaceView) AppDefaults() types.AppSettings               { return v.LoadAppSettings() }
+func (v *WorkspaceView) AppDefaults() types.AppSettings {
+	value := v.LoadAppSettings()
+	value.Analysis = types.DefaultWorkspaceAnalysisSettings()
+	return value
+}
 func (v *WorkspaceView) SessionForAgent(id string) *workspace.Session { return v.SessionsByAgent[id] }
 func (v *WorkspaceView) AgentActivity(id string) types.AgentActivityView {
 	result := v.agents[id].Activity

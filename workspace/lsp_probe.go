@@ -34,6 +34,10 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 		m.mu.Unlock()
 		return LSPProbeView{}, ErrLSPStopped
 	}
+	if err := m.analysisErrorLocked(); err != nil {
+		m.mu.Unlock()
+		return LSPProbeView{}, err
+	}
 	if gate != nil && !gate(m.settings) {
 		m.mu.Unlock()
 		return LSPProbeView{}, fmt.Errorf("%s is turned off in Code Intelligence settings", gateName)
@@ -41,6 +45,7 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 	spec, ok := m.resolveServerLocked(path)
 	limit := m.settings.MaxDocumentBytes
 	sources := m.sources
+	generation := m.settingsGeneration
 	m.mu.Unlock()
 	if !ok {
 		return LSPProbeView{}, fmt.Errorf("no enabled language server handles %s files", languageLabel(path))
@@ -65,6 +70,12 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 		return LSPProbeView{}, err
 	}
 	m.mu.Lock()
+	if m.closed || m.paused || generation != m.settingsGeneration || m.analysisErrorLocked() != nil ||
+		gate != nil && !gate(m.settings) {
+		m.mu.Unlock()
+		sources.mu.Unlock()
+		return LSPProbeView{}, errors.New("workspace analysis execution admission changed while acquiring source; retry with current Workspace settings")
+	}
 	doc := m.documents[path]
 	if doc == nil {
 		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1}
@@ -84,13 +95,18 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 	sources.mu.Unlock()
 	defer m.releaseProbe(path, doc)
 
-	client, err := m.awaitProbeClient(ctx, path, doc)
+	client, err := m.awaitProbeClient(ctx, path, doc, generation)
 	if err != nil {
 		return view, err
 	}
 	m.mu.Lock()
 	boundary := doc.boundary
+	admitted := generation == m.settingsGeneration && m.analysisErrorLocked() == nil && !m.closed && !m.paused &&
+		(gate == nil || gate(m.settings))
 	m.mu.Unlock()
+	if !admitted {
+		return view, errors.New("workspace analysis execution admission changed before request; retry with current Workspace settings")
+	}
 	if err := fn(ctx, client, path, view); err != nil {
 		return view, err
 	}
@@ -106,7 +122,9 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 		return LSPProbeView{}, err
 	}
 	m.mu.Lock()
-	current := m.documents[path] == doc && doc.source == source.ref && !m.paused && !m.closed &&
+	current := generation == m.settingsGeneration && m.analysisErrorLocked() == nil &&
+		(gate == nil || gate(m.settings)) &&
+		m.documents[path] == doc && doc.source == source.ref && !m.paused && !m.closed &&
 		doc.opened && doc.syncedContext == m.contextGeneration && sameInsightBoundary(boundary, doc.boundary) &&
 		m.states[doc.key] != nil && m.states[doc.key].client == client && !m.states[doc.key].closing &&
 		!m.states[doc.key].stopped && m.states[doc.key].status == LSPConnected
@@ -128,16 +146,20 @@ func languageLabel(path string) string {
 // awaitProbeClient waits for the document's server to connect and receive the
 // current text. Failures that need a human (missing binary, stopped server,
 // server limit) are returned at once instead of waiting out the deadline.
-func (m *LSPManager) awaitProbeClient(ctx context.Context, path string, doc *lspDocument) (LSPClient, error) {
+func (m *LSPManager) awaitProbeClient(ctx context.Context, path string, doc *lspDocument, generation uint64) (LSPClient, error) {
 	for {
 		m.mu.Lock()
-		if m.documents[path] != doc || m.closed {
+		if m.documents[path] != doc || m.closed || generation != m.settingsGeneration {
 			m.mu.Unlock()
 			return nil, errors.New("the language service was reconfigured during the request; retry")
 		}
 		if m.paused {
 			m.mu.Unlock()
 			return nil, ErrLSPStopped
+		}
+		if err := m.analysisErrorLocked(); err != nil {
+			m.mu.Unlock()
+			return nil, err
 		}
 		state := m.states[doc.key]
 		changed := m.stateChanged
@@ -284,7 +306,7 @@ func (m *LSPManager) ProbeSymbols(ctx context.Context, path string) (symbols []L
 func (m *LSPManager) EditorEnabled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.settings.Enabled
+	return m.analysisErrorLocked() == nil && m.settings.Enabled
 }
 
 // ServesWarm reports whether a connected server already holds path's language
@@ -293,7 +315,7 @@ func (m *LSPManager) ServesWarm(path string) bool {
 	path = filepath.Clean(path)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.paused || m.closed || !m.settings.Diagnostics {
+	if m.paused || m.closed || m.analysisErrorLocked() != nil || !m.settings.Diagnostics {
 		return false
 	}
 	spec, ok := m.resolveServerLocked(path)

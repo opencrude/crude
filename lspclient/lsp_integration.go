@@ -33,10 +33,13 @@ type LSPIntegration struct {
 	serverEnv   map[string]string
 	settings    map[string]any
 	initOptions map[string]any
-	launch      *lspLaunch
-	stop        *lspStop
-	teardownErr error
-	rootURI     string
+	// startAdmission is the runtime owner's launch-epoch check. It must be
+	// memory-only; construction and joined cancellation still belong here.
+	startAdmission func() error
+	launch         *lspLaunch
+	stop           *lspStop
+	teardownErr    error
+	rootURI        string
 
 	// pipe monitors the subprocess stream. All writes are decoupled from
 	// caller goroutines through the async writer (see lsp_pipe.go); Done
@@ -90,6 +93,13 @@ func WithServerConfiguration(environment map[string]string, settings, initOption
 	}
 }
 
+// WithStartAdmission installs the producer owner's final admission check at the
+// subprocess-construction boundary. It grants no permission itself. A launch
+// admitted before concurrent revocation remains owned until verified teardown.
+func WithStartAdmission(admit func() error) LSPIntegrationOption {
+	return func(l *LSPIntegration) { l.startAdmission = admit }
+}
+
 type openFileState struct {
 	version    int
 	uri        string
@@ -134,6 +144,10 @@ func (l *LSPIntegration) RootURI() string {
 func (l *LSPIntegration) Start(ctx context.Context) error {
 	for {
 		l.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			l.mu.Unlock()
+			return err
+		}
 		stopping := l.stop
 		if stopping == nil {
 			break
@@ -178,15 +192,25 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	l.mu.Unlock()
 	defer cancel()
 	var pipe *lspPipeMonitor
-	client, err := lsp.NewClient(lsp.ClientConfig{
-		Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
-		Environment: l.serverEnv, Settings: l.settings, InitOptions: l.initOptions,
-		TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
-			nr, nw, mon := wrapLSPPipe(reader, writer)
-			pipe = mon
-			return nr, nw
-		},
-	})
+	var client *lsp.Client
+	// Stop can revoke this launch after it is registered but before construction.
+	// A constructor already admitted past this point remains owned and must be
+	// joined below; cancellation is never evidence that no process was created.
+	err := initCtx.Err()
+	if err == nil && l.startAdmission != nil {
+		err = l.startAdmission()
+	}
+	if err == nil {
+		client, err = lsp.NewClient(lsp.ClientConfig{
+			Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
+			Environment: l.serverEnv, Settings: l.settings, InitOptions: l.initOptions,
+			TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
+				nr, nw, mon := wrapLSPPipe(reader, writer)
+				pipe = mon
+				return nr, nw
+			},
+		})
+	}
 	if err == nil {
 		l.mu.Lock()
 		launch.client = client

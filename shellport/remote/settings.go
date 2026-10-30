@@ -98,7 +98,10 @@ func (w *Workspace) AppDefaults() types.AppSettings {
 func (w *Workspace) LoadAppSettings() types.AppSettings {
 	w.settingsMu.RLock()
 	defer w.settingsMu.RUnlock()
-	value := types.MergeAppWorkspace(w.settings.current.fetch.Effective, types.WorkspaceOverrides{})
+	// This is already resolved by the core's workspace settings owner. Resolving
+	// it again as an application layer would erase workspace-only choices.
+	value := types.CloneAppSettings(w.settings.current.fetch.Effective)
+	types.ApplyAppDefaults(&value)
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
 	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)

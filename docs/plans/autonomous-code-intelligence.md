@@ -33,8 +33,18 @@ wire-version, context, lifecycle, empty/unversioned/limited and Unicode regressi
 the repository suite, full race campaign with supplemental lifecycle-wake checks,
 and real-gopls rendered journeys at 160x40 and 80x24 have passed on Linux.
 Neutral Windows/Darwin cross-builds are not native-platform acceptance.
-Complete build context, request/response semantic fact contracts, governor,
+Complete build context, request/response semantic fact contracts, full governor,
 assembly and the campaigns below remain open.
+
+The [workspace Trust and admission foundation](../reference/settings.md#workspace-analysis-trust)
+now implements a human-owned non-inheriting execution ceiling, native directory
+binding, one core-wide LSP process governor and launch/revocation fences.
+Its preference, lifecycle, shared-core and source-frozen full ordinary/race
+regressions have passed on Linux, along with lint, docs, benchmark and transport
+gates. Native rendered Trust grant/reset and real-gopls semantic journeys passed
+at 160x40 and 80x24. Neutral Windows/Darwin cross-builds are not native-platform
+acceptance. Complete project context, native CPU/RSS containment, pressure
+management, additional work classes and autonomous assembly remain open.
 
 ## Problem
 

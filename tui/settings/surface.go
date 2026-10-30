@@ -768,6 +768,13 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	formX, formW := railX+leftW+gap, max(1, r.W-(railX+leftW+gap)-workspaceSettingsInset)
 	s.actions.SetLabel("settings.save", "Save")
 	s.actions.SetLabel("settings.close", "Close")
+	if s.reset != nil {
+		label := "Restore defaults"
+		if s.model.Scope() == ttypes.SettingsScopeWorkspace && s.model.SelectedCategory() != catLSP {
+			label = "Use Application settings"
+		}
+		s.reset.SetLabel("settings.reset", label)
+	}
 	topPad := s.topPad()
 	ruleY := max(0, r.H-footerRows)
 	footerY := min(r.H-1, ruleY+1)

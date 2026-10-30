@@ -148,7 +148,7 @@ func TestSettingsProjectionConcurrentCommitsPreserveSparseNeighbors(t *testing.T
 			var err error
 			switch i % 3 {
 			case 0:
-				_, err = saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(fmt.Sprint(i + 1))}})
+				_, err = saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(fmt.Sprint(i + 1))}}, "")
 			case 1:
 				after := types.CloneAppSettings(base)
 				after.Capabilities.Sources[id] = captypes.SourceConfig{ID: id, Location: root, Scope: captypes.ScopeWorkspace}
@@ -179,7 +179,7 @@ func TestSettingsProjectionConcurrentCommitsPreserveSparseNeighbors(t *testing.T
 		}
 	}
 	// A later addressed explicit value wins, even when equal to the parent.
-	if _, err := saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("4")}}); err != nil {
+	if _, err := saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("4")}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(w.LoadWorkspaceOverrides().Editor); got != `{"tab_size":4}` {
@@ -217,7 +217,7 @@ func TestSettingsProjectionFailedWritesNeverPublish(t *testing.T) {
 		t.Fatalf("direct write did not reach rejecting storage: %v", err)
 	}
 	base := w.LoadAppSettings()
-	if _, err := saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("2")}}); err == nil || !strings.Contains(err.Error(), "test rejection") {
+	if _, err := saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("2")}}, ""); err == nil || !strings.Contains(err.Error(), "test rejection") {
 		t.Fatalf("preference write did not reach rejecting storage: %v", err)
 	}
 	after := types.CloneAppSettings(base)

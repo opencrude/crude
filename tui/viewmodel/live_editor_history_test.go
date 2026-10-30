@@ -7,6 +7,7 @@ import (
 
 	"crude/shellport"
 	"crude/tui/editor"
+	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -78,7 +79,9 @@ func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T
 }
 
 func TestLiveEditorHistoryDismissesStaleDiagnosticPopup(t *testing.T) {
-	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
+		grantSemanticFixture(t, w)
+	})
 	root := t.TempDir()
 	path := filepath.Join(root, "diagnostic.txt")
 	if err := os.WriteFile(path, []byte("base"), 0600); err != nil {

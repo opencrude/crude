@@ -197,13 +197,13 @@ func TestRemoteShellColdLauncherLoadsCapabilitiesWithoutSession(t *testing.T) {
 func TestRemoteShellLSPDiagnosticsReachBothTreesBeforeBrowse(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root, path := createDiagnosticsProject(t)
-	runtime := remoteJourneyRuntime(t, "http://unused.invalid")
+	lsp := &immediateTreeDiagRuntime{filePath: path, diags: []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "Connected diagnostic evidence"}}}
+	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
+		w.LSPMgr.SetRuntime(lsp)
+		grantSemanticFixture(t, w)
+	})
 	one := newRemoteJourneyShell(t, runtime, root)
 	two := newRemoteJourneyShell(t, runtime, root)
-	lsp := &immediateTreeDiagRuntime{filePath: path, diags: []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "Connected diagnostic evidence"}}}
-	if err := runtime.Each(t.Context(), func(w *workspace.Workspace) { w.LSPMgr.SetRuntime(lsp) }); err != nil {
-		t.Fatal(err)
-	}
 	command, err := one.app.openEditorTab(path)
 	if err != nil {
 		t.Fatal(err)

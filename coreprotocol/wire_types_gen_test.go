@@ -434,6 +434,8 @@ var wireTypes = []any{
 	new(p14.UsageSummary),
 	new(p14.UsageValue),
 	new(p14.ValueConfidence),
+	new(p14.WorkspaceAnalysisSettings),
+	new(p14.WorkspaceAnalysisTrust),
 	new(p14.WorkspaceOverrides),
 	new(p15.Plan),
 	new(p15.Step),

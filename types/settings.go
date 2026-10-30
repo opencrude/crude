@@ -46,22 +46,27 @@ const (
 // application happened to hold that day, so a later app-level change to an
 // untouched field silently did nothing.
 type WorkspaceOverrides struct {
-	Theme        json.RawMessage `json:"theme,omitempty"`
-	Editor       json.RawMessage `json:"editor,omitempty"`
-	LSP          json.RawMessage `json:"lsp,omitempty"`
-	UI           json.RawMessage `json:"ui,omitempty"`
-	Agents       json.RawMessage `json:"agents,omitempty"`
-	Memory       json.RawMessage `json:"memory,omitempty"`
-	Safety       json.RawMessage `json:"safety,omitempty"`
-	LocalHistory json.RawMessage `json:"local_history,omitempty"`
-	Capabilities json.RawMessage `json:"capabilities,omitempty"`
-	Terminal     json.RawMessage `json:"terminal,omitempty"`
+	Theme    json.RawMessage `json:"theme,omitempty"`
+	Editor   json.RawMessage `json:"editor,omitempty"`
+	LSP      json.RawMessage `json:"lsp,omitempty"`
+	Analysis json.RawMessage `json:"analysis,omitempty"`
+	// AnalysisRootIdentity is owner-generated metadata, not an editable setting.
+	// The workspace preference transaction binds a grant to a native directory;
+	// no application, session, form or recipe may supply this value.
+	AnalysisRootIdentity string          `json:"analysis_root_identity,omitempty"`
+	UI                   json.RawMessage `json:"ui,omitempty"`
+	Agents               json.RawMessage `json:"agents,omitempty"`
+	Memory               json.RawMessage `json:"memory,omitempty"`
+	Safety               json.RawMessage `json:"safety,omitempty"`
+	LocalHistory         json.RawMessage `json:"local_history,omitempty"`
+	Capabilities         json.RawMessage `json:"capabilities,omitempty"`
+	Terminal             json.RawMessage `json:"terminal,omitempty"`
 }
 
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
-		len(o.UI) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
+		len(o.Analysis) == 0 && len(o.UI) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
 }
 
 // DefaultLSPSettings is the application-level language-intelligence baseline.
@@ -118,6 +123,7 @@ func ApplyAppDefaults(s *AppSettings) {
 	}
 	s.Editor = NormalizeEditorSettings(s.Editor)
 	s.Terminal = NormalizeTerminalSettings(s.Terminal)
+	s.Analysis = NormalizeWorkspaceAnalysis(s.Analysis)
 	if lspUnset(s.LSP) {
 		s.LSP = DefaultLSPSettings()
 	} else {
@@ -265,6 +271,9 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.Theme, ws.Theme)
 	applySparse(&out.Editor, ws.Editor)
 	applySparse(&out.LSP, ws.LSP)
+	// Trust never inherits from application preferences, even a forged or
+	// accidentally populated application projection.
+	out.Analysis = workspaceAnalysisChoice(ws.Analysis)
 	applySparse(&out.UI, ws.UI)
 	applySparse(&out.Agents, ws.Agents)
 	applySparse(&out.Memory, ws.Memory)
@@ -283,6 +292,7 @@ func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	out.Theme = sparseDiff(app.Theme, working.Theme)
 	out.Editor = sparseDiff(app.Editor, working.Editor)
 	out.LSP = sparseDiff(app.LSP, working.LSP)
+	out.Analysis = sparseDiff(DefaultWorkspaceAnalysisSettings(), NormalizeWorkspaceAnalysis(working.Analysis))
 	out.UI = sparseDiff(app.UI, working.UI)
 	out.Agents = sparseDiff(app.Agents, working.Agents)
 	out.Memory = sparseDiff(app.Memory, working.Memory)
@@ -487,6 +497,8 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.Editor) > 0
 	case "lsp", "language servers":
 		return len(o.LSP) > 0
+	case "analysis":
+		return len(o.Analysis) > 0
 	case "ui", "interface":
 		return len(o.UI) > 0
 	case "agents":
@@ -517,6 +529,9 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.Editor = nil
 	case "lsp", "language servers":
 		o.LSP = nil
+	case "analysis":
+		o.Analysis = nil
+		o.AnalysisRootIdentity = ""
 	case "ui", "interface":
 		o.UI = nil
 	case "agents":
