@@ -241,8 +241,8 @@ func (s *DocumentService) reconcileLocked(id string) error {
 	} else {
 		previousRevision := original.snapshot.Revision
 		*original = *d
-		if s.lsp != nil && d.lspOpen && d.snapshot.Revision != previousRevision {
-			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
+		if d.snapshot.Revision != previousRevision {
+			s.observeAnalysisLocked(original)
 		}
 	}
 	return err

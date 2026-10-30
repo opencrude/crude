@@ -15,14 +15,14 @@ import (
 
 func TestLSPDiagnosticConsumersIndependentAndClears(t *testing.T) {
 	var one, two shellport.LSPDiagnosticConsumer
-	s := shellport.LSPDiagnosticSnapshot{Version: 1, Diagnostics: map[string][]workspace.LSPDiagnostic{"a.go": {{Message: "bad", Severity: 1}}}}
+	s := shellport.LSPDiagnosticSnapshot{Generation: "workspace-1", Version: 1, Diagnostics: map[string]types.InsightDiagnostics{"a.go": {ID: "fact-1", Diagnostics: []types.LSPDiagnostic{{Message: "bad", Severity: 1}}}}}
 	for _, c := range []*shellport.LSPDiagnosticConsumer{&one, &two} {
-		if got := c.Consume(s); got["a.go"][0].Message != "bad" {
+		if got := c.Consume(s); got["a.go"].Diagnostics[0].Message != "bad" || got["a.go"].ID != "fact-1" {
 			t.Fatal(got)
 		}
 	}
-	s.Diagnostics["a.go"][0].Message = "caller changed"
-	if got := one.Consume(shellport.LSPDiagnosticSnapshot{Version: 2}); len(got) != 1 || got["a.go"] != nil {
+	s.Diagnostics["a.go"].Diagnostics[0].Message = "caller changed"
+	if got := one.Consume(shellport.LSPDiagnosticSnapshot{Version: 2}); len(got) != 1 || got["a.go"].ID != "" {
 		t.Fatal("clear missing", got)
 	}
 	if got := two.Consume(shellport.LSPDiagnosticSnapshot{Version: 2}); len(got) != 1 {

@@ -477,9 +477,7 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 	}
 	for i, d := range afterDocs {
 		*beforeDocs[i] = *d
-		if s.lsp != nil && d.lspOpen {
-			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
-		}
+		s.observeAnalysisLocked(beforeDocs[i])
 		changed = append(changed, d.snapshot.ID)
 	}
 	// Everything below is metadata publication, never grounds to roll back an
@@ -647,9 +645,7 @@ func (s *DocumentService) undoExecution(ctx context.Context, service *worktree.S
 	}
 	for i, d := range staged {
 		*live[i] = *d
-		if s.lsp != nil && d.lspOpen {
-			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
-		}
+		s.observeAnalysisLocked(live[i])
 		changed = append(changed, d.snapshot.ID)
 	}
 	err = history.store.CompleteAgentOperation(inverse.Receipt.OperationID, true)

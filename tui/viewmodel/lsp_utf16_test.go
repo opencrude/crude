@@ -11,11 +11,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/editor"
-	"crude/tui/screens/statusoverview"
+	"crude/types"
 	"crude/workspace"
 )
 
-func TestLiveDiagnosticNavigationUTF16AndPrivateFocus(t *testing.T) {
+func TestLiveUTF16NavigationAndPrivateFocus(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
 	root := t.TempDir()
 	source, destination := filepath.Join(root, "source.txt"), filepath.Join(root, "destination.txt")
@@ -31,7 +31,7 @@ func TestLiveDiagnosticNavigationUTF16AndPrivateFocus(t *testing.T) {
 	a := liveTestOpen(t, shell.app, source)
 	a.InsertRune('!')
 	wire := editor.LSPDiagnostic{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError}
-	shell.app.jumpToDiagnostic(destination, wire)
+	shell.app.queueLiveNavigation(destination, wire)
 	if a.CursorLine() != 0 || a.CursorCol() != 1 || a.Value() != "!unsaved source" {
 		t.Fatal("asynchronous navigation moved or replaced old private editor")
 	}
@@ -43,7 +43,7 @@ func TestLiveDiagnosticNavigationUTF16AndPrivateFocus(t *testing.T) {
 	if sl, sc, el, ec := b.SelectionRange(); sl != 0 || sc != 9 || el != 1 || ec != 10 {
 		t.Fatalf("selection=%d:%d-%d:%d", sl, sc, el, ec)
 	}
-	b.SetDiagnostics([]editor.LSPDiagnostic{wire})
+	b.SetDiagnostics(editorDiagnosticFacts(b, []editor.LSPDiagnostic{wire}))
 	b.SetCursorPosition(1, 10)
 	if !shell.app.jumpToNextError() || b.CursorCol() != 9 {
 		t.Fatal("F8 converted visual diagnostics a second time")
@@ -52,7 +52,7 @@ func TestLiveDiagnosticNavigationUTF16AndPrivateFocus(t *testing.T) {
 		t.Fatal("Shift-F8 converted visual diagnostics a second time")
 	}
 	shell.app.activateEditorTab(source)
-	shell.app.jumpToDiagnostic(destination, wire)
+	shell.app.queueLiveNavigation(destination, wire)
 	queued := shell.app.editorCommands
 	shell.app.editorCommands = nil
 	result := queued[0]().(paneFilesOpenedMsg)
@@ -70,10 +70,6 @@ func TestLiveDiagnosticNavigationUTF16AndPrivateFocus(t *testing.T) {
 			shell.app.handleDefinitionResult(lspDefinitionResultMsg{locations: []editor.LSPLocation{{Path: destination, Line: 1, Col: 9}}})
 		},
 		func() { shell.app.jumpToReference(refRow{File: destination, Line: 1, Col: 9}) },
-		func() {
-			_, cmd := shell.app.Update(statusoverview.NavigateMsg{Action: "diagnostic:1:9:" + destination})
-			runAppCommand(t, shell.app, cmd)
-		},
 	} {
 		shell.app.activateEditorTab(source)
 		b.SetCursorPosition(1, 0)
@@ -90,28 +86,24 @@ func TestLiveDiagnosticNavigationUTF16AndPrivateFocus(t *testing.T) {
 	}
 }
 
-func TestDiagnosticFirstErrorLocalUTF16Projection(t *testing.T) {
-	root, path := createDiagnosticsProject(t)
-	if err := os.WriteFile(path, []byte("\t界é😀abc\r\nab\t界é😀XYZ\r\n"), 0600); err != nil {
+func TestDiagnosticFirstErrorCanonicalUTF16Projection(t *testing.T) {
+	app, ed, service, _ := qualifiedDiagnosticApp(t)
+	snapshot := ed.DocumentSnapshot()
+	snapshot.Text = []byte("\t界é😀abc\r\nab\t界é😀XYZ\r\n")
+	snapshot.Saved = append([]byte(nil), snapshot.Text...)
+	if err := ed.InstallDocument(snapshot); err != nil {
 		t.Fatal(err)
 	}
-	app := newDiagnosticsTreeApp(t, root)
 	wire := []editor.LSPDiagnostic{{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError}}
-	server := &immediateTreeDiagRuntime{filePath: path, diags: wire}
-	wsOf(app).LSPMgr.SetRuntime(server)
-	cmd, err := app.openEditorTab(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runAppCommand(t, app, cmd)
-	awaitTreeLSP(t, app, path)
+	facts := editorDiagnosticFacts(ed, wire)
+	service.facts[ed.FilePath()] = facts
+	app.drainLSPDiagnostics()
 	app.gotoFirstDiagnostic()
-	ed := app.EditorState.Editor
 	if ed.CursorLine() != 0 || ed.CursorCol() != 9 || ed.SelectedText() != "abc\r\nab\t界é😀X" {
-		t.Fatalf("local first-error used raw coordinates as visual: %d:%d %q", ed.CursorLine(), ed.CursorCol(), ed.SelectedText())
+		t.Fatalf("canonical first-error used raw coordinates as visual: %d:%d %q", ed.CursorLine(), ed.CursorCol(), ed.SelectedText())
 	}
-	if !reflect.DeepEqual(app.ws.LSPMgr().FileDiagnostics(path), wire) {
-		t.Fatal("local first-error mutated raw manager cache")
+	if !reflect.DeepEqual(diagnosticList(service, ed.FilePath()), wire) {
+		t.Fatal("navigation mutated wire cache")
 	}
 }
 
@@ -126,18 +118,25 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 		{Line: 1, Col: 9, EndLine: 1, EndCol: 10, Severity: editor.DiagError, Message: "second Unicode error"},
 	}
 	server := &immediateTreeDiagRuntime{filePath: path, diags: wire}
-	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) { w.LSPMgr.SetRuntime(server) })
+	authority := make(chan *workspace.LSPManager, 1)
+	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
+		w.LSPMgr.SetRuntime(server)
+		authority <- w.LSPMgr
+	})
 	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)
+	manager := <-authority
 	first := liveTestOpen(t, one.app, path)
 	shells := []remoteJourneyShell{one, two}
 	remoteJourneyUntil(t, shells, func() bool {
-		return len(one.app.ws.LSPMgr().FileDiagnostics(path)) == 2 && len(two.app.ws.LSPMgr().FileDiagnostics(path)) == 2
+		return len(diagnosticList(one.app.ws.LSPMgr(), path)) == 2 && len(diagnosticList(two.app.ws.LSPMgr(), path)) == 2
 	})
+	assertLSPStartedForRoot(t, server, root)
 	second := liveTestOpen(t, two.app, path) // cached diagnostics before open
 	three := newRemoteJourneyShell(t, runtime, root)
 	shells = append(shells, three)
 	third := liveTestOpen(t, three.app, path) // new attachment's retained snapshot
 	editors := []*editor.Editor{first, second, third}
+	var previous types.InsightDiagnostics
 	for publication := range 3 {
 		server.mu.Lock()
 		client := server.client
@@ -157,7 +156,35 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 		})
 		for i, shell := range shells {
 			ed := editors[i]
-			if !reflect.DeepEqual(shell.app.ws.LSPMgr().FileDiagnostics(path), next) || !reflect.DeepEqual(ed.DocumentBuffer().Diagnostics(), next) {
+			facts, ok := manager.FileDiagnostics(path)
+			replica, replicaOK := shell.app.ws.LSPMgr().FileDiagnostics(path)
+			if !ok || !replicaOK || facts.ID == "" || replica.ID != facts.ID ||
+				ed.DiagnosticFacts().ID != facts.ID || ed.DocumentBuffer().Diagnostics().ID != facts.ID ||
+				!reflect.DeepEqual(facts.Boundary, ed.DiagnosticFacts().Boundary) {
+				t.Fatalf("shell %d restamped core publication: core=%+v replica=%+v editor=%+v", i, facts, replica, ed.DiagnosticFacts())
+			}
+			node := shell.app.Tree.Model.NodeByPath(path)
+			if node == nil || node.DiagErrors != 2 {
+				t.Fatalf("shell %d canonical diagnostics missing from tree: %+v", i, node)
+			}
+			found := false
+			for _, item := range shell.app.problemPanelItems() {
+				if item.ID == "problem:"+facts.ID+":0" {
+					found = item.PrimaryEnabled && strings.Contains(item.Summary, "partial")
+				}
+			}
+			if !found {
+				t.Fatalf("shell %d Problems lost literal core fact identity or qualified navigation", i)
+			}
+			if previous.ID != "" {
+				shell.app.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{
+					Generation: shell.app.workspaceSwitchGen.Load(), FilePath: path, Facts: previous,
+				})
+				if ed.DiagnosticFacts().ID != facts.ID || shell.app.lspFacts[path].ID != facts.ID {
+					t.Fatalf("shell %d old event replaced newer replica authority", i)
+				}
+			}
+			if !reflect.DeepEqual(diagnosticList(shell.app.ws.LSPMgr(), path), next) || !reflect.DeepEqual(ed.DocumentBuffer().Diagnostics().Diagnostics, next) {
 				t.Fatalf("shell %d converted raw replica/buffer cache", i)
 			}
 			ed.SetCursorPosition(0, 0)
@@ -181,6 +208,38 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 			if !strings.Contains(frame, "XYZ") || ed.Value() != text {
 				t.Fatalf("shell %d navigation altered or failed to paint shared source", i)
 			}
+		}
+		previous, _ = manager.FileDiagnostics(path)
+	}
+	first.ClearSelection()
+	one.app.setFocusEditor()
+	_, editCmd := one.app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if first.FirstError() != nil {
+		t.Fatal("optimistic pending edit kept authorizing old source diagnostics")
+	}
+	runAppCommand(t, one.app, editCmd)
+	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+	liveTestSync(t, one.app)
+	remoteJourneyUntil(t, shells, func() bool {
+		for i, shell := range shells {
+			shell.app.drainLSPDiagnostics()
+			if editors[i].DocumentSnapshot().Revision <= previous.Boundary.Source.Revision || editors[i].FirstError() == nil {
+				return false
+			}
+		}
+		return true
+	})
+	current, ok := manager.FileDiagnostics(path)
+	if !ok || current.ID == previous.ID || current.Boundary.Source.Revision <= previous.Boundary.Source.Revision {
+		t.Fatal("canonical edit did not create a new source-bound observation")
+	}
+	for i, shell := range shells {
+		shell.app.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{
+			Generation: shell.app.workspaceSwitchGen.Load(), FilePath: path, Facts: previous,
+		})
+		if editors[i].DiagnosticFacts().ID != current.ID ||
+			editors[i].DocumentSnapshot().AnalysisGeneration != current.Boundary.Source.WorkspaceGeneration {
+			t.Fatalf("shell %d accepted old-source event or restamped generation", i)
 		}
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"crude/types"
+
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
@@ -16,7 +18,7 @@ func settleFixture(t *testing.T) (*LSPIntegration, *lspLaunch, string) {
 	launch := &lspLaunch{}
 	l.launch, l.client = launch, &lsp.Client{}
 	path := filepath.Join(t.TempDir(), "a.go")
-	state := &openFileState{text: "package a"}
+	state := &openFileState{text: "package a", boundary: testBoundary(path)}
 	state.resetVersion(1)
 	l.openFiles[path] = state
 	return l, launch, path
@@ -43,7 +45,7 @@ func TestAwaitDiagnosticsWaitsForPublicationAndIdleServer(t *testing.T) {
 	cancel()
 
 	done := make(chan struct{})
-	var got []LSPDiagnostic
+	var got types.InsightDiagnosticPublication
 	var settled bool
 	go func() {
 		defer close(done)
@@ -53,7 +55,7 @@ func TestAwaitDiagnosticsWaitsForPublicationAndIdleServer(t *testing.T) {
 	}()
 	l.updateProgress(launch, "load", "end")
 	<-done
-	if !settled || len(got) != 1 || got[0].Source != "compiler" || got[0].Code != "UndeclaredName" {
+	if !settled || len(got.Diagnostics) != 1 || got.Diagnostics[0].Source != "compiler" || got.Diagnostics[0].Code != "UndeclaredName" {
 		t.Fatalf("AwaitDiagnostics = %+v settled=%v", got, settled)
 	}
 }
@@ -68,7 +70,7 @@ func TestAwaitDiagnosticsIgnoresPublicationForAnOlderVersion(t *testing.T) {
 	l.updateDiagnostics(launch, protocol.URIFromPath(path), &version, []protocol.Diagnostic{{Message: "late stale"}})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if got, settled := l.AwaitDiagnostics(ctx, path); settled || len(got) != 0 {
+	if got, settled := l.AwaitDiagnostics(ctx, path); settled || len(got.Diagnostics) != 0 {
 		t.Fatalf("an older version's diagnostics were reported: %+v settled=%v", got, settled)
 	}
 }
@@ -84,9 +86,9 @@ func TestAwaitDiagnosticsOverTheWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "a.go")
-	l.OpenFile(ctx, path, "go", "package a\nvar x = y\n")
+	openTestFile(t, l, ctx, path, "go", "package a\nvar x = y\n")
 	got, settled := l.AwaitDiagnostics(ctx, path)
-	if !settled || len(got) != 1 || got[0].Message != "undefined: y" || got[0].Code != "UndeclaredName" {
+	if !settled || len(got.Diagnostics) != 1 || got.Diagnostics[0].Message != "undefined: y" || got.Diagnostics[0].Code != "UndeclaredName" {
 		t.Fatalf("AwaitDiagnostics = %+v settled=%v", got, settled)
 	}
 }

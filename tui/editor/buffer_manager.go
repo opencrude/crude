@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"crude/types"
 )
 
 // Buffer is the data model for a text file. It owns the PieceTable (the
@@ -38,7 +40,7 @@ type Buffer struct {
 	dirty          bool
 	savepoint      textSnapshot
 
-	diags   []LSPDiagnostic
+	diags   types.InsightDiagnostics
 	diagsMu sync.RWMutex
 }
 
@@ -171,19 +173,17 @@ func (b *Buffer) NoteDiskMissing() {
 }
 
 // SetDiagnostics stores LSP diagnostics for this buffer. Thread-safe.
-func (b *Buffer) SetDiagnostics(diags []LSPDiagnostic) {
+func (b *Buffer) SetDiagnostics(diags types.InsightDiagnostics) {
 	b.diagsMu.Lock()
 	defer b.diagsMu.Unlock()
-	b.diags = diags
+	b.diags = types.CloneInsightDiagnostics(diags)
 }
 
 // Diagnostics returns the cached LSP diagnostics for this buffer.
-func (b *Buffer) Diagnostics() []LSPDiagnostic {
+func (b *Buffer) Diagnostics() types.InsightDiagnostics {
 	b.diagsMu.RLock()
 	defer b.diagsMu.RUnlock()
-	result := make([]LSPDiagnostic, len(b.diags))
-	copy(result, b.diags)
-	return result
+	return types.CloneInsightDiagnostics(b.diags)
 }
 
 // BufferManager owns all open buffers. It is the single source of truth

@@ -329,11 +329,13 @@ func (z *Receipt) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 11
+	o = append(o, 0x9b)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Path)
 	o = msgp.AppendUint64(o, z.Revision)
+	o = msgp.AppendString(o, z.AnalysisGeneration)
+	o = msgp.AppendString(o, z.AnalysisLifetime)
 	if z.Text == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -363,8 +365,8 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 11 {
+		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -380,6 +382,16 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	z.Revision, bts, err = msgp.ReadUint64Bytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Revision")
+		return
+	}
+	z.AnalysisGeneration, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AnalysisGeneration")
+		return
+	}
+	z.AnalysisLifetime, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AnalysisLifetime")
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -434,7 +446,7 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Snapshot) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Path) + msgp.Uint64Size + msgp.BytesPrefixSize + len(z.Text) + msgp.BytesPrefixSize + len(z.Saved) + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize)) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Path) + msgp.Uint64Size + msgp.StringPrefixSize + len(z.AnalysisGeneration) + msgp.StringPrefixSize + len(z.AnalysisLifetime) + msgp.BytesPrefixSize + len(z.Text) + msgp.BytesPrefixSize + len(z.Saved) + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize)) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
 	return
 }
 

@@ -20,7 +20,7 @@ func TestLSPUnverifiedTeardownNeverReleasesProcessAdmission(t *testing.T) {
 				r.startErrs = []error{errors.New("initialize failed")}
 			}
 			first := filepath.Join(root, "main.go")
-			m.OpenFile(t.Context(), first, "package main")
+			editorSource(t, m, first, "package main")
 			awaitLSP(t, func() bool {
 				clients := r.snapshot()
 				return len(clients) == 1 && (reason == "initialization-failure" || len(clients[0].snapshot()) == 1)
@@ -46,8 +46,8 @@ func TestLSPUnverifiedTeardownNeverReleasesProcessAdmission(t *testing.T) {
 				t.Fatalf("Stop hid an unverified lifetime: %v %v %q", connected, state, detail)
 			}
 			m.RestartServer(health.ID)
-			m.CloseFile(t.Context(), first)
-			m.OpenFile(t.Context(), filepath.Join(root, "next.py"), "print('next')")
+			closeEditor(t, m, first)
+			editorSource(t, m, filepath.Join(root, "next.py"), "print('next')")
 			awaitLSP(t, func() bool {
 				for _, server := range m.ServerHealthSnapshots() {
 					if server.Status == "Waiting for slot" {
@@ -64,9 +64,11 @@ func TestLSPUnverifiedTeardownNeverReleasesProcessAdmission(t *testing.T) {
 				t.Error("failed exact owner was replaced or forgotten")
 			}
 			m.mu.Unlock()
-			r.snapshot()[0].emit(first, []LSPDiagnostic{{Severity: DiagError, Message: "late after failed stop"}})
-			if diagnostics := m.AllDiagnostics(); len(diagnostics) != 0 {
-				t.Fatalf("retired provider resurrected findings: %+v", diagnostics)
+			r.snapshot()[0].emit(r.snapshot()[0].publication(first, []LSPDiagnostic{{Severity: DiagError, Message: "late after failed stop"}}))
+			for _, batch := range m.AllDiagnostics() {
+				if batch.ID != "" || batch.HasExactSource() {
+					t.Fatalf("retired provider resurrected findings: %+v", batch)
+				}
 			}
 			closed := make(chan struct{})
 			go func() { m.Close(); close(closed) }()

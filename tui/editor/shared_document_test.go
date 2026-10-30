@@ -227,6 +227,53 @@ func TestDocumentProjectionUndoIntentAndSavepoint(t *testing.T) {
 	}
 }
 
+func TestDocumentSaveReceiptAndPublicationShareDiskGeneration(t *testing.T) {
+	e, s := projectionEditor(t, "base")
+	if err := e.BindDocumentOwner(projectionOwner); err != nil {
+		t.Fatal(err)
+	}
+	e.InsertRune('S')
+	change, err := e.CaptureDocumentEdits(projectionOwner, "saved-edit", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.AcceptDocumentReceipt(document.Receipt{DocumentID: s.ID, RequestID: change.RequestID, Before: 1, Revision: 2, Accepted: true}); err != nil {
+		t.Fatal(err)
+	}
+	s.Revision, s.Text, s.Saved = 2, []byte("Sbase"), []byte("Sbase")
+	s.DiskHash = sha256.Sum256(s.Saved)
+	if err := e.AcceptDocumentSnapshot(s); err != nil {
+		t.Fatal(err)
+	}
+	generation, revision, cursor := e.DiskGeneration(), e.Revision(), e.cursor
+	publish := func(snapshot document.Snapshot) {
+		t.Helper()
+		snapshot.Text = nil
+		plan, err := e.PrepareDocumentUpdate(projectionOwner, 2, nil, snapshot, nil, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.CommitDocumentUpdate(plan); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish(s) // The ordered topic follows the already-applied Save receipt.
+	if e.DiskGeneration() != generation || e.Modified() || e.Value() != "Sbase" || e.Revision() != revision || e.cursor != cursor {
+		t.Fatalf("identical save publication changed the editor's switch preimage: disk generation %d -> %d", generation, e.DiskGeneration())
+	}
+	s.Saved, s.DiskHash = []byte("base"), sha256.Sum256([]byte("base"))
+	publish(s)
+	if e.DiskGeneration() <= generation || !e.Modified() || e.Value() != "Sbase" {
+		t.Fatal("a genuinely changed disk baseline did not invalidate its preimage")
+	}
+	changed := e.DiskGeneration()
+	s.Saved, s.DiskHash = []byte("Sbase"), sha256.Sum256([]byte("Sbase"))
+	publish(s)
+	if e.DiskGeneration() <= changed || e.Modified() {
+		t.Fatal("disk-baseline ABA revived a previously captured generation")
+	}
+}
+
 func TestDocumentUndoDeferredPublicationRetainsExactGestureOrder(t *testing.T) {
 	e, s := projectionEditor(t, "alpha")
 	if err := e.BindDocumentOwner(projectionOwner); err != nil {

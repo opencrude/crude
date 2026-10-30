@@ -21,27 +21,132 @@ type fakeCodeIntelligence struct {
 	editor      bool
 	warm        bool
 	diagnostics map[string][]ttypes.LSPDiagnostic
+	sources     map[string]string
+	unversioned bool
+	probes      int
 	locations   []ttypes.LSPLocation
 	positions   [][2]int
 }
 
 func (f *fakeCodeIntelligence) EditorEnabled() bool         { return f.editor }
 func (f *fakeCodeIntelligence) ServesWarm(path string) bool { return f.warm }
-func (f *fakeCodeIntelligence) ProbeDiagnostics(_ context.Context, path string) ([]ttypes.LSPDiagnostic, bool, ttypes.LSPProbeView, error) {
+func (f *fakeCodeIntelligence) sourceView(path string) ttypes.LSPProbeView {
+	return ttypes.LSPProbeView{Server: "gopls", BufferDiffers: true, SourceText: f.sources[filepath.Base(path)],
+		Source: ttypes.InsightSource{WorkspaceGeneration: "workspace-1", DocumentID: path, Path: path, Lifetime: "canonical-1", Revision: 41, Kind: "canonical"}}
+}
+func (f *fakeCodeIntelligence) ProbeDiagnostics(_ context.Context, path string) (ttypes.InsightDiagnostics, bool, ttypes.LSPProbeView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.diagnostics[filepath.Base(path)], true, ttypes.LSPProbeView{Server: "gopls"}, nil
+	f.probes++
+	view := f.sourceView(path)
+	v := 7
+	batch := ttypes.InsightDiagnostics{ID: "fact-" + filepath.Base(path), Boundary: ttypes.InsightBoundary{Source: view.Source,
+		Context:  ttypes.InsightContext{ID: "module-1", Root: filepath.Dir(path), Generation: 2, UnknownInputs: []string{"Build graph unknown"}},
+		Producer: ttypes.InsightProducer{InstanceID: "producer-1", Provider: "gopls", ToolIdentity: "gopls-fixture"}},
+		Sequence: 1, WireVersion: 7, ReportedVersion: &v, Binding: "exact-version", State: ttypes.InsightProvisional, Diagnostics: slices.Clone(f.diagnostics[filepath.Base(path)])}
+	if f.unversioned {
+		batch.ReportedVersion = nil
+		batch.Binding = "unversioned"
+	}
+	return batch, true, view, nil
 }
-func (f *fakeCodeIntelligence) ProbeDefinition(_ context.Context, _ string, line, col int) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error) {
+
+func TestPostEditDiagnosticsRespectRoleAndReadAdmission(t *testing.T) {
+	for _, exclusion := range []string{"denied-tool", "allowed-tools", "no-read"} {
+		t.Run(exclusion, func(t *testing.T) {
+			s, live, service, _ := codeIntelFixture(t, true)
+			service.warm = true
+			service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Severity: 1, Message: "must not escape exclusion"}}
+			switch exclusion {
+			case "no-read":
+				live.Policy.AllowedCapabilities[safety.CanRead] = false
+			default:
+				profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+				category := profile.Categories[CategoryDefault]
+				if exclusion == "denied-tool" {
+					category.DeniedTools = []string{"lsp"}
+				} else {
+					category.AllowedTools = []string{"edit_file"}
+				}
+				profile.Categories[CategoryDefault] = category
+				s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+			}
+			if defs, _ := live.PrepareStep(); slices.Contains(toolNames(defs), "lsp") {
+				t.Fatal("excluded tool was offered")
+			}
+			result, err := live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"})
+			if err != nil || result.Content != "Replaced 1 occurrence" {
+				t.Fatal("ordinary allowed edit changed", err)
+			}
+			service.mu.Lock()
+			probes := service.probes
+			service.mu.Unlock()
+			if probes != 0 {
+				t.Fatalf("post-edit diagnostics bypassed %s admission: %d probes", exclusion, probes)
+			}
+			if _, notices := live.PrepareStep(); len(notices) != 0 {
+				t.Fatal("excluded post-edit data reached agent context")
+			}
+		})
+	}
+}
+
+func TestQueuedPostEditDiagnosticsWithheldWhenAdmissionChanges(t *testing.T) {
+	for _, exclusion := range []string{"role", "session", "read"} {
+		t.Run(exclusion, func(t *testing.T) {
+			s, live, service, _ := codeIntelFixture(t, true)
+			service.warm = true
+			service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Severity: 1, Message: "queued before admission changed"}}
+			if _, err := live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"}); err != nil {
+				t.Fatal(err)
+			}
+			if service.probes != 1 {
+				t.Fatal("fixture did not queue an admitted diagnostic")
+			}
+			switch exclusion {
+			case "session":
+				off := false
+				s.codeIntelOverride = &off
+			case "read":
+				live.Policy.AllowedCapabilities[safety.CanRead] = false
+			case "role":
+				profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+				category := profile.Categories[CategoryDefault]
+				category.DeniedTools = []string{"lsp"}
+				profile.Categories[CategoryDefault] = category
+				s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+			}
+			if _, notices := live.PrepareStep(); len(notices) != 0 {
+				t.Fatal("revoked admission leaked queued post-edit diagnostics")
+			}
+			s.codeIntelOverride = nil
+			live.Policy = safety.DefaultPolicy()
+			profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+			category := profile.Categories[CategoryDefault]
+			category.DeniedTools = nil
+			profile.Categories[CategoryDefault] = category
+			s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+			if _, notices := live.PrepareStep(); len(notices) != 0 {
+				t.Fatal("re-enabled admission replayed revoked diagnostic data")
+			}
+		})
+	}
+}
+func (f *fakeCodeIntelligence) ProbeDefinition(_ context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	view := f.sourceView(path)
+	line, col, err := position.Resolve(view.SourceText)
+	if err != nil {
+		return nil, ttypes.LSPProbeView{}, err
+	}
 	f.positions = append(f.positions, [2]int{line, col})
-	f.mu.Unlock()
-	return f.locations, ttypes.LSPProbeView{}, nil
+	return f.locations, view, nil
 }
-func (f *fakeCodeIntelligence) ProbeReferences(ctx context.Context, path string, line, col int) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error) {
-	return f.ProbeDefinition(ctx, path, line, col)
+func (f *fakeCodeIntelligence) ProbeReferences(ctx context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error) {
+	return f.ProbeDefinition(ctx, path, position)
 }
-func (f *fakeCodeIntelligence) ProbeHover(context.Context, string, int, int) (string, ttypes.LSPProbeView, error) {
+func (f *fakeCodeIntelligence) ProbeHover(context.Context, string, ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error) {
 	return "func y() int", ttypes.LSPProbeView{}, nil
 }
 func (f *fakeCodeIntelligence) ProbeSymbols(context.Context, string) ([]ttypes.LSPSymbol, ttypes.LSPProbeView, error) {
@@ -52,7 +157,7 @@ func codeIntelFixture(t *testing.T, editor bool) (*Session, *agent.Agent, *fakeC
 	t.Helper()
 	root := t.TempDir()
 	s := &Session{cfg: testConfig()}
-	service := &fakeCodeIntelligence{editor: editor, diagnostics: map[string][]ttypes.LSPDiagnostic{}}
+	service := &fakeCodeIntelligence{editor: editor, diagnostics: map[string][]ttypes.LSPDiagnostic{}, sources: map[string]string{}}
 	s.SetCodeIntelligence(service)
 	live := &agent.Agent{AgentID: "root", WorkDir: root, Policy: safety.DefaultPolicy(), FilteredTools: []tools.ToolDef{{Function: tools.ToolFuncDef{Name: "read_file"}}},
 		ToolFn: func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -93,7 +198,8 @@ func TestLSPToolFollowsSessionOverrideOverWorkspace(t *testing.T) {
 func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	_, live, service, root := codeIntelFixture(t, true)
 	path := filepath.Join(root, "a.go")
-	if err := os.WriteFile(path, []byte("package a\n// 😀 x := y()\nfunc y() int { return 1 }\n"), 0o644); err != nil {
+	service.sources["a.go"] = "package a\r\n// 😀 x := y()\r\nfunc y() int { return 1 }\r\n"
+	if err := os.WriteFile(path, []byte("DISK DECOY MUST NOT BE QUOTED"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	service.locations = []ttypes.LSPLocation{{Path: path, Line: 2, Col: 5}}
@@ -107,6 +213,9 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "a.go:3:6  func y() int { return 1 }") {
 		t.Fatalf("definition result = %q", result.Content)
+	}
+	if strings.Contains(result.Content, "DECOY") {
+		t.Fatal("independent disk read escaped source authority")
 	}
 	// An existing absolute file in another directory: only containment, not a
 	// missing file, may reject it on every platform.
@@ -125,6 +234,7 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 func TestLSPDiagnosticsReportSeverityAndCleanFiles(t *testing.T) {
 	_, live, service, root := codeIntelFixture(t, true)
 	for name, text := range map[string]string{"a.go": "package a\nvar x = y\n", "b.go": "package a\n"} {
+		service.sources[name] = text
 		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -137,13 +247,39 @@ func TestLSPDiagnosticsReportSeverityAndCleanFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"a.go: 1 error (gopls)", "2:9 error undefined: y [compiler UndeclaredName]", "var x = y", "b.go: no problems (gopls)"} {
+	for _, want := range []string{"Fact fact-a.go:", "source revision 41", "Partial context:", "a.go: 1 error (gopls)", "2:9 error undefined: y [compiler UndeclaredName]", "var x = y", "b.go: 0 diagnostics at requested severity (gopls)", "not a clean-project verdict"} {
 		if !strings.Contains(result.Content, want) {
 			t.Fatalf("diagnostics lack %q:\n%s", want, result.Content)
 		}
 	}
 	if strings.Contains(result.Content, "hint only") {
 		t.Fatal("default severity floor reported hints")
+	}
+}
+
+func TestLSPUnversionedFactsNeverQuoteDiskOrWithdrawExactPostEditReport(t *testing.T) {
+	s, live, service, root := codeIntelFixture(t, true)
+	path := filepath.Join(root, "a.go")
+	if err := os.WriteFile(path, []byte("DISK SECRET DECOY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.sources["a.go"] = "var 😀 = unresolved\n"
+	service.unversioned, service.warm = true, true
+	service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Line: 0, Col: 9, EndCol: 19, Severity: 1, Message: "unresolved"}}
+	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "diagnostics", "path": "a.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Fact fact-a.go:", "unversioned", "UTF-16 10 (source unverified)"} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("missing %q: %s", want, result.Content)
+		}
+	}
+	if strings.Contains(result.Content, "DECOY") || strings.Contains(result.Content, "var 😀") {
+		t.Fatal("unversioned answer quoted an unproven source")
+	}
+	if reports := s.postEditDiagnostics(t.Context(), root, []string{path}); len(reports) != 0 {
+		t.Fatalf("unversioned observation withdrew an exact report: %v", reports)
 	}
 }
 
@@ -154,6 +290,7 @@ func TestPostEditDiagnosticsArriveAsNotice(t *testing.T) {
 	_, live, service, root := codeIntelFixture(t, true)
 	service.warm = true
 	path := filepath.Join(root, "a.go")
+	service.sources["a.go"] = "package a\nvar x = y\n"
 	if err := os.WriteFile(path, []byte("package a\nvar x = y\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

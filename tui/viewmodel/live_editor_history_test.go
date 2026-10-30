@@ -91,7 +91,7 @@ func TestLiveEditorHistoryDismissesStaleDiagnosticPopup(t *testing.T) {
 	_, cmd := shell.app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	runAppCommand(t, shell.app, cmd)
 	liveTestSync(t, shell.app)
-	ed.SetDiagnostics([]editor.LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 5, Severity: editor.DiagError, Message: "stale diagnostic"}})
+	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 5, Severity: editor.DiagError, Message: "stale diagnostic"}}))
 	ed.RefreshCursorHover(0, 0)
 	shell.app.updateDiagHoverPopupFromCursor()
 	if shell.app.DiagPopupID == "" {

@@ -336,6 +336,10 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		problemText = strings.Join(parts, "") + " Problems"
 	}
 	problemRole := diagnosticRole(insights.Errors, insights.Warnings)
+	problemText += " · " + diagnosticCoverageLabel(insights)
+	if insights.DiagnosticsStale > 0 || insights.DiagnosticsLimited > 0 || insights.DiagnosticsUnverified > 0 {
+		problemRole = ui.ColorWarning
+	}
 	for _, server := range m.ws.LSPMgr().ServerHealthSnapshots() {
 		if server.Error != "" {
 			problemRole = ui.ColorError
@@ -668,7 +672,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			state = "Modified"
 		}
 		errors, warnings := editorDiagnosticCounts(ed.Diagnostics())
-		summary := state
+		summary := state + " · " + ed.DiagnosticStatus()
 		if errors+warnings > 0 {
 			summary += fmt.Sprintf("  %d errors  %d warnings", errors, warnings)
 		}
@@ -680,13 +684,14 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			{Label: "Cursor", Value: fmt.Sprintf("Ln %d, Col %d", ed.CursorLine()+1, ed.CursorCol()+1), Role: ui.ColorFg},
 			{Label: "Lines", Value: fmt.Sprintf("%d", ed.LineCount()), Role: ui.ColorMuted},
 		}
-		if insight := editorInsightSummary(ed); insight != "" {
+		if insight := editorSyntaxSummary(ed); insight != "" {
 			_, detail := ed.InsightStatus()
 			lines = append(lines, statusoverview.DetailLine{Label: "Syntax", Value: insight, Role: ui.ColorMuted})
 			if detail != "" {
 				lines = append(lines, statusoverview.DetailLine{Label: "Coverage", Value: detail, Role: ui.ColorMuted})
 			}
 		}
+		lines = append(lines, statusoverview.DetailLine{Label: "Diagnostics", Value: ed.DiagnosticStatus(), Role: ui.ColorWarning}, statusoverview.DetailLine{Label: "Provenance", Value: ed.DiagnosticProvenance(), Role: ui.ColorMuted})
 		if errors+warnings > 0 {
 			lines = append(lines,
 				statusoverview.DetailLine{Label: "Errors", Value: fmt.Sprintf("%d", errors), Role: diagnosticRole(errors, 0)},
@@ -894,10 +899,12 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	case strings.HasPrefix(action, "diagnostic:"):
 		parts := strings.SplitN(strings.TrimPrefix(action, "diagnostic:"), ":", 3)
 		if len(parts) == 3 {
-			line, lineErr := strconv.Atoi(parts[0])
-			col, colErr := strconv.Atoi(parts[1])
-			if lineErr == nil && colErr == nil {
-				m.jumpToDiagnostic(parts[2], workspace.LSPDiagnostic{Line: line, Col: col, EndLine: line, EndCol: col})
+			index, err := strconv.Atoi(parts[1])
+			facts, ok := m.ws.LSPMgr().FileDiagnostics(parts[2])
+			if err == nil && ok && facts.ID == parts[0] && index >= 0 && index < len(facts.Diagnostics) {
+				m.jumpToDiagnostic(parts[2], facts.Diagnostics[index])
+			} else {
+				m.Feedback.NotifyInfo("Diagnostic publication changed; reopen Problems")
 			}
 		}
 	case strings.HasPrefix(action, "session:resume:"):
@@ -1134,13 +1141,13 @@ func workspaceHealthSummary(insights ttypes.ProjectInsights) string {
 		return "IDE issue · language server failed"
 	}
 	if insights.Errors > 0 || insights.Warnings > 0 {
-		return fmt.Sprintf("%d errors · %d warnings", insights.Errors, insights.Warnings)
+		return fmt.Sprintf("%d observed errors · %d warnings · %s", insights.Errors, insights.Warnings, diagnosticCoverageLabel(insights))
 	}
 	if insights.ServerStarting || insights.ServerSyncing || insights.ServerBusy {
 		return "Language services working"
 	}
 	if insights.ServerReady {
-		return "Language services ready"
+		return "Language services ready · " + diagnosticCoverageLabel(insights)
 	}
 	if insights.IdleStatus != "" {
 		return insights.IdleStatus

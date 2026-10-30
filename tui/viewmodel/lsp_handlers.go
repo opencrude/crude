@@ -12,6 +12,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -25,7 +26,7 @@ func (m *App) showDiagnosticAt(line, col int) {
 	// Build structured content lines.
 	var lines []ui.DiagLine
 	lines = append(lines, ui.DiagLine{
-		Text: fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.BaseTitle(), line+1, col),
+		Text: fmt.Sprintf("%s:%d:%d · %s", m.EditorState.Editor.BaseTitle(), line+1, col, m.EditorState.Editor.DiagnosticStatus()),
 		Kind: ui.DiagLineTitle,
 	})
 	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(line), "\n\r ")
@@ -46,6 +47,7 @@ func (m *App) showDiagnosticAt(line, col int) {
 		})
 	}
 
+	lines = append(lines, ui.DiagLine{Text: m.EditorState.Editor.DiagnosticProvenance(), Kind: ui.DiagLineBody})
 	// Determine severity from the first diagnostic.
 	sev := ui.DiagSevInfo
 	if len(diags) > 0 {
@@ -89,44 +91,37 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 	if !m.acceptsLSPGeneration(msg.Generation) {
 		return
 	}
-	if m.ws.LSPMgr() != nil {
-		msg.Diagnostics = m.ws.LSPMgr().FileDiagnostics(msg.FilePath)
+	// Event delivery and the independent snapshot drain can overtake each other.
+	// Re-read this path from the fact authority, never revive an older queued
+	// publication merely because its path still names an open editor.
+	if service := m.ws.LSPMgr(); service != nil {
+		msg.Facts, _ = service.FileDiagnostics(msg.FilePath)
 	}
-	if m.Tree != nil && m.Tree.Model != nil {
-		if m.ws.LSPMgr() == nil || m.ws.LSPMgr().ShowDiagnosticsInTree() {
-			errs, warns, hints := 0, 0, 0
-			for _, d := range msg.Diagnostics {
-				switch d.Severity {
-				case editor.DiagError:
-					errs++
-				case editor.DiagWarning:
-					warns++
-				default:
-					hints++
-				}
-			}
-			m.Tree.Model.SetDiagnostics(msg.FilePath, errs, warns, hints)
-		} else {
-			m.Tree.Model.SetDiagnostics(msg.FilePath, 0, 0, 0)
-		}
-		if m.sidebarScreen != nil {
-			m.sidebarScreen.RefreshStatus()
-		}
+	m.applyLSPDiagnostics(msg.FilePath, msg.Facts)
+}
+
+// applyLSPDiagnostics consumes one authority-validated changed projection.
+func (m *App) applyLSPDiagnostics(path string, facts types.InsightDiagnostics) {
+	if m.lspFacts == nil {
+		m.lspFacts = make(map[string]types.InsightDiagnostics)
 	}
-	if tab := m.EditorState.Tabs[msg.FilePath]; tab != nil && tab.Editor != nil {
-		if m.ws.LSPMgr() != nil && !m.ws.LSPMgr().ShowDiagnosticsInEditor() {
-			tab.Editor.SetDiagnostics(nil)
-		} else {
-			tab.Editor.SetDiagnostics(msg.Diagnostics)
-		}
-	} else if m.EditorState.Editor != nil && msg.FilePath == m.EditorState.Editor.FilePath() && m.EditorState.Editor.IsOpen() {
-		if m.ws.LSPMgr() != nil && !m.ws.LSPMgr().ShowDiagnosticsInEditor() {
-			m.EditorState.Editor.SetDiagnostics(nil)
-		} else {
-			m.EditorState.Editor.SetDiagnostics(msg.Diagnostics)
-		}
+	if facts.ID == "" {
+		delete(m.lspFacts, path)
+	} else {
+		m.lspFacts[path] = types.CloneInsightDiagnostics(facts)
 	}
-	if m.EditorState.Editor != nil && msg.FilePath == m.EditorState.Editor.FilePath() {
+	m.projectTreeDiagnostic(path, facts)
+	install := func(ed *editor.Editor) {
+		ed.SetDiagnosticsVisible(m.ws.LSPMgr() == nil || m.ws.LSPMgr().ShowDiagnosticsInEditor())
+		ed.SetDiagnostics(facts)
+	}
+	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
+		install(tab.Editor)
+	} else if ed := m.EditorState.Editor; ed != nil && path == ed.FilePath() && ed.IsOpen() {
+		install(ed)
+	}
+
+	if m.EditorState.Editor != nil && path == m.EditorState.Editor.FilePath() {
 		m.clearDiagHoverPopup()
 	}
 }
@@ -134,14 +129,36 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 // Each shell consumes its own versioned replica; no callback or shared drain.
 func (m *App) wireLSPDiagnostics() {
 	m.lspDiagnostics = shellport.LSPDiagnosticConsumer{}
+	m.lspFacts = nil
+	m.lspTreeProjection = nil
 }
 
 func (m *App) drainLSPDiagnostics() {
 	if m.ws.LSPMgr() == nil {
 		return
 	}
-	for path, diags := range m.lspDiagnostics.Consume(m.ws.LSPMgr().DiagnosticSnapshot()) {
-		m.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{Generation: m.workspaceSwitchGen.Load(), FilePath: path, Diagnostics: diags})
+	// The cheap clock is checked before asking for a detached complete snapshot.
+	generation, version := m.ws.LSPMgr().DiagnosticCursor()
+	if m.lspDiagnostics.NeedsSnapshot(generation, version) {
+		snapshot := m.ws.LSPMgr().DiagnosticSnapshot()
+		for path, facts := range m.lspDiagnostics.Consume(snapshot) {
+			m.applyLSPDiagnostics(path, facts)
+		}
+	}
+	showTree := m.ws.LSPMgr().ShowDiagnosticsInTree()
+	if showTree != m.lspTreeVisible {
+		m.lspTreeVisible = showTree
+		for path, facts := range m.lspFacts {
+			m.projectTreeDiagnostic(path, facts)
+		}
+	}
+	// Independent source publications can catch up without another LSP batch.
+	for _, tab := range m.EditorState.Tabs {
+		if tab != nil && tab.Editor != nil {
+			tab.Editor.SetDiagnosticsVisible(m.ws.LSPMgr().ShowDiagnosticsInEditor())
+			tab.Editor.RefreshDiagnostics()
+			m.projectTreeDiagnostic(tab.Editor.FilePath(), m.lspFacts[tab.Editor.FilePath()])
+		}
 	}
 }
 
@@ -149,22 +166,9 @@ func (m *App) syncFileTreeDiagnosticsFromLSP() {
 	if m == nil || m.ws.LSPMgr() == nil || m.Tree == nil || m.Tree.Model == nil {
 		return
 	}
-	for fp, diags := range m.ws.LSPMgr().AllDiagnostics() {
-		m.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{
-			Generation:  m.workspaceSwitchGen.Load(),
-			FilePath:    fp,
-			Diagnostics: diags,
-		})
-	}
-}
-
-func (m *App) clearTreeDiagnostics() {
-	if m == nil || m.Tree == nil || m.Tree.Model == nil {
-		return
-	}
-	m.Tree.Model.ClearDiagnostics()
-	if m.sidebarScreen != nil {
-		m.sidebarScreen.RefreshStatus()
+	m.lspTreeProjection = nil
+	for fp, facts := range m.ws.LSPMgr().AllDiagnostics() {
+		m.applyLSPDiagnostics(fp, facts)
 	}
 }
 
@@ -198,31 +202,8 @@ func (m *App) startLSPForWorkspace() {
 		m.ws.Logger().Debug("LSP", "starting_for_workspace", "dir", wsDir)
 	}
 	if m.ws.LSPMgr() != nil {
-		// Clear cached diagnostics on every (re)start so a stopped
-		// server doesn't leave stale errors visible until the new
-		// session republishes them.
-		m.ws.LSPMgr().ClearDiagnostics()
-		m.clearTreeDiagnostics()
-		// Also clear per-editor diagnostic caches for open tabs.
-		// The new server will repopulate them via the onDiagnostics
-		// callback as it analyzes open documents.
-		m.clearOpenEditorsDiagnostics()
 		m.ws.LSPMgr().StartForWorkspace(wsDir)
 		m.syncFileTreeDiagnosticsFromLSP()
-	}
-}
-
-// clearOpenEditorsDiagnostics wipes the diagnostic cache for every
-// open editor tab. Called on LSP restart to avoid showing stale
-// errors from the previous server session.
-func (m *App) clearOpenEditorsDiagnostics() {
-	if m.EditorState.Editor != nil {
-		m.EditorState.Editor.SetDiagnostics(nil)
-	}
-	for _, tab := range m.EditorState.Tabs {
-		if tab != nil && tab.Editor != nil {
-			tab.Editor.SetDiagnostics(nil)
-		}
 	}
 }
 
@@ -235,7 +216,6 @@ func (m *App) StopLSP() {
 	}
 	if m.ws.LSPMgr() != nil {
 		m.ws.LSPMgr().Stop()
-		m.clearTreeDiagnostics()
-		m.clearOpenEditorsDiagnostics()
+		m.drainLSPDiagnostics()
 	}
 }

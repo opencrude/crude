@@ -571,7 +571,6 @@ type actor struct {
 	// statusVersion is the status-center version last announced to shells.
 	statusVersion uint64
 	lspVersion    uint64
-	lspViews      *lspViews
 	// jobCancels cancels exactly one requester's in-flight job.
 	jobCancels map[string]context.CancelFunc
 	// progress delivers request-scoped output to the requesting connection.
@@ -638,7 +637,6 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	a.accessDB = ws.WorkspaceDB
 	a.resourceLane = newResourceLane(ctx, 32)
 	a.terminalLane = newResourceLane(ctx, 32)
-	a.lspViews = newLSPViews(ws.LiveDocuments)
 	a.serviceEvents = make(chan any, 256)
 	bus := workspace.NewEventBus()
 	bus.SetSink(a)
@@ -921,7 +919,6 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 		if a.ws.LiveDocuments != nil {
 			a.ws.LiveDocuments.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
 		}
-		a.lspViews.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
 		a.documentReleases = append(a.documentReleases, document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
 		a.drainDocumentReleases()
 		return false
@@ -998,7 +995,6 @@ func (a *actor) unsubscribe(c *Connection) {
 	if a.ws.LiveDocuments != nil {
 		a.ws.LiveDocuments.Detach(document.Owner{ClientID: c.Owner.ClientID, Epoch: c.Owner.Epoch})
 	}
-	a.lspViews.Detach(document.Owner{ClientID: c.Owner.ClientID, Epoch: c.Owner.Epoch})
 	select {
 	case a.commands <- actorCommand{detach: c}:
 	case <-a.stop:
@@ -1040,7 +1036,6 @@ func (a *actor) close() {
 		for _, owner := range a.documentReleases {
 			if a.ws.LiveDocuments != nil {
 				a.ws.LiveDocuments.ReleaseDetached(owner)
-				a.ws.LiveDocuments.ReleaseDetached(lspViewOwner(owner))
 			}
 		}
 		a.ws.CloseAllSessions()
@@ -1058,7 +1053,7 @@ func (a *actor) drainDocumentReleases() {
 			a.documentReleases = a.documentReleases[1:]
 			continue
 		}
-		if !a.resourceLane.submit(func(context.Context) { docs.ReleaseDetached(owner); docs.ReleaseDetached(lspViewOwner(owner)) }) {
+		if !a.resourceLane.submit(func(context.Context) { docs.ReleaseDetached(owner) }) {
 			return
 		}
 		a.documentReleases = a.documentReleases[1:]

@@ -5,13 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"crude/document"
 	"crude/tui/cell"
 )
 
 func TestTypingPreservesDiagnosticPaintOnUnchangedSourceOnly(t *testing.T) {
 	ed := loadEditorText(t, "diagnostic.go", "package main\nvar value = 1\nvar bad = missing\n")
 	ed.SetCursorPosition(1, len("var value"))
-	ed.SetDiagnostics([]LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}})
+	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}})
 	before := paintEditor(ed, 80, 10)
 	ed.InsertRune('x')
 	after := paintEditor(ed, 80, 10)
@@ -31,7 +32,7 @@ func TestTypingPreservesDiagnosticPaintOnUnchangedSourceOnly(t *testing.T) {
 
 func TestDiagnosticPaintMapsLineChangesAndClearsOnPublication(t *testing.T) {
 	ed := loadEditorText(t, "mapped.go", "package main\nvar bad = missing\n")
-	ed.SetDiagnostics([]LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError}})
+	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError}})
 	ed.SetCursorPosition(0, 0)
 	ed.InsertRune('\n')
 	if len(ed.lineDiagnostics(2)) != 1 || len(ed.lineDiagnostics(1)) != 0 {
@@ -40,11 +41,11 @@ func TestDiagnosticPaintMapsLineChangesAndClearsOnPublication(t *testing.T) {
 	if len(ed.Diagnostics()) != 0 {
 		t.Fatal("mapped paint escaped as current diagnostic data")
 	}
-	ed.SetDiagnostics(nil)
+	setTestDiagnostics(ed, nil)
 	if len(ed.lineDiagnostics(2)) != 0 {
 		t.Fatal("empty new publication retained provisional underline")
 	}
-	ed.SetDiagnostics([]LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError}})
+	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError}})
 	ed.ApplyDisk([]byte("package replacement\n"))
 	if len(ed.lineDiagnostics(2)) != 0 {
 		t.Fatal("replacement retained unrelated diagnostic paint")
@@ -58,11 +59,11 @@ func TestLSPDiagnosticsUTF16ColumnsReachVisualCharacter(t *testing.T) {
 	wire := []LSPDiagnostic{{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: DiagError}}
 	want := LSPDiagnostic{Line: 0, Col: 9, EndLine: 1, EndCol: 10, Severity: DiagError}
 	for range 3 {
-		ed.SetDiagnostics(wire)
+		setTestDiagnostics(ed, wire)
 		if got := ed.Diagnostics(); len(got) != 1 || got[0] != want {
 			t.Fatalf("multiline diagnostic endpoints must use their own source line: %+v", got)
 		}
-		if !reflect.DeepEqual(ed.buffer.Diagnostics(), wire) || wire[0].Col != 6 || wire[0].EndCol != 9 {
+		if !reflect.DeepEqual(ed.buffer.Diagnostics().Diagnostics, wire) || wire[0].Col != 6 || wire[0].EndCol != 9 {
 			t.Fatal("projection mutated raw UTF-16 cache")
 		}
 	}
@@ -89,7 +90,7 @@ func TestLSPDiagnosticMultilinePaintHasBoundedExpansion(t *testing.T) {
 	for i := range diags {
 		diags[i] = LSPDiagnostic{Line: i, Col: 1, EndLine: int(^uint(0) >> 1), EndCol: 1, Severity: DiagError}
 	}
-	ed.SetDiagnostics(diags)
+	setTestDiagnostics(ed, diags)
 	total := 0
 	for _, spans := range ed.diagByLine {
 		total += len(spans)
@@ -105,21 +106,47 @@ func TestLSPDiagnosticMultilinePaintHasBoundedExpansion(t *testing.T) {
 func TestLSPDiagnosticsCannotHoverOrPaintOldTextAfterEditAndUndo(t *testing.T) {
 	ed := opsEditor(t, "main.go", "bad")
 	diagnostics := []LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 3, Severity: DiagError, Message: "old source error"}}
-	ed.SetDiagnostics(diagnostics)
+	setTestDiagnostics(ed, diagnostics)
+	old := ed.DiagnosticFacts()
 	if len(ed.DiagnosticsAt(0, 0)) != 1 || len(ed.lineDiagnostics(0)) != 1 {
 		t.Fatal("fresh diagnostics missing")
 	}
+	if err := ed.BindDocumentOwner(projectionOwner); err != nil {
+		t.Fatal(err)
+	}
+	var intent DocumentUndoIntent
+	ed.SetOnDocumentUndo(func(i DocumentUndoIntent) { intent = i })
 	ed.InsertRune('x')
+	ed.SetDiagnostics(old) // actual old publication arrives AFTER local mutation
 	if len(ed.DiagnosticsAt(0, 0)) != 0 || len(ed.lineDiagnostics(0)) != 0 {
-		t.Fatal("old diagnostics attached to changed source")
+		t.Fatal("late publication attached to private draft")
 	}
-	ed.SetDiagnostics(diagnostics)
+	change, err := ed.CaptureDocumentEdits(projectionOwner, "edit", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ed.AcceptDocumentReceipt(document.Receipt{DocumentID: change.DocumentID, RequestID: change.RequestID, Before: 41, Revision: 42, Accepted: true}); err != nil {
+		t.Fatal(err)
+	}
 	ed.Undo()
-	if len(ed.DiagnosticsAt(0, 0)) != 0 || len(ed.lineDiagnostics(0)) != 0 {
-		t.Fatal("undo reused diagnostics for a different source revision")
+	if intent.ExpectedRevision != 42 {
+		t.Fatal("undo was not admitted at acknowledged revision")
 	}
-	ed.SetDiagnostics(diagnostics)
+	snapshot := ed.DocumentSnapshot()
+	snapshot.Revision, snapshot.Text = 43, []byte("bad")
+	if err := ed.CompleteDocumentUndo(intent, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ed.ApplyDocumentDelta(document.Change{DocumentID: snapshot.ID, BaseRevision: 42, Edits: []document.Edit{{Start: 0, End: 1}}}, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	ed.CompleteDocumentHistorySync()
+	ed.SetDiagnostics(old)
+	if ed.Value() != "bad" || len(ed.DiagnosticsAt(0, 0)) != 0 || len(ed.lineDiagnostics(0)) != 0 {
+		t.Fatal("equal-text undo revived old canonical revision")
+	}
+	setTestDiagnostics(ed, diagnostics)
 	if len(ed.DiagnosticsAt(0, 0)) != 1 {
-		t.Fatal("new diagnostics never became available after undo")
+		t.Fatal("new exact-source diagnostics unavailable after undo")
 	}
 }

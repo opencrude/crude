@@ -1,11 +1,9 @@
 package viewmodel
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"crude/shellport"
 
@@ -157,16 +155,6 @@ func (m *App) startRenameInTree(path string) {
 					m.EditorState.ActiveView = item.newPath
 				}
 				m.retitleEditorWindowTab(item.oldPath, item.newPath, item.tab.Editor)
-				if m.ws.LSPMgr() != nil {
-					lsp, oldFile, newFile, text := m.ws.LSPMgr(), item.oldPath, item.newPath, item.tab.Editor.Value()
-					m.startSourceControlMutation(func() tea.Msg {
-						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-						defer cancel()
-						lsp.CloseFile(ctx, oldFile)
-						lsp.OpenFile(ctx, newFile, text)
-						return nil
-					})
-				}
 			}
 			if len(retargets) > 0 {
 				m.markEditorGitStaleNow()

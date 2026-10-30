@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"crude/coreprotocol"
-	"crude/document"
 	"crude/shellport"
 	"crude/types"
 	"crude/workspace"
@@ -11,8 +10,7 @@ import (
 
 func lspMethod(method string) bool {
 	switch method {
-	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPClearDiagnostics,
-		coreprotocol.LSPOpenFile, coreprotocol.LSPCloseFile, coreprotocol.LSPNotifyWatchedFilesChanged,
+	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPNotifyWatchedFilesChanged,
 		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop,
 		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer, coreprotocol.LSPFindReferences,
 		coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDefinition,
@@ -35,8 +33,7 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 	manager := a.ws.LSPMgr
 	service := shellport.Local(a.ws).LSPMgr()
 	root := a.ws.RootPath
-	views := newLSPViews(a.ws.LiveDocuments)
-	owner := document.Owner{ClientID: request.Owner.ClientID, Epoch: request.Owner.Epoch}
+	documents := a.ws.LiveDocuments
 	return func(ctx context.Context) coreprotocol.Response {
 		if err := ctx.Err(); err != nil {
 			return fault(request, "cancelled", err.Error())
@@ -50,22 +47,11 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 		if request.Method == coreprotocol.LSPStartForWorkspace && in.Path != "" && in.Path != root {
 			return fault(request, "invalid_request", "LSP root must match attached workspace")
 		}
-		var viewErr error
-		switch request.Method {
-		case coreprotocol.LSPOpenFile:
-			viewErr = views.Open(owner, in.Path)
-		case coreprotocol.LSPCloseFile:
-			viewErr = views.Close(owner, root, in.Path)
-		case coreprotocol.LSPNotifyWatchedFilesChanged:
-			viewErr = views.Reconcile(ctx, root, in.Path)
-		default:
-			goto query
+		if request.Method == coreprotocol.LSPNotifyWatchedFilesChanged && documents != nil {
+			if err := documents.ReconcileDisk(ctx, in.Path); err != nil {
+				return fault(request, "lsp_failed", err.Error())
+			}
 		}
-		if viewErr != nil {
-			return fault(request, "lsp_failed", viewErr.Error())
-		}
-		return response(request, coreprotocol.LSPResult{Applied: true})
-	query:
 		result, err := runLSP(ctx, service, request.Method, in, root)
 		if err != nil {
 			return fault(request, "lsp_failed", err.Error())
@@ -78,8 +64,8 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 	out := coreprotocol.LSPResult{Applied: true}
 	var err error
 	switch method {
-	case coreprotocol.LSPClearDiagnostics:
-		service.ClearDiagnostics()
+	case coreprotocol.LSPNotifyWatchedFilesChanged:
+		service.NotifyWatchedFilesChanged(ctx, in.Path, in.ChangeType)
 	case coreprotocol.LSPSetActiveFile:
 		service.SetActiveFile(in.Path)
 	case coreprotocol.LSPStartForWorkspace:
@@ -113,7 +99,8 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 	}
 	// Version precedes contents so a concurrent publication cannot be hidden:
 	// the owner broadcast announces it and the client reads a newer complete snapshot.
-	out := coreprotocol.LSPSnapshot{Available: true, Version: manager.Version()}
+	generation, version := manager.DiagnosticCursor()
+	out := coreprotocol.LSPSnapshot{Available: true, Generation: generation, Version: version}
 	out.Diagnostics = manager.AllDiagnostics()
 	out.Symbols = make(map[string][]workspace.LSPSymbol)
 	for path, symbols := range manager.AllDocumentSymbols() {

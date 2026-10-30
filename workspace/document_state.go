@@ -196,6 +196,7 @@ func (s *DocumentService) persistDocument(d *liveDocument) error {
 
 func encodeDocument(d *liveDocument) ([]byte, error) {
 	state := durableDocument{Version: documentStateVersion, Snapshot: d.snapshot, Undo: make(map[string][]documentUndoUnit), Redo: make(map[string][]documentUndoUnit), DiskIntent: d.diskIntent, Relocation: d.relocation}
+	state.Snapshot.AnalysisGeneration, state.Snapshot.AnalysisLifetime = "", ""
 	for _, op := range d.journal {
 		state.Journal = append(state.Journal, durableDocumentOperation{op.revision, op.inverseOf, op.edits, op.inverse, op.owner, op.group, op.change})
 	}

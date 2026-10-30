@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"crude/tui/editor"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -31,10 +32,10 @@ func TestLSPResultsFromOldWorkspaceGenerationAreIgnored(t *testing.T) {
 	_, _ = app.Update(workspace.LSPDiagnosticsMsg{
 		Generation: oldGeneration,
 		FilePath:   current.FilePath(),
-		Diagnostics: []workspace.LSPDiagnostic{{
+		Facts: types.InsightDiagnostics{ID: "stale-publication", Diagnostics: []workspace.LSPDiagnostic{{
 			Severity: workspace.DiagError,
 			Message:  "stale",
-		}},
+		}}},
 	})
 	if got := current.DiagnosticsAt(0, 0); len(got) != 0 {
 		t.Fatalf("stale diagnostics reached replacement editor: %+v", got)

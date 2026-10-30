@@ -56,7 +56,7 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 	}()
 
 	var result Agent
-	var recovered bool
+	var notify bool
 	err = store.transaction(ctx, func(tx *sql.Tx) error {
 		if registration.ParentID != "" {
 			parent, err := loadAgent(ctx, tx, registration.ParentID)
@@ -91,6 +91,7 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 				return err
 			}
 			result, err = loadAgent(ctx, tx, registration.ID)
+			notify = err == nil
 			return err
 		}
 		if err != nil {
@@ -123,10 +124,11 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 			if err := store.recoverRuntime(ctx, tx, existing, registration.Admissions, registration.PendingTerminal, now); err != nil {
 				return err
 			}
-			recovered = true
 		} else if len(registration.Admissions) != 0 {
 			return fmt.Errorf("%w: receipts require a new attachment", ErrConflict)
 		}
+		notify = newAttachment || existing.Name != registration.Name ||
+			existing.Category != registration.Category || existing.Presence != presence
 		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_agents SET
 			name=?,category=?,state=?,presence=?,runtime_epoch=?,owner_instance=?,updated_at=?,heartbeat_at=?
 			WHERE id=?`,
@@ -140,7 +142,7 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 	if err == nil && registration.OwnerInstance != "" {
 		keepLock = true
 	}
-	if err == nil && recovered {
+	if err == nil && notify {
 		store.signal()
 	}
 	return result, err
@@ -232,7 +234,18 @@ func (store *Store) Heartbeat(ctx context.Context, agentID, ownerInstance string
 	if err := validateIdentity("owner_instance", ownerInstance, 256); err != nil {
 		return err
 	}
-	return store.transaction(ctx, func(tx *sql.Tx) error {
+	notify := false
+	err := store.transaction(ctx, func(tx *sql.Tx) error {
+		var presence string
+		if err := tx.QueryRowContext(ctx, `SELECT presence FROM collaboration_agents
+			WHERE id=? AND owner_instance=? AND runtime_epoch=? AND state!='closed'`,
+			agentID, ownerInstance, runtimeEpoch).Scan(&presence); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrStale
+			}
+			return err
+		}
+		notify = presence != string(RuntimeAttached)
 		now := time.Now().UTC().UnixNano()
 		result, err := tx.ExecContext(ctx, `UPDATE collaboration_agents
 			SET heartbeat_at=?,updated_at=?,presence='attached'
@@ -250,6 +263,10 @@ func (store *Store) Heartbeat(ctx context.Context, agentID, ownerInstance string
 		}
 		return nil
 	})
+	if err == nil && notify {
+		store.signal()
+	}
+	return err
 }
 
 func (store *Store) MarkUnresponsiveBefore(ctx context.Context, cutoff time.Time) (int64, error) {
@@ -265,6 +282,9 @@ func (store *Store) MarkUnresponsiveBefore(ctx context.Context, cutoff time.Time
 		affected, err = result.RowsAffected()
 		return err
 	})
+	if err == nil && affected > 0 {
+		store.signal()
+	}
 	return affected, err
 }
 
@@ -292,6 +312,7 @@ func (store *Store) DetachAgent(ctx context.Context, agentID, ownerInstance stri
 	})
 	if err == nil {
 		store.releaseRuntimeLock(agentID, ownerInstance)
+		store.signal()
 	}
 	return err
 }
@@ -326,6 +347,9 @@ func (store *Store) SetAgentState(ctx context.Context, agentID string, expectedE
 		result, err = loadAgent(ctx, tx, agentID)
 		return err
 	})
+	if err == nil {
+		store.signal()
+	}
 	return result, err
 }
 
@@ -389,6 +413,9 @@ func (store *Store) StartRun(ctx context.Context, request StartRunRequest) (Run,
 		result, err = loadRun(ctx, tx, request.ID)
 		return err
 	})
+	if err == nil {
+		store.signal()
+	}
 	return result, err
 }
 
@@ -493,6 +520,12 @@ func (store *Store) updateRun(ctx context.Context, request FinishRunRequest) (Ru
 		result, err = loadRun(ctx, tx, request.RunID)
 		return err
 	})
+	// Reports and terminal outcomes are independent facts. A report can wake a
+	// waiter before this commit, so run transitions need their own post-commit
+	// signal rather than relying on a later message or heartbeat.
+	if err == nil {
+		store.signal()
+	}
 	return result, err
 }
 

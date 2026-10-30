@@ -714,7 +714,6 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		}
 	}
 	if w.LSPMgr != nil {
-		w.LSPMgr.SetOnDiagnostics(nil)
 		w.LSPMgr.Close()
 	}
 	if w.Status != nil {

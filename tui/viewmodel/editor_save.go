@@ -131,6 +131,7 @@ func (m *App) markEditorDiskConflict(ed *editor.Editor, message string) {
 }
 
 func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
+	m.projectTreeDiagnostic(filePath, m.lspFacts[filePath])
 	if m.FindReplace != nil && m.EditorState != nil && m.EditorState.Editor == ed {
 		state := ed.Search()
 		m.FindReplace.MatchCount, m.FindReplace.CurrentIdx, m.FindReplace.Error = len(state.Matches), state.CurrentIdx, state.Error

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/document"
 	model "crude/types"
 	"crude/workspace"
 )
@@ -39,11 +40,11 @@ func (r *liveLSPRuntime) NewClient(spec model.LSPServerSpec, root string) worksp
 	return &liveLSPClient{LSPClient: r.LSPRuntime.NewClient(spec, root), owner: r}
 }
 
-func (c *liveLSPClient) OpenFile(ctx context.Context, path, language, text string) {
+func (c *liveLSPClient) OpenFile(ctx context.Context, path, language, text string, boundary model.InsightBoundary) (int, error) {
 	c.owner.mu.Lock()
 	c.owner.opened = append(c.owner.opened, path)
 	c.owner.mu.Unlock()
-	c.LSPClient.OpenFile(ctx, path, language, text)
+	return c.LSPClient.OpenFile(ctx, path, language, text, boundary)
 }
 
 func liveLSPContext(t *testing.T) context.Context {
@@ -74,7 +75,7 @@ func liveLSPExecutable(t *testing.T, ctx context.Context, name string) string {
 	return path
 }
 
-func liveLSPManager(t *testing.T, root string) (*workspace.LSPManager, *liveLSPRuntime) {
+func liveLSPManager(t *testing.T, root string) (*workspace.LSPManager, *liveLSPRuntime, *workspace.DocumentService) {
 	t.Helper()
 	r := &liveLSPRuntime{LSPRuntime: workspace.NewLSPRuntime()}
 	m := workspace.NewLSPManager(nil, r)
@@ -93,8 +94,38 @@ func liveLSPManager(t *testing.T, root string) (*workspace.LSPManager, *liveLSPR
 	}
 	m.SetSettings(s)
 	m.StartForWorkspace(root)
+	documents := workspace.NewDocumentService(root, nil, m)
+	t.Cleanup(documents.Close)
 	t.Logf("limits: overall=45s max_servers=1 server_threads=2 server_memory_mb=%d (soft hint), GOMAXPROCS=2", s.ServerMemoryMB)
-	return m, r
+	return m, r, documents
+}
+
+var liveLSPOwner = document.Owner{ClientID: "live-lsp-editor", Epoch: 1}
+
+func liveLSPOpen(t *testing.T, documents *workspace.DocumentService, path string) document.Snapshot {
+	t.Helper()
+	snapshot, err := documents.Open(liveLSPOwner, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func liveLSPReplace(t *testing.T, documents *workspace.DocumentService, snapshot document.Snapshot, text string) document.Snapshot {
+	t.Helper()
+	_, err := documents.Apply(document.Change{
+		Owner: liveLSPOwner, DocumentID: snapshot.ID, BaseRevision: snapshot.Revision,
+		RequestID: fmt.Sprintf("replace-%d", snapshot.Revision),
+		Edits:     []document.Edit{{Start: 0, End: len(snapshot.Text), Text: text}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := documents.Snapshot(snapshot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return current
 }
 
 func liveLSPWait(t *testing.T, ctx context.Context, m *workspace.LSPManager, label string, ready func() bool) {
@@ -164,7 +195,7 @@ func TestLiveLSPGo(t *testing.T) {
 	path := liveLSPWrite(t, root, "main.go", good)
 	// Excluded on every host: opening it accidentally would manufacture an error.
 	sibling := liveLSPWrite(t, root, "alternate_windows.go", "//go:build ignore\n\npackage main\nvar _ = missingPlatformIdentifier\n")
-	m, observer := liveLSPManager(t, root)
+	m, observer, documents := liveLSPManager(t, root)
 	// Observe a settled unused workspace, not just its immediate constructor state.
 	select {
 	case <-time.After(200 * time.Millisecond):
@@ -177,27 +208,30 @@ func TestLiveLSPGo(t *testing.T) {
 	if created != 0 || opened != 0 || len(m.ServerHealthSnapshots()) != 0 {
 		t.Fatalf("enabled unused workspace launched work: created=%d opened=%d", created, opened)
 	}
-	m.OpenFile(ctx, path, good)
+	snapshot := liveLSPOpen(t, documents, path)
 	liveLSPWait(t, ctx, m, "initialize", m.ServerReady)
 	liveLSPSemantics(t, ctx, m, path, good, 2, 20, 21)
-	if diags := m.FileDiagnostics(path); len(diags) != 0 {
+	if diags := diagnosticList(m, path); len(diags) != 0 {
 		t.Fatalf("normal Go source has unexpected diagnostics: %+v", diags)
 	}
 	bad := strings.Replace(good, "_ = answer()", "_ = missingLiveIdentifier", 1)
-	m.UpdateFile(ctx, path, bad)
+	snapshot = liveLSPReplace(t, documents, snapshot, bad)
 	liveLSPWait(t, ctx, m, "unknown identifier diagnostic", func() bool {
-		for _, d := range m.FileDiagnostics(path) {
+		for _, d := range diagnosticList(m, path) {
 			if d.Severity == model.DiagError && strings.Contains(d.Message, "missingLiveIdentifier") {
 				return true
 			}
 		}
 		return false
 	})
-	m.UpdateFile(ctx, path, good)
-	liveLSPWait(t, ctx, m, "corrected buffer clears errors", func() bool { return len(m.FileDiagnostics(path)) == 0 })
+	snapshot = liveLSPReplace(t, documents, snapshot, good)
+	liveLSPWait(t, ctx, m, "corrected buffer clears errors", func() bool {
+		facts, ok := m.FileDiagnostics(path)
+		return ok && facts.Boundary.Source.Revision == snapshot.Revision && len(facts.Diagnostics) == 0
+	})
 	liveLSPSemantics(t, ctx, m, path, good, 2, 20, 21)
 	liveLSPOpenOnly(t, observer, path)
-	if diags := m.FileDiagnostics(sibling); len(diags) != 0 {
+	if diags := diagnosticList(m, sibling); len(diags) != 0 {
 		t.Fatalf("unopened alternate-platform source gained diagnostics: %+v", diags)
 	}
 	liveLSPProcessSample(t, ctx)
@@ -209,21 +243,24 @@ func TestLiveLSPClangd(t *testing.T) {
 	root := t.TempDir()
 	good := "// no includes or external dependencies\nint answer() { return 42; }\nint main() { return answer(); }\n"
 	path := liveLSPWrite(t, root, "main.cpp", good)
-	m, observer := liveLSPManager(t, root)
-	m.OpenFile(ctx, path, good)
+	m, observer, documents := liveLSPManager(t, root)
+	snapshot := liveLSPOpen(t, documents, path)
 	liveLSPWait(t, ctx, m, "initialize", m.ServerReady)
 	liveLSPSemantics(t, ctx, m, path, good, 2, 21, 22)
-	m.UpdateFile(ctx, path, strings.Replace(good, "return answer();", "return missingLiveIdentifier;", 1))
+	snapshot = liveLSPReplace(t, documents, snapshot, strings.Replace(good, "return answer();", "return missingLiveIdentifier;", 1))
 	liveLSPWait(t, ctx, m, "unknown identifier diagnostic", func() bool {
-		for _, d := range m.FileDiagnostics(path) {
+		for _, d := range diagnosticList(m, path) {
 			if d.Severity == model.DiagError && strings.Contains(d.Message, "missingLiveIdentifier") {
 				return true
 			}
 		}
 		return false
 	})
-	m.UpdateFile(ctx, path, good)
-	liveLSPWait(t, ctx, m, "corrected C++ buffer clears errors", func() bool { return len(m.FileDiagnostics(path)) == 0 })
+	snapshot = liveLSPReplace(t, documents, snapshot, good)
+	liveLSPWait(t, ctx, m, "corrected C++ buffer clears errors", func() bool {
+		facts, ok := m.FileDiagnostics(path)
+		return ok && facts.Boundary.Source.Revision == snapshot.Revision && len(facts.Diagnostics) == 0
+	})
 	liveLSPOpenOnly(t, observer, path)
 	liveLSPProcessSample(t, ctx)
 }
@@ -255,16 +292,16 @@ func TestLiveLSPRepository(t *testing.T) {
 	if line < 0 {
 		t.Fatal("root main.go has no main declaration")
 	}
-	m, observer := liveLSPManager(t, root)
-	m.OpenFile(ctx, path, string(data))
+	m, observer, documents := liveLSPManager(t, root)
+	liveLSPOpen(t, documents, path)
 	liveLSPWait(t, ctx, m, "repository initialize", m.ServerReady)
 	liveLSPWait(t, ctx, m, "repository main hover", func() bool {
 		hover, err := m.RequestHover(ctx, path, line, col)
 		return err == nil && strings.Contains(hover, "main")
 	})
 	liveLSPOpenOnly(t, observer, path)
-	t.Logf("read-only repository errors summary: %+v; opened file diagnostics: %+v", m.ProjectInsights(), m.FileDiagnostics(path))
-	if diags := m.FileDiagnostics(path); len(diags) != 0 {
+	t.Logf("read-only repository errors summary: %+v; opened file diagnostics: %+v", m.ProjectInsights(), diagnosticList(m, path))
+	if diags := diagnosticList(m, path); len(diags) != 0 {
 		t.Fatalf("compiling repository main file has diagnostics: %+v", diags)
 	}
 	liveLSPProcessSample(t, ctx)
@@ -297,7 +334,7 @@ func TestLiveLSPRepository(t *testing.T) {
 		if quiet < 2 {
 			t.Fatal("language server did not settle to bounded idle work after indexing")
 		}
-		if diags := m.FileDiagnostics(path); len(diags) != 0 {
+		if diags := diagnosticList(m, path); len(diags) != 0 {
 			t.Fatalf("settled compiling main file diagnostics: %+v", diags)
 		}
 	}

@@ -14,7 +14,7 @@ func newTestEditorWithDiagnostics(t *testing.T, content string, diags []LSPDiagn
 			t.Fatalf("insert: %v", err)
 		}
 	}
-	ed.SetDiagnostics(diags)
+	setTestDiagnostics(ed, diags)
 	return ed
 }
 
@@ -32,7 +32,7 @@ func TestDiagnostics_ReturnsCopy(t *testing.T) {
 func TestFirstError_SkipsWarnings(t *testing.T) {
 	ed := newTestEditorWithDiagnostics(t, "abc\ndef\n", []LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagWarning, Message: "w"},
-		{Line: 1, Col: 2, Severity: DiagError, Message: "e"},
+		{Line: 1, Col: 2, EndLine: 1, EndCol: 2, Severity: DiagError, Message: "e"},
 	})
 	got := ed.FirstError()
 	if assert.NotNil(t, got) {
@@ -51,7 +51,7 @@ func TestFirstError_Empty(t *testing.T) {
 func TestNextError_FindsFollowing(t *testing.T) {
 	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagError, Message: "e0"},
-		{Line: 2, Col: 0, Severity: DiagError, Message: "e2"},
+		{Line: 2, Col: 0, EndLine: 2, EndCol: 0, Severity: DiagError, Message: "e2"},
 	})
 	d := ed.NextError(0, 0)
 	if assert.NotNil(t, d) {
@@ -69,7 +69,7 @@ func TestNextError_NoneAfterCursor(t *testing.T) {
 func TestPrevError_FindsPreceding(t *testing.T) {
 	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagError, Message: "e0"},
-		{Line: 2, Col: 0, Severity: DiagError, Message: "e2"},
+		{Line: 2, Col: 0, EndLine: 2, EndCol: 0, Severity: DiagError, Message: "e2"},
 	})
 	d := ed.PrevError(2, 0)
 	if assert.NotNil(t, d) {
@@ -86,8 +86,8 @@ func TestPrevError_NoneBeforeCursor(t *testing.T) {
 
 func TestNextError_SkipsWarnings(t *testing.T) {
 	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []LSPDiagnostic{
-		{Line: 1, Col: 0, Severity: DiagWarning, Message: "w1"},
-		{Line: 2, Col: 0, Severity: DiagError, Message: "e2"},
+		{Line: 1, Col: 0, EndLine: 1, EndCol: 0, Severity: DiagWarning, Message: "w1"},
+		{Line: 2, Col: 0, EndLine: 2, EndCol: 0, Severity: DiagError, Message: "e2"},
 	})
 	d := ed.NextError(0, 0)
 	if assert.NotNil(t, d) {

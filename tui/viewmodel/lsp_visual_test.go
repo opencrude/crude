@@ -298,7 +298,7 @@ func (m *lspVisualModel) journeyLSP(key int) error {
 			return err
 		}
 		err = m.await(func(v *controlVisualModel) error {
-			diags := v.ws.LSPMgr().FileDiagnostics(m.path)
+			diags := diagnosticList(v.ws.LSPMgr(), m.path)
 			if len(diags) != 1 || diags[0].Message != "undefined: missing" || diags[0].Line != 2 || diags[0].Col != 24 || diags[0].Severity != types.DiagError || diags[0].Source != "compiler" {
 				return fmt.Errorf("real compiler diagnostics not installed: %+v", diags)
 			}
@@ -318,7 +318,8 @@ func (m *lspVisualModel) journeyLSP(key int) error {
 			app.syncWorkspacePanels()
 			app.View()
 			screen := app.termDock.Panel(termdock.PanelProblems).(*statusoverview.Surface)
-			if !screen.Select(fmt.Sprintf("problem:%s:2:24:0", m.path)) {
+			facts, ok := app.ws.LSPMgr().FileDiagnostics(m.path)
+			if !ok || facts.ID == "" || !screen.Select("problem:"+facts.ID+":0") {
 				return fmt.Errorf("diagnostic row not in Problems projection")
 			}
 			app.rootHost.Focus("status-overview/list")
@@ -333,7 +334,7 @@ func (m *lspVisualModel) journeyLSP(key int) error {
 			if ok {
 				// The full diagnostic details are below the fold at 60x20.
 				// Scroll the actual mounted list, rather than accept its clipped title.
-				for i := 0; i < 6; i++ {
+				for i := 0; i < 30; i++ {
 					app.Update(tea.MouseWheelMsg{X: r.X + 2, Y: r.Y + 1, Button: tea.MouseWheelDown})
 				}
 			}

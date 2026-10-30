@@ -334,6 +334,9 @@ type App struct {
 	lspRequestCtx         context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel      context.CancelFunc
 	lspDiagnostics        shellport.LSPDiagnosticConsumer
+	lspFacts              map[string]roottypes.InsightDiagnostics
+	lspTreeProjection     map[string]diagnosticTreeProjection
+	lspTreeVisible        bool
 	reveals               map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()

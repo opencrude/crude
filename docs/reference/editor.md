@@ -212,6 +212,9 @@ refresh after success without dropping the query/replacement draft.
 - Save acknowledgements identify an exact buffer revision. Newer text remains
   dirty. Exact watcher reconciliation replaces time-based self-event suppression;
   known external changes fail closed and preserve both local and disk content.
+  A Save receipt and its identical ordered publication share one disk-baseline
+  generation. Re-observation cannot cancel a pending workspace switch; a changed
+  baseline still advances the generation, including change-and-return ABA.
 - Every Crude-owned writer, file operation, and Local History restore shares
   `fileio`'s cancellable mutation lease. This prevents autosave, agent tools,
   rename/delete, workspace edits, and restore from racing each other.
@@ -250,7 +253,7 @@ Tea's update goroutine (the tab-close hang).
   silent success after a timeout or a fresh detached waiter per caller.
 - `lspPipeMonitor.Done()` closes when the connection dies for any reason (read
   EOF, write error, queue cap, graceful close). `workspace.LSPManager` observes
-  `LSPClient.Done()`, clears that server's diagnostics, marks it `LSPFailed` and
+  `LSPClient.Done()`, marks that producer's retained diagnostics stale, marks it `LSPFailed` and
   stops the process. A lost server is not silently restarted on every keypress or
   open; the user restarts it explicitly. Test fakes return a nil `Done()` channel.
 - `LSPClient.Stop() error` and the nested `Client.Kill() error` carry the exact
@@ -279,8 +282,9 @@ Tea's update goroutine (the tab-close hang).
 - The client advertises `window.workDoneProgress`, answers
   `window/workDoneProgress/create` and tracks `$/progress` tokens.
   `AwaitDiagnostics` waits until the server's work settles (no active progress
-  and a quiet interval) under the caller's deadline, so agent diagnostics are
-  not read from a half-indexed server. Diagnostics carry `source` and `code`.
+  and a quiet interval) under the caller's deadline. This is observed quiescence,
+  not proof of complete indexing, exact publication revision or whole-project
+  coverage. Diagnostics carry `source` and `code`.
 - `LSPManager` documents have holders: the editor view flag and a refcount of
   agent probes (`workspace/lsp_probe.go`). A document closes on the server only
   when no holder remains. Probes are allowed when the session's agent code
@@ -291,6 +295,20 @@ Tea's update goroutine (the tab-close hang).
   document/server/client owners cannot publish a stale ready state. Releasing the
   last holder during an in-flight didOpen still closes that exact server view
   before a replacement at the same path opens.
+  Probes borrow an immutable source lease from the shared document authority,
+  including retained unsaved text after the last editor closes or disk disappears.
+  They never read disk first and thereby hide retained work. Disk-only leases use
+  bounded UTF-8 reads with exact handle/path checks; missing files, symlinks and
+  replaced sources are not analyzed empty files. Final validation rejects changed
+  canonical revisions (including equal-text undo), disk replacements and a new
+  canonical view that appeared during a disk request. Rejected results expose no
+  stale payload. A probe lease is not an editor view or execution permission.
+  Canonical mutations enqueue their latest producer intent instead of waiting
+  under the document lock for an in-flight server send.
+  Probes return the same qualified diagnostic batch identity as connected
+  editors and Problems. Complete project context and non-diagnostic semantic
+  fact ownership remain [planned work](../plans/autonomous-code-intelligence.md),
+  not a guarantee supplied by source leases or a quiet server alone.
 - Language settings, resource limits and lifecycle are specified in
   [settings](settings.md#lsp); merely constructing a manager launches no server.
 - Workspace shutdown publishes terminal admission and server retirement under
@@ -298,11 +316,69 @@ Tea's update goroutine (the tab-close hang).
   `closed` before its owned servers are marked for shutdown: that gap can let the
   worker exit while an actual language-server process remains alive.
 
+### Shared diagnostic facts
+
+`DocumentService.Insight` owns the bounded published diagnostic store in
+`insight/facts`. `LSPManager` remains the sole server/transport lifetime owner,
+not another raw diagnostic cache. A batch identifies the workspace generation,
+canonical document ID/path/revision and runtime lifetime, context generation,
+actual producer instance, launch-configuration identity, publication sequence,
+actual synchronized LSP wire version and optional server-reported version.
+Canonical revision, send intent and wire version are separate clocks.
+Runtime analysis identities travel with shared document publications but are
+not persisted or reused across core restart.
+
+Transport callbacks preserve immutable source provenance and optional versions.
+Callbacks arriving before the manager records a send receipt occupy one pending
+envelope for that exact send. Source range checks run against immutable sent text
+off authority locks; final publication checks canonical source then producer under
+the document-to-manager lock order. Old versions, equal-text undo, replaced
+owners, malformed output and invalid UTF-16 endpoints cannot become a new current
+answer. A nil reported version remains unversioned, including delayed URI-only
+notifications that LSP cannot attribute to an earlier open lifetime.
+
+The store retains one batch per observed document, including original stale
+warnings and observed empty batches. Its initial bounds are 4,096 documents,
+32,768 diagnostics and 16 MiB of accounted retained payload/metadata with bounded
+status reasons. Capacity refusal is visible, never eviction or a truncated
+clean answer. There is no per-document reclamation or persisted semantic cache
+yet. Read snapshots detach nested slices/pointers. Status summaries are derived
+once per fact generation and display policy; unchanged reads do not export all
+diagnostics. Shells inspect generation/version cursors before copying changes.
+
+Source edits, observed project inputs, settings/runtime replacement, producer
+failure and view release conservatively invalidate the root-scoped context.
+This initial context explicitly lacks a complete dependency/build graph,
+inherited environment and verified executable digest. An exact wire-version
+publication therefore remains **partial** even when empty. Observed units are
+not the denominator of a complete project check. Neither quiescence nor zero
+visible diagnostics certifies a clean project. Stop/restart keeps stale evidence.
+Severity and editor/tree visibility filters are view policy, not mutations of
+the published batch.
+
+Editor, shared Buffer, Problems/tree/footer and agent diagnostics use the same
+opaque batch ID. Editor projection requires actual canonical source identity,
+including runtime lifetime, and acknowledged local text without pending edits,
+history or conflict. Future batches wait for their source. Unversioned/stale
+batches remain discoverable with provenance in Problems but cannot authorize
+current paint, hover or navigation. Previously accepted same-batch ink can map
+provisionally through unchanged rows without becoming current semantic evidence.
+
+Agent source positions resolve against the immutable source leased for the
+actual request, not an independent disk read. Diagnostic and same-source
+location quotes use those captured bytes. Destination files lacking a separately
+qualified source remain labelled raw UTF-16 positions without guessed disk
+quotes. Automatic post-edit probes obey the same session, role-tool and read-policy
+admission as explicit calls; a later revocation drops queued notices instead of
+delivering or replaying them on the next model step.
+General destination qualification, completion/hover/rename fact contracts,
+project modeling, execution trust admission and resource governance remain open.
+
 ### Diagnostic positions
 
-Manager/replica and shared Buffer diagnostics retain UTF-16 wire coordinates.
-`Editor.SetDiagnostics` copies them and projects each endpoint against its own
-source line. Its `Diagnostics` and F8 navigation results are visual positions and
+Insight batches, manager/replica and shared Buffer retain UTF-16 wire coordinates.
+`Editor.SetDiagnostics` accepts the qualified batch and projects each endpoint
+only against its matching acknowledged source. Its `Diagnostics` and F8 results are visual positions and
 must not be submitted as wire positions again. Project-first-error, status links,
 definition/reference and queued connected opens use the strict wire-navigation
 API. Both endpoints are checked before cursor or selection changes; a late

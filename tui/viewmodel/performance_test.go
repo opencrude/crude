@@ -128,7 +128,7 @@ func TestFooterMoreOpensPerformanceWithoutSession(t *testing.T) {
 	x = rendering.VisibleWidth(footer[:x])
 	_, cmd := app.Update(tea.MouseClickMsg{X: x, Y: app.height - 1, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)
-	for _, label := range []string{"Problems", "Notices", "Terminals", "Git", "Board", "Memory", "Performance", "Workspace"} {
+	for _, label := range []string{"Problems · pending", "Notices", "Terminals", "Git", "Board", "Memory", "Performance", "Workspace"} {
 		if item, found := contextMenuItem(app.LastContextMenu, label); !found || item.Disabled || item.Action == nil {
 			t.Fatalf("footer More lost %s", label)
 		}

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -180,6 +181,69 @@ func TestCollaborationWaitArtifactRevisionWakesAndSatisfiesAllConditions(t *test
 		}
 	case <-time.After(time.Second):
 		t.Fatal("artifact revision and terminal run did not satisfy wait")
+	}
+}
+
+type reportObservedWaitStore struct {
+	*collaboration.Store
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (s *reportObservedWaitStore) Artifact(ctx context.Context, id string, revision int) (collaboration.Artifact, error) {
+	artifact, err := s.Store.Artifact(ctx, id, revision)
+	if err == nil {
+		s.once.Do(func() { close(s.observed) })
+	}
+	return artifact, err
+}
+
+func TestCollaborationWaitObservedReportStillWakesForLaterRunCompletion(t *testing.T) {
+	s, store, parent, child := collaborationContractFixture(t)
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{
+		ID: "wait-after-report", AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, Origin: collaboration.OriginHuman,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := store.PublishReport(t.Context(), collaboration.PublishReportRequest{
+		AuthorID: parent.ID, RunID: run.ID, RecipientIDs: []string{child.ID}, IdempotencyKey: "already-observed-report",
+		Kind: collaboration.ReportFinal, Summary: "Report before terminal outcome", Body: "Evidence is not run completion.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &reportObservedWaitStore{Store: store, observed: make(chan struct{})}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan collaborationWaitObservation, 1)
+	finished := make(chan struct{})
+	defer func() { cancel(); <-finished }()
+	go func() {
+		defer close(finished)
+		value, _ := s.waitForCollaboration(ctx, observer, map[string]any{
+			"agent_id": parent.ID, "run_id": run.ID, "artifact_id": report.Artifact.ID, "timeout_seconds": 5,
+		})
+		done <- value.(collaborationWaitObservation)
+	}()
+	select {
+	case <-observer.observed: // The first run read preceded terminal settlement.
+	case <-time.After(time.Second):
+		t.Fatal("wait did not observe the published report")
+	}
+	if _, err := store.FinishRun(t.Context(), collaboration.FinishRunRequest{
+		RunID: run.ID, AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, ExpectedVersion: run.Version,
+		State: collaboration.RunSucceeded, Outcome: "completed after report observation",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.Status != "ready" || got.Run == nil || got.Run.State != collaboration.RunSucceeded ||
+			got.Artifact == nil || got.Artifact.ID != report.Artifact.ID {
+			t.Fatalf("later terminal observation=%+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal settlement failed to wake a wait that already observed its report")
 	}
 }
 

@@ -232,6 +232,34 @@ the sanitized result marker and a clean test exit independently. The connected
 TUI paints the same private core's event log; this is not distinct-host or
 cross-process-core acceptance.
 
+### Shared language diagnostic acceptance
+
+The source-qualified language slice has independent tests in `insight/facts`,
+`workspace/insight_diagnostics_test.go`, `core/insight_diagnostics_test.go` and
+the connected three-shell UTF-16 journey in `tui/viewmodel/lsp_utf16_test.go`.
+Exercise missing versus observed-empty, unversioned, limited and stale facts;
+late callbacks, equal-text undo, source/producer/context replacement; actual
+wire versions versus canonical revisions; and callback-before-send-receipt
+ordering. Visibility/severity changes must preserve the original batch ID and
+producer instance. Preserve negative-overlay evidence for those invariants.
+
+`CRUDE_LSP_LIVE=1 go test ./tui/viewmodel -run '^TestLiveLSP(Go|Clangd)$'`
+uses installed servers and real canonical unsaved edits. A skipped provider is
+not acceptance. `TestLSPVisualHarnessHeadless` checks the mounted local framed
+core journey at desktop and constrained sizes, without claiming native pixels.
+
+For native Linux acceptance, compile the viewmodel test binary and select it
+with `CRUDE_BIN`, `CRUDE_VISUAL_LSP=1` and
+`CRUDE_ARGS='-test.run=^TestLSPVisualAcceptance$ -test.count=1 -test.timeout=180s'`.
+Use `scripts/tuishot.sh` sequentially at 160x40 and 80x24. F2-F6 drive the actual
+diagnostic, hover, references, definition and completion handlers against an
+installed gopls. Inspect qualified Problems detail, underlines and visible
+partial coverage; finish with `quit:F9`. The separate
+`CRUDE_LSP_VISUAL_RESULT` must report each phase, an observed real gopls PID and
+joined cleanup, and the capture must independently verify exit zero. This is an
+isolated rendered fixture, not distinct-host/device, general project-context or
+complete semantic-feature acceptance.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

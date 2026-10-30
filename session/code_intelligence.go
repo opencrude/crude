@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,10 +26,10 @@ import (
 type CodeIntelligence interface {
 	EditorEnabled() bool
 	ServesWarm(path string) bool
-	ProbeDiagnostics(ctx context.Context, path string) ([]ttypes.LSPDiagnostic, bool, ttypes.LSPProbeView, error)
-	ProbeDefinition(ctx context.Context, path string, line, col int) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error)
-	ProbeReferences(ctx context.Context, path string, line, col int) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error)
-	ProbeHover(ctx context.Context, path string, line, col int) (string, ttypes.LSPProbeView, error)
+	ProbeDiagnostics(ctx context.Context, path string) (ttypes.InsightDiagnostics, bool, ttypes.LSPProbeView, error)
+	ProbeDefinition(ctx context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error)
+	ProbeReferences(ctx context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error)
+	ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error)
 	ProbeSymbols(ctx context.Context, path string) ([]ttypes.LSPSymbol, ttypes.LSPProbeView, error)
 }
 
@@ -76,6 +75,10 @@ func (s *Session) codeIntelligence() CodeIntelligence {
 	return s.codeIntel
 }
 
+func (s *Session) codeIntelligenceConsumerAllowed(live *agent.Agent) bool {
+	return s.controlToolSelected(live, "lsp") && live.Policy.IsAllowed(safety.OpRead)
+}
+
 // bindCodeIntelligence offers the lsp tool while code intelligence is on and
 // queues post-edit diagnostics for the next request. The tool set changes only
 // when the setting changes, so prompt caching is unaffected otherwise.
@@ -91,10 +94,14 @@ func (s *Session) bindCodeIntelligence(live *agent.Agent) {
 		} else {
 			definitions = append(definitions, live.FilteredTools...)
 		}
-		if s.CodeIntelligenceEnabled() && s.controlToolSelected(live, "lsp") && live.Policy.IsAllowed(safety.OpRead) {
+		allowed := s.CodeIntelligenceEnabled() && s.codeIntelligenceConsumerAllowed(live)
+		if allowed {
 			definitions = appendUniqueDefinition(definitions, tools.CodeIntelligenceTool)
 		}
 		mu.Lock()
+		if !allowed {
+			clear(pending)
+		}
 		if len(pending) > 0 {
 			paths := make([]string, 0, len(pending))
 			for path := range pending {
@@ -116,8 +123,8 @@ func (s *Session) bindCodeIntelligence(live *agent.Agent) {
 			if !s.CodeIntelligenceEnabled() {
 				return tools.ToolResult{}, errors.New("code intelligence is off for this session; it can be turned on in session settings (/settings) or with settings.set scope=session path=code_intelligence")
 			}
-			if !s.controlToolSelected(live, "lsp") || !live.Policy.IsAllowed(safety.OpRead) {
-				return tools.ToolResult{}, errors.New("the lsp tool is excluded by this role")
+			if !s.codeIntelligenceConsumerAllowed(live) {
+				return tools.ToolResult{}, errors.New("the lsp tool is excluded by this role or read policy")
 			}
 			return s.executeLSPTool(ctx, live.WorkDir, params)
 		}
@@ -126,7 +133,7 @@ func (s *Session) bindCodeIntelligence(live *agent.Agent) {
 			edited = editedPaths(live.WorkDir, name, params)
 		}
 		result, err := previousFn(ctx, name, params)
-		if err != nil || len(edited) == 0 || !s.CodeIntelligenceEnabled() {
+		if err != nil || len(edited) == 0 || !s.CodeIntelligenceEnabled() || !s.codeIntelligenceConsumerAllowed(live) {
 			return result, err
 		}
 		for path, report := range s.postEditDiagnostics(ctx, live.WorkDir, edited) {
@@ -196,13 +203,13 @@ func (s *Session) postEditDiagnostics(ctx context.Context, root string, paths []
 		wg.Add(1)
 		go func(path string) {
 			defer wg.Done()
-			diags, settled, view, err := service.ProbeDiagnostics(ctx, path)
-			if err != nil || !settled {
+			batch, settled, view, err := service.ProbeDiagnostics(ctx, path)
+			if err != nil || !settled || !batch.HasExactSource() || batch.Boundary.Source != view.Source {
 				return
 			}
 			report := ""
-			if errs := filterDiagnostics(diags, 1); len(errs) > 0 {
-				report = formatFileDiagnostics(root, path, errs, view, true)
+			if errs := filterDiagnostics(batch.Diagnostics, 1); len(errs) > 0 {
+				report = formatFileDiagnostics(root, path, batch, 1, view, true)
 			}
 			mu.Lock()
 			out[path] = report
@@ -248,12 +255,12 @@ func (s *Session) executeLSPTool(ctx context.Context, root string, params map[st
 			wg.Add(1)
 			go func(i int, path string) {
 				defer wg.Done()
-				diags, settled, view, err := service.ProbeDiagnostics(ctx, path)
+				batch, settled, view, err := service.ProbeDiagnostics(ctx, path)
 				switch {
 				case err != nil:
 					reports[i] = fmt.Sprintf("%s: %v\n", displayLSPPath(root, path), err)
 				default:
-					report := formatFileDiagnostics(root, path, filterDiagnostics(diags, floor), view, false)
+					report := formatFileDiagnostics(root, path, batch, floor, view, false)
 					if !settled {
 						report += "  (analysis was still running when the request ended; results may be incomplete, call again to re-check)\n"
 					}
@@ -276,19 +283,16 @@ func (s *Session) executeLSPTool(ctx context.Context, root string, params map[st
 		}
 		return tools.ToolResult{Content: formatSymbols(root, path, symbols, view)}, nil
 	}
-	line, col, err := lspPosition(path, params)
-	if err != nil {
-		return tools.ToolResult{}, err
-	}
+	position := ttypes.LSPSourcePosition{Line: getIntParam(params, "line"), Column: getIntParam(params, "column"), Symbol: getStrParam(params, "symbol")}
 	var locations []ttypes.LSPLocation
 	var view ttypes.LSPProbeView
 	switch operation {
 	case "definition":
-		locations, view, err = service.ProbeDefinition(ctx, path, line, col)
+		locations, view, err = service.ProbeDefinition(ctx, path, position)
 	case "references":
-		locations, view, err = service.ProbeReferences(ctx, path, line, col)
+		locations, view, err = service.ProbeReferences(ctx, path, position)
 	case "hover":
-		text, view, err := service.ProbeHover(ctx, path, line, col)
+		text, view, err := service.ProbeHover(ctx, path, position)
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -327,10 +331,7 @@ func filterDiagnostics(diags []ttypes.LSPDiagnostic, floor int) []ttypes.LSPDiag
 	out := make([]ttypes.LSPDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		severity := d.Severity
-		if severity == 0 {
-			severity = 1
-		}
-		if severity <= floor {
+		if severity >= 1 && severity <= floor {
 			out = append(out, d)
 		}
 	}
@@ -371,72 +372,23 @@ func displayLSPPath(root, path string) string {
 	return path
 }
 
-// lspPosition converts the 1-based line plus symbol or character column into
-// the 0-based UTF-16 position the protocol uses.
-func lspPosition(path string, params map[string]any) (int, int, error) {
-	line := getIntParam(params, "line")
-	if line < 1 {
-		return 0, 0, errors.New("line (1-based) is required for this operation")
-	}
-	text, err := fileLine(path, line-1)
-	if err != nil {
-		return 0, 0, err
-	}
-	symbol := getStrParam(params, "symbol")
-	column := getIntParam(params, "column")
-	runes := []rune(text)
-	var start int
-	switch {
-	case symbol != "":
-		from := 0
-		if column > 0 {
-			from = min(column-1, len(runes))
-		}
-		offset := strings.Index(string(runes[from:]), symbol)
-		if offset < 0 {
-			return 0, 0, fmt.Errorf("symbol %q is not on line %d of %s: %q", symbol, line, filepath.Base(path), strings.TrimSpace(text))
-		}
-		start = from + utf8.RuneCountInString(string(runes[from:])[:offset])
-	case column > 0:
-		if column-1 > len(runes) {
-			return 0, 0, fmt.Errorf("column %d is past the end of line %d (%d characters)", column, line, len(runes))
-		}
-		start = column - 1
-	default:
-		return 0, 0, errors.New("symbol (or column) is required for this operation")
-	}
-	return line - 1, len(utf16.Encode(runes[:start])), nil
-}
-
-func fileLine(path string, index int) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	lines := strings.Split(string(data), "\n")
-	if index < 0 || index >= len(lines) {
-		return "", fmt.Errorf("%s has %d lines", filepath.Base(path), len(lines))
-	}
-	return strings.TrimRight(lines[index], "\r"), nil
-}
-
-// sourceLines caches file lines for one result so many locations in a file
-// read it once.
+// sourceLines quotes only immutable source actually leased by the answer owner.
+// Destination files without their own qualified source remain raw UTF-16 data.
 type sourceLines map[string][]string
 
+func probeSourceLines(view ttypes.LSPProbeView) sourceLines {
+	lines := sourceLines{}
+	if view.Source.DocumentID != "" && view.Source.Path != "" {
+		lines[view.Source.Path] = strings.Split(view.SourceText, "\n")
+	}
+	return lines
+}
 func (c sourceLines) line(path string, index int) (string, bool) {
 	lines, ok := c[path]
-	if !ok {
-		data, err := os.ReadFile(path)
-		if err == nil && utf8.Valid(data) {
-			lines = strings.Split(string(data), "\n")
-		}
-		c[path] = lines
-	}
-	if index < 0 || index >= len(lines) {
+	if !ok || index < 0 || index >= len(lines) {
 		return "", false
 	}
-	return strings.TrimRight(lines[index], "\r"), true
+	return strings.TrimSuffix(lines[index], "\r"), true
 }
 
 // column converts a UTF-16 offset on a source line to a 1-based character
@@ -487,7 +439,8 @@ func bufferNote(view ttypes.LSPProbeView) string {
 
 var severityNames = map[int]string{1: "error", 2: "warning", 3: "info", 4: "hint"}
 
-func formatFileDiagnostics(root, path string, diags []ttypes.LSPDiagnostic, view ttypes.LSPProbeView, errorsOnly bool) string {
+func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, floor int, view ttypes.LSPProbeView, errorsOnly bool) string {
+	diags := filterDiagnostics(batch.Diagnostics, floor)
 	var b strings.Builder
 	b.WriteString(bufferNote(view))
 	display := displayLSPPath(root, path)
@@ -495,8 +448,20 @@ func formatFileDiagnostics(root, path string, diags []ttypes.LSPDiagnostic, view
 	if view.Server != "" {
 		server = " (" + view.Server + ")"
 	}
+	if batch.ID == "" {
+		fmt.Fprintf(&b, "%s: no diagnostic publication observed%s; project cleanliness is unverified.\n", display, server)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "Fact %s: %s, %s, source revision %d; context %s generation %d; producer %s.\n", batch.ID, batch.State, batch.Binding, batch.Boundary.Source.Revision, batch.Boundary.Context.ID, batch.Boundary.Context.Generation, batch.Boundary.Producer.InstanceID)
+	if len(batch.Boundary.Context.UnknownInputs) > 0 {
+		fmt.Fprintf(&b, "  Partial context: %s\n", strings.Join(batch.Boundary.Context.UnknownInputs, "; "))
+	}
+	if batch.Detail != "" {
+		fmt.Fprintf(&b, "  %s\n", batch.Detail)
+	}
+	b.WriteString("  Observed source only; this is not a complete project check.\n")
 	if len(diags) == 0 {
-		fmt.Fprintf(&b, "%s: no problems%s\n", display, server)
+		fmt.Fprintf(&b, "%s: 0 diagnostics at requested severity%s (not a clean-project verdict)\n", display, server)
 		return b.String()
 	}
 	counts := map[string]int{}
@@ -515,6 +480,9 @@ func formatFileDiagnostics(root, path string, diags []ttypes.LSPDiagnostic, view
 	}
 	fmt.Fprintf(&b, "%s: %s%s\n", display, strings.Join(summary, ", "), server)
 	lines := sourceLines{}
+	if batch.HasExactSource() && batch.Boundary.Source == view.Source {
+		lines = probeSourceLines(view)
+	}
 	for i, d := range diags {
 		if i == maxLSPDiagnostics {
 			fmt.Fprintf(&b, "  … %d more not shown\n", len(diags)-i)
@@ -529,7 +497,11 @@ func formatFileDiagnostics(root, path string, diags []ttypes.LSPDiagnostic, view
 			severity = severityNames[max(1, d.Severity)] + " "
 		}
 		message := strings.ReplaceAll(strings.TrimSpace(d.Message), "\n", " ")
-		fmt.Fprintf(&b, "  %d:%d %s%s%s\n", d.Line+1, lines.column(path, d.Line, d.Col), severity, message, origin)
+		coordinate := fmt.Sprintf("%d:%d", d.Line+1, lines.column(path, d.Line, d.Col))
+		if _, ok := lines[path]; !ok {
+			coordinate = fmt.Sprintf("%d:UTF-16 %d (source unverified)", d.Line+1, d.Col+1)
+		}
+		fmt.Fprintf(&b, "  %s %s%s%s\n", coordinate, severity, message, origin)
 		if quote := lines.quote(path, d.Line); quote != "" {
 			fmt.Fprintf(&b, "      %s\n", quote)
 		}
@@ -552,14 +524,18 @@ func formatLocations(root, operation string, locations []ttypes.LSPLocation, vie
 		noun += "s"
 	}
 	fmt.Fprintf(&b, "%d %s:\n", len(locations), noun)
-	lines := sourceLines{}
+	lines := probeSourceLines(view)
 	for i, loc := range locations {
 		if i == maxLSPLocations {
 			fmt.Fprintf(&b, "… %d more not shown\n", len(locations)-i)
 			break
 		}
 		path := loc.Path
-		fmt.Fprintf(&b, "%s:%d:%d", displayLSPPath(root, path), loc.Line+1, lines.column(path, loc.Line, loc.Col))
+		if _, ok := lines[path]; ok {
+			fmt.Fprintf(&b, "%s:%d:%d", displayLSPPath(root, path), loc.Line+1, lines.column(path, loc.Line, loc.Col))
+		} else {
+			fmt.Fprintf(&b, "%s:%d:UTF-16 %d (destination source unverified)", displayLSPPath(root, path), loc.Line+1, loc.Col+1)
+		}
 		if quote := lines.quote(path, loc.Line); quote != "" {
 			fmt.Fprintf(&b, "  %s", quote)
 		}

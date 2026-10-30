@@ -1,7 +1,8 @@
 # Autonomous Code Intelligence
 
 > Status: IN PROGRESS - the initial native syntax corpus, canonical scheduling
-> and connected-editor publication are implemented. Semantic insight ownership,
+> and connected-editor publication are implemented. Shared diagnostic ownership
+> has passed integrated Linux validation; complete semantic ownership,
 > autonomous assembly and complete workflow/device acceptance remain open.
 > Existing editor and LSP behavior remains governed
 > by [editor](../reference/editor.md) and [settings](../reference/settings.md).
@@ -25,6 +26,15 @@ The local [checkpointed core restart](../reference/core-restart.md) prerequisite
 now owns exact-image staging, natural settlement and one-shot goal continuation.
 Its isolated Linux TUI evidence is not a corpus, semantic-feature or device
 campaign pass, and the pre-feature running core still needs its bootstrap.
+
+The [shared diagnostic fact slice](../reference/editor.md#shared-diagnostic-facts)
+now replaces the raw manager/replica/editor/agent diagnostic paths. Source,
+wire-version, context, lifecycle, empty/unversioned/limited and Unicode regressions,
+the repository suite, full race campaign with supplemental lifecycle-wake checks,
+and real-gopls rendered journeys at 160x40 and 80x24 have passed on Linux.
+Neutral Windows/Darwin cross-builds are not native-platform acceptance.
+Complete build context, request/response semantic fact contracts, governor,
+assembly and the campaigns below remain open.
 
 ## Problem
 

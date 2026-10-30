@@ -1,11 +1,34 @@
 package lspclient
 
 import (
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
-	"github.com/stretchr/testify/assert"
+	"context"
 	"path/filepath"
 	"testing"
+
+	"crude/types"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
+	"github.com/stretchr/testify/assert"
 )
+
+func testBoundary(path string) types.InsightBoundary {
+	return types.InsightBoundary{
+		Source: types.InsightSource{WorkspaceGeneration: "workspace-1", DocumentID: "document-1",
+			Path: path, Lifetime: "open-1", Revision: 1, Kind: "canonical"},
+		Context: types.InsightContext{ID: "context-1", Root: filepath.Dir(path), Generation: 1,
+			UnknownInputs: []string{"build configuration"}},
+		Producer: types.InsightProducer{InstanceID: "launch-1", Provider: "test-lsp", ToolIdentity: "test-binary"},
+	}
+}
+
+func openTestFile(t *testing.T, l *LSPIntegration, ctx context.Context, path, language, text string) int {
+	t.Helper()
+	version, err := l.OpenFile(ctx, path, language, text, testBoundary(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
 
 func TestLSPIntegration_New(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/test")
@@ -15,26 +38,16 @@ func TestLSPIntegration_New(t *testing.T) {
 }
 
 func TestLSPIntegration_UpdateDiagnostics(t *testing.T) {
-	l := NewLSPIntegration("gopls", nil, "/test")
-	// Open a file so that diagnostics for it are accepted.
-	l.mu.Lock()
-	l.openFiles["/tmp/test.go"] = &openFileState{uri: "file:///tmp/test.go"}
-	l.mu.Unlock()
+	l, launch, path := settleFixture(t)
 
 	var got []LSPDiagnostic
-	l.OnDiagnostics(func(fp string, diags []LSPDiagnostic) {
-		got = diags
+	l.OnDiagnostics(func(p types.InsightDiagnosticPublication) {
+		got = p.Diagnostics
 	})
 
-	// Simulate updateDiagnostics via callback.
-	l.mu.Lock()
-	cb := l.onDiagnostics
-	l.mu.Unlock()
-	if cb != nil {
-		cb("/tmp/test.go", []LSPDiagnostic{
-			{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "test error"},
-		})
-	}
+	l.updateDiagnostics(launch, protocol.URIFromPath(path), nil, []protocol.Diagnostic{
+		{Range: protocol.Range{End: protocol.Position{Character: 5}}, Severity: DiagError, Message: "test error"},
+	})
 
 	assert.Len(t, got, 1)
 	assert.Equal(t, "test error", got[0].Message)
@@ -42,22 +55,15 @@ func TestLSPIntegration_UpdateDiagnostics(t *testing.T) {
 }
 
 func TestLSPIntegration_OnDiagnosticsCallback(t *testing.T) {
-	l := NewLSPIntegration("gopls", nil, "/test")
+	l, launch, path := settleFixture(t)
 	called := false
-	l.OnDiagnostics(func(fp string, diags []LSPDiagnostic) {
+	l.OnDiagnostics(func(p types.InsightDiagnosticPublication) {
 		called = true
-		assert.Len(t, diags, 1)
-		assert.Equal(t, DiagWarning, diags[0].Severity)
+		assert.Len(t, p.Diagnostics, 1)
+		assert.Equal(t, DiagWarning, p.Diagnostics[0].Severity)
 	})
 
-	l.mu.Lock()
-	cb := l.onDiagnostics
-	l.mu.Unlock()
-	if cb != nil {
-		cb("/tmp/test.go", []LSPDiagnostic{
-			{Severity: DiagWarning},
-		})
-	}
+	l.updateDiagnostics(launch, protocol.URIFromPath(path), nil, []protocol.Diagnostic{{Severity: DiagWarning}})
 
 	assert.True(t, called, "onDiagnostics callback should have been called")
 }
@@ -84,9 +90,14 @@ func TestLSPIntegration_StartFailsGracefully(t *testing.T) {
 func TestLSPIntegration_StartNotCalled(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/tmp")
 	ctx := t.Context()
-	l.OpenFile(ctx, "/tmp/test.go", "go", "package main")
-	l.UpdateFile(ctx, "/tmp/test.go", "package main\nfunc main() {}")
-	l.CloseFile(ctx, "/tmp/test.go")
+	path := filepath.Join(t.TempDir(), "test.go")
+	version, err := l.OpenFile(ctx, path, "go", "package main", testBoundary(path))
+	assert.Error(t, err)
+	assert.Zero(t, version)
+	version, err = l.UpdateFile(ctx, path, "package main\nfunc main() {}", testBoundary(path))
+	assert.Error(t, err)
+	assert.Zero(t, version)
+	l.CloseFile(ctx, path)
 	diags := l.Diagnostics()
 	assert.Empty(t, diags)
 }

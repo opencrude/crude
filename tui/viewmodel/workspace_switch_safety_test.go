@@ -387,6 +387,57 @@ func TestConnectedWorkspaceSwitchPendingSaveWaitsForAcknowledgement(t *testing.T
 	}
 }
 
+func TestConnectedWorkspaceSwitchSaveReceiptBeforePublication(t *testing.T) {
+	rt := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root, target := t.TempDir(), t.TempDir()
+	shell := newRemoteJourneyShell(t, rt, root)
+	path := switchTestFile(t, root, "save-order.txt", "base")
+	app := shell.app
+	ed := liveTestOpen(t, app, path)
+	ed.InsertRune('S')
+	runAppCommand(t, app, app.drainLiveEditorCommands())
+	liveTestSync(t, app)
+	app.requestEditorSaveWithFormat(ed, workspace.DocumentSaveManual, false, false)
+	_ = app.drainLiveEditorCommands()
+	save := app.liveEditors[ed].start
+	if save == nil {
+		t.Fatal("save command was not admitted")
+	}
+	if cmd := confirmWorkspaceSwitchTest(t, app, target); cmd != nil {
+		t.Fatal("switch bypassed outstanding save")
+	}
+	// Execute the actual save RPC, but deliberately deliver its private receipt
+	// before pumping the same core's ordered document topic.
+	_, attach := app.Update(save())
+	if attach == nil || app.workspaceSwitchIntent == nil || !app.workspaceSwitchIntent.attaching {
+		t.Fatal("acknowledged save did not prepare the requested switch")
+	}
+	seal := switchEditorSeal(ed)
+	deadline := time.NewTimer(8 * time.Second)
+	defer deadline.Stop()
+	for published := false; !published; {
+		select {
+		case msg := <-shell.fifo:
+			if topic, ok := msg.(shellport.LiveDocumentsChangedMsg); ok && topic.DocumentID == ed.DocumentState().DocumentID && topic.Update.Savepoint && string(topic.Update.State.Saved) == "Sbase" {
+				published = true
+			}
+			_, cmd := app.Update(msg)
+			runAppCommand(t, app, cmd)
+		case <-deadline.C:
+			t.Fatal("real saved document publication did not arrive")
+		}
+	}
+	if switchEditorSeal(ed) != seal {
+		t.Fatal("duplicate save publication changed an acknowledged switch preimage")
+	}
+	runAppCommand(t, app, attach)
+	liveTestSync(t, app)
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "Sbase" || app.ws.RootPath() != target || app.workspaceSwitchIntent != nil {
+		t.Fatalf("receipt-first save did not finish the switch: disk=%q error=%v root=%q", data, err, app.ws.RootPath())
+	}
+}
+
 func TestConnectedWorkspaceSwitchPreparedCleanupNeverBlocksUpdateAndJoinsShutdown(t *testing.T) {
 	for _, shutdown := range []bool{false, true} {
 		name := "esc"

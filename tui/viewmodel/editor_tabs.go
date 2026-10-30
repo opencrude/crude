@@ -76,16 +76,12 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })
-	// Register the exact editor lifetime immediately. The manager owns async
-	// discovery/start; a close cannot be overtaken by an old tea.Cmd didOpen.
-	if m.ws.LSPMgr() != nil {
-		m.ws.LSPMgr().OpenFile(context.Background(), path, ed.Value())
-	}
 
 	// Apply cached diagnostics immediately so the editor is never empty
 	// while waiting for the server to respond.
 	if m.ws.LSPMgr() != nil {
-		if cached := m.ws.LSPMgr().FileDiagnostics(path); len(cached) > 0 {
+		if cached, ok := m.ws.LSPMgr().FileDiagnostics(path); ok {
+			ed.SetDiagnosticsVisible(m.ws.LSPMgr().ShowDiagnosticsInEditor())
 			ed.SetDiagnostics(cached)
 		}
 	}
@@ -114,7 +110,12 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	if filePath == "" {
 		return
 	}
-	if m.queueLiveNavigation(filePath, d) {
+	facts, ok := m.diagnosticForNavigation(filePath, d)
+	if !ok || !m.canNavigateDiagnostic(filePath, facts) {
+		m.Feedback.NotifyInfo("Diagnostic is stale or unverified; open Problems for provenance")
+		return
+	}
+	if m.queueLiveDiagnosticNavigation(filePath, d, facts) {
 		return
 	}
 	// Open or activate the file. openEditorTab is a no-op if the
@@ -146,7 +147,7 @@ func (m *App) gotoFirstDiagnostic() {
 	}
 	all := m.ws.LSPMgr().AllDiagnostics()
 	if len(all) == 0 {
-		m.Feedback.NotifyInfo("No errors in project")
+		m.Feedback.NotifyInfo("No current observed errors; coverage is partial")
 		return
 	}
 
@@ -155,7 +156,7 @@ func (m *App) gotoFirstDiagnostic() {
 	var paths []string
 	if active := m.activeEditorPath(); active != "" {
 		if diags, ok := all[active]; ok {
-			if e := firstErrorOf(diags); e != nil {
+			if e := firstErrorOf(diags.Diagnostics); e != nil && m.canNavigateDiagnostic(active, diags) {
 				m.jumpToDiagnostic(active, *e)
 				m.Feedback.NotifyInfo(fmt.Sprintf("Jumped to %s:%d",
 					filepath.Base(active), e.Line+1))
@@ -175,8 +176,8 @@ func (m *App) gotoFirstDiagnostic() {
 	sort.Strings(paths)
 
 	for _, p := range paths {
-		e := firstErrorOf(all[p])
-		if e == nil {
+		e := firstErrorOf(all[p].Diagnostics)
+		if e == nil || !m.canNavigateDiagnostic(p, all[p]) {
 			continue
 		}
 		m.jumpToDiagnostic(p, *e)
@@ -185,7 +186,7 @@ func (m *App) gotoFirstDiagnostic() {
 		return
 	}
 
-	m.Feedback.NotifyInfo("No errors in project")
+	m.Feedback.NotifyInfo("No current observed errors; coverage is partial")
 }
 
 // firstErrorOf returns the first error-severity diagnostic in the
@@ -216,7 +217,7 @@ func (m *App) jumpToNextError() bool {
 		// every error like VSCode's command.
 		d = m.EditorState.Editor.FirstError()
 		if d == nil {
-			m.Feedback.NotifyInfo("No errors in file")
+			m.Feedback.NotifyInfo("No current observed errors · " + m.EditorState.Editor.DiagnosticStatus())
 			return false
 		}
 	}
@@ -248,7 +249,7 @@ func (m *App) jumpToPrevError() bool {
 			}
 		}
 		if d == nil {
-			m.Feedback.NotifyInfo("No errors in file")
+			m.Feedback.NotifyInfo("No current observed errors · " + m.EditorState.Editor.DiagnosticStatus())
 			return false
 		}
 	}
@@ -332,10 +333,6 @@ func (m *App) closeEditorTabForce(path string) {
 			} else {
 				m.editorCommands = append(m.editorCommands, func() tea.Msg { _ = live.CloseDocument(context.Background(), id); return nil })
 			}
-		} else if m.ws.LSPMgr() != nil {
-			lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			m.ws.LSPMgr().CloseFile(lspCtx, path)
 		}
 		tab.Editor.Close()
 		delete(m.EditorState.Tabs, path)

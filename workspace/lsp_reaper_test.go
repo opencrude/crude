@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/types"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -11,12 +12,16 @@ type reapableClient struct {
 	done chan struct{}
 }
 
-func (c *reapableClient) OnDiagnostics(func(string, []LSPDiagnostic))           {}
-func (c *reapableClient) Start(context.Context) error                           { return nil }
-func (c *reapableClient) Stop() error                                           { return nil }
-func (c *reapableClient) Done() <-chan struct{}                                 { return c.done }
-func (c *reapableClient) OpenFile(context.Context, string, string, string)      {}
-func (c *reapableClient) UpdateFile(context.Context, string, string)            {}
+func (c *reapableClient) OnDiagnostics(func(types.InsightDiagnosticPublication)) {}
+func (c *reapableClient) Start(context.Context) error                            { return nil }
+func (c *reapableClient) Stop() error                                            { return nil }
+func (c *reapableClient) Done() <-chan struct{}                                  { return c.done }
+func (c *reapableClient) OpenFile(context.Context, string, string, string, types.InsightBoundary) (int, error) {
+	return 1, nil
+}
+func (c *reapableClient) UpdateFile(context.Context, string, string, types.InsightBoundary) (int, error) {
+	return 2, nil
+}
 func (c *reapableClient) CloseFile(context.Context, string)                     {}
 func (c *reapableClient) NotifySave(context.Context, string, string, int, bool) {}
 func (c *reapableClient) NotifyWatchedFilesChanged(context.Context, string, int) {
@@ -40,6 +45,6 @@ func (c *reapableClient) RequestCompletions(context.Context, string, int, int) [
 	return nil
 }
 
-func (*reapableClient) AwaitDiagnostics(context.Context, string) ([]LSPDiagnostic, bool) {
-	return nil, true
+func (*reapableClient) AwaitDiagnostics(context.Context, string) (types.InsightDiagnosticPublication, bool) {
+	return types.InsightDiagnosticPublication{}, true
 }

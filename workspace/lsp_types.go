@@ -33,7 +33,7 @@ type ProjectInsights = model.ProjectInsights
 // LSPClient is the workspace-facing connection contract. The concrete
 // subprocess transport is supplied by the workspace runtime.
 type LSPClient interface {
-	OnDiagnostics(func(filePath string, diags []LSPDiagnostic))
+	OnDiagnostics(func(model.InsightDiagnosticPublication))
 	Start(context.Context) error
 	// Stop joins the owned process lifetime. A non-nil result means retirement
 	// could not be verified; its admission slot must not be reused.
@@ -42,8 +42,8 @@ type LSPClient interface {
 	// exit, pipe error, or a wedged server that hit the write-queue cap).
 	// The manager reaps the client on Done and restarts it on demand.
 	Done() <-chan struct{}
-	OpenFile(context.Context, string, string, string)
-	UpdateFile(context.Context, string, string)
+	OpenFile(context.Context, string, string, string, model.InsightBoundary) (int, error)
+	UpdateFile(context.Context, string, string, model.InsightBoundary) (int, error)
 	CloseFile(context.Context, string)
 	NotifySave(context.Context, string, string, int, bool)
 	NotifyWatchedFilesChanged(context.Context, string, int)
@@ -55,7 +55,7 @@ type LSPClient interface {
 	RequestCompletions(context.Context, string, int, int) []CompletionItem
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.
-	AwaitDiagnostics(context.Context, string) ([]LSPDiagnostic, bool)
+	AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool)
 }
 
 // LSPRuntime creates transport clients; language and project policy stay in the workspace.

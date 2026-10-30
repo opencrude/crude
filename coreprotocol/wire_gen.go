@@ -8777,10 +8777,9 @@ func (z *InvocationSessionRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 10
-	o = append(o, 0x9a)
+	// array header, size 9
+	o = append(o, 0x99)
 	o = msgp.AppendString(o, z.Path)
-	o = msgp.AppendString(o, z.Text)
 	o = msgp.AppendInt(o, z.Line)
 	o = msgp.AppendInt(o, z.Col)
 	o = msgp.AppendBool(o, z.IncludeDeclaration)
@@ -8808,18 +8807,13 @@ func (z *LSPRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 10 {
-		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	z.Path, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Path")
-		return
-	}
-	z.Text, bts, err = msgp.ReadStringBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "Text")
 		return
 	}
 	z.Line, bts, err = msgp.ReadIntBytes(bts)
@@ -8868,7 +8862,7 @@ func (z *LSPRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *LSPRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.Text) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + z.Reason.Msgsize() + msgp.BoolSize + msgp.IntSize + msgp.StringPrefixSize + len(z.ServerID) + msgp.StringPrefixSize + len(z.NewName)
+	s = 1 + msgp.StringPrefixSize + len(z.Path) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + z.Reason.Msgsize() + msgp.BoolSize + msgp.IntSize + msgp.StringPrefixSize + len(z.ServerID) + msgp.StringPrefixSize + len(z.NewName)
 	return
 }
 
@@ -9080,8 +9074,9 @@ func (z *LSPResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 13
-	o = append(o, 0x9d)
+	// array header, size 14
+	o = append(o, 0x9e)
+	o = msgp.AppendString(o, z.Generation)
 	o = msgp.AppendUint64(o, z.Version)
 	o = msgp.AppendBool(o, z.Available)
 	if z.Diagnostics == nil { // allownil: if nil
@@ -9090,13 +9085,10 @@ func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendMapHeader(o, uint32(len(z.Diagnostics)))
 		for za0001, za0002 := range z.Diagnostics {
 			o = msgp.AppendString(o, za0001)
-			o = msgp.AppendArrayHeader(o, uint32(len(za0002)))
-			for za0003 := range za0002 {
-				o, err = za0002[za0003].MarshalMsg(o)
-				if err != nil {
-					err = msgp.WrapError(err, "Diagnostics", za0001, za0003)
-					return
-				}
+			o, err = za0002.MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Diagnostics", za0001)
+				return
 			}
 		}
 	}
@@ -9104,13 +9096,13 @@ func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendMapHeader(o, uint32(len(z.Symbols)))
-		for za0004, za0005 := range z.Symbols {
-			o = msgp.AppendString(o, za0004)
-			o = msgp.AppendArrayHeader(o, uint32(len(za0005)))
-			for za0006 := range za0005 {
-				o, err = za0005[za0006].MarshalMsg(o)
+		for za0003, za0004 := range z.Symbols {
+			o = msgp.AppendString(o, za0003)
+			o = msgp.AppendArrayHeader(o, uint32(len(za0004)))
+			for za0005 := range za0004 {
+				o, err = za0004[za0005].MarshalMsg(o)
 				if err != nil {
-					err = msgp.WrapError(err, "Symbols", za0004, za0006)
+					err = msgp.WrapError(err, "Symbols", za0003, za0005)
 					return
 				}
 			}
@@ -9125,10 +9117,10 @@ func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Health)))
-		for za0007 := range z.Health {
-			o, err = z.Health[za0007].MarshalMsg(o)
+		for za0006 := range z.Health {
+			o, err = z.Health[za0006].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "Health", za0007)
+				err = msgp.WrapError(err, "Health", za0006)
 				return
 			}
 		}
@@ -9163,8 +9155,13 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 13 {
-		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
+	if zb0001 != 14 {
+		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+		return
+	}
+	z.Generation, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Generation")
 		return
 	}
 	z.Version, bts, err = msgp.ReadUint64Bytes(bts)
@@ -9192,14 +9189,14 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 		if z.Diagnostics == nil {
-			z.Diagnostics = make(map[string][]workspace.LSPDiagnostic, zb0002)
+			z.Diagnostics = make(map[string]types.InsightDiagnostics, zb0002)
 		} else if len(z.Diagnostics) > 0 {
 			clear(z.Diagnostics)
 		}
 		var field []byte
 		_ = field
 		for zb0002 > 0 {
-			var za0002 []workspace.LSPDiagnostic
+			var za0002 types.InsightDiagnostics
 			zb0002--
 			var za0001 string
 			za0001, bts, err = msgp.ReadStringBytes(bts)
@@ -9207,27 +9204,10 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "Diagnostics")
 				return
 			}
-			var zb0003 uint32
-			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			bts, err = za0002.UnmarshalMsg(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Diagnostics", za0001)
 				return
-			}
-			if uint64(zb0003)*1 > uint64(len(bts)) {
-				err = msgp.ErrShortBytes
-				return
-			}
-			if cap(za0002) >= int(zb0003) {
-				za0002 = (za0002)[:zb0003]
-			} else {
-				za0002 = make([]workspace.LSPDiagnostic, zb0003)
-			}
-			for za0003 := range za0002 {
-				bts, err = za0002[za0003].UnmarshalMsg(bts)
-				if err != nil {
-					err = msgp.WrapError(err, "Diagnostics", za0001, za0003)
-					return
-				}
 			}
 			z.Diagnostics[za0001] = za0002
 		}
@@ -9236,53 +9216,53 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.Symbols = nil
 	} else {
-		var zb0004 uint32
-		zb0004, bts, err = msgp.ReadMapHeaderBytes(bts)
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Symbols")
 			return
 		}
-		if uint64(zb0004)*2 > uint64(len(bts)) {
+		if uint64(zb0003)*2 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
 		if z.Symbols == nil {
-			z.Symbols = make(map[string][]workspace.LSPSymbol, zb0004)
+			z.Symbols = make(map[string][]workspace.LSPSymbol, zb0003)
 		} else if len(z.Symbols) > 0 {
 			clear(z.Symbols)
 		}
-		for zb0004 > 0 {
-			var za0005 []workspace.LSPSymbol
-			zb0004--
-			var za0004 string
-			za0004, bts, err = msgp.ReadStringBytes(bts)
+		for zb0003 > 0 {
+			var za0004 []workspace.LSPSymbol
+			zb0003--
+			var za0003 string
+			za0003, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Symbols")
 				return
 			}
-			var zb0005 uint32
-			zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			var zb0004 uint32
+			zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Symbols", za0004)
+				err = msgp.WrapError(err, "Symbols", za0003)
 				return
 			}
-			if uint64(zb0005)*1 > uint64(len(bts)) {
+			if uint64(zb0004)*1 > uint64(len(bts)) {
 				err = msgp.ErrShortBytes
 				return
 			}
-			if cap(za0005) >= int(zb0005) {
-				za0005 = (za0005)[:zb0005]
+			if cap(za0004) >= int(zb0004) {
+				za0004 = (za0004)[:zb0004]
 			} else {
-				za0005 = make([]workspace.LSPSymbol, zb0005)
+				za0004 = make([]workspace.LSPSymbol, zb0004)
 			}
-			for za0006 := range za0005 {
-				bts, err = za0005[za0006].UnmarshalMsg(bts)
+			for za0005 := range za0004 {
+				bts, err = za0004[za0005].UnmarshalMsg(bts)
 				if err != nil {
-					err = msgp.WrapError(err, "Symbols", za0004, za0006)
+					err = msgp.WrapError(err, "Symbols", za0003, za0005)
 					return
 				}
 			}
-			z.Symbols[za0004] = za0005
+			z.Symbols[za0003] = za0004
 		}
 	}
 	bts, err = z.Insights.UnmarshalMsg(bts)
@@ -9294,25 +9274,25 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.Health = nil
 	} else {
-		var zb0006 uint32
-		zb0006, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0005 uint32
+		zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Health")
 			return
 		}
-		if uint64(zb0006)*1 > uint64(len(bts)) {
+		if uint64(zb0005)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Health != nil && cap(z.Health) >= int(zb0006) {
-			z.Health = (z.Health)[:zb0006]
+		if z.Health != nil && cap(z.Health) >= int(zb0005) {
+			z.Health = (z.Health)[:zb0005]
 		} else {
-			z.Health = make([]types.LSPServerHealth, zb0006)
+			z.Health = make([]types.LSPServerHealth, zb0005)
 		}
-		for za0007 := range z.Health {
-			bts, err = z.Health[za0007].UnmarshalMsg(bts)
+		for za0006 := range z.Health {
+			bts, err = z.Health[za0006].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Health", za0007)
+				err = msgp.WrapError(err, "Health", za0006)
 				return
 			}
 		}
@@ -9358,29 +9338,26 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *LSPSnapshot) Msgsize() (s int) {
-	s = 1 + msgp.Uint64Size + msgp.BoolSize + msgp.MapHeaderSize
+	s = 1 + msgp.StringPrefixSize + len(z.Generation) + msgp.Uint64Size + msgp.BoolSize + msgp.MapHeaderSize
 	if z.Diagnostics != nil {
 		for za0001, za0002 := range z.Diagnostics {
 			_ = za0002
-			s += msgp.StringPrefixSize + len(za0001) + msgp.ArrayHeaderSize
-			for za0003 := range za0002 {
-				s += za0002[za0003].Msgsize()
-			}
+			s += msgp.StringPrefixSize + len(za0001) + za0002.Msgsize()
 		}
 	}
 	s += msgp.MapHeaderSize
 	if z.Symbols != nil {
-		for za0004, za0005 := range z.Symbols {
-			_ = za0005
-			s += msgp.StringPrefixSize + len(za0004) + msgp.ArrayHeaderSize
-			for za0006 := range za0005 {
-				s += za0005[za0006].Msgsize()
+		for za0003, za0004 := range z.Symbols {
+			_ = za0004
+			s += msgp.StringPrefixSize + len(za0003) + msgp.ArrayHeaderSize
+			for za0005 := range za0004 {
+				s += za0004[za0005].Msgsize()
 			}
 		}
 	}
 	s += z.Insights.Msgsize() + msgp.ArrayHeaderSize
-	for za0007 := range z.Health {
-		s += z.Health[za0007].Msgsize()
+	for za0006 := range z.Health {
+		s += z.Health[za0006].Msgsize()
 	}
 	s += z.Settings.Msgsize() + msgp.BoolSize + msgp.BoolSize + z.Status.Msgsize() + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize
 	return

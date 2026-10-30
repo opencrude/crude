@@ -22,7 +22,16 @@ import (
 func TestConnectedEditorTypingKeepsUnchangedPresentation(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
-			runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) { w.LSPMgr.SetRuntime(noopLSPRuntime{}) })
+			server := &immediateTreeDiagRuntime{diags: []workspace.LSPDiagnostic{{Line: 4, Col: 3, EndLine: 4, EndCol: 12, Severity: editor.DiagError, Message: "retained diagnostic"}}}
+			runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
+				w.LSPMgr.SetRuntime(server)
+				settings := w.AppDefaults()
+				settings.LSP = types.DefaultLSPSettings()
+				// This presentation journey checks the unchanged sidebar, not
+				// source-current tree counters (covered by the three-shell test).
+				settings.LSP.DiagInTree = false
+				w.SetAppDefaults(settings)
+			})
 			root := t.TempDir()
 			path := filepath.Join(root, "typing.go")
 			source := "package main\nvar value = 1\n" + strings.Repeat("// unchanged 界 documentation\n", 2000)
@@ -38,13 +47,12 @@ func TestConnectedEditorTypingKeepsUnchangedPresentation(t *testing.T) {
 			// shared publication for typing-induced flicker.
 			remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool {
 				state, _ := ed.InsightStatus()
-				return state == types.InsightCurrent
+				return state == types.InsightCurrent && len(ed.Diagnostics()) == 1
 			})
 			runAppCommand(t, app, app.drainEditorSyntaxCommands())
 			_, cmd := app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			runAppCommand(t, app, cmd)
 			ed.SetCursorPosition(1, len("var value"))
-			ed.SetDiagnostics([]editor.LSPDiagnostic{{Line: 4, Col: 3, EndLine: 4, EndCol: 12, Severity: editor.DiagError, Message: "retained diagnostic"}})
 			app.forceFrame()
 			first := app.View()
 			before := app.mainSurf.Buffer().Clone()

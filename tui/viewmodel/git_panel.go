@@ -641,7 +641,20 @@ func (m *App) handleGitFileIntent(intent gitdiff.FileIntent) tea.Cmd {
 
 // openFileAtLine opens path with the cursor on a one-based line.
 func (m *App) openFileAtLine(path string, line int) {
-	m.jumpToDiagnostic(path, workspace.LSPDiagnostic{Line: line - 1, EndLine: line - 1})
+	// Git/log/search locations are not diagnostic observations. They share the
+	// asynchronous destination-open primitive, not diagnostic source authority.
+	position := workspace.LSPDiagnostic{Line: max(0, line-1), EndLine: max(0, line-1)}
+	if m.queueLiveNavigation(path, position) {
+		return
+	}
+	if _, err := m.openEditorTab(path); err != nil {
+		m.Feedback.NotifyError("Cannot open " + path)
+		return
+	}
+	if ed := m.EditorState.Editor; ed != nil {
+		ed.SetCursorPosition(position.Line, 0)
+		ed.ScrollToCursor()
+	}
 }
 
 // inspectGitCommit loads a commit for the panel's History preview.

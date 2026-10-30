@@ -156,13 +156,16 @@ type Editor struct {
 	watchDone    chan struct{}
 	watchMu      sync.Mutex
 
-	diagMu              sync.RWMutex
-	diagnostics         []LSPDiagnostic
-	diagnosticsRevision uint64
-	diagByLine          map[int][]diagSpan
-	diagPaintBuffer     *PieceTable
-	diagPaintRevision   uint64
-	diagPaintScratch    map[int][]diagSpan
+	diagMu                sync.RWMutex
+	diagnostics           []LSPDiagnostic
+	diagnosticsRevision   uint64
+	diagnosticFacts       types.InsightDiagnostics
+	diagnosticProjectedID string
+	diagnosticsHidden     bool
+	diagByLine            map[int][]diagSpan
+	diagPaintBuffer       *PieceTable
+	diagPaintRevision     uint64
+	diagPaintScratch      map[int][]diagSpan
 
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
@@ -571,27 +574,87 @@ func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
 	e.onContentChanged = fn
 }
 
-// SetDiagnostics accepts raw LSP UTF-16 ranges. Only this editor projection is
-// visual; the caller and shared Buffer cache retain wire coordinates.
-func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
+// SetDiagnostics retains a detached qualified publication. It never associates raw
+// callbacks with whichever text happens to be current when they arrive.
+func (e *Editor) SetDiagnostics(facts types.InsightDiagnostics) {
 	e.diagMu.Lock()
+	previous := e.diagnosticFacts.ID
+	e.diagnosticFacts = types.CloneInsightDiagnostics(facts)
+	// Only previously accepted ink from the SAME batch can map provisionally.
+	if facts.ID == "" || facts.ID != previous {
+		e.diagnostics = nil
+		e.diagByLine = nil
+		e.diagnosticProjectedID = ""
+	}
+	e.ClearHover()
+	e.diagMu.Unlock()
+	if e.buffer != nil {
+		e.buffer.SetDiagnostics(facts)
+	}
+	e.RefreshDiagnostics()
+}
+
+// MatchesDiagnosticSource uses the canonical document clock, never PieceTable's
+// local mutation counter. Pending/history/conflict projections cannot authorize
+// diagnostics, even if their visible bytes equal the canonical source.
+func (e *Editor) MatchesDiagnosticSource(facts types.InsightDiagnostics) bool {
+	p := e.documentProjection
+	s := facts.Boundary.Source
+	return e.open && p != nil && facts.HasExactSource() && s.Kind == "canonical" &&
+		s.WorkspaceGeneration != "" && s.WorkspaceGeneration == p.snapshot.AnalysisGeneration &&
+		s.Lifetime != "" && s.Lifetime == p.snapshot.AnalysisLifetime &&
+		s.DocumentID != "" && s.DocumentID == p.snapshot.ID && s.Path == e.filePath &&
+		s.Path == p.snapshot.Path && s.Revision == p.snapshot.Revision &&
+		len(p.pending) == 0 && p.inflight == nil && p.conflict == nil && !p.snapshot.Conflict &&
+		!p.undoPending && !p.historySync && len(p.historyQueue) == 0
+}
+
+func (e *Editor) diagnosticsCurrent() bool {
+	return !e.diagnosticsHidden && e.diagnosticProjectedID != "" &&
+		e.diagnosticProjectedID == e.diagnosticFacts.ID &&
+		e.diagnosticsRevision == e.Revision() && e.MatchesDiagnosticSource(e.diagnosticFacts)
+}
+
+// RefreshDiagnostics projects a cached future publication only after its exact
+// source is acknowledged. It is O(1) when no eligible publication changed.
+func (e *Editor) RefreshDiagnostics() {
+	e.diagMu.Lock()
+	defer e.diagMu.Unlock()
+	if !e.MatchesDiagnosticSource(e.diagnosticFacts) || e.diagnosticProjectedID == e.diagnosticFacts.ID {
+		return
+	}
+	diags := e.diagnosticFacts.Diagnostics
 
 	// Convert LSP column offsets (UTF-16 code units from line start) to
 	// visual column offsets (tab-expanded, grapheme-aware). Must make a
 	// copy so we don't mutate the caller's slice (e.g. LSPManager cache).
 	converted := make([]LSPDiagnostic, len(diags))
 	copy(converted, diags)
+	e.diagnostics = nil
 	for i, d := range converted {
+		valid := d.EndLine > d.Line || d.EndLine == d.Line && d.EndCol >= d.Col
 		rawLine, err := e.buf.Line(d.Line)
 		if err == nil {
 			converted[i].Col = UTF16ColToVisualCol(string(rawLine), d.Col, tabWidth)
+			if _, err := lspEditOffset(string(rawLine), 0, d.Col); err != nil {
+				valid = false
+			}
+		} else {
+			valid = false
 		}
 		rawLine, err = e.buf.Line(d.EndLine)
 		if err == nil {
 			converted[i].EndCol = UTF16ColToVisualCol(string(rawLine), d.EndCol, tabWidth)
+			if _, err := lspEditOffset(string(rawLine), 0, d.EndCol); err != nil {
+				valid = false
+			}
+		} else {
+			valid = false
+		}
+		if valid {
+			e.diagnostics = append(e.diagnostics, converted[i])
 		}
 	}
-	e.diagnostics = converted
 	e.diagnosticsRevision = e.Revision()
 	e.diagPaintBuffer, e.diagPaintRevision = e.buf, e.Revision()
 	e.ClearHover()
@@ -641,17 +704,16 @@ func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 		})
 	}
 	e.diagByLine = byLine
-	e.diagMu.Unlock()
-
-	if e.buffer != nil {
-		e.buffer.SetDiagnostics(diags)
-	}
+	e.diagnosticProjectedID = e.diagnosticFacts.ID
 }
 
 func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	for _, d := range e.diagnostics {
+	if !e.diagnosticsCurrent() {
+		return
+	}
+	for _, d := range e.diagnosticFacts.Diagnostics {
 		switch d.Severity {
 		case DiagError:
 			errors++
@@ -667,7 +729,7 @@ func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
 func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagByLine == nil || e.diagPaintBuffer != e.buf || e.diagPaintRevision != e.Revision() {
+	if e.diagnosticsHidden || e.diagByLine == nil || e.diagPaintBuffer != e.buf || e.diagPaintRevision != e.Revision() {
 		return nil
 	}
 	return e.diagByLine[lineIdx]
@@ -689,7 +751,7 @@ func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
 func (e *Editor) Diagnostics() []LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagnosticsRevision != e.Revision() {
+	if !e.diagnosticsCurrent() {
 		return nil
 	}
 	out := make([]LSPDiagnostic, len(e.diagnostics))
@@ -736,7 +798,7 @@ func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
 func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagnosticsRevision != e.Revision() {
+	if !e.diagnosticsCurrent() {
 		return nil
 	}
 	for i := range e.diagnostics {
@@ -757,7 +819,7 @@ func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagnosticsRevision != e.Revision() {
+	if !e.diagnosticsCurrent() {
 		return nil
 	}
 	for i := len(e.diagnostics) - 1; i >= 0; i-- {
@@ -778,7 +840,7 @@ func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
 func (e *Editor) FirstError() *LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagnosticsRevision != e.Revision() {
+	if !e.diagnosticsCurrent() {
 		return nil
 	}
 	for i := range e.diagnostics {
@@ -818,7 +880,7 @@ func (e *Editor) DeleteSelection() bool {
 func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
-	if e.diagnosticsRevision != e.Revision() {
+	if !e.diagnosticsCurrent() {
 		return nil
 	}
 	var result []LSPDiagnostic

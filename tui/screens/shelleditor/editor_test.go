@@ -6,11 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"crude/document"
 	"crude/tui/editor"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/uitest"
+	"crude/types"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
@@ -101,9 +103,16 @@ func TestScreenPaintsGutterDiagnosticsAndScrollbar(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetDiagnostics([]editor.LSPDiagnostic{{
-		Line: 3, Col: 1, EndLine: 3, EndCol: 2, Severity: editor.DiagError, Message: "boom",
-	}})
+	if err := ed.InstallDocument(document.Snapshot{ID: "canonical", Path: path, Revision: 19,
+		AnalysisGeneration: "workspace", AnalysisLifetime: "open", Text: []byte(body), Saved: []byte(body), DiskExists: true}); err != nil {
+		t.Fatal(err)
+	}
+	version := 3
+	ed.SetDiagnostics(types.InsightDiagnostics{ID: "paint-batch", Boundary: types.InsightBoundary{
+		Source:  types.InsightSource{DocumentID: "canonical", Path: path, Revision: 19, WorkspaceGeneration: "workspace", Lifetime: "open", Kind: "canonical"},
+		Context: types.InsightContext{ID: "context", Generation: 1}, Producer: types.InsightProducer{Provider: "test-lsp", InstanceID: "server"},
+	}, WireVersion: version, ReportedVersion: &version, Binding: "exact-version", State: types.InsightCurrent,
+		Diagnostics: []editor.LSPDiagnostic{{Line: 3, Col: 1, EndLine: 3, EndCol: 2, Severity: editor.DiagError, Message: "boom"}}})
 
 	screen := shelleditor.New(theme.DefaultDark())
 	screen.Bind(ed)

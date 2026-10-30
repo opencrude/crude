@@ -2,7 +2,7 @@
 
 > Status: Current initial syntax integration. Selected native grammars are
 > scheduled from canonical documents and pushed to connected editors.
-> General assembly, semantic producers and full workflow/device acceptance
+> General assembly, complete semantic ownership and full workflow/device acceptance
 > remain open; Chroma still covers other lexical consumers.
 
 ## Ownership and boundary
@@ -74,8 +74,10 @@ cancel a different private draft or paint on its text.
 
 The existing header/footer and status details expose Syntax shared, draft,
 pending, lexical, limited or unavailable. These are syntax-source states,
-not project-check counts. LSP remains its existing producer path and is not
-yet routed through the complete planned Insight fact service.
+not project-check counts. LSP diagnostics now publish through the shared,
+source-qualified [Insight diagnostic store](editor.md#shared-diagnostic-facts).
+Other semantic request families, complete project context and the general fact
+graph remain open.
 
 ## Selected grammar data
 

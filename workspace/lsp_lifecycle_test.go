@@ -29,8 +29,13 @@ type lifecycleClient struct {
 	reapableClient
 	mu                  sync.Mutex
 	runtime             *lifecycleRuntime
-	diagnostics         func(string, []LSPDiagnostic)
+	diagnostics         func(model.InsightDiagnosticPublication)
 	calls               []string
+	wireVersion         int
+	boundaries          map[string]model.InsightBoundary
+	versions            map[string]int
+	publications        map[string]model.InsightDiagnosticPublication
+	sequence            uint64
 	startGate, stopGate <-chan struct{}
 	started, stopped    bool
 	startErr, stopErr   error
@@ -48,7 +53,7 @@ func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string) LSPC
 	r.specs = append(r.specs, spec)
 	return c
 }
-func (c *lifecycleClient) OnDiagnostics(fn func(string, []LSPDiagnostic)) {
+func (c *lifecycleClient) OnDiagnostics(fn func(model.InsightDiagnosticPublication)) {
 	c.mu.Lock()
 	c.diagnostics = fn
 	c.mu.Unlock()
@@ -102,11 +107,24 @@ func (c *lifecycleClient) record(value string) {
 	c.calls = append(c.calls, value)
 	c.mu.Unlock()
 }
-func (c *lifecycleClient) OpenFile(_ context.Context, path, language, text string) {
-	c.record("open:" + filepath.Base(path) + ":" + language + ":" + text)
+func (c *lifecycleClient) send(path, call string, boundary model.InsightBoundary) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, call)
+	c.wireVersion++
+	if c.boundaries == nil {
+		c.boundaries = make(map[string]model.InsightBoundary)
+		c.versions = make(map[string]int)
+		c.publications = make(map[string]model.InsightDiagnosticPublication)
+	}
+	c.boundaries[path], c.versions[path] = boundary, c.wireVersion
+	return c.wireVersion, nil
 }
-func (c *lifecycleClient) UpdateFile(_ context.Context, path, text string) {
-	c.record("change:" + filepath.Base(path) + ":" + text)
+func (c *lifecycleClient) OpenFile(_ context.Context, path, language, text string, boundary model.InsightBoundary) (int, error) {
+	return c.send(path, "open:"+filepath.Base(path)+":"+language+":"+text, boundary)
+}
+func (c *lifecycleClient) UpdateFile(_ context.Context, path, text string, boundary model.InsightBoundary) (int, error) {
+	return c.send(path, "change:"+filepath.Base(path)+":"+text, boundary)
 }
 func (c *lifecycleClient) CloseFile(_ context.Context, path string) {
 	c.record("close:" + filepath.Base(path))
@@ -114,16 +132,35 @@ func (c *lifecycleClient) CloseFile(_ context.Context, path string) {
 func (c *lifecycleClient) NotifyWatchedFilesChanged(_ context.Context, path string, kind int) {
 	c.record(fmt.Sprintf("watch:%s:%d", filepath.Base(path), kind))
 }
+func (c *lifecycleClient) NotifySave(_ context.Context, _ string, text string, _ int, before bool) {
+	phase := "didSave:"
+	if before {
+		phase = "willSave:"
+	}
+	c.record(phase + text)
+}
 func (c *lifecycleClient) RequestCompletions(_ context.Context, _ string, _, _ int) []CompletionItem {
 	c.record("complete")
 	return []CompletionItem{{Label: "ok"}}
 }
-func (c *lifecycleClient) emit(path string, ds []LSPDiagnostic) {
+func (c *lifecycleClient) publication(path string, ds []LSPDiagnostic) model.InsightDiagnosticPublication {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sequence++
+	v := c.versions[path]
+	return model.InsightDiagnosticPublication{Boundary: c.boundaries[path], Sequence: c.sequence,
+		WireVersion: v, ReportedVersion: &v, Diagnostics: ds}
+}
+func (c *lifecycleClient) emit(p model.InsightDiagnosticPublication) {
 	c.mu.Lock()
 	fn := c.diagnostics
+	if c.publications == nil {
+		c.publications = make(map[string]model.InsightDiagnosticPublication)
+	}
+	c.publications[p.Boundary.Source.Path] = p
 	c.mu.Unlock()
 	if fn != nil {
-		fn(path, ds)
+		fn(p)
 	}
 }
 func (c *lifecycleClient) snapshot() []string {
@@ -169,18 +206,18 @@ func TestLSPDocumentLifetimesAreLazyAndRetainLatestDuringStart(t *testing.T) {
 	}
 	path := filepath.Join(root, "main.go")
 	closed := filepath.Join(root, "closed.go")
-	m.OpenFile(t.Context(), path, "initial")
-	m.OpenFile(t.Context(), closed, "never open")
+	editorSource(t, m, path, "initial")
+	editorSource(t, m, closed, "never open")
 	awaitLSP(t, func() bool { return len(r.snapshot()) == 1 })
-	m.QueueFileUpdate(path, "latest unsaved")
-	m.CloseFile(t.Context(), closed)
+	editorSource(t, m, path, "latest unsaved")
+	closeEditor(t, m, closed)
 	close(gate)
 	c := r.snapshot()[0]
 	awaitLSP(t, func() bool { return len(c.snapshot()) == 1 })
 	if got := c.snapshot()[0]; got != "open:main.go:go:latest unsaved" {
 		t.Fatalf("startup sync=%s", got)
 	}
-	m.OpenFile(t.Context(), path, "latest unsaved")
+	editorSource(t, m, path, "latest unsaved")
 	m.mu.Lock()
 	m.signalLocked()
 	m.mu.Unlock()
@@ -193,18 +230,20 @@ func TestLSPDocumentLifetimesAreLazyAndRetainLatestDuringStart(t *testing.T) {
 func TestLSPStopRestartRetainsDocumentAndRejectsStaleDiagnostics(t *testing.T) {
 	m, r, root := lifecycleManager(t)
 	path := filepath.Join(root, "main.go")
-	m.OpenFile(t.Context(), path, "unsaved")
+	initial := editorSource(t, m, path, "unsaved")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 	old := r.snapshot()[0]
-	old.emit(path, []LSPDiagnostic{{Message: "error", Severity: 1}})
+	waitDiagnosticSend(t, m, old, initial)
+	old.emit(old.publication(path, []LSPDiagnostic{{Message: "error", Severity: 1}}))
+	requireDiagnostic(t, m, path, "error")
 	id := m.ServerHealthSnapshots()[0].ID
 	if !m.StopServer(id) {
 		t.Fatal("stop rejected")
 	}
 	awaitLSP(t, func() bool { old.mu.Lock(); defer old.mu.Unlock(); return old.stopped })
-	m.QueueFileUpdate(path, "kept while stopped")
-	old.emit(path, []LSPDiagnostic{{Message: "stale", Severity: 1}})
-	if len(m.FileDiagnostics(path)) != 0 {
+	editorSource(t, m, path, "kept while stopped")
+	old.emit(old.publication(path, []LSPDiagnostic{{Message: "stale", Severity: 1}}))
+	if batch, _ := m.FileDiagnostics(path); batch.HasExactSource() {
 		t.Fatal("stale diagnostics revived stopped state")
 	}
 	if !m.RestartServer(id) {
@@ -214,13 +253,12 @@ func TestLSPStopRestartRetainsDocumentAndRejectsStaleDiagnostics(t *testing.T) {
 	if got := r.snapshot()[1].snapshot()[0]; got != "open:main.go:go:kept while stopped" {
 		t.Fatal(got)
 	}
-	old.emit(path, []LSPDiagnostic{{Message: "old owner", Severity: 1}})
-	if len(m.FileDiagnostics(path)) != 0 {
+	old.emit(old.publication(path, []LSPDiagnostic{{Message: "old owner", Severity: 1}}))
+	if batch, _ := m.FileDiagnostics(path); batch.HasExactSource() {
 		t.Fatal("old process wrote new process cache")
 	}
-	changes := m.DrainDiagnosticChanges()
-	if _, ok := changes[path]; !ok {
-		t.Fatal("clear omitted UI delta")
+	if batch, ok := m.FileDiagnostics(path); !ok || batch.State != model.InsightStale {
+		t.Fatal("retirement did not retain stale publication evidence")
 	}
 }
 
@@ -230,7 +268,7 @@ func TestLSPRetryAfterInstallingMissingServer(t *testing.T) {
 	m, r, root := lifecycleManager(t)
 	r.startErrs = []error{fmt.Errorf("failed to start process: %w", &exec.Error{Name: "gopls", Err: exec.ErrNotFound})}
 	path := filepath.Join(root, "main.go")
-	m.OpenFile(t.Context(), path, "unsaved")
+	editorSource(t, m, path, "unsaved")
 	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots(); return len(h) == 1 && h[0].Error != "" })
 	server := m.ServerHealthSnapshots()[0]
 	if server.Error != "gopls is not installed or not on PATH. Install it, then choose Retry." {
@@ -253,9 +291,9 @@ func TestLSPBudgetWaitsForOwnedShutdownBeforeReplacement(t *testing.T) {
 	stop := make(chan struct{})
 	r.stopGate = stop
 	a, b := filepath.Join(root, "main.go"), filepath.Join(root, "app.py")
-	m.OpenFile(t.Context(), a, "go")
+	editorSource(t, m, a, "go")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
-	m.OpenFile(t.Context(), b, "python")
+	editorSource(t, m, b, "python")
 	awaitLSP(t, func() bool {
 		for _, h := range m.ServerHealthSnapshots() {
 			if h.Status == "Waiting for slot" {
@@ -264,7 +302,7 @@ func TestLSPBudgetWaitsForOwnedShutdownBeforeReplacement(t *testing.T) {
 		}
 		return false
 	})
-	m.CloseFile(t.Context(), a)
+	closeEditor(t, m, a)
 	time.Sleep(10 * time.Millisecond)
 	if len(r.snapshot()) != 1 {
 		t.Fatal("started replacement while old process still alive")
@@ -289,7 +327,7 @@ func TestLSPCloseJoinsServersAcrossWorkerWake(t *testing.T) {
 		m := NewLSPManager(nil, r)
 		t.Cleanup(m.Close)
 		m.SetWorkspaceRoot(root)
-		m.OpenFile(t.Context(), filepath.Join(root, "main.go"), "package main")
+		editorSource(t, m, filepath.Join(root, "main.go"), "package main")
 		awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 		started, stopped := make(chan struct{}), make(chan struct{})
 		go func() {
@@ -309,6 +347,7 @@ func TestLSPCloseJoinsServersAcrossWorkerWake(t *testing.T) {
 		<-started
 		m.Close()
 		<-stopped
+		m.sources.Close()
 		r.mu.Lock()
 		active := r.active
 		r.mu.Unlock()
@@ -323,7 +362,7 @@ func TestLSPDisableCancelsPendingStartAndDoesNotResurrect(t *testing.T) {
 	m, r, root := lifecycleManager(t)
 	gate := make(chan struct{})
 	r.startGate = gate
-	m.OpenFile(t.Context(), filepath.Join(root, "main.go"), "data")
+	editorSource(t, m, filepath.Join(root, "main.go"), "data")
 	awaitLSP(t, func() bool { return len(r.snapshot()) == 1 })
 	s := m.Settings()
 	s.Enabled = false
@@ -341,9 +380,9 @@ func TestLSPDisableCancelsPendingStartAndDoesNotResurrect(t *testing.T) {
 func TestLSPRequestsFlushDebounceAndWatchersDoNotOpenFiles(t *testing.T) {
 	m, r, root := lifecycleManager(t)
 	path := filepath.Join(root, "main.go")
-	m.OpenFile(t.Context(), path, "initial")
+	editorSource(t, m, path, "initial")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
-	m.QueueFileUpdate(path, "changed")
+	editorSource(t, m, path, "changed")
 	m.RequestCompletions(t.Context(), path, 0, 1)
 	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(root, "go.mod"), 2)
 	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(root, "external.go"), 2)
@@ -363,8 +402,8 @@ func TestLSPLargeDocumentDoesNotPoisonOtherDocuments(t *testing.T) {
 	s := m.Settings()
 	s.MaxDocumentBytes = 64
 	m.SetSettings(s)
-	m.OpenFile(t.Context(), filepath.Join(root, "large.go"), strings.Repeat("x", 65))
-	m.OpenFile(t.Context(), filepath.Join(root, "small.go"), "small")
+	editorSource(t, m, filepath.Join(root, "large.go"), strings.Repeat("x", 65))
+	editorSource(t, m, filepath.Join(root, "small.go"), "small")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 	if got := r.snapshot()[0].snapshot()[0]; got != "open:small.go:go:small" {
 		t.Fatal(got)
@@ -374,9 +413,9 @@ func TestLSPLargeDocumentDoesNotPoisonOtherDocuments(t *testing.T) {
 func TestLSPIdleProcessEviction(t *testing.T) {
 	m, r, root := lifecycleManager(t)
 	path := filepath.Join(root, "main.go")
-	m.OpenFile(t.Context(), path, "data")
+	editorSource(t, m, path, "data")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
-	m.CloseFile(t.Context(), path)
+	closeEditor(t, m, path)
 	m.mu.Lock()
 	for _, state := range m.states {
 		state.lastUsed = time.Now().Add(-time.Hour)
@@ -408,7 +447,15 @@ func TestLSPRootUsesLanguageMarkersAndWorkspaceBoundary(t *testing.T) {
 	}
 }
 
-func (c *lifecycleClient) AwaitDiagnostics(_ context.Context, path string) ([]LSPDiagnostic, bool) {
+func (c *lifecycleClient) AwaitDiagnostics(_ context.Context, path string) (model.InsightDiagnosticPublication, bool) {
 	c.record("await:" + filepath.Base(path))
-	return []LSPDiagnostic{{Message: "probe diagnostic", Severity: 1}}, true
+	c.mu.Lock()
+	p, ok := c.publications[path]
+	current := ok && sameInsightBoundary(p.Boundary, c.boundaries[path]) && p.WireVersion == c.versions[path]
+	c.mu.Unlock()
+	if !current {
+		p = c.publication(path, []LSPDiagnostic{{Message: "probe diagnostic", Severity: 1}})
+		c.emit(p)
+	}
+	return p, true
 }
