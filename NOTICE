@@ -6,5 +6,5 @@ See LICENSE-APACHE. This is not a dual-license grant for Crude.
 
 Third-party code retains its own licenses and notices, including the MIT
 license text in LICENSE-MIT. See codexio/NOTICE, third_party/ and
-deps/GHOSTTY-LICENSE. Release archives include dependency notices under
+third_party/libghostty-vt/GHOSTTY-LICENSE. Release archives include dependency notices under
 licenses/. These notices do not replace or relicense upstream code.

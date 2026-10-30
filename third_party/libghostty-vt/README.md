@@ -2,7 +2,8 @@
 
 Crude paints an embedded terminal from Ghostty's VT library, not a
 hand-written parser. The C API is unstable, so this tree pins one Ghostty
-commit and installs only `libghostty-vt` into a gitignored prefix.
+commit. Its pins, licenses and bootstrap documentation live here alongside the
+gitignored native outputs in `include/`, `lib/` and `share/` and `.crude-*` stamps.
 
 ## Decision
 
@@ -24,7 +25,7 @@ scripts/bootstrap_libghostty.sh
 
 This clones Ghostty at the commit in `GHOSTTY_PIN` (default source dir
 `$HOME/tools/src/ghostty`) and installs headers + `libghostty-vt.a` into
-`deps/libghostty-vt/`.
+`third_party/libghostty-vt/`.
 
 Both bootstrap scripts use `-Dcpu=baseline` and stamp `.crude-cpu` alongside
 the revision. Release packages must not inherit a builder's native CPU features;
@@ -55,7 +56,7 @@ The same script also generates the `xterm-ghostty` terminfo source from the
 pinned commit (the upstream terminfo module is emitted by a tiny Zig runner),
 compiles it with `tic -x`, and installs it twice:
 
-- `deps/libghostty-vt/share/terminfo/` — local build prefix (gitignored)
+- `third_party/libghostty-vt/share/terminfo/` — local build prefix (gitignored)
 - `types/terminfo/` — committed copy embedded into the binary via
   `types/ghostty_terminfo.go` (`go:embed`)
 

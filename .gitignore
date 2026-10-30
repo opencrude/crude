@@ -55,8 +55,11 @@ tmp/
 temp/
 __pycache__/
 
-# Pinned libghostty-vt install prefix (see deps/README.md)
-deps/libghostty-vt/
+# Generated libghostty-vt outputs (see third_party/libghostty-vt/README.md)
+/third_party/libghostty-vt/include/
+/third_party/libghostty-vt/lib/
+/third_party/libghostty-vt/share/
+/third_party/libghostty-vt/.crude-*
 
 # Agent-tool local state
 .commandcode/

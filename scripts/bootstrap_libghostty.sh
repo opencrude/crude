@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Download/check the pinned Ghostty revision and install libghostty-vt plus the
-# pinned xterm-ghostty terminfo into deps/libghostty-vt. Requires Zig 0.16.x
-# (see deps/GHOSTTY_PIN) and tic from ncurses-bin.
+# pinned xterm-ghostty terminfo into third_party/libghostty-vt. Requires Zig 0.16.x
+# (see third_party/libghostty-vt/GHOSTTY_PIN) and tic from ncurses-bin.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=/dev/null
-. "${ROOT}/deps/GHOSTTY_PIN"
+. "${ROOT}/third_party/libghostty-vt/GHOSTTY_PIN"
 
-PREFIX="${ROOT}/deps/libghostty-vt"
+PREFIX="${ROOT}/third_party/libghostty-vt"
 SRC="${GHOSTTY_SRC:-${HOME}/tools/src/ghostty}"
 STAMP="${PREFIX}/.crude-pin"
 # Keep in sync with types.GhosttyTermName.

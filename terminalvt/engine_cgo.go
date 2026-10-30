@@ -3,10 +3,10 @@
 package terminalvt
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../deps/libghostty-vt/include -DGHOSTTY_STATIC
-#cgo linux LDFLAGS: ${SRCDIR}/../deps/libghostty-vt/lib/libghostty-vt.a -lm -lpthread -ldl
-#cgo darwin LDFLAGS: ${SRCDIR}/../deps/libghostty-vt/lib/libghostty-vt.a -lm -lpthread
-#cgo windows LDFLAGS: -L${SRCDIR}/../deps/libghostty-vt/lib -lghostty-vt-static -lntdll -lkernel32 -lws2_32 -ladvapi32 -lgcc
+#cgo CFLAGS: -I${SRCDIR}/../third_party/libghostty-vt/include -DGHOSTTY_STATIC
+#cgo linux LDFLAGS: ${SRCDIR}/../third_party/libghostty-vt/lib/libghostty-vt.a -lm -lpthread -ldl
+#cgo darwin LDFLAGS: ${SRCDIR}/../third_party/libghostty-vt/lib/libghostty-vt.a -lm -lpthread
+#cgo windows LDFLAGS: -L${SRCDIR}/../third_party/libghostty-vt/lib -lghostty-vt-static -lntdll -lkernel32 -lws2_32 -ladvapi32 -lgcc
 #include "ghostty_bridge.h"
 */
 import "C"

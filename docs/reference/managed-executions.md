@@ -40,7 +40,7 @@ existing build/bootstrap workflow in the resolved checkout, or explicitly
 provision a verified matching dependency there before running native checks.
 A dependency failure is not a reason to widen source ownership, share mutable
 build state through a symlink, disable native functionality, or add another
-execution/setup authority. See [the native build prerequisites](../../deps/README.md).
+execution/setup authority. See [the native build prerequisites](../../third_party/libghostty-vt/README.md).
 
 Native file mutations in a managed checkout are checked against that checkout
 independently of optional file ownership. Absolute shared-checkout operands,

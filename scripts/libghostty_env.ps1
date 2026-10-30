@@ -2,7 +2,7 @@
 # Usage: . scripts/libghostty_env.ps1
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $env:CGO_ENABLED = if ($env:CGO_ENABLED) { $env:CGO_ENABLED } else { "1" }
-$env:PKG_CONFIG_PATH = "$Root\deps\libghostty-vt\share\pkgconfig;$Root\deps\libghostty-vt\lib\pkgconfig;$env:PKG_CONFIG_PATH"
+$env:PKG_CONFIG_PATH = "$Root\third_party\libghostty-vt\share\pkgconfig;$Root\third_party\libghostty-vt\lib\pkgconfig;$env:PKG_CONFIG_PATH"
 $zigDir = Join-Path $HOME "tools/zig-0.16.0"
 if (Test-Path (Join-Path $zigDir "zig.exe")) {
     if ($env:PATH -notlike "*$zigDir*") {

@@ -45,9 +45,9 @@ func cohortFixture(t *testing.T, reverse bool) string {
 		{"third_party/fork/fork_test.go", "package fork\n"},
 		{"third_party/pathwalk/walk.go", "package pathwalk\n"},
 		{"third_party/unused/ignored.go", "not a production dependency"},
-		{"deps/GHOSTTY_PIN", "GHOSTTY_COMMIT=pin\n"},
-		{"deps/GHOSTTY_PIN.ps1", "$GHOSTTY_COMMIT = 'pin'\n"},
-		{"deps/libghostty-vt/huge.go", "excluded native outputs"},
+		{"third_party/libghostty-vt/GHOSTTY_PIN", "GHOSTTY_COMMIT=pin\n"},
+		{"third_party/libghostty-vt/GHOSTTY_PIN.ps1", "$GHOSTTY_COMMIT = 'pin'\n"},
+		{"third_party/libghostty-vt/huge.go", "excluded native outputs"},
 		{"prompt/instructions.go", "package prompt\nconst Instructions = \"policy\"\n"},
 		{"prompt/policy.tmpl", "model instructions\n"},
 		{"docs/policy.tmpl", "not runtime instructions\n"},
@@ -94,8 +94,9 @@ func TestCohortCanonicalCorpus(t *testing.T) {
 	want := []string{
 		"command/custom.go", "command/run.go", "command/run_linux.go", "command/run_windows.go", "command/wire_gen.go",
 		"coreprotocol/schema_gen.go", "data/embed_windows.go", "data/runtime data.json",
-		"deps/GHOSTTY_PIN", "deps/GHOSTTY_PIN.ps1", "go.mod", "go.sum", "prompt/instructions.go", "prompt/policy.tmpl",
-		"third_party/fork/fork.go", "third_party/fork/fork_windows.go", "third_party/fork/go.mod", "third_party/fork/go.sum", "third_party/fork/impl.s", "third_party/pathwalk/walk.go",
+		"go.mod", "go.sum", "prompt/instructions.go", "prompt/policy.tmpl",
+		"third_party/fork/fork.go", "third_party/fork/fork_windows.go", "third_party/fork/go.mod", "third_party/fork/go.sum", "third_party/fork/impl.s",
+		"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1", "third_party/pathwalk/walk.go",
 	}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("wrong corpus:\n got %q\nwant %q", names, want)
@@ -170,7 +171,8 @@ func TestCohortSourceChanges(t *testing.T) {
 	for _, name := range []string{
 		"command/run.go", "command/run_windows.go", "command/custom.go", "command/wire_gen.go", "coreprotocol/schema_gen.go",
 		"go.mod", "go.sum", "third_party/fork/fork.go", "third_party/fork/go.mod", "third_party/fork/go.sum", "third_party/fork/impl.s",
-		"data/runtime data.json", "prompt/instructions.go", "prompt/policy.tmpl", "deps/GHOSTTY_PIN",
+		"data/runtime data.json", "prompt/instructions.go", "prompt/policy.tmpl",
+		"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := cohortFixture(t, false)
@@ -191,7 +193,7 @@ func TestCohortSourceChanges(t *testing.T) {
 func TestCohortExcludedChanges(t *testing.T) {
 	root := cohortFixture(t, false)
 	before := mustCohort(t, root)
-	for _, name := range []string{"command/run_test.go", "coreprotocol/wire_types_gen_test.go", "third_party/fork/fork_test.go", "buildinfo/cohort_gen.go", "testdata/new.go", "third_party/unused/ignored.go", "dist/new.go", "deps/libghostty-vt/huge.go", "data/other.json", "docs/policy.tmpl", ".claude/new.go"} {
+	for _, name := range []string{"command/run_test.go", "coreprotocol/wire_types_gen_test.go", "third_party/fork/fork_test.go", "buildinfo/cohort_gen.go", "testdata/new.go", "third_party/unused/ignored.go", "dist/new.go", "third_party/libghostty-vt/huge.go", "data/other.json", "docs/policy.tmpl", ".claude/new.go"} {
 		putCohortFile(t, root, name, "ignored edit")
 	}
 	if mustCohort(t, root) != before {

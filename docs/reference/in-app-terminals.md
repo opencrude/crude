@@ -5,7 +5,7 @@
 Crude embeds a terminal multiplexer in the TUI. Each session is a PTY whose
 environment is pinned to **Ghostty 1.3.0** (`types.PinnedGhosttyVersion`,
 `TERM=xterm-ghostty`). Emulation is **libghostty-vt** at the commit in
-`deps/GHOSTTY_PIN`, linked through a narrow presentation-neutral cgo adapter in `terminalvt/`.
+`third_party/libghostty-vt/GHOSTTY_PIN`, linked through a narrow presentation-neutral cgo adapter in `terminalvt/`.
 `CGO_ENABLED=0` builds compile a stub that returns an error from
 `terminalvt.New`; they do not keep a hand-written parser.
 

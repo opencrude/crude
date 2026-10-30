@@ -76,6 +76,24 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.package(self.stage, self.output, "v0.1.0", "linux")
 
+    def test_native_dependency_layout(self):
+        prefix = release.ROOT / "third_party/libghostty-vt"
+        self.assertFalse((release.ROOT / "deps").exists())
+        for name in ("GHOSTTY_PIN", "GHOSTTY_PIN.ps1", "GHOSTTY-LICENSE", "NATIVE-NOTICES", "README.md"):
+            with self.subTest(name=name):
+                self.assertTrue((prefix / name).is_file())
+        pin = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (prefix / "GHOSTTY_PIN").read_text(), re.MULTILINE).group(1)
+        self.assertIn(pin, (prefix / "GHOSTTY_PIN.ps1").read_text())
+        self.assertIn(pin, (prefix / "NATIVE-NOTICES").read_text())
+
+    def test_native_cache_does_not_overwrite_checked_in_metadata(self):
+        action = (release.ROOT / ".github/actions/setup-native/action.yml").read_text()
+        paths = re.findall(r"^          (third_party/libghostty-vt\S*)$", action, re.MULTILINE)
+        generated = {"include", "lib", "share", ".crude-pin", ".crude-cpu"}
+        self.assertEqual(len(paths), 2 * len(generated))  # Restore and save.
+        self.assertEqual(set(paths), {f"third_party/libghostty-vt/{name}" for name in generated})
+        self.assertIn("hashFiles('third_party/libghostty-vt/GHOSTTY_PIN*'", action)
+
     def test_workflows_do_not_run_on_push_pull_request_or_tag(self):
         expected = {
             "tui.yml": {"workflow_dispatch"},
