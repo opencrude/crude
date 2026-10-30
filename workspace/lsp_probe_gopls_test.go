@@ -37,6 +37,7 @@ func TestProbeAgainstRealGopls(t *testing.T) {
 	t.Cleanup(m.Close)
 	probeSources(t, m, root)
 	m.SetWorkspaceRoot(root)
+	trustAnalysis(t, m, root)
 	settings := editorDisabledSettings()
 	m.SetSettings(settings)
 

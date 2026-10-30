@@ -184,6 +184,7 @@ func (idleSymbolsClient) RequestDocumentSymbols(context.Context, string) []LSPSy
 func TestLSPChangedSymbolsAndInvalidation(t *testing.T) {
 	m := NewLSPManager(nil)
 	defer m.Close()
+	trustAnalysis(t, m, t.TempDir())
 	path := filepath.Clean("symbols.go")
 	// Install a connected, already-synchronized transport so the real request
 	// path caches symbols, without starting a process or a lifecycle worker.

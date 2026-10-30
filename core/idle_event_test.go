@@ -79,7 +79,9 @@ func TestIdleActorExternalOwnersPublishWithoutMaintenanceDeadline(t *testing.T) 
 	a.ws.LSPMgr.Stop()
 	version := a.ws.LSPMgr.Version()
 	awaitIdleState(t, a, coreprotocol.TopicLSP, func(state coreprotocol.WorkspaceState) bool {
-		return state.LSP != nil && state.LSP.Version >= version && state.LSP.Insights.IdleStatus == "Language servers paused"
+		// This idle fixture has no execution grant. Stop still broadcasts its
+		// version, but must not replace the default execution-ceiling guidance.
+		return state.LSP != nil && state.LSP.Version >= version && state.LSP.Insights.IdleStatus == "Static only"
 	})
 	assertIdle()
 }

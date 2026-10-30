@@ -192,6 +192,7 @@ func (s *Store) Publish(p types.InsightDiagnosticPublication) (types.InsightDiag
 
 // Invalidate fences publications until the coordinator next calls Observe.
 // Failure/blocked reasons retain all old facts as stale, not as a clean result.
+// Repeated retirement of an inactive boundary preserves its first stale reason.
 func (s *Store) Invalidate(documentID, reason string) error {
 	if err := boundedString(reason, MaxReasonBytes); err != nil {
 		return err
@@ -202,10 +203,19 @@ func (s *Store) Invalidate(documentID, reason string) error {
 	if !ok {
 		return ErrBoundary
 	}
+	if invalidateEntry(e, reason) {
+		s.version++
+	}
+	return nil
+}
+
+func invalidateEntry(e *entry, reason string) bool {
+	if !e.active {
+		return false
+	}
 	e.active = false
 	e.answer.State, e.answer.Detail = types.InsightStale, reason
-	s.version++
-	return nil
+	return true
 }
 
 // InvalidateSource is the bounded identity-only canonical mutation path. It
@@ -217,9 +227,7 @@ func (s *Store) InvalidateSource(source types.InsightSource) bool {
 	if e == nil || e.boundary.Source == source {
 		return false
 	}
-	changed := e.active || e.answer.State != types.InsightStale || e.answer.Detail != "Canonical source changed."
-	e.active = false
-	e.answer.State, e.answer.Detail = types.InsightStale, "Canonical source changed."
+	changed := invalidateEntry(e, "Canonical source changed.")
 	if changed {
 		s.version++
 	}
@@ -236,9 +244,9 @@ func (s *Store) InvalidateAll(reason string) bool {
 	defer s.mu.Unlock()
 	changed := false
 	for _, e := range s.documents {
-		changed = changed || e.active || e.answer.State != types.InsightStale || e.answer.Detail != reason
-		e.active = false
-		e.answer.State, e.answer.Detail = types.InsightStale, reason
+		if invalidateEntry(e, reason) {
+			changed = true
+		}
 	}
 	if changed {
 		s.version++

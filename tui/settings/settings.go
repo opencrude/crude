@@ -292,6 +292,9 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset, scope types.SettingsScope, appDefaults types.AppSettings, overrides types.WorkspaceOverrides) *Model {
 	current = types.CloneAppSettings(current)
 	types.ApplyAppDefaults(&current)
+	if scope != types.SettingsScopeWorkspace {
+		current.Analysis = types.DefaultWorkspaceAnalysisSettings()
+	}
 	current.Agents.AgentProfiles = types.CloneAgentProfiles(current.Agents.AgentProfiles)
 	categories := make(map[string]types.CategorySettings, len(current.Agents.Categories))
 	for id, value := range current.Agents.Categories {
@@ -2166,6 +2169,7 @@ func (m *Model) SetScope(scope types.SettingsScope) {
 	if len(m.categories) > catNetworkCertificates {
 		m.rebuildNetworkForms()
 	}
+	m.syncAnalysisScope()
 }
 func (m *Model) Overrides() types.WorkspaceOverrides {
 	if m.Scope() != types.SettingsScopeWorkspace {
@@ -2182,7 +2186,7 @@ func (m *Model) Edits() []types.SettingEdit {
 	edits := types.SettingsEdits(m.collectedBase, m.AppSettings())
 	filtered := edits[:0]
 	for _, edit := range edits {
-		if len(edit.Path) == 0 || edit.Path[0] == "accounts" || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
+		if len(edit.Path) == 0 || edit.Path[0] == "accounts" || edit.Path[0] == "analysis" && m.Scope() != types.SettingsScopeWorkspace || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
 			continue
 		}
 		leaf := edit.Path[len(edit.Path)-1]
@@ -2340,7 +2344,9 @@ func (m *Model) workspaceOverridesPage(index int) bool {
 			return bytes.Contains(m.storedOverrides.Memory, []byte(`"memory_category"`)) || bytes.Contains(m.storedOverrides.Safety, []byte(`"auto_permission"`))
 		}
 		return false
-	case catLSP, catLanguageServers:
+	case catLSP:
+		return m.storedOverrides.CategoryOverridden("lsp") || m.storedOverrides.CategoryOverridden("analysis")
+	case catLanguageServers:
 		return m.storedOverrides.CategoryOverridden("lsp")
 	case catAppearance:
 		return m.storedOverrides.CategoryOverridden("appearance")
@@ -2529,6 +2535,7 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectAppearance(&settings.Theme)
 	m.collectEditor(&settings.Editor)
 	m.collectLSP(&settings.LSP)
+	settings.Analysis = m.collectAnalysis()
 	m.collectUI(&settings.UI)
 	m.collectTerminal(&settings.Terminal)
 	settings.Capabilities = capability.Clone(m.capabilities)

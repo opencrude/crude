@@ -167,6 +167,9 @@ type Workspace struct {
 	// appDefaults is the application-layer settings snapshot supplied by
 	// app/ from ~/.crude/config.json. Workspace overrides layer on top.
 	appDefaults ttypes.AppSettings
+	// The factory worker and successful preference publications install this
+	// observation. Actor reads never inspect the filesystem to derive settings.
+	analysisRootIdentity string
 
 	// homeDir is the user's home directory.
 	homeDir string
@@ -746,6 +749,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 
 	// Rebuild around the new project.
 	w.RootPath = abs
+	w.analysisRootIdentity = ""
 	w.WorkspaceDir = wsDir
 	w.WorkspaceDB = wsDB
 	w.workspaceDBErr = nil

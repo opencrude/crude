@@ -53,6 +53,7 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 		{ID: "error", Label: "Errors"}, {ID: "warning", Label: "Warnings"}, {ID: "info", Label: "Info"}, {ID: "hint", Label: "Hints"},
 	}, lsp.MinSeverity, "Lowest level shown: Hints includes all; Errors includes errors only.")
 	return formModel(
+		m.analysisTrustField(m.layerBase.Analysis),
 		ui.SeparatorFieldState("language-intelligence", "General"),
 		ui.BoolFieldState("enabled", "Language intelligence", lsp.Enabled, "Enable services for open source files; this does not scan the workspace."),
 		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose configured servers by file type; install their executables separately."),

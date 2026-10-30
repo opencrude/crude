@@ -21,6 +21,9 @@ func (a *actor) prepareWorkspacePreferences(request coreprotocol.Request) (func(
 	if err := types.ValidateSettingEdits(types.AppSettings{}, input.Edits); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
 	}
+	if err := types.ValidateAnalysisSettingEdits(types.SettingsScopeWorkspace, input.Edits); err != nil {
+		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
+	}
 	for _, edit := range input.Edits {
 		if len(edit.Path) == 0 || edit.Path[0] == "onboarding" || edit.Path[0] == "accounts" || edit.Path[0] == "network" || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
 			return func(context.Context) coreprotocol.Response {

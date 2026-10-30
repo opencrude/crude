@@ -13,7 +13,7 @@ func TestDefaultLSPRuntimeConstructionIsInert(t *testing.T) {
 		Environment:           map[string]string{"CRUDE_LSP_TEST": "1"},
 		Settings:              map[string]any{"test": true},
 		InitializationOptions: map[string]any{"option": true},
-	}, "file:///unused")
+	}, "file:///unused", func() error { return nil })
 	t.Cleanup(func() {
 		if err := client.Stop(); err != nil {
 			t.Error(err)

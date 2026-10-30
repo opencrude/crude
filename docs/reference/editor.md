@@ -265,6 +265,15 @@ Tea's update goroutine (the tab-close hang).
   A reaped server's own nonzero exit is an operational failure, not an occupied
   process slot; genuine containment, wait, pipe-close or worker-join failures
   remain failures.
+- Workspace Trust and one core-wide process governor gate every installed LSP
+  producer, including headless agent probes. Static only is the default.
+  Native-root checks run off actor/Update locks; the final transport admission
+  callback fences the exact launch epoch immediately before construction.
+  Already-admitted starts remain owned across revocation and are cancelled and
+  joined. Queued work cannot occupy an orphaned slot after its last wanted
+  document closes, becomes oversized, or loses Trust. Only verified retirement
+  releases a begun lease; unverified teardown retains global capacity.
+  See [workspace Trust and limits](settings.md#workspace-analysis-trust).
 - Unix group signaling occurs before leader reap and never targets a settled
   identity; unsupported/failed exit observation is unproven cleanup. Windows
   starts suspended, assigns the retained Job before resume, joins the leader
@@ -288,8 +297,9 @@ Tea's update goroutine (the tab-close hang).
 - `LSPManager` documents have holders: the editor view flag and a refcount of
   agent probes (`workspace/lsp_probe.go`). A document closes on the server only
   when no holder remains. Probes are allowed when the session's agent code
-  intelligence is on even if editor LSP is off; a user-paused server refuses
-  both. Probe results are plain data (`types.LSPProbeView`), never editor state.
+  intelligence is on and workspace execution Trust permits them even if editor
+  LSP is off; a user-paused server refuses both. Probe results are plain data
+  (`types.LSPProbeView`), never editor state.
   Probe readiness is published only after the transport has installed the exact
   captured document revision. An edit during the send remains pending; replaced
   document/server/client owners cannot publish a stale ready state. Releasing the
@@ -353,6 +363,9 @@ inherited environment and verified executable digest. An exact wire-version
 publication therefore remains **partial** even when empty. Observed units are
 not the denominator of a complete project check. Neither quiescence nor zero
 visible diagnostics certifies a clean project. Stop/restart keeps stale evidence.
+Invalidating an already inactive boundary is idempotent: later asynchronous
+teardown cannot restamp its first stale reason between shell snapshots. Only
+observing a new active boundary admits another invalidation or publication.
 Severity and editor/tree visibility filters are view policy, not mutations of
 the published batch.
 
@@ -371,8 +384,10 @@ qualified source remain labelled raw UTF-16 positions without guessed disk
 quotes. Automatic post-edit probes obey the same session, role-tool and read-policy
 admission as explicit calls; a later revocation drops queued notices instead of
 delivering or replaying them on the next model step.
+Root-bound workspace Trust and shared LSP process admission are implemented.
 General destination qualification, completion/hover/rename fact contracts,
-project modeling, execution trust admission and resource governance remain open.
+project modeling, broader analysis work classes, pressure management and native
+CPU/RSS containment remain open.
 
 ### Diagnostic positions
 

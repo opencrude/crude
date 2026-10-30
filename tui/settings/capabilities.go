@@ -229,6 +229,11 @@ func (m *Model) categoryMatches(index int, category Category, query string) bool
 		if strings.Contains(strings.ToLower(field.ID+" "+field.Label+" "+field.Description), query) {
 			return true
 		}
+		for _, option := range field.Options {
+			if strings.Contains(strings.ToLower(option.ID+" "+option.Label), query) {
+				return true
+			}
+		}
 	}
 	var entries []string
 	switch index {

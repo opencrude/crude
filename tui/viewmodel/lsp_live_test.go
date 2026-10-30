@@ -33,11 +33,11 @@ type liveLSPClient struct {
 	owner *liveLSPRuntime
 }
 
-func (r *liveLSPRuntime) NewClient(spec model.LSPServerSpec, root string) workspace.LSPClient {
+func (r *liveLSPRuntime) NewClient(spec model.LSPServerSpec, root string, startAdmission func() error) workspace.LSPClient {
 	r.mu.Lock()
 	r.created++
 	r.mu.Unlock()
-	return &liveLSPClient{LSPClient: r.LSPRuntime.NewClient(spec, root), owner: r}
+	return &liveLSPClient{LSPClient: r.LSPRuntime.NewClient(spec, root, startAdmission), owner: r}
 }
 
 func (c *liveLSPClient) OpenFile(ctx context.Context, path, language, text string, boundary model.InsightBoundary) (int, error) {
@@ -80,6 +80,7 @@ func liveLSPManager(t *testing.T, root string) (*workspace.LSPManager, *liveLSPR
 	r := &liveLSPRuntime{LSPRuntime: workspace.NewLSPRuntime()}
 	m := workspace.NewLSPManager(nil, r)
 	t.Cleanup(m.Close) // Only this manager's exact owned processes are stopped.
+	admitSemanticManager(t, m, root)
 	s := model.DefaultLSPSettings()
 	s.Enabled, s.MaxServers, s.ServerThreads = true, 1, 2
 	if address := os.Getenv("CRUDE_LSP_PROFILE_ADDR"); address != "" {

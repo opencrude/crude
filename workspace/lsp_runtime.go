@@ -24,10 +24,11 @@ type runtimeLSPClient struct {
 var _ LSPRuntime = defaultLSPRuntime{}
 var _ LSPClient = (*runtimeLSPClient)(nil)
 
-func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string) LSPClient {
+func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient {
 	return &runtimeLSPClient{LSPIntegration: lspclient.NewLSPIntegration(
 		spec.Command, spec.Args, rootURI,
 		lspclient.WithServerConfiguration(spec.Environment, spec.Settings, spec.InitializationOptions),
+		lspclient.WithStartAdmission(startAdmission),
 	)}
 }
 

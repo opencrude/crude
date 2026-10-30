@@ -6,6 +6,8 @@ Crude has three settings layers. Each stores only its explicit choices. A value
 not configured at that scope inherits from its parent. The last explicit write
 to a field wins; ordinary settings saves have no configuration revision,
 preimage or conflict gate. Users and agents use the same rule.
+Workspace analysis Trust is an explicit exception: it never inherits from the
+application or session layer, and only a human can change its authority.
 
 ```
 Application  (~/.crude/config.json)
@@ -22,6 +24,7 @@ per category holding only the individual leaves the workspace changed. Every
 field it does not name keeps following the application layer forever, so
 turning something off at the application level reaches the workspace even
 years later.
+Analysis Trust instead resolves to **Static only** when absent or invalid.
 
 On a project switch, the target workspace database is opened before the old
 shell attachment is detached; peer work in that project is retained. Its effective theme is then applied before target-owned
@@ -1028,8 +1031,45 @@ project markers, environment table, and the JSON `settings`/`initializationOptio
 objects. Per-language `Languages` entries are the only server authority. `workspace.LSPManager` reads the **effective**
 `LSPSettings` and refuses to start or request gated features.
 
-Enabling is lazy, not a workspace scan: with **Start on open** enabled, opening
-a supported source file starts its configured server. Saving enable also starts
+### Workspace analysis Trust
+
+Workspace scope adds **Trust** at the top of Code Intelligence with two choices:
+**Static only** and **Project execution allowed**. Application scope has no
+editable Trust control. This workspace-only, human-owned choice does not inherit
+from an application setting, session flag, agent profile, recipe or permission
+reviewer. Application writes are rejected, including container writes and Reset.
+Code Intelligence Reset removes the explicit workspace choice; Language Servers
+Reset does not change it. Source editing and local syntax remain usable in
+Static only, but no external language server is constructed or started by editor
+opens, explicit Start/Retry or session-agent probes.
+
+The workspace preference transaction binds an explicit execution grant to the
+root's native directory identity. Its `analysis_root_identity` metadata is
+owner-generated, not an editable preference or repository marker. Grant and
+binding commit or roll back with the other addressed preferences in the same
+transaction. Unrelated preference/entity saves never rebind a grant. Reopening a
+different directory at the same pathname resolves to Static only and requires a
+new explicit choice. Native identity is rechecked on the manager worker before
+root discovery and every new launch; replacement or unavailable identity blocks
+execution, invalidates dependent facts and exposes repair guidance.
+
+Linux requires native statx birth identity, Darwin uses native birth identity,
+and Windows uses native volume/file identity plus creation time. Missing native
+identity, unsafe path components, symlinks/reparse points or unsupported
+platforms fail closed. These metadata checks detect observed replacement, not
+every adversarial path race, and are not a filesystem sandbox. Native
+Windows/macOS runtime acceptance remains separate from cross-build evidence.
+
+Revoking Trust stops admission immediately, cancels queued/starting work and
+retires live producers through their existing joined lifecycle owner. The final
+transport launch-epoch check is memory-only. A constructor admitted before
+concurrent revocation stays owned until verified teardown; cancellation is not
+proof that a subprocess was never created. Late callbacks and request results
+cannot revive the revoked context. Trust is an execution ceiling for this LSP
+fleet, not an acquisition, network or tool-effect grant.
+
+Enabling is lazy, not a workspace scan: with Trust granted and **Start on open**
+enabled, opening a supported source file starts its configured server. Saving enable also starts
 services for already-open source buffers without reopening or discarding their
 unsaved text. With no source open, Problems / Workspace health says **Waiting for
 source file** and its expanded details explain the next step. Disabled, paused,
@@ -1048,7 +1088,18 @@ connected editors use the core live-text authority and per-client open/close
 views; final native and distinct-host runtime acceptance remains separate.
 
 Resource fields default to two servers, a 300-second idle timeout and a 2 MiB
-document limit, edited on Code Intelligence (the document limit in MB). Remaining
+document limit, edited on Code Intelligence (the document limit in MB). A single
+core-owned governor admits all retained workspaces' LSP processes. Its initial
+global ceiling is one quarter of the core's `GOMAXPROCS`, clamped to 1 through 8,
+with at most 256 queued lifetimes. Each workspace's Maximum servers is an
+additional quota across its retained generations, not a separate global pool.
+Quota reductions do not evict running work. An unstarted reservation can be
+cancelled; a begun lease is released only after positively verified teardown.
+Failed cleanup retains its occupied slot and visible failure even across
+workspace reopen or core shutdown. A waiting slot is not a clean analysis result.
+This governor bounds process admission, not CPU/RSS, escaped descendants or
+heavy-project containment. Provider thread and memory fields remain hints;
+pressure controls and other analysis work classes remain planned. Remaining
 acceptance work is tracked in [LSP acceptance](../plans/lsp-acceptance.md).
 
 **Agent code intelligence is a separate, session-bound switch.** Session
@@ -1056,10 +1107,11 @@ Settings → **Code Intelligence** (`code_intelligence`, persisted per session a
 settable through the control API) gives that session's agents the `lsp` tool
 (diagnostics, definition, references, hover, document symbols) and a post-edit
 diagnostics notice for files an agent changed. It is independent of the editor
-master enable: with editor LSP off, an agent's probe may still start the
-configured server for the files it asks about; with the session switch off,
-agents never start a server and the editor keeps its own behavior. A user stop
-(paused server) blocks both. Probes only use servers configured and enabled
+master enable: with workspace execution Trust granted and editor LSP off, an
+agent's probe may still start the configured server for the files it asks about;
+with the session switch off, agents never start a server and the editor keeps its
+own behavior. Static only or a user stop (paused server) blocks both.
+Probes only use servers configured and enabled
 under Language Servers and are bounded by the same resource limits; they never
 install, download or guess a server. Agent-owned documents are refcounted
 separately from editor views, so closing an editor never closes a document an

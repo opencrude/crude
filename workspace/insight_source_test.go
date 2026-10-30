@@ -170,7 +170,9 @@ func (c *sourceAnswerClient) AwaitDiagnostics(ctx context.Context, path string) 
 
 type sourceAnswerRuntime struct{ client *sourceAnswerClient }
 
-func (r sourceAnswerRuntime) NewClient(types.LSPServerSpec, string) LSPClient { return r.client }
+func (r sourceAnswerRuntime) NewClient(types.LSPServerSpec, string, func() error) LSPClient {
+	return r.client
+}
 
 func TestInsightProbeNeverReturnsPayloadForReplacedSource(t *testing.T) {
 	for _, kind := range []string{"canonical-edit", "disk-edit", "cancelled"} {
@@ -182,6 +184,7 @@ func TestInsightProbeNeverReturnsPayloadForReplacedSource(t *testing.T) {
 			manager := NewLSPManager(nil, sourceAnswerRuntime{client})
 			t.Cleanup(manager.Close)
 			manager.SetWorkspaceRoot(root)
+			trustAnalysis(t, manager, root)
 			sources := probeSources(t, manager, root)
 			owner := document.Owner{ClientID: "query-author", Epoch: 1}
 			var initial document.Snapshot

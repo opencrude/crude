@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"crude/corewire"
 	"crude/document"
 	"crude/history"
+	"crude/insight/governor"
 	"crude/metrics"
 	"crude/provider"
 	"crude/types"
@@ -37,15 +39,17 @@ import (
 type Factory func(root string) (*workspace.Workspace, error)
 
 type Runtime struct {
-	mu               sync.Mutex
-	workspaces       map[string]*actor
-	clients          map[string]*Connection
-	epochs           map[string]uint64
-	factory          Factory
-	receipts         *receiptJournal
-	closed           bool
-	creating         map[string]*workspaceCreation
-	factoryWG        sync.WaitGroup
+	mu         sync.Mutex
+	workspaces map[string]*actor
+	clients    map[string]*Connection
+	epochs     map[string]uint64
+	factory    Factory
+	receipts   *receiptJournal
+	closed     bool
+	creating   map[string]*workspaceCreation
+	factoryWG  sync.WaitGroup
+	// One admission authority spans every workspace and retained generation.
+	analysisGovernor *governor.Governor
 	history          *history.Store
 	historyPath      string
 	uploads          *ReferenceUploads
@@ -53,6 +57,7 @@ type Runtime struct {
 	draining         bool
 	stopping         bool // reversible lifecycle reservation, under mu
 	stopMu           sync.Mutex
+	shutdownErr      error  // stopMu protects the joined, idempotent Close result
 	idleRelease      func() // retained until runtime resource shutdown joins
 	lifetime         lifetimePolicy
 	storageGates     map[string]*workspaceStorageGate
@@ -75,7 +80,16 @@ func New(factory Factory, receiptPath string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{factory: factory, lifetime: lifetimePolicy{buildID: buildinfo.ExecutableID()}, receipts: journal, workspaces: make(map[string]*actor), clients: make(map[string]*Connection), epochs: make(map[string]uint64), creating: make(map[string]*workspaceCreation), sessions: make(map[string]*Connection), uploads: NewReferenceUploads(filepath.Join(filepath.Dir(receiptPath), "media-staging"))}, nil
+	// Conservative machine-sized process admission is not CPU/RSS containment.
+	// Provider memory/thread hints and native enforcement remain separate facts.
+	analysis, err := governor.New(governor.Limits{
+		MaxProcesses: max(1, min(8, runtime.GOMAXPROCS(0)/4)), MaxWaiting: 256,
+	})
+	if err != nil {
+		_ = journal.close()
+		return nil, err
+	}
+	return &Runtime{factory: factory, lifetime: lifetimePolicy{buildID: buildinfo.ExecutableID()}, receipts: journal, workspaces: make(map[string]*actor), clients: make(map[string]*Connection), epochs: make(map[string]uint64), creating: make(map[string]*workspaceCreation), sessions: make(map[string]*Connection), uploads: NewReferenceUploads(filepath.Join(filepath.Dir(receiptPath), "media-staging")), analysisGovernor: analysis}, nil
 }
 
 // SetPromptHistory installs the one application-owned history before clients
@@ -276,9 +290,10 @@ func (r *Runtime) Close() error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return nil
+		return r.shutdownErr
 	}
 	r.closed = true
+	r.analysisGovernor.Close()
 	clients := make([]*Connection, 0, len(r.clients))
 	for _, c := range r.clients {
 		clients = append(clients, c)
@@ -304,7 +319,12 @@ func (r *Runtime) Close() error {
 	if r.idleRelease != nil {
 		r.idleRelease()
 	}
-	return errors.Join(r.uploads.Close(), r.receipts.close())
+	var analysisErr error
+	if reserved := r.analysisGovernor.Snapshot().Counts.Reserved(); reserved != 0 {
+		analysisErr = fmt.Errorf("analysis shutdown could not verify %d retained process reservation(s)", reserved)
+	}
+	r.shutdownErr = errors.Join(analysisErr, r.uploads.Close(), r.receipts.close())
+	return r.shutdownErr
 }
 
 func (r *Runtime) ClientCount() int { r.mu.Lock(); defer r.mu.Unlock(); return len(r.clients) }
@@ -518,6 +538,9 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 			if err == nil && ws != nil {
 				// Retained resources initialize before an actor or shell can read
 				// them. This I/O belongs to the factory worker, never actor Update.
+				if analysisErr := ws.InitializeAnalysisRuntime(r.analysisGovernor, id, rand.Text()); analysisErr != nil {
+					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "analysis", Summary: "Project analysis remains Static only", Detail: analysisErr.Error()})
+				}
 				initCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				initErr := ws.InitializeCoreResources(initCtx)
 				cancel()

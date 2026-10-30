@@ -57,14 +57,14 @@ func newRealShellApp(t *testing.T) (*App, *workspace.Workspace) {
 // in tests that do not exercise LSP.
 type noopLSPRuntime struct{}
 
-type noopLSPClient struct{}
+type noopLSPClient struct{ admit func() error }
 
-func (noopLSPRuntime) NewClient(model.LSPServerSpec, string) workspace.LSPClient {
-	return noopLSPClient{}
+func (noopLSPRuntime) NewClient(_ model.LSPServerSpec, _ string, startAdmission func() error) workspace.LSPClient {
+	return noopLSPClient{admit: startAdmission}
 }
 
 func (noopLSPClient) OnDiagnostics(func(model.InsightDiagnosticPublication)) {}
-func (noopLSPClient) Start(context.Context) error                            { return nil }
+func (c noopLSPClient) Start(context.Context) error                          { return c.admit() }
 func (noopLSPClient) Stop() error                                            { return nil }
 func (noopLSPClient) Done() <-chan struct{}                                  { return nil }
 func (noopLSPClient) OpenFile(context.Context, string, string, string, model.InsightBoundary) (int, error) {

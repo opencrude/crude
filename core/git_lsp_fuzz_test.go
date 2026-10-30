@@ -16,6 +16,8 @@ import (
 
 	"crude/coreprotocol"
 	"crude/document"
+	"crude/fileio"
+	"crude/insight/governor"
 	"crude/localhistory"
 	"crude/types"
 	"crude/workspace"
@@ -257,17 +259,32 @@ type semanticLSPClient struct {
 	boundary    types.InsightBoundary
 	version     int
 	diagnostics []types.LSPDiagnostic
+	admit       func() error
 }
 
 type semanticLSPRuntime struct{ client *semanticLSPClient }
 
-func (r semanticLSPRuntime) NewClient(types.LSPServerSpec, string) workspace.LSPClient {
+func (r semanticLSPRuntime) NewClient(_ types.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
+	r.client.mu.Lock()
+	r.client.admit = admit
+	r.client.mu.Unlock()
 	return r.client
 }
 func (*semanticLSPClient) OnDiagnostics(func(types.InsightDiagnosticPublication)) {}
-func (*semanticLSPClient) Start(context.Context) error                            { return nil }
-func (*semanticLSPClient) Stop() error                                            { return nil }
-func (*semanticLSPClient) Done() <-chan struct{}                                  { return nil }
+func (c *semanticLSPClient) Start(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	admit := c.admit
+	c.mu.Unlock()
+	if admit != nil {
+		return admit()
+	}
+	return nil
+}
+func (*semanticLSPClient) Stop() error           { return nil }
+func (*semanticLSPClient) Done() <-chan struct{} { return nil }
 func (c *semanticLSPClient) OpenFile(_ context.Context, _, _, _ string, boundary types.InsightBoundary) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -342,6 +359,20 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		manager := workspace.NewLSPManager(nil, semanticLSPRuntime{client})
 		defer manager.Close()
 		manager.SetWorkspaceRoot(root)
+		// The semantic transport fixture opts in explicitly. This is not a
+		// production constructor default or a grant from a session feature flag.
+		identity, err := fileio.DirectoryIdentity(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, err := governor.New(governor.Limits{MaxProcesses: 2, MaxWaiting: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.SetAnalysisGovernor(g, "fuzz-workspace", "fuzz-generation"); err != nil {
+			t.Fatal(err)
+		}
+		manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, identity)
 		docs := workspace.NewDocumentService(root, nil, manager)
 		defer docs.Close()
 		if _, err := docs.Open(document.Owner{ClientID: "fuzz", Epoch: 1}, path); err != nil {

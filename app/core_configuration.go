@@ -113,6 +113,9 @@ func (a *App) reloadFileConfiguration() error {
 // commitCorePreferences commits only the changed fields against latest disk data.
 // Accounts and capability entities keep their independent exact transactions.
 func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSettings, error) {
+	if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
+		return ttypes.AppSettings{}, err
+	}
 	if len(edits) == 0 {
 		return a.committedDefaults(), nil
 	}
@@ -174,6 +177,9 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 // applyPreferenceEdits maps the neutral preference fields onto the file's single
 // stored definition. It never serializes resolved/default values for neighbors.
 func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits []ttypes.SettingEdit) error {
+	if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(current)
 	if err != nil {
 		return err

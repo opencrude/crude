@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -22,6 +23,7 @@ const workspaceSettingsKey = "workspace_settings"
 // SetAppDefaults stores the application-layer snapshot from config.json.
 func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 	ttypes.ApplyAppDefaults(&s)
+	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
 	w.appDefaults = ttypes.CloneAppSettings(s)
 	w.applyEffectiveSettings()
 }
@@ -31,12 +33,17 @@ func (w *Workspace) AppDefaults() ttypes.AppSettings {
 	s := ttypes.CloneAppSettings(w.appDefaults)
 	s.Accounts = w.AllAccounts()
 	ttypes.ApplyAppDefaults(&s)
+	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
 	return s
 }
 
 // EffectiveAppSettings merges application defaults with workspace overrides.
 func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
-	return ttypes.MergeAppWorkspace(w.AppDefaults(), w.LoadWorkspaceOverrides())
+	effective := boundAnalysisSettings(w.AppDefaults(), w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
+	if effective.Analysis.Trust == ttypes.AnalysisProjectExecutionAllowed && w.LSPMgr != nil {
+		effective.Analysis = w.LSPMgr.AnalysisPolicy()
+	}
+	return effective
 }
 
 // LoadWorkspaceOverrides detaches the committed sparse overlay from the DB's
@@ -61,6 +68,19 @@ func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 // SaveWorkspaceSettings persists sparse workspace overrides and reapplies
 // the effective layer to live sessions and the LSP manager.
 func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) error {
+	// Entity/snapshot saves never grant, reset or rebind execution trust. The
+	// exact workspace preference transaction is its single mutation owner.
+	current := w.LoadWorkspaceOverrides()
+	if overrides.Analysis != nil && !bytes.Equal(overrides.Analysis, current.Analysis) {
+		return fmt.Errorf("workspace Trust must be changed through workspace preferences")
+	}
+	overrides.Analysis, overrides.AnalysisRootIdentity = current.Analysis, current.AnalysisRootIdentity
+	if overrides.Analysis != nil {
+		if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeWorkspace,
+			[]ttypes.SettingEdit{{Path: []string{"analysis"}, After: overrides.Analysis}}); err != nil {
+			return err
+		}
+	}
 	if w.WorkspaceDB != nil {
 		data, err := json.Marshal(overrides)
 		if err != nil {
@@ -79,6 +99,9 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 // OnAppSettingsSave. It does not write workspace.db; workspace overrides
 // stay on SaveWorkspaceSettings.
 func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
+	if s.Analysis.Trust != "" && s.Analysis.Trust != ttypes.AnalysisStaticOnly {
+		return fmt.Errorf("analysis trust belongs to Workspace settings")
+	}
 	ttypes.ApplyAppDefaults(&s)
 	if w.OnAppSettingsSave != nil {
 		persisted, err := w.OnAppSettingsSave(s)
@@ -112,6 +135,7 @@ func (w *Workspace) applyEffectiveSettings() {
 func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 	w.applyProviderSettings(effective)
 	if w.LSPMgr != nil {
+		w.publishAnalysisPolicy()
 		w.LSPMgr.SetSettings(effective.LSP)
 	}
 	if w.sessionCfg != nil && len(effective.Agents.Categories) > 0 {

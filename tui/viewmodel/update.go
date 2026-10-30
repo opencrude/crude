@@ -1183,7 +1183,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		label := "Page restored to built-in defaults"
 		if msg.Scope == types.SettingsScopeWorkspace {
-			label = "Page now follows Application settings"
+			label = "Workspace page choices cleared"
 		}
 		cmds = append(cmds, m.saveSettingsShortcut(msg.Scope, msg.Edits, label, msg.Target, msg.Category))
 	case settingsui.CancelMsg:
