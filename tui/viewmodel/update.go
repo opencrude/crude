@@ -188,6 +188,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case shellport.LiveDocumentsChangedMsg:
 		return m, m.applyDocumentTopic(msg)
+	case shellport.DocumentInsightMsg:
+		m.applyDocumentInsight(msg)
+		return m, nil
 	case shellport.ReplicaChangesMsg:
 		return m, m.applyReplicaChanges(msg)
 	case remotePromptHistoryMsg:

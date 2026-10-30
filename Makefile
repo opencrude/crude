@@ -3,7 +3,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := libghostty
 
-.PHONY: libghostty ensure-libghostty protocol-generate protocol-check build test-tui test-race-tui design-audit bench-gate docs-check site-check site-serve
+.PHONY: libghostty ensure-libghostty protocol-generate protocol-check build test-tui test-race-tui test-syntax test-lsp design-audit bench-gate docs-check site-check site-serve
 
 # Regenerate explicitly after production-source edits. Checks never mutate files.
 protocol-generate: ensure-libghostty
@@ -28,6 +28,17 @@ test-tui: ensure-libghostty protocol-check
 # Race-sensitive suite: the full repo is race-clean (2026-08-01).
 test-race-tui: ensure-libghostty protocol-check
 	. scripts/libghostty_env.sh && go test -race -count=1 ./...
+
+# The native binding is a replacement module, excluded from go test ./....
+test-syntax:
+	go test ./syntax -count=1 -timeout=120s
+	cd third_party/go-tree-sitter && go test . -count=1 -timeout=180s
+
+# Neutral data/transport must not acquire a native-parser dependency. The nested
+# process/transport owner is a replacement module, excluded by the root glob.
+test-lsp:
+	CGO_ENABLED=0 go test ./types/... ./lspclient -count=1 -timeout=90s
+	cd third_party/powernap && go test ./pkg/lsp ./pkg/transport -count=1 -timeout=90s
 
 design-audit:
 	./scripts/tui_design_audit.sh

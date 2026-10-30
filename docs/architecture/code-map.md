@@ -53,6 +53,7 @@ detailed contracts.
 |---|---|
 | `fileio/` | Bounded reads, atomic commit (`CommitAtomicFile`), mutation leases, command execution, desktop open. |
 | `document/` | Presentation-neutral shared text commands. |
+| `syntax/` | Bounded native syntax sessions, selected grammar/query pins, byte spans and syntax findings; not the canonical text owner or a semantic engine ([native syntax](../reference/native-syntax.md)). |
 | `textsearch/` | Shared exact/regex source-span matching and replacement expansion; established fzf ranking for project discovery only. |
 | `localhistory/` | Immutable snapshots, restore plans, verification, retention ([local history](../reference/local-history.md)). |
 | `textdiff/`, `diff/` | Exact line changes from immutable text; unified diff helpers. |

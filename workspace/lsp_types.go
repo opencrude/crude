@@ -35,7 +35,9 @@ type ProjectInsights = model.ProjectInsights
 type LSPClient interface {
 	OnDiagnostics(func(filePath string, diags []LSPDiagnostic))
 	Start(context.Context) error
-	Stop()
+	// Stop joins the owned process lifetime. A non-nil result means retirement
+	// could not be verified; its admission slot must not be reused.
+	Stop() error
 	// Done is closed when the underlying server connection dies (server
 	// exit, pipe error, or a wedged server that hit the write-queue cap).
 	// The manager reaps the client on Done and restarts it on demand.

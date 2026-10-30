@@ -429,6 +429,8 @@ func (c *Connection) serveTopic(ctx context.Context, s corewire.Stream, reader *
 		c.serveTerminalTopic(ctx, s, reader, open)
 	case coreprotocol.TopicDocument:
 		c.serveDocumentTopic(ctx, s, reader, open)
+	case coreprotocol.TopicInsight:
+		c.serveInsightTopic(ctx, s, reader, open)
 	case coreprotocol.TopicStatus, coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory, coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard:
 		c.serveStateTopic(ctx, s, reader, open)
 	default:

@@ -42,6 +42,13 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def copy_syntax_notice(stage):
+    """Embedded query data is original-module content ignored by go-licenses."""
+    destination = stage / "licenses/SYNTAX-QUERIES-NOTICE"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "syntax/queries/NOTICE", destination)
+
+
 def package(stage, output, version, target):
     """Package only the staged executable and its redistribution material."""
     name = asset_name(version, target)
@@ -52,6 +59,8 @@ def package(stage, output, version, target):
     entries = [stage / executable, stage / "LICENSE-MIT", stage / "LICENSE-APACHE", stage / "README.md", stage / "licenses"]
     if not all(path.exists() for path in entries):
         raise ValueError("release is missing its binary or redistribution notices")
+    if not (stage / "licenses/SYNTAX-QUERIES-NOTICE").is_file():
+        raise ValueError("release is missing its embedded syntax query notice")
     if target == "linux":
         with tarfile.open(destination, "w:gz") as archive:
             for path in entries:
@@ -104,6 +113,7 @@ def build(args):
         # Dependency tool is version-pinned by CI; it fails on missing notices
         # rather than silently shipping an incomplete Go dependency bundle.
         subprocess.run(["go-licenses", "save", ".", "--ignore=crude", f"--save_path={stage / 'licenses/go'}"], cwd=ROOT, check=True)
+        copy_syntax_notice(stage)
         (stage / "licenses/ghostty").mkdir(parents=True)
         shutil.copyfile(ROOT / "third_party/libghostty-vt/GHOSTTY-LICENSE", stage / "licenses/ghostty/LICENSE")
         shutil.copyfile(ROOT / "third_party/libghostty-vt/NATIVE-NOTICES", stage / "licenses/NATIVE-NOTICES")

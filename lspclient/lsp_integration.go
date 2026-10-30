@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,6 +33,8 @@ type LSPIntegration struct {
 	settings    map[string]any
 	initOptions map[string]any
 	launch      *lspLaunch
+	stop        *lspStop
+	teardownErr error
 	rootURI     string
 
 	// pipe monitors the subprocess stream. All writes are decoupled from
@@ -62,10 +65,18 @@ func WithServerEnv(env map[string]string) LSPIntegrationOption {
 }
 
 type lspLaunch struct {
-	cancel context.CancelFunc
+	cancel     context.CancelFunc
+	done       chan struct{}
+	client     *lsp.Client
+	err        error
+	cleanupErr error
+}
+
+type lspStop struct {
 	done   chan struct{}
-	client *lsp.Client
 	err    error
+	client *lsp.Client
+	launch *lspLaunch
 }
 
 // WithServerConfiguration configures the subprocess and server-specific protocol settings.
@@ -118,7 +129,32 @@ func (l *LSPIntegration) RootURI() string {
 }
 
 func (l *LSPIntegration) Start(ctx context.Context) error {
-	l.mu.Lock()
+	for {
+		l.mu.Lock()
+		stopping := l.stop
+		if stopping == nil {
+			break
+		}
+		l.mu.Unlock()
+		select {
+		case <-stopping.done:
+			if stopping.err != nil {
+				return fmt.Errorf("previous language server teardown is unverified: %w", stopping.err)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		l.mu.Lock()
+		if l.stop == stopping {
+			l.stop = nil
+		}
+		l.mu.Unlock()
+	}
+	if l.teardownErr != nil {
+		err := l.teardownErr
+		l.mu.Unlock()
+		return fmt.Errorf("previous language server teardown is unverified: %w", err)
+	}
 	if l.client != nil {
 		l.mu.Unlock()
 		return nil
@@ -154,7 +190,6 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		stopped := l.launch != launch
 		l.mu.Unlock()
 		if stopped {
-			client.Kill()
 			err = context.Canceled
 		} else {
 			client.RegisterNotificationHandler("textDocument/publishDiagnostics", func(_ context.Context, _ string, params json.RawMessage) {
@@ -182,9 +217,6 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 				}
 			})
 			err = client.Initialize(initCtx, true)
-			if err != nil {
-				client.Kill()
-			}
 		}
 	}
 	l.mu.Lock()
@@ -196,14 +228,22 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		l.client = client
 		l.pipe = pipe
 	}
+	l.mu.Unlock()
+	if err != nil && client != nil {
+		launch.cleanupErr = client.Kill()
+		err = errors.Join(err, launch.cleanupErr)
+	} else if errors.Is(err, lsp.ErrProcessCleanupUnverified) {
+		// A failed constructor can still own a process whose setup rollback
+		// was not verified. Nil is not evidence that its slot is reusable.
+		launch.cleanupErr = err
+	}
+	l.mu.Lock()
 	launch.err = err
-	if err != nil && l.launch == launch {
+	l.teardownErr = errors.Join(l.teardownErr, launch.cleanupErr)
+	if err != nil && launch.cleanupErr == nil && l.launch == launch {
 		l.launch = nil
 	}
 	l.mu.Unlock()
-	if err != nil && client != nil {
-		client.Kill()
-	}
 	lspStarts.Since(l.serverName(), started)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		metrics.Note(metrics.GroupLSP, "Language server failed to start", l.serverName(), err.Error(), "crit")
@@ -635,11 +675,20 @@ func stripMarkdown(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func (l *LSPIntegration) Stop() {
+// Stop fences admission, cancels startup and joins the exact owned teardown.
+// Repeated and concurrent calls observe the same outcome. Failure retains that
+// lifetime and prevents this integration from launching a replacement.
+func (l *LSPIntegration) Stop() error {
 	l.mu.Lock()
-	launch := l.launch
+	if stopping := l.stop; stopping != nil {
+		l.mu.Unlock()
+		<-stopping.done
+		return stopping.err
+	}
+	stopping := &lspStop{done: make(chan struct{}), client: l.client, launch: l.launch}
+	client, launch := stopping.client, stopping.launch
 	l.launch = nil
-	client := l.client
+	l.stop = stopping
 	l.client = nil
 	l.openFiles = make(map[string]*openFileState)
 	l.progress = make(map[string]bool)
@@ -650,18 +699,60 @@ func (l *LSPIntegration) Stop() {
 		starting = launch.client
 	}
 	l.mu.Unlock()
+	var teardownErr error
 	if client != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 		if client.Shutdown(ctx) == nil {
 			_ = client.Exit()
 		}
 		cancel()
-		client.Kill()
+		teardownErr = client.Kill()
 	} else if starting != nil {
-		starting.Kill()
+		teardownErr = starting.Kill()
 	}
 	if launch != nil {
 		<-launch.done
+		teardownErr = errors.Join(teardownErr, launch.cleanupErr)
+	}
+	l.mu.Lock()
+	l.teardownErr = errors.Join(l.teardownErr, teardownErr)
+	if reapedProcessExitOnly(l.teardownErr) {
+		// A server's own exit status is an operational failure, not a live
+		// resource. Kill still exposes it; connection loss remains failed in
+		// manager health. Do not poison admission after verified group/Job
+		// cleanup and a completed Wait merely because the server crashed.
+		metrics.Note(metrics.GroupLSP, "Language server exited", l.serverName(), l.teardownErr.Error(), "warn")
+		l.teardownErr = nil
+	}
+	stopping.err = l.teardownErr
+	close(stopping.done)
+	l.mu.Unlock()
+	return stopping.err
+}
+
+func reapedProcessExitOnly(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		causes := wrapped.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !reapedProcessExitOnly(cause) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return reapedProcessExitOnly(wrapped.Unwrap())
+	default:
+		return false
 	}
 }
 

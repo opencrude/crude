@@ -262,7 +262,7 @@ func (r semanticLSPRuntime) NewClient(types.LSPServerSpec, string) workspace.LSP
 }
 func (*semanticLSPClient) OnDiagnostics(func(string, []workspace.LSPDiagnostic))  {}
 func (*semanticLSPClient) Start(context.Context) error                            { return nil }
-func (*semanticLSPClient) Stop()                                                  {}
+func (*semanticLSPClient) Stop() error                                            { return nil }
 func (*semanticLSPClient) Done() <-chan struct{}                                  { return nil }
 func (*semanticLSPClient) OpenFile(context.Context, string, string, string)       {}
 func (*semanticLSPClient) UpdateFile(context.Context, string, string)             {}

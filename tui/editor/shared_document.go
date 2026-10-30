@@ -155,6 +155,7 @@ func (e *Editor) detachDocument() {
 		e.buf.mutationObserver = nil
 	}
 	e.documentProjection = nil
+	e.canonicalInsight = nil
 }
 
 // InstallDocument is a watcher-free open, not a reload or a save acknowledgement.

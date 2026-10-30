@@ -26,6 +26,7 @@ class ReleaseTests(unittest.TestCase):
             (self.stage / name).write_text(name, encoding="utf-8")
         (self.stage / "licenses/dependency").mkdir(parents=True)
         (self.stage / "licenses/dependency/LICENSE").write_text("fixture", encoding="utf-8")
+        release.copy_syntax_notice(self.stage)
         self.args = argparse.Namespace(directory=self.output, version="v0.1.0")
 
     def test_safe_versions(self):
@@ -45,11 +46,16 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("crude", names)
             self.assertNotIn("crude.exe", names)
             self.assertIn("licenses/dependency/LICENSE", names)
+            self.assertIn("licenses/SYNTAX-QUERIES-NOTICE", names)
+            self.assertEqual(archive.extractfile("licenses/SYNTAX-QUERIES-NOTICE").read(),
+                             (release.ROOT / "syntax/queries/NOTICE").read_bytes())
         with zipfile.ZipFile(windows) as archive:
             names = archive.namelist()
             self.assertIn("crude.exe", names)
             self.assertNotIn("crude", names)
             self.assertIn("licenses/dependency/LICENSE", names)
+            self.assertEqual(archive.read("licenses/SYNTAX-QUERIES-NOTICE"),
+                             (release.ROOT / "syntax/queries/NOTICE").read_bytes())
         release.combine(self.args)
         lines = (self.output / "SHA256SUMS").read_text().splitlines()
         self.assertEqual(len(lines), 2)
@@ -75,6 +81,12 @@ class ReleaseTests(unittest.TestCase):
         (self.stage / "LICENSE-APACHE").unlink()
         with self.assertRaises(ValueError):
             release.package(self.stage, self.output, "v0.1.0", "linux")
+
+    def test_missing_embedded_query_notice_fails_closed(self):
+        (self.stage / "licenses/SYNTAX-QUERIES-NOTICE").unlink()
+        for target in release.TARGETS:
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                release.package(self.stage, self.output, "v0.1.0", target)
 
     def test_native_dependency_layout(self):
         prefix = release.ROOT / "third_party/libghostty-vt"

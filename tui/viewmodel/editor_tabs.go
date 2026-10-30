@@ -108,12 +108,13 @@ func (m *App) activateEditorTab(path string) {
 // jumpToDiagnostic opens the file containing the given diagnostic
 // (if not already open), positions the cursor on it, highlights the
 // range, scrolls it into view, and refreshes the hover tooltip. The
-// caller is responsible for choosing the diagnostic.
+// caller supplies raw UTF-16 coordinates from the LSP cache, never the visual
+// values returned by Editor.NextError/Diagnostics.
 func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	if filePath == "" {
 		return
 	}
-	if m.queueLiveNavigation(filePath, d, false) {
+	if m.queueLiveNavigation(filePath, d) {
 		return
 	}
 	// Open or activate the file. openEditorTab is a no-op if the
@@ -125,8 +126,10 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	if m.EditorState.Editor == nil {
 		return
 	}
-	m.EditorState.Editor.SetCursorPosition(d.Line, d.Col)
-	m.EditorState.Editor.SetSelection(d.Line, d.Col, d.EndLine, d.EndCol)
+	if err := m.EditorState.Editor.SetLSPDiagnosticPosition(d); err != nil {
+		m.Feedback.NotifyError(err.Error())
+		return
+	}
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)

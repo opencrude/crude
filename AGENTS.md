@@ -194,6 +194,7 @@ most often broken there.
 | Chat transcript, tool rows, activity strip | [chat activity](docs/reference/chat-activity.md) | Live and hydrated rows must paint identically |
 | Composer, text fields, clipboard, cursor | [text input](docs/reference/text-input.md) | Lifecycle events never consume the draft |
 | Editor, gutter, save, LSP | [editor](docs/reference/editor.md) | Dirty means byte identity; LSP pipes never block |
+| Native syntax, grammars, parser bindings | [native syntax](docs/reference/native-syntax.md) | Native callbacks have explicit lifetimes; syntax is not semantics |
 | Embedded terminals | [in-app terminals](docs/reference/in-app-terminals.md) | One parser in the core; PTY writes never block |
 | Unicode width, ANSI | [terminal width](docs/reference/terminal-width.md) | One shared width profile |
 | Performance work | [performance baselines](docs/reference/performance-baselines.md) | Benchmark first; never raise a ceiling to land |

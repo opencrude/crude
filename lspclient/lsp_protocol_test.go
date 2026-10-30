@@ -136,7 +136,11 @@ func protocolIntegration(t *testing.T, mode, root string) *LSPIntegration {
 		map[string]any{"python": map[string]any{"analysis": map[string]any{"mode": "openFilesOnly"}}},
 		map[string]any{"testOption": true},
 	))
-	t.Cleanup(l.Stop)
+	t.Cleanup(func() {
+		if err := l.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
 	return l
 }
 
@@ -259,7 +263,9 @@ func TestLSPProtocolStopCancelsInitialize(t *testing.T) {
 	started := make(chan error, 1)
 	go func() { started <- l.Start(context.Background()) }()
 	waitProtocolReady(t, root)
-	l.Stop()
+	if err := l.Stop(); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case err := <-started:
 		if err == nil {
@@ -341,7 +347,9 @@ func TestLSPVersionsAdvanceOnlyOnAdmittedWrites(t *testing.T) {
 	if l.versionCounter != 1 {
 		t.Fatalf("duplicate open advanced version: %d", l.versionCounter)
 	}
-	l.client.Kill()
+	if err := l.client.Kill(); err != nil {
+		t.Fatal(err)
+	}
 	l.UpdateFile(ctx, path, "changed")
 	if l.versionCounter != 1 || l.openFiles[path].text != "hello" {
 		t.Fatal("failed write admitted state")
@@ -422,5 +430,7 @@ func TestLSPProtocolStdoutDeathWithoutWrites(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stdout EOF not observed")
 	}
-	l.Stop()
+	if err := l.Stop(); err != nil {
+		t.Fatal(err)
+	}
 }

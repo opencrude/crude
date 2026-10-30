@@ -7,6 +7,32 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Native syntax foundation (2026-10-30)
+
+Exploratory Linux amd64, i7-10750H, Go 1.25.9, GCC 13.3, GOMAXPROCS=2,
+three repetitions with three operations each. Native preparation reuses a
+compiled query but starts with a fresh source tree; cold query/session setup
+is measured separately. These are worker timings and cumulative Go
+allocations, not native RSS, retained memory, editor integration or displayed
+keystroke latency. Existing editor gates are unchanged.
+
+| Workload | Current Chroma preparation | Native preparation |
+|---|---|---|
+| Python docstring, 200 lines | 0.648-0.693 ms; 369,072 B; 5,878 allocations | 0.089-0.090 ms; 8,202-8,282 B; 41-43 allocations |
+| Python docstring, 20,000 lines | 58.7-59.4 ms; about 35,525,024 B; 560,290 allocations | 2.904-2.924 ms; 569,226-571,125 B; 60-63 allocations |
+| Native same-width edit inside the long Python string | not measured here | 3.201-3.847 ms; about 569,200 B; 62 allocations |
+| Cold TypeScript session/query plus tiny source | not measured here | 22.86-24.36 ms; about 57,150 B; 512-514 allocations |
+| Current editor Go source, about 27 KB | earlier exploratory comparison only | 12.84-12.91 ms; about 922,740 B; 6,608 allocations |
+| Current site TSX source, about 36 KB | earlier exploratory comparison only | 13.30-13.45 ms; about 1,335,770 B; 14,597-14,598 allocations |
+
+Tree reuse is not an incremental highlighting claim: the whole-document query
+and exact source comparison still run, and the long string edit can require
+scanner work across that string. The cold-session cost motivates shared,
+explicitly owned grammar/query configuration during service integration, not
+compiling queries on Update. Bench ceilings cover only the first four native
+rows' Go allocations with limited headroom; C memory and end-to-end latency
+need their own acceptance evidence. See [native syntax](native-syntax.md).
+
 ## Tool-title project paths (2026-10-28)
 
 The renderer prepares one lexical project-root matcher per renderer; it does no

@@ -201,6 +201,80 @@ func TestAsyncPipeWriter_SinkErrorPropagates(t *testing.T) {
 	if _, err := w.Write([]byte("after")); err == nil {
 		t.Fatal("write after sink error should fail fast")
 	}
+	if err := w.Close(); err != nil {
+		t.Fatal("fully joined broken pipe was mistaken for unverified teardown", err)
+	}
+}
+
+func TestAsyncPipeWriterOversizedFirstMessageFailsBeforeCopy(t *testing.T) {
+	w := newAsyncPipeWriter(io.Discard)
+	defer func() { _ = w.Close() }()
+	if n, err := w.Write(make([]byte, lspWriteQueueCap+1)); n != 0 || !errors.Is(err, errLSPWriteQueueFull) {
+		t.Fatalf("empty queue admitted an oversized message: %d %v", n, err)
+	}
+}
+
+type shortPipeSink struct{}
+
+func (shortPipeSink) Write(p []byte) (int, error) { return len(p) - 1, nil }
+
+func TestAsyncPipeWriterShortWriteNeverContinuesCorruptFraming(t *testing.T) {
+	w := newAsyncPipeWriter(shortPipeSink{})
+	if _, err := w.Write([]byte("frame")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.Done():
+	case <-time.After(time.Second):
+		t.Fatal("silent partial frame left connection usable")
+	}
+	if _, err := w.Write([]byte("later")); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("partial frame was replayed or accepted as complete: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type gatedPipeSink struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s gatedPipeSink) Write([]byte) (int, error) {
+	close(s.entered)
+	<-s.release
+	return 0, io.ErrClosedPipe
+}
+
+func TestAsyncPipeWriterCloseDoesNotClaimAnUnjoinedWorkerStopped(t *testing.T) {
+	sink := gatedPipeSink{entered: make(chan struct{}), release: make(chan struct{})}
+	w := newAsyncPipeWriter(sink)
+	t.Cleanup(func() {
+		close(sink.release)
+		<-w.workerDone
+	})
+	if _, err := w.Write([]byte("stalled frame")); err != nil {
+		t.Fatal(err)
+	}
+	<-sink.entered
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- w.Close() }()
+	}
+	for range 2 {
+		select {
+		case err := <-results:
+			if !errors.Is(err, errLSPWriterUnjoined) {
+				t.Fatalf("unjoined writer was reported stopped: %v", err)
+			}
+		case <-time.After(7 * time.Second):
+			t.Fatal("concurrent Close failed to share the bounded wait")
+		}
+	}
+	if err := w.Close(); !errors.Is(err, errLSPWriterUnjoined) {
+		t.Fatal("repeated close discarded its unverified outcome", err)
+	}
 }
 
 type errorSink struct {

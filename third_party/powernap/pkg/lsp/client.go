@@ -5,6 +5,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -43,6 +44,11 @@ const (
 	MethodWorkspaceDidChangeWorkspaceFolders = "workspace/didChangeWorkspaceFolders"
 	MethodWorkspaceDidChangeWatchedFiles     = "workspace/didChangeWatchedFiles"
 )
+
+// ErrProcessCleanupUnverified marks a failed launch whose owned subprocess or
+// resources could not be proven cleaned up. A nil client is not absence proof
+// when NewClient returns an error containing this marker.
+var ErrProcessCleanupUnverified = errors.New("language server process cleanup unverified")
 
 // Repeated JSON field names used both as LSP/JSON-RPC keys (in
 // map[string]any literals such as makeClientCapabilities) and as
@@ -86,6 +92,9 @@ func NewClient(config ClientConfig) (*Client, error) {
 	conn, err := transport.NewConnection(ctx, stream, slog.Default())
 	if err != nil {
 		cancel()
+		if closeErr := stream.Close(); closeErr != nil {
+			err = errors.Join(err, ErrProcessCleanupUnverified, closeErr)
+		}
 		return nil, fmt.Errorf("failed to create connection: %w", err)
 	}
 
@@ -99,9 +108,9 @@ func NewClient(config ClientConfig) (*Client, error) {
 
 // Kill forcefully terminates the client by canceling the context and closing
 // the connection. This ensures any blocked I/O operations are interrupted.
-func (c *Client) Kill() {
+func (c *Client) Kill() error {
 	c.cancel()
-	_ = c.conn.Close()
+	return c.conn.Close()
 }
 
 // Initialize sends the initialize request to the language server.
@@ -194,11 +203,10 @@ func (c *Client) Shutdown(ctx context.Context) error {
 func (c *Client) Exit() error {
 	err := c.conn.Notify(c.ctx, MethodExit, nil)
 	if err != nil {
-		return fmt.Errorf("exit notification failed: %w", err)
+		err = fmt.Errorf("exit notification failed: %w", err)
 	}
 
-	c.cancel()
-	return nil
+	return errors.Join(err, c.Kill())
 }
 
 // GetCapabilities returns the server capabilities.
@@ -713,7 +721,7 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 }
 
 // startServerProcess starts the language server process.
-func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteCloser, error) {
+func startServerProcess(ctx context.Context, config ClientConfig) (_ io.ReadWriteCloser, resultErr error) {
 	cmd := exec.Command(config.Command, config.Args...) //nolint:gosec
 
 	if config.RootURI != "" {
@@ -737,14 +745,20 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
+	var stdout, stderr io.ReadCloser
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, closeProcessPipe("stdin", stdin), closeProcessPipe("stdout", stdout), closeProcessPipe("stderr", stderr))
+		}
+	}()
 
-	stdout, err := cmd.StdoutPipe()
+	stdout, err = cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	// Create stderr pipe to capture error messages
-	stderr, err := cmd.StderrPipe()
+	stderr, err = cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
@@ -757,11 +771,9 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 
 	tree, err := ownProcess(cmd)
 	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
 		return nil, err
 	}
-	closer := &processCloser{stdin: stdin, stdout: stdout, stderr: stderr, tree: tree}
+	closer := &processCloser{stdin: stdin, stdout: stdout, stderr: stderr, tree: tree, stderrDone: make(chan struct{})}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -772,11 +784,12 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 
 	// Monitor stderr
 	go func() {
+		defer close(closer.stderrDone)
 		buf := make([]byte, 4096)
 		for {
 			n, err := stderr.Read(buf)
 			if err != nil {
-				if err != io.EOF {
+				if err != io.EOF && !errors.Is(err, os.ErrClosed) {
 					slog.Error("Error reading stderr", "error", err)
 				}
 				break
@@ -798,21 +811,36 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 }
 
 type processCloser struct {
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	stderr    io.ReadCloser
-	tree      *processTree
-	closeOnce sync.Once
+	stdin      io.WriteCloser
+	stdout     io.ReadCloser
+	stderr     io.ReadCloser
+	tree       *processTree
+	stderrDone chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func (c *processCloser) Close() error {
 	c.closeOnce.Do(func() {
 		// Kill the owned tree before releasing/reaping its identity.
 		c.tree.stop()
-		_ = c.stdin.Close()
-		_ = c.stdout.Close()
-		_ = c.stderr.Close()
-		<-c.tree.done
+		c.closeErr = errors.Join(closeProcessPipe("stdin", c.stdin), closeProcessPipe("stdout", c.stdout), closeProcessPipe("stderr", c.stderr))
+		if c.stderrDone != nil {
+			<-c.stderrDone
+		}
+		c.closeErr = errors.Join(c.closeErr, c.tree.wait())
 	})
+	return c.closeErr
+}
+
+func closeProcessPipe(name string, pipe io.Closer) error {
+	if pipe == nil {
+		return nil
+	}
+	// exec.Cmd.Wait closes its parent pipes too. Their already-closed state is
+	// expected whether process exit or explicit Close won the race.
+	if err := pipe.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return fmt.Errorf("close server %s: %w", name, err)
+	}
 	return nil
 }

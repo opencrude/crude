@@ -114,6 +114,10 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	ed.SetOnContentChanged(func(path, text string) { m.onEditorContentChanged(ed, path, text) })
 	m.BufferMgr.InstallPrepared(ed.DocumentBuffer())
 	m.EditorState.Tabs[s.Path] = NewEditorTab(s.Path, ed)
+	if msg, ok := m.pendingInsights[s.ID]; ok {
+		delete(m.pendingInsights, s.ID)
+		m.applyDocumentInsight(msg)
+	}
 	if msg, ok := m.pendingDocumentTopics[s.ID]; ok {
 		delete(m.pendingDocumentTopics, s.ID)
 		m.applyDocumentTopic(msg)
@@ -133,6 +137,11 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 				msg.Done(document.ErrOwner)
 			}
 			delete(m.pendingDocumentTopics, id)
+		}
+	}
+	for id, msg := range m.pendingInsights {
+		if msg.Owner != m.ws || msg.Valid != nil && !msg.Valid() {
+			delete(m.pendingInsights, id)
 		}
 	}
 	commands := m.editorCommands

@@ -267,9 +267,12 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 			if hints > 0 {
 				parts = append(parts, fmt.Sprintf("ℹ%d", hints))
 			}
+			if insight := editorInsightSummary(ed); insight != "" {
+				parts = append(parts, insight)
+			}
 			return state, strings.Join(parts, " "), "editor:" + path
 		}
-		return state, "", "editor:" + path
+		return state, editorInsightSummary(ed), "editor:" + path
 	}
 	if id := m.AgentView.ActiveID(); id != "" {
 		state, _ := m.ws.Status().Agent(id)
@@ -677,6 +680,13 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			{Label: "Cursor", Value: fmt.Sprintf("Ln %d, Col %d", ed.CursorLine()+1, ed.CursorCol()+1), Role: ui.ColorFg},
 			{Label: "Lines", Value: fmt.Sprintf("%d", ed.LineCount()), Role: ui.ColorMuted},
 		}
+		if insight := editorInsightSummary(ed); insight != "" {
+			_, detail := ed.InsightStatus()
+			lines = append(lines, statusoverview.DetailLine{Label: "Syntax", Value: insight, Role: ui.ColorMuted})
+			if detail != "" {
+				lines = append(lines, statusoverview.DetailLine{Label: "Coverage", Value: detail, Role: ui.ColorMuted})
+			}
+		}
 		if errors+warnings > 0 {
 			lines = append(lines,
 				statusoverview.DetailLine{Label: "Errors", Value: fmt.Sprintf("%d", errors), Role: diagnosticRole(errors, 0)},
@@ -887,7 +897,7 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 			line, lineErr := strconv.Atoi(parts[0])
 			col, colErr := strconv.Atoi(parts[1])
 			if lineErr == nil && colErr == nil {
-				m.jumpToDiagnostic(parts[2], workspace.LSPDiagnostic{Line: line, Col: col})
+				m.jumpToDiagnostic(parts[2], workspace.LSPDiagnostic{Line: line, Col: col, EndLine: line, EndCol: col})
 			}
 		}
 	case strings.HasPrefix(action, "session:resume:"):

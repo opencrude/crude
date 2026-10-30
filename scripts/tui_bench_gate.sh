@@ -72,6 +72,7 @@ run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANS
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFile)$' ./tui/editor
 run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation|MapInlineDecorations)$' ./tui/editor
+run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./syntax
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkFooterOverflowPaint$' ./tui/screens/shellfooter
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection

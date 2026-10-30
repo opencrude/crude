@@ -24,16 +24,48 @@ func (e *Editor) LSPCursorPosition() (line, col int) {
 // SetLSPCursorPosition rejects invalid wire positions without moving the cursor.
 // Valid positions within a grapheme are displayed at that grapheme's start.
 func (e *Editor) SetLSPCursorPosition(line, col int) error {
-	if e.buf == nil {
-		return fmt.Errorf("LSP cursor: no document")
-	}
-	text := e.Value()
-	off, err := lspEditOffset(text, line, col)
+	pos, err := e.lspVisualPosition(line, col)
 	if err != nil {
 		return err
 	}
-	pos := e.buf.positionAtOffset(off)
 	e.SetCursorPosition(pos.Line, pos.Col)
+	return nil
+}
+
+// lspVisualPosition validates only the addressed source line. Navigation must
+// not export/scan the complete document to place a cursor.
+func (e *Editor) lspVisualPosition(line, col int) (Position, error) {
+	if e.buf == nil {
+		return Position{}, fmt.Errorf("LSP cursor: no document")
+	}
+	raw, err := e.buf.lineView(line)
+	if err != nil {
+		return Position{}, fmt.Errorf("LSP cursor: line outside document")
+	}
+	if _, err := lspEditOffset(string(raw), 0, col); err != nil {
+		return Position{}, err
+	}
+	return Position{Line: line, Col: UTF16ColToVisualCol(string(raw), col, tabWidth)}, nil
+}
+
+// SetLSPDiagnosticPosition accepts a raw UTF-16 range, validates both endpoints
+// against their own source lines, then atomically positions and selects it.
+// Editor.Diagnostics/NextError already return visual coordinates; use the visual
+// cursor/selection APIs for those instead.
+func (e *Editor) SetLSPDiagnosticPosition(d LSPDiagnostic) error {
+	if d.EndLine < d.Line || d.EndLine == d.Line && d.EndCol < d.Col {
+		return fmt.Errorf("LSP diagnostic: reversed range")
+	}
+	start, err := e.lspVisualPosition(d.Line, d.Col)
+	if err != nil {
+		return err
+	}
+	end, err := e.lspVisualPosition(d.EndLine, d.EndCol)
+	if err != nil {
+		return err
+	}
+	e.SetCursorPosition(start.Line, start.Col)
+	e.SetSelection(start.Line, start.Col, end.Line, end.Col)
 	return nil
 }
 

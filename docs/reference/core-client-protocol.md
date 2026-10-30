@@ -481,6 +481,15 @@ not silent text replacement. Close/reopen, conflict resolution, workspace switch
 and shutdown fence queued publications with exact topic-generation tokens.
 Cursors, selection and scrolling stay private.
 
+The independent `insight` document topic pushes bounded
+`types.DocumentInsight` snapshots derived from those canonical revisions.
+Its service generation and version order analysis, not text or author history.
+An insight ACK cannot delay document admission, text-topic ACKs or peer analysis.
+Close/reopen and workspace/attachment fences use the same exact-open token.
+The shell waits for matching source before projecting future analysis; pending,
+limited, failed and unsupported results never become zero-error claims. See
+[native syntax](native-syntax.md) for the initial producer and remaining limits.
+
 Document GroupID identifies a logical editing transaction, not an RPC batch.
 The shell retains group boundaries while publishing ordered optimistic edits;
 Undo/Redo gestures and later input wait for exact command completion and matching canonical

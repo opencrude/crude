@@ -352,7 +352,7 @@ func TestLiveEditorAsyncNavigationAndStaleOpenOwnership(t *testing.T) {
 		t.Fatalf("stale open closed newer document ref: %v", state.err)
 	}
 	// A user selection after preparation wins; no position may leak to it.
-	shell.app.queueLiveNavigation(bPath, editor.LSPDiagnostic{Line: 0, Col: 1}, true)
+	shell.app.queueLiveNavigation(bPath, editor.LSPDiagnostic{Line: 0, Col: 1, EndLine: 0, EndCol: 1})
 	queued := shell.app.editorCommands
 	shell.app.editorCommands = nil
 	result := queued[0]().(paneFilesOpenedMsg)

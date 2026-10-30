@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,9 +178,11 @@ func (t *Transport) Close() error {
 
 // StreamTransport provides a bidirectional stream for JSON-RPC communication.
 type StreamTransport struct {
-	reader io.Reader
-	writer io.Writer
-	closer io.Closer
+	reader    io.Reader
+	writer    io.Writer
+	closer    io.Closer
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewStreamTransport creates a new stream transport.
@@ -204,16 +208,19 @@ func (s *StreamTransport) Write(p []byte) (n int, err error) {
 func (s *StreamTransport) Close() error {
 	// Release the actual pipes first so an asynchronous writer cannot remain
 	// stuck draining a dead server. Then stop its idle queue goroutine too.
-	var err error
-	if s.closer != nil {
-		err = s.closer.Close()
-	}
-	if closer, ok := s.writer.(io.Closer); ok {
-		if closeErr := closer.Close(); err == nil {
-			err = closeErr
+	s.closeOnce.Do(func() {
+		if s.closer != nil {
+			s.closeErr = s.closer.Close()
 		}
-	}
-	return err
+		if closer, ok := s.writer.(io.Closer); ok {
+			// An unwrapped writer may be the raw pipe the owner just closed.
+			// Wrapped writers still need their idle worker joined.
+			if err := closer.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+				s.closeErr = errors.Join(s.closeErr, err)
+			}
+		}
+	})
+	return s.closeErr
 }
 
 // ObjectStream creates a jsonrpc2.ObjectStream from the transport.

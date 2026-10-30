@@ -35,8 +35,7 @@ type paneFilesOpenedMsg struct {
 	files            []paneFilePrepared
 	landing          *fileio.ProjectSearchMatch
 	refs             *liveDocumentRefs
-	position         *editor.LSPDiagnostic
-	lspPosition      bool
+	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
 	// window opens the landed tab in its own window (Open in window).
 	window bool
 }
@@ -188,13 +187,8 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	m.handleTabSwitch()
 	if p := msg.position; p != nil && m.EditorState.Editor != nil {
 		ed := m.EditorState.Editor
-		if msg.lspPosition {
-			if err := ed.SetLSPCursorPosition(p.Line, p.Col); err != nil {
-				m.Feedback.NotifyError(err.Error())
-			}
-		} else {
-			ed.SetCursorPosition(p.Line, p.Col)
-			ed.SetSelection(p.Line, p.Col, p.EndLine, p.EndCol)
+		if err := ed.SetLSPDiagnosticPosition(*p); err != nil {
+			m.Feedback.NotifyError(err.Error())
 		}
 		ed.ScrollToCursor()
 	}
@@ -232,7 +226,7 @@ func releasePaneDocuments(msg paneFilesOpenedMsg) tea.Cmd {
 
 // queueLiveNavigation captures the destination and position together. Never
 // position the old active editor before the asynchronous open is installed.
-func (m *App) queueLiveNavigation(path string, position editor.LSPDiagnostic, lsp bool) bool {
+func (m *App) queueLiveNavigation(path string, position editor.LSPDiagnostic) bool {
 	if _, ok := m.ws.(shellport.LiveDocuments); !ok {
 		return false
 	}
@@ -240,7 +234,7 @@ func (m *App) queueLiveNavigation(path string, position editor.LSPDiagnostic, ls
 	if cmd != nil {
 		m.editorCommands = append(m.editorCommands, func() tea.Msg {
 			msg := cmd().(paneFilesOpenedMsg)
-			msg.position, msg.lspPosition = &position, lsp
+			msg.position = &position
 			return msg
 		})
 	}

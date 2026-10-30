@@ -1144,7 +1144,7 @@ func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 		m.Feedback.NotifyInfo("Definition in unindexed location")
 		return
 	}
-	if m.queueLiveNavigation(loc.Path, editor.LSPDiagnostic{Line: loc.Line, Col: loc.Col}, true) {
+	if m.queueLiveNavigation(loc.Path, editor.LSPDiagnostic{Line: loc.Line, Col: loc.Col, EndLine: loc.Line, EndCol: loc.Col}) {
 		return
 	}
 	if loc.Path != m.EditorState.Editor.FilePath() {
@@ -1422,7 +1422,7 @@ func (m *App) jumpToReference(r refRow) {
 	if r.File == "" {
 		return
 	}
-	if m.queueLiveNavigation(r.File, editor.LSPDiagnostic{Line: r.Line, Col: r.Col}, true) {
+	if m.queueLiveNavigation(r.File, editor.LSPDiagnostic{Line: r.Line, Col: r.Col, EndLine: r.Line, EndCol: r.Col}) {
 		return
 	}
 	if r.File != m.EditorState.Editor.FilePath() {

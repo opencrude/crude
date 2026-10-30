@@ -24,6 +24,11 @@ require (
 	github.com/restic/chunker v0.5.0
 	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/stretchr/testify v1.12.1
+	github.com/tree-sitter/go-tree-sitter v0.25.0
+	github.com/tree-sitter/tree-sitter-go v0.25.0
+	github.com/tree-sitter/tree-sitter-javascript v0.23.1
+	github.com/tree-sitter/tree-sitter-python v0.25.0
+	github.com/tree-sitter/tree-sitter-typescript v0.23.3-0.20250130221139-75b3874edb2d
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.50.1
 	mvdan.cc/sh/v3 v3.13.1
@@ -42,16 +47,19 @@ require github.com/quic-go/quic-go v0.61.0
 
 require github.com/klauspost/compress v1.20.3
 
-require github.com/zalando/go-keyring v0.2.6
+require (
+	github.com/tinylib/msgp v1.6.5
+	github.com/zalando/go-keyring v0.2.6
+	golang.org/x/mod v0.37.0
+	golang.org/x/tools v0.47.0
+)
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
-	github.com/tinylib/msgp v1.6.5 // indirect
-	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
 )
 
 require (
@@ -62,7 +70,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
-	github.com/charmbracelet/colorprofile v0.4.3 // indirect
+	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
@@ -147,6 +155,8 @@ replace github.com/charmbracelet/x/powernap => ./third_party/powernap
 replace github.com/quic-go/quic-go => ./third_party/quic-go
 
 replace github.com/tinylib/msgp => ./third_party/msgp
+
+replace github.com/tree-sitter/go-tree-sitter => ./third_party/go-tree-sitter
 
 // Website npm dependencies may contain unrelated Go packages; keep
 // `go list ./...`, tests and lint scoped to the product module.

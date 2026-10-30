@@ -15,6 +15,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/surface"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -31,6 +32,14 @@ func TestConnectedEditorTypingKeepsUnchangedPresentation(t *testing.T) {
 			one := newRemoteJourneyShell(t, runtime, root)
 			app := one.app
 			ed := liveTestOpen(t, app, path)
+			// The baseline must have actually received and painted native shared
+			// syntax. A local SyntaxCommand no longer prepares canonical source;
+			// starting from a plain pending frame would mistake its first real
+			// shared publication for typing-induced flicker.
+			remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool {
+				state, _ := ed.InsightStatus()
+				return state == types.InsightCurrent
+			})
 			runAppCommand(t, app, app.drainEditorSyntaxCommands())
 			_, cmd := app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			runAppCommand(t, app, cmd)

@@ -69,6 +69,18 @@ func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) 
 func (m *LSPManager) recomputeActiveStatusLocked() {
 	defer m.recomputeIdleReasonLocked()
 	m.bumpVersionLocked()
+	// Teardown uncertainty remains actionable even while language features are
+	// disabled. Paused is an admission decision, not evidence that work stopped.
+	failedKey := ""
+	for key, state := range m.states {
+		if state.teardownErr != nil && (failedKey == "" || key < failedKey) {
+			failedKey = key
+		}
+	}
+	if failedKey != "" {
+		m.applyAggregateStateLocked(*m.states[failedKey])
+		return
+	}
 	if m.paused || m.closed || !m.settings.Enabled {
 		m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
 		return
@@ -352,7 +364,7 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 		if state.closing {
 			health.Status, health.Connected, health.Starting = "Stopping", false, false
 		}
-		if state.stopped {
+		if state.stopped && state.teardownErr == nil {
 			health.Status, health.Connected, health.Starting = "Stopped", false, false
 		}
 		out = append(out, health)

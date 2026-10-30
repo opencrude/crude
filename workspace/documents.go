@@ -62,6 +62,7 @@ type DocumentService struct {
 	root        string
 	saves       *DocumentSaveService
 	lsp         *LSPManager
+	Insight     *InsightService
 	docs        map[string]*liveDocument
 	epochs      map[string]uint64
 	detached    map[document.Owner]bool
@@ -95,6 +96,7 @@ func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager
 			s.reconcile(id)
 		}
 	}
+	s.Insight = newInsightService(s)
 	return s
 }
 
@@ -178,6 +180,7 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 		s.lsp.OpenFile(context.Background(), path, string(d.snapshot.Text))
 		d.lspOpen = true
 	}
+	s.Insight.observeLocked(d)
 	return cloneDocument(d.snapshot), nil
 }
 
@@ -608,8 +611,9 @@ func (s *DocumentService) ReleaseDetached(owner document.Owner) {
 func (s *DocumentService) Close() {
 	s.watch.close()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
+		s.Insight.Close()
 		return
 	}
 	s.closed = true
@@ -621,6 +625,8 @@ func (s *DocumentService) Close() {
 			s.lsp.CloseFile(context.Background(), d.snapshot.Path)
 		}
 	}
+	s.mu.Unlock()
+	s.Insight.Close()
 }
 
 // CloseView releases only this owner; retained text and history are not discarded.
@@ -648,6 +654,7 @@ func (s *DocumentService) closeLanguageView(d *liveDocument) {
 		s.lsp.CloseFile(context.Background(), d.snapshot.Path)
 		d.lspOpen = false
 	}
+	s.Insight.observeLocked(d)
 }
 
 // DirtyCount is retained work, not a shell-view count. Durable dirty checkpoints

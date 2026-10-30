@@ -29,7 +29,7 @@ func (c *treeLSPTestClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnos
 }
 
 func (c *treeLSPTestClient) Start(context.Context) error { close(c.ready); return nil }
-func (c *treeLSPTestClient) Stop()                       {}
+func (c *treeLSPTestClient) Stop() error                 { return nil }
 func (c *treeLSPTestClient) Done() <-chan struct{}       { return nil }
 func (c *treeLSPTestClient) OpenFile(context.Context, string, string, string) {
 }
