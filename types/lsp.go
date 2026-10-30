@@ -14,7 +14,16 @@ type LSPServerSpec struct {
 	RootMarkers           []string
 	Environment           map[string]string
 	Settings              jsondoc.Object
+	ConfigurationScopes   []LSPConfigurationScope
 	InitializationOptions jsondoc.Object
+}
+
+// LSPConfigurationScope is a complete effective object for a directory URI.
+// The project-context owner resolves it; it is not a sparse preference overlay,
+// an execution grant or evidence that a complete build context was established.
+type LSPConfigurationScope struct {
+	URI      string
+	Settings jsondoc.Object
 }
 
 // ResolveServer returns detached launch settings. AutoDetect gates only built-in

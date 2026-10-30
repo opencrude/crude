@@ -416,8 +416,23 @@ VM contention and remote network baseline remain part of the reported setup.
 
 Planning-time checks found local QEMU 8.2.2, accessible KVM API 12, about 23 GiB
 RAM and about 604 GiB free storage. An unprivileged namespace probe failed with
-Operation not permitted despite the sysctl being enabled. No OS image was
-downloaded and no guest was booted. Do not call this D0 or VM acceptance.
+Operation not permitted despite the sysctl being enabled. Those checks were not
+guest boots or D0 acceptance.
+
+A subsequent isolated prerequisite run on 2026-10-30 verified a signed Ubuntu
+24.04.5 cloud-image pin, booted one new private overlay with KVM, and observed its
+two-vCPU/2-GiB configuration through its owned QMP channel. A fresh management key
+authenticated an unprivileged SSH command only after the guest's host public key
+was attested with an exact nonce through the owned serial channel. Guest boot
+and machine identities differed from the host. Guest-requested powerdown exited
+the hypervisor cleanly; the controller joined its seed server, removed the private
+key and disposable overlay, verified both loopback endpoints closed, and
+rechecked the unchanged base-image digest. No host mounts, administrator keys,
+host networking changes, product deployment or rendered IDE journey were used.
+This one-guest private probe is not part of the prepared-only harness, is not a
+generalized-image audit, and does not satisfy D0-D8, multi-client or physical-device
+acceptance. Its source, bounded measurements and cleanup evidence remain private;
+the experiment is not a durable product deliverable.
 
 Remaining lab deliverables are pinned generalized images, the overlay/network
 provisioner, exact-guest recorder/input integration, private credential

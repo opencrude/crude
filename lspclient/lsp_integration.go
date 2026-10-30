@@ -33,6 +33,9 @@ type LSPIntegration struct {
 	serverEnv   map[string]string
 	settings    map[string]any
 	initOptions map[string]any
+	scopes      []ConfigurationScope
+	config      lsp.Configuration
+	configErr   error
 	// startAdmission is the runtime owner's launch-epoch check. It must be
 	// memory-only; construction and joined cancellation still belong here.
 	startAdmission func() error
@@ -93,6 +96,16 @@ func WithServerConfiguration(environment map[string]string, settings, initOption
 	}
 }
 
+// ConfigurationScope is a complete effective configuration for a directory URI.
+// Selection is launch-bound and lexical, not execution authority or project truth.
+type ConfigurationScope = model.LSPConfigurationScope
+
+// WithConfigurationScopes supplies module-specific settings. They are detached
+// when the integration is constructed, not re-read from caller maps on Start.
+func WithConfigurationScopes(scopes []ConfigurationScope) LSPIntegrationOption {
+	return func(l *LSPIntegration) { l.scopes = scopes }
+}
+
 // WithStartAdmission installs the producer owner's final admission check at the
 // subprocess-construction boundary. It grants no permission itself. A launch
 // admitted before concurrent revocation remains owned until verified teardown.
@@ -132,6 +145,16 @@ func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string, op
 	for _, opt := range opts {
 		opt(l)
 	}
+	if len(l.scopes) > lsp.MaxConfigurationScopes {
+		l.configErr = lsp.ErrConfiguration
+	} else {
+		scopes := make([]lsp.ConfigurationScope, len(l.scopes))
+		for i, scope := range l.scopes {
+			scopes[i] = lsp.ConfigurationScope{URI: scope.URI, Settings: scope.Settings}
+		}
+		l.config, l.configErr = lsp.NewConfiguration(rootURI, l.settings, scopes)
+	}
+	l.settings, l.scopes = nil, nil // only the immutable launch table remains
 	return l
 }
 
@@ -147,6 +170,10 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			l.mu.Unlock()
 			return err
+		}
+		if l.configErr != nil {
+			l.mu.Unlock()
+			return l.configErr
 		}
 		stopping := l.stop
 		if stopping == nil {
@@ -203,7 +230,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	if err == nil {
 		client, err = lsp.NewClient(lsp.ClientConfig{
 			Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
-			Environment: l.serverEnv, Settings: l.settings, InitOptions: l.initOptions,
+			Environment: l.serverEnv, Configuration: l.config, InitOptions: l.initOptions,
 			TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
 				nr, nw, mon := wrapLSPPipe(reader, writer)
 				pipe = mon

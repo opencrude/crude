@@ -46,6 +46,15 @@ at 160x40 and 80x24. Neutral Windows/Darwin cross-builds are not native-platform
 acceptance. Complete project context, native CPU/RSS containment, pressure
 management, additional work classes and autonomous assembly remain open.
 
+The [passive project-artifact foundation](../reference/editor.md#shared-diagnostic-facts)
+now preserves bounded compilation-database observations and exact byte identities.
+Launch-bound LSP configuration honors each requested directory scope without
+implicitly merging another module's settings. Framed-server regressions and
+ordinary, race, vet and lint checks cover these boundaries; source-frozen full
+repository ordinary and race campaigns have also passed on Linux. There is no retained
+project-context authority or automatic configuration selection yet. Parser success
+and native editor regression captures do not establish complete build context.
+
 ## Problem
 
 Crude has shared documents, asynchronous LSP lifecycle ownership, editor
@@ -534,6 +543,15 @@ installer.
   quarter of the cores, and all analysis together uses at most a fixed share of
   RAM). There is one place to change them. The Problems header shows progress,
   pauses and their reasons.
+- An isolated Linux prerequisite probe on systemd 255.4 held a target at its
+  post-exec ptrace stop, verified actual scope membership and CPU/memory/task
+  limits before releasing userspace, then joined the target and collected the
+  scope. `StartTransientUnit` returned a job, not proof of completed attachment;
+  an earlier immediate check failed and is retained as a failed attempt. This
+  does not implement product containment, recovery, pressure management or
+  cross-platform enforcement. The supervisor must remain outside the limited
+  scope, and ptrace/thread ownership, cancellation and pre-attachment memory
+  charging still need explicit production contracts and acceptance.
 - Define and test a project-analysis environment policy that preserves required
   toolchain variables while withholding Crude/provider secrets; disclose any
   unavoidable limitations. This is a new analyzer-process contract, not a
