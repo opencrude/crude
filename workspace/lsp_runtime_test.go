@@ -52,3 +52,19 @@ func TestDefaultLSPRuntimeForwardsRootBoundConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDefaultLSPRuntimeRefusesUnsafeEnvironmentBeforeAdmission(t *testing.T) {
+	admissions := 0
+	client := (defaultLSPRuntime{}).NewClient(model.LSPServerSpec{
+		Command: "never-construct-this-program", Environment: map[string]string{"PATH": "."},
+	}, "file:///project", func() error { admissions++; return nil })
+	if err := client.Start(t.Context()); !errors.Is(err, lsp.ErrProcessEnvironment) {
+		t.Fatalf("workspace runtime dropped environment validation: %v", err)
+	}
+	if admissions != 0 || client.Done() != nil {
+		t.Fatal("unsafe environment crossed admission or constructed a transport")
+	}
+	if err := client.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}

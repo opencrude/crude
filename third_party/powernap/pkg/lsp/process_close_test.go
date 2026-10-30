@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,7 +37,7 @@ func TestServerTransportJoinedClose(t *testing.T) {
 			defer cancel()
 			stream, err := startServerProcess(ctx, ClientConfig{
 				Command: os.Args[0], Args: []string{"-test.run=^TestProcessCloseHelper$"},
-				Environment: map[string]string{"POWERNAP_CLOSE_HELPER": "1"},
+				Environment: closeTestEnvironment(t, map[string]string{"POWERNAP_CLOSE_HELPER": "1"}),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +59,7 @@ func TestServerTransportPreservesNaturalFailure(t *testing.T) {
 	defer cancel()
 	stream, err := startServerProcess(ctx, ClientConfig{
 		Command: os.Args[0], Args: []string{"-test.run=^TestProcessCloseHelper$"},
-		Environment: map[string]string{"POWERNAP_CLOSE_HELPER": "exit-7"},
+		Environment: closeTestEnvironment(t, map[string]string{"POWERNAP_CLOSE_HELPER": "exit-7"}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -103,9 +104,22 @@ func TestClientExitJoinsEvenAfterNotificationFailure(t *testing.T) {
 	}
 }
 
+func closeTestEnvironment(t *testing.T, values map[string]string) ProcessEnvironment {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		values["SYSTEMROOT"] = os.Getenv("SYSTEMROOT")
+	}
+	environment, err := NewProcessEnvironment(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return environment
+}
+
 func TestMissingServerDoesNotMarkCleanupUnverified(t *testing.T) {
-	_, err := NewClient(ClientConfig{Command: os.TempDir() + "/powernap-no-such-server"})
-	if err == nil || errors.Is(err, ErrProcessCleanupUnverified) {
+	_, err := NewClient(ClientConfig{Command: os.TempDir() + "/powernap-no-such-server",
+		Environment: closeTestEnvironment(t, map[string]string{})})
+	if !errors.Is(err, exec.ErrNotFound) || errors.Is(err, ErrProcessCleanupUnverified) {
 		t.Fatalf("ordinary failed start misclassified: %v", err)
 	}
 }

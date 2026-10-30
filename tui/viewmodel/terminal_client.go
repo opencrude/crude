@@ -189,16 +189,21 @@ func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
 		m.reportTerminalIOError("create", "", msg.err)
 		return nil
 	}
+	info, present := m.terminalInfo(msg.info.ID)
+	if !present {
+		m.reportTerminalIOError("create", msg.info.ID, errors.New("created terminal is no longer in inventory"))
+		return nil
+	}
 	if m.terminalLeases == nil {
 		m.terminalLeases = make(map[string]workspace.TerminalLease)
 	}
 	m.terminalLeases[msg.info.ID] = msg.lease
-	screen := m.ensureTermScreen(msg.info.ID, msg.info.Title)
+	screen := m.ensureTermScreen(info.ID, info.Title)
 	screen.SetControlled(true)
 	if m.ws.LoadAppSettings().Terminal.Placement == roottypes.TerminalPlacementFloating {
-		m.floatTerminalInfo(msg.info)
+		m.floatTerminalInfo(info)
 	} else {
-		m.dockTerminalInfo(msg.info)
+		m.dockTerminalInfo(info)
 	}
 	return m.terminalRefresh(msg.info.ID)
 }
@@ -216,6 +221,9 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 		nextInput = m.nextTerminalCommand()
 	}
 	id := msg.command.ID
+	if m.terminalClosed[id] {
+		return nextInput
+	}
 	if _, streaming := msg.service.(shellport.StreamingTerminals); streaming && msg.command.Kind == shellterm.CommandTakeControl && msg.err == nil {
 		if m.terminalLeases == nil {
 			m.terminalLeases = make(map[string]workspace.TerminalLease)
@@ -225,9 +233,6 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 			screen.SetControlled(true)
 		}
 		return tea.Batch(nextInput, m.drainTerminalCommands())
-	}
-	if m.terminalClosed[id] {
-		return nextInput
 	}
 	if msg.command.Kind == shellterm.CommandReadRows && msg.command.Sequence == 0 {
 		delete(m.terminalReads, id)

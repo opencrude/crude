@@ -1,7 +1,9 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +35,25 @@ func (m *App) termMgr() shellport.TerminalManager {
 		return nil
 	}
 	return m.ws.TermMgr()
+}
+
+// terminalInfo applies this shell's close fence over its canonical inventory.
+// Close unmounts synchronously while the core mutation and removal publication
+// finish asynchronously. Neither a stale picker nor a late result may reopen it.
+func (m *App) terminalInfo(id string) (workspace.TerminalInfo, bool) {
+	if !m.terminalClosed[id] {
+		if manager := m.termMgr(); manager != nil {
+			return manager.Get(id)
+		}
+	}
+	return workspace.TerminalInfo{}, false
+}
+
+func (m *App) terminalInfos() []workspace.TerminalInfo {
+	if manager := m.termMgr(); manager != nil {
+		return slices.DeleteFunc(manager.List(), func(info workspace.TerminalInfo) bool { return m.terminalClosed[info.ID] })
+	}
+	return nil
 }
 
 func (m *App) termDockVisible() bool {
@@ -165,30 +186,32 @@ func (m *App) openNewTerminal() tea.Cmd {
 		return nil
 	}
 	root, generation, controller := m.ws.RootPath(), m.workspaceSwitchGen.Load(), m.terminalController()
-	return func() tea.Msg {
+	return m.clientIOCommand(context.Background(), func(ctx context.Context) tea.Msg {
 		info, err := service.Create(workspace.TerminalCreateOpts{CWD: root, Cols: defaultTermCols, Rows: defaultTermRows})
+		if barrier, ok := service.(shellport.TerminalInventoryBarrier); err == nil && ok {
+			err = barrier.AwaitInventory(ctx)
+		}
 		var lease workspace.TerminalLease
 		if err == nil {
 			lease, err = service.Acquire(info.ID, controller)
 		}
 		return terminalCreatedMsg{service: service, generation: generation, info: info, lease: lease, err: err}
-	}
+	})
 }
 
 func (m *App) dockTerminal(id string) {
-	mgr := m.termMgr()
-	if mgr == nil || m.termDock == nil {
+	if m.termDock == nil {
 		return
 	}
-	info, ok := mgr.Get(id)
+	info, ok := m.terminalInfo(id)
 	if !ok {
 		return
 	}
 	m.dockTerminalInfo(info)
 }
 
-// A create receipt is already exact core evidence even when the independent
-// inventory replica has not arrived. Mount from that immutable value on Update.
+// Placement consumes a detached inventory value. Connected creation crosses its
+// UI-applied inventory barrier before mounting; a private receipt is not a clock.
 func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 	if m.termDock == nil {
 		return
@@ -212,19 +235,14 @@ func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 }
 
 func (m *App) promoteTerminal(id string) {
-	mgr := m.termMgr()
-	if mgr == nil {
-		return
-	}
-	info, ok := mgr.Get(id)
+	info, ok := m.terminalInfo(id)
 	if !ok {
 		return
 	}
 	m.floatTerminalInfo(info)
 }
 
-// floatTerminalInfo opens a terminal window from an exact identity, including
-// a create receipt whose inventory replica has not arrived yet.
+// floatTerminalInfo opens a terminal window from an exact inventory identity.
 func (m *App) floatTerminalInfo(info workspace.TerminalInfo) {
 	id := info.ID
 	m.lastTerminalID = id
@@ -303,11 +321,7 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 }
 
 func (m *App) focusTerminal(id string) {
-	mgr := m.termMgr()
-	if mgr == nil {
-		return
-	}
-	info, ok := mgr.Get(id)
+	info, ok := m.terminalInfo(id)
 	if !ok {
 		return
 	}
@@ -466,11 +480,11 @@ func (m *App) toggleTerminalFocus() tea.Cmd {
 	if mgr == nil {
 		return m.openNewTerminal()
 	}
-	list := mgr.List()
+	list := m.terminalInfos()
 	if len(list) == 0 {
 		return m.openNewTerminal()
 	}
-	if _, ok := mgr.Get(m.lastTerminalID); ok {
+	if _, ok := m.terminalInfo(m.lastTerminalID); ok {
 		m.focusTerminal(m.lastTerminalID)
 		return nil
 	}

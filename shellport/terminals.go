@@ -1,6 +1,8 @@
 package shellport
 
 import (
+	"context"
+
 	"crude/terminalvt"
 	"crude/workspace"
 )
@@ -28,6 +30,14 @@ type TerminalService interface {
 	Resize(lease workspace.TerminalLease, cols, rows int) error
 	// Rows returns a detached bounded page; start=-1 requests the active grid.
 	Rows(id string, request terminalvt.RowRequest) (workspace.TerminalProjection, error)
+}
+
+// TerminalInventoryBarrier is supplied by asynchronous connected replicas.
+// AwaitInventory waits off Update for a post-call inventory to be installed by
+// the owning UI. Create alone is a committed resource receipt, not publication
+// application. Synchronous local managers need no barrier.
+type TerminalInventoryBarrier interface {
+	AwaitInventory(context.Context) error
 }
 
 // StreamingTerminals owns asynchronous grid publication and nonblocking ordered

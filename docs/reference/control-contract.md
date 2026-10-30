@@ -124,6 +124,14 @@ its exact originating shell detaches. Such partial/uncertain evidence is not a
 successful visible mount. `applied` acknowledges the shell owner, not proof that
 physical terminal pixels were displayed.
 
+`terminal.open` additionally waits off Update for the created resource's
+post-request inventory publication before acquiring control and mounting it.
+Immediate `terminal.show`, picker and placement reads cannot outrun that
+publication. Cancellation keeps a returned resource identity as partial retained
+evidence, never permission to create a replacement. This shell's synchronous Close
+fence or a newer removal prevents late create/control completions and stale
+picker/placement actions from mounting it again.
+
 Both domain and shell mutations use the original caller's durable receipt.
 `operation.receipt` observes its original `request_id`; transport clients also
 expose `request.receipt`. Do not replay an unknown effect or retarget it after

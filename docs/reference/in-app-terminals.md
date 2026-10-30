@@ -140,6 +140,20 @@ PTY bytes enter this service even without a mounted screen; downstream readers
 receive bounded detached rows, not raw output. There is no shell startup parser
 or second query-reply source.
 
+A connected create RPC returns the retained resource identity, not proof that its
+independent inventory publication has reached the shell. Interactive creation
+uses the shell-owned cancellable I/O lifetime and `TerminalInventoryBarrier` to
+wait off Update for a post-request inventory to be applied before acquiring
+control and mounting. The existing topic installer is still the only replica
+writer; neither a private receipt nor another list fetch fills the gap. Direct
+SDK creation remains usable without a mounted UI, and synchronous local
+managers need no barrier. Immediate hide/show, dock/float and picker reads then
+observe the same inventory. Cancellation preserves the created resource rather
+than recreating it. This shell's synchronous Close fence also excludes the ID
+from picker/placement and late create/control completions while canonical removal
+is still in flight; a newer removal likewise prevents a delayed result remounting
+the terminal.
+
 Input and resize require the exact `TerminalLease`: terminal ID, client ID,
 attachment epoch and lease generation. A second controller cannot silently steal
 it; release/detach invalidates only the exact owner. Viewers may read rows and

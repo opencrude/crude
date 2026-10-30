@@ -90,6 +90,14 @@ func TestProtocolServerHelper(t *testing.T) {
 			}
 			write(map[string]any{"jsonrpc": "2.0", "id": "configuration", "method": "workspace/configuration", "params": map[string]any{"items": []any{map[string]any{"section": "python.analysis"}, map[string]any{"section": "missing"}, map[string]any{"section": ""}}}})
 		case "textDocument/hover":
+			if mode == "environment" {
+				_, unknown := os.LookupEnv("CRUDE_ANALYZER_UNKNOWN_FIXTURE")
+				data, _ := json.Marshal(map[string]any{"unknownPresent": unknown,
+					"explicit": os.Getenv("CRUDE_ANALYZER_EXPLICIT_FIXTURE")})
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{
+					"contents": map[string]any{"kind": "plaintext", "value": string(data)}}})
+				continue
+			}
 			if mode == "stale" {
 				root, _ := os.Getwd()
 				_ = os.WriteFile(filepath.Join(root, "requested"), nil, 0600)

@@ -489,7 +489,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if m.termMgr() == nil {
 			return m.failShellControl(msg, control.Unavailable, "terminal service unavailable")
 		}
-		if _, ok := m.termMgr().Get(in.ID); !ok {
+		if _, ok := m.terminalInfo(in.ID); !ok {
 			return m.failShellControl(msg, control.Unavailable, "terminal missing")
 		}
 		m.focusTerminal(in.ID)
