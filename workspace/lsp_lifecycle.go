@@ -16,18 +16,19 @@ import (
 )
 
 type lspClientState struct {
-	rootURI  string
-	cmd      string
-	args     []string
-	spec     ttypes.LSPServerSpec
-	status   LSPStatus
-	err      string
-	client   LSPClient
-	cancel   context.CancelFunc
-	closing  bool
-	waiting  bool
-	stopped  bool
-	lastUsed time.Time
+	rootURI     string
+	cmd         string
+	args        []string
+	spec        ttypes.LSPServerSpec
+	status      LSPStatus
+	err         string
+	client      LSPClient
+	teardownErr error
+	cancel      context.CancelFunc
+	closing     bool
+	waiting     bool
+	stopped     bool
+	lastUsed    time.Time
 }
 
 type lspDocument struct {
@@ -216,11 +217,16 @@ func (m *LSPManager) reconcile() bool {
 		}
 		client := state.client
 		m.mu.Unlock()
+		var stopErr error
 		if client != nil {
-			client.Stop()
+			stopErr = client.Stop()
 		}
 		m.mu.Lock()
 		if m.states[key] == state {
+			if m.retainUnverifiedStopLocked(key, state, stopErr) {
+				m.mu.Unlock()
+				return true
+			}
 			if state.stopped {
 				state.client, state.closing, state.status = nil, false, LSPIdle
 			} else {
@@ -247,18 +253,23 @@ func (m *LSPManager) reconcile() bool {
 	}
 	// A disconnected server is not silently restarted every tick or keypress.
 	for key, state := range m.states {
-		if state.client == nil {
+		if state.client == nil || state.teardownErr != nil {
 			continue
 		}
 		select {
 		case <-state.client.Done():
 			client := state.client
-			state.client = nil
 			state.status, state.err = LSPFailed, "Language server connection lost; use Restart Language Servers."
 			m.clearServerDiagnosticsLocked(key)
 			m.recomputeActiveStatusLocked()
 			m.mu.Unlock()
-			client.Stop()
+			stopErr := client.Stop()
+			m.mu.Lock()
+			if m.states[key] == state && !m.retainUnverifiedStopLocked(key, state, stopErr) {
+				state.client = nil
+				m.recomputeActiveStatusLocked()
+			}
+			m.mu.Unlock()
 			return true
 		default:
 		}
@@ -325,7 +336,7 @@ func (m *LSPManager) reconcile() bool {
 		if m.liveCountLocked() >= m.settings.MaxServers {
 			var idle *lspClientState
 			for key, candidate := range m.states {
-				if candidate.client != nil && m.documentCountLocked(key) == 0 && (idle == nil || candidate.lastUsed.Before(idle.lastUsed)) {
+				if candidate.client != nil && candidate.teardownErr == nil && m.documentCountLocked(key) == 0 && (idle == nil || candidate.lastUsed.Before(idle.lastUsed)) {
 					idle = candidate
 				}
 			}
@@ -370,10 +381,15 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 	stale := m.states[key] != state || state.closing || m.closed || m.paused || !m.keyWantedLocked(key)
 	if stale || err != nil {
 		m.mu.Unlock()
+		var stopErr error
 		if client != nil {
-			client.Stop()
+			stopErr = client.Stop()
 		}
 		m.mu.Lock()
+		if m.retainUnverifiedStopLocked(key, state, stopErr) {
+			m.mu.Unlock()
+			return
+		}
 		state.client = nil
 		if !stale {
 			state.status, state.err = LSPFailed, lspStartError(state.cmd, err)
@@ -418,10 +434,32 @@ func (m *LSPManager) documentCountLocked(key string) int {
 }
 
 func (m *LSPManager) retireLocked(state *lspClientState) {
+	if state.teardownErr != nil {
+		return
+	}
 	state.closing = true
 	if state.cancel != nil {
 		state.cancel()
 	}
+}
+
+// Stop failure is not a freed process slot. Retain the exact client and publish
+// uncertainty, including after disable/shutdown, without retry-spinning a dead
+// PID or admitting replacements against an unverified resource budget.
+func (m *LSPManager) retainUnverifiedStopLocked(key string, state *lspClientState, err error) bool {
+	if err == nil {
+		return false
+	}
+	state.teardownErr = err
+	state.closing, state.waiting, state.cancel = false, false, nil
+	state.status = LSPFailed
+	state.err = "Language server teardown is unverified; its process slot is retained. Inspect the failure before restarting Crude: " + err.Error()
+	m.clearServerDiagnosticsLocked(key)
+	m.recomputeActiveStatusLocked()
+	if m.logger != nil {
+		m.logger.Error("lsp", state.err, "server", state.cmd)
+	}
+	return true
 }
 
 func (m *LSPManager) cancelUpdatesLocked() {
@@ -717,7 +755,7 @@ func (m *LSPManager) stopLocked() {
 	m.activeConnected, m.activeStatus, m.activeError, m.syncing, m.inflight = false, LSPIdle, "", false, 0
 	m.bumpVersionLocked()
 	m.clearDiagnosticsLocked()
-	m.recomputeIdleReasonLocked()
+	m.recomputeActiveStatusLocked()
 	if len(m.states) > 0 {
 		m.signalLocked()
 	}
@@ -785,7 +823,7 @@ func (m *LSPManager) SetOnDiagnostics(fn func(string, []LSPDiagnostic)) {
 
 func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, path string, diags []LSPDiagnostic) {
 	m.mu.Lock()
-	if m.states[key] != owner || owner.closing || owner.stopped || m.paused || m.closed {
+	if m.states[key] != owner || owner.closing || owner.stopped || owner.teardownErr != nil || m.paused || m.closed {
 		m.mu.Unlock()
 		return
 	}
@@ -823,7 +861,7 @@ func (m *LSPManager) requestClient(ctx context.Context, path string) (LSPClient,
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		state := m.states[key]
-		return !m.paused && !m.closed && m.wantedLocked(doc) && m.settingsGeneration == generation && m.documents[path] == doc && doc.revision == revision && state != nil && !state.closing && !state.stopped && state.client == client
+		return !m.paused && !m.closed && m.wantedLocked(doc) && m.settingsGeneration == generation && m.documents[path] == doc && doc.revision == revision && state != nil && state.teardownErr == nil && !state.closing && !state.stopped && state.client == client
 	}
 	return client, ctx, valid, cancel
 }

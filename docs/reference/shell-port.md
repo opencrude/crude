@@ -24,6 +24,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `files.go` | `Files` | file mutations, project search; carries `Documents()` and `LSPMgr()` accessors |
 | `documents.go` | `DocumentService` | checked snapshot save infrastructure |
 | `live_documents.go`, `live_document_commands.go` | `LiveDocuments`, formatter/receipts/command interfaces | universal connected editor lifecycle, per-open topic, recovery sync, exact-owner commands |
+| `insight.go` | `DocumentInsightMsg` | Independent canonical syntax projection, exact-open validity and applied ACK; not a text mutation or semantic guarantee |
 | `lsp.go` | `LSPService` | language-server manager |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |

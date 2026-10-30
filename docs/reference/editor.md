@@ -244,12 +244,31 @@ Tea's update goroutine (the tab-close hang).
 - `asyncPipeWriter.Write` only enqueues a copy; one dedicated writer goroutine
   performs pipe writes in FIFO order. The queue is byte-bounded
   (`lspWriteQueueCap`); a stalled server trips the cap and the jsonrpc2
-  connection fails fast instead of blocking or corrupting framing.
+  connection fails fast instead of blocking or corrupting framing. The bound
+  applies to an empty queue too; short writes fail instead of replaying a frame.
+  Writer Close shares one bounded join and reports an unjoined worker, never
+  silent success after a timeout or a fresh detached waiter per caller.
 - `lspPipeMonitor.Done()` closes when the connection dies for any reason (read
   EOF, write error, queue cap, graceful close). `workspace.LSPManager` observes
   `LSPClient.Done()`, clears that server's diagnostics, marks it `LSPFailed` and
   stops the process. A lost server is not silently restarted on every keypress or
   open; the user restarts it explicitly. Test fakes return a nil `Done()` channel.
+- `LSPClient.Stop() error` and the nested `Client.Kill() error` carry the exact
+  joined retirement outcome. Concurrent stops join the same attempt. Failed
+  startup with `ErrProcessCleanupUnverified` retains its reservation even when
+  no usable client was returned. Unverified teardown keeps the exact client
+  and server slot, rejects late diagnostics, and remains visible as Failed
+  after Stop/disable instead of admitting a replacement or retry-spinning.
+  A reaped server's own nonzero exit is an operational failure, not an occupied
+  process slot; genuine containment, wait, pipe-close or worker-join failures
+  remain failures.
+- Unix group signaling occurs before leader reap and never targets a settled
+  identity; unsupported/failed exit observation is unproven cleanup. Windows
+  starts suspended, assigns the retained Job before resume, joins the leader
+  and checks Job membership reaches zero. See the exact
+  [fork lifetime limits](../../third_party/powernap/README.md): groups are not
+  a sandbox and cannot prove absence of deliberately escaped descendants.
+  Native Windows/macOS acceptance remains open.
 - A start that fails because the executable is missing reports "`<cmd>` is not
   installed or not on PATH. Install it, then choose Retry." instead of the
   transport's wrapped errors. The Problems panel's server row offers **Retry**
@@ -279,7 +298,32 @@ Tea's update goroutine (the tab-close hang).
   `closed` before its owned servers are marked for shutdown: that gap can let the
   worker exit while an actual language-server process remains alive.
 
+### Diagnostic positions
+
+Manager/replica and shared Buffer diagnostics retain UTF-16 wire coordinates.
+`Editor.SetDiagnostics` copies them and projects each endpoint against its own
+source line. Its `Diagnostics` and F8 navigation results are visual positions and
+must not be submitted as wire positions again. Project-first-error, status links,
+definition/reference and queued connected opens use the strict wire-navigation
+API. Both endpoints are checked before cursor or selection changes; a late
+destination open cannot move the previously active editor or steal newer focus.
+
+Multiline underlines use a line-indexed projection capped at 256 rows per range
+and 4,096 extra rows per publication, plus each diagnostic's start row. Complete
+endpoints remain available for current-revision hover/navigation. This avoids
+expanding an untrusted range across an entire source on Update. Display clamping
+of malformed diagnostic columns remains tolerant; strict navigation does not
+permit reversed, out-of-source or split-surrogate wire endpoints.
+
 ## Source projections and comparisons
+
+The [native syntax owner](native-syntax.md) schedules selected grammars from
+canonical shared documents. Connected clean editors consume its independent
+revision-fenced topic; private optimistic text stays provisional. Standalone
+and preview editors use the same native syntax for selected grammars; Chroma
+continues lexical coverage for other languages, Markdown and diff consumers.
+Both feed one source-byte-to-grapheme/theme projection. Syntax coverage is
+shown separately from LSP diagnostics and project-check correctness.
 
 - Syntax comes from one complete immutable document revision, never a lexical
   restart above/below the viewport. Long Python triple-quoted strings/docstrings,

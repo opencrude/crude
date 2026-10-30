@@ -174,7 +174,7 @@ func TestLSPChangedBusyCancellationAndPanic(t *testing.T) {
 
 type idleSymbolsClient struct{ LSPClient }
 
-func (idleSymbolsClient) Stop() {}
+func (idleSymbolsClient) Stop() error { return nil }
 
 func (idleSymbolsClient) RequestDocumentSymbols(context.Context, string) []LSPSymbol {
 	return []LSPSymbol{{Name: "visibleSymbol"}}

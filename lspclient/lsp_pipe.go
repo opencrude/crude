@@ -51,6 +51,7 @@ const (
 var (
 	errLSPWriteQueueFull = errors.New("lsp: write queue full; language server stalled")
 	errLSPWriterClosed   = errors.New("lsp: writer closed")
+	errLSPWriterUnjoined = errors.New("lsp: asynchronous pipe writer did not stop before its shutdown deadline")
 )
 
 // asyncPipeWriter is a bounded, serialized, non-blocking writer facade over
@@ -68,20 +69,22 @@ type asyncPipeWriter struct {
 	accepting bool
 	fatal     error
 
-	done    chan struct{}
-	endOnce sync.Once
-	wg      sync.WaitGroup
+	done       chan struct{}
+	endOnce    sync.Once
+	workerDone chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 // newAsyncPipeWriter starts a writer goroutine over sink.
 func newAsyncPipeWriter(sink io.Writer) *asyncPipeWriter {
 	w := &asyncPipeWriter{
-		sink:      sink,
-		accepting: true,
-		done:      make(chan struct{}),
+		sink:       sink,
+		accepting:  true,
+		done:       make(chan struct{}),
+		workerDone: make(chan struct{}),
 	}
 	w.cond = sync.NewCond(&w.mu)
-	w.wg.Add(1)
 	go w.run()
 	return w
 }
@@ -107,7 +110,7 @@ func (w *asyncPipeWriter) Write(p []byte) (int, error) {
 		w.mu.Unlock()
 		return 0, err
 	}
-	if w.queued > 0 && w.queued+len(p) > lspWriteQueueCap {
+	if len(p) > lspWriteQueueCap-w.queued {
 		// The server has stopped draining. Fail fast instead of blocking
 		// the caller: drop everything and let the connection die cleanly.
 		w.fatal = errLSPWriteQueueFull
@@ -127,33 +130,32 @@ func (w *asyncPipeWriter) Write(p []byte) (int, error) {
 }
 
 // Close stops accepting writes and lets the writer drain the remaining
-// queue. The wait is bounded: a wedged sink should never stall the caller;
-// in production the stream's processCloser closes the pipe within its own
-// kill timeout (~5s), which unblocks a stuck drain with an error.
+// queue. It reports the join outcome, not an earlier protocol write failure:
+// Write/Done already expose that failure, and a fully joined broken pipe is
+// not an unverified subprocess retirement. The process owner closes actual
+// pipes first; a sink which still cannot be joined is an explicit failure.
+// Repeated closes share one bounded wait, with no detached waiter goroutines.
 func (w *asyncPipeWriter) Close() error {
-	w.mu.Lock()
-	if w.accepting {
+	w.closeOnce.Do(func() {
+		w.mu.Lock()
 		w.accepting = false
 		w.cond.Broadcast()
-	}
-	w.mu.Unlock()
-
-	done := make(chan struct{})
-	go func() {
-		w.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(6 * time.Second):
-	}
-	return nil
+		w.mu.Unlock()
+		timer := time.NewTimer(6 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-w.workerDone:
+		case <-timer.C:
+			w.closeErr = errLSPWriterUnjoined
+		}
+	})
+	return w.closeErr
 }
 
 // run drains the queue in FIFO order until it is empty and closed, or until
 // a sink write fails. It is the ONLY goroutine that touches the pipe.
 func (w *asyncPipeWriter) run() {
-	defer w.wg.Done()
+	defer close(w.workerDone)
 	defer w.markEnded()
 	for {
 		w.mu.Lock()
@@ -173,11 +175,16 @@ func (w *asyncPipeWriter) run() {
 			return
 		}
 		buf := w.queue[0]
+		w.queue[0] = nil
 		w.queue = w.queue[1:]
 		w.queued -= len(buf)
 		w.mu.Unlock()
 
-		if _, err := w.sink.Write(buf); err != nil {
+		n, err := w.sink.Write(buf)
+		if err == nil && n != len(buf) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
 			w.mu.Lock()
 			if w.fatal == nil {
 				w.fatal = err

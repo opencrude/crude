@@ -31,6 +31,11 @@ BenchmarkSyntaxLongPythonViewport 0 0
 BenchmarkSyntaxMapInlineDecorations 830 3
 BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
 BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
+# Native syntax Go allocations only; native heap/RSS require separate evidence.
+BenchmarkNativeSyntaxPreparation/Python_200 10240 64
+BenchmarkNativeSyntaxPreparation/Python_20000 700000 96
+BenchmarkNativeSyntaxIncremental 700000 96
+BenchmarkNativeSyntaxColdSession 72000 640
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
 BenchmarkFooterOverflowPaint 200 17

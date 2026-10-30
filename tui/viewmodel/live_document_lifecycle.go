@@ -11,6 +11,7 @@ func (m *App) fenceLiveDocumentTopics() {
 	if epoch, ok := m.ws.(shellport.LiveDocumentEpoch); ok {
 		epoch.FenceDocumentTopics()
 	}
+	clear(m.pendingInsights)
 	for id, msg := range m.pendingDocumentTopics {
 		if msg.Done != nil {
 			msg.Done(document.ErrOwner)

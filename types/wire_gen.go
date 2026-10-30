@@ -7,6 +7,7 @@ import (
 	"crude/types/activity"
 	"crude/types/attachment"
 	"crude/types/recovery"
+	"crude/types/syntax"
 	_ "embed"
 
 	"github.com/tinylib/msgp/msgp"
@@ -2662,6 +2663,116 @@ func (z *CostValue) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *DocumentInsight) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 8
+	o = append(o, 0x98)
+	o = msgp.AppendString(o, z.DocumentID)
+	o = msgp.AppendString(o, z.Path)
+	o = msgp.AppendUint64(o, z.Revision)
+	o = msgp.AppendString(o, z.Generation)
+	o = msgp.AppendUint64(o, z.Version)
+	o = msgp.AppendString(o, string(z.State))
+	o = msgp.AppendString(o, z.Detail)
+	if z.Syntax == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o, err = z.Syntax.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "Syntax")
+			return
+		}
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DocumentInsight) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
+		return
+	}
+	z.DocumentID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "DocumentID")
+		return
+	}
+	z.Path, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Path")
+		return
+	}
+	z.Revision, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Revision")
+		return
+	}
+	z.Generation, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Generation")
+		return
+	}
+	z.Version, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Version")
+		return
+	}
+	{
+		var zb0002 string
+		zb0002, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "State")
+			return
+		}
+		z.State = InsightState(zb0002)
+	}
+	z.Detail, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Detail")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Syntax = nil
+	} else {
+		if z.Syntax == nil {
+			z.Syntax = new(syntax.Result)
+		}
+		bts, err = z.Syntax.UnmarshalMsg(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Syntax")
+			return
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *DocumentInsight) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.DocumentID) + msgp.StringPrefixSize + len(z.Path) + msgp.Uint64Size + msgp.StringPrefixSize + len(z.Generation) + msgp.Uint64Size + msgp.StringPrefixSize + len(string(z.State)) + msgp.StringPrefixSize + len(z.Detail)
+	if z.Syntax == nil {
+		s += msgp.NilSize
+	} else {
+		s += z.Syntax.Msgsize()
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 9
@@ -3047,6 +3158,34 @@ func (z *GoalStatus) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z GoalStatus) Msgsize() (s int) {
+	s = msgp.StringPrefixSize + len(string(z))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z InsightState) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	o = msgp.AppendString(o, string(z))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *InsightState) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	{
+		var zb0001 string
+		zb0001, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = InsightState(zb0001)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z InsightState) Msgsize() (s int) {
 	s = msgp.StringPrefixSize + len(string(z))
 	return
 }

@@ -152,3 +152,23 @@ func TestLSPCompletionEditCRLFAndCombiningBoundary(t *testing.T) {
 	e.Undo()
 	require.Equal(t, "a\r\néx", e.Value())
 }
+
+func TestLSPDiagnosticNavigationValidatesBothSourceLinesAtomically(t *testing.T) {
+	e := opsEditor(t, "unicode.txt", "\t界é😀abc\r\nab\t界é😀XYZ\r\n")
+	valid := LSPDiagnostic{Line: 0, Col: 6, EndLine: 1, EndCol: 9}
+	require.NoError(t, e.SetLSPDiagnosticPosition(valid))
+	require.Equal(t, Position{Col: 9}, e.cursor)
+	require.Equal(t, "abc\r\nab\t界é😀X", e.SelectedText())
+	for _, invalid := range []LSPDiagnostic{
+		{Line: -1, EndLine: 1},
+		{Line: 0, Col: 5, EndLine: 1, EndCol: 9},  // start splits 😀 surrogate
+		{Line: 0, Col: 6, EndLine: 1, EndCol: 7},  // end splits different line's 😀
+		{Line: 0, Col: 6, EndLine: 1, EndCol: 12}, // excludes CRLF from content
+		{Line: 0, Col: 6, EndLine: 9},
+		{Line: 1, Col: 9, EndLine: 0, EndCol: 6},
+	} {
+		before := e.captureViewState()
+		require.Error(t, e.SetLSPDiagnosticPosition(invalid), "%+v", invalid)
+		require.Equal(t, before, e.captureViewState(), "invalid end must not move start cursor")
+	}
+}

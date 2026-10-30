@@ -90,6 +90,8 @@ documents to read before changing each area.
   minimize, Git and local comparisons.
 - [Editor and language servers](reference/editor.md) — editor geometry, motion,
   dirty/save authority, gutter and LSP transport.
+- [Native syntax analysis](reference/native-syntax.md): bounded parser/query
+  ownership, selected grammar pins, corpus and explicit integration limits.
 - [Text input and composer](reference/text-input.md) — shared text controls,
   cursor, clipboard, composer pastes, attachments and prompt history.
 - [Interaction matrix](reference/interaction-matrix.md) — keyboard/mouse
@@ -142,8 +144,12 @@ documents to read before changing each area.
 - [Core and shell separation](plans/core-shell-separation.md) — remaining native
   Windows, distinct-host and resource-baseline acceptance.
 - [Autonomous code intelligence](plans/autonomous-code-intelligence.md) —
-  proposed: zero-install, self-acquiring, verified and resource-governed
-  whole-project intelligence; folds in LSP acceptance.
+  proposed: autonomous assembly of native syntax and project-aware engines,
+  with coverage-qualified, resource-governed editor and agent views.
+- [Human-workflow IDE acceptance](plans/ide-workflow-acceptance.md):
+  proposed: actual TUI developer tasks, auditable feature checkpoints,
+  independent VM devices, same-core pair/trio editing and local-first promotion
+  to remote Chromium scale, with separate physical-device calibration.
 - [LSP acceptance](plans/lsp-acceptance.md) — process containment and
   installed-server acceptance.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open

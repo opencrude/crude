@@ -55,7 +55,7 @@ func (c *immediateTreeDiagClient) publishDiagnostics(diags []workspace.LSPDiagno
 }
 
 func (c *immediateTreeDiagClient) Start(context.Context) error { return nil }
-func (c *immediateTreeDiagClient) Stop()                       {}
+func (c *immediateTreeDiagClient) Stop() error                 { return nil }
 func (c *immediateTreeDiagClient) Done() <-chan struct{}       { return nil }
 func (c *immediateTreeDiagClient) OpenFile(context.Context, string, string, string) {
 }

@@ -778,6 +778,9 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 		if blame := ed.CursorBlameSummary(); blame != "" {
 			prefix += "  " + blame
 		}
+		if insight := editorInsightSummary(ed); insight != "" {
+			prefix += "  " + insight
+		}
 		if errs, warns, hints := ed.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {
 			var parts []string
 			if errs > 0 {

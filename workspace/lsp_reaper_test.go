@@ -13,7 +13,7 @@ type reapableClient struct {
 
 func (c *reapableClient) OnDiagnostics(func(string, []LSPDiagnostic))           {}
 func (c *reapableClient) Start(context.Context) error                           { return nil }
-func (c *reapableClient) Stop()                                                 {}
+func (c *reapableClient) Stop() error                                           { return nil }
 func (c *reapableClient) Done() <-chan struct{}                                 { return c.done }
 func (c *reapableClient) OpenFile(context.Context, string, string, string)      {}
 func (c *reapableClient) UpdateFile(context.Context, string, string)            {}

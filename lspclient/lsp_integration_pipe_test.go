@@ -176,7 +176,9 @@ func TestLSPIntegration_CloseFileNeverBlocksOnWedgedServer(t *testing.T) {
 	}
 
 	// Connection death must be observable so the manager can reap/restart.
-	integration.Stop()
+	if err := integration.Stop(); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-integration.Done():
 	case <-time.After(10 * time.Second):
@@ -200,7 +202,9 @@ func TestLSPIntegration_ServerDeathObservedWithoutWrites(t *testing.T) {
 	}
 
 	// Kill the server process without any pending write activity.
-	integration.Stop()
+	if err := integration.Stop(); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-integration.Done():
 	case <-time.After(10 * time.Second):

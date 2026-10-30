@@ -62,6 +62,7 @@ func (s *DocumentService) notifyDocument(id string) {
 	if s.closed {
 		return
 	}
+	s.Insight.observeLocked(s.docs[id])
 	for wake := range s.subscribers[id] {
 		select {
 		case wake <- struct{}{}:

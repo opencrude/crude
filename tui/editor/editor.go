@@ -14,6 +14,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 type ActionType int
@@ -140,6 +141,8 @@ type Editor struct {
 	syntaxFailed                     bool
 	syntaxStopped                    bool
 	syntaxPlain                      bool
+	canonicalInsight                 *types.DocumentInsight
+	canonicalInk                     *types.DocumentInsight
 
 	lineRunesCacheValid bool
 	lineRunesCacheLine  int
@@ -568,7 +571,8 @@ func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
 	e.onContentChanged = fn
 }
 
-// SetDiagnostics replaces the current diagnostics for the editor.
+// SetDiagnostics accepts raw LSP UTF-16 ranges. Only this editor projection is
+// visual; the caller and shared Buffer cache retain wire coordinates.
 func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 	e.diagMu.Lock()
 
@@ -581,6 +585,9 @@ func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 		rawLine, err := e.buf.Line(d.Line)
 		if err == nil {
 			converted[i].Col = UTF16ColToVisualCol(string(rawLine), d.Col, tabWidth)
+		}
+		rawLine, err = e.buf.Line(d.EndLine)
+		if err == nil {
 			converted[i].EndCol = UTF16ColToVisualCol(string(rawLine), d.EndCol, tabWidth)
 		}
 	}
@@ -590,7 +597,31 @@ func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 	e.ClearHover()
 
 	byLine := make(map[int][]diagSpan, len(converted))
+	// Presentation is deliberately bounded even if a server publishes a range
+	// across millions of lines. Retain complete endpoints for navigation/hover;
+	// paint at most 256 rows per multiline range and 4096 extra rows per batch.
+	multilineBudget := 4096
 	for _, d := range converted {
+		if d.EndLine > d.Line {
+			if d.Line < 0 || d.Line >= e.LineCount() {
+				continue
+			}
+			last := min(d.EndLine, e.LineCount()-1, d.Line+min(255, multilineBudget))
+			for line := d.Line; line <= last; line++ {
+				start, end := 0, e.lineVisualWidth(line)
+				if line == d.Line {
+					start = d.Col
+				}
+				if line == d.EndLine {
+					end = d.EndCol
+				}
+				if end > start {
+					byLine[line] = append(byLine[line], diagSpan{startCol: start, endCol: end, severity: d.Severity})
+				}
+			}
+			multilineBudget -= last - d.Line
+			continue
+		}
 		startCol := d.Col
 		endCol := d.EndCol
 		if endCol <= startCol {
@@ -653,7 +684,8 @@ func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
 // current file, sorted by line then column. Used by navigation
 // features (F8/Shift+F8, status-bar "Goto first error") that need
 // to walk the diagnostic list in order. The returned slice is a
-// copy; modifying it does not affect the editor.
+// copy in visual editor coordinates, not UTF-16; modifying it does not affect
+// the editor. Never feed it back to SetDiagnostics or a wire-navigation API.
 func (e *Editor) Diagnostics() []LSPDiagnostic {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
@@ -699,7 +731,7 @@ func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
 // NextError returns the first diagnostic in the current file with
 // line strictly greater than fromLine (or with line == fromLine and
 // col > fromCol). Returns nil if there is no such error. The
-// returned diagnostic is a pointer into the editor's diagnostic
+// returned diagnostic uses visual editor coordinates and is a pointer into the editor's diagnostic
 // slice; do not retain across edits.
 func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
 	e.diagMu.RLock()
@@ -792,11 +824,17 @@ func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 	var result []LSPDiagnostic
 	lineEnd := -1
 	for _, d := range e.diagnostics {
-		if d.Line != line {
+		if line < d.Line || line > max(d.Line, d.EndLine) {
 			continue
 		}
+		startCol := d.Col
+		if line > d.Line {
+			startCol = 0
+		}
 		endCol := d.EndCol
-		if endCol <= d.Col {
+		if line < d.EndLine {
+			endCol = e.lineVisualWidth(line)
+		} else if d.EndLine <= d.Line && endCol <= d.Col {
 			if lineEnd < 0 {
 				lineEnd = e.lineVisualWidth(line)
 			}
@@ -805,7 +843,7 @@ func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 			}
 			endCol = lineEnd
 		}
-		if col >= d.Col && col < endCol {
+		if col >= startCol && col < endCol {
 			result = append(result, d)
 		}
 	}

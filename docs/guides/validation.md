@@ -29,6 +29,8 @@ Locally:
 go run ./internal/wiregen -check      # nonmutating source-cohort freshness
 go build ./...
 go test ./<affected packages>/...     # focused first
+make test-syntax                     # includes the nested native binding suite
+make test-lsp                        # pure data/transport and nested LSP ownership
 go test ./... -count=1 -timeout=180s  # repository suite
 golangci-lint run ./...               # zero issues, whole repo
 make design-audit                     # layer boundary, raw SGR, hard-coded hex
@@ -61,6 +63,16 @@ hundreds of cases into one package-wide budget.
   [performance baselines](../reference/performance-baselines.md).
 - Cross-platform code also needs `GOOS=windows`/`GOOS=darwin` builds of the
   affected packages. Cross-compilation is not native-platform acceptance.
+- Native parser changes additionally run the ownership regressions in
+  `third_party/go-tree-sitter/`; it is a replacement module and is not included
+  by the root package glob. `make test-syntax` runs both that suite and the
+  `syntax/` corpus. Use native sanitizers and the registered fuzz target for
+  C-boundary work, and keep C heap/RSS evidence distinct from Go allocations.
+- Language-server ownership changes also run `make test-lsp`. The replaced
+  Powernap module is excluded from the root package glob. Its native tests
+  cover process groups or Job Objects on the executing platform; cross-built
+  tests do not attest Windows/macOS behavior. Pure-Go data/transport checks
+  prevent a syntax result type from pulling the native parser into all clients.
 
 ### Protocol generation and v2 acceptance
 

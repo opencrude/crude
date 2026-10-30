@@ -23,6 +23,7 @@ type lifecycleRuntime struct {
 	active, peak        int
 	// startErrs fail the next starts in order, like a missing executable.
 	startErrs []error
+	stopErr   error
 }
 type lifecycleClient struct {
 	reapableClient
@@ -32,13 +33,13 @@ type lifecycleClient struct {
 	calls               []string
 	startGate, stopGate <-chan struct{}
 	started, stopped    bool
-	startErr            error
+	startErr, stopErr   error
 }
 
 func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string) LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := &lifecycleClient{runtime: r, startGate: r.startGate, stopGate: r.stopGate, reapableClient: reapableClient{done: make(chan struct{})}}
+	c := &lifecycleClient{runtime: r, startGate: r.startGate, stopGate: r.stopGate, stopErr: r.stopErr, reapableClient: reapableClient{done: make(chan struct{})}}
 	if len(r.startErrs) > 0 {
 		c.startErr, r.startErrs = r.startErrs[0], r.startErrs[1:]
 	}
@@ -72,14 +73,19 @@ func (c *lifecycleClient) Start(ctx context.Context) error {
 	c.runtime.mu.Unlock()
 	return nil
 }
-func (c *lifecycleClient) Stop() {
+func (c *lifecycleClient) Stop() error {
 	if c.stopGate != nil {
 		<-c.stopGate
 	}
 	c.mu.Lock()
+	if c.stopErr != nil {
+		err := c.stopErr
+		c.mu.Unlock()
+		return err
+	}
 	if c.stopped {
 		c.mu.Unlock()
-		return
+		return nil
 	}
 	c.stopped = true
 	started := c.started
@@ -89,6 +95,7 @@ func (c *lifecycleClient) Stop() {
 		c.runtime.active--
 		c.runtime.mu.Unlock()
 	}
+	return nil
 }
 func (c *lifecycleClient) record(value string) {
 	c.mu.Lock()

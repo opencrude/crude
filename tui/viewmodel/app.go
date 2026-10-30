@@ -329,6 +329,7 @@ type App struct {
 	paneFocusSeen         window.GroupID
 	workspaceSwitchGen    atomic.Uint64 // invalidates project-bound async callbacks
 	pendingDocumentTopics map[string]shellport.LiveDocumentsChangedMsg
+	pendingInsights       map[string]shellport.DocumentInsightMsg
 	lspRequestCtx         context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel      context.CancelFunc
 	lspDiagnostics        shellport.LSPDiagnosticConsumer

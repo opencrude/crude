@@ -65,7 +65,7 @@ func (noopLSPRuntime) NewClient(model.LSPServerSpec, string) workspace.LSPClient
 
 func (noopLSPClient) OnDiagnostics(func(string, []workspace.LSPDiagnostic)) {}
 func (noopLSPClient) Start(context.Context) error                           { return nil }
-func (noopLSPClient) Stop()                                                 {}
+func (noopLSPClient) Stop() error                                           { return nil }
 func (noopLSPClient) Done() <-chan struct{}                                 { return nil }
 func (noopLSPClient) OpenFile(context.Context, string, string, string)      {}
 func (noopLSPClient) UpdateFile(context.Context, string, string)            {}

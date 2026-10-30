@@ -14,7 +14,11 @@ func TestDefaultLSPRuntimeConstructionIsInert(t *testing.T) {
 		Settings:              map[string]any{"test": true},
 		InitializationOptions: map[string]any{"option": true},
 	}, "file:///unused")
-	t.Cleanup(client.Stop)
+	t.Cleanup(func() {
+		if err := client.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
 	concrete := client.(*runtimeLSPClient)
 	if concrete.ServerCmd() != "nonexistent-lsp-server-12345" || concrete.RootURI() != "file:///unused" {
 		t.Fatal("runtime lost server identity")

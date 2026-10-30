@@ -11,6 +11,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 
+	"crude/syntax"
 	"crude/tui/rendering"
 )
 
@@ -80,7 +81,8 @@ func (e *Editor) initChroma() {
 	// Chroma's coalescer repeatedly concatenates strings. Retain the original
 	// iterator and merge adjacent token spans by offsets instead (linear memory).
 	e.chromaLexer = l
-	e.syntaxPlain = l.Config().Name == lexers.Fallback.Config().Name
+	_, native := syntax.LanguageForPath(path)
+	e.syntaxPlain = !native && l.Config().Name == lexers.Fallback.Config().Name
 	e.invalidateSyntax()
 	e.syntaxStopped = false
 	e.startSyntax()
@@ -96,6 +98,7 @@ func (e *Editor) invalidateSyntax() {
 
 func (e *Editor) cancelSyntax() {
 	e.syntaxGeneration++
+	e.canonicalInk = nil
 	if e.syntaxJob != nil {
 		e.syntaxJob.cancel()
 	}
@@ -195,11 +198,21 @@ func (e *Editor) startSyntax() {
 	if !e.open || e.syntaxStopped || e.syntaxPlain || e.chromaLexer == nil || e.chromaStyle == nil || e.syntaxJob != nil || e.syntaxFailed {
 		return
 	}
+	// Canonical native syntax comes only from the core. Shell workers handle
+	// private optimistic source and read-only/non-connected surfaces.
+	if e.canonicalSyntaxSource() {
+		return
+	}
 	if e.syntaxBuffer == e.buf && e.syntaxRevision == e.buf.Revision() && e.syntaxDocument != nil {
 		return
 	}
 	snapshot := e.buf.snapshotText()
 	lexer := e.chromaLexer
+	path := e.filePath
+	if path == "" {
+		path = e.title
+	}
+	language, native := syntax.LanguageForPath(path)
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &syntaxJob{done: make(chan struct{}), cancel: cancel, buffer: e.buf, revision: e.buf.Revision(), generation: e.syntaxGeneration}
 	e.syntaxJob = job
@@ -217,7 +230,11 @@ func (e *Editor) startSyntax() {
 		// source. Keep the execution budget independent of scheduler contention.
 		work, stop := context.WithTimeout(ctx, 5*time.Second)
 		defer stop()
-		job.document, job.err = lexSyntax(work, lexer, snapshot)
+		if native {
+			job.document, job.err = nativeSyntax(work, language, snapshot)
+		} else {
+			job.document, job.err = lexSyntax(work, lexer, snapshot)
+		}
 	}()
 }
 
@@ -274,21 +291,9 @@ func lexSyntax(ctx context.Context, lexer chroma.Lexer, source textSnapshot) (do
 			err = fmt.Errorf("syntax lexer failed: %v", recovered)
 		}
 	}()
-	var text strings.Builder
-	text.Grow(source.size)
-	cursor := source.cursor(false)
-	for span := cursor.span(); len(span) > 0; span = cursor.span() {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		text.Write(span)
-		cursor.offset += len(span)
-	}
-	document = &syntaxDocument{text: text.String(), lines: []int{0}}
-	for index := range document.text {
-		if document.text[index] == '\n' {
-			document.lines = append(document.lines, index+1)
-		}
+	document, err = syntaxSource(ctx, source)
+	if err != nil {
+		return nil, err
 	}
 	iterator, err := lexer.Tokenise(&chroma.TokeniseOptions{State: "root"}, document.text)
 	if err != nil {
@@ -313,11 +318,62 @@ func lexSyntax(ctx context.Context, lexer chroma.Lexer, source textSnapshot) (do
 	return document, ctx.Err()
 }
 
+func syntaxSource(ctx context.Context, source textSnapshot) (*syntaxDocument, error) {
+	var text strings.Builder
+	text.Grow(source.size)
+	cursor := source.cursor(false)
+	for span := cursor.span(); len(span) > 0; span = cursor.span() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		text.Write(span)
+		cursor.offset += len(span)
+	}
+	document := &syntaxDocument{text: text.String(), lines: []int{0}}
+	for index := range document.text {
+		if document.text[index] == '\n' {
+			document.lines = append(document.lines, index+1)
+		}
+	}
+	return document, ctx.Err()
+}
+
+func nativeSyntax(ctx context.Context, language syntax.LanguageID, source textSnapshot) (*syntaxDocument, error) {
+	document, err := syntaxSource(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	session, err := syntax.New(language)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	result, err := session.Parse(ctx, 1, []byte(document.text))
+	if err != nil {
+		return nil, err
+	}
+	document.spans = make([]syntaxSpan, len(result.Spans))
+	for i, span := range result.Spans {
+		document.spans[i] = syntaxSpan{end: int(span.End), kind: rendering.SyntaxToken(span.Kind)}
+	}
+	return document, ctx.Err()
+}
+
 // Lexical context is always the full immutable document. The viewport selects
 // only which compact source spans to project into grapheme/tab cell colours.
 func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 	e.finishSyntax()
-	e.startSyntax()
+	if e.canonicalSyntaxSource() {
+		e.ensureCanonicalColors(fromLine, toLine)
+		if e.canonicalInk != nil || e.syntaxDocument == nil {
+			return
+		}
+		// An edit receipt may overtake shared analysis after the private worker
+		// completed. Keep its exact-source presentation as provisional ink while
+		// waiting, rather than blanking the pane or starting a second core parse.
+	} else {
+		e.startSyntax()
+	}
 	doc := e.syntaxDocument
 	if doc == nil || e.syntaxBuffer != e.buf || e.syntaxRevision != e.buf.Revision() {
 		return
@@ -341,31 +397,36 @@ func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 			}
 		}
 		raw := doc.text[start:end]
-		cm := make([]string, LineVisualWidth(raw, tabWidth))
 		spanIndex := sort.Search(len(doc.spans), func(i int) bool { return doc.spans[i].end > start })
-		col, offset := 0, start
-		for rest := raw; rest != ""; {
+		e.chromaLineCache[line] = e.projectSyntaxLine(raw, start, func(offset int) chroma.TokenType {
 			for spanIndex < len(doc.spans) && doc.spans[spanIndex].end <= offset {
 				spanIndex++
 			}
-			colour := ""
 			if spanIndex < len(doc.spans) {
-				colour = e.chromaTokenColor(doc.spans[spanIndex].kind)
+				return doc.spans[spanIndex].kind
 			}
-			cluster, width := rendering.FirstGrapheme(rest)
-			if rest[0] == '\t' {
-				cluster, width = rest[:1], TabStopAdvance(col, tabWidth)
-			}
-			if len(cluster) == 0 {
-				break
-			}
-			for c := col; c < col+width; c++ {
-				cm[c] = colour
-			}
-			col, offset, rest = col+width, offset+len(cluster), rest[len(cluster):]
-		}
-		e.chromaLineCache[line] = syntaxLine{text: raw, colours: cm}
+			return chroma.Text
+		})
 	}
+}
+
+// Both canonical byte spans and provisional/lexical spans use one grapheme,
+// tab and theme projection. No second native-cell geometry path may drift.
+func (e *Editor) projectSyntaxLine(raw string, start int, tokenAt func(int) chroma.TokenType) syntaxLine {
+	colours := make([]string, LineVisualWidth(raw, tabWidth))
+	col, offset := 0, start
+	for rest := raw; rest != ""; {
+		colour := e.chromaTokenColor(tokenAt(offset))
+		size, width := firstSourceUnit(rest, col)
+		if size == 0 {
+			break
+		}
+		for x := col; x < col+width; x++ {
+			colours[x] = colour
+		}
+		col, offset, rest = col+width, offset+size, rest[size:]
+	}
+	return syntaxLine{text: raw, colours: colours}
 }
 
 func (e *Editor) lineColorMap(lineIdx int) []string {

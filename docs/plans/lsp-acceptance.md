@@ -1,6 +1,6 @@
 # LSP Acceptance
 
-> Status: IN PROGRESS — the lazy LSP manager, language catalog, settings and lifecycle fencing are implemented and tested; process containment and installed-server acceptance remain.
+> Status: IN PROGRESS - lazy lifecycle and observable owned group/Job teardown are implemented; native-platform containment acceptance, installed-server workflows and the remaining gates are open.
 
 The current contract is in [editor and language servers](../reference/editor.md#language-server-transport)
 and [settings](../reference/settings.md#lsp). This plan lists only what is still
@@ -19,6 +19,12 @@ required before LSP is accepted as complete.
   stale diagnostics; the server budget waits for owned shutdown; disable cancels
   a pending start; idle servers are evicted; roots follow language markers inside
   the workspace boundary (`workspace/lsp_lifecycle_test.go`).
+- Nested process/transport closers preserve joined errors and exact identities;
+  the workspace retains unverified process reservations instead of releasing
+  them. `make test-lsp` covers the otherwise excluded replacement module.
+  Root startup/stop/pipe regressions and focused race checks cover failure
+  propagation. Unix group escape limits are explicit; cross-compiling the
+  Windows/macOS owners is not native behavioral acceptance.
 - The catalog covers Go, Rust, Python, TypeScript/JavaScript, HTML, CSS, C/C++,
   C# and Zig plus custom stdio servers (`types/language_servers.go`).
 - A dead connection is marked failed and needs an explicit restart.
@@ -30,8 +36,10 @@ required before LSP is accepted as complete.
 
 ## Remaining
 
-1. **Process-tree containment.** Stopping or reaping a server must terminate its
-   whole subprocess tree (Unix process group, Windows Job Object), matching the
+1. **Native process-tree acceptance.** Exercise the existing owner and reported
+   failures on supported native platforms. Verify stopping/reaping the owned
+   group or Job, neighbor isolation, cancellation, natural exit and partial
+   startup cleanup, matching the
    background-command contract in [background commands](../reference/background-commands.md).
 2. **Installed-server acceptance.** With real servers installed, verify semantic
    errors appear and clear after correction, completion/navigation/rename work,
@@ -39,7 +47,11 @@ required before LSP is accepted as complete.
    processes. Bound the test load so it does not overload the host.
 3. **Diagnostics columns.** Confirm incoming diagnostics are converted from UTF-16
    exactly once (`Editor.SetDiagnostics` performs the conversion) across every
-   delivery path, including connected shells.
+   delivery path. Nonidentity tab/CJK/combining/emoji fixtures now cover both
+   source-line endpoints, raw caches, three connected shells, cached open,
+   first-error/F8, async definition/reference/status navigation and later-focus
+   preservation. Keep real installed-provider/carrier and native acceptance
+   evidence distinct from those deterministic rendered/App regressions.
 4. **Visual acceptance** of Settings → Code Intelligence and the Language Servers
    list → detail pages at desktop and constrained sizes.
 

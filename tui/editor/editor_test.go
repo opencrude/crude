@@ -294,7 +294,7 @@ func TestLineDiagnostics_ByLine(t *testing.T) {
 	assert.NoError(t, err)
 	diags := []LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "e"},
-		{Line: 1, Col: 0, EndCol: 3, Severity: DiagWarning, Message: "w"},
+		{Line: 1, Col: 0, EndLine: 1, EndCol: 3, Severity: DiagWarning, Message: "w"},
 	}
 	e.SetDiagnostics(diags)
 	line0 := e.lineDiagnostics(0)
@@ -333,7 +333,7 @@ func TestLineDiagnostics_TabConversion(t *testing.T) {
 	assert.NoError(t, err)
 	e.SetDiagnostics([]LSPDiagnostic{
 		{Line: 0, Col: 2, EndCol: 5, Severity: DiagError, Message: "on-foo"},
-		{Line: 1, Col: 1, EndCol: 4, Severity: DiagWarning, Message: "on-bar"},
+		{Line: 1, Col: 1, EndLine: 1, EndCol: 4, Severity: DiagWarning, Message: "on-bar"},
 	})
 	spans := e.lineDiagnostics(0)
 	assert.Len(t, spans, 1)

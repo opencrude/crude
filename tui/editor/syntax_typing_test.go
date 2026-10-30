@@ -3,10 +3,11 @@ package editor
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/alecthomas/chroma/v2"
 
 	"crude/tui/cell"
 	"crude/tui/surface"
@@ -14,10 +15,28 @@ import (
 	"crude/tui/ui"
 )
 
-type pausedSyntaxLexer struct {
-	chroma.Lexer
-	entered chan struct{}
-	release chan struct{}
+// Block the real source worker admission rather than replacing a particular
+// lexer implementation. Both native and lexical preparation must preserve the
+// currently painted text while queued behind a saturated parser budget.
+func pauseSyntaxWorkers(tb testing.TB) func() {
+	tb.Helper()
+	for range cap(syntaxWorkers) {
+		select {
+		case syntaxWorkers <- struct{}{}:
+		case <-time.After(10 * time.Second):
+			tb.Fatal("existing syntax workers did not settle")
+		}
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			for range cap(syntaxWorkers) {
+				<-syntaxWorkers
+			}
+		})
+	}
+	tb.Cleanup(release)
+	return release
 }
 
 func BenchmarkSyntaxTypingPendingPaint(b *testing.B) {
@@ -28,9 +47,7 @@ func BenchmarkSyntaxTypingPendingPaint(b *testing.B) {
 			settleSyntax(b, ed)
 			// The fixture is an editable buffer, not a read-only preview action.
 			ed.readOnly = false
-			block := pausedSyntaxLexer{Lexer: ed.chromaLexer, entered: make(chan struct{}), release: make(chan struct{})}
-			ed.chromaLexer = block
-			b.Cleanup(func() { close(block.release) })
+			pauseSyntaxWorkers(b)
 			ed.SetCursorPosition(1, len("var value"))
 			surf := surface.NewSurface("typing", 120, 40, cell.TransparentBlank())
 			ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
@@ -50,28 +67,24 @@ func BenchmarkSyntaxTypingPendingPaint(b *testing.B) {
 	}
 }
 
-func (l pausedSyntaxLexer) Tokenise(options *chroma.TokeniseOptions, text string) (chroma.Iterator, error) {
-	close(l.entered)
-	<-l.release
-	return l.Lexer.Tokenise(options, text)
-}
-
 func TestSyntaxTypingDoesNotBlankUnchangedVisibleRows(t *testing.T) {
 	ed := loadEditorText(t, "typing.go", "package main\n// unchanged documentation\nfunc answer() int { return 42 }\nvar value = 1\n"+strings.Repeat("// more unchanged documentation\n", 40))
 	ed.SetCursorPosition(3, len("var value"))
 	before := paintEditor(ed, 100, 24)
-	block := pausedSyntaxLexer{Lexer: ed.chromaLexer, entered: make(chan struct{}), release: make(chan struct{})}
-	ed.chromaLexer = block
 	// Register release after the editor cleanup so a failed assertion cannot
 	// strand its owned syntax worker at teardown.
 	t.Cleanup(func() { closeSyntax(ed) })
-	t.Cleanup(func() { close(block.release) })
+	pauseSyntaxWorkers(t)
 	ed.HandleEvent(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	command := ed.SyntaxCommand()
 	if command == nil {
 		t.Fatal("edit did not schedule syntax")
 	}
-	<-block.entered
+	select {
+	case <-ed.SyntaxDone():
+		t.Fatal("syntax completed through saturated worker admission")
+	default:
+	}
 	// Render while the exact replacement parse is blocked, rather than hiding
 	// the transition by waiting for it before painting.
 	after := paintEditor(ed, 100, 24)
@@ -126,14 +139,16 @@ func TestSyntaxProvisionalMappingRespectsSourceGeometry(t *testing.T) {
 func TestSyntaxPendingLineInsertionDeletionAndReplacement(t *testing.T) {
 	ed := loadEditorText(t, "lines.go", "package main\r\n// keep 界 e\u0301\r\nvar tail = 42\r\n")
 	paintEditor(ed, 80, 10)
-	block := pausedSyntaxLexer{Lexer: ed.chromaLexer, entered: make(chan struct{}), release: make(chan struct{})}
-	ed.chromaLexer = block
 	t.Cleanup(func() { closeSyntax(ed) })
-	t.Cleanup(func() { close(block.release) })
+	pauseSyntaxWorkers(t)
 	ed.SetCursorPosition(0, 0)
 	ed.HandleEvent(tea.KeyPressMsg{Code: tea.KeyEnter})
 	ed.SyntaxCommand()
-	<-block.entered
+	select {
+	case <-ed.SyntaxDone():
+		t.Fatal("syntax completed through saturated worker admission")
+	default:
+	}
 	buf := paintEditor(ed, 80, 10)
 	if got := buf.Get(ed.gutterWidth(), 2); got.Char != '/' || !got.FG.Equal(ed.cellColor(ed.th.Colors.Code.Comment)) {
 		t.Fatalf("newline lost shifted comment: %+v", got)

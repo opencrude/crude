@@ -152,6 +152,34 @@ func (w *Workspace) startDocumentTopicLocked(client *coreclient.Client, id, path
 			}
 		}
 		_, workspaceID := w.conn()
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			insight := client.Subscribe(ctx, workspaceID, coreprotocol.TopicInsight, id, func(_ coreprotocol.TopicHeader, body []byte) error {
+				var update coreprotocol.InsightUpdate
+				if err := coreprotocol.Decode(body, &update); err != nil {
+					return err
+				}
+				done := make(chan error, 1)
+				var once sync.Once
+				w.send(shellport.DocumentInsightMsg{Owner: w, View: update.View,
+					Valid: func() bool {
+						w.liveDocumentMu.Lock()
+						defer w.liveDocumentMu.Unlock()
+						current, _ := w.conn()
+						return ctx.Err() == nil && w.liveDocumentTopics[id] == token && current == client
+					},
+					Done: func(err error) { once.Do(func() { done <- err }) },
+				})
+				select {
+				case err := <-done:
+					return err
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+			<-insight.Done()
+		}()
 		sub := client.Subscribe(ctx, workspaceID, coreprotocol.TopicDocument, id, func(header coreprotocol.TopicHeader, body []byte) error {
 			var update coreprotocol.DocumentUpdate
 			if err := coreprotocol.Decode(body, &update); err != nil {

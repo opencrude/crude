@@ -102,8 +102,8 @@ func TestLSPIntegration_DoubleStart(t *testing.T) {
 
 func TestLSPIntegration_StopTwice(t *testing.T) {
 	l := NewLSPIntegration("nonexistent-lsp-server-12345", nil, "/tmp")
-	l.Stop()
-	l.Stop()
+	assert.NoError(t, l.Stop())
+	assert.NoError(t, l.Stop())
 }
 
 func TestLSPIntegration_RequestCompletionsWithoutStart(t *testing.T) {
