@@ -51,6 +51,8 @@ type LSPClient interface {
 	RequestHover(context.Context, string, int, int) (string, error)
 	RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error)
 	RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error)
+	RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error)
+	ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error)
 	RequestCompletions(context.Context, string, int, int) []CompletionItem
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.

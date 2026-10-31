@@ -92,9 +92,9 @@ func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 			app, path, ed := lspJourneyEditor(t, "old\n")
 			port := &renamePreviewPort{result: workspace.ReviewedEditResult{ID: "review-test", Digest: "exact-digest", State: "committed", SafetySnapshotID: "safety-123", SafetyReference: "review-test"}}
 			request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new", port: port, preview: workspace.ReviewedEditPreview{ID: "review-test", Digest: "exact-digest", Files: []workspace.ReviewedEditFile{{Path: path}}, Text: "- old\n+ new\n"}}
-			app.showLSPRenamePreview(request)
+			app.showRenameReview(request)
 			app.View()
-			p := app.LSPPopup.RenamePreview
+			p := app.LSPPopup.EditPreview
 			if p == nil || !strings.Contains(p.area.Value(), "retained Local History safety") {
 				t.Fatal("missing exact review and recovery notice")
 			}
@@ -102,13 +102,13 @@ func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 			if apply {
 				action = "apply"
 			}
-			cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, action})
+			cmd := app.handleReviewedEditAction(reviewedEditActionMsg{p, action})
 			if apply {
 				if cmd == nil {
 					t.Fatal("no apply request")
 				}
-				result := cmd().(lspRenameAppliedMsg)
-				app.handleLSPRenameApplied(result)
+				result := cmd().(reviewedEditAppliedMsg)
+				app.handleReviewedEditApplied(result)
 				if port.calls != 1 {
 					t.Fatal("apply was not exactly once")
 				}
@@ -116,7 +116,7 @@ func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 				if cmd == nil {
 					t.Fatal("Cancel did not await exact pending-review release")
 				}
-				app.handleLSPRenameReleased(cmd().(lspRenameReleasedMsg))
+				app.handleReviewedEditReleased(cmd().(reviewedEditReleasedMsg))
 				if port.calls != 0 {
 					t.Fatal("Cancel submitted a mutation")
 				}
@@ -125,7 +125,7 @@ func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 			if string(disk) != "old\n" {
 				t.Fatal("shell wrote source from a private preview/receipt")
 			}
-			if app.LSPPopup.RenamePreview != nil {
+			if app.LSPPopup.EditPreview != nil {
 				t.Fatal("completed/cancelled preview retained")
 			}
 		})
@@ -135,21 +135,21 @@ func TestLSPRenameRefusesStaleSourceAndNeverReportsEmptySafetySuccess(t *testing
 	app, path, ed := lspJourneyEditor(t, "old\n")
 	port := &renamePreviewPort{result: workspace.ReviewedEditResult{ID: "review-test", Digest: "exact-digest", State: "committed"}}
 	request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, port: port, preview: workspace.ReviewedEditPreview{ID: "review-test", Digest: "exact-digest", Text: "- old\n+ new\n"}}
-	app.showLSPRenamePreview(request)
-	p := app.LSPPopup.RenamePreview
-	cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"})
-	app.handleLSPRenameApplied(cmd().(lspRenameAppliedMsg))
-	if app.LSPPopup.RenamePreview != p || !strings.Contains(p.area.Value(), "Outcome unconfirmed") {
+	app.showRenameReview(request)
+	p := app.LSPPopup.EditPreview
+	cmd := app.handleReviewedEditAction(reviewedEditActionMsg{p, "apply"})
+	app.handleReviewedEditApplied(cmd().(reviewedEditAppliedMsg))
+	if app.LSPPopup.EditPreview != p || !strings.Contains(p.area.Value(), "Outcome unconfirmed") {
 		t.Fatal("empty safety became a success")
 	}
-	if cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {
+	if cmd := app.handleReviewedEditAction(reviewedEditActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {
 		t.Fatal("unknown result was replayed")
 	}
-	app.overlayHost.Close(lspRenameOverlay)
-	app.showLSPRenamePreview(request)
-	p = app.LSPPopup.RenamePreview
+	app.overlayHost.Close(reviewedEditOverlay)
+	app.showRenameReview(request)
+	p = app.LSPPopup.EditPreview
 	ed.InsertRune('x')
-	if cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {
+	if cmd := app.handleReviewedEditAction(reviewedEditActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {
 		t.Fatal("stale shared view reached Apply")
 	}
 }
@@ -158,9 +158,9 @@ func TestLSPRenameDialogFitsConstrainedSurface(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {64, 24}} {
 		_, _ = app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		msg := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new", preview: workspace.ReviewedEditPreview{ID: "review-grid", Files: []workspace.ReviewedEditFile{{Path: path}}, Text: strings.Repeat("review full evidence\n", 100)}}
-		app.showLSPRenamePreview(msg)
+		app.showRenameReview(msg)
 		_ = app.View()
-		fw := app.overlayHost.Window(lspRenameOverlay)
+		fw := app.overlayHost.Window(reviewedEditOverlay)
 		if fw == nil {
 			t.Fatal("missing dialog")
 		}
@@ -168,9 +168,9 @@ func TestLSPRenameDialogFitsConstrainedSurface(t *testing.T) {
 		if w > size[0] || h > size[1] {
 			t.Fatal("dialog escaped grid")
 		}
-		if p := app.LSPPopup.RenamePreview; p.area.Bounds().H <= 0 || p.bar.Bounds().Y >= h {
+		if p := app.LSPPopup.EditPreview; p.area.Bounds().H <= 0 || p.bar.Bounds().Y >= h {
 			t.Fatal("review/action inaccessible")
 		}
-		app.overlayHost.Close(lspRenameOverlay)
+		app.overlayHost.Close(reviewedEditOverlay)
 	}
 }

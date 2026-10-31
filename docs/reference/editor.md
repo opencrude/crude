@@ -468,7 +468,73 @@ administration, not another Apply or undo path; see
 [safety protection](local-history.md#reviewed-edit-safety-protection).
 
 This is a bounded manual text-only rename workflow, not general refactoring,
-code-action, dynamic-registration or `workspace/applyEdit` support.
+dynamic registration or `workspace/applyEdit` support.
+
+### Manual code actions
+
+The editor's **Code actions** context item and semantic `CodeActionsChord`
+(**Alt+Enter** on legacy Unix terminals, **Ctrl+Enter** when modified Enter is
+delivered or the host reserves Alt+Enter) request one explicit list for the saved,
+acknowledged
+canonical source and exact caret/selection. A strict editor query maps display
+endpoints to UTF-8 source bytes, then the canonical coordinator maps them to
+UTF-16. Split, ambiguous, reversed or out-of-source endpoints are refused, never
+clamped or widened. The query does not mutate source, view state or history.
+
+The native list keeps disabled and unsupported actions visible for inspection.
+Enter opens complete quoted title/kind, eligibility, diagnostic inclusion detail
+and source/provider/context provenance. Detail defaults to **Close**, not Preview.
+**Preview changes** requests only the retained original row's edit, including lazy
+resolution when the static provider supports it. It cannot execute a command.
+The resulting **Review code action** composes the same read-only,
+Cancel-default review, Apply/Release/Check-result state machine and selected Local
+History safety used by rename. There is no second file writer or receipt machine.
+Successful source effects arrive through canonical document topics, not a shell
+reload or private result. Other shells retain their private cursors and drafts.
+
+This slice accepts a literal `WorkspaceEdit.changes` map or exactly one ordinary
+`TextDocumentEdit` in `documentChanges`, targeting the invoking clean canonical
+file. A versioned target must carry a nonnull positive int32 version exactly
+equal to the original synchronized provider wire clock. Missing, null, zero,
+stale or future versions are not inferred. Commands (including edit-plus-command),
+resource operations, annotations, notebooks, mixed representations,
+multiple/foreign files and no-op edits remain visibly unsupported.
+It never drops the unsupported part and
+applies the remainder. Resolved objects may add only `edit`; changing/removing
+original attributes, opaque data or numeric token spelling is refused. This is a
+deliberate bounded protocol subset, not general provider interoperability or a
+complete quick-fix/refactoring claim.
+
+Original diagnostic JSON belongs to the transport's publication adjunct, never
+reconstruction from display DTOs. Only exact versioned, nonlimited, strictly
+validated source ranges matching the requested range are forwarded. Absent,
+unversioned, stale, malformed or overbound evidence is omitted with a reason;
+the request still carries `diagnostics: []`. The pinned
+[`jsonrpc2` request decoder](../../third_party/jsonrpc2/README.md) preserves raw
+params before notification dispatch rather than erasing duplicate/invalid-string
+evidence or opaque number spelling. Consumer bounds do not limit its initial
+frame allocation or establish native CPU/RSS containment.
+
+The core retains at most four action sets, each for five minutes and bound to the
+exact attachment epoch, canonical lifetime/revision, synchronized wire source,
+provider and semantic context. Only set ID/digest/index cross back in a Preview
+request; raw actions, original diagnostic objects and caller-authored edits do not.
+Release, expiry, peer edits/equal-text Undo, document close/detach, provider/context
+replacement and shutdown revoke pending preparation and Apply. Closing a chooser
+cancels its request; a late result cannot reopen it and releases its retained set.
+An action list transfers its lifetime to the shared review until that review
+closes; explicit Cancel awaits both its pending review and related list release.
+These are pending capability releases, not release of retained recovery
+snapshots or automatic settlement of uncertain mutations.
+
+Lists admit at most 1 MiB of original JSON, 64 items, 64 KiB per item, 64 nested
+levels and 64 KiB of display evidence. Titles are at most 4 KiB and kinds 256 bytes.
+Source/result, exact-preview and retained-review bounds are the rename bounds
+above. Supported null/empty lists pass the same source/context replica barrier
+as positive results. They mean only **No actions returned for this source and
+selection**, never that the file or project is clean. Selection comparison during
+Update is constant-time; source-byte conversion runs once per explicit request,
+not once per tick or painted frame.
 
 ### Numeric completion snippets
 

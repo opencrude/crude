@@ -84,6 +84,19 @@ func (m *App) startRename() {
 	_, _ = m.startRenameCmd(), 0
 }
 
+func renameReviewRequest(msg lspRenameResultMsg) reviewedEditDialogRequest {
+	return reviewedEditDialogRequest{
+		owner: msg.owner, revision: msg.revision, generation: msg.generation,
+		filePath: msg.filePath, preview: msg.preview, port: msg.port,
+		title: "Review rename", intro: fmt.Sprintf("Rename to %q in %d files.", msg.newName, len(msg.preview.Files)),
+		applyLabel: "Apply rename", committedLabel: "Renamed", operationLabel: "Rename",
+	}
+}
+
+func (m *App) showRenameReview(msg lspRenameResultMsg) {
+	m.showReviewedEditDialog(renameReviewRequest(msg))
+}
+
 // handleLSPDiagnosticsUpdate processes a diagnostics update that arrived
 // through the workspace.EventBus from the LSP server's reader goroutine. Runs on the
 // main Bubble Tea goroutine, so it can safely update the tree model and editor.

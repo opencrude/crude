@@ -19,6 +19,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/perf"
 	"crude/tui/rendering"
+	"crude/tui/screens/codeactions"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
 	"crude/tui/screens/connectionpopover"
@@ -73,6 +74,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
+	m.syncCodeActions()
 	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -904,6 +906,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.handleLSPHoverResult(msg)
 	case signatureHelpResultMsg:
 		m.handleSignatureHelpResult(msg)
+	case codeActionListResultMsg:
+		cmds = append(cmds, m.handleCodeActionListResult(msg))
+	case codeActionPreparedMsg:
+		cmds = append(cmds, m.handleCodeActionPrepared(msg))
+	case codeactions.PrepareMsg:
+		cmds = append(cmds, m.prepareCodeAction(msg))
+	case codeactions.CloseMsg:
+		cmds = append(cmds, m.closeCodeActionScreen(msg))
+	case codeActionReleasedMsg:
+		m.handleCodeActionReleased(msg)
 	case lspReferencesResultMsg:
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleReferencesResult(msg)
@@ -914,12 +926,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case lspRenameResultMsg:
 		cmds = append(cmds, m.handleRenameResult(msg))
-	case lspRenameActionMsg:
-		cmds = append(cmds, m.handleLSPRenameAction(msg))
-	case lspRenameAppliedMsg:
-		m.handleLSPRenameApplied(msg)
-	case lspRenameReleasedMsg:
-		m.handleLSPRenameReleased(msg)
+	case reviewedEditActionMsg:
+		cmds = append(cmds, m.handleReviewedEditAction(msg))
+	case reviewedEditAppliedMsg:
+		m.handleReviewedEditApplied(msg)
+	case reviewedEditReleasedMsg:
+		m.handleReviewedEditReleased(msg)
+	case reviewedEditCleanupMsg:
+		m.handleReviewedEditCleanup(msg)
 	case lspCompletionResultMsg:
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleCompletionResult(msg)

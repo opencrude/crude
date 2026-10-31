@@ -13,6 +13,7 @@ func (m *App) resetLSPRequestContext() {
 		return
 	}
 	m.closeSignatureHelp()
+	m.closeCodeActions()
 	if m.lspRequestCancel != nil {
 		m.lspRequestCancel()
 	}

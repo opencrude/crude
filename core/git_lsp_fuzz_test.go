@@ -335,6 +335,12 @@ func (c *semanticLSPClient) RequestRename(_ context.Context, path string, line, 
 	defer c.mu.Unlock()
 	return types.LSPRenameEdit{JSON: append([]byte(nil), c.edit...), WireVersion: c.version}, nil
 }
+func (c *semanticLSPClient) RequestCodeActions(context.Context, string, int, int, int, int) (types.LSPCodeActionResponse, error) {
+	return types.LSPCodeActionResponse{}, context.Canceled
+}
+func (c *semanticLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (types.LSPCodeActionResponse, error) {
+	return types.LSPCodeActionResponse{}, context.Canceled
+}
 func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int) []workspace.CompletionItem {
 	c.record(path, line, col, "", false)
 	return []workspace.CompletionItem{{Label: "complete", Detail: "detail", Documentation: "docs", Kind: 3, InsertText: "insert", TextEdit: &types.LSPTextEdit{Line: 1, Col: 2, EndLine: 3, EndCol: 4, NewText: "primary"}, AdditionalTextEdits: []types.LSPTextEdit{{Line: 5, Col: 6, EndLine: 7, EndCol: 8, NewText: "import"}}}}

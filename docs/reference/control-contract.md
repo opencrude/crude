@@ -94,8 +94,8 @@ not a canonical commit or disk Save; the existing document receipt/topic must
 still settle. Closing/reopening the picker changes its control lifetime, so a
 retired node cannot activate an alternative in a later invocation.
 
-Reviewed rename actions resolve only against the actual open review's native
-ActionBar buttons and captured surface identity. Apply is Write, original-result
+Reviewed rename and code-action actions resolve only against the actual open
+review's native ActionBar buttons and captured surface identity. Apply is Write, original-result
 inspection is Read, and Cancel is local Write. Activation awaits the same typed
 mutation/inspection result used by ordinary keys; an intermediate action message
 is not a successful disk effect. **Committed** requires the exact review ID/digest
@@ -103,6 +103,16 @@ and retained safety identity. Refusal is failed, unknown outcomes are uncertain,
 and a known committed result with unconfirmed exchange cleanup is partial with
 the known domain state preserved. Retired or foreign surface nodes cannot acquire
 a replacement review. No generic action grants workspace Trust or execution.
+
+Manual code-action chooser controls bind the exact mounted invocation. Row detail
+and **Preview changes** are Read; Back and Close are local Write. Preview waits
+for the original retained-row result and exact shared review mount, never an
+intermediate action message. Explicit Close waits for its original pending-list
+release; failed cleanup is uncertain, not a clean completion. A list or review
+from another shell/epoch or a retired component cannot select or approve a new
+invocation. Default detail Close and default review Cancel remain ordinary native
+actions. Source changes still require the shared reviewed Apply and its exact
+retained safety receipt.
 
 Local History's review-safety list/detail navigation is owner-bound. List and
 detail reads await their typed results; a known result with unconfirmed exchange

@@ -260,6 +260,25 @@ joined cleanup, and the capture must independently verify exit zero. This is an
 isolated rendered fixture, not distinct-host/device, general project-context or
 complete semantic-feature acceptance.
 
+The manual code-action regression uses
+`go test ./tui/viewmodel -run '^TestCodeActionVisualHeadless$'` with installed
+gopls. It drives actual Alt+Enter/list/detail keys, safe-default Close and Cancel,
+fresh immutable review and explicit Apply against independently authored unused
+import bytes. A supported row is required; unsupported is never a successful
+mutation. The receipt, selected original safety content and exact provider join
+are checked separately.
+
+For its native captures select `CRUDE_VISUAL_CODE_ACTION=1`,
+`CRUDE_ARGS='-test.run=^TestCodeActionVisualAcceptance$ -test.count=1 -test.timeout=600s'`
+and `CRUDE_CODE_ACTION_VISUAL_RESULT` with the compiled viewmodel test binary.
+F3 sets up only the fixture; F4 passively observes list/detail/default-Close,
+fresh list/detail/preview/default-Cancel, and fresh list/detail/preview/Apply.
+`CODE_ACTION_ROW_INDEX` records which literal row to reach with ordinary Down
+keys. Use sequential `scripts/tuishot.sh` captures at 160x40 and 80x24, wait for
+each original observer boundary and finish with `quit:F9`. No observer may
+perform a scored action or patch chooser/editor state. This is local Linux
+rendered evidence, not distinct-host or native Windows/macOS acceptance.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

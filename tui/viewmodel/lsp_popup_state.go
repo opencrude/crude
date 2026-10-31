@@ -25,7 +25,7 @@ type OutlineRow struct {
 // This is DISPLAY state: it tracks which LSP popups are open right now,
 // cursor positions within them, and the rendered data.
 type LSPPopupState struct {
-	RenamePreview                 *lspRenamePreview
+	EditPreview                   *reviewedEditDialog
 	RenameArmed                   bool
 	OutlineOpen                   bool
 	OutlineRows                   []OutlineRow

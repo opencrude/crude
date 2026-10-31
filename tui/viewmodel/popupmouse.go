@@ -94,7 +94,7 @@ func (m *App) closePopupWindowByID(id string) tea.Cmd {
 	if id == string(projectReplaceOverlay) && m.projectReplace != nil && m.projectReplace.busy {
 		return nil
 	}
-	if id == string(lspRenameOverlay) && m.LSPPopup.RenamePreview != nil && m.LSPPopup.RenamePreview.busy {
+	if id == string(reviewedEditOverlay) && m.LSPPopup.EditPreview != nil && m.LSPPopup.EditPreview.busy {
 		return nil
 	}
 	if id == string(ui.OverlayWorkspaceSettings) {

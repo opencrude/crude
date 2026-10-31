@@ -131,6 +131,9 @@ type openFileState struct {
 	syncedAt    time.Time
 	publishedAt time.Time
 	publication model.InsightDiagnosticPublication
+	// This immutable adjunct is original protocol evidence at this publication,
+	// not a second diagnostic projection or shell-visible provider-data cache.
+	actionDiagnostics codeActionDiagnosticAdjunct
 }
 
 // OnDiagnostics sets the callback for receiving diagnostics for open files.
@@ -264,14 +267,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 			err = context.Canceled
 		} else {
 			client.RegisterNotificationHandler("textDocument/publishDiagnostics", func(_ context.Context, _ string, params json.RawMessage) {
-				var diagnostics struct {
-					protocol.PublishDiagnosticsParams
-					Version *int32 `json:"version"`
-				}
-				if json.Unmarshal(params, &diagnostics) == nil {
-					lspDiagnostics.Inc()
-					l.updateDiagnostics(launch, diagnostics.URI, diagnostics.Version, diagnostics.Diagnostics)
-				}
+				l.receiveDiagnostics(launch, params)
 			})
 			client.RegisterHandler("window/workDoneProgress/create", func(context.Context, string, json.RawMessage) (any, error) {
 				return nil, nil
@@ -1002,7 +998,7 @@ func (l *LSPIntegration) uriToPath(uri protocol.DocumentURI) string {
 	return filepath.Clean(path)
 }
 
-func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.DocumentURI, version *int32, diags []protocol.Diagnostic) {
+func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.DocumentURI, version *int32, diags []protocol.Diagnostic, originals ...json.RawMessage) {
 	filePath := l.uriToPath(uri)
 	l.mu.Lock()
 	if launch == nil || l.launch != launch || l.client == nil {
@@ -1012,6 +1008,9 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 	client := l.client
 	state := l.openFiles[filePath]
 	if state == nil || (version != nil && int(*version) != state.version) || l.sequence == math.MaxUint64 {
+		if state != nil {
+			state.actionDiagnostics = codeActionDiagnosticAdjunct{detail: "diagnostics omitted: stale or invalid publication"}
+		}
 		l.mu.Unlock()
 		return
 	}
@@ -1039,6 +1038,7 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 	}
 	l.sequence = publication.Sequence
 	state.publishedAt, state.publication = time.Now(), publication
+	state.actionDiagnostics = qualifyActionDiagnostics(state.text, publication, originals)
 	l.signalLocked()
 	cb := l.onDiagnostics
 	// The callback gets its own mutable containers, not the waiter's storage.
@@ -1073,6 +1073,7 @@ func diagnosticCode(code any) string {
 func (s *openFileState) resetVersion(version int) {
 	s.version, s.syncedAt = version, time.Now()
 	s.publishedAt, s.publication = time.Time{}, model.InsightDiagnosticPublication{}
+	s.actionDiagnostics = codeActionDiagnosticAdjunct{}
 }
 
 func (l *LSPIntegration) signalLocked() {

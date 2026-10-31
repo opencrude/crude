@@ -83,6 +83,11 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				m.runDetachedAsyncCmd(m.requestSignatureHelpCmd())
 			},
 		})
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
+			Label: "Code actions", Detail: ui.FormatShortcut(ui.CodeActionsChord), Action: func() {
+				m.runDetachedAsyncCmd(m.requestCodeActionsCmd())
+			},
+		})
 	}
 	if len(diags) > 0 {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{

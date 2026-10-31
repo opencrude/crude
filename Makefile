@@ -38,6 +38,7 @@ test-syntax:
 # process/transport owner is a replacement module, excluded by the root glob.
 test-lsp:
 	CGO_ENABLED=0 go test ./types/... ./lspclient -count=1 -timeout=90s
+	cd third_party/jsonrpc2 && go test ./... -count=1 -timeout=60s
 	cd third_party/powernap && go test ./pkg/lsp ./pkg/transport -count=1 -timeout=90s
 
 design-audit:

@@ -209,7 +209,7 @@ func runRenameVisual(t *testing.T, headless bool, width, height int) {
 
 func (m *renameVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
-	case lspRenameAppliedMsg:
+	case reviewedEditAppliedMsg:
 		m.lastResult = v.result
 	case controlVisualCheck:
 		v.reply <- v.check(m.controlVisualModel)
@@ -282,7 +282,7 @@ func (m *renameVisualModel) observeRename(phase int) error {
 	}
 	if phase == 1 || phase == 3 {
 		err := m.await(func(v *controlVisualModel) error {
-			p := v.LSPPopup.RenamePreview
+			p := v.LSPPopup.EditPreview
 			if p == nil || p.request.preview.ID == "" || len(p.request.preview.Files) != 1 {
 				return fmt.Errorf("real rename immutable preview not mounted")
 			}
@@ -304,7 +304,7 @@ func (m *renameVisualModel) observeRename(phase int) error {
 	}
 	if phase == 2 {
 		return m.await(func(v *controlVisualModel) error {
-			if v.LSPPopup.RenamePreview != nil || v.EditorState.Editor.Value() != renameVisualBefore {
+			if v.LSPPopup.EditPreview != nil || v.EditorState.Editor.Value() != renameVisualBefore {
 				return fmt.Errorf("default Cancel did not leave the canonical preimage")
 			}
 			return featureVisualPaint(v, "var renameOld = 1")
@@ -313,7 +313,7 @@ func (m *renameVisualModel) observeRename(phase int) error {
 	err := m.await(func(v *controlVisualModel) error {
 		out := m.lastResult
 		if out.ID != m.plan.ID || out.Digest != m.plan.Digest || out.State != "committed" ||
-			out.SafetySnapshotID == "" || out.SafetyReference == "" || v.LSPPopup.RenamePreview != nil ||
+			out.SafetySnapshotID == "" || out.SafetyReference == "" || v.LSPPopup.EditPreview != nil ||
 			v.EditorState.Editor.Value() != renameVisualAfter || v.EditorState.Editor.Modified() {
 			return fmt.Errorf("real rename effect/safety/publication not confirmed: %+v", out)
 		}

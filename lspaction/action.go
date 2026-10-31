@@ -195,7 +195,7 @@ func parseItem(raw []byte, resolveSupported bool) (Action, error) {
 		action.UnsupportedReason = "Actions containing commands are not supported."
 	case has(fields, "changes", "documentChanges", "changeAnnotations", "textDocument",
 		"edits", "newText", "range", "oldUri", "newUri", "uri", "options", "annotationId"):
-		action.UnsupportedReason = "Edit operations must be inside a changes-only WorkspaceEdit."
+		action.UnsupportedReason = "Edit operations must be inside a text-only WorkspaceEdit."
 	case has(fields, "notebookDocument", "notebookDocumentEdit", "cellTextDocuments", "cells"):
 		action.UnsupportedReason = "Notebook actions are not supported."
 	case disabled:
@@ -215,10 +215,7 @@ func parseItem(raw []byte, resolveSupported bool) (Action, error) {
 func editReason(raw json.RawMessage) string {
 	edit, err := object(raw)
 	if err != nil {
-		return "Edit must be a changes-only WorkspaceEdit object."
-	}
-	if has(edit, "documentChanges") {
-		return "documentChanges are not supported."
+		return "Edit must be a text-only WorkspaceEdit object."
 	}
 	if has(edit, "changeAnnotations") {
 		return "Change annotations are not supported."
@@ -229,36 +226,59 @@ func editReason(raw json.RawMessage) string {
 	if has(edit, "notebookDocument", "notebookDocumentEdit", "cellTextDocuments", "cells") {
 		return "Notebook edits are not supported."
 	}
-	if len(edit) != 1 || edit["changes"] == nil {
-		return "Only the changes WorkspaceEdit member is supported."
-	}
-	targets, err := object(edit["changes"])
-	if err != nil || len(targets) != 1 {
-		return "Edit must target exactly one nonempty URI."
-	}
-	for uri, rawEdits := range targets {
-		if uri == "" {
+	var rawEdits json.RawMessage
+	if has(edit, "documentChanges") {
+		targets, err := array(edit["documentChanges"])
+		if len(edit) != 1 || err != nil || len(targets) != 1 {
+			return "Edit must contain exactly one versioned text-document target."
+		}
+		target, err := exactObject(targets[0], "textDocument", "edits")
+		if err != nil {
+			return "Edit must contain exactly one versioned text-document target."
+		}
+		doc, err := exactObject(target["textDocument"], "uri", "version")
+		if err != nil {
+			return "Edit must contain exactly one versioned text-document target."
+		}
+		var version int32
+		uri, uriErr := text(doc["uri"], 4096)
+		if uriErr != nil || uri == "" || json.Unmarshal(doc["version"], &version) != nil || version <= 0 {
+			return "Edit must contain exactly one versioned text-document target."
+		}
+		rawEdits = target["edits"]
+	} else {
+		if len(edit) != 1 || edit["changes"] == nil {
+			return "Only one changes or documentChanges member is supported."
+		}
+		targets, err := object(edit["changes"])
+		if err != nil || len(targets) != 1 {
 			return "Edit must target exactly one nonempty URI."
 		}
-		items, err := array(rawEdits)
-		if err != nil || len(items) == 0 {
-			return "Edit must contain at least one ordinary text edit."
+		for uri, edits := range targets {
+			if uri == "" {
+				return "Edit must target exactly one nonempty URI."
+			}
+			rawEdits = edits
 		}
-		for _, item := range items {
-			// lspedit validates values/ranges. This narrower first boundary also
-			// rejects every extra edit member rather than ignoring extensions.
-			entry, err := exactObject(item, "range", "newText")
-			if err != nil {
+	}
+	items, err := array(rawEdits)
+	if err != nil || len(items) == 0 {
+		return "Edit must contain at least one ordinary text edit."
+	}
+	for _, item := range items {
+		// lspedit validates values/ranges. This boundary also rejects every
+		// extra edit member rather than silently ignoring an operation.
+		entry, err := exactObject(item, "range", "newText")
+		if err != nil {
+			return "Only ordinary text edits are supported."
+		}
+		r, err := exactObject(entry["range"], "start", "end")
+		if err != nil {
+			return "Only ordinary text edits are supported."
+		}
+		for _, endpoint := range []string{"start", "end"} {
+			if _, err := exactObject(r[endpoint], "line", "character"); err != nil {
 				return "Only ordinary text edits are supported."
-			}
-			r, err := exactObject(entry["range"], "start", "end")
-			if err != nil {
-				return "Only ordinary text edits are supported."
-			}
-			for _, endpoint := range []string{"start", "end"} {
-				if _, err := exactObject(r[endpoint], "line", "character"); err != nil {
-					return "Only ordinary text edits are supported."
-				}
 			}
 		}
 	}

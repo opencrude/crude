@@ -336,6 +336,7 @@ type App struct {
 	lspRequestCtx         context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel      context.CancelFunc
 	signatureHelp         *signatureHelpState
+	codeActions           *codeActionState
 	editorSnippet         *editorSnippetState
 	lspDiagnostics        shellport.LSPDiagnosticConsumer
 	lspFacts              map[string]roottypes.InsightDiagnostics

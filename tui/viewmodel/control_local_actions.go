@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"strings"
 
+	"crude/tui/screens/codeactions"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/types/control"
@@ -12,6 +13,15 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if s := m.codeActions; m.codeActionsVisible(s) && owner.window == m.overlayHost.Window(codeActionsOverlay) &&
+		strings.HasPrefix(string(localID), string(codeactions.ScreenID)+"/") {
+		switch action {
+		case codeactions.ActionInspect, codeactions.ActionPrepare:
+			return control.Read, false, nil
+		case codeactions.ActionBack, codeactions.ActionClose:
+			return control.Write, false, nil
+		}
+	}
 	if v := m.historySafety; v != nil && m.overlayHost != nil {
 		if v.confirm != nil && owner.window != nil && owner.window == m.overlayHost.Window(historySafetyConfirmOverlay) && op.Verb == "activate" {
 			// No generic key/button route may grant this human consent.
@@ -29,7 +39,7 @@ func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentI
 			}
 		}
 	}
-	if p := m.LSPPopup.RenamePreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(lspRenameOverlay) && op.Verb == "activate" {
+	if p := m.LSPPopup.EditPreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(reviewedEditOverlay) && op.Verb == "activate" {
 		if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == p &&
 			strings.HasPrefix(string(localID), string(p.bar.ID())+"/") {
 			switch action {

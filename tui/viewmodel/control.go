@@ -17,6 +17,7 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/boardbrowser"
+	"crude/tui/screens/codeactions"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/question"
@@ -66,7 +67,8 @@ type shellControlDoneMsg struct {
 	boardOwner    *boardbrowser.Screen
 	pickerOwner   *capabilityPickerOwner
 	snippetOwner  *editorSnippetChoice
-	renameOwner   *lspRenamePreview
+	reviewOwner   *reviewedEditDialog
+	actionOwner   *codeActionState
 	safetyOwner   *historySafetyView
 }
 
@@ -294,7 +296,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.renameOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -691,10 +693,13 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 				if state := m.editorSnippet; state != nil && m.ownsSnippetChoice(state.choice) && owner.window == state.choice.window {
 					done.snippetOwner = state.choice
 				}
-				if p := m.LSPPopup.RenamePreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(lspRenameOverlay) {
+				if p := m.LSPPopup.EditPreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(reviewedEditOverlay) {
 					if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == p {
-						done.renameOwner = p
+						done.reviewOwner = p
 					}
+				}
+				if s := m.codeActions; m.codeActionsVisible(s) && owner.window == m.overlayHost.Window(codeActionsOverlay) {
+					done.actionOwner = s
 				}
 				if v := m.historySafety; m.historySafetyVisible(v) && owner.window == m.overlayHost.Window(ui.OverlayLocalHistory) {
 					done.safetyOwner = v
@@ -743,8 +748,16 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			valid = valid && m.boardBrowser == done.boardOwner && m.termDock != nil && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelBoard
 		} else if done.pickerOwner != nil {
 			valid = valid && m.capabilityPicker == done.pickerOwner
-		} else if done.renameOwner != nil {
-			valid = valid && m.LSPPopup.RenamePreview == done.renameOwner && m.overlayHost.IsOpen(lspRenameOverlay)
+		} else if done.reviewOwner != nil {
+			valid = valid && m.LSPPopup.EditPreview == done.reviewOwner && m.overlayHost.IsOpen(reviewedEditOverlay)
+		} else if done.actionOwner != nil {
+			if released, ok := done.completion.(codeActionReleasedMsg); ok && released.owner == done.actionOwner {
+				// Close is allowed to retire its own mounted surface. Its final
+				// receipt remains bound to the exact invocation and attachment.
+				valid = valid && done.actionOwner.workspace == m.ws
+			} else {
+				valid = valid && m.codeActionsVisible(done.actionOwner)
+			}
 		} else if done.safetyOwner != nil {
 			valid = valid && m.historySafetyVisible(done.safetyOwner)
 		} else if done.deckOwner != nil {
@@ -803,31 +816,76 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			result.State = control.Partial
 			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "original protection commitment is known; exchange cleanup is unconfirmed"}
 		}
-	case lspRenameActionMsg:
-		if !valid || done.renameOwner == nil || completion.preview != done.renameOwner {
+	case codeactions.PrepareMsg:
+		if !valid || done.actionOwner == nil || completion.Target != done.actionOwner.screen {
+			return m.failShellControl(msg, control.Stale, "code-action chooser changed")
+		}
+		cmd := m.prepareCodeAction(completion)
+		if cmd == nil {
+			return m.failShellControl(msg, control.Unavailable, "code-action review is unavailable")
+		}
+		return m.awaitCapturedShellControl(done, cmd, nil)
+	case codeActionPreparedMsg:
+		if !valid || done.actionOwner == nil || completion.owner != done.actionOwner {
+			return tea.Batch(m.handleCodeActionPrepared(completion), m.failShellControl(msg, control.Stale, "code-action review belongs to a retired chooser"))
+		}
+		follow = m.handleCodeActionPrepared(completion)
+		if completion.err != nil {
+			result.State = control.Failed
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "code-action preview failed without applying source changes"}
+		} else if p := m.LSPPopup.EditPreview; p != nil && p.request.preview.ID == completion.preview.ID && completion.preview.ID != "" {
+			result.ResourceIDs = []string{completion.preview.ID}
+			result.Output, _ = json.Marshal(struct{ ID, Digest string }{completion.preview.ID, completion.preview.Digest})
+		} else {
+			result.State = control.Failed
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "exact code-action review did not mount"}
+		}
+	case codeactions.CloseMsg:
+		if !valid || done.actionOwner == nil || completion.Target != done.actionOwner.screen {
+			return m.failShellControl(msg, control.Stale, "code-action chooser changed")
+		}
+		if cmd := m.closeCodeActionScreen(completion); cmd != nil {
+			return m.awaitCapturedShellControl(done, cmd, nil)
+		}
+	case codeActionReleasedMsg:
+		if !valid || done.actionOwner == nil || completion.owner != done.actionOwner {
+			return m.failShellControl(msg, control.Stale, "code-action release belongs to another invocation")
+		}
+		set := done.actionOwner.retainedSet()
+		if completion.id != set.ID || completion.digest != set.Digest {
+			return m.failShellControl(msg, control.Stale, "code-action release lost the original set identity")
+		}
+		m.handleCodeActionReleased(completion)
+		result.ResourceIDs = []string{completion.id}
+		if completion.err != nil {
+			result.State = control.Uncertain
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "original code-action list release is unconfirmed; no edit was replayed"}
+		}
+	case reviewedEditActionMsg:
+		if !valid || done.reviewOwner == nil || completion.preview != done.reviewOwner {
 			return m.failShellControl(msg, control.Stale, "reviewed edit surface changed")
 		}
-		cmd := m.handleLSPRenameAction(completion)
+		cmd := m.handleReviewedEditAction(completion)
 		if cmd != nil {
 			return m.awaitCapturedShellControl(done, cmd, nil)
 		} else if completion.action != "cancel" {
 			return m.failShellControl(msg, control.Stale, "reviewed edit action was retired or refused")
 		}
-	case lspRenameReleasedMsg:
-		if !valid || done.renameOwner == nil || completion.preview != done.renameOwner {
+	case reviewedEditReleasedMsg:
+		if !valid || done.reviewOwner == nil || completion.preview != done.reviewOwner {
 			return m.failShellControl(msg, control.Stale, "reviewed edit release belongs to a retired surface")
 		}
-		m.handleLSPRenameReleased(completion)
+		m.handleReviewedEditReleased(completion)
 		if completion.err != nil {
 			result.State = control.Uncertain
 			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "pending review release is unconfirmed; cancel or inspect the original review, never apply it"}
 		}
-	case lspRenameAppliedMsg:
-		p := done.renameOwner
+	case reviewedEditAppliedMsg:
+		p := done.reviewOwner
 		if !valid || p == nil || completion.preview != p {
 			return m.failShellControl(msg, control.Stale, "reviewed edit result belongs to a retired surface")
 		}
-		m.handleLSPRenameApplied(completion)
+		m.handleReviewedEditApplied(completion)
 		out := completion.result
 		if out.ID == p.request.preview.ID && out.Digest == p.request.preview.Digest {
 			result.ResourceIDs = []string{out.ID}

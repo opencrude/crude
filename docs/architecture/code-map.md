@@ -62,9 +62,10 @@ detailed contracts.
 | `textdiff/`, `diff/` | Exact line changes from immutable text; unified diff helpers. |
 | `history/` | Prompt history with score-based eviction. |
 | `lspclient/` | Nonvisual LSP subprocess transport and pipe monitor ([editor](../reference/editor.md)). |
-| `lspedit/` | Passive bounded original-JSON text-edit normalization and strict UTF-16 source offsets; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
-| `lspaction/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority. Product code-action wiring remains separate. |
+| `lspedit/` | Passive bounded original-JSON text-edit normalization and strict bidirectional UTF-8-byte/UTF-16 source positions; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
+| `lspaction/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority ([manual code actions](../reference/editor.md#manual-code-actions)). |
 | `workspace/reviewed_edit.go`, `workspace/lsp_reviewed_edit.go` | Immutable canonical language-edit review, source/provider/context/native preconditions, non-agent safety reference and durable original mutation outcome; FileOps remains the only disk writer. |
+| `workspace/lsp_code_action.go`, `workspace/lsp_code_action_request.go` | Bounded original action-set ownership, source-byte selection, synchronized provider/context fencing and edit-only review composition; no action execution or second mutation writer. |
 | `workspace/reviewed_edit_safety.go`, `core/history_safety.go` | Original-journal and selected-preimage evidence verification for native human retention decisions; core receipts and Store-owned atomic append-only audit/pin transitions, not a second file writer. |
 | `snippet/` | Bounded passive numeric completion parser/validator; neutral expanded-primary byte plans, no editor state, environment or execution authority ([numeric snippets](../reference/editor.md#numeric-completion-snippets)). |
 | `terminalvt/` | libghostty-vt parsing and protocol encoding for in-app terminals. |
@@ -78,6 +79,7 @@ detailed contracts.
 | `tui/startup/` | Detached native introduction and project selection before workspace attachment. Uses the shared folder picker and request-owned startup services. |
 | `tui/ui/` | The native component system: Host, Form, List, Tabs, TextArea/TextField, ScrollbarControl, WindowFrame. |
 | `tui/screens/` | One package per retained screen (`shellchat`, `shelleditor`, `shelltree`, `shellheader`, `shellfooter`, pickers, decks). |
+| `tui/screens/codeactions/` | Read-only manual action list/detail, complete literal/provenance reading, native safe-default buttons and explicit preview intents; no RPC or mutation authority. |
 | `tui/chatprojection/` | Generation-keyed chat row snapshots, activity strip, tool rows. |
 | `tui/editor/` | Editor engine: PieceTable buffer, cursor, selection, undo, rendering, search. |
 | `tui/input/` | Chat composer: attachments, large pastes, history recall. |
@@ -96,7 +98,9 @@ detailed contracts.
 
 `bubbletea`, `xansi`, `ultraviolet` carry the shared width profile
 ([terminal width](../reference/terminal-width.md)); `powernap` carries the
-non-blocking LSP transport hook; `pathwalk` is the internal directory walker.
+non-blocking LSP transport hook; `jsonrpc2` retains original request/notification
+params and atomic envelope validation ([fork provenance](../../third_party/jsonrpc2/README.md));
+`pathwalk` is the internal directory walker.
 Do not drop a `go.mod` replace without reading the owning reference.
 
 ## Key files
@@ -107,6 +111,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 |---|---|
 | `app.go` | App struct and construction |
 | `update.go` | `tea.Model.Update` and message dispatch |
+| `reviewed_edit_dialog.go`, `lsp_code_actions.go` | One shared immutable rename/action review and receipt owner, composed with an invocation-bound native manual action chooser |
 | `view.go` | `tea.Model.View` and the frame pipeline |
 | `shell_root.go`, `layout.go` | Root shell composite and geometry |
 | `keyboard.go`, `mouse.go`, `popupmouse.go` | Key and pointer dispatch |

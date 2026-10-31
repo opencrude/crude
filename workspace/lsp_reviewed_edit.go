@@ -55,11 +55,11 @@ func (w *Workspace) PrepareLSPRename(ctx context.Context, owner document.Owner, 
 	if err != nil {
 		return ReviewedEditPreview{}, err
 	}
-	check, err := w.LSPMgr.reviewedEditFence(result, targets)
+	check, err := w.LSPMgr.reviewedEditFence(result.Boundary, result.WireVersion, targets)
 	if err != nil {
 		return ReviewedEditPreview{}, err
 	}
-	return s.prepareReviewedEdit(ctx, owner, "LSP rename", result.Boundary, targets, check)
+	return s.prepareReviewedEdit(ctx, owner, "LSP rename", "", result.Boundary, targets, check)
 }
 
 type reviewedLSPSource struct {
@@ -71,17 +71,17 @@ type reviewedLSPSource struct {
 
 // Captures only memory identities. Callers may use the returned fence while
 // holding DocumentService.mu; it never acquires documents or performs I/O.
-func (m *LSPManager) reviewedEditFence(result types.LSPRenameEdit, targets []lspedit.DocumentEdit) (func() error, error) {
+func (m *LSPManager) reviewedEditFence(boundary types.InsightBoundary, wireVersion int, targets []lspedit.DocumentEdit) (func() error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	main := m.documents[filepath.Clean(result.Boundary.Source.Path)]
-	if main == nil || !main.opened || main.syncPending || main.wireVersion != result.WireVersion ||
-		!sameInsightBoundary(main.boundary, result.Boundary) || main.boundary.Context.Generation != m.contextGeneration {
-		return nil, errors.New("rename source/provider/context is no longer synchronized")
+	main := m.documents[filepath.Clean(boundary.Source.Path)]
+	if main == nil || !main.opened || main.syncPending || main.wireVersion != wireVersion ||
+		!sameInsightBoundary(main.boundary, boundary) || main.boundary.Context.Generation != m.contextGeneration {
+		return nil, errors.New("reviewed edit source/provider/context is no longer synchronized")
 	}
 	state := m.states[main.key]
 	if state == nil || state.client == nil || state.closing || state.stopped || state.teardownErr != nil {
-		return nil, errors.New("rename provider is no longer available")
+		return nil, errors.New("reviewed edit provider is no longer available")
 	}
 	client, settingsGeneration, contextGeneration := state.client, m.settingsGeneration, m.contextGeneration
 	capture := func(path string, doc *lspDocument) reviewedLSPSource {
@@ -89,7 +89,7 @@ func (m *LSPManager) reviewedEditFence(result types.LSPRenameEdit, targets []lsp
 		boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
 		return reviewedLSPSource{path, doc, boundary, doc.wireVersion}
 	}
-	sources := []reviewedLSPSource{capture(result.Boundary.Source.Path, main)}
+	sources := []reviewedLSPSource{capture(boundary.Source.Path, main)}
 	for _, target := range targets {
 		path, err := reviewedURIPath(m.workspaceRoot, target.URI)
 		if err != nil {
@@ -101,7 +101,7 @@ func (m *LSPManager) reviewedEditFence(result types.LSPRenameEdit, targets []lsp
 		doc := m.documents[path]
 		if doc == nil || !doc.opened || doc.syncPending || doc.key != main.key ||
 			doc.wireVersion != int(*target.Version) || doc.wireVersion <= 0 ||
-			doc.boundary.Producer != result.Boundary.Producer || doc.boundary.Context.Generation != contextGeneration {
+			doc.boundary.Producer != boundary.Producer || doc.boundary.Context.Generation != contextGeneration {
 			return nil, fmt.Errorf("reviewed target does not match its exact provider wire version")
 		}
 		sources = append(sources, capture(path, doc))

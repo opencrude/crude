@@ -24,6 +24,9 @@ func lspMethod(method string) bool {
 // prepareLSP captures the core-owned service on the actor. All requests, including
 // snapshot assembly, run on a resource worker; no RPC probes a root or pipe here.
 func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
+	if run, known := a.prepareCodeActions(request); known {
+		return run, true
+	}
 	if run, known := a.prepareReviewedLSP(request); known {
 		return run, true
 	}

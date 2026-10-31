@@ -94,6 +94,12 @@ func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int) (mo
 func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
 	return model.LSPRenameEdit{}, nil
 }
+func (noopLSPClient) RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error) {
+	return model.LSPCodeActionResponse{}, context.Canceled
+}
+func (noopLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error) {
+	return model.LSPCodeActionResponse{}, context.Canceled
+}
 func (noopLSPClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
 	return nil
 }
