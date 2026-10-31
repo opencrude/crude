@@ -584,6 +584,12 @@ Autostart requires positive endpoint absence and exclusive lifetime proof before
 reclaiming a crash-left record; failed admission, permission errors and incomplete
 probes never mean absence.
 
+Securing one of these paths claims both its ownership and a private DACL for the
+current user SID. A token whose default owner is another identity — an elevated
+or SSH logon — creates paths owned by that identity, and leaving the creator's
+owner in place would make the ownership check reject the very files the core
+just published, so no core could start or hand over from that logon.
+
 Explicit `--core-stop` uses a frozen local lifecycle exchange before Hello, not
 the generated application schema or source cohort. On the first control stream,
 one bounded message is `CRUDE-STOP\0`, a byte (`0` graceful / `1` force), and an
