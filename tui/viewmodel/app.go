@@ -337,6 +337,7 @@ type App struct {
 	lspRequestCancel      context.CancelFunc
 	signatureHelp         *signatureHelpState
 	codeActions           *codeActionState
+	navigation            *navigationState
 	editorSnippet         *editorSnippetState
 	lspDiagnostics        shellport.LSPDiagnosticConsumer
 	lspFacts              map[string]roottypes.InsightDiagnostics
@@ -1071,12 +1072,12 @@ func (m *App) registerOverlayHandlers() {
 	// WindowFrame (driven by the per-frame tick). Popovers, palettes and
 	// menus get the subtle open animation; modals (dirty-close, tree-delete,
 	// file picker, settings) appear instantly for snappy confirmation UX.
-	// Typing-driven popups (completion, references, outline, snippet choices) are excluded:
+	// Immediate code popups (completion, navigation, outline, snippet choices) are excluded:
 	// they re-open on every keystroke, so an animation would feel laggy.
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
 		switch id {
-		case ui.OverlayCompletion, ui.OverlayReferences, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth:
+		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth:
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {
@@ -1200,13 +1201,6 @@ func (m *App) registerOverlayHandlers() {
 	oh.RegisterHoverHandler(ui.OverlayReplaceInFiles, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		x, y := fw.Position()
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
-
-	oh.RegisterContentHandler(ui.OverlayReferences, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.clickReferences(localX, localY)
-	})
-	oh.RegisterHoverHandler(ui.OverlayReferences, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		m.hoverReferences(localX, localY)
 	})
 
 	oh.RegisterContentHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {

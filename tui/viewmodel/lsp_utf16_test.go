@@ -74,24 +74,36 @@ func TestLiveUTF16NavigationAndPrivateFocus(t *testing.T) {
 	if got := ansi.Strip(shell.app.View().RenderContent()); !strings.Contains(got, "XYZ") || strings.Contains(got, "!unsaved source") {
 		t.Fatalf("App painted wrong source after diagnostic navigation:\n%s", got)
 	}
-	for _, navigate := range []func(){
-		func() {
-			shell.app.handleDefinitionResult(lspDefinitionResultMsg{locations: []editor.LSPLocation{{Path: destination, Line: 1, Col: 9}}})
-		},
-		func() { shell.app.jumpToReference(refRow{File: destination, Line: 1, Col: 9}) },
-	} {
-		shell.app.activateEditorTab(source)
-		b.SetCursorPosition(1, 0)
-		b.ClearSelection()
-		before := a.CursorCol()
-		navigate()
-		if a.CursorCol() != before {
-			t.Fatal("definition/reference positioned old editor before destination open")
-		}
-		runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
-		if shell.app.EditorState.Editor != b || b.CursorLine() != 1 || b.CursorCol() != 10 || b.HasSelection() {
-			t.Fatal("definition/reference/status point did not use UTF-16 without a range")
-		}
+}
+
+func TestConnectedDefinitionAndReferencesUTF16PointPreservePrivateSource(t *testing.T) {
+	const raw = `[{"uri":$TARGET,"range":{"start":{"line":1,"character":9},"end":{"line":1,"character":9}}}]`
+	for _, kind := range []string{"definition", "references"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newNavigationConnectedFixture(t, raw, "\t界é😀abc\r\nab\t界é😀XYZ\r\n")
+			one := f.shells[0]
+			if kind == "references" {
+				f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
+				f.inspect(t)
+				f.explicitOpen(t)
+			} else {
+				f.key(t, tea.KeyPressMsg{Code: '.', Mod: tea.ModAlt})
+				remoteJourneyUntil(t, f.shells, func() bool {
+					return one.app.EditorState.Editor.FilePath() == f.engine.target && one.app.navigation == nil
+				})
+			}
+			b := one.app.EditorState.Editor
+			if b.FilePath() != f.engine.target || b.CursorLine() != 1 || b.CursorCol() != 10 || b.HasSelection() ||
+				b.Value() != "\t界é😀abc\r\nab\t界é😀XYZ\r\n" {
+				t.Fatalf("qualified %s point landing=%s %d:%d selection=%q", kind, b.FilePath(), b.CursorLine(), b.CursorCol(), b.SelectedText())
+			}
+			if f.main.CursorLine() != 2 || f.main.CursorCol() != 4 || f.main.Value() != renameConnectedMain {
+				t.Fatal("qualified destination open moved or replaced the old private source")
+			}
+			if paint := navigationConnectedPaint(one.app); !strings.Contains(paint, "XYZ") {
+				t.Fatalf("qualified point did not paint actual destination:\n%s", paint)
+			}
+		})
 	}
 }
 

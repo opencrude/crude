@@ -27,8 +27,7 @@ type CodeIntelligence interface {
 	EditorEnabled() bool
 	ServesWarm(path string) bool
 	ProbeDiagnostics(ctx context.Context, path string) (ttypes.InsightDiagnostics, bool, ttypes.LSPProbeView, error)
-	ProbeDefinition(ctx context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error)
-	ProbeReferences(ctx context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error)
+	ProbeNavigation(ctx context.Context, path, kind string, position ttypes.LSPSourcePosition, includeDeclaration bool) (ttypes.LSPNavigation, ttypes.LSPProbeView, error)
 	ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error)
 	ProbeSymbols(ctx context.Context, path string) ([]ttypes.LSPSymbol, ttypes.LSPProbeView, error)
 }
@@ -284,13 +283,13 @@ func (s *Session) executeLSPTool(ctx context.Context, root string, params map[st
 		return tools.ToolResult{Content: formatSymbols(root, path, symbols, view)}, nil
 	}
 	position := ttypes.LSPSourcePosition{Line: getIntParam(params, "line"), Column: getIntParam(params, "column"), Symbol: getStrParam(params, "symbol")}
-	var locations []ttypes.LSPLocation
-	var view ttypes.LSPProbeView
 	switch operation {
-	case "definition":
-		locations, view, err = service.ProbeDefinition(ctx, path, position)
-	case "references":
-		locations, view, err = service.ProbeReferences(ctx, path, position)
+	case ttypes.LSPNavigationDefinition, ttypes.LSPNavigationTypeDefinition, ttypes.LSPNavigationImplementation, ttypes.LSPNavigationReferences:
+		result, view, err := service.ProbeNavigation(ctx, path, operation, position, operation == ttypes.LSPNavigationReferences)
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
+		return tools.ToolResult{Content: formatNavigation(root, result, view)}, nil
 	case "hover":
 		text, view, err := service.ProbeHover(ctx, path, position)
 		if err != nil {
@@ -307,10 +306,6 @@ func (s *Session) executeLSPTool(ctx context.Context, root string, params map[st
 	default:
 		return tools.ToolResult{}, fmt.Errorf("unknown lsp operation %q", operation)
 	}
-	if err != nil {
-		return tools.ToolResult{}, err
-	}
-	return tools.ToolResult{Content: formatLocations(root, operation, locations, view)}, nil
 }
 
 func severityFloor(value string) (int, error) {
@@ -509,39 +504,66 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 	return b.String()
 }
 
-func formatLocations(root, operation string, locations []ttypes.LSPLocation, view ttypes.LSPProbeView) string {
+func formatNavigation(root string, result ttypes.LSPNavigation, view ttypes.LSPProbeView) string {
 	var b strings.Builder
 	b.WriteString(bufferNote(view))
-	if len(locations) == 0 {
-		fmt.Fprintf(&b, "The language server found no %s at this position.", operation)
-		return b.String()
+	source, producer, context := result.Boundary.Source, result.Boundary.Producer, result.Boundary.Context
+	fmt.Fprintf(&b, "Navigation %s: %s; query zero-based UTF-16 %d:%d; includeDeclaration=%t.\n",
+		result.Kind, result.Answer, result.Line, result.Col, result.IncludeDeclaration)
+	fmt.Fprintf(&b, "Source %q: workspace %q, document %q, lifetime %q, kind %q, revision %d; synchronized source wire version %d.\n",
+		displayLSPPath(root, source.Path), source.WorkspaceGeneration, source.DocumentID, source.Lifetime, source.Kind, source.Revision, result.WireVersion)
+	fmt.Fprintf(&b, "Provider %q: instance %q, tool %q; context %q generation %d, root %q.\n",
+		producer.Provider, producer.InstanceID, producer.ToolIdentity, context.ID, context.Generation, context.Root)
+	for _, unknown := range context.UnknownInputs {
+		fmt.Fprintf(&b, "Unknown input: %q\n", unknown)
 	}
-	noun := "definition"
-	if operation == "references" {
-		noun = "reference"
+	b.WriteString("Observed query only; complete project context and destination semantic freshness are unverified.\n")
+	fmt.Fprintf(&b, "Target listing limit: %d rows. Target positions are zero-based UTF-16; standard LSP targets are unversioned. No destination files were read.\n", maxLSPLocations)
+	switch result.Answer {
+	case ttypes.LSPNavigationNull:
+		b.WriteString("Provider returned literal null for this query (not an empty list or unsupported operation).\n")
+	case ttypes.LSPNavigationEmpty:
+		b.WriteString("Provider returned an empty target list for this query (not a whole-project absence claim).\n")
+	case ttypes.LSPNavigationUnsupported:
+		b.WriteString("This provider does not advertise support for this operation; no target query answer is available.\n")
+	case ttypes.LSPNavigationTargets:
+		fmt.Fprintf(&b, "%d targets returned:\n", len(result.Targets))
 	}
-	if len(locations) > 1 {
-		noun += "s"
+	lines := sourceLines{}
+	if source.DocumentID != "" && source == view.Source {
+		lines = probeSourceLines(view)
 	}
-	fmt.Fprintf(&b, "%d %s:\n", len(locations), noun)
-	lines := probeSourceLines(view)
-	for i, loc := range locations {
+	for i, target := range result.Targets {
 		if i == maxLSPLocations {
-			fmt.Fprintf(&b, "… %d more not shown\n", len(locations)-i)
+			fmt.Fprintf(&b, "… %d more not shown (limit %d rows)\n", len(result.Targets)-i, maxLSPLocations)
 			break
 		}
-		path := loc.Path
-		if _, ok := lines[path]; ok {
-			fmt.Fprintf(&b, "%s:%d:%d", displayLSPPath(root, path), loc.Line+1, lines.column(path, loc.Line, loc.Col))
-		} else {
-			fmt.Fprintf(&b, "%s:%d:UTF-16 %d (destination source unverified)", displayLSPPath(root, path), loc.Line+1, loc.Col+1)
+		fmt.Fprintf(&b, "%d. URI %q", i+1, target.URI)
+		if target.Path != "" {
+			fmt.Fprintf(&b, "; path %q", displayLSPPath(root, target.Path))
 		}
-		if quote := lines.quote(path, loc.Line); quote != "" {
-			fmt.Fprintf(&b, "  %s", quote)
+		if target.UnavailableReason != "" {
+			fmt.Fprintf(&b, "; unavailable: %q", target.UnavailableReason)
+		}
+		if target.External {
+			b.WriteString("; external target (not read)")
+		}
+		fmt.Fprintf(&b, "; link=%t; target range %s; selection %s", target.Link, navigationRangeText(target.Range), navigationRangeText(target.Selection))
+		if target.Origin != nil {
+			fmt.Fprintf(&b, "; origin %s (queried source)", navigationRangeText(*target.Origin))
 		}
 		b.WriteByte('\n')
+		if target.UnavailableReason == "" && target.Path == source.Path {
+			if quote := lines.quote(target.Path, target.Selection.Start.Line); quote != "" {
+				fmt.Fprintf(&b, "  Queried source quote (not a target-version claim): %q\n", quote)
+			}
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func navigationRangeText(r ttypes.LSPNavigationRange) string {
+	return fmt.Sprintf("%d:%d-%d:%d", r.Start.Line, r.Start.Character, r.End.Line, r.End.Character)
 }
 
 func formatSymbols(root, path string, symbols []ttypes.LSPSymbol, view ttypes.LSPProbeView) string {

@@ -382,29 +382,41 @@ func (m *lspVisualModel) journeyLSP(key, phase int) error {
 		m.action(func(app *App) tea.Cmd { _, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc}); return cmd })
 		position(2, 14, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
 		err = m.await(func(v *controlVisualModel) error {
-			rows := v.LSPPopup.RefRows
+			if v.navigation == nil || !v.navigation.shown || v.navigation.result == nil {
+				return fmt.Errorf("qualified references not mounted")
+			}
+			rows := v.navigation.result.Targets
 			if len(rows) != 2 {
 				return fmt.Errorf("want declaration and call, got %+v", rows)
 			}
 			seen := map[string]bool{}
 			for _, row := range rows {
-				seen[fmt.Sprintf("%s:%d:%d", filepath.Base(row.File), row.Line, row.Col)] = true
+				seen[fmt.Sprintf("%s:%d:%d", filepath.Base(row.Path), row.Selection.Start.Line, row.Selection.Start.Character)] = true
 			}
 			if !seen["lib.go:3:5"] || !seen["main.go:2:13"] {
 				return fmt.Errorf("references disagree with independent source oracle: %+v", rows)
 			}
-			return paint(v, "References (2)", "lib.go:4:6", "main.go:3:14")
+			return paint(v, "Find references", "lib.go", "main.go", "Inspect")
 		})
 		label = "Alt+; references lib.go:4:6 and main.go:3:14"
 	case 5:
 		m.action(func(app *App) tea.Cmd { _, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc}); return cmd })
+		if err = m.await(func(v *controlVisualModel) error {
+			if v.navigation != nil || v.overlayHost.IsOpen(navigationOverlay) {
+				return fmt.Errorf("references Close has not yet settled")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 		position(2, 14, tea.KeyPressMsg{Code: '.', Mod: tea.ModAlt})
 		err = m.await(func(v *controlVisualModel) error {
 			ed := v.EditorState.Editor
 			if filepath.Base(ed.FilePath()) != "lib.go" || ed.Value() != lspVisualLib || ed.CursorLine() != 3 || ed.CursorCol() != 5 {
-				return fmt.Errorf("definition did not navigate to literal source lib.go:4:6; path=%s cursor=%d:%d", ed.FilePath(), ed.CursorLine(), ed.CursorCol())
+				return fmt.Errorf("definition did not navigate to literal source lib.go:4:6; path=%s cursor=%d:%d navigation=%+v\n%s",
+					ed.FilePath(), ed.CursorLine(), ed.CursorCol(), v.navigation, ansi.Strip(v.View().RenderContent()))
 			}
-			if v.LSPPopup.ReferencesID != "" || v.overlayHost.IsOpen(ui.OverlayID("lsp-hover")) {
+			if v.navigation != nil || v.overlayHost.IsOpen(ui.OverlayID("lsp-hover")) {
 				return fmt.Errorf("previous popup remained mounted")
 			}
 			return paint(v, "lib.go", "func Answer() int", "return 42")

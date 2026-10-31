@@ -391,48 +391,6 @@ func (m *LSPManager) ShowDiagnosticsInStatus() bool {
 	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInStatus })
 }
 
-// RequestDefinition routes a "go to definition" request to the right client.
-func (m *LSPManager) RequestDefinition(ctx context.Context, filePath string, line, col int) []LSPLocation {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Definition }) {
-		return nil
-	}
-	var out []LSPLocation
-	_ = m.trackInflight(func() error {
-		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
-		defer cancel()
-		if client == nil {
-			return nil
-		}
-		out = client.RequestDefinition(requestCtx, filePath, line, col)
-		if !valid() {
-			out = nil
-		}
-		return nil
-	})
-	return out
-}
-
-// FindReferences routes a "find references" request to the right client.
-func (m *LSPManager) FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []LSPLocation {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.References }) {
-		return nil
-	}
-	var out []LSPLocation
-	_ = m.trackInflight(func() error {
-		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
-		defer cancel()
-		if client == nil {
-			return nil
-		}
-		out = client.FindReferences(requestCtx, filePath, line, col, includeDeclaration)
-		if !valid() {
-			out = nil
-		}
-		return nil
-	})
-	return out
-}
-
 // RequestDocumentSymbols routes a "document symbols" request to the right
 // client and caches the result for the document outline panel.
 func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string) []LSPSymbol {

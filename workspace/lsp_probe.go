@@ -244,36 +244,6 @@ func (m *LSPManager) ProbeDiagnostics(ctx context.Context, path string) (answer 
 	return answer, settled, view, err
 }
 
-func (m *LSPManager) ProbeDefinition(ctx context.Context, path string, position ttypes.LSPSourcePosition) (locs []LSPLocation, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Definition }, "Go to definition", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
-		line, col, err := position.Resolve(view.SourceText)
-		if err != nil {
-			return err
-		}
-		locs = client.RequestDefinition(ctx, path, line, col)
-		return nil
-	})
-	if err != nil {
-		locs = nil
-	}
-	return locs, view, err
-}
-
-func (m *LSPManager) ProbeReferences(ctx context.Context, path string, position ttypes.LSPSourcePosition) (locs []LSPLocation, view LSPProbeView, err error) {
-	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.References }, "Find references", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
-		line, col, err := position.Resolve(view.SourceText)
-		if err != nil {
-			return err
-		}
-		locs = client.FindReferences(ctx, path, line, col, true)
-		return nil
-	})
-	if err != nil {
-		locs = nil
-	}
-	return locs, view, err
-}
-
 func (m *LSPManager) ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (text string, view LSPProbeView, err error) {
 	view, err = m.probe(ctx, path, func(s ttypes.LSPSettings) bool { return s.Hover }, "Hover", func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
 		line, col, err := position.Resolve(view.SourceText)

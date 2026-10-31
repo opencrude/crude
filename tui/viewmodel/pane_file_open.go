@@ -38,6 +38,7 @@ type paneFilesOpenedMsg struct {
 	refs             *liveDocumentRefs
 	diagnosticFacts  *types.InsightDiagnostics
 	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
+	navigation       *paneNavigation
 	// window opens the landed tab in its own window (Open in window).
 	window bool
 }
@@ -45,6 +46,10 @@ type paneFilesOpenedMsg struct {
 // openPaneFiles captures ownership on Update, but reads only in the command.
 // Its private manager cannot publish buffers into a closed/replaced workspace.
 func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
+	return m.openPaneFilesContext(context.Background(), paths, group)
+}
+
+func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group window.GroupID) tea.Cmd {
 	m.paneFileOpenSeq++ // An empty request also cancels an earlier pending open.
 	if len(paths) == 0 || m.Win == nil || m.BufferMgr == nil || !m.Win.HasGroup(group) {
 		return nil
@@ -68,7 +73,7 @@ func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 		prepared := editor.NewBufferManager()
 		for _, path := range paths {
 			if connected {
-				s, err := msg.refs.open(context.Background(), path)
+				s, err := msg.refs.open(ctx, path)
 				file := paneFilePrepared{path: s.Path, err: err, snapshot: &s}
 				if err == nil {
 					file.recovery, file.recoveryErr = loadRecovery(s.Path)
@@ -94,8 +99,22 @@ func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 }
 
 func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
+	if msg.navigation != nil && !m.navigationCurrent(msg.navigation.owner) {
+		return releasePaneDocuments(msg)
+	}
 	if msg.seq != m.paneFileOpenSeq || msg.generation != m.workspaceSwitchGen.Load() || msg.manager != m.BufferMgr ||
 		msg.win != m.Win || m.Win == nil || !m.Win.HasGroup(msg.group) {
+		return releasePaneDocuments(msg)
+	}
+	if msg.navigation != nil && !m.navigationLandingMatches(msg) {
+		m.closeNavigation()
+		if len(msg.files) == 1 && msg.files[0].err != nil {
+			m.Feedback.NotifyError(fmt.Sprintf("Cannot open navigation target: %v", msg.files[0].err))
+		} else if len(msg.files) == 1 && (msg.files[0].recoveryErr != nil || len(msg.files[0].recovery.Payload) != 0) {
+			m.Feedback.NotifyInfo("Navigation target has unresolved private recovery; open the file normally to resolve it first.")
+		} else {
+			m.Feedback.NotifyInfo("Navigation target changed; no tab or cursor was changed. Request the location again.")
+		}
 		return releasePaneDocuments(msg)
 	}
 	currentGroup := m.Win.ActiveGroup()
@@ -187,6 +206,9 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		return nil
 	}
 	m.handleTabSwitch()
+	if msg.navigation != nil {
+		m.applyNavigationLanding(msg)
+	}
 	if p := msg.position; p != nil && m.EditorState.Editor != nil {
 		ed := m.EditorState.Editor
 		valid := true

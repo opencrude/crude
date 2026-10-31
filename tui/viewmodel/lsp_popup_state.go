@@ -5,14 +5,6 @@ import (
 	"time"
 )
 
-// RefRow is one row in the references popup list.
-type RefRow struct {
-	File    string
-	Line    int
-	Col     int
-	Preview string
-}
-
 // OutlineRow is one row in the outline popup list.
 type OutlineRow struct {
 	Sym   editor.LSPSymbol
@@ -20,7 +12,7 @@ type OutlineRow struct {
 }
 
 // LSPPopupState holds the transient UI state for LSP-related popups:
-// rename preview, outline, references, and completion.
+// rename preview, outline, and completion.
 //
 // This is DISPLAY state: it tracks which LSP popups are open right now,
 // cursor positions within them, and the rendered data.
@@ -30,9 +22,6 @@ type LSPPopupState struct {
 	OutlineOpen                   bool
 	OutlineRows                   []OutlineRow
 	OutlineCursor                 int
-	ReferencesID                  string
-	RefRows                       []RefRow
-	RefCursor                     int
 	CompletionID                  string
 	CompletionItems               []editor.CompletionItem
 	CompletionCursor              int

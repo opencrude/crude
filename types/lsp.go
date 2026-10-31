@@ -129,15 +129,6 @@ type LSPProbeView struct {
 	SourceText string
 }
 
-type LSPLocation struct {
-	URI     string
-	Path    string
-	Line    int
-	Col     int
-	EndLine int
-	EndCol  int
-}
-
 type LSPSymbol struct {
 	Name     string
 	Detail   string

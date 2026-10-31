@@ -50,9 +50,6 @@ const (
 	LSPFailed    = model.LSPFailed
 )
 
-// LSPLocation is a flat, viewmodel-friendly representation of an LSP Location.
-type LSPLocation = model.LSPLocation
-
 // LSPSymbol is a flat, viewmodel-friendly representation of a document symbol.
 // Mirrors LSP SymbolKind values (1=File, 2=Module, 3=Namespace, 4=Package,
 // 5=Class, 6=Method, 7=Property, 8=Field, 9=Constructor, 10=Enum, 11=Interface,

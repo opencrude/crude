@@ -391,7 +391,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
-| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
+| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.navigation`, `.navigation_target`, `.completions`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
 | Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
@@ -441,6 +441,18 @@ Before a result is known, failed cancellation/cleanup preserves the original
 request identity as unresolved. At the unchanged 16-command bound even the
 cancellation request can be refused. That refusal is explicit; unknown original
 work/results remain retained, never evicted to make the next request succeed.
+
+`lsp.navigation` accepts the invoking acknowledged canonical source, closed kind,
+UTF-16 position and references-declaration choice. The core retains exact source,
+provider, synchronized wire and context provenance for null, empty, unsupported
+and target answers. Original provider JSON stays inside the core normalizer.
+`lsp.navigation_target` revalidates that original boundary and URI policy before
+observing a single explicitly selected current source. It grants no mutation or
+execution authority. The returned content hash is not a target wire version;
+standard destinations remain unversioned. The shell rechecks its actual opened
+snapshot before landing. Both commands share the joined cancellable exchange;
+the retired raw `.definition`/`.references` slice methods have no fallback.
+See [qualified location navigation](editor.md#qualified-location-navigation).
 
 Reviewed rename is not a raw edit relay or `files.edit` shortcut.
 `lsp.rename_preview` accepts the invoking acknowledged source and cursor/name.

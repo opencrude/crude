@@ -72,6 +72,30 @@ func (e *Editor) SetLSPDiagnosticPosition(d LSPDiagnostic) error {
 	return nil
 }
 
+// SetLSPNavigationRange validates both raw UTF-16 endpoints before moving the
+// caret. The cue is not an editable selection: typing at a destination must not
+// replace the symbol or span a provider returned.
+func (e *Editor) SetLSPNavigationRange(r model.LSPNavigationRange) error {
+	if r.End.Line < r.Start.Line || r.End.Line == r.Start.Line && r.End.Character < r.Start.Character {
+		return fmt.Errorf("LSP navigation: reversed range")
+	}
+	start, err := e.lspVisualPosition(r.Start.Line, r.Start.Character)
+	if err != nil {
+		return err
+	}
+	end, err := e.lspVisualPosition(r.End.Line, r.End.Character)
+	if err != nil {
+		return err
+	}
+	e.SetCursorPosition(start.Line, start.Col)
+	e.ClearSelection()
+	if start != end {
+		e.landing = &SearchMatch{Start: start, End: end}
+		e.landingRevision = e.Revision()
+	}
+	return nil
+}
+
 type completionEdit struct {
 	start, end int
 	text       string

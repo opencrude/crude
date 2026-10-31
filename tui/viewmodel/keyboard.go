@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +16,7 @@ import (
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
+	"crude/types"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -227,6 +227,9 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return m, m.handleFindReplaceKey(msg)
 				case findInFilesWindowID, replaceInFilesWindowID:
 					return m, m.forwardEventToWindowContent(topWin, msg)
+				case string(ui.OverlayNavigation):
+					// Its shared native body owns Back from detail, then Close.
+					return m, m.forwardEventToWindowContent(topWin, msg)
 				}
 			}
 			_, pane := paneGroupFromOverlay(ui.OverlayID(topWin.ID))
@@ -359,6 +362,14 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "edit.replace":
 				m.openFindReplace(true)
 				return m, nil
+			case "lsp.definition":
+				return m, m.requestNavigationCmd(types.LSPNavigationDefinition)
+			case "lsp.typeDefinition":
+				return m, m.requestNavigationCmd(types.LSPNavigationTypeDefinition)
+			case "lsp.implementation":
+				return m, m.requestNavigationCmd(types.LSPNavigationImplementation)
+			case "lsp.references":
+				return m, m.requestNavigationCmd(types.LSPNavigationReferences)
 			case "lsp.signature":
 				return m, m.requestSignatureHelpCmd()
 			case "lsp.codeActions":
@@ -374,10 +385,6 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.LSPPopup.RenameArmed {
 			m.LSPPopup.RenameArmed = false
 			m.Feedback.NotifyInfo("Rename cancelled")
-			return m, nil
-		}
-		if m.LSPPopup.ReferencesID != "" {
-			m.closeReferencesPopup()
 			return m, nil
 		}
 		if m.LSPPopup.CompletionID != "" {
@@ -402,10 +409,6 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.closeEditorTab()
 		return m, nil
 	}
-	// References popup: fallback when popup is open but editor still has focus.
-	if m.LSPPopup.ReferencesID != "" {
-		return m, m.handleReferencesPopupKey(msg)
-	}
 	// Outline/completion navigation is handled when the floating window is
 	// focused (dispatchFloatingWindowKey). Keep editor-path fallbacks only
 	// when the popup exists but somehow did not take focus.
@@ -422,10 +425,6 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// LSP keybinds (only when a file is open and the LSP is up).
 	if m.EditorState.Editor.IsOpen() && m.ws.LSPMgr() != nil {
 		switch msg.String() {
-		case "alt+.": // gd (go to definition): Alt+. is widely used in TUI editors
-			return m, m.requestDefinitionCmd()
-		case "alt+;": // gr (find references): Alt+; mirrors the VSCode chord
-			return m, m.requestReferencesCmd()
 		case "alt+o": // outline: refresh document symbols and toggle the outline panel
 			return m, m.requestDocumentSymbolsCmd()
 		case "f2": // rename
@@ -516,6 +515,9 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleDirtyPromptKey(msg)
 		case string(ui.OverlayOperationIssue):
 			return m, m.forwardEventToWindowContent(fw, msg)
+		case string(ui.OverlayNavigation):
+			// The native body owns Escape's detail Back and list Close ladder.
+			return m, m.forwardEventToWindowContent(fw, msg)
 		case string(ui.OverlaySettingsPrompt):
 			return m, m.handleSettingsPromptKey(msg)
 		case "agent-prompt":
@@ -524,8 +526,6 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleTreePromptInput(msg)
 		case "tree-delete-confirm":
 			return m, m.handleTreeDeleteConfirmKey(msg)
-		case "references-popup":
-			return m, m.handleReferencesPopupKey(msg)
 		case "completion-popup":
 			switch msg.String() {
 			case "down", "up", "tab", "enter", "esc":
@@ -950,30 +950,11 @@ func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.
 //
 // The functions below return a tea.Cmd that fires the LSP request in a
 // goroutine and dispatches the result back into the app via a custom msg
-// (lspDefinitionResultMsg, lspReferencesResultMsg, etc.) handled in update.go.
+// handled in update.go. Qualified location navigation lives in lsp_navigation.go.
 //
 // We keep these as separate Cmd-returning helpers so the key handler stays
 // short and readable. Each helper returns nil (no-op) when the editor is not
 // open or the LSP is not running for the active file.
-
-// lspDefinitionResultMsg is the response to a "go to definition" request.
-// locations is empty when the symbol has no definition or the request failed.
-type lspDefinitionResultMsg struct {
-	owner      *editor.Editor
-	revision   uint64
-	generation uint64
-	filePath   string
-	locations  []editor.LSPLocation
-}
-
-// lspReferencesResultMsg is the response to a "find references" request.
-type lspReferencesResultMsg struct {
-	owner      *editor.Editor
-	revision   uint64
-	generation uint64
-	filePath   string
-	locations  []editor.LSPLocation
-}
 
 // lspDocumentSymbolsResultMsg is the response to a "document symbols" request.
 // symbols is empty when the file has no symbols (empty file, server unsupported).
@@ -1007,48 +988,6 @@ type lspCompletionResultMsg struct {
 	line       int
 	col        int
 	items      []editor.CompletionItem
-}
-
-// requestDefinitionCmd fires a "go to definition" request at the cursor.
-func (m *App) requestDefinitionCmd() tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
-		return nil
-	}
-	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.LSPCursorPosition()
-	conn, status, _ := m.ws.LSPMgr().Status()
-	if !conn || status != editor.LSPConnected {
-		m.Feedback.NotifyInfo("LSP not ready")
-		return nil
-	}
-	lspMgr := m.ws.LSPMgr()
-	ctx, generation := m.lspRequestContext()
-	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
-	return tea.Cmd(func() tea.Msg {
-		locs := lspMgr.RequestDefinition(ctx, filePath, line, col)
-		return lspDefinitionResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, locations: locs}
-	})
-}
-
-// requestReferencesCmd fires a "find references" request at the cursor.
-func (m *App) requestReferencesCmd() tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
-		return nil
-	}
-	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.LSPCursorPosition()
-	conn, status, _ := m.ws.LSPMgr().Status()
-	if !conn || status != editor.LSPConnected {
-		m.Feedback.NotifyInfo("LSP not ready")
-		return nil
-	}
-	lspMgr := m.ws.LSPMgr()
-	ctx, generation := m.lspRequestContext()
-	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
-	return tea.Cmd(func() tea.Msg {
-		locs := lspMgr.FindReferences(ctx, filePath, line, col, true)
-		return lspReferencesResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, locations: locs}
-	})
 }
 
 // requestDocumentSymbolsCmd refreshes the document outline for the current
@@ -1165,59 +1104,6 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 
 //  LSP result handlers ─
 
-// handleDefinitionResult reacts to a "go to definition" response. If the
-// server returned a single location, the editor jumps straight to it. If
-// multiple, the file is opened at the first and a status-bar hint shows the
-// total count.
-func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
-	if len(msg.locations) == 0 {
-		m.Feedback.NotifyInfo("No definition found")
-		return
-	}
-	loc := msg.locations[0]
-	if loc.Path == "" {
-		m.Feedback.NotifyInfo("Definition in unindexed location")
-		return
-	}
-	if m.queueLiveNavigation(loc.Path, editor.LSPDiagnostic{Line: loc.Line, Col: loc.Col, EndLine: loc.Line, EndCol: loc.Col}) {
-		return
-	}
-	if loc.Path != m.EditorState.Editor.FilePath() {
-		if err := m.openFileInEditor(loc.Path); err != nil {
-			m.Feedback.NotifyError("Cannot open " + loc.Path)
-			return
-		}
-	}
-	if err := m.EditorState.Editor.SetLSPCursorPosition(loc.Line, loc.Col); err != nil {
-		m.Feedback.NotifyError(err.Error())
-		return
-	}
-	m.EditorState.Editor.ScrollToCursor()
-	layout := m.computeLayout()
-	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-	if len(msg.locations) > 1 {
-		m.Feedback.NotifyInfo(fmt.Sprintf("Definition: %d locations", len(msg.locations)))
-	}
-}
-
-// handleReferencesResult shows a popup with the list of references. If the
-// user presses Enter on a row, the editor jumps to that location.
-func (m *App) handleReferencesResult(msg lspReferencesResultMsg) {
-	if len(msg.locations) == 0 {
-		m.Feedback.NotifyInfo("No references found")
-		return
-	}
-	rows := make([]refRow, 0, len(msg.locations))
-	for _, loc := range msg.locations {
-		preview := ""
-		if line, err := m.EditorState.Editor.LineTextFromPath(loc.Path, loc.Line); err == nil {
-			preview = line
-		}
-		rows = append(rows, refRow{File: loc.Path, Line: loc.Line, Col: loc.Col, Preview: preview})
-	}
-	m.showReferencesPopup(rows)
-}
-
 // handleDocumentSymbolsResult stores the symbols for the outline panel and
 // opens it. Empty result closes the outline.
 func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
@@ -1288,194 +1174,6 @@ func countSymbols(syms []editor.LSPSymbol) int {
 		n += countSymbols(s.Children)
 	}
 	return n
-}
-
-// openFileInEditor opens the file at the given path in the editor, switching
-// to or creating the appropriate tab. Used by "go to definition" when the
-// target lives in another file.
-func (m *App) openFileInEditor(path string) error {
-	_, err := m.openEditorTab(path)
-	return err
-}
-
-// showReferencesPopup displays the list of references in a floating window.
-// The list is selectable: pressing Enter on a row jumps the editor to that
-// location and closes the popup.
-type refRow = RefRow
-
-func (m *App) showReferencesPopup(rows []refRow) {
-	if m.windowManager == nil {
-		return
-	}
-	const id = "references-popup"
-
-	const maxPreview = 60
-	listItems := make([]ui.ListItem, 0, len(rows))
-	for i, r := range rows {
-		short := r.Preview
-		if len([]rune(short)) > maxPreview {
-			short = string([]rune(short)[:maxPreview]) + "…"
-		}
-		label := fmt.Sprintf("%s:%d:%d", filepath.Base(r.File), r.Line+1, r.Col+1)
-		listItems = append(listItems, ui.ListItem{
-			ID:      fmt.Sprintf("%d", i),
-			Label:   label,
-			Detail:  short,
-			Payload: i, // index into RefRows
-		})
-	}
-
-	// Pick a width that fits the widest row, capped to the screen.
-	boxW := 30
-	for _, it := range listItems {
-		text := it.Label
-		if it.Detail != "" {
-			text += "  " + it.Detail
-		}
-		if w := rendering.VisibleWidth(text) + 8; w > boxW {
-			boxW = w
-		}
-	}
-	if boxW > m.width-4 {
-		boxW = m.width - 4
-	}
-	// chrome (2) + rows; min 6
-	boxH := len(listItems) + 2
-	if boxH > m.height-4 {
-		boxH = m.height - 4
-	}
-	if boxH < 6 {
-		boxH = 6
-	}
-	if m.LSPPopup.RefCursor >= len(listItems) {
-		m.LSPPopup.RefCursor = 0
-	}
-	if m.LSPPopup.RefCursor < 0 && len(listItems) > 0 {
-		m.LSPPopup.RefCursor = 0
-	}
-
-	title := fmt.Sprintf("References (%d)", len(listItems))
-	frame := ui.BuildListPopupFrame(m.Theme, ui.ListPopupSpec{
-		ID:       id,
-		Title:    title,
-		Items:    listItems,
-		Selected: m.LSPPopup.RefCursor,
-		Width:    boxW,
-		Height:   boxH,
-		Closable: true,
-	})
-
-	popupX := m.width/2 - boxW/2
-	popupY := m.height/2 - boxH/2
-	if popupX < 0 {
-		popupX = 0
-	}
-	if popupY < 0 {
-		popupY = 0
-	}
-
-	if existing := m.windowManager.Window(id); existing != nil {
-		// Prefer mutating selection when content is already a ComponentWidget.
-		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
-			if list := ui.ListPopupList(cw); list != nil {
-				list.SetItems(listItems)
-				list.SelectIndex(m.LSPPopup.RefCursor)
-				existing.SetSize(boxW, boxH)
-				existing.SetPosition(popupX, popupY)
-				existing.MarkContentDirty()
-			} else {
-				existing.Content = frame
-				existing.SetSize(boxW, boxH)
-				existing.SetPosition(popupX, popupY)
-				existing.MarkContentDirty()
-			}
-		} else {
-			existing.Content = frame
-			existing.SetSize(boxW, boxH)
-			existing.SetPosition(popupX, popupY)
-			existing.MarkContentDirty()
-		}
-	} else {
-		fw := wm.NewFloatingWindow(
-			id,
-			"",
-			frame,
-			boxW, boxH,
-			wm.WithDecoration(false),
-			wm.WithMovable(false),
-			wm.WithResizable(false),
-			wm.WithClosable(false),
-			wm.WithModal(true),
-			wm.WithFocusable(true),
-			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
-		)
-		fw.SetPosition(popupX, popupY)
-		m.overlayHost.Open(ui.OverlayReferences, fw, ui.PopoverPolicy(true), func() {
-			m.LSPPopup.ReferencesID = ""
-			m.LSPPopup.RefRows = nil
-			m.LSPPopup.RefCursor = 0
-		})
-		m.LSPPopup.ReferencesID = id
-	}
-
-	m.LSPPopup.RefRows = rows
-}
-
-// closeReferencesPopup removes the references results popup, if any.
-func (m *App) closeReferencesPopup() {
-	m.overlayHost.Close(ui.OverlayReferences)
-}
-
-// refreshReferencesPopup re-renders the references popup in place. Called
-// when the user moves the selection so the highlight follows the cursor.
-func (m *App) refreshReferencesPopup() {
-	if m.LSPPopup.ReferencesID == "" || len(m.LSPPopup.RefRows) == 0 {
-		return
-	}
-	m.showReferencesPopup(m.LSPPopup.RefRows)
-}
-
-// syncReferencesListCursor updates the WindowFrame list selection without a full rebuild.
-func (m *App) syncReferencesListCursor() {
-	if m.windowManager == nil || m.LSPPopup.ReferencesID == "" {
-		return
-	}
-	fw := m.windowManager.Window(m.LSPPopup.ReferencesID)
-	if fw == nil {
-		return
-	}
-	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		if list := ui.ListPopupList(cw); list != nil {
-			list.SelectIndex(m.LSPPopup.RefCursor)
-			fw.MarkContentDirty()
-			return
-		}
-	}
-	m.refreshReferencesPopup()
-}
-
-// jumpToReference opens the file containing the given reference (switching
-// tabs if it's already open) and moves the cursor to the matching line/col.
-func (m *App) jumpToReference(r refRow) {
-	if r.File == "" {
-		return
-	}
-	if m.queueLiveNavigation(r.File, editor.LSPDiagnostic{Line: r.Line, Col: r.Col, EndLine: r.Line, EndCol: r.Col}) {
-		return
-	}
-	if r.File != m.EditorState.Editor.FilePath() {
-		if err := m.openFileInEditor(r.File); err != nil {
-			m.Feedback.NotifyError("Cannot open " + r.File)
-			return
-		}
-	}
-	if err := m.EditorState.Editor.SetLSPCursorPosition(r.Line, r.Col); err != nil {
-		m.Feedback.NotifyError(err.Error())
-		return
-	}
-	m.EditorState.Editor.ScrollToCursor()
-	layout := m.computeLayout()
-	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 }
 
 // ─── Outline popup ──────────────────────────────────────────────────────────
@@ -1840,30 +1538,6 @@ func (m *App) handleCompletionPopupKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.acceptCompletion()
 	case "esc":
 		m.closeCompletionPopup()
-	}
-	return nil
-}
-
-func (m *App) handleReferencesPopupKey(msg tea.KeyPressMsg) tea.Cmd {
-	switch msg.String() {
-	case "down":
-		if m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows)-1 {
-			m.LSPPopup.RefCursor++
-			m.syncReferencesListCursor()
-		}
-	case "up":
-		if m.LSPPopup.RefCursor > 0 {
-			m.LSPPopup.RefCursor--
-			m.syncReferencesListCursor()
-		}
-	case "enter":
-		if m.LSPPopup.RefCursor >= 0 && m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows) {
-			r := m.LSPPopup.RefRows[m.LSPPopup.RefCursor]
-			m.jumpToReference(r)
-			m.closeReferencesPopup()
-		}
-	case "esc":
-		m.closeReferencesPopup()
 	}
 	return nil
 }

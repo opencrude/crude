@@ -31,6 +31,7 @@ import (
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
+	"crude/tui/screens/navigation"
 	"crude/tui/screens/operationissue"
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
@@ -75,6 +76,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
 	m.syncCodeActions()
+	m.syncNavigation()
 	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -898,14 +900,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay && msg.Epoch == overlay.OpenEpoch() {
 			m.setMode(ModeChat)
 		}
-	case lspDefinitionResultMsg:
-		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
-			m.handleDefinitionResult(msg)
-		}
 	case lspHoverResultMsg:
 		m.handleLSPHoverResult(msg)
 	case signatureHelpResultMsg:
 		m.handleSignatureHelpResult(msg)
+	case navigationResultMsg:
+		m.handleNavigationResult(msg)
+	case navigationTargetMsg:
+		cmds = append(cmds, m.handleNavigationTarget(msg))
+	case navigation.OpenMsg:
+		cmds = append(cmds, m.openNavigationTarget(msg))
+	case navigation.CloseMsg:
+		if s := m.navigation; s != nil && s.screen == msg.Target {
+			m.closeNavigation()
+		}
 	case codeActionListResultMsg:
 		cmds = append(cmds, m.handleCodeActionListResult(msg))
 	case codeActionPreparedMsg:
@@ -916,10 +924,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.closeCodeActionScreen(msg))
 	case codeActionReleasedMsg:
 		m.handleCodeActionReleased(msg)
-	case lspReferencesResultMsg:
-		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
-			m.handleReferencesResult(msg)
-		}
 	case lspDocumentSymbolsResultMsg:
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleDocumentSymbolsResult(msg)
@@ -1721,7 +1725,7 @@ func (m *App) handleTabSwitch() {
 		if prevEditorPath != m.EditorState.ActiveView || prevEditor != m.EditorState.Editor || prevAgentID != m.AgentView.ActiveID() {
 			m.closeCompletionPopup()
 			m.closeOutlinePopup()
-			m.closeReferencesPopup()
+			m.closeNavigation()
 		}
 	}()
 	defer m.openNextAgentPrompt()

@@ -2,6 +2,9 @@ package session
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,15 +20,19 @@ import (
 )
 
 type fakeCodeIntelligence struct {
-	mu          sync.Mutex
-	editor      bool
-	warm        bool
-	diagnostics map[string][]ttypes.LSPDiagnostic
-	sources     map[string]string
-	unversioned bool
-	probes      int
-	locations   []ttypes.LSPLocation
-	positions   [][2]int
+	mu                  sync.Mutex
+	editor              bool
+	warm                bool
+	diagnostics         map[string][]ttypes.LSPDiagnostic
+	sources             map[string]string
+	unversioned         bool
+	probes              int
+	targets             []ttypes.LSPNavigationTarget
+	answer              string
+	navigationError     error
+	kinds               []string
+	includeDeclarations []bool
+	positions           [][2]int
 }
 
 func (f *fakeCodeIntelligence) EditorEnabled() bool         { return f.editor }
@@ -132,19 +139,28 @@ func TestQueuedPostEditDiagnosticsWithheldWhenAdmissionChanges(t *testing.T) {
 		})
 	}
 }
-func (f *fakeCodeIntelligence) ProbeDefinition(_ context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error) {
+func (f *fakeCodeIntelligence) ProbeNavigation(_ context.Context, path, kind string, position ttypes.LSPSourcePosition, includeDeclaration bool) (ttypes.LSPNavigation, ttypes.LSPProbeView, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	view := f.sourceView(path)
 	line, col, err := position.Resolve(view.SourceText)
 	if err != nil {
-		return nil, ttypes.LSPProbeView{}, err
+		return ttypes.LSPNavigation{}, ttypes.LSPProbeView{}, err
 	}
 	f.positions = append(f.positions, [2]int{line, col})
-	return f.locations, view, nil
-}
-func (f *fakeCodeIntelligence) ProbeReferences(ctx context.Context, path string, position ttypes.LSPSourcePosition) ([]ttypes.LSPLocation, ttypes.LSPProbeView, error) {
-	return f.ProbeDefinition(ctx, path, position)
+	f.kinds = append(f.kinds, kind)
+	f.includeDeclarations = append(f.includeDeclarations, includeDeclaration)
+	if f.navigationError != nil {
+		return ttypes.LSPNavigation{}, ttypes.LSPProbeView{}, f.navigationError
+	}
+	answer := f.answer
+	if answer == "" {
+		answer = "targets"
+	}
+	return ttypes.LSPNavigation{Boundary: ttypes.InsightBoundary{Source: view.Source,
+		Context:  ttypes.InsightContext{ID: "module-1", Root: filepath.Dir(path), Generation: 2, UnknownInputs: []string{"Build graph unknown"}},
+		Producer: ttypes.InsightProducer{InstanceID: "producer-1", Provider: "gopls", ToolIdentity: "gopls-fixture"}},
+		WireVersion: 7, Kind: kind, Answer: answer, Line: line, Col: col, IncludeDeclaration: includeDeclaration, Targets: slices.Clone(f.targets)}, view, nil
 }
 func (f *fakeCodeIntelligence) ProbeHover(context.Context, string, ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error) {
 	return "func y() int", ttypes.LSPProbeView{}, nil
@@ -194,7 +210,7 @@ func TestLSPToolFollowsSessionOverrideOverWorkspace(t *testing.T) {
 }
 
 // Agents name the identifier; the tool converts it to the protocol's UTF-16
-// column and answers with 1-based positions and the quoted source line.
+// column; target ranges remain unversioned zero-based UTF-16.
 func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	_, live, service, root := codeIntelFixture(t, true)
 	path := filepath.Join(root, "a.go")
@@ -202,7 +218,8 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	if err := os.WriteFile(path, []byte("DISK DECOY MUST NOT BE QUOTED"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	service.locations = []ttypes.LSPLocation{{Path: path, Line: 2, Col: 5}}
+	service.targets = []ttypes.LSPNavigationTarget{{URI: "file:///a.go", Path: path,
+		Range: navRange(2, 0, 27), Selection: navRange(2, 5, 6)}}
 	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": float64(2), "symbol": "y"})
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +228,8 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	if len(service.positions) != 1 || service.positions[0] != [2]int{1, 11} {
 		t.Fatalf("protocol position = %v, want line 1 col 11", service.positions)
 	}
-	if !strings.Contains(result.Content, "a.go:3:6  func y() int { return 1 }") {
+	if !strings.Contains(result.Content, `path "a.go"; link=false; target range 2:0-2:27; selection 2:5-2:6`) ||
+		!strings.Contains(result.Content, `Queried source quote (not a target-version claim): "func y() int { return 1 }"`) {
 		t.Fatalf("definition result = %q", result.Content)
 	}
 	if strings.Contains(result.Content, "DECOY") {
@@ -228,6 +246,141 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	}
 	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": float64(2), "symbol": "zz"}); err == nil || !strings.Contains(err.Error(), `symbol "zz" is not on line 2`) {
 		t.Fatalf("missing symbol = %v", err)
+	}
+}
+
+func navRange(line, start, end int) ttypes.LSPNavigationRange {
+	return ttypes.LSPNavigationRange{Start: ttypes.LSPNavigationPosition{Line: line, Character: start},
+		End: ttypes.LSPNavigationPosition{Line: line, Character: end}}
+}
+
+func TestLSPNavigationKindsAndQualifiedAnswers(t *testing.T) {
+	for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+		for _, answer := range []string{"null", "empty", "unsupported", "targets"} {
+			t.Run(kind+"/"+answer, func(t *testing.T) {
+				_, live, service, root := codeIntelFixture(t, true)
+				service.sources["a.go"] = "// 😀 x := y()\r\n"
+				service.answer = answer
+				if answer == "targets" {
+					origin := navRange(0, 11, 12)
+					service.targets = []ttypes.LSPNavigationTarget{{Path: filepath.Join(root, "unknown.go"), URI: "file:///unknown.go",
+						Range: navRange(4, 2, 9), Selection: navRange(4, 3, 5)}}
+					if kind != "references" {
+						service.targets[0].Link, service.targets[0].Origin = true, &origin
+					}
+				}
+				result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": kind, "path": "a.go", "line": 1, "symbol": "y"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(service.kinds, []string{kind}) || !slices.Equal(service.positions, [][2]int{{0, 11}}) ||
+					!slices.Equal(service.includeDeclarations, []bool{kind == "references"}) {
+					t.Fatalf("wrong navigation dispatch: kinds=%v positions=%v include=%v", service.kinds, service.positions, service.includeDeclarations)
+				}
+				for _, want := range []string{
+					"Navigation " + kind + ": " + answer, "query zero-based UTF-16 0:11", `Source "a.go"`,
+					`workspace "workspace-1"`, fmt.Sprintf("document %q", filepath.Join(root, "a.go")), `lifetime "canonical-1"`,
+					`kind "canonical", revision 41`, "synchronized source wire version 7", `Provider "gopls": instance "producer-1", tool "gopls-fixture"`,
+					`context "module-1" generation 2`, fmt.Sprintf("root %q", root), `Unknown input: "Build graph unknown"`,
+					"destination semantic freshness are unverified", "Target listing limit: 50 rows", "standard LSP targets are unversioned",
+				} {
+					if !strings.Contains(result.Content, want) {
+						t.Fatalf("missing %q:\n%s", want, result.Content)
+					}
+				}
+				want := map[string]string{"null": "literal null", "empty": "empty target list", "unsupported": "does not advertise support",
+					"targets": "link=true; target range 4:2-4:9; selection 4:3-4:5; origin 0:11-0:12 (queried source)"}[answer]
+				if answer == "targets" && kind == "references" {
+					want = "link=false; target range 4:2-4:9; selection 4:3-4:5"
+				}
+				if !strings.Contains(result.Content, want) || strings.Contains(result.Content, "found no") {
+					t.Fatalf("answer distinction lost:\n%s", result.Content)
+				}
+			})
+		}
+	}
+}
+
+func TestLSPNavigationErrorsAndClosedKinds(t *testing.T) {
+	for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+		t.Run(kind, func(t *testing.T) {
+			_, live, service, _ := codeIntelFixture(t, true)
+			service.sources["a.go"] = "😀 y y\n"
+			service.navigationError = errors.New("provider transport failed")
+			result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": kind, "path": "a.go", "line": 1, "column": 5, "symbol": "y"})
+			if !errors.Is(err, service.navigationError) || result.Content != "" {
+				t.Fatalf("failure became absence: result=%+v err=%v", result, err)
+			}
+			if !slices.Equal(service.positions, [][2]int{{0, 5}}) {
+				t.Fatalf("explicit character column not resolved against source: %v", service.positions)
+			}
+		})
+	}
+	_, live, service, _ := codeIntelFixture(t, true)
+	for _, kind := range []string{"typeDefinition", "Definition", "implementations", ""} {
+		if result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": kind, "path": "a.go"}); err == nil || result.Content != "" {
+			t.Fatalf("unknown operation %q accepted: %+v %v", kind, result, err)
+		}
+	}
+	if len(service.kinds) != 0 {
+		t.Fatal("unknown operation reached navigation service")
+	}
+	var schema struct {
+		Properties struct {
+			Operation struct{ Enum []string }
+		}
+	}
+	if err := json.Unmarshal(tools.CodeIntelligenceTool.Function.Parameters, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(schema.Properties.Operation.Enum, []string{"diagnostics", "definition", "type-definition", "implementation", "references", "hover", "symbols"}) {
+		t.Fatalf("tool operation contract = %v", schema.Properties.Operation.Enum)
+	}
+}
+
+func TestLSPNavigationListingDoesNotReadTargetsAndHasExplicitLimit(t *testing.T) {
+	_, live, service, root := codeIntelFixture(t, true)
+	service.sources["a.go"] = "var y = 1\n"
+	private := filepath.Join(t.TempDir(), "private.go")
+	if err := os.WriteFile(private, []byte("PRIVATE TARGET SENTINEL MUST NOT LEAK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	local := filepath.Join(root, "local.go")
+	if err := os.WriteFile(local, []byte("LOCAL TARGET SENTINEL MUST NOT LEAK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.targets = []ttypes.LSPNavigationTarget{
+		{Path: private, URI: "file:///private.go", External: true, Range: navRange(20, 100, 110), Selection: navRange(20, 102, 105)},
+		{URI: "https://example.invalid/source", UnavailableReason: "only local file URIs are supported", Range: navRange(0, 1, 2), Selection: navRange(0, 1, 2)},
+		{Path: local, URI: "file:///local.go", Range: navRange(0, 1, 2), Selection: navRange(0, 1, 2)},
+	}
+	for i := 3; i < 52; i++ {
+		service.targets = append(service.targets, ttypes.LSPNavigationTarget{URI: fmt.Sprintf("file:///row-%d", i)})
+	}
+	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": 1, "symbol": "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"52 targets returned", "external target (not read)", `unavailable: "only local file URIs are supported"`,
+		"target range 20:100-20:110; selection 20:102-20:105", "50. URI", "2 more not shown (limit 50 rows)", "No destination files were read"} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("missing %q:\n%s", want, result.Content)
+		}
+	}
+	for _, absent := range []string{"SENTINEL", "51. URI", "row-50", "row-51", "Queried source quote"} {
+		if strings.Contains(result.Content, absent) {
+			t.Fatalf("unexpected %q:\n%s", absent, result.Content)
+		}
+	}
+}
+
+func TestLSPNavigationCannotQuoteMismatchedSource(t *testing.T) {
+	view := ttypes.LSPProbeView{Source: ttypes.InsightSource{DocumentID: "doc", Path: "/a.go", Revision: 2}, SourceText: "WRONG SOURCE SENTINEL"}
+	result := ttypes.LSPNavigation{Answer: "targets", Boundary: ttypes.InsightBoundary{Source: view.Source},
+		Targets: []ttypes.LSPNavigationTarget{{Path: "/a.go"}}}
+	result.Boundary.Source.Revision = 1
+	if got := formatNavigation("", result, view); strings.Contains(got, "SENTINEL") {
+		t.Fatal("source identity mismatch quoted source", got)
 	}
 }
 

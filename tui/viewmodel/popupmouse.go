@@ -149,7 +149,7 @@ func (m *App) closePaneWindowTabs(group window.GroupID) tea.Cmd {
 
 // popupClickOutsideBehavior is a reference: which popup ID has which behavior.
 // The actual values are set at popup-creation time via wm.WithClickOutside.
-// CloseRoute:  context-menu, references-popup, completion-popup,
+// CloseRoute:  context-menu, lsp-navigation, completion-popup,
 //              outline-popup, diag-context
 // KeepRoute:   find-replace, composer, command-palette,
 //              textoverlay
@@ -578,101 +578,6 @@ func (m *App) clickTreePrompt(localX, localY int, msg tea.Msg) tea.Cmd {
 		overlayFieldPointer(fw, localX, localY, msg)
 	}
 	return nil
-}
-
-// =============================================================================
-// References popup: click & hover
-//
-// Each reference is one content row (after chrome).
-// =============================================================================
-
-func (m *App) clickReferences(localX, localY int) tea.Cmd {
-	if m.LSPPopup.ReferencesID == "" || m.LSPPopup.RefRows == nil || m.windowManager == nil {
-		return nil
-	}
-	fw := m.windowManager.Window(m.LSPPopup.ReferencesID)
-	if fw == nil {
-		return nil
-	}
-	// WindowFrame path: activate via Host + List.
-	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil && cw.Host() != nil {
-		ww, hh := fw.Size()
-		cw.Host().Resize(ww, hh)
-		cw.Host().Layout()
-		// Prefer frame Handle so close button is checked before content.
-		if root := cw.Root(); root != nil {
-			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, ui.MouseClickEvent(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft}))
-			if res.Action != nil && res.Action.ID == "window.close" {
-				m.closeReferencesPopup()
-				return nil
-			}
-			if res.Action != nil && res.Action.ID == ui.ListPopupActivate {
-				if item, ok := res.Action.Payload.(ui.ListItem); ok {
-					var idx int
-					if i, ok := item.Payload.(int); ok {
-						idx = i
-					} else {
-						idx = m.listPopupSelectedIndex(cw)
-					}
-					if idx >= 0 && idx < len(m.LSPPopup.RefRows) {
-						m.LSPPopup.RefCursor = idx
-						m.jumpToReference(m.LSPPopup.RefRows[idx])
-						m.closeReferencesPopup()
-					}
-				}
-				return nil
-			}
-		}
-		return nil
-	}
-	// Legacy fallback (hand-drawn chrome).
-	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.LSPPopup.RefRows) {
-		m.LSPPopup.RefCursor = contentRow
-		r := m.LSPPopup.RefRows[m.LSPPopup.RefCursor]
-		m.jumpToReference(r)
-		m.closeReferencesPopup()
-	}
-	return nil
-}
-
-func (m *App) hoverReferences(localX, localY int) {
-	if m.LSPPopup.RefRows == nil || m.windowManager == nil {
-		return
-	}
-	fw := m.windowManager.Window(m.LSPPopup.ReferencesID)
-	if fw == nil {
-		return
-	}
-	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		list := ui.ListPopupList(cw)
-		if list == nil {
-			return
-		}
-		// Frame content starts at Y=1.
-		contentY := localY - 1
-		if contentY < 0 {
-			return
-		}
-		idx := list.Scroll().Offset() + contentY
-		if idx < 0 || idx >= len(list.Items()) {
-			return
-		}
-		if !list.Items()[idx].Selectable() {
-			return
-		}
-		if list.SelectedIndex() != idx {
-			list.SelectIndex(idx)
-			m.LSPPopup.RefCursor = idx
-			fw.MarkContentDirty()
-		}
-		return
-	}
-	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.LSPPopup.RefRows) && contentRow != m.LSPPopup.RefCursor {
-		m.LSPPopup.RefCursor = contentRow
-		m.refreshReferencesPopup()
-	}
 }
 
 // listPopupSelectedIndex returns the selected row index from a list popup frame.

@@ -252,12 +252,18 @@ func FuzzCoreGitReviewedMutations(f *testing.F) {
 // This deliberately does not claim stdio framing, parser or real server coverage.
 type semanticLSPClient struct {
 	mu          sync.Mutex
-	calls       []coreprotocol.LSPRequest
+	calls       []semanticLSPCall
 	edit        []byte
 	boundary    types.InsightBoundary
 	version     int
 	diagnostics []types.LSPDiagnostic
 	admit       func() error
+}
+
+type semanticLSPCall struct {
+	Path               string
+	Line, Col          int
+	IncludeDeclaration bool
 }
 
 type semanticLSPRuntime struct{ client *semanticLSPClient }
@@ -305,20 +311,19 @@ func (c *semanticLSPClient) AwaitDiagnostics(context.Context, string) (types.Ins
 func (c *semanticLSPClient) record(path string, line, col int, name string, include bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.calls = append(c.calls, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, IncludeDeclaration: include})
+	c.calls = append(c.calls, semanticLSPCall{Path: path, Line: line, Col: col, IncludeDeclaration: include})
 }
 func (c *semanticLSPClient) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.calls)
 }
-func (c *semanticLSPClient) RequestDefinition(_ context.Context, path string, line, col int) []workspace.LSPLocation {
-	c.record(path, line, col, "", false)
-	return []workspace.LSPLocation{{URI: "file:///fuzz/definition.go", Path: "/fuzz/definition.go", Line: 2, Col: 3, EndLine: 4, EndCol: 5}}
-}
-func (c *semanticLSPClient) FindReferences(_ context.Context, path string, line, col int, include bool) []workspace.LSPLocation {
+func (c *semanticLSPClient) RequestNavigation(_ context.Context, path, kind string, line, col int, include bool) (types.LSPNavigationResponse, error) {
 	c.record(path, line, col, "", include)
-	return []workspace.LSPLocation{{URI: "file:///fuzz/ref.go", Path: "/fuzz/ref.go", Line: 6, Col: 7, EndLine: 8, EndCol: 9}}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return types.LSPNavigationResponse{Kind: kind, WireVersion: c.version,
+		JSON: []byte(`[{"uri":"file:///fuzz/definition.go","range":{"start":{"line":2,"character":3},"end":{"line":4,"character":5}}}]`)}, nil
 }
 func (c *semanticLSPClient) RequestHover(_ context.Context, path string, line, col int) (string, error) {
 	c.record(path, line, col, "", false)
@@ -351,6 +356,7 @@ func (c *semanticLSPClient) RequestDocumentSymbols(_ context.Context, path strin
 }
 
 func FuzzCoreLSPRequests(f *testing.F) {
+	f.Add([]byte{0, 0, 1, 1, 0, 2, 1, 3})
 	f.Add([]byte{0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7})
 	f.Add([]byte{0, 255, 3, 128, 1, 64, 4, 32, 2, 16, 5, 8})
 	f.Add([]byte{})
@@ -380,7 +386,8 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, identity)
 		docs := workspace.NewDocumentService(root, nil, manager)
 		defer docs.Close()
-		if _, err := docs.Open(document.Owner{ClientID: "fuzz", Epoch: 1}, path); err != nil {
+		snapshot, err := docs.Open(document.Owner{ClientID: "fuzz", Epoch: 1}, path)
+		if err != nil {
 			t.Fatal(err)
 		}
 		// Probe waits for the manager's exact document synchronization boundary,
@@ -390,18 +397,29 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		if _, settled, _, err := manager.ProbeDiagnostics(ctx, path); err != nil || !settled {
 			t.Fatal("manager failed to admit fixture", err)
 		}
-		a := &actor{ws: &workspace.Workspace{RootPath: root, LSPMgr: manager}}
-		methods := [...]string{coreprotocol.LSPRequestDefinition, coreprotocol.LSPFindReferences, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDocumentSymbols}
+		a := &actor{ws: &workspace.Workspace{RootPath: root, LSPMgr: manager, LiveDocuments: docs}}
+		source := types.InsightSource{Kind: "canonical", WorkspaceGeneration: snapshot.AnalysisGeneration, DocumentID: snapshot.ID, Lifetime: snapshot.AnalysisLifetime, Path: snapshot.Path, Revision: snapshot.Revision}
+		methods := [...]string{coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationMethod, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDocumentSymbols}
 		for i := 0; i < min(len(sequence)/2, gitLSPFuzzActions); i++ {
 			action, value := sequence[2*i]%8, sequence[2*i+1]
 			method := methods[int(action)%len(methods)]
-			in := coreprotocol.LSPRequest{Path: path, Line: int(int8(value)), Col: int(value % 17), IncludeDeclaration: value&1 != 0}
+			in := coreprotocol.LSPRequest{Path: path, Line: int(int8(value)), Col: int(value % 17)}
+			if action < 2 {
+				in.Line /= 16
+			}
+			if action >= 6 {
+				method = coreprotocol.LSPRequestHover
+			}
 			if action == 7 {
 				// These are unopened paths, not a claim that core normalizes/fences
 				// requests: the manager only admits its exact retained document.
 				in.Path = []string{"main.go", filepath.Join(root, "unopened.go"), filepath.Join(filepath.Dir(root), "outside.go"), "../outside.go"}[value%4]
 			}
-			request := coreprotocol.Request{ID: fmt.Sprintf("lsp-%d", i), Method: method, Payload: mustTestPayload(in)}
+			request := coreprotocol.Request{ID: fmt.Sprintf("lsp-%d", i), Method: method, Owner: coreprotocol.Owner{ClientID: "fuzz", Epoch: 1}, Payload: mustTestPayload(in)}
+			kind := []string{"definition", "type-definition", "implementation", "references"}[value%4]
+			if action < 2 {
+				request.Payload = mustTestPayload(coreprotocol.NavigationRequest{Source: source, Kind: kind, Line: in.Line, Col: in.Col, IncludeDeclaration: kind == "references"})
+			}
 			run, ok := a.prepareLSP(request)
 			if !ok {
 				t.Fatal("known LSP method missing")
@@ -426,9 +444,16 @@ func FuzzCoreLSPRequests(f *testing.F) {
 				}
 				if action == 7 && out.Error == nil {
 					var result coreprotocol.LSPResult
-					if err := testDecode(out.Payload, &result); err != nil || len(result.Locations) != 0 {
+					if err := testDecode(out.Payload, &result); err != nil || len(result.Completions) != 0 {
 						t.Fatal("unopened query returned a result", err)
 					}
+				}
+				continue
+			}
+			validNavigationPosition := in.Line == 0 && in.Col <= 12 || in.Line == 1 && in.Col == 0
+			if action < 2 && !validNavigationPosition {
+				if out.Error == nil || client.count() != before {
+					t.Fatal("invalid navigation source position reached provider", out.Error)
 				}
 				continue
 			}
@@ -438,10 +463,10 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			client.mu.Lock()
 			gotInput := client.calls[len(client.calls)-1]
 			client.mu.Unlock()
-			wantInput := coreprotocol.LSPRequest{Path: path, Line: in.Line, Col: in.Col}
+			wantInput := semanticLSPCall{Path: path, Line: in.Line, Col: in.Col}
 			switch action {
-			case 1:
-				wantInput.IncludeDeclaration = in.IncludeDeclaration
+			case 0, 1:
+				wantInput.IncludeDeclaration = kind == "references"
 			case 5:
 				wantInput.Line, wantInput.Col = 0, 0
 			}
@@ -449,16 +474,23 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			if gotInput != wantInput {
 				t.Fatalf("query arguments changed: got %+v want %+v", gotInput, wantInput)
 			}
+			if action < 2 {
+				var result coreprotocol.NavigationReply
+				if err := testDecode(out.Payload, &result); err != nil || result.Result.Answer != "targets" || result.Result.Kind != kind || result.Result.Boundary.Source != source || len(result.Result.Targets) != 1 {
+					t.Fatal("qualified navigation reply changed", err, result)
+				}
+				target := result.Result.Targets[0]
+				if target.URI != "file:///fuzz/definition.go" || target.Selection.Start.Line != 2 || target.Selection.Start.Character != 3 || target.Range.End.Line != 4 || target.Range.End.Character != 5 || !target.External {
+					t.Fatal("original target changed", target)
+				}
+				continue
+			}
 			var result coreprotocol.LSPResult
 			if err := testDecode(out.Payload, &result); err != nil || !result.Applied {
 				t.Fatal("query result missing", err)
 			}
 			want := coreprotocol.LSPResult{Applied: true}
 			switch action {
-			case 0:
-				want.Locations = []workspace.LSPLocation{{URI: "file:///fuzz/definition.go", Path: "/fuzz/definition.go", Line: 2, Col: 3, EndLine: 4, EndCol: 5}}
-			case 1:
-				want.Locations = []workspace.LSPLocation{{URI: "file:///fuzz/ref.go", Path: "/fuzz/ref.go", Line: 6, Col: 7, EndLine: 8, EndCol: 9}}
 			case 2:
 				want.Hover = "hover **symbol**\nsecond line"
 			case 3:

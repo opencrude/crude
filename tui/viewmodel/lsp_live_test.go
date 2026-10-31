@@ -173,9 +173,10 @@ func liveLSPSemantics(t *testing.T, ctx context.Context, m *workspace.LSPManager
 		hover, err := m.RequestHover(ctx, path, line, col)
 		return err == nil && strings.Contains(hover, "answer")
 	})
-	defs := m.RequestDefinition(ctx, path, line, col)
-	if len(defs) == 0 || filepath.Clean(defs[0].Path) != path || defs[0].Line != 1 {
-		t.Fatalf("definition should resolve answer declaration in opened file: %+v", defs)
+	defs, err := m.RequestNavigation(ctx, path, model.LSPNavigationDefinition, line, col, false)
+	if err != nil || defs.Answer != model.LSPNavigationTargets || len(defs.Targets) == 0 ||
+		filepath.Clean(defs.Targets[0].Path) != path || defs.Targets[0].Selection.Start.Line != 1 {
+		t.Fatalf("definition should resolve answer declaration in opened file: %+v, %v", defs, err)
 	}
 	items := m.RequestCompletions(ctx, path, line, completionCol)
 	found := false

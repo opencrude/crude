@@ -357,6 +357,59 @@ Tea's update goroutine (the tab-close hang).
   `closed` before its owned servers are marked for shutdown: that gap can let the
   worker exit while an actual language-server process remains alive.
 
+### Qualified location navigation
+
+The editor's **Code** menu and contextual keys use one navigation family:
+**Alt+.** definition, **Alt+T** type definition, **Alt+M** implementation and
+**Alt+;** references (including declarations). Definition settings gate the three
+definition-family operations; References remains separate. Agent `lsp` probes
+use the same raw-response normalization and provenance, including while editor
+LSP is disabled under the existing session and workspace Trust policy.
+
+One invocation binds acknowledged canonical text, private caret/selection, the
+actual synchronized provider and the original semantic context. Unsaved
+acknowledged text is valid; pending edits, shared conflicts and stale lifetimes
+are not. Source changes, equal-text Undo, close/reopen, focus departure, workspace
+switch and newer contexts retire the invocation. All answers, including literal
+null, empty array and statically unsupported, cross the original pushed-context
+barrier. Provider/protocol failures stay failures, never successful absence.
+
+`lspnav` consumes original standard JSON, preserving homogeneous Location or
+LocationLink targets, full target/selection ranges, optional origin and order.
+Malformed, mixed, duplicate-member, noncanonical-coordinate and unsupported
+shapes are refused atomically. Its bounds are 1 MiB raw JSON, 1,024 targets,
+4,096 UTF-8 bytes per URI and 64 JSON container levels. Queried and selected
+source have a 2 MiB navigation consumer limit. The existing shared-source lease
+can read or clone up to its 16 MiB document limit before that selected-source
+check. These are consumer bounds, not bounds on initial acquisition allocations,
+the JSON-RPC library's initial frame allocation or native heap/RSS.
+
+A single supported in-project definition-family target can jump directly.
+Multiple targets, all references and external destinations use the native
+chooser. Enter on a row inspects complete copyable URI/path, ranges and original
+source/provider/context metadata without reading destination content. Detail
+defaults to **Close**; **Back** returns to the list. **Open** explicitly selects
+one target, with distinct outside-workspace wording. Non-file URIs, remote file
+authorities, query/fragment-bearing or malformed paths stay inspectable but
+unavailable. Listing never eagerly reads a private or dependency file.
+
+The selected-target command alone observes current canonical unsaved text or
+one bounded regular-file source off Update. Strict UTF-16 range checks reject
+surrogate halves and invalid line/column boundaries. Opening reuses the existing
+async core-document owner and verifies the observed hash/lifetime against the
+actually opened snapshot before installing a target tab or moving the cursor.
+Unresolved private target recovery or a failed recovery read refuses navigation
+before tab installation; ordinary file-open remains its explicit recovery path.
+Late source/focus results cannot open a tab. Neither the hash nor an exact
+selection supplies a missing target version: standard LSP locations are
+**unversioned targets**, and semantic destination freshness remains unverified.
+The visible landing is non-editing and does not select text for replacement.
+
+Agent listings preserve the same distinctions and unversioned warning, expose
+at most 50 rows with an explicit omitted count, and never read destination files.
+This manual navigation slice does not implement navigation history, hierarchy,
+dynamic capability registration or complete semantic/project coverage.
+
 ### Parameter information
 
 **Alt+I** (or Ctrl+Shift+Space when delivered by the terminal) and the editor's

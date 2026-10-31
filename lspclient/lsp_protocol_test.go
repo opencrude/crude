@@ -2,6 +2,7 @@ package lspclient
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,7 +74,7 @@ func TestProtocolServerHelper(t *testing.T) {
 				_ = os.WriteFile(os.Getenv("CRUDE_PROTOCOL_READY"), []byte("ready"), 0600)
 				continue
 			}
-			capabilities := map[string]any{}
+			capabilities := map[string]any{"definitionProvider": true}
 			if strings.HasPrefix(mode, "signature") {
 				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"(", ","}}
 			}
@@ -274,9 +275,11 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 	openTestFile(t, l, ctx, path, "python", "a😀b")
 	openTestFile(t, l, ctx, path, "python", "a😀b")
 	openTestFile(t, l, ctx, path, "python", "a😀bc")
-	definitions := l.RequestDefinition(ctx, path, 0, 3)
-	if len(definitions) != 1 || definitions[0].Path != path || definitions[0].Col != 3 {
-		t.Fatalf("LocationLink result: %v", definitions)
+	definitions, err := l.RequestNavigation(ctx, path, types.LSPNavigationDefinition, 0, 3, false)
+	if err != nil || definitions.Kind != "definition" || definitions.WireVersion == 0 ||
+		!bytes.Contains(definitions.JSON, []byte(`"targetSelectionRange"`)) ||
+		!bytes.Contains(definitions.JSON, []byte(`"character":3`)) {
+		t.Fatalf("original LocationLink result: %+v, %v", definitions, err)
 	}
 	items := l.RequestCompletions(ctx, path, 0, 3)
 	if len(items) != 1 || items[0].InsertText != "red;" || items[0].TextEdit == nil || items[0].TextEdit.Col != 3 || items[0].TextEdit.NewText != "red;" {

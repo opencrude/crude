@@ -86,11 +86,8 @@ func (c *immediateTreeDiagClient) NotifySave(context.Context, string, string, in
 func (c *immediateTreeDiagClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (c *immediateTreeDiagClient) SyncFileFromDisk(context.Context, string, int) {}
-func (c *immediateTreeDiagClient) RequestDefinition(context.Context, string, int, int) []workspace.LSPLocation {
-	return nil
-}
-func (c *immediateTreeDiagClient) FindReferences(context.Context, string, int, int, bool) []workspace.LSPLocation {
-	return nil
+func (c *immediateTreeDiagClient) RequestNavigation(context.Context, string, string, int, int, bool) (model.LSPNavigationResponse, error) {
+	return model.LSPNavigationResponse{}, context.Canceled
 }
 func (c *immediateTreeDiagClient) RequestDocumentSymbols(context.Context, string) []workspace.LSPSymbol {
 	return nil

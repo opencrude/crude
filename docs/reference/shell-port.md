@@ -28,6 +28,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `lsp.go` | `LSPService` | language-server manager |
 | `reviewed_edit.go` | `ReviewedEdits` | Connected canonical rename preview, opaque approval, pending release and original-result inspection |
 | `code_actions.go` | `CodeActions` | Exact canonical action-list discovery, retained-row preview and pending-list release; reuses `ReviewedEdits` for Apply and inspection |
+| `navigation.go` | `Navigation` | Read-only qualified definition/type/implementation/reference answers and explicit selected-target observation |
 | `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
@@ -252,11 +253,9 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `DiagnosticCursor` | current | reads | yes: generation/version only | LSP state topic replica |
 | `ContextCursor` | current | reads | yes: retained owner/context generation, separate from progress/status | LSP state topic replica |
 | `FileDiagnostics` | 2 | reads | yes | LSP state topic replica |
-| `FindReferences` | 1 | reads | yes | lsp.references |
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
 | `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
 | `RequestCompletions` | 1 | reads | yes | lsp.completions |
-| `RequestDefinition` | 1 | reads | yes | lsp.definition |
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
@@ -283,6 +282,22 @@ that joined exchange but retain their own durable mutation intent and immutable
 result; cancellation is not no-effect evidence. Other mutations keep their
 ordinary receipt semantics. See
 [command cancellation](core-client-protocol.md#mutation-receipts-and-uncertainty).
+
+### `Navigation`
+
+This optional connected capability replaces the old slice-only definition and
+reference methods. The actor supplies attachment ownership. Both calls use the
+joined cancellable command exchange and run off Update.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `RequestLSPNavigation` | Exact acknowledged source, kind, UTF-16 position and references-declaration flag | `lsp.navigation` |
+| `InspectLSPNavigationTarget` | Explicit original-boundary/wire/kind and selected target; observe one bounded current source | `lsp.navigation_target` |
+
+Only qualified DTOs cross the port. Null, empty, unsupported and failed outcomes
+are distinct. Target content is not fetched during listing. The shell verifies
+an observation against its actual opened snapshot before landing; no missing
+target version is inferred. See [qualified navigation](editor.md#qualified-location-navigation).
 
 ### `ReviewedEdits`
 

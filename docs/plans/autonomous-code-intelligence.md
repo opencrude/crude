@@ -77,6 +77,23 @@ original committed receipts, selected recovery and joined provider cleanup.
 Windows/Darwin feature-preserving builds are compilation evidence only.
 These slices do not complete the broader policy, assembly or workflow/device rows.
 
+The [qualified location navigation](../reference/editor.md#qualified-location-navigation)
+cutover is implemented. One original-JSON family replaces slice-only definition
+and reference paths, adds type-definition/implementation, distinguishes negative
+answers and binds both editor and agent results to source/provider/context.
+The native chooser retains full ranges and explicit outside-workspace Open;
+only selected-target observation reads current content. Targets remain explicitly
+unversioned. Its corrected source-frozen full ordinary/race, build, lint,
+design/docs, benchmark, nested LSP/syntax and site gates passed on Linux.
+Sequential native real-gopls keyboard journeys at 160x40 and 80x24 exercised
+all four kinds, inspect-only detail, safe-default Close/Back, explicit
+second-target Open, original response metadata, unchanged source/private draft
+and joined provider cleanup. The existing combined LSP journey also passes at
+desktop and narrower sizes. Windows/Darwin feature-preserving builds are
+compilation evidence only. These deterministic native regressions do not close
+the adaptive human-workflow driver or developer/device rows. Hierarchy, history,
+complete project context and overall workflow acceptance remain open.
+
 ## Problem
 
 Crude has shared documents, asynchronous LSP lifecycle ownership, editor
