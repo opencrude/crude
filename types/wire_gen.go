@@ -1970,8 +1970,8 @@ func (z *CompactResultMsg) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CompletionItem) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 7
-	o = append(o, 0x97)
+	// array header, size 8
+	o = append(o, 0x98)
 	if z.TextEdit == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -1990,6 +1990,25 @@ func (z *CompletionItem) MarshalMsg(b []byte) (o []byte, err error) {
 			if err != nil {
 				err = msgp.WrapError(err, "AdditionalTextEdits", za0001)
 				return
+			}
+		}
+	}
+	if z.Snippet == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		// array header, size 2
+		o = append(o, 0x92)
+		o = msgp.AppendString(o, z.Snippet.TextSHA256)
+		if z.Snippet.Occurrences == nil { // allownil: if nil
+			o = msgp.AppendNil(o)
+		} else {
+			o = msgp.AppendArrayHeader(o, uint32(len(z.Snippet.Occurrences)))
+			for za0002 := range z.Snippet.Occurrences {
+				o, err = z.Snippet.Occurrences[za0002].MarshalMsg(o)
+				if err != nil {
+					err = msgp.WrapError(err, "Snippet", "Occurrences", za0002)
+					return
+				}
 			}
 		}
 	}
@@ -2013,8 +2032,8 @@ func (z *CompletionItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 7 {
-		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -2060,6 +2079,63 @@ func (z *CompletionItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Snippet = nil
+	} else {
+		if z.Snippet == nil {
+			z.Snippet = new(CompletionSnippet)
+		}
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Snippet")
+			return
+		}
+		if uint64(zb0003)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if zb0003 != 2 {
+			err = msgp.ArrayError{Wanted: 2, Got: zb0003}
+			return
+		}
+		z.Snippet.TextSHA256, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Snippet", "TextSHA256")
+			return
+		}
+		if msgp.IsNil(bts) {
+			bts = bts[1:]
+			z.Snippet.Occurrences = nil
+		} else {
+			var zb0004 uint32
+			zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Snippet", "Occurrences")
+				return
+			}
+			if uint64(zb0004)*1 > uint64(len(bts)) {
+				err = msgp.ErrShortBytes
+				return
+			}
+			if z.Snippet.Occurrences != nil && cap(z.Snippet.Occurrences) >= int(zb0004) {
+				z.Snippet.Occurrences = (z.Snippet.Occurrences)[:zb0004]
+			} else {
+				z.Snippet.Occurrences = make([]CompletionOccurrence, zb0004)
+			}
+			for za0002 := range z.Snippet.Occurrences {
+				bts, err = z.Snippet.Occurrences[za0002].UnmarshalMsg(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "Snippet", "Occurrences", za0002)
+					return
+				}
+			}
+		}
+	}
 	z.Label, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Label")
@@ -2101,7 +2177,193 @@ func (z *CompletionItem) Msgsize() (s int) {
 	for za0001 := range z.AdditionalTextEdits {
 		s += z.AdditionalTextEdits[za0001].Msgsize()
 	}
+	if z.Snippet == nil {
+		s += msgp.NilSize
+	} else {
+		s += 1 + msgp.StringPrefixSize + len(z.Snippet.TextSHA256) + msgp.ArrayHeaderSize
+		for za0002 := range z.Snippet.Occurrences {
+			s += z.Snippet.Occurrences[za0002].Msgsize()
+		}
+	}
 	s += msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Documentation) + msgp.IntSize + msgp.StringPrefixSize + len(z.InsertText)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CompletionOccurrence) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 5
+	o = append(o, 0x95)
+	o = msgp.AppendInt(o, z.Stop)
+	o = msgp.AppendInt(o, z.StartByte)
+	o = msgp.AppendInt(o, z.EndByte)
+	o = msgp.AppendInt(o, z.Parent)
+	if z.Choices == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Choices)))
+		for za0001 := range z.Choices {
+			o = msgp.AppendString(o, z.Choices[za0001])
+		}
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompletionOccurrence) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+		return
+	}
+	z.Stop, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Stop")
+		return
+	}
+	z.StartByte, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "StartByte")
+		return
+	}
+	z.EndByte, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "EndByte")
+		return
+	}
+	z.Parent, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Parent")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Choices = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Choices")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Choices != nil && cap(z.Choices) >= int(zb0002) {
+			z.Choices = (z.Choices)[:zb0002]
+		} else {
+			z.Choices = make([]string, zb0002)
+		}
+		for za0001 := range z.Choices {
+			z.Choices[za0001], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Choices", za0001)
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CompletionOccurrence) Msgsize() (s int) {
+	s = 1 + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.ArrayHeaderSize
+	for za0001 := range z.Choices {
+		s += msgp.StringPrefixSize + len(z.Choices[za0001])
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CompletionSnippet) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.TextSHA256)
+	if z.Occurrences == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Occurrences)))
+		for za0001 := range z.Occurrences {
+			o, err = z.Occurrences[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Occurrences", za0001)
+				return
+			}
+		}
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompletionSnippet) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.TextSHA256, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TextSHA256")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Occurrences = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Occurrences")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Occurrences != nil && cap(z.Occurrences) >= int(zb0002) {
+			z.Occurrences = (z.Occurrences)[:zb0002]
+		} else {
+			z.Occurrences = make([]CompletionOccurrence, zb0002)
+		}
+		for za0001 := range z.Occurrences {
+			bts, err = z.Occurrences[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Occurrences", za0001)
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CompletionSnippet) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.TextSHA256) + msgp.ArrayHeaderSize
+	for za0001 := range z.Occurrences {
+		s += z.Occurrences[za0001].Msgsize()
+	}
 	return
 }
 

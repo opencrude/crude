@@ -343,12 +343,5 @@ func (e *Editor) replaceSearchMatch(m SearchMatch, replacement string, cursor Po
 	if m.Matched == replacement {
 		return
 	}
-	if m.startOffset != m.endOffset {
-		_, _ = e.buf.deleteOffsets(m.startOffset, m.endOffset)
-		e.recordChange(Change{Type: ActDelete, Text: []byte(m.Matched), Offset: m.startOffset, CursorBefore: cursor})
-	}
-	if replacement != "" {
-		_, _ = e.buf.insertAtOffset(m.startOffset, []byte(replacement))
-		e.recordChange(Change{Type: ActInsert, Text: []byte(replacement), Offset: m.startOffset, CursorBefore: cursor})
-	}
+	e.spliceRecorded(m.startOffset, m.endOffset, replacement, cursor)
 }

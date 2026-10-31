@@ -382,6 +382,8 @@ var wireTypes = []any{
 	new(p14.CommandSeverityRule),
 	new(p14.CompactResultMsg),
 	new(p14.CompletionItem),
+	new(p14.CompletionOccurrence),
+	new(p14.CompletionSnippet),
 	new(p14.ConversationMessage),
 	new(p14.CostValue),
 	new(p14.DocumentInsight),

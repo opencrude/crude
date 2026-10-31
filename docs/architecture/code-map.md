@@ -62,6 +62,7 @@ detailed contracts.
 | `textdiff/`, `diff/` | Exact line changes from immutable text; unified diff helpers. |
 | `history/` | Prompt history with score-based eviction. |
 | `lspclient/` | Nonvisual LSP subprocess transport and pipe monitor ([editor](../reference/editor.md)). |
+| `snippet/` | Bounded passive numeric completion parser/validator; neutral expanded-primary byte plans, no editor state, environment or execution authority ([numeric snippets](../reference/editor.md#numeric-completion-snippets)). |
 | `terminalvt/` | libghostty-vt parsing and protocol encoding for in-app terminals. |
 | `clipboard/`, `logger/`, `jsonrepair/` | Platform clipboard, structured logging, streamed-JSON repair. |
 

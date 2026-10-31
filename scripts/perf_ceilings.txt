@@ -29,6 +29,11 @@ BenchmarkBufferDirtyCheckLargeFile 0 0
 BenchmarkBufferSavepointManualRoundTripLargeFile 0 0
 BenchmarkSyntaxLongPythonViewport 0 0
 BenchmarkSyntaxMapInlineDecorations 830 3
+# Dense source mutation and mutation+editor-grid render, not parser-only work.
+BenchmarkSnippetTypingDense/lines20000/mirrors8/paintfalse 2750000 120
+BenchmarkSnippetTypingDense/lines20000/mirrors8/painttrue 3860000 1110
+BenchmarkSnippetTypingDense/lines20000/mirrors64/paintfalse 2950000 330
+BenchmarkSnippetTypingDense/lines20000/mirrors64/painttrue 4150000 1320
 BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
 BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
 # Native syntax Go allocations only; native heap/RSS require separate evidence.

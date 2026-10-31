@@ -172,6 +172,9 @@ func (e *Editor) endUndoGroup() {
 	if e.undoGroupDepth == 0 {
 		return
 	}
+	if e.undoGroupDepth == 1 {
+		e.finishSnippetMirrors()
+	}
 	e.undoGroupDepth--
 	if e.undoGroupDepth == 0 {
 		after := e.captureViewState()
@@ -181,6 +184,10 @@ func (e *Editor) endUndoGroup() {
 		}
 		e.endDocumentEditGroup()
 		e.undoGroupID = 0
+		if e.contentChangePending {
+			e.contentChangePending = false
+			e.emitContentChanged()
+		}
 		// Prune complete transactions only; a large replacement must never be
 		// cut in half just because it crosses the retained-history bound.
 		if len(e.changes) > e.maxHistory {
@@ -210,6 +217,7 @@ func (e *Editor) restoreViewState(s editorViewState) {
 }
 
 func (e *Editor) undo() {
+	e.CancelSnippet()
 	e.typingGroup = 0
 	if e.documentProjection != nil {
 		e.requestDocumentUndo(false)
@@ -253,6 +261,7 @@ func (e *Editor) Undo() {
 }
 
 func (e *Editor) redo() {
+	e.CancelSnippet()
 	e.typingGroup = 0
 	if e.documentProjection != nil {
 		e.requestDocumentUndo(true)

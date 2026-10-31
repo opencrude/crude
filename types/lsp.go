@@ -159,6 +159,7 @@ type LSPTextEdit struct {
 type CompletionItem struct {
 	TextEdit            *LSPTextEdit
 	AdditionalTextEdits []LSPTextEdit
+	Snippet             *CompletionSnippet
 	Label               string
 	Detail              string
 	Documentation       string

@@ -384,6 +384,12 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.closeCompletionPopup()
 			return m, nil
 		}
+		if m.EditorState.Editor.SnippetActive() {
+			m.closeEditorSnippet()
+			m.EditorState.Editor.CancelSnippet()
+			m.EditorState.Editor.ClearSelection()
+			return m, nil
+		}
 		// A selection is transient editor UI: drag selections persist for
 		// editing, so the first Esc only drops them.
 		if m.EditorState.Editor.HasSelection() {
@@ -491,6 +497,15 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 
 	if fw := m.windowManager.Focused(); fw != nil {
 		switch fw.ID {
+		case string(ui.OverlaySnippetChoices):
+			if msg.Code == tea.KeyEsc {
+				m.overlayHost.Close(ui.OverlaySnippetChoices)
+				return m, nil
+			}
+			if msg.Code == tea.KeyTab {
+				msg = tea.KeyPressMsg{Code: tea.KeyEnter}
+			}
+			return m, m.forwardEventToWindowContent(fw, msg)
 		case string(ui.OverlayWorkspaceDelete):
 			return m, m.forwardEventToWindowContent(fw, msg)
 		case "find-replace":
@@ -1109,6 +1124,9 @@ func (m *App) submitRename(newName string) tea.Cmd {
 
 // requestCompletionCmd fires a completion request at the cursor.
 func (m *App) requestCompletionCmd() tea.Cmd {
+	if m.openSnippetChoices() {
+		return nil
+	}
 	return m.requestCompletion(false)
 }
 
@@ -1207,6 +1225,9 @@ func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 // window. The list is navigable with up/down; pressing Enter inserts the
 // selected item's text at the cursor.
 func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
+	if msg.automatic && m.EditorState.Editor.SnippetActive() {
+		return // an admitted request can outlive byte-identical snippet acceptance
+	}
 	line, col := m.EditorState.Editor.LSPCursorPosition()
 	if line != msg.line || col != msg.col {
 		return
@@ -1853,6 +1874,8 @@ func (m *App) acceptCompletion() {
 	}
 	if err := m.EditorState.Editor.ApplyCompletion(item); err != nil {
 		m.Feedback.NotifyError("Completion: " + err.Error())
+	} else {
+		m.adoptEditorSnippet(m.EditorState.Editor)
 	}
 
 	m.closeCompletionPopup()

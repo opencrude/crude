@@ -40,6 +40,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayCompletion, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayOutline, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlaySignatureHelp, policy: ui.PopoverPolicy(true), wantClose: true},
+	{id: ui.OverlaySnippetChoices, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayDiagContext, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayPlanHover, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayConnectionHealth, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -218,8 +219,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 26 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 26", got)
+	if got := len(overlayOutsideContractMatrix); got != 27 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 27", got)
 	}
 }
 
@@ -232,6 +233,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayCompletion:        ui.OutsideCloseAndRoute,
 		ui.OverlayOutline:           ui.OutsideCloseAndRoute,
 		ui.OverlaySignatureHelp:     ui.OutsideCloseAndRoute,
+		ui.OverlaySnippetChoices:    ui.OutsideCloseAndRoute,
 		ui.OverlayDiagContext:       ui.OutsideCloseAndRoute,
 		ui.OverlayPlanHover:         ui.OutsideCloseAndRoute,
 		ui.OverlayConnectionHealth:  ui.OutsideCloseAndRoute,
@@ -254,8 +256,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayCapabilityPicker:  ui.OutsideIgnoreAndConsume,
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 26 {
-		t.Fatalf("expected opener registry len=%d want 26", len(expected))
+	if len(expected) != 27 {
+		t.Fatalf("expected opener registry len=%d want 27", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

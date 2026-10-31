@@ -67,6 +67,9 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	}
 	m.LSPPopup.CompletionDue = time.Time{}
 	ed := m.EditorState.Editor
+	if ed != nil && ed.SnippetActive() {
+		return nil
+	}
 	if m.ws.LSPMgr() == nil || !m.ws.LSPMgr().Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.LSPPopup.CompletionID != "" {
 		return nil
 	}

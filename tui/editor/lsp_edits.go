@@ -7,6 +7,8 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"crude/document"
+	"crude/snippet"
 	model "crude/types"
 )
 
@@ -77,13 +79,17 @@ type completionEdit struct {
 
 // ApplyCompletion validates all UTF-16 ranges against one immutable document,
 // then commits one undo group and one notification. It never writes to disk.
-// InsertText and NewText must already have been expanded from snippets.
+// InsertText and NewText carry expanded text; the optional initial snippet plan
+// must match exactly. Additional edits remain literal, in original coordinates.
 func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 	if e.buf == nil || !e.open || e.readOnly {
 		return fmt.Errorf("completion: document is not editable")
 	}
-	if state := e.DocumentState(); state.UndoPending || state.HistoryQueued {
+	if state := e.DocumentState(); state.UndoPending || state.HistoryQueued || state.Conflict != nil {
 		return ErrDocumentPending // these ranges describe the pre-undo snapshot
+	}
+	if len(item.AdditionalTextEdits) >= document.MaxEdits {
+		return fmt.Errorf("completion: too many edits")
 	}
 	before := e.Value()
 	if !utf8.ValidString(before) {
@@ -112,10 +118,10 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 			start -= size
 		}
 		text := item.InsertText
-		if text == "" {
+		if text == "" && item.Snippet == nil {
 			text = item.Label
 		}
-		if text == "" || !utf8.ValidString(text) {
+		if text == "" && item.Snippet == nil || !utf8.ValidString(text) {
 			return fmt.Errorf("completion: missing or invalid UTF-8 replacement")
 		}
 		edits = append(edits, completionEdit{start: start, end: end, text: text, primary: true})
@@ -134,10 +140,27 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 			return fmt.Errorf("completion: overlapping or ambiguous edits")
 		}
 	}
+	size := len(before)
+	for _, edit := range edits {
+		size += len(edit.text) - (edit.end - edit.start)
+		if size > document.MaxBytes {
+			return fmt.Errorf("completion: document exceeds its byte bound")
+		}
+		if edit.primary && item.Snippet != nil {
+			if err := snippet.Validate(edit.text, item.Snippet); err != nil {
+				return fmt.Errorf("completion: invalid snippet: %w", err)
+			}
+		}
+	}
 	var result strings.Builder
-	last, cursorOffset := 0, 0
+	last, cursorOffset, primaryStart := 0, 0, 0
+	primaryText := ""
 	for _, edit := range edits {
 		result.WriteString(before[last:edit.start])
+		if edit.primary {
+			primaryStart = result.Len()
+			primaryText = edit.text
+		}
 		result.WriteString(edit.text)
 		if edit.primary {
 			cursorOffset = result.Len()
@@ -146,19 +169,35 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 	}
 	result.WriteString(before[last:])
 	after := result.String()
+	var session *snippetSession
+	if item.Snippet != nil {
+		var err error
+		session, err = newSnippetSession(primaryText, item.Snippet, primaryStart)
+		if err != nil || !snippetSourceBoundaries(after, session) {
+			return fmt.Errorf("completion: snippet positions are not editable source boundaries")
+		}
+	}
+	e.CancelSnippet()
 	if after == before {
+		e.installSnippet(session)
 		return nil
 	}
-	// Whole-document recording also supports valid rune boundaries inside a
-	// grapheme, which the PieceTable's visual-position edit API cannot express.
+	// Sparse exact-byte recording also supports rune boundaries inside joined
+	// graphemes, without turning an import into a whole-document peer conflict.
 	cursorBefore := e.cursor
+	e.BreakUndoGroup()
 	e.beginUndoGroup()
 	defer e.endUndoGroup()
-	lastLine := e.LineCount() - 1
-	e.deleteRecorded(Position{}, Position{Line: lastLine, Col: e.lineVisualWidth(lastLine)}, cursorBefore)
-	e.insertRecorded(Position{}, after, cursorBefore)
+	batch := make([]document.Edit, len(edits))
+	for i, edit := range edits {
+		batch[i] = document.Edit{Start: edit.start, End: edit.end, Text: edit.text}
+	}
+	if err := e.spliceRecordedBatch(batch, cursorBefore); err != nil {
+		return err
+	}
 	e.cursor = e.buf.positionAtOffset(cursorOffset)
 	e.ClearSelection()
+	e.installSnippet(session)
 	e.finishEdit()
 	return nil
 }

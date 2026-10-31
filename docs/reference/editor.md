@@ -409,6 +409,93 @@ plain-text projection, not a complete Markdown layout engine. These are
 consumer-data/work bounds, separate from transport framing or native heap/RSS
 containment. All protocol and text preparation runs off Update.
 
+### Numeric completion snippets
+
+Standard completion items may carry a bounded numeric snippet plan through the
+same retained provider and typed connected completion result. `snippet/` is a
+passive, language-independent parser. It expands `$1`, `${1:default}`, nested
+defaults, repeated/forward numeric mirrors and escaped literal choices. Variables,
+transforms and provider commands are refused without reading environment values
+or inserting raw snippet syntax as a fallback. Additional completion edits remain
+literal UTF-16 source edits, never another snippet source. A primary TextEdit or
+InsertReplaceEdit replacement takes precedence over InsertText and the label;
+an explicitly empty expansion never inserts the label.
+
+The initial transport plan uses source-preorder byte spans relative to only the
+expanded primary insertion, with exact parent indices. Its SHA-256 pairs that plan
+with its expanded text; it is a consistency check, not permission or source
+authority. Validation rejects invalid UTF-8, crossed/overlapping siblings, cycles,
+inconsistent mirror values/subtrees and children inside literal choices. Parser
+bounds are 64 KiB source and expanded text, 256 occurrences, 64 alternatives per
+choice, 64 KiB aggregate copied choice bytes, 16 containment edges, 2,048 parsed
+nodes and stop IDs through 1,000,000. The LSP adapter separately admits at most 256
+items, 64 additional edits per item, 64 KiB per consumed string and 1 MiB aggregate
+input/accounted output. An oversized result is refused atomically, not silently
+truncated or advertised complete. These limits bound consumer work after native
+protocol decoding, not transport allocations or native RSS.
+
+Accepting a completion by Tab/Enter or pointer commits the primary and additional
+edits as one existing editor transaction. The exact-byte recorder commits one sparse
+original-coordinate vector. Imports before the primary insertion
+shift its private placeholder anchors, not the server's original ranges. Every
+range and initial plan is checked before bytes, selection or history change;
+unrepresentable joined-grapheme endpoints are refused. Empty or byte-identical
+snippets can still install navigation without creating an edit. Accepting Tab does
+not also advance the newly installed interaction.
+
+Positive stop IDs are visited once in ascending numeric order with Tab. Shift+Tab
+visits the previous stop; at the first it consumes without wrapping or outdenting.
+The first surviving zero occurrence in source preorder supplies the final landing
+at its end; if an outer replacement removed every zero, the transformed primary
+end remains the fallback. Repeated/nested zero occurrences are not extra stops.
+Reaching the final landing retires interaction; later Tab/Shift+Tab resumes ordinary
+indentation. Escape first retires snippet navigation/selection without closing the
+editor or changing accepted bytes.
+
+Defaults use the normal source selection. Typing, paste, Enter and deletion use
+the ordinary editor commands, including replacing a selected default when typing
+a pair opener. A passive notification in the one PieceTable mutation dispatcher
+only transforms anchors. The outer transaction finalizer then derives disjoint
+mirrored splices and records them in the same logical edit group before the
+canonical group and content notification close. The same PieceTable batch owner
+handles ordinary Insert/Delete and multi-splice commands: it checks the whole
+vector before mutation, advances source/geometry once and publishes every sparse
+observation in reverse sequential coordinates after the complete source commits.
+It does not rebuild the document cache or invalidate all line widths per mirror.
+Multiple substitutions do not pretend to be one inline syntax mapping. It never
+mutates recursively inside the PieceTable observer or takes over the canonical observer slot. Editing
+a nested field updates its enclosing mirrors too. Replacing an outer default
+retires touched copied descendants while preserving independent surviving fields.
+Arbitrary user text is allowed in a choice field; initial choices are not a
+validation rule for subsequent typing.
+
+Ctrl+Space on a stop with alternatives opens **Snippet choices**, a native
+WindowFrame/List with ordinary keys, pointer and scrolling. Enter/Tab or a row
+activation applies the exact current alternative as one editor command. Empty
+choices have an explicit label. Escape/outside dismisses only the picker; another
+editor, source revision, selection, interaction or invocation cannot reuse an old
+choice callback. Automatic completion does not steal an active snippet's Tab.
+
+The core remains the only connected text and author-history owner. Private
+snippet navigation is neither replicated nor persisted. Exact own receipts and
+savepoint-only publications retain it. Canonical peer batches prepare private
+anchor transforms as part of the same all-or-nothing publication; they use
+simultaneous original coordinates, unlike local primitive observations. Strictly
+disjoint edits can preserve navigation. Touching/intersecting peer edits retire
+it and never initiate local mirrors. Failed publication preparation changes
+neither text nor interaction. Undo/Redo intent, reset/recovery, source/buffer
+replacement and true input-owner departure retire interaction without discarding
+accepted work; Redo restores bytes, not an old private session. Terminal docks,
+session decks, unrelated overlays, tab/workspace changes and terminal blur are
+ownership boundaries too.
+
+Completion resolve, CompletionList defaults/incomplete-state presentation, provider
+commands, variables/transforms and richer semantic operations remain outside this
+numeric slice. The existing flat completion API still cannot distinguish malformed,
+oversized, unsupported or empty answers in its UI result. Full connected, native
+and whole-plan acceptance retain their own evidence and are not established by
+parser tests or this contract.
+
 ### Shared diagnostic facts
 
 `DocumentService.Insight` owns the bounded published diagnostic store in
