@@ -45,7 +45,7 @@ func (s *Store) SnapshotRetained(ctx context.Context, reference string, opts Sna
 
 func (s *Store) checkRetainedReferenceAvailable(ctx context.Context, reference string) error {
 	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM history_retained_snapshots WHERE reference=?)`, reference).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM history_retained_snapshots WHERE reference=? UNION ALL SELECT 1 FROM history_safety_protection_events WHERE reference=?)`, reference, reference).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
@@ -91,8 +91,9 @@ func (s *Store) LoadRetainedSnapshot(ctx context.Context, reference string) (Man
 	return s.verifiedRetainedManifest(ctx, id)
 }
 
-// ReleaseRetainedSnapshot removes only this exact reference. It is idempotent
-// and does not delete the snapshot; ordinary retention may collect it later.
+// ReleaseRetainedSnapshot removes only a never-audited exact reference. It is
+// idempotent for those references and does not delete the snapshot. Audited
+// references must use ChangeSafetyProtection, preserving the disposition truth.
 func (s *Store) ReleaseRetainedSnapshot(ctx context.Context, reference string) error {
 	if !validSafetyReference(reference) {
 		return errors.New("localhistory: invalid retained snapshot reference")
@@ -111,6 +112,13 @@ func (s *Store) ReleaseRetainedSnapshot(ctx context.Context, reference string) e
 		return err
 	}
 	defer unlock()
+	var audited bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM history_safety_protection_events WHERE reference=?)`, reference).Scan(&audited); err != nil {
+		return err
+	}
+	if audited {
+		return errors.New("localhistory: audited reference requires a safety protection change")
+	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM history_retained_snapshots WHERE reference=?`, reference)
 	return err
 }

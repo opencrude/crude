@@ -96,6 +96,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.handleHistorySafetyConfirmInput(msg); handled {
+		return m, cmd
+	}
 	if cmd, handled := m.handleTerminalImageMessage(msg); handled {
 		return m, cmd
 	}
@@ -1235,6 +1238,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case historyApplyResultMsg:
 		if cmd := m.applyHistoryResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case historySafetyReadMsg:
+		if cmd := m.applyHistorySafetyRead(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case historySafetyResultMsg:
+		if cmd := m.applyHistorySafetyResult(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case historyscreen.AppliedMsg:

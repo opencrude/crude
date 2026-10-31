@@ -258,6 +258,8 @@ type App struct {
 	workspaceListCancel    context.CancelFunc
 	historyScreen          *historyscreen.Screen
 	historyOperation       *historyOperation
+	historySafety          *historySafetyView
+	historySafetyOperation *historySafetyOperation
 	sessionPicker          *sessionpicker.Screen
 	commandPaletteModel    *commandPaletteModel
 	findInFiles            *findinfiles.Screen

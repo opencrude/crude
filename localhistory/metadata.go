@@ -108,6 +108,19 @@ CREATE TABLE IF NOT EXISTS history_retained_snapshots (
   reference TEXT PRIMARY KEY,
   snapshot_id TEXT NOT NULL REFERENCES history_snapshots(snapshot_id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS history_safety_protection_events (
+  event_id TEXT PRIMARY KEY,
+  reference TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK(revision > 0),
+  snapshot_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('release','reprotect')),
+  actor_client_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  UNIQUE(reference,revision),
+  UNIQUE(actor_client_id,request_id)
+);
 CREATE TABLE IF NOT EXISTS history_message_scopes (
   session_id TEXT NOT NULL,
   message_id TEXT NOT NULL,

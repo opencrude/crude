@@ -376,6 +376,10 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return m.historyCheckCmd(id)
 	case historyscreen.ActionBack:
 		return m.openLocalHistory()
+	case historyscreen.ActionSafetyOpen, historyscreen.ActionSafetyInspect, historyscreen.ActionSafetyNext,
+		historyscreen.ActionSafetyRefresh, historyscreen.ActionSafetyBack, historyscreen.ActionSafetyRelease,
+		historyscreen.ActionSafetyReprotect, historyscreen.ActionSafetyRestore, historyscreen.ActionSafetyCheck:
+		return m.handleHistorySafetyAction(action)
 	case ui.ActionTextPaste:
 		target, _ := action.Payload.(ui.ClipboardPasteTarget)
 		deliver := nativePasteDelivery(target, func(result ui.EventResult) tea.Cmd {

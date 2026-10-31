@@ -104,6 +104,15 @@ and a known committed result with unconfirmed exchange cleanup is partial with
 the known domain state preserved. Retired or foreign surface nodes cannot acquire
 a replacement review. No generic action grants workspace Trust or execution.
 
+Local History's review-safety list/detail navigation is owner-bound. List and
+detail reads await their typed results; a known result with unconfirmed exchange
+cleanup is partial, not a completed clean observation. Original disposition
+inspection is read-only and reports a confirmed exact event or uncertainty.
+**Release protection…**, **Keep protected again**, and activation of the shared
+confirmation are human-only, including through the generic control route. A
+Write/Delete grant cannot turn retention administration into human consent.
+Controls from a retired reader or another floating host never acquire a new one.
+
 `panel.show` is navigation only. Showing an empty terminal panel does not launch
 a PTY; creation requires `terminal.open`/`terminal.create` and its Execute
 authorization. Performance navigation reuses the existing dashboard lifecycle.

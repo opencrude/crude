@@ -27,6 +27,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `insight.go` | `DocumentInsightMsg` | Independent canonical syntax projection, exact-open validity and applied ACK; not a text mutation or semantic guarantee |
 | `lsp.go` | `LSPService` | language-server manager |
 | `reviewed_edit.go` | `ReviewedEdits` | Connected canonical rename preview, opaque approval, pending release and original-result inspection |
+| `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
 | `memory.go` | `Memory`, `MemoryStore` | memory browse and curation |
@@ -337,6 +338,20 @@ History is the local-history surface of a workspace.
 | `HistoryService` | 10 | reads | accessor | history.plan_message / history.plan_agent |
 | `AppendHistoryRestoreEvent` | 1 | mutates | yes | history.restore_event |
 | `ApplyHistoryRestoreChoices` | 1 | mutates | yes | history.apply |
+
+### `HistorySafety`
+
+Optional native workspace retention administration. All calls run off Update.
+The core derives evidence and attribution; inspection never grants the older
+author's reviewed-edit mutation authority. The existing Local History window
+owns the paged list/detail and the human-only exact-inspection confirmation.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `ListHistorySafety` | Replace one bounded reference page, independent of timeline limits | `history.safety_list` |
+| `InspectHistorySafety` | Read original outcome, verified snapshot coverage and current protection separately | `history.safety_inspect` |
+| `ChangeHistorySafetyProtection` | Explicit native consent to inspected identities, revision and digest | `history.safety_change` |
+| `HistorySafetyReceipt` | Observe the original disposition request, never repeat a mutation | `operation.receipt` |
 
 ### `LocalHistoryStore`
 

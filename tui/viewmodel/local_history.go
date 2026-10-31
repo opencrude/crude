@@ -130,16 +130,24 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) t
 	}
 	m.overlayHost.Close(ui.OverlayLocalHistory)
 	screen := historyscreen.New(m.Theme)
+	_, safetyAvailable := m.ws.(shellport.HistorySafety)
+	screen.SetSafetyAvailable(safetyAvailable)
 	m.historyScreen = screen
 	win := m.newLocalHistoryWindow(screen)
 	wm.CenterOnScreen(win, m.width, m.height)
-	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() { m.historyScreen = nil })
+	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() {
+		m.closeHistorySafetyView()
+		m.historyScreen = nil
+	})
 	if operation := m.historyOperation; operation != nil {
 		operation.screen = screen
 		if !operation.busy {
 			screen.Handle(ui.EventContext{}, ui.CustomEvent(operation.state))
 		}
 		return nil // Never replace unresolved state with a fresh Apply preview.
+	}
+	if m.historySafetyOperation != nil {
+		return m.openHistorySafety()
 	}
 	if messageID != "" {
 		return func() tea.Msg {
@@ -385,6 +393,7 @@ func (m *App) applyHistoryResult(msg historyApplyResultMsg) tea.Cmd {
 }
 
 func (m *App) stopHistoryOperation() {
+	m.stopHistorySafetyOperation()
 	if operation := m.historyOperation; operation != nil && operation.cancel != nil {
 		operation.cancel()
 		if operation.run != nil {

@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"strings"
 
+	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/types/control"
 )
@@ -11,6 +12,23 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if v := m.historySafety; v != nil && m.overlayHost != nil {
+		if v.confirm != nil && owner.window != nil && owner.window == m.overlayHost.Window(historySafetyConfirmOverlay) && op.Verb == "activate" {
+			// No generic key/button route may grant this human consent.
+			return control.Write, true, nil
+		}
+		if m.historySafetyVisible(v) && owner.window == m.overlayHost.Window(ui.OverlayLocalHistory) &&
+			strings.HasPrefix(string(localID), string(historyscreen.SafetyScreenID)+"/") {
+			switch action {
+			case historyscreen.ActionSafetyRelease, historyscreen.ActionSafetyReprotect:
+				return control.Write, true, nil
+			case historyscreen.ActionSafetyInspect, historyscreen.ActionSafetyNext, historyscreen.ActionSafetyRefresh, historyscreen.ActionSafetyCheck:
+				return control.Read, false, nil
+			case historyscreen.ActionSafetyBack, historyscreen.ActionSafetyRestore:
+				return control.Write, false, nil
+			}
+		}
+	}
 	if p := m.LSPPopup.RenamePreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(lspRenameOverlay) && op.Verb == "activate" {
 		if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == p &&
 			strings.HasPrefix(string(localID), string(p.bar.ID())+"/") {

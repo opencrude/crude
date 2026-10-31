@@ -58,11 +58,15 @@ invalidation and stale evidence. Automatic selection, provider binding and compl
 context remain open. Parser success and native editor regression captures do not
 establish complete build context.
 
-Manual parameter information and numeric completion fields are banked editor
-checkpoints. The next [reviewed mutation prerequisite](../reference/editor.md#reviewed-symbol-rename)
-is in integrated acceptance: immutable source/provider/context-bound rename,
-selected non-agent safety evidence and exact original-result inspection. It does
-not complete the broader code-action, policy, assembly or workflow/device rows.
+Manual parameter information, numeric completion fields and
+[reviewed symbol rename](../reference/editor.md#reviewed-symbol-rename) are banked
+editor checkpoints. The next
+[safety-protection workflow](../reference/local-history.md#reviewed-edit-safety-protection)
+is in integrated acceptance: paged reference inspection, exact native human
+release/re-protection and original-result observation without rewriting outcomes.
+Passive literal-action parsing and statically gated raw transport are implemented
+prerequisites only; code-action provider/core/editor wiring remains open.
+These slices do not complete the broader policy, assembly or workflow/device rows.
 
 ## Problem
 

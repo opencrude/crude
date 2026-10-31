@@ -64,6 +64,24 @@ and the no-active-parameter extension are not advertised. The raw response
 preserves optional index presence and both label representations for bounded
 consumer validation; it does not certify semantic quality or project context.
 
+## Raw code-action transport prerequisite
+
+`RequestCodeActions` and `ResolveCodeAction` preserve original JSON objects,
+including opaque numeric/data leaves. Static initialized provider capability is
+required; unsupported/malformed capabilities never trigger a probe. Requests are
+explicit `triggerKind=1` with original diagnostics (or `[]`), without an automatic
+trigger or kind filter. Ordered positions are bounded to nonnegative int32 range;
+the caller still owns source-relative UTF-16 boundaries and diagnostic provenance.
+
+Bounds are 256 original diagnostics and 256 KiB aggregate diagnostic bytes,
+64 KiB per resolve object and 1 MiB per raw action-list response. These encoded
+data bounds do not bound the external connection decoder's initial allocation.
+The transport neither executes commands nor applies edits or authorizes URIs.
+The detached capability constructor advertises literal/data/disabled/preferred
+support and edit-only resolution, but initialize hookup and product wiring remain
+separate integration work. No dynamic registration, resource operation,
+annotation, `workspace/applyEdit` or command-execution support is granted.
+
 ## Process and transport lifetime
 
 `Client.Kill() error` cancels the client and joins connection teardown.

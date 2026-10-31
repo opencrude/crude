@@ -424,7 +424,8 @@ fault). A failed final ACK or ACK-close cannot turn that known outcome into
 uncertainty. Unknown outcomes still require exact receipt observation. Reusing an
 identity with changed method, workspace or payload fails closed.
 
-Explicit semantic queries and reviewed-edit calls use `coreclient.CallCancellable`, sharing the
+Explicit semantic queries, reviewed-edit calls and review-safety administration
+use `coreclient.CallCancellable`, sharing the
 ordinary framing/identity/decoding exchange rather than owning another server.
 Caller cancellation retains the original waiter and uses typed `request.cancel`
 against its original job only after the enqueue receipt. It joins and ACKs that
@@ -459,6 +460,24 @@ Cancellation can refuse a pre-commit permit or trigger checked multi-file rollba
 it does not prove that no effect occurred. The UI retains Check result rather than
 re-applying an unknown outcome. Bounds and unsupported forms are in
 [reviewed symbol rename](editor.md#reviewed-symbol-rename).
+
+`history.safety_list` is a bounded independent reference traversal;
+`history.safety_inspect` returns detached original-operation and current
+protection evidence. `history.safety_change` is a journaled native-shell mutation
+with opaque reference/snapshot/operation identities, expected protection revision
+and an exact inspection digest. It accepts neither caller-authored evidence nor
+actor attribution. The document authority derives those from the sealed original
+journal and verified selected manifest, then the existing history Store atomically
+appends an audit event and changes its single current pin. Original edit outcomes
+are immutable. The request's authenticated owner supplies the current actor;
+retention administration does not renew the original client's mutation permit.
+
+No semantic-domain release command grants this human retention decision. Its
+native shell action and shared confirmation are human-only at every generic
+control route. After transport uncertainty the shell observes the original
+`operation.receipt`, preserving request identity, and never replays a change.
+An unresolved Store acknowledgement requires positive matching audit-event
+evidence; time, current bytes and absence are not settlement.
 
 Journaled mutations persist request intent before effects and their exact response
 afterward. Identity is client ID plus request ID; its digest binds workspace,

@@ -165,8 +165,8 @@ type remoteWorkspaceReadyMsg struct {
 // attachment remains intact. One exact intent survives asynchronous editor
 // publication and each dirty decision without closing any existing views.
 func (m *App) attachRemoteWorkspace(root, resumeID string) tea.Cmd {
-	if m.historyOperation != nil {
-		m.showOperationFailure("Workspace could not be opened", "Finish Local History restore or check its original result before switching.")
+	if m.historyOperation != nil || m.historySafetyOperation != nil {
+		m.showOperationFailure("Workspace could not be opened", "Finish the Local History operation or check its original result before switching.")
 		return nil
 	}
 	m.pruneRemoteWorkspacePreparations()

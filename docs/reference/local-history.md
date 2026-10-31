@@ -88,3 +88,51 @@
   rewriting accepted conversation prefix. The completed boundary is static,
   survives resume, closes the restore modal, and exposes its safety-snapshot
   inverse from the row context menu; never render it through `ActivityDot`.
+
+## Reviewed-edit safety protection
+
+Local History exposes **Review safety references** above the snapshot timeline.
+Its independent keyset traversal defaults to 100 rows and accepts at most 200 per
+page, so references are reachable beyond the ordinary 500-row timeline. Each
+page reports the active retained-reference count and whether more references
+remain. This is bounded traversal, not an atomic multi-page inventory or a
+freed-space estimate. A summary never authorizes release.
+
+The detail reader separates the original persisted operation outcome from the
+current protection disposition. It exposes the exact reference and snapshot,
+original client/epoch, reviewed preimages and preview, integrity blockers and the
+latest immutable protection audit event. Its read-only native TextArea supports
+scrolling and selection. **Restore preview** uses the existing restore planner;
+changing protection never edits project files or invokes restore.
+
+**Release protection…** requires a durably committed or positively no-effect
+refused reviewed-edit journal, its original preview digest and exact selected
+preimage manifest/object coverage. Prepared, unconfirmed, missing, corrupt and
+unattributed evidence remains protected. Current disk bytes, age, detach and an
+absent process cannot prove a historical outcome. A replacement native workspace
+shell may inspect and administer this retention evidence; it does not acquire
+the original author's Apply/InspectReviewedEdit authority.
+
+Release and **Keep protected again** use an exact-inspection confirmation with
+Cancel focused and outside clicks ignored. They are human-only actions, including
+the shared confirmation buttons; generic control grants cannot approve them.
+Only opaque inspected identities, revision and digest cross back as consent.
+The core derives original evidence and current actor/request attribution, holding
+the document-to-history exclusion order through the Store transaction.
+
+`history_retained_snapshots` remains the sole current pin owner.
+`history_safety_protection_events` appends audit evidence without a snapshot
+foreign key: each exact release/re-protection event and pin transition commits
+atomically, and the audit survives ordinary snapshot pruning without re-pinning
+it. Original edit receipts and snapshot bytes are never rewritten. Audited
+references cannot be recycled or released through the unaudited low-level API.
+Release does not delete a snapshot immediately or defeat other protections.
+Re-protection verifies the same original snapshot while it remains available;
+it never reconstructs a pruned snapshot from present files.
+
+A lost disposition reply retains **Check original result**, not Retry or a new
+mutation. It observes the original core request receipt and, for an ambiguous
+Store acknowledgement, a matching immutable event as positive commitment
+evidence. Missing evidence never becomes a no-effect verdict. Closing the reader
+does not settle a pending mutation; workspace switch is refused while its
+original outcome is unresolved, and shutdown cancels and joins its exact command.

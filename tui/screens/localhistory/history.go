@@ -16,13 +16,14 @@ import (
 )
 
 const (
-	ScreenID      ui.ComponentID = "local-history"
-	ListID        ui.ComponentID = "local-history/list"
-	ScrollbarID   ui.ComponentID = "local-history/scrollbar"
-	ActionPreview                = "history.preview"
-	ActionApply                  = "history.apply"
-	ActionBack                   = "history.back"
-	ActionCheck                  = "history.check_result"
+	ScreenID         ui.ComponentID = "local-history"
+	ListID           ui.ComponentID = "local-history/list"
+	ScrollbarID      ui.ComponentID = "local-history/scrollbar"
+	ActionPreview                   = "history.preview"
+	ActionApply                     = "history.apply"
+	ActionBack                      = "history.back"
+	ActionCheck                     = "history.check_result"
+	ActionSafetyOpen                = "history.safety.open"
 )
 
 type TimelineMsg struct {
@@ -62,21 +63,22 @@ type ApplyRequest struct {
 
 type Screen struct {
 	ui.Base
-	tokens       *ui.TokenSet
-	list         *ui.List
-	scrollbar    *ui.ScrollbarControl
-	timeline     []localhistory.SnapshotRecord
-	plan         *localhistory.RestorePlan
-	selected     map[string]bool
-	exact        map[string]bool
-	loading      bool
-	errorText    string
-	status       string
-	armed        bool
-	lastRestore  *localhistory.RestoreResult
-	previewPaths []string
-	messageRefs  map[string]MessageRef
-	requestID    string
+	tokens          *ui.TokenSet
+	list            *ui.List
+	scrollbar       *ui.ScrollbarControl
+	timeline        []localhistory.SnapshotRecord
+	plan            *localhistory.RestorePlan
+	selected        map[string]bool
+	exact           map[string]bool
+	loading         bool
+	errorText       string
+	status          string
+	armed           bool
+	lastRestore     *localhistory.RestoreResult
+	previewPaths    []string
+	messageRefs     map[string]MessageRef
+	requestID       string
+	safetyAvailable bool
 }
 
 func New(th *theme.Theme) *Screen {
@@ -276,6 +278,13 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (s *Screen) CancelPointerCapture() { s.scrollbar.CancelPointerCapture() }
 
+func (s *Screen) SetSafetyAvailable(available bool) {
+	s.safetyAvailable = available
+	if s.plan == nil && s.requestID == "" {
+		s.rebuildTimeline()
+	}
+}
+
 func (s *Screen) setTimeline(msg TimelineMsg) {
 	s.loading = false
 	s.errorText = msg.Error
@@ -308,6 +317,9 @@ func humanBytes(n int64) string {
 }
 func (s *Screen) rebuildTimeline() {
 	items := make([]ui.ListItem, 0, len(s.timeline))
+	if s.safetyAvailable {
+		items = append(items, ui.ListItem{ID: "review-safety", Label: "Review safety references", Detail: "inspect retained evidence and protection decisions", Command: true})
+	}
 	for _, r := range s.timeline {
 		label := r.Label
 		if label == "" {
@@ -436,6 +448,9 @@ func (s *Screen) activate() ui.EventResult {
 		}
 		if item.ID == "undo-restore" && s.lastRestore != nil {
 			return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionPreview, Payload: PreviewRequest{SnapshotID: s.lastRestore.SafetySnapshotID}}}
+		}
+		if item.ID == "review-safety" && s.safetyAvailable {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionSafetyOpen}}
 		}
 		r, ok := item.Payload.(localhistory.SnapshotRecord)
 		if !ok {

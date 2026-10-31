@@ -94,6 +94,11 @@ func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context
 }
 
 func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (func(context.Context) coreprotocol.Response, bool) {
+	if root == a.ws.RootPath {
+		if run, known := a.prepareHistorySafety(request); known {
+			return run, true
+		}
+	}
 	ops, store, history := a.ws.FileOps, a.ws.LocalHistory, a.ws.HistoryService
 	if root != a.ws.RootPath {
 		ops = workspace.NewFileOpsService(root, nil, a.ws.Logger)
@@ -321,7 +326,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 
 func filesMutation(method string) bool {
 	switch method {
-	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent:
+	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent, coreprotocol.HistorySafetyChange:
 		return true
 	}
 	return false
