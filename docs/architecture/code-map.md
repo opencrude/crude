@@ -56,6 +56,7 @@ detailed contracts.
 | `syntax/` | Bounded native syntax sessions, selected grammar/query pins, byte spans and syntax findings; not the canonical text owner or a semantic engine ([native syntax](../reference/native-syntax.md)). |
 | `insight/project/` | Bounded passive compilation-database artifact observations with exact byte identity and detached argv/opaque command projections; not a project model, execution authority or semantic coverage. |
 | `insight/project/cmake/` | Bounded passive CMake File API artifact observations with exact byte identity and detached configuration/target projections; native-shell fragments stay opaque, and parsing grants no read/execute authority, freshness or semantic coverage. |
+| `workspace/project_context.go`, `workspace/project_artifact.go` | Retained explicit artifact-selection/observation owner, native root/file identity, coalesced worker, stale evidence and joined lifecycle ([project context](../reference/project-context.md)); not autonomous selection, provider configuration or complete semantic context. |
 | `textsearch/` | Shared exact/regex source-span matching and replacement expansion; established fzf ranking for project discovery only. |
 | `localhistory/` | Immutable snapshots, restore plans, verification, retention ([local history](../reference/local-history.md)). |
 | `textdiff/`, `diff/` | Exact line changes from immutable text; unified diff helpers. |

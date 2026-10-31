@@ -92,6 +92,9 @@ documents to read before changing each area.
   minimize, Git and local comparisons.
 - [Editor and language servers](reference/editor.md) — editor geometry, motion,
   dirty/save authority, gutter and LSP transport.
+- [Retained project artifact context](reference/project-context.md): bounded
+  explicit metadata observations, native identities, stale evidence and joined
+  workspace/core lifetimes; provider/autonomous bindings remain open.
 - [Native syntax analysis](reference/native-syntax.md): bounded parser/query
   ownership, selected grammar pins, corpus and explicit integration limits.
 - [Text input and composer](reference/text-input.md) — shared text controls,

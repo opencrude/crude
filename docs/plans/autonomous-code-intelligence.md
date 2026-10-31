@@ -369,6 +369,13 @@ have an available fix.
 
 ### Project and build model
 
+An initial [retained artifact owner](../reference/project-context.md) now owns
+explicit compilation-database/CMake input sets, native root/file observations,
+coalesced re-observation, stale evidence and joined workspace/core lifetime.
+Autonomous selection, configuration inspection, quantitative work admission and
+provider scope/restart binding remain implementation work. This foundation is
+not accepted complete project context or a finished user-visible phase.
+
 The relevant build context is part of the answer. Prefer existing project
 artifacts and non-executing reads, then obtain additional context only as
 permitted by trust. A command named “metadata”, “dry run” or “check” can still

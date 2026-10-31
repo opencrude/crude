@@ -316,6 +316,9 @@ Tea's update goroutine (the tab-close hang).
   permission. The [fork contract](../../third_party/powernap/README.md#launch-bound-configuration)
   defines encoded request/table/response bounds. Selecting and populating these
   bindings from a retained project model remains open.
+  The initial [retained artifact owner](project-context.md) now supplies bounded,
+  generation-qualified explicit observations and core-owned invalidation, but
+  does not yet populate provider scope tables or grant complete context.
 - The client advertises `window.workDoneProgress`, answers
   `window/workDoneProgress/create` and tracks `$/progress` tokens.
   `AwaitDiagnostics` waits until the server's work settles (no active progress

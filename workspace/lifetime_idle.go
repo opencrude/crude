@@ -34,6 +34,13 @@ func (w *Workspace) BeginIdleLease(ctx context.Context) (func(), error) {
 		}
 		releases = append(releases, unlock)
 	}
+	if w.ProjectContext != nil {
+		unlock, err := w.ProjectContext.beginIdleLease()
+		if err != nil {
+			return fail(err)
+		}
+		releases = append(releases, unlock)
+	}
 	if w.Terminals != nil {
 		unlock, err := w.Terminals.beginIdleLease()
 		if err != nil {

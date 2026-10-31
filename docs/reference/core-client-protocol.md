@@ -93,6 +93,13 @@ and initializes configured capability metadata. Neither requires a model session
 or a shell to open Settings. Initialization never connects MCP, downloads skills
 or replays tools; failures retain a usable shell and an explicit workspace notice.
 
+The workspace also retains an idle
+[project-artifact context owner](project-context.md). Explicit artifact
+observation runs off the actor, while core file facts/resyncs synchronously
+invalidate selected metadata without requiring a shell watcher. It is an initial
+bounded observation foundation, not provider-configuration or complete-context
+acceptance. Idle handover reserves it and refuses active or queued observation.
+
 A retained session has an immutable client ID and attachment epoch. Every request is
 bound to the negotiated owner; selecting another tab is not a change of owner.
 `workspace.attach` installs a subscription and captures its snapshot at the actor
