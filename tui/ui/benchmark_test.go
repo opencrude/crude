@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,6 +28,21 @@ func benchmarkDemoGalleryPaint(b *testing.B, width, height int) {
 	b.ResetTimer()
 	for b.Loop() {
 		host.Paint(buf)
+	}
+}
+
+func BenchmarkTextAreaPaste200KiB(b *testing.B) {
+	line := strings.Repeat("word ", 10)
+	content := strings.Repeat(line+"\n", 3999) + line
+	ta := NewTextArea("paste", NewTokenSet(theme.DefaultDark()), true)
+	ta.Layout(LayoutContext{}, Rect{W: 80, H: 20})
+	paste := CustomEvent(tea.PasteMsg{Content: content})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		ta.Clear()
+		ta.Handle(EventContext{Focused: true}, paste)
 	}
 }
 
