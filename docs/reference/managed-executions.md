@@ -83,6 +83,17 @@ owner fields. Review produces an immutable digest covering source delta and exac
 merged accepted-document/disk postimages. Independent nonoverlapping later work
 can be retained; overlaps/changed preimages fail, not guessed merge success.
 
+The current integration bootstrap returns a compact `PlanDelta` token from an
+ordinary review: context, immutable owner, review/source digests and an empty
+`changes` array. Apply accepts that exact token, obtains the full authoritative
+plan server-side and rechecks it through the existing document/Local History
+owner. Full file bytes never need to pass through the 64 KiB control value boundary.
+A matching committed integration receipt is observed before current preimages;
+prepared or uncertain journals require explicit recovery, never a second apply.
+This is not yet the complete bounded/paged review interface: detailed review
+metadata/content reads and inventory pagination remain retained follow-up work.
+Source-only discard review is unchanged and still subject to control output bounds.
+
 Apply uses the shared document/mutation serialization boundary, persists a prepared
 integration journal and mandatory Local History safety snapshot, checks exact
 reviewed preimages, then commits disk and accepted document state. Failures roll

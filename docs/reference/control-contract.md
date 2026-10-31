@@ -189,6 +189,13 @@ provided only by a user-selected MCP integration and its real OS/vendor permissi
 | Actions per node/resource IDs per result | At most 128 |
 | Retained shell mutation receipts | 256; read inspections do not accumulate here |
 
+Ordinary `execution.review` currently returns a compact token in the existing
+`PlanDelta` envelope, with an empty `changes` array. `execution.apply` accepts only
+that exact token and reloads the full reviewed plan from its owner before checking
+source/destination preimages and applying it. This bootstrap does not raise value
+bounds, accept full-plan fallback input or prove that detailed review/content and
+inventory pagination are available; those remain separate follow-up work.
+
 Inspection nodes are flat, owner-redacted semantic records with role, accessible
 name, lifetime/revision, state, available actions and optional terminal-cell bounds.
 They are not screenshots or arbitrary reflected Go objects. Cursors bind current

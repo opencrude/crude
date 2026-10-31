@@ -66,6 +66,9 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			return controlFailure(in, control.Invalid, err.Error())
 		}
 		plan, id = input.Plan, input.Plan.ContextID
+		if plan.Digest == "" || plan.SourceDigest == "" || len(plan.Changes) != 0 || plan.DiscardDigest != "" || len(plan.IgnoredPaths) != 0 || plan.HeadCommit != "" {
+			return controlFailure(in, control.Invalid, "compact integration review token required")
+		}
 	case "execution.undo", "execution.recover":
 		var input struct {
 			OperationID string `json:"operation_id"`
@@ -217,7 +220,9 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 				if sourceReview {
 					output, err = service.ReviewDiscard(ctx, id)
 				} else {
-					output, err = service.Review(ctx, id)
+					var reviewed worktree.PlanDelta
+					reviewed, err = service.Review(ctx, id)
+					output = executionReviewToken(reviewed)
 				}
 			case "execution.apply":
 				// An exact committed owner receipt outranks current destination
@@ -228,22 +233,27 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 					break
 				}
 				for _, status := range statuses {
-					if status.State == "committed" && reflect.DeepEqual(status.Plan, plan) {
-						output = status.Receipt
-						break
+					if !reflect.DeepEqual(executionReviewToken(status.Plan), executionReviewToken(plan)) {
+						continue
 					}
+					if status.State == "committed" {
+						output = status.Receipt
+					} else {
+						err = fmt.Errorf("integration %s needs explicit recovery (%s)", status.Receipt.OperationID, status.State)
+					}
+					break
 				}
-				if output != nil {
+				if output != nil || err != nil {
 					break
 				}
 				var current worktree.PlanDelta
 				current, err = service.Review(ctx, id)
-				if err != nil || !reflect.DeepEqual(current, plan) {
+				if err != nil || !reflect.DeepEqual(executionReviewToken(current), executionReviewToken(plan)) {
 					result.State = control.Failed
 					result.Fault = &control.Fault{Code: control.Stale, Message: "reviewed source/destination changed; review again"}
 					return
 				}
-				output, err = service.Apply(ctx, plan)
+				output, err = service.Apply(ctx, current)
 			case "execution.keep":
 				err = service.Keep(id, trusted, keep)
 				output = map[string]string{"id": id}
@@ -276,6 +286,13 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 		})
 		return result.Clone()
 	}, nil, true
+}
+
+// Temporary bounded integration bootstrap using the existing PlanDelta schema.
+// Full plans stay with the document/Local History owner; replace this projection
+// with the complete bounded/paged review contract, not a full-plan fallback.
+func executionReviewToken(p worktree.PlanDelta) worktree.PlanDelta {
+	return worktree.PlanDelta{ContextID: p.ContextID, Owner: p.Owner, Digest: p.Digest, SourceDigest: p.SourceDigest, Changes: []worktree.Change{}}
 }
 
 // The artifact owner never changes during integration. Authority to manage a
