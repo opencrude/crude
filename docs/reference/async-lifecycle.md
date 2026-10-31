@@ -126,6 +126,12 @@ not keep writing caller-owned result memory after the caller has returned.
   Terminal IDs are process-wide monotonic so queued old-manager messages cannot
   target a replacement PTY.
 - **UI shutdown owns UI resources.** `App.StopAsyncIO` flushes drafts, rejects
+  document-topic delivery and reconciles pending editor commands against an
+  explicitly read canonical revision. That exclusive source-readiness proof is
+  not a topic ACK and grants no normal Update authority; a newer revision must be
+  observed again before another shutdown command. Read refusal retains the draft,
+  and uncertain commands are inspected under their original IDs, never replayed.
+  It then rejects
   new tree-watcher starts, joins accepted startup work, then closes the tree and
   every distinct editor watcher. It is idempotent. Closing `Workspace` cannot
   release TUI-owned editors; real-shell test fixtures must invoke the same UI

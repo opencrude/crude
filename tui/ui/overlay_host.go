@@ -37,6 +37,7 @@ const (
 	OverlayFindInFiles       OverlayID = "find-in-files"
 	OverlayReplaceInFiles    OverlayID = "replace-in-files"
 	OverlayNavigation        OverlayID = "lsp-navigation"
+	OverlayInlayHints        OverlayID = "inlay-hints"
 	OverlayCompletion        OverlayID = "completion-popup"
 	OverlayOutline           OverlayID = "outline-popup"
 	OverlaySignatureHelp     OverlayID = "lsp-signature"

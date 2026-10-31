@@ -28,6 +28,7 @@ import (
 	"crude/tui/screens/editorchanges"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/inlay"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
@@ -77,6 +78,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncSignatureHelp()
 	m.syncCodeActions()
 	m.syncNavigation()
+	command = tea.Batch(command, m.syncInlayHints())
 	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -904,6 +906,26 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.handleLSPHoverResult(msg)
 	case signatureHelpResultMsg:
 		m.handleSignatureHelpResult(msg)
+	case inlayDueMsg:
+		cmds = append(cmds, m.startInlayRequest(msg))
+	case inlayResultMsg:
+		m.handleInlayResult(msg)
+	case inlayInspectionMsg:
+		m.handleInlayInspection(msg)
+	case inlay.InspectMsg:
+		cmds = append(cmds, m.inspectInlayHintCmd(msg))
+	case inlay.BackMsg:
+		m.backFromInlayInspection(msg)
+	case inlay.CloseMsg:
+		if s := m.inlayInspector; s != nil && s.screen == msg.Target {
+			m.closeInlayInspector()
+		}
+	case inlayReleasedMsg:
+		// Release only revokes ephemeral read evidence. Detach and core expiry
+		// are independent backstops if the exact exchange could not complete.
+		if msg.err != nil && m.ws != nil && m.ws.Logger() != nil {
+			m.ws.Logger().Debug("LSP", "inlay_release_unconfirmed", "error", msg.err.Error())
+		}
 	case navigationResultMsg:
 		m.handleNavigationResult(msg)
 	case navigationTargetMsg:

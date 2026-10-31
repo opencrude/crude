@@ -55,7 +55,8 @@ func (e *Editor) pointerPosition() Position {
 	// Clamp to the text edge, not an invisible source row/column far offscreen.
 	x := min(max(left, right), max(left, e.drag.x))
 	y := min(e.bodyHeight()-1, max(0, e.drag.y))
-	return e.buf.snapPosition(Position{Line: e.scrollY + y, Col: e.scrollX + x - left})
+	line := e.scrollY + y
+	return e.buf.snapPosition(Position{Line: line, Col: e.sourceColumn(line, e.scrollX+x-left)})
 }
 
 func positionBefore(a, b Position) bool {

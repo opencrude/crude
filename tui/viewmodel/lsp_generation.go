@@ -15,6 +15,7 @@ func (m *App) resetLSPRequestContext() {
 	m.closeSignatureHelp()
 	m.closeCodeActions()
 	m.closeNavigation()
+	m.resetInlayHints()
 	if m.lspRequestCancel != nil {
 		m.lspRequestCancel()
 	}

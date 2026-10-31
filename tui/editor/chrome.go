@@ -54,6 +54,14 @@ func (e *Editor) syncHorizontalScrollChrome(textW, bodyH int) bool {
 }
 
 func (e *Editor) documentVisualWidth() int {
+	width := e.sourceDocumentVisualWidth()
+	if inlays := e.currentInlays(); inlays != nil {
+		width = max(width, inlays.maxWidth)
+	}
+	return width
+}
+
+func (e *Editor) sourceDocumentVisualWidth() int {
 	if e.buf == nil {
 		return 0
 	}

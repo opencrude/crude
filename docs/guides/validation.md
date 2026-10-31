@@ -293,6 +293,30 @@ and finish with `quit:F9`. Use the same compiled image at 160x40 and 80x24,
 inspect the actual native frames, and verify zero exit and joined cleanup.
 Neither a headless pass nor a cross-build supplies native pixel or device evidence.
 
+Read-only inlay hints use `TestInlayVisualHeadless` with installed gopls v0.21.1
+and explicit generic `gopls.hints` fixture settings. The test independently checks
+three literal labels and UTF-16/source-byte anchors, the original provider
+response, actual painted cells, source caret/pointer placement, view-local
+Show/Hide/Refresh, original-row inspection and unchanged text/revision/private
+draft/Trust. `TestConnectedInlay*` adds two framed shell attachments and a
+tooltip-resolve provider, including original opaque-number spelling, native Back
+cancellation, late-reader fences, default-Off and a coalesced settings epoch.
+`TestInlayEveryAnswerWaitsForTheOriginalContextCursor` separately checks the
+positive/null/empty/unsupported publication barrier.
+
+For sequential native captures select `CRUDE_VISUAL_INLAY=1`,
+`CRUDE_ARGS='-test.run=^TestInlayVisualAcceptance$ -test.count=1 -test.timeout=600s'`
+and `CRUDE_INLAY_VISUAL_RESULT` with the compiled viewmodel test binary.
+F3 prepares only the disposable fixture; F4 passively verifies the original
+boundary after the ordinary keys listed in `lsp_inlay_visual_test.go`. Follow
+the actually observed `RESOLVE_SUPPORTED` value, never treat unsupported tooltip
+resolution as an executed read. Inspect native inline/list/detail and hidden
+frames at 160x40 and 80x24, use the printed literal `POINTER_COUNT` cell for the
+final click, and finish with `quit:F9`. Check all ten `F4 VERIFIED` markers,
+`INLAY_VISUAL_SUCCESS`, exact provider join and clean product exit separately.
+These deterministic local Linux regressions are not adaptive human-workflow,
+distinct-host/device, native containment or complete-project acceptance.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

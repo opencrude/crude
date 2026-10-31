@@ -19,6 +19,7 @@ import (
 	"crude/tui/screens/boardbrowser"
 	"crude/tui/screens/codeactions"
 	"crude/tui/screens/gitpanel"
+	"crude/tui/screens/inlay"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/question"
@@ -71,6 +72,7 @@ type shellControlDoneMsg struct {
 	reviewOwner   *reviewedEditDialog
 	actionOwner   *codeActionState
 	navOwner      *navigationState
+	inlayOwner    *inlayInspectorState
 	safetyOwner   *historySafetyView
 }
 
@@ -298,7 +300,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.navOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.navOwner != nil || done.inlayOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -706,6 +708,9 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 				if s := m.navigation; m.navigationCurrent(s) && owner.window == m.overlayHost.Window(navigationOverlay) {
 					done.navOwner = s
 				}
+				if s := m.inlayInspector; m.inlayInspectorCurrent(s) && owner.window == m.overlayHost.Window(ui.OverlayInlayHints) {
+					done.inlayOwner = s
+				}
 				if v := m.historySafety; m.historySafetyVisible(v) && owner.window == m.overlayHost.Window(ui.OverlayLocalHistory) {
 					done.safetyOwner = v
 				}
@@ -765,6 +770,8 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			}
 		} else if done.navOwner != nil {
 			valid = valid && m.navigationCurrent(done.navOwner)
+		} else if done.inlayOwner != nil {
+			valid = valid && m.inlayInspectorCurrent(done.inlayOwner)
 		} else if done.safetyOwner != nil {
 			valid = valid && m.historySafetyVisible(done.safetyOwner)
 		} else if done.deckOwner != nil {
@@ -789,6 +796,38 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	result := control.Result{State: control.Applied}
 	var follow tea.Cmd
 	switch completion := done.completion.(type) {
+	case inlay.InspectMsg:
+		if !valid || done.inlayOwner == nil || completion.Target != done.inlayOwner.screen {
+			return m.failShellControl(msg, control.Stale, "inlay inspector changed")
+		}
+		cmd := m.inspectInlayHintCmd(completion)
+		if cmd == nil {
+			return m.failShellControl(msg, control.Unavailable, "original inlay row or tooltip observation is unavailable")
+		}
+		return m.awaitCapturedShellControl(done, cmd, nil)
+	case inlayInspectionMsg:
+		if !valid || done.inlayOwner == nil || completion.owner != done.inlayOwner ||
+			completion.sequence != done.inlayOwner.sequence {
+			return m.failShellControl(msg, control.Stale, "inlay observation belongs to a retired inspector")
+		}
+		applied := m.handleInlayInspection(completion)
+		if completion.err != nil {
+			return m.failShellControl(msg, control.OperationFailed, "read-only inlay observation or its exchange cleanup was not confirmed")
+		}
+		if !applied || !m.inlayInspectorCurrent(done.inlayOwner) || completion.inspection.SetID == "" {
+			return m.failShellControl(msg, control.Stale, "original inlay evidence is no longer current")
+		}
+		result.ResourceIDs = []string{completion.inspection.SetID}
+	case inlay.BackMsg:
+		if !valid || done.inlayOwner == nil || completion.Target != done.inlayOwner.screen {
+			return m.failShellControl(msg, control.Stale, "inlay inspector changed")
+		}
+		m.backFromInlayInspection(completion)
+	case inlay.CloseMsg:
+		if !valid || done.inlayOwner == nil || completion.Target != done.inlayOwner.screen {
+			return m.failShellControl(msg, control.Stale, "inlay inspector changed")
+		}
+		m.closeInlayInspector()
 	case navigation.OpenMsg:
 		if !valid || done.navOwner == nil || completion.Target != done.navOwner.screen {
 			return m.failShellControl(msg, control.Stale, "navigation chooser changed")

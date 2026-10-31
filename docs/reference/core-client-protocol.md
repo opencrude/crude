@@ -454,6 +454,19 @@ snapshot before landing. Both commands share the joined cancellable exchange;
 the retired raw `.definition`/`.references` slice methods have no fallback.
 See [qualified location navigation](editor.md#qualified-location-navigation).
 
+`lsp.inlay_hints` accepts an acknowledged canonical source, private view ID,
+monotonic sequence and UTF-16 anchor range. The authenticated attachment is its
+owner; the core stamps synchronized source/provider/context evidence and retains
+the original objects. `lsp.inlay_inspect` accepts only original set ID/digest/index
+and an explicit tooltip-resolve choice, never a caller-authored provider object.
+`lsp.inlay_release` retires that owner's exact view sequence; a late old release
+cannot revoke a newer replacement. All three use the existing joined cancellable
+exchange. The snapshot exposes a constant-size inlay gate/epoch so a coalesced
+disable/re-enable cannot revive old labels or retained row authority. No route
+executes hint edits, commands or label locations, and the local request wire
+version is not a provider-reported result version. See
+[read-only inlay hints](editor.md#read-only-inlay-hints).
+
 Reviewed rename is not a raw edit relay or `files.edit` shortcut.
 `lsp.rename_preview` accepts the invoking acknowledged source and cursor/name.
 The canonical coordinator obtains original provider JSON, normalizes it without

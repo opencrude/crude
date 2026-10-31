@@ -86,6 +86,7 @@ func DefaultLSPSettings() LSPSettings {
 		References:         true,
 		Outline:            true,
 		Rename:             true,
+		InlayHints:         false,
 		DiagInEditor:       true,
 		DiagInTree:         true,
 		DiagInStatus:       true,
@@ -206,7 +207,7 @@ func ApplyAppDefaults(s *AppSettings) {
 
 func lspUnset(s LSPSettings) bool {
 	return !s.Enabled && !s.AutoDetect && !s.Diagnostics && !s.Completions &&
-		!s.Hover && !s.Definition && s.MinSeverity == "" && len(s.Languages) == 0
+		!s.Hover && !s.Definition && !s.InlayHints && s.MinSeverity == "" && len(s.Languages) == 0
 }
 
 func NormalizeEditorSettings(s EditorSettings) EditorSettings {

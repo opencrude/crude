@@ -686,6 +686,14 @@ var defaultActions = []*ActionDef{
 	{ID: "lsp.codeActions", Label: "Code Actions", Description: "inspect edit-only language actions for the saved editor source and selection",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: CodeActionsChord}}, HintKey: CodeActionsChord},
 	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart enabled servers for open editor documents", Icon: "↻", Category: "App"},
+	{ID: "lsp.inlayInspect", Label: "Inspect Inlay Hints", Description: "read source-qualified inline labels and inert original tooltip evidence",
+		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+j"}}, HintKey: "Alt+J"},
+	{ID: "lsp.inlayShow", Label: "Show Inlay Hints", Description: "show read-only inline hints in this editor if enabled in Code Intelligence settings",
+		Category: "View"},
+	{ID: "lsp.inlayHide", Label: "Hide Inlay Hints", Description: "hide and release read-only hints in this editor view only",
+		Category: "View"},
+	{ID: "lsp.inlayRefresh", Label: "Refresh Inlay Hints", Description: "request fresh read-only hint evidence for this visible editor range",
+		Category: "View"},
 	{ID: "lsp.problems", Label: "Problems", Description: "inspect reported workspace diagnostics", Icon: "!", Category: "View"},
 
 	// ─── System (sessions, undo, theme, copy) ────────────────────────

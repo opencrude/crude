@@ -243,7 +243,7 @@ func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 	if lineIdx < 0 {
 		lineIdx = 0
 	}
-	col := e.scrollX + mouseX - sw
+	col := e.sourceColumn(lineIdx, e.scrollX+mouseX-sw)
 	if col < 0 {
 		col = 0
 	}
@@ -313,7 +313,9 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 		start, end = e.pointerUnitRange(kind, pos)
 	} else if msg.Mod.Contains(tea.ModShift) {
 		end = start // Extending a caret/selection is not a new source-unit hit.
-	} else if pos.Col < e.lineVisualWidth(pos.Line) {
+	} else if _, hint := e.InlayHintAt(mouse.X, mouse.Y); !hint && pos.Col < e.lineVisualWidth(pos.Line) {
+		// A label/padding cell is a zero-length source anchor. Backward
+		// dragging from it must not include the following source grapheme.
 		end = e.buf.nextPosition(pos)
 	}
 	e.beginPointerSelection(kind, start, end, mouse.X, mouse.Y)

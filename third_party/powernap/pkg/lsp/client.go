@@ -621,6 +621,7 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 			"completion":      map[string]any{"completionItem": map[string]any{"snippetSupport": enableSnippets, "insertReplaceSupport": true, "documentationFormat": []string{"plaintext", markupKindMarkdown}}},
 			"hover":           map[string]any{"contentFormat": []string{"plaintext", markupKindMarkdown}},
 			"codeAction":      codeActionClientCapabilities(),
+			"inlayHint":       InlayHintClientCapabilities(),
 			"signatureHelp": map[string]any{"signatureInformation": map[string]any{
 				"documentationFormat":    []string{"plaintext", markupKindMarkdown},
 				"parameterInformation":   map[string]any{"labelOffsetSupport": true},

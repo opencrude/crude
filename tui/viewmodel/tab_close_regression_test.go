@@ -97,6 +97,12 @@ func (noopLSPClient) RequestCodeActions(context.Context, string, int, int, int, 
 func (noopLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error) {
 	return model.LSPCodeActionResponse{}, context.Canceled
 }
+func (noopLSPClient) RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error) {
+	return model.LSPInlayResponse{}, context.Canceled
+}
+func (noopLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
+	return model.LSPInlayResponse{}, context.Canceled
+}
 func (noopLSPClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
 	return nil
 }

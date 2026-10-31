@@ -7,6 +7,38 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Read-only inlay projection (2026-10-31)
+
+Linux amd64, i7-10750H, `GOMAXPROCS=2`, two 200 ms repetitions of
+`BenchmarkEditorInlayWarmRender` after focused rendered-editor regressions:
+
+| Source lines | Warm editor grid + hit lookup | Go bytes/op | Allocations/op |
+|---|---|---|---|
+| 20 | 39.17-47.94 us | 250-254 | 47 |
+| 20,000 | 40.51-47.31 us | 5,871-6,073 | 146-149 |
+
+The test independently retains the same insertion projection/width cache and
+guards content-change export counters across warm frames. Cold projection,
+provider latency, canonical durability, terminal transport/pixels and native RSS
+are not measured by this benchmark. Other focused acceptance ran concurrently.
+The isolated projection baseline measured literal preparation at 2.28-2.57 us
+(3,064 B, 12 allocations), one dense line at 267.6-314.3 us (525,304 B, 28
+allocations), and warm source/cell lookup at 85.46-105.4 ns (0 B, 0 allocations),
+with two 100 ms repetitions. Those helper timings are not whole-editor paint.
+Existing allocation ceilings and frame budgets are unchanged.
+
+The consolidated viewmodel profile exposed an independent post-program editor
+readiness stall: two existing recovery journeys each spent 35.09-35.10 seconds
+rereading canonical text after document topics had been fenced. The same command
+capturer now accepts an exact owner/revision read only within the exclusive
+shutdown flush, without manufacturing topic readiness. Two focused repetitions
+of each recovery journey measured 0.09-0.37 seconds. An independent framed-port
+regression checks one edit and two canonical reads; the old owner fails after a
+third read with zero edits. It also checks rejected reads retain private text,
+ordinary admission stays blocked, and flush never implicitly saves disk.
+These are deterministic local journey durations, not whole-suite timings or
+native presentation latency. The 180-second ordinary package limit is unchanged.
+
 ## Numeric snippet mutation and editor rendering (2026-10-31)
 
 Linux amd64, i7-10750H, `GOMAXPROCS=2`, 200 ms repetitions of

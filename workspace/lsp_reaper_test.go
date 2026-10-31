@@ -46,6 +46,12 @@ func (c *reapableClient) RequestCodeActions(context.Context, string, int, int, i
 func (c *reapableClient) ResolveCodeAction(context.Context, string, int, []byte) (types.LSPCodeActionResponse, error) {
 	return types.LSPCodeActionResponse{}, context.Canceled
 }
+func (c *reapableClient) RequestInlayHints(context.Context, string, types.LSPInlayRange) (types.LSPInlayResponse, error) {
+	return types.LSPInlayResponse{}, context.Canceled
+}
+func (c *reapableClient) ResolveInlayHint(context.Context, string, int, []byte) (types.LSPInlayResponse, error) {
+	return types.LSPInlayResponse{}, context.Canceled
+}
 func (c *reapableClient) RequestCompletions(context.Context, string, int, int) []CompletionItem {
 	return nil
 }

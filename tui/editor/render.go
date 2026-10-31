@@ -100,6 +100,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 
 		lineIdx := e.scrollY + y
 		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
+		inline := e.inlayLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
 
 		ri := 0
@@ -177,7 +178,25 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					ri++
 				}
 
-				sev := diagSeverityAtCol(diags, vCol)
+				sourceCol := vCol
+				if inline != nil {
+					if ri < len(inline.Runs) && vCol < lineVisW {
+						run := inline.Runs[ri]
+						if run.HintIndex >= 0 {
+							// A label is not source, even when it contains a
+							// matching word, a diagnostic or a selected anchor.
+							// It uses the same complete-grapheme clipping as source.
+							if vCol == visCol {
+								e.paintGrapheme(buf, cx, bufY, sbX, run.Cluster, run.Width, infoColor, bgColor, cell.AttrItalic, blankCell)
+							}
+							continue
+						}
+						sourceCol = run.SourceCol + vCol - visCol
+					} else {
+						sourceCol = inline.SourceWidth + max(0, vCol-inline.DisplayWidth)
+					}
+				}
+				sev := diagSeverityAtCol(diags, sourceCol)
 				diagAttr := cell.Attrs(0)
 				var diagFg cell.Color
 				if sev > 0 {
@@ -195,22 +214,22 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				// Determine search highlight for this cell. The
 				// current match is rendered with a stronger
 				// background; other matches get a softer tint.
-				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, vCol)
+				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, sourceCol)
 				if ri < len(clusters) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
 						switch {
-						case e.isSelected(lineIdx, vCol):
+						case e.isSelected(lineIdx, sourceCol):
 							fg := e.cellColor(e.th.Colors.Fg)
-							if vCol < len(colorMap) && colorMap[vCol] != "" {
-								fg = rendering.LipglossColorToCell(colorMap[vCol])
+							if sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
+								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							fg, bg := e.tokens.TextSelectionColors(fg)
 							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bg, 0, blankCell)
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
-							if vCol < len(colorMap) && colorMap[vCol] != "" {
-								fg = rendering.LipglossColorToCell(colorMap[vCol])
+							if sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
+								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							if sev > 0 {
 								fg = diagFg
@@ -221,8 +240,8 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, hlBg, diagAttr, blankCell)
 						default:
 							fg := e.cellColor(e.th.Colors.Fg)
-							if vCol < len(colorMap) && colorMap[vCol] != "" {
-								fg = rendering.LipglossColorToCell(colorMap[vCol])
+							if sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
+								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							if sev > 0 {
 								fg = diagFg
@@ -231,7 +250,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						}
 					} else if visCol < e.scrollX {
 						switch {
-						case e.isSelected(lineIdx, vCol):
+						case e.isSelected(lineIdx, sourceCol):
 							buf.Set(cx, bufY, cell.NewCell(' ', selFgColor, selBgColor, 0))
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
@@ -253,7 +272,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					}
 				} else {
 					switch {
-					case e.isSelected(lineIdx, vCol):
+					case e.isSelected(lineIdx, sourceCol):
 						buf.Set(cx, bufY, cell.NewCell(' ', selFgColor, selBgColor, 0))
 					case searchMatchIdx >= 0:
 						hlBg := e.searchHighlightBg(searchIsCurrent)
@@ -266,7 +285,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 	}
 	if ctx.Focused && !e.readOnly && e.cursorBlink.Visible(ctx.Frame) {
-		cursorX := sw + e.cursor.Col - e.scrollX
+		cursorX := sw + e.displayColumn(e.cursor.Line, e.cursor.Col) - e.scrollX
 		cursorY := e.cursor.Line - e.scrollY
 		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {
 			ui.PaintBlockCursor(buf, cursorX, cursorY, e.tokens.Color(ui.ColorCursor), bgColor)
@@ -433,6 +452,9 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 }
 
 func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]string, int, []int, []string) {
+	if inline := e.inlayLine(lineIdx); inline != nil {
+		return inline.clusters, inline.DisplayWidth, inline.widths, e.lineColorMap(lineIdx)
+	}
 	runes, totalW, widths := e.lineGeomInfo(lineIdx)
 	if runes == nil && totalW == 0 && widths == nil && lineIdx >= 0 {
 		if _, err := e.buf.Line(lineIdx); err != nil {
@@ -576,11 +598,12 @@ func (e *Editor) ensureCursorVisible() {
 		hMargin = 1
 	}
 
-	if e.cursor.Col < e.scrollX+hMargin {
-		e.scrollX = e.cursor.Col - hMargin
+	col := e.displayColumn(e.cursor.Line, e.cursor.Col)
+	if col < e.scrollX+hMargin {
+		e.scrollX = col - hMargin
 	}
-	if e.cursor.Col >= e.scrollX+availW-hMargin {
-		e.scrollX = e.cursor.Col - availW + hMargin + 1
+	if col >= e.scrollX+availW-hMargin {
+		e.scrollX = col - availW + hMargin + 1
 	}
 	if e.scrollX < 0 {
 		e.scrollX = 0
