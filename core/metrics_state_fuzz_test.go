@@ -100,17 +100,23 @@ func semanticRawMetrics(t *testing.T, w *semanticFuzzWire, id string, input core
 	}
 	defer s.Close()
 	semanticSend(t, s, &coreprotocol.Open{Kind: coreprotocol.StreamCommand, ID: id, Method: coreprotocol.CoreMetricsMethod}, input)
-	body, err := corewire.NewReader(s, corewire.MaxMessage).Next()
-	if err != nil {
-		t.Fatal(err)
-	}
+	reader := corewire.NewReader(s, corewire.MaxMessage)
 	var reply coreprotocol.Reply
-	if _, err = coreprotocol.DecodePrefix(body, &reply); err != nil || !reply.Final {
-		t.Fatal("invalid command reply", err)
+	for {
+		body, err := reader.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = coreprotocol.DecodePrefix(body, &reply); err != nil {
+			t.Fatal("invalid command reply", err)
+		}
+		if reply.Final {
+			break
+		}
 	}
 	semanticSend(t, s, &coreprotocol.TopicAck{Seq: 1})
 	_ = s.CloseWrite()
-	_, _ = corewire.NewReader(s, corewire.MaxMessage).Next()
+	_, _ = reader.Next()
 	return reply
 }
 

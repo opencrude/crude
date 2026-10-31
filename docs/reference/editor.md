@@ -357,6 +357,58 @@ Tea's update goroutine (the tab-close hang).
   `closed` before its owned servers are marked for shutdown: that gap can let the
   worker exit while an actual language-server process remains alive.
 
+### Parameter information
+
+**Alt+I** (or Ctrl+Shift+Space when delivered by the terminal) and the editor's
+**Code > Parameter information** context action issue one explicit standard
+signature-help request through the same retained server. The initialized provider
+must advertise support; unsupported, failed and supported-but-empty answers stay
+distinct. There is no language-name branch, new server or inferred call parser.
+
+The native read-only WindowFrame/TextArea reader shows the selected signature,
+active parameter and its documentation, the other overload labels, provider,
+canonical source revision, context generation and unknown inputs. It supports
+normal reading/selection/copy, resize, Close, Escape and outside-click dismissal.
+It never inserts text, chooses an overload on the server or edits an argument.
+This is manual parameter inspection, not automatic trigger/retrigger assistance,
+dynamic capability registration or full semantic-feature acceptance.
+
+Requests require acknowledged canonical text: optimistic edits, pending history,
+conflicts and standalone raw buffers cannot query an older canonical source.
+The common editor source gate is shared with diagnostic projection. One invocation
+owns its five-second request/result lifetime. A later invocation, caret/source
+change, equal-text close/reopen, focus departure, workspace boundary or Stop
+cancels it. A backend ignoring cancellation still cannot reopen its reader.
+The coordinator stamps exact source/provider/context provenance. The shell waits
+for the corresponding pushed semantic-context cursor if its replica trails the
+result, and discards it on a newer/replacement context; progress/diagnostic status
+updates alone do not invent a new context.
+Supported empty/null evidence passes the same source/context publication barrier
+before reporting absence. The loading toast belongs to the exact invocation and
+is dismissed on publication or retirement without clearing unrelated feedback.
+Docked terminals and nonmodal session panels are input owners too; their focus
+retires a pending request rather than allowing its late reader to steal input.
+
+Connected semantic reads use the common cancellable command exchange. It retains
+the original request identity and waiter after the UI retires, issues exact
+job cancellation only after confirmed actor enqueue, and joins/ACKs both outcomes.
+Cleanup is client-owned and bounded to five seconds after cancellation; the
+shared provider is not stopped. An uncooperative provider, failed carrier or
+saturated command table can leave retirement/ACK cleanup unconfirmed. That is
+reported with the original identity, never repaired by replaying a request under
+a new attachment, dropping unknown retained work or raising the command limits.
+This cooperative boundary is not native CPU/RSS containment.
+
+The consumer admits at most 64 KiB of encoded signature JSON, 32 signatures and
+64 parameters per signature. It preserves omitted versus explicit-zero active
+parameter overrides and applies the protocol's invalid-index defaults. String
+labels and UTF-16 offset pairs become detached parameter text, not editor ranges
+or terminal columns. Invalid/split-surrogate offsets and unsupported null-active
+extensions are refused rather than guessed. Markdown documentation is a basic
+plain-text projection, not a complete Markdown layout engine. These are
+consumer-data/work bounds, separate from transport framing or native heap/RSS
+containment. All protocol and text preparation runs off Update.
+
 ### Shared diagnostic facts
 
 `DocumentService.Insight` owns the bounded published diagnostic store in

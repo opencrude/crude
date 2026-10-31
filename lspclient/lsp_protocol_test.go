@@ -72,7 +72,11 @@ func TestProtocolServerHelper(t *testing.T) {
 				_ = os.WriteFile(os.Getenv("CRUDE_PROTOCOL_READY"), []byte("ready"), 0600)
 				continue
 			}
-			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"capabilities": map[string]any{}}})
+			capabilities := map[string]any{}
+			if strings.HasPrefix(mode, "signature") {
+				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"(", ","}}
+			}
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"capabilities": capabilities}})
 		case "initialized":
 			if mode == "scoped-configuration" {
 				root, _ := os.Getwd()
@@ -116,6 +120,28 @@ func TestProtocolServerHelper(t *testing.T) {
 					time.Sleep(time.Hour)
 				}
 			}
+		case "textDocument/signatureHelp":
+			if mode == "signature-stale" {
+				root, _ := os.Getwd()
+				_ = os.WriteFile(filepath.Join(root, "requested"), nil, 0600)
+				for {
+					if _, err := os.Stat(filepath.Join(root, "release")); err == nil {
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			if mode == "signature-empty" {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": nil})
+				continue
+			}
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{
+				"signatures": []any{
+					map[string]any{"label": "join(😀: str, tail: str)", "documentation": "Join two values.",
+						"parameters": []any{map[string]any{"label": []int{5, 12}}, map[string]any{"label": "tail: str", "documentation": map[string]any{"kind": "markdown", "value": "**Remaining** text"}}}},
+					map[string]any{"label": "join(first: str)", "activeParameter": 0, "parameters": []any{map[string]any{"label": "first: str"}}},
+				}, "activeSignature": 0, "activeParameter": 1,
+			}})
 		case "textDocument/definition":
 			uri := msg["params"].(map[string]any)["textDocument"].(map[string]any)["uri"]
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": []any{

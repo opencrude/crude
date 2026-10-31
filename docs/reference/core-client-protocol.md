@@ -390,7 +390,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
-| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.rename` |
+| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.signature_help`, `.rename` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
 | Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
@@ -413,12 +413,32 @@ workspace capability registration; the transport cannot widen a grant.
 ## Mutation receipts and uncertainty
 
 One command stream carries one request, progress notes in typed `Reply` values
-and a final typed result. Progress never enters a session or domain event queue.
+and a final typed result. Its explicit `Reply.Admitted` note attests that the
+original command has been synchronously enqueued by its retained owner, not that
+its job succeeded, its result exists or any shell applied it. Exact reattachments
+wait for that same enqueue boundary. Progress never enters a session or domain event queue.
 The core retains the exact admitted preimage/result across carrier loss until the
 client sends `TopicAck{Seq: 1}` after decoding the final result (including a known
 fault). A failed final ACK or ACK-close cannot turn that known outcome into
 uncertainty. Unknown outcomes still require exact receipt observation. Reusing an
 identity with changed method, workspace or payload fails closed.
+
+Explicit read-only semantic queries use `coreclient.CallCancellable`, sharing the
+ordinary framing/identity/decoding exchange rather than owning another server.
+Caller cancellation retains the original waiter and uses typed `request.cancel`
+against its original job only after the enqueue receipt. It joins and ACKs that
+request and the original final result, with a five-second client-lifetime cleanup
+ceiling. Ordinary mutation `Call`/`CallWith` still abandon only their waiter on
+cancellation and retain uncertainty; they do not acquire implicit effect cancellation.
+A decoded result remains known even if release confirmation fails; that distinct
+cleanup state (`ResultKnown=true`, `completed_cleanup_unconfirmed`) must never
+authorize replay or be described as an unknown result. The joined path sends its
+final ACK and client FIN before receiving the server's release-confirmation FIN;
+the server waits for both instead of resetting an unread client direction.
+Before a result is known, failed cancellation/cleanup preserves the original
+request identity as unresolved. At the unchanged 16-command bound even the
+cancellation request can be refused. That refusal is explicit; unknown original
+work/results remain retained, never evicted to make the next request succeed.
 
 Journaled mutations persist request intent before effects and their exact response
 afterward. Identity is client ID plus request ID; its digest binds workspace,
@@ -527,6 +547,11 @@ a containing directory preview, never a remote path guessed to be local.
 
 Typed LSP uses per-client views and versioned diagnostics/health; document
 open/close/detach releases only that client's views, never shared servers.
+Signature-help results carry the coordinator's exact source/provider/context
+boundary. The LSP state topic includes a separate semantic-context generation;
+it is not a progress or diagnostic-publication version. A result can precede its
+shell's state publication, so the bounded reader waits for that exact cursor and
+rejects a replaced/newer one rather than repainting an old context as current.
 `document.snapshot_save` remains a separate checked immutable disk-commit API,
 not the ordinary connected editor text authority.
 

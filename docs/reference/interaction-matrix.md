@@ -193,6 +193,7 @@ window derive from current bytes, not replayed change guesses.
 | Toggle line comment | Ctrl+/ (legacy Ctrl+_) | Prefix from language map / chroma |
 | Indent / outdent selection | Tab / Shift+Tab | Shift+Tab outdents the current line without a selection |
 | Smart Home | Home | Toggles first non-blank column and column 0 |
+| Parameter information | Alt+I; Ctrl+Shift+Space where delivered; editor Code context action | Explicit provider-negotiated signature/active parameter reader for acknowledged canonical text. Read-only, scroll/select/copy, Close/Esc/outside to dismiss; never inserts text. Source/caret/invocation and pushed context generations fence replies. No automatic trigger or dynamic-registration support is implied |
 | Auto-close pairs | ( [ { " ' | Type-over closers; openers wrap an active selection; Backspace deletes an empty pair |
 | Close tab / contextual back | Ctrl+W / Esc | Both use the dirty-safe close path; Ctrl+W is the explicit Close Tab command |
 | Git line edits / blame | (gutter + header + inspector) | `+` added / `~` modified in the gutter; branch and compact current-line blame are in the header; full blame and Copy blame commit remain in editor detail/context actions |

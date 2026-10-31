@@ -24,7 +24,7 @@ type overlayOutsideFixture struct {
 }
 
 // overlayOutsideContractMatrix is the authoritative Phase 15 policy table for
-// product floating overlays (19 static surfaces). Each row is exercised by
+// product floating overlays. Each row is exercised by
 // TestOverlayClickOutsideContractMatrix. Dynamic floating terminals use
 // DefaultOverlayPolicy (KeepRoute) with ids `terminal/<pty-id>` and are not
 // listed here. Real-opener dispatchMouseClick integration is covered separately
@@ -39,6 +39,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayReferences, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayCompletion, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayOutline, policy: ui.PopoverPolicy(true), wantClose: true},
+	{id: ui.OverlaySignatureHelp, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayDiagContext, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayPlanHover, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayConnectionHealth, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -217,8 +218,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 25 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 25", got)
+	if got := len(overlayOutsideContractMatrix); got != 26 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 26", got)
 	}
 }
 
@@ -230,6 +231,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayReferences:        ui.OutsideCloseAndRoute,
 		ui.OverlayCompletion:        ui.OutsideCloseAndRoute,
 		ui.OverlayOutline:           ui.OutsideCloseAndRoute,
+		ui.OverlaySignatureHelp:     ui.OutsideCloseAndRoute,
 		ui.OverlayDiagContext:       ui.OutsideCloseAndRoute,
 		ui.OverlayPlanHover:         ui.OutsideCloseAndRoute,
 		ui.OverlayConnectionHealth:  ui.OutsideCloseAndRoute,
@@ -252,8 +254,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayCapabilityPicker:  ui.OutsideIgnoreAndConsume,
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 25 {
-		t.Fatalf("expected opener registry len=%d want 25", len(expected))
+	if len(expected) != 26 {
+		t.Fatalf("expected opener registry len=%d want 26", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

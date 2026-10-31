@@ -326,6 +326,11 @@ func (c *semanticLSPClient) RequestHover(_ context.Context, path string, line, c
 	c.record(path, line, col, "", false)
 	return "hover **symbol**\nsecond line", nil
 }
+func (c *semanticLSPClient) RequestSignatureHelp(_ context.Context, path string, line, col int) (types.LSPSignatureHelp, error) {
+	c.record(path, line, col, "", false)
+	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
+		Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}, nil
+}
 func (c *semanticLSPClient) RequestRename(_ context.Context, path string, line, col int, name string) (*protocol.WorkspaceEdit, error) {
 	c.record(path, line, col, name, false)
 	return c.edit, nil

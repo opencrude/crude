@@ -14,7 +14,8 @@ func lspMethod(method string) bool {
 		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop,
 		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer, coreprotocol.LSPFindReferences,
 		coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDefinition,
-		coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestRename:
+		coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestRename,
+		coreprotocol.LSPRequestSignatureHelp:
 		return true
 	}
 	return false
@@ -86,6 +87,8 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 		out.Symbols = service.RequestDocumentSymbols(ctx, in.Path)
 	case coreprotocol.LSPRequestHover:
 		out.Hover, err = service.RequestHover(ctx, in.Path, in.Line, in.Col)
+	case coreprotocol.LSPRequestSignatureHelp:
+		out.SignatureHelp, err = service.RequestSignatureHelp(ctx, in.Path, in.Line, in.Col)
 	case coreprotocol.LSPRequestRename:
 		edit, renameErr := service.RequestRename(ctx, in.Path, in.Line, in.Col, in.NewName)
 		out.Edit, err = (*coreprotocol.LSPEdit)(edit), renameErr
@@ -101,6 +104,7 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 	// the owner broadcast announces it and the client reads a newer complete snapshot.
 	generation, version := manager.DiagnosticCursor()
 	out := coreprotocol.LSPSnapshot{Available: true, Generation: generation, Version: version}
+	_, out.ContextGeneration = manager.ContextCursor()
 	out.Diagnostics = manager.AllDiagnostics()
 	out.Symbols = make(map[string][]workspace.LSPSymbol)
 	for path, symbols := range manager.AllDocumentSymbols() {

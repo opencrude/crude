@@ -39,6 +39,7 @@ const (
 	OverlayReferences        OverlayID = "references-popup"
 	OverlayCompletion        OverlayID = "completion-popup"
 	OverlayOutline           OverlayID = "outline-popup"
+	OverlaySignatureHelp     OverlayID = "lsp-signature"
 	OverlayDiagContext       OverlayID = "diag-context"
 	OverlayDiagHover         OverlayID = "diag-hover"
 	OverlayPlanHover         OverlayID = "plan-hover"

@@ -203,15 +203,23 @@ func TestBulkStalledReaderDoesNotBlockInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = send(input, &coreprotocol.Open{Kind: coreprotocol.StreamCommand, ID: "input-priority", WorkspaceID: id, Method: coreprotocol.StatusSnapshotMethod}, &coreprotocol.Empty{})
-	body, err := corewire.NewReader(input, corewire.MaxMessage).Next()
-	if err != nil {
-		t.Fatal("input blocked behind bulk", err)
-	}
+	reader := corewire.NewReader(input, corewire.MaxMessage)
 	var reply coreprotocol.Reply
-	if _, err := coreprotocol.DecodePrefix(body, &reply); err != nil || reply.Fault != nil || !reply.Final {
-		t.Fatal("input did not reach independent route", err)
+	for {
+		body, err := reader.Next()
+		if err != nil {
+			t.Fatal("input blocked behind bulk", err)
+		}
+		if _, err := coreprotocol.DecodePrefix(body, &reply); err != nil || reply.Fault != nil {
+			t.Fatal("input did not reach independent route", err)
+		}
+		if reply.Final {
+			break
+		}
 	}
 	_ = send(input, &coreprotocol.TopicAck{Seq: 1})
+	_ = input.CloseWrite()
+	_, _ = reader.Next()
 	_ = input.Close()
 	_ = bulk.Close()
 	cancel()

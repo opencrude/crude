@@ -333,6 +333,7 @@ type App struct {
 	pendingInsights       map[string]shellport.DocumentInsightMsg
 	lspRequestCtx         context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel      context.CancelFunc
+	signatureHelp         *signatureHelpState
 	lspDiagnostics        shellport.LSPDiagnosticConsumer
 	lspFacts              map[string]roottypes.InsightDiagnostics
 	lspTreeProjection     map[string]diagnosticTreeProjection

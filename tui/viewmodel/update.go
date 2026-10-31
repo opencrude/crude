@@ -68,6 +68,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainComparisonSearch())
 	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
+	m.syncSignatureHelp()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg:
@@ -890,6 +891,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case lspHoverResultMsg:
 		m.handleLSPHoverResult(msg)
+	case signatureHelpResultMsg:
+		m.handleSignatureHelpResult(msg)
 	case lspReferencesResultMsg:
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleReferencesResult(msg)

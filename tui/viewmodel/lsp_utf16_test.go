@@ -16,7 +16,9 @@ import (
 )
 
 func TestLiveUTF16NavigationAndPrivateFocus(t *testing.T) {
-	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
+		grantSemanticFixture(t, w)
+	})
 	root := t.TempDir()
 	source, destination := filepath.Join(root, "source.txt"), filepath.Join(root, "destination.txt")
 	for path, text := range map[string]string{
@@ -43,10 +45,17 @@ func TestLiveUTF16NavigationAndPrivateFocus(t *testing.T) {
 	if sl, sc, el, ec := b.SelectionRange(); sl != 0 || sc != 9 || el != 1 || ec != 10 {
 		t.Fatalf("selection=%d:%d-%d:%d", sl, sc, el, ec)
 	}
+	// Coordinate navigation requires the owner's actual diagnostic-display
+	// policy. Before the first LSP replica publication, the editor's default
+	// visibility is not evidence that Static-only mode permits these facts.
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
+		generation, _ := shell.app.ws.LSPMgr().DiagnosticCursor()
+		return generation == b.DocumentSnapshot().AnalysisGeneration && shell.app.ws.LSPMgr().ShowDiagnosticsInEditor()
+	})
 	b.SetDiagnostics(editorDiagnosticFacts(b, []editor.LSPDiagnostic{wire}))
 	b.SetCursorPosition(1, 10)
 	if !shell.app.jumpToNextError() || b.CursorCol() != 9 {
-		t.Fatal("F8 converted visual diagnostics a second time")
+		t.Fatalf("F8 did not reach the once-projected diagnostic: %d:%d (%s)", b.CursorLine(), b.CursorCol(), b.DiagnosticStatus())
 	}
 	if !shell.app.jumpToPrevError() || b.CursorCol() != 9 {
 		t.Fatal("Shift-F8 converted visual diagnostics a second time")

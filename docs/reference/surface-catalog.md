@@ -77,7 +77,7 @@ Click-outside policies (verified in `tui/viewmodel/overlay_click_outside_contrac
 
 | Policy | Overlays |
 |--------|----------|
-| **CloseRoute** (`PopoverPolicy(true)`) | context-menu, references-popup, completion-popup, outline-popup, diag-context, plan-hover and connection-health (passive opening) |
+| **CloseRoute** (`PopoverPolicy(true)`) | context-menu, references-popup, completion-popup, outline-popup, lsp-signature, diag-context, plan-hover and connection-health (passive opening) |
 | **KeepRoute** (`DefaultOverlayPolicy` / `PopoverPolicy(false)`) | find-replace, command-palette, composer, textoverlay, find-in-files, replace-in-files, diag-hover, **floating terminals** (dynamic `terminal/<id>`, not in the static overlay matrix) |
 | **Ignore** (`ModalDialogPolicy`) | dirty-close-prompt, operation-issue, ai-setup-reminder, tree-prompt, tree-delete-confirm, workspace-delete, filepicker, workspace-settings, capability-picker, session-picker, help |
 
@@ -110,6 +110,7 @@ Detached startup uses its own Host and is outside that matrix.
 | LSP references | `tui/viewmodel/lsp_handlers.go` | BuildListPopupFrame; typed core request with local diagnostic/health replicas |
 | LSP completion | `tui/viewmodel/lsp_handlers.go` | BuildListPopupFrame; typed core request with local diagnostic/health replicas |
 | LSP outline | `tui/viewmodel/lsp_handlers.go` | BuildListPopupFrame; typed core request with local diagnostic/health replicas |
+| Parameter information | `tui/viewmodel/lsp_signature.go` | Alt+I or Code context action; native read-only WindowFrame/TextArea with selected signature, active parameter, overload labels, documentation and source/provider/context qualification. Explicit request only; close/source/caret/context/workspace changes retire it, never modify text. |
 | Diagnostic popup | `tui/viewmodel/lsp_handlers.go` | BuildDiagnosticFrame; versioned DiagnosticSnapshot consumed independently by each shell |
 | Current plan hover | `tui/screens/planpopover/`, `tui/viewmodel/plan_hover.go` | Passive WindowFrame above the exact chat activity line; complete immutable plan, content-sized bounded wrapping, VirtualList/ScrollbarControl, wheel, drag-select with copy on release, and click-to-focus keyboard/copy. Leave/Esc/outside/owner removal/completion closes it, without changing the composer. |
 | Latest chat control | `tui/screens/shellchat/latest.go` | Centered native Button in the existing reserved activity gap; only when scrolled up, no added transcript height, exact-pane tail/follow ownership. |

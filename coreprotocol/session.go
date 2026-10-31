@@ -98,6 +98,9 @@ type Open struct {
 // final reply whose result value follows it in the same message.
 type Reply struct {
 	Progress string `json:"progress,omitempty"`
+	// Admitted fences exact request cancellation: Dispatch has synchronously
+	// enqueued the original request before this note is published.
+	Admitted bool   `json:"admitted,omitempty"`
 	Final    bool   `json:"final,omitempty"`
 	Revision uint64 `json:"revision,omitempty"`
 	Fault    *Fault `json:"fault,omitempty"`

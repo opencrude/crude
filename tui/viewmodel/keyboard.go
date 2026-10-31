@@ -361,10 +361,16 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "edit.replace":
 				m.openFindReplace(true)
 				return m, nil
+			case "lsp.signature":
+				return m, m.requestSignatureHelpCmd()
 			}
 		}
 	}
 	if msg.Code == tea.KeyEsc {
+		if m.signatureHelp != nil {
+			m.closeSignatureHelp()
+			return m, nil
+		}
 		if m.LSPPopup.RenameArmed {
 			m.LSPPopup.RenameArmed = false
 			m.Feedback.NotifyInfo("Rename cancelled")

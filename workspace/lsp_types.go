@@ -51,6 +51,7 @@ type LSPClient interface {
 	FindReferences(context.Context, string, int, int, bool) []LSPLocation
 	RequestDocumentSymbols(context.Context, string) []LSPSymbol
 	RequestHover(context.Context, string, int, int) (string, error)
+	RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error)
 	RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error)
 	RequestCompletions(context.Context, string, int, int) []CompletionItem
 	// AwaitDiagnostics returns the open document's diagnostics once the

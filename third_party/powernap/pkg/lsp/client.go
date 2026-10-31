@@ -683,9 +683,14 @@ func (c *Client) setupHandlers() {
 func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		fieldTextDocument: map[string]any{
-			"synchronization":    map[string]any{"willSave": true, "didSave": true},
-			"completion":         map[string]any{"completionItem": map[string]any{"snippetSupport": enableSnippets, "insertReplaceSupport": true, "documentationFormat": []string{"plaintext", markupKindMarkdown}}},
-			"hover":              map[string]any{"contentFormat": []string{"plaintext", markupKindMarkdown}},
+			"synchronization": map[string]any{"willSave": true, "didSave": true},
+			"completion":      map[string]any{"completionItem": map[string]any{"snippetSupport": enableSnippets, "insertReplaceSupport": true, "documentationFormat": []string{"plaintext", markupKindMarkdown}}},
+			"hover":           map[string]any{"contentFormat": []string{"plaintext", markupKindMarkdown}},
+			"signatureHelp": map[string]any{"signatureInformation": map[string]any{
+				"documentationFormat":    []string{"plaintext", markupKindMarkdown},
+				"parameterInformation":   map[string]any{"labelOffsetSupport": true},
+				"activeParameterSupport": true,
+			}},
 			"definition":         map[string]any{"linkSupport": true},
 			"documentSymbol":     map[string]any{"hierarchicalDocumentSymbolSupport": true},
 			"publishDiagnostics": map[string]any{"versionSupport": true},

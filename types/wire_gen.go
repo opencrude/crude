@@ -4545,6 +4545,258 @@ func (z *LSPSettings) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *LSPSignature) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, z.Label)
+	o = msgp.AppendString(o, z.Documentation)
+	if z.Parameters == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Parameters)))
+		for za0001 := range z.Parameters {
+			// array header, size 2
+			o = append(o, 0x92)
+			o = msgp.AppendString(o, z.Parameters[za0001].Label)
+			o = msgp.AppendString(o, z.Parameters[za0001].Documentation)
+		}
+	}
+	o = msgp.AppendInt(o, z.ActiveParameter)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPSignature) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	z.Label, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Label")
+		return
+	}
+	z.Documentation, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Documentation")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Parameters = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Parameters")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Parameters != nil && cap(z.Parameters) >= int(zb0002) {
+			z.Parameters = (z.Parameters)[:zb0002]
+		} else {
+			z.Parameters = make([]LSPSignatureParameter, zb0002)
+		}
+		for za0001 := range z.Parameters {
+			var zb0003 uint32
+			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Parameters", za0001)
+				return
+			}
+			if uint64(zb0003)*1 > uint64(len(bts)) {
+				err = msgp.ErrShortBytes
+				return
+			}
+			if zb0003 != 2 {
+				err = msgp.ArrayError{Wanted: 2, Got: zb0003}
+				return
+			}
+			z.Parameters[za0001].Label, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Parameters", za0001, "Label")
+				return
+			}
+			z.Parameters[za0001].Documentation, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Parameters", za0001, "Documentation")
+				return
+			}
+		}
+	}
+	z.ActiveParameter, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ActiveParameter")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPSignature) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Documentation) + msgp.ArrayHeaderSize
+	for za0001 := range z.Parameters {
+		s += 1 + msgp.StringPrefixSize + len(z.Parameters[za0001].Label) + msgp.StringPrefixSize + len(z.Parameters[za0001].Documentation)
+	}
+	s += msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPSignatureHelp) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o, err = z.Boundary.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Boundary")
+		return
+	}
+	if z.Signatures == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Signatures)))
+		for za0001 := range z.Signatures {
+			o, err = z.Signatures[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Signatures", za0001)
+				return
+			}
+		}
+	}
+	o = msgp.AppendInt(o, z.ActiveSignature)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPSignatureHelp) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	bts, err = z.Boundary.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Boundary")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Signatures = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Signatures")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Signatures != nil && cap(z.Signatures) >= int(zb0002) {
+			z.Signatures = (z.Signatures)[:zb0002]
+		} else {
+			z.Signatures = make([]LSPSignature, zb0002)
+		}
+		for za0001 := range z.Signatures {
+			bts, err = z.Signatures[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Signatures", za0001)
+				return
+			}
+		}
+	}
+	z.ActiveSignature, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ActiveSignature")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPSignatureHelp) Msgsize() (s int) {
+	s = 1 + z.Boundary.Msgsize() + msgp.ArrayHeaderSize
+	for za0001 := range z.Signatures {
+		s += z.Signatures[za0001].Msgsize()
+	}
+	s += msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z LSPSignatureParameter) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.Label)
+	o = msgp.AppendString(o, z.Documentation)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPSignatureParameter) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Label, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Label")
+		return
+	}
+	z.Documentation, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Documentation")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z LSPSignatureParameter) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Documentation)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z LSPStatus) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	o = msgp.AppendInt(o, int(z))
