@@ -1023,13 +1023,21 @@ Visual contracts for this window:
 
 Application and workspace settings share two pages. **Code Intelligence** holds
 the master enable, auto-detect, start-on-open, per-feature gates (diagnostics,
-completions, hover, definition, references, outline, rename), diagnostic display
+completions, hover, definition, references, outline, rename and opt-in inlay hints), diagnostic display
 (editor / tree / status + minimum severity) and resource limits. **Language
 Servers** is a searchable server table with a per-server editor: enable,
 command, shell-style arguments, file extensions/language ID (custom servers),
 project markers, environment table, and the JSON `settings`/`initializationOptions`
 objects. Per-language `Languages` entries are the only server authority. `workspace.LSPManager` reads the **effective**
 `LSPSettings` and refuses to start or request gated features.
+
+**Inlay hints** is the ordinary Boolean leaf `lsp.inlay_hints` and defaults
+**Off**. Explicit false overrides remain distinct from an absent inherited value;
+Reset inherits the latest parent value. This is a read-only inline-label display
+gate, not execution Trust or permission to apply provider edits/commands.
+Toggling it revokes old inlay evidence through a feature epoch without restarting
+the language server. Per-view Show/Hide never persists a settings choice or
+overrides the master/Trust gate. See [read-only inlay hints](editor.md#read-only-inlay-hints).
 
 ### Workspace analysis Trust
 

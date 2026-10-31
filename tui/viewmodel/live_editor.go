@@ -40,6 +40,13 @@ type liveEditorState struct {
 	pushedRevision                          uint64
 }
 
+// Only the exclusive post-program flush can supply this alternative source
+// observation. It is not a topic acknowledgement or persistent admission flag.
+type liveEditorObservedSource struct {
+	owner    document.Owner
+	revision uint64
+}
+
 // Core view registration is owner/document keyed, not counted. Serialize opens
 // and final releases and retain a shell-local count so stale opens cannot revoke
 // a newer same-document view.
@@ -132,6 +139,10 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 }
 
 func (m *App) drainLiveEditorCommands() tea.Cmd {
+	return m.captureLiveEditorCommands(nil)
+}
+
+func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorObservedSource) tea.Cmd {
 	// A stale asynchronous open can close its registration before mounting.
 	// Release retained initial publications when that exact token expires.
 	for id, msg := range m.pendingDocumentTopics {
@@ -208,7 +219,9 @@ func (m *App) drainLiveEditorCommands() tea.Cmd {
 				m.applyDocumentTopic(*pending)
 			}
 		}
-		if state.sync || !state.topicReady && state.undo == nil {
+		source := observed[ed]
+		shutdownReady := source.revision != 0 && source.revision == ed.DocumentState().Revision && source.owner == state.owner
+		if state.sync || !state.topicReady && !shutdownReady && state.undo == nil {
 			continue
 		}
 		if state.err != nil {
@@ -562,9 +575,11 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 // projections/attachment. The caller must have exclusive App ownership after
 // Bubble Tea exits. Already admitted commands are observed, not replayed.
 func (m *App) FlushLiveEditors() error {
-	if _, ok := m.ws.(shellport.LiveDocuments); !ok {
+	live, ok := m.ws.(shellport.LiveDocuments)
+	if !ok {
 		return nil
 	}
+	observed := make(map[*editor.Editor]liveEditorObservedSource)
 	deadline := time.Now().Add(35 * time.Second)
 	var execute func(tea.Cmd)
 	execute = func(cmd tea.Cmd) {
@@ -616,10 +631,18 @@ func (m *App) FlushLiveEditors() error {
 			// accepted commands; normal Update never takes this recovery path.
 			if (state.sync || !state.topicReady) && !state.busy {
 				ctx, cancel := context.WithDeadline(context.Background(), deadline)
-				result, err := m.ws.(shellport.LiveDocuments).SyncDocument(ctx, ed.DocumentState().DocumentID, ed.DocumentState().Revision)
+				owner := live.DocumentOwner()
+				result, err := live.SyncDocument(ctx, ed.DocumentState().DocumentID, ed.DocumentState().Revision)
 				cancel()
 				state.sync = false
 				m.applyLiveEditorResult(liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: state, kind: "sync", sync: result, err: err})
+				if err == nil && state.err == nil && state.owner == owner && live.DocumentOwner() == owner &&
+					ed.DocumentState().Revision == result.Snapshot.Revision {
+					// Topics are fenced after program exit. The exact canonical read,
+					// not an invented topic ACK, admits this revision to the same
+					// command capturer. An accepted edit invalidates it immediately.
+					observed[ed] = liveEditorObservedSource{owner: owner, revision: result.Snapshot.Revision}
+				}
 			}
 			if state.err != nil && state.uncertain == nil {
 				return state.err
@@ -633,7 +656,7 @@ func (m *App) FlushLiveEditors() error {
 		if !pending {
 			return nil
 		}
-		execute(m.drainLiveEditorCommands())
+		execute(m.captureLiveEditorCommands(observed))
 		for _, state := range m.liveEditors {
 			if state.uncertain != nil {
 				return errors.New("shared document outcome remains uncertain; draft retained")

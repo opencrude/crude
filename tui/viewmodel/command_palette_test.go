@@ -434,6 +434,7 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 		"view.toggle.sidebar", "lsp.problems", "status.overview", "performance.open", "terminal.new", "terminal.toggle",
 		"view.activity.git", "git.review", "git.history",
 		"settings.open", "settings.workspace", "lsp.restart", "app.quit",
+		"lsp.inlayShow", "lsp.inlayHide", "lsp.inlayRefresh",
 	} {
 		if e, ok := byID[id]; !ok || e.Label == "" {
 			t.Errorf("palette missing global command %q", id)
@@ -449,6 +450,21 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 	}
 	if len(entries) > 40 {
 		t.Fatalf("palette has %d commands; keep it to commands that work from anywhere", len(entries))
+	}
+}
+
+func TestInlayViewActionsAreActuallyDiscoverableInThePalette(t *testing.T) {
+	palette := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
+	for _, expected := range []struct{ label, id string }{
+		{"Show Inlay Hints", "lsp.inlayShow"},
+		{"Hide Inlay Hints", "lsp.inlayHide"},
+		{"Refresh Inlay Hints", "lsp.inlayRefresh"},
+	} {
+		palette.setFilter(expected.label)
+		palette.applyFilter()
+		if len(palette.filtered) != 1 || palette.filtered[0].ID != expected.id {
+			t.Fatalf("literal view action %q is not a selectable palette row: %+v", expected.label, palette.filtered)
+		}
 	}
 }
 

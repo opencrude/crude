@@ -299,6 +299,22 @@ are distinct. Target content is not fetched during listing. The shell verifies
 an observation against its actual opened snapshot before landing; no missing
 target version is inferred. See [qualified navigation](editor.md#qualified-location-navigation).
 
+### `InlayHints`
+
+This optional connected read capability has no shell-local source/provider
+fallback and uses the existing joined cancellable exchange off Update.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `RequestLSPInlayHints` | Acknowledged source, private view ID/sequence and visible anchor range | `lsp.inlay_hints` |
+| `InspectLSPInlayHint` | Original set ID/digest/index and explicit tooltip-only resolve | `lsp.inlay_inspect` |
+| `ReleaseLSPInlayHints` | Retire the exact private view sequence without affecting a newer one | `lsp.inlay_release` |
+
+`LSPService.InlayHintsState` reads the detached gate/feature epoch without cloning
+all language settings. Source/provider/context evidence stays core-owned; hint
+labels remain a private display projection and never confer edit, command or
+navigation authority. See [inlay hints](editor.md#read-only-inlay-hints).
+
 ### `ReviewedEdits`
 
 This optional connected-document capability never falls back to shell-local file

@@ -792,6 +792,7 @@ func (m *App) StopAsyncIO() {
 func (m *App) stopAsyncIO() {
 	m.closeEditorSnippet()
 	m.closeCodeActions()
+	m.resetInlayHints()
 	m.StopRemotes()
 	m.fenceLiveDocumentTopics()
 	m.stopEditorSyntax()

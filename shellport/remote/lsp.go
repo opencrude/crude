@@ -120,6 +120,9 @@ func (l *lspReplica) DiagnosticCursor() (string, uint64) {
 func (l *lspReplica) ContextCursor() (string, uint64) {
 	return l.snapshot.Generation, l.snapshot.ContextGeneration
 }
+func (l *lspReplica) InlayHintsState() (bool, uint64) {
+	return l.snapshot.ShowInlays, l.snapshot.InlayGeneration
+}
 func (l *lspReplica) FileDiagnostics(path string) (types.InsightDiagnostics, bool) {
 	batch, ok := l.snapshot.Diagnostics[filepath.Clean(path)]
 	return types.CloneInsightDiagnostics(batch), ok

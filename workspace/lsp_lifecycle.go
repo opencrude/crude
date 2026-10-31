@@ -142,6 +142,9 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 		return
 	}
 	viewOnly := sameLSPProducerSettings(m.settings, settings)
+	if m.settings.InlayHints != settings.InlayHints {
+		m.inlayGeneration++
+	}
 	m.settings = settings
 	if m.analysisGovernor != nil {
 		m.analysisGovernorError = ""
@@ -182,6 +185,7 @@ func sameLSPProducerSettings(a, b ttypes.LSPSettings) bool {
 	a.References, a.Outline, a.Rename = b.References, b.Outline, b.Rename
 	a.DiagInEditor, a.DiagInTree, a.DiagInStatus = b.DiagInEditor, b.DiagInTree, b.DiagInStatus
 	a.MinSeverity, a.AutoComplete = b.MinSeverity, b.AutoComplete
+	a.InlayHints = b.InlayHints
 	return reflect.DeepEqual(a, b)
 }
 

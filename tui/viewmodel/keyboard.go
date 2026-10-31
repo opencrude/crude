@@ -227,7 +227,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return m, m.handleFindReplaceKey(msg)
 				case findInFilesWindowID, replaceInFilesWindowID:
 					return m, m.forwardEventToWindowContent(topWin, msg)
-				case string(ui.OverlayNavigation):
+				case string(ui.OverlayNavigation), string(ui.OverlayInlayHints):
 					// Its shared native body owns Back from detail, then Close.
 					return m, m.forwardEventToWindowContent(topWin, msg)
 				}
@@ -374,6 +374,8 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.requestSignatureHelpCmd()
 			case "lsp.codeActions":
 				return m, m.requestCodeActionsCmd()
+			case "lsp.inlayInspect":
+				return m, m.openInlayInspectorCmd()
 			}
 		}
 	}
@@ -515,7 +517,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleDirtyPromptKey(msg)
 		case string(ui.OverlayOperationIssue):
 			return m, m.forwardEventToWindowContent(fw, msg)
-		case string(ui.OverlayNavigation):
+		case string(ui.OverlayNavigation), string(ui.OverlayInlayHints):
 			// The native body owns Escape's detail Back and list Close ladder.
 			return m, m.forwardEventToWindowContent(fw, msg)
 		case string(ui.OverlaySettingsPrompt):

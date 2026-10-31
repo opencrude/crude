@@ -94,6 +94,22 @@ compilation evidence only. These deterministic native regressions do not close
 the adaptive human-workflow driver or developer/device rows. Hierarchy, history,
 complete project context and overall workflow acceptance remain open.
 
+The [read-only inlay-hint slice](../reference/editor.md#read-only-inlay-hints)
+is implemented with generic raw protocol negotiation, literal parsing, canonical
+owner/view/sequence retention, tooltip-only resolution, default-Off settings
+and one editor source-to-cell geometry. Focused source, native-control body,
+rendered editor, context-publication and lifecycle checks pass, including race
+coverage. Two framed shell attachments exercise private Show/Hide and original
+tooltip reads; installed gopls v0.21.1 supplies independent literal labels and
+anchors through actual keys and pointer input. Sequential 160x40/80x24 Linux
+native captures verify inline/list/detail/hidden views, unchanged source and
+private drafts, safe-default Close, Back and joined provider teardown.
+That gopls does not advertise tooltip resolve; the explicit resolve/cancellation
+path is covered separately by a connected provider fixture, not claimed as a
+real-gopls resolve. These deterministic regressions do not establish semantic
+freshness, complete project context, native containment, autonomous assembly,
+an adaptive human-workflow driver or developer/device workflow acceptance.
+
 ## Problem
 
 Crude has shared documents, asynchronous LSP lifecycle ownership, editor

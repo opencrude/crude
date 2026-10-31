@@ -71,6 +71,7 @@ type DocumentService struct {
 	subscribers map[string]map[chan struct{}]bool
 	reviewed    map[string]*reviewedEdit
 	codeActions map[string]*codeActionSet
+	inlayViews  map[inlayViewKey]*inlayView
 }
 
 func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager, state ...*sql.DB) *DocumentService {
@@ -594,6 +595,7 @@ func (s *DocumentService) ReleaseDetached(owner document.Owner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closeCodeActionsLocked(owner, "")
+	s.closeInlayViewsLocked(owner, "")
 	for id, review := range s.reviewed {
 		if review.owner == owner {
 			delete(s.reviewed, id)
@@ -618,6 +620,10 @@ func (s *DocumentService) Close() {
 		set.retired.Store(true)
 	}
 	s.codeActions = nil
+	for _, view := range s.inlayViews {
+		view.cancel()
+	}
+	s.inlayViews = nil
 	for id, d := range s.docs {
 		if s.saves != nil {
 			s.saves.Cancel(id)
@@ -639,6 +645,7 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 		return err
 	}
 	s.closeCodeActionsLocked(owner, id)
+	s.closeInlayViewsLocked(owner, id)
 	delete(d.owners, owner)
 	s.closeLanguageView(d)
 	return nil

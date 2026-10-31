@@ -762,6 +762,7 @@ type LSPSettings struct {
 	References   bool `json:"find_references"`
 	Outline      bool `json:"document_outline"`
 	Rename       bool `json:"rename"`
+	InlayHints   bool `json:"inlay_hints"`
 	DiagInEditor bool `json:"diag_in_editor"`
 	DiagInTree   bool `json:"diag_in_tree"`
 	DiagInStatus bool `json:"diag_in_status"`

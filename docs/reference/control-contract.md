@@ -122,6 +122,15 @@ landing, not just an action message or metadata read. Stale source/focus/target
 snapshots fail without installing a tab. No node from a retired chooser acquires
 a replacement invocation, target freshness guarantee or mutation authority.
 
+Inlay inspector controls bind the exact private view request, selected original
+row, source/provider/context and mounted body. Inspect and advertised tooltip
+Resolve are Read; Back and Close are local Write. A Read activation awaits the
+exact selected-row result and accepted detail mount, not an intermediate intent.
+Back advances the reader sequence and cancels the old RPC before it can publish;
+no node from a retired body acquires a later inspector. View-local Show/Hide and
+Refresh do not change settings or Trust, and no hint control executes an edit,
+command or label location.
+
 Local History's review-safety list/detail navigation is owner-bound. List and
 detail reads await their typed results; a known result with unconfirmed exchange
 cleanup is partial, not a completed clean observation. Original disposition

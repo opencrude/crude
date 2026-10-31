@@ -55,4 +55,6 @@ type LSPSnapshot struct {
 	Error             string                              `json:"error,omitempty"`
 	ShowInEditor      bool                                `json:"show_in_editor"`
 	ShowInTree        bool                                `json:"show_in_tree"`
+	ShowInlays        bool                                `json:"show_inlays"`
+	InlayGeneration   uint64                              `json:"inlay_generation"`
 }

@@ -559,6 +559,13 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return m.requestNavigationCmd(types.LSPNavigationImplementation)
 	case "lsp.references":
 		return m.requestNavigationCmd(types.LSPNavigationReferences)
+	case "lsp.inlayInspect":
+		return m.openInlayInspectorCmd()
+	case "lsp.inlayShow", "lsp.inlayRefresh":
+		m.setInlayViewHidden(false)
+		return m.syncInlayHints()
+	case "lsp.inlayHide":
+		m.setInlayViewHidden(true)
 
 	case "agent.newSession":
 		return m.launcherNewSession()

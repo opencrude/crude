@@ -107,6 +107,12 @@ func (c *immediateTreeDiagClient) RequestCodeActions(context.Context, string, in
 func (c *immediateTreeDiagClient) ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error) {
 	return model.LSPCodeActionResponse{}, context.Canceled
 }
+func (c *immediateTreeDiagClient) RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error) {
+	return model.LSPInlayResponse{}, context.Canceled
+}
+func (c *immediateTreeDiagClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
+	return model.LSPInlayResponse{}, context.Canceled
+}
 func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
 	return nil
 }

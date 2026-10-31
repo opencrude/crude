@@ -14,7 +14,7 @@ import (
 	"crude/types"
 )
 
-func (s *DocumentService) navigationSourceLocked(owner document.Owner, source types.InsightSource) ([]byte, error) {
+func (s *DocumentService) readOnlyLSPSourceLocked(owner document.Owner, source types.InsightSource) ([]byte, error) {
 	if s.closed || s.idleFenced {
 		return nil, context.Canceled
 	}
@@ -29,10 +29,10 @@ func (s *DocumentService) navigationSourceLocked(owner document.Owner, source ty
 		return nil, document.ErrRevision
 	}
 	if d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil {
-		return nil, errors.New("resolve shared source conflicts before requesting navigation")
+		return nil, errors.New("resolve shared source conflicts before requesting semantic information")
 	}
 	if len(d.snapshot.Text) > navigationSourceBytes {
-		return nil, errors.New("navigation source exceeds its 2 MiB consumer bound")
+		return nil, errors.New("semantic source exceeds its 2 MiB consumer bound")
 	}
 	// Unsaved acknowledged text is valid navigation source. This read-only flow
 	// neither demands a save nor borrows reviewed mutation's Apply authority.
@@ -48,7 +48,7 @@ func (w *Workspace) RequestLSPNavigation(ctx context.Context, owner document.Own
 	}
 	s := w.LiveDocuments
 	s.mu.Lock()
-	text, err := s.navigationSourceLocked(owner, source)
+	text, err := s.readOnlyLSPSourceLocked(owner, source)
 	if err == nil {
 		err = validateNavigationPosition(string(text), line, col)
 	}
@@ -65,7 +65,7 @@ func (w *Workspace) RequestLSPNavigation(ctx context.Context, owner document.Own
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.navigationSourceLocked(owner, source); err != nil {
+	if _, err := s.readOnlyLSPSourceLocked(owner, source); err != nil {
 		return types.LSPNavigation{}, err
 	}
 	if _, err := w.LSPMgr.navigationFence(result.Boundary, result.WireVersion, kind); err != nil {
@@ -97,7 +97,7 @@ func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner docume
 	}
 	s := w.LiveDocuments
 	s.mu.Lock()
-	sourceText, err := s.navigationSourceLocked(owner, boundary.Source)
+	sourceText, err := s.readOnlyLSPSourceLocked(owner, boundary.Source)
 	if err == nil && target.Origin != nil {
 		err = validateNavigationRange(string(sourceText), *target.Origin)
 	}
@@ -133,7 +133,7 @@ func (w *Workspace) InspectLSPNavigationTarget(ctx context.Context, owner docume
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.navigationSourceLocked(owner, boundary.Source); err != nil {
+	if _, err := s.readOnlyLSPSourceLocked(owner, boundary.Source); err != nil {
 		return types.LSPNavigationLanding{}, err
 	}
 	if err := selected.validateLocked(); err != nil {

@@ -338,6 +338,9 @@ type App struct {
 	signatureHelp         *signatureHelpState
 	codeActions           *codeActionState
 	navigation            *navigationState
+	inlayViews            map[*editor.Editor]*inlayViewState
+	inlayViewSequence     uint64
+	inlayInspector        *inlayInspectorState
 	editorSnippet         *editorSnippetState
 	lspDiagnostics        shellport.LSPDiagnosticConsumer
 	lspFacts              map[string]roottypes.InsightDiagnostics
@@ -1077,7 +1080,7 @@ func (m *App) registerOverlayHandlers() {
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
 		switch id {
-		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth:
+		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayInlayHints, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth:
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {

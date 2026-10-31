@@ -10,7 +10,7 @@ func (e *Editor) moveUp() {
 		return
 	}
 	if !e.goalSet {
-		e.goalCol = e.cursor.Col
+		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
 		e.goalSet = true
 	}
 	e.cursor.Line--
@@ -27,7 +27,7 @@ func (e *Editor) moveDown() {
 		return
 	}
 	if !e.goalSet {
-		e.goalCol = e.cursor.Col
+		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
 		e.goalSet = true
 	}
 	e.cursor.Line++
@@ -36,7 +36,7 @@ func (e *Editor) moveDown() {
 }
 
 func (e *Editor) applyGoalCol() {
-	e.cursor = e.buf.snapPosition(Position{Line: e.cursor.Line, Col: e.goalCol})
+	e.cursor = e.buf.snapPosition(Position{Line: e.cursor.Line, Col: e.sourceColumn(e.cursor.Line, e.goalCol)})
 }
 
 func (e *Editor) clearGoal() {
@@ -223,7 +223,7 @@ func (e *Editor) moveToLineEnd() {
 
 func (e *Editor) pageUp() {
 	if !e.goalSet {
-		e.goalCol = e.cursor.Col
+		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
 		e.goalSet = true
 	}
 	pageSize := e.viewH - 2
@@ -240,7 +240,7 @@ func (e *Editor) pageUp() {
 
 func (e *Editor) pageDown() {
 	if !e.goalSet {
-		e.goalCol = e.cursor.Col
+		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
 		e.goalSet = true
 	}
 	pageSize := e.viewH - 2

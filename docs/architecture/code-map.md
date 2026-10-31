@@ -65,9 +65,11 @@ detailed contracts.
 | `lspedit/` | Passive bounded original-JSON text-edit normalization and strict bidirectional UTF-8-byte/UTF-16 source positions; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
 | `lspaction/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority ([manual code actions](../reference/editor.md#manual-code-actions)). |
 | `lspnav/` | Passive bounded original-JSON Location/LocationLink normalization with distinct null/empty answers; preserves ranges/order/URI data without file-read or target-freshness authority ([qualified navigation](../reference/editor.md#qualified-location-navigation)). |
+| `lspinlay/` | Passive bounded original-JSON inlay parsing and tooltip-only resolve comparison; original opaque data and inert adjuncts carry no source, navigation, mutation or execution authority ([inlay hints](../reference/editor.md#read-only-inlay-hints)). |
 | `workspace/reviewed_edit.go`, `workspace/lsp_reviewed_edit.go` | Immutable canonical language-edit review, source/provider/context/native preconditions, non-agent safety reference and durable original mutation outcome; FileOps remains the only disk writer. |
 | `workspace/lsp_code_action.go`, `workspace/lsp_code_action_request.go` | Bounded original action-set ownership, source-byte selection, synchronized provider/context fencing and edit-only review composition; no action execution or second mutation writer. |
 | `workspace/lsp_navigation*.go`, `lspclient/lsp_navigation.go`, `core/lsp_navigation.go` | One qualified navigation request/negative-answer family, raw synchronized-provider bridge, strict URI/range policy and explicit selected-source observation; shell-port commands never confer target-version, execution or edit authority. |
+| `workspace/lsp_inlay*.go`, `lspclient/lsp_inlay.go`, `core/lsp_inlay.go` | Canonical visible-range read evidence, exact owner/view/sequence retention and original tooltip-only observation; separate feature epoch, cancellation and bounded expiry. No hint edit, command or label-location execution. |
 | `workspace/reviewed_edit_safety.go`, `core/history_safety.go` | Original-journal and selected-preimage evidence verification for native human retention decisions; core receipts and Store-owned atomic append-only audit/pin transitions, not a second file writer. |
 | `snippet/` | Bounded passive numeric completion parser/validator; neutral expanded-primary byte plans, no editor state, environment or execution authority ([numeric snippets](../reference/editor.md#numeric-completion-snippets)). |
 | `terminalvt/` | libghostty-vt parsing and protocol encoding for in-app terminals. |
@@ -82,6 +84,7 @@ detailed contracts.
 | `tui/ui/` | The native component system: Host, Form, List, Tabs, TextArea/TextField, ScrollbarControl, WindowFrame. |
 | `tui/screens/` | One package per retained screen (`shellchat`, `shelleditor`, `shelltree`, `shellheader`, `shellfooter`, pickers, decks). |
 | `tui/screens/codeactions/` | Read-only manual action list/detail, complete literal/provenance reading, native safe-default buttons and explicit preview intents; no RPC or mutation authority. |
+| `tui/screens/inlay/` | Native read-only hint list/detail with escaped bounded original-JSON previews and explicit tooltip Resolve/Back/Close intents; no provider, file or editor I/O. |
 | `tui/chatprojection/` | Generation-keyed chat row snapshots, activity strip, tool rows. |
 | `tui/editor/` | Editor engine: PieceTable buffer, cursor, selection, undo, rendering, search. |
 | `tui/input/` | Chat composer: attachments, large pastes, history recall. |
@@ -115,6 +118,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `update.go` | `tea.Model.Update` and message dispatch |
 | `reviewed_edit_dialog.go`, `lsp_code_actions.go` | One shared immutable rename/action review and receipt owner, composed with an invocation-bound native manual action chooser |
 | `lsp_navigation.go` | One qualified location invocation/chooser and strict selected-target async landing, shared by the editor's definition/type/implementation/reference actions |
+| `lsp_inlay*.go` | Debounced per-visible-editor inlay owner, local show/hide/refresh and native original-row/tooltip inspector; source coordinates remain authoritative |
 | `view.go` | `tea.Model.View` and the frame pipeline |
 | `shell_root.go`, `layout.go` | Root shell composite and geometry |
 | `keyboard.go`, `mouse.go`, `popupmouse.go` | Key and pointer dispatch |

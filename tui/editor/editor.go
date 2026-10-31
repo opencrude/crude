@@ -155,6 +155,7 @@ type Editor struct {
 	lineRunesCache      []rune
 	lineRunesCacheWidth int
 	lineGeomCache       map[int]*lineGeomCache
+	inlays              *editorInlayProjection
 
 	watcher      *fsnotify.Watcher
 	watchDir     string
@@ -387,6 +388,7 @@ func (e *Editor) ApplyFormatted(text string) {
 }
 
 func (e *Editor) Close() {
+	e.ClearInlayHints()
 	e.StopSyntax()
 	e.detachDocument()
 	e.stopWatching()
@@ -475,6 +477,7 @@ func (e *Editor) invalidateEditorCaches() {
 // InvalidateWidthProfile clears all geometry derived from terminal cell widths.
 // Buffer contents, cursor position, undo state, and syntax data are preserved.
 func (e *Editor) InvalidateWidthProfile() {
+	e.ClearInlayHints()
 	e.lineRunesCacheValid = false
 	e.lineRunesCacheLine = -1
 	e.lineRunesCache = nil
@@ -973,6 +976,10 @@ func (e *Editor) HoverState() HoverState {
 
 // refreshMouseHover updates hover diagnostics for a screen-positioned mouse.
 func (e *Editor) refreshMouseHover(screenX, screenY int) {
+	if _, hint := e.InlayHintAt(screenX, screenY); hint {
+		e.ClearHover()
+		return
+	}
 	pos, ok := e.mouseToPosition(screenX, screenY)
 	if !ok {
 		e.ClearHover()
@@ -1026,7 +1033,7 @@ func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
 	if lineOff >= bodyH {
 		lineOff = bodyH - 1
 	}
-	colOff := e.cursor.Col - e.scrollX
+	colOff := e.displayColumn(e.cursor.Line, e.cursor.Col) - e.scrollX
 	if colOff < 0 {
 		colOff = 0
 	}
@@ -1093,8 +1100,9 @@ func (e *Editor) revealJump() {
 	}
 	e.scrollY = min(e.scrollY, max(0, e.LineCount()-h))
 	w := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
-	if e.cursor.Col < e.scrollX || e.cursor.Col >= e.scrollX+w {
-		e.scrollX = max(0, e.cursor.Col-w/3)
+	col := e.displayColumn(e.cursor.Line, e.cursor.Col)
+	if col < e.scrollX || col >= e.scrollX+w {
+		e.scrollX = max(0, col-w/3)
 	}
 	e.syncScrollChrome(h)
 }

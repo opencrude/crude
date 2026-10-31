@@ -23,6 +23,7 @@ type LSPService interface {
 	DiagnosticSnapshot() LSPDiagnosticSnapshot
 	DiagnosticCursor() (generation string, version uint64)
 	ContextCursor() (generation string, context uint64)
+	InlayHintsState() (enabled bool, generation uint64)
 	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.

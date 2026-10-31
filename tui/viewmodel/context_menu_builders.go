@@ -149,7 +149,20 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Document outline", Detail: "Alt+O", Disabled: !hasLSP, Action: func() {
 				_, _ = m.requestDocumentSymbolsCmd(), 0
 			}},
+			{Label: "Inspect inlay hints", Detail: "Alt+J", Disabled: !hasLSP, Action: func() {
+				m.runDetachedAsyncCmd(m.openInlayInspectorCmd())
+			}},
 		},
+	}
+	if view := m.inlayViews[ed]; view != nil && view.hidden {
+		viewSection.Items = append(viewSection.Items, ui.ContextMenuItem{Label: "Show inlay hints", Action: func() {
+			m.setInlayViewHidden(false)
+			m.runDetachedAsyncCmd(m.syncInlayHints())
+		}})
+	} else {
+		viewSection.Items = append(viewSection.Items, ui.ContextMenuItem{Label: "Hide inlay hints", Action: func() {
+			m.setInlayViewHidden(true)
+		}})
 	}
 	st.Sections = append(st.Sections, viewSection)
 

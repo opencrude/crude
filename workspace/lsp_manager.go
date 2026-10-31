@@ -48,6 +48,7 @@ type LSPManager struct {
 	workerDone                  chan struct{}
 	closedDocuments             []lspClosedDocument
 	settingsGeneration          uint64
+	inlayGeneration             uint64
 	docSymbols                  map[string][]LSPSymbol
 	symbolCount                 int
 	symbolsCached               bool

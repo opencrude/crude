@@ -37,6 +37,7 @@ type overlayOutsideFixture struct {
 var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayContextMenu, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayNavigation, policy: ui.PopoverPolicy(true), wantClose: true},
+	{id: ui.OverlayInlayHints, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayCompletion, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayOutline, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlaySignatureHelp, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -219,8 +220,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 27 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 27", got)
+	if got := len(overlayOutsideContractMatrix); got != 28 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 28", got)
 	}
 }
 
@@ -230,6 +231,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 	expected := map[ui.OverlayID]ui.OutsidePolicy{
 		ui.OverlayContextMenu:       ui.OutsideCloseAndRoute,
 		ui.OverlayNavigation:        ui.OutsideCloseAndRoute,
+		ui.OverlayInlayHints:        ui.OutsideCloseAndRoute,
 		ui.OverlayCompletion:        ui.OutsideCloseAndRoute,
 		ui.OverlayOutline:           ui.OutsideCloseAndRoute,
 		ui.OverlaySignatureHelp:     ui.OutsideCloseAndRoute,
@@ -256,8 +258,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayCapabilityPicker:  ui.OutsideIgnoreAndConsume,
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 27 {
-		t.Fatalf("expected opener registry len=%d want 27", len(expected))
+	if len(expected) != 28 {
+		t.Fatalf("expected opener registry len=%d want 28", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

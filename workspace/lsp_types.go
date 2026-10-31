@@ -51,6 +51,8 @@ type LSPClient interface {
 	RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error)
 	RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error)
 	ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error)
+	RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error)
+	ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error)
 	RequestCompletions(context.Context, string, int, int) []CompletionItem
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.

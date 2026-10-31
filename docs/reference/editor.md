@@ -25,6 +25,13 @@ scroll and pending optimistic text remain private. Ordinary typing, save and
 idle ticks do not invoke `SyncDocument`; explicit recovery and final shutdown
 reconciliation retain that API.
 
+After the program exits, shutdown fences document topics and reconciles pending
+text against the exact canonical revision before using the same command capturer.
+This source-readiness evidence is local to that exclusive flush and expires when
+the revision changes. It does not fabricate a topic-applied ACK, unlock ordinary
+Update admission, save the file implicitly or replay an uncertain command. A
+refused read leaves pending private text available for the recovery barrier.
+
 A warm retained-session resume continues the applied topic cursor. A cold reset
 cannot prove that an unresolved private edit was applied: it enters conflict and
 observes the original receipt instead of silently replacing or replaying text.
@@ -409,6 +416,64 @@ Agent listings preserve the same distinctions and unversioned warning, expose
 at most 50 rows with an explicit omitted count, and never read destination files.
 This manual navigation slice does not implement navigation history, hierarchy,
 dynamic capability registration or complete semantic/project coverage.
+
+### Read-only inlay hints
+
+Code Intelligence's **Inlay hints** feature defaults **Off**. When explicitly
+enabled under the existing master and workspace Trust gates, visible connected
+editors request debounced, acknowledged-source line ranges with a small row
+margin. **Show Inlay Hints**, **Hide Inlay Hints** and **Refresh Inlay Hints**
+are palette actions; the editor View menu also exposes Show/Hide and inspection.
+Show does not change settings or Trust. Hide retires only that private editor
+view's request and labels, not another pane, shell or shared language server.
+Source edits remain immediate; only read requests are debounced.
+
+**Alt+J** opens the native read-only list. Enter inspects the selected original
+row, never edits source, opens a label location or executes an adjunct command.
+The copyable detail shows the complete accepted source/provider/context identity,
+requested range, local wire source, expiry, labels/parts and tooltips, together
+with inert edit/command/location metadata. Original and resolved JSON are escaped
+literal previews with explicit byte-count truncation, not reconstructed JSON.
+Detail defaults to **Close**. **Resolve tooltips** is explicit and available only
+when advertised; only top-level and label-part tooltip enrichment is accepted.
+**Back** or Escape from detail cancels the selected reader before returning to
+the original list; Escape from the list closes it. An old reader cannot reopen
+detail after Back or replace a newer selected row.
+
+The core retains one original set per exact owner/view/monotonic sequence.
+All answers, including null, empty array and statically unsupported, use the
+same canonical source, synchronization, provider, settings and context fences.
+Disable/re-enable has a separate feature epoch; it revokes old evidence without
+restarting the producer or restamping diagnostics. Source changes, equal-text
+Undo, close/reopen, detach, provider/context replacement, expiry, hide and workspace
+boundaries retire the appropriate evidence. The shell waits for the exact
+replicated context cursor before painting or reporting a negative result.
+Standard inlay responses carry **no document version**; the wire value records
+the synchronized request source, not provider-reported semantic freshness.
+
+One shared per-line insertion projection maps source bytes to cells for paint,
+caret, pointer hits, vertical desired columns and horizontal extent. Labels and
+padding never become source, selection, copy, search, diagnostic spans, edits,
+Undo/Redo or savepoint content. A label press is a zero-length source anchor,
+including a backward drag; source presses retain their full source-unit rule.
+Tabs remain source-column-based and graphemes clip as whole cells. Terminal
+controls in labels are displayed as escapes. Surrogate halves, mismatched
+byte/UTF-16 positions and unrenderable inside-grapheme placements fail closed
+without clamping a label onto a different source anchor. Warm paint reuses the
+projection; focus, presentation and idle ticks are not invalidations.
+
+`lspinlay` passively consumes original JSON with a 1 MiB raw-response bound,
+1,024 hints, 32 label parts, 4 KiB per label, 64 KiB combined labels and 64
+container levels. Source is bounded to 2 MiB. Hint anchors include the requested
+end, permitting zero-length and final empty-line EOF requests. The coordinator
+permits 16 active views, separately bounded 128 sequence/tombstone records and
+16 MiB of retained original-object bytes, with a five-minute lifetime. The
+editor additionally bounds combined projection runs to 131,072; the inspector
+caps complete display at 256 KiB with honest raw-preview limits. These are
+consumer/accounting bounds, not initial RPC-frame, native heap/RSS or complete
+project-context guarantees. Dynamic registration, global refresh notifications,
+hint command/edit/location execution and broader IDE workflow acceptance are
+outside this slice.
 
 ### Parameter information
 
