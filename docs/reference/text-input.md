@@ -93,6 +93,12 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   SSH they also emit an OSC 52 terminal clipboard write
   (`rendering.CopyToClipboardCmd`, the async write lane). A failed read names
   the terminal's own paste shortcut (`ui.ClipboardReadUnavailable`).
+- **Text areas splice pastes in one linear pass.** `TextArea` insertions never
+  loop rune by rune, and wrap segment offsets come from one
+  `rendering.FindSegmentStarts` walk per line, not one per visual row. Only the
+  composer promotes large pastes off the UI; every other text field inserts
+  the payload in place, so a multi-megabyte instructions paste must still
+  return promptly.
 - **Ctrl+C is copy, NOT back.** Never reuse Ctrl+C for navigation.
   Esc is the universal back.
 - **One owner for text selection and copy**: `ui.TextClipboardTarget` +

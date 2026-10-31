@@ -592,6 +592,17 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	flatOffset := 0
 	for li, logLine := range lines {
 		segs := rendering.WordWrap(string(logLine), textW)
+		var starts []int
+		if visRow+len(segs) > t.scroll {
+			// Row offsets are only needed once part of this line is on screen.
+			starts = rendering.FindSegmentStarts(logLine, textW)
+		}
+		cursorSeg := -1
+		if li == t.edit.CurLine() && starts != nil {
+			// Resolve the cursor's segment once per line from the offsets above.
+			// Re-deriving it per painted row re-wrapped the line for every row.
+			cursorSeg = segmentIdxFromStarts(starts, segs, t.edit.CurCol())
+		}
 		for si, seg := range segs {
 			isFirst := li == 0 && si == 0
 			if visRow < t.scroll {
@@ -606,11 +617,13 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 			t.paintPromptPrefix(buf, ox, screenY, fg, bg, isFirst)
 
 			segRunes := []rune(seg)
-			segStart := rendering.FindSegmentStart(logLine, textW, si)
+			segStart := 0
+			if si < len(starts) {
+				segStart = starts[si]
+			}
 			lineTokenStart := segStart
 			lineTokenEnd := segStart + len(segRunes)
-			isCursorSeg := li == t.edit.CurLine() &&
-				si == segmentIdxFor(t.edit.CurLine(), t.edit.CurCol(), lines, textW)
+			isCursorSeg := li == t.edit.CurLine() && si == cursorSeg
 
 			t.paintSegment(buf, textX, screenY, textW, logLine, flatOffset,
 				lineTokenStart, lineTokenEnd, isCursorSeg,
@@ -1064,9 +1077,23 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 	return nil
 }
 
-func segmentIdxFor(curLine, curCol int, buf [][]rune, textW int) int {
-	segment, _ := cursorSegmentInfo(curLine, curCol, buf, textW)
-	return segment
+// segmentIdxFromStarts maps a logical rune column to its visual segment using
+// offsets already computed for the line, so paint never re-wraps the line per
+// row.
+func segmentIdxFromStarts(starts []int, segs []string, col int) int {
+	for si := range segs {
+		start := 0
+		if si < len(starts) {
+			start = starts[si]
+		}
+		if col < start {
+			return si
+		}
+		if col <= start+len([]rune(segs[si])) || si == len(segs)-1 {
+			return si
+		}
+	}
+	return 0
 }
 
 // cursorSegmentInfo maps a logical rune cursor to the visible segment and cell
@@ -1082,8 +1109,12 @@ func cursorSegmentInfo(curLine, curCol int, buf [][]rune, textW int) (segment, v
 	runes := buf[curLine]
 	curCol = min(max(0, curCol), len(runes))
 	segs := rendering.WordWrap(string(runes), textW)
+	starts := rendering.FindSegmentStarts(runes, textW)
 	for si := range segs {
-		segStart := rendering.FindSegmentStart(runes, textW, si)
+		segStart := 0
+		if si < len(starts) {
+			segStart = starts[si]
+		}
 		if curCol < segStart {
 			return si, 0
 		}
@@ -1464,33 +1495,75 @@ func (e *textAreaEngine) SetValue(s string) {
 }
 
 func (e *textAreaEngine) InsertString(s string) {
+	if strings.ContainsRune(s, '\r') {
+		s = strings.ReplaceAll(s, "\r", "")
+	}
 	before := e.snapshot()
+	changed := false
 	if e.HasActiveSelection() {
 		start, end := e.SelectionRange()
 		e.deleteRange(start, end)
 		e.setCursorFlat(start)
 		e.ClearSelection()
+		changed = true
 	}
-	for _, r := range s {
-		if r == '\r' {
-			continue
-		}
-		pos := e.lineColToFlat(e.curLine, e.curCol)
-		if r == '\n' {
-			e.splitLineAt(e.curLine, e.curCol)
-			e.curLine++
-			e.curCol = 0
-			continue
-		}
-		e.insertRuneAt(pos, r)
-		e.curCol++
+	if s != "" {
+		e.insertText(s)
+		changed = true
 	}
 	e.lastInputTime = time.Now()
 	e.frame++
-	if e.Value() != before.value {
+	if changed {
 		e.undo = append(e.undo, before)
 		e.redo = nil
 	}
+}
+
+// insertText splices text into the buffer at the cursor in one pass. Editing
+// rune by rune made a paste quadratic in both line count and line length
+// (lineColToFlat rescanned every preceding line, insertRuneAt reallocated the
+// whole target line), so a multi-megabyte system prompt froze Update for
+// minutes while the composer, which promotes large pastes off the UI, stayed
+// responsive.
+func (e *textAreaEngine) insertText(text string) {
+	if len(e.buf) == 0 {
+		e.buf = [][]rune{{}}
+	}
+	lineIdx := min(max(e.curLine, 0), len(e.buf)-1)
+	line := e.buf[lineIdx]
+	col := min(max(e.curCol, 0), len(line))
+	parts := strings.Split(text, "\n")
+	if len(parts) == 1 {
+		inserted := []rune(parts[0])
+		merged := make([]rune, 0, len(line)+len(inserted))
+		merged = append(merged, line[:col]...)
+		merged = append(merged, inserted...)
+		merged = append(merged, line[col:]...)
+		e.buf[lineIdx] = merged
+		e.curCol = col + len(inserted)
+		e.touchContent()
+		return
+	}
+	firstPart := []rune(parts[0])
+	lastPart := []rune(parts[len(parts)-1])
+	buf := make([][]rune, 0, len(e.buf)+len(parts)-1)
+	buf = append(buf, e.buf[:lineIdx]...)
+	first := make([]rune, 0, col+len(firstPart))
+	first = append(first, line[:col]...)
+	first = append(first, firstPart...)
+	buf = append(buf, first)
+	for _, part := range parts[1 : len(parts)-1] {
+		buf = append(buf, []rune(part))
+	}
+	tail := make([]rune, 0, len(lastPart)+len(line)-col)
+	tail = append(tail, lastPart...)
+	tail = append(tail, line[col:]...)
+	buf = append(buf, tail)
+	buf = append(buf, e.buf[lineIdx+1:]...)
+	e.buf = buf
+	e.curLine = lineIdx + len(parts) - 1
+	e.curCol = len(lastPart)
+	e.touchContent()
 }
 
 func (e *textAreaEngine) Clear() {
@@ -2006,10 +2079,17 @@ func (e *textAreaEngine) setCursorFromVisualLine(targetVisLine, targetVisCol int
 	vis := 0
 	for li, logLine := range lines {
 		segs := rendering.WordWrap(string(logLine), e.textWidth)
+		var starts []int
+		if vis+len(segs) > targetVisLine {
+			starts = rendering.FindSegmentStarts(logLine, e.textWidth)
+		}
 		for si := range segs {
 			if vis == targetVisLine {
 				e.curLine = li
-				segStart := rendering.FindSegmentStart(logLine, e.textWidth, si)
+				segStart := 0
+				if si < len(starts) {
+					segStart = starts[si]
+				}
 				segRunes := []rune(segs[si])
 				segRuneIdx := rendering.ColToRuneIdx(segRunes, targetVisCol)
 				e.curCol = segStart + segRuneIdx
@@ -2043,9 +2123,16 @@ func (e *textAreaEngine) visualToFlat(textW, x, y int) int {
 	vis := 0
 	for li, logLine := range lines {
 		segs := rendering.WordWrap(string(logLine), textW)
+		var starts []int
+		if vis+len(segs) > y {
+			starts = rendering.FindSegmentStarts(logLine, textW)
+		}
 		for si := range segs {
 			if vis == y {
-				segStart := rendering.FindSegmentStart(logLine, textW, si)
+				segStart := 0
+				if si < len(starts) {
+					segStart = starts[si]
+				}
 				segRunes := []rune(segs[si])
 				segRuneIdx := rendering.ColToRuneIdx(segRunes, x)
 				return e.lineColToFlat(li, segStart+segRuneIdx)
