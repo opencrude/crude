@@ -1,7 +1,6 @@
 # Checkpointed Core Restart
 
-> Status: Initial local implementation under integrated acceptance. The running
-> pre-feature core cannot acquire these entry points without a bootstrap upgrade.
+> Status: Local implementation; discover capabilities in the running deployment.
 > Native Windows/macOS and remote-shell restart acceptance remain open.
 
 ## Ownership
@@ -32,6 +31,12 @@ Schedule takes `executable`, `sha256`, `goal_id` and `delay_seconds` from 0 to
 session. The original shell and native root/run attribution are retained through
 the existing permission and receipt owners. A new profile, focused peer or
 replacement attachment is never an implicit target.
+
+Descriptors describe the running core, not unlaunched source changes in its
+checkout. A deployment without these descriptors needs an explicit bootstrap
+upgrade. Even when they are present, a turn without its original exact shell
+attachment cannot schedule a restart. Starting or selecting another shell does
+not repair that missing authority.
 
 The application validates an immutable staged image and invokes its bounded,
 read-only `--core-handover-identity` route without inherited credentials. Identity
