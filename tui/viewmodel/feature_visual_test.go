@@ -395,8 +395,11 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 		} else {
 			label = "Local History restore preview tracked.txt; not applied"
 			m.action(func(app *App) tea.Cmd {
-				_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-				return cmd
+				// The first row administers review safety. Select the first
+				// snapshot explicitly rather than activating that new command.
+				_, next := app.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				_, open := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+				return tea.Batch(next, open)
 			})
 			err = m.await(func(v *controlVisualModel) error { return featureVisualPaint(v, "Restore preview", "tracked.txt") })
 		}

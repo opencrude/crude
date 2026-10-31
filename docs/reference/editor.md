@@ -459,6 +459,14 @@ committed/ambiguous safety references, with unresolved review/safety identities
 recorded in Notices. No automatic age-based disposition of those references is
 implemented. A success message requires a nonempty verified safety identity.
 
+Local History's **Review safety references** reader administers these references
+independently of the original rename dialog. It preserves original outcomes,
+offers human-confirmed release only with exact settled evidence, and permits
+re-protection only while the original snapshot still verifies. Ambiguous,
+unattributed or corrupt evidence stays protected. This is retention metadata
+administration, not another Apply or undo path; see
+[safety protection](local-history.md#reviewed-edit-safety-protection).
+
 This is a bounded manual text-only rename workflow, not general refactoring,
 code-action, dynamic-registration or `workspace/applyEdit` support.
 

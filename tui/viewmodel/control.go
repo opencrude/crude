@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/shellport"
 	"crude/tui/editor"
@@ -66,6 +67,7 @@ type shellControlDoneMsg struct {
 	pickerOwner   *capabilityPickerOwner
 	snippetOwner  *editorSnippetChoice
 	renameOwner   *lspRenamePreview
+	safetyOwner   *historySafetyView
 }
 
 type shellControlReplyMsg struct{ err error }
@@ -292,7 +294,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.renameOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.renameOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -694,6 +696,9 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 						done.renameOwner = p
 					}
 				}
+				if v := m.historySafety; m.historySafetyVisible(v) && owner.window == m.overlayHost.Window(ui.OverlayLocalHistory) {
+					done.safetyOwner = v
+				}
 			}
 		}
 	}
@@ -740,6 +745,8 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			valid = valid && m.capabilityPicker == done.pickerOwner
 		} else if done.renameOwner != nil {
 			valid = valid && m.LSPPopup.RenamePreview == done.renameOwner && m.overlayHost.IsOpen(lspRenameOverlay)
+		} else if done.safetyOwner != nil {
+			valid = valid && m.historySafetyVisible(done.safetyOwner)
 		} else if done.deckOwner != nil {
 			var intent shellControlIntent
 			if decodeShellInput(msg.Envelope.Request.Input, &intent) != nil {
@@ -762,6 +769,40 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	result := control.Result{State: control.Applied}
 	var follow tea.Cmd
 	switch completion := done.completion.(type) {
+	case historySafetyReadMsg:
+		if !valid || done.safetyOwner == nil || completion.view != done.safetyOwner || completion.sequence != done.safetyOwner.sequence {
+			return m.failShellControl(msg, control.Stale, "review safety read belongs to a retired surface or intent")
+		}
+		follow = m.applyHistorySafetyRead(completion)
+		if completion.err != nil {
+			result.State = control.Failed
+			var uncertain *coreclient.UncertainError
+			if errors.As(completion.err, &uncertain) && uncertain.ResultKnown {
+				result.State = control.Partial
+			}
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "review safety read or its exchange cleanup was not fully confirmed"}
+		}
+		if completion.detail.Reference != "" {
+			result.ResourceIDs = []string{completion.detail.Reference, completion.detail.SnapshotID}
+		}
+	case historySafetyResultMsg:
+		op := completion.operation
+		if !valid || done.safetyOwner == nil || op == nil || m.historySafetyOperation != op {
+			return m.failShellControl(msg, control.Stale, "original protection observation belongs to a retired owner")
+		}
+		confirmed := confirmsHistorySafetyCommit(op, completion.result)
+		follow = m.applyHistorySafetyResult(completion)
+		result.ResourceIDs = []string{op.request.Reference, op.request.SnapshotID}
+		result.Output, _ = json.Marshal(struct {
+			RequestID, State, EventID string
+		}{completion.result.RequestID, completion.result.State, completion.result.Event.ID})
+		if !confirmed {
+			result.State = control.Uncertain
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "original protection result remains unresolved; never repeat"}
+		} else if completion.err != nil {
+			result.State = control.Partial
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "original protection commitment is known; exchange cleanup is unconfirmed"}
+		}
 	case lspRenameActionMsg:
 		if !valid || done.renameOwner == nil || completion.preview != done.renameOwner {
 			return m.failShellControl(msg, control.Stale, "reviewed edit surface changed")

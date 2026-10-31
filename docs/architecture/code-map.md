@@ -63,7 +63,9 @@ detailed contracts.
 | `history/` | Prompt history with score-based eviction. |
 | `lspclient/` | Nonvisual LSP subprocess transport and pipe monitor ([editor](../reference/editor.md)). |
 | `lspedit/` | Passive bounded original-JSON text-edit normalization and strict UTF-16 source offsets; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
+| `lspaction/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority. Product code-action wiring remains separate. |
 | `workspace/reviewed_edit.go`, `workspace/lsp_reviewed_edit.go` | Immutable canonical language-edit review, source/provider/context/native preconditions, non-agent safety reference and durable original mutation outcome; FileOps remains the only disk writer. |
+| `workspace/reviewed_edit_safety.go`, `core/history_safety.go` | Original-journal and selected-preimage evidence verification for native human retention decisions; core receipts and Store-owned atomic append-only audit/pin transitions, not a second file writer. |
 | `snippet/` | Bounded passive numeric completion parser/validator; neutral expanded-primary byte plans, no editor state, environment or execution authority ([numeric snippets](../reference/editor.md#numeric-completion-snippets)). |
 | `terminalvt/` | libghostty-vt parsing and protocol encoding for in-app terminals. |
 | `clipboard/`, `logger/`, `jsonrepair/` | Platform clipboard, structured logging, streamed-JSON repair. |

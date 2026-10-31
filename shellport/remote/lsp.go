@@ -73,14 +73,14 @@ func (l *lspReplica) send(method string, input coreprotocol.LSPRequest) {
 }
 func (l *lspReplica) query(ctx context.Context, method string, input coreprotocol.LSPRequest) (coreprotocol.LSPResult, error) {
 	var out coreprotocol.LSPResult
-	err := l.w.lspQuery(ctx, method, &input, &out)
+	err := l.w.callCancellable(ctx, method, &input, &out)
 	return out, err
 }
 
-// Every semantic reader and reviewed edit shares the exact connected
+// Semantic reads, reviewed edits and safety disposition share the exact connected
 // cancellation/join owner. A cleanup error is returned with any known result,
 // never converted into a fresh request or a second exchange implementation.
-func (w *Workspace) lspQuery(ctx context.Context, method string, input coreprotocol.Value, out coreprotocol.Target) error {
+func (w *Workspace) callCancellable(ctx context.Context, method string, input coreprotocol.Value, out coreprotocol.Target) error {
 	client, id := w.conn()
 	if client == nil {
 		return errDisconnected
@@ -102,7 +102,7 @@ func (w *Workspace) lspQuery(ctx context.Context, method string, input coreproto
 	if errors.As(err, &uncertain) {
 		// Some older slice-only port methods cannot return errors. Preserve the
 		// exact cleanup identity here without logging request/source contents.
-		w.logger.Warn("REMOTE", "lsp_query_cleanup_unconfirmed", "method", method,
+		w.logger.Warn("REMOTE", "connected_call_cleanup_unconfirmed", "method", method,
 			"request_id", uncertain.RequestID, "outcome_state", uncertain.State, "result_known", uncertain.ResultKnown)
 	}
 	return err

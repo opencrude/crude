@@ -343,7 +343,7 @@ func (m *App) workspaceSwitchPrompt() (*remoteWorkspaceSwitchIntent, *editor.Edi
 }
 
 func (m *App) remoteWorkspaceSwitchStillSafe(intent *remoteWorkspaceSwitchIntent) bool {
-	if m.historyOperation != nil {
+	if m.historyOperation != nil || m.historySafetyOperation != nil {
 		return false
 	}
 	if intent == nil || m.workspaceSwitchIntent != intent || intent.owner != m.ws || intent.sequence != m.workspaceAttachSequence || !m.workspaceAttachPending || m.asyncIOStopped.Load() || intent.session != m.ActiveSession || intent.draftEpoch != m.composerDraftEpoch || len(intent.drafts) != len(m.composerDraftOwners) {
