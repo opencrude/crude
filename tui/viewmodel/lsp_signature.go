@@ -16,7 +16,7 @@ import (
 
 const signatureHelpID = ui.OverlaySignatureHelp
 
-// One explicit invocation owns both pending work and its immutable reader.
+// One invocation owns both pending work and its immutable presentation.
 // Replacing it changes the pointer token even at the same cursor/source.
 type signatureHelpState struct {
 	editor               *editor.Editor
@@ -28,6 +28,7 @@ type signatureHelpState struct {
 	cancel               context.CancelFunc
 	result               *signatureHelpResultMsg
 	shown                bool
+	automatic            bool
 	status               shellport.StatusService
 	notice               string
 }
@@ -36,10 +37,12 @@ type signatureHelpResultMsg struct {
 	owner *signatureHelpState
 	help  types.LSPSignatureHelp
 	text  string
+	hint  string
 	err   error
 }
 
 func (m *App) closeSignatureHelp() {
+	m.signatureHelpIntent = nil
 	if state := m.signatureHelp; state != nil {
 		m.signatureHelp = nil
 		state.cancel()
@@ -58,26 +61,34 @@ func (s *signatureHelpState) finishPendingNotice() {
 }
 
 func (m *App) requestSignatureHelpCmd() tea.Cmd {
+	return m.requestSignatureHelp(false)
+}
+
+func (m *App) requestSignatureHelp(automatic bool) tea.Cmd {
 	m.closeSignatureHelp()
 	ed := m.EditorState.Editor
 	service := m.ws.LSPMgr()
 	if ed == nil || !ed.IsOpen() || service == nil || !service.ServerReady() {
-		m.Feedback.NotifyInfo("Parameter information needs a connected language server")
+		if !automatic {
+			m.Feedback.NotifyInfo("Parameter information needs a connected language server")
+		}
 		return nil
 	}
 	source, current := ed.CurrentInsightSource()
 	if !current {
-		m.Feedback.NotifyInfo("Parameter information waits for acknowledged source text and resolved editor changes")
+		if !automatic {
+			m.Feedback.NotifyInfo("Parameter information waits for acknowledged source text and resolved editor changes")
+		}
 		return nil
 	}
 	base, generation := m.lspRequestContext()
 	ctx, cancel := context.WithTimeout(base, 5*time.Second)
 	line, col := ed.LSPCursorPosition()
 	state := &signatureHelpState{editor: ed, path: ed.FilePath(), revision: ed.Revision(), generation: generation, source: source,
-		line: line, col: col, deadline: time.Now().Add(5 * time.Second), cancel: cancel}
+		line: line, col: col, deadline: time.Now().Add(5 * time.Second), cancel: cancel, automatic: automatic}
 	m.signatureHelp = state
 	state.status = m.ws.Status()
-	if state.status != nil {
+	if state.status != nil && !automatic {
 		state.notice = state.status.Notify(types.NotificationRecord{
 			Owner:  types.ResourceRef{Kind: types.ResourceEditor, ID: state.path},
 			Source: "parameter-information", Severity: types.SeverityInfo,
@@ -87,7 +98,7 @@ func (m *App) requestSignatureHelpCmd() tea.Cmd {
 	return func() tea.Msg {
 		defer cancel()
 		help, err := service.RequestSignatureHelp(ctx, state.path, line, col)
-		return signatureHelpResultMsg{owner: state, help: help, text: signatureHelpText(help), err: err}
+		return signatureHelpResultMsg{owner: state, help: help, text: signatureHelpText(help), hint: signatureHintText(help), err: err}
 	}
 }
 
@@ -133,7 +144,9 @@ func (m *App) handleSignatureHelpResult(msg signatureHelpResultMsg) {
 	}
 	if msg.err != nil {
 		m.closeSignatureHelp()
-		m.Feedback.NotifyInfo("Parameter information: " + msg.err.Error())
+		if !msg.owner.automatic {
+			m.Feedback.NotifyInfo("Parameter information: " + msg.err.Error())
+		}
 		return
 	}
 	m.signatureHelp.result = &msg
@@ -153,8 +166,13 @@ func (m *App) syncSignatureHelp() {
 	line, col := state.editor.LSPCursorPosition()
 	ownWindow := m.overlayHost != nil && m.overlayHost.IsOpen(signatureHelpID)
 	ownsInput := m.focusTarget() == FocusEditor && !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput()
-	if ownWindow {
+	if ownWindow && !state.automatic {
 		ownsInput = m.focusedPopup() == m.overlayHost.Window(signatureHelpID)
+	} else {
+		ownsInput = ownsInput && m.focusedPopup() == nil
+	}
+	if state.automatic {
+		ownsInput = ownsInput && !state.editor.HasSelection()
 	}
 	if !valid || line != state.line || col != state.col || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() ||
 		m.sessionDeckModal() || !ownsInput {
@@ -163,7 +181,9 @@ func (m *App) syncSignatureHelp() {
 	}
 	if !state.shown && time.Now().After(state.deadline) {
 		m.closeSignatureHelp()
-		m.Feedback.NotifyInfo("Parameter information timed out or its context could not be observed")
+		if !state.automatic {
+			m.Feedback.NotifyInfo("Parameter information timed out or its context could not be observed")
+		}
 		return
 	}
 	if state.result == nil {
@@ -185,21 +205,44 @@ func (m *App) syncSignatureHelp() {
 	state.finishPendingNotice()
 	if state.result.text == "" {
 		m.closeSignatureHelp()
-		m.Feedback.NotifyInfo("No parameter information at this position")
+		if !state.automatic {
+			m.Feedback.NotifyInfo("No parameter information at this position")
+		}
 		return
 	}
 	area := ui.NewTextArea("lsp-signature/text", ui.NewTokenSet(m.Theme), true)
 	area.SetReadOnly(true)
-	area.SetValue(state.result.text)
+	text := state.result.text
+	if state.automatic {
+		text = state.result.hint
+	}
+	area.SetValue(text)
 	area.SetCursorFlat(0)
 	w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
-	widget := ui.NewWindowFrameWidget(m.Theme, "lsp-signature/frame", ui.FramePopover, "Parameter information", area, nil, true, w, h)
-	widget.Focus(area.ID())
+	if state.automatic {
+		h = min(h, 10)
+	}
+	bounds, visible := m.editorHelpBounds(state.editor, w, h)
+	if !visible {
+		m.closeSignatureHelp()
+		return
+	}
+	w, h = bounds.W, bounds.H
+	title := "Parameter information"
+	if state.automatic {
+		title += " · Alt+I details"
+	}
+	widget := ui.NewWindowFrameWidget(m.Theme, "lsp-signature/frame", ui.FramePopover, title, area, nil, true, w, h)
+	if !state.automatic {
+		widget.Focus(area.ID())
+	}
 	fw := wm.NewFloatingWindow(string(signatureHelpID), "", widget, w, h, wm.WithDecoration(true),
-		wm.WithMovable(true), wm.WithResizable(true), wm.WithClosable(true), wm.WithFocusable(true),
+		wm.WithMovable(!state.automatic), wm.WithResizable(!state.automatic), wm.WithClosable(true), wm.WithFocusable(!state.automatic),
 		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	wm.CenterOnScreen(fw, m.width, m.height)
-	m.overlayHost.Open(signatureHelpID, fw, ui.PopoverPolicy(true), func() {
+	fw.SetPosition(bounds.X, bounds.Y)
+	policy := ui.PopoverPolicy(true)
+	policy.Passive, policy.Focusable = state.automatic, !state.automatic
+	m.overlayHost.Open(signatureHelpID, fw, policy, func() {
 		if m.signatureHelp == state {
 			m.signatureHelp = nil
 			state.cancel()

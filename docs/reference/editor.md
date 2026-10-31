@@ -483,13 +483,35 @@ signature-help request through the same retained server. The initialized provide
 must advertise support; unsupported, failed and supported-but-empty answers stay
 distinct. There is no language-name branch, new server or inferred call parser.
 
+Ordinary native `(` and `,` edits also request parameter information. One
+shell-local intent waits for the exact typed source and caret to be acknowledged,
+then uses the same provider/request/context boundary as explicit inspection.
+Input queued behind Undo triggers only when the original key actually executes.
+Paste, API edits, peer publications and reopening a tab are not trigger input.
+An intervening edit, selection, caret/focus/lifetime/workspace change or a
+five-second acknowledgement deadline retires the intent without querying older
+source. A ready-provider/source publication can lead the initial semantic-context
+cursor; the same intent waits for that cursor rather than being dropped or
+querying unobserved context. Automatic missing/unsupported/empty/failed answers
+and timeouts stay quiet; they do not create loading toasts while typing.
+
+The automatic WindowFrame/TextArea card is passive and anchored immediately
+below or above the actual painted caret, with native Unicode, tabs, inlays,
+scroll and nested-pane coordinates. It never captures the next typed key.
+On short grids, the reader shrinks to the larger space above/below the caret and
+retains native scrolling, rather than centering or covering the source caret.
+Escape dismisses the pending intent/card before closing the editor.
+**Alt+I** explicitly requests the complete focusable reader. That reader and
+symbol documentation also open at the caret instead of the screen center.
+
 The native read-only WindowFrame/TextArea reader shows the selected signature,
 active parameter and its documentation, the other overload labels, provider,
 canonical source revision, context generation and unknown inputs. It supports
 normal reading/selection/copy, resize, Close, Escape and outside-click dismissal.
 It never inserts text, chooses an overload on the server or edits an argument.
-This is manual parameter inspection, not automatic trigger/retrigger assistance,
-dynamic capability registration or full semantic-feature acceptance.
+Only the two native delimiter inputs trigger automatic assistance; dynamic
+capability registration, language-specific call parsing and full semantic-feature
+acceptance remain outside this slice.
 
 Requests require acknowledged canonical text: optimistic edits, pending history,
 conflicts and standalone raw buffers cannot query an older canonical source.

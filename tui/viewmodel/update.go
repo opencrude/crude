@@ -53,6 +53,7 @@ import (
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, blurred := msg.(tea.BlurMsg); blurred {
 		m.closeEditorSnippet()
+		m.closeSignatureHelp()
 	}
 	m.syncEditorSnippet()
 	defer m.invalidateMessageRegions(msg)
@@ -76,6 +77,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
+	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
 	m.syncNavigation()
 	command = tea.Batch(command, m.syncInlayHints())

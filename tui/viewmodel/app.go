@@ -336,6 +336,7 @@ type App struct {
 	lspRequestCtx         context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel      context.CancelFunc
 	signatureHelp         *signatureHelpState
+	signatureHelpIntent   *signatureHelpIntent
 	codeActions           *codeActionState
 	navigation            *navigationState
 	inlayViews            map[*editor.Editor]*inlayViewState

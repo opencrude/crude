@@ -157,11 +157,11 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 		case intent.Key != nil:
 			key := *intent.Key
 			action.evidence.Key = &key
-			action.edit = func() { e.HandleEvent(key) }
+			action.edit = func() { e.handleNonInteractiveInput(key) }
 		case intent.Paste != nil:
 			paste := *intent.Paste
 			action.evidence.Paste = &paste
-			action.edit = func() { e.HandleEvent(paste) }
+			action.edit = func() { e.handleNonInteractiveInput(paste) }
 		}
 		p.historyQueue = append(p.historyQueue, action)
 	}

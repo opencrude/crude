@@ -176,6 +176,9 @@ type Editor struct {
 
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
+	// onSignatureHelp observes an actual native delimiter edit after its final
+	// caret/history group is installed. It carries intent, not source authority.
+	onSignatureHelp func()
 
 	// Git supplies an immutable HEAD baseline. The editor owns one exact live
 	// projection for paint, navigation and inspection; there are no local claims.

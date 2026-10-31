@@ -383,6 +383,7 @@ func (m *App) closeWorkspaceEditors() {
 		}
 		seen[ed] = struct{}{}
 		ed.SetOnContentChanged(nil)
+		ed.SetOnSignatureHelp(nil)
 		ed.Close()
 	}
 	for _, tab := range m.EditorState.Tabs {

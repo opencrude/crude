@@ -76,6 +76,7 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })
+	ed.SetOnSignatureHelp(func() { m.queueAutomaticSignatureHelp(ed) })
 
 	// Apply cached diagnostics immediately so the editor is never empty
 	// while waiting for the server to respond.
