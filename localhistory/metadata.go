@@ -1,6 +1,7 @@
 package localhistory
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,12 @@ import (
 )
 
 func (s *Store) recoverManifestIndex() error {
+	// Retained evidence must never be repaired by orphan recovery. Its durable
+	// reference promises the original indexed, immutable snapshot, not a new
+	// reconstruction of missing metadata.
+	if _, err := s.retainedSafetySnapshots(context.Background()); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(filepath.Join(s.root, "manifests"))
 	if err != nil {
 		return err
@@ -97,6 +104,10 @@ CREATE TABLE IF NOT EXISTS history_snapshot_entries (
   PRIMARY KEY(snapshot_id,path)
 );
 CREATE INDEX IF NOT EXISTS idx_history_entries_path ON history_snapshot_entries(path,snapshot_id);
+CREATE TABLE IF NOT EXISTS history_retained_snapshots (
+  reference TEXT PRIMARY KEY,
+  snapshot_id TEXT NOT NULL REFERENCES history_snapshots(snapshot_id) ON DELETE RESTRICT
+);
 CREATE TABLE IF NOT EXISTS history_message_scopes (
   session_id TEXT NOT NULL,
   message_id TEXT NOT NULL,

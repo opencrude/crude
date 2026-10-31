@@ -26,6 +26,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `live_documents.go`, `live_document_commands.go` | `LiveDocuments`, formatter/receipts/command interfaces | universal connected editor lifecycle, per-open topic, recovery sync, exact-owner commands |
 | `insight.go` | `DocumentInsightMsg` | Independent canonical syntax projection, exact-open validity and applied ACK; not a text mutation or semantic guarantee |
 | `lsp.go` | `LSPService` | language-server manager |
+| `reviewed_edit.go` | `ReviewedEdits` | Connected canonical rename preview, opaque approval, pending release and original-result inspection |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
 | `memory.go` | `Memory`, `MemoryStore` | memory browse and curation |
@@ -219,7 +220,6 @@ Files is the filesystem mutation and project-search surface.
 | `RenamePath` | 1 | mutates | yes | files.rename |
 | `DeletePath` | 1 | mutates | yes | files.delete |
 | `ApplyWorkspaceEdit` | 1 | mutates | yes | files.edit |
-| `ApplyLSPRename` | 1 | mutates | yes | files.edit (typed lsp.rename supplies WorkspaceEdit) |
 | `StartProjectSearch` | 1 | mutates | yes | files.search |
 | `CancelProjectSearch` | 3 | mutates | yes | files.search (cancel via request cancellation) |
 
@@ -258,7 +258,6 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
-| `RequestRename` | 1 | reads | yes: proposes typed *protocol.WorkspaceEdit; applying it is separate | lsp.rename (typed *protocol.WorkspaceEdit) |
 | `RestartServer` | 1 | mutates | yes | lsp.restart_server |
 | `ServerHealthSnapshots` | 3 | reads | yes | LSP state topic replica |
 | `ServerReady` | 2 | reads | yes | LSP state topic replica |
@@ -277,9 +276,24 @@ retiring a shell request cancels its exact enqueued core job and joins/ACKs the
 original response, not merely the carrier stream. The cleanup lifetime remains
 bound to that original client/workspace, including on switch or shutdown, and
 reports retained uncertainty when its bounded join cannot be confirmed. It never
-stops the shared server or retargets a replacement attachment. Mutation calls keep
-their separate ordinary receipt semantics. See
+stops the shared server or retargets a replacement attachment. Reviewed edits share
+that joined exchange but retain their own durable mutation intent and immutable
+result; cancellation is not no-effect evidence. Other mutations keep their
+ordinary receipt semantics. See
 [command cancellation](core-client-protocol.md#mutation-receipts-and-uncertainty).
+
+### `ReviewedEdits`
+
+This optional connected-document capability never falls back to shell-local file
+reads or typed protocol reconstruction. The core owns target selection, original
+wire version interpretation and exact preview data. All calls run off Update.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `PrepareLSPRename` | Read immutable review for acknowledged source/name/cursor | `lsp.rename_preview` |
+| `ApplyReviewedEdit` | Approve only original opaque ID/digest | `lsp.edit_apply` |
+| `ReleaseReviewedEdit` | Retire only pending exact-owner preview | `lsp.edit_release` |
+| `InspectReviewedEdit` | Observe original stable-client result without renewed mutation authority | `lsp.edit_receipt` |
 
 ### `SourceControl`
 
@@ -493,7 +507,7 @@ These signatures are local port contracts, not wire payloads. The connected adap
 | `Files.EnsureDocuments` | Client-local timer facade over the core disk-save authority. |
 | `DocumentService.AcceptDue` | Consumes only that shell's exact timer epoch. |
 | `LSPService.DiagnosticSnapshot` | Non-destructive replica data with independent client cursor. |
-| `LSPService.RequestRename` | Typed `WorkspaceEdit`; old untyped edit/callback/drain port is removed. |
+| `ReviewedEdits` | Core-owned immutable preview and ID/digest-only Apply; no raw `WorkspaceEdit` crosses to the shell. |
 | `SourceControl.PrepareCommitMessageWriter` | Lazy client writer; core resolves Aeron and streams request-scoped progress. |
 | `Memory.BindMemory` | Attachment-bound service, not a memory database pointer. |
 | `TerminalService.Acquire` / `Detach` | Core-issued controller lease / exact release, not a client callback. |
@@ -524,8 +538,8 @@ value. See [wire and delivery](core-client-protocol.md#wire-format-and-bounded-d
   the original shell attachment.
 - LSP requests are typed and ordered in core resource worker lanes. The shell uses
   `DiagnosticSnapshot` / `LSPDiagnosticConsumer`, never a destructive shared
-  diagnostic drain. Rename returns `*protocol.WorkspaceEdit`; no callback or
-  untyped edit crosses the wire. Document views are per-client; detach releases
+  diagnostic drain. Rename uses a core-retained reviewed plan and selected safety
+  snapshot, never a shell-owned file edit or raw protocol DTO. Document views are per-client; detach releases
   those views without stopping servers.
 - `LiveDocuments` Open/Edit/Close/Save and optional Format/receipt commands
   carry `DocumentOwner` attachment epochs. Each open owns a document topic with

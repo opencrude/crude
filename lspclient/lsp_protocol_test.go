@@ -77,6 +77,9 @@ func TestProtocolServerHelper(t *testing.T) {
 			if strings.HasPrefix(mode, "signature") {
 				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"(", ","}}
 			}
+			if strings.HasPrefix(mode, "rename-") {
+				capabilities["renameProvider"] = true
+			}
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"capabilities": capabilities}})
 		case "initialized":
 			if mode == "scoped-configuration" {
@@ -143,6 +146,19 @@ func TestProtocolServerHelper(t *testing.T) {
 					map[string]any{"label": "join(first: str)", "activeParameter": 0, "parameters": []any{map[string]any{"label": "first: str"}}},
 				}, "activeSignature": 0, "activeParameter": 1,
 			}})
+		case "textDocument/rename":
+			if mode == "rename-stale" || mode == "rename-stale-null" {
+				root, _ := os.Getwd()
+				_ = os.WriteFile(filepath.Join(root, "requested"), nil, 0600)
+				for {
+					if _, err := os.Stat(filepath.Join(root, "release")); err == nil {
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			raw := renameProtocolResponse(mode, msg["params"].(map[string]any)["textDocument"].(map[string]any)["uri"].(string))
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": json.RawMessage(raw)})
 		case "textDocument/definition":
 			uri := msg["params"].(map[string]any)["textDocument"].(map[string]any)["uri"]
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": []any{

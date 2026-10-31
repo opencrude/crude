@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	model "crude/types"
-
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 type LSPStatus = model.LSPStatus
@@ -52,7 +50,7 @@ type LSPClient interface {
 	RequestDocumentSymbols(context.Context, string) []LSPSymbol
 	RequestHover(context.Context, string, int, int) (string, error)
 	RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error)
-	RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error)
+	RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error)
 	RequestCompletions(context.Context, string, int, int) []CompletionItem
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.

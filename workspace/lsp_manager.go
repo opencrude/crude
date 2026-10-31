@@ -10,8 +10,6 @@ import (
 
 	"crude/insight/governor"
 	ttypes "crude/types"
-
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // LSPManager is the sole workspace owner of server and open-document lifetimes.
@@ -587,26 +585,44 @@ func (m *LSPManager) ContextCursor() (string, uint64) {
 }
 
 // RequestRename routes a rename request to the right client.
-func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error) {
+func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (ttypes.LSPRenameEdit, error) {
 	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Rename }) {
-		return nil, nil
+		return ttypes.LSPRenameEdit{}, fmt.Errorf("rename unavailable: language intelligence is off or blocked")
 	}
-	var (
-		out *protocol.WorkspaceEdit
-		err error
-	)
-	err = m.trackInflight(func() error {
+	var out ttypes.LSPRenameEdit
+	err := m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
 		defer cancel()
 		if client == nil {
 			return fmt.Errorf("no LSP client for %s", filePath)
 		}
+		m.mu.Lock()
+		doc := m.documents[filepath.Clean(filePath)]
+		var boundary ttypes.InsightBoundary
+		wireVersion := 0
+		if doc != nil && doc.opened && !doc.syncPending {
+			boundary, wireVersion = doc.boundary, doc.wireVersion
+			boundary.Context.UnknownInputs = append([]string(nil), boundary.Context.UnknownInputs...)
+		}
+		generation := m.contextGeneration
+		m.mu.Unlock()
+		if boundary.Source.DocumentID == "" || boundary.Context.Generation != generation || wireVersion <= 0 {
+			return fmt.Errorf("rename unavailable: canonical source context is not synchronized")
+		}
 		var requestErr error
 		out, requestErr = client.RequestRename(requestCtx, filePath, line, col, newName)
-		if !valid() {
-			out = nil
-			return fmt.Errorf("LSP document changed during rename")
+		m.mu.Lock()
+		sameContext := generation == m.contextGeneration
+		m.mu.Unlock()
+		if !valid() || !sameContext || requestCtx.Err() != nil {
+			out = ttypes.LSPRenameEdit{}
+			return fmt.Errorf("LSP source or context changed during rename")
 		}
+		if requestErr == nil && out.WireVersion != wireVersion {
+			out = ttypes.LSPRenameEdit{}
+			return fmt.Errorf("rename response does not identify the synchronized wire source")
+		}
+		out.Boundary = boundary
 		return requestErr
 	})
 	return out, err

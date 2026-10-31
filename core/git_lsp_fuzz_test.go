@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +21,6 @@ import (
 	"crude/types"
 	"crude/workspace"
 
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
@@ -255,7 +253,7 @@ func FuzzCoreGitReviewedMutations(f *testing.F) {
 type semanticLSPClient struct {
 	mu          sync.Mutex
 	calls       []coreprotocol.LSPRequest
-	edit        *protocol.WorkspaceEdit
+	edit        []byte
 	boundary    types.InsightBoundary
 	version     int
 	diagnostics []types.LSPDiagnostic
@@ -307,7 +305,7 @@ func (c *semanticLSPClient) AwaitDiagnostics(context.Context, string) (types.Ins
 func (c *semanticLSPClient) record(path string, line, col int, name string, include bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.calls = append(c.calls, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, NewName: name, IncludeDeclaration: include})
+	c.calls = append(c.calls, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, IncludeDeclaration: include})
 }
 func (c *semanticLSPClient) count() int {
 	c.mu.Lock()
@@ -331,9 +329,11 @@ func (c *semanticLSPClient) RequestSignatureHelp(_ context.Context, path string,
 	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
 		Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}, nil
 }
-func (c *semanticLSPClient) RequestRename(_ context.Context, path string, line, col int, name string) (*protocol.WorkspaceEdit, error) {
+func (c *semanticLSPClient) RequestRename(_ context.Context, path string, line, col int, name string) (types.LSPRenameEdit, error) {
 	c.record(path, line, col, name, false)
-	return c.edit, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return types.LSPRenameEdit{JSON: append([]byte(nil), c.edit...), WireVersion: c.version}, nil
 }
 func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int) []workspace.CompletionItem {
 	c.record(path, line, col, "", false)
@@ -355,12 +355,6 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			t.Fatal(err)
 		}
 		client := &semanticLSPClient{}
-		// A literal independent LSP fixture exercises both edit representations,
-		// ranges, version, multiple URIs and JSON union decoding in LSPEdit.
-		const editJSON = `{"changes":{"file:///fuzz/a.go":[{"range":{"start":{"line":1,"character":2},"end":{"line":3,"character":4}},"newText":"alpha"}],"file:///fuzz/b.go":[{"range":{"start":{"line":5,"character":6},"end":{"line":7,"character":8}},"newText":"beta"}]},"documentChanges":[{"textDocument":{"uri":"file:///fuzz/c.go","version":9},"edits":[{"range":{"start":{"line":10,"character":11},"end":{"line":12,"character":13}},"newText":"gamma"}]}]}`
-		if err := json.Unmarshal([]byte(editJSON), &client.edit); err != nil {
-			t.Fatal(err)
-		}
 		manager := workspace.NewLSPManager(nil, semanticLSPRuntime{client})
 		defer manager.Close()
 		manager.SetWorkspaceRoot(root)
@@ -391,11 +385,11 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			t.Fatal("manager failed to admit fixture", err)
 		}
 		a := &actor{ws: &workspace.Workspace{RootPath: root, LSPMgr: manager}}
-		methods := [...]string{coreprotocol.LSPRequestDefinition, coreprotocol.LSPFindReferences, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestRename, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDocumentSymbols}
+		methods := [...]string{coreprotocol.LSPRequestDefinition, coreprotocol.LSPFindReferences, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDocumentSymbols}
 		for i := 0; i < min(len(sequence)/2, gitLSPFuzzActions); i++ {
 			action, value := sequence[2*i]%8, sequence[2*i+1]
 			method := methods[int(action)%len(methods)]
-			in := coreprotocol.LSPRequest{Path: path, Line: int(int8(value)), Col: int(value % 17), NewName: []string{"renamed", "", "with space", "symbol_2"}[value%4], IncludeDeclaration: value&1 != 0}
+			in := coreprotocol.LSPRequest{Path: path, Line: int(int8(value)), Col: int(value % 17), IncludeDeclaration: value&1 != 0}
 			if action == 7 {
 				// These are unopened paths, not a claim that core normalizes/fences
 				// requests: the manager only admits its exact retained document.
@@ -426,7 +420,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 				}
 				if action == 7 && out.Error == nil {
 					var result coreprotocol.LSPResult
-					if err := testDecode(out.Payload, &result); err != nil || len(result.Locations) != 0 || result.Edit != nil {
+					if err := testDecode(out.Payload, &result); err != nil || len(result.Locations) != 0 {
 						t.Fatal("unopened query returned a result", err)
 					}
 				}
@@ -442,12 +436,10 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			switch action {
 			case 1:
 				wantInput.IncludeDeclaration = in.IncludeDeclaration
-			case 3:
-				wantInput.NewName = in.NewName
 			case 5:
 				wantInput.Line, wantInput.Col = 0, 0
 			}
-			// Coordinates and names are currently forwarded, not validated here.
+			// Reader coordinates are currently forwarded, not validated here.
 			if gotInput != wantInput {
 				t.Fatalf("query arguments changed: got %+v want %+v", gotInput, wantInput)
 			}
@@ -464,7 +456,9 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			case 2:
 				want.Hover = "hover **symbol**\nsecond line"
 			case 3:
-				want.Edit = (*coreprotocol.LSPEdit)(client.edit)
+				want.SignatureHelp = types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0, Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}
+				// The manager, not the language fake, qualifies this semantic result.
+				want.SignatureHelp.Boundary = result.SignatureHelp.Boundary
 			case 4:
 				want.Completions = []workspace.CompletionItem{{Label: "complete", Detail: "detail", Documentation: "docs", Kind: 3, InsertText: "insert", TextEdit: &types.LSPTextEdit{Line: 1, Col: 2, EndLine: 3, EndCol: 4, NewText: "primary"}, AdditionalTextEdits: []types.LSPTextEdit{{Line: 5, Col: 6, EndLine: 7, EndCol: 8, NewText: "import"}}}}
 			case 5:
@@ -473,12 +467,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			if !reflect.DeepEqual(result, want) {
 				t.Fatalf("typed query result changed: got %+v want %+v", result, want)
 			}
-			if action == 3 {
-				result.Edit.Changes["file:///fuzz/a.go"][0].NewText = "caller mutation"
-				if client.edit.Changes["file:///fuzz/a.go"][0].NewText != "alpha" {
-					t.Fatal("decoded edit aliases language client")
-				}
-			}
+
 		}
 		if run, ok := a.prepareLSP(coreprotocol.Request{Method: "lsp.arbitrary"}); ok || run != nil {
 			t.Fatal("LSP dispatcher admitted an undeclared method")

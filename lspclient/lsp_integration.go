@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/lspedit"
 	"crude/metrics"
 	"crude/snippet"
 	model "crude/types"
@@ -768,23 +769,36 @@ func (l *LSPIntegration) RequestHover(ctx context.Context, filePath string, line
 
 // RequestRename returns the workspace edit that would rename the symbol at
 // (line, col) to newName. The caller is responsible for applying the edit.
-func (l *LSPIntegration) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error) {
+func (l *LSPIntegration) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (model.LSPRenameEdit, error) {
 	defer l.observeRequest("rename", time.Now())
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
 	state, ok := l.openFiles[fp]
 	version := stateVersion(state)
+	text := ""
+	if state != nil {
+		text = state.text
+	}
 	l.mu.Unlock()
 
 	if client == nil || !ok {
-		return nil, fmt.Errorf("file not open in LSP")
+		return model.LSPRenameEdit{}, fmt.Errorf("file not open in LSP")
+	}
+	if _, err := lspedit.Offset(text, line, col); err != nil {
+		return model.LSPRenameEdit{}, err
 	}
 	result, err := client.RequestRename(ctx, fp, line, col, newName)
-	if !l.currentDocument(fp, client, state, version) {
-		return nil, context.Canceled
+	if !l.currentDocument(fp, client, state, version) || ctx.Err() != nil {
+		return model.LSPRenameEdit{}, context.Canceled
 	}
-	return result, err
+	if err != nil {
+		return model.LSPRenameEdit{}, err
+	}
+	if len(result) > lspedit.MaxRawBytes || !utf8.Valid(result) {
+		return model.LSPRenameEdit{}, errors.New("invalid or oversized language-server rename edit")
+	}
+	return model.LSPRenameEdit{JSON: append([]byte(nil), result...), WireVersion: version}, nil
 }
 
 // ServerCmd returns the command used to launch the LSP server, e.g. "gopls".

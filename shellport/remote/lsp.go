@@ -9,8 +9,6 @@ import (
 	"crude/workspace"
 	"errors"
 	"path/filepath"
-
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // lspReplica owns only detached observations. Core alone owns server lifetime;
@@ -75,14 +73,22 @@ func (l *lspReplica) send(method string, input coreprotocol.LSPRequest) {
 }
 func (l *lspReplica) query(ctx context.Context, method string, input coreprotocol.LSPRequest) (coreprotocol.LSPResult, error) {
 	var out coreprotocol.LSPResult
-	client, id := l.w.conn()
+	err := l.w.lspQuery(ctx, method, &input, &out)
+	return out, err
+}
+
+// Every semantic reader and reviewed edit shares the exact connected
+// cancellation/join owner. A cleanup error is returned with any known result,
+// never converted into a fresh request or a second exchange implementation.
+func (w *Workspace) lspQuery(ctx context.Context, method string, input coreprotocol.Value, out coreprotocol.Target) error {
+	client, id := w.conn()
 	if client == nil {
-		return out, errDisconnected
+		return errDisconnected
 	}
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	cancelled := make(chan struct{})
-	stop := context.AfterFunc(l.w.ctx, func() {
+	stop := context.AfterFunc(w.ctx, func() {
 		defer close(cancelled)
 		cancel()
 	})
@@ -91,15 +97,15 @@ func (l *lspReplica) query(ctx context.Context, method string, input coreprotoco
 			<-cancelled
 		}
 	}()
-	err := client.CallCancellable(ctx, id, method, &input, &out)
+	err := client.CallCancellable(ctx, id, method, input, out)
 	var uncertain *coreclient.UncertainError
 	if errors.As(err, &uncertain) {
 		// Some older slice-only port methods cannot return errors. Preserve the
 		// exact cleanup identity here without logging request/source contents.
-		l.w.logger.Warn("REMOTE", "lsp_query_cleanup_unconfirmed", "method", method,
+		w.logger.Warn("REMOTE", "lsp_query_cleanup_unconfirmed", "method", method,
 			"request_id", uncertain.RequestID, "outcome_state", uncertain.State, "result_known", uncertain.ResultKnown)
 	}
-	return out, err
+	return err
 }
 
 func (l *lspReplica) AllDiagnostics() map[string]types.InsightDiagnostics {
@@ -191,8 +197,4 @@ func (l *lspReplica) RequestHover(ctx context.Context, path string, line, col in
 func (l *lspReplica) RequestSignatureHelp(ctx context.Context, path string, line, col int) (types.LSPSignatureHelp, error) {
 	out, err := l.query(ctx, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequest{Path: path, Line: line, Col: col})
 	return out.SignatureHelp, err
-}
-func (l *lspReplica) RequestRename(ctx context.Context, path string, line, col int, name string) (*protocol.WorkspaceEdit, error) {
-	out, err := l.query(ctx, coreprotocol.LSPRequestRename, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, NewName: name})
-	return (*protocol.WorkspaceEdit)(out.Edit), err
 }

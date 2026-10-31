@@ -54,6 +54,14 @@ type OperationPath struct {
 	After  *OperationState
 }
 
+// RetainedFile is an immutable core-owned preview preimage, not an instruction
+// to read Path from disk. Mode is the canonical stored regular-file mode.
+type RetainedFile struct {
+	Path string
+	Data []byte
+	Mode uint32
+}
+
 type AgentOperation struct {
 	ID        string
 	SessionID string
@@ -72,6 +80,9 @@ type Manifest struct {
 	Label        string           `json:"label,omitempty"`
 	Entries      map[string]Entry `json:"entries"`
 	TrackedPaths []string         `json:"tracked_paths,omitempty"`
+	// ScopePaths declares complete coverage of only these relative file keys.
+	// Nil means a full snapshot; absence outside a selected scope is unknown.
+	ScopePaths []string `json:"scope_paths,omitempty"`
 }
 
 func (m Manifest) Time() time.Time { return time.Unix(0, m.CreatedAt) }

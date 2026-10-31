@@ -11,6 +11,19 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if p := m.LSPPopup.RenamePreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(lspRenameOverlay) && op.Verb == "activate" {
+		if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == p &&
+			strings.HasPrefix(string(localID), string(p.bar.ID())+"/") {
+			switch action {
+			case "apply":
+				return control.Write, false, nil
+			case "inspect":
+				return control.Read, false, nil
+			case "cancel":
+				return control.Write, false, nil
+			}
+		}
+	}
 	if state := m.editorSnippet; state != nil && m.ownsSnippetChoice(state.choice) {
 		p := state.choice
 		if owner.window == p.window && localID == p.list.ID() && action == "snippet.choose" && op.Verb == "activate" {

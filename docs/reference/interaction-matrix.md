@@ -465,6 +465,13 @@ and viewport; author undo does not undo another shell's accepted group. Dirty
 unsaved text is shared, not silently written to disk. Rename preserves document
 identity and dirty text; conflicted delete fails closed.
 
+F2 **symbol rename** is a separate, saved-source workflow: native name prompt,
+immutable core review, initially focused Cancel, then explicit Apply. Escape or
+Enter on Cancel changes nothing. Peer edits or equal-text Undo invalidate approval.
+The read-only review supports wheel and line/page keys. Committed sparse edits
+preserve peer-private anchors. Unknown outcomes show Check result/Close, never a
+second Apply; recovery uses the exact retained Local History snapshot.
+
 Resolve shared changes in the editor context menu opens the native modal for parked
 or recovered drafts. Keep draft (default/Esc) changes nothing. Compare with
 shared opens immutable, read-only shared/local snapshots and does not consume the

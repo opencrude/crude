@@ -1451,7 +1451,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		command.result <- fault(request, "busy", "bounded workspace operation capacity is occupied; retry with a new request identity")
 		return true
 	}
-	journal := request.Method != coreprotocol.ListSessions && (historyRestore || (!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
+	journal := request.Method != coreprotocol.ListSessions && (request.Method == coreprotocol.ReviewedEditApply || historyRestore || (!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
 	if journal {
 		prior, fresh, err := a.receipts.begin(a.ctx, request)
 		if err != nil {

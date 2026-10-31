@@ -3,39 +3,28 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/shellport"
-	"crude/textdiff"
-	"crude/tui/editor"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	model "crude/types"
 	"crude/workspace"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 const lspRenameOverlay ui.OverlayID = "lsp-rename-preview"
 
-type lspRenamePreparedMsg struct {
-	request lspRenameResultMsg
-	edits   []workspace.FileEdit
-	preview string
-	err     error
-}
 type lspRenameAppliedMsg struct {
 	preview    *lspRenamePreview
 	generation uint64
-	result     workspace.FileOperationResultMsg
-	safety     string
+	result     workspace.ReviewedEditResult
+	err        error
+}
+type lspRenameReleasedMsg struct {
+	preview    *lspRenamePreview
+	generation uint64
+	err        error
 }
 type lspRenameActionMsg struct {
 	preview *lspRenamePreview
@@ -43,20 +32,21 @@ type lspRenameActionMsg struct {
 }
 type lspRenamePreview struct {
 	ui.Base
-	area    *ui.TextArea
-	bar     *ui.ActionBar
-	request lspRenameResultMsg
-	edits   []workspace.FileEdit
-	busy    bool
-	cancel  context.CancelFunc
+	area      *ui.TextArea
+	bar       *ui.ActionBar
+	request   lspRenameResultMsg
+	busy      bool
+	attempted bool
+	released  bool
+	cancel    context.CancelFunc
 }
 
-func newLSPRenamePreview(th *theme.Theme, msg lspRenamePreparedMsg) *lspRenamePreview {
+func newLSPRenamePreview(th *theme.Theme, msg lspRenameResultMsg) *lspRenamePreview {
 	tokens := ui.NewTokenSet(th)
-	p := &lspRenamePreview{Base: ui.NewBase("lsp-rename/body"), request: msg.request, edits: msg.edits}
+	p := &lspRenamePreview{Base: ui.NewBase("lsp-rename/body"), request: msg}
 	p.area = ui.NewTextArea("lsp-rename/detail", tokens, true)
 	p.area.SetReadOnly(true)
-	p.area.SetValue(msg.preview)
+	p.area.SetValue(fmt.Sprintf("Rename to %q in %d files.\nApply requires an unchanged canonical source and a retained Local History safety snapshot.\n\n%s", msg.newName, len(msg.preview.Files), msg.preview.Text))
 	p.area.SetCursorFlat(0)
 	p.bar = ui.NewActionBar("lsp-rename/actions", tokens, ui.ActionBarButton{Label: "Apply rename", Action: "apply", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	p.bar.SetCancelAction("cancel")
@@ -78,6 +68,10 @@ func (p *lspRenamePreview) Handle(ctx ui.EventContext, event ui.Event) ui.EventR
 		return p.HandleAction(ctx, ui.Action{ID: "cancel"})
 	}
 	if event.IsKey() {
+		switch event.Key.Code {
+		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd:
+			return p.area.Handle(ctx, event)
+		}
 		return p.bar.Handle(ctx, event)
 	}
 	return ui.EventResult{}
@@ -86,7 +80,7 @@ func (p *lspRenamePreview) HandleAction(_ ui.EventContext, a ui.Action) ui.Event
 	if p.busy {
 		return ui.EventResult{Handled: true}
 	}
-	if a.ID == "apply" || a.ID == "cancel" {
+	if a.ID == "apply" || a.ID == "cancel" || a.ID == "inspect" {
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return lspRenameActionMsg{p, a.ID} }}
 	}
 	return ui.EventResult{}
@@ -97,233 +91,144 @@ func (p *lspRenamePreview) SetTokens(tokens *ui.TokenSet) {
 	p.bar.SetTokens(tokens)
 }
 
-func prepareLSPRename(root string, msg lspRenameResultMsg, edit *protocol.WorkspaceEdit) lspRenamePreparedMsg {
-	return prepareLSPRenameWithReader(root, msg, edit, nil)
-}
-
-func (m *App) prepareClientLSPRename(msg lspRenameResultMsg, edit *protocol.WorkspaceEdit) tea.Cmd {
-	root := m.ws.RootPath()
-	files, remote := m.ws.(shellport.ClientFiles)
-	return func() tea.Msg {
-		if !remote {
-			return prepareLSPRename(root, msg, edit)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return prepareLSPRenameWithReader(root, msg, edit, func(path string) ([]byte, error) { return files.ReadClientFile(ctx, path) })
-	}
-}
-
-func prepareLSPRenameWithReader(root string, msg lspRenameResultMsg, edit *protocol.WorkspaceEdit, read func(string) ([]byte, error)) lspRenamePreparedMsg {
-	out := lspRenamePreparedMsg{request: msg}
-	var preview strings.Builder
-	grouped := make(map[string][]model.LSPTextEdit)
-	add := func(uri protocol.DocumentURI, edits []protocol.TextEdit) error {
-		path, err := uri.Path()
-		if err != nil {
-			return err
-		}
-		path = filepath.Clean(path)
-		rel, err := filepath.Rel(root, path)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("rename path is outside workspace")
-		}
-		for _, e := range edits {
-			grouped[path] = append(grouped[path], model.LSPTextEdit{Line: int(e.Range.Start.Line), Col: int(e.Range.Start.Character), EndLine: int(e.Range.End.Line), EndCol: int(e.Range.End.Character), NewText: e.NewText})
-		}
+func releaseLSPRenamePreview(msg lspRenameResultMsg) tea.Cmd {
+	if msg.port == nil || msg.preview.ID == "" {
 		return nil
 	}
-	for uri, edits := range edit.Changes {
-		if err := add(uri, edits); err != nil {
-			out.err = err
-			return out
-		}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = msg.port.ReleaseReviewedEdit(ctx, msg.preview.ID, msg.preview.Digest)
+		return nil
 	}
-	for _, change := range edit.DocumentChanges {
-		if !change.Valid() || change.TextDocumentEdit == nil {
-			out.err = fmt.Errorf("file create/rename/delete workspace operations are not supported")
-			return out
-		}
-		document := change.TextDocumentEdit
-		var edits []protocol.TextEdit
-		for _, union := range document.Edits {
-			switch e := union.Value.(type) {
-			case protocol.TextEdit:
-				edits = append(edits, e)
-			case protocol.AnnotatedTextEdit:
-				edits = append(edits, e.TextEdit)
-			default:
-				out.err = fmt.Errorf("unsupported annotated or snippet edit")
-				return out
-			}
-		}
-		if err := add(document.TextDocument.URI, edits); err != nil {
-			out.err = err
-			return out
-		}
-	}
-	paths := make([]string, 0, len(grouped))
-	for path := range grouped {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	if len(paths) > 200 {
-		out.err = fmt.Errorf("rename exceeds 200-file review limit")
-		return out
-	}
-	total := 0
-	for _, path := range paths {
-		var data []byte
-		var err error
-		if read != nil {
-			data, err = read(path)
-		} else {
-			data, err = readRenameLocalFile(path)
-		}
-		if err != nil {
-			out.err = err
-			return out
-		}
-		total += len(data)
-		if len(data) > 2<<20 || total > 16<<20 {
-			out.err = fmt.Errorf("rename exceeds 16 MiB review budget")
-			return out
-		}
-		updated, err := editor.ApplyLSPTextEdits(string(data), grouped[path])
-		if err != nil {
-			out.err = err
-			return out
-		}
-		out.edits = append(out.edits, workspace.FileEdit{Path: path, OldContent: string(data), NewContent: updated})
-		rel, _ := filepath.Rel(root, path)
-		fmt.Fprintf(&preview, "%s\n", rel)
-		for _, h := range textdiff.Hunks(string(data), updated) {
-			fmt.Fprintf(&preview, "@@ line %d @@\n", h.OldStart+1)
-			for _, line := range h.OldLines {
-				preview.WriteString("- " + strings.TrimSuffix(line, "\n") + "\n")
-			}
-			for _, line := range h.NewLines {
-				preview.WriteString("+ " + strings.TrimSuffix(line, "\n") + "\n")
-			}
-		}
-		if preview.Len() > 1<<20 {
-			out.err = fmt.Errorf("rename preview exceeds 1 MiB; narrow the operation")
-			return out
-		}
-		preview.WriteByte('\n')
-	}
-	out.preview = fmt.Sprintf("Rename to %q in %d files.\nApply creates a Local History safety snapshot; recover via Local History.\n\n", msg.newName, len(out.edits)) + preview.String()
-	return out
 }
 
-func readRenameLocalFile(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > 2<<20 {
-		return nil, fmt.Errorf("rename requires regular files up to 2 MiB: %s", path)
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	data, readErr := io.ReadAll(io.LimitReader(f, (2<<20)+1))
-	closeErr := f.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	return data, nil
-}
-
-func (m *App) showLSPRenamePreview(msg lspRenamePreparedMsg) {
-	r := msg.request
-	if !m.acceptsLSPDocument(r.generation, r.filePath, r.owner, r.revision) {
-		return
-	}
-	if msg.err != nil {
-		m.Feedback.NotifyError("Rename: " + msg.err.Error())
-		return
-	}
-	if len(msg.edits) == 0 {
-		m.Feedback.NotifyInfo("Rename: no changes")
-		return
-	}
-	for _, edit := range msg.edits {
-		if tab := m.EditorState.Tabs[edit.Path]; tab != nil && tab.Editor.Modified() {
-			m.Feedback.NotifyError("Save modified files before applying a workspace rename")
-			return
-		}
-	}
+func (m *App) showLSPRenamePreview(msg lspRenameResultMsg) {
 	p := newLSPRenamePreview(m.Theme, msg)
 	m.LSPPopup.RenamePreview = p
 	w, h := min(100, max(1, m.width-4)), min(26, max(1, m.height-4))
 	frame := ui.NewWindowFrameWidget(m.Theme, "lsp-rename/frame", ui.FrameDialog, "Review rename", p, nil, false, w, h)
 	frame.Host().Focus(p.bar.ID())
-	fw := wm.NewFloatingWindow(string(lspRenameOverlay), "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(true), wm.WithClickOutside(wm.ClickOutsideIgnore))
+	fw := wm.NewFloatingWindow(string(lspRenameOverlay), "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.overlayHost.Open(lspRenameOverlay, fw, ui.ModalDialogPolicy(), func() {
 		if p.cancel != nil {
 			p.cancel()
+		}
+		if !p.attempted && !p.released {
+			m.runDetachedAsyncCmd(releaseLSPRenamePreview(p.request))
 		}
 		if m.LSPPopup.RenamePreview == p {
 			m.LSPPopup.RenamePreview = nil
 		}
 	})
 }
+
 func (m *App) handleLSPRenameAction(msg lspRenameActionMsg) tea.Cmd {
 	p := msg.preview
 	if p == nil || m.LSPPopup.RenamePreview != p || p.busy {
 		return nil
 	}
 	if msg.action == "cancel" {
+		if !p.attempted && p.request.port != nil {
+			p.busy = true
+			p.bar.SetButtons(ui.ActionBarButton{Label: "Cancelling…", Action: "cancel", Enabled: false})
+			ctx, _ := m.lspRequestContext()
+			return func() tea.Msg {
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				err := p.request.port.ReleaseReviewedEdit(ctx, p.request.preview.ID, p.request.preview.Digest)
+				return lspRenameReleasedMsg{p, p.request.generation, err}
+			}
+		}
 		m.overlayHost.Close(lspRenameOverlay)
 		return nil
 	}
 	r := p.request
-	if !m.acceptsLSPDocument(r.generation, r.filePath, r.owner, r.revision) {
+	if r.port == nil {
+		return nil
+	}
+	checking := msg.action == "inspect"
+	if !checking && (msg.action != "apply" || p.attempted) {
+		return nil
+	}
+	if !checking && !m.acceptsLSPDocument(r.generation, r.filePath, r.owner, r.revision) {
+		m.Feedback.NotifyError("Rename review is stale; request a new review")
 		m.overlayHost.Close(lspRenameOverlay)
 		return nil
 	}
-	for _, edit := range p.edits {
-		if tab := m.EditorState.Tabs[edit.Path]; tab != nil && (tab.Editor.Modified() || tab.Editor.Value() != edit.OldContent) {
-			m.Feedback.NotifyError("Rename preview is stale; save changed buffers and try again")
-			return nil
-		}
-	}
-	p.busy = true
-	p.bar.SetButtons(ui.ActionBarButton{Label: "Applying…", Action: "apply", Enabled: false})
-	owner := m.ws
+	p.busy, p.attempted = true, true
+	p.bar.SetButtons(ui.ActionBarButton{Label: "Working…", Action: "apply", Enabled: false})
 	ctx, _ := m.lspRequestContext()
 	ctx, p.cancel = context.WithCancel(ctx)
-	edits := append([]workspace.FileEdit(nil), p.edits...)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		result, safety := owner.ApplyLSPRename(ctx, edits)
-		return lspRenameAppliedMsg{p, r.generation, result, safety}
+		var result workspace.ReviewedEditResult
+		var err error
+		if checking {
+			result, err = r.port.InspectReviewedEdit(ctx, r.preview.ID, r.preview.Digest)
+		} else {
+			result, err = r.port.ApplyReviewedEdit(ctx, r.preview.ID, r.preview.Digest)
+		}
+		return lspRenameAppliedMsg{preview: p, generation: r.generation, result: result, err: err}
 	}
 }
-func (m *App) handleLSPRenameApplied(msg lspRenameAppliedMsg) {
-	if !m.acceptsLSPGeneration(msg.generation) {
+
+func (m *App) handleLSPRenameReleased(msg lspRenameReleasedMsg) {
+	if !m.acceptsLSPGeneration(msg.generation) || m.LSPPopup.RenamePreview != msg.preview {
 		return
 	}
-	if m.LSPPopup.RenamePreview != msg.preview {
-		return
-	}
-	if msg.result.Err != nil {
-		m.Feedback.NotifyError("Rename: " + msg.result.Err.Error())
+	p := msg.preview
+	p.busy = false
+	if msg.err == nil {
+		p.released = true
 		m.overlayHost.Close(lspRenameOverlay)
 		return
 	}
-	for _, edit := range msg.preview.edits {
-		if tab := m.EditorState.Tabs[edit.Path]; tab != nil {
-			tab.Editor.SignalDiskChanged()
-		}
+	p.area.SetValue("Could not confirm cancellation of review " + p.request.preview.ID +
+		". Cancel this original review again; do not apply it.\n\n" + msg.err.Error())
+	p.area.SetCursorFlat(0)
+	p.bar.SetButtons(ui.ActionBarButton{Label: "Cancel review", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+}
+
+func (m *App) handleLSPRenameApplied(msg lspRenameAppliedMsg) {
+	if !m.acceptsLSPGeneration(msg.generation) || m.LSPPopup.RenamePreview != msg.preview {
+		return
 	}
-	m.Feedback.NotifyInfo(fmt.Sprintf("Renamed in %d files · recover via Local History (%s)", len(msg.preview.edits), msg.safety[:min(8, len(msg.safety))]))
-	m.overlayHost.Close(lspRenameOverlay)
+	p, result := msg.preview, msg.result
+	p.busy = false
+	exact := result.ID == p.request.preview.ID && result.Digest == p.request.preview.Digest
+	if msg.err == nil && p.confirmsCommit(result) {
+		// Canonical topics, not this private receipt, publish all open editor text.
+		m.Feedback.NotifyInfo(fmt.Sprintf("Renamed in %d files · recover via Local History (%s)", len(p.request.preview.Files), result.SafetySnapshotID[:min(8, len(result.SafetySnapshotID))]))
+		m.overlayHost.Close(lspRenameOverlay)
+		return
+	}
+	status := "Outcome unconfirmed. Check the original result; do not apply again."
+	if exact && result.State == "refused" && msg.err == nil {
+		status = "Rename refused without a disk effect: " + result.Error
+		p.bar.SetButtons(ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true})
+	} else {
+		if exact && result.Error != "" {
+			status += "\n" + result.Error
+		}
+		if exact && result.Detail != "" {
+			status += "\n" + result.Detail
+		}
+		if msg.err != nil {
+			status += "\n" + msg.err.Error()
+		}
+		p.bar.SetButtons(ui.ActionBarButton{Label: "Check result", Action: "inspect", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
+		m.Feedback.NotifyError("Rename outcome requires inspection. Review " + p.request.preview.ID +
+			"; safety snapshot " + result.SafetySnapshotID + ". Check the original result or use Local History. Do not apply it again.")
+	}
+	p.bar.FocusLast()
+	p.area.SetValue(status + "\nReview: " + p.request.preview.ID + "\nSafety snapshot: " + result.SafetySnapshotID + "\n\n" + p.request.preview.Text)
+	p.area.SetCursorFlat(0)
+}
+
+func (p *lspRenamePreview) confirmsCommit(result workspace.ReviewedEditResult) bool {
+	return result.ID == p.request.preview.ID && result.Digest == p.request.preview.Digest &&
+		result.State == "committed" && result.SafetySnapshotID != "" && result.SafetyReference == result.ID
 }

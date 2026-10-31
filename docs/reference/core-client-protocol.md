@@ -258,8 +258,9 @@ frame envelopes or a second handwritten schema. A uvarint byte length bounds eac
 application message; a role/header value is followed directly by its typed value.
 Generated decoders bound collection counts against available bytes before
 allocation, validate tuple shapes, and reject malformed or trailing data. JSON
-required by an external contract (for example an LSP WorkspaceEdit or arbitrary
-JSON document) remains a typed leaf, not the transport envelope.
+required by an external contract remains a typed leaf, not the transport envelope.
+Original provider rename JSON stays within the core transport/normalizer boundary;
+only the detached reviewed-edit evidence crosses to the shell.
 `Hello.Schema` must exactly equal `coreprotocol.Schema`, and `Hello.Build` must
 exactly equal `buildinfo.ProtocolBuild`. Incompatible peers are refused before
 application traffic, not adapted.
@@ -390,7 +391,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
-| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.signature_help`, `.rename` |
+| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.signature_help`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
 | Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
@@ -423,7 +424,7 @@ fault). A failed final ACK or ACK-close cannot turn that known outcome into
 uncertainty. Unknown outcomes still require exact receipt observation. Reusing an
 identity with changed method, workspace or payload fails closed.
 
-Explicit read-only semantic queries use `coreclient.CallCancellable`, sharing the
+Explicit semantic queries and reviewed-edit calls use `coreclient.CallCancellable`, sharing the
 ordinary framing/identity/decoding exchange rather than owning another server.
 Caller cancellation retains the original waiter and uses typed `request.cancel`
 against its original job only after the enqueue receipt. It joins and ACKs that
@@ -439,6 +440,25 @@ Before a result is known, failed cancellation/cleanup preserves the original
 request identity as unresolved. At the unchanged 16-command bound even the
 cancellation request can be refused. That refusal is explicit; unknown original
 work/results remain retained, never evicted to make the next request succeed.
+
+Reviewed rename is not a raw edit relay or `files.edit` shortcut.
+`lsp.rename_preview` accepts the invoking acknowledged source and cursor/name.
+The canonical coordinator obtains original provider JSON, normalizes it without
+losing optional versions, and retains its exact source/provider/context/native
+preimages. `lsp.edit_apply` accepts only the original review ID/digest and uses the
+document resource lane, a journaled command and a durable non-agent operation
+intent with selected retained safety evidence. No shell-supplied content or
+attribution is accepted at Apply. Sparse canonical topics publish the source
+effect; its private receipt cannot reload editors.
+
+`lsp.edit_release` retires only a pending exact-owner preview, not an admitted
+mutation or its safety evidence. `lsp.edit_receipt` observes the original durable
+domain result for the same stable client across attachment epochs, while Apply
+remains epoch-bound. An interrupted prepared intent is unconfirmed, never replayed.
+Cancellation can refuse a pre-commit permit or trigger checked multi-file rollback;
+it does not prove that no effect occurred. The UI retains Check result rather than
+re-applying an unknown outcome. Bounds and unsupported forms are in
+[reviewed symbol rename](editor.md#reviewed-symbol-rename).
 
 Journaled mutations persist request intent before effects and their exact response
 afterward. Identity is client ID plus request ID; its digest binds workspace,

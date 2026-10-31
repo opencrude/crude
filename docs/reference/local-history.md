@@ -35,6 +35,28 @@
   Retention verifies referenced execution evidence before deleting anything.
   A missing index, manifest or object fails closed; a new snapshot never repairs
   an old receipt's immutable identity.
+- Non-agent reviewed editor mutations use retained snapshot references, not
+  fabricated agent/message attribution. Capture and reference registration share
+  the Store/process mutation gate with pruning. Exact references survive modal
+  close, detach, cancellation and restart ambiguity; release is explicit.
+  Referenced index, manifest, entries and content objects are verified before
+  pruning and before startup orphan recovery. Missing or corrupt evidence fails
+  closed instead of being repaired by a later snapshot.
+- `SnapshotRetainedFiles` stores only supplied immutable core-reviewed preimages:
+  at most 200 canonical relative regular-file keys, 2 MiB each and 16 MiB total.
+  It validates the native root and bounded Git administration metadata, but never
+  walks the tree, loads ignore files or reads the selected source contents.
+  The mutation owner must separately prove actual native preimages before commit.
+  Ordinary `SnapshotRetained` remains a full snapshot; `IncludePaths` still means
+  force inclusion, never selection.
+- Selected manifests carry explicit `ScopePaths`. Only those keys observe
+  presence/absence; a missing out-of-scope entry is unknown, never a deletion.
+  Default restore and path-subset planning directly read only selected keys,
+  reject unsafe/nonregular/oversized replacements and preserve unrelated files.
+  Restore safety/after snapshots retain the same bounded operation coverage through
+  the existing transaction and rollback owner. Diff only compares jointly
+  observed keys. Full snapshots have no selected scope and keep their ordinary
+  complete-workspace semantics.
 - A stored snapshot reuses the previous scan's entry for a file whose size,
   mtime, change key and file identity are unchanged, whose object still exists,
   and whose observation is older than the timestamp granule (a same-granule

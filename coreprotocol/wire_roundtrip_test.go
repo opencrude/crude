@@ -225,7 +225,6 @@ var (
 	rawJSONType = reflect.TypeFor[json.RawMessage]()
 	objectType  = reflect.TypeFor[jsondoc.Object]()
 	timeType    = reflect.TypeFor[time.Time]()
-	lspEditType = reflect.TypeFor[coreprotocol.LSPEdit]()
 )
 
 func fill(v reflect.Value, rng *rand.Rand, depth int) {
@@ -246,8 +245,6 @@ func fill(v reflect.Value, rng *rand.Rand, depth int) {
 	case timeType:
 		v.Set(reflect.ValueOf(time.Unix(rng.Int64N(4e9), rng.Int64N(1e9)).UTC()))
 		return
-	case lspEditType:
-		return // the LSP library validates its own documents; covered by core tests
 	}
 	switch v.Kind() {
 	case reflect.Bool:

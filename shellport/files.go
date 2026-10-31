@@ -1,8 +1,6 @@
 package shellport
 
 import (
-	"context"
-
 	"crude/fileio"
 	"crude/workspace"
 )
@@ -32,12 +30,9 @@ type Files interface {
 	// The result is returned directly to the caller.
 	DeletePath(path string) workspace.FileOperationResultMsg
 	// ApplyWorkspaceEdit applies a set of text edits to files on disk.
-	// This is used for LSP rename/refactor operations that modify multiple files.
+	// Language edits instead use the immutable ReviewedEdits capability.
 	// The result is returned directly to the caller.
 	ApplyWorkspaceEdit(edits []workspace.FileEdit) workspace.FileOperationResultMsg
-	// ApplyLSPRename runs off the UI thread. Its immutable reviewed preimages must
-	// match a mandatory recoverable safety snapshot before FileOps may commit.
-	ApplyLSPRename(ctx context.Context, edits []workspace.FileEdit) (workspace.FileOperationResultMsg, string)
 	// StartProjectSearch starts a workspace-rooted search. Completion is published
 	// through EventBus as ProjectSearchCompletedMsg; no domain result is returned
 	// to the TUI method caller.

@@ -69,6 +69,7 @@ type DocumentService struct {
 	watch       *documentWatch
 	bus         *EventBus
 	subscribers map[string]map[chan struct{}]bool
+	reviewed    map[string]*reviewedEdit
 }
 
 func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager, state ...*sql.DB) *DocumentService {
@@ -590,6 +591,11 @@ func (s *DocumentService) Detach(owner document.Owner) {
 func (s *DocumentService) ReleaseDetached(owner document.Owner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for id, review := range s.reviewed {
+		if review.owner == owner {
+			delete(s.reviewed, id)
+		}
+	}
 	for _, d := range s.docs {
 		delete(d.owners, owner)
 		s.closeLanguageView(d)
@@ -604,6 +610,7 @@ func (s *DocumentService) Close() {
 		return
 	}
 	s.closed = true
+	s.reviewed = nil
 	for id, d := range s.docs {
 		if s.saves != nil {
 			s.saves.Cancel(id)

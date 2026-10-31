@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
-
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
@@ -93,8 +91,8 @@ func (noopLSPClient) RequestHover(context.Context, string, int, int) (string, er
 func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error) {
 	return model.LSPSignatureHelp{}, nil
 }
-func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
-	return nil, nil
+func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
+	return model.LSPRenameEdit{}, nil
 }
 func (noopLSPClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
 	return nil

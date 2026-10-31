@@ -34,10 +34,6 @@ func (l *local) ApplyWorkspaceEdit(edits []workspace.FileEdit) workspace.FileOpe
 	return l.ws.ApplyWorkspaceEdit(edits)
 }
 
-func (l *local) ApplyLSPRename(ctx context.Context, edits []workspace.FileEdit) (workspace.FileOperationResultMsg, string) {
-	return l.ws.ApplyLSPRename(ctx, edits)
-}
-
 func (l *local) StartProjectSearch(query string, opts fileio.ProjectSearchOptions) uint64 {
 	return l.ws.StartProjectSearch(query, opts)
 }

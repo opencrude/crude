@@ -94,6 +94,16 @@ not a canonical commit or disk Save; the existing document receipt/topic must
 still settle. Closing/reopening the picker changes its control lifetime, so a
 retired node cannot activate an alternative in a later invocation.
 
+Reviewed rename actions resolve only against the actual open review's native
+ActionBar buttons and captured surface identity. Apply is Write, original-result
+inspection is Read, and Cancel is local Write. Activation awaits the same typed
+mutation/inspection result used by ordinary keys; an intermediate action message
+is not a successful disk effect. **Committed** requires the exact review ID/digest
+and retained safety identity. Refusal is failed, unknown outcomes are uncertain,
+and a known committed result with unconfirmed exchange cleanup is partial with
+the known domain state preserved. Retired or foreign surface nodes cannot acquire
+a replacement review. No generic action grants workspace Trust or execution.
+
 `panel.show` is navigation only. Showing an empty terminal panel does not launch
 a PTY; creation requires `terminal.open`/`terminal.create` and its Execute
 authorization. Performance navigation reuses the existing dashboard lifecycle.

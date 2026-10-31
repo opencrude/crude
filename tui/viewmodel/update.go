@@ -910,15 +910,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.handleDocumentSymbolsResult(msg)
 		}
 	case lspRenameResultMsg:
-		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
-			cmds = append(cmds, m.handleRenameResult(msg))
-		}
-	case lspRenamePreparedMsg:
-		m.showLSPRenamePreview(msg)
+		cmds = append(cmds, m.handleRenameResult(msg))
 	case lspRenameActionMsg:
 		cmds = append(cmds, m.handleLSPRenameAction(msg))
 	case lspRenameAppliedMsg:
 		m.handleLSPRenameApplied(msg)
+	case lspRenameReleasedMsg:
+		m.handleLSPRenameReleased(msg)
 	case lspCompletionResultMsg:
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleCompletionResult(msg)

@@ -44,6 +44,25 @@ func (s *Store) PlanRestorePaths(ctx context.Context, targetSnapshotID string, o
 		return RestorePlan{}, err
 	}
 	defer unlock()
+	target, err := s.LoadManifest(targetSnapshotID)
+	if err != nil {
+		return RestorePlan{}, err
+	}
+	if target.ScopePaths != nil {
+		if len(paths) > selectedMaxFiles {
+			return RestorePlan{}, errors.New("localhistory: too many selected restore paths")
+		}
+		keys := make([]string, 0, len(paths))
+		for _, path := range paths {
+			if !validSelectedPath(path) {
+				return RestorePlan{}, errors.New("localhistory: invalid selected restore path")
+			}
+			if manifestObserves(target, path) {
+				keys = append(keys, path)
+			}
+		}
+		return s.planSelectedRestore(ctx, target, opts, sortedUnique(keys))
+	}
 	plan, err := s.planRestore(ctx, targetSnapshotID, opts)
 	if err != nil {
 		return RestorePlan{}, err
@@ -71,6 +90,9 @@ func (s *Store) planRestore(ctx context.Context, targetSnapshotID string, opts S
 	target, err := s.LoadManifest(targetSnapshotID)
 	if err != nil {
 		return RestorePlan{}, err
+	}
+	if target.ScopePaths != nil {
+		return s.planSelectedRestore(ctx, target, opts, target.ScopePaths)
 	}
 	current, err := s.scan(ctx, opts, false)
 	if err != nil {
@@ -316,25 +338,43 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	if len(changes) == 0 {
 		return RestoreResult{}, errors.New("localhistory: restore plan has no selected safe changes")
 	}
+	paths := changePaths(changes)
+	target, err := s.LoadManifest(plan.TargetSnapshotID)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if target.ScopePaths != nil {
+		for _, path := range paths {
+			if !manifestObserves(target, path) {
+				return RestoreResult{}, errors.New("localhistory: restore path is outside selected snapshot scope")
+			}
+		}
+		// Reject changed size/type before the general transaction precondition
+		// machinery can read it. Capture below rechecks the same bounded keys.
+		if _, err := s.readSelectedFiles(ctx, paths); err != nil {
+			return RestoreResult{}, err
+		}
+	}
 	if err := s.validateChanges(ctx, changes); err != nil {
 		return RestoreResult{}, err
 	}
 	if err := s.validateHardlinkClosure(changes); err != nil {
 		return RestoreResult{}, err
 	}
-	paths := changePaths(changes)
 	safetyOpts := plan.CaptureOptions
 	safetyOpts.Kind = "safety_before_restore"
 	safetyOpts.Label = "Safety snapshot before restore " + plan.ID[:12]
 	safetyOpts.ParentID = ""
 	safetyOpts.IncludePaths = append([]string(nil), paths...)
-	safety, err := s.snapshotIncludingPaths(ctx, safetyOpts, paths)
+	capture := s.snapshotIncludingPaths
+	if target.ScopePaths != nil {
+		// A selected restore must never expand unknown coverage into a full
+		// workspace safety/after snapshot.
+		capture = s.snapshotSelectedPaths
+	}
+	safety, err := capture(ctx, safetyOpts, paths)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("localhistory: capture safety snapshot: %w", err)
-	}
-	target, err := s.LoadManifest(plan.TargetSnapshotID)
-	if err != nil {
-		return RestoreResult{}, err
 	}
 	if err := s.beginRestoreTransaction(plan.ID, safety.ID, paths, changes); err != nil {
 		return RestoreResult{}, fmt.Errorf("localhistory: persist restore intent: %w", err)
@@ -376,7 +416,7 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	afterOpts.Label = "After restore " + plan.ID[:12]
 	afterOpts.ParentID = safety.ID
 	afterOpts.IncludePaths = append([]string(nil), paths...)
-	after, err := s.snapshotIncludingPaths(ctx, afterOpts, paths)
+	after, err := capture(ctx, afterOpts, paths)
 	if err != nil {
 		return rollback(fmt.Errorf("after-restore snapshot failed: %w", err), changes)
 	}
@@ -395,6 +435,9 @@ func (s *Store) safeRollbackChanges(safety Manifest, applied []Change) ([]Change
 	changes := make([]Change, 0, len(applied))
 	var conflicts []string
 	for _, appliedChange := range applied {
+		if !manifestObserves(safety, appliedChange.Path) {
+			return nil, nil, errors.New("localhistory: rollback path is outside safety snapshot scope")
+		}
 		current, err := s.currentEntry(appliedChange.Path)
 		if err != nil {
 			return nil, nil, err
@@ -483,6 +526,9 @@ func (s *Store) recoverInterruptedRestores() error {
 		rollback := make([]Change, 0, len(item.paths))
 		var conflicts []string
 		for _, path := range item.paths {
+			if !manifestObserves(safety, path) {
+				return errors.New("localhistory: interrupted restore path is outside safety snapshot scope")
+			}
 			current, err := s.currentEntryExpected(path, item.applied[path])
 			if err != nil {
 				return err

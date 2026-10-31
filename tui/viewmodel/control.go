@@ -65,6 +65,7 @@ type shellControlDoneMsg struct {
 	boardOwner    *boardbrowser.Screen
 	pickerOwner   *capabilityPickerOwner
 	snippetOwner  *editorSnippetChoice
+	renameOwner   *lspRenamePreview
 }
 
 type shellControlReplyMsg struct{ err error }
@@ -291,7 +292,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.renameOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -688,6 +689,11 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 				if state := m.editorSnippet; state != nil && m.ownsSnippetChoice(state.choice) && owner.window == state.choice.window {
 					done.snippetOwner = state.choice
 				}
+				if p := m.LSPPopup.RenamePreview; p != nil && owner.window != nil && owner.window == m.overlayHost.Window(lspRenameOverlay) {
+					if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == p {
+						done.renameOwner = p
+					}
+				}
 			}
 		}
 	}
@@ -732,6 +738,8 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			valid = valid && m.boardBrowser == done.boardOwner && m.termDock != nil && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelBoard
 		} else if done.pickerOwner != nil {
 			valid = valid && m.capabilityPicker == done.pickerOwner
+		} else if done.renameOwner != nil {
+			valid = valid && m.LSPPopup.RenamePreview == done.renameOwner && m.overlayHost.IsOpen(lspRenameOverlay)
 		} else if done.deckOwner != nil {
 			var intent shellControlIntent
 			if decodeShellInput(msg.Envelope.Request.Input, &intent) != nil {
@@ -754,6 +762,56 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	result := control.Result{State: control.Applied}
 	var follow tea.Cmd
 	switch completion := done.completion.(type) {
+	case lspRenameActionMsg:
+		if !valid || done.renameOwner == nil || completion.preview != done.renameOwner {
+			return m.failShellControl(msg, control.Stale, "reviewed edit surface changed")
+		}
+		cmd := m.handleLSPRenameAction(completion)
+		if cmd != nil {
+			return m.awaitCapturedShellControl(done, cmd, nil)
+		} else if completion.action != "cancel" {
+			return m.failShellControl(msg, control.Stale, "reviewed edit action was retired or refused")
+		}
+	case lspRenameReleasedMsg:
+		if !valid || done.renameOwner == nil || completion.preview != done.renameOwner {
+			return m.failShellControl(msg, control.Stale, "reviewed edit release belongs to a retired surface")
+		}
+		m.handleLSPRenameReleased(completion)
+		if completion.err != nil {
+			result.State = control.Uncertain
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "pending review release is unconfirmed; cancel or inspect the original review, never apply it"}
+		}
+	case lspRenameAppliedMsg:
+		p := done.renameOwner
+		if !valid || p == nil || completion.preview != p {
+			return m.failShellControl(msg, control.Stale, "reviewed edit result belongs to a retired surface")
+		}
+		m.handleLSPRenameApplied(completion)
+		out := completion.result
+		if out.ID == p.request.preview.ID && out.Digest == p.request.preview.Digest {
+			result.ResourceIDs = []string{out.ID}
+			if out.SafetySnapshotID != "" {
+				result.ResourceIDs = append(result.ResourceIDs, out.SafetySnapshotID)
+			}
+			result.Output, _ = json.Marshal(struct {
+				ID, Digest, State, SafetyReference, SafetySnapshotID string
+			}{out.ID, out.Digest, out.State, out.SafetyReference, out.SafetySnapshotID})
+			if p.confirmsCommit(out) && completion.err == nil {
+				result.State = control.Committed
+			} else if p.confirmsCommit(out) {
+				result.State = control.Partial
+				result.Fault = &control.Fault{Code: control.OperationFailed, Message: "reviewed mutation result is known but connection cleanup is unconfirmed; inspect, never replay"}
+			} else if out.State == "refused" && completion.err == nil {
+				result.State = control.Failed
+				result.Fault = &control.Fault{Code: control.OperationFailed, Message: "reviewed mutation refused; request a fresh review"}
+			} else {
+				result.State = control.Uncertain
+				result.Fault = &control.Fault{Code: control.OperationFailed, Message: "inspect the original reviewed mutation and retained safety; never replay"}
+			}
+		} else {
+			result.State = control.Uncertain
+			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "original reviewed mutation outcome is unknown; never replay"}
+		}
 	case editorSnippetChoiceMsg:
 		if !valid || done.snippetOwner == nil || completion.choice != done.snippetOwner {
 			return m.failShellControl(msg, control.Stale, "snippet choice owner changed")

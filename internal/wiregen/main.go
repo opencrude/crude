@@ -159,7 +159,7 @@ func run() error {
 	}
 	// These opaque primitives deliberately own their encoding rather than a
 	// generated tuple. Their semantics must be negotiated just as strictly.
-	primitives = append(primitives, "types/jsondoc/jsondoc.go", "coreprotocol/wire.go")
+	primitives = append(primitives, "types/jsondoc/jsondoc.go")
 	sort.Strings(primitives)
 	for _, source := range primitives {
 		if strings.HasSuffix(source, "_test.go") {

@@ -1,6 +1,9 @@
 package viewmodel
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +14,6 @@ import (
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 func lspJourneyEditor(t *testing.T, text string) (*App, string, *editor.Editor) {
@@ -63,81 +65,99 @@ func TestLSPDefinitionNavigatesUTF16AfterTabAndEmoji(t *testing.T) {
 		t.Fatalf("UTF16 navigation at visual col=%d want6", ed.CursorCol())
 	}
 }
+
+// A detached core review is opaque to the shell. Connected tests separately
+// exercise provider normalization, real mutation, canonical publication and undo.
+type renamePreviewPort struct {
+	result workspace.ReviewedEditResult
+	err    error
+	calls  int
+}
+
+func (p *renamePreviewPort) PrepareLSPRename(context.Context, model.InsightSource, int, int, string) (workspace.ReviewedEditPreview, error) {
+	return workspace.ReviewedEditPreview{}, errors.New("unexpected second prepare")
+}
+func (p *renamePreviewPort) ApplyReviewedEdit(_ context.Context, id, digest string) (workspace.ReviewedEditResult, error) {
+	p.calls++
+	return p.result, p.err
+}
+func (p *renamePreviewPort) ReleaseReviewedEdit(context.Context, string, string) error { return nil }
+func (p *renamePreviewPort) InspectReviewedEdit(context.Context, string, string) (workspace.ReviewedEditResult, error) {
+	return p.result, p.err
+}
+
 func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 	for _, apply := range []bool{false, true} {
-		t.Run(map[bool]string{false: "cancel", true: "apply"}[apply], func(t *testing.T) {
-			app, path, ed := lspJourneyEditor(t, "var old = 1\nold\n")
-			request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new"}
-			edit := &protocol.WorkspaceEdit{Changes: map[protocol.DocumentURI][]protocol.TextEdit{protocol.URIFromPath(path): {
-				{Range: protocol.Range{Start: protocol.Position{Line: 0, Character: 4}, End: protocol.Position{Line: 0, Character: 7}}, NewText: "new"},
-				{Range: protocol.Range{Start: protocol.Position{Line: 1, Character: 0}, End: protocol.Position{Line: 1, Character: 3}}, NewText: "new"},
-			}}}
-			prepared := prepareLSPRename(app.ws.RootPath(), request, edit)
-			if prepared.err != nil {
-				t.Fatal(prepared.err)
-			}
-			if prepared.edits[0].NewContent != "var new = 1\nnew\n" {
-				t.Fatalf("rename destroyed suffix: %q", prepared.edits[0].NewContent)
-			}
-			app.showLSPRenamePreview(prepared)
-			if app.LSPPopup.RenamePreview == nil {
-				t.Fatal("missing review surface")
-			}
-			_ = app.View()
-			before, _ := os.ReadFile(path)
-			if string(before) != "var old = 1\nold\n" {
-				t.Fatal("preview wrote files")
-			}
+		t.Run(fmt.Sprint(apply), func(t *testing.T) {
+			app, path, ed := lspJourneyEditor(t, "old\n")
+			port := &renamePreviewPort{result: workspace.ReviewedEditResult{ID: "review-test", Digest: "exact-digest", State: "committed", SafetySnapshotID: "safety-123", SafetyReference: "review-test"}}
+			request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new", port: port, preview: workspace.ReviewedEditPreview{ID: "review-test", Digest: "exact-digest", Files: []workspace.ReviewedEditFile{{Path: path}}, Text: "- old\n+ new\n"}}
+			app.showLSPRenamePreview(request)
+			app.View()
 			p := app.LSPPopup.RenamePreview
-			if !apply {
-				app.handleLSPRenameAction(lspRenameActionMsg{p, "cancel"})
-				after, _ := os.ReadFile(path)
-				if string(after) != string(before) {
-					t.Fatal("Cancel changed bytes")
+			if p == nil || !strings.Contains(p.area.Value(), "retained Local History safety") {
+				t.Fatal("missing exact review and recovery notice")
+			}
+			action := "cancel"
+			if apply {
+				action = "apply"
+			}
+			cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, action})
+			if apply {
+				if cmd == nil {
+					t.Fatal("no apply request")
 				}
-				return
+				result := cmd().(lspRenameAppliedMsg)
+				app.handleLSPRenameApplied(result)
+				if port.calls != 1 {
+					t.Fatal("apply was not exactly once")
+				}
+			} else {
+				if cmd == nil {
+					t.Fatal("Cancel did not await exact pending-review release")
+				}
+				app.handleLSPRenameReleased(cmd().(lspRenameReleasedMsg))
+				if port.calls != 0 {
+					t.Fatal("Cancel submitted a mutation")
+				}
 			}
-			cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"})
-			if cmd == nil {
-				t.Fatal("Apply returned no work")
+			disk, _ := os.ReadFile(path)
+			if string(disk) != "old\n" {
+				t.Fatal("shell wrote source from a private preview/receipt")
 			}
-			result := cmd().(lspRenameAppliedMsg)
-			if result.result.Err != nil || result.safety == "" {
-				t.Fatalf("rename failed or lacked safety snapshot: %v", result.result.Err)
-			}
-			app.handleLSPRenameApplied(result)
-			after, _ := os.ReadFile(path)
-			if string(after) != "var new = 1\nnew\n" {
-				t.Fatal(string(after))
+			if app.LSPPopup.RenamePreview != nil {
+				t.Fatal("completed/cancelled preview retained")
 			}
 		})
 	}
 }
-func TestLSPRenameRefusesStaleDirtyAndMalformedEdit(t *testing.T) {
+func TestLSPRenameRefusesStaleSourceAndNeverReportsEmptySafetySuccess(t *testing.T) {
 	app, path, ed := lspJourneyEditor(t, "old\n")
-	request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new"}
-	edit := &protocol.WorkspaceEdit{Changes: map[protocol.DocumentURI][]protocol.TextEdit{protocol.URIFromPath(path): {{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "new"}}}}
-	prepared := prepareLSPRename(app.ws.RootPath(), request, edit)
-	app.showLSPRenamePreview(prepared)
+	port := &renamePreviewPort{result: workspace.ReviewedEditResult{ID: "review-test", Digest: "exact-digest", State: "committed"}}
+	request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, port: port, preview: workspace.ReviewedEditPreview{ID: "review-test", Digest: "exact-digest", Text: "- old\n+ new\n"}}
+	app.showLSPRenamePreview(request)
 	p := app.LSPPopup.RenamePreview
+	cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"})
+	app.handleLSPRenameApplied(cmd().(lspRenameAppliedMsg))
+	if app.LSPPopup.RenamePreview != p || !strings.Contains(p.area.Value(), "Outcome unconfirmed") {
+		t.Fatal("empty safety became a success")
+	}
+	if cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {
+		t.Fatal("unknown result was replayed")
+	}
+	app.overlayHost.Close(lspRenameOverlay)
+	app.showLSPRenamePreview(request)
+	p = app.LSPPopup.RenamePreview
 	ed.InsertRune('x')
-	if cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"}); cmd != nil {
-		t.Fatal("dirty changed preimage submitted")
-	}
-	data, _ := os.ReadFile(path)
-	if string(data) != "old\n" {
-		t.Fatal("dirty refusal wrote bytes")
-	}
-	edit.Changes[protocol.URIFromPath(path)][0].Range.End.Character = 999
-	if got := prepareLSPRename(app.ws.RootPath(), request, edit); got.err == nil {
-		t.Fatal("out of range edit silently clamped")
+	if cmd := app.handleLSPRenameAction(lspRenameActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {
+		t.Fatal("stale shared view reached Apply")
 	}
 }
 func TestLSPRenameDialogFitsConstrainedSurface(t *testing.T) {
 	app, path, ed := lspJourneyEditor(t, "old")
 	for _, size := range [][2]int{{160, 40}, {64, 24}} {
 		_, _ = app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		msg := lspRenamePreparedMsg{request: lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new"}, edits: []workspace.FileEdit{{Path: path, OldContent: "old", NewContent: "new"}}, preview: strings.Repeat("review full evidence\n", 100)}
+		msg := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new", preview: workspace.ReviewedEditPreview{ID: "review-grid", Files: []workspace.ReviewedEditFile{{Path: path}}, Text: strings.Repeat("review full evidence\n", 100)}}
 		app.showLSPRenamePreview(msg)
 		_ = app.View()
 		fw := app.overlayHost.Window(lspRenameOverlay)
