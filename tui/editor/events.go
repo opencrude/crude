@@ -24,6 +24,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	if !e.open {
 		return nil
 	}
+	defer e.reconcileSnippetSelection()
 
 	switch msg := msg.(type) {
 	case PointerScrollMsg:
@@ -50,6 +51,9 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			}
 		}
 		e.cursorBlink.MarkActivity()
+		if isHistoryKey(msg) {
+			e.CancelSnippet() // retire on intent, before connected history queues
+		}
 		if !e.readOnly && !isHistoryKey(msg) && msg.Code != tea.KeyEsc && !ui.IsCopyChord(msg) && !ui.IsPasteChord(msg) {
 			if e.DeferDocumentEvent(msg) {
 				return nil
@@ -69,10 +73,11 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 				e.beginUndoGroup()
 			}
 			defer func() {
-				if typing {
-					e.typingGroup, e.typingAt, e.typingCursor = e.undoGroupID, time.Now(), e.cursor
-				}
+				group := e.undoGroupID
 				e.endUndoGroup()
+				if typing {
+					e.typingGroup, e.typingAt, e.typingCursor = group, time.Now(), e.cursor
+				}
 			}()
 		}
 		return e.handleKey(msg)
@@ -507,7 +512,9 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	case tea.KeyEnter:
 		e.replacingSelection(e.insertNewline)
 	case tea.KeyTab:
-		if extend {
+		if e.navigateSnippet(extend) {
+			return nil
+		} else if extend {
 			e.outdentLines()
 		} else if e.HasSelection() {
 			e.indentLines()
@@ -515,6 +522,11 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.insertTab()
 		}
 	case tea.KeyEsc:
+		if e.SnippetActive() {
+			e.CancelSnippet()
+			e.ClearSelection()
+			return nil
+		}
 		// Esc dismisses a selection before it means Back.
 		if e.HasSelection() {
 			e.ClearSelection()
@@ -552,7 +564,7 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 					if r < 32 {
 						continue
 					}
-					if _, opener := autoClosePairs[r]; opener && e.HasSelection() {
+					if _, opener := autoClosePairs[r]; opener && e.HasSelection() && !e.SnippetActive() {
 						e.typeRune(r) // an opener wraps the selection
 						continue
 					}

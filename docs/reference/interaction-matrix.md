@@ -192,6 +192,8 @@ window derive from current bytes, not replayed change guesses.
 | Delete line(s) | Ctrl+Shift+K | Kitty/CSI-u terminals |
 | Toggle line comment | Ctrl+/ (legacy Ctrl+_) | Prefix from language map / chroma |
 | Indent / outdent selection | Tab / Shift+Tab | Shift+Tab outdents the current line without a selection |
+| Numeric completion fields | Tab / Shift+Tab while a snippet is active | Visit positive numeric stops, then the first surviving final landing; first Shift+Tab never wraps or indents. Accepting a completion with Tab does not also advance its first field. Ordinary typing/paste updates mirrors in the same undo group; Undo/Redo restores bytes without reviving private interaction |
+| Snippet choices | Ctrl+Space on a choice field; Enter/Tab or pointer selects | Native WindowFrame/List; Escape/outside dismisses the picker without discarding text. Escape in the editor then retires snippet interaction before Close Tab; true focus/owner departure retires it too |
 | Smart Home | Home | Toggles first non-blank column and column 0 |
 | Parameter information | Alt+I; Ctrl+Shift+Space where delivered; editor Code context action | Explicit provider-negotiated signature/active parameter reader for acknowledged canonical text. Read-only, scroll/select/copy, Close/Esc/outside to dismiss; never inserts text. Source/caret/invocation and pushed context generations fence replies. No automatic trigger or dynamic-registration support is implied |
 | Auto-close pairs | ( [ { " ' | Type-over closers; openers wrap an active selection; Backspace deletes an empty pair |

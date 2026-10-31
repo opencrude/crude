@@ -182,9 +182,11 @@ func WordWrap(s string, maxWidth int) []string {
 		str   string
 		width int
 	}
-	var clusters []cluster
-	rest := s
+	// One cluster per grapheme, never more than one per byte. Preallocating
+	// avoids repeatedly copying the slice for very long logical lines.
+	clusters := make([]cluster, 0, len(s))
 	var state byte
+	rest := s
 	for len(rest) > 0 {
 		c, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		clusters = append(clusters, cluster{str: c, width: cw})
@@ -288,41 +290,44 @@ func TruncateLine(s string, max int) string {
 	return result.String()
 }
 
-func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
-	if segmentIdx <= 0 {
-		return 0
+// FindSegmentStarts returns the rune offset where each WordWrap segment of one
+// logical line begins. It walks the line once. Asking for one start per segment
+// re-parsed the whole line for every row, so a 1 MiB single-line paste spent
+// minutes in cursor projection before the view could repaint.
+func FindSegmentStarts(logLine []rune, textW int) []int {
+	if textW <= 0 {
+		return []int{0}
 	}
-	s := string(logLine)
-
 	type cluster struct {
 		runeStart int
-		runeEnd   int
 		width     int
 		str       string
 	}
-	var clusters []cluster
-	rest := s
+	// One cluster per grapheme, never more than one per rune.
+	clusters := make([]cluster, 0, len(logLine))
+	rest := string(logLine)
 	var state byte
 	runePos := 0
 	for len(rest) > 0 {
 		c, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
-		cRunes := len([]rune(c))
-		clusters = append(clusters, cluster{
-			runeStart: runePos,
-			runeEnd:   runePos + cRunes,
-			width:     cw,
-			str:       c,
-		})
-		runePos += cRunes
+		clusters = append(clusters, cluster{runeStart: runePos, width: cw, str: c})
+		runePos += len([]rune(c))
 		rest = rest[len(c):]
 		state = newState
 	}
 	n := len(clusters)
+	if n == 0 {
+		return []int{0}
+	}
+	prefix := make([]int, n+1)
+	for i, cluster := range clusters {
+		prefix[i+1] = prefix[i] + cluster.width
+	}
 
+	starts := make([]int, 0, 8)
 	ci := 0
-	currentSeg := 0
-	for currentSeg < segmentIdx && ci < n {
-		if currentSeg > 0 {
+	for ci < n {
+		if len(starts) > 0 {
 			for ci < n && clusters[ci].str == " " {
 				ci++
 			}
@@ -330,20 +335,13 @@ func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 				break
 			}
 		}
-
-		remainingW := 0
-		for k := ci; k < n; k++ {
-			remainingW += clusters[k].width
-		}
-		if remainingW <= textW {
-			// All remaining content fits: this is the final segment.
+		starts = append(starts, clusters[ci].runeStart)
+		if prefix[n]-prefix[ci] <= textW {
 			break
 		}
-
 		lineEnd := ci + 1
 		lastSpace := -1
 		w := clusters[ci].width
-
 		for j := ci + 1; j < n; j++ {
 			rw := clusters[j].width
 			if w+rw > textW {
@@ -355,24 +353,14 @@ func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 				lastSpace = j
 			}
 		}
-
-		currentSeg++
-
 		if lastSpace >= ci {
 			ci = lastSpace + 1
 		} else {
 			ci = lineEnd
 		}
 	}
-
-	if segmentIdx > 0 {
-		for ci < n && clusters[ci].str == " " {
-			ci++
-		}
+	if len(starts) == 0 {
+		return []int{0}
 	}
-
-	if ci < n {
-		return clusters[ci].runeStart
-	}
-	return len(logLine)
+	return starts
 }

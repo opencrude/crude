@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"crude/document"
 )
@@ -35,6 +37,10 @@ type PieceTable struct {
 	revision    uint64
 	// mutationObserver is a UI-local notification, never a backend call.
 	mutationObserver func(document.Edit)
+	// One dispatcher notifies passive private views after the canonical log.
+	// Listeners never mutate recursively or replace mutationObserver.
+	editOwner    *Editor
+	snippetViews map[*Editor]struct{}
 }
 
 type bufferLineChange struct {
@@ -113,6 +119,9 @@ func (pt *PieceTable) ReplaceAll(text string) {
 func (pt *PieceTable) observeMutation(edit document.Edit) {
 	if pt.mutationObserver != nil {
 		pt.mutationObserver(edit)
+	}
+	for view := range pt.snippetViews {
+		view.observeSnippetMutation(edit, pt.editOwner)
 	}
 }
 
@@ -212,20 +221,6 @@ func (pt *PieceTable) positionToOffset(pos Position) int {
 	return pt.lineOffsets[line] + VisualColToByteOffset(string(content), pos.Col, tabWidth)
 }
 
-func (pt *PieceTable) findPiece(offset int) (int, int) {
-	currentOffset := 0
-	for i, p := range pt.pieces {
-		if currentOffset+p.length > offset {
-			return i, offset - currentOffset
-		}
-		currentOffset += p.length
-	}
-	if len(pt.pieces) == 0 {
-		return 0, 0
-	}
-	return len(pt.pieces) - 1, pt.pieces[len(pt.pieces)-1].length
-}
-
 func (pt *PieceTable) GetText(start, end Position) string {
 	startOff := pt.positionToOffset(start)
 	endOff := pt.positionToOffset(end)
@@ -256,121 +251,123 @@ func (pt *PieceTable) insertAtOffset(offset int, text []byte) (EditInfo, error) 
 	if len(text) == 0 {
 		return EditInfo{}, nil
 	}
-
 	pt.ensureCache()
 	offset = min(len(pt.cachedBytes), max(0, offset))
-	line := pt.positionAtOffset(offset).Line
-
-	if len(pt.pieces) == 0 || (len(pt.pieces) == 1 && pt.pieces[0].length == 0) {
-		addStart := len(pt.add)
-		pt.add = append(pt.add, text...)
-		pt.pieces = []piece{{buffer: addBuffer, start: addStart, length: len(text)}}
-		pt.revision++
-		edit := document.Edit{Start: offset, End: offset, Text: string(text)}
-		pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}), edit)
-		pt.invalidateCache()
-		pt.observeMutation(edit)
-		return EditInfo{}, nil
-	}
-
-	addStart := len(pt.add)
-	pt.add = append(pt.add, text...)
-	newPiece := piece{buffer: addBuffer, start: addStart, length: len(text)}
-
-	pieceIdx, pieceOffset := pt.findPiece(offset)
-
-	var newPieces []piece
-
-	switch pieceOffset {
-	case 0:
-		newPieces = make([]piece, 0, len(pt.pieces)+1)
-		newPieces = append(newPieces, pt.pieces[:pieceIdx]...)
-		newPieces = append(newPieces, newPiece)
-		newPieces = append(newPieces, pt.pieces[pieceIdx:]...)
-	case pt.pieces[pieceIdx].length:
-		newPieces = make([]piece, 0, len(pt.pieces)+1)
-		newPieces = append(newPieces, pt.pieces[:pieceIdx+1]...)
-		newPieces = append(newPieces, newPiece)
-		if pieceIdx+1 < len(pt.pieces) {
-			newPieces = append(newPieces, pt.pieces[pieceIdx+1:]...)
-		}
-	default:
-		oldPiece := pt.pieces[pieceIdx]
-		leftPiece := piece{buffer: oldPiece.buffer, start: oldPiece.start, length: pieceOffset}
-		rightPiece := piece{buffer: oldPiece.buffer, start: oldPiece.start + pieceOffset, length: oldPiece.length - pieceOffset}
-
-		newPieces = make([]piece, 0, len(pt.pieces)+2)
-		newPieces = append(newPieces, pt.pieces[:pieceIdx]...)
-		newPieces = append(newPieces, leftPiece, newPiece, rightPiece)
-		if pieceIdx+1 < len(pt.pieces) {
-			newPieces = append(newPieces, pt.pieces[pieceIdx+1:]...)
-		}
-	}
-
-	pt.pieces = newPieces
-	pt.revision++
-	edit := document.Edit{Start: offset, End: offset, Text: string(text)}
-	pt.recordLineChange(line, line, bytes.Count(text, []byte{'\n'}), edit)
-	pt.invalidateCache()
-	pt.observeMutation(edit)
-
-	return EditInfo{}, nil
+	return EditInfo{}, pt.applyOffsets([]document.Edit{{Start: offset, End: offset, Text: string(text)}})
 }
 
 func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
 	return pt.deleteOffsets(pt.positionToOffset(start), pt.positionToOffset(end))
 }
 
-// deleteOffsets intentionally preserves exact source byte spans, including
-// spans inside a grapheme when applying a recorded inverse operation.
-func (pt *PieceTable) deleteOffsets(startOff, endOff int) (EditInfo, error) {
+// deleteOffsets preserves exact source byte spans, including inverse edits
+// inside joined graphemes. All byte mutations share the same checked owner.
+func (pt *PieceTable) deleteOffsets(start, end int) (EditInfo, error) {
 	pt.ensureCache()
-	startOff = min(len(pt.cachedBytes), max(0, startOff))
-	endOff = min(len(pt.cachedBytes), max(0, endOff))
-
-	if startOff >= endOff {
+	start = min(len(pt.cachedBytes), max(0, start))
+	end = min(len(pt.cachedBytes), max(0, end))
+	if start >= end {
 		return EditInfo{}, nil
 	}
-	startLine := pt.positionAtOffset(startOff).Line
-	endLine := pt.positionAtOffset(endOff).Line
+	return EditInfo{}, pt.applyOffsets([]document.Edit{{Start: start, End: end}})
+}
 
-	startPieceIdx, startPieceOffset := pt.findPiece(startOff)
-	endPieceIdx, endPieceOffset := pt.findPiece(endOff)
-
-	var newPieces []piece
-
-	newPieces = append(newPieces, pt.pieces[:startPieceIdx]...)
-
-	if startPieceOffset > 0 {
-		startPiece := pt.pieces[startPieceIdx]
-		newPieces = append(newPieces, piece{
-			buffer: startPiece.buffer,
-			start:  startPiece.start,
-			length: startPieceOffset,
-		})
+func (pt *PieceTable) checkOffsets(edits []document.Edit) error {
+	if len(edits) > document.MaxEdits {
+		return document.ErrLimit
 	}
-
-	if endPieceOffset < pt.pieces[endPieceIdx].length {
-		endPiece := pt.pieces[endPieceIdx]
-		newPieces = append(newPieces, piece{
-			buffer: endPiece.buffer,
-			start:  endPiece.start + endPieceOffset,
-			length: endPiece.length - endPieceOffset,
-		})
+	pt.ensureCache()
+	for i, edit := range edits {
+		if edit.Start < 0 || edit.End < edit.Start || edit.End > len(pt.cachedBytes) ||
+			i > 0 && (edit.Start < edits[i-1].End || edit.Start == edits[i-1].Start) {
+			return fmt.Errorf("invalid source byte edit range")
+		}
 	}
+	return nil
+}
 
-	if endPieceIdx+1 < len(pt.pieces) {
-		newPieces = append(newPieces, pt.pieces[endPieceIdx+1:]...)
+// applyOffsets commits one sorted, disjoint original-coordinate vector. It is
+// the sole piece-splice writer for Insert, Delete and recorded editor batches.
+// Validation precedes every effect; text and geometry advance once, not once
+// per mirror. The existing observer still receives every primitive in reverse
+// sequential coordinates, after the complete source has committed.
+func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
+	if err := pt.checkOffsets(edits); err != nil {
+		return err
 	}
-
-	pt.pieces = newPieces
+	before := pt.cachedBytes
+	changed := make([]document.Edit, 0, len(edits))
+	delta := 0
+	for _, edit := range edits {
+		if bytes.Equal(before[edit.Start:edit.End], []byte(edit.Text)) {
+			continue
+		}
+		changed = append(changed, edit)
+		delta += strings.Count(edit.Text, "\n") - bytes.Count(before[edit.Start:edit.End], []byte{'\n'})
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	lineAt := func(offset int) int {
+		return sort.Search(len(pt.lineOffsets), func(i int) bool { return pt.lineOffsets[i] > offset }) - 1
+	}
+	first, last := changed[0], changed[len(changed)-1]
+	startLine, endLine := lineAt(first.Start), lineAt(last.End)
+	next := make([]piece, 0, len(pt.pieces)+2*len(changed))
+	appendPiece := func(p piece) {
+		if p.length == 0 {
+			return
+		}
+		if n := len(next); n > 0 && next[n-1].buffer == p.buffer && next[n-1].start+next[n-1].length == p.start {
+			next[n-1].length += p.length
+		} else {
+			next = append(next, p)
+		}
+	}
+	index, base := 0, 0
+	appendSource := func(start, end int) {
+		for index < len(pt.pieces) && base+pt.pieces[index].length <= start {
+			base += pt.pieces[index].length
+			index++
+		}
+		for start < end {
+			p := pt.pieces[index]
+			n := min(end-start, base+p.length-start)
+			appendPiece(piece{buffer: p.buffer, start: p.start + start - base, length: n})
+			start += n
+			if start == base+p.length {
+				base += p.length
+				index++
+			}
+		}
+	}
+	at := 0
+	for _, edit := range changed {
+		appendSource(at, edit.Start)
+		if edit.Text != "" {
+			addStart := len(pt.add)
+			pt.add = append(pt.add, edit.Text...)
+			appendPiece(piece{buffer: addBuffer, start: addStart, length: len(edit.Text)})
+		}
+		at = edit.End
+	}
+	appendSource(at, len(before))
+	pt.pieces = next
 	pt.revision++
-	edit := document.Edit{Start: startOff, End: endOff}
-	pt.recordLineChange(startLine, endLine, startLine-endLine, edit)
+	summary := first
+	if len(changed) > 1 {
+		summary.End, summary.Text = last.End, ""
+	}
+	pt.recordLineChange(startLine, endLine, delta, summary)
+	if len(changed) > 1 {
+		// Multiple substitutions do not claim a single inline colour mapping.
+		pt.lineChanges[pt.revision%uint64(len(pt.lineChanges))].inline = false
+	}
 	pt.invalidateCache()
-	pt.observeMutation(edit)
-
-	return EditInfo{}, nil
+	for i := len(changed) - 1; i >= 0; i-- {
+		pt.observeMutation(changed[i])
+	}
+	return nil
 }
 
 func (pt *PieceTable) FilePath() string {

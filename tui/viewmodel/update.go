@@ -48,6 +48,10 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, blurred := msg.(tea.BlurMsg); blurred {
+		m.closeEditorSnippet()
+	}
+	m.syncEditorSnippet()
 	defer m.invalidateMessageRegions(msg)
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.BlurMsg:
@@ -69,6 +73,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
+	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg:
@@ -139,6 +144,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// retain source damage until a frame actually paints it.
 
 	switch msg := msg.(type) {
+	case editorSnippetChoiceMsg:
+		m.handleSnippetChoice(msg)
+		return m, nil
 	case editor.SyntaxReadyMsg:
 		m.applyEditorSyntax(msg)
 		return m, nil

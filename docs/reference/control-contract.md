@@ -86,6 +86,14 @@ Capability registration toggles retain human-owned settings authority through
 generic controls; opening, searching and selecting never grants activation,
 server launch or tool access.
 
+Numeric snippet alternatives resolve Write only against the exact open picker,
+native list and interaction owner. Semantic activation shares the ordinary
+editor choice handler and its source/selection/invocation fences. A connected
+choice with pending document edits reports **admitted**, with its document ID,
+not a canonical commit or disk Save; the existing document receipt/topic must
+still settle. Closing/reopening the picker changes its control lifetime, so a
+retired node cannot activate an alternative in a later invocation.
+
 `panel.show` is navigation only. Showing an empty terminal panel does not launch
 a PTY; creation requires `terminal.open`/`terminal.create` and its Execute
 authorization. Performance navigation reuses the existing dashboard lifecycle.

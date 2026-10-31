@@ -547,6 +547,13 @@ a containing directory preview, never a remote path guessed to be local.
 
 Typed LSP uses per-client views and versioned diagnostics/health; document
 open/close/detach releases only that client's views, never shared servers.
+Completion results carry bounded numeric snippet plans beside expanded primary
+text through the same generated LSP result codec. The text digest and byte-span
+ancestry are initial consistency checks, not authority. The editor independently
+validates and applies the completion in the existing canonical document group.
+Private field navigation and choice-picker state never become core text/history
+or persisted collaboration state; peer deltas can retire them without mirroring
+or refusing the publication. See [numeric snippets](editor.md#numeric-completion-snippets).
 Signature-help results carry the coordinator's exact source/provider/context
 boundary. The LSP state topic includes a separate semantic-context generation;
 it is not a progress or diagnostic-publication version. A result can precede its

@@ -14,11 +14,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/metrics"
+	"crude/snippet"
 	model "crude/types"
 )
 
@@ -476,12 +478,38 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string
 	if !l.currentDocument(fp, client, state, version) {
 		return nil
 	}
-	if err != nil || result == nil {
+	if err != nil || result == nil || ctx.Err() != nil {
 		return nil
 	}
-	out := make([]CompletionItem, 0, len(result.Items))
-	for _, it := range result.Items {
-		if it.Command != nil {
+	out := convertCompletions(ctx, result.Items)
+	if ctx.Err() != nil || !l.currentDocument(fp, client, state, version) {
+		return nil
+	}
+	return out
+}
+
+// These are consumer work/payload bounds, not transport framing or native heap
+// containment. Powernap has already decoded the response. Refuse an oversized
+// list atomically: this flat API cannot report a truncated/incomplete answer.
+// Account only fields we consume; opaque provider data is never copied/traversed.
+const (
+	maxCompletionItems           = 256
+	maxCompletionAdditionalEdits = 64
+	maxCompletionBytes           = 1 << 20
+)
+
+func convertCompletions(ctx context.Context, items []protocol.CompletionItem) []CompletionItem {
+	if ctx.Err() != nil || len(items) > maxCompletionItems || !completionInputBounded(items) {
+		return nil
+	}
+	out := make([]CompletionItem, 0, len(items))
+	bytes := 0
+	for _, it := range items {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if it.Command != nil || (it.InsertTextFormat != nil &&
+			*it.InsertTextFormat != protocol.PlainTextTextFormat && *it.InsertTextFormat != protocol.SnippetTextFormat) {
 			continue
 		}
 		item := CompletionItem{
@@ -489,38 +517,36 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string
 			Detail:        it.Detail,
 			Documentation: documentationOf(it),
 			Kind:          int(it.Kind),
-			InsertText:    insertTextOf(it),
+			InsertText:    it.InsertText,
 		}
 		if it.TextEdit != nil {
-			var edit protocol.TextEdit
-			switch v := it.TextEdit.Value.(type) {
-			case protocol.TextEdit:
-				edit = v
-			case *protocol.TextEdit:
-				edit = *v
-			case protocol.InsertReplaceEdit:
-				edit = protocol.TextEdit{Range: v.Replace, NewText: v.NewText}
-			case *protocol.InsertReplaceEdit:
-				edit = protocol.TextEdit{Range: v.Replace, NewText: v.NewText}
-			default:
+			edit, ok := completionTextEdit(it)
+			if !ok {
 				continue
 			}
 			converted := neutralTextEdit(edit)
 			item.TextEdit = &converted
 			item.InsertText = edit.NewText
+		} else if item.InsertText == "" {
+			item.InsertText = it.Label
 		}
-		if it.InsertTextFormat != nil && *it.InsertTextFormat == 2 {
-			plain, ok := expandSnippet(item.InsertText)
-			if !ok {
+		if it.InsertTextFormat != nil && *it.InsertTextFormat == protocol.SnippetTextFormat {
+			expanded, plan, err := snippet.Parse(item.InsertText)
+			if err != nil {
 				continue
 			}
-			item.InsertText = plain
+			item.InsertText, item.Snippet = expanded, plan
 			if item.TextEdit != nil {
-				item.TextEdit.NewText = plain
+				item.TextEdit.NewText = expanded
 			}
 		}
+		item.AdditionalTextEdits = make([]model.LSPTextEdit, 0, len(it.AdditionalTextEdits))
 		for _, edit := range it.AdditionalTextEdits {
 			item.AdditionalTextEdits = append(item.AdditionalTextEdits, neutralTextEdit(edit))
+		}
+		bytes += completionOutputBytes(item)
+		if bytes > maxCompletionBytes {
+			return nil
 		}
 		out = append(out, item)
 	}
@@ -531,22 +557,82 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string
 // completion result returned by the LSP server.
 type CompletionItem = model.CompletionItem
 
-func insertTextOf(it protocol.CompletionItem) string {
-	// it.TextEdit is a tagged union; if present, it carries the actual
-	// replacement text. Fall back to the simpler InsertText when the server
-	// doesn't supply a text edit.
-	if it.TextEdit != nil {
-		switch t := it.TextEdit.Value.(type) {
-		case protocol.TextEdit:
-			return t.NewText
-		case *protocol.TextEdit:
-			return t.NewText
+// completionTextEdit selects the primary replacement before any snippet parse.
+// An explicitly empty replacement remains empty. Unknown/null tagged variants
+// are refused rather than falling back to a different insertion.
+func completionTextEdit(it protocol.CompletionItem) (protocol.TextEdit, bool) {
+	if it.TextEdit == nil {
+		return protocol.TextEdit{}, false
+	}
+	switch v := it.TextEdit.Value.(type) {
+	case protocol.TextEdit:
+		return v, true
+	case *protocol.TextEdit:
+		if v != nil {
+			return *v, true
+		}
+	case protocol.InsertReplaceEdit:
+		return protocol.TextEdit{Range: v.Replace, NewText: v.NewText}, true
+	case *protocol.InsertReplaceEdit:
+		if v != nil {
+			return protocol.TextEdit{Range: v.Replace, NewText: v.NewText}, true
 		}
 	}
-	if it.InsertText == "" {
-		return it.Label
+	return protocol.TextEdit{}, false
+}
+
+func completionInputBounded(items []protocol.CompletionItem) bool {
+	remaining := maxCompletionBytes
+	consume := func(text string) bool {
+		if len(text) > snippet.MaxSourceBytes || len(text) > remaining || !utf8.ValidString(text) {
+			return false
+		}
+		remaining -= len(text)
+		return true
 	}
-	return it.InsertText
+	for _, it := range items {
+		if len(it.AdditionalTextEdits) > maxCompletionAdditionalEdits {
+			return false
+		}
+		for _, text := range [...]string{it.Label, it.Detail, it.InsertText, documentationOf(it)} {
+			if !consume(text) {
+				return false
+			}
+		}
+		if it.TextEdit != nil {
+			if edit, ok := completionTextEdit(it); ok && !consume(edit.NewText) {
+				return false
+			}
+		}
+		for _, edit := range it.AdditionalTextEdits {
+			if !consume(edit.NewText) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func completionOutputBytes(item CompletionItem) int {
+	// Conservative accounting includes string headers, pointer/coordinate
+	// metadata and duplicated primary text, even when Go shares string bytes.
+	n := 128 + len(item.Label) + len(item.Detail) + len(item.Documentation) + len(item.InsertText)
+	if item.TextEdit != nil {
+		n += 64 + len(item.TextEdit.NewText)
+	}
+	for _, edit := range item.AdditionalTextEdits {
+		n += 64 + len(edit.NewText)
+	}
+	if item.Snippet != nil {
+		n += 128 + len(item.Snippet.TextSHA256)
+		for _, o := range item.Snippet.Occurrences {
+			n += 64
+			for _, choice := range o.Choices {
+				n += 16 + len(choice)
+			}
+		}
+	}
+	return n
 }
 
 func documentationOf(it protocol.CompletionItem) string {
@@ -558,6 +644,10 @@ func documentationOf(it protocol.CompletionItem) string {
 		return v
 	case protocol.MarkupContent:
 		return v.Value
+	case *protocol.MarkupContent:
+		if v != nil {
+			return v.Value
+		}
 	}
 	return ""
 }
@@ -1056,123 +1146,6 @@ func stateVersion(state *openFileState) int {
 
 func neutralTextEdit(edit protocol.TextEdit) model.LSPTextEdit {
 	return model.LSPTextEdit{Line: int(edit.Range.Start.Line), Col: int(edit.Range.Start.Character), EndLine: int(edit.Range.End.Line), EndCol: int(edit.Range.End.Character), NewText: edit.NewText}
-}
-
-// expandSnippet supports numeric tab stops, defaults and choices as plain text.
-// Variables/transforms are rejected rather than inserting executable-looking
-// snippet syntax or guessing environment values. Repeated stops mirror defaults.
-func expandSnippet(source string) (string, bool) {
-	values := make(map[string]string)
-	var parse func(string, int) (string, bool)
-	parse = func(s string, depth int) (string, bool) {
-		if depth > 16 {
-			return "", false
-		}
-		var out strings.Builder
-		for i := 0; i < len(s); {
-			if s[i] == '\\' {
-				if i+1 >= len(s) || !strings.ContainsRune(`\$},|`, rune(s[i+1])) {
-					return "", false
-				}
-				out.WriteByte(s[i+1])
-				i += 2
-				continue
-			}
-			if s[i] != '$' {
-				out.WriteByte(s[i])
-				i++
-				continue
-			}
-			i++
-			braced := i < len(s) && s[i] == '{'
-			if braced {
-				i++
-			}
-			start := i
-			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-				i++
-			}
-			if start == i {
-				return "", false
-			}
-			id := s[start:i]
-			if _, err := strconv.Atoi(id); err != nil {
-				return "", false
-			}
-			value := values[id]
-			if braced {
-				if i >= len(s) {
-					return "", false
-				}
-				switch s[i] {
-				case '}':
-					i++
-				case ':':
-					i++
-					start = i
-					level := 1
-					for i < len(s) && level > 0 {
-						if s[i] == '\\' {
-							i += 2
-							continue
-						}
-						if s[i] == '{' {
-							level++
-						}
-						if s[i] == '}' {
-							level--
-						}
-						if level > 0 {
-							i++
-						}
-					}
-					if i >= len(s) {
-						return "", false
-					}
-					var ok bool
-					value, ok = parse(s[start:i], depth+1)
-					if !ok {
-						return "", false
-					}
-					i++
-				case '|':
-					i++
-					var first strings.Builder
-					chosen := false
-					for i < len(s) && (s[i] != '|' || i+1 >= len(s) || s[i+1] != '}') {
-						if s[i] == '\\' {
-							if i+1 >= len(s) {
-								return "", false
-							}
-							i++
-							if !chosen {
-								first.WriteByte(s[i])
-							}
-							i++
-							continue
-						}
-						if s[i] == ',' {
-							chosen = true
-						} else if !chosen {
-							first.WriteByte(s[i])
-						}
-						i++
-					}
-					if i+1 >= len(s) {
-						return "", false
-					}
-					value = first.String()
-					i += 2
-				default:
-					return "", false
-				}
-			}
-			values[id] = value
-			out.WriteString(value)
-		}
-		return out.String(), true
-	}
-	return parse(source, 0)
 }
 
 func (l *LSPIntegration) currentDocument(path string, client *lsp.Client, state *openFileState, version int) bool {

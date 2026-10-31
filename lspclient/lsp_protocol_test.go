@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/snippet"
 	"crude/types"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
@@ -148,6 +149,20 @@ func TestProtocolServerHelper(t *testing.T) {
 				map[string]any{"targetUri": uri, "targetRange": map[string]any{"start": map[string]any{"line": 0, "character": 0}, "end": map[string]any{"line": 0, "character": 4}}, "targetSelectionRange": map[string]any{"start": map[string]any{"line": 0, "character": 3}, "end": map[string]any{"line": 0, "character": 4}}},
 			}})
 		case "textDocument/completion":
+			if strings.HasPrefix(mode, "completion-") {
+				if mode == "completion-stale" {
+					root, _ := os.Getwd()
+					_ = os.WriteFile(filepath.Join(root, "requested"), nil, 0600)
+					for {
+						if _, err := os.Stat(filepath.Join(root, "release")); err == nil {
+							break
+						}
+						time.Sleep(time.Millisecond)
+					}
+				}
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": completionProtocolResponse(mode)})
+				continue
+			}
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": []any{
 				map[string]any{"label": "color", "insertTextFormat": 2, "textEdit": map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 3}, "end": map[string]any{"line": 0, "character": 4}}, "newText": "${1|red,blue|};$0"}},
 				map[string]any{"label": "unsafe", "insertTextFormat": 2, "insertText": "$TM_FILENAME"},
@@ -250,6 +265,9 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 	items := l.RequestCompletions(ctx, path, 0, 3)
 	if len(items) != 1 || items[0].InsertText != "red;" || items[0].TextEdit == nil || items[0].TextEdit.Col != 3 || items[0].TextEdit.NewText != "red;" {
 		t.Fatalf("completion edit/snippet: %+v", items)
+	}
+	if items[0].Snippet == nil || snippet.Validate("red;", items[0].Snippet) != nil {
+		t.Fatalf("completion lost numeric plan: %+v", items[0])
 	}
 	symbols := l.RequestDocumentSymbols(ctx, path)
 	if len(symbols) != 1 || symbols[0].Col != 3 {
@@ -468,7 +486,8 @@ func TestSnippetPlainTextExpansion(t *testing.T) {
 		{"${1/foo/bar/}", "", false},
 		{"${1:unterminated", "", false},
 	} {
-		got, ok := expandSnippet(tc.in)
+		got, plan, err := snippet.Parse(tc.in)
+		ok := err == nil && plan != nil
 		if got != tc.out || ok != tc.ok {
 			t.Fatalf("expand %q = %q,%v; want %q,%v", tc.in, got, ok, tc.out, tc.ok)
 		}

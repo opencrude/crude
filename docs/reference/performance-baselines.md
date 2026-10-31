@@ -7,6 +7,39 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Numeric snippet mutation and editor rendering (2026-10-31)
+
+Linux amd64, i7-10750H, `GOMAXPROCS=2`, 200 ms repetitions of
+`BenchmarkSnippetTypingDense`. The benchmark alternates real editor typing and
+Backspace with 20,000 unrelated source lines, retaining active private fields
+throughout. Mutation-only and mutation plus a 120x40 editor-grid render are
+separate cases; neither is native terminal transport, provider response, core
+durability, physical presentation or RSS evidence. Before has two repetitions;
+the corrected owner has three. Other focused acceptance ran concurrently.
+
+| Workload/stage | Before, per-mirror primitive/reflow | One checked PieceTable batch |
+|---|---|---|
+| 8 occurrences, mutation | 6.69-7.11 ms; 15.28 MB; 395 allocations | 0.96-1.14 ms; 2.28 MB; 98-99 allocations |
+| 8 occurrences, mutation + grid | 14.25-16.30 ms; 16.80-17.01 MB; 21,227-21,228 allocations | 1.64-1.77 ms; 3.14-3.21 MB; 923-925 allocations |
+| 64 occurrences, mutation | 55.30-62.86 ms; 128.56 MB; 3,275-3,278 allocations | 1.17-1.31 ms; 2.44-2.45 MB; 275 allocations |
+| 64 occurrences, mutation + grid | 62.47-70.45 ms; 129.89-130.29 MB; 24,093-24,098 allocations | 1.59-2.02 ms; 3.41-3.45 MB; 1,091-1,097 allocations |
+
+A CPU/allocation profile of the old 64-occurrence mutation locates about 67% of
+CPU samples and 98.6% of allocated space in PieceTable cache construction. The
+correction does not drop mirrors or buffer input: one authoritative checked batch
+constructs pieces once, advances source/geometry once and retains every sparse
+observer/history operation. Mirrored edits invalidate their actual source region
+rather than force a full document-width pass. Single edits use the same owner,
+not a second fast-path writer. Source-cache rebuilding still contributes to each
+actual edit; this is not a constant-cost buffer or parser-only typing claim.
+
+Four new allocation ceilings cover the dense 8/64-occurrence mutation and grid
+cases, at approximately 20% headroom over repeated measurements. The old owner
+fails those bounds. Existing ceilings are unchanged. Independent literal Unicode/
+CRLF and atomic-refusal checks plus instrumented byte-vector and mirror fuzzers
+guard the new mutation/observation ordering; repository, native and complete-plan
+acceptance remain separately recorded gates.
+
 ## Qualified diagnostic summaries (2026-10-30)
 
 Linux amd64, i7-10750H, Go 1.25.9, GOMAXPROCS=2, three 200 ms runs:

@@ -3,6 +3,8 @@ package editor
 import (
 	"path/filepath"
 	"strings"
+
+	"crude/document"
 )
 
 // This file implements modern-IDE editing operations: auto-closing pairs,
@@ -37,40 +39,69 @@ func (e *Editor) insertRecorded(pos Position, text string, cursorBefore Position
 		return pos
 	}
 	startOff := e.buf.positionToOffset(pos)
-	_, _ = e.buf.Insert(pos, []byte(text))
+	e.spliceRecorded(startOff, startOff, text, cursorBefore)
 	end := e.buf.positionAtOffset(startOff + len(text))
 	if e.buf.positionToOffset(end) < startOff+len(text) {
 		end = e.buf.nextPosition(end) // insertion caret has trailing affinity
 	}
-	e.recordChange(Change{
-		Type:         ActInsert,
-		Text:         []byte(text),
-		StartPos:     pos,
-		EndPos:       end,
-		CursorBefore: cursorBefore,
-		Offset:       startOff,
-	})
 	return end
 }
 
 // deleteRecorded deletes [start, end) and records the change. Returns the
 // deleted text ("" when the range was empty and nothing was recorded).
 func (e *Editor) deleteRecorded(start, end Position, cursorBefore Position) string {
-	startOff := e.buf.positionToOffset(start)
-	text := e.buf.GetText(start, end)
-	if text == "" {
+	return e.spliceRecorded(e.buf.positionToOffset(start), e.buf.positionToOffset(end), "", cursorBefore)
+}
+
+// spliceRecorded is the one exact-byte recorder for local editor mutations,
+// including completion imports, search replacements and snippet mirrors.
+// Callers validate the complete command before its first splice. No observer
+// writes here: inverses are recorded before the outer transaction finalizes.
+func (e *Editor) spliceRecorded(start, end int, text string, cursorBefore Position) string {
+	e.buf.ensureCache()
+	if start < 0 || end < start || end > len(e.buf.cachedBytes) {
 		return ""
 	}
-	_, _ = e.buf.Delete(start, end)
-	e.recordChange(Change{
-		Type:         ActDelete,
-		Text:         []byte(text),
-		StartPos:     start,
-		EndPos:       end,
-		CursorBefore: cursorBefore,
-		Offset:       startOff,
-	})
-	return text
+	deleted := string(e.buf.cachedBytes[start:end])
+	if deleted == text {
+		return deleted
+	}
+	if err := e.spliceRecordedBatch([]document.Edit{{Start: start, End: end, Text: text}}, cursorBefore); err != nil {
+		return ""
+	}
+	return deleted
+}
+
+// spliceRecordedBatch applies one checked simultaneous vector, retaining sparse
+// inverses in the same editor/core group. PieceTable owns the complete mutation;
+// neither mirrors nor history maintain a second byte writer or derived cache.
+func (e *Editor) spliceRecordedBatch(edits []document.Edit, cursorBefore Position) error {
+	if err := e.buf.checkOffsets(edits); err != nil {
+		return err
+	}
+	deleted := make([]string, len(edits))
+	for i, edit := range edits {
+		deleted[i] = string(e.buf.cachedBytes[edit.Start:edit.End])
+	}
+	previousOwner := e.buf.editOwner
+	e.buf.editOwner = e
+	defer func() { e.buf.editOwner = previousOwner }()
+	if err := e.buf.applyOffsets(edits); err != nil {
+		return err
+	}
+	for i := len(edits) - 1; i >= 0; i-- {
+		edit := edits[i]
+		if deleted[i] == edit.Text {
+			continue
+		}
+		if deleted[i] != "" {
+			e.recordChange(Change{Type: ActDelete, Text: []byte(deleted[i]), CursorBefore: cursorBefore, Offset: edit.Start})
+		}
+		if edit.Text != "" {
+			e.recordChange(Change{Type: ActInsert, Text: []byte(edit.Text), CursorBefore: cursorBefore, Offset: edit.Start})
+		}
+	}
+	return nil
 }
 
 // finishEdit applies the shared post-mutation bookkeeping for operations

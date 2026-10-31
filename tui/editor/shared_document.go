@@ -152,6 +152,7 @@ type DocumentState struct {
 }
 
 func (e *Editor) detachDocument() {
+	e.CancelSnippet()
 	e.diagMu.Lock()
 	e.diagnosticFacts = types.InsightDiagnostics{}
 	e.diagnosticProjectedID = ""
@@ -284,6 +285,7 @@ func (e *Editor) ResetDocument(s document.Snapshot) error {
 	}
 	// Keep the managed buffer and mutation observer: all existing consumers
 	// must continue to see the same live text authority after a history gap.
+	e.CancelSnippet()
 	e.CancelPointerCapture()
 	p.suppressed = true
 	e.buf.ReplaceAll(string(s.Text))
@@ -461,6 +463,7 @@ func (e *Editor) AcceptDocumentReceipt(r document.Receipt) error {
 		}
 		p.inflight = nil
 		p.conflict = errors.New(r.Error)
+		e.CancelSnippet()
 		return p.conflict
 	}
 	if r.Before != c.BaseRevision || r.Revision != r.Before+1 {
@@ -566,6 +569,9 @@ func (e *Editor) BindDocumentOwner(owner document.Owner) error {
 	if err := e.documentProjection.validateOwner(owner); err != nil {
 		return err
 	}
+	if previous := e.documentProjection.owner; previous.ClientID != "" && previous != owner {
+		e.CancelSnippet()
+	}
 	e.documentProjection.owner = owner
 	return nil
 }
@@ -655,7 +661,11 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 		pending = append(pending, l[0])
 		remote = r
 	}
+	nextSnippet := prepareSnippetPeer(e.snippet, remote)
+	e.snippetApplying = true
 	e.commitDocumentDelta(c, remote, pending)
+	e.snippetApplying = false
+	e.commitSnippetPeer(nextSnippet)
 	s.Text, s.Saved = bytes.Clone(s.Text), bytes.Clone(s.Saved)
 	p.snapshot = s
 	e.installDocumentBaseline(s)
@@ -748,6 +758,8 @@ type PreparedDocumentUpdate struct {
 	snapshot                document.Snapshot
 	deltas                  []preparedDocumentDelta
 	reset, savepoint        bool
+	snippetSource, snippet  *snippetSession
+	snippetSequence         uint64
 }
 
 func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, changes []document.Change, state document.Snapshot, reset *document.Snapshot, savepoint bool) (*PreparedDocumentUpdate, error) {
@@ -768,6 +780,10 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 		return nil, document.ErrLimit
 	}
 	plan := &PreparedDocumentUpdate{projection: p, localRevision: e.Revision(), revision: p.snapshot.Revision, owner: owner, snapshot: state, savepoint: savepoint}
+	plan.snippetSource, plan.snippet, plan.snippetSequence = e.snippet, e.snippet, e.snippetSequence
+	if state.Path != p.snapshot.Path || p.owner.ClientID != "" && p.owner != owner {
+		plan.snippet = nil
+	}
 	if reset != nil {
 		if len(changes) != 0 || reset.ID != state.ID || reset.Path != state.Path || reset.Revision != state.Revision || len(reset.Text) > document.MaxBytes || len(reset.Saved) > document.MaxBytes || !utf8.Valid(reset.Text) || !utf8.Valid(reset.Saved) {
 			return nil, document.ErrRevision
@@ -786,6 +802,9 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 		plan.snapshot = *reset
 		plan.snapshot.Text, plan.snapshot.Saved = bytes.Clone(reset.Text), bytes.Clone(reset.Saved)
 		plan.reset, plan.savepoint = !same, true
+		if plan.reset {
+			plan.snippet = nil
+		}
 		return plan, nil
 	}
 	if p.snapshot.Revision < base {
@@ -823,6 +842,7 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 		// Own the small operation vectors; text is already immutable, built once.
 		c.Edits = append([]document.Edit(nil), c.Edits...)
 		plan.deltas = append(plan.deltas, preparedDocumentDelta{c, append([]document.Edit(nil), remote...), moved})
+		plan.snippet = prepareSnippetPeer(plan.snippet, remote)
 		pending = moved
 	}
 	if next != state.Revision {
@@ -849,13 +869,15 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 // mutation. The coordinator preflights every view/path before committing any.
 func (e *Editor) CommitDocumentUpdate(plan *PreparedDocumentUpdate) error {
 	p := e.documentProjection
-	if plan == nil || p == nil || p != plan.projection || e.Revision() != plan.localRevision || p.snapshot.Revision != plan.revision || p.inflight != nil || p.undoPending {
+	if plan == nil || p == nil || p != plan.projection || e.Revision() != plan.localRevision || p.snapshot.Revision != plan.revision || p.inflight != nil || p.undoPending ||
+		e.snippet != plan.snippetSource || e.snippetSequence != plan.snippetSequence {
 		return ErrDocumentPending
 	}
 	if err := p.validateOwner(plan.owner); err != nil {
 		return err
 	}
 	p.owner = plan.owner
+	e.snippetApplying = true
 	if plan.reset {
 		e.CancelPointerCapture()
 		p.suppressed = true
@@ -870,6 +892,8 @@ func (e *Editor) CommitDocumentUpdate(plan *PreparedDocumentUpdate) error {
 			e.commitDocumentDelta(delta.change, delta.remote, delta.pending)
 		}
 	}
+	e.snippetApplying = false
+	e.commitSnippetPeer(plan.snippet)
 	p.snapshot = plan.snapshot
 	if plan.savepoint {
 		e.installDocumentBaseline(plan.snapshot)

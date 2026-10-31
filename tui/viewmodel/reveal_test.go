@@ -218,6 +218,7 @@ func TestReveal_TypingPopupsSkipAnimation(t *testing.T) {
 		{ui.OverlayCompletion, ui.PopoverPolicy(true)},
 		{ui.OverlayReferences, ui.PopoverPolicy(true)},
 		{ui.OverlayOutline, ui.PopoverPolicy(true)},
+		{ui.OverlaySnippetChoices, ui.PopoverPolicy(true)},
 	} {
 		fw := newRevealTestWindow(t, string(tc.id))
 		app.overlayHost.Open(tc.id, fw, tc.pol, nil)

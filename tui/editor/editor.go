@@ -27,8 +27,6 @@ const (
 type Change struct {
 	Type         ActionType
 	Text         []byte
-	StartPos     Position
-	EndPos       Position
 	CursorBefore Position
 	// Group links changes that undo/redo as one step. Zero means the
 	// change stands alone; equal non-zero values form one atomic group.
@@ -98,15 +96,23 @@ type Editor struct {
 	// undoGroupSeq/undoGroupDepth/undoGroupID implement undo grouping:
 	// changes recorded between beginUndoGroup and endUndoGroup share one
 	// group ID and undo/redo together as a single step.
-	undoGroupSeq    int
-	undoGroupDepth  int
-	undoGroupID     int
-	undoGroupStart  int
-	undoGroupBefore editorViewState
-	historyID       uint64
-	typingGroup     int
-	typingAt        time.Time
-	typingCursor    Position
+	undoGroupSeq         int
+	undoGroupDepth       int
+	undoGroupID          int
+	undoGroupStart       int
+	undoGroupBefore      editorViewState
+	historyID            uint64
+	typingGroup          int
+	typingAt             time.Time
+	typingCursor         Position
+	contentChangePending bool
+
+	// Numeric completion interaction is private to this view. The PieceTable
+	// and canonical document projection remain the text/history authorities.
+	snippet         *snippetSession
+	snippetSequence uint64
+	snippetDirty    bool
+	snippetApplying bool
 
 	open bool
 
@@ -358,6 +364,7 @@ func (e *Editor) ReplaceDocument(text string) {
 }
 
 func (e *Editor) ApplyFormatted(text string) {
+	e.CancelSnippet()
 	if e.readOnly || e.Value() == text {
 		return
 	}
@@ -402,6 +409,7 @@ func (e *Editor) Retarget(path string) error {
 	if err != nil {
 		return err
 	}
+	e.CancelSnippet()
 	e.stopWatching()
 	e.filePath, e.title = abs, filepath.Base(abs)
 	if e.buffer != nil {
@@ -417,6 +425,7 @@ func (e *Editor) ApplyDisk(data []byte) {
 	if e.buffer == nil {
 		return
 	}
+	e.CancelSnippet()
 	e.CancelPointerCapture()
 	e.buffer.ApplyDisk(data)
 	e.changes = nil
@@ -557,6 +566,10 @@ func (e *Editor) LineText(line int) string {
 func (e *Editor) notifyContentChanged() {
 	if e.buffer != nil {
 		e.buffer.NoteEdit()
+	}
+	if e.undoGroupDepth > 0 {
+		e.contentChangePending = true
+		return
 	}
 	e.emitContentChanged()
 }

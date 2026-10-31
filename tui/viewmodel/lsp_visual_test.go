@@ -28,6 +28,9 @@ import (
 // CRUDE_VISUAL_LSP=1 and CRUDE_ARGS=-test.run=^TestLSPVisualAcceptance$.
 // F2: live diagnostics; F3: hover; F4: references; F5: definition; F6: completion;
 // F7: explicit parameter information through the actual connected editor;
+// F8 x3: numeric snippet setup, edited-source verification, undo verification.
+// Native captures drive Ctrl+Space, Tab, typing and Ctrl+Z between those checks;
+// the headless driver sends the same ordinary product inputs itself.
 // quit:F9 verifies all phases and joins the real gopls process. Optional
 // CRUDE_LSP_VISUAL_RESULT receives per-phase proof and the final cleanup result.
 // CRUDE_LSP_VISUAL_GOPLS selects an installed executable, never a protocol fake.
@@ -49,6 +52,7 @@ func TestLSPVisualHarnessHeadless(t *testing.T) {
 const lspVisualMain = "package journey\n\nvar Result = Answer() + missing\n"
 const lspVisualLib = "package journey\n\n// Answer returns the LSP_HOVER_SENTINEL value.\nfunc Answer() int { return 42 }\n"
 const lspVisualParameters = "package journey\n\n// Repeat returns the SIGNATURE_HELP_SENTINEL prefix.\nfunc Repeat(prefix string, count int) string { return prefix }\n\nvar SignatureValue = Repeat(\"x\", 2)\n"
+const lspVisualSnippet = "package journey\n\nvar CompletionValue = Rep\n"
 
 func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	t.Helper()
@@ -81,7 +85,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("CRUDE_HOME", home)
-	sources := map[string]string{"go.mod": "module journey\n\ngo 1.22\n", "main.go": lspVisualMain, "lib.go": lspVisualLib, "parameters.go": lspVisualParameters}
+	sources := map[string]string{"go.mod": "module journey\n\ngo 1.22\n", "main.go": lspVisualMain, "lib.go": lspVisualLib, "parameters.go": lspVisualParameters, "snippet.go": lspVisualSnippet}
 	for name, text := range sources {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0600); err != nil {
 			t.Fatal(err)
@@ -93,6 +97,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
 		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
 			Enabled: true, Command: gopls, Args: []string{"serve"}, RootMarkers: []string{"go.mod"},
+			Settings:    map[string]any{"gopls": map[string]any{"usePlaceholders": true}},
 			Environment: map[string]string{"HOME": home, "GOROOT": strings.TrimSpace(string(goroot)), "GOPATH": filepath.Join(home, "go"), "GOCACHE": filepath.Join(home, "cache"), "GOENV": "off", "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local"},
 		}}
 		// Launch settings are fixture-private. Execution separately requires a
@@ -104,7 +109,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	m := &lspVisualModel{featureVisualModel: &featureVisualModel{
 		controlVisualModel: &controlVisualModel{App: shell.app, runtime: coreRuntime, root: root, path: filepath.Join(root, "main.go"), ctx: t.Context(), completed: map[int]bool{}},
 		settled:            make(chan struct{}, 1),
-	}, executable: gopls}
+	}, executable: gopls, headless: headless}
 	if !headless {
 		m.resultPath = os.Getenv("CRUDE_LSP_VISUAL_RESULT")
 	}
@@ -132,7 +137,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 			}
 			if len(pids) == 0 {
 				if !t.Failed() {
-					if err := m.evidence(fmt.Sprintf("LSP_VISUAL_SUCCESS F2 F3 F4 F5 F6 F7; real gopls pids=%v joined; local framed core only", m.pids)); err != nil {
+					if err := m.evidence(fmt.Sprintf("LSP_VISUAL_SUCCESS F2 F3 F4 F5 F6 F7 F8x3; real gopls pids=%v joined; local framed core only", m.pids)); err != nil {
 						t.Error(err)
 					}
 				}
@@ -173,12 +178,18 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	m.ws.(shellport.ShellControl).StartShellControl()
 	if headless {
 		go func() {
-			for key := tea.KeyF2; key <= tea.KeyF7; key++ {
-				program.Send(tea.KeyPressMsg{Code: key})
-				select {
-				case <-m.settled:
-				case <-pumpCtx.Done():
-					return
+			for key := tea.KeyF2; key <= tea.KeyF8; key++ {
+				phases := 1
+				if key == tea.KeyF8 {
+					phases = 3
+				}
+				for phase := 0; phase < phases; phase++ {
+					program.Send(tea.KeyPressMsg{Code: key})
+					select {
+					case <-m.settled:
+					case <-pumpCtx.Done():
+						return
+					}
 				}
 			}
 			program.Send(tea.KeyPressMsg{Code: tea.KeyF9})
@@ -193,7 +204,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 		}
 		t.Fatal(m.failure)
 	}
-	for key := 2; key <= 7; key++ {
+	for key := 2; key <= 8; key++ {
 		if !m.completed[key] {
 			t.Errorf("F%d not completed", key)
 		}
@@ -211,12 +222,14 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 
 type lspVisualModel struct {
 	*featureVisualModel
-	executable string
-	pids       []int
+	executable   string
+	pids         []int
+	snippetPhase int
+	headless     bool
 }
 type lspVisualDone struct {
-	key int
-	err error
+	key, phase int
+	err        error
 }
 
 func (m *lspVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -232,7 +245,10 @@ func (m *lspVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.failure = fmt.Errorf("F%d: %w", v.key, v.err)
 			return m, tea.Quit
 		}
-		m.completed[v.key] = true
+		if v.key == 8 {
+			m.snippetPhase = v.phase + 1
+		}
+		m.completed[v.key] = v.key != 8 || m.snippetPhase == 3
 		select {
 		case m.settled <- struct{}{}:
 		default: // Native capture advances with keys, not the headless driver.
@@ -242,7 +258,7 @@ func (m *lspVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Code == tea.KeyF9 && !m.busy {
 			return m, tea.Quit
 		}
-		if v.Code >= tea.KeyF2 && v.Code <= tea.KeyF7 {
+		if v.Code >= tea.KeyF2 && v.Code <= tea.KeyF8 {
 			key := int(v.Code-tea.KeyF2) + 2
 			if m.busy || m.completed[key] {
 				return m, nil
@@ -252,14 +268,15 @@ func (m *lspVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.busy = true
-			return m, func() tea.Msg { return lspVisualDone{key, m.journeyLSP(key)} }
+			phase := m.snippetPhase
+			return m, func() tea.Msg { return lspVisualDone{key, phase, m.journeyLSP(key, phase)} }
 		}
 	}
 	_, cmd := m.App.Update(msg)
 	return m, cmd
 }
 
-func (m *lspVisualModel) journeyLSP(key int) error {
+func (m *lspVisualModel) journeyLSP(key, phase int) error {
 	if err := m.connect(); err != nil {
 		return err
 	}
@@ -441,11 +458,132 @@ func (m *lspVisualModel) journeyLSP(key int) error {
 			return paint(v, "Parameter information", "Repeat(prefix string, count int) string", "Active parameter 2 of 2", "count int", "SIGNATURE_HELP_SENTINEL")
 		})
 		label = "Alt+I actual Repeat(prefix string, count int) string, active parameter count, current source/context and unchanged bytes"
+	case 8:
+		if err = m.journeyLSPNumericSnippet(phase, do, position, paint); err != nil {
+			return err
+		}
+		label = fmt.Sprintf("numeric snippet phase %d/3: real gopls plan, rendered editor keys and connected author history", phase+1)
 	}
 	if err != nil {
 		return err
 	}
 	return m.evidence(fmt.Sprintf("F%d VERIFIED %s", key, label))
+}
+
+func (m *lspVisualModel) journeyLSPNumericSnippet(phase int, do func(string, any) error,
+	position func(int, int, tea.KeyPressMsg), paint func(*controlVisualModel, ...string) error) error {
+	input := func(msg tea.Msg) {
+		m.action(func(app *App) tea.Cmd { _, cmd := app.Update(msg); return cmd })
+	}
+	settled := func(want string, active bool, selected string) error {
+		return m.await(func(v *controlVisualModel) error {
+			ed := v.EditorState.Editor
+			ds := ed.DocumentState()
+			if filepath.Base(ed.FilePath()) != "snippet.go" || ed.Value() != want ||
+				ed.SnippetActive() != active || ed.SelectedText() != selected ||
+				ds.Conflict != nil || ds.InFlight || ds.PendingEdits != 0 || ds.UndoPending || ds.HistoryQueued {
+				return fmt.Errorf("snippet source/field/history not settled: value=%q selected=%q active=%t state=%+v",
+					ed.Value(), ed.SelectedText(), ed.SnippetActive(), ds)
+			}
+			// Constrained editors legitimately truncate tab titles and scroll a
+			// long line horizontally. Verify the exact source above, then require
+			// the active field (or the final expression) in the actual viewport.
+			marker := selected
+			if marker == "" {
+				marker = "CompletionValue = Rep"
+				if strings.Contains(want, "Repeat(") {
+					marker = "Repeat("
+				}
+			}
+			return paint(v, marker)
+		})
+	}
+	// The installed gopls spells its defaults with parameter names and types.
+	// Keep literal oracles independent of the parser and returned occurrence plan.
+	const accepted = "package journey\n\nvar CompletionValue = Repeat(prefix string, count int)\n"
+	const firstEdit = "package journey\n\nvar CompletionValue = Repeat(\"\", count int)\n"
+	const final = "package journey\n\nvar CompletionValue = Repeat(\"\", 2)\n"
+	switch phase {
+	case 0:
+		input(tea.KeyPressMsg{Code: tea.KeyEsc})
+		if err := do("file.open", map[string]any{"path": filepath.Join(m.root, "snippet.go")}); err != nil {
+			return err
+		}
+		if err := m.await(func(v *controlVisualModel) error {
+			source, current := v.EditorState.Editor.CurrentInsightSource()
+			facts, ok := v.ws.LSPMgr().FileDiagnostics(filepath.Join(m.root, "snippet.go"))
+			if !current || !ok || !facts.HasExactSource() || facts.Boundary.Source != source {
+				return fmt.Errorf("snippet source has not reached its real provider")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !m.headless {
+			position(2, 25, tea.KeyPressMsg{Code: tea.KeyEnd})
+			return settled(lspVisualSnippet, false, "")
+		}
+		position(2, 25, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+		if err := m.await(func(v *controlVisualModel) error {
+			for _, item := range v.LSPPopup.CompletionItems {
+				if strings.HasPrefix(item.Label, "Repeat") && item.Snippet != nil {
+					if item.InsertText != "Repeat(prefix string, count int)" {
+						return fmt.Errorf("unexpected real gopls primary insertion %q", item.InsertText)
+					}
+					return paint(v, "Completions", "Repeat")
+				}
+			}
+			return fmt.Errorf("gopls numeric plan did not traverse connected completion codec")
+		}); err != nil {
+			return err
+		}
+		m.action(func(app *App) tea.Cmd {
+			for index, item := range app.LSPPopup.CompletionItems {
+				if strings.HasPrefix(item.Label, "Repeat") && item.Snippet != nil {
+					for i := 0; i < index; i++ {
+						app.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+					}
+					_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+					return cmd
+				}
+			}
+			return nil
+		})
+		return settled(accepted, true, "prefix string")
+	case 1:
+		if !m.headless {
+			return settled(final, false, "")
+		}
+		input(tea.KeyPressMsg{Code: '"', Text: `"`})
+		if err := settled(firstEdit, true, ""); err != nil {
+			return err
+		}
+		input(tea.KeyPressMsg{Code: tea.KeyTab})
+		if err := settled(firstEdit, true, "count int"); err != nil {
+			return err
+		}
+		input(tea.KeyPressMsg{Code: '2', Text: "2"})
+		if err := settled(final, true, ""); err != nil {
+			return err
+		}
+		input(tea.KeyPressMsg{Code: tea.KeyTab})
+		return settled(final, false, "")
+	case 2:
+		if !m.headless {
+			return settled(lspVisualSnippet, false, "")
+		}
+		for _, step := range []struct{ text, selected string }{
+			{firstEdit, "count int"}, {accepted, "prefix string"}, {lspVisualSnippet, ""},
+		} {
+			input(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+			if err := settled(step.text, false, step.selected); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown snippet phase")
+	}
 }
 
 func lspVisualProcesses(root, executable string) ([]int, error) {

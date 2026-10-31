@@ -64,6 +64,7 @@ type shellControlDoneMsg struct {
 	memoryEpoch   uint64
 	boardOwner    *boardbrowser.Screen
 	pickerOwner   *capabilityPickerOwner
+	snippetOwner  *editorSnippetChoice
 }
 
 type shellControlReplyMsg struct{ err error }
@@ -290,7 +291,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -684,6 +685,9 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 						done.pickerOwner = m.capabilityPicker
 					}
 				}
+				if state := m.editorSnippet; state != nil && m.ownsSnippetChoice(state.choice) && owner.window == state.choice.window {
+					done.snippetOwner = state.choice
+				}
 			}
 		}
 	}
@@ -750,6 +754,21 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	result := control.Result{State: control.Applied}
 	var follow tea.Cmd
 	switch completion := done.completion.(type) {
+	case editorSnippetChoiceMsg:
+		if !valid || done.snippetOwner == nil || completion.choice != done.snippetOwner {
+			return m.failShellControl(msg, control.Stale, "snippet choice owner changed")
+		}
+		if err := m.applySnippetChoice(completion); err != nil {
+			return m.failShellControl(msg, control.Stale, err.Error())
+		}
+		if state := completion.choice.state.editor.DocumentState(); state.DocumentID != "" {
+			result.ResourceIDs = []string{state.DocumentID}
+			if state.PendingEdits != 0 || state.InFlight {
+				// The exact local draft changed, but canonical text acceptance
+				// still belongs to the existing document command/topic owner.
+				result.State = control.Admitted
+			}
+		}
 	case sessionsettings.SaveMsg:
 		if !valid || completion.Target != done.deckOwner {
 			return m.failShellControl(msg, control.Stale, "session settings owner changed")

@@ -11,6 +11,14 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if state := m.editorSnippet; state != nil && m.ownsSnippetChoice(state.choice) {
+		p := state.choice
+		if owner.window == p.window && localID == p.list.ID() && action == "snippet.choose" && op.Verb == "activate" {
+			if frame, ok := p.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == p {
+				return control.Write, false, nil
+			}
+		}
+	}
 	if owner.window != nil && m.capabilityPicker != nil {
 		if frame, ok := owner.window.Content.(*ui.WindowFrameWidget); ok && frame.Body() == m.capabilityPicker.screen && strings.HasPrefix(string(localID), "capability-picker/") {
 			// A card or detail switch commits the session gate; it completes
