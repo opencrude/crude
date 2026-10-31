@@ -2,7 +2,6 @@ package lspclient
 
 import model "crude/types"
 
-type LSPLocation = model.LSPLocation
 type LSPSymbol = model.LSPSymbol
 
 const (

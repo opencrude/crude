@@ -1,32 +1,25 @@
 package viewmodel
 
 import (
-	"path/filepath"
 	"testing"
 
-	"crude/tui/editor"
 	"crude/types"
 	"crude/workspace"
 )
 
 func TestLSPResultsFromOldWorkspaceGenerationAreIgnored(t *testing.T) {
-	app := newTestApp(t)
-	current := editor.NewPreview(app.Theme, "current.go", "", 1)
-	app.EditorState.Editor = current
-	app.EditorState.ActiveView = "current.go"
-	app.EditorState.Tabs["current.go"] = NewEditorTab("current.go", current)
-
+	f := newNavigationConnectedFixture(t, navigationConnectedPoint, "\t😀name\r\n")
+	app, current := f.shells[0].app, f.main
+	result := f.captureResult(t)
 	oldGeneration := app.workspaceSwitchGen.Load()
 	app.workspaceSwitchGen.Add(1)
 	app.resetLSPRequestContext()
 
-	stalePath := filepath.Join(t.TempDir(), "stale.go")
-	_, _ = app.Update(lspDefinitionResultMsg{
-		generation: oldGeneration,
-		locations:  []editor.LSPLocation{{Path: stalePath}},
-	})
-	if app.EditorState.Editor != current || app.EditorState.ActiveView != "current.go" {
-		t.Fatal("stale definition result opened an old-workspace file")
+	_, cmd := app.Update(result)
+	runAppCommand(t, app, cmd)
+	if app.EditorState.Editor != current || app.EditorState.ActiveView != f.engine.main ||
+		app.EditorState.Tabs[f.engine.target] != nil || app.navigation != nil {
+		t.Fatal("qualified stale result opened an old-workspace file or revived its reader")
 	}
 
 	_, _ = app.Update(workspace.LSPDiagnosticsMsg{

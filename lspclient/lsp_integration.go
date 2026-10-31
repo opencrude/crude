@@ -649,57 +649,6 @@ func documentationOf(it protocol.CompletionItem) string {
 	return ""
 }
 
-// RequestDefinition returns the definition location(s) for the symbol at
-// (line, col) in filePath. Returns nil if the request fails or the client is
-// not connected. Multiple locations can be returned for symbols defined in
-// multiple places (interfaces, generics).
-func (l *LSPIntegration) RequestDefinition(ctx context.Context, filePath string, line, col int) []LSPLocation {
-	defer l.observeRequest("definition", time.Now())
-	l.mu.Lock()
-	client := l.client
-	fp := filepath.Clean(filePath)
-	state, ok := l.openFiles[fp]
-	version := stateVersion(state)
-	l.mu.Unlock()
-
-	if client == nil || !ok {
-		return nil
-	}
-	results, err := client.RequestDefinition(ctx, fp, line, col)
-	if !l.currentDocument(fp, client, state, version) {
-		return nil
-	}
-	if err != nil {
-		return nil
-	}
-	return l.toLSPLocations(results)
-}
-
-// FindReferences returns all references to the symbol at (line, col) in
-// filePath, optionally including the declaration site. includeDeclaration=true
-// is the typical UX (VSCode/JetBrains include it by default).
-func (l *LSPIntegration) FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []LSPLocation {
-	defer l.observeRequest("references", time.Now())
-	l.mu.Lock()
-	client := l.client
-	fp := filepath.Clean(filePath)
-	state, ok := l.openFiles[fp]
-	version := stateVersion(state)
-	l.mu.Unlock()
-
-	if client == nil || !ok {
-		return nil
-	}
-	results, err := client.FindReferences(ctx, fp, line, col, includeDeclaration)
-	if !l.currentDocument(fp, client, state, version) {
-		return nil
-	}
-	if err != nil {
-		return nil
-	}
-	return l.toLSPLocations(results)
-}
-
 // RequestDocumentSymbols returns a hierarchical outline (functions, types,
 // variables) for the given file. Children of nested symbols are preserved.
 func (l *LSPIntegration) RequestDocumentSymbols(ctx context.Context, filePath string) []LSPSymbol {
@@ -800,26 +749,6 @@ func (l *LSPIntegration) RequestRename(ctx context.Context, filePath string, lin
 // ServerCmd returns the command used to launch the LSP server, e.g. "gopls".
 func (l *LSPIntegration) ServerCmd() string {
 	return l.serverCmd
-}
-
-func (l *LSPIntegration) toLSPLocations(locs []protocol.Location) []LSPLocation {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	out := make([]LSPLocation, 0, len(locs))
-	for _, p := range locs {
-		uri := string(p.URI)
-		col, endCol := int(p.Range.Start.Character), int(p.Range.End.Character)
-
-		out = append(out, LSPLocation{
-			URI:     uri,
-			Path:    l.uriToPath(p.URI),
-			Line:    int(p.Range.Start.Line),
-			Col:     col,
-			EndLine: int(p.Range.End.Line),
-			EndCol:  endCol,
-		})
-	}
-	return out
 }
 
 // convertDocSymbol flattens a DocumentSymbolResult (which can be either

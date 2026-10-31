@@ -24,8 +24,6 @@ type LSPService interface {
 	DiagnosticCursor() (generation string, version uint64)
 	ContextCursor() (generation string, context uint64)
 	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
-	// FindReferences routes a "find references" request to the right client.
-	FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []workspace.LSPLocation
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.
 	NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int)
@@ -34,8 +32,6 @@ type LSPService interface {
 	ProjectInsights() workspace.ProjectInsights
 	// RequestCompletions routes a completion request to the right client.
 	RequestCompletions(ctx context.Context, filePath string, line, col int) []workspace.CompletionItem
-	// RequestDefinition routes a "go to definition" request to the right client.
-	RequestDefinition(ctx context.Context, filePath string, line, col int) []workspace.LSPLocation
 	// RequestDocumentSymbols routes a "document symbols" request to the right
 	// client and caches the result for the document outline panel.
 	RequestDocumentSymbols(ctx context.Context, filePath string) []workspace.LSPSymbol

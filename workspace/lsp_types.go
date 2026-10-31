@@ -23,7 +23,6 @@ const (
 )
 
 type LSPDiagnostic = model.LSPDiagnostic
-type LSPLocation = model.LSPLocation
 type LSPSymbol = model.LSPSymbol
 type CompletionItem = model.CompletionItem
 type ProjectInsights = model.ProjectInsights
@@ -45,8 +44,7 @@ type LSPClient interface {
 	CloseFile(context.Context, string)
 	NotifySave(context.Context, string, string, int, bool)
 	NotifyWatchedFilesChanged(context.Context, string, int)
-	RequestDefinition(context.Context, string, int, int) []LSPLocation
-	FindReferences(context.Context, string, int, int, bool) []LSPLocation
+	RequestNavigation(context.Context, string, string, int, int, bool) (model.LSPNavigationResponse, error)
 	RequestDocumentSymbols(context.Context, string) []LSPSymbol
 	RequestHover(context.Context, string, int, int) (string, error)
 	RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error)

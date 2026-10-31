@@ -551,6 +551,14 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "lsp.outline":
 		return m.requestDocumentSymbolsCmd()
+	case "lsp.definition":
+		return m.requestNavigationCmd(types.LSPNavigationDefinition)
+	case "lsp.typeDefinition":
+		return m.requestNavigationCmd(types.LSPNavigationTypeDefinition)
+	case "lsp.implementation":
+		return m.requestNavigationCmd(types.LSPNavigationImplementation)
+	case "lsp.references":
+		return m.requestNavigationCmd(types.LSPNavigationReferences)
 
 	case "agent.newSession":
 		return m.launcherNewSession()

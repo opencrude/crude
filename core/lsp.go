@@ -12,8 +12,8 @@ func lspMethod(method string) bool {
 	switch method {
 	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPNotifyWatchedFilesChanged,
 		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop,
-		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer, coreprotocol.LSPFindReferences,
-		coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDefinition,
+		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer,
+		coreprotocol.LSPRequestCompletions,
 		coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover,
 		coreprotocol.LSPRequestSignatureHelp:
 		return true
@@ -24,6 +24,9 @@ func lspMethod(method string) bool {
 // prepareLSP captures the core-owned service on the actor. All requests, including
 // snapshot assembly, run on a resource worker; no RPC probes a root or pipe here.
 func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
+	if run, known := a.prepareNavigation(request); known {
+		return run, true
+	}
 	if run, known := a.prepareCodeActions(request); known {
 		return run, true
 	}
@@ -83,12 +86,8 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 		out.Applied = service.RestartServer(in.ServerID)
 	case coreprotocol.LSPStopServer:
 		out.Applied = service.StopServer(in.ServerID)
-	case coreprotocol.LSPFindReferences:
-		out.Locations = service.FindReferences(ctx, in.Path, in.Line, in.Col, in.IncludeDeclaration)
 	case coreprotocol.LSPRequestCompletions:
 		out.Completions = service.RequestCompletions(ctx, in.Path, in.Line, in.Col)
-	case coreprotocol.LSPRequestDefinition:
-		out.Locations = service.RequestDefinition(ctx, in.Path, in.Line, in.Col)
 	case coreprotocol.LSPRequestDocumentSymbols:
 		out.Symbols = service.RequestDocumentSymbols(ctx, in.Path)
 	case coreprotocol.LSPRequestHover:

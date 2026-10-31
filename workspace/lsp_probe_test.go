@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -137,11 +138,120 @@ func TestProbeRespectsHumanStopAndFeatureGates(t *testing.T) {
 	settings := model.DefaultLSPSettings()
 	settings.References = false
 	m.SetSettings(settings)
-	if _, _, err := m.ProbeReferences(t.Context(), path, model.LSPSourcePosition{}); err == nil || !strings.Contains(err.Error(), "Find references is turned off") {
+	if _, _, err := m.ProbeNavigation(t.Context(), path, model.LSPNavigationReferences, model.LSPSourcePosition{}, true); err == nil || !strings.Contains(err.Error(), "Navigation is turned off") {
 		t.Fatalf("gated references = %v", err)
 	}
 	if _, _, _, err := m.ProbeDiagnostics(t.Context(), filepath.Join(root, "notes.unknownext")); err == nil || !strings.Contains(err.Error(), "no enabled language server") {
 		t.Fatalf("unsupported language = %v", err)
+	}
+}
+
+func TestProbeNavigationKindsAndAnswersWhileEditorDisabled(t *testing.T) {
+	f := newNavigationFixture(t, "// 😀 y\r\n")
+	m := f.w.LSPMgr
+	m.SetSettings(editorDisabledSettings())
+	for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+		for _, answer := range []string{"null", "empty", "unsupported", "targets"} {
+			t.Run(kind+"/"+answer, func(t *testing.T) {
+				raw := map[string]string{"null": "null", "empty": "[]", "unsupported": "",
+					"targets": "[" + navigationLocation(navigationTestURI(f.path)) + "]"}[answer]
+				f.client.navMu.Lock()
+				f.client.raw, f.client.unsupported = raw, answer == "unsupported"
+				f.client.navMu.Unlock()
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				result, view, err := m.ProbeNavigation(ctx, f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: "y"}, kind == "references")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Kind != kind || result.Answer != answer || result.Line != 0 || result.Col != 6 ||
+					result.IncludeDeclaration != (kind == "references") || result.WireVersion <= 0 ||
+					result.Boundary.Source != view.Source || result.Boundary.Source.DocumentID == "" ||
+					result.Boundary.Producer.InstanceID == "" || result.Boundary.Context.Generation == 0 ||
+					len(result.Boundary.Context.UnknownInputs) == 0 || view.SourceText != "// 😀 y\r\n" {
+					t.Fatalf("probe lost source/query/qualification: %+v view=%+v", result, view)
+				}
+				f.client.navMu.Lock()
+				call := f.client.requests[len(f.client.requests)-1]
+				f.client.navMu.Unlock()
+				if call != (navigationCall{f.path, kind, 0, 6, kind == "references"}) {
+					t.Fatal("probe changed literal UTF-16 source position or flag", call)
+				}
+				if answer == "targets" {
+					if len(result.Targets) != 1 {
+						t.Fatal("positive answer lost targets", result)
+					}
+					target := result.Targets[0]
+					if target.Path != f.path || target.URI != navigationTestURI(f.path) || target.UnavailableReason != "" ||
+						target.External || target.Link || target.Origin != nil ||
+						target.Range != navigationTestRange(0, 1, 3) || target.Selection != navigationTestRange(0, 1, 3) {
+						t.Fatal("probe lost target metadata", target)
+					}
+				} else if len(result.Targets) != 0 {
+					t.Fatal("negative answer carried target payload", result)
+				}
+			})
+		}
+	}
+}
+
+func TestProbeNavigationDefinitionFamilyAndReferencesGates(t *testing.T) {
+	f := newNavigationFixture(t, "var y = 1\n")
+	for _, enabled := range []string{"definition", "references"} {
+		settings := editorDisabledSettings()
+		settings.Definition, settings.References = enabled == "definition", enabled == "references"
+		f.w.LSPMgr.SetSettings(settings)
+		for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+			t.Run(enabled+"/"+kind, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				result, _, err := f.w.LSPMgr.ProbeNavigation(ctx, f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: "y"}, kind == "references")
+				allowed := (kind == "references") == (enabled == "references")
+				if allowed && (err != nil || result.Answer != "empty") ||
+					!allowed && (err == nil || !reflect.DeepEqual(result, model.LSPNavigation{})) {
+					t.Fatalf("gate %s kind %s: %+v err=%v", enabled, kind, result, err)
+				}
+			})
+		}
+	}
+}
+
+func TestProbeNavigationErrorsNeverReturnAbsence(t *testing.T) {
+	f := newNavigationFixture(t, "var y = 1\n")
+	f.w.LSPMgr.SetSettings(editorDisabledSettings())
+	for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+		for _, failure := range []string{"transport", "malformed", "symbol", "include-declaration"} {
+			if failure == "include-declaration" && kind == "references" {
+				continue
+			}
+			t.Run(kind+"/"+failure, func(t *testing.T) {
+				f.client.navMu.Lock()
+				f.client.err, f.client.raw = nil, "[]"
+				if failure == "transport" {
+					f.client.err = errors.New("provider transport failed")
+				}
+				if failure == "malformed" {
+					f.client.raw = `{"uri":"file:///bad","range":{}}`
+				}
+				f.client.navMu.Unlock()
+				symbol := "y"
+				if failure == "symbol" {
+					symbol = "absent"
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				result, _, err := f.w.LSPMgr.ProbeNavigation(ctx, f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: symbol}, failure == "include-declaration")
+				if err == nil || !reflect.DeepEqual(result, model.LSPNavigation{}) {
+					t.Fatalf("error became absence: %+v err=%v", result, err)
+				}
+			})
+		}
+	}
+	for _, kind := range []string{"typeDefinition", "Definition", "unknown"} {
+		result, _, err := f.w.LSPMgr.ProbeNavigation(t.Context(), f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: "y"}, false)
+		if err == nil || !reflect.DeepEqual(result, model.LSPNavigation{}) {
+			t.Fatalf("unrecognized kind %q returned answer: %+v err=%v", kind, result, err)
+		}
 	}
 }
 

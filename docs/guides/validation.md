@@ -279,6 +279,20 @@ each original observer boundary and finish with `quit:F9`. No observer may
 perform a scored action or patch chooser/editor state. This is local Linux
 rendered evidence, not distinct-host or native Windows/macOS acceptance.
 
+Qualified navigation uses `TestNavigationVisualHeadless` with installed real
+gopls. It drives all four registry keys, a two-target implementation chooser,
+inspect-only Enter, safe-default Close, detail Back and explicit second-target
+Open. Literal fixture positions, original provider response metadata, unchanged
+source/private drafts and exact provider cleanup are independent assertions.
+For sequential native captures select `CRUDE_VISUAL_NAVIGATION=1`,
+`CRUDE_ARGS='-test.run=^TestNavigationVisualAcceptance$ -test.count=1 -test.timeout=600s'`
+and `CRUDE_NAVIGATION_VISUAL_RESULT`. F3 prepares only the disposable fixture;
+F4 is a side-effect-free observation boundary. Supply the ordinary keys listed
+in `lsp_navigation_visual_test.go`, wait for each original `F4 VERIFIED` marker,
+and finish with `quit:F9`. Use the same compiled image at 160x40 and 80x24,
+inspect the actual native frames, and verify zero exit and joined cleanup.
+Neither a headless pass nor a cross-build supplies native pixel or device evidence.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

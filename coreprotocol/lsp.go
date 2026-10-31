@@ -15,28 +15,24 @@ const (
 	LSPStop                      = "lsp.stop"
 	LSPRestartServer             = "lsp.restart_server"
 	LSPStopServer                = "lsp.stop_server"
-	LSPFindReferences            = "lsp.references"
 	LSPRequestCompletions        = "lsp.completions"
-	LSPRequestDefinition         = "lsp.definition"
 	LSPRequestDocumentSymbols    = "lsp.document_symbols"
 	LSPRequestHover              = "lsp.hover"
 	LSPRequestSignatureHelp      = "lsp.signature_help"
 )
 
 type LSPRequest struct {
-	Path               string                       `json:"path,omitempty"`
-	Line               int                          `json:"line,omitempty"`
-	Col                int                          `json:"col,omitempty"`
-	IncludeDeclaration bool                         `json:"include_declaration,omitempty"`
-	Reason             workspace.DocumentSaveReason `json:"reason,omitempty"`
-	Before             bool                         `json:"before,omitempty"`
-	ChangeType         int                          `json:"change_type,omitempty"`
-	ServerID           string                       `json:"server_id,omitempty"`
+	Path       string                       `json:"path,omitempty"`
+	Line       int                          `json:"line,omitempty"`
+	Col        int                          `json:"col,omitempty"`
+	Reason     workspace.DocumentSaveReason `json:"reason,omitempty"`
+	Before     bool                         `json:"before,omitempty"`
+	ChangeType int                          `json:"change_type,omitempty"`
+	ServerID   string                       `json:"server_id,omitempty"`
 }
 
 type LSPResult struct {
 	Applied       bool                       `json:"applied"`
-	Locations     []workspace.LSPLocation    `json:"locations,omitempty"`
 	Completions   []workspace.CompletionItem `json:"completions,omitempty"`
 	Symbols       []workspace.LSPSymbol      `json:"symbols,omitempty"`
 	Hover         string                     `json:"hover,omitempty"`

@@ -5,6 +5,7 @@ import (
 
 	"crude/tui/screens/codeactions"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/tui/screens/navigation"
 	"crude/tui/ui"
 	"crude/types/control"
 )
@@ -13,6 +14,16 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if s := m.navigation; m.navigationCurrent(s) && owner.window == m.overlayHost.Window(navigationOverlay) &&
+		strings.HasPrefix(string(localID), string(navigation.ScreenID)+"/") {
+		switch action {
+		case navigation.ActionInspect:
+			return control.Read, false, nil
+		case navigation.ActionOpen, navigation.ActionBack, navigation.ActionClose:
+			// Open includes a selected source read and private tab/caret change.
+			return control.Write, false, nil
+		}
+	}
 	if s := m.codeActions; m.codeActionsVisible(s) && owner.window == m.overlayHost.Window(codeActionsOverlay) &&
 		strings.HasPrefix(string(localID), string(codeactions.ScreenID)+"/") {
 		switch action {

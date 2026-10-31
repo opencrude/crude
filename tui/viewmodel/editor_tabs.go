@@ -311,7 +311,7 @@ func (m *App) closeEditorTabForce(path string) {
 	}
 	// Close any popups associated with this editor before closing the tab.
 	m.closeFindReplace()
-	m.closeReferencesPopup()
+	m.closeNavigation()
 	m.closeCompletionPopup()
 	m.closeOutlinePopup()
 	m.clearDiagHoverPopup()

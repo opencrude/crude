@@ -20,6 +20,7 @@ import (
 	"crude/tui/screens/codeactions"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/memorybrowser"
+	"crude/tui/screens/navigation"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/screens/termdock"
@@ -69,6 +70,7 @@ type shellControlDoneMsg struct {
 	snippetOwner  *editorSnippetChoice
 	reviewOwner   *reviewedEditDialog
 	actionOwner   *codeActionState
+	navOwner      *navigationState
 	safetyOwner   *historySafetyView
 }
 
@@ -296,7 +298,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.navOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -701,6 +703,9 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 				if s := m.codeActions; m.codeActionsVisible(s) && owner.window == m.overlayHost.Window(codeActionsOverlay) {
 					done.actionOwner = s
 				}
+				if s := m.navigation; m.navigationCurrent(s) && owner.window == m.overlayHost.Window(navigationOverlay) {
+					done.navOwner = s
+				}
 				if v := m.historySafety; m.historySafetyVisible(v) && owner.window == m.overlayHost.Window(ui.OverlayLocalHistory) {
 					done.safetyOwner = v
 				}
@@ -758,6 +763,8 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			} else {
 				valid = valid && m.codeActionsVisible(done.actionOwner)
 			}
+		} else if done.navOwner != nil {
+			valid = valid && m.navigationCurrent(done.navOwner)
 		} else if done.safetyOwner != nil {
 			valid = valid && m.historySafetyVisible(done.safetyOwner)
 		} else if done.deckOwner != nil {
@@ -782,6 +789,29 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	result := control.Result{State: control.Applied}
 	var follow tea.Cmd
 	switch completion := done.completion.(type) {
+	case navigation.OpenMsg:
+		if !valid || done.navOwner == nil || completion.Target != done.navOwner.screen {
+			return m.failShellControl(msg, control.Stale, "navigation chooser changed")
+		}
+		cmd := m.openNavigationTarget(completion)
+		if cmd == nil {
+			return m.failShellControl(msg, control.Unavailable, "selected navigation target is unavailable")
+		}
+		return m.awaitCapturedShellControl(done, cmd, nil)
+	case navigationTargetMsg:
+		if !valid || done.navOwner == nil || completion.owner != done.navOwner {
+			return m.failShellControl(msg, control.Stale, "navigation target belongs to a retired invocation")
+		}
+		follow = m.handleNavigationTarget(completion)
+		if follow != nil {
+			return m.awaitCapturedShellControl(done, follow, nil)
+		}
+		return m.failShellControl(msg, control.OperationFailed, "selected navigation target was not opened")
+	case navigation.CloseMsg:
+		if !valid || done.navOwner == nil || completion.Target != done.navOwner.screen {
+			return m.failShellControl(msg, control.Stale, "navigation chooser changed")
+		}
+		m.closeNavigation()
 	case historySafetyReadMsg:
 		if !valid || done.safetyOwner == nil || completion.view != done.safetyOwner || completion.sequence != done.safetyOwner.sequence {
 			return m.failShellControl(msg, control.Stale, "review safety read belongs to a retired surface or intent")
@@ -1146,6 +1176,9 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 		return m.finishTreeControl(done, completion, valid)
 	case paneFilesOpenedMsg:
 		valid = valid && completion.seq == m.paneFileOpenSeq && completion.manager == m.BufferMgr && completion.win == m.Win && m.Win.HasGroup(completion.group)
+		if completion.navigation != nil {
+			valid = valid && done.navOwner == completion.navigation.owner && m.navigationLandingMatches(completion)
+		}
 		if !valid {
 			follow = releasePaneDocuments(completion)
 			result.State = control.Failed

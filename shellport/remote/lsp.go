@@ -174,14 +174,6 @@ func (l *lspReplica) StopServer(id string) bool {
 	l.send(coreprotocol.LSPStopServer, coreprotocol.LSPRequest{ServerID: id})
 	return true
 }
-func (l *lspReplica) FindReferences(ctx context.Context, path string, line, col int, include bool) []workspace.LSPLocation {
-	out, _ := l.query(ctx, coreprotocol.LSPFindReferences, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, IncludeDeclaration: include})
-	return out.Locations
-}
-func (l *lspReplica) RequestDefinition(ctx context.Context, path string, line, col int) []workspace.LSPLocation {
-	out, _ := l.query(ctx, coreprotocol.LSPRequestDefinition, coreprotocol.LSPRequest{Path: path, Line: line, Col: col})
-	return out.Locations
-}
 func (l *lspReplica) RequestCompletions(ctx context.Context, path string, line, col int) []workspace.CompletionItem {
 	out, _ := l.query(ctx, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequest{Path: path, Line: line, Col: col})
 	return out.Completions

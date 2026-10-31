@@ -60,13 +60,23 @@ func TestProbeAgainstRealGopls(t *testing.T) {
 		t.Fatalf("after the fix: %+v settled=%v err=%v", diags, settled, err)
 	}
 
-	locs, _, err := m.ProbeDefinition(ctx, main, types.LSPSourcePosition{Line: 3, Symbol: "Answer"})
-	if err != nil || len(locs) != 1 || filepath.Clean(locs[0].Path) != lib || locs[0].Line != 2 {
+	locs, sourceView, err := m.ProbeNavigation(ctx, main, types.LSPNavigationDefinition, types.LSPSourcePosition{Line: 3, Symbol: "Answer"}, false)
+	if err != nil || locs.Answer != types.LSPNavigationTargets || len(locs.Targets) != 1 || filepath.Clean(locs.Targets[0].Path) != lib || locs.Targets[0].Selection.Start.Line != 2 {
 		t.Fatalf("definition = %+v err=%v", locs, err)
 	}
-	refs, _, err := m.ProbeReferences(ctx, lib, types.LSPSourcePosition{Line: 3, Symbol: "Answer"})
-	if err != nil || len(refs) != 2 {
+	if locs.Boundary.Source != sourceView.Source || locs.Boundary.Producer.InstanceID == "" ||
+		locs.Boundary.Context.Generation == 0 || len(locs.Boundary.Context.UnknownInputs) == 0 ||
+		locs.Kind != types.LSPNavigationDefinition || locs.Line != 2 || locs.Col != 12 || locs.WireVersion <= 0 ||
+		locs.Targets[0].URI == "" || locs.Targets[0].UnavailableReason != "" || locs.Targets[0].External {
+		t.Fatalf("definition lost source/query/target qualification: %+v view=%+v", locs, sourceView)
+	}
+	refs, sourceView, err := m.ProbeNavigation(ctx, lib, types.LSPNavigationReferences, types.LSPSourcePosition{Line: 3, Symbol: "Answer"}, true)
+	if err != nil || refs.Answer != types.LSPNavigationTargets || len(refs.Targets) != 2 {
 		t.Fatalf("references = %+v err=%v", refs, err)
+	}
+	if refs.Boundary.Source != sourceView.Source || refs.Kind != types.LSPNavigationReferences || !refs.IncludeDeclaration ||
+		refs.Boundary.Producer.InstanceID == "" || len(refs.Boundary.Context.UnknownInputs) == 0 {
+		t.Fatalf("references lost qualification: %+v view=%+v", refs, sourceView)
 	}
 
 	if runtime.GOOS != "linux" {

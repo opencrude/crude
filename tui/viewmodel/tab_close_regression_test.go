@@ -76,11 +76,8 @@ func (noopLSPClient) NotifySave(context.Context, string, string, int, bool) {}
 func (noopLSPClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (noopLSPClient) SyncFileFromDisk(context.Context, string, int) {}
-func (noopLSPClient) RequestDefinition(context.Context, string, int, int) []workspace.LSPLocation {
-	return nil
-}
-func (noopLSPClient) FindReferences(context.Context, string, int, int, bool) []workspace.LSPLocation {
-	return nil
+func (noopLSPClient) RequestNavigation(context.Context, string, string, int, int, bool) (model.LSPNavigationResponse, error) {
+	return model.LSPNavigationResponse{}, context.Canceled
 }
 func (noopLSPClient) RequestDocumentSymbols(context.Context, string) []workspace.LSPSymbol {
 	return nil

@@ -65,12 +65,21 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if hasLSP {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Go to definition", Detail: "Alt+.", Action: func() {
-				_, _ = m.requestDefinitionCmd(), 0
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationDefinition))
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Find references", Detail: "Alt+;", Action: func() {
-				_, _ = m.requestReferencesCmd(), 0
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationReferences))
+			},
+		})
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
+			Label: "Go to type definition", Detail: "Alt+T", Action: func() {
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationTypeDefinition))
+			},
+		}, ui.ContextMenuItem{
+			Label: "Go to implementation", Detail: "Alt+M", Action: func() {
+				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationImplementation))
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{

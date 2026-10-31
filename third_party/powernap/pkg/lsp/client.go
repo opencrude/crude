@@ -450,32 +450,6 @@ func (c *Client) RequestHover(ctx context.Context, uri string, position protocol
 	return &result, nil
 }
 
-// FindReferences finds all references to the symbol at the given position.
-func (c *Client) FindReferences(ctx context.Context, filepath string, line, character int, includeDeclaration bool) ([]protocol.Location, error) {
-	uri := string(protocol.URIFromPath(filepath))
-	params := protocol.ReferenceParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{
-				URI: protocol.DocumentURI(uri),
-			},
-			Position: protocol.Position{
-				Line:      uint32(line),      //nolint:gosec
-				Character: uint32(character), //nolint:gosec
-			},
-		},
-		Context: protocol.ReferenceContext{
-			IncludeDeclaration: includeDeclaration,
-		},
-	}
-
-	var result []protocol.Location
-	err := c.conn.Call(ctx, MethodTextDocumentReferences, params, &result)
-	if err != nil {
-		return nil, fmt.Errorf("find references request failed: %w", err)
-	}
-	return result, nil
-}
-
 // RequestRename requests a rename of the symbol at the given position.
 func (c *Client) RequestRename(ctx context.Context, filepath string, line, character int, newName string) (json.RawMessage, error) {
 	if !c.initialized.Load() {
@@ -534,59 +508,6 @@ func (c *Client) RequestDocumentSymbols(ctx context.Context, filepath string) ([
 		return nil, fmt.Errorf("document symbol request failed: %w", err)
 	}
 	return result.Results() //nolint:wrapcheck
-}
-
-// RequestDefinition requests the definition of the symbol at the given position.
-func (c *Client) RequestDefinition(ctx context.Context, filepath string, line, character int) ([]protocol.Location, error) {
-	if !c.initialized.Load() {
-		return nil, fmt.Errorf("client not initialized")
-	}
-
-	uri := string(protocol.URIFromPath(filepath))
-	params := protocol.DefinitionParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{
-				URI: protocol.DocumentURI(uri),
-			},
-			Position: protocol.Position{
-				Line:      uint32(line),      //nolint:gosec
-				Character: uint32(character), //nolint:gosec
-			},
-		},
-	}
-
-	var result json.RawMessage
-	err := c.conn.Call(ctx, MethodTextDocumentDefinition, params, &result)
-	if err != nil {
-		return nil, fmt.Errorf("definition request failed: %w", err)
-	}
-
-	if string(result) == "null" {
-		return nil, nil
-	}
-
-	// Try []Location first (most common response from gopls).
-	var locs []protocol.Location
-	if err := json.Unmarshal(result, &locs); err == nil && len(locs) > 0 && locs[0].URI != "" {
-		return locs, nil
-	}
-
-	locs = nil
-	var links []protocol.LocationLink
-	if err := json.Unmarshal(result, &links); err == nil && len(links) > 0 && links[0].TargetURI != "" {
-		for _, link := range links {
-			locs = append(locs, protocol.Location{URI: link.TargetURI, Range: link.TargetSelectionRange})
-		}
-		return locs, nil
-	}
-
-	// Try single Location.
-	var loc protocol.Location
-	if err := json.Unmarshal(result, &loc); err == nil && loc.URI != "" {
-		return []protocol.Location{loc}, nil
-	}
-
-	return nil, nil
 }
 
 // PrepareCallHierarchy prepares a call hierarchy item at the given position.

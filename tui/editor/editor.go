@@ -1098,18 +1098,3 @@ func (e *Editor) revealJump() {
 	}
 	e.syncScrollChrome(h)
 }
-
-// LineTextFromPath returns the trimmed content of the file at the given path.
-// Used by the references popup to show a preview of the matching line. The
-// path is read fresh from disk; for the active editor use LineText() instead.
-func (e *Editor) LineTextFromPath(filePath string, lineIdx int) (string, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", err
-	}
-	lines := strings.Split(string(data), "\n")
-	if lineIdx < 0 || lineIdx >= len(lines) {
-		return "", fmt.Errorf("line %d out of range", lineIdx)
-	}
-	return strings.TrimRight(lines[lineIdx], "\r"), nil
-}

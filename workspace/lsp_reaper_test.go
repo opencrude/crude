@@ -25,11 +25,8 @@ func (c *reapableClient) CloseFile(context.Context, string)                     
 func (c *reapableClient) NotifySave(context.Context, string, string, int, bool) {}
 func (c *reapableClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
-func (c *reapableClient) RequestDefinition(context.Context, string, int, int) []LSPLocation {
-	return nil
-}
-func (c *reapableClient) FindReferences(context.Context, string, int, int, bool) []LSPLocation {
-	return nil
+func (c *reapableClient) RequestNavigation(context.Context, string, string, int, int, bool) (types.LSPNavigationResponse, error) {
+	return types.LSPNavigationResponse{}, context.Canceled
 }
 func (c *reapableClient) RequestDocumentSymbols(context.Context, string) []LSPSymbol {
 	return nil

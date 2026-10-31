@@ -172,3 +172,34 @@ func TestLSPDiagnosticNavigationValidatesBothSourceLinesAtomically(t *testing.T)
 		require.Equal(t, before, e.captureViewState(), "invalid end must not move start cursor")
 	}
 }
+
+func TestLSPNavigationRangeIsStrictNonEditingCue(t *testing.T) {
+	before := "\t界é😀abc\r\nab\t界é😀XYZ\r\n"
+	e := opsEditor(t, "unicode.txt", before)
+	valid := model.LSPNavigationRange{
+		Start: model.LSPNavigationPosition{Line: 0, Character: 6},
+		End:   model.LSPNavigationPosition{Line: 1, Character: 9},
+	}
+	require.NoError(t, e.SetLSPNavigationRange(valid))
+	require.Equal(t, Position{Col: 9}, e.cursor)
+	require.False(t, e.HasSelection())
+	require.Equal(t, &SearchMatch{Start: Position{Col: 9}, End: Position{Line: 1, Col: 10}}, e.landing)
+	require.Equal(t, before, e.Value())
+	for _, invalid := range []model.LSPNavigationRange{
+		{Start: model.LSPNavigationPosition{Line: -1}, End: valid.End},
+		{Start: model.LSPNavigationPosition{Character: 5}, End: valid.End},
+		{Start: valid.Start, End: model.LSPNavigationPosition{Line: 1, Character: 7}},
+		{Start: valid.Start, End: model.LSPNavigationPosition{Line: 1, Character: 12}},
+		{Start: valid.End, End: valid.Start},
+	} {
+		state, cue := e.captureViewState(), *e.landing
+		require.Error(t, e.SetLSPNavigationRange(invalid))
+		require.Equal(t, state, e.captureViewState())
+		require.Equal(t, cue, *e.landing)
+	}
+	// The provider span must never become replacement selection.
+	e.InsertRune('!')
+	require.Equal(t, "\t界é😀!abc\r\nab\t界é😀XYZ\r\n", e.Value())
+	e.Undo()
+	require.Equal(t, before, e.Value())
+}

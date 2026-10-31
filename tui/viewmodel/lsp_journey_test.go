@@ -59,10 +59,18 @@ func TestLSPCompletionReplacesPrefixAndRejectsLateOwners(t *testing.T) {
 	}
 }
 func TestLSPDefinitionNavigatesUTF16AfterTabAndEmoji(t *testing.T) {
-	app, path, ed := lspJourneyEditor(t, "\t😀name\n")
-	app.handleAppMessages(lspDefinitionResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, locations: []editor.LSPLocation{{Path: path, Line: 0, Col: 3}}})
-	if ed.CursorCol() != 6 {
-		t.Fatalf("UTF16 navigation at visual col=%d want6", ed.CursorCol())
+	f := newNavigationConnectedFixture(t, navigationConnectedPoint, "\t😀name\n")
+	one := f.shells[0]
+	f.key(t, tea.KeyPressMsg{Code: '.', Mod: tea.ModAlt})
+	remoteJourneyUntil(t, f.shells, func() bool {
+		return one.app.EditorState.Editor.FilePath() == f.engine.target && one.app.navigation == nil
+	})
+	ed := one.app.EditorState.Editor
+	if ed.CursorCol() != 6 || ed.CursorLine() != 0 || ed.HasSelection() || ed.Value() != "\t😀name\n" {
+		t.Fatalf("qualified UTF16 navigation at visual %d:%d source=%q want 0:6", ed.CursorLine(), ed.CursorCol(), ed.Value())
+	}
+	if f.main.CursorLine() != 2 || f.main.CursorCol() != 4 {
+		t.Fatal("asynchronous definition moved the old source editor")
 	}
 }
 

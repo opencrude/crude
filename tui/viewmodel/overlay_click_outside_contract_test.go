@@ -36,7 +36,7 @@ type overlayOutsideFixture struct {
 //   - Ignore (ModalDialogPolicy): dirty-close, tree prompts, file/workspace pickers, session-picker, help
 var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayContextMenu, policy: ui.PopoverPolicy(true), wantClose: true},
-	{id: ui.OverlayReferences, policy: ui.PopoverPolicy(true), wantClose: true},
+	{id: ui.OverlayNavigation, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayCompletion, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayOutline, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlaySignatureHelp, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -229,7 +229,7 @@ func TestOverlayOutsideContractMatrixCount(t *testing.T) {
 func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 	expected := map[ui.OverlayID]ui.OutsidePolicy{
 		ui.OverlayContextMenu:       ui.OutsideCloseAndRoute,
-		ui.OverlayReferences:        ui.OutsideCloseAndRoute,
+		ui.OverlayNavigation:        ui.OutsideCloseAndRoute,
 		ui.OverlayCompletion:        ui.OutsideCloseAndRoute,
 		ui.OverlayOutline:           ui.OutsideCloseAndRoute,
 		ui.OverlaySignatureHelp:     ui.OutsideCloseAndRoute,

@@ -114,6 +114,14 @@ invocation. Default detail Close and default review Cancel remain ordinary nativ
 actions. Source changes still require the shared reviewed Apply and its exact
 retained safety receipt.
 
+Navigation chooser controls bind the exact source/caret/invocation and mounted
+native body. Inspect is Read and fetches no destination bytes; Back/Close and
+explicit Open are local Write (Open also observes the selected source).
+Open awaits the original selected-target result and actual async document
+landing, not just an action message or metadata read. Stale source/focus/target
+snapshots fail without installing a tab. No node from a retired chooser acquires
+a replacement invocation, target freshness guarantee or mutation authority.
+
 Local History's review-safety list/detail navigation is owner-bound. List and
 detail reads await their typed results; a known result with unconfirmed exchange
 cleanup is partial, not a completed clean observation. Original disposition
