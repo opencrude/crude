@@ -856,6 +856,7 @@ func (m *App) stopAsyncIO() {
 			}
 			seen[ed] = true
 			ed.SetOnContentChanged(nil)
+			ed.SetOnSignatureHelp(nil)
 			ed.Close()
 		}
 		for _, tab := range m.EditorState.Tabs {

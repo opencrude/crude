@@ -32,6 +32,14 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	case tea.KeyPressMsg:
 		e.stopPointerSelection()
 		e.landing = nil
+		if !e.readOnly && (msg.Text == "(" || msg.Text == ",") && msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 {
+			before := e.Revision()
+			defer func() {
+				if e.Revision() != before && e.onSignatureHelp != nil {
+					e.onSignatureHelp()
+				}
+			}()
+		}
 		if e.readOnly {
 			if ui.IsCopyChord(msg) {
 				return rendering.CopyToClipboardCmd(e.SelectedText())

@@ -15,7 +15,13 @@ func (e *Editor) insertRune(r rune) {
 // Public surface used by the LSP completion popup to apply the selected
 // completion's text.
 func (e *Editor) InsertRune(r rune) {
-	if e.readOnly || e.DeferDocumentEvent(tea.KeyPressMsg{Code: r, Text: string(r)}) {
+	if e.readOnly {
+		return
+	}
+	key := tea.KeyPressMsg{Code: r, Text: string(r)}
+	if e.DeferDocumentEvent(key) {
+		p := e.documentProjection
+		p.historyQueue[len(p.historyQueue)-1].edit = func() { e.handleNonInteractiveInput(key) }
 		return
 	}
 	e.insertRune(r)

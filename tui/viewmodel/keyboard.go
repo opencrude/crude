@@ -380,7 +380,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if msg.Code == tea.KeyEsc {
-		if m.signatureHelp != nil {
+		if m.signatureHelp != nil || m.signatureHelpIntent != nil {
 			m.closeSignatureHelp()
 			return m, nil
 		}

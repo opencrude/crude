@@ -95,7 +95,7 @@ the adaptive human-workflow driver or developer/device rows. Hierarchy, history,
 complete project context and overall workflow acceptance remain open.
 
 The [read-only inlay-hint slice](../reference/editor.md#read-only-inlay-hints)
-is implemented with generic raw protocol negotiation, literal parsing, canonical
+is banked with generic raw protocol negotiation, literal parsing, canonical
 owner/view/sequence retention, tooltip-only resolution, default-Off settings
 and one editor source-to-cell geometry. Focused source, native-control body,
 rendered editor, context-publication and lifecycle checks pass, including race
@@ -109,6 +109,17 @@ path is covered separately by a connected provider fixture, not claimed as a
 real-gopls resolve. These deterministic regressions do not establish semantic
 freshness, complete project context, native containment, autonomous assembly,
 an adaptive human-workflow driver or developer/device workflow acceptance.
+
+Native `(` and `,` [parameter assistance](../reference/editor.md#parameter-information)
+now retains a bounded private input intent until its exact typed source is
+acknowledged. It reuses the explicit request's provider/context boundary and
+opens a passive caret card, while Alt+I keeps the complete selectable reader.
+Initial context-publication lag cannot discard eligible input; returned answers
+still wait for the original context cursor. Recovered/API input does not invent
+fresh UI intent. Parameter and symbol readers use mounted caret geometry and
+shrink beside it on short grids instead of covering source. Independent native-key,
+two-shell and installed-gopls regression definitions cover these transitions;
+their checkpoint evidence is separate from adaptive developer/device acceptance.
 
 ## Problem
 
@@ -126,7 +137,7 @@ it. Current capabilities and safeguards are described in
 | Project configuration needs manual work | Flags, targets, include paths, interpreters, dependencies and severity policies are not consistently derived from the actual build. |
 | Semantic coverage is limited | `types/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
-| Popups do not feel like a complete IDE | Hover and diagnostic details remain centered (`tui/viewmodel/lsp_intelligence.go`, `tui/viewmodel/lsp_handlers.go`). Manual parameter information and numeric snippet fields exist; a completion documentation pane, inline prediction and broader semantic workflows remain open. |
+| Popups do not feel like a complete IDE | Parameter assistance and symbol documentation now use caret anchoring; diagnostic details still need that cutover (`tui/viewmodel/lsp_handlers.go`). A completion documentation pane, inline prediction and broader semantic workflows remain open. |
 | Aeron never helps manual editing | Aeron drafts commit messages and compaction, nothing in the editor. |
 | Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
 
@@ -935,8 +946,11 @@ apply G0–G4 from [human-workflow acceptance](ide-workflow-acceptance.md#promot
      the actual remote service and retained command owner past 16 aborts without
      replacing its attachment. Saturated admission and uncooperative retirement
      remain explicit uncertainty, not a native containment claim.
-     Automatic triggers, dynamic registration, richer operations and this full
-     phase remain unaccepted; consolidated checkpoint gates retain their own evidence.
+     Native delimiter triggers now use one acknowledgement-gated passive card
+     and the same full reader, with retained initial-context publication fences
+     and source/private-focus retirement. Dynamic registration, richer operations
+     and this full phase remain open; consolidated/native checkpoint gates retain
+     their own evidence.
 4. **Cross-language bridges and project coverage.**
    - Deliver tested TSX/HTML/JS/CSS and Markdown injection mappings; add SQL
      and Go/C only where providers and project context substantiate their

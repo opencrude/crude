@@ -64,6 +64,9 @@ func (m *App) View() tea.View {
 	}
 	m.syncPlanHover()
 	m.syncConnectionHover()
+	if state := m.signatureHelp; state != nil && state.shown && state.automatic {
+		m.positionAutomaticSignatureHelp(state)
+	}
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	m.windowManager.ClearNeedsRender()

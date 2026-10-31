@@ -119,6 +119,7 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	ed.SetOnDocumentUndo(func(intent editor.DocumentUndoIntent) { state.undo = &intent })
 	ed.SetOnDocumentEdited(func() { m.onEditorContentChanged(ed, s.Path, "") })
 	ed.SetOnContentChanged(func(path, text string) { m.onEditorContentChanged(ed, path, text) })
+	ed.SetOnSignatureHelp(func() { m.queueAutomaticSignatureHelp(ed) })
 	m.BufferMgr.InstallPrepared(ed.DocumentBuffer())
 	m.EditorState.Tabs[s.Path] = NewEditorTab(s.Path, ed)
 	if msg, ok := m.pendingInsights[s.ID]; ok {

@@ -55,9 +55,14 @@ func (m *App) handleLSPHoverResult(msg lspHoverResultMsg) {
 	area.SetValue(msg.text)
 	area.SetCursorFlat(0)
 	w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
+	bounds, visible := m.editorHelpBounds(msg.owner, w, h)
+	if !visible {
+		return
+	}
+	w, h = bounds.W, bounds.H
 	frame := ui.NewWindowFrameWidget(m.Theme, "lsp-hover/frame", ui.FramePopover, "Symbol documentation", area, nil, false, w, h)
 	fw := wm.NewFloatingWindow("lsp-hover", "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithClosable(true), wm.WithFocusable(true), wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	wm.CenterOnScreen(fw, m.width, m.height)
+	fw.SetPosition(bounds.X, bounds.Y)
 	m.overlayHost.Open(ui.OverlayID("lsp-hover"), fw, ui.PopoverPolicy(true), nil)
 }
 
