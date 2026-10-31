@@ -23,6 +23,7 @@ type LSPService interface {
 	// DiagnosticSnapshot is a non-destructive, versioned read for each shell.
 	DiagnosticSnapshot() LSPDiagnosticSnapshot
 	DiagnosticCursor() (generation string, version uint64)
+	ContextCursor() (generation string, context uint64)
 	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
 	// FindReferences routes a "find references" request to the right client.
 	FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []workspace.LSPLocation
@@ -41,6 +42,7 @@ type LSPService interface {
 	RequestDocumentSymbols(ctx context.Context, filePath string) []workspace.LSPSymbol
 	// RequestHover routes a hover request to the right client.
 	RequestHover(ctx context.Context, filePath string, line, col int) (string, error)
+	RequestSignatureHelp(ctx context.Context, filePath string, line, col int) (types.LSPSignatureHelp, error)
 	// RequestRename routes a rename request to the right client.
 	RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error)
 	RestartServer(id string) bool

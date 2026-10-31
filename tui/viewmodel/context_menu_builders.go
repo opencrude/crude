@@ -78,6 +78,11 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				m.startRename()
 			},
 		})
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
+			Label: "Parameter information", Detail: "Alt+I", Action: func() {
+				m.runDetachedAsyncCmd(m.requestSignatureHelpCmd())
+			},
+		})
 	}
 	if len(diags) > 0 {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{

@@ -528,6 +528,64 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 	return out, err
 }
 
+// RequestSignatureHelp uses the same exact synchronized source and provider
+// lifetime as other explicit editor requests. It never starts an extra server.
+func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line, col int) (ttypes.LSPSignatureHelp, error) {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Enabled }) {
+		return ttypes.LSPSignatureHelp{}, fmt.Errorf("parameter information unavailable: language intelligence is off or blocked")
+	}
+	var out ttypes.LSPSignatureHelp
+	err := m.trackInflight(func() error {
+		client, requestCtx, valid, cancel := m.requestClient(ctx, path)
+		defer cancel()
+		if client == nil {
+			return fmt.Errorf("parameter information unavailable: no synchronized language server")
+		}
+		m.mu.Lock()
+		doc := m.documents[filepath.Clean(path)]
+		var boundary ttypes.InsightBoundary
+		if doc != nil && doc.opened && !doc.syncPending {
+			boundary = doc.boundary
+			boundary.Context.UnknownInputs = append([]string(nil), boundary.Context.UnknownInputs...)
+		}
+		generation := m.contextGeneration
+		m.mu.Unlock()
+		if boundary.Source.DocumentID == "" || boundary.Context.Generation != generation {
+			return fmt.Errorf("parameter information unavailable: source context is not synchronized")
+		}
+		if err := requestCtx.Err(); err != nil {
+			return err
+		}
+		var requestErr error
+		out, requestErr = client.RequestSignatureHelp(requestCtx, path, line, col)
+		if err := requestCtx.Err(); err != nil {
+			out = ttypes.LSPSignatureHelp{}
+			return err
+		}
+		m.mu.Lock()
+		sameContext := generation == m.contextGeneration
+		m.mu.Unlock()
+		if !valid() || !sameContext {
+			out = ttypes.LSPSignatureHelp{}
+			return fmt.Errorf("LSP source or context changed during parameter information")
+		}
+		out.Boundary = boundary
+		return requestErr
+	})
+	return out, err
+}
+
+// ContextCursor is the retained semantic-context clock, separate from status,
+// progress and diagnostic publication versions. Reads perform no I/O.
+func (m *LSPManager) ContextCursor() (string, uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sources == nil || m.sources.Insight == nil {
+		return "", m.contextGeneration
+	}
+	return m.sources.Insight.generation, m.contextGeneration
+}
+
 // RequestRename routes a rename request to the right client.
 func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error) {
 	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Rename }) {

@@ -598,9 +598,27 @@ func (e *Editor) SetDiagnostics(facts types.InsightDiagnostics) {
 // local mutation counter. Pending/history/conflict projections cannot authorize
 // diagnostics, even if their visible bytes equal the canonical source.
 func (e *Editor) MatchesDiagnosticSource(facts types.InsightDiagnostics) bool {
+	return facts.HasExactSource() && e.MatchesInsightSource(facts.Boundary.Source)
+}
+
+// CurrentInsightSource is a small metadata read. Unacknowledged text, pending
+// history and conflicts cannot authorize a semantic request for canonical text.
+func (e *Editor) CurrentInsightSource() (types.InsightSource, bool) {
 	p := e.documentProjection
-	s := facts.Boundary.Source
-	return e.open && p != nil && facts.HasExactSource() && s.Kind == "canonical" &&
+	if p == nil {
+		return types.InsightSource{}, false
+	}
+	s := types.InsightSource{WorkspaceGeneration: p.snapshot.AnalysisGeneration,
+		DocumentID: p.snapshot.ID, Path: p.snapshot.Path, Lifetime: p.snapshot.AnalysisLifetime,
+		Revision: p.snapshot.Revision, Kind: "canonical"}
+	return s, e.MatchesInsightSource(s)
+}
+
+// MatchesInsightSource shares one exact canonical-source gate across diagnostic
+// paint and explicit read-only semantic results. It does not attest a provider.
+func (e *Editor) MatchesInsightSource(s types.InsightSource) bool {
+	p := e.documentProjection
+	return e.open && p != nil && s.Kind == "canonical" &&
 		s.WorkspaceGeneration != "" && s.WorkspaceGeneration == p.snapshot.AnalysisGeneration &&
 		s.Lifetime != "" && s.Lifetime == p.snapshot.AnalysisLifetime &&
 		s.DocumentID != "" && s.DocumentID == p.snapshot.ID && s.Path == e.filePath &&

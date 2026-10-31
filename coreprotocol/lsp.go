@@ -20,6 +20,7 @@ const (
 	LSPRequestDefinition         = "lsp.definition"
 	LSPRequestDocumentSymbols    = "lsp.document_symbols"
 	LSPRequestHover              = "lsp.hover"
+	LSPRequestSignatureHelp      = "lsp.signature_help"
 	LSPRequestRename             = "lsp.rename"
 )
 
@@ -36,27 +37,29 @@ type LSPRequest struct {
 }
 
 type LSPResult struct {
-	Applied     bool                       `json:"applied"`
-	Locations   []workspace.LSPLocation    `json:"locations,omitempty"`
-	Completions []workspace.CompletionItem `json:"completions,omitempty"`
-	Symbols     []workspace.LSPSymbol      `json:"symbols,omitempty"`
-	Hover       string                     `json:"hover,omitempty"`
-	Edit        *LSPEdit                   `json:"edit,omitempty"`
+	Applied       bool                       `json:"applied"`
+	Locations     []workspace.LSPLocation    `json:"locations,omitempty"`
+	Completions   []workspace.CompletionItem `json:"completions,omitempty"`
+	Symbols       []workspace.LSPSymbol      `json:"symbols,omitempty"`
+	Hover         string                     `json:"hover,omitempty"`
+	SignatureHelp types.LSPSignatureHelp     `json:"signature_help"`
+	Edit          *LSPEdit                   `json:"edit,omitempty"`
 }
 
 type LSPSnapshot struct {
-	Generation   string                              `json:"generation"`
-	Version      uint64                              `json:"version"`
-	Available    bool                                `json:"available"`
-	Diagnostics  map[string]types.InsightDiagnostics `json:"diagnostics"`
-	Symbols      map[string][]workspace.LSPSymbol    `json:"symbols"`
-	Insights     workspace.ProjectInsights           `json:"insights"`
-	Health       []types.LSPServerHealth             `json:"health"`
-	Settings     types.LSPSettings                   `json:"settings"`
-	Connected    bool                                `json:"connected"`
-	Ready        bool                                `json:"ready"`
-	Status       workspace.LSPStatus                 `json:"status"`
-	Error        string                              `json:"error,omitempty"`
-	ShowInEditor bool                                `json:"show_in_editor"`
-	ShowInTree   bool                                `json:"show_in_tree"`
+	Generation        string                              `json:"generation"`
+	ContextGeneration uint64                              `json:"context_generation"`
+	Version           uint64                              `json:"version"`
+	Available         bool                                `json:"available"`
+	Diagnostics       map[string]types.InsightDiagnostics `json:"diagnostics"`
+	Symbols           map[string][]workspace.LSPSymbol    `json:"symbols"`
+	Insights          workspace.ProjectInsights           `json:"insights"`
+	Health            []types.LSPServerHealth             `json:"health"`
+	Settings          types.LSPSettings                   `json:"settings"`
+	Connected         bool                                `json:"connected"`
+	Ready             bool                                `json:"ready"`
+	Status            workspace.LSPStatus                 `json:"status"`
+	Error             string                              `json:"error,omitempty"`
+	ShowInEditor      bool                                `json:"show_in_editor"`
+	ShowInTree        bool                                `json:"show_in_tree"`
 }

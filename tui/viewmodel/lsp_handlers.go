@@ -209,6 +209,7 @@ func (m *App) startLSPForWorkspace() {
 
 // StopLSP shuts down all LSP server connections.
 func (m *App) StopLSP() {
+	m.closeSignatureHelp()
 	if m.lspRequestCancel != nil {
 		m.lspRequestCancel()
 		m.lspRequestCancel = nil

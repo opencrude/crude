@@ -751,14 +751,20 @@ func remoteHostPendingStatus(t *testing.T, conn corewire.Conn) func() {
 			t.Fatal(err)
 		}
 		reader := corewire.NewReader(stream, corewire.MaxMessage)
-		body, err := reader.Next()
-		if err != nil {
-			t.Fatal(err)
-		}
 		var reply coreprotocol.Reply
-		rest, err := reply.UnmarshalMsg(body)
-		if err != nil || !reply.Final || reply.Fault != nil {
-			t.Fatalf("retained streaming RPC: %+v %v", reply, err)
+		var rest []byte
+		for {
+			body, err := reader.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rest, err = reply.UnmarshalMsg(body)
+			if err != nil || reply.Fault != nil {
+				t.Fatalf("retained streaming RPC: %+v %v", reply, err)
+			}
+			if reply.Final {
+				break
+			}
 		}
 		var status coreprotocol.CoreStatus
 		if rest, err = status.UnmarshalMsg(rest); err != nil || len(rest) != 0 {

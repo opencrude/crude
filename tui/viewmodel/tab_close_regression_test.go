@@ -90,6 +90,9 @@ func (noopLSPClient) RequestDocumentSymbols(context.Context, string) []workspace
 func (noopLSPClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
+func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error) {
+	return model.LSPSignatureHelp{}, nil
+}
 func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
 	return nil, nil
 }

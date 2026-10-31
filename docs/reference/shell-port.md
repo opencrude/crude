@@ -248,6 +248,7 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `DocumentSymbols` | 1 | reads | yes | LSP state topic replica |
 | `DiagnosticSnapshot` | 1 | reads | yes: non-destructive per-client cursor | LSP state topic replica + per-client consumer |
 | `DiagnosticCursor` | current | reads | yes: generation/version only | LSP state topic replica |
+| `ContextCursor` | current | reads | yes: retained owner/context generation, separate from progress/status | LSP state topic replica |
 | `FileDiagnostics` | 2 | reads | yes | LSP state topic replica |
 | `FindReferences` | 1 | reads | yes | lsp.references |
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
@@ -256,7 +257,8 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `RequestDefinition` | 1 | reads | yes | lsp.definition |
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
-| `RequestRename` | 1 | mutates | yes: typed *protocol.WorkspaceEdit | lsp.rename (typed *protocol.WorkspaceEdit) |
+| `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
+| `RequestRename` | 1 | reads | yes: proposes typed *protocol.WorkspaceEdit; applying it is separate | lsp.rename (typed *protocol.WorkspaceEdit) |
 | `RestartServer` | 1 | mutates | yes | lsp.restart_server |
 | `ServerHealthSnapshots` | 3 | reads | yes | LSP state topic replica |
 | `ServerReady` | 2 | reads | yes | LSP state topic replica |
@@ -269,6 +271,15 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `Stop` | 1 | mutates | yes | lsp.stop (explicit action only, never detach) |
 | `StopServer` | 1 | mutates | yes | lsp.stop_server |
 | `Version` | 1 | reads | yes | LSP state topic replica |
+
+Explicit semantic queries share the connected cancellable command exchange:
+retiring a shell request cancels its exact enqueued core job and joins/ACKs the
+original response, not merely the carrier stream. The cleanup lifetime remains
+bound to that original client/workspace, including on switch or shutdown, and
+reports retained uncertainty when its bounded join cannot be confirmed. It never
+stops the shared server or retargets a replacement attachment. Mutation calls keep
+their separate ordinary receipt semantics. See
+[command cancellation](core-client-protocol.md#mutation-receipts-and-uncertainty).
 
 ### `SourceControl`
 

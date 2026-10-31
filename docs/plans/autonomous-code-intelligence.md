@@ -872,6 +872,16 @@ apply G0–G4 from [human-workflow acceptance](ide-workflow-acceptance.md#promot
      needed by the required task matrix. A generic DAP client may integrate
      existing adapters. Terminal debugging alone cannot pass an integrated
      debugger checkpoint. Keep required capability gaps visible and local.
+   - The initial [explicit parameter-information reader](../reference/editor.md#parameter-information)
+     uses the common provider and canonical source/context boundary. Its focused
+     regressions, real installed-gopls connected headless journey and sequential
+     160x40/80x24 Linux native captures now pass, including terminal-delivered Alt+I,
+     unchanged source and joined fixture teardown. Connected cancellation exercises
+     the actual remote service and retained command owner past 16 aborts without
+     replacing its attachment. Saturated admission and uncooperative retirement
+     remain explicit uncertainty, not a native containment claim.
+     Automatic triggers, dynamic registration, richer operations and this full
+     phase remain unaccepted; consolidated checkpoint gates retain their own evidence.
 4. **Cross-language bridges and project coverage.**
    - Deliver tested TSX/HTML/JS/CSS and Markdown injection mappings; add SQL
      and Go/C only where providers and project context substantiate their

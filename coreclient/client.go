@@ -47,6 +47,9 @@ type UncertainError struct {
 	Cause     error
 	// State distinguishes a still-pending operation from an unknown outcome.
 	State string
+	// ResultKnown distinguishes unconfirmed cleanup from an unknown operation:
+	// the original final result was decoded and must never be replayed.
+	ResultKnown bool
 }
 
 func (e *UncertainError) Error() string {
@@ -504,6 +507,18 @@ func (c *Client) Call(ctx context.Context, workspaceID, method string, in corepr
 // A carrier lost while it runs is replaced and the command re-attached by its
 // identity; only a lost session or cancellation leaves the outcome uncertain.
 func (c *Client) CallWith(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, opts CallOptions) (uint64, error) {
+	return c.callWith(ctx, workspaceID, method, in, out, opts, commandBoundary{})
+}
+
+// commandBoundary supplies the read job's admission and confirmed-release
+// boundaries without adding a second framing, retry or result-decoding path.
+// Ordinary calls retain their best-effort final ACK and known-result semantics.
+type commandBoundary struct {
+	admitted    func()
+	acknowledge func(corewire.Stream, *corewire.Reader) error
+}
+
+func (c *Client) callWith(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, opts CallOptions, boundary commandBoundary) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -544,10 +559,14 @@ func (c *Client) CallWith(ctx context.Context, workspaceID, method string, in co
 			}
 			return 0, err
 		}
-		revision, written, retry, err := c.attempt(ctx, conn, class, framed, out, opts.Progress)
+		revision, written, retry, err := c.attempt(ctx, conn, class, framed, out, opts.Progress, boundary)
 		sent = sent || written
 		if retry {
 			continue
+		}
+		var cleanup *finalCleanupError
+		if errors.As(err, &cleanup) {
+			return revision, &UncertainError{RequestID: id, Cause: err, State: "completed_cleanup_unconfirmed", ResultKnown: true}
 		}
 		var fault *coreprotocol.Fault
 		if errors.As(err, &fault) && (fault.Code == "outcome_pending" || fault.Code == "outcome_uncertain") {
@@ -563,13 +582,13 @@ func (c *Client) CallWith(ctx context.Context, workspaceID, method string, in co
 // attempt runs a command over one carrier. written reports that the request
 // may have reached the core; retry that the carrier was lost and the command
 // must be re-attached by its identity on the replacement.
-func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire.Class, framed []byte, out coreprotocol.Target, progress func(string)) (revision uint64, written, retry bool, err error) {
+func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire.Class, framed []byte, out coreprotocol.Target, progress func(string), boundary commandBoundary) (revision uint64, written, retry bool, err error) {
 	s, err := conn.OpenStream(ctx, class)
 	if err != nil {
 		return 0, false, ctx.Err() == nil && carrierLost(conn), err
 	}
 	defer s.Close()
-	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+	stop := joinedAfterFunc(ctx, func() { _ = s.Close() })
 	defer stop()
 	_, err = s.Write(framed)
 	if err != nil {
@@ -589,6 +608,9 @@ func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire
 		if err != nil {
 			return 0, true, false, err
 		}
+		if reply.Admitted && boundary.admitted != nil {
+			boundary.admitted()
+		}
 		if !reply.Final {
 			if progress != nil && reply.Progress != "" {
 				progress(reply.Progress)
@@ -602,7 +624,15 @@ func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire
 		}
 		// Once decoded, the original outcome is known even if this ACK or its
 		// confirmation is lost. Never replay a known result just to release it.
-		if sendValues(s, &coreprotocol.TopicAck{Seq: 1}) == nil {
+		if boundary.acknowledge != nil {
+			if err := boundary.acknowledge(s, reader); err != nil {
+				cause := err
+				if reply.Fault != nil {
+					cause = errors.Join(err, reply.Fault)
+				}
+				return reply.Revision, true, false, &finalCleanupError{cause: cause}
+			}
+		} else if sendValues(s, &coreprotocol.TopicAck{Seq: 1}) == nil {
 			_ = s.CloseWrite()
 			_, _ = reader.Next() // server EOF confirms release; cancellation closes s
 		}

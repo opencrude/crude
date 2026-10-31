@@ -344,7 +344,10 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 		return
 	}
 	admitted := time.Now()
-	cmd, err := c.admit(ctx, request)
+	var admissionErr error
+	cmd, err := c.admit(ctx, request, func() {
+		admissionErr = send(s, &coreprotocol.Reply{Admitted: true})
+	})
 	if err != nil {
 		code := "invalid_request"
 		if errors.Is(err, errCommandCapacity) {
@@ -353,13 +356,23 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 		c.refuseCommand(ctx, s, reader, &coreprotocol.Fault{Code: code, Message: err.Error()})
 		return
 	}
+	if admissionErr != nil {
+		return
+	}
 	// Only an explicit final-result ACK releases the retained command. Neither
 	// a successful write nor EOF proves the client decoded the result.
 	acknowledged := make(chan bool, 1)
 	go func() {
 		body, err := reader.Next()
 		var ack coreprotocol.TopicAck
-		acknowledged <- err == nil && coreprotocol.Decode(body, &ack) == nil && ack.Seq == 1
+		ok := err == nil && coreprotocol.Decode(body, &ack) == nil && ack.Seq == 1
+		if ok {
+			// Join the client's FIN before sending our release confirmation:
+			// closing an unread direction after ACK can reset its pending FIN.
+			_, err = reader.Next()
+			ok = errors.Is(err, io.EOF)
+		}
+		acknowledged <- ok
 	}()
 	for {
 		select {
@@ -414,6 +427,9 @@ func (c *Connection) refuseCommand(ctx context.Context, s corewire.Stream, reade
 	body, err := reader.Next()
 	var ack coreprotocol.TopicAck
 	if err != nil || coreprotocol.Decode(body, &ack) != nil || ack.Seq != 1 {
+		return
+	}
+	if _, err := reader.Next(); !errors.Is(err, io.EOF) {
 		return
 	}
 	_ = s.CloseWrite()

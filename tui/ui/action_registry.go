@@ -673,6 +673,8 @@ var defaultActions = []*ActionDef{
 		HintKey:     "Alt+O",
 	},
 	{ID: "lsp.hover", Label: "Symbol Documentation", Description: "show language-server documentation at the editor cursor", Icon: "i", Category: "Tools", HintKey: "Alt+K", Contextual: true},
+	{ID: "lsp.signature", Label: "Parameter Information", Description: "inspect the callable signature and active parameter at the editor cursor",
+		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+i"}, {Key: "ctrl+shift+space"}}, HintKey: "Alt+I"},
 	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart enabled servers for open editor documents", Icon: "↻", Category: "App"},
 	{ID: "lsp.problems", Label: "Problems", Description: "inspect reported workspace diagnostics", Icon: "!", Category: "View"},
 

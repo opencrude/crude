@@ -170,7 +170,8 @@ func (c *Connection) Carrier() (corewire.Carrier, time.Duration) {
 // instead of executing the request twice.
 type command struct {
 	admitted  time.Time
-	completed time.Time // published by close(done), never read before completion
+	enqueued  chan struct{} // closes after Dispatch synchronously admits the request
+	completed time.Time     // published by close(done), never read before completion
 	request   coreprotocol.Request
 	done      chan struct{}
 	response  coreprotocol.Response
@@ -191,20 +192,33 @@ var errCommandCapacity = errors.New("unacknowledged command capacity exceeded")
 func commandKey(request coreprotocol.Request) string { return request.Method + "\x00" + request.ID }
 
 // admit returns the in-flight command for request, starting it if new.
-func (c *Connection) admit(ctx context.Context, request coreprotocol.Request) (*command, error) {
+func (c *Connection) admit(ctx context.Context, request coreprotocol.Request, onAdmitted ...func()) (*command, error) {
+	notify := func() {
+		for _, callback := range onAdmitted {
+			callback()
+		}
+	}
 	c.commandMu.Lock()
 	if existing := c.commands[commandKey(request)]; existing != nil {
 		c.commandMu.Unlock()
 		if existing.request.Method != request.Method || existing.request.WorkspaceID != request.WorkspaceID || !bytes.Equal(existing.request.Payload, request.Payload) {
 			return nil, errors.New("request identity reused with different content")
 		}
+		// An exact reattachment can find the retained entry before its initial
+		// Dispatch returns. Never publish admission ahead of that enqueue.
+		select {
+		case <-existing.enqueued:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		notify()
 		return existing, nil
 	}
 	if len(c.commands) >= sessionCommandLimit || c.commandBytes+len(request.Payload) > sessionCommandBytes {
 		c.commandMu.Unlock()
 		return nil, errCommandCapacity
 	}
-	cmd := &command{request: request, admitted: time.Now(), done: make(chan struct{}), progress: make(chan string, 1)}
+	cmd := &command{request: request, admitted: time.Now(), enqueued: make(chan struct{}), done: make(chan struct{}), progress: make(chan string, 1)}
 	if c.commands == nil {
 		c.commands = make(map[string]*command)
 	}
@@ -213,6 +227,8 @@ func (c *Connection) admit(ctx context.Context, request coreprotocol.Request) (*
 	c.commandMu.Unlock()
 	// Carrier replacement abandons only the waiter, not the admitted operation.
 	pending := c.Dispatch(c.ctx, request)
+	close(cmd.enqueued)
+	notify()
 	go func() {
 		select {
 		case cmd.response = <-pending:

@@ -12,12 +12,15 @@ import (
 func TestLSPReplicaReadIsolationAndClear(t *testing.T) {
 	l := newLSPReplica(nil) // Any RPC during a read would panic.
 	version := 9
-	s := coreprotocol.LSPSnapshot{Available: true, Generation: "owner-1", Version: 7,
+	s := coreprotocol.LSPSnapshot{Available: true, Generation: "owner-1", Version: 7, ContextGeneration: 3,
 		Diagnostics: map[string]types.InsightDiagnostics{"a.go": {ID: "shared-fact", ReportedVersion: &version, Boundary: types.InsightBoundary{Context: types.InsightContext{UnknownInputs: []string{"unknown build"}}}, Diagnostics: []types.LSPDiagnostic{{Message: "original"}}}},
 		Symbols:     map[string][]workspace.LSPSymbol{"a.go": {{Name: "parent", Children: []workspace.LSPSymbol{{Name: "child"}}}}},
 		Settings:    types.LSPSettings{Languages: map[string]types.LSPLanguageSettings{"go": {Command: "gopls", Args: []string{"serve"}}}},
 		Health:      []types.LSPServerHealth{{ID: "one"}}, Connected: true, Ready: true, Status: workspace.LSPConnected}
 	l.install(s)
+	if owner, context := l.ContextCursor(); owner != "owner-1" || context != 3 {
+		t.Fatal("replica lost the independent semantic-context cursor", owner, context)
+	}
 	s.Diagnostics["a.go"].Diagnostics[0].Message = "changed"
 	*s.Diagnostics["a.go"].ReportedVersion = 99
 	s.Diagnostics["a.go"].Boundary.Context.UnknownInputs[0] = "changed"

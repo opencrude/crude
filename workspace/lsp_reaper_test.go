@@ -38,6 +38,9 @@ func (c *reapableClient) RequestDocumentSymbols(context.Context, string) []LSPSy
 func (c *reapableClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
+func (c *reapableClient) RequestSignatureHelp(context.Context, string, int, int) (types.LSPSignatureHelp, error) {
+	return types.LSPSignatureHelp{}, nil
+}
 func (c *reapableClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
 	return nil, nil
 }

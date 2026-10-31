@@ -27,6 +27,7 @@ import (
 // Capture sequentially with scripts/tuishot.sh, a prebuilt viewmodel test binary,
 // CRUDE_VISUAL_LSP=1 and CRUDE_ARGS=-test.run=^TestLSPVisualAcceptance$.
 // F2: live diagnostics; F3: hover; F4: references; F5: definition; F6: completion;
+// F7: explicit parameter information through the actual connected editor;
 // quit:F9 verifies all phases and joins the real gopls process. Optional
 // CRUDE_LSP_VISUAL_RESULT receives per-phase proof and the final cleanup result.
 // CRUDE_LSP_VISUAL_GOPLS selects an installed executable, never a protocol fake.
@@ -47,6 +48,7 @@ func TestLSPVisualHarnessHeadless(t *testing.T) {
 
 const lspVisualMain = "package journey\n\nvar Result = Answer() + missing\n"
 const lspVisualLib = "package journey\n\n// Answer returns the LSP_HOVER_SENTINEL value.\nfunc Answer() int { return 42 }\n"
+const lspVisualParameters = "package journey\n\n// Repeat returns the SIGNATURE_HELP_SENTINEL prefix.\nfunc Repeat(prefix string, count int) string { return prefix }\n\nvar SignatureValue = Repeat(\"x\", 2)\n"
 
 func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	t.Helper()
@@ -79,7 +81,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("CRUDE_HOME", home)
-	sources := map[string]string{"go.mod": "module journey\n\ngo 1.22\n", "main.go": lspVisualMain, "lib.go": lspVisualLib}
+	sources := map[string]string{"go.mod": "module journey\n\ngo 1.22\n", "main.go": lspVisualMain, "lib.go": lspVisualLib, "parameters.go": lspVisualParameters}
 	for name, text := range sources {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0600); err != nil {
 			t.Fatal(err)
@@ -130,7 +132,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 			}
 			if len(pids) == 0 {
 				if !t.Failed() {
-					if err := m.evidence(fmt.Sprintf("LSP_VISUAL_SUCCESS F2 F3 F4 F5 F6; real gopls pids=%v joined; local framed core only", m.pids)); err != nil {
+					if err := m.evidence(fmt.Sprintf("LSP_VISUAL_SUCCESS F2 F3 F4 F5 F6 F7; real gopls pids=%v joined; local framed core only", m.pids)); err != nil {
 						t.Error(err)
 					}
 				}
@@ -171,7 +173,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	m.ws.(shellport.ShellControl).StartShellControl()
 	if headless {
 		go func() {
-			for key := tea.KeyF2; key <= tea.KeyF6; key++ {
+			for key := tea.KeyF2; key <= tea.KeyF7; key++ {
 				program.Send(tea.KeyPressMsg{Code: key})
 				select {
 				case <-m.settled:
@@ -191,7 +193,7 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 		}
 		t.Fatal(m.failure)
 	}
-	for key := 2; key <= 6; key++ {
+	for key := 2; key <= 7; key++ {
 		if !m.completed[key] {
 			t.Errorf("F%d not completed", key)
 		}
@@ -240,7 +242,7 @@ func (m *lspVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Code == tea.KeyF9 && !m.busy {
 			return m, tea.Quit
 		}
-		if v.Code >= tea.KeyF2 && v.Code <= tea.KeyF6 {
+		if v.Code >= tea.KeyF2 && v.Code <= tea.KeyF7 {
 			key := int(v.Code-tea.KeyF2) + 2
 			if m.busy || m.completed[key] {
 				return m, nil
@@ -408,6 +410,37 @@ func (m *lspVisualModel) journeyLSP(key int) error {
 			return fmt.Errorf("actual completion missing Answer() int: %+v", v.LSPPopup.CompletionItems)
 		})
 		label = "Ctrl+Space actual Answer completion and int signature; no insertion or disk mutation"
+	case 7:
+		m.action(func(app *App) tea.Cmd { _, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEsc}); return cmd })
+		path := filepath.Join(m.root, "parameters.go")
+		if err = do("file.open", map[string]any{"path": path}); err != nil {
+			return err
+		}
+		if err = m.await(func(v *controlVisualModel) error {
+			source, current := v.EditorState.Editor.CurrentInsightSource()
+			facts, ok := v.ws.LSPMgr().FileDiagnostics(path)
+			if !current || !ok || !facts.HasExactSource() || facts.Boundary.Source != source {
+				return fmt.Errorf("parameter source not yet synchronized and independently observed")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		position(5, 33, tea.KeyPressMsg{Code: 'i', Mod: tea.ModAlt})
+		err = m.await(func(v *controlVisualModel) error {
+			if !v.overlayHost.IsOpen(signatureHelpID) || v.signatureHelp == nil || !v.signatureHelp.shown {
+				return fmt.Errorf("Alt+I parameter information not mounted")
+			}
+			source, current := v.EditorState.Editor.CurrentInsightSource()
+			if !current || v.signatureHelp.result.help.Boundary.Source != source || v.EditorState.Editor.Value() != lspVisualParameters {
+				return fmt.Errorf("parameter information/source provenance differs")
+			}
+			if signatureHasNotice(v.App, "Requesting parameter information") {
+				return fmt.Errorf("completed parameter reader still paints loading feedback")
+			}
+			return paint(v, "Parameter information", "Repeat(prefix string, count int) string", "Active parameter 2 of 2", "count int", "SIGNATURE_HELP_SENTINEL")
+		})
+		label = "Alt+I actual Repeat(prefix string, count int) string, active parameter count, current source/context and unchanged bytes"
 	}
 	if err != nil {
 		return err

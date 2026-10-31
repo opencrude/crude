@@ -54,6 +54,16 @@ the transport never reads `os.Environ` to fill missing data. Trusted analyzers
 still have native filesystem/network access and may discover credentials there.
 Environment minimization is not a credential sandbox or a change to MCP.
 
+## Explicit signature help
+
+The standard `textDocument/signatureHelp` request is admitted only when the
+initialized server advertises its static provider capability. Client capabilities
+describe plaintext/Markdown documentation, UTF-16 parameter-label offsets and
+signature-level active parameters. Dynamic registration, automatic trigger context
+and the no-active-parameter extension are not advertised. The raw response
+preserves optional index presence and both label representations for bounded
+consumer validation; it does not certify semantic quality or project context.
+
 ## Process and transport lifetime
 
 `Client.Kill() error` cancels the client and joins connection teardown.
