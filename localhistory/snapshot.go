@@ -84,7 +84,7 @@ func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Ma
 		if err != nil {
 			return Manifest{}, false, err
 		}
-		if entryMapsEqual(latest.Entries, entries) {
+		if latest.ScopePaths == nil && entryMapsEqual(latest.Entries, entries) {
 			return latest, false, nil
 		}
 		if opts.ParentID == "" {
@@ -135,6 +135,9 @@ func (s *Store) DiffSnapshotPaths(beforeID, afterID string) ([]string, error) {
 	}
 	changed := make([]string, 0)
 	for path := range paths {
+		if !manifestObserves(before, path) || !manifestObserves(after, path) {
+			continue
+		}
 		a, aok := before.Entries[path]
 		b, bok := after.Entries[path]
 		if !aok || !bok || !entriesEqual(a, b) {
@@ -365,6 +368,9 @@ func (s *Store) saveManifest(manifest *Manifest) error {
 	if manifest == nil || manifest.Version != FormatVersion {
 		return errors.New("localhistory: invalid manifest")
 	}
+	if err := validateScopedManifest(*manifest); err != nil {
+		return err
+	}
 	manifest.ID = ""
 	payload, err := json.Marshal(manifest)
 	if err != nil {
@@ -389,6 +395,9 @@ func (s *Store) LoadManifest(id string) (Manifest, error) {
 	var manifest Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil || manifest.Version != FormatVersion || manifest.ID != id {
 		return Manifest{}, errors.New("localhistory: corrupt manifest")
+	}
+	if err := validateScopedManifest(manifest); err != nil {
+		return Manifest{}, err
 	}
 	manifest.ID = ""
 	payload, err := json.Marshal(manifest)

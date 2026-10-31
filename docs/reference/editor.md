@@ -409,6 +409,59 @@ plain-text projection, not a complete Markdown layout engine. These are
 consumer-data/work bounds, separate from transport framing or native heap/RSS
 containment. All protocol and text preparation runs off Update.
 
+### Reviewed symbol rename
+
+F2 on a connected, saved and acknowledged editor opens the native symbol-name
+prompt. Enter requests an immutable **Review rename** from the core, not a shell
+read or a reconstructed `WorkspaceEdit`. The review shows exact quoted changed
+spans, UTF-16 coordinates, paths and before/after hashes. Cancel is initially
+selected. Enter on Cancel or Escape changes no source. Left/Right and Enter select
+an explicit action; the read-only body supports pointer scrolling and keyboard
+line/page movement.
+
+The core binds the invoking canonical document lifetime/revision, attachment
+epoch, actual provider instance, synchronized wire versions and semantic context.
+Equal-text Undo, peer edits, close/reopen, detach and configuration/provider/context
+replacement invalidate approval. Every target must be a clean reconciled regular
+workspace file. Native file, parent and mode preimages are retained from review
+and rechecked through the single staged FileOps commit/rollback writer. A foreign
+same-bytes replacement is not the transaction's rollback authority.
+
+`lspedit` is the passive strict UTF-16 transform and original-JSON edit normalizer.
+It preserves numeric zero, explicit null and missing version tokens separately.
+`documentChanges` takes precedence when both representations are supplied, but
+both declarations must be supported and within aggregate bounds. Exact numeric
+versions require that provider's synchronized canonical source; explicit null
+cannot be rebound to an open or retained canonical target. Missing versions,
+resource create/rename/delete, annotations, snippets, ambiguous equal-start or
+overlapping edits and malformed ranges are refused atomically.
+
+Bounds are 1 MiB original provider JSON, 200 targets, 1,024 edits, 64 KiB per
+consumed string and 1 MiB aggregate replacement text. Reviewed source and result
+are each at most 2 MiB per file, 16 MiB combined across the operation. Exact
+quoted preview text is at most 64 KiB, at most four pending previews are retained,
+and a pending preview expires after five minutes. These adapter bounds do not
+bound the external JSON-RPC library's initial frame allocation.
+
+Apply carries only the original opaque review ID/digest. A durable non-agent
+intent precedes an atomic retained Local History safety reference for the exact
+reviewed preimages. Supplied-byte selected capture does not walk or retain
+unrelated project content. Native and owner/provider/context checks precede
+commits; successful canonical publication carries the reviewed sparse edits and
+savepoint, preserving peer-private anchors instead of replacing the whole document.
+Recovery is through Local History, not another author's Ctrl+Z group.
+
+Refusal, committed and unconfirmed outcomes are distinct. Unknown transport,
+rollback, publication or persistence results never offer a second Apply.
+**Check result** observes the original operation, including after a replacement
+attachment for the same client; it never renews mutation authority. Close retains
+committed/ambiguous safety references, with unresolved review/safety identities
+recorded in Notices. No automatic age-based disposition of those references is
+implemented. A success message requires a nonempty verified safety identity.
+
+This is a bounded manual text-only rename workflow, not general refactoring,
+code-action, dynamic-registration or `workspace/applyEdit` support.
+
 ### Numeric completion snippets
 
 Standard completion items may carry a bounded numeric snippet plan through the
@@ -555,7 +608,7 @@ quotes. Automatic post-edit probes obey the same session, role-tool and read-pol
 admission as explicit calls; a later revocation drops queued notices instead of
 delivering or replaying them on the next model step.
 Root-bound workspace Trust and shared LSP process admission are implemented.
-General destination qualification, completion/hover/rename fact contracts,
+General destination qualification, completion/hover fact contracts,
 project modeling, broader analysis work classes, pressure management and native
 CPU/RSS containment remain open.
 

@@ -14,7 +14,7 @@ func lspMethod(method string) bool {
 		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop,
 		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer, coreprotocol.LSPFindReferences,
 		coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDefinition,
-		coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestRename,
+		coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover,
 		coreprotocol.LSPRequestSignatureHelp:
 		return true
 	}
@@ -24,6 +24,9 @@ func lspMethod(method string) bool {
 // prepareLSP captures the core-owned service on the actor. All requests, including
 // snapshot assembly, run on a resource worker; no RPC probes a root or pipe here.
 func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
+	if run, known := a.prepareReviewedLSP(request); known {
+		return run, true
+	}
 	if !lspMethod(request.Method) {
 		return nil, false
 	}
@@ -89,9 +92,6 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 		out.Hover, err = service.RequestHover(ctx, in.Path, in.Line, in.Col)
 	case coreprotocol.LSPRequestSignatureHelp:
 		out.SignatureHelp, err = service.RequestSignatureHelp(ctx, in.Path, in.Line, in.Col)
-	case coreprotocol.LSPRequestRename:
-		edit, renameErr := service.RequestRename(ctx, in.Path, in.Line, in.Col, in.NewName)
-		out.Edit, err = (*coreprotocol.LSPEdit)(edit), renameErr
 	}
 	return out, err
 }

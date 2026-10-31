@@ -51,9 +51,18 @@ now preserves bounded compilation-database observations and exact byte identitie
 Launch-bound LSP configuration honors each requested directory scope without
 implicitly merging another module's settings. Framed-server regressions and
 ordinary, race, vet and lint checks cover these boundaries; source-frozen full
-repository ordinary and race campaigns have also passed on Linux. There is no retained
-project-context authority or automatic configuration selection yet. Parser success
-and native editor regression captures do not establish complete build context.
+repository ordinary and race campaigns have also passed on Linux. The initial
+[retained project-artifact owner](../reference/project-context.md) now observes
+explicit bounded selections with native root/file identity, coarse watcher
+invalidation and stale evidence. Automatic selection, provider binding and complete
+context remain open. Parser success and native editor regression captures do not
+establish complete build context.
+
+Manual parameter information and numeric completion fields are banked editor
+checkpoints. The next [reviewed mutation prerequisite](../reference/editor.md#reviewed-symbol-rename)
+is in integrated acceptance: immutable source/provider/context-bound rename,
+selected non-agent safety evidence and exact original-result inspection. It does
+not complete the broader code-action, policy, assembly or workflow/device rows.
 
 ## Problem
 
@@ -71,7 +80,7 @@ it. Current capabilities and safeguards are described in
 | Project configuration needs manual work | Flags, targets, include paths, interpreters, dependencies and severity policies are not consistently derived from the actual build. |
 | Semantic coverage is limited | `types/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
-| Popups do not feel like an IDE | Hover and diagnostic details open centered on the screen (`tui/viewmodel/lsp_intelligence.go`, `tui/viewmodel/lsp_handlers.go`). Completion has no documentation pane, no inline prediction and no signature help. |
+| Popups do not feel like a complete IDE | Hover and diagnostic details remain centered (`tui/viewmodel/lsp_intelligence.go`, `tui/viewmodel/lsp_handlers.go`). Manual parameter information and numeric snippet fields exist; a completion documentation pane, inline prediction and broader semantic workflows remain open. |
 | Aeron never helps manual editing | Aeron drafts commit messages and compaction, nothing in the editor. |
 | Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
 

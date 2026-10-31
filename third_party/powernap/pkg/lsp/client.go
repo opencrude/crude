@@ -477,9 +477,22 @@ func (c *Client) FindReferences(ctx context.Context, filepath string, line, char
 }
 
 // RequestRename requests a rename of the symbol at the given position.
-func (c *Client) RequestRename(ctx context.Context, filepath string, line, character int, newName string) (*protocol.WorkspaceEdit, error) {
+func (c *Client) RequestRename(ctx context.Context, filepath string, line, character int, newName string) (json.RawMessage, error) {
 	if !c.initialized.Load() {
 		return nil, fmt.Errorf("client not initialized")
+	}
+	supported := false
+	switch value := c.capabilities.RenameProvider.(type) {
+	case bool:
+		supported = value
+	case map[string]any:
+		supported = true
+	}
+	if !supported {
+		return nil, fmt.Errorf("language server does not advertise rename")
+	}
+	if line < 0 || character < 0 || uint64(line) > 1<<31-1 || uint64(character) > 1<<31-1 {
+		return nil, fmt.Errorf("invalid rename position")
 	}
 
 	uri := string(protocol.URIFromPath(filepath))
@@ -494,12 +507,12 @@ func (c *Client) RequestRename(ctx context.Context, filepath string, line, chara
 		NewName: newName,
 	}
 
-	var result protocol.WorkspaceEdit
+	var result json.RawMessage
 	err := c.conn.Call(ctx, MethodTextDocumentRename, params, &result)
 	if err != nil {
 		return nil, fmt.Errorf("rename request failed: %w", err)
 	}
-	return &result, nil
+	return result, nil
 }
 
 // RequestDocumentSymbols requests the document symbols for the given file.

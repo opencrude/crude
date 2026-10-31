@@ -444,10 +444,6 @@ func (w *Workspace) ApplyWorkspaceEdit(edits []workspace.FileEdit) workspace.Fil
 	defer cancel()
 	return w.rpc().ApplyWorkspaceEdit(ctx, edits)
 }
-func (w *Workspace) ApplyLSPRename(ctx context.Context, edits []workspace.FileEdit) (workspace.FileOperationResultMsg, string) {
-	result := w.rpc().ApplyWorkspaceEdit(ctx, edits)
-	return result, ""
-}
 
 // StartProjectSearch runs a cancellable core search and publishes the shell's
 // usual completion message; a newer search supersedes an older one.

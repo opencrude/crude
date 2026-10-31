@@ -6,11 +6,8 @@ import (
 	"crude/shellport"
 	"crude/types"
 	"crude/workspace"
-	"encoding/json"
 	"reflect"
 	"testing"
-
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 func TestLSPDiagnosticConsumersIndependentAndClears(t *testing.T) {
@@ -33,34 +30,24 @@ func TestLSPDiagnosticConsumersIndependentAndClears(t *testing.T) {
 	}
 }
 
-type lspQueryFake struct {
-	shellport.LSPService
-	input coreprotocol.LSPRequest
-	edit  *protocol.WorkspaceEdit
-}
-
-func (f *lspQueryFake) RequestRename(_ context.Context, p string, line, col int, name string) (*protocol.WorkspaceEdit, error) {
-	f.input = coreprotocol.LSPRequest{Path: p, Line: line, Col: col, NewName: name}
-	return f.edit, nil
-}
-func TestLSPTypedRenameRoundTrip(t *testing.T) {
-	edit := &protocol.WorkspaceEdit{Changes: map[protocol.DocumentURI][]protocol.TextEdit{"file:///project/a.go": {{NewText: "renamed"}}}}
-	f := &lspQueryFake{edit: edit}
-	in := coreprotocol.LSPRequest{Path: "/project/a.go", Line: 3, Col: 5, NewName: "renamed"}
-	out, err := runLSP(context.Background(), f, coreprotocol.LSPRequestRename, in, "/project")
-	if err != nil || !reflect.DeepEqual(f.input, in) {
-		t.Fatal(f.input, err)
+func TestLSPTypedRenameRequiresCoreReviewInsteadOfRawShellEdits(t *testing.T) {
+	a := &actor{ws: &workspace.Workspace{}}
+	if _, ok := a.prepareLSP(coreprotocol.Request{Method: "lsp.rename"}); ok {
+		t.Fatal("retired raw edit route is still admitted")
 	}
-	data, err := json.Marshal(out)
-	if err != nil {
-		t.Fatal(err)
+	in := coreprotocol.RenamePreviewRequest{Source: types.InsightSource{DocumentID: "doc", Revision: 7, Kind: "canonical", Path: "/project/a.go"}, Line: 3, Col: 5, NewName: "renamed"}
+	raw := mustTestPayload(in)
+	var decoded coreprotocol.RenamePreviewRequest
+	if err := coreprotocol.Decode(raw, &decoded); err != nil || !reflect.DeepEqual(decoded, in) {
+		t.Fatal(decoded, err)
 	}
-	var decoded coreprotocol.LSPResult
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
+	run, ok := a.prepareLSP(coreprotocol.Request{Method: coreprotocol.LSPPrepareRename, Payload: raw})
+	if !ok {
+		t.Fatal("reviewed rename route missing")
 	}
-	if decoded.Edit == nil || decoded.Edit.Changes["file:///project/a.go"][0].NewText != "renamed" {
-		t.Fatal(string(data))
+	out := run(context.Background())
+	if out.Error == nil || out.Error.Code != "review_failed" {
+		t.Fatal("missing canonical/history authority was accepted", out)
 	}
 }
 func TestLSPPrepareWorkerCaptureAndCancellation(t *testing.T) {

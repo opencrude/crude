@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"crude/fileio"
 )
@@ -280,7 +279,22 @@ func (s *FileOpsService) DeletePath(path string) FileOperationResultMsg {
 // ApplyWorkspaceEdit validates and stages the entire transaction before publishing
 // any edit. It holds the shared mutation lease through commit and rollback.
 func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResultMsg {
-	msg := FileOperationResultMsg{Op: FileOpApplyEdit, Path: "(workspace edit)"}
+	return s.applyWorkspaceEdit(edits, nil, nil).FileOperationResultMsg
+}
+
+// NoEffect is positive evidence that the writer never admitted a commit.
+// An attempted commit or rollback failure must not be reclassified from an
+// error string, current equal bytes, or the caller's cancelled context.
+type workspaceEditResult struct {
+	FileOperationResultMsg
+	NoEffect bool
+}
+
+// Reviewed edits retain native preimages from their immutable preview. This
+// shares the ordinary staging/commit/rollback writer, but does not rebind equal
+// bytes to a replacement inode, parent or mode between review and approval.
+func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspaceEditFile, beforeCommit func() error) workspaceEditResult {
+	msg := workspaceEditResult{FileOperationResultMsg: FileOperationResultMsg{Op: FileOpApplyEdit, Path: "(workspace edit)"}, NoEffect: true}
 	if len(edits) == 0 {
 		msg.Err = fmt.Errorf("no edits provided")
 		return msg
@@ -292,14 +306,11 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 			return msg
 		}
 		path := filepath.Clean(edits[i].Path)
-		key := path
-		// Case-fold conservatively to reject aliases on case-insensitive filesystems.
-		key = strings.ToLower(key)
-		if seen[key] {
+		if seen[path] {
 			msg.Err = fmt.Errorf("duplicate workspace edit path: %s", path)
 			return msg
 		}
-		seen[key] = true
+		seen[path] = true
 	}
 	unlock, ok := fileio.TryLockMutation()
 	if !ok {
@@ -307,6 +318,12 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 		return msg
 	}
 	defer unlock()
+	for _, expected := range reviewed {
+		if err := expected.check(expected.data, expected.info); err != nil {
+			msg.Err = err
+			return msg
+		}
+	}
 
 	prepared := make([]workspaceEditFile, 0, len(edits))
 	defer func() {
@@ -321,7 +338,17 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 	}()
 	var total int64
 	for _, edit := range edits {
-		p, err := readWorkspaceEditFile(filepath.Clean(edit.Path))
+		path, limit := filepath.Clean(edit.Path), maxWorkspaceEditBytes
+		if len(reviewed) != 0 {
+			limit = 0
+			for _, expected := range reviewed {
+				if expected.path == path {
+					limit = expected.limit
+					break
+				}
+			}
+		}
+		p, err := readWorkspaceEditFileBounded(path, limit)
 		if err != nil {
 			msg.Err = err
 			return msg
@@ -329,6 +356,27 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 		if string(p.data) != edit.OldContent {
 			msg.Err = fmt.Errorf("content mismatch in %s (file changed on disk?)", edit.Path)
 			return msg
+		}
+		for _, expected := range reviewed {
+			if expected.path != p.path {
+				continue
+			}
+			if !os.SameFile(expected.info, p.info) || expected.info.Mode() != p.info.Mode() {
+				msg.Err = fmt.Errorf("reviewed workspace edit file was replaced: %s", edit.Path)
+				return msg
+			}
+			for parent, info := range expected.parents {
+				if current := p.parents[parent]; current == nil || !os.SameFile(info, current) {
+					msg.Err = fmt.Errorf("reviewed workspace edit parent was replaced: %s", parent)
+					return msg
+				}
+			}
+		}
+		for _, previous := range prepared {
+			if os.SameFile(previous.info, p.info) {
+				msg.Err = fmt.Errorf("duplicate native workspace edit file: %s", edit.Path)
+				return msg
+			}
 		}
 		total += int64(len(p.data)) + int64(len(edit.NewContent))
 		if total > maxWorkspaceEditBytes {
@@ -346,10 +394,15 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 			msg.Err = err
 			return msg
 		}
+		target.postimage, err = os.Lstat(target.next)
+		if err != nil {
+			msg.Err = err
+			return msg
+		}
 	}
 	// Recheck all preimages after staging, not only the next file in sequence.
 	for _, p := range prepared {
-		if err := p.check(p.data, true); err != nil {
+		if err := p.check(p.data, p.info); err != nil {
 			msg.Err = err
 			return msg
 		}
@@ -360,9 +413,13 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 	}
 	for i := range prepared {
 		p := &prepared[i]
-		err := p.check(p.data, true)
+		err := p.check(p.data, p.info)
+		if err == nil && beforeCommit != nil {
+			err = beforeCommit()
+		}
 		committed := false
 		if err == nil {
+			msg.NoEffect = false
 			err = commit(p.next, p.path)
 			committed = err == nil || fileio.WriteCommitted(err)
 		}
@@ -377,7 +434,7 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 		for j := last; j >= 0; j-- {
 			restore := &prepared[j]
 			// Never overwrite an external actor's later content during recovery.
-			rollbackErr := restore.check(restore.newData, false)
+			rollbackErr := restore.check(restore.newData, restore.postimage)
 			if rollbackErr == nil {
 				rollbackErr = fileio.CommitAtomicFile(restore.backup, restore.path)
 			}
@@ -400,16 +457,21 @@ const maxWorkspaceEditBytes int64 = 256 << 20
 
 type workspaceEditFile struct {
 	path          string
+	limit         int64
 	data, newData []byte
 	info          os.FileInfo
+	postimage     os.FileInfo
 	parents       map[string]os.FileInfo
 	next, backup  string
 }
 
 // Reject symlinks in every component, including parent directories. Capture
 // directory identity so a replaced parent cannot redirect a later commit.
-func readWorkspaceEditFile(path string) (workspaceEditFile, error) {
-	p := workspaceEditFile{path: path, parents: make(map[string]os.FileInfo)}
+func readWorkspaceEditFileBounded(path string, limit int64) (workspaceEditFile, error) {
+	p := workspaceEditFile{path: path, limit: limit, parents: make(map[string]os.FileInfo)}
+	if limit <= 0 || limit > maxWorkspaceEditBytes {
+		return p, errors.New("invalid workspace edit read bound")
+	}
 	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
 		info, err := os.Lstat(parent)
 		if err != nil {
@@ -430,7 +492,7 @@ func readWorkspaceEditFile(path string) (workspaceEditFile, error) {
 	if !info.Mode().IsRegular() {
 		return p, fmt.Errorf("workspace edit requires regular non-symlink file: %s", path)
 	}
-	if info.Size() > maxWorkspaceEditBytes {
+	if info.Size() > limit {
 		return p, fmt.Errorf("workspace edit file exceeds size limit: %s", path)
 	}
 	f, err := os.Open(path)
@@ -445,19 +507,19 @@ func readWorkspaceEditFile(path string) (workspaceEditFile, error) {
 	if !os.SameFile(info, opened) {
 		return p, fmt.Errorf("workspace edit file changed: %s", path)
 	}
-	p.data, err = io.ReadAll(io.LimitReader(f, maxWorkspaceEditBytes+1))
+	p.data, err = io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return p, err
 	}
-	if int64(len(p.data)) > maxWorkspaceEditBytes {
+	if int64(len(p.data)) > limit {
 		return p, fmt.Errorf("workspace edit file exceeds size limit: %s", path)
 	}
 	p.info = info
 	return p, nil
 }
 
-func (p workspaceEditFile) check(data []byte, identity bool) error {
-	current, err := readWorkspaceEditFile(p.path)
+func (p workspaceEditFile) check(data []byte, identity os.FileInfo) error {
+	current, err := readWorkspaceEditFileBounded(p.path, p.limit)
 	if err != nil {
 		return err
 	}
@@ -466,7 +528,7 @@ func (p workspaceEditFile) check(data []byte, identity bool) error {
 			return fmt.Errorf("workspace edit parent changed: %s", path)
 		}
 	}
-	if !bytes.Equal(data, current.data) || current.info.Mode() != p.info.Mode() || identity && !os.SameFile(p.info, current.info) {
+	if identity == nil || !bytes.Equal(data, current.data) || current.info.Mode() != identity.Mode() || !os.SameFile(identity, current.info) {
 		return fmt.Errorf("content mismatch or file identity/mode changed in %s", p.path)
 	}
 	return nil

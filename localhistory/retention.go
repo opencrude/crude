@@ -196,6 +196,13 @@ func (s *Store) protectedSnapshots(ctx context.Context) (map[string]bool, error)
 	if err != nil {
 		return nil, err
 	}
+	retained, err := s.retainedSafetySnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for id := range retained {
+		protected[id] = true
+	}
 	queries := []string{
 		`SELECT before_snapshot_id FROM history_message_scopes WHERE state<>'closed' UNION SELECT after_snapshot_id FROM history_message_scopes WHERE state<>'closed' AND after_snapshot_id<>''`,
 		`SELECT target_snapshot_id FROM history_restore_plans WHERE state='preview'`,

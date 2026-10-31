@@ -21,7 +21,6 @@ const (
 	LSPRequestDocumentSymbols    = "lsp.document_symbols"
 	LSPRequestHover              = "lsp.hover"
 	LSPRequestSignatureHelp      = "lsp.signature_help"
-	LSPRequestRename             = "lsp.rename"
 )
 
 type LSPRequest struct {
@@ -33,7 +32,6 @@ type LSPRequest struct {
 	Before             bool                         `json:"before,omitempty"`
 	ChangeType         int                          `json:"change_type,omitempty"`
 	ServerID           string                       `json:"server_id,omitempty"`
-	NewName            string                       `json:"new_name,omitempty"`
 }
 
 type LSPResult struct {
@@ -43,7 +41,6 @@ type LSPResult struct {
 	Symbols       []workspace.LSPSymbol      `json:"symbols,omitempty"`
 	Hover         string                     `json:"hover,omitempty"`
 	SignatureHelp types.LSPSignatureHelp     `json:"signature_help"`
-	Edit          *LSPEdit                   `json:"edit,omitempty"`
 }
 
 type LSPSnapshot struct {

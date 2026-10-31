@@ -8,12 +8,11 @@ import (
 	"crude/shellport"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/workspace"
-
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 type fakeClientFiles struct {
 	shellport.Workspace
+	reads   int
 	root    string
 	entries []shellport.ClientDirectoryEntry
 }
@@ -29,6 +28,7 @@ func (f *fakeClientFiles) CatalogFiles(context.Context, bool) (workspace.Browser
 	return workspace.BrowserCatalog{}, nil
 }
 func (f *fakeClientFiles) ReadClientFile(context.Context, string) ([]byte, error) {
+	f.reads++
 	return []byte("old\n"), nil
 }
 func (f *fakeClientFiles) ReadExternalClientFile(ctx context.Context, path string) ([]byte, error) {
@@ -65,18 +65,16 @@ func TestClientFileTreeNonlocalAndStale(t *testing.T) {
 	}
 }
 
-func TestClientRenameReadsNonlocalFile(t *testing.T) {
-	m := newTestApp(t)
+func TestClientRenameNeverFallsBackToShellFileReads(t *testing.T) {
+	m, _, _ := lspJourneyEditor(t, "old\n")
 	root := filepath.Join(t.TempDir(), "remote-only")
-	path := filepath.Join(root, "code.go")
-	m.ws = &fakeClientFiles{Workspace: m.ws, root: root}
-	edit := &protocol.WorkspaceEdit{Changes: map[protocol.DocumentURI][]protocol.TextEdit{protocol.URIFromPath(path): {{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "new"}}}}
-	result := m.prepareClientLSPRename(lspRenameResultMsg{newName: "new"}, edit)().(lspRenamePreparedMsg)
-	if result.err != nil {
-		t.Fatal(result.err)
+	port := &fakeClientFiles{Workspace: m.ws, root: root}
+	m.ws = port
+	if cmd := m.submitRename("new"); cmd != nil {
+		t.Fatal("noncanonical shell created a rename plan")
 	}
-	if len(result.edits) != 1 || result.edits[0].NewContent != "new\n" {
-		t.Fatalf("incorrect remote rename: %#v", result.edits)
+	if port.reads != 0 {
+		t.Fatal("rename read client-local/remote source instead of the canonical review owner")
 	}
 }
 

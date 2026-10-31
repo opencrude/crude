@@ -101,8 +101,8 @@ func (c *immediateTreeDiagClient) RequestHover(context.Context, string, int, int
 func (c *immediateTreeDiagClient) RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error) {
 	return model.LSPSignatureHelp{}, nil
 }
-func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
-	return nil, nil
+func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
+	return model.LSPRenameEdit{}, nil
 }
 func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
 	return nil

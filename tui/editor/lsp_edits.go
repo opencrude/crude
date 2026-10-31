@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"crude/document"
+	"crude/lspedit"
 	"crude/snippet"
 	model "crude/types"
 )
@@ -217,75 +218,7 @@ func validateCompletionEdit(text string, wire model.LSPTextEdit) (completionEdit
 	return completionEdit{start: start, end: end, text: wire.NewText}, nil
 }
 
-// lspEditOffset is strict: unlike display helpers it never clamps an invalid
-// endpoint or accepts the middle of a surrogate pair. Newline bytes are not
-// part of a line's UTF-16 column range.
+// lspEditOffset shares the strict source primitive with reviewed workspace edits.
 func lspEditOffset(text string, line, col int) (int, error) {
-	if line < 0 || col < 0 || !utf8.ValidString(text) {
-		return 0, fmt.Errorf("LSP edit: invalid position or document encoding")
-	}
-	start := 0
-	for n := 0; n < line; n++ {
-		next := strings.IndexByte(text[start:], '\n')
-		if next < 0 {
-			return 0, fmt.Errorf("LSP edit: line outside document")
-		}
-		start += next + 1
-	}
-	end := len(text)
-	if next := strings.IndexByte(text[start:], '\n'); next >= 0 {
-		end = start + next
-		if end > start && text[end-1] == '\r' {
-			end--
-		}
-	}
-	units := 0
-	for off, r := range text[start:end] {
-		if units == col {
-			return start + off, nil
-		}
-		units += utf16.RuneLen(r)
-		if units > col {
-			return 0, fmt.Errorf("LSP edit: column splits a surrogate pair")
-		}
-	}
-	if units == col {
-		return end, nil
-	}
-	return 0, fmt.Errorf("LSP edit: column outside line")
-}
-
-// ApplyLSPTextEdits is the pure, strict UTF16 transformation used by reviewed
-// multi-file rename preparation. All ranges are checked before returning bytes.
-func ApplyLSPTextEdits(text string, edits []model.LSPTextEdit) (string, error) {
-	positions := make([]completionEdit, 0, len(edits))
-	for _, wire := range edits {
-		edit, err := validateCompletionEdit(text, wire)
-		if err != nil {
-			return "", err
-		}
-		positions = append(positions, edit)
-	}
-	sort.Slice(positions, func(i, j int) bool { return positions[i].start < positions[j].start })
-	var out strings.Builder
-	last := -1
-	for _, edit := range positions {
-		if last >= 0 && edit.start < last {
-			return "", fmt.Errorf("overlapping LSP edits")
-		}
-		last = edit.end
-	}
-	for i := 1; i < len(positions); i++ {
-		if positions[i-1].start == positions[i].start {
-			return "", fmt.Errorf("ambiguous LSP edits")
-		}
-	}
-	last = 0
-	for _, edit := range positions {
-		out.WriteString(text[last:edit.start])
-		out.WriteString(edit.text)
-		last = edit.end
-	}
-	out.WriteString(text[last:])
-	return out.String(), nil
+	return lspedit.Offset(text, line, col)
 }

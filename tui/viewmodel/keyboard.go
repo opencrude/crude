@@ -7,8 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
-
 	"crude/provider"
 	"crude/shellport"
 	"crude/tui/editor"
@@ -992,7 +990,8 @@ type lspRenameResultMsg struct {
 	generation uint64
 	filePath   string
 	newName    string
-	edit       *protocol.WorkspaceEdit
+	preview    workspace.ReviewedEditPreview
+	port       shellport.ReviewedEdits
 	err        error
 }
 
@@ -1084,6 +1083,10 @@ func (m *App) startRenameCmd() tea.Cmd {
 		return nil
 	}
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
+	if _, ok := m.ws.(shellport.ReviewedEdits); !ok {
+		m.Feedback.NotifyInfo("Rename requires a connected shared document")
+		return nil
+	}
 	for _, tab := range m.EditorState.Tabs {
 		if tab.Editor.Modified() {
 			m.Feedback.NotifyInfo("Save modified files before a workspace rename")
@@ -1113,12 +1116,18 @@ func (m *App) submitRename(newName string) tea.Cmd {
 	}
 	filePath := m.EditorState.Editor.FilePath()
 	line, col := m.EditorState.Editor.LSPCursorPosition()
-	lspMgr := m.ws.LSPMgr()
+	port, ok := m.ws.(shellport.ReviewedEdits)
+	source, current := m.EditorState.Editor.CurrentInsightSource()
+	state := m.EditorState.Editor.DocumentState()
+	if !ok || !current || source.Kind != "canonical" || state.PendingEdits != 0 || state.InFlight || state.Conflict != nil || m.EditorState.Editor.Modified() {
+		m.Feedback.NotifyInfo("Save and synchronize the shared document before requesting rename")
+		return nil
+	}
 	ctx, generation := m.lspRequestContext()
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
-		edit, err := lspMgr.RequestRename(ctx, filePath, line, col, newName)
-		return lspRenameResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, newName: newName, edit: edit, err: err}
+		preview, err := port.PrepareLSPRename(ctx, source, line, col, newName)
+		return lspRenameResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, newName: newName, preview: preview, port: port, err: err}
 	})
 }
 
@@ -1250,22 +1259,22 @@ func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 	m.showCompletionPopup(items)
 }
 
-// handleRenameResult prepares a checked, user-reviewed transaction off Update.
+// The core already prepared the immutable review. No shell reads or rebuilds
+// source bytes, version identities, targets or preview evidence.
 func (m *App) handleRenameResult(msg lspRenameResultMsg) tea.Cmd {
+	if !m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
+		return releaseLSPRenamePreview(msg)
+	}
 	if msg.err != nil {
 		m.Feedback.NotifyError("Rename failed: " + msg.err.Error())
-		return nil
+		return releaseLSPRenamePreview(msg)
 	}
-	edit := msg.edit
-	if edit == nil {
+	if msg.preview.ID == "" {
 		m.Feedback.NotifyInfo("Rename: no changes")
 		return nil
 	}
-	root := m.ws.RootPath()
-	if _, connected := m.ws.(shellport.ClientFiles); connected {
-		return m.prepareClientLSPRename(msg, edit)
-	}
-	return func() tea.Msg { return prepareLSPRename(root, msg, edit) }
+	m.showLSPRenamePreview(msg)
+	return nil
 }
 
 // countSymbols returns the total number of symbols in a tree, including

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -126,7 +128,7 @@ func (m *App) applyProjectReplace(request findinfiles.ReplaceMsg) tea.Cmd {
 				if text, ok := local[filepath.Clean(path)]; ok {
 					return []byte(text), nil
 				}
-				return readRenameLocalFile(path)
+				return readProjectReplaceLocalFile(path)
 			})
 		}
 		preview := ""
@@ -135,6 +137,34 @@ func (m *App) applyProjectReplace(request findinfiles.ReplaceMsg) tea.Cmd {
 		}
 		return clientProjectReplaceMsg{generation: generation, screen: s, port: owner, request: request, edits: edits, skipped: skipped, err: err, preview: preview}
 	}
+}
+
+// Standalone/test replacement preparation only. Connected replacement planning
+// already belongs to the core; language-edit reviews never use this reader.
+func readProjectReplaceLocalFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 2<<20 {
+		return nil, fmt.Errorf("replacement requires a regular file up to 2 MiB: %s", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, (2<<20)+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(data) > 2<<20 {
+		return nil, fmt.Errorf("replacement source grew beyond 2 MiB")
+	}
+	return data, nil
 }
 
 func (m *App) applyClientProjectReplace(msg clientProjectReplaceMsg) tea.Cmd {

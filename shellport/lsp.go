@@ -2,7 +2,6 @@ package shellport
 
 import (
 	"context"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"reflect"
 
 	"crude/types"
@@ -43,8 +42,6 @@ type LSPService interface {
 	// RequestHover routes a hover request to the right client.
 	RequestHover(ctx context.Context, filePath string, line, col int) (string, error)
 	RequestSignatureHelp(ctx context.Context, filePath string, line, col int) (types.LSPSignatureHelp, error)
-	// RequestRename routes a rename request to the right client.
-	RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error)
 	RestartServer(id string) bool
 	// ServerHealthSnapshots exposes every configured/attempted server separately.
 	// Diagnostic counts remain project-scoped until the cache records server
