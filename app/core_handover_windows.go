@@ -26,11 +26,11 @@ func validateOwnerPath(path string, directory bool) error {
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !windows.EqualSid(owner, user.User.Sid) {
-		return errors.New("core owner path belongs to another Windows identity")
+		return errors.New("core owner path belongs to another Windows identity: " + path)
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {
-		return errors.New("core owner path requires a private DACL")
+		return errors.New("core owner path requires a private DACL: " + path)
 	}
 	for i := uint16(0); i < dacl.AceCount; i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -45,7 +45,7 @@ func validateOwnerPath(path string, directory bool) error {
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if ace.Mask != 0 && !windows.EqualSid(sid, user.User.Sid) && !sid.IsWellKnown(windows.WinLocalSystemSid) && !sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
-			return errors.New("core owner path grants another Windows identity access")
+			return errors.New("core owner path grants another Windows identity access: " + path)
 		}
 	}
 	return nil
@@ -63,15 +63,25 @@ func secureOwnerPath(path string, directory bool) error {
 	if err != nil {
 		return err
 	}
-	sd, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")")
+	// Ownership is part of this path's privacy contract. A token whose default
+	// owner is another identity (an elevated or network logon) creates files and
+	// directories owned by that identity even though their DACL is private, so
+	// securing a path claims it for the current user instead of leaving the
+	// creator's default owner in place.
+	sid := user.User.Sid.String()
+	sd, err := windows.SecurityDescriptorFromString("O:" + sid + "D:P(A;OICI;FA;;;" + sid + ")")
 	if err != nil {
 		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return errors.New("core owner path requires an explicit owner")
 	}
 	dacl, _, err := sd.DACL()
-	if err != nil {
-		return err
+	if err != nil || dacl == nil {
+		return errors.New("core owner path requires a private DACL")
 	}
-	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, owner, nil, dacl, nil); err != nil {
 		return err
 	}
 	return validateOwnerPath(path, directory)
