@@ -2804,6 +2804,168 @@ func (z *ClientDirectoryEntry) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z CodeActionRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendString(o, z.Digest)
+	o = msgp.AppendInt(o, z.Index)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CodeActionRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Digest, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Digest")
+		return
+	}
+	z.Index, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Index")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z CodeActionRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Digest) + msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CodeActionsReply) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o, err = z.Set.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Set")
+		return
+	}
+	o, err = z.Preview.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Preview")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CodeActionsReply) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	bts, err = z.Set.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Set")
+		return
+	}
+	bts, err = z.Preview.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Preview")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CodeActionsReply) Msgsize() (s int) {
+	s = 1 + z.Set.Msgsize() + z.Preview.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CodeActionsRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o, err = z.Source.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Source")
+		return
+	}
+	o = msgp.AppendInt(o, z.Start)
+	o = msgp.AppendInt(o, z.End)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CodeActionsRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	bts, err = z.Source.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Source")
+		return
+	}
+	z.Start, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Start")
+		return
+	}
+	z.End, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "End")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CodeActionsRequest) Msgsize() (s int) {
+	s = 1 + z.Source.Msgsize() + msgp.IntSize + msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z CommitMessageRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 1

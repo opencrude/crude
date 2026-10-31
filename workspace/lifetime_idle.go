@@ -69,6 +69,7 @@ func (s *DocumentService) beginIdleLease() (func(), error) {
 		}
 	}
 	s.idleFenced = true
+	s.pruneCodeActionSetsLocked()
 	return func() { s.mu.Lock(); s.idleFenced = false; s.mu.Unlock() }, nil
 }
 

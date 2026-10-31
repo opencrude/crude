@@ -84,6 +84,38 @@ func TestActionRegistry_MatchContext(t *testing.T) {
 	}
 }
 
+func TestCodeActionRegistryUsesDeliverableEditorChord(t *testing.T) {
+	r := DefaultRegistry()
+	for _, tc := range []struct {
+		profile KeyboardProfile
+		label   string
+	}{
+		{KeyboardProfile{}, "Alt+Enter"},
+		{KeyboardProfile{ModifiedEnter: true}, "Ctrl+Enter"},
+		{KeyboardProfile{AltEnterReserved: true}, "Ctrl+Enter"},
+	} {
+		withKeyboardProfile(t, tc.profile)
+		if label := FormatShortcut(r.HintFor("lsp.codeActions")); label != tc.label {
+			t.Fatalf("code-action caption names an undeliverable key: %q want %q", label, tc.label)
+		}
+		for _, mod := range []tea.KeyMod{tea.ModAlt, tea.ModCtrl} {
+			key := tea.KeyPressMsg{Code: tea.KeyEnter, Mod: mod}
+			got := r.MatchContext("editor", key)
+			if got == nil || got.ID != "lsp.codeActions" {
+				t.Fatalf("advertised editor chord %s did not reach action discovery: %+v", key.String(), got)
+			}
+			if got := r.MatchGlobal(key); got != nil {
+				t.Fatalf("editor action stole a global/composer key: %+v", got)
+			}
+		}
+		for _, mod := range []tea.KeyMod{0, tea.ModShift, tea.ModCtrl | tea.ModAlt} {
+			if got := r.MatchContext("editor", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: mod}); got != nil {
+				t.Fatalf("plain/newline/replace-all Enter became code actions: %+v", got)
+			}
+		}
+	}
+}
+
 func TestActionRegistry_ByCategory(t *testing.T) {
 	r := NewActionRegistry()
 	r.Register(&ActionDef{ID: "a", Category: "File"})

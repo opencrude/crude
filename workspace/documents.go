@@ -70,6 +70,7 @@ type DocumentService struct {
 	bus         *EventBus
 	subscribers map[string]map[chan struct{}]bool
 	reviewed    map[string]*reviewedEdit
+	codeActions map[string]*codeActionSet
 }
 
 func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager, state ...*sql.DB) *DocumentService {
@@ -173,6 +174,7 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 		for _, live := range s.docs {
 			for previous := range live.owners {
 				if previous.ClientID == owner.ClientID {
+					s.closeCodeActionsLocked(previous, live.snapshot.ID)
 					delete(live.owners, previous)
 				}
 			}
@@ -591,6 +593,7 @@ func (s *DocumentService) Detach(owner document.Owner) {
 func (s *DocumentService) ReleaseDetached(owner document.Owner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closeCodeActionsLocked(owner, "")
 	for id, review := range s.reviewed {
 		if review.owner == owner {
 			delete(s.reviewed, id)
@@ -611,6 +614,10 @@ func (s *DocumentService) Close() {
 	}
 	s.closed = true
 	s.reviewed = nil
+	for _, set := range s.codeActions {
+		set.retired.Store(true)
+	}
+	s.codeActions = nil
 	for id, d := range s.docs {
 		if s.saves != nil {
 			s.saves.Cancel(id)
@@ -631,6 +638,7 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 	if err != nil {
 		return err
 	}
+	s.closeCodeActionsLocked(owner, id)
 	delete(d.owners, owner)
 	s.closeLanguageView(d)
 	return nil

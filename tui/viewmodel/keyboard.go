@@ -361,6 +361,8 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "lsp.signature":
 				return m, m.requestSignatureHelpCmd()
+			case "lsp.codeActions":
+				return m, m.requestCodeActionsCmd()
 			}
 		}
 	}
@@ -555,7 +557,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			}
 			return m, tea.Batch(cmds...)
 
-		case string(lspRenameOverlay):
+		case string(reviewedEditOverlay), string(codeActionsOverlay):
 			return m, m.forwardEventToWindowContent(fw, msg)
 
 		case "workspace-settings":
@@ -1263,17 +1265,17 @@ func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 // source bytes, version identities, targets or preview evidence.
 func (m *App) handleRenameResult(msg lspRenameResultMsg) tea.Cmd {
 	if !m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
-		return releaseLSPRenamePreview(msg)
+		return releaseReviewedEditPreview(renameReviewRequest(msg))
 	}
 	if msg.err != nil {
 		m.Feedback.NotifyError("Rename failed: " + msg.err.Error())
-		return releaseLSPRenamePreview(msg)
+		return releaseReviewedEditPreview(renameReviewRequest(msg))
 	}
 	if msg.preview.ID == "" {
 		m.Feedback.NotifyInfo("Rename: no changes")
 		return nil
 	}
-	m.showLSPRenamePreview(msg)
+	m.showRenameReview(msg)
 	return nil
 }
 

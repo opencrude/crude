@@ -27,6 +27,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `insight.go` | `DocumentInsightMsg` | Independent canonical syntax projection, exact-open validity and applied ACK; not a text mutation or semantic guarantee |
 | `lsp.go` | `LSPService` | language-server manager |
 | `reviewed_edit.go` | `ReviewedEdits` | Connected canonical rename preview, opaque approval, pending release and original-result inspection |
+| `code_actions.go` | `CodeActions` | Exact canonical action-list discovery, retained-row preview and pending-list release; reuses `ReviewedEdits` for Apply and inspection |
 | `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
@@ -295,6 +296,26 @@ wire version interpretation and exact preview data. All calls run off Update.
 | `ApplyReviewedEdit` | Approve only original opaque ID/digest | `lsp.edit_apply` |
 | `ReleaseReviewedEdit` | Retire only pending exact-owner preview | `lsp.edit_release` |
 | `InspectReviewedEdit` | Observe original stable-client result without renewed mutation authority | `lsp.edit_receipt` |
+
+### `CodeActions`
+
+This optional connected capability sends acknowledged source and source-byte
+selection, never raw provider actions, reconstructed diagnostics or caller edits.
+The core retains exact provider JSON and qualifies it at its synchronized source.
+All three calls use the same cancellable original-command exchange. Preview is
+read-only; mutations still require `ReviewedEdits` and its opaque review ID/digest.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `RequestLSPCodeActions` | Read a detached, provenance-qualified manual list | `lsp.code_actions` |
+| `PrepareLSPCodeAction` | Resolve/preview only the original set ID/digest/index | `lsp.action_preview` |
+| `ReleaseLSPCodeActions` | Revoke an exact pending list and dependent Apply capabilities | `lsp.actions_release` |
+
+Null/empty results are source/selection-scoped evidence, not project cleanliness.
+Closing a list or an unattempted shared review retires its pending capabilities.
+Releasing a list never discards committed/uncertain outcomes or retained Local
+History safety. Bounds and unsupported forms:
+[manual code actions](editor.md#manual-code-actions).
 
 ### `SourceControl`
 

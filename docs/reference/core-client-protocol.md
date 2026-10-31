@@ -391,7 +391,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
-| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.signature_help`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
+| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.references`, `.completions`, `.definition`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
 | Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
@@ -460,6 +460,17 @@ Cancellation can refuse a pre-commit permit or trigger checked multi-file rollba
 it does not prove that no effect occurred. The UI retains Check result rather than
 re-applying an unknown outcome. Bounds and unsupported forms are in
 [reviewed symbol rename](editor.md#reviewed-symbol-rename).
+
+`lsp.code_actions` accepts only the invoking canonical source and exact source-byte
+selection. The actor supplies attachment ownership; the coordinator supplies
+source/provider/context proof and retains original action/diagnostic JSON.
+`lsp.action_preview` accepts set ID/digest/index, not raw provider objects or edits.
+It returns the same immutable reviewed-edit capability as rename. The optional
+lazy RPC must retain the original row and provider/wire/context; it grants no
+command-execution authority. `lsp.actions_release` revokes the pending list,
+including dependent prepared Apply permits, without changing durable mutation
+outcomes or retained safety. All calls use the existing cancellable exchange;
+no second raw mutation route is exposed.
 
 `history.safety_list` is a bounded independent reference traversal;
 `history.safety_inspect` returns detached original-operation and current

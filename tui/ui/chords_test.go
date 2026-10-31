@@ -33,13 +33,13 @@ func TestChordLabelsNameDeliverableKeys(t *testing.T) {
 		want    map[string]string
 	}{
 		{"tmux/legacy unix", KeyboardProfile{}, map[string]string{
-			CommitChord: "Alt+Enter", NewlineChord: "Alt+Enter", PreviousMatchChord: "Shift+F3", ReplaceAllChord: "Alt+Enter",
+			CommitChord: "Alt+Enter", CodeActionsChord: "Alt+Enter", NewlineChord: "Alt+Enter", PreviousMatchChord: "Shift+F3", ReplaceAllChord: "Alt+Enter",
 		}},
 		{"windows console", DetectKeyboardProfile("windows", func(string) string { return "" }), map[string]string{
-			CommitChord: "Ctrl+Enter", NewlineChord: "Shift+Enter", PreviousMatchChord: "Shift+Enter", ReplaceAllChord: "Ctrl+Alt+Enter",
+			CommitChord: "Ctrl+Enter", CodeActionsChord: "Ctrl+Enter", NewlineChord: "Shift+Enter", PreviousMatchChord: "Shift+Enter", ReplaceAllChord: "Ctrl+Alt+Enter",
 		}},
 		{"kitty protocol", KeyboardProfile{ModifiedEnter: true}, map[string]string{
-			CommitChord: "Ctrl+Enter", NewlineChord: "Shift+Enter", PreviousMatchChord: "Shift+Enter", ReplaceAllChord: "Ctrl+Alt+Enter",
+			CommitChord: "Ctrl+Enter", CodeActionsChord: "Ctrl+Enter", NewlineChord: "Shift+Enter", PreviousMatchChord: "Shift+Enter", ReplaceAllChord: "Ctrl+Alt+Enter",
 		}},
 		{"windows terminal hosting a unix shell", DetectKeyboardProfile("linux", func(k string) string {
 			if k == "WT_SESSION" {
@@ -47,7 +47,7 @@ func TestChordLabelsNameDeliverableKeys(t *testing.T) {
 			}
 			return ""
 		}), map[string]string{
-			NewlineChord: "Ctrl+J",
+			CodeActionsChord: "Ctrl+Enter", NewlineChord: "Ctrl+J",
 		}},
 	}
 	keys := map[string]tea.KeyPressMsg{

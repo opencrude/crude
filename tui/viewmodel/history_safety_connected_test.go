@@ -26,7 +26,7 @@ func committedHistorySafetyFixture(t *testing.T, width, height int) (renameConne
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool {
-		return one.app.LSPPopup.RenamePreview == nil && f.main.Value() == "package journey\n\nvar new = 1\n"
+		return one.app.LSPPopup.EditPreview == nil && f.main.Value() == "package journey\n\nvar new = 1\n"
 	})
 	result, err := one.app.ws.(shellport.ReviewedEdits).InspectReviewedEdit(t.Context(), preview.ID, preview.Digest)
 	if err != nil || result.State != "committed" || result.SafetyReference != preview.ID {

@@ -104,6 +104,12 @@ func (c *immediateTreeDiagClient) RequestSignatureHelp(context.Context, string, 
 func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
 	return model.LSPRenameEdit{}, nil
 }
+func (c *immediateTreeDiagClient) RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error) {
+	return model.LSPCodeActionResponse{}, context.Canceled
+}
+func (c *immediateTreeDiagClient) ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error) {
+	return model.LSPCodeActionResponse{}, context.Canceled
+}
 func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
 	return nil
 }

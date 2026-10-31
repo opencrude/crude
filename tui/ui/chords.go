@@ -24,6 +24,9 @@ const (
 	// CommitChord submits a multi-line field or its primary action.
 	// Accepts Ctrl+Enter and Alt+Enter (Ctrl+Alt+Enter stays distinct).
 	CommitChord = "chord:commit"
+	// CodeActionsChord opens read-only editor action discovery. It uses the
+	// same deliverable Enter modifiers as commit, without committing an edit.
+	CodeActionsChord = "chord:code-actions"
 	// NewlineChord inserts a line break in a field where Enter sends.
 	// Accepts Shift+Enter, Alt+Enter and Ctrl+J (LF, which every terminal
 	// delivers distinctly from Enter's CR).
@@ -157,7 +160,7 @@ func IsReplaceAllChord(m tea.KeyPressMsg) bool {
 func ChordLabel(token string) (label string, ok bool) {
 	profile := CurrentKeyboardProfile()
 	switch token {
-	case CommitChord:
+	case CommitChord, CodeActionsChord:
 		if profile.ModifiedEnter || profile.AltEnterReserved {
 			return "Ctrl+Enter", true
 		}
@@ -210,7 +213,7 @@ func MatchesShortcut(m tea.KeyPressMsg, shortcut string) bool {
 	switch shortcut {
 	case "":
 		return false
-	case CommitChord:
+	case CommitChord, CodeActionsChord:
 		return IsCommitChord(m)
 	case NewlineChord:
 		return IsNewlineChord(m)

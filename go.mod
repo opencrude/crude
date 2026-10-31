@@ -152,6 +152,8 @@ replace github.com/charmbracelet/ultraviolet => ./third_party/ultraviolet
 
 replace github.com/charmbracelet/x/powernap => ./third_party/powernap
 
+replace github.com/sourcegraph/jsonrpc2 => ./third_party/jsonrpc2
+
 replace github.com/quic-go/quic-go => ./third_party/quic-go
 
 replace github.com/tinylib/msgp => ./third_party/msgp

@@ -189,22 +189,22 @@ func TestConnectedRenameSemanticExactReviewAndCommittedReceipt(t *testing.T) {
 	}
 	oldID := ""
 	for _, node := range page.Nodes {
-		if strings.HasSuffix(node.ID, "::lsp-rename/actions/Apply rename") {
+		if strings.HasSuffix(node.ID, "::reviewed-edit/actions/Apply rename") {
 			oldID = node.ID
 		}
 	}
 	if oldID == "" {
 		t.Fatal("reviewed Apply button is not described by its mounted owner")
 	}
-	cancelled := journeySettingsControl(t, f.runtime, f.shells, one, "lsp-rename/actions/Cancel", ui.ControlOperation{Verb: "activate"})
+	cancelled := journeySettingsControl(t, f.runtime, f.shells, one, "reviewed-edit/actions/Cancel", ui.ControlOperation{Verb: "activate"})
 	if cancelled.State != control.Applied {
 		t.Fatal("semantic Cancel did not settle without mutation", cancelled)
 	}
 	plan := f.preview(t)
-	current := one.app.LSPPopup.RenamePreview
+	current := one.app.LSPPopup.EditPreview
 	stale := requestShellForTest(t, f.runtime, f.shells, one, "shell.describe_control",
 		shellControlIntent{ComponentID: oldID, Operation: ui.ControlOperation{Verb: "activate"}}, nil)
-	if stale.State == control.Applied || one.app.LSPPopup.RenamePreview != current {
+	if stale.State == control.Applied || one.app.LSPPopup.EditPreview != current {
 		t.Fatal("retired review control acquired a new invocation")
 	}
 	foreign := requestShellForTest(t, f.runtime, f.shells, two, "shell.describe_control",
@@ -212,14 +212,14 @@ func TestConnectedRenameSemanticExactReviewAndCommittedReceipt(t *testing.T) {
 	if foreign.State == control.Applied {
 		t.Fatal("another shell acquired private review activation")
 	}
-	result := journeySettingsControl(t, f.runtime, f.shells, one, "lsp-rename/actions/Apply rename", ui.ControlOperation{Verb: "activate"})
+	result := journeySettingsControl(t, f.runtime, f.shells, one, "reviewed-edit/actions/Apply rename", ui.ControlOperation{Verb: "activate"})
 	if result.State != control.Committed || len(result.ResourceIDs) != 2 || result.ResourceIDs[0] != plan.ID || result.ResourceIDs[1] == "" {
 		t.Fatalf("semantic action did not await the exact disk/safety receipt: %+v", result)
 	}
 	liveTestPump(t, []*App{one.app, two.app}, nil)
 	f.assertBytes(t, "package journey\n\nvar new = 1\n", "package journey\n\nvar use = new\n")
 	f.assertPaint(t, "var new = 1", "var use = new")
-	if one.app.LSPPopup.RenamePreview != nil {
+	if one.app.LSPPopup.EditPreview != nil {
 		t.Fatal("known committed receipt did not settle the actual review")
 	}
 }
@@ -251,12 +251,12 @@ func (f renameConnectedFixture) preview(t *testing.T) workspace.ReviewedEditPrev
 	f.prompt(t)
 	one := f.shells[0]
 	remoteJourneyUntil(t, f.shells, func() bool {
-		return one.app.LSPPopup.RenamePreview != nil || f.hasNotice("Rename failed")
+		return one.app.LSPPopup.EditPreview != nil || f.hasNotice("Rename failed")
 	})
-	if one.app.LSPPopup.RenamePreview == nil {
+	if one.app.LSPPopup.EditPreview == nil {
 		t.Fatalf("rename unexpectedly failed: %+v", one.app.ws.Status().Notifications(true))
 	}
-	p := one.app.LSPPopup.RenamePreview.request.preview
+	p := one.app.LSPPopup.EditPreview.request.preview
 	paint := ansi.Strip(one.app.View().RenderContent())
 	for _, want := range []string{"Review rename", "Apply rename", "Cancel", `- "old"`, `+ "new"`, "Local History"} {
 		if !strings.Contains(paint, want) {
@@ -320,7 +320,7 @@ func TestConnectedRenameKeysCancelApplySafetyAndInspect(t *testing.T) {
 	cancelled := f.preview(t)
 	// Enter without navigation must select Cancel, never Apply.
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
-	remoteJourneyUntil(t, f.shells, func() bool { return one.app.LSPPopup.RenamePreview == nil })
+	remoteJourneyUntil(t, f.shells, func() bool { return one.app.LSPPopup.EditPreview == nil })
 	f.assertBytes(t, renameConnectedMain, renameConnectedPeer)
 	f.assertPaint(t, "var old = 1", "var use = old")
 	if result, err := port.InspectReviewedEdit(t.Context(), cancelled.ID, cancelled.Digest); err != nil || result.State == "committed" || result.SafetySnapshotID != "" {
@@ -337,7 +337,7 @@ func TestConnectedRenameKeysCancelApplySafetyAndInspect(t *testing.T) {
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool {
-		return one.app.LSPPopup.RenamePreview == nil && f.main.Value() == "package journey\n\nvar new = 1\n" &&
+		return one.app.LSPPopup.EditPreview == nil && f.main.Value() == "package journey\n\nvar new = 1\n" &&
 			f.peer.Value() == "package journey\n\nvar use = new\n" && !f.main.Modified() && !f.peer.Modified()
 	})
 	f.assertBytes(t, "package journey\n\nvar new = 1\n", "package journey\n\nvar use = new\n")
@@ -395,7 +395,7 @@ func TestConnectedRenamePeerChangesInvalidateImmutableReview(t *testing.T) {
 				})
 			}
 			one := f.shells[0]
-			if one.app.LSPPopup.RenamePreview.request.preview.Text != p.Text {
+			if one.app.LSPPopup.EditPreview.request.preview.Text != p.Text {
 				t.Fatal("peer mutation rewrote immutable review")
 			}
 			renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
@@ -420,7 +420,7 @@ func TestConnectedRenameMissingHistoryFailsClosed(t *testing.T) {
 	f := newRenameConnectedFixture(t, renameConnectedRaw, true)
 	f.prompt(t)
 	f.assertFailurePaint(t, "recoverable Local History")
-	if f.shells[0].app.LSPPopup.RenamePreview != nil {
+	if f.shells[0].app.LSPPopup.EditPreview != nil {
 		t.Fatal("absent history dependency offered an applicable preview")
 	}
 	f.assertBytes(t, renameConnectedMain, renameConnectedPeer)
@@ -441,7 +441,7 @@ func TestConnectedRenameRawProviderUnsupportedEditsFailClosed(t *testing.T) {
 			f := newRenameConnectedFixture(t, raw, false)
 			f.prompt(t)
 			f.assertFailurePaint(t, "Rename failed")
-			if f.shells[0].app.LSPPopup.RenamePreview != nil {
+			if f.shells[0].app.LSPPopup.EditPreview != nil {
 				t.Fatal("unsupported provider edit offered partial Apply")
 			}
 			f.assertBytes(t, renameConnectedMain, renameConnectedPeer)

@@ -137,7 +137,7 @@ func (s *DocumentService) validateReviewedSourceLocked(owner document.Owner, sou
 // prepareReviewedEdit runs on a resource worker. The language coordinator owns
 // boundary and check; no shell can provide a signed semantic fact or substitute
 // file contents at Apply. Only explicit inert text edits are accepted here.
-func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner document.Owner, label string, boundary types.InsightBoundary, targets []lspedit.DocumentEdit, check func() error) (ReviewedEditPreview, error) {
+func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner document.Owner, label, summary string, boundary types.InsightBoundary, targets []lspedit.DocumentEdit, check func() error) (ReviewedEditPreview, error) {
 	if err := ctx.Err(); err != nil {
 		return ReviewedEditPreview{}, err
 	}
@@ -166,6 +166,9 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		}
 		text.WriteString(value)
 		return nil
+	}
+	if err := appendText(summary); err != nil {
+		return ReviewedEditPreview{}, err
 	}
 	// Provider order cannot make one target's validation apply to a different
 	// target. Sort only after validating the bounded outer declaration.

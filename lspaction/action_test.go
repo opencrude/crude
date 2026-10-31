@@ -144,7 +144,7 @@ func TestUnsupportedRowsRemainLiteral(t *testing.T) {
 			`,"commands":[]`,
 			`,"executeCommand":"run"`,
 		}},
-		{"Edit operations must be inside a changes-only WorkspaceEdit.", []string{
+		{"Edit operations must be inside a text-only WorkspaceEdit.", []string{
 			`,"changes":{}`,
 			`,"documentChanges":[]`,
 			`,"oldUri":"file:///a","newUri":"file:///b"`,
@@ -157,16 +157,16 @@ func TestUnsupportedRowsRemainLiteral(t *testing.T) {
 			`,"edit":` + edit + `,"disabled":{"reason":"Not available"}`,
 			`,"disabled":{"reason":""}`,
 		}},
-		{"Edit must be a changes-only WorkspaceEdit object.", []string{
+		{"Edit must be a text-only WorkspaceEdit object.", []string{
 			`,"edit":null`,
 			`,"edit":[]`,
 			`,"edit":2`,
 		}},
-		{"Only the changes WorkspaceEdit member is supported.", []string{
+		{"Only one changes or documentChanges member is supported.", []string{
 			`,"edit":{}`,
 			`,"edit":{"changes":{"file:///a":[` + textEdit + `]},"extension":{}}`,
 		}},
-		{"documentChanges are not supported.", []string{
+		{"Edit must contain exactly one versioned text-document target.", []string{
 			`,"edit":{"documentChanges":[]}`,
 			`,"edit":{"changes":{"file:///a":[` + textEdit + `]},"documentChanges":[]}`,
 			`,"edit":{"documentChanges":[{"textDocument":{"uri":"file:///a","version":null},"edits":[` + textEdit + `]}]}`,
@@ -213,6 +213,32 @@ func TestUnsupportedRowsRemainLiteral(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestLiteralVersionedTextDocumentEditAndRefusalBoundaries(t *testing.T) {
+	valid := `{"title":"Organize Imports","kind":"source.organizeImports","edit":{"documentChanges":[{"textDocument":{"uri":"file:///active.go","version":7},"edits":[` + textEdit + `]}]}}`
+	action := parseOne(t, valid, false)
+	if action.UnsupportedReason != "" || action.NeedsResolve || len(action.Edit) == 0 || string(action.Raw) != valid {
+		t.Fatal("ordinary single-document versioned literal was refused or rewritten", action)
+	}
+	for _, version := range []string{"null", "0", "-1", "2147483648", "1.0", "1e0", `"7"`, "true"} {
+		row := parseOne(t, strings.Replace(valid, `"version":7`, `"version":`+version, 1), false)
+		if row.UnsupportedReason == "" {
+			t.Fatalf("unknown/invalid version acquired literal eligibility: %s", version)
+		}
+	}
+	for _, changed := range []string{
+		strings.Replace(valid, `"uri":"file:///active.go","version":7`, `"uri":"file:///active.go"`, 1),
+		strings.Replace(valid, `"version":7`, `"version":7,"annotationId":"unapproved"`, 1),
+		strings.Replace(valid, `"newText":"X"`, `"newText":"X","annotationId":"unapproved"`, 1),
+		strings.Replace(valid, `"textDocument":`, `"kind":"create","textDocument":`, 1),
+		strings.Replace(valid, `"documentChanges":`, `"changes":{},"documentChanges":`, 1),
+		strings.Replace(valid, `}]}]}}`, `}]},{"kind":"delete","uri":"file:///active.go"}]}}`, 1),
+	} {
+		if row := parseOne(t, changed, false); row.UnsupportedReason == "" {
+			t.Fatalf("an extra operation was silently accepted: %s", changed)
 		}
 	}
 }

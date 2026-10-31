@@ -43,6 +43,12 @@ func (c *reapableClient) RequestSignatureHelp(context.Context, string, int, int)
 func (c *reapableClient) RequestRename(context.Context, string, int, int, string) (types.LSPRenameEdit, error) {
 	return types.LSPRenameEdit{}, nil
 }
+func (c *reapableClient) RequestCodeActions(context.Context, string, int, int, int, int) (types.LSPCodeActionResponse, error) {
+	return types.LSPCodeActionResponse{}, context.Canceled
+}
+func (c *reapableClient) ResolveCodeAction(context.Context, string, int, []byte) (types.LSPCodeActionResponse, error) {
+	return types.LSPCodeActionResponse{}, context.Canceled
+}
 func (c *reapableClient) RequestCompletions(context.Context, string, int, int) []CompletionItem {
 	return nil
 }

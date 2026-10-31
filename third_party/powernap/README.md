@@ -64,7 +64,7 @@ and the no-active-parameter extension are not advertised. The raw response
 preserves optional index presence and both label representations for bounded
 consumer validation; it does not certify semantic quality or project context.
 
-## Raw code-action transport prerequisite
+## Raw manual code-action transport
 
 `RequestCodeActions` and `ResolveCodeAction` preserve original JSON objects,
 including opaque numeric/data leaves. Static initialized provider capability is
@@ -77,10 +77,20 @@ Bounds are 256 original diagnostics and 256 KiB aggregate diagnostic bytes,
 64 KiB per resolve object and 1 MiB per raw action-list response. These encoded
 data bounds do not bound the external connection decoder's initial allocation.
 The transport neither executes commands nor applies edits or authorizes URIs.
-The detached capability constructor advertises literal/data/disabled/preferred
-support and edit-only resolution, but initialize hookup and product wiring remain
-separate integration work. No dynamic registration, resource operation,
+Initialize advertises literal/data/disabled/preferred support and edit-only
+resolution. `CodeActionSupport` observes only the current initialized static
+provider capability. The adapter and canonical coordinator qualify original
+diagnostic/action evidence; the transport alone grants no mutation authority.
+No dynamic registration, resource operation,
 annotation, `workspace/applyEdit` or command-execution support is granted.
+
+Both module consumers use the pinned local
+[`jsonrpc2` request decoder](../jsonrpc2/README.md). This authority preserves
+detached original notification params before Powernap dispatch: duplicate nested
+members, malformed string evidence and opaque numeric spelling must reach the
+consumer validator rather than being erased by interface decode/re-marshaling.
+The fork rejects ambiguous top-level envelopes atomically. It does not bound
+initial frame allocation or make provider data trusted.
 
 ## Process and transport lifetime
 

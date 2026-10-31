@@ -60,12 +60,21 @@ establish complete build context.
 
 Manual parameter information, numeric completion fields and
 [reviewed symbol rename](../reference/editor.md#reviewed-symbol-rename) are banked
-editor checkpoints. The next
+editor checkpoints. The
 [safety-protection workflow](../reference/local-history.md#reviewed-edit-safety-protection)
-is in integrated acceptance: paged reference inspection, exact native human
+is banked with integrated acceptance: paged reference inspection, exact native human
 release/re-protection and original-result observation without rewriting outcomes.
-Passive literal-action parsing and statically gated raw transport are implemented
-prerequisites only; code-action provider/core/editor wiring remains open.
+The bounded [manual code-action flow](../reference/editor.md#manual-code-actions)
+has integrated acceptance: original JSON transport, canonical source/selection
+and provider/context fences, native list/detail, shared immutable review and
+selected recovery. Real gopls exposed versioned `documentChanges`; the generic
+single-current-file exact-wire form is now implemented, with broader command,
+resource, multi-file and lazy-resolution interoperability still outside this slice.
+Its source-frozen full ordinary/race, build, lint, design/docs, benchmark, nested
+LSP/syntax and site gates passed on Linux. Sequential native real-gopls journeys
+at 160x40 and 80x24 exercised safe-default Close/Cancel, explicit preview/Apply,
+original committed receipts, selected recovery and joined provider cleanup.
+Windows/Darwin feature-preserving builds are compilation evidence only.
 These slices do not complete the broader policy, assembly or workflow/device rows.
 
 ## Problem
