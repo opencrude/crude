@@ -101,6 +101,10 @@ type Workspace struct {
 	// directory. One LSPManager per workspace (rooted at RootPath).
 	LSPMgr *LSPManager
 
+	// ProjectContext owns passive artifact observations across shell attachments.
+	// It is not document text, a second LSP fleet or an execution authority.
+	ProjectContext *ProjectContextService
+
 	// ProjectSearch owns Find in Files execution identity and cancellation.
 	// The TUI owns query/result presentation only.
 	ProjectSearch *ProjectSearchService
@@ -331,6 +335,7 @@ func NewWorkspace(
 	}
 	ws.Terminals, _ = NewTerminalService(ws.TermMgr) // newly allocated, empty manager
 	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr, workspaceSQLDB(wsDB))
+	ws.ProjectContext = NewProjectContextService(rootPath, ws.LiveDocuments.Insight.generation)
 
 	ws.queuePersistenceStartupIssues()
 
@@ -464,6 +469,9 @@ func (w *Workspace) Close() {
 	}
 	if w.LSPMgr != nil {
 		w.LSPMgr.Close()
+	}
+	if w.ProjectContext != nil {
+		w.ProjectContext.Close()
 	}
 	if w.Status != nil {
 		w.Status.Close()
@@ -719,6 +727,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	if w.LSPMgr != nil {
 		w.LSPMgr.Close()
 	}
+	if w.ProjectContext != nil {
+		w.ProjectContext.Close()
+	}
 	if w.Status != nil {
 		w.Status.Close()
 		w.Status = nil
@@ -777,6 +788,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.Documents = NewDocumentSaveService()
 	w.Documents.SetEventBus(w.eventBus)
 	w.LiveDocuments = NewDocumentService(abs, w.Documents, w.LSPMgr, workspaceSQLDB(wsDB))
+	w.ProjectContext = NewProjectContextService(abs, w.LiveDocuments.Insight.generation)
 	w.Executions = nil
 	w.LiveDocuments.SetEventBus(w.eventBus)
 	w.TermMgr = NewTerminalManager(abs)

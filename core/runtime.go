@@ -725,6 +725,9 @@ func (a *actor) serviceEvent(message any) {
 	var effects *workspace.TerminalEffectsMsg
 	switch event := message.(type) {
 	case coreprotocol.FileChange:
+		if a.ws.ProjectContext != nil {
+			a.ws.ProjectContext.Invalidate()
+		}
 		a.broadcast(coreprotocol.Change{Files: []coreprotocol.FileChange{event}})
 		return
 	case workspace.DocumentChangedMsg:
