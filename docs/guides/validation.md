@@ -340,6 +340,30 @@ provider join and clean product exit separately. Native frame accounting include
 boot and non-sleep actions, not sleeps or a post-exit frame. These deterministic
 local regressions do not close adaptive workflow, device or complete-context gates.
 
+Diagnostic readers use `TestDiagnosticDetailsVisualHeadless` with the installed
+gopls and framed core at 160x40 and 80x24. An independently authored anonymous
+struct causes a long compiler message. Its original notification, canonical
+source, literal message and producer/context identity are checked separately
+from the mounted reader. Ordinary editor-menu input opens the source-anchored
+read-only body. PageDown must paint both the original final-field token and
+message tail in published cells, not merely retain them in `Value()`. Selection,
+inert typing, selection-first Escape, passive hover and native wheel scrolling
+must preserve source/caret/private draft, original facts and disk.
+
+For sequential native captures select `CRUDE_VISUAL_DIAGNOSTIC_DETAILS=1`,
+`CRUDE_ARGS='-test.run=^TestDiagnosticDetailsVisualAcceptance$ -test.count=1 -test.timeout=600s'`
+and `CRUDE_DIAGNOSTIC_DETAILS_VISUAL_RESULT` with the compiled viewmodel test
+binary. F3 prepares only the disposable fixture; F4 is a read-only observation
+boundary. After Escape, move the pointer away from the diagnostic source and
+back before testing hover: the context-menu click left it there, and moving to
+the same coordinates is not a new native motion event. Use the ordinary input
+in `diagnostic_details_visual_test.go`, wait
+for each original phase/page observation, inspect the actual native frames and
+finish with `quit:F9`. Require all eleven `F4 VERIFIED` phases, original-message
+tail paint, `DIAGNOSTIC_DETAILS_VISUAL_SUCCESS`, independently joined provider
+cleanup and clean product exit. These deterministic local Linux regressions
+are not exploratory developer, device, containment or complete-context acceptance.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

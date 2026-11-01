@@ -1,14 +1,11 @@
 package viewmodel
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/filetree"
-	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )
@@ -294,7 +291,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case regionEditor:
 		m.unfocus()
 		cmd := m.handleShellPointer(msg)
-		m.updateDiagHoverPopup(mouse.X, mouse.Y)
+		m.updateDiagHoverPopup()
 		return m, cmd
 
 	case regionSessionDeck:
@@ -515,7 +512,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	case regionEditor:
 		if m.isEditorActive() {
 			cmd := m.handleShellPointer(msg)
-			m.updateDiagHoverPopup(mouse.X, mouse.Y)
+			m.updateDiagHoverPopup()
 			return m, cmd
 		}
 	case regionInput, regionChat:
@@ -652,174 +649,6 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 	}
 
 	return m, tea.Batch(cmds...)
-}
-
-// updateDiagHoverPopup checks the editor's hover state and shows/updates a
-// floating popup window with diagnostic messages at the hovered position.
-func (m *App) updateDiagHoverPopup(screenX, screenY int) {
-	if m.windowManager == nil || !m.EditorState.Editor.IsOpen() {
-		return
-	}
-	state := m.EditorState.Editor.HoverState()
-	if len(state.Messages) == 0 {
-		m.clearDiagHoverPopup()
-		return
-	}
-
-	severityLabels := map[int]string{
-		1: "Error",   // DiagError
-		2: "Warning", // DiagWarning
-		3: "Info",    // DiagInfo
-		4: "Hint",    // DiagHint
-	}
-	severityIcons := map[int]string{
-		1: "✕", // DiagError
-		2: "⚠", // DiagWarning
-		3: "ℹ", // DiagInfo
-		4: "ℹ", // DiagHint
-	}
-	sevLabel, ok := severityLabels[state.Severity]
-	if !ok {
-		sevLabel = "Info"
-	}
-	sevIcon, ok := severityIcons[state.Severity]
-	if !ok {
-		sevIcon = "ℹ"
-	}
-
-	titleStr := fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.BaseTitle(), state.Line+1, state.Col+1)
-	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(state.Line), "\n\r ")
-
-	// Build structured content lines.
-	var diagLines []ui.DiagLine
-	diagLines = append(diagLines, ui.DiagLine{
-		Text: titleStr,
-		Kind: ui.DiagLineTitle,
-	})
-	diagLines = append(diagLines,
-		ui.DiagLine{Text: m.EditorState.Editor.DiagnosticStatus(), Kind: ui.DiagLineBody},
-		ui.DiagLine{Text: m.EditorState.Editor.DiagnosticProvenance(), Kind: ui.DiagLineBody},
-	)
-	if sourceLine != "" {
-		diagLines = append(diagLines, ui.DiagLine{
-			Text: sourceLine,
-			Kind: ui.DiagLineSource,
-		})
-	}
-
-	// Compute width from content.
-	maxLineW := rendering.VisibleWidth(titleStr)
-	if w := rendering.VisibleWidth(sourceLine); w > maxLineW {
-		maxLineW = w
-	}
-	for _, msg := range state.Messages {
-		if w := rendering.VisibleWidth(msg); w > maxLineW {
-			maxLineW = w
-		}
-	}
-	boxW := maxLineW + 6
-	if boxW < 44 {
-		boxW = 44
-	}
-	if boxW > m.width-4 {
-		boxW = m.width - 4
-	}
-	innerW := boxW - 6
-
-	// Divider
-	diagLines = append(diagLines, ui.DiagLine{
-		Text: ui.DiagLineDividerText(innerW),
-		Kind: ui.DiagLineDivider,
-	})
-
-	// Body lines (word-wrapped).
-	for _, msg := range state.Messages {
-		diagLines = append(diagLines, ui.DiagLine{
-			Text: msg,
-			Kind: ui.DiagLineBody,
-		})
-	}
-
-	// Map severity to DiagSeverity for the frame.
-	diagSev := ui.DiagSevInfo
-	switch state.Severity {
-	case 1:
-		diagSev = ui.DiagSevError
-	case 2:
-		diagSev = ui.DiagSevWarning
-	}
-
-	popupH := len(diagLines) + 2
-	popupX, popupY := m.diagPopupPosition(screenX, screenY, boxW, popupH)
-
-	frame := ui.BuildDiagnosticFrame(m.Theme, ui.DiagFrameSpec{
-		Title:    sevLabel,
-		Icon:     sevIcon,
-		Severity: diagSev,
-		Lines:    diagLines,
-		Width:    boxW,
-		Height:   popupH,
-	})
-
-	// Create or update the popup window.
-	if m.DiagPopupID != "" {
-		if existing := m.windowManager.Window(m.DiagPopupID); existing != nil {
-			existing.SetContent(frame)
-			existing.SetSize(boxW, popupH)
-			existing.SetPosition(popupX, popupY)
-			existing.MarkContentDirty()
-			return
-		}
-	}
-
-	fw := wm.NewFloatingWindow(
-		string(ui.OverlayDiagHover),
-		"",
-		frame,
-		boxW, popupH,
-		wm.WithDecoration(false),
-		wm.WithMovable(false),
-		wm.WithResizable(false),
-		wm.WithClosable(false),
-		wm.WithModal(false),
-		wm.WithFocusable(false),
-	)
-	fw.SetPosition(popupX, popupY)
-	m.overlayHost.Open(ui.OverlayDiagHover, fw, ui.PopoverPolicy(false), func() {
-		m.DiagPopupID = ""
-	})
-	m.DiagPopupID = "diag-hover"
-}
-
-// updateDiagHoverPopupFromCursor shows the diagnostic hover popup at the
-// keyboard cursor position.
-func (m *App) updateDiagHoverPopupFromCursor() {
-	layout := m.computeLayout()
-	screenX, screenY := m.EditorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
-	m.updateDiagHoverPopup(screenX, screenY)
-}
-
-func (m *App) diagPopupPosition(screenX, screenY, w, h int) (int, int) {
-	popupX := screenX + 2
-	popupY := screenY + 1
-	if popupX+w >= m.width {
-		popupX = screenX - w - 2
-	}
-	if popupY+h >= m.height {
-		popupY = screenY - h - 1
-	}
-	if popupX < 0 {
-		popupX = 0
-	}
-	if popupY < 0 {
-		popupY = 0
-	}
-	return popupX, popupY
-}
-
-// clearDiagHoverPopup removes the diagnostic hover popup, if any.
-func (m *App) clearDiagHoverPopup() {
-	m.overlayHost.Close(ui.OverlayDiagHover)
 }
 
 // dispatchMouseRightClick shows a context menu appropriate to the

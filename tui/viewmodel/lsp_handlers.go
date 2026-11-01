@@ -3,81 +3,15 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
 	"crude/tui/editor"
-	"crude/tui/ui"
-	"crude/tui/wm"
 	"crude/types"
 	"crude/workspace"
 )
-
-// showDiagnosticAt displays a floating popup with diagnostics at the
-// given line/col in the active editor.
-func (m *App) showDiagnosticAt(line, col int) {
-	diags := m.EditorState.Editor.DiagnosticsAt(line, col)
-	if len(diags) == 0 {
-		return
-	}
-	// Build structured content lines.
-	var lines []ui.DiagLine
-	lines = append(lines, ui.DiagLine{
-		Text: fmt.Sprintf("%s:%d:%d · %s", m.EditorState.Editor.BaseTitle(), line+1, col, m.EditorState.Editor.DiagnosticStatus()),
-		Kind: ui.DiagLineTitle,
-	})
-	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(line), "\n\r ")
-	if sourceLine != "" {
-		lines = append(lines, ui.DiagLine{
-			Text: sourceLine,
-			Kind: ui.DiagLineSource,
-		})
-	}
-	lines = append(lines, ui.DiagLine{
-		Text: ui.DiagLineDividerText(54),
-		Kind: ui.DiagLineDivider,
-	})
-	for _, d := range diags {
-		lines = append(lines, ui.DiagLine{
-			Text: d.Message,
-			Kind: ui.DiagLineBody,
-		})
-	}
-
-	lines = append(lines, ui.DiagLine{Text: m.EditorState.Editor.DiagnosticProvenance(), Kind: ui.DiagLineBody})
-	// Determine severity from the first diagnostic.
-	sev := ui.DiagSevInfo
-	if len(diags) > 0 {
-		switch diags[0].Severity {
-		case 1:
-			sev = ui.DiagSevError
-		case 2:
-			sev = ui.DiagSevWarning
-		}
-	}
-
-	frame := ui.BuildDiagnosticFrame(m.Theme, ui.DiagFrameSpec{
-		Title:    "Diagnostic",
-		Icon:     "ℹ",
-		Severity: sev,
-		Lines:    lines,
-		Width:    60,
-		Height:   len(lines) + 2,
-	})
-	fw := wm.NewFloatingWindow(string(ui.OverlayDiagContext), "", frame, 60, len(lines)+2,
-		wm.WithDecoration(false),
-		wm.WithMovable(false),
-		wm.WithResizable(false),
-		wm.WithClosable(false),
-		wm.WithModal(false),
-		wm.WithFocusable(true),
-	)
-	wm.CenterOnScreen(fw, m.width, m.height)
-	m.overlayHost.Open(ui.OverlayDiagContext, fw, ui.PopoverPolicy(true), nil)
-}
 
 // startRename arms rename mode in the LSP popup state.
 func (m *App) startRename() {

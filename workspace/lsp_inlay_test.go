@@ -673,7 +673,7 @@ func TestInlayLatestSequenceWinsAndExactReleaseCannotRetireNewer(t *testing.T) {
 
 func TestInlayLateNegativeAndPositiveAnswersStayFenced(t *testing.T) {
 	for _, answer := range []string{"null", "[]", "unsupported", "hints"} {
-		for _, change := range []string{"cancel", "release", "context", "edit", "settings", "trust", "provider"} {
+		for _, change := range []string{"cancel", "release", "release-before-relay", "context", "edit", "settings", "trust", "provider"} {
 			t.Run(answer+"/"+change, func(t *testing.T) {
 				f := newInlayAcceptanceFixture(t, "abc\n")
 				f.client.raw = answer
@@ -695,6 +695,11 @@ func TestInlayLateNegativeAndPositiveAnswersStayFenced(t *testing.T) {
 				switch change {
 				case "cancel":
 					cancel()
+				case "release-before-relay":
+					// Release is authoritative before its asynchronous RPC cancellation relay.
+					if err := f.w.LiveDocuments.ReleaseLSPInlayHints(f.owner, "view", 1); err != nil {
+						t.Fatal(err)
+					}
 				case "release":
 					if err := f.w.LiveDocuments.ReleaseLSPInlayHints(f.owner, "view", 1); err != nil {
 						t.Fatal(err)
@@ -718,41 +723,52 @@ func TestInlayLateNegativeAndPositiveAnswersStayFenced(t *testing.T) {
 }
 
 func TestInlayReleaseCancelsPendingTooltipResolve(t *testing.T) {
-	f := newInlayAcceptanceFixture(t, "abc\n")
-	original := `{"position":{"line":0,"character":1},"label":"x","data":{"n":1e0}}`
-	f.client.resolveSupported = true
-	set := f.request(t, "["+original+"]", "view", 1, inlayAcceptanceRange(0, 0, 1, 0))
-	f.client.resolved = `{"position":{"line":0,"character":1},"label":"x","data":{"n":1e0},"tooltip":"late"}`
-	entered, unblock := holdInlayAcceptanceRPC(t, f.client)
-	type result struct {
-		out types.LSPInlayInspection
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		out, err := f.w.InspectLSPInlayHint(t.Context(), f.owner, set.ID, set.Digest, 0, true)
-		done <- result{out, err}
-	}()
-	call := awaitInlayAcceptanceCall(t, entered)
-	if !call.resolve || call.original != original {
-		t.Fatal("pending resolve lost original", call)
-	}
-	if err := f.w.LiveDocuments.ReleaseLSPInlayHints(f.owner, "view", 1); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-call.ctx.Done():
-	case <-time.After(3 * time.Second):
-		t.Fatal("exact release did not cancel pending resolve")
-	}
-	unblock()
-	select {
-	case got := <-done:
-		if got.err == nil || !reflect.DeepEqual(got.out, types.LSPInlayInspection{}) {
-			t.Fatal("released resolve returned late evidence", got)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("released resolve did not retire")
+	for _, waitForRelay := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wait-for-relay=%t", waitForRelay), func(t *testing.T) {
+			f := newInlayAcceptanceFixture(t, "abc\n")
+			original := `{"position":{"line":0,"character":1},"label":"x","data":{"n":1e0}}`
+			f.client.resolveSupported = true
+			set := f.request(t, "["+original+"]", "view", 1, inlayAcceptanceRange(0, 0, 1, 0))
+			f.client.resolved = `{"position":{"line":0,"character":1},"label":"x","data":{"n":1e0},"tooltip":"late"}`
+			entered, unblock := holdInlayAcceptanceRPC(t, f.client)
+			type result struct {
+				out types.LSPInlayInspection
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				out, err := f.w.InspectLSPInlayHint(t.Context(), f.owner, set.ID, set.Digest, 0, true)
+				done <- result{out, err}
+			}()
+			call := awaitInlayAcceptanceCall(t, entered)
+			if !call.resolve || call.original != original {
+				t.Fatal("pending resolve lost original", call)
+			}
+			if err := f.w.LiveDocuments.ReleaseLSPInlayHints(f.owner, "view", 1); err != nil {
+				t.Fatal(err)
+			}
+			if waitForRelay {
+				select {
+				case <-call.ctx.Done():
+				case <-time.After(3 * time.Second):
+					t.Fatal("exact release did not cancel pending resolve")
+				}
+			}
+			unblock()
+			select {
+			case got := <-done:
+				if got.err == nil || !reflect.DeepEqual(got.out, types.LSPInlayInspection{}) {
+					t.Fatal("released resolve returned late evidence", got)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("released resolve did not retire")
+			}
+			select {
+			case <-call.ctx.Done():
+			case <-time.After(3 * time.Second):
+				t.Fatal("retired resolve did not cancel its original provider context")
+			}
+		})
 	}
 }
 

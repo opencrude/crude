@@ -87,6 +87,10 @@ subprocess rather than a process-name search.
   expiring after five minutes; source close/detach/shutdown revoke their views.
   These bounds do not prove provider CPU/RSS containment. See
   [completion documentation](editor.md#completion-documentation-and-original-insertion).
+  Completion and inlay publication/selected-row inspection recheck the retained
+  invocation's own cancellation under the document lock. Release takes effect
+  there immediately; an asynchronous RPC-cancellation relay interrupts work but
+  cannot postpone retirement or authorize a late answer.
 
 ## Pushed application and private effects
 

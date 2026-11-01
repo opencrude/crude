@@ -55,6 +55,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.closeEditorSnippet()
 		m.closeSignatureHelp()
 		m.closeCompletionPopup()
+		m.closeDiagnosticDetail()
+		m.clearDiagHoverPopup()
 	}
 	if _, pasted := msg.(tea.PasteMsg); pasted && m.completion != nil {
 		m.closeCompletionPopup()
@@ -81,6 +83,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
+	m.syncDiagnosticPopups()
 	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
 	m.syncNavigation()
@@ -1575,53 +1578,61 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 	return msg
 }
 
+// forwardNativeWindowContent routes a native event exactly once and returns
+// the control's handled result. The shell can honor selection dismissal before
+// its generic Escape-close rung without a second text-interaction path.
+func (m *App) forwardNativeWindowContent(fw *wm.FloatingWindow, w *ui.WindowFrameWidget, localMsg tea.Msg) (tea.Cmd, bool) {
+	if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) && w.Host() != nil {
+		if body := w.Body(); body != nil {
+			w.Host().Focus(body.ID())
+		}
+	}
+	result := w.Dispatch(localMsg)
+	fw.MarkContentDirty()
+	if result.Action != nil && result.Action.ID == "window.close" {
+		return tea.Batch(result.Cmd, m.closePopupWindowByID(fw.ID)), result.Handled
+	}
+	if result.Action != nil && result.Action.ID == "window.titleaction" {
+		// Terminal and surface windows use the title action as their Dock button.
+		if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok {
+			m.dockTerminal(id)
+			return result.Cmd, result.Handled
+		}
+		if group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID)); ok {
+			if result.Action.Payload == paneWindowNewTab {
+				x, y := fw.Position()
+				w, _ := fw.Size()
+				rect := ui.Rect{X: x + w - 3 - 2*ui.TitleActionWidth, Y: y, W: ui.TitleActionWidth, H: 1}
+				return tea.Batch(result.Cmd, m.openContextMenuState(tea.Mouse{X: rect.X + 1, Y: rect.Y + 1}, m.paneWindowNewTabMenu(group))), result.Handled
+			}
+			m.dockPaneWindow(group)
+			return result.Cmd, result.Handled
+		}
+	}
+	if result.Action != nil && result.Action.ID == ui.ActionTextPaste {
+		target, _ := result.Action.Payload.(ui.ClipboardPasteTarget)
+		deliver := nativePasteDelivery(target, func(pasted ui.EventResult) tea.Cmd {
+			if m.windowManager == nil || m.windowManager.Window(fw.ID) != fw {
+				return nil
+			}
+			fw.MarkContentDirty()
+			return tea.Batch(pasted.Cmd, m.handleHostAction(windowScreenAction(fw, pasted.Action)))
+		}, w.Host())
+		return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID, deliver)), result.Handled
+	}
+	result.Action = windowScreenAction(fw, result.Action)
+	cmd := m.handleHostAction(result.Action)
+	return tea.Batch(result.Cmd, cmd), result.Handled
+}
+
 func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) tea.Cmd {
 	if fw == nil || fw.Content == nil {
 		return nil
 	}
 	localMsg := m.translateToLocalMouse(msg, fw)
 	if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
-		if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) && w.Host() != nil {
-			if body := w.Body(); body != nil {
-				w.Host().Focus(body.ID())
-			}
-		}
-		result := w.Dispatch(localMsg)
-		fw.MarkContentDirty()
-		if result.Action != nil && result.Action.ID == "window.close" {
-			return tea.Batch(result.Cmd, m.closePopupWindowByID(fw.ID))
-		}
-		if result.Action != nil && result.Action.ID == "window.titleaction" {
-			// Terminal and surface windows use the title action as their Dock button.
-			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok {
-				m.dockTerminal(id)
-				return result.Cmd
-			}
-			if group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID)); ok {
-				if result.Action.Payload == paneWindowNewTab {
-					x, y := fw.Position()
-					w, _ := fw.Size()
-					rect := ui.Rect{X: x + w - 3 - 2*ui.TitleActionWidth, Y: y, W: ui.TitleActionWidth, H: 1}
-					return tea.Batch(result.Cmd, m.openContextMenuState(tea.Mouse{X: rect.X + 1, Y: rect.Y + 1}, m.paneWindowNewTabMenu(group)))
-				}
-				m.dockPaneWindow(group)
-				return result.Cmd
-			}
-		}
-		if result.Action != nil && result.Action.ID == ui.ActionTextPaste {
-			target, _ := result.Action.Payload.(ui.ClipboardPasteTarget)
-			deliver := nativePasteDelivery(target, func(pasted ui.EventResult) tea.Cmd {
-				if m.windowManager == nil || m.windowManager.Window(fw.ID) != fw {
-					return nil
-				}
-				fw.MarkContentDirty()
-				return tea.Batch(pasted.Cmd, m.handleHostAction(windowScreenAction(fw, pasted.Action)))
-			}, w.Host())
-			return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID, deliver))
-		}
-		result.Action = windowScreenAction(fw, result.Action)
-		cmd := m.handleHostAction(result.Action)
-		return tea.Batch(result.Cmd, cmd)
+		cmd, _ := m.forwardNativeWindowContent(fw, w, localMsg)
+		return cmd
 	}
 	// A drag that a ComponentWidget overlay's text field captured (find /
 	// replace, palette filter, tree prompt) keeps its motion and release in

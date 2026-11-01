@@ -97,14 +97,14 @@ func TestLiveEditorHistoryDismissesStaleDiagnosticPopup(t *testing.T) {
 	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 5, Severity: editor.DiagError, Message: "stale diagnostic"}}))
 	ed.RefreshCursorHover(0, 0)
 	shell.app.updateDiagHoverPopupFromCursor()
-	if shell.app.DiagPopupID == "" {
+	if !shell.app.overlayHost.IsOpen("diag-hover") {
 		t.Fatal("diagnostic popup not opened")
 	}
 	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	runAppCommand(t, shell.app, cmd)
 	liveTestSync(t, shell.app)
-	if ed.Value() != "base" || shell.app.DiagPopupID != "" {
-		t.Fatalf("stale popup survived undo: %q %s", ed.Value(), shell.app.DiagPopupID)
+	if ed.Value() != "base" || shell.app.overlayHost.IsOpen("diag-hover") {
+		t.Fatalf("stale popup survived undo: %q %t", ed.Value(), shell.app.overlayHost.IsOpen("diag-hover"))
 	}
 }
 

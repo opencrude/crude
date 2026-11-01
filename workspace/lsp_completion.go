@@ -156,6 +156,11 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 	result.Digest = reviewedHash(string(identity))
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Release retires the authoritative invocation synchronously. Its
+	// AfterFunc relay may not have cancelled the provider context yet.
+	if err := entry.ctx.Err(); err != nil {
+		return types.LSPCompletionSet{}, err
+	}
 	if err := requestCtx.Err(); err != nil {
 		return types.LSPCompletionSet{}, err
 	}

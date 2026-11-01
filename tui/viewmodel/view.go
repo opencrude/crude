@@ -68,6 +68,7 @@ func (m *App) View() tea.View {
 		m.positionAutomaticSignatureHelp(state)
 	}
 	m.positionCompletion()
+	m.positionDiagnosticPopups()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	m.windowManager.ClearNeedsRender()

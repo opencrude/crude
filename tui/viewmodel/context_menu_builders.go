@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
@@ -25,10 +26,14 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		return nil
 	}
 	ed := m.EditorState.Editor
+	diagnosticPosition := editor.Position{Line: ed.CursorLine(), Col: ed.CursorCol()}
 	if m.rootHost != nil {
 		if rect, ok := m.screenRectOf(m.editorScreen.ID()); ok && rect.Contains(mouse.X, mouse.Y) {
-			if pos, valid := ed.PositionAt(mouse.X-rect.X, mouse.Y-rect.Y); valid && !ed.HasSelection() {
-				ed.SetCursorPosition(pos.Line, pos.Col)
+			if pos, valid := ed.PositionAt(mouse.X-rect.X-ed.PadL, mouse.Y-rect.Y); valid {
+				diagnosticPosition = pos
+				if !ed.HasSelection() {
+					ed.SetCursorPosition(pos.Line, pos.Col)
+				}
 			}
 		}
 	}
@@ -50,14 +55,10 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 
-	// Diagnostic- and symbol-aware items.
-	// Use the current cursor position to find diagnostics at point.
-	// Future: translate mouse X/Y to (line, col) for accuracy.
-	pos := struct{ Line, Col int }{Line: ed.CursorLine(), Col: ed.CursorCol()}
-	// Use the diagnostics helper on the editor. We don't expose
-	// it, but the editor has a diagnosticsAt function via
-	// SetDiagnostics/LSPDiagnostic; we just need the existence
-	// check.
+	// Inspect the clicked source point even when a private selection retains
+	// the caret elsewhere. A stale menu cannot inspect a newer publication.
+	pos := diagnosticPosition
+	factID, _ := ed.DiagnosticCursor()
 	diags := m.EditorState.Editor.DiagnosticsAt(pos.Line, pos.Col)
 	hasLSP := m.ws.LSPMgr() != nil && m.ws.LSPMgr().ServerReady()
 
@@ -101,7 +102,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if len(diags) > 0 {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: fmt.Sprintf("Show %d diagnostic(s)", len(diags)), Action: func() {
-				m.showDiagnosticAt(pos.Line, pos.Col)
+				m.showDiagnosticAt(ed, factID, pos.Line, pos.Col)
 			},
 		})
 	}

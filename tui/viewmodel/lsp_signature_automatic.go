@@ -102,6 +102,13 @@ func signatureHintText(help types.LSPSignatureHelp) string {
 // editor, not the unsplit shell layout. The shared editor owns inlay/scroll and
 // tab/Unicode caret projection; screenRectOf supplies nested/floating offsets.
 func (m *App) editorHelpBounds(ed *editor.Editor, preferW, preferH int) (ui.Rect, bool) {
+	if ed == nil {
+		return ui.Rect{}, false
+	}
+	return m.editorPositionHelpBounds(ed, editor.Position{Line: ed.CursorLine(), Col: ed.CursorCol()}, preferW, preferH)
+}
+
+func (m *App) editorPositionHelpBounds(ed *editor.Editor, position editor.Position, preferW, preferH int) (ui.Rect, bool) {
 	if m.EditorState == nil || m.EditorState.Editor != ed || m.editorScreen == nil {
 		return ui.Rect{}, false
 	}
@@ -109,8 +116,8 @@ func (m *App) editorHelpBounds(ed *editor.Editor, preferW, preferH int) (ui.Rect
 	if !mounted || rect.Empty() {
 		return ui.Rect{}, false
 	}
-	caretX, caretY := ed.CursorScreenPosition(rect.X, rect.Y)
-	if !rect.Contains(caretX, caretY) {
+	caretX, caretY, visible := ed.PositionScreenPosition(position, rect.X, rect.Y)
+	if !visible || !rect.Contains(caretX, caretY) {
 		return ui.Rect{}, false
 	}
 	frame := m.frameInsets()

@@ -264,6 +264,13 @@ func TestConnectedAutomaticSignatureNativeTriggersStayPassiveAndShellPrivate(t *
 		t.Fatal("explicit reader lost native text selection")
 	}
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if app.overlayHost.Window(signatureHelpID) != fw || area.HasActiveSelection() {
+		t.Fatal("first explicit-reader Escape did not dismiss only its native selection")
+	}
+	f.key(t, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if app.overlayHost.IsOpen(signatureHelpID) || !f.eds[0].IsOpen() {
+		t.Fatal("second explicit-reader Escape did not dismiss only the reader")
+	}
 	f.assertPrivate(t)
 }
 

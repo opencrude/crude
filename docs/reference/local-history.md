@@ -104,6 +104,9 @@ original client/epoch, reviewed preimages and preview, integrity blockers and th
 latest immutable protection audit event. Its read-only native TextArea supports
 scrolling and selection. **Restore preview** uses the existing restore planner;
 changing protection never edits project files or invokes restore.
+Escape follows the native reader's back ladder: clear a text selection, return
+from detail to the reference list, then return to the ordinary history timeline.
+Closing the containing window retires the reader directly.
 
 **Release protection…** requires a durably committed or positively no-effect
 refused reviewed-edit journal, its original preview digest and exact selected

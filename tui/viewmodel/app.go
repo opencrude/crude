@@ -98,7 +98,8 @@ type App struct {
 	gitDiscardPreview         *workspace.GitDiscardPreview
 	gitDiscardSequence        uint64
 	FilePicker                *filepickerscreen.Screen
-	DiagPopupID               string
+	diagnosticDetail          *diagnosticPopover
+	diagnosticHover           *diagnosticPopover
 	planHover                 *planHoverState
 	connectionHover           *connectionHoverState
 	remotes                   *remoteManagerState

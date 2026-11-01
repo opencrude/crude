@@ -90,7 +90,11 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	if retained, ok := second.app.RefStore().GetReference(text.ID); !ok || retained.Content != content {
 		t.Fatal("reading a transfer projection replaced the canonical reference")
 	}
-	_, _ = second.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	_, command = second.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	runAppCommand(t, second.app, command)
+	if second.app.sessionTextOverlay().IsOpen() || second.app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+		t.Fatal("native attachment Escape command did not finish closing its exact reader")
+	}
 	clickTranscriptAttachment(t, second.app, media.DisplayName())
 	if screen := second.app.sessionTextOverlay(); !screen.ReadOnly() || screen.RefID() != media.ID || screen.Value() != "" {
 		t.Fatalf("reattached image preview: id=%q want=%q readonly=%v value=%q open=%v", screen.RefID(), media.ID, screen.ReadOnly(), screen.Value(), screen.IsOpen())
@@ -108,7 +112,8 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	if view := second.app.View(); len(view.Images) != 1 || !strings.ContainsRune(view.RenderContent(), kitty.Placeholder) || strings.ContainsRune(view.RenderContent(), '▀') {
 		t.Fatal("reattached connected media did not use native terminal graphics")
 	}
-	_, _ = second.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	_, command = second.app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	runAppCommand(t, second.app, command)
 	if second.app.Input.Value() != "PEER DRAFT MUST SURVIVE PREVIEWS" || calls.Load() != 1 {
 		t.Fatal("attachment preview consumed a draft or replayed model work")
 	}

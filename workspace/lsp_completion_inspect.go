@@ -61,6 +61,9 @@ func (w *Workspace) InspectLSPCompletion(ctx context.Context, owner document.Own
 	stop := context.AfterFunc(lifetime, cancel)
 	defer cancel()
 	defer stop()
+	if err := lifetime.Err(); err != nil {
+		return types.LSPCompletionInspection{}, err
+	}
 	if err := requestCtx.Err(); err != nil {
 		return types.LSPCompletionInspection{}, err
 	}
@@ -105,6 +108,9 @@ func (w *Workspace) InspectLSPCompletion(ctx context.Context, owner document.Own
 		return types.LSPCompletionInspection{}, err
 	}
 	if err := check(); err != nil {
+		return types.LSPCompletionInspection{}, err
+	}
+	if err := entry.ctx.Err(); err != nil {
 		return types.LSPCompletionInspection{}, err
 	}
 	if err := requestCtx.Err(); err != nil {
