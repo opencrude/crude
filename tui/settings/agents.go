@@ -246,7 +246,8 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 			Enabled: p.Enabled, AccountID: p.AccountID, Model: p.Model, Description: p.Description, Instructions: p.Instructions,
 			ThinkingEffort: p.ThinkingEffort, ModelContextWindow: p.ModelContextWindow, ModelMaxOutput: p.ModelMaxOutput,
 			ModelModalities: p.ModelModalities, ModelTemperature: p.ModelTemperature, ModelTopP: p.ModelTopP,
-			AllowedTools: p.AllowedTools, DeniedTools: p.DeniedTools, SkillModes: p.SkillModes, ContextCompactionPercent: p.ContextCompactionPercent,
+			AllowedTools: p.AllowedTools, DeniedTools: p.DeniedTools, SkillModes: p.SkillModes,
+			ContextCompactionPercent: p.ContextCompactionPercent, ContextRetentionTokens: p.ContextRetentionTokens, ServiceTier: p.ServiceTier,
 		}
 	}
 	if duplicate {
@@ -263,6 +264,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		c.draft = c.model.buildAgentForm(c.base, c.roleIndex == catMain)
 	}
 	if c.roleIndex < 0 {
+		c.draft.Field(fieldServiceTier).Options[0].Label = "Role"
 		name := ui.TextFieldState("agent-name", "Name", c.id, "Stable name used when delegating to this agent.")
 		name.Disabled = c.id != ""
 		name.Validator = func(value ui.FieldValue) []string {
@@ -584,7 +586,9 @@ func (c *agentCatalog) prospectiveProfile(cfg types.CategorySettings) types.Agen
 	p.DeniedTools = cfg.DeniedTools
 	p.SkillModes = cfg.SkillModes
 	p.ContextCompactionPercent = cfg.ContextCompactionPercent
+	p.ContextRetentionTokens = cfg.ContextRetentionTokens
 	p.ThinkingEffort = cfg.ThinkingEffort
+	p.ServiceTier = cfg.ServiceTier
 	p.ModelContextWindow = cfg.ModelContextWindow
 	p.ModelMaxOutput = cfg.ModelMaxOutput
 	if ui.BoolFieldValue(c.draft.Field("agent-inherit-modalities")) {

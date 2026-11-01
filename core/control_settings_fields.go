@@ -89,6 +89,12 @@ func controlFieldSchema(t reflect.Type, path string) map[string]any {
 	if e, ok := enums[leaf]; ok {
 		schema["enum"] = e
 	}
+	// Role-level choices differ from account protocol values such as "default".
+	if leaf == "service_tier" && (strings.HasPrefix(path, "agents.") ||
+		strings.HasPrefix(path, "overrides.") || strings.HasPrefix(path, "value.Agents.") ||
+		path == "memory.memory_category.service_tier" || path == "safety.auto_permission.service_tier") {
+		schema["enum"] = []string{"", "standard", "fast", "priority", "flex"}
+	}
 	if strings.HasPrefix(path, "memory.") || strings.HasPrefix(path, "local_history.") {
 		switch leaf {
 		case "enabled", "auto_recall", "auto_extract", "consolidation", "use_gitignore", "capture_external_changes", "safety_snapshot_before_restore":

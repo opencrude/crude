@@ -136,6 +136,9 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 			}
 			role = parts[1]
 			_, known := snap.Base.Agents.Categories[role]
+			if name, profile := strings.CutPrefix(role, "profile/"); profile {
+				_, known = snap.Base.Agents.AgentProfiles[name]
+			}
 			if !known && role != "root/"+value.MainAgent {
 				return controlFailure(in, control.Invalid, "unknown session role")
 			}

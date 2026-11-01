@@ -33,6 +33,7 @@ const (
 	fieldProvider          = "connection"
 	fieldModel             = "model"
 	fieldThinking          = "thinking-effort"
+	fieldServiceTier       = "service-tier"
 	fieldMultiAgent        = "multi-agent"
 	fieldCodeIntelligence  = "code-intelligence"
 	fieldMaxSubAgents      = "max-sub-agents"
@@ -353,7 +354,9 @@ func (s *Screen) applyModelToEffective(id string) {
 	cfg := categoryFor(s.effective, s.base, s.role)
 	cfg.Inherit = ""
 	cfg.Model = id
-	setCategory(&s.effective, s.role, cfg)
+	if !strings.HasPrefix(s.role, "profile/") {
+		setCategory(&s.effective, s.role, cfg)
+	}
 	key := s.role
 	if key == "default" && s.effective.SessionMainAgent != "" {
 		key = "root/" + s.effective.SessionMainAgent
@@ -362,6 +365,7 @@ func (s *Screen) applyModelToEffective(id string) {
 	over.Model = id
 	over.Inherit = ""
 	s.overrides[key] = over
+	s.refreshNamedAgent(s.role)
 }
 
 // applyProviderToEffective stages a provider picker selection into the
@@ -381,7 +385,9 @@ func (s *Screen) applyProviderToEffective(id string) {
 	cfg.Inherit = ""
 	cfg.Provider = account.ProviderID
 	cfg.AccountID = id
-	setCategory(&s.effective, s.role, cfg)
+	if !strings.HasPrefix(s.role, "profile/") {
+		setCategory(&s.effective, s.role, cfg)
+	}
 	key := s.role
 	if key == "default" && s.effective.SessionMainAgent != "" {
 		key = "root/" + s.effective.SessionMainAgent
@@ -391,6 +397,7 @@ func (s *Screen) applyProviderToEffective(id string) {
 	over.Model = ""
 	over.Inherit = ""
 	s.overrides[key] = over
+	s.refreshNamedAgent(s.role)
 }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
@@ -419,8 +426,14 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "session-settings.agent.select":
 		return s.commitPickerAction(ui.EventResult{})
 	case "session-settings.model.open":
+		if !s.stageRoleBeforePicker() {
+			return focusFormResult(0)
+		}
 		return ui.EventResult{Handled: true, Cmd: s.openModelPicker(), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Action: &ui.Action{ID: "ui.focus", Payload: ScreenID}}
 	case "session-settings.provider.open":
+		if !s.stageRoleBeforePicker() {
+			return focusFormResult(0)
+		}
 		return ui.EventResult{Handled: true, Cmd: s.openProviderPicker(), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Action: &ui.Action{ID: "ui.focus", Payload: ScreenID}}
 	case "session-settings.model.select":
 		s.commitModelSelection()
@@ -434,6 +447,11 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		fieldID, _ := action.Payload.(string)
 		return ui.EventResult{Handled: true, Cmd: s.openSelect(fieldID), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "form.changed":
+		if s.page == rolePage {
+			if speed := s.formModel.Field(fieldServiceTier); speed != nil {
+				speed.Inherited = speed.Value.String() == ""
+			}
+		}
 		s.applyRootForm()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	case "form.cancel":
@@ -499,6 +517,23 @@ func focusFormResult(extra ui.Invalidation) ui.EventResult {
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: FormID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint | extra}
 }
 
+// Picker navigation rebuilds the role form; stage valid edits before leaving
+// so a speed or other field change is not silently lost on return.
+func (s *Screen) stageRoleBeforePicker() bool {
+	if s.page != rolePage {
+		return true
+	}
+	s.formModel.ValidateAll()
+	for _, field := range s.formModel.Fields() {
+		if field.HasErrors() {
+			s.form.FocusField(field.ID)
+			return false
+		}
+	}
+	s.applyRoleForm()
+	return true
+}
+
 func (s *Screen) openRoot() {
 	s.page, s.role = rootPage, ""
 	model := ui.NewFormModel()
@@ -516,6 +551,22 @@ func (s *Screen) openRoot() {
 			Target:        "session-settings.role.open",
 			Inherited:     !overridden,
 			InheritedFrom: inheritedFrom,
+		})
+	}
+	names := make([]string, 0, len(s.effective.Agents.AgentProfiles))
+	for name := range s.effective.Agents.AgentProfiles {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		key := "profile/" + name
+		cfg := categoryFor(s.effective, s.base, key)
+		_, overridden := s.overrides[key]
+		model.AddField(&ui.FieldState{
+			ID: key, Label: name, Type: ui.FieldNav,
+			Columns: []string{cfg.Model, s.accountLabel(cfg.AccountID)},
+			Target:  "session-settings.role.open", Inherited: !overridden,
+			InheritedFrom: "workspace",
 		})
 	}
 	model.AddField(ui.SpacerFieldState("roles-gap"))
@@ -615,6 +666,11 @@ func (s *Screen) openRole(role string) {
 			break
 		}
 	}
+	if profileName, ok := strings.CutPrefix(role, "profile/"); ok {
+		if _, exists := s.effective.Agents.AgentProfiles[profileName]; exists {
+			name = profileName
+		}
+	}
 	if name == "" {
 		return
 	}
@@ -636,6 +692,24 @@ func (s *Screen) openRole(role string) {
 		Target: "session-settings.model.open",
 	})
 	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, ""))
+	key := role
+	if key == "default" && s.effective.SessionMainAgent != "" {
+		key = "root/" + s.effective.SessionMainAgent
+	}
+	options := []ui.FormOption{{ID: "", Label: "Inherit"}}
+	if s.overrides[key].ServiceTier == "" && cfg.ServiceTier != "" {
+		options[0].Label = "Inherit (" + strings.ToUpper(cfg.ServiceTier[:1]) + cfg.ServiceTier[1:] + ")"
+	}
+	for _, tier := range provider.ServiceTierChoices() {
+		options = append(options, ui.FormOption{ID: tier, Label: strings.ToUpper(tier[:1]) + tier[1:]})
+	}
+	speed := ui.SegmentedFieldState(fieldServiceTier, "Speed", options, s.overrides[key].ServiceTier,
+		"Fast and Priority may cost more; unsupported connections ignore the choice.")
+	if speed.Value.String() == "" {
+		speed.Inherited = true
+		speed.InheritedFrom = "workspace"
+	}
+	model.AddField(speed)
 	compactionText := ""
 	if cfg.ContextCompactionPercent != nil {
 		compactionText = strconv.Itoa(*cfg.ContextCompactionPercent)
@@ -683,13 +757,15 @@ func (s *Screen) openRole(role string) {
 	// The main agent is the source of "inherit from main"; it cannot inherit
 	// from itself, so that button only appears on the other roles. Both
 	// surfaces can point at the live workspace main agent.
-	if role != "default" {
+	if role != "default" && !strings.HasPrefix(role, "profile/") {
 		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "inherit-main"), Label: "Inherit from main", Action: "session-settings.role.inherit-main", Variant: ui.VariantSecondary, Enabled: true})
 	}
-	buttons = append(buttons,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "inherit-workspace"), Label: "Inherit from workspace", Action: "session-settings.role.inherit-workspace", Variant: ui.VariantSecondary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-workspace"), Label: "Reset", Action: "session-settings.role.reset-workspace", Variant: ui.VariantDanger, Enabled: true},
-	)
+	// Named agents already follow their workspace profile. Reset removes that
+	// profile's session pins, so a second "inherit" button would do the same.
+	if !strings.HasPrefix(role, "profile/") {
+		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "inherit-workspace"), Label: "Inherit from workspace", Action: "session-settings.role.inherit-workspace", Variant: ui.VariantSecondary, Enabled: true})
+	}
+	buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-workspace"), Label: "Reset", Action: "session-settings.role.reset-workspace", Variant: ui.VariantDanger, Enabled: true})
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 }
 
@@ -1040,6 +1116,9 @@ func (s *Screen) roleName() string {
 			return role.Name
 		}
 	}
+	if name, ok := strings.CutPrefix(s.role, "profile/"); ok {
+		return name
+	}
 	return s.role
 }
 
@@ -1111,6 +1190,9 @@ func (s *Screen) selectMainAgent(id string) {
 		if previous.ThinkingEffort != "" {
 			base.ThinkingEffort = previous.ThinkingEffort
 		}
+		if previous.ServiceTier != "" {
+			base.ServiceTier = previous.ServiceTier
+		}
 	}
 	selected := base
 	if id != "" {
@@ -1131,6 +1213,9 @@ func (s *Screen) selectMainAgent(id string) {
 				if roleOverride.ThinkingEffort != "" {
 					selected.ThinkingEffort = roleOverride.ThinkingEffort
 				}
+				if roleOverride.ServiceTier != "" {
+					selected.ServiceTier = roleOverride.ServiceTier
+				}
 			}
 			if selected.AccountID == "" {
 				selected.AccountID = base.AccountID
@@ -1150,6 +1235,9 @@ func (s *Screen) selectMainAgent(id string) {
 			if profile.ThinkingEffort != "" {
 				selected.ThinkingEffort = profile.ThinkingEffort
 			}
+			if profile.ServiceTier != "" {
+				selected.ServiceTier = profile.ServiceTier
+			}
 		}
 		if pin, ok := s.overrides["root/"+id]; ok {
 			if pin.AccountID != "" {
@@ -1160,6 +1248,9 @@ func (s *Screen) selectMainAgent(id string) {
 			}
 			if pin.ThinkingEffort != "" {
 				selected.ThinkingEffort = pin.ThinkingEffort
+			}
+			if pin.ServiceTier != "" {
+				selected.ServiceTier = pin.ServiceTier
 			}
 		}
 	}
@@ -1219,7 +1310,6 @@ func (s *Screen) applyRoleForm() {
 	}
 	// A manual override never carries a live-inherit marker.
 	cfg.Inherit = ""
-	setCategory(&s.effective, s.role, cfg)
 	key := s.role
 	if key == "default" && s.effective.SessionMainAgent != "" {
 		key = "root/" + s.effective.SessionMainAgent
@@ -1234,6 +1324,9 @@ func (s *Screen) applyRoleForm() {
 	if !s.formModel.Field(fieldThinking).Value.Equal(s.formModel.Field(fieldThinking).Initial) {
 		override.ThinkingEffort = cfg.ThinkingEffort
 	}
+	if !s.formModel.Field(fieldServiceTier).Value.Equal(s.formModel.Field(fieldServiceTier).Initial) {
+		override.ServiceTier = s.formModel.Field(fieldServiceTier).Value.String()
+	}
 	if !s.formModel.Field(fieldContextCompaction).Value.Equal(s.formModel.Field(fieldContextCompaction).Initial) {
 		override.ContextCompactionPercent = cloneIntPtr(cfg.ContextCompactionPercent)
 	}
@@ -1242,6 +1335,27 @@ func (s *Screen) applyRoleForm() {
 	}
 	if len(types.SettingsEdits(types.CategorySettings{}, override)) != 0 {
 		s.overrides[key] = override
+	} else {
+		delete(s.overrides, key)
+	}
+	if strings.HasPrefix(s.role, "profile/") {
+		s.refreshNamedAgent(s.role)
+		if s.effective.SessionMainAgent == s.role {
+			s.selectMainAgent(s.role)
+		}
+	} else {
+		cfg.ServiceTier = override.ServiceTier
+		if cfg.ServiceTier == "" {
+			switch {
+			case s.role == "default" && s.effective.SessionMainAgent != "":
+				cfg.ServiceTier = categoryFor(s.effective, s.base, s.effective.SessionMainAgent).ServiceTier
+			case override.Inherit == "main":
+				cfg.ServiceTier = categoryFor(s.effective, s.base, "default").ServiceTier
+			default:
+				cfg.ServiceTier = categoryFor(s.base, s.base, s.role).ServiceTier
+			}
+		}
+		setCategory(&s.effective, s.role, cfg)
 	}
 }
 
@@ -1254,6 +1368,13 @@ func (s *Screen) resetRole(role string) {
 	// Remove this role's local choice. The preview matches the corresponding
 	// parent role; only explicit Inherit from Main follows the session root.
 	delete(s.overrides, role)
+	if strings.HasPrefix(role, "profile/") {
+		s.refreshNamedAgent(role)
+		if s.effective.SessionMainAgent == role {
+			s.selectMainAgent(role)
+		}
+		return
+	}
 	if role == memoryRole {
 		clearCategory(&s.effective, role)
 		s.effective.Memory.MemoryCategory = s.base.Memory.MemoryCategory
@@ -1367,6 +1488,38 @@ const memoryRole = "memory"
 // always terminates at a real value; it must never be the same settings object
 // as the one carrying the marker.
 func categoryFor(settings, base types.Settings, role string) types.CategorySettings {
+	if name, ok := strings.CutPrefix(role, "profile/"); ok {
+		profile, exists := settings.Agents.AgentProfiles[name]
+		if !exists {
+			return types.CategorySettings{}
+		}
+		parent := profile.Category
+		switch parent {
+		case "researcher", "crafter", "aeron", memoryRole:
+		default:
+			return types.CategorySettings{}
+		}
+		cfg := categoryFor(settings, base, parent)
+		if profile.AccountID != "" {
+			cfg.AccountID = profile.AccountID
+		}
+		if profile.Model != "" {
+			cfg.Model = profile.Model
+		}
+		if profile.ThinkingEffort != "" {
+			cfg.ThinkingEffort = profile.ThinkingEffort
+		}
+		if profile.ServiceTier != "" {
+			cfg.ServiceTier = profile.ServiceTier
+		}
+		if profile.ContextCompactionPercent != nil {
+			cfg.ContextCompactionPercent = cloneIntPtr(profile.ContextCompactionPercent)
+		}
+		if profile.ContextRetentionTokens != nil {
+			cfg.ContextRetentionTokens = cloneIntPtr(profile.ContextRetentionTokens)
+		}
+		return cfg
+	}
 	if role == "" || role == "default" {
 		if cfg, ok := settings.Agents.Categories["default"]; ok {
 			if cfg.Inherit == InheritWorkspaceMarker && base.Agents.Categories != nil {
@@ -1395,16 +1548,62 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 	// role form prefills, so getting it wrong makes Apply overwrite the real
 	// override with the main agent's model.
 	if role == memoryRole {
-		if cat := settings.Memory.MemoryCategory; cat.Provider != "" || cat.AccountID != "" || cat.Model != "" || cat.ThinkingEffort != "" {
+		if cat := settings.Memory.MemoryCategory; cat.Provider != "" || cat.AccountID != "" || cat.Model != "" || cat.ThinkingEffort != "" || cat.ServiceTier != "" {
 			// Copy the compaction pointer so the role category and
 			// Memory.MemoryCategory never alias one int.
 			cat.ContextCompactionPercent = cloneIntPtr(cat.ContextCompactionPercent)
 			cat.ContextRetentionTokens = cloneIntPtr(cat.ContextRetentionTokens)
+			main := categoryFor(settings, base, "default")
+			if cat.AccountID == "" {
+				cat.AccountID = main.AccountID
+			}
+			if cat.Model == "" {
+				cat.Model = main.Model
+			}
+			if cat.ThinkingEffort == "" {
+				cat.ThinkingEffort = main.ThinkingEffort
+			}
 			return cat
 		}
 	}
 	// A role with no explicit category inherits the session main agent.
 	return categoryFor(settings, base, "default")
+}
+
+// refreshNamedAgent rebuilds the displayed profile from its workspace source
+// and the session's sparse edits. It never rewrites the workspace catalog.
+func (s *Screen) refreshNamedAgent(role string) {
+	name, ok := strings.CutPrefix(role, "profile/")
+	if !ok {
+		return
+	}
+	profile, exists := s.base.Agents.AgentProfiles[name]
+	if !exists {
+		return
+	}
+	override := s.overrides[role]
+	if override.AccountID != "" {
+		profile.AccountID = override.AccountID
+	}
+	if override.Model != "" {
+		profile.Model = override.Model
+	}
+	if override.ThinkingEffort != "" {
+		profile.ThinkingEffort = override.ThinkingEffort
+	}
+	if override.ServiceTier != "" {
+		profile.ServiceTier = override.ServiceTier
+	}
+	if override.ContextCompactionPercent != nil {
+		profile.ContextCompactionPercent = cloneIntPtr(override.ContextCompactionPercent)
+	}
+	if override.ContextRetentionTokens != nil {
+		profile.ContextRetentionTokens = cloneIntPtr(override.ContextRetentionTokens)
+	}
+	if s.effective.Agents.AgentProfiles == nil {
+		s.effective.Agents.AgentProfiles = make(map[string]types.AgentProfileSettings)
+	}
+	s.effective.Agents.AgentProfiles[name] = profile
 }
 
 func setCategory(settings *types.Settings, role string, cfg types.CategorySettings) {

@@ -18,7 +18,12 @@ composer's guidance row starts with **⚡ Fast** and the focused main-agent
 header appends **fast** to its model. Other sessions and child-agent headers do
 not borrow that indicator. Clearing the override returns to the inherited speed,
 which can itself still be fast; the notice says so rather than claiming it is
-off. Session settings and account-level fast choices use the same projection.
+off. **Speed** in the session's agent settings and in the Application/Workspace
+Agents editor provides the same choice for individual roles and named agents.
+Changing a named agent affects later root requests and newly launched delegated
+agents; already launched children retain their launch configuration. A separate
+root-only session override still takes precedence. The root choices use the
+same next-request projection as `/fast`.
 
 These are requested settings, not proof of the tier the provider actually
 served; fast processing can bill at a premium rate. If the selected connection

@@ -2598,6 +2598,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 			if ap.ThinkingEffort != "" {
 				spec.ThinkingEffort = ap.ThinkingEffort
 			}
+			if ap.ServiceTier != "" {
+				spec.ServiceTier = ap.ServiceTier
+			}
 			if ap.ModelContextWindow > 0 {
 				spec.ModelContextWindow = ap.ModelContextWindow
 			}

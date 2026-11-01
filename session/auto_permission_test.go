@@ -60,6 +60,32 @@ func TestPermissionReviewerTransportHasNoLifetimeCallCap(t *testing.T) {
 	}
 }
 
+func TestPermissionReviewerSendsConfiguredFastTier(t *testing.T) {
+	tiers := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		tier, _ := request["service_tier"].(string)
+		tiers <- tier
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+	}))
+	defer server.Close()
+	s, a := newReviewerTestSession(t, server.URL)
+	s.cfg.Safety.AutoPermission.ServiceTier = "fast"
+	result := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}},
+		map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+	if result.Decision != "allow" {
+		t.Fatalf("review failed: %+v", result)
+	}
+	if tier := <-tiers; tier != "fast" {
+		t.Fatalf("review request tier = %q, want fast", tier)
+	}
+}
+
 func newReviewerTestSession(t *testing.T, url string) (*Session, *agent.Agent) {
 	t.Helper()
 	cfg := modelAttributionConfig(url, "main-model")
