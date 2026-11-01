@@ -143,6 +143,17 @@ func (m *App) submitComposerInput(sessionID, text string) tea.Cmd {
 	}
 }
 
+// inputAdmissionPending reports a submission from this shell that the core
+// has not yet acknowledged for agentID.
+func (m *App) inputAdmissionPending(agentID string) bool {
+	for intent := range m.pendingInputAdmissions {
+		if intent != nil && intent.AgentID == agentID {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 	if !msg.submitted.IsZero() {
 		promptAdmission.Since(msg.submitted)

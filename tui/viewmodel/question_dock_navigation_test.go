@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/decision"
 	"crude/tui/screens/question"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/statusoverview"
@@ -319,33 +320,65 @@ func TestQuestionDockJourneyCapturesSurviveAndTrueModalsShield(t *testing.T) {
 		}
 		questionDockAssertRetained(t, app, prompt, "", app.Input.Value())
 	})
-	t.Run("yolo_deck_remains_modal_and_cancels_underlying_capture", func(t *testing.T) {
-		app, projection := setupSessionDeckApp(t)
-		wsOf(app).Logger = stubLogger{}
-		app.width, app.height = 160, 50
-		app.toggleWorkspacePanel(termdock.PanelProblems)
-		app.paintShellFrame()
-		r, ok := app.rootHost.ScreenRect(termdock.DividerID)
-		if !ok {
-			t.Fatal("workspace divider is not mounted")
-		}
-		_, _ = app.Update(tea.MouseClickMsg{X: r.X + 5, Y: r.Y, Button: tea.MouseLeft})
-		if !app.rootHost.HasPointerCapture() {
-			t.Fatal("fixture did not begin a divider drag")
-		}
-		app.openSessionYoloPanel()
-		app.paintShellFrame()
-		before := app.termDockHeight
-		_, _ = app.Update(tea.MouseMotionMsg{X: r.X + 5, Y: r.Y - 3, Button: tea.MouseLeft})
-		_, _ = app.Update(tea.MouseReleaseMsg{X: r.X + 5, Y: r.Y - 3, Button: tea.MouseLeft})
-		if app.rootHost.HasPointerCapture() || app.termDockHeight != before || !app.sessionDeckModal() {
-			t.Fatal("YOLO safety decision allowed an underlying captured drag")
-		}
-		header, _ := app.rootHost.ScreenRect(termdock.HeaderID)
-		x, y := questionDockTextPoint(t, app, header, "⌄")
-		_, _ = app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-		if !app.termDockVisible() || !projection.deckFocused || app.terminalSummonAllowed() {
-			t.Fatal("YOLO safety decision allowed unrelated panel controls or terminal summon")
-		}
-	})
+	// Session decisions (goal resume on open, plan implementation, YOLO) are
+	// docked offers, not shell modals: the bottom workspace dock stays fully
+	// usable and the offer stays pending until explicitly answered.
+	for _, tc := range []struct {
+		name string
+		open func(*App)
+	}{
+		{"goal_resume", func(app *App) {
+			app.openSessionDecision(app.AgentView.ActiveID(), "Goal", decision.Spec{Purpose: "goal_resume", Title: "Resume the goal?",
+				Confirm: decision.Answer{Label: "Resume goal", Shortcut: "y"}, Cancel: decision.Answer{Label: "Not now", Shortcut: "n"}})
+		}},
+		{"yolo", func(app *App) { app.openSessionYoloPanel() }},
+	} {
+		t.Run(tc.name+"_decision_leaves_bottom_dock_usable", func(t *testing.T) {
+			app, _ := newRealShellApp(t)
+			wsOf(app).Logger = stubLogger{}
+			selectDeckSession(t, app, &workspace.Session{SessionID: "decision-family"}, "agent")
+			_, _ = app.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
+			tc.open(app)
+			questionDockPaint(app)
+			projection := app.activeSessionProjection()
+			if panel := projection.deck.Active(); panel == nil || panel.ID != sessionDecisionPanelID {
+				t.Fatal("fixture did not mount the session decision")
+			}
+			footer, _ := app.rootHost.ScreenRect(app.footerScreen.ID())
+			questionDockClickText(t, app, footer, "Problems")
+			if !app.termDockVisible() {
+				t.Fatal("pending session decision swallowed the footer's bottom-dock click")
+			}
+			r, ok := app.rootHost.ScreenRect(termdock.DividerID)
+			if !ok {
+				t.Fatal("workspace divider is not mounted")
+			}
+			before := app.termDockHeight
+			questionDockSend(t, app, tea.MouseClickMsg{X: r.X + 5, Y: r.Y, Button: tea.MouseLeft})
+			questionDockSend(t, app, tea.MouseMotionMsg{X: r.X + 5, Y: r.Y - 3, Button: tea.MouseLeft})
+			questionDockSend(t, app, tea.MouseReleaseMsg{X: r.X + 5, Y: r.Y - 3, Button: tea.MouseLeft})
+			if app.termDockHeight <= before || app.rootHost.HasPointerCapture() {
+				t.Fatal("pending session decision blocked the dock divider drag")
+			}
+			if !app.terminalSummonAllowed() {
+				t.Fatal("pending session decision blocked terminal summon")
+			}
+			header, _ := app.rootHost.ScreenRect(termdock.HeaderID)
+			questionDockClickText(t, app, header, "⌄")
+			if app.termDockVisible() {
+				t.Fatal("pending session decision blocked the dock's own hide control")
+			}
+			if panel := projection.deck.Active(); panel == nil || panel.ID != sessionDecisionPanelID || projection.decisionAgentID == "" {
+				t.Fatal("using the dock answered or discarded the pending decision")
+			}
+			if app.OverlayState.IsYolo() {
+				t.Fatal("navigation enabled YOLO without an explicit answer")
+			}
+			// Non-modal for the human is not permission for automation: a
+			// core restart cannot slip past the unanswered decision.
+			if reason := app.coreRestartBlocked(); !strings.Contains(reason, "blocking decision") {
+				t.Fatalf("core restart ignored a pending session decision: %q", reason)
+			}
+		})
+	}
 }

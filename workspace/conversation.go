@@ -158,6 +158,18 @@ func (c *Conversation) Messages() []Message {
 	return out
 }
 
+// Message returns a detached copy of one current record.
+func (c *Conversation) Message(id string) (Message, bool) {
+	if c == nil {
+		return Message{}, false
+	}
+	message := c.byID[id]
+	if message == nil {
+		return Message{}, false
+	}
+	return ttypes.CloneConversationMessage(*message), true
+}
+
 func (c *Conversation) AppendMessage(message Message) string {
 	if c == nil {
 		return ""

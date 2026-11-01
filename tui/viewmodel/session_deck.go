@@ -120,8 +120,12 @@ func sessionSettingsPanel(screen *sessionsettings.Screen) ui.PanelEntry {
 	}
 }
 
+// sessionDecisionPanel is an interactive dock, never a shell modal: the session
+// change applies only on its explicit answer, so an unanswered offer (goal
+// resume, plan implementation, YOLO) stays retained while every other IDE
+// surface, the composer included, remains usable.
 func sessionDecisionPanel(screen *decision.Screen, title string) ui.PanelEntry {
-	return ui.PanelEntry{ID: sessionDecisionPanelID, Title: title, Content: screen, Closable: false, Policy: ui.PanelBlocking, PreferredHeight: 12}
+	return ui.PanelEntry{ID: sessionDecisionPanelID, Title: title, Content: screen, Closable: false, Policy: ui.PanelInteractive, PreferredHeight: 12}
 }
 
 // openSessionDecision asks the active session one docked yes/no question
@@ -228,25 +232,25 @@ func (m *App) sessionDeckBlocking() bool {
 	return panel != nil && panel.Policy == ui.PanelBlocking
 }
 
-func (m *App) sessionDeckCapturesInput() bool {
-	return m.sessionDeckFocused() || m.sessionDeckModal()
-}
-
-// sessionDeckModal is the shell-interaction boundary, separate from whether
-// an agent is waiting for a decision. Agent prompts retain their answers and
-// block continuation/composer submission, but keys and pointers may deliberately
-// move to other IDE content. Safety decisions such as YOLO remain modal.
-func (m *App) sessionDeckModal() bool {
-	return m.sessionDeckBlocking() && !m.sessionDeckAllowsNavigation()
-}
-
-func (m *App) sessionDeckAllowsNavigation() bool {
-	if projection := m.activeSessionDeck(); projection != nil {
-		if panel := projection.deck.Active(); panel != nil {
-			return panel.BlockingGroup == "agent-prompts"
-		}
+// sessionDecisionPending reports an unanswered consequential decision (agent
+// prompt or session decision) in the active session. It is not modality: the
+// human keeps every surface. It gates only automation that could otherwise
+// act around the decision, such as self-control effects, a core restart, or a
+// remote shell receipt that must report the decision as pending.
+func (m *App) sessionDecisionPending() bool {
+	if m.sessionDeckBlocking() {
+		return true
 	}
-	return false
+	projection := m.activeSessionDeck()
+	return projection != nil && projection.decisionAgentID != "" && projection.deck.IsOpen()
+}
+
+// sessionDeckCapturesInput reports explicit deck focus. A docked panel is
+// never a shell modal: blocking agent prompts hold their owner's continuation
+// and composer submission, but keys and pointers may always move to other IDE
+// content. Only floating OverlayHost windows can be modal.
+func (m *App) sessionDeckCapturesInput() bool {
+	return m.sessionDeckFocused()
 }
 
 func (m *App) setSessionDeckFocused(focused bool) {

@@ -215,11 +215,15 @@ Rules:
 - `PanelDeck` is exclusively for session-owned docked content between messages and
   chat input: session settings, questions, tool confirmation, YOLO, and background
   job details. Those docks share the chat `ColorBg` — they are not popup cards.
-- Pending agent questions/confirmations are not shell-wide modals.
-  `sessionDeckModal` is the single shell shielding predicate; explicit deck focus
-  owns keys until deliberate navigation. Ordinary Host hit testing and capture
-  keep unrelated panels, editors, terminals and tab minimize usable. The owning
-  agent still waits, answers/review remain retained, and its composer cannot send.
+- A docked `PanelDeck` panel is never a shell-wide modal, whatever it holds:
+  agent questions/confirmations and session decisions (goal resume or replace,
+  plan implementation, YOLO) alike. Only floating `OverlayHost` windows can be
+  modal. Explicit deck focus (`sessionDeckCapturesInput`) owns keys until
+  deliberate navigation; ordinary Host hit testing and capture keep unrelated
+  panels, the bottom workspace dock, editors, terminals and tab minimize usable.
+  A blocking agent prompt still holds its agent and its composer Send; a session
+  decision changes nothing until it is explicitly answered and stays retained
+  while the user works elsewhere.
 - **Deck and tab-bar slots span the FULL content column** (`SidebarW..width`, no
   `PadLR` inset in their slot rects) so separator rules run edge to edge, same as
   the chat and terminal dock. The `PadLR` model lives inside the components:

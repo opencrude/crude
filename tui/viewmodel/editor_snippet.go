@@ -97,7 +97,7 @@ func (m *App) syncEditorSnippet() {
 	}
 	if m.EditorState.Editor != s.editor || !s.editor.IsOpen() || !s.editor.SnippetActive() ||
 		s.path != s.editor.FilePath() || s.generation != m.workspaceSwitchGen.Load() ||
-		!owns || m.termDockOwnsKeys() || m.sessionDeckCapturesInput() || m.sessionDeckModal() {
+		!owns || m.termDockOwnsKeys() || m.sessionDeckCapturesInput() {
 		m.closeEditorSnippet()
 	}
 }

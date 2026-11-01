@@ -249,7 +249,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 	if fault := r.ValidateAgainst(supplied, current); fault != nil {
 		return m.replyShellControl(msg, control.Result{State: control.Failed, Fault: fault})
 	}
-	if d.Effect != control.Read && (m.workspaceAttachPending || (r.CommandID != "shell.control" && (m.sessionDeckBlocking() || (m.windowManager != nil && m.windowManager.Focused() != nil)))) {
+	if d.Effect != control.Read && (m.workspaceAttachPending || (r.CommandID != "shell.control" && (m.sessionDecisionPending() || (m.windowManager != nil && m.windowManager.Focused() != nil)))) {
 		return m.failShellControl(msg, control.Denied, "a modal, floating owner or blocking decision owns input")
 	}
 	result := control.Result{State: control.Applied}
@@ -310,7 +310,9 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		} else if _, ordinaryQuestion := owner.body.(*question.Screen); ordinaryQuestion && res.Cmd == nil && actionCmd == nil {
 			// Editing an ordinary question is a local draft mutation, not a
 			// permission decision merely because its deck blocks input.
-		} else if m.DirtyPromptPath != "" || m.sessionDeckBlocking() {
+		} else if m.DirtyPromptPath != "" || m.sessionDeckBlocking() || owner.host != m.rootHost && m.sessionDecisionPending() {
+			// A docked session decision leaves the root surfaces usable, so
+			// only actions inside the deck or a floating owner are pending it.
 			result.State = control.PendingDecision
 		} else if res.Cmd != nil || actionCmd != nil {
 			result.State = control.Partial

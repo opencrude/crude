@@ -153,7 +153,7 @@ func (m *App) completionCurrent(s *completionState) bool {
 	if s == nil || m.completion != s || s.released || s.ctx.Err() != nil || m.ws != s.workspace ||
 		m.asyncIOStopped.Load() || !m.acceptsLSPDocument(s.generation, s.source.Path, s.editor, s.revision) ||
 		!s.editor.MatchesInsightSource(s.source) || currentCodeActionSelection(s.editor) != s.selection ||
-		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() || m.sessionDeckModal() ||
+		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() ||
 		m.sessionDeckCapturesInput() || m.termDockFocused || m.FocusStack != nil && m.FocusStack.Top() != s.focus {
 		return false
 	}

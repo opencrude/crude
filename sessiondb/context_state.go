@@ -415,22 +415,49 @@ func immutableMessagePayload(message provider.ChatMessage) ([]byte, error) {
 // recovery checkpoints conflict with the identities they are verified against.
 // Display content and reference labels stay owned by the transcript row.
 func HydrateMessageIdentities(db *sql.DB, sessionID string, messages []MessageWithMeta) error {
+	wanted := make(map[string]struct{}, len(messages))
+	for i := range messages {
+		if id := messages[i].Msg.InternalID; id != "" {
+			wanted[id] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
 	rows, err := db.Query(`SELECT internal_id,message_json FROM immutable_message_identities WHERE session_id=?`, sessionID)
 	if err != nil {
 		return fmt.Errorf("sessiondb: load message identities: %w", err)
 	}
 	defer rows.Close()
-	identities := make(map[string]provider.ChatMessage)
+	// Only identities of transcript rows are decoded; registry rows owned by
+	// other context lists are skipped before their payload is parsed.
+	type pending struct {
+		id  string
+		raw []byte
+	}
+	var found []pending
 	for rows.Next() {
 		var id string
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
 			return fmt.Errorf("sessiondb: load message identities scan: %w", err)
 		}
-		var identity immutableMessageIdentity
-		if err := json.Unmarshal(raw, &identity); err != nil {
-			return fmt.Errorf("sessiondb: decode message identity %q: %w", id, err)
+		if _, ok := wanted[id]; ok {
+			found = append(found, pending{id, raw})
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sessiondb: load message identities rows: %w", err)
+	}
+	decoded := make([]provider.ChatMessage, len(found))
+	failures := make([]error, len(found))
+	decodeParallel(len(found), func(i int) {
+		var identity immutableMessageIdentity
+		if err := json.Unmarshal(found[i].raw, &identity); err != nil {
+			failures[i] = fmt.Errorf("sessiondb: decode message identity %q: %w", found[i].id, err)
+			return
+		}
+		found[i].raw = nil
 		if !identity.NilToolCalls && identity.Message.ToolCalls == nil {
 			identity.Message.ToolCalls = []provider.ToolCall{}
 		}
@@ -440,17 +467,24 @@ func HydrateMessageIdentities(db *sql.DB, sessionID string, messages []MessageWi
 		if !identity.NilProviderItems && identity.Message.ProviderItems == nil {
 			identity.Message.ProviderItems = []provider.ProviderItem{}
 		}
-		identities[id] = identity.Message
+		decoded[i] = identity.Message
+	})
+	for _, err := range failures {
+		if err != nil {
+			return err
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("sessiondb: load message identities rows: %w", err)
+	byID := make(map[string]int, len(found))
+	for i, item := range found {
+		byID[item.id] = i
 	}
 	for i := range messages {
 		row := messages[i].Msg
-		identity, ok := identities[row.InternalID]
+		index, ok := byID[row.InternalID]
 		if row.InternalID == "" || !ok {
 			continue
 		}
+		identity := decoded[index]
 		identity.DisplayContent = row.DisplayContent
 		identity.ReferenceLabels = row.ReferenceLabels
 		messages[i].Msg = identity

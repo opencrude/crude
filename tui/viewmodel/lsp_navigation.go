@@ -140,7 +140,7 @@ func (m *App) navigationCurrent(s *navigationState) bool {
 	if s == nil || m.navigation != s || m.ws != s.workspace || m.asyncIOStopped.Load() ||
 		!m.acceptsLSPDocument(s.generation, s.path, s.editor, s.revision) ||
 		!s.editor.MatchesInsightSource(s.source) || currentCodeActionSelection(s.editor) != s.selection ||
-		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() || m.sessionDeckModal() {
+		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
 		return false
 	}
 	if m.termDockFocused || m.sessionDeckCapturesInput() || m.FocusStack != nil && m.FocusStack.Top() != s.focus {

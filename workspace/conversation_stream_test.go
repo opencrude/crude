@@ -275,3 +275,47 @@ func TestConversationRandomStructuralStream(t *testing.T) {
 		}
 	}
 }
+
+// A shell's replica journals what it installs, so its own readers (the
+// transcript projection) advance by exact deltas, never by complete resets,
+// even when one installed delta coalesces many core revisions.
+func TestConversationReplicaJournalFeedsExactLocalReaders(t *testing.T) {
+	random := rand.New(rand.NewPCG(3, 4))
+	c, replica, reader := NewConversation(), NewConversation(), NewConversation()
+	resets := 0
+	for i := 0; i < 2000; i++ {
+		switch random.IntN(6) {
+		case 0:
+			c.AppendMessage(Message{Role: MessageRoleUser, Content: "next"})
+		case 1:
+			c.AppendThinking("thought")
+		case 2:
+			c.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider"})
+		default:
+			c.EnsureAssistant()
+			c.AppendToken("token")
+		}
+		if random.IntN(5) != 0 {
+			continue
+		}
+		if err := replica.InstallDelta(c.ChangesSince(replica.Version())); err != nil {
+			t.Fatal(err)
+		}
+		if random.IntN(3) != 0 {
+			continue
+		}
+		delta := replica.ChangesSince(reader.Version())
+		if delta.Reset && reader.Version() != 0 {
+			resets++
+		}
+		if err := reader.InstallDelta(delta); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(reader.Messages(), c.Messages()) {
+			t.Fatalf("step %d: local reader of the replica diverged", i)
+		}
+	}
+	if resets != 0 {
+		t.Fatalf("local reader fell back to %d complete resets", resets)
+	}
+}

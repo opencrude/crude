@@ -174,8 +174,7 @@ func (m *App) syncSignatureHelp() {
 	if state.automatic {
 		ownsInput = ownsInput && !state.editor.HasSelection()
 	}
-	if !valid || line != state.line || col != state.col || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() ||
-		m.sessionDeckModal() || !ownsInput {
+	if !valid || line != state.line || col != state.col || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() || !ownsInput {
 		m.closeSignatureHelp()
 		return
 	}

@@ -37,10 +37,10 @@ subprocess rather than a process-name search.
   `async_io_test_helpers_test.go`, not production code. Editor Git blame and
   line-edit annotation (`AnnotateFile`) also run in a command, keyed by
   `editorGitGen` plus `workspaceSwitchGen`.
-- **Blocking PanelDecks shield pointer input as well as keys.**
-  `blockingDeckShieldsPointer` consumes coordinates outside the deck before
-  root-Host hit testing, cancels stale underlying captures, and permits only a
-  deck-owned drag to release outside its slot.
+- **PanelDecks never shield the shell.** Pointer input outside a deck uses
+  ordinary root-Host hit testing and capture; a deck-owned drag may release
+  outside its slot. Modal shielding belongs only to floating `OverlayHost`
+  windows.
 - **The header Git identity reconciles itself from watcher events.** The
   branch, changed-file count, and tracking on the header segment come from the
   Git panel snapshot, so that snapshot must not depend on the user opening

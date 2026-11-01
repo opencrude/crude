@@ -71,9 +71,28 @@ func (c *Conversation) InstallDelta(delta ConversationDelta) error {
 			c.messages[i] = c.byID[id]
 		}
 	}
+	previous := c.version
 	c.version = delta.Revision
-	c.changeJournal = nil
 	c.pendingChange = conversationChange{}
+	if delta.Reset {
+		c.changeJournal = nil
+		return nil
+	}
+	// The mirror journals what it installed, so local readers (the shell's
+	// transcript projection) consume exact changes instead of re-exporting
+	// the whole conversation for every core publication.
+	change := conversationChange{base: previous, structural: delta.Order != nil, removed: append([]string(nil), delta.Removed...)}
+	for _, message := range delta.Upserts {
+		change.ids = append(change.ids, message.InternalID)
+	}
+	for i, appended := range delta.Appends {
+		if i == 0 {
+			change.textID, change.textOffset = appended.InternalID, int(appended.Offset)
+		} else {
+			change.ids = append(change.ids, appended.InternalID)
+		}
+	}
+	c.recordChange(change)
 	return nil
 }
 

@@ -115,6 +115,23 @@ func (vl *itemList) SetItems(items []renderItem) {
 	vl.revision++
 }
 
+// ReplaceFrom keeps items[:keep] and replaces the rest. Identity bookkeeping
+// touches only the replaced tail.
+func (vl *itemList) ReplaceFrom(keep int, tail []renderItem) {
+	keep = clamp(keep, 0, len(vl.items))
+	for _, item := range vl.items[keep:] {
+		if index, ok := vl.byID[item.ID]; ok && index >= keep {
+			delete(vl.byID, item.ID)
+		}
+	}
+	vl.items = append(vl.items[:keep:keep], tail...)
+	for index := keep; index < len(vl.items); index++ {
+		vl.byID[vl.items[index].ID] = index
+	}
+	vl.indexDirty = true
+	vl.revision++
+}
+
 func (vl *itemList) Items() []renderItem {
 	return vl.items
 }

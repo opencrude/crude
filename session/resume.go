@@ -55,12 +55,8 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("resume: interrupt running compactions: %w", err)
 	}
 
-	msgs, msgTurns, err := sessiondb.LoadMessages(db)
-	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("resume: load messages: %w", err)
-	}
-
+	// One ordered read supplies messages, turns and display metadata. Dense
+	// sessions previously paid a second complete decode of every row here.
 	msgsWithMeta, err := sessiondb.LoadMessagesWithMeta(db)
 	if err != nil {
 		db.Close()
@@ -71,11 +67,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("resume: load message identities: %w", err)
 	}
 
+	var msgs []provider.ChatMessage
+	var msgTurns []int
 	maxTurn := 0
-	for _, t := range msgTurns {
-		if t > maxTurn {
-			maxTurn = t
-		}
+	for _, mm := range msgsWithMeta {
+		maxTurn = max(maxTurn, mm.Turn)
 	}
 
 	lg, err := logger.New(logger.Options{
@@ -177,13 +173,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if len(msgsWithMeta) > 0 {
 		cleanMsgs := make([]provider.ChatMessage, 0, len(msgsWithMeta))
 		cleanTurns := make([]int, 0, len(msgsWithMeta))
-		for i, mm := range msgsWithMeta {
+		for _, mm := range msgsWithMeta {
 			cleanMsgs = append(cleanMsgs, mm.Msg)
-			if i < len(msgTurns) {
-				cleanTurns = append(cleanTurns, msgTurns[i])
-			} else {
-				cleanTurns = append(cleanTurns, 0)
-			}
+			cleanTurns = append(cleanTurns, mm.Turn)
 			displayMetas = append(displayMetas, mm.Meta)
 			createdAts = append(createdAts, mm.CreatedAt)
 		}

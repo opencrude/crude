@@ -18,6 +18,7 @@ import (
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
+	ctypes "crude/types"
 	"crude/workspace"
 )
 
@@ -554,6 +555,12 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		m.chatReflowContentW, m.chatReflowInnerW = renderContentW, renderInnerW
 	}
 	activity := m.ws.AgentActivity(agentID)
+	if !activity.Active && m.inputAdmissionPending(agentID) {
+		// The submitted draft awaits the core's receipt. The chat status strip
+		// owns that state; the composer only dims the exact pending draft.
+		activity.Active = true
+		activity.Status.Phase, activity.Status.Detail = ctypes.AgentSending, ""
+	}
 	if node := m.ws.AgentMgr().Get(agentID); node != nil && m.thinkingPaneID(node.State) != "" {
 		activity.Thinking, activity.ThinkingID = "", ""
 	}

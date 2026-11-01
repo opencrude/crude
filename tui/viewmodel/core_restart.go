@@ -97,7 +97,7 @@ func (m *App) coreRestartAvailability() control.Availability {
 // saves/history, rather than assuming Modified is the complete I/O barrier.
 func (m *App) coreRestartBlocked() string {
 	if m.asyncIOStopped.Load() || m.workspaceAttachPending || m.workspaceSwitchIntent != nil ||
-		m.sessionDeckBlocking() || (m.windowManager != nil && m.windowManager.Focused() != nil) {
+		m.sessionDecisionPending() || (m.windowManager != nil && m.windowManager.Focused() != nil) {
 		return "a workspace transition, modal or blocking decision owns this shell"
 	}
 	if m.Input.HasPendingPastes() {

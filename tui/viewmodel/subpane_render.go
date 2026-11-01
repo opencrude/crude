@@ -303,11 +303,13 @@ func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversat
 		p.renderer.BindPaneScroll(p.scroll)
 		p.compactToolLines = nil
 	}
-	messages, version := chatMessagesFromConversation(conversation)
-	if p.source != conversation {
-		p.renderer.InvalidateSource()
+	if p.source != conversation || !syncConversationChanges(p.renderer, conversation) {
+		messages, version := chatMessagesFromConversation(conversation)
+		if p.source != conversation {
+			p.renderer.InvalidateSource()
+		}
+		p.renderer.SyncMessages(messages, version, conversation.SourceGeneration())
 	}
-	p.renderer.SyncMessages(messages, version, conversation.SourceGeneration())
 	p.source = conversation
 	if scroll {
 		p.renderer.ScrollToBottom()

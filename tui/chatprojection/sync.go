@@ -199,3 +199,130 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.SubPaneID == incoming.SubPaneID &&
 		current.PermTag == incoming.PermTag
 }
+
+// ApplyChanges installs an exact source delta: changed rows (complete
+// records), removed identities, and, when membership changed, the complete new
+// order. Work is proportional to the change plus a pointer-prefix comparison,
+// never to the bodies of unchanged rows. It returns false without mutating
+// anything when the delta cannot be applied exactly; the caller then performs
+// a complete SyncMessages.
+func (s *MessageSync) ApplyChanges(changed []types.ChatMessage, removed, order []string, sourceVersion, sourceGeneration uint64) (SyncResult, bool) {
+	if !s.sourceSet || sourceGeneration != s.sourceGeneration || sourceVersion <= s.sourceVersion {
+		return SyncResult{}, false
+	}
+	incoming := make(map[string]int, len(changed))
+	for i := range changed {
+		id := changed[i].InternalID
+		if id == "" {
+			return SyncResult{}, false
+		}
+		if _, duplicate := incoming[id]; duplicate {
+			return SyncResult{}, false
+		}
+		if existing := s.MsgByID[id]; existing == nil || existing.InternalID != id {
+			if order == nil {
+				return SyncResult{}, false // a new row without its position
+			}
+		}
+		incoming[id] = i
+	}
+	if len(removed) != 0 && order == nil {
+		return SyncResult{}, false
+	}
+	removedSet := make(map[string]bool, len(removed))
+	for _, id := range removed {
+		removedSet[id] = true
+	}
+	previousLen := len(s.Messages)
+	prefix := previousLen
+	if order != nil {
+		prefix = min(previousLen, len(order))
+		for i := range prefix {
+			if s.Messages[i].InternalID != order[i] {
+				prefix = i
+				break
+			}
+		}
+		seen := make(map[string]bool, len(order)-prefix)
+		for _, id := range order[prefix:] {
+			if seen[id] || removedSet[id] {
+				return SyncResult{}, false
+			}
+			seen[id] = true
+			if _, ok := incoming[id]; ok {
+				continue
+			}
+			if existing := s.MsgByID[id]; existing == nil || existing.InternalID != id {
+				return SyncResult{}, false
+			}
+		}
+	}
+
+	changedIDs := make([]string, 0, len(changed))
+	for i := range changed {
+		next := changed[i]
+		s.trackMessageID(next.InternalID)
+		message := s.MsgByID[next.InternalID]
+		if message == nil || message.InternalID != next.InternalID {
+			copy := next
+			message = &copy
+			s.MsgByID[message.InternalID] = message
+		} else if !sameMessageData(message, &next) {
+			oldToolID := message.ToolID
+			cursorLine := message.CursorLine
+			streamLines, streamLen := message.StreamCompletedLines, message.StreamCompletedLen
+			*message = next
+			message.CachedLines = nil
+			message.CursorLine = cursorLine
+			message.StreamCompletedLines, message.StreamCompletedLen = streamLines, streamLen
+			if strings.Contains(message.Content, "\n") {
+				message.StreamCompletedLines, message.StreamCompletedLen = nil, 0
+			}
+			if oldToolID != "" && oldToolID != message.ToolID && s.MsgByID[oldToolID] == message {
+				delete(s.MsgByID, oldToolID)
+			}
+		} else {
+			continue
+		}
+		if message.ToolID != "" {
+			s.MsgByID[message.ToolID] = message
+		}
+		changedIDs = append(changedIDs, message.InternalID)
+	}
+	for _, id := range removed {
+		message := s.MsgByID[id]
+		if message == nil || message.InternalID != id {
+			continue
+		}
+		delete(s.MsgByID, id)
+		if message.ToolID != "" && s.MsgByID[message.ToolID] == message {
+			delete(s.MsgByID, message.ToolID)
+		}
+	}
+	structureChanged := false
+	pureAppend := true
+	if order != nil {
+		members := make(map[string]bool, len(order)-prefix)
+		for _, id := range order[prefix:] {
+			members[id] = true
+		}
+		for _, message := range s.Messages[prefix:] {
+			if !members[message.InternalID] && s.MsgByID[message.InternalID] == message {
+				delete(s.MsgByID, message.InternalID)
+				if message.ToolID != "" && s.MsgByID[message.ToolID] == message {
+					delete(s.MsgByID, message.ToolID)
+				}
+			}
+		}
+		next := append(s.Messages[:prefix:prefix], make([]*types.ChatMessage, 0, len(order)-prefix)...)
+		for _, id := range order[prefix:] {
+			next = append(next, s.MsgByID[id])
+		}
+		structureChanged = prefix < previousLen || len(order) != previousLen
+		pureAppend = prefix == previousLen
+		s.Messages = next
+	}
+	s.sourceVersion = sourceVersion
+	s.BumpVersion()
+	return SyncResult{ChangedIDs: changedIDs, StructureChanged: structureChanged, PureAppend: pureAppend, PreviousLen: previousLen}, true
+}

@@ -101,6 +101,9 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	} else {
 		starts = starts[:len(rows)]
 	}
+	// Offsets are integer work; a retained item whose identity and index are
+	// unchanged keeps its boxed payload, so a height change in a dense
+	// transcript does not allocate per row.
 	global := 0
 	for i, row := range rows {
 		starts[i] = global
@@ -108,10 +111,10 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 		if h < 1 {
 			h = 1
 		}
-		items[i] = ui.VirtItem{
-			ID:      row.ID,
-			Height:  h,
-			Payload: i,
+		if index, ok := items[i].Payload.(int); ok && index == i && items[i].ID == row.ID {
+			items[i].Height = h
+		} else {
+			items[i] = ui.VirtItem{ID: row.ID, Height: h, Payload: i}
 		}
 		global += h
 	}

@@ -248,10 +248,15 @@ in the fixed activity strip, not a temporary standalone tool row. Terminal error
 and stopped/not-run outcomes remain visible even when no named child arrived.
 
 Group summaries and visible membership are derived on source/disclosure changes,
-not rescanned over a dense transcript on animation ticks. The batch projection
-cache is keyed by canonical source changes; geometry and theme remain renderer
-responsibilities. Upload progress cannot recreate a provider-wait row after
-output has begun.
+not rescanned over a dense transcript on animation ticks. A source change
+rederives items only from its earliest affected position (moved identity,
+changed row, or the first row of a recent-window round); settled history keeps
+its items and memoized grouping verdicts, so per-event cost is independent of
+session length. The fixed strip also reads "Sending" while this shell's
+submission awaits the core's receipt; the composer itself carries no status
+text. The batch projection cache is keyed by canonical source changes;
+geometry and theme remain renderer responsibilities. Upload progress cannot
+recreate a provider-wait row after output has begun.
 
 Stopping settles every pending tool display stage at the canonical conversation
 boundary. Already received success/error results remain those outcomes even if

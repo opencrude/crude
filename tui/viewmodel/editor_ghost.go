@@ -38,7 +38,7 @@ func (m *App) syncEditorGhost() {
 	}
 	owns := ed != nil && ed.IsOpen() && m.focusTarget() == FocusEditor &&
 		m.focusedPopup() == nil && !m.termDockOwnsKeys() &&
-		!m.sessionDeckCapturesInput() && !m.sessionDeckModal()
+		!m.sessionDeckCapturesInput()
 	if state := m.editorGhost; state != nil &&
 		(state.editor != ed || state.generation != m.workspaceSwitchGen.Load() || !owns) {
 		m.closeEditorGhost()

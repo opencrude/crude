@@ -33,7 +33,10 @@ const conversationJournalLimit = 256
 // Only identities and scalar offsets are retained: readers receive current
 // suffixes, not historical token bodies. This bounds retained evidence without
 // copying dense transcripts or retaining every intermediate streamed string.
+// Each entry covers (base, revision]; local mutations advance by one, while an
+// installed replica delta may cover a coalesced range of core revisions.
 type conversationChange struct {
+	base       uint64
 	revision   uint64
 	ids        []string
 	removed    []string
@@ -50,13 +53,18 @@ func (c *Conversation) commitChange(message *Message) {
 	if message != nil {
 		c.changed(message)
 	}
+	c.pendingChange.base = c.version
 	c.version++
+	c.recordChange(c.pendingChange)
+	c.pendingChange = conversationChange{}
+}
+
+func (c *Conversation) recordChange(change conversationChange) {
 	if c.changeJournal == nil {
 		c.changeJournal = make([]conversationChange, conversationJournalLimit)
 	}
-	c.pendingChange.revision = c.version
-	c.changeJournal[c.version%conversationJournalLimit] = c.pendingChange
-	c.pendingChange = conversationChange{}
+	change.revision = c.version
+	c.changeJournal[c.version%conversationJournalLimit] = change
 }
 
 func (c *Conversation) commitText(message *Message, offset int) {
@@ -75,14 +83,23 @@ func (c *Conversation) ChangesSince(revision uint64) ConversationDelta {
 		return delta
 	}
 	delta.Revision = c.version
-	reset := revision == 0 || revision > c.version || c.version-revision > conversationJournalLimit
-	if !reset {
-		for r := revision + 1; r <= c.version; r++ {
-			if c.changeJournal == nil || c.changeJournal[r%conversationJournalLimit].revision != r {
-				reset = true
-				break
-			}
+	// Walk the retained chain back to the reader's revision. A gap, an entry
+	// overwritten by a later one, or a reader inside a coalesced entry fails
+	// closed to a complete reset.
+	var chain []conversationChange
+	reset := revision == 0 || revision > c.version
+	for r := c.version; !reset && r > revision; {
+		if c.changeJournal == nil || len(chain) >= conversationJournalLimit {
+			reset = true
+			break
 		}
+		change := c.changeJournal[r%conversationJournalLimit]
+		if change.revision != r || change.base >= r || change.base < revision {
+			reset = true
+			break
+		}
+		chain = append(chain, change)
+		r = change.base
 	}
 	if reset {
 		delta.Reset = true
@@ -109,8 +126,8 @@ func (c *Conversation) ChangesSince(revision uint64) ConversationDelta {
 		records = append(records, changedRecord{id, offset, upsert})
 	}
 	structural := false
-	for r := revision + 1; r <= c.version; r++ {
-		change := c.changeJournal[r%conversationJournalLimit]
+	for index := len(chain) - 1; index >= 0; index-- {
+		change := chain[index]
 		structural = structural || change.structural
 		for _, id := range change.ids {
 			add(id, 0, true)
