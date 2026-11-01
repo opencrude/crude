@@ -10,8 +10,9 @@ import (
 
 type editorInlineLine struct {
 	*inlineProjection
-	clusters []string
-	widths   []int
+	clusters   []string
+	widths     []int
+	insertions []InlineInsertion
 }
 
 // The editor owns only a source-to-cell projection. The canonical coordinator
@@ -22,6 +23,7 @@ type editorInlayProjection struct {
 	revision uint64
 	lines    map[int]*editorInlineLine
 	maxWidth int
+	runs     int
 }
 
 // SetInlayHints atomically prepares one exact-source range. It changes no text,
@@ -78,13 +80,15 @@ func (e *Editor) SetInlayHints(set types.LSPInlaySet) error {
 			return fmt.Errorf("%w: combined inlay projection run bound exceeded", ErrInlinePlacement)
 		}
 		prepared := &editorInlineLine{inlineProjection: projection,
-			clusters: make([]string, len(projection.Runs)), widths: make([]int, len(projection.Runs))}
+			clusters: make([]string, len(projection.Runs)), widths: make([]int, len(projection.Runs)),
+			insertions: append([]InlineInsertion(nil), insertions...)}
 		for i, run := range projection.Runs {
 			prepared.clusters[i], prepared.widths[i] = run.Cluster, run.Width
 		}
 		next.lines[line] = prepared
 		next.maxWidth = max(next.maxWidth, projection.DisplayWidth)
 	}
+	next.runs = runs
 	visible := e.inlayCaretVisible()
 	e.CancelPointerCapture()
 	e.clearGoal()
@@ -120,22 +124,26 @@ func (e *Editor) currentInlays() *editorInlayProjection {
 	return p
 }
 
-func (e *Editor) inlayLine(line int) *editorInlineLine {
+func (e *Editor) inlineLine(line int) *editorInlineLine {
+	var base *editorInlineLine
 	if state := e.currentInlays(); state != nil {
-		return state.lines[line]
+		base = state.lines[line]
 	}
-	return nil
+	if ghost := e.currentGhost(); ghost != nil && ghost.caret.Line == line {
+		return e.ghostProjection(ghost, base)
+	}
+	return base
 }
 
 func (e *Editor) displayColumn(line, sourceCol int) int {
-	if p := e.inlayLine(line); p != nil {
+	if p := e.inlineLine(line); p != nil {
 		return p.sourceToDisplay(sourceCol)
 	}
 	return sourceCol
 }
 
 func (e *Editor) sourceColumn(line, displayCol int) int {
-	if p := e.inlayLine(line); p != nil {
+	if p := e.inlineLine(line); p != nil {
 		return p.displayHit(displayCol).SourceCol
 	}
 	return displayCol
@@ -147,9 +155,19 @@ func (e *Editor) InlayHintAt(x, y int) (int, bool) {
 	if x < e.gutterWidth() || x >= e.viewW-e.scrollbarColWidth() || y < 0 || y >= e.bodyHeight() {
 		return 0, false
 	}
-	if p := e.inlayLine(e.scrollY + y); p != nil {
+	if p := e.inlineLine(e.scrollY + y); p != nil {
 		hit := p.displayHit(e.scrollX + x - e.gutterWidth())
 		return hit.HintIndex, hit.HintIndex >= 0
 	}
 	return 0, false
+}
+
+func (e *Editor) inlineInsertionAt(x, y int) bool {
+	if x < e.gutterWidth() || x >= e.viewW-e.scrollbarColWidth() || y < 0 || y >= e.bodyHeight() {
+		return false
+	}
+	if p := e.inlineLine(e.scrollY + y); p != nil {
+		return p.insertionAt(e.scrollX + x - e.gutterWidth())
+	}
+	return false
 }

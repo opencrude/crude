@@ -58,6 +58,11 @@ func (e *Editor) documentVisualWidth() int {
 	if inlays := e.currentInlays(); inlays != nil {
 		width = max(width, inlays.maxWidth)
 	}
+	if ghost := e.currentGhost(); ghost != nil {
+		if projection := e.inlineLine(ghost.caret.Line); projection != nil {
+			width = max(width, projection.DisplayWidth)
+		}
+	}
 	return width
 }
 

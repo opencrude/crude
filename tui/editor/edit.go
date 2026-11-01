@@ -165,6 +165,7 @@ func (e *Editor) beginUndoGroup() {
 }
 
 func (e *Editor) startUndoGroup() {
+	e.beginGhostEdit()
 	e.undoGroupBefore = e.captureViewState()
 	e.undoGroupStart = e.changeIndex
 	e.beginDocumentEditGroup(fmt.Sprintf("editor-%x-%d", e.historyID, e.undoGroupID))
@@ -183,6 +184,7 @@ func (e *Editor) endUndoGroup() {
 	}
 	e.undoGroupDepth--
 	if e.undoGroupDepth == 0 {
+		e.finishGhostEdit()
 		after := e.captureViewState()
 		for i := e.undoGroupStart; i < e.changeIndex; i++ {
 			e.changes[i].Before = e.undoGroupBefore
@@ -223,6 +225,7 @@ func (e *Editor) restoreViewState(s editorViewState) {
 }
 
 func (e *Editor) undo() {
+	e.DismissGhostText()
 	e.CancelSnippet()
 	e.typingGroup = 0
 	if e.documentProjection != nil {
@@ -267,6 +270,7 @@ func (e *Editor) Undo() {
 }
 
 func (e *Editor) redo() {
+	e.DismissGhostText()
 	e.CancelSnippet()
 	e.typingGroup = 0
 	if e.documentProjection != nil {

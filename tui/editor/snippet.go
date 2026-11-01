@@ -24,13 +24,14 @@ func (e *Editor) SnippetActive() bool { return e.snippet != nil }
 // CancelSnippet discards only private interaction. Accepted bytes and the
 // canonical edit/history log are never undone or consumed.
 func (e *Editor) CancelSnippet() {
-	if e.snippet != nil && e.buf != nil {
-		delete(e.buf.snippetViews, e)
+	if e.snippet != nil && e.buf != nil && e.ghost == nil && e.ghostEdit == nil {
+		delete(e.buf.interactionViews, e)
 	}
 	e.snippet, e.snippetDirty = nil, false
 }
 
 func (e *Editor) installSnippet(state *snippetSession) {
+	e.DismissGhostText()
 	e.CancelSnippet()
 	if state == nil || e.snippetSequence == ^uint64(0) {
 		return
@@ -45,10 +46,10 @@ func (e *Editor) installSnippet(state *snippetSession) {
 		e.CancelSnippet()
 		return
 	}
-	if e.buf.snippetViews == nil {
-		e.buf.snippetViews = make(map[*Editor]struct{})
+	if e.buf.interactionViews == nil {
+		e.buf.interactionViews = make(map[*Editor]struct{})
 	}
-	e.buf.snippetViews[e] = struct{}{}
+	e.buf.interactionViews[e] = struct{}{}
 }
 
 func (e *Editor) snippetPosition(offset int) (Position, bool) {

@@ -7,6 +7,27 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Single-line prediction projection prerequisite (2026-11-01)
+
+Linux amd64, i7-10750H, `GOMAXPROCS=2`, two 200 ms repetitions of
+`BenchmarkEditorGhostWarmRender` on an 80x16 editor surface:
+
+| Source lines | Private candidate | Warm editor grid + hit lookup | Go bytes/op | Allocations/op |
+|---|---|---|---|---|
+| 20 | absent | 36.84-38.37 us | 308-311 | 51 |
+| 20 | offered | 38.55-39.06 us | 292-294 | 50 |
+| 20,000 | absent | 40.13-40.44 us | 5,338-5,658 | 140-145 |
+| 20,000 | offered | 40.91-41.78 us | 5,376-6,140 | 140-152 |
+
+The dense regression separately requires the source byte cache, width cache and
+combined inlay/ghost projection to retain their identities across 30 warm frames,
+without source exports, revision changes or width remeasurement. This measures
+local warm grid paint and hit testing only: not cold candidate preparation,
+mutation/ACK durability, provider latency, native terminal presentation or RSS.
+The candidate is supplied by a fixture; consent, inference scheduling and budget
+integration remain open. Existing allocation ceilings and frame budgets are
+unchanged.
+
 ## Read-only inlay projection (2026-10-31)
 
 Linux amd64, i7-10750H, `GOMAXPROCS=2`, two 200 ms repetitions of

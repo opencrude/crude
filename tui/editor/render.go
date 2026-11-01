@@ -100,7 +100,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 
 		lineIdx := e.scrollY + y
 		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
-		inline := e.inlayLine(lineIdx)
+		inline := e.inlineLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
 
 		ri := 0
@@ -182,12 +182,16 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				if inline != nil {
 					if ri < len(inline.Runs) && vCol < lineVisW {
 						run := inline.Runs[ri]
-						if run.HintIndex >= 0 {
+						if run.HintIndex >= 0 || run.Ghost {
 							// A label is not source, even when it contains a
 							// matching word, a diagnostic or a selected anchor.
 							// It uses the same complete-grapheme clipping as source.
 							if vCol == visCol {
-								e.paintGrapheme(buf, cx, bufY, sbX, run.Cluster, run.Width, infoColor, bgColor, cell.AttrItalic, blankCell)
+								fg, attr := infoColor, cell.AttrItalic
+								if run.Ghost {
+									fg, attr = e.tokens.Color(ui.ColorMuted), 0
+								}
+								e.paintGrapheme(buf, cx, bufY, sbX, run.Cluster, run.Width, fg, bgColor, attr, blankCell)
 							}
 							continue
 						}
@@ -452,7 +456,7 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 }
 
 func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]string, int, []int, []string) {
-	if inline := e.inlayLine(lineIdx); inline != nil {
+	if inline := e.inlineLine(lineIdx); inline != nil {
 		return inline.clusters, inline.DisplayWidth, inline.widths, e.lineColorMap(lineIdx)
 	}
 	runes, totalW, widths := e.lineGeomInfo(lineIdx)

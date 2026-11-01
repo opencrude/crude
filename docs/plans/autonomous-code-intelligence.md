@@ -149,10 +149,36 @@ reading position, with an independently failing original-behavior regression.
 Sequential 160x40/80x24 Linux native captures now pass all eleven observation
 phases, including the painted original message tail, native selection-first
 Escape, passive hover/wheel and independently joined provider cleanup. Reviewed
-pixels preserve the visible source anchor at both sizes. Consolidated repository
-gates and the exact commit/push receipt remain required before banking this
-checkpoint. These deterministic regressions do not close adaptive developer/device,
-complete-context, native-containment or broader semantic acceptance.
+pixels preserve the visible source anchor at both sizes. Source-frozen full
+ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax and site
+gates passed for checkpoint `07b7360d`; its exact 38-path commit was pushed and
+the remote ref verified. The durable local acceptance archive retains the source,
+original failures, gate logs and both native grids. These deterministic regressions
+do not close adaptive developer/device, complete-context, native-containment or
+broader semantic acceptance.
+
+Prediction prerequisites are now integrated but not an enabled Aeron feature.
+The single-line editor projection shares inlay geometry and preserves exact
+typed-through suffixes; native key routing, true owner departure, automatic
+completion exclusion and attachment-epoch retirement have independent negative
+regressions and focused ordinary/race evidence. A deterministic connected
+fixture covers literal sparse edits, private paint, both actual receipt/topic
+orders, peer convergence, source ABA, Undo/Redo and save/reopen; its direct
+epoch-rebind case also refuses older authority. Connected ordinary/race checks
+pass after correcting the fixture's attempted backward epoch. Sequential Linux
+160x40/80x24 native captures pass all ten observations: muted literal candidate,
+typed-through remainder, word/full acceptance, Undo/Redo, Escape dismissal and
+ordinary indentation. Reviewed pixels preserve the source at both sizes; the
+fixture supplies candidates internally, not through a prediction provider.
+The no-tools text and explicit FIM adapters retain original-wire usage
+presence and enforce one-attempt bounded streams. The sessionless durable budget
+ledger is library-only. The exact 37-path prerequisite freeze passed full
+ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax, site and
+Windows/amd64 plus Darwin/arm64 native-feature cross-build gates. Cross-builds
+are compilation evidence, not Windows/macOS runtime acceptance.
+Human-owned non-inheriting workspace consent, coordinator/provider
+wiring, qualified fact context, budget meter, multiline and next-edit acceptance
+remain open; no new source egress is enabled by these libraries.
 
 ## Problem
 

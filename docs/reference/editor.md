@@ -475,6 +475,48 @@ project-context guarantees. Dynamic registration, global refresh notifications,
 hint command/edit/location execution and broader IDE workflow acceptance are
 outside this slice.
 
+### Inline prediction projection (prerequisite)
+
+The editor can prepare one private, literal, insertion-only **single-line**
+candidate at an exact local buffer revision and byte caret. It uses the same
+source-to-cell projection as inlay hints, not another paint/hit/caret path.
+Inlays precede the caret; muted candidate text follows it. Candidate cells map
+back to their zero-length source anchor and never become selection, search,
+diagnostics, copy, canonical edits or savepoint bytes until explicitly accepted.
+
+**Tab** accepts the whole candidate, **Ctrl+Right** one complete-grapheme word
+segment (including its leading spaces), and **Escape** dismisses it before
+closing the source tab. With no candidate, ordinary Tab still indents. Exact
+typed-through source insertions retain only the remainder without another
+request; mismatches, auto-pair side effects, peers, history, selection and true
+caret/owner departure retire it. Terminal blur, a modal reader, another pane/tab,
+workspace switch, attachment-epoch replacement, buffer replacement and shutdown
+revoke private acceptance even when source bytes remain unchanged.
+Fresh and late automatic LSP completions cannot steal a retained candidate's
+keys; a fresh explicit completion invocation intentionally retires the candidate.
+
+Preparation rejects empty, invalid UTF-8, multiline, control/bidi-bearing or
+over-4-KiB candidates instead of trimming, escaping or repairing source code.
+Source lines and combined projection runs retain the existing inlay bounds.
+Warm painting reuses retained source and projection geometry.
+
+This is an internal editor prerequisite, **not an enabled prediction service**.
+No automatic provider request, privacy opt-in, budget meter, multiline candidate
+or next-edit behavior is supplied by this projection. Those require the retained
+coordinator and human-owned consent/accounting gates in the active plan.
+
+The separate `provider.CompleteTextOnce` and `CompleteFIMOnce` libraries preserve
+literal successful output and original-wire token-count presence. They make one
+POST without retries, redirects or adapter-internal fallback; caller/account
+timeouts apply beneath a 60-second hard ceiling. Event, total-wire and output
+bounds fail closed. An accepted HTTP response does not prove remote inference
+has stopped or that billing is complete. Only `UsageComplete` after a successful
+terminal stream can justify treating both reported counters as final.
+The `insight/predictionbudget` ledger reserves before an attempt, admits each
+ticket only once and retains unknown-usage charges across restart. It does not
+grant consent, send requests or create chat sessions, and is not yet wired into
+an editor coordinator or visible meter.
+
 ### Parameter information
 
 **Alt+I** (or Ctrl+Shift+Space when delivered by the terminal) and the editor's

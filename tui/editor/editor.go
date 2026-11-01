@@ -156,6 +156,8 @@ type Editor struct {
 	lineRunesCacheWidth int
 	lineGeomCache       map[int]*lineGeomCache
 	inlays              *editorInlayProjection
+	ghost               *editorGhost
+	ghostEdit           *ghostEdit
 
 	watcher      *fsnotify.Watcher
 	watchDir     string
@@ -368,6 +370,7 @@ func (e *Editor) ReplaceDocument(text string) {
 }
 
 func (e *Editor) ApplyFormatted(text string) {
+	e.DismissGhostText()
 	e.CancelSnippet()
 	if e.readOnly || e.Value() == text {
 		return
@@ -391,6 +394,7 @@ func (e *Editor) ApplyFormatted(text string) {
 }
 
 func (e *Editor) Close() {
+	e.DismissGhostText()
 	e.ClearInlayHints()
 	e.StopSyntax()
 	e.detachDocument()
@@ -414,6 +418,7 @@ func (e *Editor) Retarget(path string) error {
 	if err != nil {
 		return err
 	}
+	e.DismissGhostText()
 	e.CancelSnippet()
 	e.stopWatching()
 	e.filePath, e.title = abs, filepath.Base(abs)
@@ -480,6 +485,7 @@ func (e *Editor) invalidateEditorCaches() {
 // InvalidateWidthProfile clears all geometry derived from terminal cell widths.
 // Buffer contents, cursor position, undo state, and syntax data are preserved.
 func (e *Editor) InvalidateWidthProfile() {
+	e.DismissGhostText()
 	e.ClearInlayHints()
 	e.lineRunesCacheValid = false
 	e.lineRunesCacheLine = -1
@@ -803,6 +809,7 @@ func (e *Editor) Diagnostics() []LSPDiagnostic {
 // backwards single-line range is normalized. Setting a selection is
 // purely visual: it does not move the cursor.
 func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
+	e.DismissGhostText()
 	e.stopPointerSelection()
 	if startLine < 0 {
 		startLine = 0
@@ -979,7 +986,7 @@ func (e *Editor) HoverState() HoverState {
 
 // refreshMouseHover updates hover diagnostics for a screen-positioned mouse.
 func (e *Editor) refreshMouseHover(screenX, screenY int) {
-	if _, hint := e.InlayHintAt(screenX, screenY); hint {
+	if e.inlineInsertionAt(screenX, screenY) {
 		e.ClearHover()
 		return
 	}
@@ -1048,6 +1055,7 @@ func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
 // reference", "find symbol") so the cursor lands precisely where the server
 // pointed.
 func (e *Editor) SetCursorPosition(line, col int) {
+	e.DismissGhostText()
 	e.BreakUndoGroup()
 	e.clearGoal()
 	lc := e.buf.LineCount()

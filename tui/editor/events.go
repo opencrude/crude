@@ -27,9 +27,14 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	defer e.reconcileSnippetSelection()
 
 	switch msg := msg.(type) {
+	case tea.BlurMsg:
+		e.DismissGhostText()
 	case PointerScrollMsg:
 		return e.handlePointerScroll(msg)
 	case tea.KeyPressMsg:
+		if e.handleGhostKey(msg) {
+			return nil
+		}
 		e.stopPointerSelection()
 		e.landing = nil
 		if !e.readOnly && (msg.Text == "(" || msg.Text == ",") && msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 {
@@ -107,6 +112,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			return e.movePointerSelection(msg.X, msg.Y)
 		}
 	case tea.MouseClickMsg:
+		defer e.DismissGhostText()
 		e.typingGroup = 0
 		e.landing = nil
 		if msg.Button == tea.MouseLeft {
@@ -321,7 +327,7 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 		start, end = e.pointerUnitRange(kind, pos)
 	} else if msg.Mod.Contains(tea.ModShift) {
 		end = start // Extending a caret/selection is not a new source-unit hit.
-	} else if _, hint := e.InlayHintAt(mouse.X, mouse.Y); !hint && pos.Col < e.lineVisualWidth(pos.Line) {
+	} else if !e.inlineInsertionAt(mouse.X, mouse.Y) && pos.Col < e.lineVisualWidth(pos.Line) {
 		// A label/padding cell is a zero-length source anchor. Backward
 		// dragging from it must not include the following source grapheme.
 		end = e.buf.nextPosition(pos)
