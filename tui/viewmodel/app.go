@@ -346,6 +346,7 @@ type App struct {
 	inlayViewSequence     uint64
 	inlayInspector        *inlayInspectorState
 	editorSnippet         *editorSnippetState
+	editorGhost           *editorGhostView
 	lspDiagnostics        shellport.LSPDiagnosticConsumer
 	lspFacts              map[string]roottypes.InsightDiagnostics
 	lspTreeProjection     map[string]diagnosticTreeProjection

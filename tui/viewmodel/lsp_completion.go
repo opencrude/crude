@@ -102,6 +102,9 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 
 func (m *App) requestCompletion(automatic bool) tea.Cmd {
 	m.closeCompletionPopup()
+	if !automatic {
+		m.closeEditorGhost()
+	}
 	ed := m.EditorState.Editor
 	port, connected := m.ws.(shellport.Completions)
 	if ed == nil || !ed.IsOpen() || !connected || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
@@ -112,7 +115,7 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 	}
 	enabled, feature := m.ws.LSPMgr().CompletionsState()
 	source, current := ed.CurrentInsightSource()
-	if !enabled || !current || source.Kind != "canonical" || automatic && ed.SnippetActive() {
+	if !enabled || !current || source.Kind != "canonical" || automatic && editorRetainsCompletionKeys(ed) {
 		if !automatic {
 			m.Feedback.NotifyInfo("Completion waits for acknowledged source text and enabled language intelligence")
 		}
@@ -155,7 +158,7 @@ func (m *App) completionCurrent(s *completionState) bool {
 		return false
 	}
 	enabled, feature := m.ws.LSPMgr().CompletionsState()
-	if !enabled || feature != s.feature || s.automatic && (!m.ws.LSPMgr().Settings().AutoComplete || s.editor.SnippetActive()) {
+	if !enabled || feature != s.feature || s.automatic && (!m.ws.LSPMgr().Settings().AutoComplete || editorRetainsCompletionKeys(s.editor)) {
 		return false
 	}
 	line, col := s.editor.LSPCursorPosition()

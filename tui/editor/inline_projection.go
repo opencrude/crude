@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"crude/tui/rendering"
@@ -46,6 +47,7 @@ type inlineRun struct {
 	Cluster                                     string
 	HintIndex                                   int
 	Padding                                     bool
+	Ghost                                       bool
 }
 
 type inlineHit struct {
@@ -67,27 +69,68 @@ type inlineProjection struct {
 	boundaries                []inlineBoundary
 }
 
+func validGhostText(text string) bool {
+	if len(text) == 0 || len(text) > inlineMaxLabel || !utf8.ValidString(text) {
+		return false
+	}
+	for _, r := range text {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' ||
+			r == '\u061c' || r == '\u200e' || r == '\u200f' ||
+			r >= '\u202a' && r <= '\u202e' || r >= '\u2066' && r <= '\u2069' {
+			return false
+		}
+	}
+	return true
+}
+
 func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlineProjection, error) {
+	return buildInlineProjectionWithGhost(raw, insertions, nil)
+}
+
+// Both display-only kinds share source segmentation, paint runs and hit geometry.
+// Hints have after affinity; a candidate is last at its anchor, before the caret's
+// source glyph, and gives the caret before affinity for its entire literal text.
+func buildInlineProjectionWithGhost(raw string, insertions []InlineInsertion, ghost *InlineInsertion) (*inlineProjection, error) {
 	if len(raw) > inlineMaxSource || !utf8.ValidString(raw) || strings.ContainsAny(raw, "\r\n") {
 		return nil, errors.New("inline source must be a UTF-8 line of at most 2 MiB")
 	}
-	if len(insertions) > inlineMaxInsertions {
+	count := len(insertions)
+	if ghost != nil {
+		count++
+	}
+	if count > inlineMaxInsertions {
 		return nil, errors.New("too many inline insertions")
+	}
+	type insertion struct {
+		InlineInsertion
+		ghost bool
+	}
+	ordered := make([]insertion, 0, count)
+	for _, in := range insertions {
+		ordered = append(ordered, insertion{InlineInsertion: in})
+	}
+	if ghost != nil {
+		if !validGhostText(ghost.Label) || ghost.PaddingLeft || ghost.PaddingRight {
+			return nil, errors.New("prediction must be bounded literal single-line text")
+		}
+		ordered = append(ordered, insertion{InlineInsertion: *ghost, ghost: true})
 	}
 	labelBytes := 0
 	ids := make(map[int]struct{}, len(insertions))
-	for _, in := range insertions {
+	for _, in := range ordered {
 		if in.ByteOffset < 0 || in.ByteOffset > len(raw) ||
 			(in.ByteOffset < len(raw) && !utf8.RuneStart(raw[in.ByteOffset])) {
 			return nil, fmt.Errorf("inline index %d has invalid source byte %d", in.Index, in.ByteOffset)
 		}
-		if in.Index < 0 {
+		if in.Index < 0 && !in.ghost {
 			return nil, errors.New("inline index must be nonnegative")
 		}
-		if _, exists := ids[in.Index]; exists {
-			return nil, fmt.Errorf("duplicate inline index %d", in.Index)
+		if !in.ghost {
+			if _, exists := ids[in.Index]; exists {
+				return nil, fmt.Errorf("duplicate inline index %d", in.Index)
+			}
+			ids[in.Index] = struct{}{}
 		}
-		ids[in.Index] = struct{}{}
 		if len(in.Label) > inlineMaxLabel || !utf8.ValidString(in.Label) {
 			return nil, errors.New("inline label must be UTF-8 of at most 4 KiB")
 		}
@@ -96,8 +139,12 @@ func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlinePro
 			return nil, errors.New("inline labels exceed 64 KiB")
 		}
 	}
-	ordered := append([]InlineInsertion(nil), insertions...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].ByteOffset < ordered[j].ByteOffset })
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].ByteOffset == ordered[j].ByteOffset {
+			return !ordered[i].ghost && ordered[j].ghost
+		}
+		return ordered[i].ByteOffset < ordered[j].ByteOffset
+	})
 	p := &inlineProjection{sourceBytes: len(raw)}
 	// Each source byte can produce at most DefaultTabWidth space runs. An
 	// escaped label byte produces at most six ASCII runs (\uXXXX), plus padding.
@@ -116,9 +163,13 @@ func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlinePro
 	}
 	next := 0
 	for off, col := 0, 0; ; {
+		caret := -1
 		for next < len(ordered) && ordered[next].ByteOffset == off {
 			in := ordered[next]
-			run := inlineRun{SourceByte: off, SourceEnd: off, SourceCol: col, AnchorCol: col, HintIndex: in.Index}
+			if in.ghost {
+				caret = p.DisplayWidth
+			}
+			run := inlineRun{SourceByte: off, SourceEnd: off, SourceCol: col, AnchorCol: col, HintIndex: in.Index, Ghost: in.ghost}
 			if in.PaddingLeft {
 				run.Cluster, run.Width, run.Padding = " ", 1, true
 				if err := appendRun(run); err != nil {
@@ -126,6 +177,9 @@ func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlinePro
 				}
 			}
 			label := safeInlineLabel(in.Label)
+			if in.ghost {
+				label = in.Label // no escaping, stripping or normalization of code
+			}
 			for len(label) > 0 {
 				cluster, width := rendering.FirstGrapheme(label)
 				if len(cluster) == 0 || width <= 0 {
@@ -145,8 +199,10 @@ func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlinePro
 			}
 			next++
 		}
-		// The caret has AFTER affinity for the entire stable same-byte group.
-		p.boundaries = append(p.boundaries, inlineBoundary{col, p.DisplayWidth})
+		if caret < 0 {
+			caret = p.DisplayWidth
+		}
+		p.boundaries = append(p.boundaries, inlineBoundary{col, caret})
 		if off == len(raw) {
 			p.SourceWidth = col
 			break
@@ -179,6 +235,14 @@ func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlinePro
 		col += width
 	}
 	return p, nil
+}
+
+func (p *inlineProjection) insertionAt(displayCell int) bool {
+	if displayCell < 0 || displayCell >= p.DisplayWidth {
+		return false
+	}
+	i := sort.Search(len(p.Runs), func(i int) bool { return p.Runs[i].DisplayStart+p.Runs[i].Width > displayCell })
+	return p.Runs[i].HintIndex >= 0 || p.Runs[i].Ghost
 }
 
 // sourceToDisplay floors an interior source column to its full unit's caret.

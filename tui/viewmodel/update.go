@@ -52,6 +52,7 @@ import (
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, blurred := msg.(tea.BlurMsg); blurred {
+		m.closeEditorGhost()
 		m.closeEditorSnippet()
 		m.closeSignatureHelp()
 		m.closeCompletionPopup()
@@ -61,6 +62,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, pasted := msg.(tea.PasteMsg); pasted && m.completion != nil {
 		m.closeCompletionPopup()
 	}
+	m.syncEditorGhost()
 	m.syncEditorSnippet()
 	defer m.invalidateMessageRegions(msg)
 	switch msg.(type) {
@@ -89,6 +91,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncNavigation()
 	command = tea.Batch(command, m.syncCompletion())
 	command = tea.Batch(command, m.syncInlayHints())
+	m.syncEditorGhost()
 	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {

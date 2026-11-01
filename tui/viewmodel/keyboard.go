@@ -354,6 +354,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// bindings but retained as a fallback if the registry is absent.
 	if m.actionRegistry != nil {
 		if match := m.actionRegistry.MatchContext("editor", msg); match != nil {
+			m.closeEditorGhost()
 			switch match.ID {
 			case "file.save":
 				return m, m.requestActiveEditorSave(workspace.DocumentSaveManual)
@@ -404,6 +405,10 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.closeEditorSnippet()
 			m.EditorState.Editor.CancelSnippet()
 			m.EditorState.Editor.ClearSelection()
+			return m, nil
+		}
+		if m.EditorState.Editor.DismissGhostText() {
+			m.editorGhost = nil
 			return m, nil
 		}
 		// A selection is transient editor UI: drag selections persist for

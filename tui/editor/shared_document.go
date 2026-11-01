@@ -152,6 +152,7 @@ type DocumentState struct {
 }
 
 func (e *Editor) detachDocument() {
+	e.DismissGhostText()
 	e.CancelSnippet()
 	e.diagMu.Lock()
 	e.diagnosticFacts = types.InsightDiagnostics{}
@@ -568,6 +569,9 @@ func (p *DocumentProjection) validateOwner(owner document.Owner) error {
 func (e *Editor) BindDocumentOwner(owner document.Owner) error {
 	if err := e.documentProjection.validateOwner(owner); err != nil {
 		return err
+	}
+	if e.documentProjection.owner != owner {
+		e.DismissGhostText()
 	}
 	if previous := e.documentProjection.owner; previous.ClientID != "" && previous != owner {
 		e.CancelSnippet()

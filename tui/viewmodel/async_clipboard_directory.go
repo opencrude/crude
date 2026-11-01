@@ -790,6 +790,7 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	m.closeEditorGhost()
 	m.closeCompletionPopup()
 	m.closeEditorSnippet()
 	m.closeCodeActions()

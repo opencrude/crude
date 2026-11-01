@@ -39,8 +39,8 @@ type PieceTable struct {
 	mutationObserver func(document.Edit)
 	// One dispatcher notifies passive private views after the canonical log.
 	// Listeners never mutate recursively or replace mutationObserver.
-	editOwner    *Editor
-	snippetViews map[*Editor]struct{}
+	editOwner        *Editor
+	interactionViews map[*Editor]struct{}
 }
 
 type bufferLineChange struct {
@@ -120,8 +120,9 @@ func (pt *PieceTable) observeMutation(edit document.Edit) {
 	if pt.mutationObserver != nil {
 		pt.mutationObserver(edit)
 	}
-	for view := range pt.snippetViews {
+	for view := range pt.interactionViews {
 		view.observeSnippetMutation(edit, pt.editOwner)
+		view.observeGhostMutation(edit, pt.editOwner)
 	}
 }
 
