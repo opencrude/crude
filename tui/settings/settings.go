@@ -1259,6 +1259,7 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "The account this agent connects through."),
 		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Models offered by this account. Enter fetches the list."),
 		thinkingSegments(cfg.ThinkingEffort),
+		serviceTierSegments(cfg.ServiceTier),
 	}
 	fields = append(fields, m.capabilityFields(cfg)...)
 	compactionField := optionalNumberField(fieldContextCompaction, "Compact context at", cfg.ContextCompactionPercent, "% full",
@@ -1267,8 +1268,7 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 	retentionField := optionalNumberField(fieldContextRetention, "Keep older input", cfg.ContextRetentionTokens, "tokens",
 		"Blank is Auto: older requests kept up to the checkpoint's size.",
 		types.MinContextRetentionTokens, types.MaxContextRetentionTokens)
-	fields = append(fields, serviceTierSegments(cfg.ServiceTier),
-		ui.SeparatorFieldState("context-management", "Context management"),
+	fields = append(fields, ui.SeparatorFieldState("context-management", "Context management"),
 		compactionField,
 		retentionField,
 	)
@@ -1522,6 +1522,7 @@ func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, m.connectionOptions(false), "Explicit reviewer account; never inherits Main Agent."),
 		ui.ModelFieldState(fieldModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
 			"Explicit reviewer model; never inherits Main Agent."),
+		serviceTierSegments(auto.ServiceTier),
 		purpose, instructions,
 	}
 	fields = append(fields, m.autoReviewPolicyFields(auto)...)
@@ -1600,6 +1601,7 @@ func autoPermissionFromForm(current types.AutoPermissionSettings, form *ui.FormM
 	auto.DenyMode = value(fieldAutoPermDenyMode, auto.DenyMode)
 	auto.UnresolvedMode = value(fieldAutoPermUnresolved, auto.UnresolvedMode)
 	auto.ThinkingEffort = value(fieldAutoPermThinking, auto.ThinkingEffort)
+	auto.ServiceTier = value(fieldServiceTier, auto.ServiceTier)
 	auto.ResponseFormat = value(fieldAutoPermFormat, auto.ResponseFormat)
 	auto.TimeoutSeconds = parseOpt(value(fieldAutoPermTimeout, strconv.Itoa(auto.TimeoutSeconds)), auto.TimeoutSeconds)
 	auto.MaxOutputTokens = parseOpt(value(fieldAutoPermOutputTokens, strconv.Itoa(auto.MaxOutputTokens)), auto.MaxOutputTokens)

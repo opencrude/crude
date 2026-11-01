@@ -223,6 +223,9 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 		if cat.AccountID != "" {
 			resolved.AccountID = cat.AccountID
 		}
+		if cat.ServiceTier != "" {
+			resolved.ServiceTier = cat.ServiceTier
+		}
 		resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
 		c.resolveCategoryDefaults(&resolved)
 		return resolved
@@ -238,7 +241,14 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error) {
 	main := prof.Categories[CategoryDefault]
 	if main.Inherit == InheritWorkspace && c.workspaceMain != nil {
+		override := main
 		main = *c.workspaceMain
+		if override.AccountID != "" {
+			main.AccountID = override.AccountID
+		}
+		if override.ServiceTier != "" {
+			main.ServiceTier = override.ServiceTier
+		}
 	}
 	id := c.SelectedAgent
 	role := strings.TrimPrefix(id, "profile/")
@@ -264,10 +274,19 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 	if selected.Enabled != nil && !*selected.Enabled {
 		return CategoryConfig{}, fmt.Errorf("selected agent role %q is disabled", role)
 	}
+	roleConfig := selected
 	if selected.Inherit == InheritMain {
 		selected = main
 	} else if selected.Inherit == InheritWorkspace && c.workspaceMain != nil {
 		selected = *c.workspaceMain
+	}
+	if roleConfig.Inherit == InheritMain || (roleConfig.Inherit == InheritWorkspace && c.workspaceMain != nil) {
+		if roleConfig.AccountID != "" {
+			selected.AccountID = roleConfig.AccountID
+		}
+		if roleConfig.ServiceTier != "" {
+			selected.ServiceTier = roleConfig.ServiceTier
+		}
 	}
 	if selected.AccountID == "" {
 		selected.AccountID = main.AccountID
@@ -293,6 +312,9 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		}
 		if named.ThinkingEffort != "" {
 			selected.ThinkingEffort = named.ThinkingEffort
+		}
+		if named.ServiceTier != "" {
+			selected.ServiceTier = named.ServiceTier
 		}
 		if named.ModelContextWindow > 0 {
 			selected.ModelContextWindow = named.ModelContextWindow
@@ -381,6 +403,9 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 			if cat.AccountID != "" {
 				resolved.AccountID = cat.AccountID
 			}
+			if cat.ServiceTier != "" {
+				resolved.ServiceTier = cat.ServiceTier
+			}
 			c.resolveCategoryDefaults(&resolved)
 			resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
 			return resolved
@@ -388,6 +413,9 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 			main := c.GetActiveDefaultCategory()
 			if cat.AccountID != "" {
 				main.AccountID = cat.AccountID
+			}
+			if cat.ServiceTier != "" {
+				main.ServiceTier = cat.ServiceTier
 			}
 			main = mergeCategoryConfig(main, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
 			return main
@@ -437,6 +465,9 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 			if cat.AccountID != "" {
 				resolved.AccountID = cat.AccountID
 			}
+			if cat.ServiceTier != "" {
+				resolved.ServiceTier = cat.ServiceTier
+			}
 			c.resolveCategoryDefaults(&resolved)
 			return finish(resolved)
 		case cat.Inherit == InheritMain:
@@ -444,18 +475,29 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 			if cat.AccountID != "" {
 				main.AccountID = cat.AccountID
 			}
+			if cat.ServiceTier != "" {
+				main.ServiceTier = cat.ServiceTier
+			}
 			return finish(main)
 		}
-		if cat.AccountID == "" {
+		if cat.AccountID == "" || cat.Model == "" || cat.ThinkingEffort == "" {
 			main := c.GetActiveDefaultCategory()
-			cat.AccountID = main.AccountID
+			if cat.AccountID == "" {
+				cat.AccountID = main.AccountID
+			}
+			if cat.Model == "" {
+				cat.Model = main.Model
+			}
+			if cat.ThinkingEffort == "" {
+				cat.ThinkingEffort = main.ThinkingEffort
+			}
 		}
 		c.resolveCategoryDefaults(&cat)
 		return finish(cat)
 	}
 	cat := memory
 	main := c.GetActiveDefaultCategory()
-	if cat.AccountID == "" && cat.Model == "" && cat.ThinkingEffort == "" && cat.ModelMaxOutput == 0 && cat.ModelContextWindow == 0 && cat.ModelTemperature == nil && cat.ModelTopP == nil && cat.ModelModalities == nil {
+	if cat.AccountID == "" && cat.Model == "" && cat.ThinkingEffort == "" && cat.ServiceTier == "" && cat.ModelMaxOutput == 0 && cat.ModelContextWindow == 0 && cat.ModelTemperature == nil && cat.ModelTopP == nil && cat.ModelModalities == nil {
 		main.Enabled = cloneBoolPtr(cat.Enabled)
 		main.Instructions = cat.Instructions
 		return main
@@ -693,9 +735,10 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 		return
 	}
 	cfg.Agents.ExecutionHygiene = ttypes.CloneExecutionHygiene(agents.ExecutionHygiene)
-	if agents.AgentProfiles != nil {
-		cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
-	}
+	// The catalog is a complete workspace projection, including an empty map
+	// after the last named agent is removed. Retaining the old map would make
+	// already-running sessions keep showing deleted profiles.
+	cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
 	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
 		agents.MaxConcurrent == 0 {
 		return

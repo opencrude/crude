@@ -206,7 +206,21 @@ func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 		if old.AccountID == changed.AccountID && old.Model == changed.Model {
 			continue
 		}
-		if _, err := newCfg.providerForCategory(newCfg.GetCategoryConfig(role)); err != nil {
+		category := newCfg.GetCategoryConfig(role)
+		if name, isProfile := strings.CutPrefix(role, "profile/"); isProfile {
+			named, exists := newCfg.Agents.AgentProfiles[name]
+			if !exists {
+				return fmt.Errorf("agent profile %q is unavailable", name)
+			}
+			category = newCfg.GetCategoryConfig(named.Category)
+			if named.AccountID != "" {
+				category.AccountID = named.AccountID
+			}
+			if named.Model != "" {
+				category.Model = named.Model
+			}
+		}
+		if _, err := newCfg.providerForCategory(category); err != nil {
 			return fmt.Errorf("%s connection: %w", role, err)
 		}
 	}
@@ -303,6 +317,41 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		if strings.HasPrefix(category, "root/") {
 			continue
 		}
+		if name, isProfile := strings.CutPrefix(category, "profile/"); isProfile {
+			named, exists := cfg.Agents.AgentProfiles[name]
+			if !exists {
+				continue // Preserve the session pin if its workspace profile is unavailable.
+			}
+			if override.AccountID != "" {
+				named.AccountID = override.AccountID
+			}
+			if override.Model != "" {
+				named.Model = override.Model
+			}
+			if override.ThinkingEffort != "" {
+				named.ThinkingEffort = override.ThinkingEffort
+			}
+			if override.ServiceTier != "" {
+				named.ServiceTier = override.ServiceTier
+			}
+			if override.ContextCompactionPercent != nil {
+				named.ContextCompactionPercent = cloneIntPtr(override.ContextCompactionPercent)
+			}
+			if override.ContextRetentionTokens != nil {
+				named.ContextRetentionTokens = cloneIntPtr(override.ContextRetentionTokens)
+			}
+			if override.AllowedTools != nil {
+				named.AllowedTools = slices.Clone(override.AllowedTools)
+			}
+			if override.DeniedTools != nil {
+				named.DeniedTools = slices.Clone(override.DeniedTools)
+			}
+			if override.SkillModes != nil {
+				named.SkillModes = maps.Clone(override.SkillModes)
+			}
+			cfg.Agents.AgentProfiles[name] = named
+			continue
+		}
 		current := profile.Categories[category]
 		if category == CategoryMemory {
 			current = catSettingsToConfig(base.Memory.MemoryCategory)
@@ -314,7 +363,7 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 			if override.AccountID != "" {
 				pin = override.AccountID
 			}
-			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, AccountID: pin, AllowedTools: slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes)}
+			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, AccountID: pin, ServiceTier: override.ServiceTier, AllowedTools: slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes)}
 			continue
 		}
 		selectionChanged := override.AccountID != "" && override.AccountID != current.AccountID || override.Model != "" && override.Model != current.Model

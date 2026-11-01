@@ -10,9 +10,29 @@ import (
 	"crude/workspace"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestAgentSpeedSchemaDoesNotConstrainAccountProtocolTiers(t *testing.T) {
+	for _, path := range []string{
+		"agents.Categories.default.service_tier",
+		"agents.agent_profiles.reviewer.service_tier",
+		"overrides.profile/reviewer.service_tier",
+		"memory.memory_category.service_tier",
+		"safety.auto_permission.service_tier",
+	} {
+		schema := controlFieldSchema(reflect.TypeOf(""), path)
+		if got, ok := schema["enum"].([]string); !ok || !strings.Contains(strings.Join(got, ","), "fast") {
+			t.Fatalf("%s lacks agent speed choices: %#v", path, schema)
+		}
+	}
+	schema := controlFieldSchema(reflect.TypeOf(""), "accounts.example.connection.protocol.service_tier")
+	if _, constrained := schema["enum"]; constrained {
+		t.Fatalf("role speed choices wrongly constrain account protocol tiers: %#v", schema)
+	}
+}
 
 func TestControlSessionExactRoleModelPersists(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
@@ -43,6 +63,61 @@ func TestControlSessionExactRoleModelPersists(t *testing.T) {
 	run, _, _ = a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "test", Epoch: 1})
 	if got := run(context.Background()); got.Fault != nil {
 		t.Fatal("repeated explicit session set rejected", got.Fault)
+	}
+}
+
+func TestControlSessionNamedAgentSpeedSetAndReset(t *testing.T) {
+	setCoreTestHome(t, t.TempDir())
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	t.Cleanup(ws.Close)
+	cfg := &session.Config{
+		Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", APIKey: "secret", Connection: provider.Template{Name: "test", AuthType: provider.AuthBearer, APIStandard: "openai", ProviderURL: "https://example.com"}}},
+		Agents: session.AgentsConfig{
+			ActiveProfile: "default",
+			Profiles: map[string]session.ProfileConfig{"default": {Categories: map[string]session.CategoryConfig{
+				"default": {AccountID: "one", Model: "main"}, "researcher": {AccountID: "one", Model: "role"},
+			}}},
+			AgentProfiles: map[string]types.AgentProfileSettings{"reviewer": {Category: "researcher", Model: "review", ServiceTier: "standard"}},
+		},
+	}
+	owner, err := ws.CreateSession(cfg, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := ws.BackendSession(owner.SessionID)
+	a := &actor{ws: ws}
+	call := func(command, tier string) control.Result {
+		t.Helper()
+		payload := map[string]any{"scope": "session", "path": "overrides.profile/reviewer.service_tier"}
+		if command == "settings.set" {
+			payload["value"] = tier
+		}
+		raw, _ := json.Marshal(payload)
+		in := control.Request{ID: command + tier, CommandID: command, Target: control.Target{SessionID: owner.SessionID}, Input: raw}
+		run, apply, _ := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "test", Epoch: 1})
+		out := run(context.Background())
+		if out.Fault == nil {
+			apply(out)
+		}
+		return out
+	}
+	if out := call("settings.set", "fast"); out.Fault != nil {
+		t.Fatal(out.Fault)
+	}
+	if got := backend.SettingsSnapshots(); got.Overrides["profile/reviewer"].ServiceTier != "fast" ||
+		got.Effective.Agents.AgentProfiles["reviewer"].ServiceTier != "fast" ||
+		got.Effective.Agents.Categories["researcher"].ServiceTier != "" {
+		t.Fatalf("named profile was not isolated: %+v", got)
+	}
+	if out := call("settings.set", "invalid"); out.Fault == nil {
+		t.Fatal("invalid agent tier was accepted")
+	}
+	if out := call("settings.reset", ""); out.Fault != nil {
+		t.Fatal(out.Fault)
+	}
+	if got := backend.SettingsSnapshots(); got.Overrides["profile/reviewer"].ServiceTier != "" ||
+		got.Effective.Agents.AgentProfiles["reviewer"].ServiceTier != "standard" {
+		t.Fatalf("reset did not restore the live profile tier: %+v", got)
 	}
 }
 

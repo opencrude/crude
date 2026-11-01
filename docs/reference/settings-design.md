@@ -137,6 +137,9 @@ prefetch their account's model list through the core when they open and whenever
 the account changes (`Model.prefetchModels`); capability rows fill when it
 arrives, without opening the dropdown. A catalog update refetches loaded lists
 through the core instead of re-deriving cards in the catalog-less shell.
+The model page puts Speed beside Account, Model and Thinking, before the longer
+capability section. Named agents label the inherited value Role; built-ins and
+the Auto Review Agent inherit their account.
 
 ## Collections (list → detail)
 

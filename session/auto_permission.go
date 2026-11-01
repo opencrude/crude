@@ -104,7 +104,7 @@ func runPermissionReviewAttempts(ctx context.Context, cfg *Config, settings type
 		if ctx.Err() != nil {
 			return agent.PermissionReview{}, false
 		}
-		p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort})
+		p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort, ServiceTier: settings.ServiceTier})
 		if err != nil {
 			return agent.PermissionReview{}, false
 		}

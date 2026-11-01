@@ -258,11 +258,13 @@ type AgentProfileSettings struct {
 	ContextCompactionPercent *int              `json:"context_compaction_percent,omitempty"`
 	ContextRetentionTokens   *int              `json:"context_retention_tokens,omitempty"`
 	ThinkingEffort           string            `json:"thinking_effort,omitempty"`
-	ModelContextWindow       int               `json:"model_context_window,omitempty"`
-	ModelMaxOutput           int               `json:"model_max_output,omitempty"`
-	ModelModalities          []string          `json:"model_modalities"`
-	ModelTemperature         *float64          `json:"model_temperature,omitempty"`
-	ModelTopP                *float64          `json:"model_top_p,omitempty"`
+	// ServiceTier overrides the underlying role's tier when set.
+	ServiceTier        string   `json:"service_tier,omitempty"`
+	ModelContextWindow int      `json:"model_context_window,omitempty"`
+	ModelMaxOutput     int      `json:"model_max_output,omitempty"`
+	ModelModalities    []string `json:"model_modalities"`
+	ModelTemperature   *float64 `json:"model_temperature,omitempty"`
+	ModelTopP          *float64 `json:"model_top_p,omitempty"`
 }
 
 // DefaultAgentRoleCategories is the single reset/initialization source for
@@ -441,6 +443,7 @@ type AutoPermissionSettings struct {
 	UnresolvedMode       string `json:"unresolved_mode,omitempty"`
 	Instructions         string `json:"instructions,omitempty"`
 	ThinkingEffort       string `json:"thinking_effort,omitempty"`
+	ServiceTier          string `json:"service_tier,omitempty"`
 	ResponseFormat       string `json:"response_format,omitempty"`
 	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
 	MaxOutputTokens      int    `json:"max_output_tokens,omitempty"`
@@ -479,6 +482,11 @@ func (s AutoPermissionSettings) Normalized() AutoPermissionSettings {
 	case "low", "medium", "high", "max":
 	default:
 		s.ThinkingEffort = "low"
+	}
+	switch s.ServiceTier {
+	case "", "standard", "fast", "priority", "flex":
+	default:
+		s.ServiceTier = ""
 	}
 	switch s.ResponseFormat {
 	case AutoPermissionFormatAuto, AutoPermissionFormatJSONSchema, AutoPermissionFormatJSONObject, AutoPermissionFormatPrompt:

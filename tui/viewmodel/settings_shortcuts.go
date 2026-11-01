@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"encoding/json"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/shellport"
@@ -66,7 +67,12 @@ func (m *App) applySettingsShortcut(msg settingsShortcutResultMsg) {
 func promotedSessionEdits(settings types.Settings) []types.SettingEdit {
 	var edits []types.SettingEdit
 	for role, value := range settings.SessionOverrides {
-		if role != "default" && role != "researcher" && role != "crafter" && role != "aeron" && role != "memory" {
+		name, isProfile := strings.CutPrefix(role, "profile/")
+		if isProfile {
+			if _, exists := settings.Agents.AgentProfiles[name]; !exists {
+				continue
+			}
+		} else if role != "default" && role != "researcher" && role != "crafter" && role != "aeron" && role != "memory" {
 			continue
 		}
 		// These are the session-owned role choices, not resolved provider facts.
@@ -89,6 +95,15 @@ func promotedSessionEdits(settings types.Settings) []types.SettingEdit {
 			path := []string{"agents", "Categories", role, field.name}
 			if role == "memory" {
 				path = []string{"memory", "memory_category", field.name}
+			} else if isProfile {
+				profileLeaf := map[string]string{
+					"Model": "model", "ThinkingEffort": "thinking_effort",
+					"AllowedTools": "allowed_tools", "DeniedTools": "denied_tools",
+				}[field.name]
+				if profileLeaf == "" {
+					profileLeaf = field.name
+				}
+				path = []string{"agents", "agent_profiles", name, profileLeaf}
 			}
 			raw, _ := json.Marshal(field.value)
 			edits = append(edits, types.SettingEdit{Path: path, After: raw})

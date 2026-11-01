@@ -63,8 +63,8 @@ settings also complete this fence. A durable save whose display refresh fails
 keeps the draft and explains that the settings were saved but not refreshed.
 This is an observation boundary, never a configuration revision or conflict gate.
 
-**Save as Workspace** patches only explicit eligible session role choices,
-including Memory, delegation and the sub-agent limit. It preserves unrelated
+**Save as Workspace** patches only explicit eligible session role and named-agent
+choices, including Memory, delegation and the sub-agent limit. It preserves unrelated
 workspace settings and the source session's choices. Session-only root identity,
 Code Intelligence, log preferences, invocation secrets and capability opt-outs
 are not promoted. **Reset section** removes only that workspace section and
@@ -926,9 +926,13 @@ client-local copies, never passed to a local app as a foreign-core path. See
 
 Session settings stay on the per-session Panel Deck (`/settings`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
 for any depth. The root page is a compact agent table (model, then
-provider, aligned `·` columns) with **Multi Agent** last after a blank
-row — that inherited `·` shares the agent table's last column. Enter on
-a role opens its overrides; Enter on Provider or Model opens a
+account, aligned `·` columns). It lists built-in roles followed by the current
+named-agent catalog in name order, including disabled profiles so their settings
+remain inspectable. Adding, changing or removing a catalog profile publishes the
+new catalog to existing sessions; reopening the deck shows it, including removal
+of the last row. A deck already open retains its unsaved draft until closed.
+Named rows and built-in rows open their own session overrides;
+the default-agent picker separately selects the root profile. Enter on Account or Model opens a
 filterable picker page. Filter inputs use `FilterSurface`
 (`ColorPopupSubtleBg`), never the dock fill. Docked forms are compact:
 title + rule, one line per field, a shared value column — every
@@ -964,10 +968,19 @@ Failure, truncated extraction, or cancellation installs no partial checkpoint.
 Zero disables automatic compaction and overflow recovery; `/compact` uses the
 same transaction.
 
-Each agent's **Speed** chooses its processing tier: Account (the connection's own
-setting), Standard, Fast, Priority or Flex (`service_tier`). The tier applies only
+Each agent's **Speed**, beside Account, Model and Thinking, chooses its processing
+tier: the inherited connection/role, Standard, Fast, Priority or Flex (`service_tier`).
+Application and workspace named profiles inherit their built-in role's tier until
+explicitly set. Session agent rows inherit their workspace definition until edited;
+named-agent session edits affect that profile in the current session, both when
+selected as root and when used for delegation, and do not change its role or
+other profiles. Root-only overrides remain separate. Picker navigation preserves
+staged edits; Reset removes the exact session overrides. The Auto Review Agent
+has its own independent account and speed in the application/workspace Agents
+editor. The tier applies only
 where the connection's protocol offers it and is otherwise ignored, so a choice
-never breaks a backend without tiers. Children use their role's tier. `/fast`
+never breaks a backend without tiers. Children use their named profile's tier
+when set, otherwise their role's. `/fast`
 toggles the fast tier for the session's main agent as an ordinary explicit
 session override. The focused main-agent header and composer guidance indicate
 the configured next-request fast tier, including inherited account/role choices;

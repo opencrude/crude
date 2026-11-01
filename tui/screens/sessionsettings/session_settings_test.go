@@ -36,8 +36,8 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	if result.Action != nil || screen.page != rolePage || screen.role != "default" {
 		t.Fatalf("role open result=%#v page=%d role=%q", result, screen.page, screen.role)
 	}
-	if screen.formModel.FieldCount() != 5 {
-		t.Fatalf("role form fields=%d, want provider/model/thinking/compaction/retention", screen.formModel.FieldCount())
+	if screen.formModel.FieldCount() != 6 {
+		t.Fatalf("role form fields=%d, want account/model/thinking/speed/compaction/retention", screen.formModel.FieldCount())
 	}
 
 	buf := surface.NewCellBuffer(80, 13)

@@ -211,8 +211,8 @@ func (z AgentPhase) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AgentProfileSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 18
-	o = append(o, 0xdc, 0x0, 0x12)
+	// array header, size 19
+	o = append(o, 0xdc, 0x0, 0x13)
 	if z.Enabled == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -267,6 +267,7 @@ func (z *AgentProfileSettings) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendInt(o, *z.ContextRetentionTokens)
 	}
 	o = msgp.AppendString(o, z.ThinkingEffort)
+	o = msgp.AppendString(o, z.ServiceTier)
 	o = msgp.AppendInt(o, z.ModelContextWindow)
 	o = msgp.AppendInt(o, z.ModelMaxOutput)
 	if z.ModelModalities == nil { // allownil: if nil
@@ -302,8 +303,8 @@ func (z *AgentProfileSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 18 {
-		err = msgp.ArrayError{Wanted: 18, Got: zb0001}
+	if zb0001 != 19 {
+		err = msgp.ArrayError{Wanted: 19, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -503,6 +504,11 @@ func (z *AgentProfileSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "ThinkingEffort")
 		return
 	}
+	z.ServiceTier, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ServiceTier")
+		return
+	}
 	z.ModelContextWindow, bts, err = msgp.ReadIntBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "ModelContextWindow")
@@ -613,7 +619,7 @@ func (z *AgentProfileSettings) Msgsize() (s int) {
 	} else {
 		s += msgp.IntSize
 	}
-	s += msgp.StringPrefixSize + len(z.ThinkingEffort) + msgp.IntSize + msgp.IntSize + msgp.ArrayHeaderSize
+	s += msgp.StringPrefixSize + len(z.ThinkingEffort) + msgp.StringPrefixSize + len(z.ServiceTier) + msgp.IntSize + msgp.IntSize + msgp.ArrayHeaderSize
 	for za0006 := range z.ModelModalities {
 		s += msgp.StringPrefixSize + len(z.ModelModalities[za0006])
 	}
@@ -1273,8 +1279,8 @@ func (z *AppSettings) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AutoPermissionSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 15
-	o = append(o, 0x9f)
+	// array header, size 16
+	o = append(o, 0xdc, 0x0, 0x10)
 	o = msgp.AppendString(o, z.Enabled)
 	o = msgp.AppendString(o, z.AccountID)
 	o = msgp.AppendString(o, z.Provider)
@@ -1283,6 +1289,7 @@ func (z *AutoPermissionSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.UnresolvedMode)
 	o = msgp.AppendString(o, z.Instructions)
 	o = msgp.AppendString(o, z.ThinkingEffort)
+	o = msgp.AppendString(o, z.ServiceTier)
 	o = msgp.AppendString(o, z.ResponseFormat)
 	o = msgp.AppendInt(o, z.TimeoutSeconds)
 	o = msgp.AppendInt(o, z.MaxOutputTokens)
@@ -1305,8 +1312,8 @@ func (z *AutoPermissionSettings) UnmarshalMsg(bts []byte) (o []byte, err error) 
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 15 {
-		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
+	if zb0001 != 16 {
+		err = msgp.ArrayError{Wanted: 16, Got: zb0001}
 		return
 	}
 	z.Enabled, bts, err = msgp.ReadStringBytes(bts)
@@ -1347,6 +1354,11 @@ func (z *AutoPermissionSettings) UnmarshalMsg(bts []byte) (o []byte, err error) 
 	z.ThinkingEffort, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "ThinkingEffort")
+		return
+	}
+	z.ServiceTier, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ServiceTier")
 		return
 	}
 	z.ResponseFormat, bts, err = msgp.ReadStringBytes(bts)
@@ -1390,7 +1402,7 @@ func (z *AutoPermissionSettings) UnmarshalMsg(bts []byte) (o []byte, err error) 
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *AutoPermissionSettings) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Enabled) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.Provider) + msgp.StringPrefixSize + len(z.Model) + msgp.StringPrefixSize + len(z.DenyMode) + msgp.StringPrefixSize + len(z.UnresolvedMode) + msgp.StringPrefixSize + len(z.Instructions) + msgp.StringPrefixSize + len(z.ThinkingEffort) + msgp.StringPrefixSize + len(z.ResponseFormat) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.RetryTokenGrowth) + msgp.IntSize + msgp.IntSize
+	s = 3 + msgp.StringPrefixSize + len(z.Enabled) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.Provider) + msgp.StringPrefixSize + len(z.Model) + msgp.StringPrefixSize + len(z.DenyMode) + msgp.StringPrefixSize + len(z.UnresolvedMode) + msgp.StringPrefixSize + len(z.Instructions) + msgp.StringPrefixSize + len(z.ThinkingEffort) + msgp.StringPrefixSize + len(z.ServiceTier) + msgp.StringPrefixSize + len(z.ResponseFormat) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.RetryTokenGrowth) + msgp.IntSize + msgp.IntSize
 	return
 }
 

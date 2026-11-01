@@ -84,6 +84,29 @@ func TestSaveAsWorkspaceIncludesExplicitMemoryAndLimitOnly(t *testing.T) {
 	}
 }
 
+func TestSaveAsWorkspacePromotesOnlyNamedAgentChoices(t *testing.T) {
+	app := types.AppSettings{Agents: types.AgentsSettings{AgentProfiles: map[string]types.AgentProfileSettings{
+		"reviewer": {Category: "researcher", Model: "original", Instructions: "Keep"},
+		"other":    {Category: "crafter", ServiceTier: "priority"},
+	}}}
+	settings := types.Settings{Agents: app.Agents, SessionOverrides: map[string]types.CategorySettings{
+		"profile/reviewer":      {Model: "changed", ServiceTier: "fast"},
+		"root/profile/reviewer": {Model: "root-only"},
+	}}
+	stored := types.WorkspaceOverrides{}
+	if err := types.ApplySettingsEdits(&stored, promotedSessionEdits(settings)); err != nil {
+		t.Fatal(err)
+	}
+	effective := types.MergeAppWorkspace(app, stored)
+	reviewer := effective.Agents.AgentProfiles["reviewer"]
+	if reviewer.Model != "changed" || reviewer.ServiceTier != "fast" || reviewer.Instructions != "Keep" {
+		t.Fatalf("promotion did not preserve the named agent: %+v", reviewer)
+	}
+	if effective.Agents.AgentProfiles["other"].ServiceTier != "priority" {
+		t.Fatal("promotion changed another named agent")
+	}
+}
+
 func TestConnectedSessionPromotionKeepsStagedChoicesUntilSaved(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
 	one := newRemoteJourneyShell(t, runtime, t.TempDir())
