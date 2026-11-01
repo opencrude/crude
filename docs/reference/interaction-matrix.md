@@ -303,7 +303,7 @@ slots retain a vertical action fallback rather than clipping buttons.
 ## Focus precedence (current)
 
 1. Floating window (WM)
-2. Explicitly focused session Panel Deck (true modal decisions remain trapped)
+2. Explicitly focused session Panel Deck (focus only; no deck is shell-modal)
 3. Focused workspace terminal dock
 4. Launcher
 5. File tree
@@ -457,12 +457,14 @@ does not terminate the old core's agents or PTYs.
 5. Scrollbar colors hard-coded outside theme.
 6. Three chrome systems disagree on padding and close buttons.
 7. Modal=true combined with CloseRoute on some popups (contradictory).
-8. Blocking PanelDeck pointer shielding. **FIXED**: `sessionDeckModal` separates
-   actual shell modality from a waiting agent request. Agent question/confirmation
-   docks use normal Host focus, hit testing and capture; unrelated IDE controls
-   remain usable without resolving the request. True modal decks alone shield
-   outside pointers and cancel underlying capture. Guarded by
-   `TestQuestionDockJourneyCapturesSurviveAndTrueModalsShield`.
+8. Blocking PanelDeck pointer shielding. **FIXED (whole class)**: no docked
+   panel is shell-modal. Agent question/confirmation docks and session decisions
+   (goal resume/replace, plan implementation, YOLO) use normal Host focus, hit
+   testing and capture; the bottom workspace dock, terminals and every other IDE
+   control remain usable without answering, and the pending request or offer is
+   retained. Only floating `OverlayHost` windows (dirty-close prompt and similar)
+   shield. Guarded by `TestQuestionDockJourneyCapturesSurviveAndTrueModalsShield`
+   (including `goal_resume_` / `yolo_decision_leaves_bottom_dock_usable`).
 
 ## Connected shared-editor decisions
 

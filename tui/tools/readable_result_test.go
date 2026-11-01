@@ -61,3 +61,42 @@ func TestReadableResultPreservesControlEvidence(t *testing.T) {
 		t.Fatalf("source evidence changed before paint sanitization: %q", got)
 	}
 }
+
+// A string field carrying a JSON document (an event body, an encoded payload)
+// is structure: it nests as readable fields, never paints as raw JSON. JSON
+// fragments inside prose and ordinary strings stay verbatim.
+func TestReadableResultNestsEmbeddedJSONStrings(t *testing.T) {
+	content := `{"event":{"kind":"command_outcome","body":"Background command \"lint\" settled after 1m11s: {\"cwd\":\"/repo\",\"exit_code\":0,\"output_descriptor\":{\"status\":\"completed\"}}"},"payload":"{\"handle\":\"lint\"}","note":"use {braces} freely","command":"echo '{\"a\":1}' > x.json"}`
+	result := BuildReadableResult(content)
+	got := readableEvidence(result)
+	for _, want := range []string{"Background command \"lint\" settled after 1m11s", "event · body", "cwd", "/repo", "exit code", "completed", "payload", "handle", "use {braces} freely", `echo '{"a":1}' > x.json`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("lost %q in %s", want, got)
+		}
+	}
+	for _, raw := range []string{`{"cwd"`, `"exit_code":`, `{"handle"`} {
+		if strings.Contains(got, raw) {
+			t.Fatalf("embedded JSON painted raw (%q): %s", raw, got)
+		}
+	}
+}
+
+// A command-outcome style body: prose lead, the outcome document, then a
+// trailing prose line; and the same body cut off by an upstream length bound.
+func TestReadableResultEmbeddedJSONTrailingAndTruncated(t *testing.T) {
+	whole := BuildReadableResult(`{"body":"Background command \"x\" settled after 3s: {\"exit_code\":0,\"cwd\":\"/repo\"}\nCommand: go test ./..."}`)
+	got := readableEvidence(whole)
+	for _, want := range []string{"Background command \"x\" settled after 3s", "Command: go test ./...", "exit code", "/repo"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("lost %q in %s", want, got)
+		}
+	}
+	cut := BuildReadableResult(`{"body":"Background command \"x\" settled after 3s: {\"cwd\":\"/repo\",\"output\":{\"command\":\"go te"}`)
+	got = readableEvidence(cut)
+	if !strings.Contains(got, "Background command \"x\" settled after 3s (structured detail truncated)") || strings.Contains(got, `{"cwd"`) || strings.Contains(got, `"/repo"`) {
+		t.Fatalf("truncated embedded document painted raw: %s", got)
+	}
+	if got := readableEvidence(BuildReadableResult(`{"note":"Summary: {not json} here"}`)); !strings.Contains(got, "Summary: {not json} here") {
+		t.Fatalf("prose with braces was altered: %s", got)
+	}
+}

@@ -27,7 +27,7 @@ func (m *App) signatureEditorOwnsInput(ed *editor.Editor) bool {
 	return m.EditorState != nil && m.EditorState.Editor == ed && ed != nil && ed.IsOpen() &&
 		!ed.ReadOnly() && !ed.HasSelection() && m.isEditorActive() &&
 		m.focusTarget() == FocusEditor && !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput() &&
-		!m.sessionDeckModal() && m.focusedPopup() == nil && !m.asyncIOStopped.Load()
+		m.focusedPopup() == nil && !m.asyncIOStopped.Load()
 }
 
 func (m *App) queueAutomaticSignatureHelp(ed *editor.Editor) {

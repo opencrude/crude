@@ -66,14 +66,29 @@ type Renderer struct {
 	expanded         map[string]bool
 	activityMessages map[string]*types.ChatMessage   // transient batch children, keyed by stable call ID
 	activityBatches  map[string][]*types.ChatMessage // rebuilt only when the canonical batch changes
-	exportSnapshot   MessageRowsSnapshot
-	exportRevision   uint64
-	exportWidth      int
-	exportScrollbarW int
-	exportGeneration uint64
-	exportScrollY    int
-	exportViewportH  int
-	lazyWidthReflow  bool
+	// eligibility memoizes activityEligible per retained message. Grouping is
+	// rederived on every source sync, but a settled result's payload verdict
+	// is immutable, so dense transcripts must not reparse it per event.
+	eligibility map[*types.ChatMessage]eligibilityMemo
+	// Retained activity build state (see syncActivityItems): the canonical
+	// list it was built from, the flattened rows with each canonical row's
+	// start, each item's first flat row, and the recent-round window start.
+	activityCanon        []*types.ChatMessage
+	activityFlat         []*types.ChatMessage
+	activityFlatStart    []int
+	activityItemStart    []int
+	activityParallel     map[string]bool
+	activityRecentStart  int
+	activityRecentRounds map[string]bool
+	activityRoundFirst   map[string]int
+	exportSnapshot       MessageRowsSnapshot
+	exportRevision       uint64
+	exportWidth          int
+	exportScrollbarW     int
+	exportGeneration     uint64
+	exportScrollY        int
+	exportViewportH      int
+	lazyWidthReflow      bool
 	// materializing is set while offscreen items still await their first
 	// render at this width; each export advances them within a time budget.
 	materializing  bool
@@ -978,20 +993,48 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion, sou
 	if r.sync.sourceSet && sourceVersion == r.sync.SourceVersion() && sourceGeneration == r.sync.SourceGeneration() {
 		return
 	}
-	// Restore only overridden rows before the ordinary source diff. The saved
-	// values are display projections, never another canonical Conversation.
+	cursorOwnerID := r.restoreThinkingOriginals()
+	result, ok := r.sync.SyncMessages(messages, sourceVersion, sourceGeneration)
+	if !ok {
+		return
+	}
+	r.applySyncResult(result, cursorOwnerID)
+}
+
+// SyncChanges applies an exact source delta (see MessageSync.ApplyChanges).
+// It reports false without changing the projection when the caller must
+// perform a complete SyncMessages instead.
+func (r *Renderer) SyncChanges(changed []types.ChatMessage, removed, order []string, sourceVersion, sourceGeneration uint64) bool {
+	if !r.sync.sourceSet || sourceGeneration != r.sync.SourceGeneration() || sourceVersion <= r.sync.SourceVersion() {
+		return false
+	}
+	cursorOwnerID := r.restoreThinkingOriginals()
+	result, ok := r.sync.ApplyChanges(changed, removed, order, sourceVersion, sourceGeneration)
+	if !ok {
+		// Validation precedes every mutation: re-present the pane overrides.
+		for id, paneID := range r.thinkingPanes {
+			r.PresentThinkingPane(id, paneID)
+		}
+		return false
+	}
+	r.applySyncResult(result, cursorOwnerID)
+	return true
+}
+
+// restoreThinkingOriginals undoes pane-presentation overrides before a source
+// diff. The saved values are display projections, never another canonical
+// Conversation. It returns the streaming cursor owner before the diff.
+func (r *Renderer) restoreThinkingOriginals() string {
 	for id, original := range r.thinkingOriginal {
 		if message := r.sync.MsgByID[id]; message != nil {
 			*message = original
 		}
 	}
 	clear(r.thinkingOriginal)
-	cursorOwnerID := r.streamingCursorOwnerID()
-	result, ok := r.sync.SyncMessages(messages, sourceVersion, sourceGeneration)
-	if !ok {
-		return
-	}
+	return r.streamingCursorOwnerID()
+}
 
+func (r *Renderer) applySyncResult(result SyncResult, cursorOwnerID string) {
 	if cursorOwnerID != "" && result.PureAppend {
 		if previous := r.sync.MsgByID[cursorOwnerID]; previous != nil {
 			previous.CachedLines = nil
@@ -1090,7 +1133,8 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	if !r.materializing && r.exportSnapshot.Generation != 0 && r.exportRevision == r.vl.Revision() && r.exportWidth == width && r.exportScrollbarW == scrollbarW && r.exportScrollY == scrollY && r.exportViewportH == viewportH {
 		return r.exportSnapshot
 	}
-	structureChanged := r.exportSnapshot.Generation == 0 || r.exportWidth != width || r.exportScrollbarW != scrollbarW || len(r.exportSnapshot.Rows) != r.vl.ItemCount()
+	geometryChanged := r.exportSnapshot.Generation == 0 || r.exportWidth != width || r.exportScrollbarW != scrollbarW
+	structureChanged := geometryChanged || len(r.exportSnapshot.Rows) != r.vl.ItemCount()
 	dirty := make([]int, 0)
 	oldHeights := make(map[int]int)
 	for i := 0; i < r.vl.ItemCount(); i++ {
@@ -1106,7 +1150,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	// before publishing this snapshot, not on the first idle tick (which would
 	// discard a completed heavy diff's cache and repeat all preview work).
 	if r.extScroll != nil && r.ScrollbarWidth() != r.lastScrollbarW {
-		structureChanged = true
+		structureChanged, geometryChanged = true, true
 		r.prepareRender(width)
 		r.materializeOffscreen(width)
 	}
@@ -1134,22 +1178,43 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	} else {
 		r.vl.ClampScroll()
 	}
+	// Rows depend only on their item, never on global offsets. A geometry
+	// change (width, scrollbar) re-exports every row; membership or height
+	// changes (offscreen materialization, an appended item) re-export only rows
+	// whose identity moved or whose item was dirty. Consumers still receive
+	// StructureChanged so they rebuild offsets, which is integer work.
+	reexportAll := geometryChanged
 	structureChanged = structureChanged || heightChanged
 	rows := r.exportSnapshot.Rows
 	changedIndices := renderedDirty
 	if structureChanged {
+		previous := rows
 		rows = make([]MessageRow, r.vl.ItemCount())
 		changedIndices = make([]int, r.vl.ItemCount())
 		for i := range changedIndices {
 			changedIndices[i] = i
 		}
-	}
-	for _, i := range changedIndices {
-		item := r.vl.Item(i)
-		if item == nil {
-			continue
+		wasDirty := make(map[int]bool, len(dirty))
+		for _, i := range dirty {
+			wasDirty[i] = true
 		}
-		rows[i] = r.messageRow(item)
+		for i := range rows {
+			item := r.vl.Item(i)
+			if item == nil {
+				continue
+			}
+			if !reexportAll && !wasDirty[i] && i < len(previous) && previous[i].ID == item.ID {
+				rows[i] = previous[i]
+				continue
+			}
+			rows[i] = r.messageRow(item)
+		}
+	} else {
+		for _, i := range changedIndices {
+			if item := r.vl.Item(i); item != nil {
+				rows[i] = r.messageRow(item)
+			}
+		}
 	}
 	paneMap := r.exportSnapshot.PaneLineMap
 	if structureChanged {

@@ -81,9 +81,6 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 	if !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
 		t.Fatal("blocking question panel did not capture deck input")
 	}
-	if app.sessionDeckModal() {
-		t.Fatal("pending question made the shell globally modal")
-	}
 
 	selectDeckSession(t, app, second, "second-agent")
 	secondProjection := app.activeSessionProjection()

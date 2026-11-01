@@ -96,7 +96,7 @@ func (m *App) openInlayInspectorCmd() tea.Cmd {
 
 func (m *App) inlayInspectorCurrent(s *inlayInspectorState) bool {
 	if s == nil || m.inlayInspector != s || s.ctx.Err() != nil || m.overlayHost == nil ||
-		m.asyncIOStopped.Load() || m.sessionDeckModal() || m.termDockFocused || m.sessionDeckCapturesInput() {
+		m.asyncIOStopped.Load() || m.termDockFocused || m.sessionDeckCapturesInput() {
 		return false
 	}
 	r := s.request

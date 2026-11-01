@@ -60,6 +60,17 @@ func TestCrudeControlProjectionIsReadable(t *testing.T) {
 	if text := structuredText(result); !strings.Contains(text, "1 command|settings.get|domain · read|Read settings.") {
 		t.Fatalf("discovery projection: %s", text)
 	}
+	// Expanded discovery describes inputs in words, never as a raw schema.
+	result = BuildStructuredResult("crude_commands", `[{"id":"execution.select","scope":"domain","effect":"write","input":{"id":"i","revision":1,"document":{"type":"object","description":"Select execution.","properties":{"expected_revision":{"minimum":0,"type":"integer"},"id":{"description":"Exact execution ID.","type":"string"},"mode":{"enum":["a","b"],"type":["string","null"]}},"required":["id","expected_revision"]}},"output":{"id":"o","revision":1,"document":{}},"requires":{},"availability":{"available":true}}]`, `{}`)
+	text := readableEvidence(result)
+	for _, want := range []string{"Input · expected_revision", "integer · required · min 0", "Input · id", "string · required: Exact execution ID.", "string · one of a, b"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("schema lost %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, `"properties"`) || strings.Contains(text, `{"`) {
+		t.Fatalf("discovery painted a raw JSON schema: %s", text)
+	}
 }
 
 func TestClaimToolsProjectReadableScope(t *testing.T) {

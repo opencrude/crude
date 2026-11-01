@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/provider"
+	"crude/tui/chatprojection"
 	ttypes "crude/types"
 	"crude/types/command"
 	"crude/types/recovery"
@@ -94,6 +95,34 @@ func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttype
 		messages = append(messages, chatMessageFromCanonical(view))
 	}
 	return messages, conversation.Version()
+}
+
+// syncConversationChanges advances a retained projection by the source's exact
+// change journal: only changed rows are converted and compared, so a streamed
+// token or tool update is independent of transcript length. It reports false
+// when only a complete export can be exact (a new source, a generation change
+// or a journal gap); the caller then performs SyncMessages.
+func syncConversationChanges(renderer *chatprojection.Renderer, conversation *workspace.Conversation) bool {
+	base := renderer.SourceVersion()
+	if base == 0 || renderer.SourceGeneration() != conversation.SourceGeneration() {
+		return false
+	}
+	delta := conversation.ChangesSince(base)
+	if delta.Reset {
+		return false
+	}
+	changed := make([]ttypes.ChatMessage, 0, len(delta.Upserts)+len(delta.Appends))
+	for _, message := range delta.Upserts {
+		changed = append(changed, chatMessageFromCanonical(message))
+	}
+	for _, appended := range delta.Appends {
+		message, ok := conversation.Message(appended.InternalID)
+		if !ok {
+			return false
+		}
+		changed = append(changed, chatMessageFromCanonical(message))
+	}
+	return renderer.SyncChanges(changed, delta.Removed, delta.Order, delta.Revision, conversation.SourceGeneration())
 }
 
 func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {

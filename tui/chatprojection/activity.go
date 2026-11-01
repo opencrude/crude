@@ -2,6 +2,7 @@ package chatprojection
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -108,6 +109,52 @@ func activityEligible(msg *types.ChatMessage) bool {
 		return true
 	}
 	return false
+}
+
+// eligibilityMemo records every input activityEligible reads. String fields
+// compare by identity first, so an unchanged retained message costs a few
+// word comparisons instead of a JSON parse of its complete tool result.
+type eligibilityMemo struct {
+	role, toolName, toolStatus, permTag, subPaneID, content string
+	thinkingActive, thinkingInterrupted                     bool
+	eligible                                                bool
+}
+
+func (m *eligibilityMemo) matches(msg *types.ChatMessage) bool {
+	return m.role == msg.Role && m.toolName == msg.ToolName && m.toolStatus == msg.ToolStatus &&
+		m.permTag == msg.PermTag && m.subPaneID == msg.SubPaneID && m.content == msg.Content &&
+		m.thinkingActive == msg.ThinkingActive && m.thinkingInterrupted == msg.ThinkingInterrupted
+}
+
+// activityEligibleCached is activityEligible for retained renderer messages.
+func (r *Renderer) activityEligibleCached(msg *types.ChatMessage) bool {
+	if msg == nil {
+		return false
+	}
+	if memo, ok := r.eligibility[msg]; ok && memo.matches(msg) {
+		return memo.eligible
+	}
+	if r.eligibility == nil {
+		r.eligibility = make(map[*types.ChatMessage]eligibilityMemo)
+	}
+	eligible := activityEligible(msg)
+	r.eligibility[msg] = eligibilityMemo{role: msg.Role, toolName: msg.ToolName, toolStatus: msg.ToolStatus,
+		permTag: msg.PermTag, subPaneID: msg.SubPaneID, content: msg.Content,
+		thinkingActive: msg.ThinkingActive, thinkingInterrupted: msg.ThinkingInterrupted, eligible: eligible}
+	return eligible
+}
+
+// pruneEligibility drops memos for messages no longer retained. It runs only
+// when the memo outgrows the live set, so steady streaming pays nothing.
+func (r *Renderer) pruneEligibility(live map[string]*types.ChatMessage) {
+	if len(r.eligibility) <= 2*len(live)+64 {
+		return
+	}
+	for msg := range r.eligibility {
+		if live[msg.InternalID] != msg {
+			delete(r.eligibility, msg)
+		}
+	}
 }
 
 func activitySuccessfulResult(msg *types.ChatMessage) bool {
@@ -248,22 +295,47 @@ func (g *activityGroup) title() string {
 
 // syncActivityItems is the sole construction path for visible transcript items.
 // The canonical messages are retained independently of grouping and expansion.
+//
+// Items are rederived only from the earliest affected position: the first
+// canonical row whose identity moved, the earliest changed row, or the
+// recent-round window whose visibility rules may shift. Retained items before
+// that point are byte-identical to a complete rebuild, so a streamed token or a
+// new tool row costs proportional work to the tail, not to the whole session.
+// A nil changedIDs requests a complete rebuild (disclosure toggles, reflow).
 func (r *Renderer) syncActivityItems(changedIDs []string) {
 	changed := make(map[string]bool, len(changedIDs))
 	for _, id := range changedIDs {
 		changed[id] = true
 	}
-	previous := make(map[string]renderItem, r.vl.ItemCount())
-	for _, item := range r.vl.Items() {
-		previous[item.ID] = item
+	canonical := r.sync.Messages
+	from := 0
+	if changedIDs != nil && r.activityCanon != nil {
+		from = r.firstActivityChange(canonical, changedIDs)
 	}
-	messages := make([]*types.ChatMessage, 0, len(r.sync.Messages))
-	parallelLeaves := make(map[string]bool)
-	r.activityMessages = make(map[string]*types.ChatMessage)
 	if r.activityBatches == nil {
 		r.activityBatches = make(map[string][]*types.ChatMessage)
 	}
-	for _, msg := range r.sync.Messages {
+	if r.activityMessages == nil || from == 0 {
+		r.activityMessages = make(map[string]*types.ChatMessage)
+		r.activityParallel = make(map[string]bool)
+		r.activityFlat, r.activityFlatStart = r.activityFlat[:0], r.activityFlatStart[:0]
+		r.activityRoundFirst = make(map[string]int)
+	}
+	// Flatten parallel batches from the first affected canonical row.
+	flatFrom := len(r.activityFlat)
+	if from < len(r.activityFlatStart) {
+		flatFrom = r.activityFlatStart[from]
+	}
+	for _, msg := range r.activityFlat[flatFrom:] {
+		if r.activityMessages[msg.InternalID] == msg {
+			delete(r.activityMessages, msg.InternalID)
+			delete(r.activityParallel, msg.InternalID)
+		}
+	}
+	messages := r.activityFlat[:flatFrom]
+	starts := r.activityFlatStart[:min(from, len(r.activityFlatStart))]
+	for _, msg := range canonical[from:] {
+		starts = append(starts, len(messages))
 		if msg.ToolName == "multi_tool_use.parallel" {
 			batch, ok := r.activityBatches[msg.InternalID]
 			if !ok || changed[msg.InternalID] {
@@ -273,7 +345,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 			if len(batch) > 0 {
 				for _, child := range batch {
 					messages = append(messages, child)
-					parallelLeaves[child.InternalID] = true
+					r.activityParallel[child.InternalID] = true
 					r.activityMessages[child.InternalID] = child
 					if changed[msg.InternalID] {
 						changed[child.InternalID] = true
@@ -285,22 +357,44 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		messages = append(messages, msg)
 		r.activityMessages[msg.InternalID] = msg
 	}
+	r.activityFlat, r.activityFlatStart = messages, starts
+	// First flat index of each tool round. Prefix entries stay exact; an entry
+	// at or after flatFrom is re-established on its first sight in this build.
+	// A stale entry for a vanished round is only ever a conservative bound.
+	seenRound := make(map[string]bool)
+	for i := flatFrom; i < len(messages); i++ {
+		msg := messages[i]
+		if msg.Role != types.RoleTool || !r.activityEligibleCached(msg) {
+			continue
+		}
+		id := activityRoundID(msg)
+		if seenRound[id] {
+			continue
+		}
+		seenRound[id] = true
+		if first, ok := r.activityRoundFirst[id]; !ok || first >= flatFrom {
+			r.activityRoundFirst[id] = i
+		}
+	}
+	r.activityCanon = append(r.activityCanon[:0], canonical...)
 	for id := range r.activityBatches {
 		if r.sync.MsgByID[id] == nil {
 			delete(r.activityBatches, id)
 		}
 	}
+	r.pruneEligibility(r.activityMessages)
 	// Retain whole request rounds with both a round floor and a useful leaf
 	// floor. Singleton requests must not reduce a long investigation to two
 	// leaves; thinking and pending notes must not consume or reset that budget.
 	recentRounds := make(map[string]bool)
 	recentTools := 0
+	recentStart := len(messages)
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		if msg.Role == types.RoleUser && !msg.PendingSteering {
 			break
 		}
-		if msg.Role != types.RoleTool || !activityEligible(msg) {
+		if msg.Role != types.RoleTool || !r.activityEligibleCached(msg) {
 			continue
 		}
 		id := activityRoundID(msg)
@@ -309,30 +403,64 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		}
 		recentRounds[id] = true
 		recentTools++
+		recentStart = i
 	}
-	items := make([]renderItem, 0, len(messages))
-	for i := 0; i < len(messages); {
+	// Recent-round visibility applies to every member of those rounds, even
+	// one before the window, so the rebuild starts at the first row of every
+	// round in the new or previous window.
+	rebuild := min(flatFrom, recentStart, r.activityRecentStart)
+	for id := range recentRounds {
+		rebuild = min(rebuild, r.activityRoundFirst[id])
+	}
+	for id := range r.activityRecentRounds {
+		if first, ok := r.activityRoundFirst[id]; ok {
+			rebuild = min(rebuild, first)
+		}
+	}
+	r.activityRecentStart, r.activityRecentRounds = recentStart, recentRounds
+	keep := 0
+	oldItems := r.vl.Items()
+	if rebuild > 0 && from > 0 && len(r.activityItemStart) == len(oldItems) {
+		// The item containing rebuild, then one more: a newly eligible row can
+		// join the preceding run.
+		keep = sort.SearchInts(r.activityItemStart, rebuild+1) - 2
+		keep = max(0, min(keep, len(r.activityItemStart), r.vl.ItemCount()))
+	}
+	start := 0
+	if keep > 0 {
+		start = r.activityItemStart[keep]
+	}
+	previous := make(map[string]renderItem, max(0, len(oldItems)-keep))
+	if keep < len(oldItems) {
+		for _, item := range oldItems[keep:] {
+			previous[item.ID] = item
+		}
+	}
+	items := make([]renderItem, 0, max(0, len(oldItems)-keep)+1)
+	itemStart := r.activityItemStart[:keep]
+	for i := start; i < len(messages); {
 		msg := messages[i]
 		if r.activityInvisible(msg) {
 			i++
 			continue
 		}
-		if !activityEligible(msg) {
+		itemStart = append(itemStart, i)
+		if !r.activityEligibleCached(msg) {
 			items = append(items, r.activityMessageItem(msg, previous, changed))
 			i++
 			continue
 		}
 		end := i + 1
 		members := []*types.ChatMessage{msg}
-		for end < len(messages) && (activityEligible(messages[end]) || r.activityInvisible(messages[end])) {
-			if activityEligible(messages[end]) {
+		for end < len(messages) && (r.activityEligibleCached(messages[end]) || r.activityInvisible(messages[end])) {
+			if r.activityEligibleCached(messages[end]) {
 				members = append(members, messages[end])
 			}
 			end++
 		}
 		// A batch leaf starts in its tree, even before its siblings arrive.
 		// Independent singleton calls retain their ordinary informative row.
-		if len(members) == 1 && !parallelLeaves[msg.InternalID] {
+		if len(members) == 1 && !r.activityParallel[msg.InternalID] {
 			items = append(items, r.activityMessageItem(msg, previous, changed))
 			i = end
 			continue
@@ -382,28 +510,11 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		items = append(items, item)
 		i = end
 	}
-	// Dormant group toggles cannot survive a split/removal and accidentally
-	// expand a later, unrelated group that happens to start with the same ID.
-	present := make(map[string]bool)
-	for _, item := range items {
-		if _, ok := item.Data.(*activityGroup); ok {
-			present[item.ID] = true
-		}
-	}
-	for id := range r.expanded {
-		if strings.HasPrefix(id, "activity:") && !present[id] {
-			delete(r.expanded, id)
-		}
-	}
-	for id := range r.frameSensitive {
-		if r.activityMessages[id] == nil && !present[id] {
-			delete(r.frameSensitive, id)
-		}
-	}
-	structure := len(items) != r.vl.ItemCount()
+	r.activityItemStart = itemStart
+	structure := keep+len(items) != len(oldItems)
 	if !structure {
 		for i := range items {
-			if old := r.vl.Item(i); old == nil || old.ID != items[i].ID {
+			if oldItems[keep+i].ID != items[i].ID {
 				structure = true
 				break
 			}
@@ -413,14 +524,81 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		// Width-only lazy reflow estimates offscreen heights. A new pane must
 		// have its actual height before scroll-to-bottom or pane hit testing.
 		r.lazyWidthReflow = false
-		r.vl.SetItems(items)
-		return
-	}
-	for i := range items {
-		if items[i].Dirty {
-			r.vl.UpdateItemAt(i, items[i])
+		r.vl.ReplaceFrom(keep, items)
+	} else {
+		for i := range items {
+			if items[i].Dirty {
+				r.vl.UpdateItemAt(keep+i, items[i])
+			}
 		}
 	}
+	// Dormant group toggles cannot survive a split/removal and accidentally
+	// expand a later, unrelated group that happens to start with the same ID.
+	for id := range r.expanded {
+		if strings.HasPrefix(id, "activity:") && !r.activityGroupPresent(id) {
+			delete(r.expanded, id)
+		}
+	}
+	for id := range r.frameSensitive {
+		if r.activityMessages[id] == nil && !r.activityGroupPresent(id) {
+			delete(r.frameSensitive, id)
+		}
+	}
+}
+
+func (r *Renderer) activityGroupPresent(id string) bool {
+	index, ok := r.vl.byID[id]
+	if !ok {
+		return false
+	}
+	_, group := r.vl.Item(index).Data.(*activityGroup)
+	return group
+}
+
+// firstActivityChange is the earliest canonical position whose projection may
+// differ from the retained build: an identity moved or a changed row. Pointer
+// comparison is a few nanoseconds per row and never decodes message bodies;
+// changed rows are searched from the tail, where live updates land.
+func (r *Renderer) firstActivityChange(canonical []*types.ChatMessage, changedIDs []string) int {
+	first := min(len(canonical), len(r.activityCanon))
+	for i := range first {
+		if canonical[i] != r.activityCanon[i] {
+			first = i
+			break
+		}
+	}
+	for _, id := range changedIDs {
+		if msg := r.sync.MsgByID[id]; msg != nil {
+			first = min(first, lastIndexOf(canonical, func(m *types.ChatMessage) bool { return m == msg }, first))
+			continue
+		}
+		if !r.activityParallel[id] {
+			continue
+		}
+		// A parallel leaf is rebuilt from its canonical batch row.
+		first = min(first, lastIndexOf(canonical, func(m *types.ChatMessage) bool {
+			if m.ToolName != "multi_tool_use.parallel" {
+				return false
+			}
+			for _, child := range r.activityBatches[m.InternalID] {
+				if child.InternalID == id {
+					return true
+				}
+			}
+			return false
+		}, first))
+	}
+	return first
+}
+
+// lastIndexOf returns the last index matching match, or fallback when none does.
+func lastIndexOf(canonical []*types.ChatMessage, match func(*types.ChatMessage) bool, fallback int) int {
+	for i := len(canonical) - 1; i >= 0; i-- {
+		if match(canonical[i]) {
+			return i
+		}
+	}
+	return fallback
 }
 
 func activityRoundID(msg *types.ChatMessage) string {

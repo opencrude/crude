@@ -134,13 +134,13 @@ func (m *App) routeConnectionHoverMotion(msg tea.MouseMotionMsg) bool {
 	if m.windowManager == nil || m.overlayHost == nil || m.rootHost == nil {
 		return false
 	}
-	if h := m.connectionHover; h != nil && h.widget.Host().HasPointerCapture() && !m.sessionDeckModal() {
+	if h := m.connectionHover; h != nil && h.widget.Host().HasPointerCapture() {
 		if fw := m.overlayHost.Window(ui.OverlayConnectionHealth); fw != nil && m.windowManager.TopWindow() == fw {
 			m.forwardEventToWindowContent(fw, msg)
 			return true
 		}
 	}
-	if m.sessionDeckModal() || msg.Button != tea.MouseNone {
+	if msg.Button != tea.MouseNone {
 		m.clearConnectionHover()
 		return false
 	}
@@ -168,7 +168,7 @@ func (m *App) routeConnectionHoverMotion(msg tea.MouseMotionMsg) bool {
 }
 
 func (m *App) openConnectionHover(anchor ui.Rect) {
-	if anchor.Empty() || m.sessionDeckModal() || m.width < 24 || m.height-anchor.Y < 9 {
+	if anchor.Empty() || m.width < 24 || m.height-anchor.Y < 9 {
 		return
 	}
 	body := connectionpopover.New(m.Theme, m.connectionHealth().projection())
@@ -194,7 +194,7 @@ func (m *App) syncConnectionHover() {
 	}
 	anchor := m.connectionWordmarkRect()
 	fw := m.overlayHost.Window(ui.OverlayConnectionHealth)
-	if fw == nil || h.owner != m.ws || h.generation != m.workspaceSwitchGen.Load() || anchor.Empty() || m.sessionDeckModal() ||
+	if fw == nil || h.owner != m.ws || h.generation != m.workspaceSwitchGen.Load() || anchor.Empty() ||
 		m.windowManager.TopWindow() != fw || m.width < 24 || m.height-anchor.Y < 9 {
 		m.clearConnectionHover()
 		return

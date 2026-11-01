@@ -236,7 +236,7 @@ func TestPlanHoverRefreshResizeAndAbsentPlan(t *testing.T) {
 	app.rootHost.CancelPointerCapture()
 }
 
-func TestPlanHoverReadableWhileQuestionWaitsButNotUnderModalDeck(t *testing.T) {
+func TestPlanHoverReadableWhileQuestionWaitsButNotUnderModalWindow(t *testing.T) {
 	app, prompt := questionDockJourneyApp(t)
 	draft := app.Input.Value()
 	plan := hoverPlanFixture("Pending question plan", 4)
@@ -258,8 +258,21 @@ func TestPlanHoverReadableWhileQuestionWaitsButNotUnderModalDeck(t *testing.T) {
 	paintHoverFixture(app, map[string]*activity.Plan{"agent": plan})
 	anchor = app.planActivityRect(app.chatScreen)
 	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 3, Y: anchor.Y})
+	if app.planHover == nil || !strings.Contains(hoverPopoverText(app), "Pending question plan") {
+		t.Fatal("a docked session decision blocked reading the plan")
+	}
+	app.clearPlanHover()
+	// A true floating modal (dirty close) still owns the pointer.
+	path := openMultiLineEditor(t, app, "package dirty\n")
+	questionDockPaint(app)
+	questionDockSend(t, app, tea.KeyPressMsg{Code: 'x', Text: "x"})
+	questionDockSend(t, app, tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+	if app.DirtyPromptPath != path || !app.overlayHost.IsOpen(ui.OverlayDirtyClose) {
+		t.Fatal("dirty editor did not open its safe close decision")
+	}
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 3, Y: anchor.Y})
 	if app.planHover != nil {
-		t.Fatal("plan reading bypassed a true modal decision")
+		t.Fatal("plan reading bypassed a true modal window")
 	}
 }
 

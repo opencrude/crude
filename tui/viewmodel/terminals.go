@@ -494,7 +494,7 @@ func (m *App) toggleTerminalFocus() tea.Cmd {
 }
 
 func (m *App) terminalSummonAllowed() bool {
-	if m.workspaceAttachPending || m.sessionDeckModal() {
+	if m.workspaceAttachPending {
 		return false
 	}
 	if popup := m.focusedPopup(); popup != nil && !ui.IsTerminalOverlay(ui.OverlayID(popup.ID)) {

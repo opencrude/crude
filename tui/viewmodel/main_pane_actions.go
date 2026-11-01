@@ -312,11 +312,8 @@ func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
 	if !strings.HasPrefix(id, "pane.") {
 		return nil, false
 	}
-	// Pane commands do not bypass a modal decision or the terminal's keys.
+	// Pane commands do not bypass a modal window or the terminal's keys.
 	if m.focusedPopup() != nil {
-		return nil, true
-	}
-	if m.sessionDeckModal() {
 		return nil, true
 	}
 	switch id {

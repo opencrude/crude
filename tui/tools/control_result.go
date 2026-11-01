@@ -3,6 +3,8 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"crude/types/control"
@@ -143,14 +145,98 @@ func controlDescriptorSection(descriptor control.Descriptor) ResultSection {
 		metadata = append(metadata, "unavailable")
 	}
 	section := ResultSection{Title: descriptor.ID, Metadata: strings.Join(metadata, " · "), Body: schema.Description}
-	if len(schema.Required) > 0 {
-		section.Details = append(section.Details, ResultField{"Required", strings.Join(schema.Required, ", ")})
-	}
 	if descriptor.Availability.Message != "" {
 		section.Details = append(section.Details, ResultField{"Availability", descriptor.Availability.Message})
 	}
-	section.Details = append(section.Details, ResultField{"Input schema", string(descriptor.Input.Document)})
+	if inputs := controlSchemaFields(descriptor.Input.Document, schema.Required); len(inputs) > 0 {
+		section.Details = append(section.Details, inputs...)
+	} else if len(schema.Required) > 0 {
+		section.Details = append(section.Details, ResultField{"Required", strings.Join(schema.Required, ", ")})
+	}
 	return section
+}
+
+// controlSchemaFields describes each input property in words (type, bounds,
+// choices, description). The exact schema stays with the tool contract; a
+// transcript row never paints it as raw JSON.
+func controlSchemaFields(document json.RawMessage, required []string) []ResultField {
+	var schema struct {
+		Properties map[string]controlSchemaProperty `json:"properties"`
+	}
+	if json.Unmarshal(document, &schema) != nil || len(schema.Properties) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	fields := make([]ResultField, 0, len(names))
+	for _, name := range names {
+		property := schema.Properties[name]
+		parts := []string{property.typeLabel()}
+		if slices.Contains(required, name) {
+			parts = append(parts, "required")
+		}
+		if property.Minimum != nil {
+			parts = append(parts, fmt.Sprintf("min %v", *property.Minimum))
+		}
+		if property.Maximum != nil {
+			parts = append(parts, fmt.Sprintf("max %v", *property.Maximum))
+		}
+		if len(property.Enum) > 0 {
+			choices := make([]string, len(property.Enum))
+			for i, choice := range property.Enum {
+				choices[i] = fmt.Sprint(choice)
+			}
+			parts = append(parts, "one of "+strings.Join(choices, ", "))
+		}
+		value := strings.Join(parts, " · ")
+		if property.Description != "" {
+			value += ": " + property.Description
+		}
+		fields = append(fields, ResultField{Label: "Input · " + name, Value: value})
+	}
+	return fields
+}
+
+type controlSchemaProperty struct {
+	Type        any      `json:"type"`
+	Description string   `json:"description"`
+	Enum        []any    `json:"enum"`
+	Minimum     *float64 `json:"minimum"`
+	Maximum     *float64 `json:"maximum"`
+	Items       *struct {
+		Type any `json:"type"`
+	} `json:"items"`
+}
+
+func (p controlSchemaProperty) typeLabel() string {
+	label := schemaTypeLabel(p.Type)
+	if label == "array" && p.Items != nil {
+		if item := schemaTypeLabel(p.Items.Type); item != "value" {
+			return "list of " + item
+		}
+	}
+	return label
+}
+
+func schemaTypeLabel(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []any:
+		names := make([]string, 0, len(typed))
+		for _, name := range typed {
+			if text, ok := name.(string); ok && text != "null" {
+				names = append(names, text)
+			}
+		}
+		if len(names) > 0 {
+			return strings.Join(names, " or ")
+		}
+	}
+	return "value"
 }
 
 func controlStateLabel(state control.ResultState) string {

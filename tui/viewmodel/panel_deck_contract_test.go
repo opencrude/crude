@@ -69,9 +69,6 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		if app.Input.Value() != "should-not-reach" {
 			t.Fatal("blocking confirmation leaked key to chat input")
 		}
-		if app.sessionDeckModal() {
-			t.Fatal("a pending agent confirmation is not a shell-modal decision")
-		}
 		app.paintShellFrame()
 		if region := app.classifyShellRegion(app.chatRect.X+2, app.chatRect.Y, false); region != regionChat {
 			t.Fatalf("transcript click classified as %v, want chat", region)

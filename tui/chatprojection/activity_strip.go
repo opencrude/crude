@@ -148,7 +148,10 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 		return
 	}
-	if status.Phase == types.AgentPreparing || status.Phase == types.AgentUploading || status.Phase == types.AgentWaiting {
+	if status.Phase == types.AgentSending || status.Phase == types.AgentPreparing || status.Phase == types.AgentUploading || status.Phase == types.AgentWaiting {
+		if status.Phase == types.AgentSending {
+			label = "Sending"
+		}
 		if status.Phase == types.AgentPreparing {
 			label = "Preparing"
 		}

@@ -30,10 +30,6 @@ const (
 )
 
 func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
-	if m.sessionDeckModal() && !isWheel {
-		return regionSessionDeck
-	}
-
 	if m.termDockRect.Contains(x, y) {
 		return regionTermDock
 	}
@@ -111,33 +107,6 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	}
 
 	return regionChat
-}
-
-// blockingDeckShieldsPointer keeps a modal session panel from routing raw
-// screen coordinates through the root Host into controls behind its slot.
-// A drag that began inside the deck may finish outside; any capture owned by
-// another shell component is stale once a blocking panel takes precedence.
-func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) bool {
-	if !m.sessionDeckModal() {
-		return false
-	}
-	if m.rootHost != nil {
-		captured, _, ok := m.rootHost.CapturedPointer()
-		if ok {
-			deckCaptured := false
-			if c := m.rootHost.Component(captured); c != nil {
-				_, deckCaptured = c.(*deckMount)
-			}
-			if preserveDeckCapture && deckCaptured {
-				return false
-			}
-			m.rootHost.CancelPointerCapture()
-			if preserveDeckCapture {
-				return true
-			}
-		}
-	}
-	return !m.sessionDeckRect.Contains(x, y)
 }
 
 // handleShellPointer routes one pointer message through the root Host.
@@ -268,9 +237,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
-	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
-		return m, nil
-	}
 	// Header controls are app chrome, not the sidebar/chat beneath their X
 	// coordinate. Inspecting the link must retain the draft's keyboard owner.
 	if m.headerScreen != nil {
@@ -281,9 +247,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	previousSession := m.ActiveSession
 	m.activatePaneAt(mouse.X, mouse.Y)
-	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
-		return m, nil
-	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
@@ -384,13 +347,6 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	}
 	m.setWheelHost(m.rootHost)
 	region := m.classifyShellRegion(msg.X, msg.Y, true)
-	// A modal deck still shields clicks/selection, but wheel-over-chat is a
-	// read-only navigation action and remains available behind it. Agent prompt
-	// docks are nonmodal and use ordinary Host hit testing for every surface.
-	if m.blockingDeckShieldsPointer(msg.X, msg.Y, false) && region != regionChat {
-		return m, nil
-	}
-
 	switch region {
 	case regionSidebar:
 		return m, m.handleShellPointer(msg)
@@ -450,11 +406,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if m.rootHost != nil && m.rootHost.HasPointerCapture() &&
-		m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
-		return m, tea.Batch(cmds...)
-	}
-
 	// Root-host pointer capture: drags (chat selection, scrollbar thumbs,
 	// split dividers, input selection, deck gutters) continue outside their
 	// original bounds until release, using one capture service for the whole shell.
@@ -496,10 +447,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
-	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
-		return m, tea.Batch(cmds...)
-	}
-
 	region := m.classifyShellRegion(mouse.X, mouse.Y, true)
 	if region != regionChat && m.chatScreen != nil {
 		m.chatScreen.ClearPaneGutterHover()
@@ -597,10 +544,6 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 			}
 		}
 	}
-	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
-		return m, tea.Batch(cmds...)
-	}
-
 	// Root-host capture release: ends drags (chat selection, scrollbar,
 	// split dividers, input selection, deck gutters) wherever the pointer is.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
@@ -689,13 +632,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 			return m, nil
 		}
 	}
-	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
-		return m, nil
-	}
 	m.activatePaneAt(mouse.X, mouse.Y)
-	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
-		return m, nil
-	}
 	// A session deck panel covers the chat: a right-click inside it belongs to
 	// the panel's own controls (question write-ins), never to the message rows
 	// painted behind it.

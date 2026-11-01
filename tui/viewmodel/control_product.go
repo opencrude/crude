@@ -65,7 +65,7 @@ func (m *App) handleProductControl(msg shellport.ControlRequestMsg) (tea.Cmd, bo
 		return m.replyShellControl(msg, control.Result{State: control.Failed, Fault: fault}), true
 	}
 	windowAction := strings.HasPrefix(r.CommandID, "window.") || r.CommandID == "terminal.dock"
-	if m.workspaceAttachPending || m.sessionDeckBlocking() {
+	if m.workspaceAttachPending || m.sessionDecisionPending() {
 		return fail(control.Denied, "blocking owner owns input")
 	}
 	if m.windowManager != nil {

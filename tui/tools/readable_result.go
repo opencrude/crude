@@ -2,7 +2,9 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"unicode"
@@ -85,9 +87,24 @@ func appendReadableValue(result *StructuredResult, title string, value any) {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
+		// A string field may itself carry a JSON document (an event body,
+		// an encoded payload). It is structure, so it nests like any other
+		// object instead of painting as raw JSON.
+		embedded := make(map[string]any)
 		for _, key := range keys {
-			switch typed[key].(type) {
+			switch value := typed[key].(type) {
 			case map[string]any, []any:
+			case string:
+				if lead, nested, trailing, truncated, ok := splitEmbeddedJSON(value); ok {
+					if nested != nil {
+						embedded[key] = nested
+					}
+					if text := embeddedJSONLead(lead, trailing, truncated); text != "" {
+						section.Details = append(section.Details, ResultField{Label: readableFieldLabel(key), Value: text})
+					}
+					continue
+				}
+				section.Details = append(section.Details, ResultField{Label: readableFieldLabel(key), Value: value})
 			default:
 				section.Details = append(section.Details, ResultField{Label: readableFieldLabel(key), Value: readableScalar(typed[key])})
 			}
@@ -99,9 +116,13 @@ func appendReadableValue(result *StructuredResult, title string, value any) {
 			result.Sections = append(result.Sections, section)
 		}
 		for _, key := range keys {
-			switch typed[key].(type) {
+			value := typed[key]
+			if nested, ok := embedded[key]; ok {
+				value = nested
+			}
+			switch value.(type) {
 			case map[string]any, []any:
-				appendReadableValue(result, joinResultPath(title, readableFieldLabel(key)), typed[key])
+				appendReadableValue(result, joinResultPath(title, readableFieldLabel(key)), value)
 			}
 		}
 	case []any:
@@ -111,9 +132,92 @@ func appendReadableValue(result *StructuredResult, title string, value any) {
 		for index, item := range typed {
 			appendReadableValue(result, joinResultPath(title, fmt.Sprintf("%d", index+1)), item)
 		}
+	case string:
+		if lead, nested, trailing, truncated, ok := splitEmbeddedJSON(typed); ok {
+			if text := embeddedJSONLead(lead, trailing, truncated); text != "" {
+				result.Sections = append(result.Sections, ResultSection{Title: title, Body: text})
+			}
+			if nested != nil {
+				appendReadableValue(result, title, nested)
+			}
+			return
+		}
+		result.Sections = append(result.Sections, ResultSection{Title: title, Body: typed})
 	default:
 		result.Sections = append(result.Sections, ResultSection{Title: title, Body: readableScalar(value)})
 	}
+}
+
+// splitEmbeddedJSON reports a string value that carries a JSON object or
+// array: the whole value, or the tail after a prose lead ending in ": "
+// ("Background command x settled after 3s: {...}"). Prose after the document
+// on later lines is kept as trailing text. A document cut off by an upstream
+// length bound is reported with a nil value and truncated set, so callers keep
+// the lead instead of painting the fragment. JSON fragments inside ordinary
+// prose, and strings that merely contain braces, stay text.
+func splitEmbeddedJSON(value string) (lead string, nested any, trailing string, truncated, ok bool) {
+	decode := func(text string) (any, string, bool, bool) {
+		text = strings.TrimLeft(text, " \t")
+		if !strings.HasPrefix(text, "{") && !strings.HasPrefix(text, "[") {
+			return nil, "", false, false
+		}
+		decoder := json.NewDecoder(strings.NewReader(text))
+		decoder.UseNumber()
+		var decoded any
+		if err := decoder.Decode(&decoded); err != nil {
+			// Only an unexpected end is a cut-off document; any other syntax
+			// error means this is prose that happens to start with a brace.
+			if errors.Is(err, io.ErrUnexpectedEOF) && looksLikeBrokenJSON(text) {
+				return nil, "", true, true
+			}
+			return nil, "", false, false
+		}
+		rest := text[decoder.InputOffset():]
+		if strings.TrimSpace(rest) != "" && !strings.HasPrefix(strings.TrimLeft(rest, " \t\r"), "\n") {
+			return nil, "", false, false
+		}
+		switch typed := decoded.(type) {
+		case map[string]any:
+			if len(typed) == 0 {
+				return nil, "", false, false
+			}
+		case []any:
+			if len(typed) == 0 {
+				return nil, "", false, false
+			}
+		default:
+			return nil, "", false, false
+		}
+		return decoded, strings.TrimSpace(rest), false, true
+	}
+	if decoded, rest, cut, found := decode(value); found {
+		return "", decoded, rest, cut, true
+	}
+	for _, marker := range []string{": {", ": ["} {
+		if at := strings.Index(value, marker); at > 0 && !strings.Contains(value[:at], "\n") {
+			if decoded, rest, cut, found := decode(value[at+2:]); found {
+				return strings.TrimSpace(value[:at]), decoded, rest, cut, true
+			}
+		}
+	}
+	return "", nil, "", false, false
+}
+
+// embeddedJSONLead is the readable text kept beside a nested document.
+func embeddedJSONLead(lead, trailing string, truncated bool) string {
+	if truncated {
+		if lead == "" {
+			return "Structured detail truncated."
+		}
+		lead += " (structured detail truncated)"
+	}
+	if trailing != "" {
+		if lead != "" {
+			lead += "\n"
+		}
+		lead += trailing
+	}
+	return lead
 }
 
 func readableFieldLabel(key string) string {

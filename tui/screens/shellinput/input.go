@@ -110,8 +110,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	s.model.PaintShell(buf, ox+b.X, oy+b.Y, b.W, b.H, ctx)
 	if s.model.Sending() {
-		// The submitted draft stays intact until the core's receipt; dim it
-		// and say so, so Enter is acknowledged on the very next frame.
+		// The submitted draft stays intact until the core's receipt; dim it so
+		// Enter is acknowledged on the very next frame. The chat status strip
+		// names the state ("Sending"); the composer carries no status text.
 		muted := s.tokens.Color(ui.ColorMuted)
 		for y := oy + b.Y; y < oy+b.Y+b.H; y++ {
 			for x := ox + b.X; x < ox+b.X+b.W; x++ {
@@ -121,11 +122,6 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 					buf.Set(x, y, c)
 				}
 			}
-		}
-		const label = "Sending…"
-		pad := min(s.tokens.PadLR(), b.W/2)
-		if x := ox + b.X + b.W - pad - rendering.VisibleWidth(label); x > ox+b.X+pad {
-			buf.WriteString(x, oy+b.Y, label, s.tokens.Color(ui.ColorAccent), bg, cell.AttrItalic)
 		}
 	}
 	if first, last, total := s.model.ComposerViewport(); first > 0 && last-first+1 < total {

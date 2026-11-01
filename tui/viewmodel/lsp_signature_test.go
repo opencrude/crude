@@ -347,7 +347,7 @@ func TestSignaturePendingReaderRetiresOnNonmodalSessionPanel(t *testing.T) {
 		Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}, "signature-agent")
 	app.openSessionSettings()
 	projection := app.activeSessionDeck()
-	if projection == nil || app.sessionDeckModal() {
+	if projection == nil || app.sessionDeckBlocking() {
 		t.Fatal("expected a nonmodal interactive session panel")
 	}
 	app.paintShellFrame()

@@ -554,7 +554,10 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 	}
 	defer rows.Close()
 
-	var result []MessageWithMeta
+	// SQLite reads stay sequential; the JSON decode of each independent row
+	// (tool calls, provider items, display snapshots) runs in parallel so a
+	// dense session's resume is not bound to one core.
+	var raw []MessageRow
 	for rows.Next() {
 		var r MessageRow
 		err := rows.Scan(
@@ -567,74 +570,84 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		if err != nil {
 			return nil, fmt.Errorf("sessiondb: load messages with meta scan: %w", err)
 		}
-
-		m := provider.ChatMessage{
-			InternalID: r.InternalID.String,
-			Role:       r.Role,
-			Origin:     provider.MessageOrigin(r.Origin),
-			Visibility: provider.MessageVisibility(r.Visibility),
-		}
-		if r.Collaboration.Valid && r.Collaboration.String != "" {
-			var attribution provider.CollaborationAttribution
-			if json.Unmarshal([]byte(r.Collaboration.String), &attribution) == nil {
-				m.Collaboration = &attribution
-			}
-		}
-		m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
-
-		if r.ReasoningContent.Valid {
-			m.ReasoningContent = r.ReasoningContent.String
-		}
-		if r.Reasoning.Valid {
-			m.Reasoning = r.Reasoning.String
-		}
-		if r.ToolCallID.Valid {
-			m.ToolCallID = r.ToolCallID.String
-		}
-		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
-			_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
-		}
-		m.ToolError = r.ToolError != 0
-		if r.ProviderItems.Valid && r.ProviderItems.String != "" {
-			_ = json.Unmarshal([]byte(r.ProviderItems.String), &m.ProviderItems)
-		}
-		if r.CacheControl.Valid && r.CacheControl.String != "" {
-			var cc provider.CacheControl
-			if json.Unmarshal([]byte(r.CacheControl.String), &cc) == nil {
-				m.CacheControl = &cc
-			}
-		}
-		if m.Role == "tool" && r.ToolResult.Valid && r.ContentType.String != "multipart" {
-			m.Content = provider.TextContent(r.ToolResult.String)
-		}
-
-		var meta DisplayMeta
-		if r.DisplayMeta.Valid && r.DisplayMeta.String != "" {
-			if err := json.Unmarshal([]byte(r.DisplayMeta.String), &meta); err != nil {
-				meta = DisplayMeta{}
-			}
-		}
-		m.DisplayContent = meta.DisplayContent
-		m.ReferenceLabels = append([]string(nil), meta.ReferenceLabels...)
-		m.Attachments = append([]attachment.Target(nil), meta.Attachments...)
-
-		turn := r.TurnNumber
-		if meta.DisplayRole == "" {
-			meta.DisplayRole = r.Role
-		}
-
-		result = append(result, MessageWithMeta{
-			Msg:       m,
-			Meta:      meta,
-			Turn:      turn,
-			CreatedAt: r.CreatedAt,
-		})
+		raw = append(raw, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sessiondb: load messages with meta rows: %w", err)
 	}
-
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	result := make([]MessageWithMeta, len(raw))
+	decodeParallel(len(raw), func(i int) {
+		result[i] = messageWithMetaFromRow(&raw[i])
+		raw[i] = MessageRow{}
+	})
 	return result, nil
+}
+
+func messageWithMetaFromRow(r *MessageRow) MessageWithMeta {
+	m := provider.ChatMessage{
+		InternalID: r.InternalID.String,
+		Role:       r.Role,
+		Origin:     provider.MessageOrigin(r.Origin),
+		Visibility: provider.MessageVisibility(r.Visibility),
+	}
+	if r.Collaboration.Valid && r.Collaboration.String != "" {
+		var attribution provider.CollaborationAttribution
+		if json.Unmarshal([]byte(r.Collaboration.String), &attribution) == nil {
+			m.Collaboration = &attribution
+		}
+	}
+	m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
+
+	if r.ReasoningContent.Valid {
+		m.ReasoningContent = r.ReasoningContent.String
+	}
+	if r.Reasoning.Valid {
+		m.Reasoning = r.Reasoning.String
+	}
+	if r.ToolCallID.Valid {
+		m.ToolCallID = r.ToolCallID.String
+	}
+	if r.ToolCalls.Valid && r.ToolCalls.String != "" {
+		_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
+	}
+	m.ToolError = r.ToolError != 0
+	if r.ProviderItems.Valid && r.ProviderItems.String != "" {
+		_ = json.Unmarshal([]byte(r.ProviderItems.String), &m.ProviderItems)
+	}
+	if r.CacheControl.Valid && r.CacheControl.String != "" {
+		var cc provider.CacheControl
+		if json.Unmarshal([]byte(r.CacheControl.String), &cc) == nil {
+			m.CacheControl = &cc
+		}
+	}
+	if m.Role == "tool" && r.ToolResult.Valid && r.ContentType.String != "multipart" {
+		m.Content = provider.TextContent(r.ToolResult.String)
+	}
+
+	var meta DisplayMeta
+	if r.DisplayMeta.Valid && r.DisplayMeta.String != "" {
+		if err := json.Unmarshal([]byte(r.DisplayMeta.String), &meta); err != nil {
+			meta = DisplayMeta{}
+		}
+	}
+	m.DisplayContent = meta.DisplayContent
+	m.ReferenceLabels = append([]string(nil), meta.ReferenceLabels...)
+	m.Attachments = append([]attachment.Target(nil), meta.Attachments...)
+
+	turn := r.TurnNumber
+	if meta.DisplayRole == "" {
+		meta.DisplayRole = r.Role
+	}
+
+	return MessageWithMeta{
+		Msg:       m,
+		Meta:      meta,
+		Turn:      turn,
+		CreatedAt: r.CreatedAt,
+	}
 }
 
 func nullString(s string) sql.NullString {

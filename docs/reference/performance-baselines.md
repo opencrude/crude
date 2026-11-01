@@ -7,6 +7,48 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Dense-session streaming and resume (2026-11-01)
+
+Reproduced on a read-only copy of a real 850 MiB session (17,447 messages)
+through the App with the actual transcript, measured per event plus the
+presented frame:
+
+| Step | Before | After |
+|---|---|---|
+| Streamed token | 256 ms | 15.6 ms |
+| Tool call + result | 490 ms | 11.7 ms |
+| Phase change (p95) | 271 ms | 10.9 ms |
+| Core session open (`ResumeSessionWithDir`) | 5.8 s | 1.6 s |
+
+Causes, each fixed at its owner:
+
+- Every agent event rebuilt every transcript item. `syncActivityItems`
+  reclassified all history, and `activityEligible` JSON-decoded each settled
+  command result. Items now rebuild only from the earliest affected position:
+  the first moved identity, the earliest changed row, or the first row of a
+  round in the recent-round window. The verdict for each retained message is
+  memoized against every input it reads. A randomized equivalence test
+  (`TestIncrementalActivityItemsMatchCompleteRebuild`) compares both sync paths
+  with a fresh complete build after every live mutation.
+- Every event re-exported and converted the whole Conversation
+  (`chatMessagesFromConversation`). The shell replica now journals what it
+  installs, and a retained projection advances by `ChangesSince`
+  (`syncConversationChanges` → `Renderer.SyncChanges`). It falls back to a
+  complete export only on a new source, generation or journal gap.
+- A height change (one item materializing offscreen) re-exported every row and
+  reboxed every VirtualList payload. Rows are now re-exported only when
+  geometry changes or their item was dirty.
+- Resume decoded every message row twice (`LoadMessages` and
+  `LoadMessagesWithMeta`) and decoded every identity registry row, including
+  ones that are not in the transcript. It now does one ordered read, decodes
+  only the transcript's identities, and runs the independent per-row JSON
+  decode on bounded workers (`decodeParallel`). SQLite iteration stays
+  sequential.
+
+Gate: `TestDenseSessionStreamTokenCostIndependentOfHistory` (allocations per
+streamed token at 200 vs 8,000 messages; measured 395 vs 396). It fails on the
+previous code (1,223 vs 32,888).
+
 ## Single-line prediction projection prerequisite (2026-11-01)
 
 Linux amd64, i7-10750H, `GOMAXPROCS=2`, two 200 ms repetitions of

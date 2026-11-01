@@ -132,7 +132,10 @@ type AgentActivityView struct {
 type AgentPhase string
 
 const (
-	AgentOpening          AgentPhase = "opening"
+	AgentOpening AgentPhase = "opening"
+	// AgentSending is shell-local presentation: this shell submitted input
+	// and awaits the core's admission receipt. The core never publishes it.
+	AgentSending          AgentPhase = "sending"
 	AgentIdle             AgentPhase = "idle"
 	AgentPreparing        AgentPhase = "preparing"
 	AgentUploading        AgentPhase = "uploading"

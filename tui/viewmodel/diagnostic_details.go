@@ -213,7 +213,7 @@ func (m *App) syncDiagnosticPopups() {
 		factID, current := s.editor.DiagnosticCursor()
 		valid := fw != nil && fw.Content == s.frame && s.workspace == m.ws && s.generation == m.workspaceSwitchGen.Load() &&
 			!m.asyncIOStopped.Load() && m.EditorState.Editor == s.editor && s.editor.IsOpen() && s.editor.Revision() == s.revision &&
-			current && factID == s.factID && !m.sessionDeckModal()
+			current && factID == s.factID
 		if id == ui.OverlayDiagContext {
 			valid = valid && m.focusedPopup() == fw && currentCodeActionSelection(s.editor) == s.selection
 		}
