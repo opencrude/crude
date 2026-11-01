@@ -428,15 +428,16 @@ func (m *lspVisualModel) journeyLSP(key, phase int) error {
 		}
 		position(2, 16, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 		err = m.await(func(v *controlVisualModel) error {
-			if v.LSPPopup.CompletionID == "" {
+			if v.completion == nil || v.completion.screen == nil || v.completion.set == nil {
 				return fmt.Errorf("Ctrl+Space completion not mounted")
 			}
-			for _, item := range v.LSPPopup.CompletionItems {
+			for _, entry := range v.completion.set.Entries {
+				item := entry.Insertion
 				if strings.HasPrefix(item.Label, "Answer") && strings.Contains(item.Detail, "int") {
 					return paint(v, "Completions", "Answer", "func() int")
 				}
 			}
-			return fmt.Errorf("actual completion missing Answer() int: %+v", v.LSPPopup.CompletionItems)
+			return fmt.Errorf("actual completion missing Answer() int: %+v", v.completion.set.Entries)
 		})
 		label = "Ctrl+Space actual Answer completion and int signature; no insertion or disk mutation"
 	case 7:
@@ -537,7 +538,11 @@ func (m *lspVisualModel) journeyLSPNumericSnippet(phase int, do func(string, any
 		}
 		position(2, 25, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 		if err := m.await(func(v *controlVisualModel) error {
-			for _, item := range v.LSPPopup.CompletionItems {
+			if v.completion == nil || v.completion.screen == nil || v.completion.set == nil {
+				return fmt.Errorf("gopls completion is not mounted")
+			}
+			for _, entry := range v.completion.set.Entries {
+				item := entry.Insertion
 				if strings.HasPrefix(item.Label, "Repeat") && item.Snippet != nil {
 					if item.InsertText != "Repeat(prefix string, count int)" {
 						return fmt.Errorf("unexpected real gopls primary insertion %q", item.InsertText)
@@ -550,10 +555,17 @@ func (m *lspVisualModel) journeyLSPNumericSnippet(phase int, do func(string, any
 			return err
 		}
 		m.action(func(app *App) tea.Cmd {
-			for index, item := range app.LSPPopup.CompletionItems {
+			if app.completion == nil || app.completion.screen == nil || app.completion.set == nil {
+				return nil
+			}
+			for index, entry := range app.completion.set.Entries {
+				item := entry.Insertion
 				if strings.HasPrefix(item.Label, "Repeat") && item.Snippet != nil {
 					for i := 0; i < index; i++ {
 						app.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+					}
+					if app.completion.screen.SelectedID() != entry.ID {
+						return nil // observer reports failure; never patch native selection
 					}
 					_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 					return cmd

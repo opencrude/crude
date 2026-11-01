@@ -29,6 +29,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `reviewed_edit.go` | `ReviewedEdits` | Connected canonical rename preview, opaque approval, pending release and original-result inspection |
 | `code_actions.go` | `CodeActions` | Exact canonical action-list discovery, retained-row preview and pending-list release; reuses `ReviewedEdits` for Apply and inspection |
 | `navigation.go` | `Navigation` | Read-only qualified definition/type/implementation/reference answers and explicit selected-target observation |
+| `completion.go` | `Completions` | Canonical source/view-bound original completions, selected documentation-only resolve, acceptance preflight and exact-sequence release |
 | `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
@@ -255,7 +256,7 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `FileDiagnostics` | 2 | reads | yes | LSP state topic replica |
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
 | `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
-| `RequestCompletions` | 1 | reads | yes | lsp.completions |
+| `CompletionsState` | current | reads | yes: constant-size feature gate/generation | LSP state topic replica |
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
@@ -298,6 +299,23 @@ Only qualified DTOs cross the port. Null, empty, unsupported and failed outcomes
 are distinct. Target content is not fetched during listing. The shell verifies
 an observation against its actual opened snapshot before landing; no missing
 target version is inferred. See [qualified navigation](editor.md#qualified-location-navigation).
+
+### `Completions`
+
+This optional connected capability replaces the old slice-only completion method.
+No shell-local provider, raw object or label-keyed resolve path remains.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `RequestLSPCompletions` | Acknowledged source, private view/sequence and UTF-16 cursor | `lsp.completions` |
+| `InspectLSPCompletion` | Exact original set ID/digest/item ID; documentation-only resolve or initial-edit validation | `lsp.completion_inspect` |
+| `ReleaseLSPCompletions` | Retire only the owner's exact private sequence | `lsp.completion_release` |
+
+All use the joined cancellable exchange off Update. `LSPService.CompletionsState`
+reads the detached gate/feature generation, not a second settings owner. Only
+initial core-normalized edits can reach the ordinary editor transaction;
+documentation remains inert. See
+[completion documentation](editor.md#completion-documentation-and-original-insertion).
 
 ### `InlayHints`
 

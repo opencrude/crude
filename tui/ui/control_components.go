@@ -51,10 +51,26 @@ type controlItem struct {
 	Height                      int
 }
 
+// nativeControlCollection exposes the native source, not another selection or
+// scroll model. Private methods are promoted through embedded standard controls,
+// so thin interaction wrappers retain the same inventory and source fences.
+type nativeControlCollection interface {
+	controlItemCount() int
+	controlItemAt(int) controlItem
+	controlActivateAction() string
+}
+
+func (c *List) controlItemCount() int { return len(c.items) }
+func (c *List) controlItemAt(i int) controlItem {
+	it := c.items[i]
+	return controlItem{ID: it.ID, Name: it.Label, Enabled: it.Selectable(), Selected: c.sel.Index() == i, Height: 1}
+}
+func (c *List) controlActivateAction() string { return c.activate }
+
 func controlItemCount(c Component) int {
 	switch c := c.(type) {
-	case *List:
-		return len(c.items)
+	case nativeControlCollection:
+		return c.controlItemCount()
 	case *Menu:
 		return len(c.items)
 	case *Table:
@@ -73,12 +89,8 @@ func controlItemCount(c Component) int {
 func controlItemAt(c Component, i int) controlItem {
 	out := controlItem{Enabled: true, Height: 1}
 	switch c := c.(type) {
-	case *List:
-		it := c.items[i]
-		out.ID = it.ID
-		out.Name = it.Label
-		out.Enabled = it.Selectable()
-		out.Selected = c.sel.Index() == i
+	case nativeControlCollection:
+		return c.controlItemAt(i)
 	case *Menu:
 		it := c.items[i]
 		out.ID = it.ID
@@ -239,6 +251,29 @@ func controlValue(c Component) any {
 func collectionActions(c Component, activate string) []control.Descriptor {
 	return controlActions(true, "select", "set_offset", "scroll", activate)
 }
+
+func controlItemIndex(c Component, id string) (int, error) {
+	if strings.TrimSpace(id) == "" {
+		return -1, controlError(control.Invalid, "item ID is required")
+	}
+	index := -1
+	for i := 0; i < controlItemCount(c); i++ {
+		if controlItemAt(c, i).ID == id {
+			if index >= 0 {
+				return -1, controlError(control.Invalid, "ambiguous item ID")
+			}
+			index = i
+		}
+	}
+	if index < 0 {
+		return -1, controlError(control.Unavailable, "item ID not found")
+	}
+	if !controlItemAt(c, index).Enabled {
+		return -1, controlError(control.Unavailable, "item disabled")
+	}
+	return index, nil
+}
+
 func collectionControl(c Component, op ControlOperation, activate string) (EventResult, error) {
 	if op.Verb == "set_offset" || op.Verb == "scroll" {
 		if s, ok := c.(interface{ Scroll() *ScrollModel }); ok {
@@ -255,20 +290,9 @@ func collectionControl(c Component, op ControlOperation, activate string) (Event
 	if op.Verb != "select" && op.Verb != "activate" && op.Verb != "expand" && op.Verb != "close" {
 		return unsupportedControl()
 	}
-	index := -1
-	for i := 0; i < controlItemCount(c); i++ {
-		if controlItemAt(c, i).ID == op.ItemID {
-			if index >= 0 {
-				return EventResult{}, controlError(control.Invalid, "ambiguous item ID")
-			}
-			index = i
-		}
-	}
-	if index < 0 {
-		return EventResult{}, controlError(control.Unavailable, "item ID not found")
-	}
-	if !controlItemAt(c, index).Enabled {
-		return EventResult{}, controlError(control.Unavailable, "item disabled")
+	index, err := controlItemIndex(c, op.ItemID)
+	if err != nil {
+		return EventResult{}, err
 	}
 	if op.Verb == "expand" {
 		t, ok := c.(*Tree)

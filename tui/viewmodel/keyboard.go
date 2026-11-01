@@ -389,7 +389,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.Feedback.NotifyInfo("Rename cancelled")
 			return m, nil
 		}
-		if m.LSPPopup.CompletionID != "" {
+		if m.completion != nil {
 			m.closeCompletionPopup()
 			return m, nil
 		}
@@ -417,11 +417,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.LSPPopup.OutlineOpen && m.windowManager != nil && m.windowManager.Window(outlinePopupID) != nil {
 		return m, m.handleOutlinePopupKey(msg)
 	}
-	if m.LSPPopup.CompletionID != "" {
-		switch msg.String() {
-		case "down", "up", "tab", "enter", "esc":
-			return m, m.handleCompletionPopupKey(msg)
-		}
+	if m.completion != nil {
 		m.closeCompletionPopup()
 	}
 	// LSP keybinds (only when a file is open and the LSP is up).
@@ -528,13 +524,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleTreePromptInput(msg)
 		case "tree-delete-confirm":
 			return m, m.handleTreeDeleteConfirmKey(msg)
-		case "completion-popup":
-			switch msg.String() {
-			case "down", "up", "tab", "enter", "esc":
-				return m, m.handleCompletionPopupKey(msg)
-			}
-			m.closeCompletionPopup()
-			return m.dispatchEditorKey(msg)
+		case completionPopupID:
+			return m.handleCompletionKey(fw, msg)
 		case "outline-popup":
 			return m, m.handleOutlinePopupKey(msg)
 		case "command-palette":
@@ -980,18 +971,6 @@ type lspRenameResultMsg struct {
 	err        error
 }
 
-// lspCompletionResultMsg is the response to a "completion" request.
-type lspCompletionResultMsg struct {
-	automatic  bool
-	owner      *editor.Editor
-	revision   uint64
-	generation uint64
-	filePath   string
-	line       int
-	col        int
-	items      []editor.CompletionItem
-}
-
 // requestDocumentSymbolsCmd refreshes the document outline for the current
 // file and shows it in the outline panel.
 func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
@@ -1074,36 +1053,6 @@ func (m *App) submitRename(newName string) tea.Cmd {
 	})
 }
 
-// requestCompletionCmd fires a completion request at the cursor.
-func (m *App) requestCompletionCmd() tea.Cmd {
-	if m.openSnippetChoices() {
-		return nil
-	}
-	return m.requestCompletion(false)
-}
-
-func (m *App) requestCompletion(automatic bool) tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
-		return nil
-	}
-	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.LSPCursorPosition()
-	conn, status, _ := m.ws.LSPMgr().Status()
-	if !conn || status != editor.LSPConnected {
-		if !automatic {
-			m.Feedback.NotifyInfo("LSP not ready")
-		}
-		return nil
-	}
-	lspMgr := m.ws.LSPMgr()
-	ctx, generation := m.lspRequestContext()
-	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
-	return tea.Cmd(func() tea.Msg {
-		items := lspMgr.RequestCompletions(ctx, filePath, line, col)
-		return lspCompletionResultMsg{automatic: automatic, owner: owner, revision: revision, generation: generation, filePath: filePath, line: line, col: col, items: items}
-	})
-}
-
 //  LSP result handlers ─
 
 // handleDocumentSymbolsResult stores the symbols for the outline panel and
@@ -1118,35 +1067,6 @@ func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 	m.LSPPopup.OutlineOpen = true
 	m.Feedback.NotifyInfo(fmt.Sprintf("Outline: %d symbols", countSymbols(msg.symbols)))
 	m.showOutlinePopup(msg.symbols)
-}
-
-// handleCompletionResult shows a list of completion items in a floating
-// window. The list is navigable with up/down; pressing Enter inserts the
-// selected item's text at the cursor.
-func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
-	if msg.automatic && m.EditorState.Editor.SnippetActive() {
-		return // an admitted request can outlive byte-identical snippet acceptance
-	}
-	line, col := m.EditorState.Editor.LSPCursorPosition()
-	if line != msg.line || col != msg.col {
-		return
-	}
-	if len(msg.items) == 0 {
-		if !msg.automatic {
-			m.Feedback.NotifyInfo("No completions")
-		}
-		return
-	}
-	// Limit to a reasonable number of items for the popup.
-	const maxItems = 30
-	items := msg.items
-	if len(items) > maxItems {
-		items = items[:maxItems]
-	}
-	m.LSPPopup.CompletionOwner, m.LSPPopup.CompletionRevision = msg.owner, msg.revision
-	m.LSPPopup.CompletionLine, m.LSPPopup.CompletionCol = msg.line, msg.col
-	m.LSPPopup.CompletionAutomatic = msg.automatic
-	m.showCompletionPopup(items)
 }
 
 // The core already prepared the immutable review. No shell reads or rebuilds
@@ -1375,230 +1295,4 @@ func (m *App) jumpToOutline(idx int) {
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-}
-
-// ─── Completion popup ──────────────────────────────────────────────────────
-
-const completionPopupID = "completion-popup"
-
-func (m *App) showCompletionPopup(items []editor.CompletionItem) {
-	if m.windowManager == nil {
-		return
-	}
-
-	listItems := make([]ui.ListItem, 0, len(items))
-	for i, it := range items {
-		listItems = append(listItems, ui.ListItem{
-			ID:      fmt.Sprintf("%d", i),
-			Icon:    completionKindIcon(it.Kind),
-			Label:   it.Label,
-			Detail:  it.Detail,
-			Payload: i,
-		})
-	}
-
-	const maxW = 50
-	boxW := 30
-	for _, it := range listItems {
-		text := it.Icon + " " + it.Label
-		if it.Detail != "" {
-			text += "  " + it.Detail
-		}
-		if w := rendering.VisibleWidth(text) + 8; w > boxW {
-			boxW = w
-		}
-	}
-	if boxW > maxW {
-		boxW = maxW
-	}
-	if boxW > m.width-4 {
-		boxW = m.width - 4
-	}
-	boxH := len(listItems) + 2
-	if boxH > m.height-4 {
-		boxH = m.height - 4
-	}
-	if boxH < 6 {
-		boxH = 6
-	}
-	if m.LSPPopup.CompletionCursor >= len(listItems) {
-		m.LSPPopup.CompletionCursor = 0
-	}
-	if m.LSPPopup.CompletionCursor < 0 && len(listItems) > 0 {
-		m.LSPPopup.CompletionCursor = 0
-	}
-
-	title := fmt.Sprintf("Completions · %d", len(listItems))
-	frame := ui.BuildListPopupFrame(m.Theme, ui.ListPopupSpec{
-		ID:       completionPopupID,
-		Title:    title,
-		Items:    listItems,
-		Selected: m.LSPPopup.CompletionCursor,
-		Width:    boxW,
-		Height:   boxH,
-		Closable: true,
-	})
-
-	layout := m.computeLayout()
-	cx, cy := m.EditorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
-	popupX := cx
-	popupY := cy + 1
-	if popupX+boxW >= m.width {
-		popupX = m.width - boxW - 1
-	}
-	if popupY+boxH >= m.height {
-		popupY = cy - boxH - 1
-	}
-	if popupX < 0 {
-		popupX = 0
-	}
-	if popupY < 0 {
-		popupY = 0
-	}
-
-	if existing := m.windowManager.Window(completionPopupID); existing != nil {
-		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
-			if list := ui.ListPopupList(cw); list != nil {
-				list.SetItems(listItems)
-				list.SelectIndex(m.LSPPopup.CompletionCursor)
-				existing.SetSize(boxW, boxH)
-				existing.SetPosition(popupX, popupY)
-				existing.MarkContentDirty()
-			} else {
-				existing.Content = frame
-				existing.SetSize(boxW, boxH)
-				existing.SetPosition(popupX, popupY)
-				existing.MarkContentDirty()
-			}
-		} else {
-			existing.Content = frame
-			existing.SetSize(boxW, boxH)
-			existing.SetPosition(popupX, popupY)
-			existing.MarkContentDirty()
-		}
-	} else {
-		fw := wm.NewFloatingWindow(
-			completionPopupID,
-			"",
-			frame,
-			boxW, boxH,
-			wm.WithDecoration(false),
-			wm.WithMovable(false),
-			wm.WithResizable(false),
-			wm.WithClosable(false),
-			wm.WithModal(false),
-			wm.WithFocusable(true),
-			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
-		)
-		fw.SetPosition(popupX, popupY)
-		m.overlayHost.Open(ui.OverlayCompletion, fw, ui.PopoverPolicy(true), func() {
-			m.LSPPopup.CompletionID = ""
-			m.LSPPopup.CompletionItems = nil
-			m.LSPPopup.CompletionCursor = 0
-		})
-	}
-
-	m.LSPPopup.CompletionID = completionPopupID
-	m.LSPPopup.CompletionItems = items
-}
-
-func (m *App) closeCompletionPopup() {
-	m.overlayHost.Close(ui.OverlayCompletion)
-}
-
-func (m *App) syncCompletionListCursor() {
-	if m.windowManager == nil || m.LSPPopup.CompletionID == "" {
-		return
-	}
-	fw := m.windowManager.Window(m.LSPPopup.CompletionID)
-	if fw == nil {
-		return
-	}
-	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		if list := ui.ListPopupList(cw); list != nil {
-			list.SelectIndex(m.LSPPopup.CompletionCursor)
-			fw.MarkContentDirty()
-			return
-		}
-	}
-	m.showCompletionPopup(m.LSPPopup.CompletionItems)
-}
-
-func (m *App) handleCompletionPopupKey(msg tea.KeyPressMsg) tea.Cmd {
-	switch msg.String() {
-	case "down":
-		if m.LSPPopup.CompletionCursor < len(m.LSPPopup.CompletionItems)-1 {
-			m.LSPPopup.CompletionCursor++
-			m.syncCompletionListCursor()
-		}
-	case "up":
-		if m.LSPPopup.CompletionCursor > 0 {
-			m.LSPPopup.CompletionCursor--
-			m.syncCompletionListCursor()
-		}
-	case "tab", "enter":
-		m.acceptCompletion()
-	case "esc":
-		m.closeCompletionPopup()
-	}
-	return nil
-}
-
-func (m *App) acceptCompletion() {
-	if m.LSPPopup.CompletionCursor < 0 || m.LSPPopup.CompletionCursor >= len(m.LSPPopup.CompletionItems) {
-		m.closeCompletionPopup()
-		return
-	}
-	item := m.LSPPopup.CompletionItems[m.LSPPopup.CompletionCursor]
-	if m.LSPPopup.CompletionOwner != m.EditorState.Editor || m.EditorState.Editor.Revision() != m.LSPPopup.CompletionRevision {
-		m.closeCompletionPopup()
-		return
-	}
-	line, col := m.EditorState.Editor.LSPCursorPosition()
-	if line != m.LSPPopup.CompletionLine || col != m.LSPPopup.CompletionCol {
-		m.closeCompletionPopup()
-		return
-	}
-	if err := m.EditorState.Editor.ApplyCompletion(item); err != nil {
-		m.Feedback.NotifyError("Completion: " + err.Error())
-	} else {
-		m.adoptEditorSnippet(m.EditorState.Editor)
-	}
-
-	m.closeCompletionPopup()
-	layout := m.computeLayout()
-	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-}
-
-// completionKindIcon returns a single-character icon for a CompletionItemKind
-// (https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification#completionItemKind).
-func completionKindIcon(kind int) string {
-	switch kind {
-	case 1:
-		return "T" // Text
-	case 2:
-		return "ƒ" // Method
-	case 3:
-		return "ƒ" // Function
-	case 4:
-		return "ƒ" // Constructor
-	case 5:
-		return "ƒ" // Field
-	case 6:
-		return "v" // Variable
-	case 7:
-		return "C" // Class
-	case 8:
-		return "I" // Interface
-	case 9:
-		return "M" // Module
-	case 10:
-		return "P" // Property
-	case 14:
-		return "K" // Keyword
-	case 15:
-		return "·" // Snippet
-	default:
-		return "·"
-	}
 }

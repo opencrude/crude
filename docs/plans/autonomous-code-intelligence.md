@@ -121,6 +121,15 @@ shrink beside it on short grids instead of covering source. Independent native-k
 two-shell and installed-gopls regression definitions cover these transitions;
 their checkpoint evidence is separate from adaptive developer/device acceptance.
 
+The [completion documentation and original-insertion cutover](../reference/editor.md#completion-documentation-and-original-insertion)
+replaces the flat completion path with retained canonical original rows,
+documentation/detail-only resolution and one native chooser. Independent
+canonical, framed-provider and rendered tests cover identity, opaque data,
+negative/incomplete evidence, source/context/feature retirement and initial-edit
+acceptance. Consolidated repository, installed-engine and native checkpoint
+acceptance is still in progress; these definitions do not close the broader
+editor, autonomous assembly or workflow/device rows.
+
 ## Problem
 
 Crude has shared documents, asynchronous LSP lifecycle ownership, editor
@@ -131,13 +140,13 @@ it. Current capabilities and safeguards are described in
 
 | Symptom | Cause in the code today |
 |---|---|
-| No semantic completion, outline or navigation until a server is installed and running | `requestCompletion` in `tui/viewmodel/keyboard.go` needs a connected server. **Detect servers** does not install executables ([settings](../reference/settings.md)). Chroma already highlights many files without a server. |
+| No semantic completion, outline or navigation until a server is installed and running | `requestCompletion` in `tui/viewmodel/lsp_completion.go` needs a connected server. **Detect servers** does not install executables ([settings](../reference/settings.md)). Chroma already highlights many files without a server. |
 | No coverage-qualified whole-project diagnostic counts | Current editor diagnostics are tied to the LSP manager's tracked documents; `ProjectInsights` in `types/lsp.go` is a server snapshot, not proof that every project unit was checked. |
 | Background analysis can overwhelm the machine | Server memory and thread settings are hints, not limits (`tui/settings/language_servers.go`). Process-tree containment and pressure management remain open. |
 | Project configuration needs manual work | Flags, targets, include paths, interpreters, dependencies and severity policies are not consistently derived from the actual build. |
 | Semantic coverage is limited | `types/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
-| Popups do not feel like a complete IDE | Parameter assistance and symbol documentation now use caret anchoring; diagnostic details still need that cutover (`tui/viewmodel/lsp_handlers.go`). A completion documentation pane, inline prediction and broader semantic workflows remain open. |
+| Popups do not feel like a complete IDE | Parameter assistance, symbol documentation and the native selected-completion reader now use caret anchoring; diagnostic details still need that cutover (`tui/viewmodel/lsp_handlers.go`). Inline prediction and broader semantic workflows remain open. |
 | Aeron never helps manual editing | Aeron drafts commit messages and compaction, nothing in the editor. |
 | Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
 

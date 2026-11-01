@@ -74,6 +74,20 @@ subprocess rather than a process-name search.
   cancelled command. Search highlights are discarded and re-derived with the
   retained query after geometry publication.
 
+- **Completion invocations retain original identity.** One private view sequence
+  owns its request, exact canonical source/caret/selection, settings feature epoch
+  and original context. Selected-row documentation and initial-edit preflight run
+  off Update through the joined cancellable exchange; only Update may publish a
+  still-current reader or apply the initial editor transaction. Changing row
+  cancels the former read, not the original insertion. Closing/switching/shutdown
+  cancels the invocation and schedules its exact-sequence release on the App's
+  joined async owner. A late old release/result cannot affect a newer chooser or
+  another workspace's feedback. The canonical document service retains at most
+  16 active views, 128 sequence records and 16 MiB accounted raw/display payload,
+  expiring after five minutes; source close/detach/shutdown revoke their views.
+  These bounds do not prove provider CPU/RSS containment. See
+  [completion documentation](editor.md#completion-documentation-and-original-insertion).
+
 ## Pushed application and private effects
 
 Domain state arrives through the acknowledged workspace log, seven state topics

@@ -120,6 +120,7 @@ func TestLSPIntegration_StopTwice(t *testing.T) {
 func TestLSPIntegration_RequestCompletionsWithoutStart(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/tmp")
 	ctx := t.Context()
-	items := l.RequestCompletions(ctx, "/tmp/test.go", 0, 0)
-	assert.Nil(t, items)
+	response, err := l.RequestCompletions(ctx, "/tmp/test.go", 0, 0)
+	assert.Error(t, err)
+	assert.Empty(t, response)
 }

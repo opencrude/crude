@@ -24,6 +24,7 @@ type LSPService interface {
 	DiagnosticCursor() (generation string, version uint64)
 	ContextCursor() (generation string, context uint64)
 	InlayHintsState() (enabled bool, generation uint64)
+	CompletionsState() (enabled bool, generation uint64)
 	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.
@@ -31,8 +32,6 @@ type LSPService interface {
 	// ProjectInsights combines producer health with qualified observed-unit
 	// counts. It is not an exhaustive project check or coverage denominator.
 	ProjectInsights() workspace.ProjectInsights
-	// RequestCompletions routes a completion request to the right client.
-	RequestCompletions(ctx context.Context, filePath string, line, col int) []workspace.CompletionItem
 	// RequestDocumentSymbols routes a "document symbols" request to the right
 	// client and caches the result for the document outline panel.
 	RequestDocumentSymbols(ctx context.Context, filePath string) []workspace.LSPSymbol

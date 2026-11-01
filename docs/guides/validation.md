@@ -317,6 +317,29 @@ final click, and finish with `quit:F9`. Check all ten `F4 VERIFIED` markers,
 These deterministic local Linux regressions are not adaptive human-workflow,
 distinct-host/device, native containment or complete-project acceptance.
 
+Completion documentation uses `TestCompletionVisualHeadless` with the actual
+installed gopls and framed core at 160x40 and 80x24. The independently authored
+Alpha/Beta comments must appear only for the selected original row. Browsing,
+Escape, original snippet acceptance, ordinary typing and two author Undos preserve
+canonical source, private draft and disk invariants. Original initialize and RPC
+traces qualify the result: gopls v0.21.1 supplies documentation eagerly and does
+not advertise resolve. This is initial-documentation evidence, not a successful
+real-gopls resolve. `TestConnectedCompletion*` and the framed `lspclient` and
+nested Powernap tests separately exercise advertised exact-object resolve,
+same-label row identity, inert documentation, refusal and joined cancellation.
+
+For sequential native captures select `CRUDE_VISUAL_COMPLETION=1`,
+`CRUDE_ARGS='-test.run=^TestCompletionVisualAcceptance$ -test.count=1 -test.timeout=600s'`
+and `CRUDE_COMPLETION_VISUAL_RESULT` with the compiled viewmodel test binary.
+F3 prepares only the disposable fixture; F4 passively observes each transition.
+Supply the ordinary keys in `lsp_completion_visual_test.go`, inspect the actual
+selected-documentation and original-insertion frames at both sizes, and finish
+with `quit:F9`. Check all eight `F4 VERIFIED` markers, unchanged initial insertion
+during documentation, actual capability/no-unadvertised-resolve evidence, exact
+provider join and clean product exit separately. Native frame accounting includes
+boot and non-sleep actions, not sleeps or a post-exit frame. These deterministic
+local regressions do not close adaptive workflow, device or complete-context gates.
+
 ### Live diagnostic acceptance
 
 `app/live_diagnostics_test.go`, `app/live_diagnostics_visual_test.go` and

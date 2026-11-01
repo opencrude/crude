@@ -364,6 +364,16 @@ func (h *Host) Control(id ComponentID, epoch uint64, revision *uint64, op Contro
 	if len(op.Value) > control.MaxValueBytes {
 		return EventResult{}, controlError(control.Invalid, "value exceeds budget")
 	}
+	// Native collection wrappers may observe an operation before delegating it.
+	// Validate against the same source used by inspection/description before
+	// entering that wrapper or changing focus.
+	if _, ok := m.component.(nativeControlCollection); ok {
+		if op.Verb == "activate" || op.Verb == "select" || op.Verb == "expand" || op.Verb == "close" {
+			if _, err := controlItemIndex(m.component, op.ItemID); err != nil {
+				return EventResult{}, err
+			}
+		}
+	}
 	// An open form dropdown owns input until committed/dismissed.
 	for _, mounted := range h.controls {
 		if form, ok := mounted.component.(*Form); ok {
@@ -447,23 +457,10 @@ func (h *Host) DescribeControl(id ComponentID, op ControlOperation) (control.Des
 		if op.Verb == "activate" || op.Verb == "set_checked" {
 			action = c.actionID
 		}
-	case *List, *Menu, *Table, *Tree, *Tabs, *VirtualList:
+	case nativeControlCollection, *Menu, *Table, *Tree, *Tabs, *VirtualList:
 		if op.Verb == "activate" || op.Verb == "select" || op.Verb == "expand" || op.Verb == "close" {
-			found := false
-			for i := 0; i < controlItemCount(c); i++ {
-				item := controlItemAt(c, i)
-				if item.ID == op.ItemID {
-					if found {
-						return control.Descriptor{}, controlError(control.Invalid, "ambiguous item")
-					}
-					found = true
-					if !item.Enabled {
-						return control.Descriptor{}, controlError(control.Unavailable, "item disabled")
-					}
-				}
-			}
-			if !found {
-				return control.Descriptor{}, controlError(control.Unavailable, "item unavailable")
+			if _, err := controlItemIndex(c, op.ItemID); err != nil {
+				return control.Descriptor{}, err
 			}
 		}
 		switch c := c.(type) {
@@ -502,6 +499,32 @@ func (h *Host) DescribeControl(id ComponentID, op ControlOperation) (control.Des
 			if op.Verb == "activate" {
 				action = c.activate
 			}
+		default:
+			// A native collection wrapper may observe selection/scrolling,
+			// rename activation or advertise additional owner actions. Its
+			// descriptors establish structure, never effect authority. Prefer
+			// the wrapper's exact verb, then the promoted native activation
+			// when it is still advertised. Even selection needs contextual
+			// resolution here; only concrete native controls prove it local.
+			if p, ok := c.(ControlProvider); ok {
+				activation := c.(nativeControlCollection).controlActivateAction()
+				actions := p.ControlActions()
+				for _, d := range actions {
+					if d.ID == op.Verb {
+						d.Effect = ""
+						return d, nil
+					}
+				}
+				if op.Verb == "activate" && activation != "" {
+					for _, d := range actions {
+						if d.ID == activation {
+							d.Effect = ""
+							return d, nil
+						}
+					}
+				}
+			}
+			return control.Descriptor{}, controlError(control.Invalid, "unsupported semantic operation")
 		}
 		if action == "" && (op.Verb == "select" || op.Verb == "scroll" || op.Verb == "set_offset") {
 			local = true

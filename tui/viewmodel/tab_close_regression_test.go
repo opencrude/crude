@@ -103,8 +103,11 @@ func (noopLSPClient) RequestInlayHints(context.Context, string, model.LSPInlayRa
 func (noopLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
 	return model.LSPInlayResponse{}, context.Canceled
 }
-func (noopLSPClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
-	return nil
+func (noopLSPClient) RequestCompletions(context.Context, string, int, int) (model.LSPCompletionResponse, error) {
+	return model.LSPCompletionResponse{}, context.Canceled
+}
+func (noopLSPClient) ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error) {
+	return model.LSPCompletionResponse{}, context.Canceled
 }
 
 // clickLastTabClose clicks the close glyph of the LAST tab through the real

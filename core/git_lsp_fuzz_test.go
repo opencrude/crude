@@ -352,9 +352,14 @@ func (c *semanticLSPClient) RequestInlayHints(context.Context, string, types.LSP
 func (c *semanticLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (types.LSPInlayResponse, error) {
 	return types.LSPInlayResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int) []workspace.CompletionItem {
+func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
 	c.record(path, line, col, "", false)
-	return []workspace.CompletionItem{{Label: "complete", Detail: "detail", Documentation: "docs", Kind: 3, InsertText: "insert", TextEdit: &types.LSPTextEdit{Line: 1, Col: 2, EndLine: 3, EndCol: 4, NewText: "primary"}, AdditionalTextEdits: []types.LSPTextEdit{{Line: 5, Col: 6, EndLine: 7, EndCol: 8, NewText: "import"}}}}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return types.LSPCompletionResponse{WireVersion: c.version, JSON: []byte(`[{"label":"complete","detail":"detail","documentation":"docs","kind":3,"insertText":"insert"}]`)}, nil
+}
+func (c *semanticLSPClient) ResolveCompletion(context.Context, string, int, []byte) (types.LSPCompletionResponse, error) {
+	return types.LSPCompletionResponse{}, context.Canceled
 }
 func (c *semanticLSPClient) RequestDocumentSymbols(_ context.Context, path string) []workspace.LSPSymbol {
 	c.record(path, 0, 0, "", false)
@@ -405,7 +410,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		}
 		a := &actor{ws: &workspace.Workspace{RootPath: root, LSPMgr: manager, LiveDocuments: docs}}
 		source := types.InsightSource{Kind: "canonical", WorkspaceGeneration: snapshot.AnalysisGeneration, DocumentID: snapshot.ID, Lifetime: snapshot.AnalysisLifetime, Path: snapshot.Path, Revision: snapshot.Revision}
-		methods := [...]string{coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationMethod, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDocumentSymbols}
+		methods := [...]string{coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationMethod, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPCompletionsMethod, coreprotocol.LSPRequestDocumentSymbols}
 		for i := 0; i < min(len(sequence)/2, gitLSPFuzzActions); i++ {
 			action, value := sequence[2*i]%8, sequence[2*i+1]
 			method := methods[int(action)%len(methods)]
@@ -422,6 +427,9 @@ func FuzzCoreLSPRequests(f *testing.F) {
 				in.Path = []string{"main.go", filepath.Join(root, "unopened.go"), filepath.Join(filepath.Dir(root), "outside.go"), "../outside.go"}[value%4]
 			}
 			request := coreprotocol.Request{ID: fmt.Sprintf("lsp-%d", i), Method: method, Owner: coreprotocol.Owner{ClientID: "fuzz", Epoch: 1}, Payload: mustTestPayload(in)}
+			if action == 4 {
+				request.Payload = mustTestPayload(coreprotocol.CompletionsRequest{Source: source, ViewID: "fuzz-completion", Sequence: uint64(i + 1), Line: in.Line, Col: in.Col})
+			}
 			kind := []string{"definition", "type-definition", "implementation", "references"}[value%4]
 			if action < 2 {
 				request.Payload = mustTestPayload(coreprotocol.NavigationRequest{Source: source, Kind: kind, Line: in.Line, Col: in.Col, IncludeDeclaration: kind == "references"})
@@ -450,14 +458,14 @@ func FuzzCoreLSPRequests(f *testing.F) {
 				}
 				if action == 7 && out.Error == nil {
 					var result coreprotocol.LSPResult
-					if err := testDecode(out.Payload, &result); err != nil || len(result.Completions) != 0 {
+					if err := testDecode(out.Payload, &result); err != nil || result.Hover != "" {
 						t.Fatal("unopened query returned a result", err)
 					}
 				}
 				continue
 			}
 			validNavigationPosition := in.Line == 0 && in.Col <= 12 || in.Line == 1 && in.Col == 0
-			if action < 2 && !validNavigationPosition {
+			if (action < 2 || action == 4) && !validNavigationPosition {
 				if out.Error == nil || client.count() != before {
 					t.Fatal("invalid navigation source position reached provider", out.Error)
 				}
@@ -491,6 +499,18 @@ func FuzzCoreLSPRequests(f *testing.F) {
 				}
 				continue
 			}
+			if action == 4 {
+				var result coreprotocol.CompletionReply
+				if err := testDecode(out.Payload, &result); err != nil || result.Set.Boundary.Source != source || len(result.Set.Entries) != 1 {
+					t.Fatal("qualified completion reply changed", err, result)
+				}
+				row := result.Set.Entries[0]
+				if row.Index != 0 || row.ID != "item-0" || row.Insertion.Label != "complete" || row.Insertion.InsertText != "insert" ||
+					row.Documentation.Value != "docs" || row.Documentation.Detail != "detail" {
+					t.Fatal("original completion identity/payload lost", row)
+				}
+				continue
+			}
 			var result coreprotocol.LSPResult
 			if err := testDecode(out.Payload, &result); err != nil || !result.Applied {
 				t.Fatal("query result missing", err)
@@ -503,8 +523,6 @@ func FuzzCoreLSPRequests(f *testing.F) {
 				want.SignatureHelp = types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0, Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}
 				// The manager, not the language fake, qualifies this semantic result.
 				want.SignatureHelp.Boundary = result.SignatureHelp.Boundary
-			case 4:
-				want.Completions = []workspace.CompletionItem{{Label: "complete", Detail: "detail", Documentation: "docs", Kind: 3, InsertText: "insert", TextEdit: &types.LSPTextEdit{Line: 1, Col: 2, EndLine: 3, EndCol: 4, NewText: "primary"}, AdditionalTextEdits: []types.LSPTextEdit{{Line: 5, Col: 6, EndLine: 7, EndCol: 8, NewText: "import"}}}}
 			case 5:
 				want.Symbols = []workspace.LSPSymbol{{Name: "parent", Detail: "outline", Kind: 12, KindName: "function", Line: 1, Col: 2, EndLine: 9, EndCol: 10, Children: []workspace.LSPSymbol{{Name: "child", Line: 3, Col: 4, EndLine: 5, EndCol: 6}}}}
 			}

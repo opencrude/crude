@@ -790,6 +790,7 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	m.closeCompletionPopup()
 	m.closeEditorSnippet()
 	m.closeCodeActions()
 	m.resetInlayHints()

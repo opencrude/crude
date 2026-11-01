@@ -397,6 +397,7 @@ func (m *App) closeWorkspaceEditors() {
 // closeWorkspaceBoundOverlays closes project/session/editor surfaces while
 // preserving the application-global Command Palette.
 func (m *App) closeWorkspaceBoundOverlays() {
+	m.closeCompletionPopup()
 	search := m.findInFiles
 	if m.overlayHost != nil {
 		for _, entry := range m.overlayHost.All() {

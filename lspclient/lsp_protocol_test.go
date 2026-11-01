@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/lspcompletion"
 	"crude/snippet"
 	"crude/types"
 
@@ -61,6 +62,12 @@ func TestProtocolServerHelper(t *testing.T) {
 		if json.Unmarshal(data, &msg) != nil {
 			os.Exit(2)
 		}
+		var original struct {
+			Params json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal(data, &original) != nil {
+			os.Exit(2)
+		}
 		trace = append(trace, msg)
 		method, _ := msg["method"].(string)
 		switch method {
@@ -75,6 +82,11 @@ func TestProtocolServerHelper(t *testing.T) {
 				continue
 			}
 			capabilities := map[string]any{"definitionProvider": true}
+			if mode != "completion-unsupported" {
+				capabilities["completionProvider"] = map[string]any{
+					"resolveProvider": strings.HasPrefix(mode, "completion-") && mode != "completion-no-resolve",
+				}
+			}
 			if strings.HasPrefix(mode, "signature") {
 				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"(", ","}}
 			}
@@ -168,14 +180,11 @@ func TestProtocolServerHelper(t *testing.T) {
 		case "textDocument/completion":
 			if strings.HasPrefix(mode, "completion-") {
 				if mode == "completion-stale" {
-					root, _ := os.Getwd()
-					_ = os.WriteFile(filepath.Join(root, "requested"), nil, 0600)
-					for {
-						if _, err := os.Stat(filepath.Join(root, "release")); err == nil {
-							break
-						}
-						time.Sleep(time.Millisecond)
-					}
+					completionProtocolGate()
+				}
+				if mode == "completion-error" {
+					write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "error": map[string]any{"code": -32601, "message": "completion unavailable"}})
+					continue
 				}
 				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": completionProtocolResponse(mode)})
 				continue
@@ -184,6 +193,17 @@ func TestProtocolServerHelper(t *testing.T) {
 				map[string]any{"label": "color", "insertTextFormat": 2, "textEdit": map[string]any{"range": map[string]any{"start": map[string]any{"line": 0, "character": 3}, "end": map[string]any{"line": 0, "character": 4}}, "newText": "${1|red,blue|};$0"}},
 				map[string]any{"label": "unsafe", "insertTextFormat": 2, "insertText": "$TM_FILENAME"},
 			}})
+		case "completionItem/resolve":
+			trace = append(trace, map[string]any{"resolveOriginal": string(original.Params)})
+			if mode == "completion-resolve-stale" {
+				completionProtocolGate()
+			}
+			if mode == "completion-resolve-error" {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "error": map[string]any{"code": -32602, "message": "unknown original completion"}})
+				continue
+			}
+			result := completionProtocolResolved(original.Params, mode)
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": result})
 		case "textDocument/documentSymbol":
 			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": []any{map[string]any{"name": "symbol", "kind": 12, "range": map[string]any{"start": map[string]any{"line": 0, "character": 3}, "end": map[string]any{"line": 0, "character": 4}}, "selectionRange": map[string]any{"start": map[string]any{"line": 0, "character": 3}, "end": map[string]any{"line": 0, "character": 4}}}}})
 		case "shutdown":
@@ -281,7 +301,23 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 		!bytes.Contains(definitions.JSON, []byte(`"character":3`)) {
 		t.Fatalf("original LocationLink result: %+v, %v", definitions, err)
 	}
-	items := l.RequestCompletions(ctx, path, 0, 3)
+	completions, err := l.RequestCompletions(ctx, path, 0, 3)
+	if err != nil || completions.WireVersion == 0 || completions.Unsupported ||
+		!bytes.Contains(completions.JSON, []byte("${1|red,blue|};$0")) ||
+		!bytes.Contains(completions.JSON, []byte("$TM_FILENAME")) {
+		t.Fatalf("original completion response: %+v, %v", completions, err)
+	}
+	parsed, err := lspcompletion.Parse(completions.JSON)
+	if err != nil || len(parsed.Items) != 2 {
+		t.Fatalf("completion parse: %+v, %v", parsed, err)
+	}
+	var items []types.CompletionItem
+	for _, original := range parsed.Items {
+		item, err := lspcompletion.Insertion(original)
+		if err == nil {
+			items = append(items, item)
+		}
+	}
 	if len(items) != 1 || items[0].InsertText != "red;" || items[0].TextEdit == nil || items[0].TextEdit.Col != 3 || items[0].TextEdit.NewText != "red;" {
 		t.Fatalf("completion edit/snippet: %+v", items)
 	}

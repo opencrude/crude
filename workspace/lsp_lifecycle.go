@@ -145,6 +145,9 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 	if m.settings.InlayHints != settings.InlayHints {
 		m.inlayGeneration++
 	}
+	if m.settings.Completions != settings.Completions || m.settings.AutoComplete != settings.AutoComplete {
+		m.completionGeneration++
+	}
 	m.settings = settings
 	if m.analysisGovernor != nil {
 		m.analysisGovernorError = ""
