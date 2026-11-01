@@ -24,6 +24,10 @@ shared control, never to one popup.
   A cursor inside continuation whitespace omitted by WordWrap maps to the next
   segment's column zero without changing the draft or cursor offset; never slice
   from a visible segment start past a logical cursor in that omitted gap.
+- TextArea PageUp/PageDown moves the native viewport with its cursor by one
+  viewport minus one row. The first page gesture advances reading immediately,
+  in editable and read-only areas; unchanged paint/layout never restores the
+  former page. Composite documentation shortcuts reuse this native behavior.
 - `Form` is a composite pointer owner because its retained fields are not Host
   children. Once an inner input starts a drag, `Form.pointerField` must route
   every captured motion/release to that same field before hover-focusing.

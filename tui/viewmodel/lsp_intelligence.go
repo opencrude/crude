@@ -75,7 +75,7 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	if ed != nil && ed.SnippetActive() {
 		return nil
 	}
-	if m.ws.LSPMgr() == nil || !m.ws.LSPMgr().Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.LSPPopup.CompletionID != "" {
+	if m.ws.LSPMgr() == nil || !m.ws.LSPMgr().Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.completion != nil {
 		return nil
 	}
 	if m.focusedPopup() != nil {

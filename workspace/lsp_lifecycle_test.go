@@ -145,9 +145,11 @@ func (c *lifecycleClient) NotifySave(_ context.Context, _ string, text string, _
 	}
 	c.record(phase + text)
 }
-func (c *lifecycleClient) RequestCompletions(_ context.Context, _ string, _, _ int) []CompletionItem {
+func (c *lifecycleClient) RequestCompletions(_ context.Context, path string, _, _ int) (model.LSPCompletionResponse, error) {
 	c.record("complete")
-	return []CompletionItem{{Label: "ok"}}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return model.LSPCompletionResponse{WireVersion: c.versions[path], JSON: []byte(`[{"label":"ok"}]`)}, nil
 }
 func (c *lifecycleClient) publication(path string, ds []LSPDiagnostic) model.InsightDiagnosticPublication {
 	c.mu.Lock()
@@ -391,7 +393,9 @@ func TestLSPRequestsFlushDebounceAndWatchersDoNotOpenFiles(t *testing.T) {
 	editorSource(t, m, path, "initial")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 	editorSource(t, m, path, "changed")
-	m.RequestCompletions(t.Context(), path, 0, 1)
+	if _, err := m.RequestCompletions(t.Context(), path, 0, 1); err != nil {
+		t.Fatal(err)
+	}
 	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(root, "go.mod"), 2)
 	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(root, "external.go"), 2)
 	calls := r.snapshot()[0].snapshot()

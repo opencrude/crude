@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"crude/document"
+	"crude/lspcompletion"
 	"crude/lspedit"
 	"crude/snippet"
 	model "crude/types"
@@ -130,26 +131,16 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 		edits = append(edits, edit)
 	} else {
 		line, col := e.LSPCursorPosition()
-		end, err := lspEditOffset(before, line, col)
+		wire, err := lspcompletion.PrimaryEdit(before, line, col, item)
 		if err != nil {
 			return err
 		}
-		start := end
-		for start > 0 {
-			r, size := utf8.DecodeLastRuneInString(before[:start])
-			if !isWordChar(r) {
-				break
-			}
-			start -= size
+		edit, err := validateCompletionEdit(before, wire)
+		if err != nil {
+			return err
 		}
-		text := item.InsertText
-		if text == "" && item.Snippet == nil {
-			text = item.Label
-		}
-		if text == "" && item.Snippet == nil || !utf8.ValidString(text) {
-			return fmt.Errorf("completion: missing or invalid UTF-8 replacement")
-		}
-		edits = append(edits, completionEdit{start: start, end: end, text: text, primary: true})
+		edit.primary = true
+		edits = append(edits, edit)
 	}
 	for _, wire := range item.AdditionalTextEdits {
 		edit, err := validateCompletionEdit(before, wire)

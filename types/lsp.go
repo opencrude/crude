@@ -156,6 +156,9 @@ type CompletionItem struct {
 	Documentation       string
 	Kind                int
 	InsertText          string
+	// HasInsertText distinguishes an explicitly empty insertion from an absent
+	// field. Only absence permits using the label as a replacement.
+	HasInsertText bool
 }
 
 type ProjectInsights struct {

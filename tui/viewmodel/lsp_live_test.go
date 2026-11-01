@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"crude/document"
+	"crude/lspcompletion"
 	model "crude/types"
 	"crude/workspace"
 )
@@ -178,9 +179,16 @@ func liveLSPSemantics(t *testing.T, ctx context.Context, m *workspace.LSPManager
 		filepath.Clean(defs.Targets[0].Path) != path || defs.Targets[0].Selection.Start.Line != 1 {
 		t.Fatalf("definition should resolve answer declaration in opened file: %+v, %v", defs, err)
 	}
-	items := m.RequestCompletions(ctx, path, line, completionCol)
+	response, err := m.RequestCompletions(ctx, path, line, completionCol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := lspcompletion.Parse(response.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
 	found := false
-	for _, item := range items {
+	for _, item := range items.Items {
 		found = found || strings.Contains(item.Label, "answer")
 	}
 	if !found {

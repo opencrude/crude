@@ -17,9 +17,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// This fixture supplies a parsed completion result, not a real language engine.
-// It exercises the actual two-shell/core document owner, topic, sparse edit,
-// author-history, save and reattach flow. The gopls visual journey separately
+// This fixture applies a parsed insertion through the editor command, not a fake
+// LSP result or a real language engine. It exercises the actual two-shell/core
+// document owner, topic, sparse edit, author-history, save and reattach flow.
+// The gopls visual journey separately
 // covers native provider conversion and the generated connected result codec.
 func TestConnectedSnippetSparseMirrorsPrivateNavigationAuthorUndoAndResume(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
@@ -68,12 +69,10 @@ func TestConnectedSnippetSparseMirrorsPrivateNavigationAuthorUndoAndResume(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	line, col := a.LSPCursorPosition()
-	one.app.handleAppMessages(lspCompletionResultMsg{owner: a, revision: a.Revision(),
-		generation: one.app.workspaceSwitchGen.Load(), filePath: path, line: line, col: col,
-		items: []types.CompletionItem{{Label: "pair", InsertText: text, Snippet: plan}}})
-	one.app.View()
-	key(tea.KeyTab, "", 0)
+	if err := a.ApplyCompletion(types.CompletionItem{Label: "pair", InsertText: text, Snippet: plan}); err != nil {
+		t.Fatal(err)
+	}
+	one.app.adoptEditorSnippet(a)
 	sync("A pair(word, red, word) Z")
 	if !a.SnippetActive() || a.SelectedText() != "word" {
 		t.Fatal("own receipt/publication retired the newly accepted field")
@@ -151,15 +150,14 @@ func TestConnectedSnippetChoiceNativeOverflowAndExactSemanticOwner(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	line, col := a.LSPCursorPosition()
-	one.app.Update(lspCompletionResultMsg{owner: a, revision: a.Revision(),
-		generation: one.app.workspaceSwitchGen.Load(), filePath: path, line: line, col: col,
-		items: []types.CompletionItem{{Label: "choices", InsertText: text, Snippet: plan}}})
+	if err := a.ApplyCompletion(types.CompletionItem{Label: "choices", InsertText: text, Snippet: plan}); err != nil {
+		t.Fatal(err)
+	}
+	one.app.adoptEditorSnippet(a)
 	one.app.View()
-	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	runAppCommand(t, one.app, cmd)
+	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
 	liveTestPump(t, []*App{one.app, two.app}, nil)
-	_, cmd = one.app.Update(tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+	_, cmd := one.app.Update(tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 	runAppCommand(t, one.app, cmd)
 	p := one.app.editorSnippet.choice
 	frame := p.window.Content.(*ui.WindowFrameWidget)

@@ -17,7 +17,7 @@ import (
 
 func snippetJourney(t *testing.T, width int) (*App, *editor.Editor) {
 	t.Helper()
-	app, path, ed := lspJourneyEditor(t, "pr")
+	app, _, ed := lspJourneyEditor(t, "pr")
 	app.Update(tea.WindowSizeMsg{Width: width, Height: 24})
 	app.setFocusEditor()
 	app.Input.SetInput("keep the private composer draft")
@@ -26,14 +26,13 @@ func snippetJourney(t *testing.T, width int) (*App, *editor.Editor) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	line, col := ed.LSPCursorPosition()
-	app.handleAppMessages(lspCompletionResultMsg{owner: ed, revision: ed.Revision(),
-		generation: app.workspaceSwitchGen.Load(), filePath: path, line: line, col: col,
-		items: []types.CompletionItem{{Label: "print", InsertText: text, Snippet: plan}}})
+	if err := ed.ApplyCompletion(types.CompletionItem{Label: "print", InsertText: text, Snippet: plan}); err != nil {
+		t.Fatal(err)
+	}
+	app.adoptEditorSnippet(ed)
 	app.View()
-	app.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // actual completion popup acceptance
-	if !ed.SnippetActive() || ed.SelectedText() != "value" || app.LSPPopup.CompletionID != "" || app.editorSnippet == nil {
-		t.Fatalf("accepting Tab also advanced/lost interaction: %q selected=%q state=%+v", ed.Value(), ed.SelectedText(), app.editorSnippet)
+	if !ed.SnippetActive() || ed.SelectedText() != "value" || app.editorSnippet == nil {
+		t.Fatalf("snippet did not adopt its first field: %q selected=%q state=%+v", ed.Value(), ed.SelectedText(), app.editorSnippet)
 	}
 	return app, ed
 }
@@ -163,36 +162,39 @@ func TestEditorSnippetTrueFocusBoundariesAndAutomaticCompletion(t *testing.T) {
 }
 
 func TestEditorSnippetLateAutomaticResultCannotStealIdenticalSourceInteraction(t *testing.T) {
-	app, path, ed := lspJourneyEditor(t, "word")
-	app.setFocusEditor()
+	app, port := completionTestApp(t, 100, 32, "word")
+	ed := app.EditorState.Editor
 	ed.SetCursorPosition(0, 4)
-	line, col := ed.LSPCursorPosition()
-	automatic := lspCompletionResultMsg{automatic: true, owner: ed, revision: ed.Revision(),
-		generation: app.workspaceSwitchGen.Load(), filePath: path, line: line, col: col,
-		items: []types.CompletionItem{{Label: "unrelated", InsertText: "unrelated"}}}
+	automatic := app.requestCompletion(true)
+	if automatic == nil || app.completion == nil || !app.completion.automatic {
+		t.Fatal("old automatic invocation was not really admitted")
+	}
+	old := app.completion
+	late := automatic()
 	text, plan, err := snippet.Parse("${1:word}$0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	explicit := automatic
-	explicit.automatic = false
-	explicit.items = []types.CompletionItem{{Label: "word", InsertText: text, Snippet: plan}}
-	app.Update(explicit)
-	app.View()
-	app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	if !ed.SnippetActive() || ed.SelectedText() != "word" || ed.Revision() != automatic.revision {
-		t.Fatal("fixture did not retain identical source/caret with new private interaction")
+	port.set.Entries = []types.LSPCompletionEntry{{ID: "original-word", Insertion: types.CompletionItem{Label: "word", InsertText: text, Snippet: plan}}}
+	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !ed.SnippetActive() || ed.SelectedText() != "word" || ed.Revision() != old.revision || ed.Value() != "word" {
+		t.Fatal("fixture did not retain identical source with a new private interaction")
 	}
-	app.Update(automatic)
-	if app.LSPPopup.CompletionID != "" || !ed.SnippetActive() || ed.SelectedText() != "word" || ed.Value() != "word" {
-		t.Fatal("late automatic completion stole an identical-source snippet's Tab")
+	app.Update(late)
+	if app.completion != nil || !ed.SnippetActive() || ed.SelectedText() != "word" || ed.Value() != "word" {
+		t.Fatal("late automatic result stole the identical-source snippet's Tab")
 	}
-	app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	if ed.SnippetActive() || ed.HasSelection() || ed.CursorCol() != 4 || ed.Value() != "word" {
-		t.Fatal("snippet final landing did not retain normal Tab ownership")
+	// A fresh explicit invocation remains permitted at the same source. An active
+	// field with choices has its own Ctrl+Space priority in the preceding tests.
+	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+	if app.completion == nil || app.completion.screen == nil || app.completion.automatic {
+		t.Fatal("manual request was suppressed by a snippet without choices")
 	}
-	app.Update(automatic)
-	if app.LSPPopup.CompletionID == "" {
-		t.Fatal("ordinary current automatic completion was suppressed without a snippet")
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyEsc})
+	// This fresh manual chooser is a true input-owner departure, unlike the
+	// retired automatic reply above. Dismissing it must not revive old fields.
+	if ed.SnippetActive() || ed.Value() != "word" {
+		t.Fatal("manual chooser departure revived snippet fields or changed accepted bytes")
 	}
 }

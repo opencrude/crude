@@ -374,60 +374,6 @@ func (c *Client) NotifyWorkspaceDidChangeConfiguration(ctx context.Context, sett
 	return c.conn.Notify(ctx, MethodWorkspaceDidChangeConfiguration, params) //nolint:wrapcheck
 }
 
-// RequestCompletion requests completion items at the given position.
-func (c *Client) RequestCompletion(ctx context.Context, uri string, position protocol.Position) (*protocol.CompletionList, error) {
-	if !c.initialized.Load() {
-		return nil, fmt.Errorf("client not initialized")
-	}
-
-	params := protocol.CompletionParams{
-		Context: protocol.CompletionContext{
-			TriggerKind: protocol.Invoked,
-		},
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{
-				URI: protocol.DocumentURI(uri),
-			},
-			Position: position,
-		},
-	}
-
-	var result any
-	err := c.conn.Call(ctx, MethodTextDocumentCompletion, params, &result)
-	if err != nil {
-		return nil, fmt.Errorf("completion request failed: %w", err)
-	}
-
-	// Parse the result - can be CompletionList or []CompletionItem
-	var completionList protocol.CompletionList
-
-	switch v := result.(type) {
-	case map[string]any:
-		// It's a CompletionList
-		data, err := json.Marshal(v)
-		if err != nil {
-			return nil, err //nolint:wrapcheck
-		}
-		if err := json.Unmarshal(data, &completionList); err != nil {
-			return nil, err //nolint:wrapcheck
-		}
-	case []any:
-		// It's an array of CompletionItem
-		data, err := json.Marshal(v)
-		if err != nil {
-			return nil, err //nolint:wrapcheck
-		}
-		var items []protocol.CompletionItem
-		if err := json.Unmarshal(data, &items); err != nil {
-			return nil, err //nolint:wrapcheck
-		}
-		completionList.Items = items
-		completionList.IsIncomplete = false
-	}
-
-	return &completionList, nil
-}
-
 // RequestHover requests hover information at the given position.
 func (c *Client) RequestHover(ctx context.Context, uri string, position protocol.Position) (*protocol.Hover, error) {
 	if !c.initialized.Load() {
@@ -618,7 +564,7 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		fieldTextDocument: map[string]any{
 			"synchronization": map[string]any{"willSave": true, "didSave": true},
-			"completion":      map[string]any{"completionItem": map[string]any{"snippetSupport": enableSnippets, "insertReplaceSupport": true, "documentationFormat": []string{"plaintext", markupKindMarkdown}}},
+			"completion":      CompletionClientCapabilities(enableSnippets),
 			"hover":           map[string]any{"contentFormat": []string{"plaintext", markupKindMarkdown}},
 			"codeAction":      codeActionClientCapabilities(),
 			"inlayHint":       InlayHintClientCapabilities(),

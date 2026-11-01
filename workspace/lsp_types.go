@@ -53,7 +53,8 @@ type LSPClient interface {
 	ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error)
 	RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error)
 	ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error)
-	RequestCompletions(context.Context, string, int, int) []CompletionItem
+	RequestCompletions(context.Context, string, int, int) (model.LSPCompletionResponse, error)
+	ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error)
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.
 	AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool)

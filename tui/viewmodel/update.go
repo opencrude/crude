@@ -54,6 +54,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, blurred := msg.(tea.BlurMsg); blurred {
 		m.closeEditorSnippet()
 		m.closeSignatureHelp()
+		m.closeCompletionPopup()
+	}
+	if _, pasted := msg.(tea.PasteMsg); pasted && m.completion != nil {
+		m.closeCompletionPopup()
 	}
 	m.syncEditorSnippet()
 	defer m.invalidateMessageRegions(msg)
@@ -80,6 +84,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
 	m.syncNavigation()
+	command = tea.Batch(command, m.syncCompletion())
 	command = tea.Batch(command, m.syncInlayHints())
 	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
@@ -962,9 +967,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.handleReviewedEditReleased(msg)
 	case reviewedEditCleanupMsg:
 		m.handleReviewedEditCleanup(msg)
-	case lspCompletionResultMsg:
-		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
-			m.handleCompletionResult(msg)
+	case completionResultMsg:
+		m.handleCompletionResult(msg)
+		cmds = append(cmds, m.syncCompletion())
+	case completionReadMsg:
+		m.handleCompletionRead(msg)
+	case completionReleasedMsg:
+		if msg.err != nil && msg.owner != nil && msg.owner.workspace == m.ws &&
+			msg.owner.generation == m.workspaceSwitchGen.Load() && msg.owner.sequence == m.completionSequence &&
+			m.completion == nil {
+			m.Feedback.NotifyInfo("Completion view release was not confirmed; retained evidence expires automatically")
 		}
 	case types.ErrorMsg:
 		m.ws.Logger().Debug("UI", "error", "msg", string(msg))

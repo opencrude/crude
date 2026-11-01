@@ -13,6 +13,7 @@ func (m *App) resetLSPRequestContext() {
 		return
 	}
 	m.closeSignatureHelp()
+	m.closeCompletionPopup()
 	m.closeCodeActions()
 	m.closeNavigation()
 	m.resetInlayHints()

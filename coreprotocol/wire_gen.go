@@ -3086,6 +3086,232 @@ func (z CommitModelResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *CompletionInspectRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendString(o, z.Digest)
+	o = msgp.AppendString(o, z.ItemID)
+	o = msgp.AppendBool(o, z.Resolve)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompletionInspectRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Digest, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Digest")
+		return
+	}
+	z.ItemID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ItemID")
+		return
+	}
+	z.Resolve, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Resolve")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CompletionInspectRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Digest) + msgp.StringPrefixSize + len(z.ItemID) + msgp.BoolSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z CompletionReleaseRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.ViewID)
+	o = msgp.AppendUint64(o, z.Sequence)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompletionReleaseRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.ViewID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ViewID")
+		return
+	}
+	z.Sequence, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Sequence")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z CompletionReleaseRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ViewID) + msgp.Uint64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CompletionReply) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o, err = z.Set.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Set")
+		return
+	}
+	o, err = z.Inspection.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Inspection")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompletionReply) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	bts, err = z.Set.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Set")
+		return
+	}
+	bts, err = z.Inspection.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Inspection")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CompletionReply) Msgsize() (s int) {
+	s = 1 + z.Set.Msgsize() + z.Inspection.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CompletionsRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 5
+	o = append(o, 0x95)
+	o, err = z.Source.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Source")
+		return
+	}
+	o = msgp.AppendString(o, z.ViewID)
+	o = msgp.AppendUint64(o, z.Sequence)
+	o = msgp.AppendInt(o, z.Line)
+	o = msgp.AppendInt(o, z.Col)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompletionsRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+		return
+	}
+	bts, err = z.Source.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Source")
+		return
+	}
+	z.ViewID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ViewID")
+		return
+	}
+	z.Sequence, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Sequence")
+		return
+	}
+	z.Line, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Line")
+		return
+	}
+	z.Col, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Col")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CompletionsRequest) Msgsize() (s int) {
+	s = 1 + z.Source.Msgsize() + msgp.StringPrefixSize + len(z.ViewID) + msgp.Uint64Size + msgp.IntSize + msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *ConnectionSecretPresence) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 5
@@ -9437,29 +9663,17 @@ func (z *LSPRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPResult) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 5
-	o = append(o, 0x95)
+	// array header, size 4
+	o = append(o, 0x94)
 	o = msgp.AppendBool(o, z.Applied)
-	if z.Completions == nil { // allownil: if nil
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendArrayHeader(o, uint32(len(z.Completions)))
-		for za0001 := range z.Completions {
-			o, err = z.Completions[za0001].MarshalMsg(o)
-			if err != nil {
-				err = msgp.WrapError(err, "Completions", za0001)
-				return
-			}
-		}
-	}
 	if z.Symbols == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Symbols)))
-		for za0002 := range z.Symbols {
-			o, err = z.Symbols[za0002].MarshalMsg(o)
+		for za0001 := range z.Symbols {
+			o, err = z.Symbols[za0001].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "Symbols", za0002)
+				err = msgp.WrapError(err, "Symbols", za0001)
 				return
 			}
 		}
@@ -9485,8 +9699,8 @@ func (z *LSPResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 5 {
-		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
 		return
 	}
 	z.Applied, bts, err = msgp.ReadBoolBytes(bts)
@@ -9496,54 +9710,27 @@ func (z *LSPResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
-		z.Completions = nil
+		z.Symbols = nil
 	} else {
 		var zb0002 uint32
 		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
-			err = msgp.WrapError(err, "Completions")
+			err = msgp.WrapError(err, "Symbols")
 			return
 		}
 		if uint64(zb0002)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Completions != nil && cap(z.Completions) >= int(zb0002) {
-			z.Completions = (z.Completions)[:zb0002]
+		if z.Symbols != nil && cap(z.Symbols) >= int(zb0002) {
+			z.Symbols = (z.Symbols)[:zb0002]
 		} else {
-			z.Completions = make([]workspace.CompletionItem, zb0002)
+			z.Symbols = make([]workspace.LSPSymbol, zb0002)
 		}
-		for za0001 := range z.Completions {
-			bts, err = z.Completions[za0001].UnmarshalMsg(bts)
+		for za0001 := range z.Symbols {
+			bts, err = z.Symbols[za0001].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Completions", za0001)
-				return
-			}
-		}
-	}
-	if msgp.IsNil(bts) {
-		bts = bts[1:]
-		z.Symbols = nil
-	} else {
-		var zb0003 uint32
-		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
-		if err != nil {
-			err = msgp.WrapError(err, "Symbols")
-			return
-		}
-		if uint64(zb0003)*1 > uint64(len(bts)) {
-			err = msgp.ErrShortBytes
-			return
-		}
-		if z.Symbols != nil && cap(z.Symbols) >= int(zb0003) {
-			z.Symbols = (z.Symbols)[:zb0003]
-		} else {
-			z.Symbols = make([]workspace.LSPSymbol, zb0003)
-		}
-		for za0002 := range z.Symbols {
-			bts, err = z.Symbols[za0002].UnmarshalMsg(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "Symbols", za0002)
+				err = msgp.WrapError(err, "Symbols", za0001)
 				return
 			}
 		}
@@ -9565,12 +9752,8 @@ func (z *LSPResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *LSPResult) Msgsize() (s int) {
 	s = 1 + msgp.BoolSize + msgp.ArrayHeaderSize
-	for za0001 := range z.Completions {
-		s += z.Completions[za0001].Msgsize()
-	}
-	s += msgp.ArrayHeaderSize
-	for za0002 := range z.Symbols {
-		s += z.Symbols[za0002].Msgsize()
+	for za0001 := range z.Symbols {
+		s += z.Symbols[za0001].Msgsize()
 	}
 	s += msgp.StringPrefixSize + len(z.Hover) + z.SignatureHelp.Msgsize()
 	return
@@ -9579,8 +9762,8 @@ func (z *LSPResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 17
-	o = append(o, 0xdc, 0x0, 0x11)
+	// array header, size 19
+	o = append(o, 0xdc, 0x0, 0x13)
 	o = msgp.AppendString(o, z.Generation)
 	o = msgp.AppendUint64(o, z.ContextGeneration)
 	o = msgp.AppendUint64(o, z.Version)
@@ -9648,6 +9831,8 @@ func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendBool(o, z.ShowInTree)
 	o = msgp.AppendBool(o, z.ShowInlays)
 	o = msgp.AppendUint64(o, z.InlayGeneration)
+	o = msgp.AppendBool(o, z.ShowCompletions)
+	o = msgp.AppendUint64(o, z.CompletionGeneration)
 	return
 }
 
@@ -9663,8 +9848,8 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 17 {
-		err = msgp.ArrayError{Wanted: 17, Got: zb0001}
+	if zb0001 != 19 {
+		err = msgp.ArrayError{Wanted: 19, Got: zb0001}
 		return
 	}
 	z.Generation, bts, err = msgp.ReadStringBytes(bts)
@@ -9855,6 +10040,16 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "InlayGeneration")
 		return
 	}
+	z.ShowCompletions, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ShowCompletions")
+		return
+	}
+	z.CompletionGeneration, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CompletionGeneration")
+		return
+	}
 	o = bts
 	return
 }
@@ -9882,7 +10077,7 @@ func (z *LSPSnapshot) Msgsize() (s int) {
 	for za0006 := range z.Health {
 		s += z.Health[za0006].Msgsize()
 	}
-	s += z.Settings.Msgsize() + msgp.BoolSize + msgp.BoolSize + z.Status.Msgsize() + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Uint64Size
+	s += z.Settings.Msgsize() + msgp.BoolSize + msgp.BoolSize + z.Status.Msgsize() + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Uint64Size + msgp.BoolSize + msgp.Uint64Size
 	return
 }
 

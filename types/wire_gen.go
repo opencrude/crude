@@ -1970,8 +1970,8 @@ func (z *CompactResultMsg) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CompletionItem) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 8
-	o = append(o, 0x98)
+	// array header, size 9
+	o = append(o, 0x99)
 	if z.TextEdit == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -2017,6 +2017,7 @@ func (z *CompletionItem) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.Documentation)
 	o = msgp.AppendInt(o, z.Kind)
 	o = msgp.AppendString(o, z.InsertText)
+	o = msgp.AppendBool(o, z.HasInsertText)
 	return
 }
 
@@ -2032,8 +2033,8 @@ func (z *CompletionItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 8 {
-		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -2161,6 +2162,11 @@ func (z *CompletionItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "InsertText")
 		return
 	}
+	z.HasInsertText, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "HasInsertText")
+		return
+	}
 	o = bts
 	return
 }
@@ -2185,7 +2191,7 @@ func (z *CompletionItem) Msgsize() (s int) {
 			s += z.Snippet.Occurrences[za0002].Msgsize()
 		}
 	}
-	s += msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Documentation) + msgp.IntSize + msgp.StringPrefixSize + len(z.InsertText)
+	s += msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Documentation) + msgp.IntSize + msgp.StringPrefixSize + len(z.InsertText) + msgp.BoolSize
 	return
 }
 
@@ -4061,6 +4067,409 @@ func (z *IssueSnapshot) Msgsize() (s int) {
 	for za0001 := range z.Actions {
 		s += z.Actions[za0001].Msgsize()
 	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPCompletionDocumentation) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 6
+	o = append(o, 0x96)
+	o = msgp.AppendBool(o, z.HasDetail)
+	o = msgp.AppendBool(o, z.Present)
+	o = msgp.AppendString(o, z.Detail)
+	o = msgp.AppendString(o, z.Form)
+	o = msgp.AppendString(o, z.Kind)
+	o = msgp.AppendString(o, z.Value)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPCompletionDocumentation) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+		return
+	}
+	z.HasDetail, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "HasDetail")
+		return
+	}
+	z.Present, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Present")
+		return
+	}
+	z.Detail, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Detail")
+		return
+	}
+	z.Form, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Form")
+		return
+	}
+	z.Kind, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Kind")
+		return
+	}
+	z.Value, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Value")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPCompletionDocumentation) Msgsize() (s int) {
+	s = 1 + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Form) + msgp.StringPrefixSize + len(z.Kind) + msgp.StringPrefixSize + len(z.Value)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPCompletionEntry) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendInt(o, z.Index)
+	o, err = z.Insertion.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Insertion")
+		return
+	}
+	o, err = z.Documentation.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Documentation")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPCompletionEntry) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Index, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Index")
+		return
+	}
+	bts, err = z.Insertion.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Insertion")
+		return
+	}
+	bts, err = z.Documentation.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Documentation")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPCompletionEntry) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.IntSize + z.Insertion.Msgsize() + z.Documentation.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPCompletionInspection) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 9
+	o = append(o, 0x99)
+	o = msgp.AppendString(o, z.SetID)
+	o = msgp.AppendString(o, z.Digest)
+	o = msgp.AppendString(o, z.ItemID)
+	o, err = z.Boundary.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Boundary")
+		return
+	}
+	o = msgp.AppendInt(o, z.WireVersion)
+	o = msgp.AppendUint64(o, z.FeatureGeneration)
+	o, err = z.Documentation.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Documentation")
+		return
+	}
+	o = msgp.AppendString(o, z.ResolveState)
+	o = msgp.AppendString(o, z.Detail)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPCompletionInspection) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+		return
+	}
+	z.SetID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SetID")
+		return
+	}
+	z.Digest, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Digest")
+		return
+	}
+	z.ItemID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ItemID")
+		return
+	}
+	bts, err = z.Boundary.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Boundary")
+		return
+	}
+	z.WireVersion, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WireVersion")
+		return
+	}
+	z.FeatureGeneration, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FeatureGeneration")
+		return
+	}
+	bts, err = z.Documentation.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Documentation")
+		return
+	}
+	z.ResolveState, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ResolveState")
+		return
+	}
+	z.Detail, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Detail")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPCompletionInspection) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.SetID) + msgp.StringPrefixSize + len(z.Digest) + msgp.StringPrefixSize + len(z.ItemID) + z.Boundary.Msgsize() + msgp.IntSize + msgp.Uint64Size + z.Documentation.Msgsize() + msgp.StringPrefixSize + len(z.ResolveState) + msgp.StringPrefixSize + len(z.Detail)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPCompletionSet) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 16
+	o = append(o, 0xdc, 0x0, 0x10)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendString(o, z.Digest)
+	o = msgp.AppendString(o, z.ViewID)
+	o = msgp.AppendUint64(o, z.Sequence)
+	o, err = z.Boundary.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Boundary")
+		return
+	}
+	o = msgp.AppendInt(o, z.WireVersion)
+	o = msgp.AppendUint64(o, z.FeatureGeneration)
+	o = msgp.AppendInt(o, z.Line)
+	o = msgp.AppendInt(o, z.Col)
+	o = msgp.AppendString(o, z.Answer)
+	o = msgp.AppendBool(o, z.Incomplete)
+	o = msgp.AppendInt(o, z.UnsupportedItems)
+	o = msgp.AppendBool(o, z.ResolveSupported)
+	if z.Entries == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Entries)))
+		for za0001 := range z.Entries {
+			o, err = z.Entries[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Entries", za0001)
+				return
+			}
+		}
+	}
+	o = msgp.AppendTime(o, z.ExpiresAt)
+	o = msgp.AppendString(o, z.Detail)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPCompletionSet) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 16 {
+		err = msgp.ArrayError{Wanted: 16, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Digest, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Digest")
+		return
+	}
+	z.ViewID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ViewID")
+		return
+	}
+	z.Sequence, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Sequence")
+		return
+	}
+	bts, err = z.Boundary.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Boundary")
+		return
+	}
+	z.WireVersion, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WireVersion")
+		return
+	}
+	z.FeatureGeneration, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FeatureGeneration")
+		return
+	}
+	z.Line, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Line")
+		return
+	}
+	z.Col, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Col")
+		return
+	}
+	z.Answer, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Answer")
+		return
+	}
+	z.Incomplete, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Incomplete")
+		return
+	}
+	z.UnsupportedItems, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "UnsupportedItems")
+		return
+	}
+	z.ResolveSupported, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ResolveSupported")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Entries = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Entries")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Entries != nil && cap(z.Entries) >= int(zb0002) {
+			z.Entries = (z.Entries)[:zb0002]
+		} else {
+			z.Entries = make([]LSPCompletionEntry, zb0002)
+		}
+		for za0001 := range z.Entries {
+			bts, err = z.Entries[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Entries", za0001)
+				return
+			}
+		}
+	}
+	z.ExpiresAt, bts, err = msgp.ReadTimeBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExpiresAt")
+		return
+	}
+	z.Detail, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Detail")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPCompletionSet) Msgsize() (s int) {
+	s = 3 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Digest) + msgp.StringPrefixSize + len(z.ViewID) + msgp.Uint64Size + z.Boundary.Msgsize() + msgp.IntSize + msgp.Uint64Size + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Answer) + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.ArrayHeaderSize
+	for za0001 := range z.Entries {
+		s += z.Entries[za0001].Msgsize()
+	}
+	s += msgp.TimeSize + msgp.StringPrefixSize + len(z.Detail)
 	return
 }
 

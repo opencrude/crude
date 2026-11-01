@@ -31,30 +31,47 @@ func lspJourneyEditor(t *testing.T, text string) (*App, string, *editor.Editor) 
 	return app, path, app.EditorState.Editor
 }
 func TestLSPCompletionReplacesPrefixAndRejectsLateOwners(t *testing.T) {
-	app, path, ed := lspJourneyEditor(t, "fmt.Pr")
+	// Local editor history is intentionally separate from the canonical chooser
+	// fixture: an installed shared document must never pretend local Undo is a
+	// canonical receipt. Connected snippet journeys cover the real author history.
+	local, _, standalone := lspJourneyEditor(t, "fmt.Pr")
+	standalone.SetCursorPosition(0, 6)
+	if err := standalone.ApplyCompletion(model.CompletionItem{Label: "Println", InsertText: "Println"}); err != nil {
+		t.Fatal(err)
+	}
+	local.adoptEditorSnippet(standalone)
+	if standalone.Value() != "fmt.Println" {
+		t.Fatalf("completion duplicated typed prefix: %q", standalone.Value())
+	}
+	standalone.Undo()
+	if standalone.Value() != "fmt.Pr" {
+		t.Fatal("completion was not one undo")
+	}
+
+	app, port := completionTestApp(t, 120, 40, "fmt.Pr")
+	ed := app.EditorState.Editor
 	ed.SetCursorPosition(0, 6)
-	line, col := ed.LSPCursorPosition()
-	response := lspCompletionResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, line: line, col: col, items: []model.CompletionItem{{Label: "Println", InsertText: "Println"}}}
-	app.handleAppMessages(response)
-	if app.LSPPopup.CompletionID == "" {
+	port.set.Entries = []model.LSPCompletionEntry{{ID: "original-println", Insertion: model.CompletionItem{Label: "Println", InsertText: "Println"}}}
+	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+	if app.completion == nil || app.completion.screen == nil {
 		t.Fatal("completion did not render")
 	}
-	app.acceptCompletion()
+	old := app.completion
+	response := completionResultMsg{owner: old, set: *old.set}
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if ed.Value() != "fmt.Println" {
 		t.Fatalf("completion duplicated typed prefix: %q", ed.Value())
 	}
-	ed.Undo()
-	if ed.Value() != "fmt.Pr" {
-		t.Fatal("completion was not one undo")
+	app.Update(response)
+	if app.completion != nil {
+		t.Fatal("retired result reopened completion after acceptance")
 	}
-	app.handleAppMessages(response)
-	if app.LSPPopup.CompletionID != "" {
-		t.Fatal("stale revision reopened completion")
-	}
-	response.revision = ed.Revision()
-	response.owner = editor.New(app.Theme)
-	app.handleAppMessages(response)
-	if app.LSPPopup.CompletionID != "" {
+	foreign := *old
+	foreign.editor = editor.New(app.Theme)
+	t.Cleanup(foreign.editor.Close)
+	response.owner = &foreign
+	app.Update(response)
+	if app.completion != nil {
 		t.Fatal("foreign editor accepted result")
 	}
 }

@@ -339,6 +339,8 @@ type App struct {
 	signatureHelpIntent   *signatureHelpIntent
 	codeActions           *codeActionState
 	navigation            *navigationState
+	completion            *completionState
+	completionSequence    uint64
 	inlayViews            map[*editor.Editor]*inlayViewState
 	inlayViewSequence     uint64
 	inlayInspector        *inlayInspectorState
@@ -1208,7 +1210,7 @@ func (m *App) registerOverlayHandlers() {
 	})
 
 	oh.RegisterContentHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.clickCompletion(localX, localY)
+		return m.forwardEventToWindowContent(fw, msg)
 	})
 	oh.RegisterContentHandler(ui.OverlaySnippetChoices, func(_ *ui.OverlayHost, fw *wm.FloatingWindow, _, _ int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
@@ -1218,7 +1220,8 @@ func (m *App) registerOverlayHandlers() {
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: ox + x, Y: oy + y, Button: button})
 	})
 	oh.RegisterHoverHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		m.hoverCompletion(localX, localY)
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
 
 	oh.RegisterContentHandler(ui.OverlayOutline, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {

@@ -676,6 +676,69 @@ selection**, never that the file or project is clean. Selection comparison durin
 Update is constant-time; source-byte conversion runs once per explicit request,
 not once per tick or painted frame.
 
+### Completion documentation and original insertion
+
+Ctrl+Space and the automatic-completion debounce share one canonical completion
+invocation. The native caret-anchored WindowFrame contains a List with standard
+kind glyphs and detail, plus passive selected-row documentation. Wide frames put
+the reader beside the list; constrained frames stack it below. Up/Down, paging,
+Home/End and pointer selection use that one List. Ctrl+PgUp/PgDn pages the native
+read-only TextArea without moving the selected completion; pointer selection and
+Ctrl+C copy inert text. Ordinary typing dismisses the chooser and reaches the
+editor exactly once. Escape/outside dismiss only the invocation. Ctrl+Space on an
+active numeric choice field still opens **Snippet choices** first.
+
+The core retains the original array or CompletionList item, original index and
+opaque row ID, not a label-keyed reconstruction. Equal labels remain independent
+rows. Null, empty, unsupported static capability, unsupported insertions and
+provider failures remain distinct. `isIncomplete` and omitted unsupported-row
+counts are visible; an incomplete result is never advertised as complete.
+CompletionList defaults and dynamic registration are not advertised or accepted.
+
+Initial documentation preserves string versus MarkupContent, plaintext versus
+markdown, absence versus an explicitly empty value, and optional detail. Markdown,
+links, terminal control bytes and commands are displayed literally, never
+interpreted or executed. If the original provider advertises resolve, selecting a
+row requests `completionItem/resolve` passively with its exact retained original
+object. Only detail and documentation may change. Missing or changed original
+fields, new insertion fields, changed opaque data/numeric tokens, sort/filter
+changes, edits and commands are refused atomically. A resolved object never
+replaces an insertion or its numeric plan. Revisiting a resolved row uses only
+that invocation's display cache; a late former-row answer cannot replace the
+selected reader.
+
+Every request, including negative evidence, carries the acknowledged canonical
+source, exact synchronized wire version, actual producer instance and original
+context. Standard completion results do not report a source version and remain
+labelled **unversioned**; unknown context inputs remain partial. The shell waits
+for the original pushed context cursor before presenting semantic evidence.
+Source/caret/selection, tab, focus, workspace, provider, settings and expiry
+boundaries retire old callbacks. A dedicated feature generation prevents an
+off/on settings cycle from reviving old evidence without restarting the server.
+Automatic absence/failure stays quiet; explicit requests give bounded feedback.
+
+Enter/Tab or row activation first inspects the exact retained set ID/digest/item
+without resolve. The core validates all original primary/additional edits against
+the still-current canonical source. The shell then rechecks its original editor
+and applies only the initial insertion through the existing editor transaction.
+Semantic activation reports local admission while that ordinary canonical edit
+is pending; a successful documentation read is not a text/save receipt.
+An omitted insertion may use its label; an explicitly empty insertion never does.
+The shared `lspcompletion.PrimaryEdit` chooses the strict UTF-16 range or backward
+Unicode identifier prefix, so validation and application cannot derive different
+prefix edits. No request or documentation observation changes source, saved
+bytes, author history or the private composer.
+
+Bounds are 2 MiB source, 1 MiB encoded result, 256 original items, 64 KiB consumed
+strings, 32 JSON container levels, 64 additional edits per item and 1 MiB
+accounted normalized output. Malformed or over-bound evidence is refused, not
+truncated. Per-document-service retention is at most 16 live views, 128 sequence
+records and 16 MiB accounted original/display payload with a five-minute lifetime.
+Closing a chooser cancels its reads and releases its exact private sequence;
+late old releases cannot retire newer invocations. Close/detach/shutdown revoke
+the corresponding source views. These are consumer/retention bounds, not decoder
+allocation ceilings or native CPU/RSS containment.
+
 ### Numeric completion snippets
 
 Standard completion items may carry a bounded numeric snippet plan through the
@@ -695,7 +758,7 @@ authority. Validation rejects invalid UTF-8, crossed/overlapping siblings, cycle
 inconsistent mirror values/subtrees and children inside literal choices. Parser
 bounds are 64 KiB source and expanded text, 256 occurrences, 64 alternatives per
 choice, 64 KiB aggregate copied choice bytes, 16 containment edges, 2,048 parsed
-nodes and stop IDs through 1,000,000. The LSP adapter separately admits at most 256
+nodes and stop IDs through 1,000,000. The canonical completion consumer admits at most 256
 items, 64 additional edits per item, 64 KiB per consumed string and 1 MiB aggregate
 input/accounted output. An oversized result is refused atomically, not silently
 truncated or advertised complete. These limits bound consumer work after native
@@ -756,12 +819,12 @@ accepted work; Redo restores bytes, not an old private session. Terminal docks,
 session decks, unrelated overlays, tab/workspace changes and terminal blur are
 ownership boundaries too.
 
-Completion resolve, CompletionList defaults/incomplete-state presentation, provider
-commands, variables/transforms and richer semantic operations remain outside this
-numeric slice. The existing flat completion API still cannot distinguish malformed,
-oversized, unsupported or empty answers in its UI result. Full connected, native
-and whole-plan acceptance retain their own evidence and are not established by
-parser tests or this contract.
+The [completion owner](#completion-documentation-and-original-insertion) now
+retains original identity, presents incomplete-state evidence and resolves only
+documentation/detail. CompletionList defaults, provider commands,
+variables/transforms and richer semantic operations remain unsupported. Full
+connected, native and whole-plan acceptance retain their own evidence and are
+not established by parser tests or this contract.
 
 ### Shared diagnostic facts
 

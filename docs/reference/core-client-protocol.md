@@ -391,7 +391,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Workspace | `workspace.attach`, `.detach`, `.snapshot`, `.delete_preview`, `.delete_saved`, `.restore_deleted`; `agent.changes` |
 | Session/agent | `session.create`, `.open`, `.list`, `.snapshots`; `agent.submit`, `.steer`, `.decide`, `.cancel`, `.terminate`, `.yolo`, `.plan_mode`, `.goal`, `.loop`, `.recover`, `.recover_cancel`, `.recover_reject`, `.stop_command`, `.compact`, `.append_messages` |
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
-| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.navigation`, `.navigation_target`, `.completions`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
+| LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.navigation`, `.navigation_target`, `.completions`, `.completion_inspect`, `.completion_release`, `.inlay_hints`, `.inlay_inspect`, `.inlay_release`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
 | Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
@@ -466,6 +466,26 @@ disable/re-enable cannot revive old labels or retained row authority. No route
 executes hint edits, commands or label locations, and the local request wire
 version is not a provider-reported result version. See
 [read-only inlay hints](editor.md#read-only-inlay-hints).
+
+`lsp.completions` accepts only acknowledged canonical source, private view ID,
+monotonic sequence and UTF-16 cursor. The attachment supplies ownership. It returns
+one retained set with opaque original-row IDs/indexes, frozen initial insertion
+plans and distinct items/null/empty/unsupported evidence; no raw provider objects
+cross the shell port. `lsp.completion_inspect` accepts only set ID/digest/item ID
+and a resolve flag. Resolve is documentation/detail-only over the retained original
+object; non-resolve validates all original edits before explicit editor acceptance.
+`lsp.completion_release` retires only that owner's exact view sequence. All three
+use the existing joined cancellable exchange. No method executes provider commands
+or applies newly resolved edits.
+
+The LSP state topic exposes a constant-size completion gate/feature generation;
+coalesced disable/re-enable cannot revive an older invocation. Results retain
+source/provider/context and synchronized wire evidence, not a server-reported
+source version. Consumer bounds are 2 MiB source, 1 MiB raw result, 256 original
+items, 64 additional edits per item and 1 MiB normalized output. Retention has
+16 live views, 128 sequence records, 16 MiB accounted payload and five-minute
+expiry per canonical document service. See
+[completion documentation](editor.md#completion-documentation-and-original-insertion).
 
 Reviewed rename is not a raw edit relay or `files.edit` shortcut.
 `lsp.rename_preview` accepts the invoking acknowledged source and cursor/name.
@@ -622,8 +642,8 @@ a containing directory preview, never a remote path guessed to be local.
 
 Typed LSP uses per-client views and versioned diagnostics/health; document
 open/close/detach releases only that client's views, never shared servers.
-Completion results carry bounded numeric snippet plans beside expanded primary
-text through the same generated LSP result codec. The text digest and byte-span
+Retained completion sets carry bounded numeric snippet plans beside expanded
+primary text through their generated completion codec. The text digest and byte-span
 ancestry are initial consistency checks, not authority. The editor independently
 validates and applies the completion in the existing canonical document group.
 Private field navigation and choice-picker state never become core text/history

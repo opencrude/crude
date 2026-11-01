@@ -282,6 +282,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if action == nil {
 		return nil
 	}
+	if cmd, handled := m.handleCompletionAction(action); handled {
+		return cmd
+	}
 	if cmd, handled := m.handleMainPaneAction(action); handled {
 		return cmd
 	}

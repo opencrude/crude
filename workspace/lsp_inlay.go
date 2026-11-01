@@ -52,7 +52,7 @@ func (v *inlayView) retire() {
 	v.items, v.check, v.rawBytes = nil, nil, 0
 }
 
-func validInlayView(view string, sequence uint64) bool {
+func validLSPView(view string, sequence uint64) bool {
 	return view != "" && len(view) <= 128 && utf8.ValidString(view) &&
 		!strings.ContainsAny(view, "\x00\r\n") && sequence > 0
 }
@@ -83,7 +83,7 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
 		return types.LSPInlaySet{}, errors.New("inlay hints require canonical source and a language service")
 	}
-	if !validInlayView(viewID, sequence) {
+	if !validLSPView(viewID, sequence) {
 		return types.LSPInlaySet{}, errors.New("invalid inlay view or sequence")
 	}
 	if err := ctx.Err(); err != nil {

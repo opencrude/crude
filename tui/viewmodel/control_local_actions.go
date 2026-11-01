@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"crude/tui/screens/codeactions"
+	"crude/tui/screens/completion"
 	"crude/tui/screens/inlay"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/navigation"
@@ -15,6 +16,22 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if s := m.completion; m.completionCurrent(s) && owner.window == m.overlayHost.Window(ui.OverlayCompletion) {
+		if localID == completion.ListID {
+			switch action {
+			case "select":
+				return control.Read, false, nil
+			case "activate", "scroll", "set_offset":
+				return control.Write, false, nil
+			}
+		}
+		if localID == completion.TextID {
+			switch op.Verb {
+			case "select_range", "scroll", "set_offset":
+				return control.Write, false, nil
+			}
+		}
+	}
 	if s := m.inlayInspector; m.inlayInspectorCurrent(s) && owner.window == m.overlayHost.Window(ui.OverlayInlayHints) &&
 		strings.HasPrefix(string(localID), string(inlay.ScreenID)+"/") {
 		switch action {

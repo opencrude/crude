@@ -52,8 +52,11 @@ func (c *reapableClient) RequestInlayHints(context.Context, string, types.LSPInl
 func (c *reapableClient) ResolveInlayHint(context.Context, string, int, []byte) (types.LSPInlayResponse, error) {
 	return types.LSPInlayResponse{}, context.Canceled
 }
-func (c *reapableClient) RequestCompletions(context.Context, string, int, int) []CompletionItem {
-	return nil
+func (c *reapableClient) RequestCompletions(context.Context, string, int, int) (types.LSPCompletionResponse, error) {
+	return types.LSPCompletionResponse{}, context.Canceled
+}
+func (c *reapableClient) ResolveCompletion(context.Context, string, int, []byte) (types.LSPCompletionResponse, error) {
+	return types.LSPCompletionResponse{}, context.Canceled
 }
 
 func (*reapableClient) AwaitDiagnostics(context.Context, string) (types.InsightDiagnosticPublication, bool) {

@@ -957,6 +957,10 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 			delta = -delta
 		}
 		t.edit.moveVisualRows(delta, m.Mod.Contains(tea.ModShift))
+		// Page navigation moves the viewport with the cursor, preserving its
+		// relative row. Revealing only the cursor leaves the first PageDown at
+		// the bottom of the same page, which is not a page of reading progress.
+		t.SetScrollOffset(t.scroll + delta)
 		t.EnsureCursorVisible()
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}

@@ -104,7 +104,7 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 // ReleaseLSPInlayHints retires only this owner's exact private view sequence.
 // Late release of an older sequence cannot retire its newer replacement.
 func (s *DocumentService) ReleaseLSPInlayHints(owner document.Owner, viewID string, sequence uint64) error {
-	if !validInlayView(viewID, sequence) {
+	if !validLSPView(viewID, sequence) {
 		return errors.New("invalid inlay view or sequence")
 	}
 	s.mu.Lock()

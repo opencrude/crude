@@ -113,8 +113,11 @@ func (c *immediateTreeDiagClient) RequestInlayHints(context.Context, string, mod
 func (c *immediateTreeDiagClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
 	return model.LSPInlayResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
-	return nil
+func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) (model.LSPCompletionResponse, error) {
+	return model.LSPCompletionResponse{}, context.Canceled
+}
+func (c *immediateTreeDiagClient) ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error) {
+	return model.LSPCompletionResponse{}, context.Canceled
 }
 
 func TestLocalEditorCannotInventCanonicalDiagnosticAuthority(t *testing.T) {

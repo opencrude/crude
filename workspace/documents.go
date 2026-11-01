@@ -51,27 +51,28 @@ type documentRequest struct {
 // All methods serialize, including disk saves. Invoke I/O methods off any UI
 // thread. The supplied save/LSP services are borrowed, not closed by this owner.
 type DocumentService struct {
-	mu          sync.Mutex
-	ownerMu     sync.Mutex
-	saveCancels map[document.Owner]context.CancelFunc
-	stateDB     *sql.DB
-	stateErr    error
-	stateSizes  map[string]int
-	root        string
-	saves       *DocumentSaveService
-	lsp         *LSPManager
-	Insight     *InsightService
-	docs        map[string]*liveDocument
-	epochs      map[string]uint64
-	detached    map[document.Owner]bool
-	closed      bool
-	idleFenced  bool
-	watch       *documentWatch
-	bus         *EventBus
-	subscribers map[string]map[chan struct{}]bool
-	reviewed    map[string]*reviewedEdit
-	codeActions map[string]*codeActionSet
-	inlayViews  map[inlayViewKey]*inlayView
+	mu              sync.Mutex
+	ownerMu         sync.Mutex
+	saveCancels     map[document.Owner]context.CancelFunc
+	stateDB         *sql.DB
+	stateErr        error
+	stateSizes      map[string]int
+	root            string
+	saves           *DocumentSaveService
+	lsp             *LSPManager
+	Insight         *InsightService
+	docs            map[string]*liveDocument
+	epochs          map[string]uint64
+	detached        map[document.Owner]bool
+	closed          bool
+	idleFenced      bool
+	watch           *documentWatch
+	bus             *EventBus
+	subscribers     map[string]map[chan struct{}]bool
+	reviewed        map[string]*reviewedEdit
+	codeActions     map[string]*codeActionSet
+	inlayViews      map[inlayViewKey]*inlayView
+	completionViews map[completionViewKey]*completionView
 }
 
 func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager, state ...*sql.DB) *DocumentService {
@@ -596,6 +597,7 @@ func (s *DocumentService) ReleaseDetached(owner document.Owner) {
 	defer s.mu.Unlock()
 	s.closeCodeActionsLocked(owner, "")
 	s.closeInlayViewsLocked(owner, "")
+	s.closeCompletionViewsLocked(owner, "")
 	for id, review := range s.reviewed {
 		if review.owner == owner {
 			delete(s.reviewed, id)
@@ -624,6 +626,10 @@ func (s *DocumentService) Close() {
 		view.cancel()
 	}
 	s.inlayViews = nil
+	for _, view := range s.completionViews {
+		view.cancel()
+	}
+	s.completionViews = nil
 	for id, d := range s.docs {
 		if s.saves != nil {
 			s.saves.Cancel(id)
@@ -646,6 +652,7 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 	}
 	s.closeCodeActionsLocked(owner, id)
 	s.closeInlayViewsLocked(owner, id)
+	s.closeCompletionViewsLocked(owner, id)
 	delete(d.owners, owner)
 	s.closeLanguageView(d)
 	return nil

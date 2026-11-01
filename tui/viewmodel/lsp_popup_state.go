@@ -12,24 +12,17 @@ type OutlineRow struct {
 }
 
 // LSPPopupState holds the transient UI state for LSP-related popups:
-// rename preview, outline, and completion.
+// rename preview, outline, and the automatic-completion debounce.
 //
 // This is DISPLAY state: it tracks which LSP popups are open right now,
 // cursor positions within them, and the rendered data.
 type LSPPopupState struct {
-	EditPreview                   *reviewedEditDialog
-	RenameArmed                   bool
-	OutlineOpen                   bool
-	OutlineRows                   []OutlineRow
-	OutlineCursor                 int
-	CompletionID                  string
-	CompletionItems               []editor.CompletionItem
-	CompletionCursor              int
-	CompletionOwner               *editor.Editor
-	CompletionRevision            uint64
-	CompletionLine, CompletionCol int
-	CompletionDue                 time.Time
-	CompletionAutomatic           bool
+	EditPreview   *reviewedEditDialog
+	RenameArmed   bool
+	OutlineOpen   bool
+	OutlineRows   []OutlineRow
+	OutlineCursor int
+	CompletionDue time.Time
 }
 
 // NewLSPPopupState creates an LSPPopupState with all fields zeroed.

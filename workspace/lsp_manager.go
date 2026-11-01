@@ -49,6 +49,7 @@ type LSPManager struct {
 	closedDocuments             []lspClosedDocument
 	settingsGeneration          uint64
 	inlayGeneration             uint64
+	completionGeneration        uint64
 	docSymbols                  map[string][]LSPSymbol
 	symbolCount                 int
 	symbolsCached               bool
@@ -585,27 +586,6 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 		return requestErr
 	})
 	return out, err
-}
-
-// RequestCompletions routes a completion request to the right client.
-func (m *LSPManager) RequestCompletions(ctx context.Context, filePath string, line, col int) []CompletionItem {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Completions }) {
-		return nil
-	}
-	var out []CompletionItem
-	_ = m.trackInflight(func() error {
-		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
-		defer cancel()
-		if client == nil {
-			return nil
-		}
-		out = client.RequestCompletions(requestCtx, filePath, line, col)
-		if !valid() {
-			out = nil
-		}
-		return nil
-	})
-	return out
 }
 
 // InvalidateFile removes all cached state for a file. Call this when a file

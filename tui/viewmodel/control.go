@@ -58,22 +58,23 @@ func decodeShellInput(raw json.RawMessage, dst any) error {
 }
 
 type shellControlDoneMsg struct {
-	request       shellport.ControlRequestMsg
-	completion    tea.Msg
-	generation    uint64
-	settingsOwner *settingsui.WorkspaceSettingsSurface
-	settingsModel *settingsui.Model
-	deckOwner     ui.Component
-	memoryOwner   *memorybrowser.Screen
-	memoryEpoch   uint64
-	boardOwner    *boardbrowser.Screen
-	pickerOwner   *capabilityPickerOwner
-	snippetOwner  *editorSnippetChoice
-	reviewOwner   *reviewedEditDialog
-	actionOwner   *codeActionState
-	navOwner      *navigationState
-	inlayOwner    *inlayInspectorState
-	safetyOwner   *historySafetyView
+	request         shellport.ControlRequestMsg
+	completion      tea.Msg
+	generation      uint64
+	settingsOwner   *settingsui.WorkspaceSettingsSurface
+	settingsModel   *settingsui.Model
+	deckOwner       ui.Component
+	memoryOwner     *memorybrowser.Screen
+	memoryEpoch     uint64
+	boardOwner      *boardbrowser.Screen
+	pickerOwner     *capabilityPickerOwner
+	snippetOwner    *editorSnippetChoice
+	reviewOwner     *reviewedEditDialog
+	actionOwner     *codeActionState
+	navOwner        *navigationState
+	inlayOwner      *inlayInspectorState
+	completionOwner *completionState
+	safetyOwner     *historySafetyView
 }
 
 type shellControlReplyMsg struct{ err error }
@@ -300,7 +301,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if owner.window != nil {
 			owner.window.MarkContentDirty()
 		}
-		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.navOwner != nil || done.inlayOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
+		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.navOwner != nil || done.inlayOwner != nil || done.completionOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {
 				work = actionCmd
@@ -711,6 +712,9 @@ func (m *App) captureShellControl(msg shellport.ControlRequestMsg) shellControlD
 				if s := m.inlayInspector; m.inlayInspectorCurrent(s) && owner.window == m.overlayHost.Window(ui.OverlayInlayHints) {
 					done.inlayOwner = s
 				}
+				if s := m.completion; m.completionCurrent(s) && owner.window == m.overlayHost.Window(ui.OverlayCompletion) {
+					done.completionOwner = s
+				}
 				if v := m.historySafety; m.historySafetyVisible(v) && owner.window == m.overlayHost.Window(ui.OverlayLocalHistory) {
 					done.safetyOwner = v
 				}
@@ -772,6 +776,8 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			valid = valid && m.navigationCurrent(done.navOwner)
 		} else if done.inlayOwner != nil {
 			valid = valid && m.inlayInspectorCurrent(done.inlayOwner)
+		} else if done.completionOwner != nil {
+			valid = valid && m.completionCurrent(done.completionOwner)
 		} else if done.safetyOwner != nil {
 			valid = valid && m.historySafetyVisible(done.safetyOwner)
 		} else if done.deckOwner != nil {
@@ -796,6 +802,28 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 	result := control.Result{State: control.Applied}
 	var follow tea.Cmd
 	switch completion := done.completion.(type) {
+	case completionReadMsg:
+		if !valid || done.completionOwner == nil || completion.read == nil || completion.read.owner != done.completionOwner {
+			return m.failShellControl(msg, control.Stale, "completion observation belongs to a retired chooser")
+		}
+		applied := m.handleCompletionRead(completion)
+		if completion.err != nil {
+			return m.failShellControl(msg, control.OperationFailed, "completion observation or its exchange cleanup was not confirmed")
+		}
+		if !applied {
+			return m.failShellControl(msg, control.Stale, "original completion evidence or source is no longer current")
+		}
+		result.ResourceIDs = []string{completion.result.SetID}
+		if completion.read.accept {
+			if state := completion.read.owner.editor.DocumentState(); state.DocumentID != "" {
+				result.ResourceIDs = append(result.ResourceIDs, state.DocumentID)
+				if state.PendingEdits != 0 || state.InFlight {
+					// Initial-edit preflight is known, but the editor's ordinary
+					// canonical command/topic owner still must accept its draft.
+					result.State = control.Admitted
+				}
+			}
+		}
 	case inlay.InspectMsg:
 		if !valid || done.inlayOwner == nil || completion.Target != done.inlayOwner.screen {
 			return m.failShellControl(msg, control.Stale, "inlay inspector changed")

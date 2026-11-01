@@ -123,6 +123,9 @@ func (l *lspReplica) ContextCursor() (string, uint64) {
 func (l *lspReplica) InlayHintsState() (bool, uint64) {
 	return l.snapshot.ShowInlays, l.snapshot.InlayGeneration
 }
+func (l *lspReplica) CompletionsState() (bool, uint64) {
+	return l.snapshot.ShowCompletions, l.snapshot.CompletionGeneration
+}
 func (l *lspReplica) FileDiagnostics(path string) (types.InsightDiagnostics, bool) {
 	batch, ok := l.snapshot.Diagnostics[filepath.Clean(path)]
 	return types.CloneInsightDiagnostics(batch), ok
@@ -176,10 +179,6 @@ func (l *lspReplica) StopServer(id string) bool {
 	}
 	l.send(coreprotocol.LSPStopServer, coreprotocol.LSPRequest{ServerID: id})
 	return true
-}
-func (l *lspReplica) RequestCompletions(ctx context.Context, path string, line, col int) []workspace.CompletionItem {
-	out, _ := l.query(ctx, coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequest{Path: path, Line: line, Col: col})
-	return out.Completions
 }
 func (l *lspReplica) RequestDocumentSymbols(ctx context.Context, path string) []workspace.LSPSymbol {
 	out, _ := l.query(ctx, coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequest{Path: path})
