@@ -430,7 +430,8 @@ func (m *App) closeWorkspaceBoundOverlays() {
 	m.DirtyPromptPath = ""
 	m.DirtyPromptChoice = 0
 	m.pendingTabClose = nil
-	m.DiagPopupID = ""
+	m.diagnosticDetail = nil
+	m.diagnosticHover = nil
 	m.sessionPicker = nil
 	m.memoryBrowser = nil
 	m.LSPPopup = NewLSPPopupState()

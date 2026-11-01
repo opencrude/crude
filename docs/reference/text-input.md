@@ -28,6 +28,10 @@ shared control, never to one popup.
   viewport minus one row. The first page gesture advances reading immediately,
   in editable and read-only areas; unchanged paint/layout never restores the
   former page. Composite documentation shortcuts reuse this native behavior.
+- Explicit wheel reading survives vertical expansion, including a popup's
+  opening reveal. Adding visible rows cannot hide the caret and must not snap
+  back to it. Width reflow or shrinking can reveal the caret again; an actual
+  cursor/edit action resumes the native caret-following path.
 - `Form` is a composite pointer owner because its retained fields are not Host
   children. Once an inner input starts a drag, `Form.pointerField` must route
   every captured motion/release to that same field before hover-focusing.

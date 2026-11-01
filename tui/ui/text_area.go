@@ -477,9 +477,10 @@ func (t *TextArea) Layout(_ LayoutContext, r Rect) {
 	t.viewH = r.H
 	t.edit.SetTextWidth(tw)
 	t.clampScroll()
-	// Explicit wheel browsing owns the offset until a cursor/edit action or a
-	// real viewport change. An unchanged per-frame layout must not undo it.
-	if tw != previousWidth || r.H != previousHeight {
+	// Initial layout, width reflow or a smaller viewport can hide the caret.
+	// More vertical space cannot: preserve wheel browsing while a frame reveals
+	// its body instead of snapping back to an untouched caret on every step.
+	if previousHeight == 0 || tw != previousWidth || r.H < previousHeight {
 		t.EnsureCursorVisible()
 	}
 }

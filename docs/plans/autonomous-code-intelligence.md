@@ -126,9 +126,33 @@ replaces the flat completion path with retained canonical original rows,
 documentation/detail-only resolution and one native chooser. Independent
 canonical, framed-provider and rendered tests cover identity, opaque data,
 negative/incomplete evidence, source/context/feature retirement and initial-edit
-acceptance. Consolidated repository, installed-engine and native checkpoint
-acceptance is still in progress; these definitions do not close the broader
-editor, autonomous assembly or workflow/device rows.
+acceptance. Source-frozen repository ordinary/race, build, lint, design/docs,
+benchmark, nested LSP/syntax and site gates passed for checkpoint `296f95e3`.
+Installed gopls supplied initial documentation in sequential native 160x40 and
+80x24 Linux journeys with original snippet insertion, canonical Undo and joined
+provider cleanup. That installed provider does not advertise resolve; framed
+and connected fixtures cover documentation-only resolve separately.
+Windows/Darwin feature-preserving builds are compilation evidence only. These
+deterministic regressions do not close the broader editor, autonomous assembly
+or workflow/device rows.
+
+The [diagnostic-reader cutover](../reference/editor.md#diagnostic-readers) now
+replaces centered/clipped label stacks with one source-anchored, selectable
+native reader for editor-menu details and passive pointer hover. Independent
+literal entry, long-message paging, clicked-source selection, publication
+retirement and shared selection-first Escape checks now pass in the integrated
+tree, including existing completion/parameter journeys and focused race coverage.
+The real-gopls diagnostic journey passed three race repetitions at both grids.
+Its short-grid reproduction also exposed shared text-area scrolling being reset
+by vertical opening reveal; editable and read-only controls now preserve that
+reading position, with an independently failing original-behavior regression.
+Sequential 160x40/80x24 Linux native captures now pass all eleven observation
+phases, including the painted original message tail, native selection-first
+Escape, passive hover/wheel and independently joined provider cleanup. Reviewed
+pixels preserve the visible source anchor at both sizes. Consolidated repository
+gates and the exact commit/push receipt remain required before banking this
+checkpoint. These deterministic regressions do not close adaptive developer/device,
+complete-context, native-containment or broader semantic acceptance.
 
 ## Problem
 
@@ -146,7 +170,7 @@ it. Current capabilities and safeguards are described in
 | Project configuration needs manual work | Flags, targets, include paths, interpreters, dependencies and severity policies are not consistently derived from the actual build. |
 | Semantic coverage is limited | `types/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
-| Popups do not feel like a complete IDE | Parameter assistance, symbol documentation and the native selected-completion reader now use caret anchoring; diagnostic details still need that cutover (`tui/viewmodel/lsp_handlers.go`). Inline prediction and broader semantic workflows remain open. |
+| Popups do not feel like a complete IDE | Parameter assistance, symbol documentation, selected-completion documentation and diagnostic readers now use mounted source anchoring. Inline prediction and broader semantic workflows remain open. |
 | Aeron never helps manual editing | Aeron drafts commit messages and compaction, nothing in the editor. |
 | Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
 

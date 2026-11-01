@@ -51,6 +51,9 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 	stop := context.AfterFunc(lifetime, cancel)
 	defer cancel()
 	defer stop()
+	if err := lifetime.Err(); err != nil {
+		return types.LSPInlayInspection{}, err
+	}
 	if err := requestCtx.Err(); err != nil {
 		return types.LSPInlayInspection{}, err
 	}
@@ -92,6 +95,9 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 		return types.LSPInlayInspection{}, err
 	}
 	if err := check(); err != nil {
+		return types.LSPInlayInspection{}, err
+	}
+	if err := entry.ctx.Err(); err != nil {
 		return types.LSPInlayInspection{}, err
 	}
 	if err := requestCtx.Err(); err != nil {

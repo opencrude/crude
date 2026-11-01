@@ -314,8 +314,15 @@ func TestConnectedHistorySafetyClosedReaderDropsLateInspection(t *testing.T) {
 	sequence := old.sequence
 	detail, _ := old.screen.SelectedDetail()
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if one.app.historySafety != old || old.detail || old.sequence <= sequence {
+		t.Fatal("first native Escape did not go Back and retire the selected inspection")
+	}
+	if _, selected := old.screen.SelectedDetail(); selected {
+		t.Fatal("Back retained the departed safety detail")
+	}
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if one.app.historySafety != nil {
-		t.Fatal("Escape did not retire the exact reader")
+		t.Fatal("second native Escape did not retire the exact safety reader")
 	}
 	openHistorySafetyKeys(t, f)
 	current := one.app.historySafety

@@ -214,13 +214,14 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(res.Cmd, m.handleHostAction(res.Action))
 	}
 
-	// Esc always closes the topmost popup first, regardless of focus.
+	// Native controls own selection/back before the shell closes their popup.
+	// An unfocused popup still dismisses before the underlying editor or draft.
 	// Floating terminals are KeepRoute windows that own Esc as a PTY key;
 	// close them with the window X / Close action, not Esc.
 	if msg.Code == tea.KeyEsc && m.windowManager != nil {
 		if topWin := m.windowManager.TopWindow(); topWin != nil && topWin.Focusable() {
-			// Search text controls own selection dismissal before close, exactly
-			// like other editable controls. Don't bypass them in the shell ladder.
+			var nativeCommand tea.Cmd
+			// Don't bypass the mounted native control in the shell's close ladder.
 			if focused := m.windowManager.Focused(); focused == topWin {
 				switch topWin.ID {
 				case string(ui.OverlayFindReplace):
@@ -231,11 +232,17 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					// Its shared native body owns Back from detail, then Close.
 					return m, m.forwardEventToWindowContent(topWin, msg)
 				}
+				if widget, native := topWin.Content.(*ui.WindowFrameWidget); native {
+					var handled bool
+					nativeCommand, handled = m.forwardNativeWindowContent(topWin, widget, msg)
+					if handled {
+						return m, nativeCommand
+					}
+				}
 			}
 			_, pane := paneGroupFromOverlay(ui.OverlayID(topWin.ID))
 			if !pane && !ui.IsTerminalOverlay(ui.OverlayID(topWin.ID)) && topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
-				m.closePopupWindowByID(topWin.ID)
-				return m, nil
+				return m, tea.Batch(nativeCommand, m.closePopupWindowByID(topWin.ID))
 			}
 		}
 	}
@@ -468,9 +475,12 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+.":
-			layout := m.computeLayout()
-			cx, cy := m.EditorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
-			m.showContextMenuAt(cx, cy)
+			ed := m.EditorState.Editor
+			if rect, mounted := m.screenRectOf(m.editorScreen.ID()); mounted {
+				if cx, cy, visible := ed.PositionScreenPosition(editor.Position{Line: ed.CursorLine(), Col: ed.CursorCol()}, rect.X, rect.Y); visible {
+					m.showContextMenuAt(cx, cy)
+				}
+			}
 			return m, nil
 		case "esc":
 			if m.FindReplace != nil {

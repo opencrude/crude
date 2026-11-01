@@ -35,11 +35,11 @@ import (
 // key:ctrl+End key:Up key:End key:F4
 // 'type:(' key:F4
 // type:x key:F4
-// 'type:,' key:F4
+// key:comma key:F4
 // key:Escape key:F4
 // key:alt+i key:F4
-// key:shift+End key:F4
-// key:Escape key:F4 quit:F9
+// key:shift+Right key:F4
+// key:Escape key:Escape key:F4 quit:F9
 //
 // F3 sets up. F4 only observes; no requests, edits, caret setters or focus repair.
 func TestAutomaticSignatureVisualAcceptance(t *testing.T) {
@@ -329,10 +329,11 @@ func (m *automaticSignatureVisualModel) driveAutomaticSignatureVisual(ctx contex
 	if !observe(tea.KeyF4) {
 		return
 	}
-	send(tea.KeyEnd, tea.ModShift)
+	send(tea.KeyRight, tea.ModShift)
 	if !observe(tea.KeyF4) {
 		return
 	}
+	send(tea.KeyEscape, 0) // Native text selection, then the reader itself.
 	send(tea.KeyEscape, 0)
 	if !observe(tea.KeyF4) {
 		return
@@ -528,7 +529,7 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 				if phase == 6 {
 					m.reader = area
 				} else if area != m.reader || !area.HasActiveSelection() {
-					return fmt.Errorf("native Shift+End did not select the explicit reader")
+					return fmt.Errorf("native shifted arrow did not select the explicit reader")
 				}
 			}
 		}

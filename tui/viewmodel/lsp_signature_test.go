@@ -137,6 +137,10 @@ func TestSignatureEditorEntryPaintAndEscapePreserveText(t *testing.T) {
 			t.Fatal("typing into the reader changed read-only text or source")
 		}
 		app.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if !app.overlayHost.IsOpen(signatureHelpID) || body.HasActiveSelection() || body.Value() != textBefore {
+			t.Fatal("first Escape did not dismiss only the native reader selection")
+		}
+		app.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 		if app.overlayHost.IsOpen(signatureHelpID) || !app.EditorState.Editor.IsOpen() ||
 			app.EditorState.Editor.Value() != before || app.Input.Value() != "keep the private draft" {
 			t.Fatal("Escape dismissed source/draft instead of the parameter reader")

@@ -177,6 +177,11 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 	result.Digest = reviewedHash(string(identity))
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The retained view is the authority, not its asynchronous provider
+	// cancellation relay. A released invocation cannot publish again.
+	if err := entry.ctx.Err(); err != nil {
+		return types.LSPInlaySet{}, err
+	}
 	if err := requestCtx.Err(); err != nil {
 		return types.LSPInlaySet{}, err
 	}

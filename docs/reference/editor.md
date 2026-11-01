@@ -907,6 +907,43 @@ execution or coverage attestation. A missing artifact or unsupported binding
 cannot be an empty clean project. Retained discovery, freshness, configuration
 selection and provider wiring remain separate work.
 
+### Diagnostic readers
+
+The editor context menu's **Show diagnostics** replaces the centered label stack
+with a native WindowFrame/read-only TextArea. It inspects the clicked source point
+without consuming an existing selection; a keyboard-invoked menu uses the mounted
+caret. Pointer hover and explicit details share the same reader builder and exact
+fact-publication owner, not separate wrapping or source-coordinate models.
+
+The source point projects through the editor's existing tab, grapheme, inlay and
+scroll geometry plus the actual mounted pane offset. Readers fit below or above
+that point, shrink to the available side, and re-anchor on the first resized
+frame. An off-viewport source is unavailable, not clamped into a fictitious visible
+anchor. Resizing retains the original TextArea, text and selection.
+
+Complete original messages, severity, reported source/code, source-line preview,
+partial-coverage qualification and fact/provider/context provenance are readable.
+Provider control characters are escaped literally, never interpreted as terminal
+commands. A separate 64 KiB reader budget refuses an oversized display with an
+explicit notice rather than presenting a clipped apparently-complete answer. The
+retained fact remains unchanged. Source-line previews above 4 KiB are omitted
+explicitly; this does not truncate the diagnostic message.
+
+Explicit details focus the native reader. Hover opens passively, accepts wheel
+browsing without taking typing focus, and an explicit body click enables keyboard
+reading. Page keys, selection and copy use the shared TextArea. Escape and the
+explicit reader's Close/outside actions retire inspection without closing the
+editor or consuming its private draft. Pointer departure retires passive hover.
+With selected text, the first Escape clears that native selection; the next
+Escape closes the reader. The shell does not bypass the shared text control's
+selection/back handling.
+
+A small publication cursor validates the original fact ID and eligible canonical
+source without cloning a batch each tick. New publication, source/history/lifetime,
+visibility, editor/selection, modal or workspace departure retires old inspection.
+A context menu opened for an older fact cannot inspect its replacement. These are
+source-bound partial observations, never proof of a clean or fully checked project.
+
 ### Diagnostic positions
 
 Insight batches, manager/replica and shared Buffer retain UTF-16 wire coordinates.
