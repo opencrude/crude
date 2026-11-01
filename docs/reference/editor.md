@@ -517,6 +517,20 @@ ticket only once and retains unknown-usage charges across restart. It does not
 grant consent, send requests or create chat sessions, and is not yet wired into
 an editor coordinator or visible meter.
 
+The source now also contains workspace-only human consent preferences and an
+internal bounded request-service composition. Consent is independent of project
+execution Trust and never inherits application/session choices; see
+[prediction consent](settings.md#workspace-prediction-consent). Its exact-root,
+connection and positive-cap requirements do not themselves send source.
+The internal service composes canonical source, the bounded partial context,
+explicit text/FIM adapters, one joined local request per view, sequence
+tombstones, policy generations, digest caching and durable accounting. Its local
+HTTP-body join does not prove remote inference or billing stopped.
+The service is not yet installed in the workspace/editor transport lifecycle;
+there is still no product request action, automatic pause scheduling or visible
+meter. Multiline candidates, next-edit, Explain/Fix and complete fact-context
+assembly remain separate work, not implied by the single-line projection.
+
 ### Parameter information
 
 **Alt+I** (or Ctrl+Shift+Space when delivered by the terminal) and the editor's

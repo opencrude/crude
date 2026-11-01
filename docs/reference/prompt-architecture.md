@@ -22,6 +22,7 @@ Callers import it directly; do not recreate forwarding APIs in `agent/`,
 | `prompt/guidance.go`, `guidance_compile.go` | Named-file discovery, hashes, verbatim representation, compiler/verifier wording, compiled ledger envelope |
 | `prompt/memory.go` | No-tools memory extraction/consolidation policy and input envelopes |
 | `prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
+| `prompt/editor_prediction.go` | Narrow single-line insertion-only, no-tools policy and escaped untrusted source/fact envelope; no consent, source selection or request execution |
 | `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, interruptions and exact unavailable-attachment explanations |
 | `prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
 | `prompt/plan_mode.go` | Plan mode contract and its ended notice ([session commands](session-commands.md)) |
@@ -38,6 +39,15 @@ jobs use their specialized `prompt/` builders; a memory curator or permission
 reviewer must not inherit the whole coding-agent prompt or acquire its tools.
 Domain packages may redact, bound and serialize source data before rendering;
 validation and state mutation do not move into a prompt builder.
+
+Editor prediction prerequisites use a dedicated prompt rather than a coding-agent
+conversation. The request owner qualifies canonical source/diagnostic facts and
+bounds the complete escaped chat envelope (instructions included) to about 2,000
+estimated tokens. Native document paths, producer identities and account
+fingerprints remain local authority metadata, not model-facing facts. Explicit
+missing scope/import/signature/edit-history/project inputs stay labelled partial.
+FIM adapters use explicit prefix/suffix fields and never choose a chat fallback
+themselves. The current builders are prerequisites, not an enabled editor service.
 
 The stable environment projection includes the exact session-owned
 `temporary_directory`, also exported to command processes as `CRUDE_TEMP_DIR`.

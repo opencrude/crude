@@ -396,7 +396,9 @@ type AppSettings struct {
 	Editor     EditorSettings     `json:"editor,omitempty"`
 	LSP        LSPSettings        `json:"lsp,omitempty"`
 	// Analysis is workspace-owned despite sharing this effective/schema carrier.
-	Analysis     WorkspaceAnalysisSettings   `json:"analysis,omitempty"`
+	Analysis WorkspaceAnalysisSettings `json:"analysis,omitempty"`
+	// Prediction is workspace-only egress authority, never an application/session default.
+	Prediction   WorkspacePredictionSettings `json:"prediction,omitempty"`
 	UI           UISettings                  `json:"ui,omitempty"`
 	Accounts     map[string]provider.Account `json:"accounts,omitempty"`
 	Agents       AgentsSettings              `json:"agents,omitempty"`

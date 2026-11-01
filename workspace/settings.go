@@ -24,6 +24,7 @@ const workspaceSettingsKey = "workspace_settings"
 func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 	ttypes.ApplyAppDefaults(&s)
 	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
+	s.Prediction = ttypes.DefaultWorkspacePredictionSettings()
 	w.appDefaults = ttypes.CloneAppSettings(s)
 	w.applyEffectiveSettings()
 }
@@ -34,12 +35,13 @@ func (w *Workspace) AppDefaults() ttypes.AppSettings {
 	s.Accounts = w.AllAccounts()
 	ttypes.ApplyAppDefaults(&s)
 	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
+	s.Prediction = ttypes.DefaultWorkspacePredictionSettings()
 	return s
 }
 
 // EffectiveAppSettings merges application defaults with workspace overrides.
 func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
-	effective := boundAnalysisSettings(w.AppDefaults(), w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
+	effective := boundWorkspaceSettings(w.AppDefaults(), w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
 	if effective.Analysis.Trust == ttypes.AnalysisProjectExecutionAllowed && w.LSPMgr != nil {
 		effective.Analysis = w.LSPMgr.AnalysisPolicy()
 	}
@@ -74,6 +76,11 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 	if overrides.Analysis != nil && !bytes.Equal(overrides.Analysis, current.Analysis) {
 		return fmt.Errorf("workspace Trust must be changed through workspace preferences")
 	}
+	if overrides.Prediction != nil && !bytes.Equal(overrides.Prediction, current.Prediction) {
+		return fmt.Errorf("prediction consent must be changed through workspace preferences")
+	}
+	overrides.Prediction = current.Prediction
+	overrides.PredictionRootIdentity, overrides.PredictionConnectionIdentity, overrides.PredictionGrantID = current.PredictionRootIdentity, current.PredictionConnectionIdentity, current.PredictionGrantID
 	overrides.Analysis, overrides.AnalysisRootIdentity = current.Analysis, current.AnalysisRootIdentity
 	if overrides.Analysis != nil {
 		if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeWorkspace,
@@ -101,6 +108,9 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 	if s.Analysis.Trust != "" && s.Analysis.Trust != ttypes.AnalysisStaticOnly {
 		return fmt.Errorf("analysis trust belongs to Workspace settings")
+	}
+	if s.Prediction != (ttypes.WorkspacePredictionSettings{}) && s.Prediction != ttypes.DefaultWorkspacePredictionSettings() {
+		return fmt.Errorf("prediction consent belongs to Workspace settings")
 	}
 	ttypes.ApplyAppDefaults(&s)
 	if w.OnAppSettingsSave != nil {

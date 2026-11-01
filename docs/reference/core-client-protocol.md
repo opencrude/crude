@@ -578,6 +578,15 @@ projections. Observation revisions prevent out-of-order replica installation;
 they never reject an ordinary configuration write. Immutable install/grant
 reviews and actual attachment/session lifetimes retain their own safeguards.
 
+The effective settings carrier includes workspace-only prediction consent, but
+the shell must not reconstruct it by application inheritance. Workspace preference
+edits own its atomic root/connection/grant binding; generated metadata is not
+caller-editable. Application/session and whole-entity snapshots cannot grant it,
+and generic control Save/Reset cannot authorize an off-page consent draft. The
+existing post-save settings-publication barrier also applies to this choice.
+This settings projection does not add an editor prediction RPC or enable model
+requests; that lifecycle and its budget-status topic remain integration work.
+
 Passive `settings.capability.runtime` and `.snapshot` reads bypass the serialized
 settings lane so a pending Connect/Sign in cannot starve home polling. Editable
 settings reads and writes remain ordered after prior publication. Each shell's

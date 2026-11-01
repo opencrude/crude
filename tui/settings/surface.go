@@ -902,27 +902,43 @@ func (s *WorkspaceSettingsSurface) footerButtons() []footerSlot {
 }
 
 // footerStatusText is the unsaved/saving/error status shown beside Save.
-func (s *WorkspaceSettingsSurface) footerStatusText() (string, cell.Color) {
+func (s *WorkspaceSettingsSurface) footerStatusText() (text, compact string, ink cell.Color) {
 	if s.model == nil || s.footer().bar != nil {
-		return "", cell.NoColor
+		return "", "", cell.NoColor
 	}
 	switch {
 	case s.model.Saving():
-		return "Saving…", s.tokens.Color(ui.ColorMuted)
+		return "Saving…", "", s.tokens.Color(ui.ColorMuted)
 	case s.model.SaveError() != "":
-		return s.model.SaveError(), s.tokens.Color(ui.ColorError)
+		return s.model.SaveError(), "", s.tokens.Color(ui.ColorError)
 	case s.hasUnsavedDrafts():
-		return s.tokens.Glyphs().Modified + " Unsaved changes", s.tokens.Color(ui.ColorWarning)
+		marker := s.tokens.Glyphs().Modified
+		return marker + " Unsaved changes", marker + " Unsaved", s.tokens.Color(ui.ColorWarning)
 	}
-	return "", cell.NoColor
+	return "", "", cell.NoColor
 }
 
-const footerStatusMaxW = 40
+const (
+	footerStatusMinW = 10 // Keep "Unsaved"/"Saving"/an error prefix readable.
+	footerStatusMaxW = 40
+)
 
 // layoutFooter places the footer row right to left: buttons, then the status
 // beside them; the page notice takes the columns to the left.
 func (s *WorkspaceSettingsSurface) layoutFooter(ctx ui.LayoutContext, formX, formW, footerY int) {
 	gap := s.tokens.ButtonGap()
+	if s.showReset() && s.footer().bar == nil {
+		required := footerStatusMinW
+		for _, slot := range s.footerButtons() {
+			required += slot.bar.Measure(ctx, ui.Loose(formW, 1)).W + gap
+		}
+		if required > formW {
+			// Keep the real reset action, but shorten its caption before it
+			// crowds out dirty/save-error status on a constrained frame.
+			// Its confirmation still names the exact page and reset effect.
+			s.reset.SetLabel("settings.reset", "Reset")
+		}
+	}
 	for _, bar := range []*ui.ActionBar{s.actions, s.closeBar, s.reset} {
 		if bar != nil {
 			bar.Layout(ctx, ui.Rect{})
@@ -936,7 +952,7 @@ func (s *WorkspaceSettingsSurface) layoutFooter(ctx ui.LayoutContext, formX, for
 		groupX = x - gap
 	}
 	s.footerStatus = ui.Rect{}
-	if text, _ := s.footerStatusText(); text != "" {
+	if text, _, _ := s.footerStatusText(); text != "" {
 		w := min(footerStatusMaxW, rendering.VisibleWidth(text), max(0, groupX-formX))
 		s.footerStatus = ui.Rect{X: groupX - w, Y: footerY, W: w, H: 1}
 		groupX -= w + gap
@@ -1248,9 +1264,12 @@ func (s *WorkspaceSettingsSurface) paintHelp(buf *surface.CellBuffer, ox, oy int
 // clean page read the same way everywhere.
 func (s *WorkspaceSettingsSurface) paintFooterStatus(buf *surface.CellBuffer, ox, oy int, bg cell.Color) {
 	rect := s.footerStatus
-	text, ink := s.footerStatusText()
+	text, compact, ink := s.footerStatusText()
 	if rect.W <= 0 || text == "" {
 		return
+	}
+	if compact != "" && rendering.VisibleWidth(text) > rect.W && rendering.VisibleWidth(compact) <= rect.W {
+		text = compact
 	}
 	text = rendering.TruncateVisual(text, rect.W, "…")
 	buf.WriteString(ox+rect.X+rect.W-rendering.VisibleWidth(text), oy+rect.Y, text, ink, bg, 0)
@@ -1363,18 +1382,24 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.FocusForm()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	case "form.changed":
+		// Edits change footer geometry (clean/dirty/error), even when a
+		// single-line control only invalidates paint. The surface owns those
+		// status/button bounds; never wait for resize or a later focus move.
+		invalidate := ui.InvalidateLayout | ui.InvalidatePaint
 		fieldID, _ := action.Payload.(string)
 		if fieldID == "preset" {
 			preset := s.model.value(catAppearance, "preset")
 			return ui.EventResult{
-				Handled: true,
-				Cmd:     func() tea.Msg { return ThemePreviewMsg{Preset: preset} },
+				Handled:    true,
+				Invalidate: invalidate,
+				Cmd:        func() tea.Msg { return ThemePreviewMsg{Preset: preset} },
 			}
 		}
 		if frame, ok := s.model.framePreview(fieldID); ok {
 			return ui.EventResult{
-				Handled: true,
-				Cmd:     func() tea.Msg { return FramePreviewMsg(frame) },
+				Handled:    true,
+				Invalidate: invalidate,
+				Cmd:        func() tea.Msg { return FramePreviewMsg(frame) },
 			}
 		}
 		// Account connection changes rebuild their FormModel;
@@ -1383,7 +1408,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			s.refreshForm()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 		}
-		return ui.EventResult{Handled: true}
+		return ui.EventResult{Handled: true, Invalidate: invalidate}
 	case "settings.account.begin-add":
 		return s.openAccountEditor(true, "")
 	case "settings.account.clone":

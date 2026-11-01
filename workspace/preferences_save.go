@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"crude/session"
 	"crude/types"
 )
 
@@ -15,9 +16,11 @@ type PreferencesSaveResult struct {
 	Effective   types.AppSettings
 	Overrides   types.WorkspaceOverrides
 	Err         error
-	// Only an explicit Trust edit supplies a new native-root observation.
-	AnalysisRootIdentity string
-	AnalysisObserved     bool
+	// Only explicit workspace authority edits supply a new native observation.
+	AnalysisRootIdentity   string
+	AnalysisObserved       bool
+	PredictionRootIdentity string
+	PredictionObserved     bool
 }
 
 // PreparePreferencesSave captures the exact persistence owners before a command
@@ -28,9 +31,21 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 	root, observedRoot := w.RootPath, w.analysisRootIdentity
 	persistApplication := w.OnAppPreferencesCommit
 	defaults := w.AppDefaults()
+	var predictionCompleter session.EditorPredictionCompleter
+	var predictionConnectionErr error
+	if len(predictionEdits(edits)) != 0 {
+		if w.sessionCfg == nil || w.sessionCfg.AccountManager == nil {
+			predictionConnectionErr = fmt.Errorf("configure an Aeron connection before enabling prediction")
+		} else {
+			predictionCompleter, predictionConnectionErr = w.sessionCfg.AeronPredictionCompleter()
+		}
+	}
 	validationErr := types.ValidateSettingEdits(types.AppSettings{}, edits)
 	if validationErr == nil {
 		validationErr = types.ValidateAnalysisSettingEdits(scope, edits)
+	}
+	if validationErr == nil {
+		validationErr = types.ValidatePredictionSettingEdits(scope, edits)
 	}
 	return func() PreferencesSaveResult {
 		result := PreferencesSaveResult{Scope: scope, AppSettings: defaults}
@@ -52,21 +67,28 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 				return result
 			}
 			result.AnalysisRootIdentity, result.AnalysisObserved = identity, touched
-			if touched {
+			// An Off/reset choice revokes its own stored grant, not the native
+			// directory observation shared by the independent authorities.
+			if touched && identity != "" {
 				resultRoot = identity
 			}
 			if database != nil {
-				overrides, err := saveWorkspacePreferences(database, defaults, edits, identity)
+				binding := predictionPreferenceBinding{root: root, completer: predictionCompleter, connectionErr: predictionConnectionErr}
+				overrides, err := saveWorkspacePreferences(database, defaults, edits, identity, binding)
 				if err != nil {
 					result.Err = err
 					return result
 				}
+				if len(predictionEdits(edits)) != 0 && overrides.PredictionRootIdentity != "" {
+					resultRoot = overrides.PredictionRootIdentity
+					result.PredictionRootIdentity, result.PredictionObserved = resultRoot, true
+				}
 				result.Overrides = overrides
-				result.Effective = boundAnalysisSettings(defaults, overrides, resultRoot)
+				result.Effective = boundWorkspaceSettings(defaults, overrides, resultRoot)
 				return result
 			}
-			if touched {
-				result.Err = fmt.Errorf("workspace Trust requires durable workspace preference storage")
+			if touched || len(predictionEdits(edits)) != 0 {
+				result.Err = fmt.Errorf("workspace Trust and prediction consent require durable workspace preference storage")
 				return result
 			}
 			result.Err = types.ApplySettingsEdits(&result.Overrides, edits)
@@ -93,18 +115,21 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 				_ = json.Unmarshal([]byte(encoded), &workspaceOverrides)
 			}
 		}
-		result.Effective = boundAnalysisSettings(result.AppSettings, workspaceOverrides, resultRoot)
+		result.Effective = boundWorkspaceSettings(result.AppSettings, workspaceOverrides, resultRoot)
 		return result
 	}
 }
 
 // Capability cards have independent entity commits. A preference draft opened
 // before an agent install must not replace those authoritative registration maps.
-func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, edits []types.SettingEdit, analysisRoot string) (types.WorkspaceOverrides, error) {
+func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, edits []types.SettingEdit, analysisRoot string, prediction predictionPreferenceBinding) (types.WorkspaceOverrides, error) {
 	if err := types.ValidateSettingEdits(types.AppSettings{}, edits); err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
 	if err := types.ValidateAnalysisSettingEdits(types.SettingsScopeWorkspace, edits); err != nil {
+		return types.WorkspaceOverrides{}, err
+	}
+	if err := types.ValidatePredictionSettingEdits(types.SettingsScopeWorkspace, edits); err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
 	database.settingsWriteMu.Lock()
@@ -119,8 +144,28 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 	if err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
+	// Ordinary sparse editing canonicalizes JSON objects. A neighbor save must
+	// never repair malformed authority data into a grant. Preserve its original
+	// bytes unless this exact transaction explicitly changes prediction.
+	storedPrediction := currentOverrides.Prediction
+	if len(predictionEdits(edits)) != 0 && len(storedPrediction) != 0 {
+		if _, err := types.DecodeWorkspacePredictionSettings(storedPrediction); err != nil {
+			// An explicit whole-category reset/replacement can repair a corrupt
+			// choice; leaf patches cannot silently resolve ambiguous members.
+			replaces := false
+			for _, edit := range edits {
+				replaces = replaces || len(edit.Path) == 1 && edit.Path[0] == "prediction"
+			}
+			if !replaces {
+				return types.WorkspaceOverrides{}, fmt.Errorf("reset invalid workspace prediction settings before changing individual fields")
+			}
+		}
+	}
 	if err := types.ApplySettingsEdits(&currentOverrides, edits); err != nil {
 		return types.WorkspaceOverrides{}, err
+	}
+	if len(predictionEdits(edits)) == 0 {
+		currentOverrides.Prediction = storedPrediction
 	}
 	if len(analysisEdits(edits)) != 0 {
 		currentOverrides.AnalysisRootIdentity = ""
@@ -130,6 +175,9 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 			}
 			currentOverrides.AnalysisRootIdentity = analysisRoot
 		}
+	}
+	if err := bindPredictionPreferences(&currentOverrides, edits, prediction, analysisRoot); err != nil {
+		return types.WorkspaceOverrides{}, err
 	}
 	encoded, err := json.Marshal(currentOverrides)
 	if err != nil {
@@ -160,8 +208,11 @@ func (w *Workspace) ApplyPreferencesSave(result PreferencesSaveResult) {
 			w.appDefaults.Accounts = w.sessionCfg.AccountManager.Snapshot()
 		}
 	}
-	if result.AnalysisObserved {
+	if result.AnalysisObserved && result.AnalysisRootIdentity != "" {
 		w.analysisRootIdentity = result.AnalysisRootIdentity
+	}
+	if result.PredictionObserved {
+		w.analysisRootIdentity = result.PredictionRootIdentity
 	}
 	w.applySettingsProjection(result.Effective)
 }

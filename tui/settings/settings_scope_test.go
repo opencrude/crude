@@ -59,25 +59,35 @@ func TestWorkspaceScopeSaveEmitsOverridesWithoutAPIKeys(t *testing.T) {
 }
 
 func TestWorkspaceScopeShowsResetSection(t *testing.T) {
-	th := theme.DefaultDark()
-	model := NewScoped(th, types.AppSettings{}, nil, types.SettingsScopeWorkspace, types.AppSettings{}, types.WorkspaceOverrides{})
-	surfaceRoot := NewSurface(th, model)
-	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 22)
-	surfaceRoot.SetFocusHandler(cw.Focus)
-	surf := surface.NewSurface("settings-scope", 80, 22, cell.TransparentBlank())
-	cw.Render(surf, &wm.RenderContext{Theme: th})
-	if !bufferContains(surf.Buffer(), "Workspace") {
-		t.Fatal("workspace scope bar missing")
-	}
-	if !bufferContains(surf.Buffer(), "Use Application") {
-		t.Fatal("workspace scope should offer Use Application settings")
-	}
-	if !bufferContains(surf.Buffer(), "Application") {
-		t.Fatal("segmented scope switch must show Application")
-	}
-	resetX, saveX := bufferIndex(surf.Buffer(), "Use Application"), bufferIndex(surf.Buffer(), "Save")
-	if resetX < 0 || saveX < 0 || resetX >= saveX {
-		t.Fatalf("Reset should sit left of Save: reset=%d save=%d", resetX, saveX)
+	for _, tc := range []struct {
+		name, label string
+		width       int
+	}{{"compact", "Reset", 80}, {"wide", "Use Application settings", 140}} {
+		t.Run(tc.name, func(t *testing.T) {
+			th := theme.DefaultDark()
+			model := NewScoped(th, types.AppSettings{}, nil, types.SettingsScopeWorkspace, types.AppSettings{}, types.WorkspaceOverrides{})
+			surfaceRoot := NewSurface(th, model)
+			cw := ui.NewComponentWidget(th, surfaceRoot, tc.width, 22)
+			surfaceRoot.SetFocusHandler(cw.Focus)
+			surf := surface.NewSurface("settings-scope", tc.width, 22, cell.TransparentBlank())
+			cw.Render(surf, &wm.RenderContext{Theme: th})
+			if !bufferContains(surf.Buffer(), "Workspace") || !bufferContains(surf.Buffer(), "Application") {
+				t.Fatal("segmented scope switch must show Application and Workspace")
+			}
+			resetX, saveX := bufferIndex(surf.Buffer(), tc.label), bufferIndex(surf.Buffer(), "Save")
+			if resetX < 0 || saveX < 0 || resetX >= saveX {
+				t.Fatalf("reset caption %q should sit left of Save: reset=%d save=%d", tc.label, resetX, saveX)
+			}
+			result := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.reset"})
+			if result.Cmd == nil {
+				t.Fatal("responsive caption removed the page's reset action")
+			}
+			request, ok := result.Cmd().(ResetSectionMsg)
+			if !ok || request.Target != model || request.Scope != types.SettingsScopeWorkspace ||
+				request.Category != catAgents || len(request.Edits) == 0 || model.hasUnsavedPreferences() {
+				t.Fatal("responsive reset changed its exact page/scope or mutated before confirmation")
+			}
+		})
 	}
 }
 

@@ -22,6 +22,7 @@ type Form struct {
 	tokens           *TokenSet
 	fields           []*FormField
 	focused          int
+	focusReveal      bool
 	hovered          int
 	fieldGap         int
 	scroll           *ScrollModel
@@ -338,6 +339,15 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 			contentY += f.fieldGap
 		}
 	}
+	if f.focusReveal && !r.Empty() {
+		f.focusReveal = false
+		if f.revealFocusedBounds() {
+			// A composite may prepare field focus before its first mount.
+			// Consume that reveal only once, against the actual viewport.
+			f.Layout(ctx, r)
+			return
+		}
+	}
 	for _, field := range f.fields {
 		field.layoutOverlay(ctx, r.H)
 	}
@@ -560,8 +570,15 @@ func (f *Form) NeedsFrame() bool {
 }
 
 func (f *Form) handleField(index int, ctx EventContext, evt Event) EventResult {
+	height := f.contentHeight()
 	result := f.fields[index].Handle(ctx, evt)
 	f.syncFields()
+	if height != f.contentHeight() {
+		// A validator can grow/shrink preceding siblings while typing. Keep the
+		// actual focused input visible, without snapping wheel-only scrolling.
+		f.ensureFocusedVisible()
+		result.Invalidate |= InvalidateLayout | InvalidatePaint
+	}
 	if result.Action != nil {
 		switch result.Action.ID {
 		case ActionTextPaste:
@@ -694,6 +711,24 @@ func (f *Form) ensureFocusedVisible() {
 	if f.scroll == nil || f.focused < 0 || f.focused >= len(f.fields) {
 		return
 	}
+	if f.Bounds().Empty() {
+		f.focusReveal = true
+		return
+	}
+	// Error/help rows may have changed since the last host layout. Derive
+	// current field bounds before deciding which offset reveals native focus.
+	f.Layout(LayoutContext{}, f.Bounds())
+	if f.revealFocusedBounds() {
+		f.Layout(LayoutContext{}, f.Bounds())
+	}
+}
+
+// Only Form layout publishes field geometry. Reveal uses those current bounds,
+// whether invoked by native traversal or a prepared pre-layout focus request.
+func (f *Form) revealFocusedBounds() bool {
+	if f.scroll == nil || f.focused < 0 || f.focused >= len(f.fields) {
+		return false
+	}
 	field := f.fields[f.focused]
 	start := field.Bounds().Y + f.scroll.Offset()
 	end := start + max(1, field.Bounds().H) - 1
@@ -704,9 +739,7 @@ func (f *Form) ensureFocusedVisible() {
 	} else if end >= off+vh {
 		f.scroll.ScrollTo(end - vh + 1)
 	}
-	if !f.Bounds().Empty() {
-		f.Layout(LayoutContext{}, f.Bounds())
-	}
+	return f.scroll.Offset() != off
 }
 
 func (f *Form) color(role SemanticColor) cell.Color {
