@@ -148,6 +148,7 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 	for _, id := range remove {
 		_ = os.Remove(filepath.Join(s.root, "manifests", id+".json"))
 	}
+	s.forgetVerifiedSnapshots(remove)
 	if err := s.removeStalePlans(); err != nil {
 		return PruneResult{}, err
 	}
@@ -281,7 +282,7 @@ WHERE o.source IN ('execution_apply','execution_undo') AND o.status<>'aborted'`)
 		if !indexed {
 			return nil, fmt.Errorf("localhistory: execution safety snapshot %s is not indexed", id)
 		}
-		if err := s.verify(ctx, id); err != nil {
+		if err := s.verifyEvidence(ctx, id); err != nil {
 			return nil, fmt.Errorf("localhistory: execution safety snapshot %s: %w", id, err)
 		}
 	}
@@ -308,7 +309,7 @@ func (s *Store) collectGarbage(ctx context.Context) (int, error) {
 				continue
 			}
 			files[entry.Hash] = true
-			obj, err := s.readFileObject(entry.Hash)
+			obj, err := s.verifiedFileObject(entry.Hash)
 			if err != nil {
 				return 0, err
 			}
@@ -335,7 +336,7 @@ func (s *Store) collectGarbage(ctx context.Context) (int, error) {
 					continue
 				}
 				files[target.Hash] = true
-				obj, err := s.readFileObject(target.Hash)
+				obj, err := s.verifiedFileObject(target.Hash)
 				if err != nil {
 					return 0, err
 				}
@@ -365,7 +366,7 @@ func (s *Store) collectGarbage(ctx context.Context) (int, error) {
 				continue
 			}
 			files[entry.Hash] = true
-			object, err := s.readFileObject(entry.Hash)
+			object, err := s.verifiedFileObject(entry.Hash)
 			if err != nil {
 				_ = rows.Close()
 				return 0, err
@@ -382,6 +383,7 @@ func (s *Store) collectGarbage(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	removed, err := removeUnreferenced(filepath.Join(s.root, "objects", "files"), ".json", files)
+	s.retainVerifiedObjects(files)
 	if err != nil {
 		return removed, err
 	}

@@ -102,7 +102,11 @@ bounded public recent work, recovery facts and report revision references. An
 attached or available participant without a current run is not labeled working.
 
 The family includes `remember`, `recall_memory`, `update_memory`, `forget_memory`,
-`memory_feedback` and `search_history`, not only the Board operations. Live
+`memory_feedback`, `search_history` and the goal tools (`get_goal`,
+`create_goal`, `update_goal`), not only the Board operations. Goal rows show the
+objective, status, active time, tokens and reason, never the model-facing
+JSON. A pending `question` reads "Waiting for your answer", not a running
+command. Live
 events, passive SQLite hydration, parallel leaves and compact child panes use
 the same title/body builders. Exact family inputs are retained before title
 derivation so mutation acknowledgements cannot lose authored content. Generic

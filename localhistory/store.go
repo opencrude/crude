@@ -51,6 +51,15 @@ type Store struct {
 	// relative path, so unchanged files are not re-read and re-hashed.
 	statCache map[string]statEntry
 	statMu    sync.Mutex
+	// verified holds file objects whose chunks this Store has already read
+	// and hash-checked, and verifiedSnapshots the protected snapshots whose
+	// complete evidence it checked. Manifests and objects are content-addressed
+	// and immutable, and this Store's GC never deletes what a protected
+	// snapshot references, so retention reuses the proof instead of
+	// decompressing every protected snapshot on each prune.
+	verified          map[string]FileObject
+	verifiedSnapshots map[string]bool
+	verifiedMu        sync.Mutex
 }
 
 // statEntry is a file's observed metadata and the content it had then.
@@ -413,6 +422,64 @@ func (s *Store) readFileObject(hash string) (FileObject, error) {
 		return FileObject{}, errors.New("localhistory: file object hash mismatch")
 	}
 	return obj, nil
+}
+
+// verifiedFileObject is readFileObject for retention evidence checks: the
+// first use reads and hash-checks every chunk, later uses reuse that proof.
+// Explicit Verify/VerifyAll and every restore still read content.
+func (s *Store) verifiedFileObject(hash string) (FileObject, error) {
+	s.verifiedMu.Lock()
+	obj, ok := s.verified[hash]
+	s.verifiedMu.Unlock()
+	if ok {
+		return obj, nil
+	}
+	obj, err := s.readFileObject(hash)
+	if err != nil {
+		return FileObject{}, err
+	}
+	s.verifiedMu.Lock()
+	if s.verified == nil {
+		s.verified = make(map[string]FileObject)
+	}
+	s.verified[hash] = obj
+	s.verifiedMu.Unlock()
+	return obj, nil
+}
+
+func (s *Store) snapshotEvidenceVerified(id string) bool {
+	s.verifiedMu.Lock()
+	defer s.verifiedMu.Unlock()
+	return s.verifiedSnapshots[id]
+}
+
+func (s *Store) markSnapshotEvidenceVerified(id string) {
+	s.verifiedMu.Lock()
+	if s.verifiedSnapshots == nil {
+		s.verifiedSnapshots = make(map[string]bool)
+	}
+	s.verifiedSnapshots[id] = true
+	s.verifiedMu.Unlock()
+}
+
+// retainVerifiedObjects drops proofs for objects garbage collection did not
+// keep.
+func (s *Store) retainVerifiedObjects(keep map[string]bool) {
+	s.verifiedMu.Lock()
+	for hash := range s.verified {
+		if !keep[hash] {
+			delete(s.verified, hash)
+		}
+	}
+	s.verifiedMu.Unlock()
+}
+
+func (s *Store) forgetVerifiedSnapshots(ids []string) {
+	s.verifiedMu.Lock()
+	for _, id := range ids {
+		delete(s.verifiedSnapshots, id)
+	}
+	s.verifiedMu.Unlock()
 }
 
 func (s *Store) materializeFile(hash, path string) error {

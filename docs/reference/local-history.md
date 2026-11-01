@@ -63,6 +63,26 @@
   write is invisible to metadata, so such files are re-read). Paths the walk did
   not visit leave the cache. Restore planning never uses it and reads every file.
 
+## Retention cost
+
+- Retention runs after every capture and on every reconcile tick while holding
+  the Store/process mutation gate that message scopes and every direct file
+  tool's operation receipt wait on. It must stay cheap: re-reading every
+  protected snapshot's content on each pass once held that gate for over a
+  minute per pass in a real store, so turns and edits stalled behind it.
+- Protected evidence is content-verified once per open Store. Retention keeps
+  that proof for immutable content-addressed objects and protected snapshots;
+  later passes still check the index row and manifest presence and fail closed
+  when they are gone. Garbage collection resolves chunk references through the
+  same proofs and evicts proofs for objects it deletes. Explicit
+  Verify/VerifyAll, loading a retained snapshot for use, and restore always read
+  content again.
+- The storage budget measures retained content: objects, manifests, plans and
+  SQLite's in-use pages. Free pages left by pruned snapshots and the WAL/shm
+  sidecars are reusable working space, never budget usage; counting them kept a
+  store permanently over budget and discarded all ordinary history each pass.
+  The WAL is truncated to 64 MiB after checkpoints.
+
 ## Restore and agent undo
 
 - `/undo` always opens preview. Conflicts require an explicit exact choice;

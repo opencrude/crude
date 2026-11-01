@@ -24,7 +24,7 @@ type StructuredResult struct {
 }
 
 // IsStructuredTool is the shared routing contract for related knowledge,
-// collaboration and capability tools, including connected MCP operations.
+// collaboration, goal and capability tools, including connected MCP operations.
 func IsStructuredTool(name string) bool {
 	return toolcontract.RetainsStructuredToolInput(name)
 }
@@ -51,6 +51,9 @@ func resultCount(count int, singular, plural string) string {
 func BuildStructuredResult(name, content, input string) StructuredResult {
 	if IsCollaborationTool(name) {
 		return buildCollaborationResult(name, content, input)
+	}
+	if IsGoalTool(name) {
+		return buildGoalResult(content)
 	}
 	switch name {
 	case "crude_commands", "crude_control":
