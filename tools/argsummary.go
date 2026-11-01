@@ -337,7 +337,8 @@ func RetainsStructuredToolInput(name string) bool {
 		"remember", "recall_memory", "update_memory",
 		"forget_memory", "memory_feedback", "search_history", "capability_search",
 		"capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt",
-		"agent_update_claims", "agent_narrow_claims", "agent_configure", "crude_commands", "crude_control":
+		"agent_update_claims", "agent_narrow_claims", "agent_configure", "crude_commands", "crude_control",
+		"get_goal", "create_goal", "update_goal":
 		return true
 	}
 	return strings.HasPrefix(name, "mcp__")

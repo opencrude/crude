@@ -9,6 +9,7 @@ import (
 
 	"crude/shellport"
 	"crude/tui/screens/decision"
+	"crude/tui/tools"
 	"crude/types"
 	"crude/workspace"
 )
@@ -109,7 +110,7 @@ func (m *App) offerGoalResume(agentID string) {
 	if !ok || !resumable {
 		return
 	}
-	facts := []decision.Fact{{Label: "Objective", Value: goal.Objective}, {Label: "Status", Value: goalStatusLabel(goal)}}
+	facts := []decision.Fact{{Label: "Objective", Value: goal.Objective}, {Label: "Status", Value: tools.GoalStatusLabel(goal)}}
 	if goal.Reason != "" {
 		facts = append(facts, decision.Fact{Label: "Why", Value: goal.Reason})
 	}
@@ -122,34 +123,20 @@ func (m *App) offerGoalResume(agentID string) {
 	})
 }
 
-func goalStatusLabel(goal types.Goal) string {
-	switch {
-	case goal.Status == types.GoalActive && goal.Verifying:
-		return "checking"
-	case goal.Status == types.GoalActive && goal.Waiting:
-		return "waiting"
-	case goal.Status == types.GoalComplete:
-		return "complete"
-	case goal.Status == types.GoalBudgetLimited:
-		return "limited by budget"
-	}
-	return string(goal.Status)
-}
-
 func goalDetails(goal types.Goal, planMode bool) string {
-	status := goalStatusLabel(goal)
+	status := tools.GoalStatusLabel(goal)
 	if planMode && goal.Status == types.GoalActive && !goal.Verifying && !goal.Waiting {
 		status = "active; automatic continuation waits for Plan mode to end"
 	}
 	var text strings.Builder
 	fmt.Fprintf(&text, "Snapshot · reopen /goal to refresh\n\nStatus: %s\n", status)
 	if goal.TimeUsed >= time.Second {
-		fmt.Fprintf(&text, "Active time: %s\n", formatGoalDuration(goal.TimeUsed))
+		fmt.Fprintf(&text, "Active time: %s\n", tools.FormatGoalDuration(goal.TimeUsed))
 	}
 	if goal.TokenBudget > 0 {
-		fmt.Fprintf(&text, "Tokens: %s / %s\n", formatGoalTokens(goal.TokensUsed), formatGoalTokens(goal.TokenBudget))
+		fmt.Fprintf(&text, "Tokens: %s / %s\n", tools.FormatGoalTokens(goal.TokensUsed), tools.FormatGoalTokens(goal.TokenBudget))
 	} else if goal.TokensUsed > 0 {
-		fmt.Fprintf(&text, "Tokens: %s\n", formatGoalTokens(goal.TokensUsed))
+		fmt.Fprintf(&text, "Tokens: %s\n", tools.FormatGoalTokens(goal.TokensUsed))
 	}
 	text.WriteString("\nObjective\n" + goal.Objective)
 	if goal.Reason != "" {
@@ -159,36 +146,13 @@ func goalDetails(goal types.Goal, planMode bool) string {
 	return text.String()
 }
 
-func formatGoalDuration(d time.Duration) string {
-	minutes := int(d.Minutes())
-	switch {
-	case minutes < 1:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case minutes < 60:
-		return fmt.Sprintf("%dm", minutes)
-	case minutes < 24*60:
-		return fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
-	}
-	return fmt.Sprintf("%dd %dh", minutes/(24*60), minutes/60%24)
-}
-
-func formatGoalTokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1_000)
-	}
-	return fmt.Sprint(n)
-}
-
 // goalHeaderText labels the selected session's goal in the header.
 func (m *App) goalHeaderText(agentID string) string {
 	goal, ok := m.ws.GoalForAgent(agentID)
 	if !ok {
 		return ""
 	}
-	label := goalStatusLabel(goal)
+	label := tools.GoalStatusLabel(goal)
 	if m.ws.PlanModeForAgent(agentID) && goal.Status == types.GoalActive && !goal.Verifying && !goal.Waiting {
 		label = "plan wait"
 	}

@@ -465,6 +465,36 @@ func (s *Store) verify(ctx context.Context, manifestID string) error {
 	return nil
 }
 
+// verifyEvidence is verify for retention's repeated evidence checks: a
+// protected snapshot's content is checked completely once per Store. Later
+// prunes only confirm its immutable manifest is still present; restore and
+// explicit Verify read content again.
+func (s *Store) verifyEvidence(ctx context.Context, manifestID string) error {
+	if s.snapshotEvidenceVerified(manifestID) && validID(manifestID) {
+		if _, err := os.Stat(filepath.Join(s.root, "manifests", manifestID+".json")); err == nil {
+			return nil
+		}
+		s.forgetVerifiedSnapshots([]string{manifestID})
+	}
+	manifest, err := s.LoadManifest(manifestID)
+	if err != nil {
+		return err
+	}
+	for path, entry := range manifest.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.Type != EntryFile {
+			continue
+		}
+		if _, err := s.verifiedFileObject(entry.Hash); err != nil {
+			return fmt.Errorf("localhistory: verify %s: %w", path, err)
+		}
+	}
+	s.markSnapshotEvidenceVerified(manifestID)
+	return nil
+}
+
 func validID(id string) bool {
 	if len(id) != sha256.Size*2 {
 		return false
@@ -481,13 +511,19 @@ func (s *Store) Stats() (Stats, error) {
 	return s.stats()
 }
 
+// stats measures what the store retains. SQLite metadata counts its in-use
+// pages: free pages left by pruned snapshots and the WAL/shared-memory
+// sidecars are reusable working space, and counting them made a store whose
+// content fit its budget look permanently over it, so every prune discarded
+// all ordinary history.
 func (s *Store) stats() (Stats, error) {
 	var stats Stats
+	metadata := filepath.Join(s.root, "history.db")
 	err := filepath.WalkDir(s.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
+		if entry.IsDir() || path == metadata || path == metadata+"-wal" || path == metadata+"-shm" {
 			return nil
 		}
 		info, err := entry.Info()
@@ -511,6 +547,11 @@ func (s *Store) stats() (Stats, error) {
 	if err := s.db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(logical_bytes),0) FROM history_snapshots`).Scan(&stats.Snapshots, &stats.LogicalBytes); err != nil {
 		return Stats{}, err
 	}
+	var pages, free, pageSize int64
+	if err := s.db.QueryRow(`SELECT page_count,freelist_count,page_size FROM pragma_page_count(),pragma_freelist_count(),pragma_page_size()`).Scan(&pages, &free, &pageSize); err != nil {
+		return Stats{}, err
+	}
+	stats.PhysicalBytes += max(0, pages-free) * pageSize
 	return stats, nil
 }
 

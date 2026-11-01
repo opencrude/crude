@@ -1376,7 +1376,17 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 			}
 		}
 	}
-	s.logger.Info("BLOCK", "prompt", "operation", data["operation"], "tool", data["tool"], "target", data["target"], "question", data["question"])
+	// Question prompts carry map[string]any; log the same fields for both
+	// shapes so a long human wait stays diagnosable.
+	field := func(key string) string {
+		if data != nil {
+			return data[key]
+		}
+		values, _ := evt.Data.(map[string]any)
+		value, _ := values[key].(string)
+		return value
+	}
+	s.logger.Info("BLOCK", "prompt", "block_id", field("block_id"), "operation", field("operation"), "tool", field("tool"), "target", field("target"), "question", field("question"))
 	agentID := evt.AgentID
 	if agentID == "" {
 		agentID = o.ID

@@ -168,7 +168,9 @@ func (s *Store) retainedSafetySnapshots(ctx context.Context) (map[string]bool, e
 		return nil, err
 	}
 	for id := range protected {
-		if _, err := s.verifiedRetainedManifest(ctx, id); err != nil {
+		// Retention reuses this Store's content proofs; loading a retained
+		// snapshot for use still reads every object.
+		if _, err := s.checkRetainedManifest(ctx, id, s.verifiedFileObject); err != nil {
 			return nil, fmt.Errorf("localhistory: retained safety snapshot %s: %w", id, err)
 		}
 	}
@@ -176,6 +178,10 @@ func (s *Store) retainedSafetySnapshots(ctx context.Context) (map[string]bool, e
 }
 
 func (s *Store) verifiedRetainedManifest(ctx context.Context, id string) (Manifest, error) {
+	return s.checkRetainedManifest(ctx, id, s.readFileObject)
+}
+
+func (s *Store) checkRetainedManifest(ctx context.Context, id string, readObject func(string) (FileObject, error)) (Manifest, error) {
 	if !validID(id) {
 		return Manifest{}, errors.New("localhistory: invalid retained snapshot ID")
 	}
@@ -230,7 +236,7 @@ func (s *Store) verifiedRetainedManifest(ctx context.Context, id string) (Manife
 		if entry.Type != EntryFile && entry.Type != EntryHardlink {
 			continue
 		}
-		object, err := s.readFileObject(entry.Hash)
+		object, err := readObject(entry.Hash)
 		if err != nil {
 			return Manifest{}, err
 		}

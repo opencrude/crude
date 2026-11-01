@@ -81,6 +81,7 @@ func (s *Store) recoverPlanIndex() error {
 func migrateMetadata(db *sql.DB) error {
 	_, err := db.Exec(`
 PRAGMA journal_mode=WAL;
+PRAGMA journal_size_limit=67108864;
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS history_snapshots (
   snapshot_id TEXT PRIMARY KEY,
