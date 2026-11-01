@@ -37,7 +37,7 @@ func pageOwnershipFor(category int, scope types.SettingsScope) (pageOwnership, b
 	case catLSP:
 		include := [][]string{{"lsp"}}
 		if scope == types.SettingsScopeWorkspace {
-			include = append(include, []string{"analysis"})
+			include = append(include, []string{"analysis"}, []string{"prediction"})
 		}
 		return pageOwnership{include: include, exclude: [][]string{{"lsp", "languages"}}}, true
 	case catUI:

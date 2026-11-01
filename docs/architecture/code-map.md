@@ -33,6 +33,7 @@ detailed contracts.
 | `prompt/` | Every code-authored model instruction template ([prompt architecture](../reference/prompt-architecture.md)). |
 | `provider/` | Wire protocols, streaming, failure classification, connection accounting. |
 | `provider/text_once.go`, `provider/fim_once.go` | Bounded one-attempt no-tools text/FIM operations with original-wire usage-presence evidence; no prediction coordinator, consent authority, retry or adapter fallback. |
+| `session/editor_prediction.go` | Captured Aeron account/role binding for usage-preserving one-shot requests; live connection preflight, no consent, endpoint probing or chat-session creation. |
 | `codexio/` | Native Codex/OpenAI interfaces such as freeform `apply_patch`. |
 | `tools/` | Tool schemas, argument summaries, parallel dispatch, effects. |
 | `plan/` | Revisioned declarative plan store and activity view. |
@@ -58,6 +59,9 @@ detailed contracts.
 | `insight/project/` | Bounded passive compilation-database artifact observations with exact byte identity and detached argv/opaque command projections; not a project model, execution authority or semantic coverage. |
 | `insight/project/cmake/` | Bounded passive CMake File API artifact observations with exact byte identity and detached configuration/target projections; native-shell fragments stay opaque, and parsing grants no read/execute authority, freshness or semantic coverage. |
 | `insight/predictionbudget/` | Sessionless durable token reservations, single-attempt tickets and conservative unknown-usage settlement; library-only, not egress consent or an enabled editor request path. |
+| `insight/predictioncontext/`, `prompt/editor_prediction.go` | Bounded exact-source diagnostic subset, source window, digest and explicit missing-input coverage; narrow escaped insertion prompt, not complete semantic/project context. |
+| `types/editor_prediction*.go`, `workspace/editor_prediction_preferences.go`, `tui/settings/prediction.go` | Workspace-only human consent, strict authority decoding, one shared literal insertion contract and native preference rows; application/session inheritance and caller-generated grants are refused. |
+| `workspace/editor_prediction_service.go` | Internal bounded invocation/cancellation/cache and sessionless accounting composition; not yet constructed by the live workspace or connected to an editor RPC, source intent or visible meter. |
 | `workspace/project_context.go`, `workspace/project_artifact.go` | Retained explicit artifact-selection/observation owner, native root/file identity, coalesced worker, stale evidence and joined lifecycle ([project context](../reference/project-context.md)); not autonomous selection, provider configuration or complete semantic context. |
 | `textsearch/` | Shared exact/regex source-span matching and replacement expansion; established fzf ranking for project discovery only. |
 | `localhistory/` | Immutable snapshots, restore plans, verification, retention ([local history](../reference/local-history.md)). |

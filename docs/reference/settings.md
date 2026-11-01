@@ -6,8 +6,9 @@ Crude has three settings layers. Each stores only its explicit choices. A value
 not configured at that scope inherits from its parent. The last explicit write
 to a field wins; ordinary settings saves have no configuration revision,
 preimage or conflict gate. Users and agents use the same rule.
-Workspace analysis Trust is an explicit exception: it never inherits from the
-application or session layer, and only a human can change its authority.
+Workspace analysis Trust and prediction consent are explicit, independent
+exceptions: neither inherits from the application or session layer, and only a
+human can change their authority.
 
 ```
 Application  (~/.crude/config.json)
@@ -25,6 +26,7 @@ field it does not name keeps following the application layer forever, so
 turning something off at the application level reaches the workspace even
 years later.
 Analysis Trust instead resolves to **Static only** when absent or invalid.
+Prediction consent resolves to **Off**, with no invented spending allowance.
 
 On a project switch, the target workspace database is opened before the old
 shell attachment is detached; peer work in that project is retained. Its effective theme is then applied before target-owned
@@ -1038,6 +1040,47 @@ gate, not execution Trust or permission to apply provider edits/commands.
 Toggling it revokes old inlay evidence through a feature epoch without restarting
 the language server. Per-view Show/Hide never persists a settings choice or
 overrides the master/Trust gate. See [read-only inlay hints](editor.md#read-only-inlay-hints).
+
+### Workspace prediction consent
+
+**Code Intelligence → AI predictions** edits a separate workspace-owned
+`prediction` category, not analysis Trust or session Code Intelligence. Its
+shared native controls are:
+
+- **AI predictions**: Off / Light / Full segments. Light records an on-demand
+  choice; Full additionally records automatic-typing intent.
+- **Hourly token cap**: an exact whole-token number from 0 through 1099511627776.
+  Enabling requires an explicitly chosen positive cap; zero is not unlimited.
+  Tokens are an estimate/accounting unit, not a price.
+- **Prediction protocol**: Chat, OpenAI completions, DeepSeek FIM or Codestral
+  FIM. Selection is explicit, never guessed from a hostname or model name.
+- **Prediction endpoint**: empty for Chat; an explicit safe mount-relative path
+  for FIM. It cannot replace the Aeron account's base URL.
+
+Application scope shows four read-only **Workspace only** rows. Switching scope
+rebases these rows from the effective workspace projection, never raw blocked
+overrides or an application-level On value. Field and combined validation retain
+an invalid draft until corrected; Save cannot normalize it into a grant.
+Code Intelligence Reset removes prediction and analysis choices independently
+while preserving the Language Servers inventory. A Trust-only edit does not
+revoke prediction consent, and a prediction-only Off/reset does not revoke Trust.
+
+The existing workspace preference transaction binds an enabled choice to a
+stable native root, exact configured Aeron connection and a newly generated grant
+identity. The reserved `prediction_root_identity`,
+`prediction_connection_identity` and `prediction_grant_id` fields cannot be
+supplied through edits. Application/session, entity-snapshot and generic agent
+controls cannot mint consent; Save/Reset remain human-only with off-page
+authority drafts. Unrelated saves preserve invalid inner authority bytes rather
+than repairing ambiguous JSON. Duplicate or case-aliased outer authority members
+fail decoding; repair of such corrupted stored rows is not an automatic upgrade.
+Off/reset remains possible without a working provider connection.
+
+**Implementation boundary:** these consent settings and internal request
+prerequisites do not yet enable a live editor prediction service. The editor
+request/transport lifecycle, complete fact context and visible budget meter still
+require integration and product acceptance. Saving a choice does not probe an
+endpoint, start a model session or send source.
 
 ### Workspace analysis Trust
 

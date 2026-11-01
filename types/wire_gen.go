@@ -1007,8 +1007,8 @@ func (z *AgentsSettings) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AppSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 14
-	o = append(o, 0x9e)
+	// array header, size 15
+	o = append(o, 0x9f)
 	// array header, size 2
 	o = append(o, 0x92)
 	o = msgp.AppendBool(o, z.Onboarding.IntroductionCompleted)
@@ -1031,6 +1031,11 @@ func (z *AppSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	// array header, size 1
 	o = append(o, 0x91)
 	o = msgp.AppendString(o, string(z.Analysis.Trust))
+	o, err = z.Prediction.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Prediction")
+		return
+	}
 	o, err = z.UI.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "UI")
@@ -1099,8 +1104,8 @@ func (z *AppSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 14 {
-		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+	if zb0001 != 15 {
+		err = msgp.ArrayError{Wanted: 15, Got: zb0001}
 		return
 	}
 	var zb0002 uint32
@@ -1164,6 +1169,11 @@ func (z *AppSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 		z.Analysis.Trust = WorkspaceAnalysisTrust(zb0004)
+	}
+	bts, err = z.Prediction.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Prediction")
+		return
 	}
 	bts, err = z.UI.UnmarshalMsg(bts)
 	if err != nil {
@@ -1249,7 +1259,7 @@ func (z *AppSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *AppSettings) Msgsize() (s int) {
-	s = 1 + 1 + msgp.BoolSize + msgp.BoolSize + z.Theme.Msgsize() + z.Editor.Msgsize() + z.LSP.Msgsize() + 1 + msgp.StringPrefixSize + len(string(z.Analysis.Trust)) + z.UI.Msgsize() + msgp.MapHeaderSize
+	s = 1 + 1 + msgp.BoolSize + msgp.BoolSize + z.Theme.Msgsize() + z.Editor.Msgsize() + z.LSP.Msgsize() + 1 + msgp.StringPrefixSize + len(string(z.Analysis.Trust)) + z.Prediction.Msgsize() + z.UI.Msgsize() + msgp.MapHeaderSize
 	if z.Accounts != nil {
 		for za0001, za0002 := range z.Accounts {
 			_ = za0002
@@ -3063,6 +3073,62 @@ func (z *DocumentInsight) Msgsize() (s int) {
 	} else {
 		s += z.Syntax.Msgsize()
 	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z EditorPredictionMode) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	o = msgp.AppendString(o, string(z))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *EditorPredictionMode) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	{
+		var zb0001 string
+		zb0001, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = EditorPredictionMode(zb0001)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z EditorPredictionMode) Msgsize() (s int) {
+	s = msgp.StringPrefixSize + len(string(z))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z EditorPredictionProtocol) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	o = msgp.AppendString(o, string(z))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *EditorPredictionProtocol) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	{
+		var zb0001 string
+		zb0001, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = EditorPredictionProtocol(zb0001)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z EditorPredictionProtocol) Msgsize() (s int) {
+	s = msgp.StringPrefixSize + len(string(z))
 	return
 }
 
@@ -9964,8 +10030,8 @@ func (z WorkspaceAnalysisTrust) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *WorkspaceOverrides) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 16
+	o = append(o, 0xdc, 0x0, 0x10)
 	if z.Theme == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -9986,6 +10052,14 @@ func (z *WorkspaceOverrides) MarshalMsg(b []byte) (o []byte, err error) {
 	} else {
 		o = msgp.AppendBytes(o, rawJSONToBytes(z.Analysis))
 	}
+	if z.Prediction == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBytes(o, rawJSONToBytes(z.Prediction))
+	}
+	o = msgp.AppendString(o, z.PredictionRootIdentity)
+	o = msgp.AppendString(o, z.PredictionConnectionIdentity)
+	o = msgp.AppendString(o, z.PredictionGrantID)
 	o = msgp.AppendString(o, z.AnalysisRootIdentity)
 	if z.UI == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
@@ -10037,8 +10111,8 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 16 {
+		err = msgp.ArrayError{Wanted: 16, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -10109,6 +10183,38 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.Analysis = bytesToRawJSON(zb0005)
 		}
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Prediction = nil
+	} else {
+		{
+			var zb0006 []byte
+			zb0006, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Prediction))
+			if err != nil {
+				err = msgp.WrapError(err, "Prediction")
+				return
+			}
+			if zb0006 == nil {
+				zb0006 = make([]byte, 0)
+			}
+			z.Prediction = bytesToRawJSON(zb0006)
+		}
+	}
+	z.PredictionRootIdentity, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "PredictionRootIdentity")
+		return
+	}
+	z.PredictionConnectionIdentity, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "PredictionConnectionIdentity")
+		return
+	}
+	z.PredictionGrantID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "PredictionGrantID")
+		return
+	}
 	z.AnalysisRootIdentity, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "AnalysisRootIdentity")
@@ -10119,16 +10225,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.UI = nil
 	} else {
 		{
-			var zb0006 []byte
-			zb0006, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.UI))
+			var zb0007 []byte
+			zb0007, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.UI))
 			if err != nil {
 				err = msgp.WrapError(err, "UI")
 				return
 			}
-			if zb0006 == nil {
-				zb0006 = make([]byte, 0)
+			if zb0007 == nil {
+				zb0007 = make([]byte, 0)
 			}
-			z.UI = bytesToRawJSON(zb0006)
+			z.UI = bytesToRawJSON(zb0007)
 		}
 	}
 	if msgp.IsNil(bts) {
@@ -10136,16 +10242,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.Agents = nil
 	} else {
 		{
-			var zb0007 []byte
-			zb0007, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Agents))
+			var zb0008 []byte
+			zb0008, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Agents))
 			if err != nil {
 				err = msgp.WrapError(err, "Agents")
 				return
 			}
-			if zb0007 == nil {
-				zb0007 = make([]byte, 0)
+			if zb0008 == nil {
+				zb0008 = make([]byte, 0)
 			}
-			z.Agents = bytesToRawJSON(zb0007)
+			z.Agents = bytesToRawJSON(zb0008)
 		}
 	}
 	if msgp.IsNil(bts) {
@@ -10153,16 +10259,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.Memory = nil
 	} else {
 		{
-			var zb0008 []byte
-			zb0008, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Memory))
+			var zb0009 []byte
+			zb0009, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Memory))
 			if err != nil {
 				err = msgp.WrapError(err, "Memory")
 				return
 			}
-			if zb0008 == nil {
-				zb0008 = make([]byte, 0)
+			if zb0009 == nil {
+				zb0009 = make([]byte, 0)
 			}
-			z.Memory = bytesToRawJSON(zb0008)
+			z.Memory = bytesToRawJSON(zb0009)
 		}
 	}
 	if msgp.IsNil(bts) {
@@ -10170,16 +10276,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.Safety = nil
 	} else {
 		{
-			var zb0009 []byte
-			zb0009, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Safety))
+			var zb0010 []byte
+			zb0010, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Safety))
 			if err != nil {
 				err = msgp.WrapError(err, "Safety")
 				return
 			}
-			if zb0009 == nil {
-				zb0009 = make([]byte, 0)
+			if zb0010 == nil {
+				zb0010 = make([]byte, 0)
 			}
-			z.Safety = bytesToRawJSON(zb0009)
+			z.Safety = bytesToRawJSON(zb0010)
 		}
 	}
 	if msgp.IsNil(bts) {
@@ -10187,16 +10293,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.LocalHistory = nil
 	} else {
 		{
-			var zb0010 []byte
-			zb0010, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.LocalHistory))
+			var zb0011 []byte
+			zb0011, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.LocalHistory))
 			if err != nil {
 				err = msgp.WrapError(err, "LocalHistory")
 				return
 			}
-			if zb0010 == nil {
-				zb0010 = make([]byte, 0)
+			if zb0011 == nil {
+				zb0011 = make([]byte, 0)
 			}
-			z.LocalHistory = bytesToRawJSON(zb0010)
+			z.LocalHistory = bytesToRawJSON(zb0011)
 		}
 	}
 	if msgp.IsNil(bts) {
@@ -10204,16 +10310,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.Capabilities = nil
 	} else {
 		{
-			var zb0011 []byte
-			zb0011, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Capabilities))
+			var zb0012 []byte
+			zb0012, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Capabilities))
 			if err != nil {
 				err = msgp.WrapError(err, "Capabilities")
 				return
 			}
-			if zb0011 == nil {
-				zb0011 = make([]byte, 0)
+			if zb0012 == nil {
+				zb0012 = make([]byte, 0)
 			}
-			z.Capabilities = bytesToRawJSON(zb0011)
+			z.Capabilities = bytesToRawJSON(zb0012)
 		}
 	}
 	if msgp.IsNil(bts) {
@@ -10221,16 +10327,16 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		z.Terminal = nil
 	} else {
 		{
-			var zb0012 []byte
-			zb0012, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Terminal))
+			var zb0013 []byte
+			zb0013, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.Terminal))
 			if err != nil {
 				err = msgp.WrapError(err, "Terminal")
 				return
 			}
-			if zb0012 == nil {
-				zb0012 = make([]byte, 0)
+			if zb0013 == nil {
+				zb0013 = make([]byte, 0)
 			}
-			z.Terminal = bytesToRawJSON(zb0012)
+			z.Terminal = bytesToRawJSON(zb0013)
 		}
 	}
 	o = bts
@@ -10239,6 +10345,72 @@ func (z *WorkspaceOverrides) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *WorkspaceOverrides) Msgsize() (s int) {
-	s = 1 + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Theme)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Editor)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.LSP)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Analysis)) + msgp.StringPrefixSize + len(z.AnalysisRootIdentity) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.UI)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Agents)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Memory)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Safety)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.LocalHistory)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Capabilities)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Terminal))
+	s = 3 + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Theme)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Editor)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.LSP)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Analysis)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Prediction)) + msgp.StringPrefixSize + len(z.PredictionRootIdentity) + msgp.StringPrefixSize + len(z.PredictionConnectionIdentity) + msgp.StringPrefixSize + len(z.PredictionGrantID) + msgp.StringPrefixSize + len(z.AnalysisRootIdentity) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.UI)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Agents)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Memory)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Safety)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.LocalHistory)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Capabilities)) + msgp.BytesPrefixSize + len(rawJSONToBytes(z.Terminal))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *WorkspacePredictionSettings) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, string(z.Mode))
+	o = msgp.AppendInt64(o, z.HourlyTokenLimit)
+	o = msgp.AppendString(o, string(z.Protocol))
+	o = msgp.AppendString(o, z.EndpointPath)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *WorkspacePredictionSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	{
+		var zb0002 string
+		zb0002, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Mode")
+			return
+		}
+		z.Mode = EditorPredictionMode(zb0002)
+	}
+	z.HourlyTokenLimit, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "HourlyTokenLimit")
+		return
+	}
+	{
+		var zb0003 string
+		zb0003, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Protocol")
+			return
+		}
+		z.Protocol = EditorPredictionProtocol(zb0003)
+	}
+	z.EndpointPath, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "EndpointPath")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *WorkspacePredictionSettings) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(string(z.Mode)) + msgp.Int64Size + msgp.StringPrefixSize + len(string(z.Protocol)) + msgp.StringPrefixSize + len(z.EndpointPath)
 	return
 }

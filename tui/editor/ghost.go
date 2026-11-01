@@ -11,6 +11,7 @@ import (
 	"crude/document"
 	"crude/tui/rendering"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // Ghost text is a private display projection, never source or provider authority.
@@ -38,7 +39,7 @@ type ghostEdit struct {
 // refused rather than trimmed or transformed into different source code.
 func (e *Editor) SetGhostText(revision uint64, anchor int, text string) error {
 	if !e.open || e.readOnly || e.buf == nil || e.Revision() != revision ||
-		e.HasSelection() || e.SnippetActive() || e.IsMouseDragging() || !validGhostText(text) {
+		e.HasSelection() || e.SnippetActive() || e.IsMouseDragging() || !types.ValidEditorPredictionInsertion(text) {
 		return errors.New("prediction does not identify a usable insertion caret")
 	}
 	if p := e.documentProjection; p != nil && (p.conflict != nil || p.snapshot.Conflict ||

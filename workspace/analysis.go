@@ -33,13 +33,18 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 	return nil
 }
 
-// boundAnalysisSettings derives from committed choices and an owned observation,
+// boundWorkspaceSettings derives from committed choices and an owned observation,
 // not a pathname hash or an application/session grant.
-func boundAnalysisSettings(defaults types.AppSettings, overrides types.WorkspaceOverrides, observedRoot string) types.AppSettings {
+func boundWorkspaceSettings(defaults types.AppSettings, overrides types.WorkspaceOverrides, observedRoot string) types.AppSettings {
 	effective := types.MergeAppWorkspace(defaults, overrides)
 	if effective.Analysis.Trust == types.AnalysisProjectExecutionAllowed &&
 		(observedRoot == "" || overrides.AnalysisRootIdentity == "" || observedRoot != overrides.AnalysisRootIdentity) {
 		effective.Analysis = types.DefaultWorkspaceAnalysisSettings()
+	}
+	if effective.Prediction.Mode != types.PredictionOff &&
+		(observedRoot == "" || overrides.PredictionRootIdentity != observedRoot ||
+			overrides.PredictionConnectionIdentity == "" || overrides.PredictionGrantID == "") {
+		effective.Prediction = types.DefaultWorkspacePredictionSettings()
 	}
 	return effective
 }
@@ -49,7 +54,7 @@ func (w *Workspace) publishAnalysisPolicy() {
 		return
 	}
 	overrides := w.LoadWorkspaceOverrides()
-	policy := boundAnalysisSettings(w.AppDefaults(), overrides, w.analysisRootIdentity).Analysis
+	policy := boundWorkspaceSettings(w.AppDefaults(), overrides, w.analysisRootIdentity).Analysis
 	w.LSPMgr.SetAnalysisPolicy(policy, overrides.AnalysisRootIdentity)
 }
 

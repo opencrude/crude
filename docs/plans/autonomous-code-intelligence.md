@@ -176,9 +176,18 @@ ledger is library-only. The exact 37-path prerequisite freeze passed full
 ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax, site and
 Windows/amd64 plus Darwin/arm64 native-feature cross-build gates. Cross-builds
 are compilation evidence, not Windows/macOS runtime acceptance.
-Human-owned non-inheriting workspace consent, coordinator/provider
-wiring, qualified fact context, budget meter, multiline and next-edit acceptance
-remain open; no new source egress is enabled by these libraries.
+The follow-up source adds human-owned non-inheriting workspace consent and
+native preference rows, captured Aeron account binding, bounded partial context
+and prompt builders, and an internal cancellation/cache/accounting composition.
+Shared source integration and affected-package ordinary/race checks cover native
+fields and source-qualified loopback requests, including policy changes and
+release before queued admission. The native preferences journey also exposed
+shared first-layout focus, retained validation and footer invalidation defects;
+their fixes have independent original-defect regression checks. Consolidated
+repository and native capture checks for this follow-up remain in progress. The
+live workspace/editor transport, complete fact context, measured automatic
+scheduling, visible meter, multiline and next-edit acceptance remain open; no
+product source egress is enabled by these prerequisites.
 
 ## Problem
 

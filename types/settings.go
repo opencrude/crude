@@ -46,10 +46,15 @@ const (
 // application happened to hold that day, so a later app-level change to an
 // untouched field silently did nothing.
 type WorkspaceOverrides struct {
-	Theme    json.RawMessage `json:"theme,omitempty"`
-	Editor   json.RawMessage `json:"editor,omitempty"`
-	LSP      json.RawMessage `json:"lsp,omitempty"`
-	Analysis json.RawMessage `json:"analysis,omitempty"`
+	Theme      json.RawMessage `json:"theme,omitempty"`
+	Editor     json.RawMessage `json:"editor,omitempty"`
+	LSP        json.RawMessage `json:"lsp,omitempty"`
+	Analysis   json.RawMessage `json:"analysis,omitempty"`
+	Prediction json.RawMessage `json:"prediction,omitempty"`
+	// Generated only by the explicit workspace preference transaction.
+	PredictionRootIdentity       string `json:"prediction_root_identity,omitempty"`
+	PredictionConnectionIdentity string `json:"prediction_connection_identity,omitempty"`
+	PredictionGrantID            string `json:"prediction_grant_id,omitempty"`
 	// AnalysisRootIdentity is owner-generated metadata, not an editable setting.
 	// The workspace preference transaction binds a grant to a native directory;
 	// no application, session, form or recipe may supply this value.
@@ -66,7 +71,7 @@ type WorkspaceOverrides struct {
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
-		len(o.Analysis) == 0 && len(o.UI) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
+		len(o.Analysis) == 0 && len(o.Prediction) == 0 && len(o.UI) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
 }
 
 // DefaultLSPSettings is the application-level language-intelligence baseline.
@@ -125,6 +130,7 @@ func ApplyAppDefaults(s *AppSettings) {
 	s.Editor = NormalizeEditorSettings(s.Editor)
 	s.Terminal = NormalizeTerminalSettings(s.Terminal)
 	s.Analysis = NormalizeWorkspaceAnalysis(s.Analysis)
+	s.Prediction = NormalizeWorkspacePrediction(s.Prediction)
 	if lspUnset(s.LSP) {
 		s.LSP = DefaultLSPSettings()
 	} else {
@@ -275,6 +281,10 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	// Trust never inherits from application preferences, even a forged or
 	// accidentally populated application projection.
 	out.Analysis = workspaceAnalysisChoice(ws.Analysis)
+	out.Prediction = DefaultWorkspacePredictionSettings()
+	if choice, err := DecodeWorkspacePredictionSettings(ws.Prediction); err == nil {
+		out.Prediction = choice
+	}
 	applySparse(&out.UI, ws.UI)
 	applySparse(&out.Agents, ws.Agents)
 	applySparse(&out.Memory, ws.Memory)
@@ -294,6 +304,7 @@ func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	out.Editor = sparseDiff(app.Editor, working.Editor)
 	out.LSP = sparseDiff(app.LSP, working.LSP)
 	out.Analysis = sparseDiff(DefaultWorkspaceAnalysisSettings(), NormalizeWorkspaceAnalysis(working.Analysis))
+	out.Prediction = sparseDiff(DefaultWorkspacePredictionSettings(), NormalizeWorkspacePrediction(working.Prediction))
 	out.UI = sparseDiff(app.UI, working.UI)
 	out.Agents = sparseDiff(app.Agents, working.Agents)
 	out.Memory = sparseDiff(app.Memory, working.Memory)
@@ -500,6 +511,8 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.LSP) > 0
 	case "analysis":
 		return len(o.Analysis) > 0
+	case "prediction":
+		return len(o.Prediction) > 0
 	case "ui", "interface":
 		return len(o.UI) > 0
 	case "agents":
@@ -533,6 +546,9 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 	case "analysis":
 		o.Analysis = nil
 		o.AnalysisRootIdentity = ""
+	case "prediction":
+		o.Prediction = nil
+		o.PredictionRootIdentity, o.PredictionConnectionIdentity, o.PredictionGrantID = "", "", ""
 	case "ui", "interface":
 		o.UI = nil
 	case "agents":

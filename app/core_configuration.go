@@ -116,6 +116,9 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 	if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
 		return ttypes.AppSettings{}, err
 	}
+	if err := ttypes.ValidatePredictionSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
+		return ttypes.AppSettings{}, err
+	}
 	if len(edits) == 0 {
 		return a.committedDefaults(), nil
 	}
@@ -178,6 +181,9 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 // stored definition. It never serializes resolved/default values for neighbors.
 func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits []ttypes.SettingEdit) error {
 	if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
+		return err
+	}
+	if err := ttypes.ValidatePredictionSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(current)

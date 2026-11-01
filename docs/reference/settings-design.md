@@ -50,7 +50,11 @@ format. The reference implementation is `tui/settings/surface.go` (anatomy),
   separator continuing the rail divider (joined to the rule with `┼`), the page
   notice (a pending decision, an error, an operation's progress), then
   `● Unsaved changes`/`Saving…`/the save error and the buttons. Field help is
-  never footer content.
+  never footer content. A native value edit invalidates this footer's layout as
+  well as paint, including clean → dirty → clean without a resize. At constrained
+  widths dirty status uses **● Unsaved** before eliding; the page reset caption
+  shortens to **Reset** before crowding out readable dirty/save-error status
+  beside Save. Its confirmation still names the exact page and reset effect.
 - **Decision buttons live in the footer**, and `[ Close ]` is always the
   rightmost one, on every page; closing with unsaved work opens the discard
   decision. Preference pages show `[ Save ]` (enabled only when dirty) before
@@ -96,6 +100,15 @@ Rules:
   (`dialFieldOptions`), so `‹` always means less.
 - Clicking beside a stepper or segments (the label column) only focuses the row.
 - Segments fall back to the stepper automatically when they do not fit.
+- Workspace prediction consent uses these same segments, exact numeric input,
+  protocol dropdown and endpoint text field on Code Intelligence. Application
+  scope replaces all four with read-only **Workspace only** rows; no disabled
+  fake picker, inherited On value or synthesized spending default is shown.
+  Scope changes replace the four mounted row states and their collection
+  baselines together, preserving live sibling validation.
+- Form focus prepared before mounting is revealed once against its first actual
+  viewport. Later layouts preserve the reader's scroll; validation-driven height
+  changes reveal the current input using the current field geometry.
 - `DescriptionImportant` (a description painted under its control) is reserved
   for exceptional per-field state — a denied tool, a catalog disagreement.
   Routine explanations are the focused field's inline help.

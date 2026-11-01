@@ -290,10 +290,13 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 
 // NewScoped creates a settings model for application or workspace scope.
 func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset, scope types.SettingsScope, appDefaults types.AppSettings, overrides types.WorkspaceOverrides) *Model {
+	appDefaults = types.CloneAppSettings(appDefaults)
+	appDefaults.Prediction = types.DefaultWorkspacePredictionSettings()
 	current = types.CloneAppSettings(current)
 	types.ApplyAppDefaults(&current)
 	if scope != types.SettingsScopeWorkspace {
 		current.Analysis = types.DefaultWorkspaceAnalysisSettings()
+		current.Prediction = types.DefaultWorkspacePredictionSettings()
 	}
 	current.Agents.AgentProfiles = types.CloneAgentProfiles(current.Agents.AgentProfiles)
 	categories := make(map[string]types.CategorySettings, len(current.Agents.Categories))
@@ -1784,6 +1787,17 @@ func (m *Model) isAgentCategory(index int) bool {
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
+	if category == catLSP && strings.HasPrefix(fieldID, "prediction.") {
+		// These four fields share a combined validity contract. Revalidate the
+		// retained siblings after each edit, not only the edited leaf or Save:
+		// correcting the cap/endpoint must remove the old mode/protocol errors.
+		for _, field := range m.categories[catLSP].Form.Fields() {
+			if strings.HasPrefix(field.ID, "prediction.") {
+				field.Validate()
+			}
+		}
+		return
+	}
 	if category == catTerminal && fieldID == fieldTerminalShell {
 		m.syncTerminalCommand(m.categories[catTerminal].Form)
 		return
@@ -2170,6 +2184,7 @@ func (m *Model) SetScope(scope types.SettingsScope) {
 		m.rebuildNetworkForms()
 	}
 	m.syncAnalysisScope()
+	m.syncPredictionScope()
 }
 func (m *Model) Overrides() types.WorkspaceOverrides {
 	if m.Scope() != types.SettingsScopeWorkspace {
@@ -2186,7 +2201,7 @@ func (m *Model) Edits() []types.SettingEdit {
 	edits := types.SettingsEdits(m.collectedBase, m.AppSettings())
 	filtered := edits[:0]
 	for _, edit := range edits {
-		if len(edit.Path) == 0 || edit.Path[0] == "accounts" || edit.Path[0] == "analysis" && m.Scope() != types.SettingsScopeWorkspace || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
+		if len(edit.Path) == 0 || edit.Path[0] == "accounts" || (edit.Path[0] == "analysis" || edit.Path[0] == "prediction") && m.Scope() != types.SettingsScopeWorkspace || edit.Path[0] == "capabilities" && (len(edit.Path) < 2 || edit.Path[1] != "acquisition") {
 			continue
 		}
 		leaf := edit.Path[len(edit.Path)-1]
@@ -2345,7 +2360,7 @@ func (m *Model) workspaceOverridesPage(index int) bool {
 		}
 		return false
 	case catLSP:
-		return m.storedOverrides.CategoryOverridden("lsp") || m.storedOverrides.CategoryOverridden("analysis")
+		return m.storedOverrides.CategoryOverridden("lsp") || m.storedOverrides.CategoryOverridden("analysis") || m.storedOverrides.CategoryOverridden("prediction")
 	case catLanguageServers:
 		return m.storedOverrides.CategoryOverridden("lsp")
 	case catAppearance:
@@ -2536,6 +2551,7 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectEditor(&settings.Editor)
 	m.collectLSP(&settings.LSP)
 	settings.Analysis = m.collectAnalysis()
+	settings.Prediction = m.collectPrediction()
 	m.collectUI(&settings.UI)
 	m.collectTerminal(&settings.Terminal)
 	settings.Capabilities = capability.Clone(m.capabilities)

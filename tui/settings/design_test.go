@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -52,6 +53,50 @@ func TestUnsavedWorkDrivesSaveFooterAndRailMarker(t *testing.T) {
 	}
 	if plain = paintSettings(t, root, 140, 40); !strings.Contains(plain, "● Unsaved changes") {
 		t.Fatalf("footer does not state unsaved work:\n%s", plain)
+	}
+}
+
+func TestUnsavedFooterTracksNativeEditsWithoutResize(t *testing.T) {
+	for _, width := range []int{140, 80, 72} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			model := New(theme.DefaultDark(), types.AppSettings{}, nil)
+			model.SelectCategory(catEditor)
+			root := NewSurface(theme.DefaultDark(), model)
+			host := ui.NewHost(theme.DefaultDark(), root)
+			root.SetFocusHandler(func(id ui.ComponentID) { host.Focus(id) })
+			host.Resize(width, 24)
+			host.Layout()
+			root.FocusForm()
+			if !root.form.FocusField("word-wrap") {
+				t.Fatal("word wrap cannot receive native input")
+			}
+			host.MarkLayout()
+			paint := func() string {
+				host.Layout()
+				buf := surface.NewCellBuffer(width, 24)
+				host.Paint(buf)
+				return bufferPlain(buf)
+			}
+			if plain := paint(); strings.Contains(plain, "Unsaved") {
+				t.Fatal("clean fixture paints unsaved status")
+			}
+			for _, dirty := range []bool{true, false, true} {
+				host.Handle(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				plain := paint() // no resize or test-supplied layout invalidation
+				if !strings.Contains(plain, "Save") || !strings.Contains(plain, "Close") {
+					t.Fatalf("native input hid footer decisions:\n%s", plain)
+				}
+				footer := strings.Split(plain, "\n")[23]
+				// The footer can elide the long phrase, but "Unsaved" must
+				// remain readable beside Save, not only in the category rail.
+				// 72 body columns is the real 80-column floating frame.
+				if strings.Contains(footer, "●") != dirty ||
+					strings.Contains(footer, "Unsaved") != dirty ||
+					root.actions.ActionEnabled("settings.save") != dirty {
+					t.Fatalf("native edit did not repaint the current dirty footer (dirty=%t):\n%s", dirty, plain)
+				}
+			}
+		})
 	}
 }
 

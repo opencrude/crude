@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"crude/tui/rendering"
+	"crude/types"
 )
 
 // InlineInsertion is display-only text at an exact source grapheme boundary.
@@ -69,20 +69,6 @@ type inlineProjection struct {
 	boundaries                []inlineBoundary
 }
 
-func validGhostText(text string) bool {
-	if len(text) == 0 || len(text) > inlineMaxLabel || !utf8.ValidString(text) {
-		return false
-	}
-	for _, r := range text {
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' ||
-			r == '\u061c' || r == '\u200e' || r == '\u200f' ||
-			r >= '\u202a' && r <= '\u202e' || r >= '\u2066' && r <= '\u2069' {
-			return false
-		}
-	}
-	return true
-}
-
 func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlineProjection, error) {
 	return buildInlineProjectionWithGhost(raw, insertions, nil)
 }
@@ -110,7 +96,7 @@ func buildInlineProjectionWithGhost(raw string, insertions []InlineInsertion, gh
 		ordered = append(ordered, insertion{InlineInsertion: in})
 	}
 	if ghost != nil {
-		if !validGhostText(ghost.Label) || ghost.PaddingLeft || ghost.PaddingRight {
+		if !types.ValidEditorPredictionInsertion(ghost.Label) || ghost.PaddingLeft || ghost.PaddingRight {
 			return nil, errors.New("prediction must be bounded literal single-line text")
 		}
 		ordered = append(ordered, insertion{InlineInsertion: *ghost, ghost: true})
