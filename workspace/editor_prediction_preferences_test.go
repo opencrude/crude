@@ -263,7 +263,7 @@ func TestPredictionPreferenceAuthorityResetsAreIndependent(t *testing.T) {
 			before := applyAnalysisPreference(t, w, predictionGrantEdit()).Overrides
 			if order == "trust-first" {
 				applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"analysis"}})
-				if w.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly ||
+				if w.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided ||
 					w.LoadAppSettings().Prediction.Mode != types.PredictionLight ||
 					w.LoadWorkspaceOverrides().PredictionGrantID != before.PredictionGrantID {
 					t.Fatal("revoking project-execution Trust revoked unrelated source-egress consent")
@@ -271,7 +271,7 @@ func TestPredictionPreferenceAuthorityResetsAreIndependent(t *testing.T) {
 			} else {
 				applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"prediction"}})
 				if w.LoadAppSettings().Prediction.Mode != types.PredictionOff ||
-					w.LoadAppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed ||
+					w.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted ||
 					w.LoadWorkspaceOverrides().AnalysisRootIdentity != before.AnalysisRootIdentity {
 					t.Fatal("revoking source-egress consent revoked unrelated project-execution Trust")
 				}

@@ -2,22 +2,21 @@ package workspace
 
 import (
 	"bytes"
-	"runtime"
 	"testing"
 	"time"
+
+	"crude/internal/testterminal"
 )
 
 func TestTerminalManagerCreateWriteClose(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("in-app PTYs are unix-only")
-	}
+	cmd, args := testterminal.Command(t, "echo")
 	mgr := NewTerminalManager(t.TempDir())
 	info, err := mgr.Create(TerminalCreateOpts{
-		Command: "/bin/cat",
-		CWD:     t.TempDir(),
-		Cols:    40,
-		Rows:    10,
-		Title:   "cat",
+		Command: cmd, Args: args,
+		CWD:   t.TempDir(),
+		Cols:  40,
+		Rows:  10,
+		Title: "cat",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -44,11 +43,9 @@ func TestTerminalManagerCreateWriteClose(t *testing.T) {
 }
 
 func TestTerminalManagerResize(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("in-app PTYs are unix-only")
-	}
+	cmd, args := testterminal.Command(t, "echo")
 	mgr := NewTerminalManager(t.TempDir())
-	info, err := mgr.Create(TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	info, err := mgr.Create(TerminalCreateOpts{Command: cmd, Args: args, CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -60,17 +57,14 @@ func TestTerminalManagerResize(t *testing.T) {
 	if got.Cols != 60 || got.Rows != 20 {
 		t.Fatalf("size=%dx%d", got.Cols, got.Rows)
 	}
-	time.Sleep(20 * time.Millisecond)
 }
 
 func TestTerminalWriteDoesNotBlockUI(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("in-app PTYs are unix-only")
-	}
+	cmd, args := testterminal.Command(t, "idle")
 	mgr := NewTerminalManager(t.TempDir())
 	info, err := mgr.Create(TerminalCreateOpts{
-		Command: "/bin/sleep",
-		Args:    []string{"30"},
+		Command: cmd,
+		Args:    args,
 		CWD:     t.TempDir(),
 		Cols:    40,
 		Rows:    10,

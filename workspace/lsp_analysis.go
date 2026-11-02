@@ -20,8 +20,8 @@ func (m *LSPManager) SetAnalysisPolicy(settings types.WorkspaceAnalysisSettings,
 	}
 	m.analysisSettings, m.analysisRootIdentity = settings, rootIdentity
 	m.analysisBlocked = ""
-	if settings.Trust == types.AnalysisProjectExecutionAllowed && !validAnalysisIdentity(rootIdentity) {
-		m.analysisBlocked = "The workspace root has no valid execution binding. Grant Project execution allowed again in Workspace settings."
+	if settings.Trusted() && !validAnalysisIdentity(rootIdentity) {
+		m.analysisBlocked = "language servers could not start; this folder cannot be verified; trust this folder again in Workspace settings"
 	}
 	m.analysisBoundaryLocked("Workspace analysis execution policy changed.")
 }
@@ -48,22 +48,22 @@ func (m *LSPManager) AnalysisPolicy() types.WorkspaceAnalysisSettings {
 }
 
 func (m *LSPManager) analysisTrustedLocked() bool {
-	return m.analysisSettings.Trust == types.AnalysisProjectExecutionAllowed &&
+	return m.analysisSettings.Trusted() &&
 		validAnalysisIdentity(m.analysisRootIdentity) && m.analysisBlocked == ""
 }
 
 func (m *LSPManager) analysisErrorLocked() error {
 	if m.analysisBlocked != "" {
-		return fmt.Errorf("workspace analysis execution blocked: %s", m.analysisBlocked)
+		return fmt.Errorf("%s", m.analysisBlocked)
 	}
 	if !m.analysisTrustedLocked() {
-		return fmt.Errorf("no workspace execution grant: Static only; grant Project execution allowed in Workspace settings to run language servers")
+		return fmt.Errorf("language servers do not run in restricted mode; trust this folder to start them")
 	}
 	if m.analysisGovernor == nil {
-		return fmt.Errorf("analysis process governor unavailable; reopen this workspace in a core with analysis admission configured")
+		return fmt.Errorf("language servers could not start; the process service is unavailable; reopen this workspace and try again")
 	}
 	if m.analysisGovernorError != "" {
-		return fmt.Errorf("analysis process admission unavailable: %s", m.analysisGovernorError)
+		return fmt.Errorf("language servers could not start; the process service reported an error; reopen this workspace and try again: %s", m.analysisGovernorError)
 	}
 	return nil
 }
@@ -143,7 +143,7 @@ func (m *LSPManager) checkAnalysisRootLocked() bool {
 		return false
 	}
 	if err != nil || actual != binding {
-		m.analysisBlocked = "Workspace root identity changed or is unavailable. Static only is active; verify the root and grant Project execution allowed again in Workspace settings."
+		m.analysisBlocked = "language servers could not start; this folder changed or cannot be verified; trust this folder again in Workspace settings"
 		m.analysisBoundaryLocked(m.analysisBlocked)
 		return false
 	}
@@ -161,7 +161,7 @@ func (m *LSPManager) startAdmission(key string, state *lspClientState, epoch uin
 		}
 		if m.closed || m.paused || epoch != m.settingsGeneration || m.states[key] != state ||
 			state.closing || state.stopped || state.lease == nil || !m.keyWantedLocked(key) {
-			return fmt.Errorf("language server launch admission revoked; retry with current workspace settings")
+			return fmt.Errorf("language server could not start; workspace settings changed; start language servers again")
 		}
 		return nil
 	}

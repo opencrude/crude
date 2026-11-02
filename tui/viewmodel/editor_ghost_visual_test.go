@@ -16,6 +16,8 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
+	"crude/types"
+	"crude/workspace"
 )
 
 // Internal candidate injection, NOT automatic prediction/provider acceptance.
@@ -35,6 +37,47 @@ func TestEditorGhostVisualHeadless(t *testing.T) {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			runEditorGhostVisual(t, true, size[0], size[1])
 		})
+	}
+}
+
+func TestGhostVisualObservationWaitsForAppliedDocumentTopic(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
+		restrictFixture(t, w)
+	})
+	root := t.TempDir()
+	path := filepath.Join(root, "ghost-topic.txt")
+	if err := os.WriteFile(path, []byte("consume()"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	ed := liveTestOpen(t, shell.app, path)
+	ed.SetCursorPosition(0, 8)
+	shell.app.setFocusEditor()
+	shell.app.Input.SetInput("private ghost visual draft")
+	if err := ed.SetGhostText(ed.Revision(), 8, "value + next"); err != nil {
+		t.Fatal(err)
+	}
+	_, cmd := shell.app.Update(ghostVisualProbe{})
+	runAppCommand(t, shell.app, cmd)
+	_, cmd = shell.app.Update(tea.KeyPressMsg{Code: 'v', Text: "val"})
+	receipt, topic := connectedGhostHold(t, shell, ed, cmd)
+
+	m := &ghostVisualModel{App: shell.app, ed: ed, phase: 1, settled: make(chan int, 1)}
+	_, cmd = m.Update(receipt)
+	runAppCommand(t, shell.app, cmd)
+	state := shell.app.liveEditors[ed]
+	if _, current := ed.CurrentInsightSource(); !current || !state.sync {
+		t.Fatalf("fixture did not hold the receipt-before-publication boundary: current=%v live=%+v", current, state)
+	}
+	// The canonical receipt is not the applied topic: F4 must retain its check.
+	m.Update(tea.KeyPressMsg{Code: tea.KeyF4})
+	if !m.checkPending || m.phase != 1 || m.failure != nil {
+		t.Fatalf("observation ran before the held topic was applied: phase=%d pending=%v failure=%v", m.phase, m.checkPending, m.failure)
+	}
+	_, cmd = m.Update(topic)
+	runAppCommand(t, shell.app, cmd)
+	if m.checkPending || m.phase != 2 || m.failure != nil {
+		t.Fatalf("observation did not finish on the actual topic: phase=%d pending=%v failure=%v", m.phase, m.checkPending, m.failure)
 	}
 }
 
@@ -109,7 +152,9 @@ func (m *ghostVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.checkPending {
 		// Observation waits for actual ordered document installation. It neither
 		// fabricates an ACK nor repairs source, caret or candidate state.
-		if _, current := m.ed.CurrentInsightSource(); current {
+		state := m.liveEditors[m.ed]
+		_, current := m.ed.CurrentInsightSource()
+		if state != nil && current && state.topicReady && !state.busy && !state.sync {
 			if err := m.observe(); err != nil {
 				m.failure = err
 				return m, tea.Quit
@@ -131,13 +176,18 @@ func (m *ghostVisualModel) observe() error {
 	}
 	want := ghostVisualExpected[m.phase]
 	anchor, rest, offered := m.ed.GhostText()
+	popupID := ""
+	if popup := m.focusedPopup(); popup != nil {
+		popupID = popup.ID
+	}
 	if !m.ed.IsOpen() || m.EditorState.Editor != m.ed || m.ed.Value() != want.source ||
 		rest != want.rest || offered != (want.rest != "") || offered && anchor != want.anchor {
-		return fmt.Errorf("phase %d: source=%q ghost=(%d,%q,%t), want source=%q ghost=(%d,%q)",
-			m.phase, m.ed.Value(), anchor, rest, offered, want.source, want.anchor, want.rest)
+		return fmt.Errorf("phase %d: source=%q ghost=(%d,%q,%t), want source=%q ghost=(%d,%q), popup=%q",
+			m.phase, m.ed.Value(), anchor, rest, offered, want.source, want.anchor, want.rest, popupID)
 	}
-	if m.Input.Value() != "private ghost visual draft" || m.focusTarget() != FocusEditor || m.focusedPopup() != nil {
-		return fmt.Errorf("phase %d consumed private input or changed native editor focus", m.phase)
+	if m.Input.Value() != "private ghost visual draft" || m.focusTarget() != FocusEditor || popupID != "" {
+		return fmt.Errorf("phase %d consumed private input or changed native editor focus: draft=%q focus=%v popup=%q",
+			m.phase, m.Input.Value(), m.focusTarget(), popupID)
 	}
 	if paint := ansi.Strip(m.App.View().RenderContent()); !strings.Contains(paint, want.painted) {
 		return fmt.Errorf("phase %d: literal source/candidate was not painted: %q", m.phase, want.painted)
@@ -175,7 +225,11 @@ func (m *ghostVisualModel) observe() error {
 
 func runEditorGhostVisual(t *testing.T, headless bool, width, height int) {
 	t.Helper()
-	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	// This journey exercises editor input, not the first-use Trust decision. Make
+	// the same durable restricted choice as a user before attaching the shell.
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
+		restrictFixture(t, w)
+	})
 	root := t.TempDir()
 	path := filepath.Join(root, "prediction-projection.txt")
 	const original = "consume()"
@@ -183,6 +237,9 @@ func runEditorGhostVisual(t *testing.T, headless bool, width, height int) {
 		t.Fatal(err)
 	}
 	shell := newRemoteJourneyShell(t, runtime, root)
+	if shell.app.ws.LoadAppSettings().Analysis.DecisionNeeded() {
+		t.Fatal("ghost journey attached before its restricted Trust decision")
+	}
 	ed := liveTestOpen(t, shell.app, path)
 	ed.SetCursorPosition(0, 8)
 	shell.app.setFocusEditor()
@@ -227,6 +284,9 @@ func runEditorGhostVisual(t *testing.T, headless bool, width, height int) {
 				for _, key := range group {
 					program.Send(key)
 				}
+				// A real periodic tick may open first-use overlays. Exercise it
+				// at every phase rather than depending on scheduler timing.
+				program.Send(types.TickMsg(time.Now()))
 				program.Send(tea.KeyPressMsg{Code: tea.KeyF4})
 				select {
 				case <-m.settled:

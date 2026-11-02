@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -892,7 +893,8 @@ func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, path string,
 	var clients []LSPClient
 	if !m.paused && !m.closed && m.analysisErrorLocked() == nil {
 		for _, state := range m.states {
-			if state.status == LSPConnected && !state.closing && pathWithin(filePathFromURI(state.rootURI), path) {
+			root, err := fileuri.ToPath(state.rootURI)
+			if err == nil && state.status == LSPConnected && !state.closing && pathWithin(root, path) {
 				clients = append(clients, state.client)
 			}
 		}

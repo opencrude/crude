@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func (testLogger) Debug(tag, msg string, pairs ...any) {}
 
 func TestFileURIPathRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "with space")
-	if got := filePathFromURI(fileURI(path)); got != filepath.Clean(path) {
+	if got, err := fileuri.ToPath(fileuri.FromPath(path)); err != nil || got != filepath.Clean(path) {
 		t.Fatalf("file URI round trip = %q, want %q", got, filepath.Clean(path))
 	}
 }
@@ -196,7 +197,7 @@ func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	// state key matches regardless of platform (Linux: file:///project,
 	// Windows: file://<drive>:\project). The test is about aggregation
 	// precedence, not URI formatting.
-	rootURI := fileURI(filepath.Dir(m.activeFilePath))
+	rootURI := fileuri.FromPath(filepath.Dir(m.activeFilePath))
 	m.documents[m.activeFilePath] = &lspDocument{key: "json"}
 	m.states["go"] = &lspClientState{
 		rootURI: rootURI,

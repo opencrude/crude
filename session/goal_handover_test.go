@@ -44,6 +44,14 @@ func newHandoverFixture(t *testing.T) handoverFixture {
 		t.Fatal(err)
 	}
 	store := attachDelegationTestCollaboration(t, s)
+	// This fixture exercises handover synchronously, not lifecycle-control
+	// delivery. Join that independent background owner before asserting an
+	// idle lease; otherwise a presence sweep can legitimately hold admission.
+	s.mu.Lock()
+	s.collaborationCancel()
+	s.collaborationCancel = nil
+	s.mu.Unlock()
+	s.collaborationWg.Wait()
 	t.Cleanup(s.Close)
 	s.SetWorkDir(t.TempDir())
 	g, err := s.SetGoal("Preserve the objective and continue exactly once", 0, false)

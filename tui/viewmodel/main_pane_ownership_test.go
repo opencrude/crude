@@ -288,6 +288,7 @@ func paneOwnershipDense(tb testing.TB) *App {
 	tb.Helper()
 	app := newFullTestApp(tb)
 	wsOf(app).Logger = stubLogger{}
+	restrictSyntheticFixture(tb, app, tb.TempDir())
 	app.width, app.height = 200, 50
 	app.Tree.Visible = false
 	for _, id := range []string{"dense-first", "dense-second"} {

@@ -1789,6 +1789,10 @@ func (m *Model) isAgentCategory(index int) bool {
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
+	if category == catLSP && fieldID == fieldAnalysisTrust {
+		m.syncAnalysisChoice()
+		return
+	}
 	if category == catLSP && strings.HasPrefix(fieldID, "prediction.") {
 		// These four fields share a combined validity contract. Revalidate the
 		// retained siblings after each edit, not only the edited leaf or Save:

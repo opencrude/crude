@@ -39,7 +39,7 @@ func (f *fakeStartup) Browse(ctx context.Context, r coreprotocol.StartupBrowseRe
 	if f.browse != nil {
 		return f.browse(ctx, r)
 	}
-	return coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: -1, Entries: []coreprotocol.ClientDirectoryEntry{{Name: "project", Path: r.Path + "/project", IsDir: true}}}, nil
+	return coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: -1, Entries: []coreprotocol.ClientDirectoryEntry{{Name: "project", Path: filepath.Join(r.Path, "project"), IsDir: true}}}, nil
 }
 func (f *fakeStartup) Catalog(ctx context.Context, root string, hidden bool) (workspace.BrowserCatalog, error) {
 	if f.catalog != nil {
@@ -60,9 +60,17 @@ func (f *fakeStartup) Save(ctx context.Context, edits []types.SettingEdit) (type
 	return types.OnboardingSettings{IntroductionCompleted: true}, nil
 }
 
+func fixturePath(path string) string {
+	p, err := filepath.Abs(filepath.FromSlash(path))
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 func fixture(t *testing.T, f *fakeStartup, intro bool) *Model {
 	t.Helper()
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: "/home/demo", FolderKind: "home", ShowIntroduction: intro})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", ShowIntroduction: intro})
 	t.Cleanup(m.Close)
 	return m
 }
@@ -150,7 +158,7 @@ func TestNativePaintThemesAndSizes(t *testing.T) {
 				}
 				send(t, m, key(tea.KeyEsc))
 				text = paintText(m)
-				for _, label := range []string{"Previous workspaces", "Open Workspace", "Quit", "/home/demo", "home folder"} {
+				for _, label := range []string{"Previous workspaces", "Open Workspace", "Quit", fixturePath("/home/demo"), "home folder"} {
 					if !strings.Contains(text, label) {
 						t.Fatalf("missing selection %q\n%s", label, text)
 					}
@@ -207,7 +215,7 @@ func TestIntroductionMouseAndAsyncSaveFailure(t *testing.T) {
 		t.Fatal("save failure is not visible")
 	}
 	send(t, m, ctrl('o'))
-	if m.Result() != "/home/demo" {
+	if m.Result() != fixturePath("/home/demo") {
 		t.Fatalf("save failure blocked folder selection: %q", m.Result())
 	}
 }
@@ -245,19 +253,19 @@ func TestSearchEscClearCancelsAndRejectsLateResult(t *testing.T) {
 	var catalogRoot string
 	f := &fakeStartup{catalog: func(_ context.Context, root string, _ bool) (workspace.BrowserCatalog, error) {
 		catalogRoot = root
-		return workspace.BrowserCatalog{Entries: []pathwalk.Entry{{Name: "nested", Relative: "nested", Path: root + "/nested", IsDir: true}}}, nil
+		return workspace.BrowserCatalog{Entries: []pathwalk.Entry{{Name: "nested", Relative: "nested", Path: filepath.Join(root, "nested"), IsDir: true}}}, nil
 	}}
 	m := fixture(t, f, false)
 	send(t, m, key(tea.KeyEnter))
 	send(t, m, ctrl('l'))
 	send(t, m, ctrl('a'))
-	send(t, m, tea.PasteMsg{Content: "/elsewhere"})
+	send(t, m, tea.PasteMsg{Content: fixturePath("/elsewhere")})
 	send(t, m, key(tea.KeyEnter))
 	m.picker.FocusFilter()
 	_, intentCmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	_, searchCmd := m.Update(intentCmd())
 	late := searchCmd()
-	if catalogRoot != "/elsewhere" {
+	if catalogRoot != fixturePath("/elsewhere") {
 		t.Fatalf("catalog used %q, not displayed root", catalogRoot)
 	}
 	send(t, m, key(tea.KeyEsc))
@@ -275,28 +283,28 @@ func TestSearchEscClearCancelsAndRejectsLateResult(t *testing.T) {
 }
 func TestBrowseFailuresStaleAndReopen(t *testing.T) {
 	f := &fakeStartup{browse: func(_ context.Context, r coreprotocol.StartupBrowseRequest) (coreprotocol.StartupBrowseResult, error) {
-		if r.Path == "/bad" {
+		if r.Path == fixturePath("/bad") {
 			return coreprotocol.StartupBrowseResult{}, errors.New("permission denied")
 		}
-		return coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: -1, Entries: []coreprotocol.ClientDirectoryEntry{{Name: "project", Path: r.Path + "/project", IsDir: true}}}, nil
+		return coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: -1, Entries: []coreprotocol.ClientDirectoryEntry{{Name: "project", Path: filepath.Join(r.Path, "project"), IsDir: true}}}, nil
 	}}
 	m := fixture(t, f, false)
 	send(t, m, key(tea.KeyEnter))
 	old := strings.Join(m.picker.VisiblePaths(), " ")
 	intent := filepicker.IntentToken{Epoch: m.picker.OpenEpoch(), Sequence: m.picker.IntentSequence()}
-	drive(t, m, m.browse("/bad", 0, false, intent))
+	drive(t, m, m.browse(fixturePath("/bad"), 0, false, intent))
 	if got := strings.Join(m.picker.VisiblePaths(), " "); got != old {
 		t.Fatalf("failed read discarded usable rows: %q != %q", got, old)
 	}
 	if !strings.Contains(paintText(m), "permission denied") {
 		t.Fatal("directory failure absent")
 	}
-	cmd := m.browse("/stale", 0, false, intent)
+	cmd := m.browse(fixturePath("/stale"), 0, false, intent)
 	late := cmd()
 	send(t, m, key(tea.KeyEsc))
 	send(t, m, key(tea.KeyEnter))
 	send(t, m, late)
-	if m.picker.Current() != "/home/demo" {
+	if m.picker.Current() != fixturePath("/home/demo") {
 		t.Fatal("closed/reopened picker accepted stale read")
 	}
 }
@@ -331,25 +339,25 @@ func TestProjectSelectionInspectsExactPath(t *testing.T) {
 	var inspected string
 	f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
 		inspected = root
-		return coreprotocol.StartupSnapshot{Root: "/canonical/project"}, nil
+		return coreprotocol.StartupSnapshot{Root: fixturePath("/canonical/project")}, nil
 	}}
 	m := fixture(t, f, false)
 	send(t, m, key(tea.KeyEnter))
 	send(t, m, ctrl('o'))
-	if inspected != "/home/demo" || m.Result() != "/canonical/project" || !m.closed {
+	if inspected != fixturePath("/home/demo") || m.Result() != fixturePath("/canonical/project") || !m.closed {
 		t.Fatalf("handoff not inspected: %q %q", inspected, m.Result())
 	}
 }
 func TestPreviousWorkspaceNativeListKeyboard(t *testing.T) {
 	f := &fakeStartup{}
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: "/home/demo", FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: "/previous/project"}}})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 	t.Cleanup(m.Close)
 	if !strings.Contains(paintText(m), "Previous project") {
 		t.Fatal("native recent row absent")
 	}
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))
-	if m.Result() != "/previous/project" {
+	if m.Result() != fixturePath("/previous/project") {
 		t.Fatalf("list failed: %q", m.Result())
 	}
 }
@@ -358,7 +366,7 @@ func TestPagedFolderMoreRetainsRowsAndBounds(t *testing.T) {
 		page := coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: r.Offset + 512, Truncated: true}
 		for i := 0; i < 512; i++ {
 			name := fmt.Sprintf("folder-%04d", r.Offset+i)
-			page.Entries = append(page.Entries, coreprotocol.ClientDirectoryEntry{Name: name, Path: r.Path + "/" + name, IsDir: true})
+			page.Entries = append(page.Entries, coreprotocol.ClientDirectoryEntry{Name: name, Path: filepath.Join(r.Path, name), IsDir: true})
 		}
 		return page, nil
 	}}
@@ -439,15 +447,15 @@ func TestNativeFolderTreeActivationAndPathFieldMouse(t *testing.T) {
 	// The actual mounted path TextField owns mouse focus, paste and submit.
 	click(t, m, pathID)
 	send(t, m, ctrl('a'))
-	send(t, m, tea.PasteMsg{Content: "/projects"})
+	send(t, m, tea.PasteMsg{Content: fixturePath("/projects")})
 	send(t, m, key(tea.KeyEnter))
-	if m.picker.Current() != "/projects" {
+	if m.picker.Current() != fixturePath("/projects") {
 		t.Fatalf("path entry did not navigate: %q", m.picker.Current())
 	}
 	m.picker.FocusFilter()
 	send(t, m, key(tea.KeyDown))
 	send(t, m, key(' '))
-	if inspected != "/projects/project" || m.Result() != inspected {
+	if inspected != fixturePath("/projects/project") || m.Result() != inspected {
 		t.Fatalf("native tree selection did not inspect exact folder: %q %q", inspected, m.Result())
 	}
 }
@@ -464,10 +472,10 @@ func TestSearchFailureAndSupersededBrowse(t *testing.T) {
 	}
 	send(t, m, key(tea.KeyEsc))
 	intent := filepicker.IntentToken{Epoch: m.picker.OpenEpoch(), Sequence: m.picker.IntentSequence()}
-	old := m.browse("/old", 0, false, intent)()
-	drive(t, m, m.browse("/new", 0, false, intent))
+	old := m.browse(fixturePath("/old"), 0, false, intent)()
+	drive(t, m, m.browse(fixturePath("/new"), 0, false, intent))
 	send(t, m, old)
-	if m.picker.Current() != "/new" {
+	if m.picker.Current() != fixturePath("/new") {
 		t.Fatal("old browse overtook replacement")
 	}
 }
@@ -521,8 +529,47 @@ func TestFastQuitStillJoinsIntroductionSaveAttempt(t *testing.T) {
 	}
 }
 
+func TestCloseBoundsUncooperativeIntroductionSave(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	f := &fakeStartup{save: func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
+		close(started)
+		<-release
+		return types.OnboardingSettings{}, errors.New("late failure")
+	}}
+	// A short parent deadline stands in for the 20-second request deadline;
+	// the save context inherits it, which is the bound Close must honor.
+	parent, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	m := NewModel(parent, f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", ShowIntroduction: true})
+	t.Cleanup(m.Close)
+	_, cmd := m.Update(key(tea.KeyEnter))
+	batch := cmd().(tea.BatchMsg)
+	result := make(chan tea.Msg, 1)
+	go func() { result <- batch[1]() }()
+	<-started
+	done := make(chan struct{})
+	go func() { m.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("Close blocked past the save deadline on a save that ignores cancellation")
+	}
+	if len(m.Issues()) != 1 || m.Issues()[0].Detail != errSaveUnanswered.Error() {
+		close(release)
+		t.Fatalf("missing uncertain-save issue: %+v", m.Issues())
+	}
+	close(release)
+	send(t, m, <-result)
+	if len(m.Issues()) != 1 || strings.Contains(m.Issues()[0].Detail, "late failure") {
+		t.Fatalf("late result changed closed startup: %+v", m.Issues())
+	}
+}
+
 func TestSelectedProjectRetainsLateIntroductionSaveFailure(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
 	f := &fakeStartup{save: func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
 		close(started)
 		<-release
@@ -536,7 +583,7 @@ func TestSelectedProjectRetainsLateIntroductionSaveFailure(t *testing.T) {
 	<-started
 	drive(t, m, batch[0])
 	send(t, m, ctrl('o'))
-	if m.Result() != "/home/demo" || !m.closed {
+	if m.Result() != fixturePath("/home/demo") || !m.closed {
 		t.Fatal("pending save blocked project confirmation")
 	}
 	done := make(chan Selection, 1)
@@ -546,9 +593,9 @@ func TestSelectedProjectRetainsLateIntroductionSaveFailure(t *testing.T) {
 		t.Fatal("handoff returned before the accepted save finished")
 	default:
 	}
-	close(release)
+	releaseOnce.Do(func() { close(release) })
 	selection := <-done
-	if selection.Root != "/home/demo" || len(selection.Issues) != 1 {
+	if selection.Root != fixturePath("/home/demo") || len(selection.Issues) != 1 {
 		t.Fatalf("late issue lost: %+v", selection)
 	}
 	issue := selection.Issues[0]
@@ -584,7 +631,7 @@ func TestSnapshotIssuesRemainVisibleAndSurviveSelection(t *testing.T) {
 			f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
 				return coreprotocol.StartupSnapshot{Root: root, Issues: []types.OperationIssue{issue, later}}, nil
 			}}
-			m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: "/home/demo", FolderKind: "home", Issues: []types.OperationIssue{issue}, Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: "/previous/project"}}})
+			m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []types.OperationIssue{issue}, Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 			t.Cleanup(m.Close)
 			send(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			for _, picker := range []bool{false, true} {
@@ -611,7 +658,7 @@ func TestSnapshotIssuesRemainVisibleAndSurviveSelection(t *testing.T) {
 }
 
 func TestLongStartupIssueScrollKeepsActionsAndPreviousRows(t *testing.T) {
-	m := NewModel(context.Background(), &fakeStartup{}, coreprotocol.StartupSnapshot{Root: "/home/demo", FolderKind: "home", Issues: []types.OperationIssue{{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: strings.Repeat("Long error evidence. ", 100) + "END OF ERROR"}}, Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: "/previous/project"}}})
+	m := NewModel(context.Background(), &fakeStartup{}, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []types.OperationIssue{{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: strings.Repeat("Long error evidence. ", 100) + "END OF ERROR"}}, Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 	t.Cleanup(m.Close)
 	text := paintText(m)
 	if strings.Contains(text, "END OF ERROR") || !strings.Contains(text, "Previous project") || !strings.Contains(text, "Open Workspace") || !strings.Contains(text, "Quit") {
@@ -652,36 +699,36 @@ func TestLongStartupIssueScrollKeepsActionsAndPreviousRows(t *testing.T) {
 func TestPreviousTopLevelOpensInspectedLocationAndReopensThere(t *testing.T) {
 	var browsed []string
 	f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
-		if root != "/saved/Downloads" {
+		if root != fixturePath("/saved/Downloads") {
 			t.Fatalf("wrong previous path: %q", root)
 		}
-		return coreprotocol.StartupSnapshot{Root: "/relocated/Downloads", FolderKind: "personal"}, nil
+		return coreprotocol.StartupSnapshot{Root: fixturePath("/relocated/Downloads"), FolderKind: "personal"}, nil
 	}, browse: func(_ context.Context, r coreprotocol.StartupBrowseRequest) (coreprotocol.StartupBrowseResult, error) {
 		browsed = append(browsed, r.Path)
 		return coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: -1}, nil
 	}}
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: "/launch/home", FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Downloads", ProjectDir: "/saved/Downloads"}}})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/launch/home"), FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Downloads", ProjectDir: fixturePath("/saved/Downloads")}}})
 	t.Cleanup(m.Close)
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))
-	if m.Result() != "" || m.closed || m.root.mode != picking || m.picker.Current() != "/relocated/Downloads" || m.root.path.Value() != "/relocated/Downloads" {
+	if m.Result() != "" || m.closed || m.root.mode != picking || m.picker.Current() != fixturePath("/relocated/Downloads") || m.root.path.Value() != fixturePath("/relocated/Downloads") {
 		t.Fatal("previous top-level entry did not become its inspected browsing location")
 	}
 	send(t, m, key(tea.KeyEsc))
 	send(t, m, key(tea.KeyEnter))
-	if len(browsed) != 2 || browsed[0] != "/relocated/Downloads" || browsed[1] != "/relocated/Downloads" {
+	if len(browsed) != 2 || browsed[0] != fixturePath("/relocated/Downloads") || browsed[1] != fixturePath("/relocated/Downloads") {
 		t.Fatalf("reopen returned to launch folder: %v", browsed)
 	}
 }
 
 func TestPreviousPathFailureKeepsOtherRowsUsable(t *testing.T) {
 	f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
-		if root == "/missing" {
+		if root == fixturePath("/missing") {
 			return coreprotocol.StartupSnapshot{Root: root, PathError: "folder vanished"}, nil
 		}
 		return coreprotocol.StartupSnapshot{Root: root}, nil
 	}}
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: "/launch/home", FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Missing", ProjectDir: "/missing"}, {ProjectName: "Good project", ProjectDir: "/good/project"}}})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/launch/home"), FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Missing", ProjectDir: fixturePath("/missing")}, {ProjectName: "Good project", ProjectDir: fixturePath("/good/project")}}})
 	t.Cleanup(m.Close)
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))
@@ -690,7 +737,7 @@ func TestPreviousPathFailureKeepsOtherRowsUsable(t *testing.T) {
 	}
 	send(t, m, key(tea.KeyDown))
 	send(t, m, key(tea.KeyEnter))
-	if m.Result() != "/good/project" {
+	if m.Result() != fixturePath("/good/project") {
 		t.Fatalf("other previous row no longer usable: %q", m.Result())
 	}
 }

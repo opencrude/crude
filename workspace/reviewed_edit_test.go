@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"errors"
 	"os"
 	"path/filepath"
@@ -58,7 +59,7 @@ func newReviewedFixture(t *testing.T) reviewedFixture {
 func (f reviewedFixture) prepare(t *testing.T, check func() error) ReviewedEditPreview {
 	t.Helper()
 	p, err := f.documents.prepareReviewedEdit(t.Context(), f.owner, "Rename", "", types.InsightBoundary{Source: f.source},
-		[]lspedit.DocumentEdit{{URI: fileURI(f.path), Edits: []types.LSPTextEdit{
+		[]lspedit.DocumentEdit{{URI: fileuri.FromPath(f.path), Edits: []types.LSPTextEdit{
 			{Line: 0, Col: 4, EndLine: 0, EndCol: 7, NewText: "new"},
 			{Line: 1, EndLine: 1, EndCol: 3, NewText: "new"},
 		}}}, check)

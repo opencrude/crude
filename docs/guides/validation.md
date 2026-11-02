@@ -47,6 +47,56 @@ upload recovery stress case runs separately with the same five-minute limit.
 No workload size, individual assertion or timeout is relaxed to fit the sum of
 hundreds of cases into one package-wide budget.
 
+### Windows race checks with Zig
+
+Use a separate PowerShell session for race checks, after bootstrapping the
+Windows libghostty dependency. For example:
+
+```powershell
+. .\scripts\libghostty_env.ps1
+. .\scripts\race_env.ps1
+go test -race -count=1 ./plan/ ./types/ ./terminalvt/
+```
+
+If the local PowerShell execution policy blocks scripts, start that session with
+`powershell -ExecutionPolicy Bypass` under the applicable local policy. The race
+setup creates Zig's missing synchronization import archive under `%LOCALAPPDATA%`
+and adds race linker flags to that session's `GOFLAGS`. It sets a low image base
+and disables dynamic-base relocation: Go's Windows race runtime needs a
+compatible shadow address range, and Zig does not accept Go's GNU spelling for
+that switch. The PE high-entropy bit may remain set, but dynamic-base is off.
+The setup rejects an existing `GOFLAGS` linker override. Close the session before
+normal builds; do not use these race-specific linker flags for production binaries.
+For the whole repository in the same session, limit concurrent package binaries
+so timing-sensitive tests are not starved by the run itself:
+`go test -race -count=1 -p 2 -timeout 1800s ./...` (about 30 minutes on a
+developer laptop).
+
+### When a test fails only under `-race`
+
+The race detector slows every goroutine several times, so it exposes ordering
+assumptions that a fast run hides. Classify each failure before changing it:
+
+- **A `WARNING: DATA RACE` report** is a product or test defect. Fix the
+  unsynchronized access; never suppress the report.
+- **A wrong readiness signal** (the test reads state after a proxy counter or an
+  acknowledgement that precedes the state it asserts) is fixed by waiting on the
+  real outcome. For example, a governor lease is counted before its client is
+  constructed, so wait for the client to run, not for the counter.
+- **A lost or refused user action** (a keystroke, Open or save that fails only
+  because Crude's own background work moved under it) is a product bug. Fix
+  the owner; do not make the test wait longer.
+- **A fixed time budget** that a slow machine exceeds is replaced by waiting for
+  the real completion signal with a generous safety deadline that fails loudly.
+  Wall-clock performance ceilings belong in `make bench-gate`, not in tests
+  that also run under `-race`.
+
+Do not skip a test under `-race`, loosen its assertion, or add sleeps for
+ordering. A failure that reproduces without `-race` is an ordinary failure, not
+a race-only one.
+
+### Gate details
+
 - **Lint** (`.golangci.yml`, golangci-lint v2) enables `govet`, `ineffassign`,
   `misspell`, `staticcheck`, `unused` and `errcheck` plus `gofmt`, with zero
   issues allowed. Do not reintroduce dead code or unchecked errors.

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"crude/document"
+	"crude/fileio"
 	"crude/localhistory"
 )
 
@@ -193,7 +194,9 @@ func TestHistorySafetyGenericReferencePagingAndWrongWorkspace(t *testing.T) {
 	f, preview, _ := committedSafety(t)
 	for _, ref := range []string{"unattributed-A", "unattributed-B", "unattributed-C"} {
 		if _, err := f.store.SnapshotRetainedFiles(t.Context(), ref, "Unattributed safety", []localhistory.RetainedFile{
-			{Path: "source.txt", Data: []byte("original unrelated operation"), Mode: 0600},
+			// Retained modes are the native observable mode, as a stat would
+			// report it; Windows has no 0600, only writable (0666) or read-only.
+			{Path: "source.txt", Data: []byte("original unrelated operation"), Mode: uint32(fileio.MutationFileMode(0o600))},
 		}); err != nil {
 			t.Fatal(err)
 		}

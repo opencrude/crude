@@ -12,7 +12,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/sessiondb"
 	"crude/shellport"
 	"crude/tui/ui"
@@ -222,13 +221,17 @@ func (m *App) applyAttachmentPrepared(msg attachmentPreparedMsg) tea.Cmd {
 	if msg.imported {
 		return m.openReferenceIn(msg.ref, true, state.destination)
 	}
+	async := asyncIOStateFor(m)
+	async.mu.Lock()
+	launch := async.desktopLaunch
+	async.mu.Unlock()
 	return m.clientIOCommand(state.ctx, func(ctx context.Context) tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		if current, ok := state.store.GetReference(msg.ref.ID); !ok || current != msg.ref {
 			return attachmentOpenedMsg{owner: state, err: fmt.Errorf("attachment changed before opening; open it again")}
 		}
-		err := fileio.OpenDesktopPathContext(ctx, msg.path, state.destination == types.AttachmentOpenFileManager)
+		err := launch(ctx, msg.path, state.destination == types.AttachmentOpenFileManager)
 		return attachmentOpenedMsg{owner: state, copied: msg.copied, err: err}
 	})
 }

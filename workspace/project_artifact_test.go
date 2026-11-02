@@ -5,9 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"crude/internal/testsymlink"
 )
 
 func TestProjectArtifactSelectionRefusesUnsafeOrUnboundedOperands(t *testing.T) {
@@ -84,17 +85,10 @@ func TestProjectArtifactBoundedRegularReadsAndCancellation(t *testing.T) {
 }
 
 func TestProjectArtifactRejectsSymlinkFileAndParents(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows symlink setup needs separate native privilege acceptance")
-	}
 	root, outside := t.TempDir(), t.TempDir()
 	writeProjectContextFixture(t, outside, "commands.json", "[]")
-	if err := os.Symlink(filepath.Join(outside, "commands.json"), filepath.Join(root, "link.json")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
-		t.Fatal(err)
-	}
+	testsymlink.Create(t, filepath.Join(outside, "commands.json"), filepath.Join(root, "link.json"))
+	testsymlink.Create(t, outside, filepath.Join(root, "linked"))
 	for _, path := range []string{"link.json", filepath.Join("linked", "commands.json")} {
 		if content, _, err := readProjectArtifact(t.Context(), root, path, 100); err == nil || content != nil {
 			t.Fatal("symlink allowed a project artifact read outside its selected authority", path, err)
@@ -115,7 +109,7 @@ func TestProjectArtifactNativeDuplicateIdentityDoesNotCreateTwoInputs(t *testing
 	}
 }
 
-func TestProjectArtifactCaseDistinctNativeFilesRemainDistinct(t *testing.T) {
+func TestProjectArtifactCaseVariantsFollowNativeIdentity(t *testing.T) {
 	root := t.TempDir()
 	writeProjectContextFixture(t, root, "one.json", "[]")
 	writeProjectContextFixture(t, root, "ONE.JSON", projectContextDatabaseFixture)
@@ -127,12 +121,13 @@ func TestProjectArtifactCaseDistinctNativeFilesRemainDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if os.SameFile(lower, upper) {
-		t.Skip("fixture positively observed case-insensitive storage; distinct-file lane not applicable")
-	}
 	selection := []ProjectArtifactSet{{ID: "one", CompilationDatabase: "one.json"}, {ID: "two", CompilationDatabase: "ONE.JSON"}}
 	data, _, err := readProjectContext(t.Context(), root, selection)
-	if err != nil || len(data.identities) != 2 || data.compilation["one"].Len() != 0 || data.compilation["two"].Len() != 2 {
+	if os.SameFile(lower, upper) {
+		if !errors.Is(err, ErrProjectContextSelection) || len(data.identities) != 0 || len(data.compilation) != 0 {
+			t.Fatal("case aliases of one native file became distinct inputs", err)
+		}
+	} else if err != nil || len(data.identities) != 2 || data.compilation["one"].Len() != 0 || data.compilation["two"].Len() != 2 {
 		t.Fatal("string case folding merged genuinely distinct native inputs", err)
 	}
 }
@@ -145,11 +140,16 @@ func TestProjectContextNativeCaseAliasInvalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	upper, aliasErr := os.Stat(filepath.Join(root, "COMMANDS.JSON"))
-	if errors.Is(aliasErr, os.ErrNotExist) || aliasErr == nil && !os.SameFile(lower, upper) {
-		t.Skip("fixture positively observed case-sensitive storage; native alias lane NOT RUN")
+	if errors.Is(aliasErr, os.ErrNotExist) {
+		// Case-sensitive storage needs an explicit native alias. A hard link
+		// exercises the same file identity rather than skipping the lifecycle.
+		if err := os.Link(filepath.Join(root, "commands.json"), filepath.Join(root, "COMMANDS.JSON")); err != nil {
+			t.Fatal("create native case-variant alias:", err)
+		}
+		upper, aliasErr = os.Stat(filepath.Join(root, "COMMANDS.JSON"))
 	}
-	if aliasErr != nil {
-		t.Fatal(aliasErr)
+	if aliasErr != nil || !os.SameFile(lower, upper) {
+		t.Fatal("case-variant fixture does not alias the native source:", aliasErr)
 	}
 	p := NewProjectContextService(root, "workspace-1")
 	t.Cleanup(p.Close)

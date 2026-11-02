@@ -97,6 +97,18 @@ func Open(storeRoot, workspaceRoot string) (*Store, error) {
 	if err != nil || !workspaceInfo.IsDir() {
 		return nil, errors.New("localhistory: workspace root is unavailable or not a directory")
 	}
+	// Retain handle-derived identity: Windows path-based Stat defers ID lookup,
+	// which would otherwise identify a later replacement at the same path.
+	workspaceHandle, err := os.Open(workspace)
+	if err != nil {
+		return nil, fmt.Errorf("localhistory: open workspace root: %w", err)
+	}
+	openedInfo, statErr := workspaceHandle.Stat()
+	closeErr := workspaceHandle.Close()
+	if statErr != nil || closeErr != nil || !os.SameFile(workspaceInfo, openedInfo) {
+		return nil, errors.New("localhistory: workspace root changed while opening")
+	}
+	workspaceInfo = openedInfo
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("localhistory: create store root: %w", err)
 	}

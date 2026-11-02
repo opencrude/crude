@@ -1,9 +1,9 @@
 package viewmodel
 
 import (
+	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -27,8 +27,7 @@ func TestChildReasoningVisualAcceptance(t *testing.T) {
 	trace := strings.Repeat("Inspect the owner and retained evidence before deciding which source controls the operation.\n\n", 60)
 	display := reasoning.Display{Kind: reasoning.Summary}
 	if path := os.Getenv("CRUDE_REASONING_REPLAY_DB"); path != "" {
-		u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
-		db, err := sql.Open("sqlite", u.String())
+		db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -29,7 +29,7 @@ func TestAnalysisDefaultStaticBlocksHeadlessProbeAndManualEditorStart(t *testing
 	path := filepath.Join(root, "main.go")
 	createFile(t, path, "package main\n")
 	_, settled, _, err := m.ProbeDiagnostics(t.Context(), path)
-	if err == nil || !strings.Contains(err.Error(), "no workspace execution grant") || settled {
+	if err == nil || !strings.Contains(err.Error(), "restricted mode") || settled {
 		t.Fatalf("untrusted headless probe: settled=%v err=%v", settled, err)
 	}
 	if got := len(runtime.snapshot()); got != 0 {
@@ -42,10 +42,10 @@ func TestAnalysisDefaultStaticBlocksHeadlessProbeAndManualEditorStart(t *testing
 		t.Fatal("manual/session/editor control supplied execution permission")
 	}
 	m.Close() // Join any worker so the no-construction assertion is not a sleep.
-	if len(runtime.snapshot()) != 0 || m.AnalysisPolicy().Trust != types.AnalysisStaticOnly {
+	if len(runtime.snapshot()) != 0 || m.AnalysisPolicy().Trust != types.AnalysisUndecided {
 		t.Fatal("default Static only constructed a provider or acquired trust")
 	}
-	if view := m.ProjectInsights(); view.IdleStatus != "Static only" || !strings.Contains(view.IdleReason, "Workspace settings") {
+	if view := m.ProjectInsights(); view.Language.State != types.LanguageRestricted || view.Language.Action != types.LanguageActionTrustFolder {
 		t.Fatalf("static guidance=%+v", view)
 	}
 }
@@ -68,13 +68,13 @@ func TestAnalysisRequiresBindingAndCoreGovernor(t *testing.T) {
 			case "invalid-binding":
 				identity = "invalid\nbinding"
 			}
-			m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, identity)
+			m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
 			probeSources(t, m, root)
 			_, _, _, err = m.ProbeDiagnostics(t.Context(), filepath.Join(root, "main.go"))
-			if err == nil || len(r.snapshot()) != 0 || m.ProjectInsights().IdleReason == "" {
+			if err == nil || len(r.snapshot()) != 0 || m.ProjectInsights().Language.State != types.LanguageFailed {
 				t.Fatalf("unavailable execution admission escaped: %v", err)
 			}
-			if kind != "missing-governor" && m.AnalysisPolicy().Trust != types.AnalysisStaticOnly {
+			if kind != "missing-governor" && m.AnalysisPolicy().Trust != types.AnalysisUndecided {
 				t.Fatal("invalid binding appeared trusted")
 			}
 			if err := m.SetAnalysisGovernor(nil, "", ""); err == nil {
@@ -207,14 +207,14 @@ func TestAnalysisRootReplacementBeforeResolutionAndAfterQueue(t *testing.T) {
 				replace()
 				blocker.Release()
 			}
-			awaitLSP(t, func() bool { return m.AnalysisPolicy().Trust == types.AnalysisStaticOnly })
-			m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, binding)
+			awaitLSP(t, func() bool { return m.AnalysisPolicy().Trust == types.AnalysisUndecided })
+			m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, binding)
 			m.StartForWorkspace(root)
 			m.Close()
-			if m.AnalysisPolicy().Trust != types.AnalysisStaticOnly || len(r.snapshot()) != 0 || g.Snapshot().Counts.Reserved() != 0 {
+			if m.AnalysisPolicy().Trust != types.AnalysisUndecided || len(r.snapshot()) != 0 || g.Snapshot().Counts.Reserved() != 0 {
 				t.Fatal("root replacement or identical policy replay bypassed the blocked binding")
 			}
-			if !strings.Contains(m.ProjectInsights().IdleReason, "root identity") {
+			if !strings.Contains(m.ProjectInsights().Language.Message, "folder changed") {
 				t.Fatalf("replacement guidance=%+v", m.ProjectInsights())
 			}
 		})
@@ -237,10 +237,10 @@ func TestAnalysisPendingIdentityCannotOverrideNewPolicyEpoch(t *testing.T) {
 	editorSource(t, m, filepath.Join(root, "main.go"), "package main\n")
 	<-entered
 	m.SetAnalysisPolicy(types.DefaultWorkspaceAnalysisSettings(), "")
-	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, binding)
+	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, binding)
 	close(release)
 	awaitLSP(t, m.ServerReady)
-	if m.AnalysisPolicy().Trust != types.AnalysisProjectExecutionAllowed || len(r.snapshot()) != 1 {
+	if m.AnalysisPolicy().Trust != types.AnalysisTrusted || len(r.snapshot()) != 1 {
 		t.Fatal("stale metadata result downgraded or launched the wrong policy epoch")
 	}
 }
@@ -292,7 +292,7 @@ func TestAnalysisAwaitRejectsRevokeRegrantEpoch(t *testing.T) {
 	}()
 	awaitLSP(t, func() bool { return len(r.snapshot()) == 1 })
 	m.SetAnalysisPolicy(types.DefaultWorkspaceAnalysisSettings(), "")
-	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, binding)
+	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, binding)
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "reconfigured") {
@@ -368,11 +368,28 @@ func TestAnalysisQuotaUpdatesDoNotEvictLiveProducers(t *testing.T) {
 	if len(r.snapshot()) != 2 {
 		t.Fatal("quota reduction admitted a third process")
 	}
+	retained := r.snapshot()
 	settings.MaxServers = 3
 	m.SetSettings(settings)
-	awaitLSP(t, func() bool { return g.Snapshot().Counts.Started == 3 })
-	if len(r.snapshot()) != 3 {
-		t.Fatal("quota increase restarted instead of retaining live producers")
+	// The governor counts a lease as started before the manager constructs the
+	// client, so wait for the third server itself to be running rather than
+	// for the governor counter.
+	awaitLSP(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.active == 3
+	})
+	clients := r.snapshot()
+	if g.Snapshot().Counts.Started != 3 || len(clients) != 3 || clients[0] != retained[0] || clients[1] != retained[1] {
+		t.Fatalf("quota increase restarted instead of retaining live producers: constructed=%d", len(clients))
+	}
+	for i, c := range retained {
+		c.mu.Lock()
+		stopped := c.stopped
+		c.mu.Unlock()
+		if stopped {
+			t.Fatalf("quota increase stopped live producer %d", i)
+		}
 	}
 }
 

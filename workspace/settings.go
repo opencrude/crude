@@ -42,7 +42,7 @@ func (w *Workspace) AppDefaults() ttypes.AppSettings {
 // EffectiveAppSettings merges application defaults with workspace overrides.
 func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 	effective := boundWorkspaceSettings(w.AppDefaults(), w.LoadWorkspaceOverrides(), w.analysisRootIdentity)
-	if effective.Analysis.Trust == ttypes.AnalysisProjectExecutionAllowed && w.LSPMgr != nil {
+	if effective.Analysis.Trusted() && w.LSPMgr != nil {
 		effective.Analysis = w.LSPMgr.AnalysisPolicy()
 	}
 	return effective
@@ -106,7 +106,7 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 // OnAppSettingsSave. It does not write workspace.db; workspace overrides
 // stay on SaveWorkspaceSettings.
 func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
-	if s.Analysis.Trust != "" && s.Analysis.Trust != ttypes.AnalysisStaticOnly {
+	if s.Analysis.Trust != ttypes.AnalysisUndecided {
 		return fmt.Errorf("analysis trust belongs to Workspace settings")
 	}
 	if s.Prediction != (ttypes.WorkspacePredictionSettings{}) && s.Prediction != ttypes.DefaultWorkspacePredictionSettings() {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"runtime"
@@ -188,23 +189,47 @@ func TestParsingWithDebugGraphEnabled(t *testing.T) {
 	parser.SetLanguage(getLanguage("javascript"))
 
 	debugGraphFile, err := os.CreateTemp("", ".tree-sitter-test-debug-graph")
-	assert.Nil(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := debugGraphFile.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := os.Remove(debugGraphFile.Name()); err != nil {
+			t.Error(err)
+		}
+	})
 
 	parser.PrintDotGraphs(debugGraphFile)
-	parser.Parse([]byte("const zero = 0"), nil)
+	tree := parser.Parse([]byte("const zero = 0"), nil)
+	if tree == nil {
+		t.Fatal("debug graph output prevented parsing")
+	}
+	defer tree.Close()
+	parser.StopPrintingDotGraphs() // Flush and close the parser-owned duplicate.
 
-	debugGraphFile.Seek(0, 0)
+	if _, err := debugGraphFile.Seek(0, 0); err != nil {
+		t.Fatal("parser closed the caller's original file:", err)
+	}
 	logReader := bufio.NewReader(debugGraphFile)
+	lines := 0
 	for {
 		line, err := logReader.ReadString('\n')
+		if line != "" {
+			lines++
+			assert.False(t, hasZeroIndexedRow(line), "Graph log output includes zero-indexed row: %s", line)
+		}
 		if err != nil {
+			if err != io.EOF {
+				t.Fatal("read debug graphs:", err)
+			}
 			break
 		}
-		assert.False(t, hasZeroIndexedRow(line), "Graph log output includes zero-indexed row: %s", line)
 	}
-
-	debugGraphFile.Close()
-	os.Remove(debugGraphFile.Name())
+	if lines == 0 {
+		t.Fatal("parser did not write debug graphs")
+	}
 }
 
 func TestParsingWithCustomUTF8Input(t *testing.T) {

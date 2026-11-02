@@ -7,15 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"crude/internal/testterminal"
 	"crude/terminalvt"
 )
 
 func TestTerminalDirectSubscriptionConflatesWithoutActor(t *testing.T) {
+	cmd, args := testterminal.Command(t, "idle")
 	s, sink := testTerminalService(t)
-	info, err := s.Create(TerminalCreateOpts{Command: "/bin/sleep", Args: []string{"300"}, Cols: 20, Rows: 4})
-	if errors.Is(err, terminalvt.ErrNoCGO) {
-		t.Skip(err)
-	}
+	info, err := s.Create(TerminalCreateOpts{Command: cmd, Args: args, Cols: 20, Rows: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,11 +40,9 @@ func TestTerminalDirectSubscriptionConflatesWithoutActor(t *testing.T) {
 }
 
 func TestTerminalOrderedInputResumeDeduplicatesAndRetainsErrors(t *testing.T) {
+	cmd, args := testterminal.Command(t, "echo", "READY")
 	s, _ := testTerminalService(t)
-	info, err := s.Create(TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "stty raw -echo; printf READY; cat"}, Cols: 40, Rows: 4})
-	if errors.Is(err, terminalvt.ErrNoCGO) {
-		t.Skip(err)
-	}
+	info, err := s.Create(TerminalCreateOpts{Command: cmd, Args: args, Cols: 40, Rows: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +119,9 @@ func TestTerminalOrderedInputResumeDeduplicatesAndRetainsErrors(t *testing.T) {
 }
 
 func TestTerminalConcurrentInputReceiptIsAtomicWithGridExport(t *testing.T) {
+	cmd, args := testterminal.Command(t, "echo", "READY")
 	s, _ := testTerminalService(t)
-	info, err := s.Create(TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "stty raw -echo; printf READY; cat"}, Cols: 80, Rows: 24})
-	if errors.Is(err, terminalvt.ErrNoCGO) {
-		t.Skip(err)
-	}
+	info, err := s.Create(TerminalCreateOpts{Command: cmd, Args: args, Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
 	}

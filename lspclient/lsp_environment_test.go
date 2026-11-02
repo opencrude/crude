@@ -3,9 +3,11 @@ package lspclient
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,11 +93,28 @@ func TestAnalyzerEnvironmentRefusesAmbiguousInputWithoutEchoingValues(t *testing
 	}
 }
 
-func TestAnalyzerEnvironmentBoundsPathBeforeSplittingAndExplicitTables(t *testing.T) {
+func TestAnalyzerEnvironmentInvalidRootReportsReasonBeforeAdmission(t *testing.T) {
+	_, err := analyzerEnvironment(nil, nil, "untitled:sensitive-fixture")
+	if !errors.Is(err, errAnalyzerEnvironment) || !strings.Contains(err.Error(), "workspace folder path is invalid") ||
+		strings.Contains(err.Error(), "sensitive-fixture") {
+		t.Fatalf("invalid root was not safely explained: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		return
+	}
+	admissions := 0
+	integration := NewLSPIntegration("must-not-be-resolved", nil, "file:///unused",
+		WithStartAdmission(func() error { admissions++; return nil }))
+	err = integration.Start(t.Context())
+	if !errors.Is(err, errAnalyzerEnvironment) || !strings.Contains(err.Error(), "workspace folder path is invalid") ||
+		strings.Contains(err.Error(), "sensitive-fixture") || admissions != 0 || integration.Done() != nil {
+		t.Fatalf("invalid root was not safely explained before admission: %v", err)
+	}
+}
+
+func TestAnalyzerEnvironmentBoundsAmbientAndExplicitTables(t *testing.T) {
 	for _, ambient := range [][]string{
 		make([]string, maxAnalyzerAmbientEntries+1),
-		{"PATH=" + strings.Repeat("x", maxAnalyzerPathBytes+1)},
-		{"PATH=" + strings.Repeat(string(filepath.ListSeparator), maxAnalyzerPathEntries)},
 	} {
 		got, err := analyzerEnvironment(ambient, nil, "")
 		if !errors.Is(err, errAnalyzerEnvironment) || got != nil {
@@ -108,6 +127,58 @@ func TestAnalyzerEnvironmentBoundsPathBeforeSplittingAndExplicitTables(t *testin
 	}
 	if got, err := analyzerEnvironment(nil, overrides, ""); !errors.Is(err, errAnalyzerEnvironment) || got != nil {
 		t.Fatal("unbounded explicit table accepted")
+	}
+}
+
+func TestAnalyzerEnvironmentRealAndLongPATHPrepareGopls(t *testing.T) {
+	// Exercise the actual machine environment, including native PATHEXT and drive entries.
+	actual, err := analyzerEnvironment(os.Environ(), nil, "")
+	if err != nil {
+		t.Fatalf("actual ambient environment: %v", err)
+	}
+	if _, err := lsp.NewProcessEnvironment(actual); err != nil {
+		t.Fatalf("actual launch environment: %v", err)
+	}
+	base := filepath.Dir(t.TempDir())
+	paths := make([]string, 100)
+	for i := range paths {
+		paths[i] = filepath.Join(base, fmt.Sprintf("developer-tool-%03d", i), "bin")
+	}
+	path := strings.Join(paths, string(filepath.ListSeparator))
+	t.Setenv("PATH", path)
+	got, err := analyzerEnvironment(os.Environ(), nil, "")
+	if err != nil || got["PATH"] != path {
+		t.Fatalf("100-entry ambient PATH preparation failed: %v", err)
+	}
+	if _, err := lsp.NewProcessEnvironment(got); err != nil {
+		t.Fatalf("100-entry process environment: %v", err)
+	}
+	integration := NewLSPIntegration("gopls", nil, "")
+	if integration.envErr != nil {
+		t.Fatalf("gopls launch preparation: %v", integration.envErr)
+	}
+}
+
+func TestAnalyzerEnvironmentNativeKeysFollowHostCaseRules(t *testing.T) {
+	dir := t.TempDir()
+	pathKey, extKey := "PATH", "PATHEXT"
+	if runtime.GOOS == "windows" {
+		pathKey, extKey = "Path", "PathExt"
+	}
+	got, err := analyzerEnvironment([]string{"=C:=C:\\fixture", pathKey + "=" + dir, extKey + "=.COM;.EXE;.BAT;.CMD"}, nil, "")
+	if err != nil || got["PATH"] != dir || got["PATHEXT"] != ".COM;.EXE;.BAT;.CMD" {
+		t.Fatalf("native environment entries: %v", err)
+	}
+	if _, err := lsp.NewProcessEnvironment(got); err != nil {
+		t.Fatalf("native environment validation: %v", err)
+	}
+	got, err = analyzerEnvironment([]string{"Path=" + dir, "PATH=" + dir}, nil, "")
+	if runtime.GOOS == "windows" {
+		if !errors.Is(err, errAnalyzerEnvironment) || got != nil {
+			t.Fatal("ambiguous case-duplicate PATH was not rejected")
+		}
+	} else if err != nil || len(got) != 1 || got["PATH"] != dir {
+		t.Fatal("case-sensitive inheritance accepted an unlisted key or rejected PATH", got, err)
 	}
 }
 

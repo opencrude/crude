@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -443,18 +444,18 @@ func TestLSPRootUsesLanguageMarkersAndWorkspaceBoundary(t *testing.T) {
 	mkdir(t, nested)
 	createFile(t, filepath.Join(root, "go.work"), "go 1.25\n")
 	createFile(t, filepath.Join(root, "src", "go.mod"), "module nested")
-	if got := resolveLSPRoot(filepath.Join(nested, "main.go"), root, []string{"go.work", "go.mod"}); got != fileURI(root) {
+	if got := resolveLSPRoot(filepath.Join(nested, "main.go"), root, []string{"go.work", "go.mod"}); got != fileuri.FromPath(root) {
 		t.Fatal(got)
 	}
 	createFile(t, filepath.Join(root, "Solution.sln"), "")
 	createFile(t, filepath.Join(nested, "Project.csproj"), "")
-	if got := resolveLSPRoot(filepath.Join(nested, "Main.cs"), root, []string{"*.sln", "*.csproj"}); got != fileURI(root) {
+	if got := resolveLSPRoot(filepath.Join(nested, "Main.cs"), root, []string{"*.sln", "*.csproj"}); got != fileuri.FromPath(root) {
 		t.Fatal(got)
 	}
-	if got := resolveLSPRoot(filepath.Join(nested, "test.xyz"), root, nil); got != fileURI(root) {
+	if got := resolveLSPRoot(filepath.Join(nested, "test.xyz"), root, nil); got != fileuri.FromPath(root) {
 		t.Fatal("fallback fragmented workspace root", got)
 	}
-	if got := resolveLSPRoot(filepath.Join(nested, "main.go"), nested, []string{"go.work", "go.mod"}); got != fileURI(nested) {
+	if got := resolveLSPRoot(filepath.Join(nested, "main.go"), nested, []string{"go.work", "go.mod"}); got != fileuri.FromPath(nested) {
 		t.Fatal("escaped workspace boundary", got)
 	}
 }

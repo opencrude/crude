@@ -9,7 +9,6 @@ import (
 	"crude/shellport"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
-	"crude/tui/wm"
 	"crude/types"
 	"crude/workspace"
 )
@@ -27,6 +26,7 @@ type onboardingState struct {
 	setupModel *settingsui.Model
 	setupGen   uint64
 	checking   bool
+	trust      workspaceTrustState
 }
 
 type aiSetupReminder struct {
@@ -139,27 +139,7 @@ func (m *App) handleOnboardingMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.aiSetupReminderOnTop() {
 			break
 		}
-		window := m.overlayHost.Window(aiSetupReminderOverlay)
-		frame := window.Content.(*ui.ComponentWidget)
-		if m.onboarding.prompt.busy && msg.Code != tea.KeyEsc {
-			return true, nil
-		}
-		switch msg.Code {
-		case tea.KeyEsc:
-			m.overlayHost.Close(aiSetupReminderOverlay) // defer, never persist
-		case tea.KeyEnter:
-			return true, m.activateAISetupReminder(ui.ConfirmButtonIndexFromID(frame.Host().Focused()))
-		case tea.KeyLeft, tea.KeyUp:
-			ui.MoveConfirmFocus(frame, -1, 2)
-		case tea.KeyRight, tea.KeyDown, tea.KeyTab:
-			delta := 1
-			if msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift) {
-				delta = -1
-			}
-			ui.MoveConfirmFocus(frame, delta, 2)
-		}
-		m.forceFrame()
-		return true, nil
+		return m.confirmModalInput(aiSetupReminderOverlay, msg, m.onboarding.prompt.busy, m.activateAISetupReminder)
 	}
 	return false, nil
 }
@@ -195,31 +175,11 @@ func (m *App) maybeShowAISetupReminder() {
 	state.shown = true
 	prompt := &aiSetupReminder{owner: m.ws, generation: m.workspaceSwitchGen.Load()}
 	state.prompt = prompt
-	frame := m.aiSetupReminderFrame()
-	w, h := frame.Measure(m.width, m.height)
-	window := wm.NewFloatingWindow(string(aiSetupReminderOverlay), "", frame, w, h,
-		wm.WithDecoration(true), wm.WithMovable(true), wm.WithModal(true), wm.WithFocusable(true),
-		wm.WithClosable(false), wm.WithResizable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))
-	wm.CenterOnScreen(window, m.width, m.height)
-	policy := ui.ModalDialogPolicy()
-	policy.Decorated, policy.Movable = true, true
-	m.overlayHost.RegisterContentHandler(aiSetupReminderOverlay, func(_ *ui.OverlayHost, fw *wm.FloatingWindow, x, y int, _ tea.Msg) tea.Cmd {
-		return m.activateAISetupReminder(confirmFrameButtonAt(fw, x, y))
-	})
-	m.overlayHost.RegisterHoverHandler(aiSetupReminderOverlay, func(_ *ui.OverlayHost, fw *wm.FloatingWindow, x, y int, _ tea.MouseButton) {
-		if frame, ok := fw.Content.(*ui.ComponentWidget); ok {
-			ui.SetConfirmHover(frame, confirmFrameButtonAt(fw, x, y))
-		}
-	})
-	if m.rootHost != nil {
-		m.rootHost.CancelPointerCapture()
-	}
-	m.overlayHost.Open(aiSetupReminderOverlay, window, policy, func() {
+	m.openConfirmModal(aiSetupReminderOverlay, m.aiSetupReminderFrame(), m.activateAISetupReminder, func() {
 		if state.prompt == prompt {
 			state.prompt = nil
 		}
 	})
-	m.forceFrame()
 }
 
 func (m *App) aiSetupReminderFrame() *ui.ComponentWidget {
@@ -240,37 +200,13 @@ func (m *App) aiSetupReminderFrame() *ui.ComponentWidget {
 		},
 	})
 	if m.onboarding.prompt != nil && m.onboarding.prompt.busy {
-		var disable func(ui.Component)
-		disable = func(component ui.Component) {
-			if button, ok := component.(*ui.Button); ok {
-				button.SetDisabled(true)
-			}
-			if parent, ok := component.(ui.Parent); ok {
-				for _, child := range parent.Children() {
-					disable(child)
-				}
-			}
-		}
-		disable(frame.Root())
+		disableConfirmButtons(frame)
 	}
 	return frame
 }
 
 func (m *App) refreshAISetupReminder() {
-	if window := m.overlayHost.Window(aiSetupReminderOverlay); window != nil {
-		focus := 1
-		if old, ok := window.Content.(*ui.ComponentWidget); ok {
-			focus = ui.ConfirmButtonIndexFromID(old.Host().Focused())
-		}
-		frame := m.aiSetupReminderFrame()
-		ui.SetConfirmFocus(frame, focus)
-		w, h := frame.Measure(m.width, m.height)
-		window.Content = frame
-		frame.SetMarkContentDirty(window.MarkContentDirty)
-		window.SetSize(w, h)
-		window.MarkContentDirty()
-		m.forceFrame()
-	}
+	m.refreshConfirmModal(aiSetupReminderOverlay, m.aiSetupReminderFrame())
 }
 
 func (m *App) activateAISetupReminder(choice int) tea.Cmd {

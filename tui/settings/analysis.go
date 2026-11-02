@@ -18,10 +18,14 @@ func (m *Model) analysisTrustField(settings types.WorkspaceAnalysisSettings) *ui
 		}
 	}
 	field := ui.SegmentedFieldState(fieldAnalysisTrust, "Trust", []ui.FormOption{
-		{ID: string(types.AnalysisStaticOnly), Label: "Static only"},
-		{ID: string(types.AnalysisProjectExecutionAllowed), Label: "Project execution allowed"},
-	}, string(types.NormalizeWorkspaceAnalysis(settings).Trust), "Tools may run project code; permission and acquisition policies still apply.")
+		{ID: string(types.AnalysisUndecided), Label: "Ask when the folder opens"},
+		{ID: string(types.AnalysisRestricted), Label: "Restricted"},
+		{ID: string(types.AnalysisTrusted), Label: "Trusted"},
+	}, string(types.NormalizeWorkspaceAnalysis(settings).Trust), "Restricted mode allows editing but does not run project tools. Trusted folders can run project tools.")
 	field.Validator = func(value ui.FieldValue) []string {
+		if value.String() == string(types.AnalysisUndecided) {
+			return nil
+		}
 		raw, _ := json.Marshal(value.String())
 		if err := types.ValidateAnalysisSettingEdits(types.SettingsScopeWorkspace, []types.SettingEdit{
 			{Path: []string{"analysis", "trust"}, After: raw},
@@ -38,6 +42,12 @@ func (m *Model) collectAnalysis() types.WorkspaceAnalysisSettings {
 		return types.DefaultWorkspaceAnalysisSettings()
 	}
 	return types.WorkspaceAnalysisSettings{Trust: types.WorkspaceAnalysisTrust(m.value(catLSP, fieldAnalysisTrust))}
+}
+
+func (m *Model) syncAnalysisChoice() {
+	if m.Scope() == types.SettingsScopeWorkspace && m.value(catLSP, fieldAnalysisTrust) == string(types.AnalysisUndecided) {
+		m.resetWorkspacePath("analysis")
+	}
 }
 
 // Direct scope changes replace this workspace-only row, never carrying a grant

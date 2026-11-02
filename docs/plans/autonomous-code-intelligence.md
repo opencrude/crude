@@ -1,9 +1,9 @@
 # Autonomous Code Intelligence
 
-> Status: IN PROGRESS - paused behind the
-> [workspace trust prompt and plain status](workspace-trust-and-status-language.md)
-> plan, because untrusted folders show internal states instead of a trust
-> question. The initial native syntax corpus, canonical scheduling
+> Status: IN PROGRESS - workspace trust and plain language-server status are
+> implemented; see [settings](../reference/settings.md#workspace-analysis-trust)
+> and [editor](../reference/editor.md#shared-diagnostic-facts). The initial
+> native syntax corpus, canonical scheduling
 > and connected-editor publication are implemented. Shared diagnostic ownership
 > has passed integrated Linux validation; complete semantic ownership,
 > autonomous assembly and complete workflow/device acceptance remain open.

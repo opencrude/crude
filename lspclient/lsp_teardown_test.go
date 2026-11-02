@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 func TestLSPConcurrentStopJoinsTheSameLaunchingLifetime(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "verified", true: "unverified"}[failed], func(t *testing.T) {
-			l := NewLSPIntegration("nonexistent-lsp-server-12345", nil, "file:///unused")
+			l := NewLSPIntegration("nonexistent-lsp-server-12345", nil, string(protocol.URIFromPath(t.TempDir())))
 			cancelled := make(chan struct{})
 			launch := &lspLaunch{cancel: func() { close(cancelled) }, done: make(chan struct{})}
 			l.launch = launch
@@ -81,7 +82,7 @@ func TestLSPVerifiedReapDoesNotTurnServerCrashIntoPoisonedAdmission(t *testing.T
 		reapedProcessExitOnly(errors.Join(exit, lsp.ErrProcessCleanupUnverified)) {
 		t.Fatal("provider exit was conflated with failed resource cleanup")
 	}
-	integration := NewLSPIntegration("nonexistent-lsp-server-12345", nil, "file:///unused")
+	integration := NewLSPIntegration("nonexistent-lsp-server-12345", nil, string(protocol.URIFromPath(t.TempDir())))
 	integration.teardownErr = fmt.Errorf("reap: %w", exit)
 	if err := integration.Stop(); err != nil {
 		t.Fatalf("a verified reap retained a non-existent process reservation: %v", err)

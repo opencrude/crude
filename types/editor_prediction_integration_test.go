@@ -49,7 +49,7 @@ func TestPredictionOverlayResetDropsOnlyItsOwnAuthority(t *testing.T) {
 		t.Fatal("explicit workspace prediction choice was not retained", string(overlay.Prediction))
 	}
 	overlay.PredictionRootIdentity, overlay.PredictionConnectionIdentity, overlay.PredictionGrantID = "native", "connection", "grant"
-	overlay.Analysis = json.RawMessage(`{"trust":"static_only"}`)
+	overlay.Analysis = json.RawMessage(`{"trust":"restricted"}`)
 	overlay.AnalysisRootIdentity = "foreign-analysis"
 	neighbor := append([]byte(nil), overlay.Editor...)
 	overlay.ClearCategory("prediction")
@@ -58,7 +58,7 @@ func TestPredictionOverlayResetDropsOnlyItsOwnAuthority(t *testing.T) {
 		t.Fatal("prediction reset retained grant material", overlay)
 	}
 	if !reflect.DeepEqual([]byte(overlay.Editor), neighbor) || overlay.AnalysisRootIdentity != "foreign-analysis" ||
-		string(overlay.Analysis) != `{"trust":"static_only"}` {
+		string(overlay.Analysis) != `{"trust":"restricted"}` {
 		t.Fatal("prediction reset modified unrelated preferences or execution Trust")
 	}
 }

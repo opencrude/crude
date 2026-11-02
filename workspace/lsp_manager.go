@@ -41,7 +41,7 @@ type LSPManager struct {
 	activeConnected             bool
 	activeError                 string
 	activeStatus                LSPStatus
-	idleStatus, idleReason      string
+	language                    ttypes.LanguageServiceStatus
 	paused, manualStart, closed bool
 	workerRunning               bool
 	wake                        chan struct{}
@@ -66,7 +66,7 @@ func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) 
 }
 
 func (m *LSPManager) recomputeActiveStatusLocked() {
-	defer m.recomputeIdleReasonLocked()
+	defer m.recomputeLanguageStatusLocked()
 	m.bumpVersionLocked()
 	// Teardown uncertainty remains actionable even while language features are
 	// disabled. Paused is an admission decision, not evidence that work stopped.
@@ -86,6 +86,10 @@ func (m *LSPManager) recomputeActiveStatusLocked() {
 	}
 	if state, ok := m.activeFileStateLocked(); ok {
 		m.applyAggregateStateLocked(*state)
+		return
+	}
+	if m.documents[m.activeFilePath] != nil {
+		m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
 		return
 	}
 
@@ -124,39 +128,6 @@ func (m *LSPManager) recomputeActiveStatusLocked() {
 		return
 	}
 	m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
-}
-
-func (m *LSPManager) recomputeIdleReasonLocked() {
-	m.idleStatus, m.idleReason = "", ""
-	if m.activeStatus != LSPIdle {
-		return
-	}
-	switch {
-	case m.analysisErrorLocked() != nil:
-		m.idleStatus, m.idleReason = "Static only", m.analysisErrorLocked().Error()
-	case !m.settings.Enabled:
-		m.idleStatus, m.idleReason = "Language intelligence off", "Enable Language intelligence in Settings → Code Intelligence."
-	case m.paused || m.closed:
-		m.idleStatus, m.idleReason = "Language servers paused", "Use Start Language Servers to resume services for open source files."
-	case !m.settings.StartOnOpen && !m.manualStart:
-		m.idleStatus, m.idleReason = "Automatic start off", "Enable Start on open in Settings → Code Intelligence, or use Start Language Servers."
-	case m.activeError != "":
-		m.idleStatus, m.idleReason = "Language services unavailable", m.activeError
-	case len(m.documents) == 0:
-		m.idleStatus, m.idleReason = "Waiting for source file", "Open a supported source file (for example, .go) to start its server. Enabling does not scan the workspace."
-	default:
-		if doc := m.documents[m.activeFilePath]; doc != nil {
-			if state := m.states[doc.key]; state != nil && state.stopped {
-				m.idleStatus, m.idleReason = "Language server stopped", "Restart the stopped server to resume services for this file."
-				return
-			}
-			if _, ok := m.resolveServerLocked(m.activeFilePath); !ok {
-				m.idleStatus, m.idleReason = "No matching language server", "No enabled server matches the open file. Check Settings → Language Servers; server executables must be installed separately."
-				return
-			}
-		}
-		m.idleStatus, m.idleReason = "Language services idle", "Services start only for supported open source files, not every file in the workspace."
-	}
 }
 
 func (m *LSPManager) activeFileStateLocked() (*lspClientState, bool) {
@@ -240,7 +211,7 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 	m.mu.Lock()
 	ins := ProjectInsights{ServerName: m.activeServerNameLocked(), ServerReady: m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
 		ServerBusy: m.inflight > 0, ServerStarting: m.activeStatus == LSPStarting, ServerSyncing: m.syncing,
-		ServerFailed: m.isFailedLocked(), ServerError: m.activeError, IdleStatus: m.idleStatus, IdleReason: m.idleReason, SymbolsCount: m.symbolCount}
+		ServerFailed: m.isFailedLocked(), ServerError: m.activeError, Language: m.language, SymbolsCount: m.symbolCount}
 	settings := ttypes.LSPSettings{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
 	sources := m.sources
 	m.mu.Unlock()
@@ -252,7 +223,7 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 	}
 	summary.ServerName, summary.ServerReady, summary.ServerBusy = ins.ServerName, ins.ServerReady, ins.ServerBusy
 	summary.ServerStarting, summary.ServerSyncing, summary.ServerFailed = ins.ServerStarting, ins.ServerSyncing, ins.ServerFailed
-	summary.ServerError, summary.IdleStatus, summary.IdleReason, summary.SymbolsCount = ins.ServerError, ins.IdleStatus, ins.IdleReason, ins.SymbolsCount
+	summary.ServerError, summary.Language, summary.SymbolsCount = ins.ServerError, ins.Language, ins.SymbolsCount
 	return summary
 }
 func (m *LSPManager) ProjectDiagnosticCounts() (int, int, int) {
@@ -275,6 +246,10 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 			Connected: state.status == LSPConnected,
 			Starting:  state.status == LSPStarting,
 			Syncing:   m.syncing, Busy: m.inflight > 0,
+		}
+		if !state.closing && !state.stopped && state.teardownErr == nil &&
+			(state.status == LSPConnected || state.status == LSPStarting) {
+			health.InstanceID = state.instance
 		}
 		if state.waiting {
 			health.Status = "Waiting for slot"

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	statusoverview "crude/tui/screens/statusoverview"
@@ -171,35 +170,64 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		Owner: ttypes.ResourceRef{Kind: ttypes.ResourceWorkspace, ID: m.ws.RootPath()},
 		Lines: []statusoverview.DetailLine{
 			{Label: "Path", Value: m.ws.RootPath(), Role: ui.ColorFg},
-			{Label: "Errors", Value: fmt.Sprintf("%d", insights.Errors), Role: mapBool(insights.Errors > 0, ui.ColorError, ui.ColorMuted)},
-			{Label: "Warnings", Value: fmt.Sprintf("%d", insights.Warnings), Role: mapBool(insights.Warnings > 0, ui.ColorWarning, ui.ColorMuted)},
-			{Label: "Affected files", Value: fmt.Sprintf("%d", insights.FilesAffected), Role: ui.ColorMuted},
-			{Label: "Observed source units", Value: fmt.Sprintf("%d", insights.DiagnosticsObserved), Role: ui.ColorMuted},
-			{Label: "Coverage", Value: diagnosticCoverage(insights), Role: ui.ColorWarning},
 			{Label: "Uptime", Value: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted},
 		},
 	}}
-	if insights.IdleReason != "" && !insights.ServerReady && !insights.ServerStarting && !insights.ServerFailed {
-		items[0].Lines = append([]statusoverview.DetailLine{{Label: "Language services", Value: insights.IdleReason, Role: ui.ColorMuted}}, items[0].Lines...)
+	if insights.Errors == 0 && insights.Warnings == 0 && insights.Language.Message != "" {
+		items[0].Lines = append([]statusoverview.DetailLine{{Value: insights.Language.Message, Role: ui.ColorFg}}, items[0].Lines...)
 	}
+	switch insights.Language.Action {
+	case ttypes.LanguageActionTrustFolder:
+		items[0].PrimaryAction = "language:trust"
+	case ttypes.LanguageActionOpenSettings:
+		items[0].PrimaryAction = "language:settings"
+	case ttypes.LanguageActionStartServers:
+		items[0].PrimaryAction = "lsp:start-all"
+	case ttypes.LanguageActionRestartServer:
+		// Select an exact server below. Do not restart unrelated servers.
+	}
+	items[0].PrimaryLabel, items[0].PrimaryEnabled = insights.Language.ActionLabel, items[0].PrimaryAction != ""
 	servers := m.ws.LSPMgr().ServerHealthSnapshots()
+	if insights.Language.Action == ttypes.LanguageActionRestartServer {
+		match := ""
+		for _, server := range servers {
+			if server.Error != "" && server.Name == filepath.Base(insights.ServerName) {
+				if match != "" {
+					match = ""
+					break
+				}
+				match = server.ID
+			}
+		}
+		if match != "" {
+			items[0].Owner = ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: match}
+			items[0].PrimaryAction = "lsp:restart"
+			items[0].PrimaryEnabled = true
+		}
+	}
 	if len(servers) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-lsp", Label: "Language Servers", Header: true})
 	}
 	for _, server := range servers {
-		lines := []statusoverview.DetailLine{
-			{Label: "State", Value: server.Status, Role: mapBool(server.Connected, ui.ColorSuccess, mapBool(server.Error != "", ui.ColorError, ui.ColorWarning))},
-			{Label: "Root", Value: server.RootURI, Role: ui.ColorFg},
+		state := "Stopped"
+		switch {
+		case server.Error != "":
+			state = "Language server failed"
+		case server.Starting || server.Syncing:
+			state = "Checking…"
+		case server.Connected:
+			state = "Running"
 		}
-		if server.Busy || server.Syncing {
-			lines = append(lines, statusoverview.DetailLine{Label: "Activity", Value: mapBool(server.Busy, "Busy", "Syncing"), Role: ui.ColorAccent})
-		}
+		lines := []statusoverview.DetailLine{{Label: "State", Value: state, Role: mapBool(server.Error != "", ui.ColorError, ui.ColorMuted)}}
 		if server.Error != "" {
-			lines = append(lines, statusoverview.DetailLine{Label: "Error", Value: server.Error, Role: ui.ColorError})
+			lines = append(lines, statusoverview.DetailLine{Value: "The language server failed. Check its installation and settings. Restart the server.", Role: ui.ColorError}, statusoverview.DetailLine{Label: "Details", Value: server.Error, Role: ui.ColorMuted})
 		}
-		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: server.Status, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines, Actions: lspServerActions(server)})
+		actions := lspServerActions(server)
+		if items[0].PrimaryAction == "lsp:restart" && items[0].Owner.ID == server.ID {
+			actions = nil
+		}
+		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: state, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines, Actions: actions})
 	}
-
 	diagnostics := m.lspFacts
 	if len(diagnostics) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-problems", Label: "Problems", Header: true})
@@ -211,18 +239,21 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 	sort.Strings(paths)
 	for _, path := range paths {
 		facts := diagnostics[path]
-		qualification := diagnosticQualification(facts)
+		outdated := facts.State == ttypes.InsightStale
+		unmatched := !facts.HasExactSource()
 		if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil && facts.HasExactSource() && !tab.Editor.MatchesDiagnosticSource(facts) {
-			qualification = "stale · " + strings.TrimPrefix(qualification, "observed exact source · ")
+			outdated = true
 		}
-		items = append(items, statusoverview.Item{ID: "problem-file:" + path, Label: filepath.Base(path), Summary: fmt.Sprintf("%d problems · %s", len(facts.Diagnostics), qualification),
-			Lines: []statusoverview.DetailLine{
-				{Label: "Fact", Value: facts.ID, Role: ui.ColorMuted},
-				{Label: "Producer", Value: facts.Boundary.Producer.Provider + " · " + facts.Boundary.Producer.InstanceID + " · " + facts.Boundary.Producer.ToolIdentity, Role: ui.ColorMuted},
-				{Label: "Observed revision", Value: fmt.Sprintf("%d · %s · %s", facts.Boundary.Source.Revision, facts.Boundary.Source.DocumentID, facts.Boundary.Source.Lifetime), Role: ui.ColorMuted},
-				{Label: "Context", Value: diagnosticContext(facts), Role: ui.ColorWarning},
-				{Label: "Coverage", Value: qualification + " · " + facts.Detail, Role: ui.ColorWarning},
-			}})
+		if len(facts.Diagnostics) == 0 {
+			continue
+		}
+		file := statusoverview.Item{ID: "problem-file:" + path, Label: filepath.Base(path), Summary: fmt.Sprintf("%d problems", len(facts.Diagnostics))}
+		if outdated {
+			file.Lines = []statusoverview.DetailLine{{Value: "Results are for an older version of this file.", Role: ui.ColorWarning}}
+		} else if unmatched {
+			file.Lines = []statusoverview.DetailLine{{Value: "Results cannot be matched to this version of the file.", Role: ui.ColorWarning}}
+		}
+		items = append(items, file)
 		for index, diagnostic := range facts.Diagnostics {
 			severity, role := "Hint", ui.ColorMuted
 			switch diagnostic.Severity {
@@ -235,10 +266,10 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			}
 			items = append(items, statusoverview.Item{
 				ID: fmt.Sprintf("problem:%s:%d", facts.ID, index), Label: diagnostic.Message,
-				Summary: fmt.Sprintf("%d:%d  %s", diagnostic.Line+1, diagnostic.Col+1, severity) + " · " + qualification, Icon: severityIconFromRole(role),
+				Summary: fmt.Sprintf("%d:%d  %s", diagnostic.Line+1, diagnostic.Col+1, severity), Icon: severityIconFromRole(role),
 				Owner: ttypes.ResourceRef{Kind: ttypes.ResourceEditor, ID: path}, Subtitle: path,
 				PrimaryAction: fmt.Sprintf("diagnostic:%s:%d:%s", facts.ID, index, path), PrimaryLabel: "Go to diagnostic", PrimaryEnabled: m.canNavigateDiagnostic(path, facts),
-				Lines: []statusoverview.DetailLine{{Label: "Fact", Value: facts.ID, Role: ui.ColorMuted}, {Label: "Producer", Value: facts.Boundary.Producer.Provider, Role: ui.ColorMuted}, {Label: "Observed revision", Value: fmt.Sprintf("%d", facts.Boundary.Source.Revision), Role: ui.ColorMuted}, {Label: "Context", Value: diagnosticContext(facts), Role: ui.ColorWarning}, {Label: "Coverage", Value: qualification, Role: ui.ColorWarning}, {Label: "Severity", Value: severity, Role: role}, {Label: "Location", Value: fmt.Sprintf("Ln %d, Col %d", diagnostic.Line+1, diagnostic.Col+1), Role: ui.ColorFg}, {Blank: true}, {Value: diagnostic.Message, Role: ui.ColorFg}},
+				Lines: []statusoverview.DetailLine{{Label: "Severity", Value: severity, Role: role}, {Label: "Location", Value: fmt.Sprintf("Ln %d, Col %d", diagnostic.Line+1, diagnostic.Col+1), Role: ui.ColorFg}, {Blank: true}, {Value: diagnostic.Message, Role: ui.ColorFg}},
 			})
 		}
 	}

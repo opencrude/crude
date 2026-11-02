@@ -131,6 +131,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if onboardingHandled {
 		return m, onboardingCmd
 	}
+	if handled, cmd := m.handleWorkspaceTrustMessage(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.handleWorkspaceOpenPromptInput(msg); handled {
 		return m, cmd
 	}

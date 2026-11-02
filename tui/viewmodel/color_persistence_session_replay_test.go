@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/internal/fileuri"
 	"database/sql"
 	"os"
 	"testing"
@@ -21,7 +22,7 @@ func TestRealSessionColorPersistenceReplay(t *testing.T) {
 	if dbPath == "" {
 		t.Skip("CRUDE_REPLAY_SESSION_DB not set")
 	}
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=1000")
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(dbPath, "mode=ro&_busy_timeout=1000"))
 	if err != nil {
 		t.Fatal(err)
 	}

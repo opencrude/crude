@@ -69,7 +69,10 @@ func startInteractiveProcess(cmd *exec.Cmd, tty bool, output io.Writer) (io.Writ
 		return fail(err)
 	}
 	defer attrs.Delete()
-	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(hpc), unsafe.Sizeof(hpc)); err != nil {
+	// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE takes the HPCON value itself as
+	// lpValue. Reinterpret the handle bits rather than converting a uintptr to
+	// unsafe.Pointer; the handle is not a Go pointer.
+	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, *(*unsafe.Pointer)(unsafe.Pointer(&hpc)), unsafe.Sizeof(hpc)); err != nil {
 		return fail(err)
 	}
 	// Explicit invalid handles let ConPTY establish console streams instead of

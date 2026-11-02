@@ -2,8 +2,8 @@ package mcpclient
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,7 +82,7 @@ func TestOfficialSDKBindsCwdAndRootsWithoutRebasingAbsoluteDirectory(t *testing.
 			if directory == absolute {
 				expected = absolute
 			}
-			if evidence.Pwd != expected || len(evidence.Roots) != 1 || evidence.Roots[0].URI != (&url.URL{Scheme: "file", Path: filepath.ToSlash(root)}).String() {
+			if evidence.Pwd != expected || len(evidence.Roots) != 1 || evidence.Roots[0].URI != fileuri.FromPath(root) {
 				t.Fatalf("root=%s directory=%s evidence=%+v", root, directory, evidence)
 			}
 		}

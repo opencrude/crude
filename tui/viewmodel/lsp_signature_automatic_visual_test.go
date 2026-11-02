@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -629,7 +630,7 @@ func (m *automaticSignatureVisualModel) verifyAutomaticSignatureTrace(count int)
 		if err := json.Unmarshal(request.raw, &params); err != nil {
 			return err
 		}
-		if params.TextDocument.URI != "file://"+m.path || params.Position.Line != 2 || params.Position.Character != wantCol {
+		if params.TextDocument.URI != fileuri.FromPath(m.path) || params.Position.Line != 2 || params.Position.Character != wantCol {
 			return fmt.Errorf("original request not at literal typed call: %s", request.raw)
 		}
 		// Last actual whole-document notification BEFORE this request.

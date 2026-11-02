@@ -765,13 +765,35 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		command = "cd"
 	}
+	assertExecutionRoot := func(content, want string) {
+		t.Helper()
+		var result struct {
+			CWD      string `json:"cwd"`
+			Output   string `json:"output"`
+			ExitCode int    `json:"exit_code"`
+		}
+		if err := json.Unmarshal([]byte(content), &result); err != nil {
+			t.Fatalf("decode command result: %v: %q", err, content)
+		}
+		if result.ExitCode != 0 {
+			t.Fatalf("command failed: %+v", result)
+		}
+		wantInfo, err := os.Stat(want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, path := range map[string]string{"cwd": result.CWD, "output": strings.TrimSpace(result.Output)} {
+			info, err := os.Stat(filepath.Clean(path))
+			if err != nil || !os.SameFile(wantInfo, info) {
+				t.Fatalf("%s = %q, want directory %q: %v", name, path, want, err)
+			}
+		}
+	}
 	result, err := toolFnA(nil, "execute_command", map[string]any{"command": command})
 	if err != nil {
 		t.Fatalf("execute_command in workspace A: %v", err)
 	}
-	if !strings.Contains(result.Content, dirA) {
-		t.Fatalf("first session ran outside workspace A: %q want %q", result.Content, dirA)
-	}
+	assertExecutionRoot(result.Content, dirA)
 
 	// Simulate a workspace switch: the product path re-roots all domain
 	// managers and creates a new session in the new root. The session's
@@ -788,12 +810,7 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute_command in workspace B: %v", err)
 	}
-	if strings.Contains(resultB.Content, dirA) {
-		t.Fatalf("second session still executed in workspace A after switch: %q", resultB.Content)
-	}
-	if !strings.Contains(resultB.Content, dirB) {
-		t.Fatalf("second session ran outside workspace B: %q want %q", resultB.Content, dirB)
-	}
+	assertExecutionRoot(resultB.Content, dirB)
 
 	// The model-visible prompt must advertise the new working directory.
 	prompt := sessB.systemPrompt(false)

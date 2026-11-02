@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"fmt"
 	"os"
@@ -29,7 +30,7 @@ func TestWorkspaceCatalogBriefBusyPreservesCommittedMetadata(t *testing.T) {
 	if err := wdb.Close(); err != nil {
 		t.Fatal(err)
 	}
-	writer, err := sql.Open("sqlite", fileURI(path)+"?_pragma=journal_mode(DELETE)&_pragma=locking_mode(EXCLUSIVE)")
+	writer, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "_pragma=journal_mode(DELETE)&_pragma=locking_mode(EXCLUSIVE)"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func denseCatalogFixture(tb testing.TB) []string {
 		if err := os.MkdirAll(project, 0700); err != nil {
 			tb.Fatal(err)
 		}
-		db, err := sql.Open("sqlite", fileURI(path))
+		db, err := sql.Open("sqlite", fileuri.FromPath(path))
 		if err != nil {
 			tb.Fatal(err)
 		}

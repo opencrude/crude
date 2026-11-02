@@ -85,12 +85,12 @@ func TestDiagnosticContextUnknownEmptyIsVisibleNotClean(t *testing.T) {
 	facts.Boundary.Context = types.InsightContext{UnknownInputs: []string{"build flags", "dependencies"}}
 	ed.SetDiagnostics(facts)
 	status := ed.DiagnosticStatus()
-	if !strings.Contains(status, "partial/context unknown") || strings.Contains(status, "clean") || ed.DiagnosticFacts().ID == "" {
+	if !strings.Contains(status, "Other files may not be checked") || strings.Contains(status, "clean") || ed.DiagnosticFacts().ID == "" {
 		t.Fatalf("unknown empty observation looks certified: %q", status)
 	}
 	facts.ID, facts.Binding, facts.ReportedVersion = "unversioned-empty", "unversioned", nil
 	ed.SetDiagnostics(facts)
-	if !strings.Contains(ed.DiagnosticStatus(), "unverified") {
+	if !strings.Contains(ed.DiagnosticStatus(), "cannot be matched") {
 		t.Fatal("unversioned empty observation erased coverage uncertainty")
 	}
 }
@@ -101,7 +101,7 @@ func TestDiagnosticUnknownContextCanPaintSourceButRemainsQualified(t *testing.T)
 	facts := testDiagnosticFacts(ed, []LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagWarning}})
 	facts.Boundary.Context.UnknownInputs = []string{"configuration"}
 	ed.SetDiagnostics(facts)
-	if len(ed.DiagnosticsAt(0, 6)) != 1 || len(ed.lineDiagnostics(0)) != 1 || !strings.Contains(ed.DiagnosticStatus(), "partial/context unknown") {
+	if len(ed.DiagnosticsAt(0, 6)) != 1 || len(ed.lineDiagnostics(0)) != 1 || !strings.Contains(ed.DiagnosticStatus(), "Other files may not be checked") {
 		t.Fatal("exact-source partial-context observation was hidden or over-certified")
 	}
 }
@@ -113,7 +113,7 @@ func TestDiagnosticFiltersKeepDetachedBatch(t *testing.T) {
 	ed.SetDiagnostics(facts)
 	facts.Diagnostics[0].Message = "caller mutated"
 	ed.SetDiagnosticsVisible(false)
-	if len(ed.Diagnostics()) != 0 || len(ed.lineDiagnostics(0)) != 0 || !strings.Contains(ed.DiagnosticStatus(), "hidden") {
+	if len(ed.Diagnostics()) != 0 || len(ed.lineDiagnostics(0)) != 0 || !strings.Contains(ed.DiagnosticStatus(), "markers are turned off") {
 		t.Fatal("hidden projection still interactive or unlabelled")
 	}
 	bufferFacts := ed.DocumentBuffer().Diagnostics()

@@ -2,10 +2,10 @@ package app
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -623,8 +623,7 @@ func liveDiagnosticMessages(t *testing.T, project, id string) []sessiondb.Messag
 
 func diagnosticMessagesFromPath(t *testing.T, path string) []sessiondb.MessageWithMeta {
 	t.Helper()
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 	if err != nil {
 		t.Fatal(err)
 	}

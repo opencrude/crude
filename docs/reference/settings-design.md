@@ -100,6 +100,8 @@ Rules:
   (`dialFieldOptions`), so `‹` always means less.
 - Clicking beside a stepper or segments (the label column) only focuses the row.
 - Segments fall back to the stepper automatically when they do not fit.
+- Workspace Trust uses segments for **Ask when the folder opens**,
+  **Restricted**, and **Trusted**; application scope shows **Workspace only**.
 - Workspace prediction consent uses these same segments, exact numeric input,
   protocol dropdown and endpoint text field on Code Intelligence. Application
   scope replaces all four with read-only **Workspace only** rows; no disabled

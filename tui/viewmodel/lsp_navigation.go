@@ -140,14 +140,37 @@ func (m *App) navigationCurrent(s *navigationState) bool {
 	if s == nil || m.navigation != s || m.ws != s.workspace || m.asyncIOStopped.Load() ||
 		!m.acceptsLSPDocument(s.generation, s.path, s.editor, s.revision) ||
 		!s.editor.MatchesInsightSource(s.source) || currentCodeActionSelection(s.editor) != s.selection ||
-		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
+		m.ws.LSPMgr() == nil {
 		return false
 	}
 	if m.termDockFocused || m.sessionDeckCapturesInput() || m.FocusStack != nil && m.FocusStack.Top() != s.focus {
 		return false
 	}
 	if s.landing {
+		// Opening a target changes the aggregate active-file status. The source
+		// provider must still be the exact instance that qualified the selected
+		// target, even while a different destination server starts.
+		if s.result == nil || s.result.Boundary.Producer.InstanceID == "" {
+			return false
+		}
+		owner, _ := m.ws.LSPMgr().ContextCursor()
+		if owner != s.source.WorkspaceGeneration {
+			return false
+		}
+		found := false
+		for _, health := range m.ws.LSPMgr().ServerHealthSnapshots() {
+			if health.InstanceID == s.result.Boundary.Producer.InstanceID && health.Connected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 		return m.focusTarget() == FocusEditor && !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput()
+	}
+	if !m.ws.LSPMgr().ServerReady() {
+		return false
 	}
 	if m.overlayHost == nil {
 		return false

@@ -2,6 +2,7 @@ package sessiondb
 
 import (
 	"bufio"
+	"crude/internal/fileuri"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func TestUsageArchiveReconciliation(t *testing.T) {
 	if path == "" {
 		t.Skip("set CRUDE_TEST_USAGE_ARCHIVE to a session DB")
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 	if err != nil {
 		t.Fatal(err)
 	}

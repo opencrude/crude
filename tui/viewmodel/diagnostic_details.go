@@ -180,7 +180,7 @@ func diagnosticReaderText(ed *editor.Editor, line, col int, diags []editor.LSPDi
 			return refused()
 		}
 	}
-	if !appendText(ed.DiagnosticProvenance()) {
+	if !appendText("Details\n" + ed.DiagnosticProvenance()) {
 		return refused()
 	}
 	raw := b.String()

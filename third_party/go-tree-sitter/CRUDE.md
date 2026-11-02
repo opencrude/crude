@@ -16,6 +16,11 @@ Crude changes:
   instead of interpreting the opaque C index pointer as a function.
 - Release custom-input C buffers, consistent with the UTF-8/UTF-16 paths.
 - Treat an absent progress callback as no callback.
+- Convert Windows debug-output handles to native handles in C, not through
+  `unsafe.Pointer` in Go. Declare the duplicate's actual `int` CRT descriptor
+  return type. The parser retains its duplicate and never closes the caller's
+  original file. Debug-output tests require actual flushed graph content and
+  run under the race detector's pointer checks.
 - Make the upstream concurrent-clone test self-contained: its Rust CLI source
   fixture is absent from the published Go module. A 4096-function Rust source
   retains the workload and exact child-count checks, with all clones released.

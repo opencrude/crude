@@ -25,6 +25,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -332,7 +333,7 @@ func readWorkspaceMetaLight(ctx context.Context, dbPath string) *WorkspaceInfo {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	dsn := fileURI(dbPath) + "?mode=ro&_pragma=busy_timeout(1)"
+	dsn := fileuri.SQLiteDSN(dbPath, "mode=ro&_pragma=busy_timeout(1)")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil
@@ -378,7 +379,7 @@ func readWorkspaceMetaUnlocked(ctx context.Context, dbPath string) *WorkspaceInf
 	// Avoid immutable=1 so recent WAL-backed project_dir writes remain visible.
 	// Escape filesystem delimiters before adding SQLite's options. A literal
 	// '#' or '?' in CRUDE_HOME belongs to the path, not a URI fragment/query.
-	dsn := fileURI(dbPath) + "?mode=ro&_pragma=busy_timeout(1)"
+	dsn := fileuri.SQLiteDSN(dbPath, "mode=ro&_pragma=busy_timeout(1)")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil

@@ -204,6 +204,7 @@ func newTestApp(t testing.TB) *App {
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
 		EditorState:        NewEditorState(),
+		BufferMgr:          editor.NewBufferManager(),
 		actionRegistry:     ui.DefaultRegistry(),
 		windowManager:      wmgr,
 		overlayHost:        ui.NewOverlayHost(wmgr),

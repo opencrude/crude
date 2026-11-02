@@ -19,7 +19,7 @@ func newInputContractEditorApp(t *testing.T, names ...string) (*App, []string) {
 	dir := t.TempDir()
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
-	wsOf(app).RootPath = dir
+	restrictSyntheticFixture(t, app, dir)
 	app.launcherScreen = nil
 	app.BufferMgr = editor.NewBufferManager()
 

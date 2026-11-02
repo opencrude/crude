@@ -81,7 +81,7 @@ func TestIdleActorExternalOwnersPublishWithoutMaintenanceDeadline(t *testing.T) 
 	awaitIdleState(t, a, coreprotocol.TopicLSP, func(state coreprotocol.WorkspaceState) bool {
 		// This idle fixture has no execution grant. Stop still broadcasts its
 		// version, but must not replace the default execution-ceiling guidance.
-		return state.LSP != nil && state.LSP.Version >= version && state.LSP.Insights.IdleStatus == "Static only"
+		return state.LSP != nil && state.LSP.Version >= version && state.LSP.Insights.Language.Label == "Restricted mode"
 	})
 	assertIdle()
 }

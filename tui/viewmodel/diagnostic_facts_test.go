@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -59,9 +60,11 @@ func (s *diagnosticFixtureService) StartForWorkspace(string) {
 type diagnosticFixtureWorkspace struct {
 	shellport.Workspace
 	service shellport.LSPService
+	root    string
 }
 
 func (w *diagnosticFixtureWorkspace) LSPMgr() shellport.LSPService { return w.service }
+func (w *diagnosticFixtureWorkspace) RootPath() string             { return w.root }
 
 func qualifiedDiagnosticApp(t *testing.T) (*App, *editor.Editor, *diagnosticFixtureService, types.InsightDiagnostics) {
 	t.Helper()
@@ -70,10 +73,10 @@ func qualifiedDiagnosticApp(t *testing.T) (*App, *editor.Editor, *diagnosticFixt
 		LSPService: app.ws.LSPMgr(), facts: make(map[string]types.InsightDiagnostics),
 		generation: "fixture-generation", version: 1,
 	}
-	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: service}
+	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: service, root: t.TempDir()}
 	ed := editor.New(app.Theme)
 	t.Cleanup(ed.Close)
-	path := app.ws.RootPath() + "/qualified.txt"
+	path := filepath.Join(app.ws.RootPath(), "qualified.txt")
 	if err := ed.InstallDocument(document.Snapshot{
 		ID: "fixture-document", Path: path, Revision: 41, AnalysisGeneration: "fixture-generation", AnalysisLifetime: "fixture-open",
 		Text: []byte("\t😀bad\n"), Saved: []byte("\t😀bad\n"), DiskExists: true,
@@ -100,11 +103,13 @@ func TestQualifiedDiagnosticAllConsumersSharePublication(t *testing.T) {
 	for _, item := range app.problemPanelItems() {
 		if item.ID == "problem:"+facts.ID+":0" {
 			found = true
-			if !item.PrimaryEnabled || !strings.Contains(item.Summary, "partial") {
+			if !item.PrimaryEnabled || !strings.Contains(item.Summary, "Error") {
 				t.Fatalf("exact observation lost qualified action: %+v", item)
 			}
-			if len(item.Lines) < 5 || item.Lines[0].Value != facts.ID {
-				t.Fatal("Problems lost provenance")
+			for _, line := range item.Lines {
+				if line.Label == "Fact" || line.Label == "Context" {
+					t.Fatal("Problems exposed provenance outside the details reader")
+				}
 			}
 		}
 	}
@@ -121,16 +126,21 @@ func TestOldPublicationAfterLocalEditStaysStaleInProblems(t *testing.T) {
 	if len(ed.DiagnosticsAt(0, 6)) != 0 || ed.FirstError() != nil {
 		t.Fatal("late old publication authorized draft diagnostic interaction")
 	}
-	found := false
+	found, outdated := false, false
 	for _, item := range app.problemPanelItems() {
+		if item.ID == "problem-file:"+ed.FilePath() {
+			for _, line := range item.Lines {
+				outdated = outdated || line.Value == "Results are for an older version of this file."
+			}
+		}
 		if item.ID == "problem:"+facts.ID+":0" {
 			found = true
-			if item.PrimaryEnabled || !strings.Contains(item.Summary, "stale") {
+			if item.PrimaryEnabled {
 				t.Fatalf("stale row hidden or actionable: %+v", item)
 			}
 		}
 	}
-	if !found || app.lspFacts[ed.FilePath()].Boundary.Source.Revision != 41 {
+	if !found || !outdated || app.lspFacts[ed.FilePath()].Boundary.Source.Revision != 41 {
 		t.Fatal("stale provenance was dropped or restamped")
 	}
 }
@@ -196,7 +206,7 @@ func TestStopRestartRetainsStaleDiagnosticEvidence(t *testing.T) {
 	}
 	for _, item := range app.problemPanelItems() {
 		if item.ID == "problem:"+facts.ID+":0" {
-			if !strings.Contains(item.Summary, "stale") || item.PrimaryEnabled {
+			if item.PrimaryEnabled {
 				t.Fatal("restart stale row incorrectly navigable")
 			}
 			return
@@ -230,10 +240,10 @@ func TestUnversionedEmptyProblemsAndFooterNeverImplyClean(t *testing.T) {
 	for _, item := range app.problemPanelItems() {
 		observed += item.Summary + "\n"
 	}
-	if !strings.Contains(observed, "unverified") || !strings.Contains(observed, "context unknown") || strings.Contains(strings.ToLower(observed), "clean") {
+	if !strings.Contains(observed, "No results yet") || strings.Contains(strings.ToLower(observed), "clean") || strings.Contains(observed, "unverified") {
 		t.Fatalf("unverified empty observation over-certified: %s", observed)
 	}
-	if summary := workspaceHealthSummary(types.ProjectInsights{ServerReady: true}); !strings.Contains(summary, "pending") || strings.Contains(summary, "clean") {
+	if summary := workspaceHealthSummary(types.ProjectInsights{ServerReady: true}); !strings.Contains(summary, "No results yet") || strings.Contains(summary, "clean") {
 		t.Fatal("zero observed units implied complete coverage")
 	}
 }

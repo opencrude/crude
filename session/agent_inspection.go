@@ -2,9 +2,9 @@ package session
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 
@@ -129,8 +129,7 @@ func (s *Session) agentInspectionDB(ctx context.Context, store *collaboration.St
 	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("no existing session database")
 	}
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(1000)"}
-	db, err := sql.Open("sqlite", uri.String())
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(1000)"))
 	if err != nil {
 		return nil, nil, err
 	}

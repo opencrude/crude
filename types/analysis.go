@@ -6,31 +6,50 @@ import (
 	"fmt"
 )
 
-// WorkspaceAnalysisTrust is a human-owned workspace execution ceiling, not an
-// LSP feature toggle, command grant, acquisition approval or sandbox.
+// WorkspaceAnalysisTrust is the human-owned workspace trust decision: a
+// workspace execution ceiling, not an LSP feature toggle, command grant,
+// acquisition approval or sandbox. It has three states. Only Trusted lets
+// project tools (language servers) run; Undecided and Restricted both run none.
 type WorkspaceAnalysisTrust string
 
 const (
-	AnalysisStaticOnly              WorkspaceAnalysisTrust = "static_only"
-	AnalysisProjectExecutionAllowed WorkspaceAnalysisTrust = "project_execution_allowed"
+	// AnalysisUndecided is the absent choice: restricted now, and the shell asks
+	// the user when the folder opens. It is never stored.
+	AnalysisUndecided WorkspaceAnalysisTrust = ""
+	// AnalysisRestricted is an explicit, remembered "Open in restricted mode".
+	AnalysisRestricted WorkspaceAnalysisTrust = "restricted"
+	// AnalysisTrusted is valid only with the workspace root identity bound by
+	// the workspace preference owner; a replaced folder resolves to Undecided.
+	AnalysisTrusted WorkspaceAnalysisTrust = "trusted"
 )
 
 // WorkspaceAnalysisSettings is carried by AppSettings for schema/effective
 // projections only. Its choices belong exclusively to the workspace overlay;
 // application defaults and session preferences cannot supply execution trust.
 type WorkspaceAnalysisSettings struct {
-	Trust WorkspaceAnalysisTrust `json:"trust"`
+	Trust WorkspaceAnalysisTrust `json:"trust,omitempty"`
 }
 
 func DefaultWorkspaceAnalysisSettings() WorkspaceAnalysisSettings {
-	return WorkspaceAnalysisSettings{Trust: AnalysisStaticOnly}
+	return WorkspaceAnalysisSettings{Trust: AnalysisUndecided}
+}
+
+// Trusted reports whether project tools may run. Use it instead of comparing
+// against a single constant, so Undecided and Restricted can never diverge.
+func (s WorkspaceAnalysisSettings) Trusted() bool { return s.Trust == AnalysisTrusted }
+
+// DecisionNeeded is the one derived fact behind the trust prompt. Callers pass
+// the bound effective settings, so a replaced folder asks again.
+func (s WorkspaceAnalysisSettings) DecisionNeeded() bool {
+	return s.Trust != AnalysisTrusted && s.Trust != AnalysisRestricted
 }
 
 // NormalizeWorkspaceAnalysis fails closed when reading incomplete or invalid
-// stored data. New writes use ValidateAnalysisSettingEdits and reject bad values.
+// stored data: unknown values become Undecided (restricted, and ask again).
+// New writes use ValidateAnalysisSettingEdits and reject bad values.
 func NormalizeWorkspaceAnalysis(s WorkspaceAnalysisSettings) WorkspaceAnalysisSettings {
-	if s.Trust != AnalysisProjectExecutionAllowed {
-		s.Trust = AnalysisStaticOnly
+	if s.Trust != AnalysisTrusted && s.Trust != AnalysisRestricted {
+		s.Trust = AnalysisUndecided
 	}
 	return s
 }
@@ -67,8 +86,8 @@ func decodeWorkspaceAnalysisChoice(raw json.RawMessage) (WorkspaceAnalysisSettin
 	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
 		return choice, fmt.Errorf("invalid workspace analysis object")
 	}
-	if choice.Trust != AnalysisStaticOnly && choice.Trust != AnalysisProjectExecutionAllowed {
-		return choice, fmt.Errorf("analysis trust must be static_only or project_execution_allowed")
+	if choice.Trust != AnalysisRestricted && choice.Trust != AnalysisTrusted {
+		return choice, fmt.Errorf("workspace trust must be restricted or trusted")
 	}
 	return choice, nil
 }
@@ -90,7 +109,7 @@ func ValidateAnalysisSettingEdits(scope SettingsScope, edits []SettingEdit) erro
 			return fmt.Errorf("unknown workspace analysis setting")
 		}
 		if edit.After == nil {
-			continue // Reset resolves to Static only, never application inheritance.
+			continue // Reset removes the choice: Undecided, never application inheritance.
 		}
 		if !json.Valid(edit.After) {
 			return fmt.Errorf("invalid workspace analysis JSON")
@@ -106,9 +125,9 @@ func ValidateAnalysisSettingEdits(scope SettingsScope, edits []SettingEdit) erro
 			return fmt.Errorf("invalid workspace analysis trust: %w", err)
 		}
 		switch choice.Trust {
-		case AnalysisStaticOnly, AnalysisProjectExecutionAllowed:
+		case AnalysisRestricted, AnalysisTrusted:
 		default:
-			return fmt.Errorf("analysis trust must be static_only or project_execution_allowed")
+			return fmt.Errorf("workspace trust must be restricted or trusted")
 		}
 	}
 	return nil

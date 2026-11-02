@@ -111,7 +111,10 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 	}
 	defer attrList.Delete()
 
-	if err := attrList.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(hpc), unsafe.Sizeof(hpc)); err != nil {
+	// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE takes the HPCON value itself as
+	// lpValue, not a pointer to it. Reinterpret the handle bits instead of
+	// converting a uintptr to unsafe.Pointer; it is not a Go pointer.
+	if err := attrList.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, *(*unsafe.Pointer)(unsafe.Pointer(&hpc)), unsafe.Sizeof(hpc)); err != nil {
 		windows.ClosePseudoConsole(hpc)
 		_ = windows.CloseHandle(ptyInWrite)
 		_ = windows.CloseHandle(ptyOutRead)

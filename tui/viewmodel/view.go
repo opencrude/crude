@@ -790,10 +790,7 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 		if blame := ed.CursorBlameSummary(); blame != "" {
 			prefix += "  " + blame
 		}
-		if insight := editorInsightSummary(ed); insight != "" {
-			prefix += "  " + insight
-		}
-		if errs, warns, hints := ed.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {
+		if errs, warns, _ := ed.DiagnosticCounts(); errs > 0 || warns > 0 {
 			var parts []string
 			if errs > 0 {
 				parts = append(parts, fmt.Sprintf("✕%d", errs))
@@ -801,10 +798,9 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			if warns > 0 {
 				parts = append(parts, fmt.Sprintf("⚠%d", warns))
 			}
-			if hints > 0 {
-				parts = append(parts, fmt.Sprintf("ℹ%d", hints))
-			}
 			prefix += "  " + strings.Join(parts, " ")
+		} else if label := m.ws.LSPMgr().ProjectInsights().Language.Label; label != "" {
+			prefix += "  " + label
 		}
 		if m.actionRegistry != nil {
 			segs = []ui.HintSegment{

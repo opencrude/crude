@@ -25,7 +25,7 @@ per category holding only the individual leaves the workspace changed. Every
 field it does not name keeps following the application layer forever, so
 turning something off at the application level reaches the workspace even
 years later.
-Analysis Trust instead resolves to **Static only** when absent or invalid.
+Analysis Trust instead resolves to **Ask when the folder opens** when absent or invalid.
 Prediction consent resolves to **Off**, with no invented spending allowance.
 
 On a project switch, the target workspace database is opened before the old
@@ -1097,14 +1097,21 @@ endpoint, start a model session or send source.
 
 ### Workspace analysis Trust
 
-Workspace scope adds **Trust** at the top of Code Intelligence with two choices:
-**Static only** and **Project execution allowed**. Application scope has no
+Workspace scope adds **Trust** at the top of Code Intelligence with three choices:
+**Ask when the folder opens**, **Restricted**, and **Trusted**. Application scope has no
 editable Trust control. This workspace-only, human-owned choice does not inherit
 from an application setting, session flag, agent profile, recipe or permission
 reviewer. Application writes are rejected, including container writes and Reset.
 Code Intelligence Reset removes the explicit workspace choice; Language Servers
-Reset does not change it. Source editing and local syntax remain usable in
-Static only, but no external language server is constructed or started by editor
+Reset does not change it. The first choice removes the stored decision. When a
+folder opens without a decision, Crude asks whether to trust its authors.
+**Open in restricted mode** is focused by default; Esc defers the decision without
+storing it. A stored Restricted decision does not prompt on the next open.
+The prompt waits for attachment and other dialogs to finish. Each shell asks once
+per workspace opening; a decision saved in another shell closes its open prompt.
+Saving runs off the UI thread and disables both choices while it is in progress.
+On failure, the prompt retains its error and enables the choices for retry.
+Source editing and local syntax remain usable in restricted mode, but no external language server is constructed or started by editor
 opens, explicit Start/Retry or session-agent probes.
 
 The workspace preference transaction binds an explicit execution grant to the
@@ -1112,8 +1119,11 @@ root's native directory identity. Its `analysis_root_identity` metadata is
 owner-generated, not an editable preference or repository marker. Grant and
 binding commit or roll back with the other addressed preferences in the same
 transaction. Unrelated preference/entity saves never rebind a grant. Reopening a
-different directory at the same pathname resolves to Static only and requires a
-new explicit choice. Native identity is rechecked on the manager worker before
+different directory at the same pathname resolves to an undecided choice and asks
+again without an error or notice. Typed settings reads, pushed shell settings and
+semantic field observations use this same bound effective projection; they never
+re-merge the old stored choice into execution authority.
+Native identity is rechecked on the manager worker before
 root discovery and every new launch; replacement or unavailable identity blocks
 execution, invalidates dependent facts and exposes repair guidance.
 
@@ -1187,7 +1197,7 @@ diagnostics notice for files an agent changed. It is independent of the editor
 master enable: with workspace execution Trust granted and editor LSP off, an
 agent's probe may still start the configured server for the files it asks about;
 with the session switch off, agents never start a server and the editor keeps its
-own behavior. Static only or a user stop (paused server) blocks both.
+own behavior. Restricted mode or a user stop (paused server) blocks both.
 Probes only use servers configured and enabled
 under Language Servers and are bounded by the same resource limits; they never
 install, download or guess a server. Agent-owned documents are refcounted

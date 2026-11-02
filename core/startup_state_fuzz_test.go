@@ -3,10 +3,10 @@ package core_test
 import (
 	"bytes"
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -356,8 +356,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 // Handles close before the next delete/restore action; no lease escapes a check.
 func startupFuzzDatabase(t *testing.T, path, project string) {
 	t.Helper()
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 	if err != nil {
 		t.Fatal(err)
 	}

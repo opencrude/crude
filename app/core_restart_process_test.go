@@ -3,52 +3,18 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func restartScript(t *testing.T, body string) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX harmless-process fixture; native Windows process acceptance remains separate")
-	}
-	path := filepath.Join(t.TempDir(), "harmless-handover-helper")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 func TestCoreRestartIdentityProcessRealSelfDigestAndEmptyEnvironment(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX harmless-process fixture")
-	}
-	sha, err := exec.LookPath("sha256sum")
-	if err != nil {
-		t.Skip("sha256sum is required by the harmless self-digest fixture")
-	}
-	cut, err := exec.LookPath("cut")
-	if err != nil {
-		t.Skip("cut is required by the harmless self-digest fixture")
-	}
 	f := newRestartFixture(t)
 	t.Setenv("CRUDE_HOME", f.host.home)
 	t.Setenv("CRUDE_RESTART_PRIVATE_SENTINEL", "must-not-inherit")
-	body := fmt.Sprintf(`
-[ "$1" = "--core-handover-identity" ] || exit 41
-[ -z "$CRUDE_HOME" ] && [ -z "$CRUDE_RESTART_PRIVATE_SENTINEL" ] || exit 42
-digest=$(%q "$0") || exit 43
-digest=${digest%%%% *}
-build=$(printf '%%s' "$digest" | %q -c1-16) || exit 44
-printf '{"build_id":"%%s","cohort":"%s","schema":"new-schema","sha256":"%%s","goos":"%s","goarch":"%s"}\n' "$build" "$digest"
-`, sha, cut, strings.Repeat("3", 64), runtime.GOOS, runtime.GOARCH)
-	f.input.Executable = restartScript(t, body)
+	f.input.Executable = writeRestartFixture(t, t.TempDir(), "self-digest")
 	digest, _, err := restartImageDigest(f.input.Executable)
 	if err != nil {
 		t.Fatal(err)
@@ -67,28 +33,9 @@ printf '{"build_id":"%%s","cohort":"%s","schema":"new-schema","sha256":"%%s","go
 }
 
 func TestCoreRestartIdentityProcessBoundedStrictAndCancellable(t *testing.T) {
-	valid := fmt.Sprintf(`{"build_id":"0123456789abcdef","cohort":"%s","schema":"schema","sha256":"%s","goos":"%s","goarch":"%s"}`,
-		strings.Repeat("2", 64), strings.Repeat("1", 64), runtime.GOOS, runtime.GOARCH)
 	for _, test := range []string{"valid", "unknown-field", "duplicate-key", "trailing-value", "oversized", "stderr-oversized", "exit", "cancelled"} {
 		t.Run(test, func(t *testing.T) {
-			body := "printf '%s' '" + valid + "'"
-			switch test {
-			case "unknown-field":
-				body = "printf '%s' '" + strings.TrimSuffix(valid, "}") + `,"unexpected":true}'`
-			case "duplicate-key":
-				body = "printf '%s' '" + strings.TrimSuffix(valid, "}") + `,"schema":"another"}'`
-			case "trailing-value":
-				body += "\nprintf '{}'"
-			case "oversized":
-				body = "printf '%9000s' x"
-			case "stderr-oversized":
-				body += "\nprintf '%9000s' x >&2"
-			case "exit":
-				body = "echo private-secret-error >&2\nexit 73"
-			case "cancelled":
-				body = "exec /bin/sleep 60"
-			}
-			path := restartScript(t, body)
+			path := writeRestartFixture(t, t.TempDir(), test)
 			ctx := t.Context()
 			var cancel context.CancelFunc
 			if test == "cancelled" {
@@ -112,12 +59,7 @@ func TestCoreRestartExactOwnerHelperNeverSelectsReplacement(t *testing.T) {
 		t.Run(map[bool]string{false: "matching-harmless-helper", true: "replacement-refused"}[replaced], func(t *testing.T) {
 			f := newRestartFixture(t)
 			marker := filepath.Join(f.host.home, "harmless-helper-ran")
-			helper := restartScript(t, fmt.Sprintf(`
-[ "$#" -eq 1 ] && [ "$1" = "--core-stop" ] || exit 61
-[ "$CRUDE_EXPECT_CORE_OWNER" = "%s" ] || exit 62
-printf 'exact original helper' > %q
-/bin/rm -- %q
-`, f.old.Generation, marker, coreOwnerPath(f.host.home)))
+			helper := writeRestartFixture(t, t.TempDir(), "exact-owner")
 			digest, _, err := restartImageDigest(helper)
 			if err != nil {
 				t.Fatal(err)
@@ -161,14 +103,10 @@ printf 'exact original helper' > %q
 }
 
 func TestCoreRestartForegroundSuccessorWaitIsJoined(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "joined-result")
-	path := restartScript(t, `
-[ "$CRUDE_RESTART_JOIN_FIXTURE" = "one" ] || exit 51
-[ "$PWD" = "$2" ] || exit 52
-printf 'foreground child completed' > "$1"
-`)
 	dir := t.TempDir()
-	if err := runRestartSuccessor(t.Context(), path, []string{marker, dir}, []string{"CRUDE_RESTART_JOIN_FIXTURE=one"}, dir); err != nil {
+	marker := filepath.Join(dir, "joined-result")
+	path := writeRestartFixture(t, t.TempDir(), "successor")
+	if err := runRestartSuccessor(t.Context(), path, []string{"--core-handover", marker}, []string{"CRUDE_RESTART_JOIN_FIXTURE=one"}, dir); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(marker)

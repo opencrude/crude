@@ -137,9 +137,6 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
-- [Workspace trust prompt and plain status](plans/workspace-trust-and-status-language.md):
-  next work. Ask for trust when a folder opens, allow editing in restricted
-  mode, and show one plain language-server status on every surface.
 - [First-use acceptance handoff](plans/broad-workspace-ux.md): remaining native
   Windows, distinct-host SSH, and reported memory-workload acceptance.
 - [Agent experience roadmap](plans/agent-experience-roadmap.md) — vision and

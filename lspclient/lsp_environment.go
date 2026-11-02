@@ -2,6 +2,7 @@ package lspclient
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -9,13 +10,11 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
-var errAnalyzerEnvironment = errors.New("analyzer environment could not be prepared")
+var errAnalyzerEnvironment = errors.New("could not prepare the language server environment")
 
 const (
 	maxAnalyzerEnvironmentEntries = 256
 	maxAnalyzerAmbientEntries     = 4096
-	maxAnalyzerPathBytes          = 32 << 10
-	maxAnalyzerPathEntries        = 64
 )
 
 // analyzerEnvironment is the single ambient-inheritance policy for analyzers.
@@ -32,14 +31,14 @@ const (
 // trusted analyzer still has the user's native access, including home files.
 func analyzerEnvironment(ambient []string, explicit map[string]string, rootURI string) (map[string]string, error) {
 	if len(ambient) > maxAnalyzerAmbientEntries || len(explicit) > maxAnalyzerEnvironmentEntries {
-		return nil, errAnalyzerEnvironment
+		return nil, fmt.Errorf("%w. The environment has too many entries. Reduce the entries, then retry", errAnalyzerEnvironment)
 	}
 	root := ""
 	if rootURI != "" {
 		var err error
 		root, err = protocol.DocumentURI(rootURI).Path()
 		if err != nil || !filepath.IsAbs(root) {
-			return nil, errAnalyzerEnvironment
+			return nil, fmt.Errorf("%w. The workspace folder path is invalid. Open a valid folder, then retry", errAnalyzerEnvironment)
 		}
 		root = filepath.Clean(root)
 	}
@@ -52,15 +51,11 @@ func analyzerEnvironment(ambient []string, explicit map[string]string, rootURI s
 		}
 		key = analyzerEnvironmentKey(key)
 		if ambientKeys[key] {
-			return nil, errAnalyzerEnvironment
+			return nil, fmt.Errorf("%w. An inherited environment variable has more than one value. Remove the duplicate, then retry", errAnalyzerEnvironment)
 		}
 		ambientKeys[key] = true
 		if key == "PATH" {
-			var err error
-			value, err = analyzerSearchPath(value, root)
-			if err != nil {
-				return nil, err
-			}
+			value = analyzerSearchPath(value, root)
 			if value == "" {
 				continue // absent PATH cannot implicitly search the current directory
 			}
@@ -71,7 +66,7 @@ func analyzerEnvironment(ambient []string, explicit map[string]string, rootURI s
 	for key, value := range explicit {
 		canonical := analyzerEnvironmentKey(key)
 		if explicitKeys[canonical] {
-			return nil, errAnalyzerEnvironment
+			return nil, fmt.Errorf("%w. A configured environment variable has more than one value. Remove the duplicate, then retry", errAnalyzerEnvironment)
 		}
 		explicitKeys[canonical] = true
 		result[canonical] = value
@@ -106,13 +101,10 @@ func inheritedAnalyzerKey(key string) bool {
 
 // Ambient PATH is data to minimize, not an implicit project-execution choice.
 // Empty/relative entries and lexical workspace descendants are omitted. The
-// process primitive validates the remaining count/bytes and absolute paths;
+// process primitive validates the remaining bytes and absolute paths;
 // only its resolver may select the executable, never exec.LookPath's ambient
 // environment. No filesystem I/O or symlink-identity claim occurs here.
-func analyzerSearchPath(value, root string) (string, error) {
-	if len(value) > maxAnalyzerPathBytes || strings.Count(value, string(filepath.ListSeparator)) >= maxAnalyzerPathEntries {
-		return "", errAnalyzerEnvironment
-	}
+func analyzerSearchPath(value, root string) string {
 	seen := make(map[string]bool)
 	var paths []string
 	for _, item := range filepath.SplitList(value) {
@@ -131,5 +123,5 @@ func analyzerSearchPath(value, root string) (string, error) {
 			paths = append(paths, item)
 		}
 	}
-	return strings.Join(paths, string(filepath.ListSeparator)), nil
+	return strings.Join(paths, string(filepath.ListSeparator))
 }

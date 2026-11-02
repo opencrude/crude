@@ -407,6 +407,10 @@ async core-document owner and verifies the observed hash/lifetime against the
 actually opened snapshot before installing a target tab or moving the cursor.
 Unresolved private target recovery or a failed recovery read refuses navigation
 before tab installation; ordinary file-open remains its explicit recovery path.
+During landing, the shell fences the original source producer's exact live
+instance in the published server health, not the aggregate active-file status.
+Opening a target can start a different server without retiring the source;
+stopping, replacing or revoking the source producer still retires the landing.
 Late source/focus results cannot open a tab. Neither the hash nor an exact
 selection supplies a missing target version: standard LSP locations are
 **unversioned targets**, and semantic destination freshness remains unverified.
@@ -932,6 +936,14 @@ history or conflict. Future batches wait for their source. Unversioned/stale
 batches remain discoverable with provenance in Problems but cannot authorize
 current paint, hover or navigation. Previously accepted same-batch ink can map
 provisionally through unchanged rows without becoming current semantic evidence.
+
+The language-server manager derives the active file's visible language status.
+The editor header shows error and warning counts, or that status label. The
+Problems footer shows counts and marks restricted or stopped services as off,
+and failures as errors. Workspace health shows counts or the manager's status
+message and routes its next action to the existing trust, settings or server
+controls. No result is a clean-project claim. Diagnostic provenance remains in
+the diagnostic details reader under **Details**, not in Problems rows.
 
 Agent source positions resolve against the immutable source leased for the
 actual request, not an independent disk read. Diagnostic and same-source

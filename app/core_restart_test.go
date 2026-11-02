@@ -24,6 +24,16 @@ type restartTestPort struct {
 	beforeReserve                                          func()
 }
 
+func TestCoreRestartIdentityRejectsInvalidNativeExecutable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidate.exe")
+	if err := os.WriteFile(path, []byte("not a native executable"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectRestartCandidate(t.Context(), path); err == nil {
+		t.Fatal("invalid native executable passed the real identity probe")
+	}
+}
+
 func (p *restartTestPort) ReserveCoreRestart(_ context.Context, _, _ string, r handover.Reservation) (handover.State, error) {
 	p.reserves++
 	if p.beforeReserve != nil {

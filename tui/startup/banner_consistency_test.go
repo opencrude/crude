@@ -158,7 +158,7 @@ func TestChooserBannerLeavesItsContentReadable(t *testing.T) {
 			t.Fatalf("row %d above the banner is not empty: %q", y, text)
 		}
 	}
-	for _, want := range []string{"Choose a project workspace", "Previous workspaces", "Open Workspace", "Quit", "/home/demo"} {
+	for _, want := range []string{"Choose a project workspace", "Previous workspaces", "Open Workspace", "Quit", fixturePath("/home/demo")} {
 		found := false
 		for y := bannerBottom + 1; y < m.surf.Buffer().Height(); y++ {
 			if strings.Contains(startupRowText(m, y), want) {

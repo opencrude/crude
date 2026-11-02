@@ -13,6 +13,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/fileio"
 	"crude/workspace"
 )
 
@@ -248,7 +249,7 @@ func openCheckedFile(root, path string, limit int64) (*checkedFile, error) {
 	if !before.Mode().IsRegular() || before.Size() > limit {
 		return nil, errors.New("read requires a regular file within size bound")
 	}
-	f, err := os.Open(path)
+	f, err := fileio.OpenReadSharedDelete(path)
 	if err != nil {
 		return nil, err
 	}

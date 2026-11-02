@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"crude/internal/fileuri"
 	model "crude/types"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
@@ -41,7 +42,7 @@ func TestDefaultLSPRuntimeForwardsRootBoundConfiguration(t *testing.T) {
 		ConfigurationScopes: []model.LSPConfigurationScope{{
 			URI: "file:///foreign/module", Settings: map[string]any{"engine": "must-not-launch"},
 		}},
-	}, "file:///project", func() error { admissions++; return nil })
+	}, fileuri.FromPath(t.TempDir()), func() error { admissions++; return nil })
 	if err := client.Start(t.Context()); !errors.Is(err, lsp.ErrConfiguration) {
 		t.Fatalf("workspace runtime dropped scoped launch configuration: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestDefaultLSPRuntimeRefusesUnsafeEnvironmentBeforeAdmission(t *testing.T) 
 	admissions := 0
 	client := (defaultLSPRuntime{}).NewClient(model.LSPServerSpec{
 		Command: "never-construct-this-program", Environment: map[string]string{"PATH": "."},
-	}, "file:///project", func() error { admissions++; return nil })
+	}, fileuri.FromPath(t.TempDir()), func() error { admissions++; return nil })
 	if err := client.Start(t.Context()); !errors.Is(err, lsp.ErrProcessEnvironment) {
 		t.Fatalf("workspace runtime dropped environment validation: %v", err)
 	}

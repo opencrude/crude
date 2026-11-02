@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
+	"crude/fileio"
 	"crude/sessiondb"
 	"crude/shellport"
 	"crude/tui/editor"
@@ -131,6 +132,7 @@ type appAsyncIOState struct {
 	detachedMessageSink     func(tea.Msg)
 	detachedCommands        sync.WaitGroup
 	desktopCaches           []string
+	desktopLaunch           func(context.Context, string, bool) error
 	clientIONext            uint64
 	clientIOEpoch           uint64
 	clientIOJobs            map[uint64]context.CancelFunc
@@ -162,6 +164,7 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 		pathSearchIntent:    make(map[*filepickerscreen.Screen]filepickerscreen.IntentToken),
 		treePathSearch:      newTreePathSearchState(),
 		clipboardWorkerDone: make(chan struct{}),
+		desktopLaunch:       fileio.OpenDesktopPathContext,
 		clientIOJobs:        make(map[uint64]context.CancelFunc),
 	}
 	state.clipboardCond = sync.NewCond(&state.mu)

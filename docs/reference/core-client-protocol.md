@@ -651,6 +651,9 @@ a containing directory preview, never a remote path guessed to be local.
 
 Typed LSP uses per-client views and versioned diagnostics/health; document
 open/close/detach releases only that client's views, never shared servers.
+Server health publishes the exact running producer instance ID; stopped,
+failed or retiring servers publish no instance ID. It is distinct from the
+stable launch key and from aggregate active-file readiness.
 Retained completion sets carry bounded numeric snippet plans beside expanded
 primary text through their generated completion codec. The text digest and byte-span
 ancestry are initial consistency checks, not authority. The editor independently

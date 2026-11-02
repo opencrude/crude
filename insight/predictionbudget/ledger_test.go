@@ -2,11 +2,11 @@ package predictionbudget
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"errors"
 	"fmt"
 	"math"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,8 +31,7 @@ func (c *fakeClock) add(d time.Duration) { c.ns.Add(int64(d)) }
 
 func openDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String()+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"))
 	check(t, err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })

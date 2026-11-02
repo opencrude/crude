@@ -2,10 +2,10 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,7 +94,7 @@ func (c *renameConnectedClient) RequestRename(_ context.Context, path string, li
 		return types.LSPRenameEdit{}, fmt.Errorf("unexpected provider input: %s %d:%d %q; source=%q peer=%q", path, line, col, name, main.text, peer.text)
 	}
 	uri := func(path string) string {
-		return strconv.Quote((&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String())
+		return strconv.Quote(fileuri.FromPath(path))
 	}
 	raw := strings.NewReplacer("$MAIN_VERSION", strconv.Itoa(main.version), "$PEER_VERSION", strconv.Itoa(peer.version),
 		"$MAIN", uri(r.main), "$PEER", uri(r.peer)).Replace(r.raw)

@@ -40,41 +40,43 @@ func TestWorkspaceAnalysisTrustNativeForm(t *testing.T) {
 			}
 			field := m.fieldAt(catLSP, "analysis.trust")
 			if field.Type != ui.FieldCycle || field.Style != ui.StyleSegmented || field.ReadOnly ||
-				len(field.Options) != 2 || field.Options[0].Label != "Static only" || field.Options[1].Label != "Project execution allowed" {
-				t.Fatalf("not the native two-choice Trust control: %+v", field)
+				len(field.Options) != 3 || field.Options[0].Label != "Ask when the folder opens" || field.Options[1].Label != "Restricted" || field.Options[2].Label != "Trusted" {
+				t.Fatalf("not the native three-choice Trust control: %+v", field)
 			}
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
 			plain := bufferPlain(buf)
-			for _, text := range []string{"Trust", "Static only"} {
+			ask := "Ask when the folder opens"
+			if size.W == 80 {
+				ask = "Ask when the …"
+			}
+			for _, text := range []string{"Trust", ask} {
 				if !strings.Contains(plain, text) {
 					t.Fatalf("missing %q:\n%s", text, plain)
 				}
 			}
-			if size.W == 160 && (!strings.Contains(plain, "Project execution allowed") ||
-				!strings.Contains(plain, "Tools may run project code; permission and acquisition policies still apply.")) {
+			if size.W == 160 && (!strings.Contains(plain, "Trusted") ||
+				!strings.Contains(plain, "Restricted mode allows editing")) {
 				t.Fatalf("wide form omitted choices or help:\n%s", plain)
 			}
-			if m.AppSettings().Analysis.Trust != types.AnalysisStaticOnly || m.hasUnsavedPreferences() || len(m.Edits()) != 0 {
+			if m.AppSettings().Analysis.Trust != types.AnalysisUndecided || m.hasUnsavedPreferences() || len(m.Edits()) != 0 {
 				t.Fatal("opening Trust changed its default or dirtied preferences")
 			}
 			if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight}); !result.Handled {
 				t.Fatal("human keyboard choice was not handled")
 			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
 			host.MarkLayout()
 			host.Layout()
 			host.Paint(buf)
-			wantChoice := "Project execution allowed"
-			if size.W == 80 {
-				wantChoice = "Project execu…"
-			}
-			if m.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed ||
+			wantChoice := "Trusted"
+			if m.AppSettings().Analysis.Trust != types.AnalysisTrusted ||
 				!strings.Contains(bufferPlain(buf), wantChoice) || !m.categoryDirty(catLSP) {
 				t.Fatalf("choice not collected and painted:\n%s", bufferPlain(buf))
 			}
 			edits := m.Edits()
 			if len(edits) != 1 || strings.Join(edits[0].Path, ".") != "analysis.trust" ||
-				string(edits[0].After) != `"project_execution_allowed"` {
+				string(edits[0].After) != `"trusted"` {
 				t.Fatalf("Trust wrote unrelated leaves: %+v", edits)
 			}
 			result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
@@ -94,8 +96,8 @@ func TestWorkspaceAnalysisTrustNativeForm(t *testing.T) {
 }
 
 func TestApplicationAnalysisTrustCannotGrant(t *testing.T) {
-	app := types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}}
-	stored := types.WorkspaceOverrides{Analysis: json.RawMessage(`{"trust":"project_execution_allowed"}`)}
+	app := types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}}
+	stored := types.WorkspaceOverrides{Analysis: json.RawMessage(`{"trust":"trusted"}`)}
 	m := NewScoped(theme.DefaultDark(), app, nil, types.SettingsScopeApplication, app, stored)
 	m.SelectCategory(catLSP)
 	s := NewSurface(theme.DefaultDark(), m)
@@ -104,20 +106,20 @@ func TestApplicationAnalysisTrustCannotGrant(t *testing.T) {
 	host.Layout()
 	buf := surface.NewCellBuffer(140, 32)
 	host.Paint(buf)
-	if !strings.Contains(bufferPlain(buf), "Workspace only") || strings.Contains(bufferPlain(buf), "Project execution allowed") {
+	if !strings.Contains(bufferPlain(buf), "Workspace only") || strings.Contains(bufferPlain(buf), "Trusted") {
 		t.Fatal("application page exposes a trust grant", bufferPlain(buf))
 	}
 	if field := m.fieldAt(catLSP, "analysis.trust"); !field.ReadOnly || len(field.Options) != 0 {
 		t.Fatal("application Trust is editable")
 	}
-	m.SetValueForTest(catLSP, "analysis.trust", "project_execution_allowed")
+	m.SetValueForTest(catLSP, "analysis.trust", "trusted")
 	m.SetValueForTest(catEditor, "tab-size", "8")
 	for _, edit := range m.Edits() {
 		if edit.Path[0] == "analysis" {
 			t.Fatal("application writes carried a grant", edit)
 		}
 	}
-	if m.AppSettings().Analysis.Trust != types.AnalysisStaticOnly || !m.workspaceOverridesPage(catLSP) || m.workspaceOverridesPage(catLanguageServers) {
+	if m.AppSettings().Analysis.Trust != types.AnalysisUndecided || !m.workspaceOverridesPage(catLSP) || m.workspaceOverridesPage(catLanguageServers) {
 		t.Fatal("application grant or workspace page marker is wrong")
 	}
 	reset, _ := m.PageResetEdits()
@@ -129,7 +131,7 @@ func TestApplicationAnalysisTrustCannotGrant(t *testing.T) {
 }
 
 func TestAnalysisScopeAndSearch(t *testing.T) {
-	stored := types.WorkspaceOverrides{Analysis: json.RawMessage(`{"trust":"project_execution_allowed"}`)}
+	stored := types.WorkspaceOverrides{Analysis: json.RawMessage(`{"trust":"trusted"}`)}
 	m := analysisModel(types.AppSettings{}, stored)
 	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace, types.SettingsScopeApplication, types.SettingsScopeWorkspace} {
 		m.SetScope(scope)
@@ -137,11 +139,11 @@ func TestAnalysisScopeAndSearch(t *testing.T) {
 		if f.ReadOnly != (scope == types.SettingsScopeApplication) || m.hasUnsavedPreferences() || len(m.Edits()) != 0 {
 			t.Fatalf("scope change created an editable app grant or dirty form: %s %+v", scope, m.Edits())
 		}
-		if scope == types.SettingsScopeWorkspace && m.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+		if scope == types.SettingsScopeWorkspace && m.AppSettings().Analysis.Trust != types.AnalysisTrusted {
 			t.Fatal("workspace scope lost the workspace grant")
 		}
 	}
-	for _, query := range []string{"Trust", "analysis.trust", "Static only", "Project execution allowed"} {
+	for _, query := range []string{"Trust", "analysis.trust", "Ask when the folder opens", "Restricted", "Trusted"} {
 		m.SetSearchQuery(query)
 		if !slices.Contains(m.visibleCategoryIndices(), catLSP) || m.searchTarget() != catLSP {
 			t.Fatalf("%q did not find Code Intelligence", query)
@@ -151,33 +153,33 @@ func TestAnalysisScopeAndSearch(t *testing.T) {
 
 func TestAnalysisScopeDoesNotReauthorizeAStoredButBlockedGrant(t *testing.T) {
 	stored := types.WorkspaceOverrides{
-		Analysis: json.RawMessage(`{"trust":"project_execution_allowed"}`), AnalysisRootIdentity: "old-directory",
+		Analysis: json.RawMessage(`{"trust":"trusted"}`), AnalysisRootIdentity: "old-directory",
 	}
 	// The core observed a different or unavailable directory and resolved the
-	// current effective choice to Static only. The form cannot undo that
+	// current effective choice to Undecided. The form cannot undo that
 	// adjudication by re-merging raw persisted choices during a scope round trip.
 	m := NewScoped(theme.DefaultDark(), types.AppSettings{Analysis: types.DefaultWorkspaceAnalysisSettings()}, nil,
 		types.SettingsScopeWorkspace, types.AppSettings{}, stored)
 	m.SetScope(types.SettingsScopeApplication)
 	m.SetScope(types.SettingsScopeWorkspace)
-	if m.AppSettings().Analysis.Trust != types.AnalysisStaticOnly || len(m.Edits()) != 0 {
+	if m.AppSettings().Analysis.Trust != types.AnalysisUndecided || len(m.Edits()) != 0 {
 		t.Fatal("form scope re-merged a root-blocked stored grant as current execution trust")
 	}
 	// An application observation, even with a forged application value and a
 	// remembered workspace overlay, cannot supply a verified workspace policy.
-	m = NewScoped(theme.DefaultDark(), types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}}, nil,
+	m = NewScoped(theme.DefaultDark(), types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}}, nil,
 		types.SettingsScopeApplication, types.AppSettings{}, stored)
 	m.SetScope(types.SettingsScopeWorkspace)
-	if m.AppSettings().Analysis.Trust != types.AnalysisStaticOnly || len(m.Edits()) != 0 {
+	if m.AppSettings().Analysis.Trust != types.AnalysisUndecided || len(m.Edits()) != 0 {
 		t.Fatal("application-to-workspace scope switch synthesized execution authority")
 	}
 }
 
 func TestAnalysisResetAndRebaseOwnership(t *testing.T) {
 	// Even an invalid application-owned grant can never become the reset parent.
-	app := types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}}
+	app := types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}}
 	stored := types.WorkspaceOverrides{
-		Analysis: json.RawMessage(`{"trust":"project_execution_allowed"}`),
+		Analysis: json.RawMessage(`{"trust":"trusted"}`),
 		LSP:      json.RawMessage(`{"enabled":false,"languages":{"go":{"enabled":false}}}`),
 	}
 	m := analysisModel(app, stored)
@@ -192,7 +194,7 @@ func TestAnalysisResetAndRebaseOwnership(t *testing.T) {
 		t.Fatal("reset kept analysis or removed the server inventory", nextStored)
 	}
 	next := m.SectionResetModel(app, types.MergeAppWorkspace(app, nextStored), nextStored, catLSP)
-	if next.AppSettings().Analysis.Trust != types.AnalysisStaticOnly || next.AppSettings().UI.SidebarWidth != 45 {
+	if next.AppSettings().Analysis.Trust != types.AnalysisUndecided || next.AppSettings().UI.SidebarWidth != 45 {
 		t.Fatal("reset inherited application trust or consumed unrelated draft")
 	}
 	for _, edit := range next.Edits() {
@@ -203,10 +205,10 @@ func TestAnalysisResetAndRebaseOwnership(t *testing.T) {
 
 	// An unrelated committed reset retains pending Trust and its Save authority.
 	m = analysisModel(types.AppSettings{}, types.WorkspaceOverrides{})
-	m.SetValueForTest(catLSP, "analysis.trust", "project_execution_allowed")
+	m.SetValueForTest(catLSP, "analysis.trust", "trusted")
 	m.SelectCategory(catEditor)
 	next = m.SectionResetModel(types.AppSettings{}, types.MergeAppWorkspace(types.AppSettings{}, types.WorkspaceOverrides{}), types.WorkspaceOverrides{}, catEditor)
-	if next.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed || !next.hasUnsavedPreferences() {
+	if next.AppSettings().Analysis.Trust != types.AnalysisTrusted || !next.hasUnsavedPreferences() {
 		t.Fatal("unrelated reset consumed off-page Trust")
 	}
 	s := NewSurface(theme.DefaultDark(), next)
@@ -215,7 +217,7 @@ func TestAnalysisResetAndRebaseOwnership(t *testing.T) {
 	}
 	saved := next.Overrides()
 	clean := next.SavedModel(types.AppSettings{}, types.MergeAppWorkspace(types.AppSettings{}, saved), saved)
-	if clean.hasUnsavedPreferences() || len(clean.Edits()) != 0 || clean.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if clean.hasUnsavedPreferences() || len(clean.Edits()) != 0 || clean.AppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("saved Trust was not rebased cleanly")
 	}
 }
@@ -232,7 +234,7 @@ func TestAnalysisTrustControlAdmissionIncludesOffPageDraft(t *testing.T) {
 		t.Fatal("Trust does not have its canonical path", path)
 	}
 	for _, verb := range []string{"set_value", "select"} {
-		desc, err := host.DescribeControl(id, ui.ControlOperation{Verb: verb, ItemID: "project_execution_allowed", Value: json.RawMessage(`"project_execution_allowed"`)})
+		desc, err := host.DescribeControl(id, ui.ControlOperation{Verb: verb, ItemID: "trusted", Value: json.RawMessage(`"trusted"`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -242,7 +244,7 @@ func TestAnalysisTrustControlAdmissionIncludesOffPageDraft(t *testing.T) {
 		}
 	}
 	before := s.ControlEditGeneration()
-	m.SetValueForTest(catLSP, "analysis.trust", "project_execution_allowed")
+	m.SetValueForTest(catLSP, "analysis.trust", "trusted")
 	s.openCategory(catEditor)
 	host.MarkLayout()
 	host.Layout()
@@ -265,29 +267,29 @@ func TestAnalysisTrustControlAdmissionIncludesOffPageDraft(t *testing.T) {
 func TestAnalysisTrustDiscardScopeAndServerReset(t *testing.T) {
 	m := analysisModel(types.AppSettings{}, types.WorkspaceOverrides{})
 	m.Snapshot()
-	m.SetValueForTest(catLSP, "analysis.trust", "project_execution_allowed")
+	m.SetValueForTest(catLSP, "analysis.trust", "trusted")
 	s := NewSurface(theme.DefaultDark(), m)
 	prompt := settingsPrompt(t, s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.scope", Payload: scopeTabApplication}))
 	if prompt.Kind != PromptDiscardSettings || !s.PromptRelevant(prompt) {
 		t.Fatal("scope switch did not protect the Trust draft")
 	}
 	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.stay"})
-	if m.Scope() != types.SettingsScopeWorkspace || m.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if m.Scope() != types.SettingsScopeWorkspace || m.AppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("canceling scope switch consumed Trust")
 	}
 	m.SelectCategory(catLanguageServers)
 	s.syncModel()
 	s.lsp.begin("go")
 	s.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.reset"})
-	if m.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if m.AppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("server Restore default changed Trust")
 	}
 	s.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.cancel"})
-	if m.AppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if m.AppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("canceling server edit changed Trust")
 	}
 	m.Restore()
-	if m.AppSettings().Analysis.Trust != types.AnalysisStaticOnly || m.hasUnsavedPreferences() || len(m.Edits()) != 0 {
+	if m.AppSettings().Analysis.Trust != types.AnalysisUndecided || m.hasUnsavedPreferences() || len(m.Edits()) != 0 {
 		t.Fatal("discarding settings retained a pending grant")
 	}
 }
@@ -298,5 +300,30 @@ func TestInvalidAnalysisTrustBlocksSave(t *testing.T) {
 	s := NewSurface(theme.DefaultDark(), m)
 	if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"}); result.Cmd != nil || m.Saving() || m.SaveError() == "" {
 		t.Fatal("invalid trust escaped the native form validator")
+	}
+}
+
+func TestAnalysisChoiceRemovalAndLaterChoice(t *testing.T) {
+	stored := types.WorkspaceOverrides{Analysis: json.RawMessage(`{"trust":"trusted"}`)}
+	m := analysisModel(types.AppSettings{}, stored)
+	m.SetValueForTest(catLSP, fieldAnalysisTrust, "")
+	edits := m.Edits()
+	if len(edits) != 1 || !slices.Equal(edits[0].Path, []string{"analysis"}) || edits[0].After != nil {
+		t.Fatalf("Ask must remove the analysis object: %+v", edits)
+	}
+	cleared := applyResetToOverrides(t, stored, edits)
+	if len(cleared.Analysis) != 0 {
+		t.Fatalf("choice remained stored: %s", cleared.Analysis)
+	}
+	for _, choice := range []string{"restricted", "trusted"} {
+		m.SetValueForTest(catLSP, fieldAnalysisTrust, choice)
+		updated := applyResetToOverrides(t, stored, m.Edits())
+		if string(updated.Analysis) != `{"trust":"`+choice+`"}` {
+			t.Fatalf("later %s choice not stored: %s", choice, updated.Analysis)
+		}
+	}
+	unchanged := analysisModel(types.AppSettings{}, types.WorkspaceOverrides{})
+	if len(unchanged.Edits()) != 0 {
+		t.Fatalf("unchanged Ask produced edits: %+v", unchanged.Edits())
 	}
 }

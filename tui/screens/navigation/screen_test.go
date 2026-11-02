@@ -1,6 +1,7 @@
 package navigation
 
 import (
+	"crude/internal/fileuri"
 	"fmt"
 	"strconv"
 	"strings"
@@ -386,7 +387,7 @@ func TestNavigationNarrowListKeepsDestinationNamesVisible(t *testing.T) {
 	root := "/workspace/" + strings.Repeat("a-long-directory/", 8)
 	first, second := result.Targets[0], result.Targets[0]
 	first.Path, second.Path = root+"lib.go", root+"main.go"
-	first.URI, second.URI = "file://"+first.Path, "file://"+second.Path
+	first.URI, second.URI = fileuri.FromPath(first.Path), fileuri.FromPath(second.Path)
 	result.Targets = []types.LSPNavigationTarget{first, second}
 	s := New(nil)
 	s.SetResult(result)

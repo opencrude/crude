@@ -15,7 +15,7 @@ func TestAnalysisTrustAndContainerWritesAreHumanOwned(t *testing.T) {
 	}
 	before := types.AppSettings{Analysis: types.DefaultWorkspaceAnalysisSettings()}
 	after := types.CloneAppSettings(before)
-	after.Analysis.Trust = types.AnalysisProjectExecutionAllowed
+	after.Analysis.Trust = types.AnalysisTrusted
 	if !control.SettingsChangesAuthority(before, after, "") {
 		t.Fatal("a pending trust draft escaped whole-form authority admission")
 	}

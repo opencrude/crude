@@ -169,7 +169,7 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 	}
 	if len(analysisEdits(edits)) != 0 {
 		currentOverrides.AnalysisRootIdentity = ""
-		if types.MergeAppWorkspace(defaults, currentOverrides).Analysis.Trust == types.AnalysisProjectExecutionAllowed {
+		if types.MergeAppWorkspace(defaults, currentOverrides).Analysis.Trusted() {
 			if analysisRoot == "" {
 				return types.WorkspaceOverrides{}, fmt.Errorf("workspace Trust grant has no owned native directory identity")
 			}

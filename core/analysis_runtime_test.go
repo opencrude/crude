@@ -86,16 +86,16 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	one.call(t, attached[0].WorkspaceID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: filepath.Join(roots[0], "main.go")}, &source)
 	first.StartForWorkspace(roots[0]) // Explicit Start is not an execution grant.
 	_, _, _, err = first.ProbeDiagnostics(t.Context(), filepath.Join(roots[0], "main.go"))
-	if err == nil || !strings.Contains(err.Error(), "no workspace execution grant") ||
+	if err == nil || !strings.Contains(err.Error(), "do not run in restricted mode; trust this folder") ||
 		firstEngine.constructions.Load() != 0 || r.analysisGovernor.Snapshot().Counts.Reserved() != 0 {
 		t.Fatal("default-static editor/manual-start/probe path acquired external execution", err)
 	}
 	grant := coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{
-		{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"project_execution_allowed"`)},
+		{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 	}}
 	var saved coreprotocol.WorkspacePreferencesResult
 	one.call(t, attached[0].WorkspaceID, coreprotocol.WorkspaceOverridesSet, grant, &saved)
-	if saved.Effective.Analysis.Trust != types.AnalysisProjectExecutionAllowed || saved.Overrides.AnalysisRootIdentity == "" {
+	if saved.Effective.Analysis.Trust != types.AnalysisTrusted || saved.Overrides.AnalysisRootIdentity == "" {
 		t.Fatal("typed grant lost its native binding")
 	}
 	awaitCoreAnalysis(t, first, second, func() bool {
@@ -112,7 +112,7 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	// retirement releases the exact lease, waking the peer without polling RPCs.
 	one.call(t, attached[0].WorkspaceID, coreprotocol.WorkspaceOverridesSet,
 		coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}}}}, &saved)
-	if saved.Effective.Analysis.Trust != types.AnalysisStaticOnly || saved.Overrides.AnalysisRootIdentity != "" {
+	if saved.Effective.Analysis.Trust != types.AnalysisUndecided || saved.Overrides.AnalysisRootIdentity != "" {
 		t.Fatal("revoke/reset returned a residual execution grant")
 	}
 	awaitCoreAnalysis(t, first, second, func() bool {
@@ -127,7 +127,7 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	// Both shell observations agree on the same retained owner, not form drafts.
 	var settings coreprotocol.SettingsFetchResult
 	one.call(t, attached[0].WorkspaceID, coreprotocol.SettingsFetch, coreprotocol.Empty{}, &settings)
-	if settings.Application.Analysis.Trust != types.AnalysisStaticOnly || settings.Effective.Analysis.Trust != types.AnalysisStaticOnly {
+	if settings.Application.Analysis.Trust != types.AnalysisUndecided || settings.Effective.Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("revoked workspace projection inherited application execution")
 	}
 }
@@ -157,7 +157,7 @@ func TestAnalysisCoreCloseReportsAndRetainsUnverifiedAdmission(t *testing.T) {
 	var saved coreprotocol.WorkspacePreferencesResult
 	client.call(t, attached.WorkspaceID, coreprotocol.WorkspaceOverridesSet,
 		coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{
-			{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"project_execution_allowed"`)},
+			{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 		}}, &saved)
 	var source document.Snapshot
 	client.call(t, attached.WorkspaceID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}, &source)

@@ -129,16 +129,16 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 	}
 	navigate("Code Intelligence")
 	body := one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings))
-	if body == nil || body.Model().AppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+	if body == nil || body.Model().AppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("opening the mounted form acquired Trust")
 	}
-	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Trust") || !strings.Contains(paint, "Static only") {
+	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Trust") || !strings.Contains(paint, "Ask when the") {
 		t.Fatalf("workspace Trust was not rendered:\n%s", paint)
 	}
 	trustID := string(ui.NewID(settingsui.WorkspaceSettingsFormID, "analysis.trust"))
 	for _, op := range []ui.ControlOperation{
-		{Verb: "select", ItemID: "project_execution_allowed"},
-		{Verb: "set_value", Value: json.RawMessage(`"project_execution_allowed"`)},
+		{Verb: "select", ItemID: "trusted"},
+		{Verb: "set_value", Value: json.RawMessage(`"trusted"`)},
 	} {
 		desc, node := describe(trustID, op, true)
 		denied(writer(node, op, desc.ID))
@@ -146,7 +146,7 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 	}
 	// There is no generic input-injection escape hatch, even when addressed to
 	// an ordinary parent form, a Trust field, or an authority-bearing button.
-	_, trustNode := describe(trustID, ui.ControlOperation{Verb: "select", ItemID: "project_execution_allowed"}, true)
+	_, trustNode := describe(trustID, ui.ControlOperation{Verb: "select", ItemID: "trusted"}, true)
 	_, formNode := describe(string(settingsui.WorkspaceSettingsFormID), ui.ControlOperation{Verb: "scroll"}, false)
 	unsupported := func(result analysisControlOutcome) bool {
 		return result.RPCFault != nil && result.RPCFault.Code == "control_failed" &&
@@ -161,7 +161,7 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 			}
 		}
 	}
-	if len(body.Model().Edits()) != 0 || one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+	if len(body.Model().Edits()) != 0 || one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("denied generic input changed a draft or committed trust")
 	}
 	nativeChoice := func(code rune, want types.WorkspaceAnalysisTrust) {
@@ -178,13 +178,14 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 			t.Fatalf("human native keyboard cannot choose Trust: %+v", body.Model().Edits())
 		}
 	}
-	nativeChoice(tea.KeyRight, types.AnalysisProjectExecutionAllowed)
+	nativeChoice(tea.KeyRight, types.AnalysisRestricted)
+	nativeChoice(tea.KeyRight, types.AnalysisTrusted)
 	save := ui.ControlOperation{Verb: "activate"}
 	for _, id := range []ui.ComponentID{settingsui.WorkspaceSettingsSaveID, settingsui.WorkspaceSettingsResetID} {
 		desc, node := describe(string(id), save, true)
 		denied(writer(node, save, desc.ID))
 	}
-	if one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+	if one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("generic Save committed the human's pending grant")
 	}
 	// The native focused footer + Enter is a human save and owns the durable
@@ -193,13 +194,14 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
 	body = one.app.settingsSurface(one.app.overlayHost.Window(ui.OverlayWorkspaceSettings))
-	if one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed || len(body.Model().Edits()) != 0 ||
+	if one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted || len(body.Model().Edits()) != 0 ||
 		one.app.ws.LoadWorkspaceOverrides().AnalysisRootIdentity == "" {
 		t.Fatal("native Save did not persist and rebase the root-bound grant")
 	}
-	nativeChoice(tea.KeyLeft, types.AnalysisStaticOnly)
+	nativeChoice(tea.KeyLeft, types.AnalysisRestricted)
+	nativeChoice(tea.KeyLeft, types.AnalysisUndecided)
 	navigate("Editor")
-	if paint := ansi.Strip(one.app.View().RenderContent()); strings.Contains(paint, "Project execution allowed") || !strings.Contains(paint, "Word wrap") {
+	if paint := ansi.Strip(one.app.View().RenderContent()); strings.Contains(paint, "Ask when the folder opens") || !strings.Contains(paint, "Word wrap") {
 		t.Fatalf("Trust draft did not leave the visible page:\n%s", paint)
 	}
 	value := `"on"`
@@ -220,8 +222,8 @@ func TestConnectedAnalysisTrustGenericControlsCannotAuthorizeOrDiscard(t *testin
 			}
 		}
 	}
-	if body.Model().AppSettings().Analysis.Trust != types.AnalysisStaticOnly || len(body.Model().Edits()) < 2 ||
-		one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if body.Model().AppSettings().Analysis.Trust != types.AnalysisUndecided || len(body.Model().Edits()) < 2 ||
+		one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatalf("generic Save/Reset lost the off-page draft or changed committed trust: edits=%+v draft=%s committed=%s",
 			body.Model().Edits(), body.Model().AppSettings().Analysis.Trust, one.app.ws.LoadAppSettings().Analysis.Trust)
 	}

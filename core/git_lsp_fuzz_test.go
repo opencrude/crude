@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -251,6 +252,7 @@ func FuzzCoreGitReviewedMutations(f *testing.F) {
 // The real manager owns lifecycle/admission; only the language engine is fake.
 // This deliberately does not claim stdio framing, parser or real server coverage.
 type semanticLSPClient struct {
+	targetURI   string
 	mu          sync.Mutex
 	calls       []semanticLSPCall
 	edit        []byte
@@ -323,7 +325,7 @@ func (c *semanticLSPClient) RequestNavigation(_ context.Context, path, kind stri
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return types.LSPNavigationResponse{Kind: kind, WireVersion: c.version,
-		JSON: []byte(`[{"uri":"file:///fuzz/definition.go","range":{"start":{"line":2,"character":3},"end":{"line":4,"character":5}}}]`)}, nil
+		JSON: []byte(fmt.Sprintf(`[{"uri":%q,"range":{"start":{"line":2,"character":3},"end":{"line":4,"character":5}}}]`, c.targetURI))}, nil
 }
 func (c *semanticLSPClient) RequestHover(_ context.Context, path string, line, col int) (string, error) {
 	c.record(path, line, col, "", false)
@@ -377,7 +379,8 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		if err := os.WriteFile(path, []byte("package main\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		client := &semanticLSPClient{}
+		targetURI := fileuri.FromPath(filepath.Join(t.TempDir(), "definition.go"))
+		client := &semanticLSPClient{targetURI: targetURI}
 		manager := workspace.NewLSPManager(nil, semanticLSPRuntime{client})
 		defer manager.Close()
 		manager.SetWorkspaceRoot(root)
@@ -394,7 +397,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		if err := manager.SetAnalysisGovernor(g, "fuzz-workspace", "fuzz-generation"); err != nil {
 			t.Fatal(err)
 		}
-		manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, identity)
+		manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
 		docs := workspace.NewDocumentService(root, nil, manager)
 		defer docs.Close()
 		snapshot, err := docs.Open(document.Owner{ClientID: "fuzz", Epoch: 1}, path)
@@ -494,7 +497,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 					t.Fatal("qualified navigation reply changed", err, result)
 				}
 				target := result.Result.Targets[0]
-				if target.URI != "file:///fuzz/definition.go" || target.Selection.Start.Line != 2 || target.Selection.Start.Character != 3 || target.Range.End.Line != 4 || target.Range.End.Character != 5 || !target.External {
+				if target.URI != targetURI || target.Selection.Start.Line != 2 || target.Selection.Start.Character != 3 || target.Range.End.Line != 4 || target.Range.End.Character != 5 || !target.External {
 					t.Fatal("original target changed", target)
 				}
 				continue

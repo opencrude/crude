@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -267,7 +268,11 @@ func TestDiagnosticWorkspaceDenseGatewayPreservesCanonicalStatusAndRevision(t *t
 	if err := a.inspect(t.Context(), func() { after = a.revision }); err != nil {
 		t.Fatal(err)
 	}
-	if after != revision || a.ws.Status.Version() != statusVersion || !reflect.DeepEqual(issues, a.ws.Status.Issues()) || !reflect.DeepEqual(notices, a.ws.Status.Notifications(true)) || !reflect.DeepEqual(agents, a.ws.Status.Agents()) || !reflect.DeepEqual(operations, a.ws.Status.Operations()) || a.ws.Status.UnreadCount() != 1 {
+	// Equal timestamps leave the status owner's map-backed issue order unspecified.
+	afterIssues := a.ws.Status.Issues()
+	sort.Slice(issues, func(i, j int) bool { return issues[i].ID < issues[j].ID })
+	sort.Slice(afterIssues, func(i, j int) bool { return afterIssues[i].ID < afterIssues[j].ID })
+	if after != revision || a.ws.Status.Version() != statusVersion || !reflect.DeepEqual(issues, afterIssues) || !reflect.DeepEqual(notices, a.ws.Status.Notifications(true)) || !reflect.DeepEqual(agents, a.ws.Status.Agents()) || !reflect.DeepEqual(operations, a.ws.Status.Operations()) || a.ws.Status.UnreadCount() != 1 {
 		t.Fatal("read changed revision, issue detail or canonical notice markers")
 	}
 }

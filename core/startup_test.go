@@ -16,6 +16,9 @@ import (
 )
 
 func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
+	if isolatedStartupNavigation(t) {
+		return
+	}
 	home := t.TempDir()
 	setCoreTestHome(t, home)
 	desktop := filepath.Join(home, "Desktop")
@@ -37,7 +40,8 @@ func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	for _, root := range []string{home, desktop, filepath.VolumeName(home) + string(filepath.Separator)} {
+	knownDesktop := testDesktop(t, home)
+	for _, root := range []string{home, knownDesktop, filepath.VolumeName(home) + string(filepath.Separator)} {
 		out := callCore(t, c, "inspect", "", coreprotocol.StartupInspect, coreprotocol.StartupInspectRequest{Root: root})
 		var snapshot coreprotocol.StartupSnapshot
 		if err := coreprotocol.Decode(out.Payload, &snapshot); err != nil {
@@ -45,6 +49,9 @@ func TestStartupNavigationNeverConstructsWorkspace(t *testing.T) {
 		}
 		if snapshot.FolderKind == "" || snapshot.PathError != "" {
 			t.Fatalf("not classified: %+v", snapshot)
+		}
+		if root == knownDesktop && snapshot.FolderKind != "personal" {
+			t.Fatalf("known Desktop not classified personal: %+v", snapshot)
 		}
 		raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AttachRequest{Root: root}))
 		attached := c.Call(t.Context(), coreprotocol.Request{ID: "forbidden-attach", Owner: c.Owner, Method: coreprotocol.Attach, Payload: raw})
