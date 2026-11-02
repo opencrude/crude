@@ -51,7 +51,8 @@ type AssemblyLanguage struct {
 	// Root is the project root a whole-project check uses.
 	Root string
 	// Package names the catalog package that can provide the server, and
-	// Installable says whether it has a download for this computer.
+	// Installable says whether Crude can install it on this computer
+	// (catalog Package.DownloadFor).
 	Package     string
 	Installable bool
 	// Reason is user text that states the result and the next step.
