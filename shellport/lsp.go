@@ -43,6 +43,9 @@ type LSPService interface {
 	// Diagnostic counts remain project-scoped until the cache records server
 	// origin.
 	ServerHealthSnapshots() []types.LSPServerHealth
+	// Assembly is the project's code-intelligence plan: languages found,
+	// the server for each, where it comes from and what it checks.
+	Assembly() types.AssemblyPlan
 	// ServerReady returns true when at least one LSP client has reached the
 	// connected state. Used by the right-click context menu to enable LSP-backed
 	// items.

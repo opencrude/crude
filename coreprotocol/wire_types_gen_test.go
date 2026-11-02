@@ -400,6 +400,8 @@ var wireTypes = []any{
 	new(p14.AgentStatusSnapshot),
 	new(p14.AgentsSettings),
 	new(p14.AppSettings),
+	new(p14.AssemblyLanguage),
+	new(p14.AssemblyPlan),
 	new(p14.AutoPermissionSettings),
 	new(p14.AutoSaveMode),
 	new(p14.CategorySettings),

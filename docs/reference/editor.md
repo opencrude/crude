@@ -216,6 +216,10 @@ refresh after success without dropping the query/replacement draft.
 - Automatic saves are opt-in and text-only. They never format, reload, move the
   cursor, clear selection/undo, or emit synthetic text changes. Manual format
   runs on an immutable snapshot and applies as one revision-checked undo group.
+  The formatter is the one the [catalog](code-intelligence-catalog.md) names
+  for the file's language (`FormatDocument` in `workspace/document_format.go`),
+  run over standard input and output; a language without one keeps its exact
+  bytes. Toggle comment uses the language's first catalog line comment token.
 - Save acknowledgements identify an exact buffer revision. Newer text remains
   dirty. Exact watcher reconciliation replaces time-based self-event suppression;
   known external changes fail closed and preserve both local and disk content.
@@ -945,8 +949,7 @@ same trust, master switch, start policy, pause, `MaxServers` and governor
 admission as document servers, and shares a process with documents that resolve
 to the same root and launch configuration. It is exempt from idle retirement
 while it is wanted. It never causes `didOpen` for a file the user did not open.
-Nothing calls `SetProjectProducers` yet; the assembly service of the
-[IDE plan](../plans/autonomous-code-intelligence.md#current-checkpoint) does.
+The assembly service (below) is its caller.
 
 The transport routes unversioned `publishDiagnostics` for files the client has
 not opened to `OnUnopenedDiagnostics`. A versioned publication for an unopened
@@ -967,7 +970,40 @@ Only reports inside both the workspace root and the producer root are accepted.
   diagnostic opens the file and applies the location unless the buffer has
   unsaved changes.
 
-The coverage view that states what each producer checks is not built yet.
+#### Assembly service and coverage
+
+The assembly service (`workspace/lsp_assembly.go`) plans the project's code
+intelligence from data. It runs no project code.
+
+1. **Discovery.** A bounded listing of file names (`third_party/pathwalk`, two
+   workers, at most 100,000 entries, hidden folders and symbolic links not
+   followed) counts files per language through the
+   [catalog](code-intelligence-catalog.md) and custom languages. A larger
+   project is marked limited.
+2. **Resolution.** For each language, launch resolution picks the server. The
+   program is looked up without starting it: an absolute path from settings,
+   then the tool store, then the system path. Path folders inside the
+   workspace are skipped, so a project cannot supply its own server program.
+3. **Plan.** One `types.AssemblyPlan` per workspace: each language with its
+   file count, server, program, source, status (ready, not installed, off, no
+   known server), checked scope and a plain reason. The manager publishes it
+   in its snapshot (`Assembly()` on the shell port) and the control API's
+   diagnostics `lsp` view lists it.
+4. **Activation.** A ready server whose catalog scope is `project` becomes a
+   project producer at its project root. A server found in the tool store
+   launches from there. A server that is not installed never launches: the
+   status names the missing program, and editing stays usable.
+
+The workspace starts the service when its analysis runtime starts. Settings
+changes and **Start Language Servers** run it again; a newer run cancels an
+older one and a stale result is dropped. Close cancels and joins it.
+
+Coverage is shown where the user looks for problems. Each server row in the
+workspace panel states what it checks ("Checks the whole project, including
+files that are not open." or "Checks open files only."), and **Project
+Languages** lists every language found, with the server, the program and the
+reason. A language whose server is not installed offers **Check again** after
+installation.
 
 The language-server manager derives the active file's visible language status.
 The editor header shows error and warning counts, or that status label. The

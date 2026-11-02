@@ -1,6 +1,7 @@
 package types
 
 import (
+	"crude/insight/catalog"
 	"encoding/json"
 	"maps"
 	"reflect"
@@ -75,10 +76,15 @@ func (o WorkspaceOverrides) IsEmpty() bool {
 }
 
 // DefaultLSPSettings is the application-level language-intelligence baseline.
+//
+// Languages has an enabled entry for every catalog language with a language
+// server. An entry without a command follows the catalog's first server.
 func DefaultLSPSettings() LSPSettings {
-	languages := make(map[string]LSPLanguageSettings, 16)
-	for _, lang := range DefaultLSPLanguages() {
-		languages[lang.ID] = LSPLanguageSettings{Enabled: true, Command: lang.DefaultCmd, Args: append([]string(nil), lang.DefaultArgs...)}
+	languages := map[string]LSPLanguageSettings{}
+	for _, language := range catalog.Current().Languages() {
+		if len(language.Servers) > 0 {
+			languages[language.ID] = LSPLanguageSettings{Enabled: true}
+		}
 	}
 	return LSPSettings{
 		Enabled:            true,
@@ -255,7 +261,6 @@ func NormalizeLSP(s LSPSettings) LSPSettings {
 	if s.MaxDocumentBytes == 0 {
 		s.MaxDocumentBytes = def.MaxDocumentBytes
 	}
-
 	if s.Languages == nil {
 		s.Languages = def.Languages
 	} else {
@@ -661,43 +666,6 @@ func cloneStringMap(src map[string]string) map[string]string {
 func (s LSPSettings) LanguageEnabled(ext string) bool {
 	_, ok := s.ResolveServer("document" + ext)
 	return ok
-}
-
-// ServerOverride returns an explicit command/argument definition without defaults.
-func (s LSPSettings) ServerOverride(ext string) (cmd string, args []string, ok bool) {
-	id, _ := s.languageForExtension(ext)
-	if lang, exists := s.Languages[id]; exists && !lang.Enabled {
-		return "", nil, false
-	}
-	lang, exists := s.Languages[id]
-	if !exists || lang.Command == "" {
-		return "", nil, false
-	}
-	def := languageByID(id)
-	if def.DefaultCmd == lang.Command && equalStrings(def.DefaultArgs, lang.Args) {
-		return "", nil, false
-	}
-	return lang.Command, append([]string(nil), lang.Args...), true
-}
-
-func languageIDForExt(ext string) string {
-	for _, lang := range DefaultLSPLanguages() {
-		for _, candidate := range lang.Exts {
-			if candidate == ext {
-				return lang.ID
-			}
-		}
-	}
-	return ""
-}
-
-func languageByID(id string) LSPLanguage {
-	for _, lang := range DefaultLSPLanguages() {
-		if lang.ID == id {
-			return lang
-		}
-	}
-	return LSPLanguage{}
 }
 
 func equalStrings(a, b []string) bool {

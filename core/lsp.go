@@ -116,6 +116,7 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 		out.Symbols[path] = cloneLSPSymbols(symbols)
 	}
 	out.Insights, out.Health = manager.ProjectInsights(), manager.ServerHealthSnapshots()
+	out.Assembly = manager.Assembly()
 	out.Settings = types.CloneLSPSettings(manager.Settings())
 	out.Connected, out.Status, out.Error = manager.Status()
 	out.Ready = manager.ServerReady()

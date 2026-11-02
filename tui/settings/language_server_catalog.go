@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/insight/catalog"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
@@ -262,13 +263,11 @@ func (c *lspCatalog) applyDraft() {
 	}
 }
 
+// builtinLSP reports a catalog language that has a language server.
 func builtinLSP(id string) bool {
-	for _, def := range types.DefaultLSPLanguages() {
-		if def.ID == id {
-			return true
-		}
-	}
-	return false
+	c := catalog.Current()
+	language, ok := c.Language(id)
+	return ok && len(language.Servers) > 0
 }
 
 func (c *lspCatalog) closeEditor() {
@@ -386,9 +385,17 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 		return c.changed()
 	case "lsp.toggle":
 		if server, ok := c.selected(); ok {
+			// Store only the switch: the command keeps following the
+			// catalog unless the user chose another one.
 			c.mutate(func(m *Model) {
-				cfg := server.cfg
-				cfg.Enabled = !cfg.Enabled
+				cfg := m.lspLanguages[server.id]
+				if !server.builtin {
+					cfg = server.cfg
+				}
+				cfg.Enabled = !server.cfg.Enabled
+				if m.lspLanguages == nil {
+					m.lspLanguages = map[string]types.LSPLanguageSettings{}
+				}
 				m.lspLanguages[server.id] = cfg
 			})
 		}
@@ -401,6 +408,7 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 			}
 		}
 		if builtinLSP(id) {
+			// The default entry is on and follows the catalog.
 			c.mutate(func(m *Model) {
 				m.lspLanguages[id] = types.DefaultLSPSettings().Languages[id]
 				if m.Scope() == types.SettingsScopeWorkspace {

@@ -38,7 +38,27 @@ type Language struct {
 	Roots          []string
 	WorkspaceRoots []string
 	Servers        []string
-	Provenance     []Provenance
+	// Editor data; see LanguageRecord.
+	CommentTokens []string
+	BlockComment  *BlockComment
+	Grammar       string
+	Formatter     *Formatter
+	Provenance    []Provenance
+}
+
+// Formatter formats a document through standard input and output.
+type Formatter struct {
+	Command string
+	Args    []string
+}
+
+// ArgsFor returns the arguments with "{file}" replaced by path.
+func (f Formatter) ArgsFor(path string) []string {
+	out := make([]string, len(f.Args))
+	for i, arg := range f.Args {
+		out[i] = strings.ReplaceAll(arg, "{file}", path)
+	}
+	return out
 }
 
 // Hints are soft resource defaults. String values "{threads}" and
@@ -378,14 +398,29 @@ func (c *Catalog) Names() []string {
 	return out
 }
 
+// ExtensionOwners returns the IDs of the languages that claim a lowercase
+// extension such as ".go", sorted.
+func (c *Catalog) ExtensionOwners(ext string) []string {
+	return slices.Clone(c.byExtension[ext])
+}
+
 func (c *Catalog) language(record LanguageRecord) Language {
-	return Language{
+	out := Language{
 		ID: record.ID, Name: record.Name, Linguist: slices.Clone(record.Linguist),
 		Extensions: slices.Clone(record.Extensions), Filenames: slices.Clone(record.Filenames),
 		Interpreters: slices.Clone(record.Interpreters), LSPLanguageID: record.LSPLanguageID, Roots: slices.Clone(record.Roots),
 		WorkspaceRoots: slices.Clone(record.WorkspaceRoots), Servers: slices.Clone(record.Servers),
+		CommentTokens: slices.Clone(record.CommentTokens), Grammar: record.Grammar,
 		Provenance: c.provenance(record.Sources),
 	}
+	if record.BlockComment != nil {
+		block := *record.BlockComment
+		out.BlockComment = &block
+	}
+	if record.Formatter != nil {
+		out.Formatter = &Formatter{Command: record.Formatter.Command, Args: slices.Clone(record.Formatter.Args)}
+	}
+	return out
 }
 
 func (c *Catalog) provenance(ids []string) []Provenance {
@@ -403,6 +438,16 @@ func (c *Catalog) provenance(ids []string) []Provenance {
 func cloneLanguageRecord(v LanguageRecord) LanguageRecord {
 	v.Linguist, v.Extensions, v.Filenames, v.Interpreters = slices.Clone(v.Linguist), slices.Clone(v.Extensions), slices.Clone(v.Filenames), slices.Clone(v.Interpreters)
 	v.Roots, v.WorkspaceRoots, v.Servers, v.Sources = slices.Clone(v.Roots), slices.Clone(v.WorkspaceRoots), slices.Clone(v.Servers), slices.Clone(v.Sources)
+	v.CommentTokens = slices.Clone(v.CommentTokens)
+	if v.BlockComment != nil {
+		block := *v.BlockComment
+		v.BlockComment = &block
+	}
+	if v.Formatter != nil {
+		f := *v.Formatter
+		f.Args = slices.Clone(f.Args)
+		v.Formatter = &f
+	}
 	return v
 }
 

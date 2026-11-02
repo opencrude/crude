@@ -45,9 +45,66 @@
       "servers": [
         "ada-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "ada",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "adl",
+      "name": "adl",
+      "extensions": [
+        ".adl"
+      ],
+      "lsp_language_id": "adl",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "adl",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "agda",
+      "name": "Agda",
+      "linguist": [
+        "Agda"
+      ],
+      "extensions": [
+        ".agda"
+      ],
+      "lsp_language_id": "agda",
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "agda",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "alloy",
+      "name": "alloy",
+      "extensions": [
+        ".alloy"
+      ],
+      "lsp_language_id": "alloy",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "alloy",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -60,6 +117,11 @@
       "servers": [
         "amber-lsp"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "grammar": "amber",
       "sources": [
         "helix"
       ]
@@ -77,6 +139,11 @@
       "servers": [
         "astro-ls"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "astro",
       "sources": [
         "helix",
         "linguist"
@@ -104,6 +171,10 @@
       "servers": [
         "awk-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "awk",
       "sources": [
         "helix",
         "linguist"
@@ -141,12 +212,9 @@
         "zlogout",
         "zprofile",
         "zshrc",
-        "Renviron",
         "*.Renviron",
         "cshrc",
-        "bashrc_Apple_Terminal",
         "*.bashrc_Apple_Terminal",
-        "zshrc_Apple_Terminal",
         "*.zshrc_Apple_Terminal",
         ".tmux.conf",
         "tmux.conf",
@@ -194,6 +262,33 @@
       "servers": [
         "bash-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "bash",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "basic",
+      "name": "basic",
+      "linguist": [
+        "B4X",
+        "BASIC",
+        "QuickBASIC",
+        "VBA",
+        "Visual Basic 6.0"
+      ],
+      "extensions": [
+        ".bas"
+      ],
+      "lsp_language_id": "basic",
+      "comment_tokens": [
+        "REM"
+      ],
+      "grammar": "basic",
       "sources": [
         "helix",
         "linguist"
@@ -209,8 +304,34 @@
       "servers": [
         "bass"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "bass",
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "batch",
+      "name": "Batchfile",
+      "linguist": [
+        "Batchfile"
+      ],
+      "extensions": [
+        ".bat",
+        ".cmd",
+        ".btm"
+      ],
+      "lsp_language_id": "batch",
+      "comment_tokens": [
+        "REM",
+        "::"
+      ],
+      "grammar": "batch",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -224,6 +345,10 @@
       "servers": [
         "beancount-language-server"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "beancount",
       "sources": [
         "helix"
       ]
@@ -241,6 +366,23 @@
       "servers": [
         "texlab"
       ],
+      "comment_tokens": [
+        "%"
+      ],
+      "grammar": "bibtex",
+      "formatter": {
+        "command": "bibtex-tidy",
+        "args": [
+          "-",
+          "--curly",
+          "--drop-all-caps",
+          "--remove-empty-fields",
+          "--sort-fields",
+          "--sort=year,author,id",
+          "--strip-enclosing-braces",
+          "--trailing-commas"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -260,6 +402,14 @@
       "servers": [
         "bicep-langserver"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "bicep",
       "sources": [
         "helix",
         "linguist"
@@ -280,6 +430,33 @@
       "servers": [
         "bitbake-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "bitbake",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "blade",
+      "name": "Blade",
+      "linguist": [
+        "Blade"
+      ],
+      "extensions": [
+        ".blade"
+      ],
+      "filenames": [
+        "*.blade.php"
+      ],
+      "lsp_language_id": "blade",
+      "roots": [
+        "composer.json",
+        "index.php"
+      ],
+      "grammar": "blade",
       "sources": [
         "helix",
         "linguist"
@@ -295,6 +472,31 @@
       "servers": [
         "blueprint-compiler"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "blueprint",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "bovex",
+      "name": "bovex",
+      "extensions": [
+        ".bovex",
+        ".bibvex"
+      ],
+      "lsp_language_id": "bovex",
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "bovex",
       "sources": [
         "helix"
       ]
@@ -321,6 +523,14 @@
       "servers": [
         "clangd"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "c",
       "sources": [
         "crude-authored",
         "helix",
@@ -353,6 +563,15 @@
         "roslyn-language-server",
         "omnisharp"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "c-sharp",
       "sources": [
         "crude-authored",
         "helix",
@@ -377,6 +596,14 @@
       "servers": [
         "c3-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "c3",
       "sources": [
         "helix",
         "linguist"
@@ -399,6 +626,43 @@
       "servers": [
         "haskell-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "cabal",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "caddyfile",
+      "name": "Caddyfile",
+      "linguist": [
+        "Caddyfile"
+      ],
+      "extensions": [
+        ".caddyfile"
+      ],
+      "filenames": [
+        "*.Caddyfile",
+        "Caddyfile",
+        "Caddyfile.*",
+        "caddyfile",
+        "caddyfile.*"
+      ],
+      "lsp_language_id": "caddyfile",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "caddyfile",
+      "formatter": {
+        "command": "caddy",
+        "args": [
+          "fmt",
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -418,9 +682,66 @@
       "servers": [
         "cairo-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "cairo",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "capnp",
+      "name": "Cap'n Proto",
+      "linguist": [
+        "Cap'n Proto"
+      ],
+      "extensions": [
+        ".capnp"
+      ],
+      "lsp_language_id": "capnp",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "capnp",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "cel",
+      "name": "cel",
+      "extensions": [
+        ".cel"
+      ],
+      "lsp_language_id": "cel",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "cel",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "chuck",
+      "name": "chuck",
+      "filenames": [
+        "*.ck"
+      ],
+      "lsp_language_id": "chuck",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "chuck",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -439,6 +760,10 @@
       "servers": [
         "circom-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "circom",
       "sources": [
         "helix",
         "linguist"
@@ -460,6 +785,10 @@
       "servers": [
         "clarinet"
       ],
+      "comment_tokens": [
+        ";;"
+      ],
+      "grammar": "clarity",
       "sources": [
         "helix",
         "linguist"
@@ -494,6 +823,17 @@
       "servers": [
         "clojure-lsp"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "clojure",
+      "formatter": {
+        "command": "cljfmt",
+        "args": [
+          "fix",
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -516,6 +856,14 @@
         "neocmakelsp",
         "cmake-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "#[[",
+        "end": "]]"
+      },
+      "grammar": "cmake",
       "sources": [
         "helix",
         "linguist"
@@ -535,6 +883,14 @@
       "servers": [
         "codeql"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ql",
       "sources": [
         "helix",
         "linguist"
@@ -549,7 +905,6 @@
       "extensions": [
         ".lisp",
         ".asd",
-        ".cl",
         ".l",
         ".lsp",
         ".ny",
@@ -568,6 +923,49 @@
       "servers": [
         "cl-lsp"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "commonlisp",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "concerto",
+      "name": "concerto",
+      "extensions": [
+        ".cto"
+      ],
+      "lsp_language_id": "concerto",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "concerto",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "cpon",
+      "name": "Component Pascal",
+      "linguist": [
+        "Component Pascal"
+      ],
+      "extensions": [
+        ".cpon",
+        ".cp"
+      ],
+      "lsp_language_id": "cpon",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "cpon",
       "sources": [
         "helix",
         "linguist"
@@ -600,9 +998,7 @@
         ".inl"
       ],
       "filenames": [
-        "C",
         "*.C",
-        "H",
         "*.H",
         ".hpp.in",
         ".h.in"
@@ -616,6 +1012,17 @@
       "servers": [
         "clangd"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "cpp",
+      "formatter": {
+        "command": "clang-format"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -633,6 +1040,10 @@
         "taplo",
         "tombi"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "toml",
       "sources": [
         "helix"
       ]
@@ -658,6 +1069,18 @@
         "crystalline",
         "ameba-ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "crystal",
+      "formatter": {
+        "command": "crystal",
+        "args": [
+          "tool",
+          "format",
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -676,6 +1099,27 @@
       "servers": [
         "vscode-css-language-server"
       ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "css",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "csv",
+      "name": "CSV",
+      "linguist": [
+        "CSV"
+      ],
+      "extensions": [
+        ".csv"
+      ],
+      "lsp_language_id": "csv",
+      "grammar": "csv",
       "sources": [
         "helix",
         "linguist"
@@ -698,6 +1142,65 @@
       "servers": [
         "cuelsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "cue",
+      "formatter": {
+        "command": "cue",
+        "args": [
+          "fmt",
+          "-"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "cylc",
+      "name": "Cylc",
+      "linguist": [
+        "Cylc"
+      ],
+      "extensions": [
+        ".cylc"
+      ],
+      "filenames": [
+        "suite.rc"
+      ],
+      "lsp_language_id": "cylc",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "cylc",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "cython",
+      "name": "Cython",
+      "linguist": [
+        "Cython"
+      ],
+      "extensions": [
+        ".pxd",
+        ".pxi",
+        ".pyx"
+      ],
+      "lsp_language_id": "cython",
+      "roots": [
+        "pyproject.toml",
+        "setup.py",
+        "poetry.lock"
+      ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "cython",
       "sources": [
         "helix",
         "linguist"
@@ -721,6 +1224,17 @@
       "servers": [
         "serve-d"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "d",
+      "formatter": {
+        "command": "dfmt"
+      },
       "sources": [
         "helix",
         "linguist"
@@ -745,9 +1259,33 @@
       "servers": [
         "dart"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "dart",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "dbml",
+      "name": "dbml",
+      "extensions": [
+        ".dbml"
+      ],
+      "lsp_language_id": "dbml",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "dbml",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -765,6 +1303,10 @@
       "servers": [
         "debian-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "debian",
       "sources": [
         "helix",
         "linguist"
@@ -781,6 +1323,14 @@
       "servers": [
         "dts-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "devicetree",
       "sources": [
         "helix"
       ]
@@ -798,9 +1348,61 @@
       "servers": [
         "dhall-lsp-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "dhall",
+      "formatter": {
+        "command": "dhall",
+        "args": [
+          "format"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "diff",
+      "name": "Diff",
+      "linguist": [
+        "Diff"
+      ],
+      "extensions": [
+        ".diff",
+        ".patch",
+        ".rej"
+      ],
+      "lsp_language_id": "diff",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "diff",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "djot",
+      "name": "djot",
+      "extensions": [
+        ".dj",
+        ".djot"
+      ],
+      "lsp_language_id": "djot",
+      "block_comment": {
+        "start": "{%",
+        "end": "%}"
+      },
+      "grammar": "djot",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -814,6 +1416,14 @@
       "servers": [
         "docker-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "hcl",
       "sources": [
         "helix"
       ]
@@ -839,6 +1449,10 @@
         "yaml-language-server",
         "docker-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "yaml",
       "sources": [
         "helix"
       ]
@@ -854,13 +1468,13 @@
         ".containerfile"
       ],
       "filenames": [
-        "Dockerfile",
         "*.Dockerfile",
+        "Dockerfile",
         "Dockerfile.*",
         "dockerfile",
         "dockerfile.*",
-        "Containerfile",
         "*.Containerfile",
+        "Containerfile",
         "Containerfile.*",
         "containerfile",
         "containerfile.*"
@@ -874,6 +1488,13 @@
         "docker-langserver",
         "docker-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "dockerfile",
+      "formatter": {
+        "command": "dockerfmt"
+      },
       "sources": [
         "helix",
         "linguist"
@@ -892,9 +1513,32 @@
       "servers": [
         "dot-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "dot",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "doxyfile",
+      "name": "doxyfile",
+      "filenames": [
+        "Doxyfile"
+      ],
+      "lsp_language_id": "doxyfile",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "doxyfile",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -911,8 +1555,61 @@
       "servers": [
         "drools-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "drools",
+      "formatter": {
+        "command": "drools-fmt"
+      },
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "dtd",
+      "name": "dtd",
+      "extensions": [
+        ".dtd",
+        ".ent"
+      ],
+      "lsp_language_id": "dtd",
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "dtd",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "dune",
+      "name": "Dune",
+      "linguist": [
+        "Dune"
+      ],
+      "filenames": [
+        "dune-project",
+        "dune"
+      ],
+      "lsp_language_id": "dune",
+      "roots": [
+        "dune-project"
+      ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "scheme",
+      "formatter": {
+        "command": "dune",
+        "args": [
+          "format-dune-file"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -931,6 +1628,10 @@
       "servers": [
         "earthlyls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "earthfile",
       "sources": [
         "helix",
         "linguist"
@@ -949,9 +1650,47 @@
       "servers": [
         "ebnfer"
       ],
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "ebnf",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "edoc",
+      "name": "edoc",
+      "extensions": [
+        ".edoc",
+        ".edoc.in"
+      ],
+      "lsp_language_id": "edoc",
+      "grammar": "edoc",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "eex",
+      "name": "eex",
+      "extensions": [
+        ".eex"
+      ],
+      "lsp_language_id": "eex",
+      "roots": [
+        "mix.exs",
+        "mix.lock"
+      ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "eex",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -974,6 +1713,49 @@
       "servers": [
         "eiffel-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "eiffel",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "ejs",
+      "name": "EJS",
+      "linguist": [
+        "EJS"
+      ],
+      "extensions": [
+        ".ejs"
+      ],
+      "lsp_language_id": "ejs",
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "embedded-template",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "elisp",
+      "name": "Emacs Lisp",
+      "linguist": [
+        "Emacs Lisp"
+      ],
+      "extensions": [
+        ".el"
+      ],
+      "lsp_language_id": "elisp",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "elisp",
       "sources": [
         "helix",
         "linguist"
@@ -1004,6 +1786,10 @@
         "elixir-ls",
         "expert"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "elixir",
       "sources": [
         "helix",
         "linguist"
@@ -1025,6 +1811,14 @@
       "servers": [
         "elm-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "elm",
       "sources": [
         "helix",
         "linguist"
@@ -1046,6 +1840,77 @@
       "servers": [
         "elvish"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "elvish",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "embedded-perl",
+      "name": "embedded-perl",
+      "extensions": [
+        ".ep"
+      ],
+      "filenames": [
+        "*.html.ep"
+      ],
+      "lsp_language_id": "embedded-perl",
+      "comment_tokens": [
+        "%#"
+      ],
+      "grammar": "embedded-perl",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "env",
+      "name": "env",
+      "linguist": [
+        "Dotenv",
+        "Shell"
+      ],
+      "filenames": [
+        ".env",
+        ".env.*",
+        ".envrc",
+        ".envrc.*",
+        "_environment",
+        "_environment-*",
+        "_environment.local",
+        "_environment.required",
+        ".bazeliskrc",
+        ".gitlab-ci-local-env"
+      ],
+      "lsp_language_id": "env",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "bash",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "erb",
+      "name": "HTML+ERB",
+      "linguist": [
+        "HTML+ERB"
+      ],
+      "extensions": [
+        ".erb"
+      ],
+      "lsp_language_id": "erb",
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "embedded-template",
       "sources": [
         "helix",
         "linguist"
@@ -1078,6 +1943,34 @@
         "erlang-ls",
         "elp"
       ],
+      "comment_tokens": [
+        "%%"
+      ],
+      "grammar": "erlang",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "esdl",
+      "name": "EdgeQL",
+      "linguist": [
+        "EdgeQL"
+      ],
+      "extensions": [
+        ".gel",
+        ".esdl"
+      ],
+      "lsp_language_id": "esdl",
+      "roots": [
+        "gel.toml",
+        "edgedb.toml"
+      ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "esdl",
       "sources": [
         "helix",
         "linguist"
@@ -1100,9 +1993,52 @@
       "servers": [
         "fennel-ls"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "fennel",
+      "formatter": {
+        "command": "fnlfmt",
+        "args": [
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "fga",
+      "name": "fga",
+      "extensions": [
+        ".fga"
+      ],
+      "filenames": [
+        "fga.mod"
+      ],
+      "lsp_language_id": "fga",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "fga",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "fidl",
+      "name": "fidl",
+      "extensions": [
+        ".fidl"
+      ],
+      "lsp_language_id": "fidl",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "fidl",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -1121,6 +2057,32 @@
       "servers": [
         "fish-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "fish",
+      "formatter": {
+        "command": "fish_indent"
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "flatbuffers",
+      "name": "FlatBuffers",
+      "linguist": [
+        "FlatBuffers"
+      ],
+      "extensions": [
+        ".fbs"
+      ],
+      "lsp_language_id": "flatbuffers",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "flatbuffers",
       "sources": [
         "helix",
         "linguist"
@@ -1133,7 +2095,6 @@
         "Forth"
       ],
       "extensions": [
-        ".fs",
         ".forth",
         ".fth",
         ".4th"
@@ -1142,6 +2103,10 @@
       "servers": [
         "forth-lsp"
       ],
+      "comment_tokens": [
+        "\\"
+      ],
+      "grammar": "forth",
       "sources": [
         "helix",
         "linguist"
@@ -1161,13 +2126,9 @@
         ".f03"
       ],
       "filenames": [
-        "F",
         "*.F",
-        "F90",
         "*.F90",
-        "F95",
         "*.F95",
-        "F03",
         "*.F03"
       ],
       "lsp_language_id": "fortran",
@@ -1177,6 +2138,32 @@
       "servers": [
         "fortls"
       ],
+      "comment_tokens": [
+        "!"
+      ],
+      "grammar": "fortran",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "freebasic",
+      "name": "freebasic",
+      "linguist": [
+        "FreeBASIC",
+        "QuickBASIC"
+      ],
+      "extensions": [
+        ".bas",
+        ".bi"
+      ],
+      "lsp_language_id": "freebasic",
+      "comment_tokens": [
+        "'",
+        "REM"
+      ],
+      "grammar": "freebasic",
       "sources": [
         "helix",
         "linguist"
@@ -1203,6 +2190,15 @@
       "servers": [
         "fsharp-ls"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "fsharp",
       "sources": [
         "helix",
         "linguist"
@@ -1221,6 +2217,10 @@
       "servers": [
         "asm-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gas",
       "sources": [
         "helix",
         "linguist"
@@ -1242,6 +2242,52 @@
       "servers": [
         "godot"
       ],
+      "comment_tokens": [
+        "#",
+        "##"
+      ],
+      "grammar": "gdscript",
+      "formatter": {
+        "command": "gdformat",
+        "args": [
+          "-"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "linguist": [
+        "Gemini"
+      ],
+      "extensions": [
+        ".gmi"
+      ],
+      "lsp_language_id": "gemini",
+      "grammar": "gemini",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "gherkin",
+      "name": "Gherkin",
+      "linguist": [
+        "Gherkin"
+      ],
+      "extensions": [
+        ".feature"
+      ],
+      "lsp_language_id": "gherkin",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gherkin",
       "sources": [
         "helix",
         "linguist"
@@ -1257,8 +2303,31 @@
       "servers": [
         "ghostty-ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "ghostty",
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "git-attributes",
+      "name": "Git Attributes",
+      "linguist": [
+        "Git Attributes"
+      ],
+      "filenames": [
+        ".gitattributes"
+      ],
+      "lsp_language_id": "git-attributes",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gitattributes",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -1272,6 +2341,10 @@
         "taplo",
         "tombi"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "toml",
       "sources": [
         "helix"
       ]
@@ -1291,9 +2364,95 @@
       "servers": [
         "commit-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gitcommit",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "git-config",
+      "name": "Git Config",
+      "linguist": [
+        "Git Config"
+      ],
+      "extensions": [
+        ".gitconfig"
+      ],
+      "filenames": [
+        ".gitmodules",
+        "gitconfig",
+        ".gitconfig",
+        "config.worktree",
+        ".lfsconfig"
+      ],
+      "lsp_language_id": "git-config",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "git-config",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "git-ignore",
+      "name": "git-ignore",
+      "linguist": [
+        "CODEOWNERS",
+        "Git Revision List",
+        "Ignore List"
+      ],
+      "filenames": [
+        ".gitignore_global",
+        ".ignore",
+        "CODEOWNERS",
+        ".*ignore",
+        ".git-blame-ignore-revs"
+      ],
+      "lsp_language_id": "git-ignore",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gitignore",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "git-notes",
+      "name": "git-notes",
+      "filenames": [
+        "NOTES_EDITMSG",
+        "EDIT_DESCRIPTION"
+      ],
+      "lsp_language_id": "git-notes",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gitcommit",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "git-rebase",
+      "name": "git-rebase",
+      "filenames": [
+        "git-rebase-todo"
+      ],
+      "lsp_language_id": "git-rebase",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "git-rebase",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -1307,6 +2466,10 @@
         "yaml-language-server",
         "gitlab-ci-ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "yaml",
       "sources": [
         "helix"
       ]
@@ -1330,6 +2493,14 @@
         "vscode-eslint-language-server",
         "ember-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "glimmer-javascript",
       "sources": [
         "helix",
         "linguist"
@@ -1351,6 +2522,12 @@
       "servers": [
         "gleam"
       ],
+      "comment_tokens": [
+        "//",
+        "///",
+        "////"
+      ],
+      "grammar": "gleam",
       "sources": [
         "helix",
         "linguist"
@@ -1376,6 +2553,65 @@
         "glsl_analyzer",
         "glsld"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "glsl",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "gn",
+      "name": "GN",
+      "linguist": [
+        "GN"
+      ],
+      "extensions": [
+        ".gn",
+        ".gni"
+      ],
+      "interpreters": [
+        "gn"
+      ],
+      "lsp_language_id": "gn",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gn",
+      "formatter": {
+        "command": "gn",
+        "args": [
+          "format",
+          "--stdin"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "gnuplot",
+      "name": "Gnuplot",
+      "linguist": [
+        "Gnuplot"
+      ],
+      "extensions": [
+        ".gnuplot",
+        ".plot",
+        ".plt"
+      ],
+      "lsp_language_id": "gnuplot",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "gnuplot",
       "sources": [
         "helix",
         "linguist"
@@ -1401,8 +2637,44 @@
       "servers": [
         "gopls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "go",
+      "formatter": {
+        "command": "gofmt"
+      },
       "sources": [
         "crude-authored",
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "godot-resource",
+      "name": "Godot Resource",
+      "linguist": [
+        "Godot Resource"
+      ],
+      "extensions": [
+        ".tscn",
+        ".tres",
+        ".godot",
+        ".gdextension"
+      ],
+      "lsp_language_id": "godot-resource",
+      "roots": [
+        "project.godot"
+      ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "godot-resource",
+      "sources": [
         "helix",
         "linguist"
       ]
@@ -1420,6 +2692,10 @@
       "servers": [
         "gopls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "gomod",
       "sources": [
         "helix",
         "linguist"
@@ -1438,6 +2714,14 @@
       "servers": [
         "gopls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "gotmpl",
       "sources": [
         "helix",
         "linguist"
@@ -1456,6 +2740,10 @@
       "servers": [
         "gopls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "gowork",
       "sources": [
         "helix",
         "linguist"
@@ -1474,6 +2762,10 @@
       "servers": [
         "ada-gpr-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "gpr",
       "sources": [
         "helix"
       ]
@@ -1493,6 +2785,64 @@
       "servers": [
         "graphql-language-service"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "\"\"\"",
+        "end": "\"\"\""
+      },
+      "grammar": "graphql",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "gren",
+      "name": "gren",
+      "extensions": [
+        ".gren"
+      ],
+      "lsp_language_id": "gren",
+      "roots": [
+        "gren.json"
+      ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "gren",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "groovy",
+      "name": "Groovy",
+      "linguist": [
+        "Groovy"
+      ],
+      "extensions": [
+        ".gradle",
+        ".groovy",
+        ".jenkinsfile"
+      ],
+      "filenames": [
+        "Jenkinsfile",
+        "Jenkinsfile.*"
+      ],
+      "interpreters": [
+        "groovy"
+      ],
+      "lsp_language_id": "groovy",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "groovy",
       "sources": [
         "helix",
         "linguist"
@@ -1517,6 +2867,14 @@
         "vscode-eslint-language-server",
         "ember-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "glimmer-typescript",
       "sources": [
         "helix",
         "linguist"
@@ -1535,6 +2893,10 @@
       "servers": [
         "hare-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "hare",
       "sources": [
         "helix",
         "linguist"
@@ -1567,6 +2929,14 @@
       "servers": [
         "haskell-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "haskell",
       "sources": [
         "helix",
         "linguist"
@@ -1595,6 +2965,58 @@
       "servers": [
         "haskell-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "haskell-literate",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "haskell-persistent",
+      "name": "haskell-persistent",
+      "extensions": [
+        ".persistentmodels"
+      ],
+      "lsp_language_id": "haskell-persistent",
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "haskell-persistent",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "haxe",
+      "name": "Haxe",
+      "linguist": [
+        "Haxe"
+      ],
+      "extensions": [
+        ".hx"
+      ],
+      "lsp_language_id": "haxe",
+      "roots": [
+        "haxelib.json",
+        "project.xml",
+        "build.hxml"
+      ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "haxe",
       "sources": [
         "helix",
         "linguist"
@@ -1615,6 +3037,14 @@
       "servers": [
         "terraform-ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "hcl",
       "sources": [
         "helix",
         "linguist"
@@ -1630,6 +3060,7 @@
       "servers": [
         "hdls"
       ],
+      "grammar": "hdl",
       "sources": [
         "helix"
       ]
@@ -1652,9 +3083,64 @@
         "elixir-ls",
         "expert"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "heex",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "hocon",
+      "name": "hocon",
+      "filenames": [
+        "*scalafmt*.conf",
+        "*scalafix*.conf"
+      ],
+      "lsp_language_id": "hocon",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "hocon",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "hoon",
+      "name": "hoon",
+      "linguist": [
+        "hoon"
+      ],
+      "extensions": [
+        ".hoon"
+      ],
+      "lsp_language_id": "hoon",
+      "comment_tokens": [
+        "::"
+      ],
+      "grammar": "hoon",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "hosts",
+      "name": "hosts",
+      "filenames": [
+        "hosts"
+      ],
+      "lsp_language_id": "hosts",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "hosts",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -1682,8 +3168,35 @@
         "vscode-html-language-server",
         "superhtml"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "html",
       "sources": [
         "crude-authored",
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "hurl",
+      "name": "Hurl",
+      "linguist": [
+        "Hurl"
+      ],
+      "extensions": [
+        ".hurl"
+      ],
+      "lsp_language_id": "hurl",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "hurl",
+      "formatter": {
+        "command": "hurlfmt"
+      },
+      "sources": [
         "helix",
         "linguist"
       ]
@@ -1707,6 +3220,10 @@
       "servers": [
         "hyuga"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "scheme",
       "sources": [
         "helix",
         "linguist"
@@ -1725,6 +3242,140 @@
       "servers": [
         "idris2-lsp"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "idris",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "iex",
+      "name": "iex",
+      "extensions": [
+        ".iex"
+      ],
+      "lsp_language_id": "iex",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "iex",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "ini",
+      "name": "INI",
+      "linguist": [
+        "INI"
+      ],
+      "extensions": [
+        ".ini",
+        ".desktop",
+        ".cfg",
+        ".directory"
+      ],
+      "filenames": [
+        "mimeapps.list",
+        ".editorconfig",
+        ".npmrc",
+        "hgrc",
+        "npmrc",
+        "rclone.conf",
+        ".wslconfig",
+        ".buckconfig",
+        ".buckconfig.local"
+      ],
+      "lsp_language_id": "ini",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "ini",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "ink",
+      "name": "Ink",
+      "linguist": [
+        "Ink"
+      ],
+      "extensions": [
+        ".ink"
+      ],
+      "lsp_language_id": "ink",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ink",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "inko",
+      "name": "inko",
+      "extensions": [
+        ".inko"
+      ],
+      "lsp_language_id": "inko",
+      "roots": [
+        "inko.pkg"
+      ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "inko",
+      "formatter": {
+        "command": "inko",
+        "args": [
+          "fmt",
+          "-"
+        ]
+      },
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "janet",
+      "name": "Janet",
+      "linguist": [
+        "Janet"
+      ],
+      "extensions": [
+        ".cgen",
+        ".janet",
+        ".jdn"
+      ],
+      "interpreters": [
+        "janet"
+      ],
+      "lsp_language_id": "janet",
+      "roots": [
+        "project.janet"
+      ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "janet-simple",
+      "formatter": {
+        "command": "janet-format"
+      },
       "sources": [
         "helix",
         "linguist"
@@ -1750,6 +3401,14 @@
       "servers": [
         "jdtls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "java",
       "sources": [
         "helix",
         "linguist"
@@ -1795,10 +3454,79 @@
       "servers": [
         "typescript-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "javascript",
       "sources": [
         "crude-authored",
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "jinja",
+      "name": "Jinja",
+      "linguist": [
+        "Jinja"
+      ],
+      "extensions": [
+        ".jinja",
+        ".jinja2",
+        ".j2"
+      ],
+      "lsp_language_id": "jinja",
+      "block_comment": {
+        "start": "{#",
+        "end": "#}"
+      },
+      "grammar": "jinja2",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "jjdescription",
+      "name": "jjdescription",
+      "filenames": [
+        "*.jjdescription"
+      ],
+      "lsp_language_id": "jjdescription",
+      "comment_tokens": [
+        "JJ:"
+      ],
+      "grammar": "jjdescription",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "jjrevset",
+      "name": "jjrevset",
+      "extensions": [
+        ".jjrevset"
+      ],
+      "lsp_language_id": "jjrevset",
+      "grammar": "jjrevset",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "jjtemplate",
+      "name": "jjtemplate",
+      "extensions": [
+        ".jjtemplate"
+      ],
+      "lsp_language_id": "jjtemplate",
+      "grammar": "jjtemplate",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -1823,9 +3551,25 @@
       "servers": [
         "jq-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "jq",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "jsdoc",
+      "name": "jsdoc",
+      "extensions": [
+        ".jsdoc"
+      ],
+      "lsp_language_id": "jsdoc",
+      "grammar": "jsdoc",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -1883,6 +3627,7 @@
       "servers": [
         "vscode-json-language-server"
       ],
+      "grammar": "json",
       "sources": [
         "helix",
         "linguist"
@@ -1901,6 +3646,26 @@
       "servers": [
         "vscode-json-language-server"
       ],
+      "grammar": "json",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "json5",
+      "name": "JSON5",
+      "linguist": [
+        "JSON5"
+      ],
+      "extensions": [
+        ".json5"
+      ],
+      "lsp_language_id": "json5",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "json5",
       "sources": [
         "helix",
         "linguist"
@@ -1925,6 +3690,14 @@
       "servers": [
         "vscode-json-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "json",
       "sources": [
         "helix",
         "linguist"
@@ -1947,6 +3720,14 @@
       "servers": [
         "jsonnet-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "jsonnet",
       "sources": [
         "helix",
         "linguist"
@@ -1970,6 +3751,14 @@
       "servers": [
         "typescript-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "javascript",
       "sources": [
         "crude-authored",
         "helix",
@@ -1996,6 +3785,14 @@
       "servers": [
         "julia"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "#=",
+        "end": "=#"
+      },
+      "grammar": "julia",
       "sources": [
         "helix",
         "linguist"
@@ -2020,6 +3817,18 @@
       "servers": [
         "just-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "just",
+      "formatter": {
+        "command": "just",
+        "args": [
+          "--fmt",
+          "--justfile",
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -2035,6 +3844,77 @@
       "servers": [
         "kcl-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "kcl",
+      "formatter": {
+        "command": "zoo",
+        "args": [
+          "kcl",
+          "fmt",
+          "-"
+        ]
+      },
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "kconfig",
+      "name": "kconfig",
+      "filenames": [
+        "*.Kconfig",
+        "Kconfig.*"
+      ],
+      "lsp_language_id": "kconfig",
+      "grammar": "kconfig",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "kdl",
+      "name": "KDL",
+      "linguist": [
+        "KDL"
+      ],
+      "extensions": [
+        ".kdl"
+      ],
+      "lsp_language_id": "kdl",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "kdl",
+      "formatter": {
+        "command": "kdlfmt",
+        "args": [
+          "format",
+          "-"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "klog",
+      "name": "klog",
+      "extensions": [
+        ".klg"
+      ],
+      "lsp_language_id": "klog",
+      "grammar": "klog",
       "sources": [
         "helix"
       ]
@@ -2055,6 +3935,10 @@
       "servers": [
         "koka"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "koka",
       "sources": [
         "helix",
         "linguist"
@@ -2078,6 +3962,14 @@
       "servers": [
         "kotlin-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "kotlin",
       "sources": [
         "helix",
         "linguist"
@@ -2093,6 +3985,16 @@
       "servers": [
         "koto-ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "koto",
+      "formatter": {
+        "command": "koto",
+        "args": [
+          "--format"
+        ]
+      },
       "sources": [
         "helix"
       ]
@@ -2113,16 +4015,60 @@
         ".cbx"
       ],
       "filenames": [
-        "Rd",
         "*.Rd"
       ],
       "lsp_language_id": "latex",
       "servers": [
         "texlab"
       ],
+      "comment_tokens": [
+        "%"
+      ],
+      "grammar": "latex",
+      "formatter": {
+        "command": "tex-fmt",
+        "args": [
+          "--stdin"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "ld",
+      "name": "Linker Script",
+      "linguist": [
+        "Linker Script"
+      ],
+      "extensions": [
+        ".ld"
+      ],
+      "lsp_language_id": "ld",
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ld",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "ldif",
+      "name": "ldif",
+      "extensions": [
+        ".ldif"
+      ],
+      "lsp_language_id": "ldif",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "ldif",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -2143,9 +4089,34 @@
       "servers": [
         "lean"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "/-",
+        "end": "-/"
+      },
+      "grammar": "lean",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "ledger",
+      "name": "ledger",
+      "extensions": [
+        ".ldg",
+        ".ledger",
+        ".journal"
+      ],
+      "lsp_language_id": "ledger",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "ledger",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -2161,9 +4132,79 @@
       "servers": [
         "vscode-css-language-server"
       ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "less",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "llvm",
+      "name": "LLVM",
+      "linguist": [
+        "LLVM"
+      ],
+      "extensions": [
+        ".ll"
+      ],
+      "lsp_language_id": "llvm",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "llvm",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "llvm-mir-yaml",
+      "name": "YAML",
+      "linguist": [
+        "YAML"
+      ],
+      "extensions": [
+        ".mir"
+      ],
+      "lsp_language_id": "llvm-mir-yaml",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "llvm-mir-yaml",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "log",
+      "name": "log",
+      "extensions": [
+        ".log"
+      ],
+      "lsp_language_id": "log",
+      "grammar": "log",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "lpf",
+      "name": "lpf",
+      "extensions": [
+        ".lpf"
+      ],
+      "lsp_language_id": "lpf",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "lpf",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -2184,6 +4225,15 @@
       "servers": [
         "lua-language-server"
       ],
+      "comment_tokens": [
+        "--",
+        "---"
+      ],
+      "block_comment": {
+        "start": "--[[",
+        "end": "--]]"
+      },
+      "grammar": "lua",
       "sources": [
         "crude-authored",
         "helix",
@@ -2216,6 +4266,62 @@
       "servers": [
         "luau"
       ],
+      "comment_tokens": [
+        "--",
+        "---"
+      ],
+      "block_comment": {
+        "start": "--[[",
+        "end": "]]"
+      },
+      "grammar": "luau",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "mail",
+      "name": "E-mail",
+      "linguist": [
+        "E-mail"
+      ],
+      "extensions": [
+        ".eml"
+      ],
+      "lsp_language_id": "mail",
+      "grammar": "mail",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "make",
+      "name": "Makefile",
+      "linguist": [
+        "Makefile"
+      ],
+      "extensions": [
+        ".make",
+        ".mk",
+        ".mak"
+      ],
+      "filenames": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile",
+        "OCamlMakefile"
+      ],
+      "interpreters": [
+        "gmake",
+        "make"
+      ],
+      "lsp_language_id": "make",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "make",
       "sources": [
         "helix",
         "linguist"
@@ -2231,6 +4337,11 @@
       "servers": [
         "markdoc-ls"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "markdoc",
       "sources": [
         "helix"
       ]
@@ -2267,6 +4378,56 @@
         "markdown-oxide",
         "rumdl"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "markdown",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "matlab",
+      "name": "matlab",
+      "linguist": [
+        "Mercury",
+        "Objective-C"
+      ],
+      "extensions": [
+        ".m"
+      ],
+      "interpreters": [
+        "matlab",
+        "mmi",
+        "octave-cli"
+      ],
+      "lsp_language_id": "matlab",
+      "comment_tokens": [
+        "%"
+      ],
+      "grammar": "matlab",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "mermaid",
+      "name": "Mermaid",
+      "linguist": [
+        "Mermaid"
+      ],
+      "extensions": [
+        ".mermaid",
+        ".mmd"
+      ],
+      "lsp_language_id": "mermaid",
+      "comment_tokens": [
+        "%%"
+      ],
+      "grammar": "mermaid",
       "sources": [
         "helix",
         "linguist"
@@ -2287,6 +4448,10 @@
       "servers": [
         "mesonlsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "meson",
       "sources": [
         "helix",
         "linguist"
@@ -2308,6 +4473,11 @@
       "servers": [
         "mm-lsp-server"
       ],
+      "block_comment": {
+        "start": "$(",
+        "end": "$)"
+      },
+      "grammar": "metamath",
       "sources": [
         "helix",
         "linguist"
@@ -2326,6 +4496,14 @@
       "servers": [
         "mint"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "mint",
       "sources": [
         "helix",
         "linguist"
@@ -2345,6 +4523,10 @@
         "taplo",
         "tombi"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "toml",
       "sources": [
         "helix"
       ]
@@ -2367,6 +4549,20 @@
       "servers": [
         "mojo-lsp-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "mojo",
+      "formatter": {
+        "command": "pixi",
+        "args": [
+          "run",
+          "mojo",
+          "format",
+          "-q",
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -2389,6 +4585,62 @@
       "servers": [
         "moonbit-lsp"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "moonbit",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "move",
+      "name": "Move",
+      "linguist": [
+        "Move"
+      ],
+      "extensions": [
+        ".move"
+      ],
+      "lsp_language_id": "move",
+      "roots": [
+        "Move.toml"
+      ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "move",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "msbuild",
+      "name": "XML",
+      "linguist": [
+        "XML"
+      ],
+      "extensions": [
+        ".proj",
+        ".vbproj",
+        ".csproj",
+        ".fsproj",
+        ".targets",
+        ".props"
+      ],
+      "lsp_language_id": "msbuild",
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "xml",
       "sources": [
         "helix",
         "linguist"
@@ -2405,16 +4657,53 @@
         ".nasm"
       ],
       "filenames": [
-        "S",
         "*.S"
       ],
       "lsp_language_id": "nasm",
       "servers": [
         "asm-lsp"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "nasm",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "nearley",
+      "name": "Nearley",
+      "linguist": [
+        "Nearley"
+      ],
+      "extensions": [
+        ".ne"
+      ],
+      "lsp_language_id": "nearley",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "nearley",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "nestedtext",
+      "name": "nestedtext",
+      "extensions": [
+        ".nt"
+      ],
+      "lsp_language_id": "nestedtext",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "yaml",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -2433,6 +4722,10 @@
       "servers": [
         "nginx-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "nginx",
       "sources": [
         "helix",
         "linguist"
@@ -2452,6 +4745,10 @@
       "servers": [
         "nls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "nickel",
       "sources": [
         "helix",
         "linguist"
@@ -2472,6 +4769,14 @@
       "servers": [
         "nimlangserver"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "#[",
+        "end": "]#"
+      },
+      "grammar": "nim",
       "sources": [
         "helix",
         "linguist"
@@ -2491,6 +4796,17 @@
         "nil",
         "nixd"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "nix",
+      "formatter": {
+        "command": "nixfmt"
+      },
       "sources": [
         "helix",
         "linguist"
@@ -2516,6 +4832,36 @@
         "nu-lsp",
         "nu-lint"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "nu",
+      "formatter": {
+        "command": "nufmt",
+        "args": [
+          "--stdin"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "nunjucks",
+      "name": "Nunjucks",
+      "linguist": [
+        "Nunjucks"
+      ],
+      "extensions": [
+        ".njk"
+      ],
+      "lsp_language_id": "nunjucks",
+      "block_comment": {
+        "start": "{#",
+        "end": "#}"
+      },
+      "grammar": "jinja2",
       "sources": [
         "helix",
         "linguist"
@@ -2540,6 +4886,11 @@
       "servers": [
         "ocamllsp"
       ],
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "ocaml",
       "sources": [
         "helix",
         "linguist"
@@ -2558,6 +4909,14 @@
       "servers": [
         "ocamllsp"
       ],
+      "comment_tokens": [
+        "(**)"
+      ],
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "ocaml-interface",
       "sources": [
         "helix",
         "linguist"
@@ -2576,8 +4935,41 @@
       "servers": [
         "ols"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "odin",
+      "formatter": {
+        "command": "odinfmt",
+        "args": [
+          "-stdin"
+        ]
+      },
       "sources": [
         "crude-authored",
+        "helix"
+      ]
+    },
+    {
+      "id": "ohm",
+      "name": "ohm",
+      "extensions": [
+        ".ohm"
+      ],
+      "lsp_language_id": "ohm",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ohm",
+      "sources": [
         "helix"
       ]
     },
@@ -2595,6 +4987,10 @@
       "servers": [
         "clangd"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "opencl",
       "sources": [
         "helix",
         "linguist"
@@ -2613,6 +5009,50 @@
       "servers": [
         "openscad-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "openscad",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "org",
+      "name": "Org",
+      "linguist": [
+        "Org"
+      ],
+      "extensions": [
+        ".org"
+      ],
+      "lsp_language_id": "org",
+      "grammar": "org",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "p",
+      "name": "OpenEdge ABL",
+      "linguist": [
+        "OpenEdge ABL"
+      ],
+      "extensions": [
+        ".p"
+      ],
+      "lsp_language_id": "p",
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "p",
       "sources": [
         "helix",
         "linguist"
@@ -2637,9 +5077,60 @@
       "servers": [
         "pasls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "{",
+        "end": "}"
+      },
+      "grammar": "pascal",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "passwd",
+      "name": "passwd",
+      "filenames": [
+        "passwd"
+      ],
+      "lsp_language_id": "passwd",
+      "grammar": "passwd",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "pem",
+      "name": "pem",
+      "extensions": [
+        ".pem",
+        ".cert",
+        ".crt"
+      ],
+      "lsp_language_id": "pem",
+      "grammar": "pem",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "penrose",
+      "name": "penrose",
+      "extensions": [
+        ".substance",
+        ".style",
+        ".domain"
+      ],
+      "lsp_language_id": "penrose",
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "penrose",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -2649,7 +5140,6 @@
         "Raku"
       ],
       "extensions": [
-        ".pl",
         ".pm",
         ".t",
         ".psgi",
@@ -2673,6 +5163,10 @@
       "servers": [
         "perlnavigator"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "perl",
       "sources": [
         "helix",
         "linguist"
@@ -2688,6 +5182,16 @@
       "servers": [
         "pest-language-server"
       ],
+      "comment_tokens": [
+        "//",
+        "///",
+        "//!"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "pest",
       "sources": [
         "helix"
       ]
@@ -2717,6 +5221,54 @@
       "servers": [
         "intelephense"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/**",
+        "end": "*/"
+      },
+      "grammar": "php",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "picat",
+      "name": "picat",
+      "extensions": [
+        ".pi",
+        ".picat"
+      ],
+      "interpreters": [
+        "picat"
+      ],
+      "lsp_language_id": "picat",
+      "comment_tokens": [
+        "%"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "picat",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "pip-requirements",
+      "name": "Pip Requirements",
+      "linguist": [
+        "Pip Requirements"
+      ],
+      "filenames": [
+        "requirements.txt",
+        "constraints.txt"
+      ],
+      "lsp_language_id": "pip-requirements",
+      "grammar": "requirements",
       "sources": [
         "helix",
         "linguist"
@@ -2736,6 +5288,10 @@
         "termux-language-server",
         "bash-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "bash",
       "sources": [
         "helix",
         "linguist"
@@ -2762,6 +5318,47 @@
       "servers": [
         "pkl-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "pkl",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "po",
+      "name": "Gettext Catalog",
+      "linguist": [
+        "Gettext Catalog"
+      ],
+      "extensions": [
+        ".po",
+        ".pot"
+      ],
+      "lsp_language_id": "po",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "po",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "pod",
+      "name": "pod",
+      "linguist": [
+        "Pod",
+        "Pod 6"
+      ],
+      "extensions": [
+        ".pod"
+      ],
+      "lsp_language_id": "pod",
+      "grammar": "pod",
       "sources": [
         "helix",
         "linguist"
@@ -2784,6 +5381,45 @@
       "servers": [
         "pony-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ponylang",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "powershell",
+      "name": "PowerShell",
+      "linguist": [
+        "PowerShell"
+      ],
+      "extensions": [
+        ".ps1",
+        ".psm1",
+        ".psd1",
+        ".pscc",
+        ".psrc"
+      ],
+      "interpreters": [
+        "powershell",
+        "pwsh"
+      ],
+      "lsp_language_id": "powershell",
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "<#",
+        "end": "#>"
+      },
+      "grammar": "powershell",
       "sources": [
         "helix",
         "linguist"
@@ -2805,6 +5441,10 @@
       "servers": [
         "prisma-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "prisma",
       "sources": [
         "helix",
         "linguist"
@@ -2828,6 +5468,34 @@
       "servers": [
         "swipl"
       ],
+      "comment_tokens": [
+        "%"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "prolog",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "properties",
+      "name": "Java Properties",
+      "linguist": [
+        "Java Properties"
+      ],
+      "extensions": [
+        ".properties",
+        ".prefs"
+      ],
+      "lsp_language_id": "properties",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "properties",
       "sources": [
         "helix",
         "linguist"
@@ -2848,6 +5516,84 @@
         "pbkit",
         "protols"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "proto",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "proverif",
+      "name": "proverif",
+      "extensions": [
+        ".pv"
+      ],
+      "lsp_language_id": "proverif",
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "proverif",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "prql",
+      "name": "prql",
+      "extensions": [
+        ".prql"
+      ],
+      "lsp_language_id": "prql",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "prql",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "ptx",
+      "name": "ptx",
+      "extensions": [
+        ".ptx"
+      ],
+      "lsp_language_id": "ptx",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ptx",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "pug",
+      "name": "Pug",
+      "linguist": [
+        "Pug"
+      ],
+      "extensions": [
+        ".pug"
+      ],
+      "lsp_language_id": "pug",
+      "comment_tokens": [
+        "//",
+        "//-"
+      ],
+      "grammar": "pug",
       "sources": [
         "helix",
         "linguist"
@@ -2866,6 +5612,14 @@
       "servers": [
         "puppet-languageserver"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "puppet",
       "sources": [
         "helix",
         "linguist"
@@ -2889,6 +5643,20 @@
       "servers": [
         "purescript-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "{-",
+        "end": "-}"
+      },
+      "grammar": "purescript",
+      "formatter": {
+        "command": "purs-tidy",
+        "args": [
+          "format"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -2943,6 +5711,19 @@
         "pylsp",
         "zuban"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "python",
+      "formatter": {
+        "command": "black",
+        "args": [
+          "--quiet",
+          "--stdin-filename",
+          "{file}",
+          "-"
+        ]
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -2962,6 +5743,37 @@
       "servers": [
         "qmlls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "qmljs",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "quarto",
+      "name": "RMarkdown",
+      "linguist": [
+        "RMarkdown"
+      ],
+      "extensions": [
+        ".qmd"
+      ],
+      "lsp_language_id": "qmd",
+      "roots": [
+        "_quarto.yml"
+      ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "markdown",
       "sources": [
         "helix",
         "linguist"
@@ -2977,6 +5789,14 @@
       "servers": [
         "quint-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "quint",
       "sources": [
         "helix"
       ]
@@ -2991,7 +5811,6 @@
         ".r"
       ],
       "filenames": [
-        "R",
         "*.R",
         ".Rprofile",
         "Rprofile.site",
@@ -3007,6 +5826,11 @@
       "servers": [
         "r"
       ],
+      "comment_tokens": [
+        "#",
+        "#'"
+      ],
+      "grammar": "r",
       "sources": [
         "helix",
         "linguist"
@@ -3033,6 +5857,33 @@
       "servers": [
         "racket"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "block_comment": {
+        "start": "#|",
+        "end": "|#"
+      },
+      "grammar": "scheme",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "regex",
+      "name": "Regular Expression",
+      "linguist": [
+        "Regular Expression"
+      ],
+      "extensions": [
+        ".regex"
+      ],
+      "filenames": [
+        ".Rbuildignore"
+      ],
+      "lsp_language_id": "regex",
+      "grammar": "regex",
       "sources": [
         "helix",
         "linguist"
@@ -3051,6 +5902,10 @@
       "servers": [
         "regols"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "rego",
       "sources": [
         "helix",
         "linguist"
@@ -3072,6 +5927,14 @@
       "servers": [
         "rescript-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "rescript",
       "sources": [
         "helix",
         "linguist"
@@ -3090,6 +5953,14 @@
       "servers": [
         "ripple-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ripple",
       "sources": [
         "helix"
       ]
@@ -3104,13 +5975,17 @@
         ".rmd"
       ],
       "filenames": [
-        "Rmd",
         "*.Rmd"
       ],
       "lsp_language_id": "rmd",
       "servers": [
         "r"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "markdown",
       "sources": [
         "helix",
         "linguist"
@@ -3131,6 +6006,29 @@
         "robotcode",
         "robotframework_ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "robot",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "robots.txt",
+      "name": "robots.txt",
+      "linguist": [
+        "robots.txt"
+      ],
+      "filenames": [
+        "robots.txt"
+      ],
+      "lsp_language_id": "robots.txt",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "robots-txt",
       "sources": [
         "helix",
         "linguist"
@@ -3152,6 +6050,33 @@
       "servers": [
         "ron-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "ron",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "rpmspec",
+      "name": "RPM Spec",
+      "linguist": [
+        "RPM Spec"
+      ],
+      "extensions": [
+        ".spec"
+      ],
+      "lsp_language_id": "rpmspec",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "rpmspec",
       "sources": [
         "helix",
         "linguist"
@@ -3173,8 +6098,28 @@
         "vscode-html-language-server",
         "superhtml"
       ],
+      "grammar": "rshtml",
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "rst",
+      "name": "reStructuredText",
+      "linguist": [
+        "reStructuredText"
+      ],
+      "extensions": [
+        ".rst"
+      ],
+      "lsp_language_id": "rst",
+      "comment_tokens": [
+        ".."
+      ],
+      "grammar": "rst",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -3237,6 +6182,10 @@
         "ruby-lsp",
         "solargraph"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "ruby",
       "sources": [
         "helix",
         "linguist"
@@ -3262,9 +6211,45 @@
       "servers": [
         "rust-analyzer"
       ],
+      "comment_tokens": [
+        "//",
+        "///",
+        "//!"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "rust",
+      "formatter": {
+        "command": "rustfmt",
+        "args": [
+          "--emit",
+          "stdout"
+        ]
+      },
       "sources": [
         "crude-authored",
         "helix"
+      ]
+    },
+    {
+      "id": "sage",
+      "name": "Sage",
+      "linguist": [
+        "Sage"
+      ],
+      "extensions": [
+        ".sage"
+      ],
+      "lsp_language_id": "sage",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "python",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -3275,8 +6260,7 @@
       ],
       "extensions": [
         ".scala",
-        ".sbt",
-        ".sc"
+        ".sbt"
       ],
       "interpreters": [
         "scala"
@@ -3293,6 +6277,48 @@
       "servers": [
         "metals"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "scala",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "scheme",
+      "name": "Scheme",
+      "linguist": [
+        "Scheme"
+      ],
+      "extensions": [
+        ".ss",
+        ".scm",
+        ".sld"
+      ],
+      "interpreters": [
+        "bigloo",
+        "chicken",
+        "csi",
+        "gosh",
+        "guile",
+        "r6rs",
+        "scheme"
+      ],
+      "lsp_language_id": "scheme",
+      "comment_tokens": [
+        ";"
+      ],
+      "block_comment": {
+        "start": "#|",
+        "end": "|#"
+      },
+      "grammar": "scheme",
       "sources": [
         "helix",
         "linguist"
@@ -3311,6 +6337,43 @@
       "servers": [
         "vscode-css-language-server"
       ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "scss",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "sgf",
+      "name": "sgf",
+      "extensions": [
+        ".sgf"
+      ],
+      "lsp_language_id": "sgf",
+      "grammar": "sgf",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "shellcheckrc",
+      "name": "ShellCheck Config",
+      "linguist": [
+        "ShellCheck Config"
+      ],
+      "filenames": [
+        "shellcheckrc",
+        ".shellcheckrc"
+      ],
+      "lsp_language_id": "shellcheckrc",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "shellcheckrc",
       "sources": [
         "helix",
         "linguist"
@@ -3329,6 +6392,14 @@
       "servers": [
         "slangd"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "slang",
       "sources": [
         "helix",
         "linguist"
@@ -3347,6 +6418,33 @@
       "servers": [
         "slint-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "slint",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "slisp",
+      "name": "Slash",
+      "linguist": [
+        "Slash"
+      ],
+      "extensions": [
+        ".sl"
+      ],
+      "lsp_language_id": "slisp",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "slisp",
       "sources": [
         "helix",
         "linguist"
@@ -3365,6 +6463,10 @@
       "servers": [
         "smalisp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "smali",
       "sources": [
         "helix",
         "linguist"
@@ -3386,6 +6488,10 @@
       "servers": [
         "cs"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "smithy",
       "sources": [
         "helix",
         "linguist"
@@ -3409,6 +6515,11 @@
       "servers": [
         "millet"
       ],
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "sml",
       "sources": [
         "helix",
         "linguist"
@@ -3435,6 +6546,17 @@
       "servers": [
         "pylsp"
       ],
+      "comment_tokens": [
+        "#",
+        "##"
+      ],
+      "grammar": "snakemake",
+      "formatter": {
+        "command": "snakefmt",
+        "args": [
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -3453,6 +6575,14 @@
       "servers": [
         "solc"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "solidity",
       "sources": [
         "helix",
         "linguist"
@@ -3472,6 +6602,10 @@
       "servers": [
         "sourcepawn-studio"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "sourcepawn",
       "sources": [
         "helix",
         "linguist"
@@ -3490,8 +6624,58 @@
       "servers": [
         "spade-language-server"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "spade",
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "spicedb",
+      "name": "spicedb",
+      "extensions": [
+        ".zed"
+      ],
+      "lsp_language_id": "spicedb",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "spicedb",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "sql",
+      "name": "sql",
+      "linguist": [
+        "SQL",
+        "SQLPL",
+        "TSQL"
+      ],
+      "extensions": [
+        ".sql",
+        ".dsql"
+      ],
+      "lsp_language_id": "sql",
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "sql",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -3519,9 +6703,41 @@
         "starpls",
         "buck2"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "python",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "strace",
+      "name": "strace",
+      "extensions": [
+        ".strace"
+      ],
+      "lsp_language_id": "strace",
+      "grammar": "strace",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "strictdoc",
+      "name": "strictdoc",
+      "extensions": [
+        ".sdoc",
+        ".sgra"
+      ],
+      "lsp_language_id": "strictdoc",
+      "comment_tokens": [
+        ".."
+      ],
+      "grammar": "strictdoc",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -3534,8 +6750,38 @@
       "servers": [
         "styx"
       ],
+      "comment_tokens": [
+        "//",
+        "///"
+      ],
+      "grammar": "styx",
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "supercollider",
+      "name": "SuperCollider",
+      "linguist": [
+        "SuperCollider"
+      ],
+      "extensions": [
+        ".scd",
+        ".sc",
+        ".quark"
+      ],
+      "interpreters": [
+        "sclang",
+        "scsynth"
+      ],
+      "lsp_language_id": "supercollider",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "supercollider",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -3551,6 +6797,11 @@
       "servers": [
         "svelteserver"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "svelte",
       "sources": [
         "helix",
         "linguist"
@@ -3573,6 +6824,10 @@
       "servers": [
         "forc"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "sway",
       "sources": [
         "helix",
         "linguist"
@@ -3595,6 +6850,17 @@
       "servers": [
         "sourcekit-lsp"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "swift",
+      "formatter": {
+        "command": "swift-format"
+      },
       "sources": [
         "helix",
         "linguist"
@@ -3630,6 +6896,10 @@
       "servers": [
         "systemd-lsp"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "ini",
       "sources": [
         "helix",
         "linguist"
@@ -3650,6 +6920,108 @@
         "svlangserver",
         "verible-verilog-ls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "systemverilog",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "t32",
+      "name": "t32",
+      "extensions": [
+        ".cmm",
+        ".t32"
+      ],
+      "lsp_language_id": "t32",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "t32",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "tablegen",
+      "name": "tablegen",
+      "extensions": [
+        ".td"
+      ],
+      "lsp_language_id": "tablegen",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "tablegen",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "tact",
+      "name": "Tact",
+      "linguist": [
+        "Tact"
+      ],
+      "extensions": [
+        ".tact"
+      ],
+      "lsp_language_id": "tact",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "tact",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "task",
+      "name": "task",
+      "extensions": [
+        ".task"
+      ],
+      "lsp_language_id": "task",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "task",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "tcl",
+      "name": "Tcl",
+      "linguist": [
+        "Tcl"
+      ],
+      "extensions": [
+        ".tcl"
+      ],
+      "interpreters": [
+        "jimsh",
+        "tclish",
+        "tclsh",
+        "wish"
+      ],
+      "lsp_language_id": "tcl",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "tcl",
       "sources": [
         "helix",
         "linguist"
@@ -3675,6 +7047,14 @@
       "servers": [
         "teal-language-server"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "block_comment": {
+        "start": "--[[",
+        "end": "--]]"
+      },
+      "grammar": "teal",
       "sources": [
         "helix",
         "linguist"
@@ -3697,6 +7077,50 @@
       "servers": [
         "templ"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "templ",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "tera",
+      "name": "tera",
+      "extensions": [
+        ".tera"
+      ],
+      "lsp_language_id": "tera",
+      "block_comment": {
+        "start": "{#",
+        "end": "#}"
+      },
+      "grammar": "tera",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "textproto",
+      "name": "Protocol Buffer Text Format",
+      "linguist": [
+        "Protocol Buffer Text Format"
+      ],
+      "extensions": [
+        ".txtpb",
+        ".textpb",
+        ".textproto"
+      ],
+      "lsp_language_id": "textproto",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "textproto",
+      "formatter": {
+        "command": "txtpbfmt"
+      },
       "sources": [
         "helix",
         "linguist"
@@ -3715,6 +7139,37 @@
       "servers": [
         "terraform-ls"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "hcl",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "thrift",
+      "name": "Thrift",
+      "linguist": [
+        "Thrift"
+      ],
+      "extensions": [
+        ".thrift"
+      ],
+      "lsp_language_id": "thrift",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "thrift",
       "sources": [
         "helix",
         "linguist"
@@ -3736,9 +7191,78 @@
       "servers": [
         "tilt"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "python",
+      "formatter": {
+        "command": "buildifier"
+      },
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "tlaplus",
+      "name": "TLA",
+      "linguist": [
+        "TLA"
+      ],
+      "extensions": [
+        ".tla"
+      ],
+      "lsp_language_id": "tlaplus",
+      "comment_tokens": [
+        "\\*"
+      ],
+      "block_comment": {
+        "start": "(*",
+        "end": "*)"
+      },
+      "grammar": "tlaplus",
+      "formatter": {
+        "command": "tlafmt",
+        "args": [
+          "--stdin"
+        ]
+      },
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "todotxt",
+      "name": "todotxt",
+      "extensions": [
+        ".todotxt"
+      ],
+      "filenames": [
+        "*.todo.txt"
+      ],
+      "lsp_language_id": "todotxt",
+      "grammar": "todotxt",
+      "formatter": {
+        "command": "sort"
+      },
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "tolk",
+      "name": "tolk",
+      "extensions": [
+        ".tolk"
+      ],
+      "lsp_language_id": "tolk",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "tolk",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -3767,9 +7291,28 @@
         "taplo",
         "tombi"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "toml",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "tql",
+      "name": "tql",
+      "extensions": [
+        ".tql"
+      ],
+      "lsp_language_id": "tql",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "tql",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -3787,6 +7330,10 @@
       "servers": [
         "ts_query_ls"
       ],
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "query",
       "sources": [
         "helix"
       ]
@@ -3809,8 +7356,36 @@
       "servers": [
         "typescript-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "tsx",
       "sources": [
         "crude-authored",
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "twig",
+      "name": "Twig",
+      "linguist": [
+        "Twig"
+      ],
+      "extensions": [
+        ".twig"
+      ],
+      "lsp_language_id": "twig",
+      "block_comment": {
+        "start": "{#",
+        "end": "#}"
+      },
+      "grammar": "twig",
+      "sources": [
         "helix",
         "linguist"
       ]
@@ -3841,6 +7416,14 @@
       "servers": [
         "typescript-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "typescript",
       "sources": [
         "crude-authored",
         "helix",
@@ -3864,6 +7447,14 @@
       "servers": [
         "typespec"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "typespec",
       "sources": [
         "helix",
         "linguist"
@@ -3883,9 +7474,64 @@
       "servers": [
         "tinymist"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "typst",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "ungrammar",
+      "name": "ungrammar",
+      "extensions": [
+        ".ungram",
+        ".ungrammar"
+      ],
+      "lsp_language_id": "ungrammar",
+      "comment_tokens": [
+        "//"
+      ],
+      "grammar": "ungrammar",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "unison",
+      "name": "unison",
+      "extensions": [
+        ".u"
+      ],
+      "lsp_language_id": "unison",
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "unison",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "uxntal",
+      "name": "uxntal",
+      "extensions": [
+        ".tal"
+      ],
+      "lsp_language_id": "uxntal",
+      "block_comment": {
+        "start": "(",
+        "end": ")"
+      },
+      "grammar": "uxntal",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -3908,6 +7554,14 @@
       "servers": [
         "vlang-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "v",
       "sources": [
         "helix",
         "linguist"
@@ -3927,6 +7581,14 @@
       "servers": [
         "vala-language-server"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "vala",
       "sources": [
         "helix",
         "linguist"
@@ -3942,8 +7604,32 @@
       "servers": [
         "varlink-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "varlink",
       "sources": [
         "helix"
+      ]
+    },
+    {
+      "id": "vento",
+      "name": "Vento",
+      "linguist": [
+        "Vento"
+      ],
+      "extensions": [
+        ".vto"
+      ],
+      "lsp_language_id": "vento",
+      "block_comment": {
+        "start": "{{#",
+        "end": "#}}"
+      },
+      "grammar": "vento",
+      "sources": [
+        "helix",
+        "linguist"
       ]
     },
     {
@@ -3962,6 +7648,14 @@
       "servers": [
         "verible-verilog-ls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "verilog",
       "sources": [
         "helix",
         "linguist"
@@ -3981,6 +7675,49 @@
       "servers": [
         "vhdl_ls"
       ],
+      "comment_tokens": [
+        "--"
+      ],
+      "grammar": "vhdl",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "vhs",
+      "name": "vhs",
+      "extensions": [
+        ".tape"
+      ],
+      "lsp_language_id": "vhs",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "vhs",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "vim",
+      "name": "Vim Script",
+      "linguist": [
+        "Vim Script"
+      ],
+      "extensions": [
+        ".vim"
+      ],
+      "filenames": [
+        ".vimrc",
+        ".nvimrc",
+        ".exrc"
+      ],
+      "lsp_language_id": "vim",
+      "comment_tokens": [
+        "\""
+      ],
+      "grammar": "vim",
       "sources": [
         "helix",
         "linguist"
@@ -4002,6 +7739,34 @@
       "servers": [
         "vuels"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "vue",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "wast",
+      "name": "WebAssembly",
+      "linguist": [
+        "WebAssembly"
+      ],
+      "extensions": [
+        ".wast"
+      ],
+      "lsp_language_id": "wast",
+      "comment_tokens": [
+        ";;"
+      ],
+      "block_comment": {
+        "start": "(;",
+        "end": ";)"
+      },
+      "grammar": "wast",
       "sources": [
         "helix",
         "linguist"
@@ -4020,9 +7785,70 @@
       "servers": [
         "wasm-language-tools"
       ],
+      "comment_tokens": [
+        ";;"
+      ],
+      "block_comment": {
+        "start": "(;",
+        "end": ";)"
+      },
+      "grammar": "wat",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "webc",
+      "name": "webc",
+      "extensions": [
+        ".webc"
+      ],
+      "lsp_language_id": "webc",
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "html",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "werk",
+      "name": "werk",
+      "extensions": [
+        ".werk"
+      ],
+      "filenames": [
+        "Werkfile"
+      ],
+      "lsp_language_id": "werk",
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "werk",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "wesl",
+      "name": "wesl",
+      "extensions": [
+        ".wesl"
+      ],
+      "lsp_language_id": "wesl",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "wesl",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -4038,6 +7864,14 @@
       "servers": [
         "wgsl-analyzer"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "wgsl",
       "sources": [
         "helix",
         "linguist"
@@ -4058,6 +7892,34 @@
       "servers": [
         "wikitext-lsp"
       ],
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "wikitext",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "wit",
+      "name": "WebAssembly Interface Type",
+      "linguist": [
+        "WebAssembly Interface Type"
+      ],
+      "extensions": [
+        ".wit"
+      ],
+      "lsp_language_id": "wit",
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "wit",
       "sources": [
         "helix",
         "linguist"
@@ -4073,6 +7935,173 @@
       "servers": [
         "yaml-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "yaml",
+      "formatter": {
+        "command": "yamlfmt",
+        "args": [
+          "-"
+        ]
+      },
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "wren",
+      "name": "Wren",
+      "linguist": [
+        "Wren"
+      ],
+      "extensions": [
+        ".wren"
+      ],
+      "lsp_language_id": "wren",
+      "grammar": "wren",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "xit",
+      "name": "xit",
+      "extensions": [
+        ".xit"
+      ],
+      "lsp_language_id": "xit",
+      "grammar": "xit",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "xml",
+      "name": "XML",
+      "linguist": [
+        "XML"
+      ],
+      "extensions": [
+        ".ascx",
+        ".atom",
+        ".axaml",
+        ".axml",
+        ".bpmn",
+        ".checkstyle",
+        ".cpt",
+        ".csl",
+        ".csproj.user",
+        ".dita",
+        ".ditamap",
+        ".dtml",
+        ".fods",
+        ".fodt",
+        ".fxml",
+        ".gir",
+        ".glif",
+        ".gml",
+        ".gpx",
+        ".iml",
+        ".isml",
+        ".itermcolors",
+        ".jmx",
+        ".kml",
+        ".launch",
+        ".menu",
+        ".mobileconfig",
+        ".mpd",
+        ".musicxml",
+        ".mxml",
+        ".ncx",
+        ".nuspec",
+        ".opml",
+        ".osc",
+        ".osm",
+        ".plist",
+        ".policy",
+        ".pproj",
+        ".pt",
+        ".publishsettings",
+        ".pubxml",
+        ".pubxml.user",
+        ".rbxlx",
+        ".rbxmx",
+        ".resx",
+        ".rng",
+        ".rss",
+        ".shproj",
+        ".smil",
+        ".storyboard",
+        ".sublime-snippet",
+        ".svg",
+        ".terminal",
+        ".tld",
+        ".tmx",
+        ".ui",
+        ".vbproj.user",
+        ".vcxproj",
+        ".vcxproj.filters",
+        ".wixproj",
+        ".wsdl",
+        ".wxi",
+        ".wxs",
+        ".xaml",
+        ".xbl",
+        ".xib",
+        ".xlf",
+        ".xliff",
+        ".xml",
+        ".xmp",
+        ".xoml",
+        ".xpdl",
+        ".xrc",
+        ".xsd",
+        ".xsl",
+        ".xul"
+      ],
+      "filenames": [
+        "*.tm[Ll]anguage",
+        "*.tm[Pp]references",
+        "*.tm[Tt]heme"
+      ],
+      "lsp_language_id": "xml",
+      "block_comment": {
+        "start": "<!--",
+        "end": "-->"
+      },
+      "grammar": "xml",
+      "sources": [
+        "helix",
+        "linguist"
+      ]
+    },
+    {
+      "id": "xtc",
+      "name": "xtc",
+      "extensions": [
+        ".xtc",
+        ".xpc",
+        ".xoa"
+      ],
+      "lsp_language_id": "xtc",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "xtc",
+      "sources": [
+        "helix"
+      ]
+    },
+    {
+      "id": "xwiki",
+      "name": "xwiki",
+      "extensions": [
+        ".xwiki"
+      ],
+      "lsp_language_id": "xwiki",
+      "grammar": "xwiki",
       "sources": [
         "helix"
       ]
@@ -4103,6 +8132,16 @@
         "yaml-language-server",
         "ansible-language-server"
       ],
+      "comment_tokens": [
+        "#"
+      ],
+      "grammar": "yaml",
+      "formatter": {
+        "command": "yamlfmt",
+        "args": [
+          "-"
+        ]
+      },
       "sources": [
         "helix",
         "linguist"
@@ -4122,9 +8161,32 @@
       "servers": [
         "yls"
       ],
+      "comment_tokens": [
+        "//"
+      ],
+      "block_comment": {
+        "start": "/*",
+        "end": "*/"
+      },
+      "grammar": "yara",
       "sources": [
         "helix",
         "linguist"
+      ]
+    },
+    {
+      "id": "yuck",
+      "name": "yuck",
+      "extensions": [
+        ".yuck"
+      ],
+      "lsp_language_id": "yuck",
+      "comment_tokens": [
+        ";"
+      ],
+      "grammar": "yuck",
+      "sources": [
+        "helix"
       ]
     },
     {
@@ -4145,6 +8207,19 @@
       "servers": [
         "zls"
       ],
+      "comment_tokens": [
+        "//",
+        "///",
+        "//!"
+      ],
+      "grammar": "zig",
+      "formatter": {
+        "command": "zig",
+        "args": [
+          "fmt",
+          "--stdin"
+        ]
+      },
       "sources": [
         "crude-authored",
         "helix",

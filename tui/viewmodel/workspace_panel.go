@@ -219,6 +219,9 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			state = "Running"
 		}
 		lines := []statusoverview.DetailLine{{Label: "State", Value: state, Role: mapBool(server.Error != "", ui.ColorError, ui.ColorMuted)}}
+		if server.Coverage != "" {
+			lines = append(lines, statusoverview.DetailLine{Label: "Checks", Value: server.Coverage, Role: ui.ColorMuted})
+		}
 		if server.Error != "" {
 			lines = append(lines, statusoverview.DetailLine{Value: "The language server failed. Check its installation and settings. Restart the server.", Role: ui.ColorError}, statusoverview.DetailLine{Label: "Details", Value: server.Error, Role: ui.ColorMuted})
 		}
@@ -228,6 +231,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		}
 		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: state, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines, Actions: actions})
 	}
+	items = append(items, assemblyPanelItems(m.ws.LSPMgr().Assembly())...)
 	diagnostics := m.lspFacts
 	if len(diagnostics) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-problems", Label: "Problems", Header: true})
@@ -275,6 +279,57 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 				Lines: []statusoverview.DetailLine{{Label: "Severity", Value: severity, Role: role}, {Label: "Location", Value: fmt.Sprintf("Ln %d, Col %d", diagnostic.Line+1, diagnostic.Col+1), Role: ui.ColorFg}, {Blank: true}, {Value: diagnostic.Message, Role: ui.ColorFg}},
 			})
 		}
+	}
+	return items
+}
+
+// assemblyPanelItems is the coverage view: every language the project
+// contains, the server for it, and what that server checks. Languages without
+// a running server say why and what to do next.
+func assemblyPanelItems(plan ttypes.AssemblyPlan) []statusoverview.Item {
+	if plan.State == "" {
+		return nil
+	}
+	header := statusoverview.Item{ID: "workspace-languages", Label: "Project Languages", Header: true}
+	items := []statusoverview.Item{header}
+	summary := statusoverview.Item{ID: "languages-summary", Label: "Code intelligence", Icon: "◇",
+		Lines: []statusoverview.DetailLine{{Value: plan.Message, Role: mapBool(plan.State == ttypes.AssemblyFailed, ui.ColorError, ui.ColorMuted)}}}
+	switch plan.State {
+	case ttypes.AssemblyScanning:
+		summary.Summary = "Checking…"
+	case ttypes.AssemblyFailed:
+		summary.Summary = "Could not check"
+	}
+	items = append(items, summary)
+	for _, language := range plan.Languages {
+		item := statusoverview.Item{ID: "language:" + language.ID, Label: language.Name, Icon: "◇",
+			Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: "language:" + language.ID}}
+		role := ui.ColorMuted
+		switch language.Status {
+		case ttypes.ToolReady:
+			item.Summary = "Whole project"
+			if language.Scope != ttypes.CoverageProject {
+				item.Summary = "Open files"
+			}
+		case ttypes.ToolMissing:
+			item.Summary, role = "Not installed", ui.ColorWarning
+			item.PrimaryAction, item.PrimaryLabel, item.PrimaryEnabled = "lsp:start-all", "Check again", true
+		case ttypes.ToolOff:
+			item.Summary = "Off"
+		default:
+			item.Summary = "No server"
+		}
+		item.Lines = append(item.Lines, statusoverview.DetailLine{Value: language.Reason, Role: role})
+		if language.Command != "" {
+			item.Lines = append(item.Lines, statusoverview.DetailLine{Label: "Server", Value: filepath.Base(language.Command), Role: ui.ColorMuted})
+		}
+		if language.Executable != "" {
+			item.Lines = append(item.Lines, statusoverview.DetailLine{Label: "Program", Value: language.Executable, Role: ui.ColorMuted})
+		}
+		if language.Files > 0 {
+			item.Lines = append(item.Lines, statusoverview.DetailLine{Label: "Files", Value: fmt.Sprint(language.Files), Role: ui.ColorMuted})
+		}
+		items = append(items, item)
 	}
 	return items
 }

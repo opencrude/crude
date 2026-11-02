@@ -20,6 +20,10 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 			return err
 		}
 		w.publishAnalysisPolicy()
+		// Assemble the project's code intelligence. Listing file names runs
+		// no project code, so it does not wait for Trust; starting any
+		// server still does.
+		w.LSPMgr.RefreshAssembly()
 	}
 	overrides := w.LoadWorkspaceOverrides()
 	if types.MergeAppWorkspace(w.AppDefaults(), overrides).Analysis.Trusted() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -302,6 +303,18 @@ func workspaceInspection(ctx context.Context, id string, status *workspace.Statu
 			health.RootURI = "" // health, not a project-path/configuration export
 			health.Error = diagnosticText(health.Error)
 			add("lsp", health.ID, health, health.Name, health.Status)
+		}
+		// The assembly plan: every project language, its server, where the
+		// server comes from and what it checks.
+		plan := lsp.Assembly()
+		for _, language := range plan.Languages {
+			value := map[string]any{"language": diagnosticLabel(language.Name), "files": language.Files, "status": language.Status,
+				"server": diagnosticLabel(language.ServerID), "command": diagnosticLabel(filepath.Base(language.Command)), "source": language.Source,
+				"scope": language.Scope, "installable": language.Installable, "package": diagnosticLabel(language.Package), "reason": diagnosticText(language.Reason)}
+			add("language", diagnosticLabel(language.ID), value, language.Name, language.Status)
+		}
+		if plan.State != "" {
+			add("assembly", "plan", map[string]any{"state": plan.State, "message": diagnosticText(plan.Message), "files_seen": plan.FilesSeen, "limited": plan.Limited, "generation": plan.Generation}, plan.State)
 		}
 	}
 	if ws != nil && (view == "summary" || view == "capabilities") {

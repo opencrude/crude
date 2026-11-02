@@ -262,14 +262,17 @@ func TestOverridesRoundTripIsStable(t *testing.T) {
 	}
 }
 
-func TestLSPLanguageEnabledAndServerOverride(t *testing.T) {
+// A catalog language is on by default and follows the catalog; an entry can
+// turn it off or choose another command.
+func TestLSPLanguageEnabledAndExplicitCommand(t *testing.T) {
 	s := DefaultLSPSettings()
+	if cfg := s.Languages["go"]; !cfg.Enabled || cfg.Command != "" {
+		t.Fatalf("default go entry = %+v", cfg)
+	}
 	if !s.LanguageEnabled(".go") {
 		t.Fatal("go should be enabled by default")
 	}
-	lang := s.Languages["go"]
-	lang.Enabled = false
-	s.Languages["go"] = lang
+	s.Languages["go"] = LSPLanguageSettings{Enabled: false}
 	if s.LanguageEnabled(".go") {
 		t.Fatal("disabled go must not start")
 	}
@@ -279,13 +282,15 @@ func TestLSPLanguageEnabledAndServerOverride(t *testing.T) {
 	}
 
 	s = DefaultLSPSettings()
-	lang = s.Languages["python"]
-	lang.Command = "pylsp"
-	lang.Args = nil
-	s.Languages["python"] = lang
-	cmd, args, ok := s.ServerOverride(".py")
-	if !ok || cmd != "pylsp" || len(args) != 0 {
-		t.Fatalf("python override: cmd=%q args=%v ok=%v", cmd, args, ok)
+	s.Languages["python"] = LSPLanguageSettings{Enabled: true, Command: "pylsp"}
+	spec, ok := s.ResolveServer("a.py")
+	if !ok || spec.Command != "pylsp" || spec.ServerID != "pylsp" || len(spec.Args) != 0 {
+		t.Fatalf("python with another catalog server: %+v %v", spec, ok)
+	}
+	s.Languages["python"] = LSPLanguageSettings{Enabled: true, Command: "/opt/my-python-ls", Args: []string{"--stdio"}}
+	spec, ok = s.ResolveServer("a.py")
+	if !ok || spec.Command != "/opt/my-python-ls" || spec.ServerID != "" || len(spec.Args) != 1 {
+		t.Fatalf("python with a custom command: %+v %v", spec, ok)
 	}
 }
 

@@ -6,8 +6,10 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
+	"crude/insight/catalog"
 	"crude/tui/ui"
 	"crude/types"
 )
@@ -88,12 +90,12 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 	return formModel(fields...)
 }
 
-// lspServerSummary states how many servers are enabled, e.g. "11 of 12 on".
+// lspServerSummary states how many servers are enabled, e.g. "178 of 179 on".
 func lspServerSummary(languages map[string]types.LSPLanguageSettings) string {
 	total, enabled := 0, 0
-	for _, cfg := range languages {
+	for _, server := range lspServerList(languages) {
 		total++
-		if cfg.Enabled {
+		if server.cfg.Enabled {
 			enabled++
 		}
 	}
@@ -120,35 +122,61 @@ func cloneLSPLanguages(src map[string]types.LSPLanguageSettings) map[string]type
 	return types.CloneLSPSettings(types.LSPSettings{Languages: src}).Languages
 }
 
-// lspServer is one row of the Language Servers inventory: a built-in
-// catalog language or a custom definition.
+// lspServer is one row of the Language Servers inventory: a catalog
+// language that has a language server, or a custom definition.
 type lspServer struct {
 	id      string
 	name    string
 	builtin bool
-	def     types.LSPLanguage
+	def     lspDefault
 	cfg     types.LSPLanguageSettings
 }
 
-// lspServers lists built-ins in catalog order, then custom servers by name.
-func (m *Model) lspServers() []lspServer {
+// lspDefault is the catalog's default server for a language.
+type lspDefault struct {
+	Command     string
+	Args        []string
+	Exts        []string
+	RootMarkers []string
+}
+
+func (m *Model) lspServers() []lspServer { return lspServerList(m.lspLanguages) }
+
+// lspServerList lists catalog languages with a server by name, then custom
+// servers by identifier. A catalog language without an explicit entry is on
+// and uses its first catalog server.
+func lspServerList(languages map[string]types.LSPLanguageSettings) []lspServer {
 	var servers []lspServer
-	known := map[string]bool{}
-	for _, def := range types.DefaultLSPLanguages() {
-		known[def.ID] = true
-		cfg := m.lspLanguages[def.ID]
+	c := catalog.Current()
+	for _, language := range c.Languages() {
+		if len(language.Servers) == 0 {
+			continue
+		}
+		server, ok := c.Server(language.Servers[0])
+		if !ok {
+			continue
+		}
+		def := lspDefault{Command: server.Command, Args: slices.Clone(server.Args), Exts: slices.Clone(language.Extensions), RootMarkers: slices.Clone(language.Roots)}
+		cfg, configured := languages[language.ID]
+		if !configured {
+			cfg.Enabled = true
+		}
 		if cfg.Command == "" {
-			cfg.Command = def.DefaultCmd
+			cfg.Command = def.Command
 			if cfg.Args == nil {
-				cfg.Args = slices.Clone(def.DefaultArgs)
+				cfg.Args = slices.Clone(def.Args)
 			}
 		}
-		servers = append(servers, lspServer{id: def.ID, name: def.Name, builtin: true, def: def, cfg: cfg})
+		name := language.Name
+		if name == "" {
+			name = language.ID
+		}
+		servers = append(servers, lspServer{id: language.ID, name: name + " (" + server.ID + ")", builtin: true, def: def, cfg: cfg})
 	}
-	custom := slices.Sorted(maps.Keys(m.lspLanguages))
-	for _, id := range custom {
-		if !known[id] {
-			servers = append(servers, lspServer{id: id, name: id, cfg: m.lspLanguages[id]})
+	sort.SliceStable(servers, func(i, j int) bool { return strings.ToLower(servers[i].name) < strings.ToLower(servers[j].name) })
+	for _, id := range slices.Sorted(maps.Keys(languages)) {
+		if !builtinLSP(id) {
+			servers = append(servers, lspServer{id: id, name: id, cfg: languages[id]})
 		}
 	}
 	return servers
@@ -196,8 +224,8 @@ func buildLSPServerForm(server lspServer) *ui.FormModel {
 	}
 	command := ui.TextFieldState(lspFieldCommand, "Command", cfg.Command, "Executable to launch, found on PATH or given as an absolute path.")
 	if server.builtin {
-		command.Placeholder = server.def.DefaultCmd
-		command.Description = "Executable on PATH; default is " + server.def.DefaultCmd + "."
+		command.Placeholder = server.def.Command
+		command.Description = "Executable on PATH; default is " + server.def.Command + "."
 	} else {
 		command.Required = true
 	}
@@ -270,7 +298,7 @@ func lspServerFromForm(server lspServer, form *ui.FormModel) (string, types.LSPL
 	cfg.Enabled = value(lspFieldEnabled) == "on"
 	cfg.Command = value(lspFieldCommand)
 	if cfg.Command == "" && server.builtin {
-		cfg.Command = server.def.DefaultCmd
+		cfg.Command = server.def.Command
 	}
 	if args, err := splitShellWords(value(lspFieldArgs)); err == nil {
 		cfg.Args = args
@@ -278,6 +306,11 @@ func lspServerFromForm(server lspServer, form *ui.FormModel) (string, types.LSPL
 	cfg.RootMarkers = splitList(value(lspFieldRootMarkers))
 	if server.builtin && slices.Equal(cfg.RootMarkers, server.def.RootMarkers) {
 		cfg.RootMarkers = nil
+	}
+	// Only explicit choices are stored: the default command and arguments
+	// keep following the catalog.
+	if server.builtin && cfg.Command == server.def.Command && slices.Equal(cfg.Args, server.def.Args) {
+		cfg.Command, cfg.Args = "", nil
 	}
 	cfg.Environment = parseEnvironment(value(lspFieldEnvironment))
 	if object, err := parseJSONObject(value(lspFieldSettings)); err == nil {

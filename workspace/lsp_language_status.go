@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"crude/insight/catalog"
 	"crude/types"
 )
 
@@ -34,12 +35,15 @@ func (m *LSPManager) recomputeLanguageStatusLocked() {
 		s = types.LanguageServiceStatus{State: types.LanguageOff, Label: "Language servers stopped", Message: "Language servers are stopped. Start language servers to check files.", Action: types.LanguageActionStartServers, ActionLabel: "Start Language Servers"}
 	case m.documents[m.activeFilePath] != nil && !m.languageServerMatchesActiveLocked():
 		name := strings.TrimPrefix(filepath.Ext(m.activeFilePath), ".")
-		if strings.EqualFold(name, "go") {
-			name = "Go"
+		if language, ok := catalog.Current().LanguageForPath(m.activeFilePath, nil); ok && language.Name != "" {
+			name = language.Name
 		}
 		message := "No language server for this file. Set one up in Language servers settings."
 		if name != "" {
 			message = fmt.Sprintf("No language server for %s. Set one up in Language servers settings.", name)
+		}
+		if reason, missing := m.assemblyStatusLocked(m.activeFilePath); missing {
+			message = reason
 		}
 		s = types.LanguageServiceStatus{State: types.LanguageNoServer, Message: message, Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}
 	case m.activeStatus == LSPStarting || m.syncing:

@@ -1043,8 +1043,18 @@ completions, hover, definition, references, outline, rename and opt-in inlay hin
 Servers** is a searchable server table with a per-server editor: enable,
 command, shell-style arguments, file extensions/language ID (custom servers),
 project markers, environment table, and the JSON `settings`/`initializationOptions`
-objects. Per-language `Languages` entries are the only server authority. `workspace.LSPManager` reads the **effective**
-`LSPSettings` and refuses to start or request gated features.
+objects. The server list comes from the
+[code-intelligence catalog](code-intelligence-catalog.md): every catalog
+language that has a language server is a row, on by default, using its first
+catalog server. Per-language `Languages` entries hold only explicit choices: an
+entry without a command follows the catalog, a command that matches another
+catalog server of the language selects that server and its defaults, and any
+other command runs as written. Custom languages need extensions, a language ID
+and a command, and cannot claim an extension that the catalog owns. A saved
+entry for a language the catalog does not have, with no extensions, matches no
+file and is ignored. Restore default returns a row to the catalog.
+`workspace.LSPManager` reads the **effective** `LSPSettings` and refuses to
+start or request gated features.
 
 **Inlay hints** is the ordinary Boolean leaf `lsp.inlay_hints` and defaults
 **Off**. Explicit false overrides remain distinct from an absent inherited value;

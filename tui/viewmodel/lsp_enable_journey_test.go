@@ -18,7 +18,7 @@ import (
 	"crude/workspace"
 )
 
-func TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource(t *testing.T) {
+func TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource(t *testing.T) {
 	for _, alreadyOpen := range []bool{false, true} {
 		t.Run(map[bool]string{false: "open-after-save", true: "already-open"}[alreadyOpen], func(t *testing.T) {
 			root := t.TempDir()
@@ -85,17 +85,28 @@ func TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource(t *testing.T) {
 				one.app.rootHost.Focus("status-overview/list")
 				_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 				runAppCommand(t, one.app, cmd)
+				// Enabling in a trusted project starts the whole-project
+				// check that the assembly plan names, without opening any
+				// source. Opening a file then shares that one process.
+				remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool {
+					server.mu.Lock()
+					defer server.mu.Unlock()
+					return len(server.rootURIs) == 1
+				})
 				paint := ansi.Strip(one.app.View().RenderContent())
-				if !strings.Contains(paint, "No results yet. Open a source file to check it.") || strings.Contains(paint, "No language server") {
-					t.Fatalf("saved enabled idle state is misleading:\n%s", paint)
+				if strings.Contains(paint, "No language server") {
+					t.Fatalf("saved enabled state is misleading:\n%s", paint)
 				}
+				if tab := one.app.EditorState.Tabs[path]; tab != nil {
+					t.Fatal("the project check opened a source tab")
+				}
+				openSource()
 				server.mu.Lock()
 				started := len(server.rootURIs)
 				server.mu.Unlock()
-				if started != 0 {
-					t.Fatal("Save eagerly started unused server")
+				if started != 1 {
+					t.Fatalf("opening a file started a second server: %d", started)
 				}
-				openSource()
 			}
 			remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool { return one.app.ws.LSPMgr().ProjectInsights().Errors == 1 })
 			one.app.hideWorkspacePanel()

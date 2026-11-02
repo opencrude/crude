@@ -9,29 +9,42 @@ import (
 	"time"
 
 	"crude/insight/governor"
+	"crude/toolstore"
 	ttypes "crude/types"
 )
 
 // LSPManager is the sole workspace owner of server and open-document lifetimes.
 // Expensive root discovery, startup, synchronization and shutdown run on its
-// serialized worker; merely enabling intelligence never scans or opens sources.
+// serialized worker; merely enabling intelligence never opens sources. The
+// assembly service (lsp_assembly.go) lists file names to plan the project.
 type LSPManager struct {
-	analysisSettings            ttypes.WorkspaceAnalysisSettings
-	analysisRootIdentity        string
-	analysisBlocked             string
-	analysisGovernor            *governor.Governor
-	analysisWorkspace           string
-	analysisGeneration          string
-	analysisGovernorError       string
-	analysisRetained            bool
-	analysisIdentity            func(string) (string, error)
-	contextGeneration           uint64
-	sources                     *DocumentService
-	mu                          sync.Mutex
-	documentSend                sync.Mutex
-	states                      map[string]*lspClientState
-	documents                   map[string]*lspDocument
-	projects                    map[string]ttypes.LSPProjectProducer // by server key
+	analysisSettings      ttypes.WorkspaceAnalysisSettings
+	analysisRootIdentity  string
+	analysisBlocked       string
+	analysisGovernor      *governor.Governor
+	analysisWorkspace     string
+	analysisGeneration    string
+	analysisGovernorError string
+	analysisRetained      bool
+	analysisIdentity      func(string) (string, error)
+	contextGeneration     uint64
+	sources               *DocumentService
+	mu                    sync.Mutex
+	documentSend          sync.Mutex
+	states                map[string]*lspClientState
+	documents             map[string]*lspDocument
+	projects              map[string]ttypes.LSPProjectProducer // by server key
+	// Assembly (lsp_assembly.go): the published plan, the cached project
+	// listing, and the tool locations the plan resolved.
+	toolStore                   *toolstore.Store
+	assemblyActive              bool
+	assembly                    ttypes.AssemblyPlan
+	assemblyRequested           uint64
+	assemblyCancel              context.CancelFunc
+	assemblyWG                  sync.WaitGroup
+	discovery                   *assemblyDiscovery
+	toolPaths                   map[string]string // command -> tool store executable
+	toolMissing                 map[string]string // command -> user reason
 	updateTimers                map[string]*time.Timer
 	runtime                     LSPRuntime
 	settings                    ttypes.LSPSettings
@@ -254,6 +267,12 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 		}
 		if state.waiting {
 			health.Status = "Waiting for slot"
+		}
+		// Coverage: what this producer checks. A project producer reports
+		// files that are not open; any other server checks open files only.
+		health.Scope, health.Coverage = ttypes.CoverageOpenFiles, "Checks open files only."
+		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == ttypes.CoverageProject {
+			health.Scope, health.Coverage = ttypes.CoverageProject, "Checks the whole project, including files that are not open."
 		}
 		if state.closing {
 			health.Status, health.Connected, health.Starting = "Stopping", false, false

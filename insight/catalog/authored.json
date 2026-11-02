@@ -2,131 +2,344 @@
   "note": "Crude-authored overlay for the code-intelligence catalog. It holds facts that no upstream source provides, and choices that keep earlier Crude behavior. internal/catalogimport applies it after the upstream data. Every entry needs a note that says why it exists.",
   "languages": {
     "go": {
-      "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod.",
-      "roots": ["go.work", "go.mod"],
-      "workspace_roots": ["go.work"],
-      "servers": ["gopls"]
+      "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod. Formatter: gofmt reads stdin and writes stdout, the same output as the go/format package Crude used before.",
+      "roots": [
+        "go.work",
+        "go.mod"
+      ],
+      "workspace_roots": [
+        "go.work"
+      ],
+      "servers": [
+        "gopls"
+      ],
+      "formatter": {
+        "command": "gofmt"
+      }
     },
     "rust": {
-      "note": "Earlier Crude root rules. Linguist also assigns .rs to RenderScript; this entry is Rust only.",
-      "linguist": ["Rust"],
-      "roots": ["Cargo.toml"],
-      "servers": ["rust-analyzer"]
+      "note": "Earlier Crude root rules. Linguist also assigns .rs to RenderScript; this entry is Rust only. Formatter: rustfmt, as Crude used before.",
+      "linguist": [
+        "Rust"
+      ],
+      "roots": [
+        "Cargo.toml"
+      ],
+      "servers": [
+        "rust-analyzer"
+      ],
+      "formatter": {
+        "command": "rustfmt",
+        "args": [
+          "--emit",
+          "stdout"
+        ]
+      }
     },
     "python": {
-      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates.",
-      "roots": ["pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg"],
-      "servers_prepend": ["pyright"]
+      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration.",
+      "roots": [
+        "pyproject.toml",
+        "pyrightconfig.json",
+        "setup.py",
+        "setup.cfg"
+      ],
+      "servers_prepend": [
+        "pyright"
+      ],
+      "formatter": {
+        "command": "black",
+        "args": [
+          "--quiet",
+          "--stdin-filename",
+          "{file}",
+          "-"
+        ]
+      }
     },
     "javascript": {
       "note": "Earlier Crude root rules are shared by all script language identities.",
-      "roots": ["tsconfig.json", "jsconfig.json", "package.json"],
-      "servers": ["typescript-language-server"]
+      "roots": [
+        "tsconfig.json",
+        "jsconfig.json",
+        "package.json"
+      ],
+      "servers": [
+        "typescript-language-server"
+      ]
     },
     "jsx": {
       "note": "Earlier Crude root rules are shared by all script language identities.",
-      "roots": ["tsconfig.json", "jsconfig.json", "package.json"],
-      "servers": ["typescript-language-server"]
+      "roots": [
+        "tsconfig.json",
+        "jsconfig.json",
+        "package.json"
+      ],
+      "servers": [
+        "typescript-language-server"
+      ]
     },
     "typescript": {
       "note": "Earlier Crude root rules are shared by all script language identities.",
-      "roots": ["tsconfig.json", "jsconfig.json", "package.json"],
-      "servers": ["typescript-language-server"]
+      "roots": [
+        "tsconfig.json",
+        "jsconfig.json",
+        "package.json"
+      ],
+      "servers": [
+        "typescript-language-server"
+      ]
     },
     "tsx": {
       "note": "Earlier Crude root rules are shared by all script language identities.",
-      "roots": ["tsconfig.json", "jsconfig.json", "package.json"],
-      "servers": ["typescript-language-server"]
+      "roots": [
+        "tsconfig.json",
+        "jsconfig.json",
+        "package.json"
+      ],
+      "servers": [
+        "typescript-language-server"
+      ]
     },
     "html": {
       "note": "Earlier Crude default server first.",
-      "servers_prepend": ["vscode-html-language-server"]
+      "servers_prepend": [
+        "vscode-html-language-server"
+      ]
     },
     "c": {
       "note": "Earlier Crude sent .h files as C. Upstream lists .h under C++.",
-      "extensions_add": [".h"],
-      "roots": ["compile_commands.json", ".clangd", "CMakeLists.txt"],
-      "servers": ["clangd"]
+      "extensions_add": [
+        ".h"
+      ],
+      "roots": [
+        "compile_commands.json",
+        ".clangd",
+        "CMakeLists.txt"
+      ],
+      "servers": [
+        "clangd"
+      ]
     },
     "cpp": {
       "note": "See the c entry for .h ownership.",
-      "extensions_remove": [".h"],
-      "roots": ["compile_commands.json", ".clangd", "CMakeLists.txt"],
-      "servers": ["clangd"]
+      "extensions_remove": [
+        ".h"
+      ],
+      "roots": [
+        "compile_commands.json",
+        ".clangd",
+        "CMakeLists.txt"
+      ],
+      "servers": [
+        "clangd"
+      ]
     },
     "c-sharp": {
       "note": "The LSP language identifier for C# is csharp. Earlier Crude default server and solution-first root rules.",
       "lsp_language_id": "csharp",
-      "roots": ["*.sln", "*.slnx", "*.csproj"],
-      "workspace_roots": ["*.sln", "*.slnx"],
-      "servers_prepend": ["csharp-ls"]
+      "roots": [
+        "*.sln",
+        "*.slnx",
+        "*.csproj"
+      ],
+      "workspace_roots": [
+        "*.sln",
+        "*.slnx"
+      ],
+      "servers_prepend": [
+        "csharp-ls"
+      ]
     },
     "zig": {
       "note": "Earlier Crude root rules.",
-      "roots": ["build.zig", "zls.json"],
-      "servers": ["zls"]
+      "roots": [
+        "build.zig",
+        "zls.json"
+      ],
+      "servers": [
+        "zls"
+      ]
     },
     "odin": {
       "note": "Earlier Crude used the workspace folder as the root. Linguist also assigns .odin to a data format; this entry is the Odin language only.",
-      "linguist": ["Odin"],
+      "linguist": [
+        "Odin"
+      ],
       "roots": [],
-      "servers": ["ols"]
+      "servers": [
+        "ols"
+      ]
     },
     "lua": {
       "note": "Earlier Crude used the workspace folder as the root.",
       "roots": [],
-      "servers": ["lua-language-server"]
+      "servers": [
+        "lua-language-server"
+      ]
     }
   },
   "servers": {
     "gopls": {
       "note": "Earlier Crude launch and resource hints. Staticcheck stays off because it can use two cores for a long time on a cold large workspace. The gopls diagnostics documentation states that compilation and analysis diagnostics are computed for the whole workspace: https://github.com/golang/tools/blob/master/gopls/doc/features/diagnostics.md",
-      "launch": {"command": "gopls"},
+      "launch": {
+        "command": "gopls"
+      },
       "diagnostic_scope": "project",
       "hints": {
-        "environment": {"GOMAXPROCS": "{threads}", "GOMEMLIMIT": "{memory_mb}MiB"},
-        "settings": {"gopls": {"staticcheck": false, "diagnosticsDelay": "1s"}}
+        "environment": {
+          "GOMAXPROCS": "{threads}",
+          "GOMEMLIMIT": "{memory_mb}MiB"
+        },
+        "settings": {
+          "gopls": {
+            "staticcheck": false,
+            "diagnosticsDelay": "1s"
+          }
+        }
       }
     },
     "clangd": {
       "note": "Earlier Crude launch and thread hint. clangd reports diagnostics for files that the editor opens.",
-      "launch": {"command": "clangd"},
+      "launch": {
+        "command": "clangd"
+      },
       "diagnostic_scope": "open-files",
-      "hints": {"args": ["-j={threads}"], "arg_prefixes": ["-j"]}
+      "hints": {
+        "args": [
+          "-j={threads}"
+        ],
+        "arg_prefixes": [
+          "-j"
+        ]
+      }
     },
     "rust-analyzer": {
       "note": "Earlier Crude launch and thread hints. The settings section is also sent as initialization options, as rust-analyzer documents. Cargo's job limit covers build scripts and checks.",
-      "launch": {"command": "rust-analyzer"},
+      "launch": {
+        "command": "rust-analyzer"
+      },
       "hints": {
-        "environment": {"CARGO_BUILD_JOBS": "{threads}"},
-        "settings": {"rust-analyzer": {"numThreads": "{threads}", "cachePriming": {"numThreads": "{threads}"}}},
+        "environment": {
+          "CARGO_BUILD_JOBS": "{threads}"
+        },
+        "settings": {
+          "rust-analyzer": {
+            "numThreads": "{threads}",
+            "cachePriming": {
+              "numThreads": "{threads}"
+            }
+          }
+        },
         "initialization_from_section": "rust-analyzer"
       }
     },
     "pyright": {
       "note": "Earlier Crude launch and the open-files diagnostic mode, which bounds analysis work.",
-      "launch": {"command": "pyright-langserver", "args": ["--stdio"]},
+      "launch": {
+        "command": "pyright-langserver",
+        "args": [
+          "--stdio"
+        ]
+      },
       "diagnostic_scope": "open-files",
-      "hints": {"settings": {"python": {"analysis": {"diagnosticMode": "openFilesOnly"}}}}
+      "hints": {
+        "settings": {
+          "python": {
+            "analysis": {
+              "diagnosticMode": "openFilesOnly"
+            }
+          }
+        }
+      }
     },
     "basedpyright": {
       "note": "Same bounded diagnostic mode as pyright.",
-      "launch": {"command": "basedpyright-langserver", "args": ["--stdio"]},
+      "launch": {
+        "command": "basedpyright-langserver",
+        "args": [
+          "--stdio"
+        ]
+      },
       "diagnostic_scope": "open-files",
-      "hints": {"settings": {"basedpyright": {"analysis": {"diagnosticMode": "openFilesOnly"}}}}
+      "hints": {
+        "settings": {
+          "basedpyright": {
+            "analysis": {
+              "diagnosticMode": "openFilesOnly"
+            }
+          }
+        }
+      }
     },
     "typescript-language-server": {
       "note": "Earlier Crude launch and memory hint. The TypeScript server reports diagnostics for open files.",
-      "launch": {"command": "typescript-language-server", "args": ["--stdio"]},
+      "launch": {
+        "command": "typescript-language-server",
+        "args": [
+          "--stdio"
+        ]
+      },
       "diagnostic_scope": "open-files",
-      "hints": {"initialization_options": {"maxTsServerMemory": "{memory_mb}", "tsserver": {"useSyntaxServer": "never"}}}
+      "hints": {
+        "initialization_options": {
+          "maxTsServerMemory": "{memory_mb}",
+          "tsserver": {
+            "useSyntaxServer": "never"
+          }
+        }
+      }
     },
-    "vscode-html-language-server": {"note": "Earlier Crude launch.", "launch": {"command": "vscode-html-language-server", "args": ["--stdio"]}},
-    "vscode-css-language-server": {"note": "Earlier Crude launch.", "launch": {"command": "vscode-css-language-server", "args": ["--stdio"]}},
-    "vscode-json-language-server": {"note": "Earlier Crude launch.", "launch": {"command": "vscode-json-language-server", "args": ["--stdio"]}},
-    "csharp-ls": {"note": "Earlier Crude launch.", "launch": {"command": "csharp-ls"}},
-    "zls": {"note": "Earlier Crude launch.", "launch": {"command": "zls"}},
-    "ols": {"note": "Earlier Crude launch.", "launch": {"command": "ols"}},
-    "lua-language-server": {"note": "Earlier Crude launch.", "launch": {"command": "lua-language-server"}}
+    "vscode-html-language-server": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "vscode-html-language-server",
+        "args": [
+          "--stdio"
+        ]
+      }
+    },
+    "vscode-css-language-server": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "vscode-css-language-server",
+        "args": [
+          "--stdio"
+        ]
+      }
+    },
+    "vscode-json-language-server": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "vscode-json-language-server",
+        "args": [
+          "--stdio"
+        ]
+      }
+    },
+    "csharp-ls": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "csharp-ls"
+      }
+    },
+    "zls": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "zls"
+      }
+    },
+    "ols": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "ols"
+      }
+    },
+    "lua-language-server": {
+      "note": "Earlier Crude launch.",
+      "launch": {
+        "command": "lua-language-server"
+      }
+    }
   }
 }

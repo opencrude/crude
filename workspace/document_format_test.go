@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// Go formatting runs the catalog formatter (gofmt) over stdin and stdout.
+// The path's folder does not exist, so nothing can touch the disk.
 func TestFormatDocumentGoUsesSnapshotWithoutDiskMutation(t *testing.T) {
 	input := []byte("package main\nfunc f(){println(1)}\n")
 	got, err := FormatDocument(context.Background(), "/missing/source.go", input)

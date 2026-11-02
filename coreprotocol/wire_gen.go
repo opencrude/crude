@@ -9762,8 +9762,8 @@ func (z *LSPResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 19
-	o = append(o, 0xdc, 0x0, 0x13)
+	// array header, size 20
+	o = append(o, 0xdc, 0x0, 0x14)
 	o = msgp.AppendString(o, z.Generation)
 	o = msgp.AppendUint64(o, z.ContextGeneration)
 	o = msgp.AppendUint64(o, z.Version)
@@ -9814,6 +9814,11 @@ func (z *LSPSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	o, err = z.Assembly.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Assembly")
+		return
+	}
 	o, err = z.Settings.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "Settings")
@@ -9848,8 +9853,8 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 19 {
-		err = msgp.ArrayError{Wanted: 19, Got: zb0001}
+	if zb0001 != 20 {
+		err = msgp.ArrayError{Wanted: 20, Got: zb0001}
 		return
 	}
 	z.Generation, bts, err = msgp.ReadStringBytes(bts)
@@ -9995,6 +10000,11 @@ func (z *LSPSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	bts, err = z.Assembly.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Assembly")
+		return
+	}
 	bts, err = z.Settings.UnmarshalMsg(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Settings")
@@ -10077,7 +10087,7 @@ func (z *LSPSnapshot) Msgsize() (s int) {
 	for za0006 := range z.Health {
 		s += z.Health[za0006].Msgsize()
 	}
-	s += z.Settings.Msgsize() + msgp.BoolSize + msgp.BoolSize + z.Status.Msgsize() + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Uint64Size + msgp.BoolSize + msgp.Uint64Size
+	s += z.Assembly.Msgsize() + z.Settings.Msgsize() + msgp.BoolSize + msgp.BoolSize + z.Status.Msgsize() + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Uint64Size + msgp.BoolSize + msgp.Uint64Size
 	return
 }
 

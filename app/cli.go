@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"crude/buildinfo"
+	"crude/insight/catalog"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"time"
 
 	"crude/provider"
@@ -269,6 +271,12 @@ func Main() int {
 	if flags.Version {
 		fmt.Println(buildinfo.VersionString())
 		return 0
+	}
+	// Every Crude process (core and shells) reads the same catalog: the
+	// embedded data plus the packs in the data folder. A pack that does not
+	// validate is skipped; the core logs it.
+	if home, err := buildinfo.Home(); err == nil {
+		catalog.UsePacks(filepath.Join(DataDir(home), "catalog"))
 	}
 	if err := validateCoreRestartInvocation(flags); err != nil {
 		fmt.Fprintf(os.Stderr, "crude: %v\n", err)

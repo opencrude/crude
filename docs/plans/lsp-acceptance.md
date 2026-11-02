@@ -10,9 +10,10 @@ required before LSP is accepted as complete.
 
 - Enabling LSP on an unused workspace starts no server and sends no `didOpen`
   (`TestLSPEnabledUnusedWorkspaceDoesNotOpenSources`).
-- Settings Save → replicated idle guidance → source open → rendered diagnostics,
-  including enabling with an already-open source, is guarded by
-  `TestConnectedLSPEnableSaveExplainsIdleAndStartsOpenSource`. Idle, disabled,
+- Settings Save → the project check that the assembly plan names starts
+  without opening any source → source open shares that process → rendered
+  diagnostics, including enabling with an already-open source, is guarded by
+  `TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource`. Idle, disabled,
   paused, manual-start and unsupported-file explanations are manager-owned
   (`workspace/lsp_idle_test.go`).
 - Document lifetimes are lazy; stop/restart retains open documents and rejects

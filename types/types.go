@@ -746,7 +746,9 @@ type EditorSettings struct {
 }
 
 // LSPLanguageSettings is the per-language overlay for one language server.
-// Empty Command/Args inherit the built-in default for that language.
+// The key is a catalog language ID or a custom language ID. Empty Command
+// uses the language's first catalog server; a Command that matches another
+// catalog server of the language selects that server and its defaults.
 type LSPLanguageSettings struct {
 	Enabled               bool              `json:"enabled"`
 	Command               string            `json:"command,omitempty"`
