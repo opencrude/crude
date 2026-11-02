@@ -86,6 +86,8 @@ documents to read before changing each area.
   anatomy, control dialect, help strip, footer and live store search.
 - [Dialog and prompt design language](reference/dialog-design-language.md) —
   confirms and prompts.
+- [User language](reference/user-language.md) — ASD-STE100 wording, plain
+  status and errors, when to ask the user, and one owner for each message.
 - [Chat activity projection](reference/chat-activity.md) — tool activity,
   reasoning, activity strip, header/footer telemetry and live/hydrated parity.
 - [Main view panes](reference/main-view-panes.md) — tab groups, splits, agent tab
@@ -135,6 +137,9 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
+- [Workspace trust prompt and plain status](plans/workspace-trust-and-status-language.md):
+  next work. Ask for trust when a folder opens, allow editing in restricted
+  mode, and show one plain language-server status on every surface.
 - [First-use acceptance handoff](plans/broad-workspace-ux.md): remaining native
   Windows, distinct-host SSH, and reported memory-workload acceptance.
 - [Agent experience roadmap](plans/agent-experience-roadmap.md) — vision and
