@@ -1,0 +1,14 @@
+{
+  "mason": {
+    "release": "2026-11-02-drunk-goat",
+    "url": "https://github.com/mason-org/mason-registry/releases/download/2026-11-02-drunk-goat/registry.json.zip",
+    "sha256": "05635ef1aeca6fe9c25f14dc1c6f93bad3199e5474dada1f8679b182fa81fab7",
+    "license": "Apache-2.0"
+  },
+  "helix": {
+    "commit": "ba40e547426b0f9896c8bdc699a4ab11f2b37dbc",
+    "url": "https://raw.githubusercontent.com/helix-editor/helix/ba40e547426b0f9896c8bdc699a4ab11f2b37dbc/languages.toml",
+    "sha256": "365d39f08c94e792d685cb9f12020340daefeb7999ab4bb8202d4fe04b9fc273",
+    "license": "MPL-2.0"
+  }
+}

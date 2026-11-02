@@ -57,6 +57,7 @@ detailed contracts.
 | `internal/fileuri/` | Native path, local file URI and SQLite file DSN conversion. |
 | `document/` | Presentation-neutral shared text commands. |
 | `syntax/` | Bounded native syntax sessions, selected grammar/query pins, byte spans and syntax findings; not the canonical text owner or a semantic engine ([native syntax](../reference/native-syntax.md)). |
+| `insight/catalog/`, `internal/catalogimport/` | Languages, language servers and installable tools as validated data with provenance, detection through Linguist data, resource hints and release assets; generated from pinned sources by the development importer ([catalog](../reference/code-intelligence-catalog.md)). |
 | `insight/project/` | Bounded passive compilation-database artifact observations with exact byte identity and detached argv/opaque command projections; not a project model, execution authority or semantic coverage. |
 | `insight/project/cmake/` | Bounded passive CMake File API artifact observations with exact byte identity and detached configuration/target projections; native-shell fragments stay opaque, and parsing grants no read/execute authority, freshness or semantic coverage. |
 | `insight/predictionbudget/` | Sessionless durable token reservations, single-attempt tickets and conservative unknown-usage settlement; library-only, not egress consent or an enabled editor request path. |
