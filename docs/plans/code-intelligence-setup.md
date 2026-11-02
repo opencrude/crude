@@ -58,8 +58,11 @@ Confirmed by the user on 2026-11-02:
 | [Open VSX](https://open-vsx.org/) | Language IDs, file extensions and settings schemas from extension manifests | Most extensions start their server from extension code, so they are not a launch source. Some well-known servers have licenses limited to Microsoft products. |
 | Sources found by an agent | Gaps that the sources above do not cover | Always a separate question for the exact source. |
 
-Registry data is mirrored at pinned commits. Whether Crude signs its own index
-from the start is an open decision.
+Registry data is mirrored at pinned commits and built into the program after a
+checksum check. There is no signed index yet (decided 2026-11-02): a tool file
+whose source publishes no checksum gets its checksum recorded at the first
+download, and the install preview says so. A signature with one built-in public
+key comes when Crude updates its catalog between releases.
 
 ## Accountability
 

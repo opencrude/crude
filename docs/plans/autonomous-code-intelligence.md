@@ -48,11 +48,12 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-02 | The Microsoft Visual Studio Marketplace is not a source. Its terms allow use only with Visual Studio products. | Research |
 | 2026-11-02 | Development approach: build a thin path through every stage first, then deepen one stage at a time against the same end-to-end test. Not finished horizontal layers one by one, and not the whole plan at once. | User |
 | 2026-11-02 | Registry sources: mason and aqua for acquisition metadata, declarative launch configurations (such as Helix `languages.toml`) for launch data, and Open VSX for language and settings metadata only. See [code-intelligence setup](code-intelligence-setup.md#sources). | User |
-| 2026-11-02 | Linguist data is used when the catalog is generated, not at run time. Linking go-enry into Crude measured 9.6 MB of binary size and 20 ms of start-up for every process. Run-time detection uses catalog data: file names, extensions and script interpreters. | Measurement |
+| 2026-11-02 | Linguist data is used when the catalog is generated, not at run time. Linking go-enry into Crude measured 9.6 MB of binary size and 20 ms of start-up for every process. Run-time detection uses catalog data: file names, extensions and script interpreters. Linguist content rules for the few shared extensions can be copied into the catalog later if needed. | User (from a measurement) |
+| 2026-11-02 | No signed index yet. The catalog is built into the program and verified against pinned checksums when it is generated, so it is as trusted as the program. Tool downloads without a published checksum record the checksum at the first download, and the install preview says so in plain words. A signature with one built-in public key comes when Crude updates its catalog between releases. | User |
 
 ### Open decisions
 
-- **Signed index.** Whether Crude signs its own registry index from the start.
+None.
 
 ## Stage status
 
