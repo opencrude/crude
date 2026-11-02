@@ -68,6 +68,14 @@ sufficient.
 - Correctness includes focus/capture, loading/empty/error states, confirmations,
   recovery, discoverability and clear status. A backend API without usable
   product UX is not a finished feature.
+- **Talk to the user like a production IDE.** Every user-visible word follows
+  [user language](docs/reference/user-language.md): ASD-STE100 sentences,
+  the state and the next step, no internal state names or zero counters. Ask
+  at the moment a decision is needed (for example, trust a new workspace)
+  instead of assuming the user knows how Crude works. Be clear, not verbose.
+- Prefer an established, respected implementation (a direct dependency or a
+  pinned copy in `third_party/`) over fragile hand-rolled logic, and do not
+  over-depend either: choose what keeps the result small and dependable.
 - Safety-sensitive operations need immutable preview, precondition checks,
   transactional rollback, durable audit context and an undo path. Fail closed on
   ambiguity; never guess ownership or overwrite later work.
@@ -190,6 +198,7 @@ most often broken there.
 | New screens and components | [component authoring](docs/guides/component-authoring.md), [control usage](docs/reference/control-usage.md), [surface catalog](docs/reference/surface-catalog.md) | One shared `ui.Tabs` look; no bespoke controls |
 | Keyboard/mouse behavior | [interaction matrix](docs/reference/interaction-matrix.md) | Esc is back; Ctrl+C is copy |
 | Dialogs and confirms | [dialog design language](docs/reference/dialog-design-language.md) | Use the shared confirm frame |
+| Any user-visible text: status, errors, prompts, help | [user language](docs/reference/user-language.md) | State and next step; never show internal state names |
 | Main panes, tabs, agent tabs | [main view panes](docs/reference/main-view-panes.md) | Closing an agent tab minimizes, never terminates |
 | Chat transcript, tool rows, activity strip | [chat activity](docs/reference/chat-activity.md) | Live and hydrated rows must paint identically |
 | Composer, text fields, clipboard, cursor | [text input](docs/reference/text-input.md) | Lifecycle events never consume the draft |
