@@ -91,6 +91,15 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
 - `Server.WithHints` fills resource defaults. Explicit values always win.
 - `Package.AssetFor` selects the release asset for the first matching
   platform name from `CurrentTargets`.
+- `Package.DownloadFor(command, targets)` is the install contract: the HTTPS
+  release URL, file, archive kind (`zip`, `tar.gz`, `tar.xz`, `gz` or `raw`),
+  program path and source of the program a server runs. Only release files on
+  GitHub are supported. A package that a language package manager installs, a
+  release file inside another archive, an archive kind the tool store cannot
+  unpack, a program template Crude does not support, or an unsafe program path
+  is not installable, and the second result says why in plain words
+  (`TestEmbeddedServersResolveOrExplain`). The assembly plan uses it to mark a
+  missing server as one Crude can install.
 - `Names` lists every identifying string.
 
 ## Names gate

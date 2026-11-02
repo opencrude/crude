@@ -197,10 +197,12 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 			language.Reason = fmt.Sprintf("The language server for %s is off. Turn it on in Language servers settings.", found.name)
 		default:
 			language.ServerID, language.Command = spec.ServerID, spec.Command
+			installReason := ""
 			if server, known := c.Server(spec.ServerID); known && server.Package != "" {
 				language.Package = server.Package
 				if pkg, ok := c.Package(server.Package); ok {
-					_, language.Installable = pkg.AssetFor(catalog.CurrentTargets())
+					_, installReason = pkg.DownloadFor(server.Command, catalog.CurrentTargets())
+					language.Installable = installReason == ""
 				}
 			}
 			language.Executable, language.Source = locate(spec.Command)
@@ -209,7 +211,12 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 			}
 			if language.Executable == "" {
 				language.Status = ttypes.ToolMissing
-				language.Reason = fmt.Sprintf("%s needs %s, which is not installed. Install it, then refresh.", found.name, filepath.Base(spec.Command))
+				language.Reason = fmt.Sprintf("%s needs %s, which is not installed.", found.name, filepath.Base(spec.Command))
+				if language.Installable {
+					language.Reason += " Crude can install it."
+				} else {
+					language.Reason += " " + strings.TrimSpace(installReason+" Install it yourself, then check again.")
+				}
 				break
 			}
 			language.Status = ttypes.ToolReady
