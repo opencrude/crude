@@ -99,6 +99,9 @@ documents to read before changing each area.
   workspace/core lifetimes; provider/autonomous bindings remain open.
 - [Native syntax analysis](reference/native-syntax.md): bounded parser/query
   ownership, selected grammar pins, corpus and explicit integration limits.
+- [Code-intelligence catalog](reference/code-intelligence-catalog.md):
+  languages, language servers and installable tools as data, with pinned
+  sources, provenance, detection and pack validation.
 - [Text input and composer](reference/text-input.md) — shared text controls,
   cursor, clipboard, composer pastes, attachments and prompt history.
 - [Interaction matrix](reference/interaction-matrix.md) — keyboard/mouse

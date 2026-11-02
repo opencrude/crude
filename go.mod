@@ -48,6 +48,8 @@ require github.com/quic-go/quic-go v0.61.0
 require github.com/klauspost/compress v1.20.3
 
 require (
+	github.com/BurntSushi/toml v1.6.0
+	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/tinylib/msgp v1.6.5
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/mod v0.37.0
@@ -57,6 +59,7 @@ require (
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
+	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
@@ -139,9 +142,9 @@ require (
 	golang.org/x/term v0.45.0
 	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.72.3
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
+	modernc.org/memory v1.11.0
 )
 
 replace charm.land/bubbletea/v2 => ./third_party/bubbletea
