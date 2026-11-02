@@ -146,17 +146,25 @@ parallel, then 4, 5 and 6, then 7.
    (resource hints, declared diagnostic scope, name mapping fixes). Language
    detection uses Linguist data through go-enry. Extra packs load from data
    files with the same validation. Every entry keeps its provenance.
+   **Landed 2026-11-02** (`2746eb7e`): 179 languages, 179 servers, 121
+   packages; go-enry runs only in the importer. See the
+   [catalog reference](../reference/code-intelligence-catalog.md).
 2. **Tool store** (a new neutral package). One read-only directory per tool,
    version and digest under `CRUDE_HOME`, bounded downloads through the shared
    network client, safe archive extraction, a manifest per tool and an
    append-only history. Lists, sizes, workspace use and previewed removal. No
-   automatic deletion.
+   automatic deletion. **Landed 2026-11-02** (`36679c1e`). See the
+   [tool store reference](../reference/tool-store.md).
 3. **Project producers.** The language-server manager accepts project-scoped
    producers that start without an open document, inside existing admission.
    Diagnostics for unopened files publish as unversioned `disk` batches.
    A coverage view states, per producer, what it checks (whole project or only
    open files), its state and the reason. No `didOpen` is sent for files the
-   user did not open.
+   user did not open. **Manager and Problems part landed 2026-11-02:**
+   `SetProjectProducers`, unopened-file facts that Problems lists and the
+   status summary counts, an open document that owns its file, and removal of a
+   producer's facts when it stops. Nothing calls `SetProjectProducers` yet;
+   the assembly service (slice 4) does. The coverage view is not built yet.
 4. **Assembly service** (workspace). Bounded discovery that runs no project
    code, resolution against installed tools, the tool store and the catalog,
    and one assembly plan published to shells and to the control API.

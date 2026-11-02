@@ -31,6 +31,7 @@ type LSPManager struct {
 	documentSend                sync.Mutex
 	states                      map[string]*lspClientState
 	documents                   map[string]*lspDocument
+	projects                    map[string]ttypes.LSPProjectProducer // by server key
 	updateTimers                map[string]*time.Timer
 	runtime                     LSPRuntime
 	settings                    ttypes.LSPSettings

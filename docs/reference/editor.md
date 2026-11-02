@@ -937,6 +937,38 @@ batches remain discoverable with provenance in Problems but cannot authorize
 current paint, hover or navigation. Previously accepted same-batch ink can map
 provisionally through unchanged rows without becoming current semantic evidence.
 
+#### Project producers and unopened files
+
+`LSPManager.SetProjectProducers` takes project-scoped servers (a root and a
+launch spec). A project producer starts without an open document, through the
+same trust, master switch, start policy, pause, `MaxServers` and governor
+admission as document servers, and shares a process with documents that resolve
+to the same root and launch configuration. It is exempt from idle retirement
+while it is wanted. It never causes `didOpen` for a file the user did not open.
+Nothing calls `SetProjectProducers` yet; the assembly service of the
+[IDE plan](../plans/autonomous-code-intelligence.md#current-checkpoint) does.
+
+The transport routes unversioned `publishDiagnostics` for files the client has
+not opened to `OnUnopenedDiagnostics`. A versioned publication for an unopened
+file is dropped, because the version names a text the client never sent. The
+manager publishes such a report as a `disk` fact with document ID
+`unopened:<path>`, bound to the producer instance and its context key, not to a
+text revision. `InsightDiagnostics.FromProjectCheck` identifies these facts.
+Only reports inside both the workspace root and the producer root are accepted.
+
+- An open document owns its file: opening it removes the project fact, and
+  unopened reports for it are ignored until it closes.
+- Editor context changes do not make project facts stale. The server
+  republishes the files an edit affects.
+- Stopping, retiring or removing the producer removes its facts and releases
+  their store capacity.
+- Problems lists a project fact with the reason "This file is not open. The
+  project check found these problems." Workspace health counts it. Go to
+  diagnostic opens the file and applies the location unless the buffer has
+  unsaved changes.
+
+The coverage view that states what each producer checks is not built yet.
+
 The language-server manager derives the active file's visible language status.
 The editor header shows error and warning counts, or that status label. The
 Problems footer shows counts and marks restricted or stopped services as off,

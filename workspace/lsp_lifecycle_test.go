@@ -31,6 +31,7 @@ type lifecycleClient struct {
 	mu                  sync.Mutex
 	runtime             *lifecycleRuntime
 	diagnostics         func(model.InsightDiagnosticPublication)
+	unopened            func(string, model.InsightDiagnosticPublication)
 	calls               []string
 	wireVersion         int
 	boundaries          map[string]model.InsightBoundary

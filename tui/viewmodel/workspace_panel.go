@@ -240,7 +240,8 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 	for _, path := range paths {
 		facts := diagnostics[path]
 		outdated := facts.State == ttypes.InsightStale
-		unmatched := !facts.HasExactSource()
+		fromProject := facts.FromProjectCheck()
+		unmatched := !facts.HasExactSource() && !fromProject
 		if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil && facts.HasExactSource() && !tab.Editor.MatchesDiagnosticSource(facts) {
 			outdated = true
 		}
@@ -252,6 +253,8 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			file.Lines = []statusoverview.DetailLine{{Value: "Results are for an older version of this file.", Role: ui.ColorWarning}}
 		} else if unmatched {
 			file.Lines = []statusoverview.DetailLine{{Value: "Results cannot be matched to this version of the file.", Role: ui.ColorWarning}}
+		} else if fromProject {
+			file.Lines = []statusoverview.DetailLine{{Value: "This file is not open. The project check found these problems.", Role: ui.ColorMuted}}
 		}
 		items = append(items, file)
 		for index, diagnostic := range facts.Diagnostics {

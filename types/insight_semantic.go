@@ -74,6 +74,22 @@ type InsightDiagnostics struct {
 	Limited         bool
 }
 
+// Insight source kinds. A canonical source is an editor document at an exact
+// revision. A disk source is a file that no editor has open; a project check
+// reported it from the file on disk.
+const (
+	InsightSourceCanonical = "canonical"
+	InsightSourceDisk      = "disk"
+)
+
+// FromProjectCheck reports a current batch for a file that is not open. A
+// project-scoped language server reported it without a document version, so
+// it is bound to the producer's view of the project, not to an exact text.
+func (d InsightDiagnostics) FromProjectCheck() bool {
+	return d.ID != "" && d.Boundary.Source.Kind == InsightSourceDisk && d.ReportedVersion == nil &&
+		(d.State == InsightCurrent || d.State == InsightProvisional) && !d.Limited
+}
+
 // HasExactSource describes source association, not semantic correctness or
 // complete build context. Consumers must still match their actual source owner.
 func (d InsightDiagnostics) HasExactSource() bool {
