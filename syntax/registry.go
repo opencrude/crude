@@ -4,8 +4,9 @@ import (
 	"crypto/sha256"
 	"embed"
 	"fmt"
-	"path/filepath"
 	"strings"
+
+	"crude/insight/catalog"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	tsgo "github.com/tree-sitter/tree-sitter-go/bindings/go"
@@ -26,18 +27,19 @@ type grammar struct {
 	query    string
 }
 
+// LanguageForPath returns the linked grammar for a file. The catalog decides
+// the file's language and names its grammar; this package only knows which
+// grammars it links.
 func LanguageForPath(path string) (LanguageID, bool) {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go":
-		return Go, true
-	case ".py", ".pyi":
-		return Python, true
-	case ".js", ".mjs", ".cjs", ".jsx":
-		return JavaScript, true
-	case ".ts", ".mts", ".cts":
-		return TypeScript, true
-	case ".tsx":
-		return TSX, true
+	c := catalog.Current()
+	language, ok := c.LanguageForPath(path, nil)
+	if !ok || language.Grammar == "" {
+		return "", false
+	}
+	id := LanguageID(language.Grammar)
+	switch id {
+	case Go, Python, JavaScript, TypeScript, TSX:
+		return id, true
 	default:
 		return "", false
 	}

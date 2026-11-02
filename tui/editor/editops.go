@@ -1,10 +1,10 @@
 package editor
 
 import (
-	"path/filepath"
 	"strings"
 
 	"crude/document"
+	"crude/insight/catalog"
 )
 
 // This file implements modern-IDE editing operations: auto-closing pairs,
@@ -508,51 +508,6 @@ func (e *Editor) deleteLines() {
 
 // ── toggle line comment ──────────────────────────────────────────────
 
-var commentPrefixByExt = map[string]string{
-	".go": "//", ".c": "//", ".h": "//", ".cpp": "//", ".hpp": "//", ".cc": "//",
-	".hh": "//", ".cxx": "//", ".hxx": "//", ".c++": "//", ".h++": "//",
-	".cs": "//", ".java": "//", ".js": "//", ".jsx": "//", ".ts": "//",
-	".tsx": "//", ".mjs": "//", ".cjs": "//", ".rs": "//", ".zig": "//",
-	".odin": "//", ".swift": "//", ".kt": "//", ".kts": "//", ".scala": "//",
-	".dart": "//", ".d": "//", ".v": "//", ".m": "//", ".mm": "//",
-	".php": "//", ".proto": "//", ".jsonc": "//", ".json5": "//",
-
-	".py": "#", ".sh": "#", ".bash": "#", ".zsh": "#", ".fish": "#", ".ksh": "#",
-	".rb": "#", ".pl": "#", ".pm": "#", ".r": "#", ".jl": "#", ".ex": "#",
-	".exs": "#", ".nim": "#", ".cr": "#", ".yaml": "#", ".yml": "#",
-	".toml": "#", ".mk": "#", ".cmake": "#", ".tcl": "#", ".ps1": "#",
-	".psm1": "#", ".tf": "#", ".hcl": "#", ".conf": "#", ".properties": "#",
-	".gitignore": "#", ".env": "#", ".dockerfile": "#", ".s": "#",
-
-	".sql": "--", ".lua": "--", ".hs": "--", ".elm": "--",
-
-	".lisp": ";", ".el": ";", ".clj": ";", ".cljs": ";", ".edn": ";",
-	".scm": ";", ".ini": ";", ".asm": ";",
-
-	".tex": "%", ".erl": "%", ".hrl": "%",
-
-	".vim": "\"",
-}
-
-var commentPrefixByBase = map[string]string{
-	"makefile":    "#",
-	"gnumakefile": "#",
-	"dockerfile":  "#",
-}
-
-var commentPrefixByLexer = map[string]string{
-	"Go": "//", "C": "//", "C++": "//", "C#": "//", "Java": "//",
-	"JavaScript": "//", "TypeScript": "//", "Rust": "//", "Zig": "//",
-	"Swift": "//", "Kotlin": "//", "Scala": "//", "Dart": "//", "PHP": "//",
-	"Python": "#", "Bash": "#", "Ruby": "#", "Perl": "#", "YAML": "#",
-	"TOML": "#", "Makefile": "#", "Docker": "#", "CMake": "#", "Fish": "#",
-	"R": "#", "Julia": "#", "Elixir": "#", "Nim": "#", "Crystal": "#",
-	"SQL": "--", "Lua": "--", "Haskell": "--", "Elm": "--",
-	"Common Lisp": ";", "Scheme": ";", "Clojure": ";", "EmacsLisp": ";",
-	"TeX": "%", "Erlang": "%",
-	"VimL": "\"",
-}
-
 // commentPrefix returns the line-comment prefix for the current file, or
 // "" when the language has no known line comment.
 func (e *Editor) commentPrefix() string {
@@ -560,22 +515,12 @@ func (e *Editor) commentPrefix() string {
 	if path == "" {
 		path = e.title
 	}
-	if ext := strings.ToLower(filepath.Ext(path)); ext != "" {
-		if p, ok := commentPrefixByExt[ext]; ok {
-			return p
-		}
+	c := catalog.Current()
+	language, ok := c.LanguageForPath(path, nil)
+	if !ok || len(language.CommentTokens) == 0 {
+		return ""
 	}
-	if base := strings.ToLower(filepath.Base(path)); base != "" {
-		if p, ok := commentPrefixByBase[base]; ok {
-			return p
-		}
-	}
-	if e.chromaLexer != nil {
-		if p, ok := commentPrefixByLexer[e.chromaLexer.Config().Name]; ok {
-			return p
-		}
-	}
-	return ""
+	return language.CommentTokens[0]
 }
 
 // toggleLineComment comments or uncomments every selected line using the

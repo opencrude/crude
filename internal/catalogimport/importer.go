@@ -66,6 +66,14 @@ type helixLanguage struct {
 	Roots           []string `toml:"roots"`
 	Shebangs        []string `toml:"shebangs"`
 	LanguageServers []any    `toml:"language-servers"`
+	CommentToken    any      `toml:"comment-token"`
+	CommentTokens   any      `toml:"comment-tokens"`
+	BlockComment    any      `toml:"block-comment-tokens"`
+	Grammar         string   `toml:"grammar"`
+	Formatter       *struct {
+		Command string   `toml:"command"`
+		Args    []string `toml:"args"`
+	} `toml:"formatter"`
 }
 
 type masonPackage struct {
@@ -103,6 +111,8 @@ type authoredLanguage struct {
 	WorkspaceRoots   *[]string `json:"workspace_roots"`
 	Servers          *[]string `json:"servers"`
 	ServersPrepend   []string  `json:"servers_prepend"`
+	// Formatter replaces the upstream formatter; an empty command removes it.
+	Formatter *catalog.FormatterRecord `json:"formatter"`
 }
 
 type authoredLaunch struct {
@@ -141,11 +151,14 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 	}
 
 	languages := map[string]*catalog.LanguageRecord{}
+	helixByName := map[string]helixLanguage{}
 	for _, hl := range helix.Language {
+		helixByName[hl.Name] = hl
+	}
+	for _, hl := range helix.Language {
+		// Languages without a language server stay: the editor still uses
+		// their file types, comments, grammar and formatter.
 		servers := helixServerNames(hl.LanguageServers)
-		if len(servers) == 0 {
-			continue // Only languages with a language server are useful here.
-		}
 		if !idPattern.MatchString(hl.Name) {
 			report.skip("language %q: identifier is not valid", hl.Name)
 			continue
@@ -159,13 +172,14 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 			case string:
 				ext := "." + v
 				if ext != strings.ToLower(ext) {
-					// Helix matches a file type against the extension or the
-					// whole file name, with case. Keep both meanings as
-					// case-sensitive file name patterns.
-					for _, pattern := range []string{v, "*." + v} {
-						if validPattern(pattern) {
-							record.Filenames = appendUnique(record.Filenames, pattern)
-						}
+					// An uppercase file type is a case-sensitive extension, such
+					// as ".C" for C++. Keep it as a file name pattern. A whole
+					// file name is kept only when Linguist knows it.
+					if validPattern("*." + v) {
+						record.Filenames = appendUnique(record.Filenames, "*."+v)
+					}
+					if len(enry.GetLanguagesByFilename(v, nil, nil)) > 0 && validPattern(v) {
+						record.Filenames = appendUnique(record.Filenames, v)
 					}
 					continue
 				}
@@ -191,6 +205,18 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 				}
 				record.Filenames = appendUnique(record.Filenames, glob)
 			}
+		}
+		record.CommentTokens = helixCommentTokens(hl)
+		record.BlockComment = helixBlockComment(hl.BlockComment)
+		record.Grammar = hl.Name
+		if hl.Grammar != "" {
+			record.Grammar = hl.Grammar
+		}
+		if !idPattern.MatchString(record.Grammar) {
+			record.Grammar = ""
+		}
+		if hl.Formatter != nil && strings.TrimSpace(hl.Formatter.Command) != "" {
+			record.Formatter = &catalog.FormatterRecord{Command: hl.Formatter.Command, Args: slices.Clone(hl.Formatter.Args)}
 		}
 		for _, interpreter := range hl.Shebangs {
 			if validInterpreter(interpreter) {
@@ -236,6 +262,12 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 		}
 		if patch.Servers != nil {
 			record.Servers = slices.Clone(*patch.Servers)
+		}
+		if patch.Formatter != nil {
+			record.Formatter = nil
+			if strings.TrimSpace(patch.Formatter.Command) != "" {
+				record.Formatter = &catalog.FormatterRecord{Command: patch.Formatter.Command, Args: slices.Clone(patch.Formatter.Args)}
+			}
 		}
 		if len(patch.ServersPrepend) > 0 {
 			rest := slices.DeleteFunc(slices.Clone(record.Servers), func(s string) bool { return slices.Contains(patch.ServersPrepend, s) })
@@ -303,6 +335,38 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 			}
 		}
 	}
+	// A shared extension stays with the one entry whose Linguist language
+	// has it as the primary extension. Without exactly one such entry all
+	// claimants keep it and detection picks the first by ID.
+	claims := map[string][]*catalog.LanguageRecord{}
+	for _, record := range languages {
+		for _, ext := range record.Extensions {
+			claims[ext] = append(claims[ext], record)
+		}
+	}
+	for ext, owners := range claims {
+		if len(owners) < 2 {
+			continue
+		}
+		var primary []*catalog.LanguageRecord
+		for _, record := range owners {
+			for _, name := range record.Linguist {
+				if exts := enry.GetLanguageExtensions(name); len(exts) > 0 && strings.ToLower(exts[0]) == ext {
+					primary = append(primary, record)
+					break
+				}
+			}
+		}
+		if len(primary) != 1 {
+			continue
+		}
+		for _, record := range owners {
+			if record != primary[0] {
+				record.Extensions = slices.DeleteFunc(record.Extensions, func(e string) bool { return e == ext })
+				report.skip("language %s: extension %s belongs to %s, whose Linguist language has it as primary", record.ID, ext, primary[0].ID)
+			}
+		}
+	}
 	for id, record := range languages {
 		sort.Strings(record.Interpreters)
 		if len(record.Extensions) == 0 && len(record.Filenames) == 0 && len(record.Interpreters) == 0 {
@@ -346,9 +410,8 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 			servers[name] = &catalog.ServerRecord{ID: name, Command: hs.Command, Args: hs.Args, Environment: hs.Environment, InitializationOptions: hs.Config, Sources: []string{sourceHelix}}
 		}
 		record.Servers = kept
-		if len(kept) == 0 {
-			report.skip("language %s: no server has a launch definition", record.ID)
-			delete(languages, record.ID)
+		if len(kept) == 0 && len(helixServerNames(helixByName[record.ID].LanguageServers)) > 0 {
+			report.skip("language %s: no server has a launch definition; the language stays for the editor", record.ID)
 		}
 	}
 	for id, patch := range authored.Servers {
@@ -528,6 +591,47 @@ func appendUnique(list []string, value string) []string {
 
 func validExtension(ext string) bool {
 	return len(ext) > 1 && len(ext) <= 64 && ext[0] == '.' && !strings.ContainsAny(ext, "/\\*?[] \t\r\n\x00") && !strings.Contains(ext, "..")
+}
+
+func helixCommentTokens(hl helixLanguage) []string {
+	// Upstream writes either field as a string or a list of strings.
+	var out []string
+	for _, value := range []any{hl.CommentToken, hl.CommentTokens} {
+		var tokens []any
+		switch v := value.(type) {
+		case string:
+			tokens = []any{v}
+		case []any:
+			tokens = v
+		}
+		for _, item := range tokens {
+			token, _ := item.(string)
+			if token = strings.TrimSpace(token); token != "" && len(token) <= 16 {
+				out = appendUnique(out, token)
+			}
+		}
+	}
+	return out
+}
+
+// helixBlockComment reads one table or the first of a list of tables.
+func helixBlockComment(value any) *catalog.BlockComment {
+	if list, ok := value.([]any); ok {
+		if len(list) == 0 {
+			return nil
+		}
+		value = list[0]
+	}
+	table, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	start, _ := table["start"].(string)
+	end, _ := table["end"].(string)
+	if start == "" || end == "" || len(start) > 16 || len(end) > 16 {
+		return nil
+	}
+	return &catalog.BlockComment{Start: start, End: end}
 }
 
 func validInterpreter(name string) bool {

@@ -5,54 +5,67 @@ import (
 	"math"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
-	"strconv"
 	"strings"
+
+	"crude/insight/catalog"
 )
 
-// LSPLanguage describes a built-in language server the settings UI can
-// enable, disable, or retarget.
-type LSPLanguage struct {
-	ID          string
-	Name        string
-	Exts        []string
-	DefaultCmd  string
-	RootMarkers []string
-	DefaultArgs []string
-}
-
-// DefaultLSPLanguages is the catalog of servers Crude knows how to start.
-func DefaultLSPLanguages() []LSPLanguage {
-	return []LSPLanguage{
-		{ID: "go", Name: "Go (gopls)", Exts: []string{".go"}, RootMarkers: []string{"go.work", "go.mod"}, DefaultCmd: "gopls"},
-		{ID: "rust", Name: "Rust (rust-analyzer)", Exts: []string{".rs"}, RootMarkers: []string{"Cargo.toml"}, DefaultCmd: "rust-analyzer"},
-		{ID: "python", Name: "Python (pyright)", Exts: []string{".py"}, RootMarkers: []string{"pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg"}, DefaultCmd: "pyright-langserver", DefaultArgs: []string{"--stdio"}},
-		{ID: "typescript", Name: "TypeScript / JavaScript", Exts: []string{".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}, RootMarkers: []string{"tsconfig.json", "jsconfig.json", "package.json"}, DefaultCmd: "typescript-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "html", Name: "HTML", Exts: []string{".html", ".htm"}, DefaultCmd: "vscode-html-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "css", Name: "CSS / SCSS / Less", Exts: []string{".css", ".scss", ".less"}, DefaultCmd: "vscode-css-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "json", Name: "JSON", Exts: []string{".json"}, DefaultCmd: "vscode-json-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "cpp", Name: "C / C++ (clangd)", Exts: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++"}, RootMarkers: []string{"compile_commands.json", ".clangd", "CMakeLists.txt"}, DefaultCmd: "clangd"},
-		{ID: "csharp", Name: "C# (csharp-ls / Roslyn)", Exts: []string{".cs"}, RootMarkers: []string{"*.sln", "*.slnx", "*.csproj"}, DefaultCmd: "csharp-ls"},
-		{ID: "zig", Name: "Zig (zls)", Exts: []string{".zig"}, RootMarkers: []string{"build.zig", "zls.json"}, DefaultCmd: "zls"},
-		{ID: "odin", Name: "Odin (ols)", Exts: []string{".odin"}, DefaultCmd: "ols"},
-		{ID: "lua", Name: "Lua", Exts: []string{".lua"}, DefaultCmd: "lua-language-server"},
+// languageForPath returns the language of a file: a catalog language first,
+// then a custom language by extension. Validation rejects a custom language
+// that claims a catalog extension, so the order is unambiguous.
+func (s LSPSettings) languageForPath(path string) (id string, language catalog.Language, builtin bool) {
+	if language, ok := catalog.Current().LanguageForPath(path, nil); ok {
+		return language.ID, language, true
 	}
-}
-
-// languageForExtension has one deterministic extension authority. Validation
-// rejects collisions, including custom languages shadowing built-in extensions.
-func (s LSPSettings) languageForExtension(ext string) (string, bool) {
-	if id := languageIDForExt(ext); id != "" {
-		return id, true
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return "", catalog.Language{}, false
 	}
-	for id, cfg := range s.Languages {
-		for _, candidate := range cfg.Extensions {
+	ids := make([]string, 0, len(s.Languages))
+	for id := range s.Languages {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		for _, candidate := range s.Languages[id].Extensions {
 			if candidate == ext {
-				return id, true
+				return id, catalog.Language{}, false
 			}
 		}
 	}
-	return "", false
+	return "", catalog.Language{}, false
+}
+
+// LanguageForPath names the language of a file the way launch resolution
+// sees it: a catalog language, or a custom language by extension.
+func (s LSPSettings) LanguageForPath(path string) (id, name string, ok bool) {
+	id, language, builtin := s.languageForPath(path)
+	if id == "" {
+		return "", "", false
+	}
+	name = id
+	if builtin && language.Name != "" {
+		name = language.Name
+	}
+	return id, name, true
+}
+
+// defaultServer returns the catalog server for a language: the one whose
+// command matches command when it is set, otherwise the first server.
+func defaultServer(language catalog.Language, command string) (catalog.Server, bool) {
+	c := catalog.Current()
+	for _, id := range language.Servers {
+		server, ok := c.Server(id)
+		if !ok {
+			continue
+		}
+		if command == "" || filepath.Base(command) == server.Command {
+			return server, true
+		}
+	}
+	return catalog.Server{}, false
 }
 
 func cloneJSONObject(src map[string]any) map[string]any {
@@ -133,12 +146,8 @@ func (s LSPSettings) Validate() error {
 	default:
 		return fmt.Errorf("invalid minimum severity")
 	}
+	c := catalog.Current()
 	extensions := map[string]string{}
-	for _, lang := range DefaultLSPLanguages() {
-		for _, ext := range lang.Exts {
-			extensions[ext] = lang.ID
-		}
-	}
 	ids := make([]string, 0, len(s.Languages))
 	for id := range s.Languages {
 		ids = append(ids, id)
@@ -149,12 +158,22 @@ func (s LSPSettings) Validate() error {
 		if strings.TrimSpace(id) == "" {
 			return fmt.Errorf("language identity is required")
 		}
-		if languageByID(id).ID == "" && (len(cfg.Extensions) == 0 || cfg.LanguageID == "" || strings.TrimSpace(cfg.Command) == "") {
+		_, builtin := c.Language(id)
+		if !builtin && len(cfg.Extensions) == 0 {
+			// A language the catalog does not have and no file
+			// extension: the entry matches no file and cannot launch
+			// anything, so it must not disable every other language.
+			continue
+		}
+		if !builtin && (len(cfg.Extensions) == 0 || cfg.LanguageID == "" || strings.TrimSpace(cfg.Command) == "") {
 			return fmt.Errorf("custom language %s needs extensions, language_id and command", id)
 		}
 		for _, ext := range cfg.Extensions {
 			if !validLSPExtension(ext) {
 				return fmt.Errorf("%s: extension %q must be lowercase and start with a dot", id, ext)
+			}
+			if owners := c.ExtensionOwners(ext); len(owners) > 0 && !slices.Contains(owners, id) {
+				return fmt.Errorf("extension %s belongs to %s, not %s", ext, owners[0], id)
 			}
 			if owner, exists := extensions[ext]; exists && owner != id {
 				return fmt.Errorf("extension %s belongs to %s, not %s", ext, owner, id)
@@ -224,90 +243,21 @@ func validJSONValue(value reflect.Value) bool {
 	}
 }
 
-// applyServerHints supplies conservative soft guidance only to known executables.
-// Explicit environment/configuration/arguments always win; these aren't RSS caps.
-func applyServerHints(spec *LSPServerSpec, cfg LSPSettings) {
-	threads, memory := cfg.ServerThreads, cfg.ServerMemoryMB
-	if threads == 0 {
-		threads = 2
-	}
-	if memory == 0 {
-		memory = 1024
-	}
-	command := strings.TrimSuffix(strings.ToLower(filepath.Base(spec.Command)), ".exe")
-	switch command {
-	case "gopls":
-		// Compiler/type diagnostics stay live; whole-dependency Staticcheck fact
-		// construction is opt-in. Unset enables heavyweight subsets in newer
-		// gopls, which can monopolize two cores on a cold large workspace.
-		spec.Settings = mergeJSONDefaults(spec.Settings, map[string]any{"gopls": map[string]any{"staticcheck": false, "diagnosticsDelay": "1s"}})
-		if spec.Environment == nil {
-			spec.Environment = map[string]string{}
-		}
-		if _, ok := spec.Environment["GOMAXPROCS"]; !ok {
-			spec.Environment["GOMAXPROCS"] = strconv.Itoa(threads)
-		}
-		if _, ok := spec.Environment["GOMEMLIMIT"]; !ok {
-			spec.Environment["GOMEMLIMIT"] = strconv.Itoa(memory) + "MiB"
-		}
-	case "clangd":
-		hasJobs := false
-		for _, arg := range spec.Args {
-			if arg == "-j" || strings.HasPrefix(arg, "-j=") || (strings.HasPrefix(arg, "-j") && len(arg) > 2) {
-				hasJobs = true
-			}
-		}
-		if !hasJobs {
-			spec.Args = append(spec.Args, "-j="+strconv.Itoa(threads))
-		}
-	case "rust-analyzer":
-		// Cargo's documented environment budget covers build scripts/checks
-		// without disabling either. Cargo CLI/config overrides still win.
-		if spec.Environment == nil {
-			spec.Environment = map[string]string{}
-		}
-		if _, exists := spec.Environment["CARGO_BUILD_JOBS"]; !exists {
-			spec.Environment["CARGO_BUILD_JOBS"] = strconv.Itoa(threads)
-		}
-		defaults := map[string]any{"numThreads": threads, "cachePriming": map[string]any{"numThreads": threads}}
-		// didChangeConfiguration wraps rust-analyzer options; initialization uses
-		// the unwrapped object documented by rust-analyzer.
-		effective := mergeJSONDefaults(cloneJSONObject(spec.Settings), map[string]any{"rust-analyzer": defaults})
-		if options, ok := effective["rust-analyzer"].(map[string]any); ok {
-			spec.InitializationOptions = mergeJSONDefaults(spec.InitializationOptions, options)
-		}
-		spec.InitializationOptions = mergeJSONDefaults(spec.InitializationOptions, defaults)
-		// Keep startup and later configuration consistent: an explicit init
-		// option must not be overwritten by our default notification.
-		effective["rust-analyzer"] = cloneJSONObject(spec.InitializationOptions)
-		spec.Settings = effective
-	case "pyright-langserver", "basedpyright-langserver":
-		name := "python"
-		if command == "basedpyright-langserver" {
-			name = "basedpyright"
-		}
-		spec.Settings = mergeJSONDefaults(spec.Settings, map[string]any{name: map[string]any{"analysis": map[string]any{"diagnosticMode": "openFilesOnly"}}})
-	case "typescript-language-server":
-		spec.InitializationOptions = mergeJSONDefaults(spec.InitializationOptions, map[string]any{"maxTsServerMemory": memory, "tsserver": map[string]any{"useSyntaxServer": "never"}})
-	}
-}
-
-func mergeJSONDefaults(explicit, defaults map[string]any) map[string]any {
-	out := cloneJSONObject(explicit)
-	if out == nil {
+// mergeJSONOver returns base with top overlaid. Nested objects merge; any
+// other value in top wins.
+func mergeJSONOver(base, top map[string]any) map[string]any {
+	out := cloneJSONObject(base)
+	if out == nil && len(top) > 0 {
 		out = map[string]any{}
 	}
-	for key, value := range defaults {
-		current, exists := out[key]
-		if !exists {
-			out[key] = cloneJSONValue(value)
-			continue
-		}
-		a, aok := current.(map[string]any)
+	for key, value := range top {
+		a, aok := out[key].(map[string]any)
 		b, bok := value.(map[string]any)
 		if aok && bok {
-			out[key] = mergeJSONDefaults(a, b)
+			out[key] = mergeJSONOver(a, b)
+			continue
 		}
+		out[key] = cloneJSONValue(value)
 	}
 	return out
 }

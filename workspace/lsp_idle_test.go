@@ -74,7 +74,7 @@ func TestLSPIdleResumeWithoutDocumentsRefreshesReason(t *testing.T) {
 
 func TestLSPUnsupportedDocumentExplainsNoMatchingServer(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
-	editorSource(t, m, filepath.Join(root, "readme.md"), "# No configured Markdown server\n")
+	editorSource(t, m, filepath.Join(root, "notes.unknownext"), "No language owns this file type.\n")
 	if got := m.ProjectInsights(); got.Language.State != types.LanguageNoServer || !strings.Contains(got.Language.Message, "Language servers settings") {
 		t.Fatalf("unmatched source reason=%+v", got)
 	}

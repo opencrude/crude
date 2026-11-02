@@ -1,0 +1,61 @@
+# Reviewed exceptions for the names gate: path<TAB>literal<TAB>reason.
+# Each line covers one literal in one file. These files use a name that the
+# catalog also knows, for a purpose that is not code intelligence.
+app/core_restart.go	.json	Crude's own restart record file.
+docconv/docconv.go	.ipynb	Document conversion for read_file and web_fetch, not language support.
+search/web.go	.ipynb	Maps a web MIME type to the document converter.
+jsonrepair/utils.go	.c	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.cfg	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.cpp	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.cs	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.csv	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.go	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.h	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.ini	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.java	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.js	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.json	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.log	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.md	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.php	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.properties	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.py	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.rb	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.rs	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.svg	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.toml	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.ts	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.xml	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.yaml	Heuristic that recognizes file paths inside model output.
+jsonrepair/utils.go	.yml	Heuristic that recognizes file paths inside model output.
+localhistory/metadata.go	.json	Local History's own metadata files.
+localhistory/restore.go	.json	Local History's own metadata files.
+localhistory/retention.go	.json	Local History's own metadata files.
+localhistory/snapshot.go	.json	Local History's own metadata files.
+localhistory/store.go	.json	Local History's own metadata files.
+mcpclient/oauth.go	.json	MCP OAuth token file.
+worktree/review.go	.json	Managed execution records.
+worktree/service.go	.json	Managed execution records.
+provider/mime.go	.svg	Image MIME type for model attachments.
+safety/command_checker.go	.bash_login	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.bash_logout	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.bash_profile	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.bashrc	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.gitconfig	Safety rule: commands that write Git configuration.
+safety/command_checker.go	.profile	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.service	Safety rule: commands that install system services.
+safety/command_checker.go	.tmux.conf	Safety rule: commands that write terminal startup files.
+safety/command_checker.go	.vimrc	Safety rule: commands that write editor startup files.
+safety/command_checker.go	.zlogin	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.zprofile	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.zshenv	Safety rule: commands that write shell startup files.
+safety/command_checker.go	.zshrc	Safety rule: commands that write shell startup files.
+safety/command_checker.go	ncat	Safety rule: network listener commands.
+safety/command_policy.go	.bash	Safety rule: shell scripts that a command runs.
+safety/command_policy.go	.sh	Safety rule: shell scripts that a command runs.
+safety/command_policy.go	.zsh	Safety rule: shell scripts that a command runs.
+session/auto_permission.go	.env	Safety rule: secret files that need approval.
+workspace/editor_prediction_service.go	.env	Privacy rule: files never sent for AI predictions.
+workspace/editor_prediction_service.go	.kube	Privacy rule: folders never sent for AI predictions.
+workspace/editor_prediction_service.go	.pem	Privacy rule: files never sent for AI predictions.
+syntax/registry.go	.scm	File suffix of the embedded highlight query files.

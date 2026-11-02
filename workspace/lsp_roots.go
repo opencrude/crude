@@ -13,9 +13,10 @@ func pathWithin(root, path string) bool {
 }
 
 // resolveLSPRoot honors language-specific markers, including wildcard project
-// files, without descending into source trees. Workspace folders are a boundary,
-// not permission to walk up to an unrelated parent repository or home directory.
-func resolveLSPRoot(path, workspaceRoot string, markers []string) string {
+// files, without descending into source trees. Workspace markers (from the
+// catalog) win over nearer markers. Workspace folders are a boundary, not
+// permission to walk up to an unrelated parent repository or home directory.
+func resolveLSPRoot(path, workspaceRoot string, markers, workspaceMarkers []string) string {
 	dir := filepath.Dir(path)
 	boundary := workspaceRoot
 	if boundary == "" || boundary == "." || !pathWithin(boundary, dir) {
@@ -29,10 +30,7 @@ func resolveLSPRoot(path, workspaceRoot string, markers []string) string {
 		}
 	}
 	// Workspace markers take precedence over nearer package/module markers.
-	for _, marker := range markers {
-		if marker != "go.work" && marker != "*.sln" && marker != "*.slnx" {
-			continue
-		}
+	for _, marker := range workspaceMarkers {
 		for _, current := range dirs {
 			if lspMarkerExists(current, marker) {
 				return fileuri.FromPath(current)

@@ -166,17 +166,30 @@ parallel, then 4, 5 and 6, then 7.
    status summary counts, an open document that owns its file, and removal of a
    producer's facts when it stops. Nothing calls `SetProjectProducers` yet;
    the assembly service (slice 4) does. The coverage view is not built yet.
+   **Coverage view landed with slice 4:** server rows state what they check
+   and Project Languages lists every language with its reason.
 4. **Assembly service** (workspace). Bounded discovery that runs no project
    code, resolution against installed tools, the tool store and the catalog,
    and one assembly plan published to shells and to the control API.
+   **Landed 2026-11-02.** It is the first caller of `SetProjectProducers`. See
+   [editor: assembly service and coverage](../reference/editor.md#assembly-service-and-coverage).
 5. **Cutover.** Settings, launch resolution, roots, status text and the
    Settings server list read the catalog. `DefaultLSPLanguages`,
    `applyServerHints` and the language-named branches are deleted.
+   **Landed 2026-11-02.** Comment tokens, formatters and grammar names are
+   catalog data too, and languages without a server stay in the catalog for
+   them (322 languages). Packs load from `<data folder>/catalog`. The old
+   built-in entries in `~/.crude/config.json` were aligned by hand: the one
+   real choice (OmniSharp for C#) moved to the catalog ID `c-sharp`.
 6. **Acquisition flow.** A `tool` capability kind with one reviewed preview for
    a whole project, the non-blocking project question, and the Settings page
    for installed tools.
 7. **Proof.** The names gate, the end-to-end fixture language, visual captures
-   and the repository gates.
+   and the repository gates. **Names gate and fixture landed 2026-11-02:**
+   `internal/namesgate` passes (352 findings at the start), and
+   `TestFixtureLanguageRunsThroughEveryStage` runs a language that exists only
+   in a catalog pack through discovery, resolution, a real server process,
+   Problems for a file nobody opened, and the fix.
 
 ## Problem
 

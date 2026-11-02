@@ -275,4 +275,8 @@ type LSPServerHealth struct {
 	Information     int
 	Hints           int
 	LastDiagnostics time.Time
+	// Scope is CoverageProject or CoverageOpenFiles; Coverage states it in
+	// user text.
+	Scope    string
+	Coverage string
 }

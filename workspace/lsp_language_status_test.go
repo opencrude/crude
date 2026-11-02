@@ -25,7 +25,7 @@ func TestLanguageStatusOwnerStates(t *testing.T) {
 		{"stopped", func(m *LSPManager, _ string) { m.paused = true }, types.LanguageOff, "Language servers stopped", types.LanguageActionStartServers},
 		{"idle", func(m *LSPManager, _ string) {}, types.LanguageIdle, "", types.LanguageActionNone},
 		{"no server", func(m *LSPManager, root string) {
-			m.activeFilePath = filepath.Join(root, "readme.md")
+			m.activeFilePath = filepath.Join(root, "notes.unknownext")
 			m.documents[m.activeFilePath] = &lspDocument{}
 		}, types.LanguageNoServer, "", types.LanguageActionOpenSettings},
 		{"starting", func(m *LSPManager, _ string) { m.activeStatus = LSPStarting }, types.LanguageStarting, "Checking…", types.LanguageActionNone},

@@ -32,6 +32,10 @@ language-servers = ["beta-ls"]
 [[language]]
 name = "plain"
 file-types = ["txt"]
+comment-tokens = ["#", ";"]
+block-comment-tokens = [{ start = "(*", end = "*)" }]
+grammar = "plaintext"
+formatter = { command = "fmt-plain", args = ["--file", "{file}"] }
 `
 
 const masonFixture = `[
@@ -78,11 +82,15 @@ func TestImportFixture(t *testing.T) {
 		!slices.Equal(alpha.Servers, []string{"alpha-ls"}) || !slices.Equal(alpha.Roots, []string{"alpha.toml"}) {
 		t.Fatalf("alpha: %+v", alpha)
 	}
-	if !slices.Contains(alpha.Filenames, "alpha.conf") || !slices.Contains(alpha.Filenames, "Alpfile") {
+	if !slices.Contains(alpha.Filenames, "alpha.conf") || !slices.Contains(alpha.Filenames, "*.Alpfile") {
 		t.Fatalf("alpha file names: %v", alpha.Filenames)
 	}
-	if _, ok := c.Language("plain"); ok {
-		t.Fatal("a language without a server was imported")
+	// A language without a server stays for the editor data it carries.
+	plain, ok := c.Language("plain")
+	if !ok || len(plain.Servers) != 0 || !slices.Equal(plain.CommentTokens, []string{"#", ";"}) ||
+		plain.BlockComment == nil || plain.BlockComment.Start != "(*" || plain.Grammar != "plaintext" ||
+		plain.Formatter == nil || !slices.Equal(plain.Formatter.ArgsFor("/p/a.txt"), []string{"--file", "/p/a.txt"}) {
+		t.Fatalf("plain: %+v", plain)
 	}
 	server, _ := c.Server("alpha-ls")
 	if server.Package != "alpha-ls" || server.InitializationOptions["alpha"] == nil {

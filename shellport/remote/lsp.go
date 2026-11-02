@@ -59,6 +59,7 @@ func cloneLSPSnapshot(in coreprotocol.LSPSnapshot) coreprotocol.LSPSnapshot {
 	}
 	in.Symbols = syms
 	in.Health = append([]types.LSPServerHealth(nil), in.Health...)
+	in.Assembly = types.CloneAssemblyPlan(in.Assembly)
 	in.Settings = types.CloneLSPSettings(in.Settings)
 	return in
 }
@@ -136,6 +137,9 @@ func (l *lspReplica) DocumentSymbols(path string) []workspace.LSPSymbol {
 func (l *lspReplica) ProjectInsights() workspace.ProjectInsights { return l.snapshot.Insights }
 func (l *lspReplica) ServerHealthSnapshots() []types.LSPServerHealth {
 	return append([]types.LSPServerHealth(nil), l.snapshot.Health...)
+}
+func (l *lspReplica) Assembly() types.AssemblyPlan {
+	return types.CloneAssemblyPlan(l.snapshot.Assembly)
 }
 func (l *lspReplica) Settings() types.LSPSettings   { return types.CloneLSPSettings(l.snapshot.Settings) }
 func (l *lspReplica) ShowDiagnosticsInEditor() bool { return l.snapshot.ShowInEditor }

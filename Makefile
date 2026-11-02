@@ -41,8 +41,11 @@ test-lsp:
 	cd third_party/jsonrpc2 && go test ./... -count=1 -timeout=60s
 	cd third_party/powernap && go test ./pkg/lsp ./pkg/transport -count=1 -timeout=90s
 
+# Includes the names gate: product Go code names no language, tool or server
+# that the code-intelligence catalog owns (docs/reference/code-intelligence-catalog.md).
 design-audit:
 	./scripts/tui_design_audit.sh
+	go run ./internal/namesgate
 
 # Allocation regression gate against docs/reference/performance-baselines.md ceilings.
 bench-gate: protocol-check

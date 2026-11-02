@@ -35,6 +35,10 @@ func isProjectFact(b ttypes.InsightBoundary) bool {
 func (m *LSPManager) SetProjectProducers(producers []ttypes.LSPProjectProducer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.setProjectProducersLocked(producers)
+}
+
+func (m *LSPManager) setProjectProducersLocked(producers []ttypes.LSPProjectProducer) {
 	if m.closed {
 		return
 	}

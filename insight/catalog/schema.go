@@ -45,7 +45,30 @@ type LanguageRecord struct {
 	Roots          []string `json:"roots,omitempty"`
 	WorkspaceRoots []string `json:"workspace_roots,omitempty"`
 	Servers        []string `json:"servers,omitempty"`
-	Sources        []string `json:"sources,omitempty"`
+	// Editor data. CommentTokens are line comment prefixes, the first is
+	// preferred. Grammar names a syntax grammar; Crude uses it only when it
+	// links a grammar of that name. Formatter reads the document on stdin
+	// and writes the formatted text on stdout.
+	CommentTokens []string         `json:"comment_tokens,omitempty"`
+	BlockComment  *BlockComment    `json:"block_comment,omitempty"`
+	Grammar       string           `json:"grammar,omitempty"`
+	Formatter     *FormatterRecord `json:"formatter,omitempty"`
+	Sources       []string         `json:"sources,omitempty"`
+}
+
+// BlockComment is a pair of block comment delimiters.
+type BlockComment struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+// FormatterRecord is a command that formats a document through standard
+// input and output. The argument "{file}" is replaced by the document path,
+// so the formatter can find its project configuration. It never receives
+// write access to the file.
+type FormatterRecord struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
 }
 
 type HintsRecord struct {
@@ -201,6 +224,28 @@ func validateLanguage(language LanguageRecord) error {
 	}
 	if len(language.Extensions) == 0 && len(language.Filenames) == 0 && len(language.Interpreters) == 0 {
 		return fmt.Errorf("%w: language %s needs extensions, filenames or interpreters", errInvalidInput, language.ID)
+	}
+	for _, token := range language.CommentTokens {
+		if token == "" || len(token) > 16 || strings.ContainsAny(token, "\r\n\x00") {
+			return fmt.Errorf("%w: language %s comment token %q", errInvalidInput, language.ID, token)
+		}
+	}
+	if b := language.BlockComment; b != nil && (b.Start == "" || b.End == "" || len(b.Start) > 16 || len(b.End) > 16 ||
+		strings.ContainsAny(b.Start+b.End, "\r\n\x00")) {
+		return fmt.Errorf("%w: language %s block comment", errInvalidInput, language.ID)
+	}
+	if language.Grammar != "" && !idPattern.MatchString(language.Grammar) {
+		return fmt.Errorf("%w: language %s grammar %q", errInvalidInput, language.ID, language.Grammar)
+	}
+	if f := language.Formatter; f != nil {
+		if strings.TrimSpace(f.Command) == "" || strings.ContainsAny(f.Command, "\x00\r\n") {
+			return fmt.Errorf("%w: language %s formatter needs a command", errInvalidInput, language.ID)
+		}
+		for _, arg := range f.Args {
+			if strings.ContainsRune(arg, 0) {
+				return fmt.Errorf("%w: language %s formatter argument", errInvalidInput, language.ID)
+			}
+		}
 	}
 	for _, ext := range language.Extensions {
 		if !validExtension(ext) {

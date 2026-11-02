@@ -140,17 +140,17 @@ func TestLanguageServerCustomServerLifecycle(t *testing.T) {
 	if len(draft.Field(lspFieldID).Errors) == 0 || root.lsp.editing != "custom" {
 		t.Fatal("invalid identifier renamed the server")
 	}
-	draft.SetValue(lspFieldID, ui.StringValue("ruby"))
-	draft.SetValue(lspFieldCommand, ui.StringValue("ruby-lsp"))
-	draft.SetValue(lspFieldExtensions, ui.StringValue(".rb, .rake"))
-	draft.SetValue(lspFieldLanguageID, ui.StringValue("ruby"))
+	draft.SetValue(lspFieldID, ui.StringValue("fixture"))
+	draft.SetValue(lspFieldCommand, ui.StringValue("fixture-lsp"))
+	draft.SetValue(lspFieldExtensions, ui.StringValue(".fxl, .fxm"))
+	draft.SetValue(lspFieldLanguageID, ui.StringValue("fixture"))
 	result := root.lsp.save()
 	if result.Action == nil || result.Action.ID != "settings.save" {
 		t.Fatal("Save did not persist Settings")
 	}
-	ruby, ok := model.AppSettings().LSP.Languages["ruby"]
-	if root.lsp.draft != nil || !ok || ruby.Command != "ruby-lsp" || !reflect.DeepEqual(ruby.Extensions, []string{".rb", ".rake"}) {
-		t.Fatalf("custom server not applied: %+v open=%v", ruby, root.lsp.draft != nil)
+	custom, ok := model.AppSettings().LSP.Languages["fixture"]
+	if root.lsp.draft != nil || !ok || custom.Command != "fixture-lsp" || !reflect.DeepEqual(custom.Extensions, []string{".fxl", ".fxm"}) {
+		t.Fatalf("custom server not applied: %+v open=%v", custom, root.lsp.draft != nil)
 	}
 	if _, stale := model.AppSettings().LSP.Languages["custom"]; stale {
 		t.Fatal("rename left the placeholder behind")

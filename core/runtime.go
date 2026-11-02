@@ -5,6 +5,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"crude/toolstore"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -50,6 +51,10 @@ type Runtime struct {
 	factoryWG  sync.WaitGroup
 	// One admission authority spans every workspace and retained generation.
 	analysisGovernor *governor.Governor
+	// tools is the one tool store of this core, opened with the first
+	// workspace; nil when it cannot open.
+	toolsOnce        sync.Once
+	tools            *toolstore.Store
 	history          *history.Store
 	historyPath      string
 	uploads          *ReferenceUploads
@@ -538,6 +543,10 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 			if err == nil && ws != nil {
 				// Retained resources initialize before an actor or shell can read
 				// them. This I/O belongs to the factory worker, never actor Update.
+				if ws.LSPMgr != nil {
+					r.toolsOnce.Do(func() { r.tools = openToolStore() })
+					ws.LSPMgr.SetToolStore(r.tools)
+				}
 				if analysisErr := ws.InitializeAnalysisRuntime(r.analysisGovernor, id, rand.Text()); analysisErr != nil {
 					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "analysis", Summary: "Could not check this folder", Detail: analysisErr.Error()})
 				}

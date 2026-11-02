@@ -40,15 +40,15 @@ func TestExternalLanguagesAndAutoDetect(t *testing.T) {
 	if _, ok := s.ResolveServer("a.go"); ok {
 		t.Fatal("auto-detect off started built-in")
 	}
-	s.Languages["ruby"] = LSPLanguageSettings{Enabled: true, Command: "ruby-lsp", Args: []string{"a spaced argument"}, Extensions: []string{".rb"}, LanguageID: "ruby", RootMarkers: []string{"Gemfile"}}
-	spec, ok := s.ResolveServer("a.rb")
-	if !ok || spec.LanguageID != "ruby" || spec.Args[0] != "a spaced argument" {
+	s.Languages["fixture"] = LSPLanguageSettings{Enabled: true, Command: "fixture-lsp", Args: []string{"a spaced argument"}, Extensions: []string{".fxl"}, LanguageID: "fixture", RootMarkers: []string{"fixture.toml"}}
+	spec, ok := s.ResolveServer("a.fxl")
+	if !ok || spec.LanguageID != "fixture" || spec.Args[0] != "a spaced argument" {
 		t.Fatalf("custom: %+v %v", spec, ok)
 	}
-	lang := s.Languages["ruby"]
+	lang := s.Languages["fixture"]
 	lang.Enabled = false
-	s.Languages["ruby"] = lang
-	if _, ok := s.ResolveServer("a.rb"); ok {
+	s.Languages["fixture"] = lang
+	if _, ok := s.ResolveServer("a.fxl"); ok {
 		t.Fatal("disabled custom started")
 	}
 	s.Languages["go"] = LSPLanguageSettings{Enabled: true, Command: "external-go"}
@@ -71,7 +71,7 @@ func TestLSPHintsAndDetachedSettings(t *testing.T) {
 	if goSpec.Settings["gopls"].(map[string]any)["staticcheck"] != false {
 		t.Fatal("default unexpectedly starts heavyweight dependency analysis")
 	}
-	goCfg := s.Languages["go"]
+	goCfg := LSPLanguageSettings{Enabled: true}
 	goCfg.Settings = map[string]any{"gopls": map[string]any{"staticcheck": true}}
 	s.Languages["go"] = goCfg
 	explicit, _ := s.ResolveServer("a.go")
@@ -83,7 +83,7 @@ func TestLSPHintsAndDetachedSettings(t *testing.T) {
 	if ts.InitializationOptions["maxTsServerMemory"] != 1024 || ts.InitializationOptions["tsserver"].(map[string]any)["useSyntaxServer"] != "never" {
 		t.Fatal(ts)
 	}
-	rust := s.Languages["rust"]
+	rust := LSPLanguageSettings{Enabled: true}
 	rust.Settings = map[string]any{"rust-analyzer": map[string]any{"numThreads": 7, "cargo": map[string]any{"jobs": 8}, "nested": []any{map[string]any{"keep": true}}}}
 	rust.InitializationOptions = map[string]any{"cachePriming": map[string]any{"numThreads": 9}}
 	s.Languages["rust"] = rust
@@ -105,7 +105,7 @@ func TestLSPHintsAndDetachedSettings(t *testing.T) {
 		t.Fatal("resolve mutated source")
 	}
 	for _, args := range [][]string{{"-j", "6"}, {"-j=6"}, {"-j6"}} {
-		cfg := s.Languages["cpp"]
+		cfg := LSPLanguageSettings{Enabled: true, Command: "clangd"}
 		cfg.Args = args
 		s.Languages["cpp"] = cfg
 		c, _ := s.ResolveServer("a.cpp")
@@ -123,7 +123,7 @@ func TestLSPValidationRejectsBoundsCollisionsAndNonJSON(t *testing.T) {
 			s.Languages["ruby"] = LSPLanguageSettings{Command: "ruby-lsp", LanguageID: "ruby", Extensions: []string{".go"}}
 		},
 		func(s *LSPSettings) {
-			cfg := s.Languages["go"]
+			cfg := LSPLanguageSettings{Enabled: true}
 			cfg.Settings = map[string]any{"bad": func() {}}
 			s.Languages["go"] = cfg
 		},
@@ -136,5 +136,18 @@ func TestLSPValidationRejectsBoundsCollisionsAndNonJSON(t *testing.T) {
 		if _, ok := s.ResolveServer("a.go"); ok {
 			t.Fatal("invalid config launched")
 		}
+	}
+}
+
+// A saved entry for a language the catalog does not have, with no file
+// extension, matches no file. It must not turn off every other language.
+func TestStaleLanguageEntryDoesNotDisableOtherLanguages(t *testing.T) {
+	s := DefaultLSPSettings()
+	s.Languages["old-language-name"] = LSPLanguageSettings{Enabled: true, Command: "old-server", Args: []string{"--stdio"}}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("stale entry rejected the whole configuration: %v", err)
+	}
+	if spec, ok := s.ResolveServer("main.go"); !ok || spec.Command != "gopls" {
+		t.Fatalf("go after a stale entry = %+v %v", spec, ok)
 	}
 }

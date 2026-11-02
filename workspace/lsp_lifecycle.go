@@ -112,6 +112,8 @@ func (m *LSPManager) setWorkspaceRootLocked(root string) {
 		return
 	}
 	m.workspaceRoot = root
+	m.discovery = nil
+	m.projects = nil
 	m.settingsGeneration++
 	m.advanceContextLocked("Project root changed; retained context is stale.")
 	for _, state := range m.states {
@@ -172,6 +174,12 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 		doc.key, doc.opened = "", false
 	}
 	m.cancelUpdatesLocked()
+	// Settings can change which language owns a file and which server runs.
+	// The old producers' launch specs are stale: drop them now, so nothing
+	// starts with them, and let the new plan name the current ones.
+	m.setProjectProducersLocked(nil)
+	m.discovery = nil
+	m.requestAssemblyLocked()
 	m.recomputeActiveStatusLocked()
 	m.invalidateDiagnosticsLocked("Language service was stopped or reconfigured.")
 	if len(m.states) > 0 || len(m.documents) > 0 {
@@ -209,6 +217,10 @@ func (m *LSPManager) StartForWorkspace(root string) {
 			m.retireLocked(state)
 		}
 	}
+	// Starting again re-checks the project and its tools, so a server the
+	// user installed since the last plan is found.
+	m.discovery = nil
+	m.requestAssemblyLocked()
 	m.recomputeActiveStatusLocked()
 	if len(m.documents) > 0 || len(m.states) > 0 {
 		m.signalLocked()
@@ -390,7 +402,7 @@ func (m *LSPManager) reconcile() bool {
 			return true
 		}
 		m.mu.Unlock()
-		rootURI := resolveLSPRoot(path, root, spec.RootMarkers)
+		rootURI := resolveLSPRoot(path, root, spec.RootMarkers, spec.WorkspaceRootMarkers)
 		key := lspServerKey(rootURI, spec)
 		m.mu.Lock()
 		if m.documents[path] != doc || generation != m.settingsGeneration || m.paused || m.closed || !m.wantedLocked(doc) {
@@ -990,11 +1002,17 @@ func (m *LSPManager) Close() {
 	if m.workerRunning {
 		m.signalLocked()
 	}
+	if m.assemblyCancel != nil {
+		m.assemblyCancel()
+	}
 	done := m.workerDone
 	m.mu.Unlock()
 	if done != nil {
 		<-done
 	}
+	// A cancelled listing returns at its next directory; the bound only
+	// protects shutdown from a blocked filesystem call.
+	m.joinAssembly(5 * time.Second)
 }
 
 func (m *LSPManager) RestartServer(id string) bool {
@@ -1060,8 +1078,12 @@ func (m *LSPManager) clearServerDiagnosticsLocked(key string) {
 
 func lspServerKey(root string, spec ttypes.LSPServerSpec) string {
 	// A JS and a TS document share a process, but different args/env/settings do
-	// not. LanguageID is document metadata, never connection identity.
+	// not. LanguageID is document metadata, never connection identity. Root
+	// markers are per language too: they only choose the root, which is
+	// already part of the key, so one server for two languages (a module
+	// file and its sources) is one process.
 	spec.LanguageID = ""
+	spec.RootMarkers, spec.WorkspaceRootMarkers = nil, nil
 	b, _ := json.Marshal(spec)
 	return fmt.Sprintf("%s|%x", root, sha256.Sum256(b))
 }
@@ -1115,8 +1137,22 @@ func (m *LSPManager) broadcastLocked() {
 // resolveServerLocked maps a path to its configured server. The editor's
 // master switch is not consulted here: whether anyone may use the server is
 // decided per document by wantedLocked.
+//
+// The assembly plan refines it: a server the plan found in the tool store
+// launches from there, and a server the plan found missing does not launch,
+// so the status can name the missing program.
 func (m *LSPManager) resolveServerLocked(path string) (ttypes.LSPServerSpec, bool) {
 	settings := m.settings
 	settings.Enabled = true
-	return settings.ResolveServer(path)
+	spec, ok := settings.ResolveServer(path)
+	if !ok {
+		return spec, false
+	}
+	if _, missing := m.toolMissing[spec.Command]; missing {
+		return ttypes.LSPServerSpec{}, false
+	}
+	if executable := m.toolPaths[spec.Command]; executable != "" {
+		spec.Command = executable
+	}
+	return spec, true
 }

@@ -46,6 +46,7 @@ type LSPSnapshot struct {
 	Symbols              map[string][]workspace.LSPSymbol    `json:"symbols"`
 	Insights             workspace.ProjectInsights           `json:"insights"`
 	Health               []types.LSPServerHealth             `json:"health"`
+	Assembly             types.AssemblyPlan                  `json:"assembly"`
 	Settings             types.LSPSettings                   `json:"settings"`
 	Connected            bool                                `json:"connected"`
 	Ready                bool                                `json:"ready"`
