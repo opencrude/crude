@@ -46,6 +46,7 @@ detailed contracts.
 | `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection; no sampling or state owner. |
 | `types/inspect/` | Owner-bound immutable diagnostic pages with encoded-byte/range/retention bounds; no telemetry registry, authorization or background collector. |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
+| `toolstore/` | Read-only folders for acquired code-intelligence tools under `CRUDE_HOME`: bounded downloads, safe extraction, manifests, usage, history and previewed removal ([tool store](../reference/tool-store.md)). Records the caller's approval; owns no approval or language knowledge. |
 | `search/`, `docconv/` | Web/arXiv search engines and binary document conversion for read/fetch tools. |
 | `worktree/` | Managed execution worktrees and integration plans. |
 

@@ -63,6 +63,9 @@ documents to read before changing each area.
   permission, wire and history contracts.
 - [Network transport](reference/network.md) — routing, proxy, TLS trust, client
   identity, timeouts and stalled-connection recovery.
+- [Tool store](reference/tool-store.md): read-only folders for acquired
+  code-intelligence tools, bounded downloads, safe extraction, accounting,
+  history and previewed removal.
 
 ### Reference — core, shell and lifecycle
 

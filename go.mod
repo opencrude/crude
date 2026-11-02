@@ -51,6 +51,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/tinylib/msgp v1.6.5
+	github.com/ulikunitz/xz v0.5.17
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/mod v0.37.0
 	golang.org/x/tools v0.47.0
