@@ -14,6 +14,30 @@ change plus a map to the detailed contracts. Area-specific contracts live in
 3. Discover code with search tools over the repository. Ignore `.claude/`,
    `third_party/` (unless the change is there) and build output.
 
+## Active focus: the IDE plan
+
+Remove this section when the plan below is no longer active.
+
+Current product work is
+[autonomous code intelligence](docs/plans/autonomous-code-intelligence.md).
+Before any work on language support, language servers, diagnostics, Problems,
+project discovery or tool acquisition, read its top four sections: **How to
+work on this plan**, **Decisions**, **Stage status** and **Current
+checkpoint**. They override older text in the plan and your own assumptions
+about how an IDE works.
+
+- **Assembly first.** Crude is not a traditional IDE. Go code implements
+  generic discovery, resolution, acquisition, evaluation and activation.
+  Knowledge about a language, tool or server lives in data, never in Go code.
+  Never add a language-named branch or a special case for one language, even
+  as a first step.
+- Work only on the written current checkpoint. If the task needs another
+  direction, change the plan first and tell the user.
+- Record each new user decision in the plan's Decisions table.
+- Tool acquisition decisions live in
+  [code-intelligence setup](docs/plans/code-intelligence-setup.md). Trust is a
+  separate, finished flow.
+
 ## Engineering standard
 
 Crude is held to production IDE standards. A change is complete only when the

@@ -151,8 +151,13 @@ documents to read before changing each area.
 - [Core and shell separation](plans/core-shell-separation.md) — remaining native
   Windows, distinct-host and resource-baseline acceptance.
 - [Autonomous code intelligence](plans/autonomous-code-intelligence.md) —
-  proposed: autonomous assembly of native syntax and project-aware engines,
-  with coverage-qualified, resource-governed editor and agent views.
+  the active IDE plan: assembly-first discovery, acquisition, evaluation and
+  activation, with coverage-qualified, resource-governed editor and agent
+  views. Its top sections hold the rules, decisions, stage status and current
+  checkpoint.
+- [Code-intelligence setup](plans/code-intelligence-setup.md): how Crude
+  finds, asks for, installs and accounts for code-intelligence tools,
+  separate from workspace trust.
 - [Human-workflow IDE acceptance](plans/ide-workflow-acceptance.md):
   proposed: actual TUI developer tasks, auditable feature checkpoints,
   independent VM devices, same-core pair/trio editing and local-first promotion
