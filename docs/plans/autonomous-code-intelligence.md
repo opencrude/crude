@@ -1,196 +1,123 @@
 # Autonomous Code Intelligence
 
-> Status: IN PROGRESS - workspace trust and plain language-server status are
-> implemented; see [settings](../reference/settings.md#workspace-analysis-trust)
-> and [editor](../reference/editor.md#shared-diagnostic-facts). The initial
-> native syntax corpus, canonical scheduling
-> and connected-editor publication are implemented. Shared diagnostic ownership
-> has passed integrated Linux validation; complete semantic ownership,
-> autonomous assembly and complete workflow/device acceptance remain open.
-> Existing editor and LSP behavior remains governed
-> by [editor](../reference/editor.md) and [settings](../reference/settings.md).
-> This plan replaces "install and configure a language server first" with
-> intelligence Crude assembles, evaluates and governs under the user's policy.
-> [LSP acceptance](lsp-acceptance.md) remains open until all four of its items
-> have evidence; the phases below include them rather than presuming closure.
-> [Human-workflow acceptance](ide-workflow-acceptance.md) defines the local-first
-> project corpus, actual TUI development tasks, shared-core pair programming
-> and later remote scale campaigns. Its
-> [multi-device lab](ide-workflow-acceptance.md#reproducible-multi-device-lab)
-> specifies independent VM clients, locality/identity checks and separate
-> physical-device calibration. Those product gates have not yet run.
+> Status: IN PROGRESS - the assembly-first design is agreed. The generic
+> assembly path (discover, resolve, acquire, evaluate, activate, maintain) is
+> not implemented. Workspace trust and several editor feature slices are done;
+> see [Stage status](#stage-status) and [Banked checkpoints](#banked-checkpoints).
 
-Implementation boundary: [native syntax](../reference/native-syntax.md)
-documents the selected parser/query foundation, shared scheduling and initial
-editor integration. Focused syntax tests and native captures do not establish
-semantic product parity, provider assembly or multi-device acceptance.
+## How to work on this plan
 
-The local [checkpointed core restart](../reference/core-restart.md) prerequisite
-now owns exact-image staging, natural settlement and one-shot goal continuation.
-Its isolated Linux TUI evidence is not a corpus, semantic-feature or device
-campaign pass, and the pre-feature running core still needs its bootstrap.
+Read this section, [Decisions](#decisions), [Stage status](#stage-status) and
+[Current checkpoint](#current-checkpoint) before any code-intelligence work.
+They override older text further down. The rest of the document is design
+detail: read the sections that the current checkpoint names.
 
-The [shared diagnostic fact slice](../reference/editor.md#shared-diagnostic-facts)
-now replaces the raw manager/replica/editor/agent diagnostic paths. Source,
-wire-version, context, lifecycle, empty/unversioned/limited and Unicode regressions,
-the repository suite, full race campaign with supplemental lifecycle-wake checks,
-and real-gopls rendered journeys at 160x40 and 80x24 have passed on Linux.
-Neutral Windows/Darwin cross-builds are not native-platform acceptance.
-Complete build context, request/response semantic fact contracts, full governor,
-assembly and the campaigns below remain open.
+1. **Assembly first.** Crude code implements generic protocols, metadata
+   importers, managed acquisition and evaluation. Knowledge about a language,
+   tool or server lives in imported or authored data, never in Go code. Go,
+   C/C++ and TypeScript are test cases for the generic path, not product
+   modules. A language-named branch in product Go code is a defect. Known and
+   unknown languages use the same path.
+2. **One checkpoint at a time.** Write the checkpoint (goal, scope, exit test,
+   out of scope) under [Current checkpoint](#current-checkpoint) before writing
+   code. If the work needs a different direction, change this plan first, then
+   the code.
+3. **Close a checkpoint with evidence.** When its exit test passes, update
+   [Stage status](#stage-status) with the evidence (tests, captures, commit) and
+   move its narrative to [Banked checkpoints](#banked-checkpoints). A claim
+   without evidence is not verified.
+4. **Record decisions here.** A new user decision goes into
+   [Decisions](#decisions) with its date before work depends on it.
+5. **Related plans.** [Code-intelligence setup](code-intelligence-setup.md)
+   owns tool acquisition. [Human-workflow acceptance](ide-workflow-acceptance.md)
+   owns the project corpus, developer journeys and promotion gates G0 to G4.
+   [LSP acceptance](lsp-acceptance.md) owns its four remaining items. Workspace
+   trust is done; its contract is in
+   [settings](../reference/settings.md#workspace-analysis-trust).
 
-The [workspace Trust and admission foundation](../reference/settings.md#workspace-analysis-trust)
-now implements a human-owned non-inheriting execution ceiling, native directory
-binding, one core-wide LSP process governor and launch/revocation fences.
-Its preference, lifecycle, shared-core and source-frozen full ordinary/race
-regressions have passed on Linux, along with lint, docs, benchmark and transport
-gates. Native rendered Trust grant/reset and real-gopls semantic journeys passed
-at 160x40 and 80x24. Neutral Windows/Darwin cross-builds are not native-platform
-acceptance. Complete project context, native CPU/RSS containment, pressure
-management, additional work classes and autonomous assembly remain open.
+## Decisions
 
-The [passive project-artifact foundation](../reference/editor.md#shared-diagnostic-facts)
-now preserves bounded compilation-database observations and exact byte identities.
-Launch-bound LSP configuration honors each requested directory scope without
-implicitly merging another module's settings. Framed-server regressions and
-ordinary, race, vet and lint checks cover these boundaries; source-frozen full
-repository ordinary and race campaigns have also passed on Linux. The initial
-[retained project-artifact owner](../reference/project-context.md) now observes
-explicit bounded selections with native root/file identity, coarse watcher
-invalidation and stale evidence. Automatic selection, provider binding and complete
-context remain open. Parser success and native editor regression captures do not
-establish complete build context.
+| Date | Decision | From |
+|---|---|---|
+| 2026-10-29 | Autonomy is the foundation. When a project opens, Crude finds what intelligence is possible, gets and configures the tools, checks that they work and maintains them. There is no hand-written intelligence layer for each language. | User |
+| 2026-10-29 | The quality goal is JetBrains level for measured workflows and languages. Native C and Zig dependencies are acceptable. | User |
+| 2026-10-29 | Ask the user to trust a folder when it opens. Restricted mode still allows editing. Done. | User |
+| 2026-11-02 | Trust and code-intelligence setup are separate flows with separate plans. | User |
+| 2026-11-02 | Setup asks once per project for all tools from sources that Crude already knows. A source that Crude did not plan for, such as a GitHub repository that the agent finds, gets its own question for that exact source. Approvals and rejections are remembered. | User |
+| 2026-11-02 | No disk cap for acquired tools. Settings shows each acquired tool with its files, size, source, history and the workspaces that use it. Agents see the same view and change it only when the user tells them to. | User |
+| 2026-11-02 | The Microsoft Visual Studio Marketplace is not a source. Its terms allow use only with Visual Studio products. | Research |
+| 2026-11-02 | Development approach: build a thin path through every stage first, then deepen one stage at a time against the same end-to-end test. Not finished horizontal layers one by one, and not the whole plan at once. | User |
+| 2026-11-02 | Registry sources: mason and aqua for acquisition metadata, declarative launch configurations (such as Helix `languages.toml`) for launch data, and Open VSX for language and settings metadata only. See [code-intelligence setup](code-intelligence-setup.md#sources). | User |
 
-Manual parameter information, numeric completion fields and
-[reviewed symbol rename](../reference/editor.md#reviewed-symbol-rename) are banked
-editor checkpoints. The
-[safety-protection workflow](../reference/local-history.md#reviewed-edit-safety-protection)
-is banked with integrated acceptance: paged reference inspection, exact native human
-release/re-protection and original-result observation without rewriting outcomes.
-The bounded [manual code-action flow](../reference/editor.md#manual-code-actions)
-has integrated acceptance: original JSON transport, canonical source/selection
-and provider/context fences, native list/detail, shared immutable review and
-selected recovery. Real gopls exposed versioned `documentChanges`; the generic
-single-current-file exact-wire form is now implemented, with broader command,
-resource, multi-file and lazy-resolution interoperability still outside this slice.
-Its source-frozen full ordinary/race, build, lint, design/docs, benchmark, nested
-LSP/syntax and site gates passed on Linux. Sequential native real-gopls journeys
-at 160x40 and 80x24 exercised safe-default Close/Cancel, explicit preview/Apply,
-original committed receipts, selected recovery and joined provider cleanup.
-Windows/Darwin feature-preserving builds are compilation evidence only.
-These slices do not complete the broader policy, assembly or workflow/device rows.
+### Open decisions
 
-The [qualified location navigation](../reference/editor.md#qualified-location-navigation)
-cutover is implemented. One original-JSON family replaces slice-only definition
-and reference paths, adds type-definition/implementation, distinguishes negative
-answers and binds both editor and agent results to source/provider/context.
-The native chooser retains full ranges and explicit outside-workspace Open;
-only selected-target observation reads current content. Targets remain explicitly
-unversioned. Its corrected source-frozen full ordinary/race, build, lint,
-design/docs, benchmark, nested LSP/syntax and site gates passed on Linux.
-Sequential native real-gopls keyboard journeys at 160x40 and 80x24 exercised
-all four kinds, inspect-only detail, safe-default Close/Back, explicit
-second-target Open, original response metadata, unchanged source/private draft
-and joined provider cleanup. The existing combined LSP journey also passes at
-desktop and narrower sizes. Windows/Darwin feature-preserving builds are
-compilation evidence only. These deterministic native regressions do not close
-the adaptive human-workflow driver or developer/device rows. Hierarchy, history,
-complete project context and overall workflow acceptance remain open.
+- **Signed index.** Whether Crude signs its own registry index from the start.
 
-The [read-only inlay-hint slice](../reference/editor.md#read-only-inlay-hints)
-is banked with generic raw protocol negotiation, literal parsing, canonical
-owner/view/sequence retention, tooltip-only resolution, default-Off settings
-and one editor source-to-cell geometry. Focused source, native-control body,
-rendered editor, context-publication and lifecycle checks pass, including race
-coverage. Two framed shell attachments exercise private Show/Hide and original
-tooltip reads; installed gopls v0.21.1 supplies independent literal labels and
-anchors through actual keys and pointer input. Sequential 160x40/80x24 Linux
-native captures verify inline/list/detail/hidden views, unchanged source and
-private drafts, safe-default Close, Back and joined provider teardown.
-That gopls does not advertise tooltip resolve; the explicit resolve/cancellation
-path is covered separately by a connected provider fixture, not claimed as a
-real-gopls resolve. These deterministic regressions do not establish semantic
-freshness, complete project context, native containment, autonomous assembly,
-an adaptive human-workflow driver or developer/device workflow acceptance.
+## Stage status
 
-Native `(` and `,` [parameter assistance](../reference/editor.md#parameter-information)
-now retains a bounded private input intent until its exact typed source is
-acknowledged. It reuses the explicit request's provider/context boundary and
-opens a passive caret card, while Alt+I keeps the complete selectable reader.
-Initial context-publication lag cannot discard eligible input; returned answers
-still wait for the original context cursor. Recovered/API input does not invent
-fresh UI intent. Parameter and symbol readers use mounted caret geometry and
-shrink beside it on short grids instead of covering source. Independent native-key,
-two-shell and installed-gopls regression definitions cover these transitions;
-their checkpoint evidence is separate from adaptive developer/device acceptance.
+The stages are those of [assembly first](#assembly-first-not-per-language-product-modules).
+Update a row only with evidence.
 
-The [completion documentation and original-insertion cutover](../reference/editor.md#completion-documentation-and-original-insertion)
-replaces the flat completion path with retained canonical original rows,
-documentation/detail-only resolution and one native chooser. Independent
-canonical, framed-provider and rendered tests cover identity, opaque data,
-negative/incomplete evidence, source/context/feature retirement and initial-edit
-acceptance. Source-frozen repository ordinary/race, build, lint, design/docs,
-benchmark, nested LSP/syntax and site gates passed for checkpoint `296f95e3`.
-Installed gopls supplied initial documentation in sequential native 160x40 and
-80x24 Linux journeys with original snippet insertion, canonical Undo and joined
-provider cleanup. That installed provider does not advertise resolve; framed
-and connected fixtures cover documentation-only resolve separately.
-Windows/Darwin feature-preserving builds are compilation evidence only. These
-deterministic regressions do not close the broader editor, autonomous assembly
-or workflow/device rows.
+| Stage | This plan requires | Today |
+|---|---|---|
+| Detect languages | Linguist data through go-enry | Not started. Language identity comes from the hard-coded list `DefaultLSPLanguages` in `types/language_servers.go` (12 language-named entries with extensions, root markers and commands). go-enry is not a dependency. |
+| Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Not started. The [project-context owner](../reference/project-context.md) observes explicit selections only. |
+| Resolve | Ordered resolver; compatibility rules as data | Not started. Each list entry has one default command. **Detect servers** does not install anything. |
+| Acquire | Tools as a capability kind; one shared store under `CRUDE_HOME` | Not started. Capability kinds are skill and MCP only (`types/capability/types.go`). See [code-intelligence setup](code-intelligence-setup.md). |
+| Evaluate | Operational checks and independent fixtures; evidence for each feature | Not started. |
+| Activate | Project-scoped producers, enabled feature by feature | Not started. Servers start only for open documents (`workspace/lsp_lifecycle.go`), guarded by `TestLSPEnabledUnusedWorkspaceDoesNotOpenSources`. |
+| Maintain | Invalidation, staged replacement, bounded repair, memory of failed candidates | Watcher invalidation for explicit project selections only. |
+| Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
+| Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostics only. |
+| Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites. |
 
-The [diagnostic-reader cutover](../reference/editor.md#diagnostic-readers) now
-replaces centered/clipped label stacks with one source-anchored, selectable
-native reader for editor-menu details and passive pointer hover. Independent
-literal entry, long-message paging, clicked-source selection, publication
-retirement and shared selection-first Escape checks now pass in the integrated
-tree, including existing completion/parameter journeys and focused race coverage.
-The real-gopls diagnostic journey passed three race repetitions at both grids.
-Its short-grid reproduction also exposed shared text-area scrolling being reset
-by vertical opening reveal; editable and read-only controls now preserve that
-reading position, with an independently failing original-behavior regression.
-Sequential 160x40/80x24 Linux native captures now pass all eleven observation
-phases, including the painted original message tail, native selection-first
-Escape, passive hover/wheel and independently joined provider cleanup. Reviewed
-pixels preserve the visible source anchor at both sizes. Source-frozen full
-ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax and site
-gates passed for checkpoint `07b7360d`; its exact 38-path commit was pushed and
-the remote ref verified. The durable local acceptance archive retains the source,
-original failures, gate logs and both native grids. These deterministic regressions
-do not close adaptive developer/device, complete-context, native-containment or
-broader semantic acceptance.
+Known exception: the compilation-database and CMake importers in
+`insight/project/` read build-file formats. The generic recipe layer must call
+them; they are not a template for language-specific modules.
 
-Prediction prerequisites are now integrated but not an enabled Aeron feature.
-The single-line editor projection shares inlay geometry and preserves exact
-typed-through suffixes; native key routing, true owner departure, automatic
-completion exclusion and attachment-epoch retirement have independent negative
-regressions and focused ordinary/race evidence. A deterministic connected
-fixture covers literal sparse edits, private paint, both actual receipt/topic
-orders, peer convergence, source ABA, Undo/Redo and save/reopen; its direct
-epoch-rebind case also refuses older authority. Connected ordinary/race checks
-pass after correcting the fixture's attempted backward epoch. Sequential Linux
-160x40/80x24 native captures pass all ten observations: muted literal candidate,
-typed-through remainder, word/full acceptance, Undo/Redo, Escape dismissal and
-ordinary indentation. Reviewed pixels preserve the source at both sizes; the
-fixture supplies candidates internally, not through a prediction provider.
-The no-tools text and explicit FIM adapters retain original-wire usage
-presence and enforce one-attempt bounded streams. The sessionless durable budget
-ledger is library-only. The exact 37-path prerequisite freeze passed full
-ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax, site and
-Windows/amd64 plus Darwin/arm64 native-feature cross-build gates. Cross-builds
-are compilation evidence, not Windows/macOS runtime acceptance.
-The follow-up source adds human-owned non-inheriting workspace consent and
-native preference rows, captured Aeron account binding, bounded partial context
-and prompt builders, and an internal cancellation/cache/accounting composition.
-Shared source integration and affected-package ordinary/race checks cover native
-fields and source-qualified loopback requests, including policy changes and
-release before queued admission. The native preferences journey also exposed
-shared first-layout focus, retained validation and footer invalidation defects;
-their fixes have independent original-defect regression checks. Consolidated
-repository and native capture checks for this follow-up remain in progress. The
-live workspace/editor transport, complete fact context, measured automatic
-scheduling, visible meter, multiline and next-edit acceptance remain open; no
-product source egress is enabled by these prerequisites.
+## Current checkpoint
+
+**Thin assembly path. Proposed, not started.**
+
+Goal: open a trusted project that uses a language Crude's Go code never names,
+and see real diagnostics in Problems without opening a file. Every stage takes
+part, each in its smallest real form.
+
+Scope:
+
+- Data formats in the neutral insight package: integration artifact (tool,
+  source, version, digest, launch, roots, required effects, per-feature
+  capabilities, evidence, invalidation inputs) and coverage facts with
+  freshness states.
+- Language detection from Linguist data.
+- The built-in server list becomes imported data. `DefaultLSPLanguages` stops
+  being an authority.
+- Bounded discovery that produces an assembly plan users and agents can read.
+- Resolution against installed tools and one registry source.
+- Acquisition as a capability kind, with the once-per-project question, the
+  shared store and its Settings view
+  ([code-intelligence setup](code-intelligence-setup.md)).
+- A minimal operational evaluation: the server starts, initializes and answers
+  a known fixture.
+- Project-scoped activation: assembled servers start for the project, and
+  Problems shows the checked scope. Existing process admission bounds them.
+
+Exit test:
+
+1. A gate fails when product Go code names a language, tool or server outside
+   imported data. It fails today and must pass at the end.
+2. A fixture language that is in no built-in list runs through every stage
+   with no Go change.
+3. A trusted project with a known error in a file nobody opened shows the error
+   in Problems, clears it after the fix, and shows incomplete coverage clearly.
+4. Denied, offline and unsupported cases keep editing usable and give a clear
+   status in plain language.
+5. The repository gates in `AGENTS.md` pass.
+
+Out of scope: work classes and containment beyond current process admission
+(so no new bulk project-wide work), project checks and build observation,
+policy presets, Aeron, remote campaigns.
 
 ## Problem
 
@@ -314,7 +241,7 @@ For a new project, including an offline machine without toolchains:
 3. Crude discovers existing tools and project models. It may acquire pinned
    tools under the user's autonomy policy. If obtaining accurate configuration
    would execute project code, it asks for the applicable trust decision; the
-   static-only experience remains usable.
+   restricted-mode experience remains usable.
 4. Once the relevant engine and project model are ready, completion,
    navigation, diagnostics and supported refactorings use semantic results.
    The same qualified results are available to agents. Cached project facts
@@ -614,6 +541,9 @@ passing these checks does not prove completeness for unseen projects.
 
 ### Autonomous acquisition
 
+The [code-intelligence setup](code-intelligence-setup.md) plan owns the user
+decisions and checkpoints for this section.
+
 Tools become a new capability kind in the existing capability system
 ([capabilities](../reference/capabilities.md)). They use the same Manual, Auto
 Review and YOLO policy, the same immutable source and digest preimage for
@@ -638,8 +568,9 @@ installer.
      authority.
 - Each tool installs once under `CRUDE_HOME`, in a directory named by tool,
   version and digest. The directory is read-only after install and shared by
-  all workspaces. Packs hold references to it. An LRU collector keeps the
-  store under a disk quota and keeps pinned tools.
+  all workspaces. Packs hold references to it. There is no disk cap and no
+  automatic deletion; Settings accounts for every file instead. See
+  [code-intelligence setup](code-intelligence-setup.md#accountability).
 - Compiler-sensitive tools follow the project where supported: a compatible
   gopls/Go pair, rust-analyzer and the selected Rust toolchain, zls matched to
   Zig, and a clangd/toolchain pairing tested against the project. Version
@@ -713,7 +644,7 @@ The user has three choices and one verb.
 
 | Choice | Values | Effect |
 |---|---|---|
-| Trust (per workspace) | Static only, project execution allowed | Project execution, network, acquisitions and external tools still obey their own effect, source and approval policy |
+| Trust (per workspace) | Restricted, Trusted | Project execution, network, acquisitions and external tools still obey their own effect, source and approval policy |
 | Strictness | Project checks, Strict, Errors only | Which producers count, and at what severity; a check is labelled by what it actually ran |
 | Aeron | Off, Light, Full | Ghost text and next-edit prediction within a token budget |
 
@@ -874,7 +805,7 @@ above.
 - Builds, observation, project configuration, compiler driver queries,
   plugins, Makefiles, build.rs, procedural macros and npm scripts can run
   project code. Each operation needs the appropriate explicit trust and
-  policy decision. Static-only mode runs only reviewed built-in parsing and
+  policy decision. Restricted mode runs only reviewed built-in parsing and
   providers with a verified non-executing configuration; a server whose
   behavior cannot be restricted stays off with a visible reason.
 - Fetching dependencies (network) and checking (offline) are separate steps.
@@ -1113,6 +1044,183 @@ four items have passed and the current references describe the result.
 | Very large C++ translation units | Changed and open units first, then by include fan-in; per-unit cache keyed by content and dependency digests |
 | FIM availability and cost | Chat fallback, local option, budget |
 | 100,000 or more diagnostics | Aggregated, virtualized views; indexed view-time policy |
+
+## Banked checkpoints
+
+History of finished slices, kept as evidence. [Stage status](#stage-status) is
+the authoritative summary; this text does not describe remaining work.
+
+Implementation boundary: [native syntax](../reference/native-syntax.md)
+documents the selected parser/query foundation, shared scheduling and initial
+editor integration. Focused syntax tests and native captures do not establish
+semantic product parity, provider assembly or multi-device acceptance.
+
+The local [checkpointed core restart](../reference/core-restart.md) prerequisite
+now owns exact-image staging, natural settlement and one-shot goal continuation.
+Its isolated Linux TUI evidence is not a corpus, semantic-feature or device
+campaign pass, and the pre-feature running core still needs its bootstrap.
+
+The [shared diagnostic fact slice](../reference/editor.md#shared-diagnostic-facts)
+now replaces the raw manager/replica/editor/agent diagnostic paths. Source,
+wire-version, context, lifecycle, empty/unversioned/limited and Unicode regressions,
+the repository suite, full race campaign with supplemental lifecycle-wake checks,
+and real-gopls rendered journeys at 160x40 and 80x24 have passed on Linux.
+Neutral Windows/Darwin cross-builds are not native-platform acceptance.
+Complete build context, request/response semantic fact contracts, full governor,
+assembly and the campaigns below remain open.
+
+The [workspace Trust and admission foundation](../reference/settings.md#workspace-analysis-trust)
+now implements a human-owned non-inheriting execution ceiling, native directory
+binding, one core-wide LSP process governor and launch/revocation fences.
+Its preference, lifecycle, shared-core and source-frozen full ordinary/race
+regressions have passed on Linux, along with lint, docs, benchmark and transport
+gates. Native rendered Trust grant/reset and real-gopls semantic journeys passed
+at 160x40 and 80x24. Neutral Windows/Darwin cross-builds are not native-platform
+acceptance. Complete project context, native CPU/RSS containment, pressure
+management, additional work classes and autonomous assembly remain open.
+
+The [passive project-artifact foundation](../reference/editor.md#shared-diagnostic-facts)
+now preserves bounded compilation-database observations and exact byte identities.
+Launch-bound LSP configuration honors each requested directory scope without
+implicitly merging another module's settings. Framed-server regressions and
+ordinary, race, vet and lint checks cover these boundaries; source-frozen full
+repository ordinary and race campaigns have also passed on Linux. The initial
+[retained project-artifact owner](../reference/project-context.md) now observes
+explicit bounded selections with native root/file identity, coarse watcher
+invalidation and stale evidence. Automatic selection, provider binding and complete
+context remain open. Parser success and native editor regression captures do not
+establish complete build context.
+
+Manual parameter information, numeric completion fields and
+[reviewed symbol rename](../reference/editor.md#reviewed-symbol-rename) are banked
+editor checkpoints. The
+[safety-protection workflow](../reference/local-history.md#reviewed-edit-safety-protection)
+is banked with integrated acceptance: paged reference inspection, exact native human
+release/re-protection and original-result observation without rewriting outcomes.
+The bounded [manual code-action flow](../reference/editor.md#manual-code-actions)
+has integrated acceptance: original JSON transport, canonical source/selection
+and provider/context fences, native list/detail, shared immutable review and
+selected recovery. Real gopls exposed versioned `documentChanges`; the generic
+single-current-file exact-wire form is now implemented, with broader command,
+resource, multi-file and lazy-resolution interoperability still outside this slice.
+Its source-frozen full ordinary/race, build, lint, design/docs, benchmark, nested
+LSP/syntax and site gates passed on Linux. Sequential native real-gopls journeys
+at 160x40 and 80x24 exercised safe-default Close/Cancel, explicit preview/Apply,
+original committed receipts, selected recovery and joined provider cleanup.
+Windows/Darwin feature-preserving builds are compilation evidence only.
+These slices do not complete the broader policy, assembly or workflow/device rows.
+
+The [qualified location navigation](../reference/editor.md#qualified-location-navigation)
+cutover is implemented. One original-JSON family replaces slice-only definition
+and reference paths, adds type-definition/implementation, distinguishes negative
+answers and binds both editor and agent results to source/provider/context.
+The native chooser retains full ranges and explicit outside-workspace Open;
+only selected-target observation reads current content. Targets remain explicitly
+unversioned. Its corrected source-frozen full ordinary/race, build, lint,
+design/docs, benchmark, nested LSP/syntax and site gates passed on Linux.
+Sequential native real-gopls keyboard journeys at 160x40 and 80x24 exercised
+all four kinds, inspect-only detail, safe-default Close/Back, explicit
+second-target Open, original response metadata, unchanged source/private draft
+and joined provider cleanup. The existing combined LSP journey also passes at
+desktop and narrower sizes. Windows/Darwin feature-preserving builds are
+compilation evidence only. These deterministic native regressions do not close
+the adaptive human-workflow driver or developer/device rows. Hierarchy, history,
+complete project context and overall workflow acceptance remain open.
+
+The [read-only inlay-hint slice](../reference/editor.md#read-only-inlay-hints)
+is banked with generic raw protocol negotiation, literal parsing, canonical
+owner/view/sequence retention, tooltip-only resolution, default-Off settings
+and one editor source-to-cell geometry. Focused source, native-control body,
+rendered editor, context-publication and lifecycle checks pass, including race
+coverage. Two framed shell attachments exercise private Show/Hide and original
+tooltip reads; installed gopls v0.21.1 supplies independent literal labels and
+anchors through actual keys and pointer input. Sequential 160x40/80x24 Linux
+native captures verify inline/list/detail/hidden views, unchanged source and
+private drafts, safe-default Close, Back and joined provider teardown.
+That gopls does not advertise tooltip resolve; the explicit resolve/cancellation
+path is covered separately by a connected provider fixture, not claimed as a
+real-gopls resolve. These deterministic regressions do not establish semantic
+freshness, complete project context, native containment, autonomous assembly,
+an adaptive human-workflow driver or developer/device workflow acceptance.
+
+Native `(` and `,` [parameter assistance](../reference/editor.md#parameter-information)
+now retains a bounded private input intent until its exact typed source is
+acknowledged. It reuses the explicit request's provider/context boundary and
+opens a passive caret card, while Alt+I keeps the complete selectable reader.
+Initial context-publication lag cannot discard eligible input; returned answers
+still wait for the original context cursor. Recovered/API input does not invent
+fresh UI intent. Parameter and symbol readers use mounted caret geometry and
+shrink beside it on short grids instead of covering source. Independent native-key,
+two-shell and installed-gopls regression definitions cover these transitions;
+their checkpoint evidence is separate from adaptive developer/device acceptance.
+
+The [completion documentation and original-insertion cutover](../reference/editor.md#completion-documentation-and-original-insertion)
+replaces the flat completion path with retained canonical original rows,
+documentation/detail-only resolution and one native chooser. Independent
+canonical, framed-provider and rendered tests cover identity, opaque data,
+negative/incomplete evidence, source/context/feature retirement and initial-edit
+acceptance. Source-frozen repository ordinary/race, build, lint, design/docs,
+benchmark, nested LSP/syntax and site gates passed for checkpoint `296f95e3`.
+Installed gopls supplied initial documentation in sequential native 160x40 and
+80x24 Linux journeys with original snippet insertion, canonical Undo and joined
+provider cleanup. That installed provider does not advertise resolve; framed
+and connected fixtures cover documentation-only resolve separately.
+Windows/Darwin feature-preserving builds are compilation evidence only. These
+deterministic regressions do not close the broader editor, autonomous assembly
+or workflow/device rows.
+
+The [diagnostic-reader cutover](../reference/editor.md#diagnostic-readers) now
+replaces centered/clipped label stacks with one source-anchored, selectable
+native reader for editor-menu details and passive pointer hover. Independent
+literal entry, long-message paging, clicked-source selection, publication
+retirement and shared selection-first Escape checks now pass in the integrated
+tree, including existing completion/parameter journeys and focused race coverage.
+The real-gopls diagnostic journey passed three race repetitions at both grids.
+Its short-grid reproduction also exposed shared text-area scrolling being reset
+by vertical opening reveal; editable and read-only controls now preserve that
+reading position, with an independently failing original-behavior regression.
+Sequential 160x40/80x24 Linux native captures now pass all eleven observation
+phases, including the painted original message tail, native selection-first
+Escape, passive hover/wheel and independently joined provider cleanup. Reviewed
+pixels preserve the visible source anchor at both sizes. Source-frozen full
+ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax and site
+gates passed for checkpoint `07b7360d`; its exact 38-path commit was pushed and
+the remote ref verified. The durable local acceptance archive retains the source,
+original failures, gate logs and both native grids. These deterministic regressions
+do not close adaptive developer/device, complete-context, native-containment or
+broader semantic acceptance.
+
+Prediction prerequisites are now integrated but not an enabled Aeron feature.
+The single-line editor projection shares inlay geometry and preserves exact
+typed-through suffixes; native key routing, true owner departure, automatic
+completion exclusion and attachment-epoch retirement have independent negative
+regressions and focused ordinary/race evidence. A deterministic connected
+fixture covers literal sparse edits, private paint, both actual receipt/topic
+orders, peer convergence, source ABA, Undo/Redo and save/reopen; its direct
+epoch-rebind case also refuses older authority. Connected ordinary/race checks
+pass after correcting the fixture's attempted backward epoch. Sequential Linux
+160x40/80x24 native captures pass all ten observations: muted literal candidate,
+typed-through remainder, word/full acceptance, Undo/Redo, Escape dismissal and
+ordinary indentation. Reviewed pixels preserve the source at both sizes; the
+fixture supplies candidates internally, not through a prediction provider.
+The no-tools text and explicit FIM adapters retain original-wire usage
+presence and enforce one-attempt bounded streams. The sessionless durable budget
+ledger is library-only. The exact 37-path prerequisite freeze passed full
+ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax, site and
+Windows/amd64 plus Darwin/arm64 native-feature cross-build gates. Cross-builds
+are compilation evidence, not Windows/macOS runtime acceptance.
+The follow-up source adds human-owned non-inheriting workspace consent and
+native preference rows, captured Aeron account binding, bounded partial context
+and prompt builders, and an internal cancellation/cache/accounting composition.
+Shared source integration and affected-package ordinary/race checks cover native
+fields and source-qualified loopback requests, including policy changes and
+release before queued admission. The native preferences journey also exposed
+shared first-layout focus, retained validation and footer invalidation defects;
+their fixes have independent original-defect regression checks. Consolidated
+repository and native capture checks for this follow-up remain in progress. The
+live workspace/editor transport, complete fact context, measured automatic
+scheduling, visible meter, multiline and next-edit acceptance remain open; no
+product source egress is enabled by these prerequisites.
 
 ## Evidence, prior art and sources
 
