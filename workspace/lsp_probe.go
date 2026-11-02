@@ -81,6 +81,7 @@ func (m *LSPManager) probe(ctx context.Context, path string, gate func(ttypes.LS
 	if doc == nil {
 		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1}
 		m.documents[path] = doc
+		m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Source.Path == path })
 		m.advanceContextLocked("Analysis source view opened; dependent context needs reanalysis.")
 	} else if doc.text != string(source.snapshot.Text) || doc.source != source.ref {
 		doc.text = string(source.snapshot.Text)

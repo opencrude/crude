@@ -49,6 +49,13 @@ func (m *App) projectTreeDiagnostic(path string, facts types.InsightDiagnostics)
 }
 
 func (m *App) canNavigateDiagnostic(path string, facts types.InsightDiagnostics) bool {
+	// A project check reports a file from disk. Opening the file reads the
+	// same disk text, so the location applies unless an editor holds unsaved
+	// changes for it.
+	if facts.FromProjectCheck() && facts.Boundary.Source.Path == path {
+		tab := m.EditorState.Tabs[path]
+		return tab == nil || tab.Editor == nil || !tab.Editor.Modified()
+	}
 	if !facts.HasExactSource() || facts.Boundary.Source.Path != path {
 		return false
 	}

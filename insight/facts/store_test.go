@@ -412,3 +412,47 @@ func TestDetachedInputsOutputsAndConcurrentAccess(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestMatchingInvalidationAndRemovalAreScopedAndReleaseCapacity(t *testing.T) {
+	s := store(t, 2, 1)
+	editor := boundary()
+	project := boundary()
+	project.Source.DocumentID, project.Source.Path, project.Source.Kind = "disk:/project/util.go", "/project/util.go", "disk"
+	project.Context.ID = "project-check"
+	observe(t, s, editor)
+	observe(t, s, project)
+	publish(t, s, publication(project, 1))
+
+	if !s.InvalidateMatching(func(b types.InsightBoundary) bool { return b.Source.Kind != "disk" }, "editor context changed") {
+		t.Fatal("matching invalidation changed nothing")
+	}
+	got, _ := s.Snapshot(project.Source.DocumentID)
+	if got.State == types.InsightStale {
+		t.Fatal("invalidation reached a fact owned by another producer")
+	}
+	if editorFact, _ := s.Snapshot(editor.Source.DocumentID); editorFact.State != types.InsightStale {
+		t.Fatalf("matching fact was not invalidated: %+v", editorFact)
+	}
+
+	// The store holds one diagnostic in total. Removal must release the slot
+	// and the diagnostic budget, so a new producer fact fits again.
+	version := s.Version()
+	if n := s.RemoveMatching(func(b types.InsightBoundary) bool { return b.Context.ID == "project-check" }); n != 1 {
+		t.Fatalf("removed %d entries, want 1", n)
+	}
+	if s.Version() == version {
+		t.Fatal("removal did not advance the store version")
+	}
+	if _, ok := s.Snapshot(project.Source.DocumentID); ok {
+		t.Fatal("removed fact is still visible")
+	}
+	if n := s.RemoveMatching(func(types.InsightBoundary) bool { return false }); n != 0 {
+		t.Fatal("removal without a match changed the store")
+	}
+	other := project
+	other.Source.DocumentID, other.Source.Path = "disk:/project/other.go", "/project/other.go"
+	observe(t, s, other)
+	if _, err := s.Publish(publication(other, 1)); err != nil {
+		t.Fatalf("capacity was not released: %v", err)
+	}
+}

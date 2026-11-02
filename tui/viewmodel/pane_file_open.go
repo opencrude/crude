@@ -212,7 +212,12 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if p := msg.position; p != nil && m.EditorState.Editor != nil {
 		ed := m.EditorState.Editor
 		valid := true
-		if f := msg.diagnosticFacts; f != nil {
+		if f := msg.diagnosticFacts; f != nil && f.FromProjectCheck() {
+			// The open document replaces the project view of this file.
+			// The location came from the same disk text unless the buffer
+			// already had unsaved changes.
+			valid = f.Boundary.Source.Path == ed.FilePath() && !ed.Modified()
+		} else if f != nil {
 			current, ok := m.ws.LSPMgr().FileDiagnostics(ed.FilePath())
 			valid = ok && current.ID == f.ID && ed.MatchesDiagnosticSource(current) && ed.MatchesDiagnosticSource(*f)
 		}

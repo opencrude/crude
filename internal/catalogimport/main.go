@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"crude/insight/catalog"
+	"crude/network"
 )
 
 //go:embed pins.json
@@ -113,7 +114,8 @@ func input(path, url, wantSHA256 string) ([]byte, error) {
 }
 
 func download(url string) ([]byte, error) {
-	client := &http.Client{Timeout: 60 * time.Second}
+	// The shared client applies Crude's proxy and TLS policy.
+	client := network.NewClient(60 * time.Second)
 	response, err := client.Get(url)
 	if err != nil {
 		return nil, err

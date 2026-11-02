@@ -26,6 +26,29 @@ type LSPConfigurationScope struct {
 	Settings jsondoc.Object
 }
 
+// LSPProjectProducer asks for one language server that checks a whole
+// project root. It starts without an open document and reports problems for
+// files that no editor has open. Root is a native directory path.
+type LSPProjectProducer struct {
+	Root string
+	Spec LSPServerSpec
+}
+
+// CloneLSPServerSpec returns a detached copy.
+func CloneLSPServerSpec(spec LSPServerSpec) LSPServerSpec {
+	spec.Args = append([]string(nil), spec.Args...)
+	spec.RootMarkers = append([]string(nil), spec.RootMarkers...)
+	spec.Environment = cloneStringMap(spec.Environment)
+	spec.Settings = cloneJSONObject(spec.Settings)
+	spec.InitializationOptions = cloneJSONObject(spec.InitializationOptions)
+	scopes := spec.ConfigurationScopes
+	spec.ConfigurationScopes = nil
+	for _, scope := range scopes {
+		spec.ConfigurationScopes = append(spec.ConfigurationScopes, LSPConfigurationScope{URI: scope.URI, Settings: cloneJSONObject(scope.Settings)})
+	}
+	return spec
+}
+
 // ResolveServer returns detached launch settings. AutoDetect gates only built-in
 // selection; explicit external definitions remain usable when it is off.
 func (s LSPSettings) ResolveServer(path string) (LSPServerSpec, bool) {

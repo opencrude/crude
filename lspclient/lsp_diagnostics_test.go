@@ -268,3 +268,53 @@ func TestDiagnosticTransportLimitsAreExplicit(t *testing.T) {
 		}
 	}
 }
+
+// A server that checks a whole project reports files that no editor opened.
+// Those publications reach the unopened callback without a version, and never
+// reach the open-file path or its waiters.
+func TestUnopenedFilePublicationsUseTheirOwnCallback(t *testing.T) {
+	l, launch, openPath := settleFixture(t)
+	other := filepath.Join(filepath.Dir(openPath), "other.go")
+	var openCalls int
+	var unopened []string
+	var last types.InsightDiagnosticPublication
+	l.OnDiagnostics(func(types.InsightDiagnosticPublication) { openCalls++ })
+
+	diag := []protocol.Diagnostic{{Message: "undefined: y", Severity: 1}}
+	// Without an unopened callback the publication is dropped, as before.
+	l.updateDiagnostics(launch, protocol.URIFromPath(other), nil, diag)
+	if openCalls != 0 {
+		t.Fatal("an unopened file reached the open-file callback")
+	}
+
+	l.OnUnopenedDiagnostics(func(path string, p types.InsightDiagnosticPublication) {
+		unopened = append(unopened, path)
+		last = p
+	})
+	l.updateDiagnostics(launch, protocol.URIFromPath(other), nil, diag)
+	if len(unopened) != 1 || unopened[0] != other || len(last.Diagnostics) != 1 ||
+		last.Diagnostics[0].Message != "undefined: y" || last.ReportedVersion != nil || last.WireVersion != 1 || last.Sequence == 0 {
+		t.Fatalf("unopened publication = %v %+v", unopened, last)
+	}
+	first := last.Sequence
+
+	version := int32(3)
+	l.updateDiagnostics(launch, protocol.URIFromPath(other), &version, diag)
+	if len(unopened) != 1 {
+		t.Fatal("a versioned publication for an unopened file was accepted")
+	}
+
+	// A stopped launch delivers nothing.
+	l.updateDiagnostics(&lspLaunch{}, protocol.URIFromPath(other), nil, diag)
+	if len(unopened) != 1 {
+		t.Fatal("a stale launch delivered a publication")
+	}
+
+	l.updateDiagnostics(launch, protocol.URIFromPath(other), nil, nil)
+	if len(unopened) != 2 || len(last.Diagnostics) != 0 || last.Sequence <= first {
+		t.Fatalf("clearing publication = %+v", last)
+	}
+	if openCalls != 0 {
+		t.Fatal("an unopened file reached the open-file callback")
+	}
+}

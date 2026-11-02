@@ -254,6 +254,50 @@ func (s *Store) InvalidateAll(reason string) bool {
 	return changed
 }
 
+// InvalidateMatching retires only entries whose boundary matches. It lets a
+// coordinator invalidate one producer's facts without touching facts that a
+// different authority owns.
+func (s *Store) InvalidateMatching(match func(types.InsightBoundary) bool, reason string) bool {
+	if len(reason) > MaxReasonBytes || !utf8.ValidString(reason) {
+		reason = "Diagnostic context invalidated; the producer reason exceeded its bounded status field."
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for _, e := range s.documents {
+		if match(e.boundary) && invalidateEntry(e, reason) {
+			changed = true
+		}
+	}
+	if changed {
+		s.version++
+	}
+	return changed
+}
+
+// RemoveMatching deletes entries whose boundary matches and releases their
+// capacity. Use it only when the producer that owns the facts retires them,
+// for example when a project check stops or an open document replaces the
+// project view of the same file. It returns the number of removed entries.
+func (s *Store) RemoveMatching(match func(types.InsightBoundary) bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for id, e := range s.documents {
+		if !match(e.boundary) {
+			continue
+		}
+		s.diagnosticCount -= len(e.answer.Diagnostics)
+		s.retainedBytes -= e.weight
+		delete(s.documents, id)
+		removed++
+	}
+	if removed > 0 {
+		s.version++
+	}
+	return removed
+}
+
 func boundaryWeight(b types.InsightBoundary) int {
 	n := 256 + len(b.Source.WorkspaceGeneration) + len(b.Source.DocumentID) + len(b.Source.Path) + len(b.Source.Lifetime) +
 		len(b.Context.ID) + len(b.Context.Root) + len(b.Producer.InstanceID) + len(b.Producer.Provider) + len(b.Producer.ToolIdentity)

@@ -89,9 +89,15 @@ func (m *LSPManager) invalidateDiagnosticsLocked(reason string) {
 	m.bumpVersionLocked()
 }
 
+// advanceContextLocked retires editor-bound facts. Project facts belong to
+// their producer: it republishes the files an edit affects, and the facts go
+// away when the producer stops or a document opens for the file.
 func (m *LSPManager) advanceContextLocked(reason string) {
 	m.contextGeneration++
-	m.invalidateDiagnosticsLocked(reason)
+	if m.sources != nil && m.sources.Insight != nil {
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b types.InsightBoundary) bool { return !isProjectFact(b) }, reason)
+	}
+	m.bumpVersionLocked()
 }
 
 func (m *LSPManager) diagnosticBoundaryLocked(doc *lspDocument, state *lspClientState) types.InsightBoundary {
@@ -248,7 +254,10 @@ func summarizeDiagnosticFacts(ins *types.ProjectInsights, batches map[string]typ
 		case types.InsightProvisional:
 			ins.DiagnosticsUnverified++
 		}
-		if !batch.HasExactSource() {
+		// A project check reports files that are not open. Its batch is bound
+		// to the producer's view of the project, not to an exact text, and it
+		// still counts: that is the point of checking the project.
+		if !batch.HasExactSource() && !batch.FromProjectCheck() {
 			continue
 		}
 		affected := false

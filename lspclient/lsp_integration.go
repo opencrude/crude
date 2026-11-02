@@ -64,6 +64,9 @@ type LSPIntegration struct {
 	changed  chan struct{}
 
 	onDiagnostics func(model.InsightDiagnosticPublication)
+	// onUnopened receives unversioned publications for files this client has
+	// not opened, for example from a server that checks a whole project.
+	onUnopened func(path string, p model.InsightDiagnosticPublication)
 }
 
 // LSPIntegrationOption configures a new LSPIntegration.
@@ -133,6 +136,17 @@ type openFileState struct {
 	// This immutable adjunct is original protocol evidence at this publication,
 	// not a second diagnostic projection or shell-visible provider-data cache.
 	actionDiagnostics codeActionDiagnosticAdjunct
+}
+
+// OnUnopenedDiagnostics sets the callback for unversioned diagnostics about
+// files that this client has not opened. The publication has no boundary:
+// the caller owns the source identity of a file that no editor holds.
+// Versioned publications for unopened files are dropped: a version names a
+// document text that this client never sent.
+func (l *LSPIntegration) OnUnopenedDiagnostics(fn func(path string, p model.InsightDiagnosticPublication)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.onUnopened = fn
 }
 
 // OnDiagnostics sets the callback for receiving diagnostics for open files.
@@ -738,6 +752,15 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 	}
 	client := l.client
 	state := l.openFiles[filePath]
+	if state == nil && version == nil && l.onUnopened != nil && l.sequence != math.MaxUint64 {
+		l.sequence++
+		publication := model.InsightDiagnosticPublication{Sequence: l.sequence, WireVersion: 1}
+		publication.Diagnostics, publication.Limited, publication.Detail = transportDiagnostics(diags)
+		cb := l.onUnopened
+		l.mu.Unlock()
+		cb(filePath, publication)
+		return
+	}
 	if state == nil || (version != nil && int(*version) != state.version) || l.sequence == math.MaxUint64 {
 		if state != nil {
 			state.actionDiagnostics = codeActionDiagnosticAdjunct{detail: "diagnostics omitted: stale or invalid publication"}
@@ -755,18 +778,7 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 	}
 	// Only one bounded transient publication per synchronized document is kept
 	// for protocol waiters. Product fact identity and validity live upstream.
-	bytes := 0
-	for _, d := range diags {
-		code := diagnosticCode(d.Code)
-		size := len(d.Message) + len(d.Source) + len(code)
-		if len(publication.Diagnostics) == maxTransportDiagnostics || size > maxTransportDiagnosticBytes-bytes {
-			publication.Limited = true
-			publication.Detail = "LSP transport publication exceeded 4096 diagnostics or 1 MiB of diagnostic text"
-			break
-		}
-		bytes += size
-		publication.Diagnostics = append(publication.Diagnostics, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity), Source: d.Source, Code: code})
-	}
+	publication.Diagnostics, publication.Limited, publication.Detail = transportDiagnostics(diags)
 	l.sequence = publication.Sequence
 	state.publishedAt, state.publication = time.Now(), publication
 	state.actionDiagnostics = qualifyActionDiagnostics(state.text, publication, originals)
@@ -785,6 +797,22 @@ func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.Docum
 			cb(publication)
 		}
 	}
+}
+
+// transportDiagnostics converts one publication within the transport bounds.
+func transportDiagnostics(diags []protocol.Diagnostic) ([]LSPDiagnostic, bool, string) {
+	var out []LSPDiagnostic
+	bytes := 0
+	for _, d := range diags {
+		code := diagnosticCode(d.Code)
+		size := len(d.Message) + len(d.Source) + len(code)
+		if len(out) == maxTransportDiagnostics || size > maxTransportDiagnosticBytes-bytes {
+			return out, true, "LSP transport publication exceeded 4096 diagnostics or 1 MiB of diagnostic text"
+		}
+		bytes += size
+		out = append(out, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity), Source: d.Source, Code: code})
+	}
+	return out, false, ""
 }
 
 // diagnosticCode renders the protocol's integer-or-string code.

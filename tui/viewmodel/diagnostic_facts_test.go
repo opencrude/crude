@@ -262,3 +262,38 @@ func TestDiagnosticStatusLinkRequiresFactIdentity(t *testing.T) {
 		t.Fatal("raw range without observed batch authorized navigation")
 	}
 }
+
+// A project check reports a file that is not open. Problems lists it with a
+// plain reason, and Go to diagnostic is available because opening the file
+// reads the same disk text.
+func TestProblemsListsUnopenedFileFromProjectCheck(t *testing.T) {
+	app, _, service, _ := qualifiedDiagnosticApp(t)
+	path := filepath.Join(app.ws.RootPath(), "unopened.txt")
+	service.facts = map[string]types.InsightDiagnostics{path: {
+		ID: "project-fact", Binding: "unversioned", State: types.InsightProvisional, WireVersion: 1,
+		Boundary: types.InsightBoundary{Source: types.InsightSource{DocumentID: "unopened:" + path, Path: path,
+			Kind: types.InsightSourceDisk, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
+		Diagnostics: []types.LSPDiagnostic{{Line: 2, Col: 4, EndLine: 2, EndCol: 9, Severity: types.DiagError, Message: "undefined: helper"}},
+	}}
+	service.version++
+	app.drainLSPDiagnostics()
+	var file, row *statusoverview.Item
+	items := app.problemPanelItems()
+	for i := range items {
+		switch items[i].ID {
+		case "problem-file:" + path:
+			file = &items[i]
+		case "problem:project-fact:0":
+			row = &items[i]
+		}
+	}
+	if file == nil || row == nil {
+		t.Fatalf("Problems does not list the unopened file: %+v", items)
+	}
+	if len(file.Lines) != 1 || !strings.Contains(file.Lines[0].Value, "not open") || strings.Contains(file.Lines[0].Value, "cannot be matched") {
+		t.Fatalf("file row reason = %+v", file.Lines)
+	}
+	if !row.PrimaryEnabled || !strings.Contains(row.Summary, "3:5") || row.Label != "undefined: helper" {
+		t.Fatalf("diagnostic row = %+v", row)
+	}
+}
