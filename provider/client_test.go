@@ -392,21 +392,39 @@ func TestListModelsDetectsCursorCycles(t *testing.T) {
 }
 
 func TestListModelsAppliesListingDeadline(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":[]}`)
-	}))
-	defer server.Close()
-
-	p := FromPreset("openai-chat", "key", server.URL)
+	var observed context.Context
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		observed = request.Context()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"bounded-listing"}]}`)),
+		}, nil
+	})
+	p := FromPreset("openai-chat", "key", "https://example.invalid")
 	p.SetDialSettings(DialSettings{RequestTimeoutSeconds: 0})
-	client, err := p.Client()
+	client, err := p.Client(WithHTTPClient(&http.Client{Transport: transport}))
 	if err != nil {
 		t.Fatalf("Client: %v", err)
 	}
-	if _, err := client.ListModels(context.Background()); err == nil {
-		t.Skip("server responded within the listing deadline")
+	started := time.Now()
+	models, err := client.ListModels(context.Background())
+	finished := time.Now()
+	if err != nil || len(models) != 1 || models[0].ID != "bounded-listing" {
+		t.Fatalf("model listing = %+v, %v", models, err)
+	}
+	if observed == nil {
+		t.Fatal("listing never reached the HTTP transport")
+	}
+	// The parent has no deadline and the dialer disables its overall timeout.
+	// Inspect the actual HTTP request's independent 30-second listing budget,
+	// rather than sleeping briefly and skipping when a fast response succeeds.
+	deadline, ok := observed.Deadline()
+	if !ok || deadline.Before(started.Add(30*time.Second)) || deadline.After(finished.Add(30*time.Second)) {
+		t.Fatalf("listing deadline = %v, %v; want a 30-second budget created during the call", deadline, ok)
+	}
+	if !errors.Is(observed.Err(), context.Canceled) {
+		t.Fatalf("completed listing retained its deadline context: %v", observed.Err())
 	}
 }
 

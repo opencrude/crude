@@ -31,27 +31,27 @@ func (e *Editor) DiagnosticStatus() string {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
 	f := e.diagnosticFacts
-	status := "Diagnostics pending"
+	status := "No results yet. Open a file and start its language server."
 	switch {
 	case f.ID == "":
 	case f.Limited || f.State == types.InsightLimited:
-		status = "Diagnostics limited"
+		status = "Results are not available for this file. Check the language server."
 	case f.Binding != "exact-version" || f.ReportedVersion == nil:
-		status = "Diagnostics unverified"
+		status = "Results cannot be matched to this version of the file."
 	case e.documentProjection != nil && f.HasExactSource() &&
 		f.Boundary.Source.DocumentID == e.documentProjection.snapshot.ID &&
 		f.Boundary.Source.Revision > e.documentProjection.snapshot.Revision:
-		status = "Diagnostics pending"
+		status = "Results are not available for this version yet."
 	case !e.MatchesDiagnosticSource(f) || e.diagnosticsRevision != e.Revision():
-		status = "Diagnostics stale"
+		status = "Results are for an older version of this file."
 	default:
-		status = "Diagnostics observed · partial coverage"
+		status = "Results are available for this file."
 	}
 	if f.ID != "" && (f.Boundary.Context.ID == "" || f.Boundary.Context.Generation == 0 || len(f.Boundary.Context.UnknownInputs) > 0) {
-		status += " · partial/context unknown"
+		status += " Other files may not be checked."
 	}
 	if e.diagnosticsHidden {
-		status += " · hidden"
+		status += " Problem markers are turned off."
 	}
 	return status
 }

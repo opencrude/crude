@@ -10,7 +10,6 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -48,31 +47,17 @@ func attachmentImageBytes(t *testing.T) []byte {
 	return data.Bytes()
 }
 
-func desktopAttachmentFile(t *testing.T, output string, reveal bool) string {
+func desktopAttachmentFile(t *testing.T, calls <-chan desktopLaunchRecord, reveal bool) string {
 	t.Helper()
-	args, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := strings.TrimSuffix(string(args), "\n")
-	if reveal && runtime.GOOS == "darwin" {
-		path = strings.TrimPrefix(path, "-R\n")
-	} else if reveal {
-		entries, err := os.ReadDir(path)
-		if err != nil || len(entries) != 1 {
-			t.Fatalf("file manager did not receive a folder containing the attachment: %+v %v", entries, err)
-		}
-		path = filepath.Join(path, entries[0].Name())
-	}
-	return path
+	return requireDesktopLaunch(t, calls, reveal)
 }
 
 func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, destination := range []string{"", "system", "file-manager", "crude"} {
 		for _, entry := range []string{"chip", "keyboard", "posted", "sqlite", "prompt-history"} {
 			t.Run(destination+"/"+entry, func(t *testing.T) {
 				app := newTranscriptAttachmentApp(t)
+				calls := recordDesktopLauncher(t, app)
 				setAttachmentDestination(t, app, destination)
 				original := attachmentImageBytes(t)
 				ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedImage, Mime: "image/png", Data: original})
@@ -115,7 +100,7 @@ func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
 					if app.overlayHost.IsOpen(ui.OverlayTextOverlay) || strings.Contains(app.View().RenderContent(), "▀") {
 						t.Fatal("OS destination still opened the blocky preview")
 					}
-					path := desktopAttachmentFile(t, output, destination == "file-manager")
+					path := desktopAttachmentFile(t, calls, destination == "file-manager")
 					data, err := os.ReadFile(path)
 					if err != nil || !bytes.Equal(data, original) || filepath.Ext(path) != ".png" || path == ref.FilePath {
 						t.Fatalf("OS app did not receive the full original image as a private .png copy: %q %v", path, err)
@@ -138,10 +123,10 @@ func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
 }
 
 func TestSystemAttachmentTextAndSelectedFile(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, kind := range []sessiondb.Kind{sessiondb.KindPastedText, sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile} {
 		t.Run(string(kind), func(t *testing.T) {
 			app := newTranscriptAttachmentApp(t)
+			calls := recordDesktopLauncher(t, app)
 			setAttachmentDestination(t, app, "")
 			const content = "EXACT complete attachment\nEnd of full original text"
 			req := sessiondb.CreateRequest{Kind: kind, Content: content}
@@ -156,16 +141,12 @@ func TestSystemAttachmentTextAndSelectedFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			command := app.openAttachment(ref.ID, false)
-			if _, err := os.Stat(output); err == nil {
-				if err := os.Remove(output); err != nil {
-					t.Fatal(err)
-				}
-			}
+			requireNoDesktopLaunch(t, calls)
 			if app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
 				t.Fatal("opening began an in-app viewer on Update")
 			}
 			runAppCommand(t, app, command)
-			path := desktopAttachmentFile(t, output, false)
+			path := desktopAttachmentFile(t, calls, false)
 			data, err := os.ReadFile(path)
 			if err != nil || string(data) != content || filepath.Ext(path) != ".txt" {
 				t.Fatalf("text launch lost source content or file association: %q %q %v", path, data, err)
@@ -196,8 +177,8 @@ func (s *foreignAttachmentMedia) ReadReferenceMedia(ctx context.Context, expecte
 }
 
 func TestForeignAttachmentUsesOriginalMediaNeverLocalPath(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	app := newTranscriptAttachmentApp(t)
+	calls := recordDesktopLauncher(t, app)
 	setAttachmentDestination(t, app, "system")
 	ref := sessiondb.Reference{ID: "exact-remote-image", SessionID: app.ActiveSession.SessionID, Kind: sessiondb.KindPastedImage, Mime: "image/png", FilePath: `C:\foreign-only\CON.png`}
 	store := &foreignAttachmentMedia{SessionReferences: app.RefStore(), data: attachmentImageBytes(t)}
@@ -205,7 +186,7 @@ func TestForeignAttachmentUsesOriginalMediaNeverLocalPath(t *testing.T) {
 	app.ActiveSession.RefStore = store
 	app.ws = &desktopFilesPort{fakeClientFiles: fakeClientFiles{Workspace: app.ws}}
 	runAppCommand(t, app, app.openAttachment(ref.ID, false))
-	path := desktopAttachmentFile(t, output, false)
+	path := desktopAttachmentFile(t, calls, false)
 	data, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(data, store.data) || strings.Contains(path, "foreign-only") || filepath.Base(path) != "preview-CON.png" {
 		t.Fatalf("foreign image was not transferred by exact reference: %q %v", path, err)
@@ -213,10 +194,10 @@ func TestForeignAttachmentUsesOriginalMediaNeverLocalPath(t *testing.T) {
 }
 
 func TestAttachmentPreparationRejectsStaleOwnersAndReference(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, boundary := range []string{"workspace", "session", "pane", "reference", "replace", "shutdown"} {
 		t.Run(boundary, func(t *testing.T) {
 			app := newTranscriptAttachmentApp(t)
+			calls := recordDesktopLauncher(t, app)
 			setAttachmentDestination(t, app, "system")
 			ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Content: "must not launch"})
 			if err != nil {
@@ -242,18 +223,16 @@ func TestAttachmentPreparationRejectsStaleOwnersAndReference(t *testing.T) {
 				app.StopAsyncIO()
 			}
 			runAppCommand(t, app, app.applyAttachmentPrepared(prepared))
-			if _, err := os.Stat(output); !os.IsNotExist(err) {
-				t.Fatal("stale preparation launched an external app")
-			}
+			requireNoDesktopLaunch(t, calls)
 		})
 	}
 }
 
 func TestAttachmentRunningDownloadIsCancelledBeforeDesktopLaunch(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, boundary := range []string{"switch", "replace", "shutdown"} {
 		t.Run(boundary, func(t *testing.T) {
 			app := newTranscriptAttachmentApp(t)
+			calls := recordDesktopLauncher(t, app)
 			setAttachmentDestination(t, app, "system")
 			started := make(chan struct{})
 			store := &foreignAttachmentMedia{SessionReferences: app.RefStore(), read: func(ctx context.Context) error {
@@ -286,18 +265,16 @@ func TestAttachmentRunningDownloadIsCancelledBeforeDesktopLaunch(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("owned download did not finish after cancellation")
 			}
-			if _, err := os.Stat(output); !os.IsNotExist(err) {
-				t.Fatal("cancelled download launched the desktop")
-			}
+			requireNoDesktopLaunch(t, calls)
 		})
 	}
 }
 
 func TestAttachmentContextMenuDestinationsIgnorePreference(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, action := range []string{"Open with default app", "Show in file manager", "Preview in Crude"} {
 		t.Run(action, func(t *testing.T) {
 			app := newTranscriptAttachmentApp(t)
+			calls := recordDesktopLauncher(t, app)
 			setAttachmentDestination(t, app, "crude")
 			ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedImage, Mime: "image/png", Data: attachmentImageBytes(t)})
 			if err != nil {
@@ -317,11 +294,12 @@ func TestAttachmentContextMenuDestinationsIgnorePreference(t *testing.T) {
 				t.Fatal("explicit menu action did not complete")
 			}
 			if action == "Preview in Crude" {
+				requireNoDesktopLaunch(t, calls)
 				if !app.overlayHost.IsOpen(ui.OverlayTextOverlay) || !strings.Contains(app.View().RenderContent(), "▀") {
 					t.Fatal("explicit native preview unavailable")
 				}
 			} else {
-				path := desktopAttachmentFile(t, output, action == "Show in file manager")
+				path := desktopAttachmentFile(t, calls, action == "Show in file manager")
 				if _, err := os.Stat(path); err != nil || app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
 					t.Fatal("explicit OS action followed the Crude preference")
 				}
@@ -331,10 +309,10 @@ func TestAttachmentContextMenuDestinationsIgnorePreference(t *testing.T) {
 }
 
 func TestAttachmentLaunchRechecksCancellationAndReference(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, boundary := range []string{"reference", "switch", "replace"} {
 		t.Run(boundary, func(t *testing.T) {
 			app := newTranscriptAttachmentApp(t)
+			calls := recordDesktopLauncher(t, app)
 			setAttachmentDestination(t, app, "system")
 			ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Content: "never launch"})
 			if err != nil {
@@ -353,9 +331,7 @@ func TestAttachmentLaunchRechecksCancellationAndReference(t *testing.T) {
 				app.beginReferenceOverlay(ref.ID)
 			}
 			runAppCommand(t, app, launch)
-			if _, err := os.Stat(output); !os.IsNotExist(err) {
-				t.Fatal("a queued stale launch opened the desktop")
-			}
+			requireNoDesktopLaunch(t, calls)
 		})
 	}
 }

@@ -2,9 +2,9 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +56,7 @@ func (c *actionConnectedClient) RequestCodeActions(_ context.Context, path strin
 	if path != r.main || d.text != renameConnectedMain {
 		return types.LSPCodeActionResponse{}, fmt.Errorf("unexpected action source %q", path)
 	}
-	uri := strconv.Quote((&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String())
+	uri := strconv.Quote(fileuri.FromPath(path))
 	return types.LSPCodeActionResponse{JSON: []byte(strings.ReplaceAll(r.actions, "$MAIN", uri)),
 		WireVersion: d.version, DiagnosticsDetail: "fixture has no diagnostic adjunct"}, nil
 }

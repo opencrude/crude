@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -157,7 +158,7 @@ func (f codeActionFixture) assertUnchanged(t *testing.T) {
 }
 
 func codeActionEdit(path string) string {
-	return fmt.Sprintf(`{"changes":{%q:[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"newText":"new"},{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}},"newText":"new"}]}}`, fileURI(path))
+	return fmt.Sprintf(`{"changes":{%q:[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"newText":"new"},{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}},"newText":"new"}]}}`, fileuri.FromPath(path))
 }
 
 func codeActionLiteral(path string) string {
@@ -270,7 +271,7 @@ func TestCodeActionVersionedLiteralRequiresExactWireAndRetainsSafety(t *testing.
 			if wire != 1 {
 				t.Fatal("fixture initial wire is not the independently expected first version", wire)
 			}
-			raw := fmt.Sprintf(`[{"title":"Versioned literal","edit":{"documentChanges":[{"textDocument":{"uri":%q,"version":%s},"edits":[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"newText":"new"}]}]}}]`, fileURI(f.path), version)
+			raw := fmt.Sprintf(`[{"title":"Versioned literal","edit":{"documentChanges":[{"textDocument":{"uri":%q,"version":%s},"edits":[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"newText":"new"}]}]}}]`, fileuri.FromPath(f.path), version)
 			set := f.list(t, raw, false)
 			if version != "1" {
 				if len(set.Items) != 1 || set.Items[0].CanReview || set.Items[0].UnsupportedReason == "" {
@@ -310,17 +311,17 @@ func TestCodeActionUnsupportedRowsRemainVisibleWithoutPartialReview(t *testing.T
 		t.Fatal(err)
 	}
 	edit := codeActionEdit(f.path)
-	docChanges := fmt.Sprintf(`{"documentChanges":[{"textDocument":{"uri":%q,"version":0},"edits":[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"newText":"new"}]}]}`, fileURI(f.path))
+	docChanges := fmt.Sprintf(`{"documentChanges":[{"textDocument":{"uri":%q,"version":0},"edits":[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":7}},"newText":"new"}]}]}`, fileuri.FromPath(f.path))
 	for _, tc := range []struct{ name, raw string }{
 		{"disabled", `{"title":"disabled","disabled":{"reason":"not available"},"edit":` + edit + `}`},
 		{"command-only", `{"title":"run tool","command":"provider.run","arguments":["literal"]}`},
 		{"lazy-no-resolve", `{"title":"unresolvable","data":{"opaque":true}}`},
 		{"edit-plus-command", `{"title":"do both","command":{"title":"run","command":"provider.run"},"edit":` + edit + `}`},
-		{"resource", fmt.Sprintf(`{"title":"create","edit":{"documentChanges":[{"kind":"create","uri":%q}]}}`, fileURI(other))},
+		{"resource", fmt.Sprintf(`{"title":"create","edit":{"documentChanges":[{"kind":"create","uri":%q}]}}`, fileuri.FromPath(other))},
 		{"invalid-versioned-documentChanges", `{"title":"versioned","edit":` + docChanges + `}`},
 		{"multi-file", `{"title":"two files","edit":` + strings.TrimSuffix(edit, "}}") + "," + strings.TrimPrefix(codeActionEdit(other), `{"changes":{`) + `}`},
 		{"foreign-uri", `{"title":"foreign","edit":` + codeActionEdit(other) + `}`},
-		{"remote-uri", `{"title":"remote","edit":` + strings.ReplaceAll(edit, fileURI(f.path), "https://example.invalid/source.go") + `}`},
+		{"remote-uri", `{"title":"remote","edit":` + strings.ReplaceAll(edit, fileuri.FromPath(f.path), "https://example.invalid/source.go") + `}`},
 		{"no-op", `{"title":"same bytes","edit":` + strings.ReplaceAll(edit, `"newText":"new"`, `"newText":"old"`) + `}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

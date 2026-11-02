@@ -257,7 +257,9 @@ type IssueSnapshot struct {
 }
 
 type LSPServerHealth struct {
-	ID              string
+	ID string
+	// InstanceID is the exact live producer instance; empty when no instance is running.
+	InstanceID      string
 	Name            string
 	RootURI         string
 	Status          string

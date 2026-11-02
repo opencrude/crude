@@ -13,15 +13,15 @@ func TestRemoteEffectiveSettingsPreserveNonInheritedWorkspaceTrust(t *testing.T)
 	w.settings = &settingsReplica{w: w}
 	application := types.AppSettings{Analysis: types.DefaultWorkspaceAnalysisSettings()}
 	effective := types.MergeAppWorkspace(application, types.WorkspaceOverrides{
-		Analysis: json.RawMessage(`{"trust":"project_execution_allowed"}`),
+		Analysis: json.RawMessage(`{"trust":"trusted"}`),
 	})
 	w.settings.install(settingsSnapshot{fetch: coreprotocol.SettingsFetchResult{
 		Application: application, Effective: effective,
 	}})
-	if got := w.LoadAppSettings(); got.Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if got := w.LoadAppSettings(); got.Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("replica re-merged an already-effective workspace choice as application defaults", got.Analysis)
 	}
-	if got := w.AppDefaults(); got.Analysis.Trust != types.AnalysisStaticOnly {
+	if got := w.AppDefaults(); got.Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("application observation exposed a workspace grant", got.Analysis)
 	}
 }

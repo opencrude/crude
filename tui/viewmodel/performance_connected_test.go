@@ -135,7 +135,9 @@ func TestConnectedPerformanceSnapshotLifecycle(t *testing.T) {
 	selectSection("Core", perfdash.SectionCore)
 	paint("Workspace actor step", "Actor time by work")
 	selectSection("Resources", perfdash.SectionResources)
-	paint("Crude memory", "Processes", "Core")
+	if text := paint("Shell memory", "Core memory", "Processes"); strings.Contains(text, "Crude memory") {
+		t.Fatal("connected resources must not conflate shell and core memory")
+	}
 
 	if cmd := footer(); cmd != nil {
 		t.Fatal("hiding Performance scheduled a snapshot")

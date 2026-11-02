@@ -29,6 +29,6 @@ func bindAnalysisRoot(t *testing.T, manager *LSPManager, root string) string {
 		t.Fatal(err)
 	}
 	manager.SetWorkspaceRoot(root)
-	manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, identity)
+	manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
 	return identity
 }

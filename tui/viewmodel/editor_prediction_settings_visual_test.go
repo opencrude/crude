@@ -225,7 +225,7 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 		return false, fmt.Errorf("native settings input consumed the private composer")
 	}
 	draft, saved := model.AppSettings(), m.ws.LoadAppSettings()
-	if draft.Analysis.Trust != types.AnalysisStaticOnly || saved.Analysis.Trust != types.AnalysisStaticOnly ||
+	if draft.Analysis.Trust != types.AnalysisUndecided || saved.Analysis.Trust != types.AnalysisUndecided ||
 		m.ws.AppDefaults().Prediction.Mode != types.PredictionOff ||
 		m.ws.AppDefaults().Prediction.HourlyTokenLimit != 0 {
 		return false, fmt.Errorf("prediction changed independent analysis Trust or application defaults")

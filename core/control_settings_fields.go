@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"crude/types"
 	"crude/types/control"
 )
 
@@ -234,7 +233,7 @@ func (a *actor) prepareControlSettingsFields(in control.Request) (func(context.C
 		value = app
 		if input.Scope == "workspace" {
 			page.Revision = entityRevision(overrides)
-			value = types.MergeAppWorkspace(app, overrides)
+			value = a.ws.LoadAppSettings()
 			raw, _ := json.Marshal(overrides)
 			_ = json.Unmarshal(raw, &overlay)
 		}

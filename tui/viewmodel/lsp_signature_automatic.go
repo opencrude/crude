@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
+	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/types"
 )
@@ -79,7 +80,7 @@ func (m *App) drainAutomaticSignatureHelp() tea.Cmd {
 	return m.requestSignatureHelp(true)
 }
 
-func signatureHintText(help types.LSPSignatureHelp) string {
+func signatureHintText(help types.LSPSignatureHelp, width int) string {
 	if len(help.Signatures) == 0 || help.ActiveSignature < 0 || help.ActiveSignature >= len(help.Signatures) {
 		return ""
 	}
@@ -93,8 +94,9 @@ func signatureHintText(help types.LSPSignatureHelp) string {
 			fmt.Fprintln(&text, parameter.Documentation)
 		}
 	}
-	fmt.Fprintf(&text, "\nProvider: %s\nSource revision: %d; context: %d\nAlt+I details · Esc dismiss",
-		help.Boundary.Producer.Provider, help.Boundary.Source.Revision, help.Boundary.Context.Generation)
+	provider := rendering.TruncateMiddleVisual(help.Boundary.Producer.Provider, max(0, width-14), "…")
+	fmt.Fprintf(&text, "\nSource revision: %d; context: %d\nProvider: %s\nAlt+I details · Esc dismiss",
+		help.Boundary.Source.Revision, help.Boundary.Context.Generation, provider)
 	return text.String()
 }
 
@@ -151,6 +153,11 @@ func (m *App) positionAutomaticSignatureHelp(state *signatureHelpState) {
 	}
 	if oldW, oldH := fw.Size(); oldW != bounds.W || oldH != bounds.H {
 		fw.SetSize(bounds.W, bounds.H)
+		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+			if area, ok := frame.Body().(*ui.TextArea); ok {
+				area.SetValue(signatureHintText(state.result.help, bounds.W))
+			}
+		}
 	}
 	if oldX, oldY := fw.Position(); oldX != bounds.X || oldY != bounds.Y {
 		fw.SetPosition(bounds.X, bounds.Y)

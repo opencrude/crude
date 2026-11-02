@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"crude/internal/testhome"
+	"crude/internal/testsymlink"
 )
 
 func TestMain(m *testing.M) {
@@ -72,15 +73,10 @@ func TestInspectExistingDirectoriesOnly(t *testing.T) {
 }
 
 func TestInspectAndBrowseAliases(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlinks require host privilege on Windows")
-	}
 	base := t.TempDir()
 	project := mkdir(t, filepath.Join(base, "Project"))
 	link := filepath.Join(base, "Alias")
-	if err := os.Symlink(project, link); err != nil {
-		t.Fatal(err)
-	}
+	testsymlink.Create(t, project, link)
 	got := assertKind(t, link, "")
 	want, err := filepath.EvalSymlinks(project)
 	if err != nil {
@@ -91,9 +87,7 @@ func TestInspectAndBrowseAliases(t *testing.T) {
 	}
 	write(t, filepath.Join(base, "file"), "")
 	for name, target := range map[string]string{"fileLink": "file", "broken": "missing", "loop": "loop"} {
-		if err := os.Symlink(target, filepath.Join(base, name)); err != nil {
-			t.Fatal(err)
-		}
+		testsymlink.Create(t, target, filepath.Join(base, name))
 	}
 	result, err := Browse(context.Background(), base, 0)
 	if err != nil {

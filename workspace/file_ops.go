@@ -394,7 +394,14 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 			msg.Err = err
 			return msg
 		}
-		target.postimage, err = os.Lstat(target.next)
+		// Stat the open handle: Windows Lstat defers file identity lookup until
+		// SameFile, when the staged path may already have been renamed away.
+		var staged *os.File
+		staged, err = os.Open(target.next)
+		if err == nil {
+			target.postimage, err = staged.Stat()
+			err = errors.Join(err, staged.Close())
+		}
 		if err != nil {
 			msg.Err = err
 			return msg

@@ -49,27 +49,50 @@ func TestFileTreeContextMenuOffersDesktopReveal(t *testing.T) {
 	}
 }
 
-// The actual desktop owner is exercised through a private fake OS launcher,
-// never a production seam or the user's file manager.
-func recordDesktopLauncher(t *testing.T) string {
+// Record the per-App desktop launch without opening the user's file manager.
+type desktopLaunchRecord struct {
+	path   string
+	reveal bool
+	ctxErr error
+}
+
+func recordDesktopLauncher(t *testing.T, app *App) chan desktopLaunchRecord {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("native Windows Explorer selection requires the Windows desktop journey")
+	calls := make(chan desktopLaunchRecord, 16)
+	state := asyncIOStateFor(app)
+	state.mu.Lock()
+	state.desktopLaunch = func(ctx context.Context, path string, reveal bool) error {
+		calls <- desktopLaunchRecord{path, reveal, ctx.Err()}
+		return ctx.Err()
 	}
-	dir := t.TempDir()
-	output := filepath.Join(dir, "arguments")
-	for _, name := range []string{"xdg-open", "open"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CRUDE_TEST_DESKTOP_ARGS\"\n"), 0o700); err != nil {
-			t.Fatal(err)
+	state.mu.Unlock()
+	return calls
+}
+
+func requireDesktopLaunch(t *testing.T, calls <-chan desktopLaunchRecord, reveal bool) string {
+	t.Helper()
+	select {
+	case call := <-calls:
+		if call.reveal != reveal || call.ctxErr != nil {
+			t.Fatalf("desktop launch: %+v, want reveal=%v and live context", call, reveal)
 		}
+		return call.path
+	default:
+		t.Fatal("desktop launch missing")
+		return ""
 	}
-	t.Setenv("CRUDE_TEST_DESKTOP_ARGS", output)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return output
+}
+
+func requireNoDesktopLaunch(t *testing.T, calls <-chan desktopLaunchRecord) {
+	t.Helper()
+	select {
+	case call := <-calls:
+		t.Fatalf("unexpected desktop launch: %+v", call)
+	default:
+	}
 }
 
 func TestFileTreeRevealTargetsClickedPathOffUpdate(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, directory := range []bool{false, true} {
 		root := t.TempDir()
 		path := filepath.Join(root, "a&b.txt")
@@ -81,6 +104,7 @@ func TestFileTreeRevealTargetsClickedPathOffUpdate(t *testing.T) {
 			t.Fatal(err)
 		}
 		app := newEditorPaintApp(t, root)
+		calls := recordDesktopLauncher(t, app)
 		app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 		app.registerOverlayHandlers()
 		app.setActivity(activityFiles, true)
@@ -109,20 +133,8 @@ func TestFileTreeRevealTargetsClickedPathOffUpdate(t *testing.T) {
 			t.Fatal("context menu did not complete desktop reveal")
 		}
 		restore()
-		args, err := os.ReadFile(output)
-		if err != nil {
-			t.Fatal(err)
-		}
-		expect := path
-		if !directory {
-			if runtime.GOOS == "darwin" {
-				expect = "-R\n" + path
-			} else {
-				expect = root
-			}
-		}
-		if string(args) != expect+"\n" {
-			t.Fatalf("revealed %q, want %q", args, expect)
+		if got := requireDesktopLaunch(t, calls, true); got != path {
+			t.Fatalf("revealed %q, want %q", got, path)
 		}
 	}
 }
@@ -139,9 +151,9 @@ func (p *desktopFilesPort) ReadExternalClientFile(ctx context.Context, path stri
 }
 
 func TestConnectedRevealNeverPassesForeignPathToDesktop(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	for _, source := range []string{"/foreign/project/foreign-only.txt", `C:\foreign\project\foreign-only.txt`} {
 		app := newFullTestApp(t)
+		calls := recordDesktopLauncher(t, app)
 		port := &desktopFilesPort{fakeClientFiles: fakeClientFiles{Workspace: app.ws}}
 		reads := 0
 		port.read = func(_ context.Context, requested string) ([]byte, error) {
@@ -156,19 +168,10 @@ func TestConnectedRevealNeverPassesForeignPathToDesktop(t *testing.T) {
 		if msg.err != nil || msg.notice == "" || reads != 1 {
 			t.Fatalf("remote reveal: %#v; reads=%d", msg, reads)
 		}
-		args, err := os.ReadFile(output)
-		if err != nil {
-			t.Fatal(err)
-		}
-		local := strings.TrimSpace(string(args))
-		if runtime.GOOS == "darwin" {
-			local = strings.TrimPrefix(local, "-R\n")
-		} else {
-			local = filepath.Join(local, "preview-foreign-only.txt")
-		}
+		local := requireDesktopLaunch(t, calls, true)
 		data, err := os.ReadFile(local)
-		if err != nil || string(data) != "core-only content" || strings.Contains(string(args), source) {
-			t.Fatalf("desktop did not receive a client-local copy: args=%q content=%q err=%v", args, data, err)
+		if err != nil || string(data) != "core-only content" || strings.Contains(local, source) {
+			t.Fatalf("desktop did not receive a client-local copy: path=%q content=%q err=%v", local, data, err)
 		}
 		app.StopAsyncIO()
 		if _, err := os.Stat(local); !os.IsNotExist(err) {
@@ -178,8 +181,8 @@ func TestConnectedRevealNeverPassesForeignPathToDesktop(t *testing.T) {
 }
 
 func TestConnectedLocalRevealUsesOriginalPath(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	app := newFullTestApp(t)
+	calls := recordDesktopLauncher(t, app)
 	path := filepath.Join(t.TempDir(), "original.txt")
 	if err := os.WriteFile(path, []byte("source"), 0o600); err != nil {
 		t.Fatal(err)
@@ -193,19 +196,14 @@ func TestConnectedLocalRevealUsesOriginalPath(t *testing.T) {
 	if msg := app.revealTreePath(path, false)().(desktopPathOpenedMsg); msg.err != nil || msg.notice != "" {
 		t.Fatalf("local reveal failed: %#v", msg)
 	}
-	args, _ := os.ReadFile(output)
-	expect := filepath.Dir(path)
-	if runtime.GOOS == "darwin" {
-		expect = "-R\n" + path
-	}
-	if string(args) != expect+"\n" {
-		t.Fatalf("local core path changed: %q", args)
+	if got := requireDesktopLaunch(t, calls, true); got != path {
+		t.Fatalf("local core path changed: %q", got)
 	}
 }
 
 func TestRemoteFolderRevealIsExplicitLocalPreview(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	app := newFullTestApp(t)
+	calls := recordDesktopLauncher(t, app)
 	port := &desktopFilesPort{fakeClientFiles: fakeClientFiles{Workspace: app.ws, entries: []shellport.ClientDirectoryEntry{{Name: "file.txt"}, {Name: "subdir", IsDir: true}}}}
 	port.read = func(context.Context, string) ([]byte, error) {
 		t.Error("folder reveal tried to read a file")
@@ -215,8 +213,7 @@ func TestRemoteFolderRevealIsExplicitLocalPreview(t *testing.T) {
 	if msg := app.revealTreePath("/core-only/folder", true)().(desktopPathOpenedMsg); msg.err != nil || msg.notice == "" {
 		t.Fatalf("folder preview failed: %#v", msg)
 	}
-	args, _ := os.ReadFile(output)
-	preview := strings.TrimSpace(string(args))
+	preview := requireDesktopLaunch(t, calls, true)
 	note, err := os.ReadFile(filepath.Join(preview, "REMOTE-FOLDER.txt"))
 	if err != nil || !strings.Contains(string(note), "/core-only/folder") || !strings.Contains(string(note), "No project folder was copied") {
 		t.Fatalf("remote folder misrepresented: %q %v", note, err)
@@ -227,6 +224,7 @@ func TestDesktopRevealCancellationAndStaleOwnership(t *testing.T) {
 	for _, stop := range []string{"switch", "shutdown"} {
 		t.Run(stop, func(t *testing.T) {
 			app := newFullTestApp(t)
+			calls := recordDesktopLauncher(t, app)
 			started := make(chan struct{})
 			port := &desktopFilesPort{fakeClientFiles: fakeClientFiles{Workspace: app.ws}}
 			port.read = func(ctx context.Context, _ string) ([]byte, error) {
@@ -252,14 +250,17 @@ func TestDesktopRevealCancellationAndStaleOwnership(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("desktop request survived its owner")
 			}
+			requireNoDesktopLaunch(t, calls)
 		})
 	}
 	app := newFullTestApp(t)
+	calls := recordDesktopLauncher(t, app)
 	cmd := app.revealTreePath("/must-not-open", false)
 	app.workspaceSwitchGen.Add(1)
 	if msg := cmd().(desktopPathOpenedMsg); !errors.Is(msg.err, context.Canceled) {
 		t.Fatalf("stale reveal started: %v", msg.err)
 	}
+	requireNoDesktopLaunch(t, calls)
 }
 
 func TestFileTreeRevealMenuRejectsLaterWorkspace(t *testing.T) {
@@ -284,7 +285,6 @@ func TestFileTreeRevealMenuRejectsLaterWorkspace(t *testing.T) {
 // A genuine connected core exercises the port provenance rather than inferring
 // locality from whether the path happens to exist on the shell host.
 func TestConnectedCoreTreeRevealUsesHostAuthority(t *testing.T) {
-	output := recordDesktopLauncher(t)
 	root := t.TempDir()
 	path := filepath.Join(root, "connected.txt")
 	if err := os.WriteFile(path, []byte("core file"), 0o600); err != nil {
@@ -293,6 +293,7 @@ func TestConnectedCoreTreeRevealUsesHostAuthority(t *testing.T) {
 	r := remoteJourneyRuntime(t, "http://unused.invalid")
 	shell := newRemoteJourneyShell(t, r, root)
 	app := shell.app
+	calls := recordDesktopLauncher(t, app)
 	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	runAppCommand(t, app, app.beginClientFileTreeLoad())
 	app.setActivity(activityFiles, true)
@@ -310,13 +311,8 @@ func TestConnectedCoreTreeRevealUsesHostAuthority(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("connected tree reveal did not finish")
 	}
-	args, _ := os.ReadFile(output)
-	expect := root
-	if runtime.GOOS == "darwin" {
-		expect = "-R\n" + path
-	}
-	if string(args) != expect+"\n" {
-		t.Fatalf("real local core reveal got %q, want %q", args, expect)
+	if got := requireDesktopLaunch(t, calls, true); got != path {
+		t.Fatalf("real local core reveal got %q, want %q", got, path)
 	}
 }
 

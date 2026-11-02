@@ -254,9 +254,10 @@ func TestBreadcrumbOmitsWorkspaceRoot(t *testing.T) {
 	if idx < 0 {
 		t.Fatal("leaf not visible")
 	}
+	m.Update(TreeHeightMsg{Height: 1})
 	m.SetScrollOffset(idx)
-	if m.ScrollOffset() <= 0 {
-		t.Skip("scroll offset did not advance; breadcrumb would be empty")
+	if got := m.ScrollOffset(); got != idx {
+		t.Fatalf("scroll offset = %d, want the visible leaf at %d", got, idx)
 	}
 
 	got := BreadcrumbLine(m, 80)

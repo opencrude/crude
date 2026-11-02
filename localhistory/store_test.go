@@ -3,6 +3,7 @@ package localhistory
 import (
 	"bytes"
 	"context"
+	"crude/internal/testsymlink"
 	"errors"
 	"io"
 	"math/rand"
@@ -334,13 +335,8 @@ func TestPartialRestoreChangesOnlySelectedPath(t *testing.T) {
 }
 
 func TestUnsafeSymlinkRestoreIsRejected(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink privileges vary on Windows")
-	}
 	store, workspace := newTestStore(t)
-	if err := os.Symlink("../outside", filepath.Join(workspace, "escape")); err != nil {
-		t.Fatal(err)
-	}
+	testsymlink.Create(t, "../outside", filepath.Join(workspace, "escape"))
 	base, err := store.Snapshot(context.Background(), SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -391,27 +387,19 @@ func TestOpenRejectsStoreInsideWorkspace(t *testing.T) {
 }
 
 func TestOpenRejectsSymlinkedStoreInsideWorkspace(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink privileges vary on Windows")
-	}
 	workspace := t.TempDir()
 	external := t.TempDir()
 	if err := os.Mkdir(filepath.Join(workspace, "hidden-store"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	alias := filepath.Join(external, "store-alias")
-	if err := os.Symlink(filepath.Join(workspace, "hidden-store"), alias); err != nil {
-		t.Fatal(err)
-	}
+	testsymlink.Create(t, filepath.Join(workspace, "hidden-store"), alias)
 	if _, err := Open(alias, workspace); err == nil {
 		t.Fatal("symlinked store inside workspace was accepted")
 	}
 }
 
 func TestPartialRestoreRejectsSymlinkParentEscape(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink privileges vary on Windows")
-	}
 	store, workspace := newTestStore(t)
 	writeTestFile(t, workspace, "dir/file.txt", []byte("base"), 0o644)
 	base, err := store.Snapshot(context.Background(), SnapshotOptions{})
@@ -422,9 +410,7 @@ func TestPartialRestoreRejectsSymlinkParentEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(workspace, "dir")); err != nil {
-		t.Fatal(err)
-	}
+	testsymlink.Create(t, outside, filepath.Join(workspace, "dir"))
 	plan, err := store.PlanRestore(context.Background(), base.ID, SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)

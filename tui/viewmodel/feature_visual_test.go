@@ -57,6 +57,13 @@ func runFeatureVisual(t *testing.T, headless bool, width, height int) {
 	root := newGitRepoFixture(t)
 	path := filepath.Join(root, "tracked.txt")
 	seed := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
+	choice := seed.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+		Path: []string{"analysis", "trust"}, After: []byte(`"restricted"`),
+	}})()
+	if choice.Err != nil {
+		t.Fatal(choice.Err)
+	}
+	seed.ApplyPreferencesSave(choice)
 	seed.Status.Notify(types.NotificationRecord{ID: "feature-notice", Summary: "Saved feature notice", Detail: "Read from the retained workspace status owner.", Source: "acceptance"})
 	seed.Close()
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
@@ -310,8 +317,8 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 				if v.findInFiles == nil || len(v.findInFiles.Results()) != 1 {
 					return fmt.Errorf("project search did not return one real file result")
 				}
-				if v.findInFiles.Results()[0].Path != m.path {
-					return fmt.Errorf("project search returned the wrong file")
+				if got := v.findInFiles.Results()[0].Path; filepath.Clean(got) != filepath.Clean(m.path) {
+					return fmt.Errorf("project search returned %q, want %q", got, m.path)
 				}
 				return featureVisualPaint(v, "Find in Files", "1 match in 1 file", "FEATURE NEEDLE")
 			})
@@ -376,7 +383,20 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 			if v.perf.screen.Section() != sections[phase-1] {
 				return fmt.Errorf("Performance pointer did not select %s (current=%s focus=%s):\n%s", sections[phase-1], v.perf.screen.Section(), v.rootHost.Focused(), ansi.Strip(v.View().RenderContent()))
 			}
-			return featureVisualPaint(v, []string{"Memory", "Workspace actor step", "Crude memory"}[phase-1])
+			if phase == 3 {
+				markers := []string{"Shell memory"}
+				if v.width >= 160 {
+					markers = append(markers, "Core memory")
+				}
+				if err := featureVisualPaint(v, markers...); err != nil {
+					return err
+				}
+				if paint := ansi.Strip(v.View().RenderContent()); strings.Contains(paint, "Crude memory") {
+					return fmt.Errorf("%dx%d frame mixes resource owners:\n%s", v.width, v.height, paint)
+				}
+				return nil
+			}
+			return featureVisualPaint(v, []string{"Memory", "Workspace actor step"}[phase-1])
 		})
 	case 6:
 		label = "Skills real capability snapshot; no activation"

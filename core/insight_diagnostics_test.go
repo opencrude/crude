@@ -46,9 +46,9 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 	b.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
 	var granted coreprotocol.WorkspacePreferencesResult
 	a.call(t, ws, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{
-		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: []byte(`"project_execution_allowed"`)}},
+		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`)}},
 	}, &granted)
-	if granted.Effective.Analysis.Trust != types.AnalysisProjectExecutionAllowed || granted.Overrides.AnalysisRootIdentity == "" {
+	if granted.Effective.Analysis.Trust != types.AnalysisTrusted || granted.Overrides.AnalysisRootIdentity == "" {
 		t.Fatal("the semantic wire fixture did not persist explicit root-bound workspace trust")
 	}
 	var initial, peer document.Snapshot

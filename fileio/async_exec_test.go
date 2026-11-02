@@ -1,9 +1,13 @@
 package fileio
 
 import (
+	"bufio"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -36,6 +40,48 @@ func TestAsyncCommandHelperProcess(t *testing.T) {
 		os.Exit(7)
 	case "utf8-binary":
 		_, _ = os.Stdout.Write([]byte("A界B\xffC"))
+		return
+	case "detached-parent":
+		child := exec.Command(os.Args[0], "-test.run=^TestAsyncCommandHelperProcess$")
+		child.Env = append(os.Environ(), "CRUDE_ASYNC_ACTION=detached-child")
+		ready, err := child.StdoutPipe()
+		if err != nil {
+			os.Exit(2)
+		}
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			os.Exit(2)
+		}
+		// The shell must outlive its child's actual connection to the test.
+		// Start() or a guessed startup delay cannot establish that boundary.
+		line, err := bufio.NewReader(ready).ReadString('\n')
+		_ = ready.Close()
+		_ = child.Process.Release()
+		if err != nil || line != "ready\n" {
+			os.Exit(3)
+		}
+		return
+	case "detached-child":
+		gate, err := net.DialTimeout("tcp", os.Getenv("CRUDE_ASYNC_GATE"), 5*time.Second)
+		if err != nil {
+			os.Exit(4)
+		}
+		defer gate.Close()
+		if err := gate.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+			os.Exit(4)
+		}
+		if _, err := io.WriteString(gate, "ready\n"); err != nil {
+			os.Exit(4)
+		}
+		_, _ = io.WriteString(os.Stdout, "ready\n")
+		line, err := bufio.NewReader(gate).ReadString('\n')
+		if err != nil || line != "write\n" {
+			os.Exit(5)
+		}
+		if err := os.WriteFile(os.Getenv("CRUDE_ASYNC_TARGET"), []byte("late"), 0600); err != nil {
+			os.Exit(5)
+		}
+		_, _ = io.WriteString(gate, "wrote\n")
 		return
 	}
 	time.Sleep(30 * time.Second)
@@ -144,20 +190,48 @@ func TestConcurrentDuplicateHandleStartsOnlyOneProcess(t *testing.T) {
 }
 
 func TestCompletedShellCannotLeaveDetachedWriter(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows process-tree ownership is compile-checked separately")
-	}
 	manager := NewAsyncCommandManager()
-	target := filepath.Join(t.TempDir(), "late")
-	command := fmt.Sprintf(`(sleep 1; printf late > %q) >/dev/null 2>&1 &`, target)
-	if _, err := manager.Start("detached", command, t.TempDir(), 0); err != nil {
+	settled := settleObserver(t, manager)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "late")
+	gate, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for manager.Running() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	defer gate.Close()
+	if err := gate.(*net.TCPListener).SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
 	}
-	time.Sleep(1200 * time.Millisecond)
+	t.Setenv("CRUDE_ASYNC_TARGET", target)
+	t.Setenv("CRUDE_ASYNC_GATE", gate.Addr().String())
+	if _, err := manager.Start("detached", asyncActionCommand("detached-parent"), dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	child, err := gate.Accept()
+	if err != nil {
+		t.Fatal("descendant never connected:", err)
+	}
+	defer child.Close()
+	if err := child.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(child)
+	if ready, err := reader.ReadString('\n'); err != nil || ready != "ready\n" {
+		t.Fatalf("descendant did not reach its write barrier: %q, %v", ready, err)
+	}
+	info := awaitSettled(t, settled)
+	if info.Handle != "detached" || info.Status != AsyncCompleted || manager.Running() {
+		t.Fatalf("shell did not complete after its descendant reached the barrier: %+v", info)
+	}
+	// A surviving descendant would write immediately on this signal. A real
+	// ownership teardown closes the connection, so no elapsed-time guess is
+	// needed to establish that it cannot act after command completion.
+	_, _ = io.WriteString(child, "write\n")
+	if response, err := reader.ReadString('\n'); err == nil || response != "" {
+		t.Fatalf("descendant survived command settlement: %q, %v", response, err)
+	} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+		t.Fatal("descendant remained live after command settlement:", err)
+	}
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		t.Fatalf("detached child survived command ownership: %v", err)
 	}

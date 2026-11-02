@@ -539,7 +539,7 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 				// Retained resources initialize before an actor or shell can read
 				// them. This I/O belongs to the factory worker, never actor Update.
 				if analysisErr := ws.InitializeAnalysisRuntime(r.analysisGovernor, id, rand.Text()); analysisErr != nil {
-					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "analysis", Summary: "Project analysis remains Static only", Detail: analysisErr.Error()})
+					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityWarning, Source: "analysis", Summary: "Could not check this folder", Detail: analysisErr.Error()})
 				}
 				initCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				initErr := ws.InitializeCoreResources(initCtx)

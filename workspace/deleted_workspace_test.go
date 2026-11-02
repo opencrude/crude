@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"crude/internal/testsymlink"
 )
 
 func savedWorkspaceFixture(t *testing.T) (string, string) {
@@ -157,17 +159,12 @@ func TestSavedWorkspaceDeletionStillRejectsNewSQLiteWALWork(t *testing.T) {
 }
 
 func TestWorkspaceDeleteRefusesSymlinkStorage(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation requires Windows privilege")
-	}
 	project, saved := savedWorkspaceFixture(t)
 	backup := saved + "-moved"
 	if err := os.Rename(saved, backup); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(backup, saved); err != nil {
-		t.Fatal(err)
-	}
+	testsymlink.Create(t, backup, saved)
 	if _, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir()); err == nil {
 		t.Fatal("symlink storage accepted")
 	}

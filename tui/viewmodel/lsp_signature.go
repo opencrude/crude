@@ -37,7 +37,6 @@ type signatureHelpResultMsg struct {
 	owner *signatureHelpState
 	help  types.LSPSignatureHelp
 	text  string
-	hint  string
 	err   error
 }
 
@@ -98,7 +97,7 @@ func (m *App) requestSignatureHelp(automatic bool) tea.Cmd {
 	return func() tea.Msg {
 		defer cancel()
 		help, err := service.RequestSignatureHelp(ctx, state.path, line, col)
-		return signatureHelpResultMsg{owner: state, help: help, text: signatureHelpText(help), hint: signatureHintText(help), err: err}
+		return signatureHelpResultMsg{owner: state, help: help, text: signatureHelpText(help), err: err}
 	}
 }
 
@@ -211,12 +210,6 @@ func (m *App) syncSignatureHelp() {
 	}
 	area := ui.NewTextArea("lsp-signature/text", ui.NewTokenSet(m.Theme), true)
 	area.SetReadOnly(true)
-	text := state.result.text
-	if state.automatic {
-		text = state.result.hint
-	}
-	area.SetValue(text)
-	area.SetCursorFlat(0)
 	w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
 	if state.automatic {
 		h = min(h, 10)
@@ -227,6 +220,12 @@ func (m *App) syncSignatureHelp() {
 		return
 	}
 	w, h = bounds.W, bounds.H
+	text := state.result.text
+	if state.automatic {
+		text = signatureHintText(state.result.help, w)
+	}
+	area.SetValue(text)
+	area.SetCursorFlat(0)
 	title := "Parameter information"
 	if state.automatic {
 		title += " · Alt+I details"

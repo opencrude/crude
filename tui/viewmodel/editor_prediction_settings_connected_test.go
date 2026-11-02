@@ -148,7 +148,7 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			grant := one.app.ws.LoadWorkspaceOverrides()
 			if grant.PredictionRootIdentity == "" || grant.PredictionConnectionIdentity == "" || grant.PredictionGrantID == "" ||
 				two.app.ws.LoadAppSettings().Prediction.HourlyTokenLimit != 4200 ||
-				one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly ||
+				one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided ||
 				one.app.ws.AppDefaults().Prediction.Mode != types.PredictionOff {
 				t.Fatal("native Save lost the exact root/connection grant, peer projection or authority independence")
 			}
@@ -170,7 +170,7 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			})
 			revoked := one.app.ws.LoadWorkspaceOverrides()
 			if revoked.PredictionRootIdentity != "" || revoked.PredictionConnectionIdentity != "" || revoked.PredictionGrantID != "" ||
-				one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly || calls.Load() != 0 {
+				one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided || calls.Load() != 0 {
 				t.Fatal("native revocation retained a grant, changed Trust or probed a provider", calls.Load())
 			}
 		})

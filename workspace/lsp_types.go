@@ -2,9 +2,6 @@ package workspace
 
 import (
 	"context"
-	"net/url"
-	"path/filepath"
-	"strings"
 
 	model "crude/types"
 )
@@ -63,31 +60,4 @@ type LSPClient interface {
 // LSPRuntime creates transport clients; language and project policy stay in the workspace.
 type LSPRuntime interface {
 	NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient
-}
-
-func fileURI(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	slashPath := filepath.ToSlash(abs)
-	if filepath.VolumeName(abs) != "" {
-		slashPath = "/" + slashPath
-	}
-	return (&url.URL{Scheme: "file", Path: slashPath}).String()
-}
-
-func filePathFromURI(uri string) string {
-	u, err := url.Parse(uri)
-	if err != nil || u.Scheme != "file" {
-		return filepath.Clean(strings.TrimPrefix(uri, "file://"))
-	}
-	path := u.Path
-	if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
-		path = "//" + u.Host + path
-	}
-	if trimmed := strings.TrimPrefix(path, "/"); filepath.VolumeName(trimmed) != "" {
-		path = trimmed
-	}
-	return filepath.Clean(filepath.FromSlash(path))
 }

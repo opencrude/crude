@@ -2,26 +2,41 @@ package metrics
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"testing"
 	"time"
 )
+
+func TestResourceProcessHelper(t *testing.T) {
+	if os.Getenv("CRUDE_RESOURCE_PROCESS_HELPER") != "1" {
+		return
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func resourceProcess(t *testing.T) *exec.Cmd {
+	t.Helper()
+	child := exec.Command(os.Args[0], "-test.run=^TestResourceProcessHelper$")
+	child.Env = append(os.Environ(), "CRUDE_RESOURCE_PROCESS_HELPER=1")
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		_ = stdin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = child.Wait() })
+	return child
+}
 
 // A snapshot reports this process first, the processes it started with
 // their parent, the machine's memory, and CPU shares from the second
 // snapshot on.
 func TestResourcesReportThisProcessItsChildrenAndTheMachine(t *testing.T) {
-	name, args := "sleep", []string{"30"}
-	if runtime.GOOS == "windows" {
-		name, args = "ping", []string{"-n", "30", "127.0.0.1"}
-	}
-	child := exec.Command(name, args...)
-	if err := child.Start(); err != nil {
-		t.Skipf("cannot start a child process: %v", err)
-	}
-	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	child := resourceProcess(t)
 	SetDiskSource(func() *DiskUsage { return &DiskUsage{Path: "data", Total: 42} })
 	t.Cleanup(func() { SetDiskSource(nil) })
 
@@ -96,15 +111,8 @@ func TestResourceWaitingCancellationAndUnknowns(t *testing.T) {
 }
 
 func TestResourcesRetainEveryDescendantAndCountDiskSourceOmissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("large real process tree uses POSIX sleep; Windows cross-compilation checked separately")
-	}
 	for range processLimit + 3 {
-		child := exec.Command("sleep", "30")
-		if err := child.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+		resourceProcess(t)
 	}
 	SetDiskSource(func() *DiskUsage {
 		return &DiskUsage{Path: "fixture", Total: 42, MeasuredAt: time.Now(), WorkspaceCount: 50, Workspaces: []WorkspaceDisk{{ID: "one", Bytes: 42}}}

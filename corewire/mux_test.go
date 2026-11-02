@@ -229,8 +229,14 @@ func TestMuxDetectsSilentPeer(t *testing.T) {
 }
 
 func TestMuxMeasuresRTT(t *testing.T) {
-	client, _ := muxPair(t)
-	waitFor(t, func() bool { return client.RTT() > 0 })
+	const latency = 20 * time.Millisecond
+	a, b := net.Pipe()
+	client := NewMux(slowConn{a, latency}, CarrierLocal, true)
+	server := NewMux(slowConn{b, latency}, CarrierLocal, false)
+	defer client.Close()
+	defer server.Close()
+	// A local pipe can measure zero on clocks with coarse monotonic ticks.
+	waitFor(t, func() bool { return client.RTT() >= 2*latency-16*time.Millisecond })
 }
 
 func TestMuxRejectsCreditOverrun(t *testing.T) {

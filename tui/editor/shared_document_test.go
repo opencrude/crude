@@ -19,7 +19,11 @@ var projectionOwner = document.Owner{ClientID: "editor-test", Epoch: 1}
 
 func projectionEditor(t *testing.T, text string) (*Editor, document.Snapshot) {
 	t.Helper()
-	s := document.Snapshot{ID: "/virtual/doc", Path: "/virtual/doc", Revision: 1, Text: []byte(text), Saved: []byte(text), DiskExists: true, DiskHash: sha256.Sum256([]byte(text))}
+	path, err := filepath.Abs(filepath.FromSlash("/virtual/doc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := document.Snapshot{ID: "/virtual/doc", Path: path, Revision: 1, Text: []byte(text), Saved: []byte(text), DiskExists: true, DiskHash: sha256.Sum256([]byte(text))}
 	e := New(theme.DefaultDark())
 	t.Cleanup(e.Close)
 	if err := e.InstallDocument(s); err != nil {

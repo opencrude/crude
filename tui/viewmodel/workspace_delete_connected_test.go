@@ -25,6 +25,9 @@ import (
 )
 
 func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
+	// The package-level test home also contains saved workspaces from other
+	// journeys. This test owns its catalog and must not scan those unrelated DBs.
+	t.Setenv("CRUDE_HOME", t.TempDir())
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
 		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -102,14 +105,35 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	if !strings.Contains(p.title.Text(), "restored") {
 		t.Fatal("Undo did not show restored status")
 	}
-	remoteJourneyUntil(t, []remoteJourneyShell{current}, func() bool {
-		for _, info := range app.workspaceInfos {
-			if info.ID == workspace.WorkspaceID(project) {
-				return true
-			}
+	// Undo starts an asynchronous, generation-owned catalog read. Wait for that
+	// actual read to finish, not merely a short deadline for its desired content.
+	// A completed read which omits the restored resource is still a failure.
+	gen := app.launcherLoadGen.Load()
+	deadline := time.NewTimer(45 * time.Second)
+	defer deadline.Stop()
+	for app.workspaceListLoading {
+		select {
+		case msg := <-current.fifo:
+			_, cmd := app.Update(msg)
+			runAppCommand(t, app, cmd)
+		case <-deadline.C:
+			t.Fatalf("restored workspace catalog did not finish: generation=%d current=%d error=%q",
+				gen, app.launcherLoadGen.Load(), app.workspaceListError)
+		case <-t.Context().Done():
+			t.Fatal("restored workspace catalog cancelled:", t.Context().Err())
 		}
-		return false
-	})
+	}
+	if app.launcherLoadGen.Load() != gen || app.workspaceListError != "" {
+		t.Fatalf("restored workspace catalog did not complete its original refresh: generation=%d current=%d error=%q",
+			gen, app.launcherLoadGen.Load(), app.workspaceListError)
+	}
+	found := false
+	for _, info := range app.workspaceInfos {
+		found = found || info.ID == workspace.WorkspaceID(project)
+	}
+	if !found {
+		t.Fatalf("completed workspace catalog omitted restored workspace %s: %+v", project, app.workspaceInfos)
+	}
 	app.overlayHost.Close(ui.OverlayWorkspaceDelete)
 	if !strings.Contains(app.View().RenderContent(), filepath.Base(project)) {
 		t.Fatal("Undo did not return the resource to the rendered sidebar")

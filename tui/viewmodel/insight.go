@@ -3,34 +3,8 @@ package viewmodel
 import (
 	"crude/document"
 	"crude/shellport"
-	"crude/tui/editor"
 	"crude/types"
-	"strings"
 )
-
-func editorInsightSummary(ed *editor.Editor) string {
-	return strings.TrimPrefix(editorSyntaxSummary(ed)+" · "+ed.DiagnosticStatus(), " · ")
-}
-
-func editorSyntaxSummary(ed *editor.Editor) string {
-	state, _ := ed.InsightStatus()
-	switch state {
-	case types.InsightCurrent:
-		return "Syntax shared"
-	case types.InsightProvisional:
-		return "Syntax draft"
-	case types.InsightPending:
-		return "Syntax pending"
-	case types.InsightUnsupported:
-		return "Syntax lexical"
-	case types.InsightFailed:
-		return "Syntax unavailable"
-	case types.InsightLimited:
-		return "Syntax limited"
-	default:
-		return ""
-	}
-}
 
 func (m *App) applyDocumentInsight(msg shellport.DocumentInsightMsg) {
 	finish := func(err error) {
@@ -63,7 +37,7 @@ func (m *App) applyDocumentInsight(msg shellport.DocumentInsightMsg) {
 	finish(nil)
 	if found && (msg.View.State == types.InsightFailed || msg.View.State == types.InsightLimited) {
 		if m.Feedback != nil {
-			m.Feedback.NotifyError("Shared syntax unavailable: " + msg.View.Detail)
+			m.Feedback.NotifyError("Syntax highlighting is unavailable. The syntax service reported an error. Reopen the file and try again. " + msg.View.Detail)
 		}
 	}
 }

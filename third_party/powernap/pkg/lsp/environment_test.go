@@ -190,7 +190,7 @@ func TestProcessEnvironmentPATHRejectsHiddenSearchAndBounds(t *testing.T) {
 		requireProcessEnvironmentError(t, err)
 	}
 	// The input bound applies even to repeated entries which would deduplicate.
-	repeated := make([]string, 64)
+	repeated := make([]string, 100)
 	for i := range repeated {
 		repeated[i] = dir
 	}
@@ -198,9 +198,16 @@ func TestProcessEnvironmentPATHRejectsHiddenSearchAndBounds(t *testing.T) {
 	if !reflect.DeepEqual(env.Env(), []string{"PATH=" + dir}) {
 		t.Fatal("exact duplicates not removed from privileged launch data")
 	}
-	repeated = append(repeated, dir)
-	_, err := NewProcessEnvironment(map[string]string{"PATH": strings.Join(repeated, separator)})
-	requireProcessEnvironmentError(t, err)
+	// Use valid individual directories to reach the total PATH boundary.
+	piece := filepath.VolumeName(dir) + string(os.PathSeparator)
+	piece += strings.Repeat("x", 4096-len(piece))
+	path := strings.Repeat(piece+separator, 7) + filepath.VolumeName(dir) + string(os.PathSeparator)
+	path += strings.Repeat("y", 32767-len(path))
+	requireProcessEnvironment(t, map[string]string{"PATH": path})
+	_, err := NewProcessEnvironment(map[string]string{"PATH": path + "x"})
+	if !errors.Is(err, ErrProcessEnvironment) || !strings.Contains(err.Error(), "PATH is too long") {
+		t.Fatalf("oversized PATH did not report its reason: %v", err)
+	}
 	prefix := string(os.PathSeparator)
 	if runtime.GOOS == "windows" {
 		prefix = `C:\`

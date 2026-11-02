@@ -91,7 +91,7 @@ func TestWindowsOwnedJobJoinsDescendants(t *testing.T) {
 				t.Fatalf("successful shutdown left the exact descendant running: status %d, error %v", status, err)
 			}
 			tree.stop()
-			if tree.job != 0 || tree.process != 0 {
+			if tree.job != 0 || tree.process != 0 || tree.port != 0 {
 				t.Fatal("joined shutdown did not release retained handles")
 			}
 		})
@@ -146,7 +146,7 @@ func TestWindowsJobEmptyWaitIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := waitJobEmpty(tree.job, time.Now()); err == nil {
+	if err := waitJobEmpty(tree.port, time.Now().Add(100*time.Millisecond)); err == nil {
 		t.Error("active job reported empty at expired deadline")
 	}
 	tree.stop()

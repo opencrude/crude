@@ -18,7 +18,13 @@ var createJob = kernel.NewProc("CreateJobObjectW")
 var setJob = kernel.NewProc("SetInformationJobObject")
 var assignJob = kernel.NewProc("AssignProcessToJobObject")
 var terminateJob = kernel.NewProc("TerminateJobObject")
-var queryJob = kernel.NewProc("QueryInformationJobObject")
+var createCompletionPort = kernel.NewProc("CreateIoCompletionPort")
+var getCompletion = kernel.NewProc("GetQueuedCompletionStatus")
+
+type jobCompletionAssociation struct {
+	key  uintptr
+	port syscall.Handle
+}
 
 // An application-defined code distinguishes our job termination from an
 // ordinary server failure (in particular the common exit status 1).
@@ -40,6 +46,7 @@ type processTree struct {
 	cmd      *exec.Cmd
 	process  syscall.Handle
 	job      syscall.Handle
+	port     syscall.Handle
 	assigned bool
 	stopping bool
 	killed   bool
@@ -68,6 +75,15 @@ func ownProcess(cmd *exec.Cmd) (*processTree, error) {
 	limits := jobLimits{Flags: 0x2000} // KILL_ON_JOB_CLOSE
 	if ok, _, e := setJob.Call(job, 9, uintptr(unsafe.Pointer(&limits)), unsafe.Sizeof(limits)); ok == 0 {
 		return t.failedStart(fmt.Errorf("set server job containment: %w", e))
+	}
+	port, _, e := createCompletionPort.Call(^uintptr(0), 0, 0, 1)
+	if port == 0 {
+		return t.failedStart(fmt.Errorf("create server job completion port: %w", e))
+	}
+	t.port = syscall.Handle(port)
+	association := jobCompletionAssociation{key: job, port: t.port}
+	if ok, _, e := setJob.Call(job, 7, uintptr(unsafe.Pointer(&association)), unsafe.Sizeof(association)); ok == 0 {
+		return t.failedStart(fmt.Errorf("associate server job completion port: %w", e))
 	}
 	if ok, _, e := assignJob.Call(job, uintptr(h)); ok == 0 {
 		return t.failedStart(fmt.Errorf("assign suspended server to job: %w", e))
@@ -113,11 +129,11 @@ func (t *processTree) reap() {
 	}
 	t.mu.Unlock()
 	t.stop()
-	// Leader exit is not job exit. Query the retained exact job, not PIDs, and
-	// do not report success until every member has left it.
+	// Leader exit is not job exit. Await the retained job's completion message
+	// before reporting success.
 	var jobErr error
 	if t.assigned {
-		jobErr = waitJobEmpty(t.job, time.Now().Add(5*time.Second))
+		jobErr = waitJobEmpty(t.port, time.Now().Add(5*time.Second))
 	}
 	t.mu.Lock()
 	t.err = errors.Join(t.err, jobErr)
@@ -126,6 +142,13 @@ func (t *processTree) reap() {
 			t.err = errors.Join(t.err, fmt.Errorf("close server job: %w", err))
 		} else {
 			t.job = 0
+		}
+	}
+	if t.port != 0 {
+		if err := syscall.CloseHandle(t.port); err != nil {
+			t.err = errors.Join(t.err, fmt.Errorf("close server job completion port: %w", err))
+		} else {
+			t.port = 0
 		}
 	}
 	if t.process != 0 {
@@ -163,24 +186,24 @@ func (t *processTree) stop() {
 	}
 }
 
-type jobAccounting struct {
-	UserTime, KernelTime, PeriodUserTime, PeriodKernelTime  int64
-	PageFaults, TotalProcesses, ActiveProcesses, Terminated uint32
-}
-
-func waitJobEmpty(job syscall.Handle, deadline time.Time) error {
+func waitJobEmpty(port syscall.Handle, deadline time.Time) error {
+	if port == 0 {
+		return fmt.Errorf("wait for server job completion; containment unproven: %w", syscall.Errno(6))
+	}
 	for {
-		var info jobAccounting
-		if ok, _, err := queryJob.Call(uintptr(job), 1, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info), 0); ok == 0 {
-			return fmt.Errorf("query server job; containment unproven: %w", err)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return errors.New("server job completion timed out; containment unproven")
 		}
-		if info.ActiveProcesses == 0 {
+		ms := uint32((remaining + time.Millisecond - 1) / time.Millisecond)
+		var message uint32
+		var key, overlapped uintptr
+		if ok, _, err := getCompletion.Call(uintptr(port), uintptr(unsafe.Pointer(&message)), uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&overlapped)), uintptr(ms)); ok == 0 {
+			return fmt.Errorf("wait for server job completion; containment unproven: %w", err)
+		}
+		if message == 4 { // JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO
 			return nil
 		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("server job still has %d active processes; containment unproven", info.ActiveProcesses)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 

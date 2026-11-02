@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 func TestLSPCancelledStartNeverAttemptsProgramConstruction(t *testing.T) {
@@ -13,7 +15,7 @@ func TestLSPCancelledStartNeverAttemptsProgramConstruction(t *testing.T) {
 			// This exact nonexistent operand makes any constructor attempt
 			// independently observable as an exec/path error, without spawning a
 			// process or relying on whether a killed script managed to write a marker.
-			l := NewLSPIntegration(filepath.Join(t.TempDir(), "must-not-be-resolved"), nil, "file:///unused")
+			l := NewLSPIntegration(filepath.Join(t.TempDir(), "must-not-be-resolved"), nil, string(protocol.URIFromPath(t.TempDir())))
 			ctx, cancel := context.WithCancel(t.Context())
 			result := make(chan error, 1)
 			if waitingOnOwner {
@@ -45,7 +47,7 @@ func TestLSPCancelledStartNeverAttemptsProgramConstruction(t *testing.T) {
 func TestLSPDeniedLaunchEpochNeverAttemptsProgramConstruction(t *testing.T) {
 	denied := errors.New("workspace analysis launch epoch was revoked")
 	calls := 0
-	l := NewLSPIntegration(filepath.Join(t.TempDir(), "must-not-be-resolved"), nil, "file:///unused",
+	l := NewLSPIntegration(filepath.Join(t.TempDir(), "must-not-be-resolved"), nil, string(protocol.URIFromPath(t.TempDir())),
 		WithStartAdmission(func() error { calls++; return denied }))
 	if err := l.Start(t.Context()); !errors.Is(err, denied) {
 		t.Fatalf("revoked epoch reached program construction: %v", err)

@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/internal/fileuri"
 	"database/sql"
 	"os"
 	"strings"
@@ -20,7 +21,7 @@ func TestResumeLatencyArchive(t *testing.T) {
 	if path == "" {
 		t.Skip("set CRUDE_TEST_ARCHIVE to a session database")
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 	if err != nil {
 		t.Fatal(err)
 	}

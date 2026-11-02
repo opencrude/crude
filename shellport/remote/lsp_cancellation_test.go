@@ -130,7 +130,7 @@ func TestSignatureRemoteServiceCancellationRetiresProviderAndKeepsAttachment(t *
 		}
 	})
 	if err := port.call(ctx, coreprotocol.WorkspaceOverridesSet, &coreprotocol.WorkspacePreferencesRequest{
-		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"project_execution_allowed"`)}}}, nil); err != nil {
+		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := port.OpenDocument(ctx, path); err != nil {

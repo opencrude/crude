@@ -15,3 +15,12 @@ if (Test-Path (Join-Path $zigDir "zig.exe")) {
 # plain clang targets the MSVC ABI but rejects cgo's gcc flags (-mthreads).
 $env:CC = "zig cc"
 $env:CXX = "zig c++"
+# go-tree-sitter declares its exported callbacks in its cgo preamble and cgo's
+# generated header re-declares them with __declspec(dllexport). clang (zig cc)
+# reports that as -Wdll-attribute-on-redeclaration on every build. It is
+# harmless, so silence exactly that diagnostic and keep every other warning.
+$quietDll = "-Wno-dll-attribute-on-redeclaration"
+$cflags = if ($env:CGO_CFLAGS) { $env:CGO_CFLAGS } else { "-O2 -g" }
+if ($cflags -notlike "*$quietDll*") {
+    $env:CGO_CFLAGS = "$cflags $quietDll"
+}

@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"errors"
 	"os"
@@ -19,7 +20,7 @@ func holdMetadataRead(t *testing.T, dbPath string) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", fileURI(dbPath)+"?mode=ro&_busy_timeout=1")
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(dbPath, "mode=ro&_busy_timeout=1"))
 	if err != nil {
 		release()
 		t.Fatal(err)

@@ -19,7 +19,9 @@ func continuationFixture(t *testing.T, endpoint string) (*Provider, ChatRequest)
 		t.Fatal(err)
 	}
 	p.Model = "continuation-model"
-	p.AccountID = "account-a"
+	// Learning is intentionally retained across clients and test repetitions.
+	// Give this fixture its own connection identity instead of clearing that state.
+	p.AccountID = t.TempDir()
 	req := ChatRequest{Model: p.Model, ResponseContinuationScope: p.ResponseContinuationScope(p.Model),
 		Messages: []ChatMessage{NewTextMessage("system", strings.Repeat("stable policy\n", 8000)), NewTextMessage("user", "inspect")}}
 	message := ChatMessage{Role: "assistant", Content: TextContent(""), ToolCalls: []ToolCall{{ID: "patch", Type: "custom", Function: FunctionCall{Name: "apply_patch", Arguments: "patch"}}}}
@@ -96,6 +98,10 @@ func TestResponsesContinuationMediaReplayLearningIsAdaptive(t *testing.T) {
 	}
 	if plan := PlanResponseContinuation(&req); plan.PreviousResponseID != "" || plan.Start != 0 || plan.Reason != "media_replay_limitation_learned" {
 		t.Fatalf("learned media limitation was ignored: %+v", plan)
+	}
+	_, neighbour := inlineMediaContinuationFixture(t, "https://media-replay-learning.invalid/v1")
+	if plan := PlanResponseContinuation(&neighbour); plan.PreviousResponseID != "response-1" || plan.Reason != "delta" {
+		t.Fatalf("a different account inherited the learned media limitation: %+v", plan)
 	}
 	req.MediaReplayRecovery = false
 	if plan := PlanResponseContinuation(&req); plan.PreviousResponseID != "response-1" || plan.Reason != "delta" {

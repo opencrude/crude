@@ -59,9 +59,9 @@ then report the result as an error.
   results.
 - The safe choice has the default focus. For a security decision, Esc uses the
   safe choice for now and does not remember it, so Crude asks again later.
-- Workspace trust is the reference case. Today Crude does not ask; the
-  [workspace trust plan](../plans/workspace-trust-and-status-language.md)
-  adds the prompt.
+- Workspace trust is the reference case. The
+  [workspace trust settings](settings.md#workspace-analysis-trust) describe
+  the prompt and its choices.
 
 ## One owner for each message
 

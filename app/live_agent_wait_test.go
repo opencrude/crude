@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -10,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -507,8 +507,7 @@ func verifyLiveWaitJourney(t *testing.T, ctx context.Context, ws *workspace.Work
 		requireLiveWaitAdmission(t, ws, backend.DB(), backend.SessionID(), backend.SessionID(), parent, event)
 	}
 	childPath := filepath.Join(backend.SessionDir(), "subagents", child.SessionID+".db")
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(childPath), RawQuery: "mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(1000)"}
-	db, err := sql.Open("sqlite", uri.String())
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(childPath, "mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(1000)"))
 	if err != nil {
 		t.Fatal("cannot inspect completed child receipts read-only")
 	}

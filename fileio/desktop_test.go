@@ -31,6 +31,10 @@ func TestDesktopCommandKeepsPathsAsArguments(t *testing.T) {
 	}
 }
 
+func TestDesktopNativeLauncherArguments(t *testing.T) {
+	testDesktopNativeLauncherArguments(t)
+}
+
 func TestDesktopOpenCancelledBeforePathInspection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

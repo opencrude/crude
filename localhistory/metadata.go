@@ -384,7 +384,7 @@ func (s *Store) finalizeMessageScope(sessionID, messageID, afterSnapshotID strin
 }
 
 func cleanRelativeHistoryPath(path string) (string, bool) {
-	if path == "" || filepath.IsAbs(path) {
+	if path == "" || filepath.IsAbs(path) || filepath.VolumeName(path) != "" || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) {
 		return "", false
 	}
 	path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))

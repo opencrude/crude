@@ -7,12 +7,12 @@ package clientstate
 import (
 	"bytes"
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,12 +131,7 @@ func Open(path string) (*Store, error) {
 	if err = f.Close(); err != nil {
 		return nil, err
 	}
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
-	// A Windows drive belongs in the URI path, not its authority.
-	if !strings.HasPrefix(u.Path, "/") {
-		u.Path = "/" + u.Path
-	}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(abs, ""))
 	if err != nil {
 		return nil, err
 	}

@@ -2,11 +2,11 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -476,7 +476,7 @@ func (m *navigationVisualModel) navigationTargets(kind string) error {
 		for _, target := range m.lastResult.Targets {
 			name := filepath.Base(target.Path)
 			want, ok := expected[name]
-			uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Join(m.root, name))}).String()
+			uri := fileuri.FromPath(filepath.Join(m.root, name))
 			if !ok || seen[name] || target.URI != uri || target.Selection != want || target.External || target.UnavailableReason != "" {
 				return fmt.Errorf("real %s target differs from independent literal source position: %+v want=%+v", kind, target, want)
 			}

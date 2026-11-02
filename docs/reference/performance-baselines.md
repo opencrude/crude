@@ -427,6 +427,42 @@ The Linux allocation gate is 9,000 B / 215 allocations; no existing ceiling or
 test timeout was raised. `TestMigrateFailureDoesNotLeavePartialSchema` also
 guards rollback and preservation of preexisting data.
 
+### Native Windows call-adapter allocations (2026-11-02)
+
+The same unchanged fresh on-disk startup benchmark exceeded its allocation gate
+on Windows/amd64. An allocation profile located the cost in escaping variadic
+argument slices in modernc's Windows `LazyProc.Call` adapters, including file
+I/O, locks, path conversion and virtual memory calls, not in another schema or
+settings projection.
+
+With Go 1.25.8, i7-9850H, `GOMAXPROCS=2`, ten iterations and three repetitions:
+
+| Workload | Original adapters | Fixed-arity entry points using `syscall.SyscallN` |
+|---|---|---|
+| Fresh session database, schema, WAL and close | 30,616–30,641 B/op; 728 allocations | 7,931–8,129 B/op; 193–194 allocations |
+
+The independently repeated after run took 26.66–26.83 ms/op. This is native
+database startup and close, not frame latency or a portable timing promise.
+The 9,000 B / 215-allocation gate, benchmark workload, WAL, synchronization and
+atomic schema initialization are unchanged.
+
+The local [libc](../../third_party/modernc-libc/CRUDE_PATCH.md) and
+[memory](../../third_party/modernc-memory/CRUDE_PATCH.md) replacements retain the
+complete pinned upstream modules, versions and licenses. Only the existing
+Windows call adapters change. Fixed-arity pointer annotations protect direct
+calls, while indirect and pending operations retain explicit caller-owned
+memory until native completion. Native regressions cover actual bytes/counts,
+Unicode paths, errno, lock conflicts, allocation/free failures, GC pressure and
+a pinned pending read completed through a native event. Repeated synchronous
+I/O allocates zero argument slices; the same regression reports two allocations
+with the original adapters.
+
+The upstream memory suite initially exhausted a shared 180-second package
+budget at `Test3Big`. All 16 discovered top-level cases then ran exhaustively,
+one per process with the same 180-second budget per case and unchanged data
+sizes/assertions. Each passed in 1.2–15.4 seconds, with no exclusions. This
+separates accumulated suite duration from a stalled or weakened allocator test.
+
 ## Git comparison reliability (2026-10-19)
 
 The long-line reproduction uses the real Git dock and review with one 2,000,000-

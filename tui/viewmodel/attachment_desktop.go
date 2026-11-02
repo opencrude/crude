@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"crude/fileio"
 	"crude/shellport"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,6 +28,7 @@ func (m *App) clientDesktopOpener(directory bool) func(string, bool) error {
 	state := asyncIOStateFor(m)
 	state.mu.Lock()
 	epoch := state.clientIOEpoch
+	launch := state.desktopLaunch
 	state.mu.Unlock()
 	return func(path string, reveal bool) error {
 		parent, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -39,7 +39,7 @@ func (m *App) clientDesktopOpener(directory bool) func(string, bool) error {
 		}
 		defer release()
 		if !remote {
-			return fileio.OpenDesktopPathContext(ctx, path, reveal)
+			return launch(ctx, path, reveal)
 		}
 		cache, err := os.MkdirTemp("", "crude-desktop-")
 		if err != nil {
@@ -66,7 +66,7 @@ func (m *App) clientDesktopOpener(directory bool) func(string, bool) error {
 		if generation != m.workspaceSwitchGen.Load() || m.asyncIOStopped.Load() {
 			return context.Canceled
 		}
-		err = fileio.OpenDesktopPathContext(ctx, local, reveal)
+		err = launch(ctx, local, reveal)
 		keep = err == nil
 		return err
 	}

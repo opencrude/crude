@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -592,7 +593,7 @@ func (m *completionVisualModel) verifyCompletionTrace(phase int) error {
 		if err := json.Unmarshal(open.raw, &params); err != nil {
 			return err
 		}
-		if params.TextDocument.URI == "file://"+m.path && params.TextDocument.Text == completionVisualSource {
+		if params.TextDocument.URI == fileuri.FromPath(m.path) && params.TextDocument.Text == completionVisualSource {
 			wireVersion = params.TextDocument.Version
 		}
 	}
@@ -621,7 +622,7 @@ func (m *completionVisualModel) verifyCompletionTrace(phase int) error {
 		if err := json.Unmarshal(request.raw, &params); err != nil {
 			return err
 		}
-		if params.TextDocument.URI != "file://"+m.path || params.Position.Line != 2 ||
+		if params.TextDocument.URI != fileuri.FromPath(m.path) || params.Position.Line != 2 ||
 			params.Position.Character != 11 || params.Context.TriggerKind != 1 {
 			return fmt.Errorf("original completion not explicit at literal Doc caret: %s", request.raw)
 		}

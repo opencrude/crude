@@ -47,12 +47,12 @@ func applyAnalysisPreference(t *testing.T, w *Workspace, edits ...types.SettingE
 }
 
 func grantAnalysisEdit() types.SettingEdit {
-	return types.SettingEdit{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"project_execution_allowed"`)}
+	return types.SettingEdit{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)}
 }
 
 func TestAnalysisPreferenceGrantAndResetOwnTheNativeBinding(t *testing.T) {
 	w, root := analysisPreferenceFixture(t)
-	if w.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+	if w.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("an unconfigured workspace acquired execution trust")
 	}
 	result := applyAnalysisPreference(t, w, grantAnalysisEdit())
@@ -61,10 +61,10 @@ func TestAnalysisPreferenceGrantAndResetOwnTheNativeBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Overrides.AnalysisRootIdentity != actual || w.LoadWorkspaceOverrides().AnalysisRootIdentity != actual ||
-		w.LoadAppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+		w.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("workspace grant did not atomically bind to the native root", result.Overrides.AnalysisRootIdentity)
 	}
-	if w.AppDefaults().Analysis.Trust != types.AnalysisStaticOnly {
+	if w.AppDefaults().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("workspace grant escaped to application defaults")
 	}
 	// Code Intelligence reset removes the choice and its owner metadata together,
@@ -73,8 +73,84 @@ func TestAnalysisPreferenceGrantAndResetOwnTheNativeBinding(t *testing.T) {
 	applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"analysis", "trust"}})
 	saved := w.LoadWorkspaceOverrides()
 	if len(saved.Analysis) != 0 || saved.AnalysisRootIdentity != "" ||
-		w.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly || w.LoadAppSettings().Editor.TabSize != 7 {
+		w.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided || w.LoadAppSettings().Editor.TabSize != 7 {
 		t.Fatal("reset retained trust/binding or lost unrelated explicit work", saved)
+	}
+}
+
+func TestAnalysisRestrictedChoiceDoesNotBindIdentity(t *testing.T) {
+	w, _ := analysisPreferenceFixture(t)
+	applyAnalysisPreference(t, w, grantAnalysisEdit())
+	applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"restricted"`)})
+	saved := w.LoadWorkspaceOverrides()
+	if string(saved.Analysis) != `{"trust":"restricted"}` || saved.AnalysisRootIdentity != "" ||
+		w.LoadAppSettings().Analysis.DecisionNeeded() || w.LoadAppSettings().Analysis.Trusted() {
+		t.Fatalf("restricted choice lost or retained identity: %+v", saved)
+	}
+}
+
+func TestAnalysisTrustedAskTrustedRebindsOnlyTheNewChoice(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "same-folder", true: "replacement-folder"}[replaced], func(t *testing.T) {
+			w, root := analysisPreferenceFixture(t)
+			applyAnalysisPreference(t, w, grantAnalysisEdit(),
+				types.SettingEdit{Path: []string{"editor", "tab_size"}, After: json.RawMessage("7")})
+			original := w.LoadWorkspaceOverrides().AnalysisRootIdentity
+			if original == "" {
+				t.Fatal("initial Trusted choice has no native binding")
+			}
+
+			result := applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"analysis", "trust"}})
+			if !result.Effective.Analysis.DecisionNeeded() || result.Effective.Analysis.Trusted() ||
+				result.Overrides.AnalysisRootIdentity != "" || w.LSPMgr.AnalysisPolicy().Trusted() {
+				t.Fatal("Ask retained project execution or its old binding", result)
+			}
+			// Inspect the durable row, not only the owner's read projection. Ask
+			// removes the choice and metadata rather than storing an empty choice.
+			var encoded string
+			if err := w.WorkspaceDB.DB.QueryRow("SELECT value FROM workspace_metadata WHERE key = ?", workspaceSettingsKey).Scan(&encoded); err != nil {
+				t.Fatal(err)
+			}
+			var stored map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(encoded), &stored); err != nil {
+				t.Fatal(err)
+			}
+			if _, present := stored["analysis"]; present {
+				t.Fatal("Ask persisted an analysis decision", encoded)
+			}
+			if _, present := stored["analysis_root_identity"]; present {
+				t.Fatal("Ask persisted the old native binding", encoded)
+			}
+
+			if replaced {
+				if err := os.Rename(root, root+"-original"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(root, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			actual, err := fileio.DirectoryIdentity(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replaced && actual == original {
+				t.Fatal("replacement fixture reused the original native directory")
+			}
+			// A neighboring save after replacement must not turn Ask back into
+			// Trusted or restore the cleared identity.
+			applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"ui", "sidebar_width"}, After: json.RawMessage("42")})
+			if !w.LoadAppSettings().Analysis.DecisionNeeded() || w.LoadWorkspaceOverrides().AnalysisRootIdentity != "" {
+				t.Fatal("a neighboring save revived the old Trusted choice")
+			}
+			result = applyAnalysisPreference(t, w, grantAnalysisEdit())
+			if !result.Effective.Analysis.Trusted() || !w.LSPMgr.AnalysisPolicy().Trusted() ||
+				result.Overrides.AnalysisRootIdentity != actual ||
+				w.LoadWorkspaceOverrides().AnalysisRootIdentity != actual ||
+				w.LoadAppSettings().Editor.TabSize != 7 || w.LoadAppSettings().UI.SidebarWidth != 42 {
+				t.Fatal("the new Trusted choice lost its current root or neighboring preferences", result)
+			}
+		})
 	}
 }
 
@@ -92,21 +168,21 @@ func TestAnalysisSamePathReplacementNeverInheritsOrRebindsGrant(t *testing.T) {
 	t.Cleanup(reopened.LSPMgr.Close)
 	g, _ := governor.New(governor.Limits{MaxProcesses: 2, MaxWaiting: 4})
 	err := reopened.InitializeAnalysisRuntime(g, "test-workspace", "second-generation")
-	if err == nil || !strings.Contains(err.Error(), "identity changed") ||
-		reopened.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+	if err != nil ||
+		reopened.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("same pathname silently inherited a replaced directory's grant", err)
 	}
 	// Neither an ordinary application update nor a workspace neighbor save can
 	// observe a fresh identity and thereby relabel the old accepted choice.
-	reopened.SetAppDefaults(types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}})
+	reopened.SetAppDefaults(types.AppSettings{Analysis: types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}})
 	applyAnalysisPreference(t, reopened, types.SettingEdit{Path: []string{"editor", "tab_size"}, After: json.RawMessage("8")})
 	if reopened.LoadWorkspaceOverrides().AnalysisRootIdentity != original ||
-		reopened.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+		reopened.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("an unrelated save rebound execution trust")
 	}
 	applyAnalysisPreference(t, reopened, grantAnalysisEdit())
 	if reopened.LoadWorkspaceOverrides().AnalysisRootIdentity == original ||
-		reopened.LoadAppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+		reopened.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("an explicit new human choice did not bind to the replacement root")
 	}
 }
@@ -114,7 +190,7 @@ func TestAnalysisSamePathReplacementNeverInheritsOrRebindsGrant(t *testing.T) {
 func TestAnalysisGrantCannotBeForgedBySnapshotOrMetadataEdits(t *testing.T) {
 	w, _ := analysisPreferenceFixture(t)
 	if err := w.SaveWorkspaceSettings(types.WorkspaceOverrides{
-		Analysis: json.RawMessage(`{"trust":"project_execution_allowed"}`), AnalysisRootIdentity: "forged",
+		Analysis: json.RawMessage(`{"trust":"trusted"}`), AnalysisRootIdentity: "forged",
 	}); err == nil {
 		t.Fatal("full-snapshot entity save created a workspace execution grant")
 	}
@@ -156,7 +232,7 @@ func TestAnalysisBindingAndNeighborEditsRollbackTogether(t *testing.T) {
 		t.Fatal("grant save did not preserve storage failure", result.Err)
 	}
 	if overrides := w.LoadWorkspaceOverrides(); !overrides.IsEmpty() || overrides.AnalysisRootIdentity != "" ||
-		w.LoadAppSettings().Analysis.Trust != types.AnalysisStaticOnly {
+		w.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided {
 		t.Fatal("failed transaction partially published trust or neighbors", overrides)
 	}
 }
@@ -181,7 +257,7 @@ func TestAnalysisPreparedGrantStaysWithCapturedRootAndStorage(t *testing.T) {
 		!strings.Contains(originalDB.GetSetting(workspaceSettingsKey), actual) {
 		t.Fatal("late preference worker redirected a grant to its replacement workspace")
 	}
-	if w.analysisRootIdentity != originalObservation || w.LSPMgr.AnalysisPolicy().Trust != types.AnalysisStaticOnly {
+	if w.analysisRootIdentity != originalObservation || w.LSPMgr.AnalysisPolicy().Trust != types.AnalysisUndecided {
 		t.Fatal("preference I/O mutated the live workspace before its owning publication")
 	}
 }

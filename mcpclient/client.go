@@ -2,6 +2,7 @@ package mcpclient
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -326,7 +327,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	})
 	if manager.root != "" {
 		//nolint:staticcheck // Roots remain interoperable for negotiated pre-2026-07-28 servers during the official SDK deprecation window; newer protocols do not use this callback.
-		client.AddRoots(&mcp.Root{URI: (&url.URL{Scheme: "file", Path: filepath.ToSlash(manager.root)}).String(), Name: filepath.Base(manager.root)})
+		client.AddRoots(&mcp.Root{URI: fileuri.FromPath(manager.root), Name: filepath.Base(manager.root)})
 	}
 	transport, cleanup, err := manager.transport(config, lifetime, epoch, interactive)
 	if err != nil {

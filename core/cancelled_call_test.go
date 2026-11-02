@@ -85,7 +85,7 @@ func TestConnectedSemanticCancellationJoinsAndReleasesRetainedResults(t *testing
 	manager := <-managers
 	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.WorkspaceOverridesSet,
 		&coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{
-			Path: []string{"analysis", "trust"}, After: json.RawMessage(`"project_execution_allowed"`),
+			Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`),
 		}}}, nil); err != nil {
 		t.Fatal(err)
 	}

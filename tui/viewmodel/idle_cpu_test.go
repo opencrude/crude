@@ -14,6 +14,7 @@ import (
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/recovery"
+	"crude/workspace"
 )
 
 func TestConnectedCompletedTurnIdleKeepsTranscriptPaintRetained(t *testing.T) {
@@ -22,7 +23,9 @@ func TestConnectedCompletedTurnIdleKeepsTranscriptPaintRetained(t *testing.T) {
 		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"SETTLED VISIBLE ANSWER\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
 	t.Cleanup(server.Close)
-	runtime := remoteJourneyRuntime(t, server.URL)
+	runtime := remoteJourneyRuntime(t, server.URL, func(w *workspace.Workspace) {
+		restrictFixture(t, w)
+	})
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	id := remoteJourneyCreate(t, shell)
 	app := shell.app

@@ -2,10 +2,21 @@ package fileio
 
 import (
 	"context"
-	"syscall"
+	"fmt"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
+
+// Explorer parses /select, itself, rather than using CommandLineToArgvW.
+func explorerSelectArgument(path string) (string, error) {
+	// A quote cannot occur in a Windows filename and cannot be safely embedded
+	// in Explorer's quoted operand.
+	if strings.ContainsRune(path, '"') {
+		return "", fmt.Errorf("invalid quote in Windows path")
+	}
+	return `/select,"` + path + `"`, nil
+}
 
 func platformOpenBrowser(ctx context.Context, rawURL string) error {
 	if err := ctx.Err(); err != nil {
@@ -24,7 +35,12 @@ func platformOpenPath(ctx context.Context, path string, reveal bool) error {
 	}
 	var parameters *uint16
 	if reveal {
-		parameters, err = windows.UTF16PtrFromString("/select," + syscall.EscapeArg(path))
+		var arg string
+		arg, err = explorerSelectArgument(path)
+		if err != nil {
+			return err
+		}
+		parameters, err = windows.UTF16PtrFromString(arg)
 		if err != nil {
 			return err
 		}

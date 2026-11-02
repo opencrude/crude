@@ -29,6 +29,7 @@ func regionTerminalFixture(t testing.TB, messages int) (*App, *streamTestService
 	t.Helper()
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
+	restrictSyntheticFixture(t, app, t.TempDir())
 	// Zero start makes the header's diagnostic elapsed clock deterministic
 	// across the independent paint (the header intentionally uses wall time).
 	wsOf(app).StartTime = time.Time{}
@@ -283,6 +284,29 @@ func TestRegionClockDoesNotPaintFileTree(t *testing.T) {
 		t.Fatalf("clock still paints entire shell: %+v", stats)
 	}
 	assertRegionFrame(t, app, view)
+}
+
+func TestRegionClockRetainsShellWithTrustPromptOpen(t *testing.T) {
+	app := newFullTestApp(t)
+	wsOf(app).Logger = stubLogger{}
+	wsOf(app).StartTime = time.Time{}
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	app.Update(types.TickMsg(time.Now()))
+	if !app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
+		t.Fatal("undecided workspace did not open its trust prompt")
+	}
+	app.View()
+	for range 4 {
+		app.Update(types.TickMsg(time.Now()))
+		view := app.View()
+		if stats := app.rootHost.LastPaintStats(); stats.Full || stats.Cells >= app.width*app.height {
+			t.Fatalf("idle clock repainted entire shell behind trust prompt: %+v", stats)
+		}
+		if !app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) || !strings.Contains(view.RenderContent(), "Trust this folder?") {
+			t.Fatal("idle clock removed the trust prompt")
+		}
+		assertRegionFrame(t, app, view)
+	}
 }
 
 func TestRegionEditorSelectionFullEquivalence(t *testing.T) {

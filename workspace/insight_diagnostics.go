@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crude/internal/fileuri"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -94,8 +95,12 @@ func (m *LSPManager) advanceContextLocked(reason string) {
 }
 
 func (m *LSPManager) diagnosticBoundaryLocked(doc *lspDocument, state *lspClientState) types.InsightBoundary {
+	root, err := fileuri.ToPath(state.rootURI)
+	if err != nil {
+		root = "" // Invalid roots cannot claim a native source boundary.
+	}
 	return types.InsightBoundary{Source: doc.source,
-		Context: types.InsightContext{ID: doc.key, Root: filePathFromURI(state.rootURI),
+		Context: types.InsightContext{ID: doc.key, Root: root,
 			Generation: m.contextGeneration, UnknownInputs: []string{
 				"Complete dependency and build graph has not been established.",
 				"Inherited environment and toolchain identity are not fully tracked.",

@@ -32,6 +32,8 @@ import (
 const requestTimeout = 20 * time.Second
 const retainedEntryLimit = 4096
 
+var errSaveUnanswered = errors.New("could not save settings: no response after 20 seconds")
+
 // Selection retains recovery context across the detached startup boundary.
 type Selection struct {
 	Root   string
@@ -113,6 +115,7 @@ type Model struct {
 	cancel        context.CancelFunc
 	saveParent    context.Context
 	saveCmd       tea.Cmd
+	saveCtx       context.Context
 	owner         commandOwner
 	requestCancel context.CancelFunc
 	gen           uint64
@@ -198,7 +201,7 @@ func (m *Model) saved(v savedMsg) {
 	}
 }
 
-// Close cancels and joins all started service calls. It is idempotent.
+// Close cancels and joins reads and bounds the wait for the accepted save.
 func (m *Model) Close() {
 	m.owner.mu.Lock()
 	m.owner.closed = true
@@ -207,11 +210,28 @@ func (m *Model) Close() {
 	m.owner.wg.Wait()
 	// Completing the introduction accepts one bounded save attempt. Fast Quit
 	// must not cancel it merely because no Tea worker started it yet.
+	// The wait is bounded by the save's own request deadline, so a service that
+	// ignores cancellation cannot hold the handoff past it.
 	if m.saveCmd != nil {
-		if v, ok := m.saveCmd().(savedMsg); ok {
-			m.saved(v)
+		done := make(chan tea.Msg, 1)
+		cmd := m.saveCmd
+		m.saveCmd = nil
+		go func() { done <- cmd() }()
+		// Wait on the deadline, not ctx.Done: a finished save also cancels its
+		// context, and that must not be mistaken for an unanswered save.
+		deadline, _ := m.saveCtx.Deadline()
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		select {
+		case msg := <-done:
+			if v, ok := msg.(savedMsg); ok {
+				m.saved(v)
+			}
+		case <-timer.C:
+			m.saved(savedMsg{err: errSaveUnanswered})
 		}
 	}
+	m.closed = true
 }
 
 func (m *Model) layout() { m.host.MarkLayout(); m.host.Layout() }
@@ -458,6 +478,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "startup.go":
 			cmd := m.openPicker()
 			ctx, cancel := context.WithTimeout(m.saveParent, requestTimeout)
+			m.saveCtx = ctx
 			var once sync.Once
 			var saveErr error
 			m.saveCmd = func() tea.Msg {

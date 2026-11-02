@@ -3,10 +3,10 @@ package lspclient
 import (
 	"bufio"
 	"context"
+	"crude/internal/fileuri"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -119,11 +119,7 @@ func TestFakeLSPServerHelper(t *testing.T) {
 // helper env var, exactly like a real language server subprocess.
 func newFakeLSPServerIntegration(t *testing.T, root string) *LSPIntegration {
 	t.Helper()
-	uriPath := filepath.ToSlash(root)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	rootURI := (&url.URL{Scheme: "file", Path: uriPath}).String()
+	rootURI := fileuri.FromPath(root)
 	integration := NewLSPIntegration(
 		os.Args[0],
 		[]string{"-test.run", "TestFakeLSPServerHelper"},
@@ -144,6 +140,7 @@ func TestLSPIntegration_CloseFileNeverBlocksOnWedgedServer(t *testing.T) {
 	}
 	root := t.TempDir()
 	integration := newFakeLSPServerIntegration(t, root)
+	path := filepath.Join(root, "big.go")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -155,7 +152,7 @@ func TestLSPIntegration_CloseFileNeverBlocksOnWedgedServer(t *testing.T) {
 	big := strings.Repeat("package main\n\nfunc f() {}\n", 6000)
 	openDone := make(chan error, 1)
 	go func() {
-		_, err := integration.OpenFile(ctx, root+"/big.go", "go", big, testBoundary(root+"/big.go"))
+		_, err := integration.OpenFile(ctx, path, "go", big, testBoundary(path))
 		openDone <- err
 	}()
 	select {
@@ -171,7 +168,7 @@ func TestLSPIntegration_CloseFileNeverBlocksOnWedgedServer(t *testing.T) {
 	// server is wedged and the pipe is (or becomes) full.
 	closeDone := make(chan struct{})
 	go func() {
-		integration.CloseFile(ctx, root+"/big.go")
+		integration.CloseFile(ctx, path)
 		close(closeDone)
 	}()
 	select {

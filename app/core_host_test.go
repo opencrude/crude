@@ -24,6 +24,9 @@ import (
 // TestMain lets this test binary act as the crude executable: spawnCore and
 // the helpers below re-execute it with core flags.
 func TestMain(m *testing.M) {
+	if code, ok := runRestartFixture(); ok {
+		os.Exit(code)
+	}
 	if os.Getenv("CRUDE_APP_TEST_MAIN") == "1" {
 		os.Exit(Main())
 	}

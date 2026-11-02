@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -105,8 +106,7 @@ func TestLiveResponsesHistoricalSessionReplay(t *testing.T) {
 	}
 	// Inspect the running session read-only. No session resume, tool execution,
 	// persistence mutation, account change, or synthetic historical ID is needed.
-	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 	if err != nil {
 		t.Fatal(err)
 	}

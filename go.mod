@@ -160,6 +160,10 @@ replace github.com/tinylib/msgp => ./third_party/msgp
 
 replace github.com/tree-sitter/go-tree-sitter => ./third_party/go-tree-sitter
 
+replace modernc.org/libc => ./third_party/modernc-libc
+
+replace modernc.org/memory => ./third_party/modernc-memory
+
 // Website npm dependencies may contain unrelated Go packages; keep
 // `go list ./...`, tests and lint scoped to the product module.
 ignore site/node_modules

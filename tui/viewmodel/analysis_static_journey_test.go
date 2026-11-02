@@ -118,15 +118,22 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	}
 	_, cmd = one.app.Update(statusoverview.NavigateMsg{Action: "lsp:start-all"})
 	runAppCommand(t, one.app, cmd)
-	if manager.EditorEnabled() || manager.ServerReady() || manager.AnalysisPolicy().Trust != types.AnalysisStaticOnly {
+	if manager.EditorEnabled() || manager.ServerReady() || manager.AnalysisPolicy().Trust != types.AnalysisUndecided {
 		t.Fatal("opening source or explicit Start supplied semantic execution authority")
+	}
+	_, header, _ := one.app.activeHeaderContext()
+	if header != "Restricted mode" {
+		t.Fatalf("editor header status = %q", header)
+	}
+	if footer := one.app.footerStatusSegments()[0].Text; footer != "Problems: off" {
+		t.Fatalf("footer status = %q", footer)
 	}
 	one.app.toggleWorkspacePanel(termdock.PanelProblems)
 	one.app.paintShellFrame()
 	one.app.rootHost.Focus("status-overview/list")
 	_, cmd = one.app.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	runAppCommand(t, one.app, cmd)
-	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Static only") || !strings.Contains(paint, "Workspace settings") {
+	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Language servers do not run") || !strings.Contains(paint, "Trust folder") {
 		t.Fatalf("rendered static state hides current reason or human repair:\n%s", paint)
 	}
 	one.app.hideWorkspacePanel()
@@ -144,7 +151,7 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 		}
 		return refusal != "" && strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Static only probe refused.")
 	})
-	if !strings.Contains(refusal, "no workspace execution grant") || !strings.Contains(refusal, "Workspace settings") {
+	if !strings.Contains(refusal, "restricted mode") || !strings.Contains(refusal, "trust this folder") {
 		t.Fatalf("session probe did not report the current Trust reason: %s", refusal)
 	}
 	// Join the exact owner; no sleeps or empty-row proxy stand in for checking
@@ -153,7 +160,7 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	server.mu.Lock()
 	created := len(server.rootURIs)
 	server.mu.Unlock()
-	if created != 0 || len(manager.AllDiagnostics()) != 0 || manager.AnalysisPolicy().Trust != types.AnalysisStaticOnly {
+	if created != 0 || len(manager.AllDiagnostics()) != 0 || manager.AnalysisPolicy().Trust != types.AnalysisUndecided {
 		t.Fatalf("Static only constructed %d providers or acquired semantic authority", created)
 	}
 	if ed.Value() != "package main\nvar Answerx = 42\n" {

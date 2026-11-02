@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -741,7 +742,7 @@ func (m *diagnosticDetailsVisualModel) verifyDiagnosticTrace(record bool) error 
 		if err := json.Unmarshal(event.raw, &params); err != nil {
 			return err
 		}
-		if params.TextDocument.URI == "file://"+m.path && params.TextDocument.Text == diagnosticVisualSource &&
+		if params.TextDocument.URI == fileuri.FromPath(m.path) && params.TextDocument.Text == diagnosticVisualSource &&
 			params.TextDocument.Version == m.facts.WireVersion {
 			didOpen = true
 		}
@@ -776,7 +777,7 @@ func (m *diagnosticDetailsVisualModel) verifyDiagnosticTrace(record bool) error 
 		if err := json.Unmarshal(event.raw, &params); err != nil {
 			return err
 		}
-		if params.URI != "file://"+m.path || params.Version == nil ||
+		if params.URI != fileuri.FromPath(m.path) || params.Version == nil ||
 			m.facts.ReportedVersion == nil || *params.Version != *m.facts.ReportedVersion {
 			continue
 		}

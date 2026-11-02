@@ -212,6 +212,29 @@ func identityTestOpener(onBirth func() error) directoryIdentityOpener {
 	}
 }
 
+type changedAncestorHandle struct {
+	directoryIdentityHandle
+	target  string
+	changed bool
+	current bool
+}
+
+func (h changedAncestorHandle) openChild(name string) (directoryIdentityHandle, error) {
+	child, err := h.directoryIdentityHandle.openChild(name)
+	if err != nil {
+		return nil, err
+	}
+	return changedAncestorHandle{directoryIdentityHandle: child, target: h.target, changed: h.changed, current: h.changed && name == h.target}, nil
+}
+
+func (h changedAncestorHandle) identity(withBirth bool) (string, error) {
+	id, err := h.directoryIdentityHandle.identity(withBirth)
+	if h.current && err == nil {
+		id += ":replacement"
+	}
+	return id, err
+}
+
 func TestDirectoryIdentityRejectsReplacementDuringObservation(t *testing.T) {
 	for _, ancestor := range []bool{false, true} {
 		name := "directory"
@@ -221,10 +244,25 @@ func TestDirectoryIdentityRejectsReplacementDuringObservation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := identityTestDirectory(t)
 			requireDirectoryIdentity(t, dir)
-			target := dir
 			if ancestor {
-				target = filepath.Dir(dir)
+				// Windows can deny moving an ancestor with an open descendant.
+				// Inject a changed ancestor ID while preserving the real leaf ID.
+				observations := 0
+				opener := func(root string) (directoryIdentityHandle, error) {
+					h, err := openDirectoryIdentityRoot(root)
+					if err != nil {
+						return nil, err
+					}
+					observations++
+					return changedAncestorHandle{directoryIdentityHandle: h, target: filepath.Base(filepath.Dir(dir)), changed: observations == 2}, nil
+				}
+				id, err := directoryIdentity(dir, opener)
+				if observations != 2 || err == nil || id != "" || !strings.Contains(err.Error(), "replaced") {
+					t.Fatalf("ancestor replacement not detected: id=%q err=%v", id, err)
+				}
+				return
 			}
+			target := dir
 			changed := false
 			opener := identityTestOpener(func() error {
 				if changed {
@@ -242,11 +280,6 @@ func TestDirectoryIdentityRejectsReplacementDuringObservation(t *testing.T) {
 				})
 				if err := os.Mkdir(target, 0700); err != nil {
 					return err
-				}
-				if ancestor {
-					// Keep the leaf's native identity unchanged while replacing its
-					// parent. Only checking the final directory would miss this.
-					return os.Rename(filepath.Join(moved, filepath.Base(dir)), dir)
 				}
 				return nil
 			})

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -293,8 +294,9 @@ func (m *LSPManager) ServesWarm(path string) bool {
 		return false
 	}
 	for _, state := range m.states {
-		if state.status == LSPConnected && state.client != nil && !state.closing && !state.stopped &&
-			state.cmd == spec.Command && pathWithin(filePathFromURI(state.rootURI), path) {
+		root, err := fileuri.ToPath(state.rootURI)
+		if err == nil && state.status == LSPConnected && state.client != nil && !state.closing && !state.stopped &&
+			state.cmd == spec.Command && pathWithin(root, path) {
 			return true
 		}
 	}

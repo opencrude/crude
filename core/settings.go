@@ -242,7 +242,10 @@ func resolveAccount(draft coreprotocol.AccountDraft, before provider.Account) (p
 func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, types.AgentsSettings) {
 	app := a.ws.AppDefaults()
 	overrides := a.ws.LoadWorkspaceOverrides()
-	effective := types.MergeAppWorkspace(app, overrides)
+	// The workspace has already qualified trust and prediction consent against
+	// its native-root observation and live policy. Re-merging stored choices
+	// here would reauthorize a replaced folder in every shell projection.
+	effective := a.ws.LoadAppSettings()
 	// Sparse raw JSON must be sanitized independently; never send the raw DB overlay.
 	publicOverrides := overrides
 	if len(overrides.Capabilities) != 0 {

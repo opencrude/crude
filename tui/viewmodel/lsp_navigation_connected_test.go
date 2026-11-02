@@ -2,10 +2,10 @@ package viewmodel
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,8 +19,10 @@ import (
 
 	"crude/clientstate"
 	"crude/core"
+	"crude/coreprotocol"
 	"crude/shellport"
 	"crude/tui/editor"
+	"crude/tui/screens/navigation"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types"
@@ -49,16 +51,29 @@ type navigationConnectedRuntime struct {
 	err              error
 	navigationCalls  []navigationConnectedCall
 	watched          chan struct{}
+	targetStart      <-chan struct{}
 }
 
 type navigationConnectedClient struct {
 	*renameConnectedClient
-	runtime *navigationConnectedRuntime
+	runtime     *navigationConnectedRuntime
+	startTarget bool
 }
 
 func (r *navigationConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	base := r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient)
-	return &navigationConnectedClient{renameConnectedClient: base, runtime: r}
+	return &navigationConnectedClient{renameConnectedClient: base, runtime: r, startTarget: spec.LanguageID == "rust" && r.targetStart != nil}
+}
+
+func (c *navigationConnectedClient) Start(ctx context.Context) error {
+	if c.startTarget {
+		select {
+		case <-c.runtime.targetStart:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return c.renameConnectedClient.Start(ctx)
 }
 
 func (c *navigationConnectedClient) RequestNavigation(_ context.Context, path, kind string, line, col int, includeDeclaration bool) (types.LSPNavigationResponse, error) {
@@ -71,7 +86,7 @@ func (c *navigationConnectedClient) RequestNavigation(_ context.Context, path, k
 		includeDeclaration: includeDeclaration, text: d.text,
 	})
 	uri := func(path string) string {
-		return strconv.Quote((&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String())
+		return strconv.Quote(fileuri.FromPath(path))
 	}
 	raw := strings.NewReplacer("$MAIN", uri(r.main), "$TARGET", uri(r.target), "$EXTERNAL", uri(r.external)).Replace(r.answer)
 	return types.LSPNavigationResponse{Kind: kind, WireVersion: d.version, JSON: []byte(raw), Unsupported: r.unsupported}, r.err
@@ -99,11 +114,16 @@ type navigationConnectedFixture struct {
 }
 
 func newNavigationConnectedFixture(t *testing.T, answer, targetText string) navigationConnectedFixture {
+	return newNavigationConnectedFixtureTarget(t, answer, targetText, "target.go", nil)
+}
+
+func newNavigationConnectedFixtureTarget(t *testing.T, answer, targetText, targetName string, targetStart <-chan struct{}) navigationConnectedFixture {
 	t.Helper()
 	root := t.TempDir()
 	engine := &navigationConnectedRuntime{
 		renameConnectedRuntime: renameConnectedRuntime{main: filepath.Join(root, "main.go")},
-		target:                 filepath.Join(root, "target.go"), external: filepath.Join(t.TempDir(), "external.go"), answer: answer,
+		target:                 filepath.Join(root, targetName), external: filepath.Join(t.TempDir(), "external.go"), answer: answer,
+		targetStart: targetStart,
 	}
 	for path, text := range map[string]string{
 		engine.main: renameConnectedMain, engine.target: targetText,
@@ -127,6 +147,11 @@ func newNavigationConnectedFixture(t *testing.T, answer, targetText string) navi
 		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
 			Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
 		}}
+		if targetStart != nil {
+			// LanguageID alone is not a process key: distinct arguments model
+			// the real Rust server rather than sharing the Go fixture process.
+			settings.LSP.Languages["rust"] = types.LSPLanguageSettings{Enabled: true, Command: executable, Args: []string{"--fixture-rust"}, RootMarkers: []string{"go.mod"}}
+		}
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
 	})
@@ -405,6 +430,230 @@ func TestConnectedNavigationControlOpenAwaitsActualLanding(t *testing.T) {
 	if refused.State != control.Failed || one.app.EditorState.Tabs[f.engine.target] != nil ||
 		one.app.EditorState.Editor != f.main || !strings.Contains(navigationConnectedPaint(one.app), "Navigation failed") {
 		t.Fatalf("invalid target received successful Open: %+v", refused)
+	}
+}
+
+type navigationControlOutcome struct {
+	result control.Result
+	err    error
+}
+
+// Start the real connected control request, but retain its prepared pane-open
+// completion so another genuine LSP publication can arrive before Update.
+func holdNavigationControlOpen(t *testing.T, f navigationConnectedFixture) (shellControlDoneMsg, <-chan navigationControlOutcome) {
+	t.Helper()
+	one := f.shells[0]
+	one.app.View()
+	cursor, componentID := "", ""
+	for {
+		result := requestShellForTest(t, f.runtime, f.shells, one, "shell.controls", control.PageRequest{Limit: 128, Cursor: cursor}, nil)
+		if result.State != control.Applied {
+			t.Fatalf("navigation control inventory: %+v", result)
+		}
+		var page control.Page
+		if err := json.Unmarshal(result.Output, &page); err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range page.Nodes {
+			if strings.HasSuffix(node.ID, "::navigation/actions/open") {
+				componentID = node.ID
+			}
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if componentID == "" {
+		t.Fatal("navigation Open control is not mounted")
+	}
+	intent := shellControlIntent{ComponentID: componentID, Operation: ui.ControlOperation{Verb: "activate"}}
+	described := requestShellForTest(t, f.runtime, f.shells, one, "shell.describe_control", intent, nil)
+	if described.State != control.Applied {
+		t.Fatalf("navigation Open description: %+v", described)
+	}
+	var details struct {
+		Descriptor control.Descriptor `json:"descriptor"`
+		Node       control.Node       `json:"node"`
+	}
+	if err := json.Unmarshal(described.Output, &details); err != nil {
+		t.Fatal(err)
+	}
+	intent.ExpectedAction = details.Descriptor.ID
+	raw, err := json.Marshal(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := one.app.ws.(shellport.ShellControl)
+	identity := port.ControlIdentity()
+	identity.ResourceID = componentID
+	id := fmt.Sprintf("navigation-held-%d", shellControlTestSequence.Add(1))
+	envelope := coreprotocol.ControlEnvelope{Descriptor: details.Descriptor, Request: control.Request{
+		ID: id, CommandID: "shell.control", Target: identity,
+		Caller: control.Caller{Kind: control.ExternalCaller, ClientID: "test-controller"},
+		Input:  raw, Preconditions: control.Preconditions{Revision: &details.Node.Revision, OpenEpoch: &details.Node.OpenEpoch},
+	}}
+	envelope.Descriptor.ID = "shell.control"
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	t.Cleanup(cancel)
+	outcome := make(chan navigationControlOutcome, 1)
+	go func() {
+		result, err := f.runtime.RequestShellControl(ctx, identity.WorkspaceID, *identity.Shell, envelope)
+		outcome <- navigationControlOutcome{result, err}
+	}()
+
+	type commandResult struct {
+		app *App
+		msg tea.Msg
+	}
+	results := make(chan commandResult, 64)
+	pending, launched := 0, 0
+	launch := func(app *App, cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		launched++
+		if launched > cap(results) {
+			t.Fatal("held control journey did not settle")
+		}
+		pending++
+		go func() { results <- commandResult{app, cmd()} }()
+	}
+	var held shellControlDoneMsg
+	found := false
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	for !found || pending != 0 {
+		var app *App
+		var msg tea.Msg
+		select {
+		case msg = <-f.shells[0].fifo:
+			app = f.shells[0].app
+		case msg = <-f.shells[1].fifo:
+			app = f.shells[1].app
+		case done := <-results:
+			pending--
+			app, msg = done.app, done.msg
+		case premature := <-outcome:
+			t.Fatalf("control settled before its prepared pane open: %+v %v", premature.result, premature.err)
+		case <-deadline.C:
+			t.Fatal("control did not prepare its selected target")
+		case <-ctx.Done():
+			t.Fatal("control preparation cancelled:", ctx.Err())
+		}
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, cmd := range batch {
+				launch(app, cmd)
+			}
+			continue
+		}
+		if completion, ok := msg.(shellControlDoneMsg); ok && completion.request.Envelope.Request.ID == id {
+			switch value := completion.completion.(type) {
+			case navigation.OpenMsg:
+			case navigationTargetMsg:
+				if value.err != nil {
+					t.Fatal(value.err)
+				}
+			case paneFilesOpenedMsg:
+				if len(value.files) != 1 || value.files[0].err != nil || value.files[0].snapshot == nil {
+					t.Fatalf("target preparation failed: %+v", value.files)
+				}
+				held, found = completion, true
+				continue
+			default:
+				t.Fatalf("unexpected control preparation stage %T", value)
+			}
+		}
+		if msg != nil {
+			_, cmd := app.Update(msg)
+			launch(app, cmd)
+		}
+	}
+	return held, outcome
+}
+
+func TestConnectedNavigationLandingTracksSourceProducerNotDestinationReadiness(t *testing.T) {
+	for _, stopSource := range []bool{false, true} {
+		name := "destination-starting"
+		if stopSource {
+			name = "source-stopped"
+		}
+		t.Run(name, func(t *testing.T) {
+			gate := make(chan struct{})
+			defer close(gate)
+			f := newNavigationConnectedFixtureTarget(t, navigationConnectedPoint, "\t😀name\r\n", "target.rs", gate)
+			one := f.shells[0]
+			s := f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
+			f.inspect(t)
+			instance := s.result.Boundary.Producer.InstanceID
+			sourceID := ""
+			for _, health := range one.app.ws.LSPMgr().ServerHealthSnapshots() {
+				if health.InstanceID == instance && health.Connected {
+					sourceID = health.ID
+				}
+			}
+			if sourceID == "" {
+				t.Fatal("original source producer is not connected")
+			}
+			held, outcome := holdNavigationControlOpen(t, f)
+			// Wait in product order: target start is admitted by Open, then
+			// its active-file readiness is published to the invoking shell.
+			remoteJourneyUntil(t, f.shells, func() bool {
+				for _, health := range one.app.ws.LSPMgr().ServerHealthSnapshots() {
+					if health.Starting && health.InstanceID != "" && health.InstanceID != instance {
+						return true
+					}
+				}
+				return false
+			})
+			remoteJourneyUntil(t, f.shells, func() bool { return !one.app.ws.LSPMgr().ServerReady() })
+			if stopSource {
+				if !one.app.ws.LSPMgr().StopServer(sourceID) {
+					t.Fatal("source server Stop was not admitted")
+				}
+				remoteJourneyUntil(t, f.shells, func() bool {
+					for _, health := range one.app.ws.LSPMgr().ServerHealthSnapshots() {
+						if health.ID == sourceID {
+							return !health.Connected && health.InstanceID == ""
+						}
+					}
+					return false
+				})
+			}
+			_, cmd := one.app.Update(held)
+			runAppCommand(t, one.app, cmd)
+			var result navigationControlOutcome
+			select {
+			case result = <-outcome:
+			case <-time.After(15 * time.Second):
+				t.Fatal("held navigation control did not produce its original receipt")
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			}
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			paint := navigationConnectedPaint(one.app)
+			if stopSource {
+				if result.result.State != control.Failed || result.result.Fault == nil || result.result.Fault.Code != control.Stale ||
+					one.app.navigation != nil || one.app.EditorState.Tabs[f.engine.target] != nil ||
+					one.app.EditorState.Editor != f.main || f.main.CursorLine() != 2 || f.main.CursorCol() != 4 ||
+					!strings.Contains(paint, "var old = 1") {
+					t.Fatalf("stopped source producer installed a destination or disturbed the original view: %+v", result.result)
+				}
+			} else {
+				ed := one.app.EditorState.Editor
+				if result.result.State != control.Applied || len(result.result.ResourceIDs) != 2 ||
+					one.app.navigation != nil || ed == f.main || ed.FilePath() != f.engine.target ||
+					ed.Value() != "\t😀name\r\n" || ed.CursorCol() != 6 || ed.HasSelection() ||
+					!strings.Contains(paint, "name") {
+					t.Fatalf("starting destination server prevented the verified target from landing: %+v", result.result)
+				}
+			}
+			if one.app.Input.Value() != "private navigation first draft" {
+				t.Fatal("navigation consumed the private composer draft")
+			}
+		})
 	}
 }
 
@@ -697,7 +946,8 @@ func TestConnectedNavigationPrivateTargetRecoveryDoesNotInstallOrMove(t *testing
 	_, contextGeneration := f.ws.LSPMgr.ContextCursor()
 	remoteJourneyUntil(t, f.shells, func() bool {
 		_, generation := one.app.ws.LSPMgr().ContextCursor()
-		return generation == contextGeneration
+		_, current := f.main.CurrentInsightSource()
+		return generation == contextGeneration && current && one.app.ws.LSPMgr().ServerReady()
 	})
 	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
 	f.inspect(t)

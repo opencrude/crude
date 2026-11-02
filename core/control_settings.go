@@ -173,10 +173,9 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 		return prepare(coreprotocol.SessionSettingsSave, coreprotocol.SessionSettingsMutationRequest{SessionID: in.Target.SessionID, Edits: []types.SettingEdit{{Path: strings.Split(path, "."), After: input.Value}}})
 	}
 	app := a.ws.AppDefaults()
-	overrides := a.ws.LoadWorkspaceOverrides()
 	before := app
 	if input.Scope == "workspace" {
-		before = types.MergeAppWorkspace(app, overrides)
+		before = a.ws.LoadAppSettings()
 	}
 	// Resolve exact JSON metadata, including absent omitempty leaves, before
 	// touching the sparse overlay. No case-insensitive encoding/json aliases.

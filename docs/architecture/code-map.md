@@ -54,6 +54,7 @@ detailed contracts.
 | Package | Owns |
 |---|---|
 | `fileio/` | Bounded reads, atomic commit (`CommitAtomicFile`), mutation leases, command execution, desktop open. |
+| `internal/fileuri/` | Native path, local file URI and SQLite file DSN conversion. |
 | `document/` | Presentation-neutral shared text commands. |
 | `syntax/` | Bounded native syntax sessions, selected grammar/query pins, byte spans and syntax findings; not the canonical text owner or a semantic engine ([native syntax](../reference/native-syntax.md)). |
 | `insight/project/` | Bounded passive compilation-database artifact observations with exact byte identity and detached argv/opaque command projections; not a project model, execution authority or semantic coverage. |
@@ -115,6 +116,13 @@ detailed contracts.
 non-blocking LSP transport hook; `jsonrpc2` retains original request/notification
 params and atomic envelope validation ([fork provenance](../../third_party/jsonrpc2/README.md));
 `pathwalk` is the internal directory walker.
+`modernc-libc` and `modernc-memory` retain the complete pinned upstream modules
+for the existing SQLite driver. Their narrow Windows call-adapter patches remove
+temporary syscall argument slices without changing database formats, WAL,
+durability, locking or allocator ownership. Versions and all non-Windows source
+remain upstream-identical; provenance, local differences and pointer-lifetime
+rules are in their [libc](../../third_party/modernc-libc/CRUDE_PATCH.md) and
+[memory](../../third_party/modernc-memory/CRUDE_PATCH.md) notes.
 Do not drop a `go.mod` replace without reading the owning reference.
 
 ## Key files

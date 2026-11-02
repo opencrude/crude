@@ -2,10 +2,10 @@ package core
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,8 +52,7 @@ func (a *actor) executionRetentionCheck() func(context.Context, worktree.Owner, 
 			return err
 		}
 		for _, path := range paths {
-			dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}
-			db, err := sql.Open("sqlite", dsn.String())
+			db, err := sql.Open("sqlite", fileuri.SQLiteDSN(path, "mode=ro"))
 			if err != nil {
 				return err
 			}

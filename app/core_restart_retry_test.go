@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,12 +9,12 @@ import (
 	"time"
 )
 
-func installRestartRefusalHelper(t *testing.T, fixture *restartFixture, body string) coreOwner {
+func installRestartRefusalHelper(t *testing.T, fixture *restartFixture, behavior string) coreOwner {
 	t.Helper()
 	if err := removeCoreOwner(fixture.host.home, fixture.old.Generation); err != nil {
 		t.Fatal(err)
 	}
-	path := restartScript(t, body)
+	path := writeRestartFixture(t, t.TempDir(), behavior)
 	digest, _, err := restartImageDigest(path)
 	if err != nil {
 		t.Fatal(err)
@@ -37,22 +36,11 @@ func TestCoreRestartScheduledHelperRetriesOnlyExplicitNoEffectRefusal(t *testing
 		t.Run(kind, func(t *testing.T) {
 			f := newRestartFixture(t)
 			attempts := filepath.Join(f.host.home, "attempts")
-			marker := filepath.Join(f.host.home, "first-refusal")
-			body := fmt.Sprintf("printf 'attempt\\n' >> %q\n", attempts)
-			switch kind {
-			case "refused-then-accepted":
-				body += fmt.Sprintf("if [ ! -f %q ]; then : > %q; exit %d; fi\n/bin/rm -- %q\n", marker, marker, coreHandoverRefusedExit, coreOwnerPath(f.host.home))
-			case "unknown-failure":
-				body += "exit 1\n"
-			case "panic-exit-two":
-				body += "printf 'panic: uncertain result\\n' >&2\nexit 2\n"
-			case "permanent-refusal":
-				body += fmt.Sprintf("exit %d\n", coreHandoverRefusedExit)
-			}
-			owner := installRestartRefusalHelper(t, f, body)
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			err := handoverOwnedCore(ctx, f.host.home, owner)
+			owner := installRestartRefusalHelper(t, f, kind)
+			// The property is the retry boundary, not speed: each attempt rechecks
+			// the full image digest and launches it, so the product's own handover
+			// deadline bounds this call rather than a tighter test-only budget.
+			err := handoverOwnedCore(t.Context(), f.host.home, owner)
 			raw, readErr := os.ReadFile(attempts)
 			if readErr != nil {
 				t.Fatal(readErr)
@@ -77,8 +65,7 @@ func TestCoreRestartScheduledRefusalCannotStopReplacement(t *testing.T) {
 	f := newRestartFixture(t)
 	marker, proceed := filepath.Join(f.host.home, "refused"), filepath.Join(f.host.home, "replacement-published")
 	attempts := filepath.Join(f.host.home, "attempts")
-	body := fmt.Sprintf("printf 'attempt\\n' >> %q\n: > %q\nwhile [ ! -f %q ]; do /bin/sleep 0.01; done\nexit %d\n", attempts, marker, proceed, coreHandoverRefusedExit)
-	owner := installRestartRefusalHelper(t, f, body)
+	owner := installRestartRefusalHelper(t, f, "replacement-race")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	stopped := make(chan error, 1)

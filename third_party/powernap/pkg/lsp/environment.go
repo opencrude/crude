@@ -17,8 +17,9 @@ const (
 	maxProcessEnvironmentBytes   = 128 << 10
 	maxProcessEnvironmentKey     = 256
 	maxProcessEnvironmentValue   = 32 << 10
-	maxProcessPathEntries        = 64
-	maxProcessPathBytes          = 4096
+	// Windows allows 32,767 characters per variable; this conservative byte bound also bounds entry count.
+	maxProcessPathValueBytes = 32767
+	maxProcessPathBytes      = 4096
 )
 
 // ErrProcessEnvironment covers invalid, unprepared, oversized environments and
@@ -46,8 +47,8 @@ type processEnvironmentTable struct {
 // Values must be UTF-8 without NUL. Bounds count KEY=value plus one terminator,
 // before PATH deduplication; they are not OS launchability or heap guarantees.
 //
-// If present, PATH must contain 1..64 absolute native directories, each at most
-// 4096 bytes, without control characters or dot components. Empty/relative
+// If present, PATH is at most 32767 bytes and contains absolute native directories,
+// each at most 4096 bytes, without control characters or dot components. Empty/relative
 // entries are rejected, never silently expanded to the working directory.
 // Exact duplicate directories are removed, preserving first occurrence.
 func NewProcessEnvironment(values map[string]string) (ProcessEnvironment, error) {
@@ -58,6 +59,9 @@ func NewProcessEnvironment(values map[string]string) (ProcessEnvironment, error)
 	seen := make(map[string]bool, len(values))
 	total := 0
 	for key, value := range values {
+		if processEnvironmentKey(key) == "PATH" && len(value) > maxProcessPathValueBytes {
+			return ProcessEnvironment{}, fmt.Errorf("PATH is too long. Shorten PATH, then retry: %w", ErrProcessEnvironment)
+		}
 		if !validProcessEnvironmentKey(key) || len(value) > maxProcessEnvironmentValue ||
 			!utf8.ValidString(value) || strings.ContainsRune(value, 0) {
 			return ProcessEnvironment{}, ErrProcessEnvironment
@@ -110,9 +114,6 @@ func validProcessEnvironmentKey(key string) bool {
 }
 
 func prepareProcessPath(value string) ([]string, error) {
-	if strings.Count(value, string(os.PathListSeparator)) >= maxProcessPathEntries {
-		return nil, ErrProcessEnvironment
-	}
 	dirs := strings.Split(value, string(os.PathListSeparator))
 	out := make([]string, 0, len(dirs))
 	seen := make(map[string]bool, len(dirs))

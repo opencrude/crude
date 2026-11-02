@@ -255,8 +255,8 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 		if ed.Modified() {
 			state = "● " + state
 		}
-		errors, warnings, hints := ed.DiagnosticCounts()
-		if errors+warnings+hints > 0 {
+		errors, warnings, _ := ed.DiagnosticCounts()
+		if errors+warnings > 0 {
 			parts := make([]string, 0, 3)
 			if errors > 0 {
 				parts = append(parts, fmt.Sprintf("✕%d", errors))
@@ -264,15 +264,9 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 			if warnings > 0 {
 				parts = append(parts, fmt.Sprintf("⚠%d", warnings))
 			}
-			if hints > 0 {
-				parts = append(parts, fmt.Sprintf("ℹ%d", hints))
-			}
-			if insight := editorInsightSummary(ed); insight != "" {
-				parts = append(parts, insight)
-			}
 			return state, strings.Join(parts, " "), "editor:" + path
 		}
-		return state, editorInsightSummary(ed), "editor:" + path
+		return state, m.ws.LSPMgr().ProjectInsights().Language.Label, "editor:" + path
 	}
 	if id := m.AgentView.ActiveID(); id != "" {
 		state, _ := m.ws.Status().Agent(id)
@@ -336,15 +330,12 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		problemText = strings.Join(parts, "") + " Problems"
 	}
 	problemRole := diagnosticRole(insights.Errors, insights.Warnings)
-	problemText += " · " + diagnosticCoverageLabel(insights)
-	if insights.DiagnosticsStale > 0 || insights.DiagnosticsLimited > 0 || insights.DiagnosticsUnverified > 0 {
-		problemRole = ui.ColorWarning
-	}
-	for _, server := range m.ws.LSPMgr().ServerHealthSnapshots() {
-		if server.Error != "" {
-			problemRole = ui.ColorError
-			break
-		}
+	switch insights.Language.State {
+	case ttypes.LanguageRestricted, ttypes.LanguageOff:
+		problemText += ": off"
+	case ttypes.LanguageFailed:
+		problemText += ": error"
+		problemRole = ui.ColorError
 	}
 
 	unread := 0
@@ -672,9 +663,14 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			state = "Modified"
 		}
 		errors, warnings := editorDiagnosticCounts(ed.Diagnostics())
-		summary := state + " · " + ed.DiagnosticStatus()
+		summary := state
 		if errors+warnings > 0 {
-			summary += fmt.Sprintf("  %d errors  %d warnings", errors, warnings)
+			if errors > 0 {
+				summary += fmt.Sprintf(" · %d errors", errors)
+			}
+			if warnings > 0 {
+				summary += fmt.Sprintf(" · %d warnings", warnings)
+			}
 		}
 		actionLabel := "Switch to Tab"
 		if path == m.EditorState.ActiveView {
@@ -684,19 +680,11 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			{Label: "Cursor", Value: fmt.Sprintf("Ln %d, Col %d", ed.CursorLine()+1, ed.CursorCol()+1), Role: ui.ColorFg},
 			{Label: "Lines", Value: fmt.Sprintf("%d", ed.LineCount()), Role: ui.ColorMuted},
 		}
-		if insight := editorSyntaxSummary(ed); insight != "" {
-			_, detail := ed.InsightStatus()
-			lines = append(lines, statusoverview.DetailLine{Label: "Syntax", Value: insight, Role: ui.ColorMuted})
-			if detail != "" {
-				lines = append(lines, statusoverview.DetailLine{Label: "Coverage", Value: detail, Role: ui.ColorMuted})
-			}
+		if errors > 0 {
+			lines = append(lines, statusoverview.DetailLine{Label: "Errors", Value: fmt.Sprintf("%d", errors), Role: ui.ColorError})
 		}
-		lines = append(lines, statusoverview.DetailLine{Label: "Diagnostics", Value: ed.DiagnosticStatus(), Role: ui.ColorWarning}, statusoverview.DetailLine{Label: "Provenance", Value: ed.DiagnosticProvenance(), Role: ui.ColorMuted})
-		if errors+warnings > 0 {
-			lines = append(lines,
-				statusoverview.DetailLine{Label: "Errors", Value: fmt.Sprintf("%d", errors), Role: diagnosticRole(errors, 0)},
-				statusoverview.DetailLine{Label: "Warnings", Value: fmt.Sprintf("%d", warnings), Role: diagnosticRole(0, warnings)},
-			)
+		if warnings > 0 {
+			lines = append(lines, statusoverview.DetailLine{Label: "Warnings", Value: fmt.Sprintf("%d", warnings), Role: ui.ColorWarning})
 		}
 		actions := make([]ttypes.StatusAction, 0, 1)
 		if blame, ok := ed.BlameAtLine(ed.CursorLine()); ok {
@@ -904,13 +892,35 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 			if err == nil && ok && facts.ID == parts[0] && index >= 0 && index < len(facts.Diagnostics) {
 				m.jumpToDiagnostic(parts[2], facts.Diagnostics[index])
 			} else {
-				m.Feedback.NotifyInfo("Diagnostic publication changed; reopen Problems")
+				m.Feedback.NotifyInfo("Results changed. Reopen Problems to see the current results.")
 			}
 		}
 	case strings.HasPrefix(action, "session:resume:"):
 		return m.resumeWorkspaceSession(strings.TrimPrefix(action, "session:resume:"))
 	case action == "settings:workspace":
 		m.openWorkspaceSettings()
+		return nil
+	case action == "language:trust":
+		return m.openWorkspaceTrustPrompt()
+	case action == "language:settings":
+		if !m.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
+			m.openWorkspaceSettings()
+		}
+		if win := m.overlayHost.Window(ui.OverlayWorkspaceSettings); win != nil {
+			if body := m.settingsSurface(win); body != nil {
+				for i, category := range body.Model().Categories() {
+					if category.Name == "Language Servers" {
+						body.Model().SelectCategory(i)
+						break
+					}
+				}
+				body.SetModel(body.Model())
+				if frame, ok := win.Content.(*ui.WindowFrameWidget); ok {
+					frame.Host().MarkLayout()
+				}
+				win.MarkContentDirty()
+			}
+		}
 		return nil
 	case action == "git:open":
 		return m.toggleGitPanel()
@@ -1137,22 +1147,20 @@ func usageScopeLabel(scope ttypes.UsageScope) string {
 }
 
 func workspaceHealthSummary(insights ttypes.ProjectInsights) string {
-	if insights.ServerFailed {
-		return "IDE issue · language server failed"
-	}
 	if insights.Errors > 0 || insights.Warnings > 0 {
-		return fmt.Sprintf("%d observed errors · %d warnings · %s", insights.Errors, insights.Warnings, diagnosticCoverageLabel(insights))
+		parts := make([]string, 0, 2)
+		if insights.Errors > 0 {
+			parts = append(parts, fmt.Sprintf("%d errors", insights.Errors))
+		}
+		if insights.Warnings > 0 {
+			parts = append(parts, fmt.Sprintf("%d warnings", insights.Warnings))
+		}
+		return strings.Join(parts, ", ") + "."
 	}
-	if insights.ServerStarting || insights.ServerSyncing || insights.ServerBusy {
-		return "Language services working"
+	if insights.Language.Message != "" {
+		return insights.Language.Message
 	}
-	if insights.ServerReady {
-		return "Language services ready · " + diagnosticCoverageLabel(insights)
-	}
-	if insights.IdleStatus != "" {
-		return insights.IdleStatus
-	}
-	return "No language server"
+	return "No results yet."
 }
 
 func editorDiagnosticCounts(diags []workspace.LSPDiagnostic) (errors, warnings int) {

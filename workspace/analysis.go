@@ -22,12 +22,9 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 		w.publishAnalysisPolicy()
 	}
 	overrides := w.LoadWorkspaceOverrides()
-	if types.MergeAppWorkspace(w.AppDefaults(), overrides).Analysis.Trust == types.AnalysisProjectExecutionAllowed {
+	if types.MergeAppWorkspace(w.AppDefaults(), overrides).Analysis.Trusted() {
 		if identityErr != nil {
-			return fmt.Errorf("workspace analysis remains Static only: %w", identityErr)
-		}
-		if overrides.AnalysisRootIdentity == "" || overrides.AnalysisRootIdentity != identity {
-			return fmt.Errorf("workspace directory identity changed; analysis remains Static only until Trust is explicitly granted for this directory")
+			return fmt.Errorf("could not check this folder; project tools will not run: %w", identityErr)
 		}
 	}
 	return nil
@@ -37,7 +34,7 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 // not a pathname hash or an application/session grant.
 func boundWorkspaceSettings(defaults types.AppSettings, overrides types.WorkspaceOverrides, observedRoot string) types.AppSettings {
 	effective := types.MergeAppWorkspace(defaults, overrides)
-	if effective.Analysis.Trust == types.AnalysisProjectExecutionAllowed &&
+	if effective.Analysis.Trusted() &&
 		(observedRoot == "" || overrides.AnalysisRootIdentity == "" || observedRoot != overrides.AnalysisRootIdentity) {
 		effective.Analysis = types.DefaultWorkspaceAnalysisSettings()
 	}
@@ -80,12 +77,12 @@ func prepareAnalysisBinding(root string, edits []types.SettingEdit) (string, boo
 	if err := types.ApplySettingsEdits(&draft, choices); err != nil {
 		return "", true, err
 	}
-	if types.MergeAppWorkspace(types.AppSettings{}, draft).Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+	if !types.MergeAppWorkspace(types.AppSettings{}, draft).Analysis.Trusted() {
 		return "", true, nil
 	}
 	identity, err := fileio.DirectoryIdentity(root)
 	if err != nil {
-		return "", true, fmt.Errorf("cannot grant project execution without a stable native directory identity: %w", err)
+		return "", true, fmt.Errorf("could not trust this folder. Check the folder path and permissions, then try again: %w", err)
 	}
 	return identity, true, nil
 }

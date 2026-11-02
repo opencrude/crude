@@ -1,9 +1,9 @@
 package sessiondb
 
 import (
+	"crude/internal/fileuri"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"time"
 
@@ -437,16 +437,11 @@ func Open(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: resolve path: %w", err)
 	}
-	path := filepath.ToSlash(abs)
-	if filepath.VolumeName(abs) != "" {
-		path = "/" + path
-	}
 	// modernc applies _pragma in order, including on replacement connections.
 	// Waiting must be enabled before WAL takes its initial schema lock.
 	// The argument is a filesystem path, never an unescaped SQLite URI. Literal
 	// delimiters in a profile/session name cannot become connection options.
-	u := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)"}
-	dsn := u.String()
+	dsn := fileuri.SQLiteDSN(abs, "_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: open: %w", err)

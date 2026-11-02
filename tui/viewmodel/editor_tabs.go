@@ -113,7 +113,7 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	}
 	facts, ok := m.diagnosticForNavigation(filePath, d)
 	if !ok || !m.canNavigateDiagnostic(filePath, facts) {
-		m.Feedback.NotifyInfo("Diagnostic is stale or unverified; open Problems for provenance")
+		m.Feedback.NotifyInfo("This result cannot be matched to the current file. Open Problems to check the results.")
 		return
 	}
 	if m.queueLiveDiagnosticNavigation(filePath, d, facts) {
@@ -143,12 +143,12 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 // wins. If the project has no errors, shows a status bar message.
 func (m *App) gotoFirstDiagnostic() {
 	if m.ws.LSPMgr() == nil {
-		m.Feedback.NotifyInfo("LSP not configured")
+		m.Feedback.NotifyInfo("Language servers are not available. Open Language servers settings to set them up.")
 		return
 	}
 	all := m.ws.LSPMgr().AllDiagnostics()
 	if len(all) == 0 {
-		m.Feedback.NotifyInfo("No current observed errors; coverage is partial")
+		m.Feedback.NotifyInfo("No errors are available to navigate. Open Problems to check the results.")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (m *App) gotoFirstDiagnostic() {
 		return
 	}
 
-	m.Feedback.NotifyInfo("No current observed errors; coverage is partial")
+	m.Feedback.NotifyInfo("No errors are available to navigate. Open Problems to check the results.")
 }
 
 // firstErrorOf returns the first error-severity diagnostic in the
@@ -218,7 +218,7 @@ func (m *App) jumpToNextError() bool {
 		// every error like VSCode's command.
 		d = m.EditorState.Editor.FirstError()
 		if d == nil {
-			m.Feedback.NotifyInfo("No current observed errors · " + m.EditorState.Editor.DiagnosticStatus())
+			m.Feedback.NotifyInfo(m.EditorState.Editor.DiagnosticStatus())
 			return false
 		}
 	}
@@ -250,7 +250,7 @@ func (m *App) jumpToPrevError() bool {
 			}
 		}
 		if d == nil {
-			m.Feedback.NotifyInfo("No current observed errors · " + m.EditorState.Editor.DiagnosticStatus())
+			m.Feedback.NotifyInfo(m.EditorState.Editor.DiagnosticStatus())
 			return false
 		}
 	}

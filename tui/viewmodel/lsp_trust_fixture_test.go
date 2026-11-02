@@ -15,16 +15,42 @@ import (
 func grantSemanticFixture(t *testing.T, w *workspace.Workspace) {
 	t.Helper()
 	result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
-		Path: []string{"analysis", "trust"}, After: []byte(`"project_execution_allowed"`),
+		Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`),
 	}})()
 	if result.Err != nil {
 		t.Fatal(result.Err)
 	}
 	w.ApplyPreferencesSave(result)
 	if w.LoadWorkspaceOverrides().AnalysisRootIdentity == "" ||
-		w.LoadAppSettings().Analysis.Trust != types.AnalysisProjectExecutionAllowed {
+		w.LoadAppSettings().Analysis.Trust != types.AnalysisTrusted {
 		t.Fatal("semantic fixture did not persist its explicit native-root Trust grant")
 	}
+}
+
+func restrictFixture(t testing.TB, w *workspace.Workspace) {
+	t.Helper()
+	result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{
+		Path: []string{"analysis", "trust"}, After: []byte(`"restricted"`),
+	}})()
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	w.ApplyPreferencesSave(result)
+	if w.LoadAppSettings().Analysis.DecisionNeeded() {
+		t.Fatal("restricted fixture did not retain its trust decision")
+	}
+}
+
+func restrictSyntheticFixture(t testing.TB, app *App, root string) {
+	t.Helper()
+	w := wsOf(app)
+	w.RootPath = root
+	db, err := workspace.OpenWorkspaceDB(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.WorkspaceDB = db
+	restrictFixture(t, w)
 }
 
 // Standalone manager fixtures have no retained core to supply process capacity.
@@ -41,5 +67,5 @@ func admitSemanticManager(t *testing.T, m *workspace.LSPManager, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisProjectExecutionAllowed}, identity)
+	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
 }

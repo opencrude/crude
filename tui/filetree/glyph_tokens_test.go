@@ -119,9 +119,12 @@ func TestBreadcrumbLineConsumesBreadcrumbSepToken(t *testing.T) {
 	if idx < 0 {
 		t.Fatalf("deep path not visible: %v", model.VisibleRows())
 	}
+	// A one-row viewport can actually scroll this three-row fixture.
+	// The default ten-row viewport clamps it to zero and never paints a breadcrumb.
+	model.Update(TreeHeightMsg{Height: 1})
 	model.SetScrollOffset(idx)
-	if model.ScrollOffset() <= 0 {
-		t.Skip("scroll offset did not advance; breadcrumb would be empty")
+	if got := model.ScrollOffset(); got != idx {
+		t.Fatalf("scroll offset = %d, want the visible leaf at %d", got, idx)
 	}
 
 	sep := theme.DefaultGlyphs().BreadcrumbSep

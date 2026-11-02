@@ -33,7 +33,6 @@ import (
 // hydration rather than seeding the new attachment fields in a UI fixture.
 func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	var calls atomic.Int32
-	output := recordDesktopLauncher(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -79,6 +78,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	})
 
 	second := newRemoteJourneyShell(t, runtime, root)
+	secondCalls := recordDesktopLauncher(t, second.app)
 	remoteJourneyUntil(t, []remoteJourneyShell{first, second}, func() bool {
 		return second.app.AgentView.ActiveID() == agentID && strings.Contains(second.app.View().RenderContent(), "connected attachments accepted")
 	})
@@ -148,12 +148,13 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	})
 	second.app.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	clickTranscriptAttachment(t, second.app, media.DisplayName())
-	path := desktopAttachmentFile(t, output, false)
+	path := desktopAttachmentFile(t, secondCalls, false)
 	copy, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(copy, encoded.Bytes()) || path == media.FilePath || second.app.overlayHost.IsOpen(ui.OverlayTextOverlay) {
 		t.Fatalf("connected System app destination lost original media or still opened native preview: %q %v", path, err)
 	}
 	third := newRemoteJourneyShell(t, runtime, root)
+	thirdCalls := recordDesktopLauncher(t, third.app)
 	remoteJourneyUntil(t, []remoteJourneyShell{first, second, third}, func() bool {
 		// Registry selection and settings are independent of transcript
 		// hydration. A human cannot click the reattached link until it paints.
@@ -162,6 +163,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 			strings.Contains(third.app.View().RenderContent(), media.DisplayName())
 	})
 	clickTranscriptAttachment(t, third.app, media.DisplayName())
+	desktopAttachmentFile(t, thirdCalls, false)
 	if third.app.overlayHost.IsOpen(ui.OverlayTextOverlay) || calls.Load() != 1 || second.app.Input.Value() != "PEER DRAFT MUST SURVIVE PREVIEWS" {
 		t.Fatal("saved OS destination did not survive reattach or replayed inference/consumed draft")
 	}
@@ -184,7 +186,7 @@ func TestConnectedPostedAttachmentsSurviveViewerReattach(t *testing.T) {
 	}
 	third.app.renderPromptHistory()
 	runAppCommand(t, third.app, third.app.openHistoricalAttachment(key))
-	path = desktopAttachmentFile(t, output, false)
+	path = desktopAttachmentFile(t, thirdCalls, false)
 	copy, err = os.ReadFile(path)
 	imported := third.app.RefStore().ListReferences()
 	if err != nil || !bytes.Equal(copy, encoded.Bytes()) || len(imported) != 1 || imported[0].ID == media.ID || third.app.Input.Value() != "NEW SESSION DRAFT" || calls.Load() != 1 || third.app.overlayHost.IsOpen(ui.OverlayPromptHistory) {

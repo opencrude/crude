@@ -34,8 +34,10 @@ I/O and admits at most 256 entries, 128 KiB of encoded `KEY=value` data, 256-byt
 ASCII identifier keys and 32-KiB UTF-8, NUL-free values. These encoded bounds are
 not OS launchability or heap guarantees.
 
-An explicit PATH admits at most 64 absolute native directories of at most 4096
-bytes each, without empty/relative entries, control characters or dot components.
+An explicit PATH admits at most 32767 bytes of absolute native directories of at
+most 4096 bytes each, without empty/relative entries, control characters or dot
+components. The byte bound also bounds the number of entries; oversized PATH
+values fail rather than truncate.
 Exact duplicates preserve the first position. Immediately before construction,
 the existing subprocess owner resolves only this PATH or a native absolute
 executable, then passes that absolute result and the complete environment to
@@ -117,10 +119,12 @@ wait, not universal descendant absence or malicious-process containment.
 On Windows, creation is suspended until the exact retained process handle has
 been assigned to a retained kill-on-close Job Object. The process is resumed only
 after assignment succeeds. Failed setup kills and joins the suspended process.
-Shutdown terminates that exact job, joins the leader, and queries active job
-membership to zero before releasing its handles. An application-defined exit code
-distinguishes our job termination from ordinary server failures. Job-empty polling
-is bounded to five seconds; the outer join is bounded to six seconds.
+Before assigning the first process, the owner associates an I/O completion port
+with the job. Shutdown terminates that exact job, joins the leader, and waits
+for the job's `ACTIVE_PROCESS_ZERO` completion message before releasing handles.
+An application-defined exit code distinguishes our job termination from ordinary
+server failures. Completion waiting is bounded to five seconds; the outer join
+is bounded to six seconds. A timeout fails closed.
 
 The Unix join is bounded to five seconds. A timeout or failed containment/reap
 operation is an error, not a successful join. A blocked reaper retains its exact

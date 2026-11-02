@@ -161,7 +161,59 @@ type CompletionItem struct {
 	HasInsertText bool
 }
 
+// LanguageServiceState is the user-facing state of language services for the
+// active document of a workspace. Only the LSP manager derives it.
+type LanguageServiceState string
+
+const (
+	// LanguageRestricted: the folder is not trusted, so no server runs.
+	LanguageRestricted LanguageServiceState = "restricted"
+	// LanguageOff: turned off in settings, paused or stopped by the user.
+	LanguageOff LanguageServiceState = "off"
+	// LanguageNoServer: no enabled server matches the active file.
+	LanguageNoServer LanguageServiceState = "no_server"
+	// LanguageIdle: nothing to check yet (no source file open, automatic
+	// start off). A quiet state.
+	LanguageIdle LanguageServiceState = "idle"
+	// LanguageStarting: a server is starting or catching up with edits.
+	LanguageStarting LanguageServiceState = "starting"
+	// LanguageReady: a server runs for the active file. A quiet state.
+	LanguageReady LanguageServiceState = "ready"
+	// LanguageFailed: a server could not start or stopped with an error.
+	LanguageFailed LanguageServiceState = "failed"
+)
+
+// LanguageServiceAction names the next step a surface offers. Surfaces route
+// it to one existing command; they never invent a second path.
+type LanguageServiceAction string
+
+const (
+	LanguageActionNone          LanguageServiceAction = ""
+	LanguageActionTrustFolder   LanguageServiceAction = "trust_folder"   // opens the trust dialog
+	LanguageActionOpenSettings  LanguageServiceAction = "open_settings"  // Language servers settings
+	LanguageActionStartServers  LanguageServiceAction = "start_servers"  // Start Language Servers
+	LanguageActionRestartServer LanguageServiceAction = "restart_server" // retry the failed server
+)
+
+// LanguageServiceStatus is the single user-facing language status. Every
+// surface (editor header, footer pill, Problems panel, Status Overview)
+// renders it and composes no wording of its own. Text follows
+// docs/reference/user-language.md.
+type LanguageServiceStatus struct {
+	State LanguageServiceState
+	// Label is one short phrase for a header or pill. Empty in quiet states.
+	Label string
+	// Message is the state, then the next step, in STE sentences.
+	Message string
+	// Action and ActionLabel name the next step and its exact control name.
+	Action      LanguageServiceAction
+	ActionLabel string
+}
+
 type ProjectInsights struct {
+	// Language is the owner-derived user-facing status. Prefer it over the
+	// raw lifecycle fields below for any user-visible text.
+	Language       LanguageServiceStatus
 	ServerName     string
 	ServerReady    bool
 	ServerBusy     bool
@@ -169,19 +221,15 @@ type ProjectInsights struct {
 	ServerSyncing  bool
 	ServerFailed   bool
 	ServerError    string
-	// IdleStatus/IdleReason explain why enabled language services have not
-	// launched. They are owner-derived observations, not a second startup policy.
-	IdleStatus    string
-	IdleReason    string
-	Errors        int
-	Warnings      int
-	Info          int
-	Hints         int
-	FilesAffected int
-	FilesTracked  int
-	SymbolsCount  int
-	TopIssue      string
-	LastSync      int64
+	Errors         int
+	Warnings       int
+	Info           int
+	Hints          int
+	FilesAffected  int
+	FilesTracked   int
+	SymbolsCount   int
+	TopIssue       string
+	LastSync       int64
 	// These count observed diagnostic units, not all files in the project.
 	// The denominator and complete build context may remain unknown.
 	DiagnosticsObserved   int

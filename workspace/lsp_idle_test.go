@@ -12,13 +12,13 @@ import (
 
 func TestLSPIdleReasonsExplainLazyStartupAndPolicy(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
-	if got := m.ProjectInsights(); got.IdleStatus != "Waiting for source file" || !strings.Contains(got.IdleReason, "Open a supported source file") {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageIdle || !strings.Contains(got.Language.Message, "Open a source file") {
 		t.Fatalf("enabled unused workspace reason=%+v", got)
 	}
 	settings := types.DefaultLSPSettings()
 	settings.Enabled = false
 	m.SetSettings(settings)
-	if got := m.ProjectInsights(); got.IdleStatus != "Language intelligence off" {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageOff {
 		t.Fatalf("disabled reason=%+v", got)
 	}
 	path := filepath.Join(root, "main.go")
@@ -28,16 +28,16 @@ func TestLSPIdleReasonsExplainLazyStartupAndPolicy(t *testing.T) {
 	}
 	settings.Enabled, settings.StartOnOpen = true, false
 	m.SetSettings(settings)
-	if got := m.ProjectInsights(); got.IdleStatus != "Automatic start off" || !strings.Contains(got.IdleReason, "Start Language Servers") {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageIdle || got.Language.Action != types.LanguageActionStartServers {
 		t.Fatalf("manual startup reason=%+v", got)
 	}
 	m.StartForWorkspace(root)
 	awaitLSP(t, m.ServerReady)
-	if got := m.ProjectInsights(); got.IdleStatus != "" || got.IdleReason != "" {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageReady || got.Language.Label != "" {
 		t.Fatalf("connected server retained idle explanation=%+v", got)
 	}
 	m.Stop()
-	if got := m.ProjectInsights(); got.IdleStatus != "Language servers paused" {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageOff {
 		t.Fatalf("paused reason=%+v", got)
 	}
 }
@@ -64,7 +64,7 @@ func TestLSPIdleResumeWithoutDocumentsRefreshesReason(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
 	m.Stop()
 	m.StartForWorkspace(root)
-	if got := m.ProjectInsights(); got.IdleStatus != "Waiting for source file" {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageIdle {
 		t.Fatalf("resume retained paused reason=%+v", got)
 	}
 	if len(runtime.snapshot()) != 0 {
@@ -75,7 +75,7 @@ func TestLSPIdleResumeWithoutDocumentsRefreshesReason(t *testing.T) {
 func TestLSPUnsupportedDocumentExplainsNoMatchingServer(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
 	editorSource(t, m, filepath.Join(root, "readme.md"), "# No configured Markdown server\n")
-	if got := m.ProjectInsights(); got.IdleStatus != "No matching language server" || !strings.Contains(got.IdleReason, "Settings → Language Servers") {
+	if got := m.ProjectInsights(); got.Language.State != types.LanguageNoServer || !strings.Contains(got.Language.Message, "Language servers settings") {
 		t.Fatalf("unmatched source reason=%+v", got)
 	}
 	if len(runtime.snapshot()) != 0 {
@@ -115,7 +115,7 @@ func TestLSPChangedDiagnosticsClearAndStop(t *testing.T) {
 		t.Fatal("diagnostic retirement lost provenance or retained current counts")
 	}
 	assertLSPBroadcast(t, m, m.Stop)
-	if m.ProjectInsights().IdleStatus != "Language servers paused" {
+	if m.ProjectInsights().Language.State != types.LanguageOff {
 		t.Fatal("stop not projected")
 	}
 }

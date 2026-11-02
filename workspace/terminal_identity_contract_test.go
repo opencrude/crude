@@ -1,24 +1,23 @@
 package workspace
 
 import (
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+
+	"crude/internal/testterminal"
 )
 
 func TestTerminalIDsRemainMonotonicAcrossManagerLifetimes(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("in-app PTYs are unix-only")
-	}
 	create := func(t *testing.T, mgr *TerminalManager, title string) TerminalInfo {
 		t.Helper()
+		cmd, args := testterminal.Command(t, "echo")
 		info, err := mgr.Create(TerminalCreateOpts{
-			Command: "/bin/cat",
-			CWD:     t.TempDir(),
-			Cols:    20,
-			Rows:    8,
-			Title:   title,
+			Command: cmd, Args: args,
+			CWD:   t.TempDir(),
+			Cols:  20,
+			Rows:  8,
+			Title: title,
 		})
 		if err != nil {
 			t.Fatalf("Create %s: %v", title, err)

@@ -3,7 +3,6 @@ package viewmodel
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +11,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/types"
+	"crude/workspace"
 )
 
 func TestInsightThreeRenderedShellsEditAuthorUndoAndSave(t *testing.T) {
@@ -46,8 +46,8 @@ func TestInsightThreeRenderedShellsEditAuthorUndoAndSave(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool { return shared(baseline) })
 	for i, shell := range shells {
 		shell.app.View()
-		if !bufferContainsPlain(shell.app.mainSurf.Buffer(), "Syntax shared") {
-			t.Fatalf("shell %d hid source coverage in the rendered header/footer", i)
+		if bufferContainsPlain(shell.app.mainSurf.Buffer(), "Syntax shared") {
+			t.Fatalf("shell %d exposed internal syntax status", i)
 		}
 		// Inspect the actual mounted editor region, not only its cached result.
 		x, y := shell.app.editorRect.X+editors[i].GutterWidth()+2, shell.app.editorRect.Y
@@ -80,8 +80,8 @@ func TestInsightThreeRenderedShellsEditAuthorUndoAndSave(t *testing.T) {
 	}
 	for _, shell := range shells {
 		shell.app.View()
-		if !bufferContainsPlain(shell.app.mainSurf.Buffer(), "Syntax shared") {
-			t.Fatal("save cleared or falsely recomputed canonical syntax coverage")
+		if bufferContainsPlain(shell.app.mainSurf.Buffer(), "Syntax shared") {
+			t.Fatal("save exposed internal syntax status")
 		}
 	}
 }
@@ -124,7 +124,9 @@ func TestInsightPreMountAckAndStaleWorkspaceFence(t *testing.T) {
 }
 
 func TestInsightCoverageDoesNotMeanNoCompilerErrors(t *testing.T) {
-	runtime := remoteJourneyRuntime(t, "http://unused.invalid")
+	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
+		grantSemanticFixture(t, w)
+	})
 	root := t.TempDir()
 	path := filepath.Join(root, "unknown.cr")
 	if err := os.WriteFile(path, []byte("puts \"unknown language\"\n"), 0600); err != nil {
@@ -138,7 +140,7 @@ func TestInsightCoverageDoesNotMeanNoCompilerErrors(t *testing.T) {
 	})
 	shell.app.View()
 	_, metrics, _ := shell.app.activeHeaderContext()
-	if !strings.Contains(metrics, "Syntax lexical") || strings.Contains(metrics, "0 errors") {
+	if metrics != "" {
 		t.Fatalf("unsupported native syntax disguised as semantic success: %q", metrics)
 	}
 }

@@ -19,6 +19,13 @@ func (a *App) StartupSnapshot(ctx context.Context) (coreprotocol.StartupSnapshot
 		return out, err
 	}
 	config, err := loadFileConfigFrom(ConfigPath())
+	if os.IsNotExist(err) {
+		if info, parentErr := os.Stat(filepath.Dir(ConfigPath())); parentErr == nil && !info.IsDir() {
+			err = errors.New("configuration parent is not a directory")
+		} else if parentErr != nil && !os.IsNotExist(parentErr) {
+			err = parentErr
+		}
+	}
 	if err != nil && !os.IsNotExist(err) {
 		out.Issues = []types.OperationIssue{configStartupIssue(ConfigPath(), err)}
 		a.configMu.Lock()

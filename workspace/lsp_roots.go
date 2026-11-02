@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crude/internal/fileuri"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,18 +35,18 @@ func resolveLSPRoot(path, workspaceRoot string, markers []string) string {
 		}
 		for _, current := range dirs {
 			if lspMarkerExists(current, marker) {
-				return fileURI(current)
+				return fileuri.FromPath(current)
 			}
 		}
 	}
 	for _, current := range dirs {
 		for _, marker := range markers {
 			if lspMarkerExists(current, marker) {
-				return fileURI(current)
+				return fileuri.FromPath(current)
 			}
 		}
 	}
-	return fileURI(boundary)
+	return fileuri.FromPath(boundary)
 }
 
 func lspMarkerExists(dir, marker string) bool {

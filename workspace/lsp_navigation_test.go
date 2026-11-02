@@ -2,10 +2,10 @@ package workspace
 
 import (
 	"context"
+	"crude/internal/fileuri"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,7 +114,7 @@ func newNavigationFixture(t *testing.T, text string) *navigationFixture {
 }
 
 func navigationTestURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	return fileuri.FromPath(path)
 }
 
 func navigationLocation(uri string) string {

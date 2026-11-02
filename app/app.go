@@ -19,6 +19,7 @@ package app
 import (
 	"context"
 	"crude/buildinfo"
+	"crude/internal/fileuri"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -291,7 +292,7 @@ func openCLIWorkspaceDB(store cliSessionStore) (*sql.DB, error) {
 		}
 		return nil, err
 	}
-	dsn := "file:" + filepath.ToSlash(store.workspaceDB) + "?mode=ro&_busy_timeout=1000"
+	dsn := fileuri.SQLiteDSN(store.workspaceDB, "mode=ro&_busy_timeout=1000")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -414,7 +415,7 @@ func DeleteSession(home, projectDir, sessionID string) (resultErr error) {
 		}
 		return err
 	}
-	dsn := "file:" + filepath.ToSlash(store.workspaceDB) + "?_busy_timeout=1000"
+	dsn := fileuri.SQLiteDSN(store.workspaceDB, "_busy_timeout=1000")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return err
