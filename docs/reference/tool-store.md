@@ -1,6 +1,6 @@
 # Tool store
 
-> Status: Current reference. The `toolstore` package owns acquired code-intelligence tools. Assembly resolves matching installed tools through the store. The [thin assembly checkpoint](../plans/autonomous-code-intelligence.md#current-checkpoint) has not yet connected the acquisition flow.
+> Status: Current reference. The `toolstore` package owns acquired code-intelligence tools. Native project setup connects reviewed acquisition, staged protocol checks and assembly refresh. This is a thin path, not completion of the [autonomous code-intelligence plan](../plans/autonomous-code-intelligence.md#current-checkpoint).
 
 ## Ownership
 
@@ -26,20 +26,18 @@ question to the user. The store never deletes a tool on its own. There is no
 disk cap.
 
 The workspace decision transaction records the exact review and selected and
-rejected IDs as audit evidence only. It does not establish human consent or
-authorize installation. The native decision owner must retain and consume the
-exact human receipt; agent and generic-settings paths cannot submit it. A
-separate effect-admission owner is still needed before this evidence can be
-used for project installation. The store exposes a publication-admission hook,
-but no project caller supplies it yet. Do not connect the project installer to
-this transaction until the native receipt, revocation, stale usage and partial
-outcomes are fenced and tested together.
+rejected IDs as audit evidence only. `workspace.ProjectToolSetupOwner` retains
+the native shell's owner-bound, expiring preview and consumes it once before
+effects. Neither the audit row nor the review hash can recreate that authority.
+Detach, cancellation, Trust revocation and changed project, catalog or settings
+fence later effects. Generic control and settings calls cannot grant installation.
+See [native project setup](settings.md#project-tool-setup).
 
-The internal reviewed-install worker requires a caller-owned current-effect
-check before each download and again after it returns. It passes the caller's
-publication check to the store. It does not record workspace use or start a
-server. Those later effects need their own current admission. The worker is
-not connected to the product question or an effect owner.
+The reviewed-install worker validates current authority before download and
+after return. The setup owner supplies staged evaluation, publication preflight,
+the short publication gate and separately admitted usage accounting. A published
+artifact is not permission for later execution; assembly and each server launch
+retain their own Trust, generation and process-admission checks.
 
 ## Layout
 
@@ -54,6 +52,7 @@ to `toolstore.Open`. `Open` refuses a relative root.
 | `<root>/usage.json` | Mutable accounting: workspaces and last use for each tool ID. |
 | `<root>/history.jsonl` | Append-only history, one JSON object for each line. |
 | `<root>/.staging/` | Temporary install and removal folders. |
+| `<root>/.staging/install-*/.evaluation-pending` | Durable pre-launch marker; uncertain staged checks retain their executable bytes here for inspection. |
 | `<root>/.publication-pending/<package>/<version>-<sha256[:12]>` | An install whose publication is not yet confirmed. |
 
 The tool ID is `<package>/<version>-<sha256[:12]>`. The digest is the SHA-256
@@ -80,19 +79,25 @@ manifest.
    the digest of the first download (`DigestOrigin` is `first-download`).
 6. Extract into the staged tool folder, write the manifest and make the tree
    read-only.
-7. Create and sync a publication record for the exact tool identity. After
-   preparation, an optional caller-owned admission check runs immediately
-   before the rename. It must do no I/O or call back into the store. A refused
-   or cancelled check prevents publication. A successful check admits this
-   publication, not later use or execution. Existing artifacts do not invoke it.
-   The project acquisition flow must provide its own current authority check;
-   this hook is not an approval.
-8. Move the staged folder without replacing an existing destination. A matching
+7. If supplied, run `Request.Evaluate(ctx, tool)` on the exact sealed staged
+   executable, outside the store mutex. The install owns these bytes exclusively
+   under its package/version lock. A durable `.evaluation-pending` marker is
+   written before launch. The callback must join the exact process even on failure
+   or cancellation; `EvaluationUnverifiedError` retains the marker and staging
+   tree. Failed or uncertain checks never publish or enter ordinary resolution.
+8. Run `PreparePublication(ctx)` outside the store mutex for expensive current
+   preflight. Then take the mutex, prepare the durable publication record, and run
+   `AdmitPublication(ctx)` immediately before rename. This second check must be
+   short, do no I/O and never call back into the store. Refusal or cancellation
+   prevents publication. Existing matching artifacts skip these callbacks; callers
+   must still admit their own later evaluation and use. Neither callback grants
+   approval or execution authority.
+9. Move the staged folder without replacing an existing destination. A matching
    installed tool found before the rename is returned without publication. If a
    rename attempt fails, its outcome needs inspection even when a tool is found
    afterward. The store does not overwrite an existing target.
-9. Append an `install` event, then clear the exact unchanged publication
-   record. The tool becomes available only after this step.
+10. Append an `install` event, then clear the exact unchanged publication
+    record. The tool becomes available only after this step.
 
 The store attempts to append an `install-failed` event for each failure. A
 history-write failure is returned to the caller. If rename was attempted or
@@ -102,8 +107,11 @@ retry or use the artifact. Pending records remain after a restart. Lookup,
 automatic assembly, usage and ordinary removal do not accept the tool while
 its record exists; `Unrecognized` includes its identity for inspection. There
 is not yet a product recovery action for these records. The store attempts to
-delete the staging folder. `Open` deletes stale installation scratch but keeps
-interrupted removal folders, which may contain installed tools, for inspection.
+delete ordinary staging scratch. `Open` keeps staged checks with an evaluation
+marker and interrupted removal folders for inspection; it does not prune bytes
+whose process retirement is unknown. These entries appear in `Unrecognized`.
+There is no product recovery action for retained uncertain evaluation processes
+or their staging trees.
 This is not a filesystem security sandbox. Directory synchronization is a
 no-op on Windows, so crash durability there has not been verified.
 
@@ -153,10 +161,16 @@ never followed.
   size recorded at install.
 - `Unrecognized` lists root entries that are not tools, for example a folder
   without a valid manifest. The store never removes them.
-- `MarkUsed(id, workspace)` records the workspace and the time. It replaces
-  `usage.json` atomically through `fileio.CommitAtomicFile`. The first use by a
-  workspace appends a `use` event; later uses update only the time. `MarkUsed`
-  has no caller-owned admission check and must not be used as an authorization.
+- `MarkUsedContext(ctx, id, workspace, admit)` records the workspace and time
+  only after cancellable lock admission and a short current-effect check under
+  the store mutex. Refused or cancelled queued work writes neither usage nor
+  history. `MarkExecutableUsedContext` applies the same gate by exact managed
+  executable, without exposing store path layout to callers.
+  Accounting replaces `usage.json` atomically through `fileio.CommitAtomicFile`.
+  First workspace use appends a `use` event; later uses update only the time.
+  `MarkUsed` delegates with no caller gate and is not authorization. Native setup
+  accounts after successful protocol evaluation and current admission; actual
+  managed LSP launches account through their current-launch gate.
 - A damaged `usage.json` makes `Open` fail with the file name. The store does
   not replace it with empty data.
 
@@ -178,17 +192,41 @@ so memory does not grow with the length of the log.
 2. The token is a SHA-256 of the tool IDs, the digest of each manifest, a
    fingerprint of each tree (path, type, permissions, size, modification time
    and link target of every entry) and the usage entry of each tool.
-3. `Remove(ctx, preview, actor)` requires a nonempty actor and takes the install locks of the tools and the store
-   mutex, computes the preview again and fails with `ErrPreviewStale` when
+3. `Remove(ctx, preview, actor)` requires a nonempty actor and takes the tools'
+   install locks and the store mutex. It refreshes current identities and refuses
+   live executable leases with `ErrExecutableInUse` before fingerprinting.
+   A snapshot of workspace references is not a substitute for this atomic
+   start-versus-remove fence.
+4. Compute the preview again and fail with `ErrPreviewStale` when
    any preview field differs. A changed file, a new file, a removed tool, a use
    after the preview, or altered displayed metadata all fail.
-4. Remove makes only each previewed tool folder writable and moves it into
+5. Remove makes only each previewed tool folder writable and moves it into
    `.staging/remove-*`. If a move fails or the context ends, the moved folders
    go back and nothing is removed.
-5. Remove saves `usage.json` without the tools, appends a `remove` event with
+6. Remove saves `usage.json` without the tools, appends a `remove` event with
    the actor for each tool, deletes an empty package folder and then deletes the staged
    files. If that final delete fails, the tools are already removed and the
    staged files remain for inspection.
+
+The native [Settings inventory](settings.md#code-intelligence-tools) adds an
+owner/workspace-bound, ten-minute, one-shot removal preview (at most 64 retained
+previews). It rechecks retained workspace assembly references before calling
+`Remove`. Unmanaged tools and unrecognized entries are read-only. A removal error
+triggers observation of current inventory, never replay of the deletion.
+
+## Executable lifetimes
+
+`AcquireExecutable(ctx, path)` pins the exact confirmed, indexed managed tool
+under the removal mutex before client construction. Paths outside the store are
+unmanaged; missing, removed, changed or unconfirmed managed identities fail
+closed. Each release is idempotent and independent of other clients' pins.
+
+The exact LSP client owns its pin through startup, cancellation, restart and
+shutdown. Only its successful joined `Stop` releases the pin; failed or unverified
+teardown retains it, even if the manager closes. Acquire and release run outside
+the language-server manager lock. Staged evaluation instead owns unpublished
+bytes exclusively until its exact process joins. These lifetimes prevent
+store-owned deletion, not arbitrary external filesystem mutation.
 
 ## Limits
 

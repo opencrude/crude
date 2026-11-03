@@ -11,6 +11,13 @@ type CodeTool struct {
 	Licenses, Workspaces                                []string
 	InstalledAt, LastUsed                               time.Time
 	InstalledBy, Approval                               string
+	FileEntries                                         []CodeToolFile
+}
+
+// CodeToolFile is a literal entry inside a managed tool folder.
+type CodeToolFile struct {
+	Path, Kind, LinkTarget string
+	Size                   int64
 }
 
 // CodeToolHistoryEvent records an install, failure, use or removal.

@@ -37,7 +37,17 @@ func TestSignatureManagerRequiresQualifiedBoundaryAndLiveRequest(t *testing.T) {
 			t.Cleanup(manager.Close)
 			trustAnalysis(t, manager, root)
 			source := editorSource(t, manager, filepath.Join(root, "main.go"), "package main\n")
-			awaitLSP(t, func() bool { return manager.ServerReady() })
+			// A connected process is not yet a synchronized source. First wait
+			// for the real send receipt, or startup can legitimately publish its
+			// boundary after this test removes the one it intends to exercise.
+			awaitLSP(t, func() bool {
+				manager.mu.Lock()
+				defer manager.mu.Unlock()
+				doc := manager.documents[source.Path]
+				return doc != nil && doc.opened && !doc.syncPending &&
+					doc.boundary.Source.DocumentID == source.ID &&
+					doc.boundary.Source.Revision == source.Revision
+			})
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if condition == "cancelled" {

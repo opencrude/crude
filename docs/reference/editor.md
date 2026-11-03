@@ -276,6 +276,13 @@ Tea's update goroutine (the tab-close hang).
   A reaped server's own nonzero exit is an operational failure, not an occupied
   process slot; genuine containment, wait, pipe-close or worker-join failures
   remain failures.
+- Managed executables acquire a store-owned exact-identity lease before client
+  construction, outside the manager lock. Only that client's successful joined
+  `Stop` releases it; failed or uncertain teardown keeps the tool pinned across
+  restart and shutdown. The same store mutex gates lease acquisition and removal,
+  so a stale assembly snapshot cannot race deletion into a new process.
+  Successful launches record workspace use under their current-launch gate.
+  See [tool-store lifetimes](tool-store.md#executable-lifetimes).
 - Workspace Trust and one core-wide process governor gate every installed LSP
   producer, including headless agent probes. Static only is the default.
   Native-root checks run off actor/Update locks; the final transport admission
@@ -976,18 +983,21 @@ The assembly service (`workspace/lsp_assembly.go`) plans the project's code
 intelligence from data. It runs no project code.
 
 1. **Discovery.** A bounded listing of file names (`third_party/pathwalk`, two
-   workers, at most 100,000 entries, hidden folders and symbolic links not
-   followed) counts files per language through the
-   [catalog](code-intelligence-catalog.md) and custom languages. A larger
-   project is marked limited.
+   workers, at most 100,000 entries) counts files per language through the
+   [catalog](code-intelligence-catalog.md) and custom languages. Hidden,
+   dependency and build folders use the standard browser exclusions; symbolic
+   links are not followed. Inherited worktree `.gitignore` rules apply before
+   counting. Ignore inputs use bounded no-follow regular-file reads; links and
+   special files supply no rules. Read/traversal errors fail discovery instead of
+   claiming a complete plan. A larger project is marked limited, not complete.
 2. **Resolution.** For each language, launch resolution picks the server. The
    program is looked up without starting it: an absolute path from settings,
    then the tool store, then the system path. Path folders inside the
    workspace are skipped, so a project cannot supply its own server program.
 3. **Plan.** One `types.AssemblyPlan` per workspace: each language with its
-   file count, server, program, source, status (ready, not installed, off, no
-   known server), checked scope and a plain reason. The manager publishes it
-   in its snapshot (`Assembly()` on the shell port) and the control API's
+   file count and an example file, server, program, source, status (ready, not
+   installed, off, no known server), checked scope and a plain reason. The manager
+   publishes it in its snapshot (`Assembly()` on the shell port) and the control API's
    diagnostics `lsp` view lists it.
 4. **Activation.** A ready server whose catalog scope is `project` becomes a
    project producer at its project root. A server found in the tool store
@@ -996,14 +1006,33 @@ intelligence from data. It runs no project code.
 
 The workspace starts the service when its analysis runtime starts. Settings
 changes and **Start Language Servers** run it again; a newer run cancels an
-older one and a stale result is dropped. Close cancels and joins it.
+older one and a stale result is dropped. Source create/delete/rename and ignore
+changes immediately invalidate/cancel cached discovery, then debounce a fresh
+scan (150 ms idle, at most one second hold). Root, settings and invalidation
+generations fence timers and results. Watch recovery rescans even without active
+producers. Close cancels timers and joins scans.
+
+The retained core watches source changes, including files nobody opened. On
+Windows it holds one root-recursive native watch and one parent-nonrecursive
+directory-name watch filtered to the root name, with no descendant handles that
+would block populated directory moves. Windows path identity is case-insensitive;
+event/display spelling is preserved. Native `OVERLAPPED` and buffers remain
+heap-owned and pinned through completion/cancellation and joined Close. Overflow,
+read/admission failures and root loss fence project coverage. Root replacement
+does not restore reliability automatically: the watcher must restart. Unrelated
+sibling subtree activity is outside the native observation scope.
 
 Coverage is shown where the user looks for problems. Server rows show their
 current state and declared scope as a capability, not proof of a complete
 project check. **Project Languages** lists every language found, with the
 installed server, its program and declared capability; installation alone does
-not mean it is running. A language whose server is not installed offers
-**Check again** after installation.
+not mean it is running. Each language includes an **Example file** so its
+classification is inspectable. A missing installable tool offers **Set up tools**;
+manual installation can be followed by **Check again**. The native setup owner
+checks newly acquired sealed bytes at an independent inert root and joins the
+exact process before publication, then admits usage and refreshes assembly.
+Protocol initialization alone proves neither semantic features nor complete
+project coverage. See [project setup](settings.md#project-tool-setup).
 
 The language-server manager derives the active file's visible language status.
 The editor header shows error and warning counts, or that status label. The

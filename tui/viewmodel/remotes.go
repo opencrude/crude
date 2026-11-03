@@ -610,6 +610,7 @@ func (m *App) drainRemoteUICommands() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 func (m *App) bindRemoteSettings(body *settingsui.WorkspaceSettingsSurface) {
+	m.bindCodeToolsSettings(body)
 	admin, _ := m.ws.(shellport.RemoteAccessAdmin)
 	authority, ok := m.ws.(shellport.LocalHostAuthority)
 	local := ok && authority.LocalHost()
@@ -618,6 +619,7 @@ func (m *App) bindRemoteSettings(body *settingsui.WorkspaceSettingsSurface) {
 	}
 }
 func (m *App) cancelRemoteSettings() {
+	m.cancelCodeToolsSettings()
 	if m.overlayHost != nil {
 		if body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings)); body != nil {
 			body.CancelRemoteAccess()

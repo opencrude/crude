@@ -942,6 +942,8 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	case action == "lsp:start-all":
 		m.startLSPForWorkspace()
 		return nil
+	case action == "lsp:setup":
+		return m.requestProjectTools(true)
 	case action == "lsp:stop-all":
 		m.StopLSP()
 		return nil

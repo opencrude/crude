@@ -253,6 +253,7 @@ type App struct {
 	editorScreen           *shelleditor.Screen
 	launcherScreen         *launcher.Screen
 	onboarding             onboardingState
+	projectTools           projectToolsState
 	workspaceInfos         []workspace.WorkspaceInfo
 	workspaceListLoading   bool
 	workspaceListError     string
@@ -852,6 +853,7 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 	m.overlayHost.Open(ui.OverlayWorkspaceSettings, win, ui.ModalDialogPolicy(), func() {
 		if body := m.settingsSurface(win); body != nil {
 			body.CancelRemoteAccess()
+			body.CancelCodeTools()
 		}
 		if m.settingsPrompt != nil && m.settingsPrompt.parent == win {
 			m.overlayHost.Close(ui.OverlaySettingsPrompt)

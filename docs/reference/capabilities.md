@@ -11,13 +11,16 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
 
 ## Registration and binding
 
-- The `tool` capability kind is reserved for tool acquisition, not an MCP
-  registration. Its product acquisition path is not connected yet. The reserved
+- The `tool` capability kind describes managed project tools, not an MCP
+  registration. The native [project setup](settings.md#project-tool-setup) owner
+  connects review, human choice, staged evaluation and acquisition. The reserved
   `capabilities.project_tool_decisions` JSON value
   is workspace-only and does not inherit from application settings. Generic
   settings and capability registration are not the authority to grant project
-  setup consent; a separate workspace transaction must own that decision.
-  Reserving the field does not itself create human consent.
+  setup consent; an expiring native-shell preview and consumed one-shot authority
+  own that decision. Stored choices are audit evidence, not reusable effect grants.
+  Agents can inspect the shared [tool inventory](tool-store.md), but no generic
+  capability registration or semantic command grants installation or removal.
 - **Skills and MCP are application-bound by default; workspace binding is an
   explicit choice.** `capability_activate` publishes user-owned registrations into
   config.json unless the task or user asks for `scope: "workspace"`, so deleting a

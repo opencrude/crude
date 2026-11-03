@@ -49,7 +49,7 @@ func TestDocumentDurableRestartAuthorHistoryAndReceipts(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	lsp := NewLSPManager(nil)
-	defer lsp.Stop()
+	defer lsp.Close()
 	s = NewDocumentService(root, nil, lsp, db.DB)
 	defer s.Close()
 	if got := documentText(t, s, path, "finish"); !got.Dirty || string(got.Saved) != "start" || got.Revision != 3 {

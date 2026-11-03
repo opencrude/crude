@@ -28,6 +28,10 @@ shared control, never to one popup.
   viewport minus one row. The first page gesture advances reading immediately,
   in editable and read-only areas; unchanged paint/layout never restores the
   former page. Composite documentation shortcuts reuse this native behavior.
+- Read-only Form text areas open replacement content at its first line, so a
+  source or warning cannot start below the visible viewport. Unchanged Form
+  refreshes retain the user's reading position and selection. Editable areas
+  keep their ordinary end-of-content insertion behavior.
 - Explicit wheel reading survives vertical expansion, including a popup's
   opening reveal. Adding visible rows cannot hide the caret and must not snap
   back to it. Width reflow or shrinking can reveal the caret again; an actual

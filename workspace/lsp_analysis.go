@@ -84,6 +84,10 @@ func (m *LSPManager) analysisBoundaryLocked(reason string) {
 	if len(m.states) > 0 || len(m.documents) > 0 {
 		m.signalLocked()
 	}
+	// This boundary also supersedes a watch-recovery debounce captured under
+	// the previous policy. Own a new scan instead of leaving "scanning" with
+	// no current worker after that old callback rejects its generation.
+	m.requestAssemblyLocked()
 }
 
 // SetAnalysisGovernor binds the core's shared capacity authority. No fallback

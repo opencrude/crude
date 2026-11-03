@@ -45,26 +45,29 @@ const (
 	PromptDiscardSettings
 	PromptRemoveCapability
 	PromptRevokeRemoteDevice
+	PromptRemoveCodeTools
 )
 
 type PromptMsg struct {
-	Target           *Model
-	Kind             PromptKind
-	ID               string
-	Label            string
-	RelatedCount     int
-	beforeAccount    *provider.Account
-	accountEditor    *accountEdit
-	accountDraft     *provider.Account
-	preferences      []byte
-	agentEditor      *ui.FormModel
-	agentDraft       []byte
-	capabilityEditor *capabilityCatalog
-	capabilityForm   *ui.FormModel
-	capabilityDraft  []byte
-	CapabilityAction *capability.Action
-	remoteDevice     *coreprotocol.RemoteDevice
-	remoteGeneration uint64
+	Target             *Model
+	Kind               PromptKind
+	ID                 string
+	Label              string
+	RelatedCount       int
+	beforeAccount      *provider.Account
+	accountEditor      *accountEdit
+	accountDraft       *provider.Account
+	preferences        []byte
+	agentEditor        *ui.FormModel
+	agentDraft         []byte
+	capabilityEditor   *capabilityCatalog
+	capabilityForm     *ui.FormModel
+	capabilityDraft    []byte
+	CapabilityAction   *capability.Action
+	remoteDevice       *coreprotocol.RemoteDevice
+	remoteGeneration   uint64
+	CodeToolPreview    *types.CodeToolRemovalPreview
+	codeToolGeneration uint64
 }
 
 type AccountChangeMsg struct {
@@ -204,6 +207,7 @@ type Model struct {
 	layerBase       types.AppSettings
 	resetPaths      [][]string
 	remoteAccess    remoteAccessState
+	codeTools       codeToolsSettingsState
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents                   *types.AgentsSettings
@@ -409,6 +413,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		Category{Name: "Acquisition", Group: "AI", Description: "When agents may pick or install capabilities on their own, and the limits they work within.", Form: m.buildAcquisitionForm()},
 		Category{Name: "Language Servers", Group: "IDE", Description: "The server behind each language. Open one to change its command, arguments or environment.", Form: formModel()},
 		Category{Name: "Terminal", Group: "IDE", Description: "The shell integrated terminals start, its environment, and where new terminals open.", Form: m.buildTerminalForm(current.Terminal)},
+		Category{Name: "Code intelligence tools", Group: "IDE", Description: "Review installed tools, their files, disk use and history.", Form: m.buildCodeToolsForm()},
 	)
 	for index := range m.categories {
 		category := index
@@ -1963,6 +1968,9 @@ func (m *Model) syncAppearanceColors() {
 // the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case CodeToolsResultMsg:
+		cmd := m.applyCodeToolsResult(msg)
+		return *m, cmd
 	case RemoteAccessResultMsg:
 		cmd := m.applyRemoteAccessResult(msg)
 		return *m, cmd
@@ -2178,6 +2186,7 @@ func (m *Model) SetScope(scope types.SettingsScope) {
 	}
 	m.storeAccountForm()
 	m.cancelRemoteAccess()
+	m.cancelCodeTools()
 	m.scope = scope
 	if scope == types.SettingsScopeWorkspace && m.selected == catAccounts {
 		m.SelectCategory(catMain)
@@ -2277,6 +2286,10 @@ func (m *Model) rebased(application, effective types.AppSettings, overrides type
 
 func (m *Model) SelectCategory(index int) {
 	if index >= 0 && index < len(m.categories) && (index != catAccounts || m.Scope() == types.SettingsScopeApplication) {
+		if m.selected == catCodeTools && index != m.selected {
+			m.cancelCodeTools()
+			m.rebuildCodeTools()
+		}
 		if m.selected == catNetworkRemoteAccess && index != m.selected {
 			m.cancelRemoteAccess()
 			m.rebuildRemoteAccessStatus()
@@ -2501,15 +2514,17 @@ func (m *Model) ensureVisibleSelection() {
 func railPosition(index int) int {
 	switch index {
 	case catLanguageServers:
-		return catLSP*2 + 1
+		return catLSP*4 + 1
+	case catCodeTools:
+		return catLSP*4 + 2
 	case catTerminal:
 		// Terminal follows Interface, the other window-chrome page.
-		return catUI*2 + 1
+		return catUI*4 + 1
 	case catAgents:
 		// The Agents catalog takes the Main Agent role's place.
-		return catMain * 2
+		return catMain * 4
 	}
-	return index * 2
+	return index * 4
 }
 
 // networkGroupName is the rail group for application-owned transport policy.
@@ -2541,6 +2556,7 @@ const (
 	catAcquisition
 	catLanguageServers
 	catTerminal
+	catCodeTools
 )
 
 // AppSettings returns the values held by the shared form models.

@@ -45,6 +45,9 @@ type LSPManager struct {
 	assemblyRequested           uint64
 	assemblyCancel              context.CancelFunc
 	assemblyWG                  sync.WaitGroup
+	assemblyInvalidationTimer   *time.Timer
+	assemblyInvalidationEpoch   uint64
+	assemblyInvalidationStarted time.Time
 	discovery                   *assemblyDiscovery
 	toolPaths                   map[assemblyToolKey]string // server and command -> tool store executable
 	toolMissing                 map[assemblyToolKey]string // server and command -> user reason
@@ -228,8 +231,11 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 	m.mu.Lock()
 	watchUnreliable := m.projectWatchUnreliable
 	ins := ProjectInsights{ServerName: m.activeServerNameLocked(), ServerReady: m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
-		ServerBusy: m.inflight > 0, ServerStarting: m.activeStatus == LSPStarting, ServerSyncing: m.syncing,
+		ServerBusy: m.inflight > 0, ServerStarting: m.activeStatus == LSPStarting || m.activeFileWaitingLocked(), ServerSyncing: m.syncing,
 		ServerFailed: m.isFailedLocked(), ServerError: m.activeError, Language: m.language, SymbolsCount: m.symbolCount}
+	if !ins.ServerFailed {
+		ins.ServerError = ""
+	}
 	settings := ttypes.LSPSettings{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
 	sources := m.sources
 	m.mu.Unlock()
@@ -274,7 +280,7 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 			health.InstanceID = state.instance
 		}
 		if state.waiting {
-			health.Status = "Waiting for slot"
+			health.Status, health.Error = "Waiting for slot", ""
 		}
 		// Coverage: what this producer checks. A project producer reports
 		// files that are not open; any other server checks open files only.
@@ -339,7 +345,8 @@ func (m *LSPManager) activeServerNameLocked() string {
 }
 
 func (m *LSPManager) isFailedLocked() bool {
-	return m.activeStatus == LSPFailed || (m.activeError != "" && m.activeStatus != LSPConnected)
+	return !m.activeFileWaitingLocked() &&
+		(m.activeStatus == LSPFailed || m.activeError != "" && m.activeStatus != LSPConnected)
 }
 
 func (m *LSPManager) HasActiveFile() bool {

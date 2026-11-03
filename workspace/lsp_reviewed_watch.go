@@ -27,7 +27,7 @@ type reviewedWatchTxn struct {
 }
 
 type reviewedWatchTarget struct {
-	committing, committed, observed bool
+	committing, committed, removed, observed bool
 }
 
 type reviewedWatchEvent struct {
@@ -97,12 +97,18 @@ func (r *reviewedWatchRegistry) deferEvent(ctx context.Context, path string, kin
 			}
 		}
 		ambiguous := tx.draining || target == nil
-		// An atomic replacement produces one create event. Any other
-		// observation refuses the next commit rather than assuming ownership.
+		// An atomic replacement produces create, or remove then create on
+		// Windows. Admit that sequence only for a target whose exact writer
+		// commit has started. The writer still checks staged file identity and
+		// the complete postimage before claiming success; a pathname event
+		// alone is never proof that an external mutation belongs to us.
 		if !tx.draining {
-			if target == nil || kind != 1 || target.observed || (!target.committing && !target.committed) {
+			if target == nil || target.observed || (!target.committing && !target.committed) ||
+				(kind != 1 && (kind != 3 || target.removed)) {
 				tx.tainted = true
 				ambiguous = true
+			} else if kind == 3 {
+				target.removed = true
 			} else {
 				target.observed = true
 			}

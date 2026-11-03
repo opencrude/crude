@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"sync"
 	"time"
 
 	"crude/fileio"
@@ -93,6 +94,7 @@ func (m *LSPManager) SetRuntime(runtime LSPRuntime) {
 	m.runtime = runtime
 	m.settingsGeneration++
 	m.advanceContextLocked("Language service configuration changed.")
+	m.requestAssemblyLocked()
 	if len(m.states) > 0 || len(m.documents) > 0 {
 		m.signalLocked()
 	}
@@ -125,6 +127,7 @@ func (m *LSPManager) setWorkspaceRootLocked(root string) {
 	if len(m.states) > 0 {
 		m.signalLocked()
 	}
+	m.requestAssemblyLocked()
 }
 
 func (m *LSPManager) Settings() ttypes.LSPSettings {
@@ -556,14 +559,38 @@ func (m *LSPManager) startStateLocked(key string, state *lspClientState, stillWa
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	state.status, state.err, state.waiting, state.cancel = LSPStarting, "", false, cancel
 	runtime := m.runtime
+	store, workspace := m.toolStore, m.workspaceRoot
+	spec, rootURI := state.spec, state.rootURI
 	admission := m.startAdmission(key, state, epoch)
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
-	client := runtime.NewClient(state.spec, state.rootURI, admission)
+	var release func()
+	var managed bool
+	if store != nil {
+		release, managed, err = store.AcquireExecutable(ctx, spec.Command)
+	}
+	if err == nil {
+		err = admission()
+	}
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		cancel()
+		m.finishStart(key, state, nil, err)
+		return true
+	}
+	client := runtime.NewClient(spec, rootURI, admission)
 	if client == nil {
+		if release != nil {
+			release()
+		}
 		cancel()
 		m.finishStart(key, state, nil, fmt.Errorf("LSP transport is unavailable"))
 		return true
+	}
+	if release != nil {
+		client = &leasedLSPClient{LSPClient: client, release: release}
 	}
 	m.mu.Lock()
 	state.client = client
@@ -575,9 +602,40 @@ func (m *LSPManager) startStateLocked(key string, state *lspClientState, stillWa
 		})
 	}
 	err = client.Start(ctx)
+	if err == nil && managed {
+		err = store.MarkExecutableUsedContext(ctx, spec.Command, workspace, func(ctx context.Context) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return admission()
+		})
+	}
 	cancel()
 	m.finishStart(key, state, client, err)
 	return true
+}
+
+// A managed tool pin belongs to the exact transport, not its registry key.
+// Stop always runs off m.mu. Failed/unverified teardown retains the pin even
+// after configuration changes or manager shutdown.
+type leasedLSPClient struct {
+	LSPClient
+	release func()
+	once    sync.Once
+}
+
+func (c *leasedLSPClient) Stop() error {
+	if err := c.LSPClient.Stop(); err != nil {
+		return err
+	}
+	c.once.Do(c.release)
+	return nil
+}
+
+func (c *leasedLSPClient) OnUnopenedDiagnostics(fn func(string, ttypes.InsightDiagnosticPublication)) {
+	if unopened, ok := c.LSPClient.(lspUnopenedDiagnostics); ok {
+		unopened.OnUnopenedDiagnostics(fn)
+	}
 }
 
 func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPClient, err error) {
@@ -970,10 +1028,14 @@ func (m *LSPManager) notifyWatchedFilesChanged(ctx context.Context, path string,
 		return
 	}
 	if deferReview && m.reviewWatch.deferEvent(ctx, path, changeType, func() {
+		m.invalidateAssemblyForWatch(ctx, path, changeType)
 		m.invalidateWatchedContext(ctx, path)
 	}) {
 		return
 	}
+	// Exact reviewed atomic replacements defer their events until the owned
+	// transaction settles. Do not scan its transient remove/create topology.
+	m.invalidateAssemblyForWatch(ctx, path, changeType)
 	m.mu.Lock()
 	// A watch generation can be cancelled while this callback waits for the
 	// lock. Check inside the same critical section that selects producers.
@@ -1059,6 +1121,7 @@ func (m *LSPManager) Close() {
 	// closed must already see every owned server marked for joined shutdown;
 	// otherwise it can exit between this flag and a later Stop call.
 	m.closed = true
+	m.cancelAssemblyInvalidationLocked()
 	m.stopLocked()
 	if m.workerRunning {
 		m.signalLocked()

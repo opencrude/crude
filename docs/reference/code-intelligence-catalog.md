@@ -102,6 +102,25 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
   missing server as one Crude can install.
 - `Names` lists every identifying string.
 
+### Discovery and acquired tools
+
+Project discovery uses these name/extension rules on a bounded, ignore-aware file
+listing, not go-enry or project execution. Standard hidden/dependency/build
+exclusions and inherited `.gitignore` rules limit the scope. Ignore links and
+special files are not followed; actual read failures do not become a complete
+plan. At 100,000 entries the plan is explicitly limited. Each detected language
+retains a counted example path shown as **Example file** in Project Languages.
+Ambiguous-extension content detection remains open; the example makes the current
+name-based result inspectable.
+
+`DownloadFor` describes a candidate; it grants no download or execution authority.
+The native [project setup owner](settings.md#project-tool-setup) binds the exact
+catalog/review to a one-shot human decision, stages the artifact and checks its
+standard protocol initialization at an independent inert root. Successful joined
+teardown precedes publication, current usage admission and assembly refresh.
+A failed or uncertain new artifact never enters ordinary resolution. This thin
+protocol check is not feature evidence or a compatibility guarantee.
+
 ## Names gate
 
 `go run ./internal/namesgate` (part of `make design-audit`, and the test

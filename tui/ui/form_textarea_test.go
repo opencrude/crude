@@ -188,3 +188,40 @@ func TestFormTextAreaOwnsPageNavigation(t *testing.T) {
 		t.Fatal("PageDown moved focus out of textarea")
 	}
 }
+
+func TestReadOnlyFormTextAreaStartsAtTopAndRetainsReading(t *testing.T) {
+	model := NewFormModel()
+	state := TextAreaFieldState("reader", "Details", "FIRST SOURCE\nsecond\nthird\nfourth\nLAST CHECKSUM", "")
+	state.ReadOnly, state.Rows = true, 2
+	model.AddField(state)
+	form := NewForm("reader-form", model, "", "", NewTokenSet(theme.DefaultDark()))
+	form.Layout(LayoutContext{}, Rect{W: 60, H: 8})
+	paint := func() string {
+		t.Helper()
+		buffer := surface.NewCellBuffer(60, 8)
+		form.Paint(buffer, 0, 0, PaintContext{Focused: true})
+		var b strings.Builder
+		for y := 0; y < buffer.Height(); y++ {
+			b.WriteString(rowText(buffer, y))
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
+	if got := paint(); !strings.Contains(got, "FIRST SOURCE") || strings.Contains(got, "LAST CHECKSUM") {
+		t.Fatalf("a newly opened reader skipped its source:\n%s", got)
+	}
+	area := form.Field("reader").Area()
+	area.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyPgDown}))
+	before := area.EditState()
+	form.SetForm(model, "", "")
+	form.Layout(LayoutContext{}, Rect{W: 60, H: 8})
+	if got := area.EditState(); got != before {
+		t.Fatal("unchanged view refresh reset the user's reading position", before, got)
+	}
+	state.Value = StringValue("NEW SOURCE\nsecond\nthird\nfourth\nNEW CHECKSUM")
+	form.SetForm(model, "", "")
+	form.Layout(LayoutContext{}, Rect{W: 60, H: 8})
+	if got := paint(); !strings.Contains(got, "NEW SOURCE") {
+		t.Fatalf("replacement reader text skipped its new source:\n%s", got)
+	}
+}

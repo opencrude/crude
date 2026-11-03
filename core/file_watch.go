@@ -37,7 +37,8 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 	if reliable != nil {
 		reliable(false)
 	}
-	watcher, err := fsnotify.NewWatcher()
+	root = filepath.Clean(root)
+	watcher, err := newCoreWatcher(root)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,6 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 			}
 		}
 	}()
-	root = filepath.Clean(root)
 	go func() {
 		defer close(w.done)
 		defer func() { _ = watcher.Close() }()
@@ -122,7 +122,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 				if err := watcher.Add(path); err != nil {
 					return err
 				}
-				dirs[path] = true
+				dirs[coreWatchPathKey(path)] = true
 				return nil
 			})
 			return err == nil
@@ -134,6 +134,10 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 			publish(coreprotocol.FileChange{Resync: true})
 		}
 		rootIdentity, _ = os.Lstat(root)
+		if !addCoreWatchParent(watcher, root) {
+			admissionFailed = true
+			gap()
+		}
 		if !add(root) && ctx.Err() == nil {
 			admissionFailed = true
 			gap()
@@ -153,12 +157,17 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 					return
 				}
 				path := filepath.Clean(event.Name)
+				rel, err := filepath.Rel(root, path)
+				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					continue
+				}
 				if skipCoreWatchPath(root, path) {
 					continue
 				}
 				fileEvents.Inc()
-				rel, _ := filepath.Rel(root, path)
-				git := rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator))
+				key := coreWatchPathKey(path)
+				relKey := coreWatchPathKey(rel)
+				git := relKey == ".git" || strings.HasPrefix(relKey, ".git"+string(filepath.Separator))
 				if event.Op&fsnotify.Create != 0 {
 					info, err := os.Lstat(path)
 					if err == nil && info.IsDir() {
@@ -177,17 +186,16 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 						gap()
 					}
 				}
-				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && dirs[path] {
+				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && dirs[key] {
 					if !git {
 						gap()
 					}
-					// We do not observe the root's parent, so a replacement
-					// cannot be admitted reliably. Stay fenced until restart.
-					if path == root {
+					// A replacement is not admitted reliably. Stay fenced until restart.
+					if key == coreWatchPathKey(root) {
 						admissionFailed = true
 					}
 					for dir := range dirs {
-						if dir == path || strings.HasPrefix(dir, path+string(filepath.Separator)) {
+						if dir == key || strings.HasPrefix(dir, key+string(filepath.Separator)) {
 							delete(dirs, dir)
 						}
 					}
@@ -238,7 +246,7 @@ func skipCoreWatchPath(root, path string) bool {
 	if err != nil {
 		return true
 	}
-	parts := strings.Split(rel, string(filepath.Separator))
+	parts := strings.Split(coreWatchPathKey(rel), string(filepath.Separator))
 	for i, part := range parts {
 		if part == ".claude" && i+1 < len(parts) && parts[i+1] == "worktrees" {
 			return true

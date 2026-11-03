@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -138,23 +139,33 @@ func newNavigationConnectedFixtureTarget(t *testing.T, answer, targetText, targe
 		t.Fatal(err)
 	}
 	var owned *workspace.Workspace
-	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
-		owned = w
-		w.LSPMgr.SetRuntime(engine)
-		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
-		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
-			Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
-		}}
+	runtime := func() *core.Runtime {
 		if targetStart != nil {
-			// LanguageID alone is not a process key: distinct arguments model
-			// the real Rust server rather than sharing the Go fixture process.
-			settings.LSP.Languages["rust"] = types.LSPLanguageSettings{Enabled: true, Command: executable, Args: []string{"--fixture-rust"}, RootMarkers: []string{"go.mod"}}
+			// The core sizes process admission at construction from GOMAXPROCS.
+			// This journey needs two simultaneous producers, even on a one-slot
+			// host. Restore the actual scheduler before attaching either shell;
+			// only the fixture's fixed process capacity needs two slots.
+			previous := goruntime.GOMAXPROCS(max(8, goruntime.GOMAXPROCS(0)))
+			defer goruntime.GOMAXPROCS(previous)
 		}
-		w.SetAppDefaults(settings)
-		grantSemanticFixture(t, w)
-	})
+		return remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
+			owned = w
+			w.LSPMgr.SetRuntime(engine)
+			settings := w.AppDefaults()
+			settings.LSP = types.DefaultLSPSettings()
+			settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
+			settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+				Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
+			}}
+			if targetStart != nil {
+				// LanguageID alone is not a process key: distinct arguments model
+				// the real Rust server rather than sharing the Go fixture process.
+				settings.LSP.Languages["rust"] = types.LSPLanguageSettings{Enabled: true, Command: executable, Args: []string{"--fixture-rust"}, RootMarkers: []string{"go.mod"}}
+			}
+			w.SetAppDefaults(settings)
+			grantSemanticFixture(t, w)
+		})
+	}()
 	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)
 	a, b := liveTestOpen(t, one.app, engine.main), liveTestOpen(t, two.app, engine.main)
 	f := navigationConnectedFixture{runtime, []remoteJourneyShell{one, two}, owned, engine, a, b}
@@ -581,7 +592,11 @@ func TestConnectedNavigationLandingTracksSourceProducerNotDestinationReadiness(t
 		t.Run(name, func(t *testing.T) {
 			gate := make(chan struct{})
 			defer close(gate)
+			scheduler := goruntime.GOMAXPROCS(0)
 			f := newNavigationConnectedFixtureTarget(t, navigationConnectedPoint, "\t😀name\r\n", "target.rs", gate)
+			if got := goruntime.GOMAXPROCS(0); got != scheduler {
+				t.Fatalf("fixture changed navigation scheduling: GOMAXPROCS=%d, want %d", got, scheduler)
+			}
 			one := f.shells[0]
 			s := f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
 			f.inspect(t)
@@ -600,6 +615,9 @@ func TestConnectedNavigationLandingTracksSourceProducerNotDestinationReadiness(t
 			// its active-file readiness is published to the invoking shell.
 			remoteJourneyUntil(t, f.shells, func() bool {
 				for _, health := range one.app.ws.LSPMgr().ServerHealthSnapshots() {
+					if health.Status == "Failed" || health.Status == "Waiting for slot" {
+						t.Fatalf("server failed before held navigation landing: %+v", health)
+					}
 					if health.Starting && health.InstanceID != "" && health.InstanceID != instance {
 						return true
 					}

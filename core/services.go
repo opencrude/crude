@@ -9,6 +9,7 @@ import (
 	"crude/collaboration"
 	"crude/coreprotocol"
 	"crude/memory"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -41,6 +42,9 @@ func (a *actor) prepareService(request coreprotocol.Request) (func(context.Conte
 }
 
 func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) (func(context.Context) coreprotocol.Response, bool) {
+	if run, known := a.prepareCodeTools(request); known {
+		return run, true
+	}
 	ws, git := a.ws, a.ws.Git
 	if root != ws.RootPath {
 		git = workspace.NewGitService(root)
@@ -58,6 +62,22 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 	}
 	board := ws.Collaboration
 	switch request.Method {
+	case coreprotocol.ReadCodeToolInventory:
+		// The workspace manager belongs to the logical root. An isolated
+		// execution must not expose that root's unmanaged executables as its own.
+		manager := ws.LSPMgr
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.ReadCodeToolInventoryRequest) (coreprotocol.ReadCodeToolInventoryResult, error) {
+			var plan types.AssemblyPlan
+			if root == ws.RootPath && manager != nil {
+				plan = manager.Assembly()
+			}
+			store, err := a.runtime.toolStore()
+			if err != nil {
+				return coreprotocol.ReadCodeToolInventoryResult{}, err
+			}
+			inventory, err := readCodeToolInventory(ctx, store, plan, in.Offset, in.Limit)
+			return coreprotocol.ReadCodeToolInventoryResult{Inventory: inventory}, err
+		})
 	case coreprotocol.GitSnapshot:
 		return serviceCall(request, func(ctx context.Context, in coreprotocol.GitSnapshotRequest) (coreprotocol.GitSnapshotResult, error) {
 			if git == nil {
@@ -335,7 +355,7 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 
 func serviceMutation(method string) bool {
 	switch method {
-	case coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
+	case coreprotocol.RemoveCodeTools, coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
 		coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation, coreprotocol.ResolveGitConflict,
 		coreprotocol.PinMemory, coreprotocol.ForgetMemoryRecord, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
 		return true

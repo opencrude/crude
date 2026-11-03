@@ -34,6 +34,9 @@ func TestLanguageStatusOwnerStates(t *testing.T) {
 		{"large", func(m *LSPManager, _ string) {
 			m.activeStatus = LSPIdle
 			m.activeError = "Document exceeds the configured LSP size limit."
+			m.activeFilePath = "large-source"
+			m.settings.MaxDocumentBytes = 4
+			m.documents[m.activeFilePath] = &lspDocument{text: "12345"}
 		}, types.LanguageFailed, "Language server failed", types.LanguageActionOpenSettings},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,5 +55,45 @@ func TestLanguageStatusOwnerStates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWaitingLanguageServerIsNotReportedAsLargeOrFailed(t *testing.T) {
+	m, r, root := lifecycleManager(t)
+	settings := m.Settings()
+	settings.MaxServers = 1
+	m.SetSettings(settings)
+	first := filepath.Join(root, "first.go")
+	second := filepath.Join(root, "second.py")
+	editorSource(t, m, first, "first")
+	awaitLSP(t, func() bool {
+		clients := r.snapshot()
+		return len(clients) == 1 && len(clients[0].snapshot()) == 1
+	})
+	editorSource(t, m, second, "second")
+	m.SetActiveFile(second)
+	awaitLSP(t, func() bool {
+		for _, server := range m.ServerHealthSnapshots() {
+			if server.Status == "Waiting for slot" {
+				return true
+			}
+		}
+		return false
+	})
+	view := m.ProjectInsights()
+	if view.ServerFailed || view.Language.State != types.LanguageStarting ||
+		view.Language.Label != "Waiting to start" || !strings.Contains(view.Language.Message, "limit") ||
+		strings.Contains(view.Language.Message, "too large") {
+		t.Fatalf("process capacity was misreported as a file or server failure: %+v", view)
+	}
+	for _, server := range m.ServerHealthSnapshots() {
+		if server.Status == "Waiting for slot" && server.Error != "" {
+			t.Fatalf("a queued server carries a failure into Problems: %+v", server)
+		}
+	}
+	closeEditor(t, m, first)
+	awaitLSP(t, func() bool { return m.ServerReady() })
+	if view := m.ProjectInsights(); view.ServerFailed || view.Language.State != types.LanguageReady {
+		t.Fatalf("released capacity did not clear the waiting explanation: %+v", view)
 	}
 }

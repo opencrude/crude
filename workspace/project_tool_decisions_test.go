@@ -80,7 +80,7 @@ func decisionsFromDB(t *testing.T, db *WorkspaceDB) []projectToolDecision {
 
 func TestProjectToolDecisionPersistDenyAndReplay(t *testing.T) {
 	w, review := decisionFixture(t)
-	work, err := w.PrepareProjectToolDecision(review, nil, "receipt-denial")
+	work, err := w.PrepareProjectToolDecision(review, nil, "receipt-denial", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,10 +107,10 @@ func TestProjectToolDecisionPersistDenyAndReplay(t *testing.T) {
 
 func TestProjectToolDecisionRejectsStaleAndCancellation(t *testing.T) {
 	w, review := decisionFixture(t)
-	if _, err := w.PrepareProjectToolDecision(review, []string{"missing"}, "bad"); err == nil {
+	if _, err := w.PrepareProjectToolDecision(review, []string{"missing"}, "bad", ""); err == nil {
 		t.Fatal("accepted foreign item")
 	}
-	work, err := w.PrepareProjectToolDecision(review, nil, "cancel")
+	work, err := w.PrepareProjectToolDecision(review, nil, "cancel", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestProjectToolDecisionRejectsStaleAndCancellation(t *testing.T) {
 
 func TestProjectToolDecisionWaitingForSettingsIsCancellable(t *testing.T) {
 	w, review := decisionFixture(t)
-	work, err := w.PrepareProjectToolDecision(review, nil, "blocked")
+	work, err := w.PrepareProjectToolDecision(review, nil, "blocked", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,14 +150,14 @@ func TestProjectToolDecisionPreparationDoesNotWaitForWorkspaceSwitch(t *testing.
 	w, review := decisionFixture(t)
 	w.capabilityMu.Lock()
 	defer w.capabilityMu.Unlock()
-	if _, err := w.PrepareProjectToolDecision(review, nil, "switching"); err == nil {
+	if _, err := w.PrepareProjectToolDecision(review, nil, "switching", ""); err == nil {
 		t.Fatal("prepared a decision while the workspace was changing")
 	}
 }
 
 func TestProjectToolDecisionMalformedAuthorityFailsClosed(t *testing.T) {
 	w, review := decisionFixture(t)
-	work, err := w.PrepareProjectToolDecision(review, nil, "bad")
+	work, err := w.PrepareProjectToolDecision(review, nil, "bad", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestProjectToolDecisionSelectedSetIsDetached(t *testing.T) {
 		t.Skip("fixture has no installable package for this platform")
 	}
 	original := selected[0]
-	work, err := w.PrepareProjectToolDecision(review, selected[:1], "selection")
+	work, err := w.PrepareProjectToolDecision(review, selected[:1], "selection", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestProjectToolDecisionRejectsRootAndTrustChange(t *testing.T) {
 	for _, mode := range []string{"root", "trust"} {
 		t.Run(mode, func(t *testing.T) {
 			w, review := decisionFixture(t)
-			work, err := w.PrepareProjectToolDecision(review, nil, "decision")
+			work, err := w.PrepareProjectToolDecision(review, nil, "decision", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -244,7 +244,7 @@ func TestProjectToolDecisionRejectsRootAndTrustChange(t *testing.T) {
 
 func TestProjectToolDecisionConcurrentPreference(t *testing.T) {
 	w, review := decisionFixture(t)
-	work, err := w.PrepareProjectToolDecision(review, nil, "concurrent")
+	work, err := w.PrepareProjectToolDecision(review, nil, "concurrent", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,5 +263,49 @@ func TestProjectToolDecisionConcurrentPreference(t *testing.T) {
 	}
 	if len(decisionsFromDB(t, w.WorkspaceDB)) != 1 || w.LoadWorkspaceOverrides().Editor == nil {
 		t.Fatal("concurrent decision or preference was lost")
+	}
+}
+
+func TestProjectToolDecisionWriterRejectsChangedHistoryPreimage(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "first-choice", true: "explicit-retry"}[existing], func(t *testing.T) {
+			w, review := decisionFixture(t)
+			expectedCount := 1
+			if existing {
+				work, err := w.PrepareProjectToolDecision(review, nil, "initial-choice", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := work(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				expectedCount++
+			}
+			_, history, err := readProjectToolDecisions(t.Context(), w.WorkspaceDB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Both workers are prepared while the reviewed history is still
+			// current. Only the writer's transactional check can fence the
+			// second worker after the first worker commits.
+			first, err := w.PrepareProjectToolDecision(review, nil, "first-shell", history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := w.PrepareProjectToolDecision(review, nil, "second-shell", history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := first(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if saved, err := second(t.Context()); err == nil || saved.ReceiptID != "" {
+				t.Fatalf("changed decision history was appended: %+v %v", saved, err)
+			}
+			records := decisionsFromDB(t, w.WorkspaceDB)
+			if len(records) != expectedCount || records[len(records)-1].ReceiptID != "first-shell" {
+				t.Fatalf("stale writer changed history: %+v", records)
+			}
+		})
 	}
 }

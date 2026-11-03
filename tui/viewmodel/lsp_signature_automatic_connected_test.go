@@ -412,12 +412,38 @@ func TestConnectedAutomaticSignaturePendingReplyCannotReacquireInput(t *testing.
 			case "escape":
 				d.send(tea.KeyPressMsg{Code: tea.KeyEscape})
 			case "stop":
+				// Shutdown fences document topics and then reads canonical source
+				// on the same core resource lane as this blocked provider call.
+				// Release its late answer only after actual request cancellation,
+				// not after Stop returns and needs that lane to finish its flush.
+				// Only Stop owns App here; the release worker observes no UI state
+				// and is joined before the driver can resume Update.
+				released := make(chan struct{})
+				go func() {
+					defer close(released)
+					<-call.ctx.Done()
+					f.engine.unblock()
+				}()
 				app.StopAsyncIO()
+				<-released
+				if app.signatureHelp != nil || app.overlayHost.IsOpen(signatureHelpID) {
+					t.Fatal("Stop did not retire the pending parameter invocation")
+				}
+				if f.eds[0].IsOpen() || !app.asyncIOStopped.Load() {
+					t.Fatal("Stop did not flush and close its editor projection")
+				}
 			}
 			d.until(t, func() bool { return app.signatureHelp == nil && call.ctx.Err() != nil })
 			f.engine.unblock()
 			d.until(t, func() bool { return d.pending == 0 })
-			liveTestPump(t, []*App{app, f.shells[1].app}, nil)
+			if change == "stop" {
+				// The stopped shell has fenced its topics and closed its editor.
+				// Its late command was driven above; only the live peer can now
+				// acknowledge document publications.
+				liveTestPump(t, []*App{f.shells[1].app}, nil)
+			} else {
+				liveTestPump(t, []*App{app, f.shells[1].app}, nil)
+			}
 			if app.signatureHelp != nil || app.overlayHost.IsOpen(signatureHelpID) {
 				t.Fatal("late positive provider reply revived retired help")
 			}

@@ -339,6 +339,9 @@ func assemblyPanelItems(plan ttypes.AssemblyPlan, status ttypes.LanguageServiceS
 		case ttypes.ToolMissing:
 			item.Summary, role = "Not installed", ui.ColorWarning
 			item.PrimaryAction, item.PrimaryLabel, item.PrimaryEnabled = "lsp:start-all", "Check again", true
+			if language.Installable {
+				item.PrimaryAction, item.PrimaryLabel = "lsp:setup", "Set up tools"
+			}
 		case ttypes.ToolOff:
 			item.Summary = "Off"
 		default:
@@ -355,6 +358,9 @@ func assemblyPanelItems(plan ttypes.AssemblyPlan, status ttypes.LanguageServiceS
 		}
 		if language.Files > 0 {
 			item.Lines = append(item.Lines, statusoverview.DetailLine{Label: "Files", Value: fmt.Sprint(language.Files), Role: ui.ColorMuted})
+		}
+		if language.Sample != "" {
+			item.Lines = append(item.Lines, statusoverview.DetailLine{Label: "Example file", Value: language.Sample, Role: ui.ColorMuted})
 		}
 		items = append(items, item)
 	}

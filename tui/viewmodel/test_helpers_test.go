@@ -237,19 +237,15 @@ func newTestApp(t testing.TB) *App {
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 	gitPanel.SetFocusHandler(rootHost.Focus, rootHost.Focused)
+	originalWorkspace := wsOf(app)
 	t.Cleanup(func() {
 		app.StopAsyncIO()
-		if wsOf(app) != nil {
-			if app.ws.TermMgr() != nil {
-				wsOf(app).TermMgr.CloseAll()
-			}
-			if app.ws.LSPMgr() != nil {
-				app.ws.LSPMgr().Stop()
-			}
+		// Tests can replace or wrap the port. The original concrete fixture
+		// remains ours even when Unwrap cannot reach it through that wrapper.
+		if current := wsOf(app); current != nil && current != originalWorkspace {
+			current.Close()
 		}
-		if wsOf(app) != nil {
-			wsOf(app).Close()
-		}
+		originalWorkspace.Close()
 	})
 	return app
 }
@@ -261,6 +257,23 @@ func newFullTestApp(t testing.TB) *App {
 	app.compositor = compositor.NewCompositor(app.width, app.height)
 	app.renderCtx = wm.NewRenderContext(app.Theme)
 	return app
+}
+
+func TestAppFixtureClosesOriginalWorkspaceAfterPortReplacement(t *testing.T) {
+	var original *workspace.Workspace
+	defer func() {
+		if original != nil {
+			original.Close()
+		}
+	}()
+	t.Run("wrapped-port", func(t *testing.T) {
+		app := newTestApp(t)
+		original = wsOf(app)
+		app.ws = &struct{ shellport.Workspace }{app.ws}
+	})
+	if original == nil || original.Status != nil {
+		t.Fatal("replacing the test port leaked the fixture's original workspace")
+	}
 }
 
 // addBackendTestOrchestrator exercises the real Workspace -> Session turn

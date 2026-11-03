@@ -70,6 +70,8 @@ type WorkspaceSettingsSurface struct {
 	reset            *ui.ActionBar
 	actions          *ui.ActionBar
 	closeBar         *ui.ActionBar // Close beside an editor's decisions
+	codeToolsBar     *ui.ActionBar
+	codeToolsButtons []ui.ActionBarButton
 	listScroll       *ui.ScrollbarControl
 	formScroll       *ui.ScrollbarControl
 	split            *ui.SplitModel
@@ -192,6 +194,9 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 		ui.ActionBarButton{Label: "Close", Action: "settings.close", Variant: ui.VariantSecondary, Enabled: true})
 	s.closeBar.SetExitActions("settings.closebar.forward", "settings.closebar.backward")
 	s.closeBar.SetCancelAction("settings.cancel")
+	s.codeToolsBar = ui.NewActionBar("workspace-settings/code-tools-actions", tokens)
+	s.codeToolsBar.SetCancelAction("settings.cancel")
+	s.codeToolsBar.SetExitActions("settings.closebar.forward", "settings.closebar.backward")
 	s.rebuildActions()
 	s.bindModel()
 	s.syncModel()
@@ -303,6 +308,9 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	// area. This lets a category switch focus its first input before the next
 	// frame's layout, without painting or hit-testing an empty form over rows.
 	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents, s.capCatalog, s.lsp}
+	if s.model != nil && s.model.selected == catCodeTools {
+		children = append(children, s.codeToolsBar)
+	}
 	switch {
 	case s.accountsOpen() && s.model.accountEditor != nil:
 		children = append(children, s.accountEditorBar)
@@ -337,6 +345,9 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 }
 func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
+	if s.codeToolsBar != nil {
+		s.codeToolsBar.SetTokens(tokens)
+	}
 	if s.agents != nil {
 		s.agents.SetTokens(tokens)
 	}
@@ -553,6 +564,18 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 	if s.model == nil {
 		return nil
 	}
+	if s.model.selected == catCodeTools {
+		parts := []string{"Code intelligence tools"}
+		if s.model.codeTools.preview != nil {
+			return append(parts, "Review removal")
+		}
+		for _, tool := range s.model.codeTools.inventory.Tools {
+			if tool.ID == s.model.codeTools.detail {
+				return append(parts, tool.Package+" "+tool.Version)
+			}
+		}
+		return parts
+	}
 	if s.capabilitiesOpen() {
 		parts := []string{s.capCatalog.title()}
 		if s.capCatalog.id != "" && (s.capCatalog.detail || s.capCatalog.edit != "") {
@@ -698,6 +721,7 @@ func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
 	s.model.nextCategory, s.model.nextScope = -1, ""
 	s.capCatalog.nextOpen = nil
 	s.CancelRemoteAccess()
+	s.CancelCodeTools()
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
 
@@ -967,6 +991,10 @@ func (s *WorkspaceSettingsSurface) footer() pageFooter {
 		return footer
 	}
 	switch {
+	case s.model.selected == catCodeTools:
+		s.syncCodeToolsBar()
+		footer.bar, footer.notice, footer.ink = s.codeToolsBar, s.model.codeTools.notice, ui.ColorMuted
+		footer.help = s.form.HelpField()
 	case s.agentsOpen() && s.agents.draft != nil:
 		footer.bar, footer.origin, footer.notice = s.agents.bar, s.agents.Bounds(), s.agents.notice
 		footer.help = s.agents.form.HelpField()
@@ -1298,6 +1326,8 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 		parts := s.paneTitleParts()
 		if len(parts) > 1 && ui.BreadcrumbIndex(parts, s.breadcrumbSeparator(), ctx.LocalX-s.contentRect.X, s.contentRect.W) == 0 {
 			switch {
+			case s.model.selected == catCodeTools:
+				return s.handleCodeToolsAction(ui.Action{ID: "settings.code-tools.back"})
 			case s.accountsOpen() && s.model.accountEditor != nil:
 				return s.cancelAccountEdit()
 			case s.agentsOpen() && s.agents.draft != nil:
@@ -1374,6 +1404,9 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 	}
 	if strings.HasPrefix(string(action.ID), "settings.remote.") {
 		return s.handleRemoteAccessAction(action)
+	}
+	if strings.HasPrefix(string(action.ID), "settings.code-tools.") {
+		return s.handleCodeToolsAction(action)
 	}
 	switch action.ID {
 	case "settings.lsp.servers":
@@ -1816,6 +1849,8 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		return false
 	}
 	switch msg.Kind {
+	case PromptRemoveCodeTools:
+		return s.codeToolsPromptRelevant(msg)
 	case PromptRevokeRemoteDevice:
 		return s.remoteRevokeRelevant(msg)
 	case PromptRemoveAccount:
@@ -1883,6 +1918,9 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 	if s.model != nil && s.model.Saving() {
 		return ui.EventResult{Handled: true}
 	}
+	if s.model != nil && s.model.selected == catCodeTools && (s.model.codeTools.detail != "" || s.model.codeTools.preview != nil) {
+		return s.handleCodeToolsAction(ui.Action{ID: "settings.code-tools.back"})
+	}
 	if s.capabilitiesOpen() && (s.capCatalog.detail || s.capCatalog.edit != "") {
 		return s.capCatalog.back()
 	}
@@ -1903,6 +1941,7 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 		return s.lsp.back()
 	}
 	s.CancelRemoteAccess()
+	s.CancelCodeTools()
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
 

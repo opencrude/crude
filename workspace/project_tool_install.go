@@ -40,6 +40,11 @@ type projectToolInstallResult struct {
 	Err             error
 }
 
+type projectToolAuthorityError struct{ cause error }
+
+func (e *projectToolAuthorityError) Error() string { return e.cause.Error() }
+func (e *projectToolAuthorityError) Unwrap() error { return e.cause }
+
 // installReviewedProjectTools performs blocking I/O. It must run off the UI
 // thread under a cancellable lifecycle owner. This is not an approval authority:
 // before calling, the authority must verify and durably record the exact human
@@ -105,17 +110,18 @@ func installReviewedProjectToolsWithCatalog(ctx context.Context, installer proje
 	for i, item := range selected {
 		results[i] = projectToolInstallResult{ItemID: item.ID, Message: "Crude did not try to install this tool."}
 	}
+	var failures error
 	for i, item := range selected {
 		if err := ctx.Err(); err != nil {
-			return results, err
+			return results, errors.Join(failures, err)
 		}
 		if err := authority.Validate(ctx, item.ID); err != nil {
 			results[i].Err = err
-			return results, err
+			return results, errors.Join(failures, err)
 		}
 		if err := ctx.Err(); err != nil {
 			results[i].Err = err
-			return results, err
+			return results, errors.Join(failures, err)
 		}
 		results[i].Attempted = true
 		request := toolstore.Request{
@@ -123,8 +129,17 @@ func installReviewedProjectToolsWithCatalog(ctx context.Context, installer proje
 			Archive: item.Archive, Bin: item.Bin, Command: item.Command,
 			Licenses: append([]string(nil), item.Licenses...), InstalledBy: "user", Approval: approvalID,
 			MaxDownloadBytes: limits.MaxDownloadBytes, MaxExtractedBytes: limits.MaxExtractedBytes, MaxEntries: limits.MaxEntries,
+			PreparePublication: func(ctx context.Context) error {
+				if err := authority.Validate(ctx, item.ID); err != nil {
+					return &projectToolAuthorityError{err}
+				}
+				return nil
+			},
 			AdmitPublication: func(ctx context.Context) error {
-				return authority.AdmitPublication(ctx, item.ID)
+				if err := authority.AdmitPublication(ctx, item.ID); err != nil {
+					return &projectToolAuthorityError{err}
+				}
+				return nil
 			},
 		}
 		tool, err := installer.Install(ctx, request)
@@ -134,13 +149,27 @@ func installReviewedProjectToolsWithCatalog(ctx context.Context, installer proje
 			var unconfirmed *toolstore.PublicationUnconfirmedError
 			if errors.As(err, &unconfirmed) {
 				results[i].Message = fmt.Sprintf("Crude cannot confirm that %s was installed. Check the tools before you try again.", item.Package)
-				return results, err
+				return results, errors.Join(failures, err)
+			}
+			var unverified *toolstore.EvaluationUnverifiedError
+			if errors.As(err, &unverified) {
+				results[i].Message = "Crude could not stop the tool check. Check the tools before you try again."
+				return results, errors.Join(failures, err)
+			}
+			var authorityError *projectToolAuthorityError
+			if errors.As(err, &authorityError) {
+				results[i].Message = fmt.Sprintf("Crude cannot finish setting up %s. Review the tools again.", item.Package)
+				return results, errors.Join(failures, err)
 			}
 			var networkError net.Error
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && errors.As(err, &networkError) {
 				results[i].Message = fmt.Sprintf("Crude could not download %s. Check the network connection, then try again.", item.Package)
 			}
-			return results, err
+			failures = errors.Join(failures, err)
+			if ctx.Err() != nil {
+				return results, failures
+			}
+			continue
 		}
 		if err = ctx.Err(); err == nil {
 			err = authority.Validate(ctx, item.ID)
@@ -151,9 +180,9 @@ func installReviewedProjectToolsWithCatalog(ctx context.Context, installer proje
 		if err != nil {
 			results[i].Err = err
 			results[i].Message = fmt.Sprintf("Crude cannot finish setting up %s. Review the tools again.", item.Package)
-			return results, err
+			return results, errors.Join(failures, err)
 		}
 		results[i].Message = fmt.Sprintf("Crude installed %s.", item.Package)
 	}
-	return results, nil
+	return results, failures
 }

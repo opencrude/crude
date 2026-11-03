@@ -71,7 +71,7 @@ func TestScanStopsAtEntryAndPathBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cat.Truncated || len(cat.Entries) != 3 {
+	if !cat.Truncated || len(cat.Entries) != 3 || cat.Errors != 0 {
 		t.Fatalf("catalog=%#v, want exactly three truncated entries", cat)
 	}
 }

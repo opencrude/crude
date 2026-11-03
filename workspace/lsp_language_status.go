@@ -12,8 +12,11 @@ import (
 // recomputeLanguageStatusLocked is the sole owner of the visible language state.
 func (m *LSPManager) recomputeLanguageStatusLocked() {
 	var s types.LanguageServiceStatus
+	active := m.documents[m.activeFilePath]
 	switch {
-	case m.activeStatus == LSPIdle && m.activeError != "":
+	case m.activeFileWaitingLocked():
+		s = types.LanguageServiceStatus{State: types.LanguageStarting, Label: "Waiting to start", Message: "The language server is waiting for capacity. Close another language's files or raise the server limit in Code Intelligence settings.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}
+	case m.activeStatus == LSPIdle && active != nil && len(active.text) > m.settings.MaxDocumentBytes:
 		s = types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed", Message: "Language server could not check this file. The file is too large. Change the file size limit in Language servers settings.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}
 	case m.isFailedLocked():
 		name := m.activeServerNameLocked()
@@ -64,6 +67,15 @@ func (m *LSPManager) recomputeLanguageStatusLocked() {
 		s = types.LanguageServiceStatus{State: types.LanguageIdle, Message: "No results yet. Open a source file to check it."}
 	}
 	m.language = s
+}
+
+func (m *LSPManager) activeFileWaitingLocked() bool {
+	doc := m.documents[m.activeFilePath]
+	if doc == nil {
+		return false
+	}
+	state := m.states[doc.key]
+	return state != nil && state.waiting && !state.closing && !state.stopped
 }
 
 func (m *LSPManager) languageServerMatchesActiveLocked() bool {

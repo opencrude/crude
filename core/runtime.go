@@ -56,6 +56,7 @@ type Runtime struct {
 	toolsOnce        sync.Once
 	tools            *toolstore.Store
 	toolsErr         error
+	codeTools        codeToolsState
 	history          *history.Store
 	historyPath      string
 	uploads          *ReferenceUploads
@@ -573,6 +574,7 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 			}
 			if err == nil {
 				creation.actor = newActor(id, ws, r.receipts)
+				creation.actor.projectTools = workspace.NewProjectToolSetupOwner(ws, r.tools)
 				creation.actor.progress = r.publishProgress
 				creation.actor.runtime = r
 				r.workspaces[id] = creation.actor
@@ -614,6 +616,7 @@ type actor struct {
 	// progress delivers request-scoped output to the requesting connection.
 	progress       func(coreprotocol.Owner, coreprotocol.Progress)
 	runtime        *Runtime
+	projectTools   *workspace.ProjectToolSetupOwner
 	id             string
 	ws             *workspace.Workspace
 	accessDB       *workspace.WorkspaceDB // immutable lifetime handle; sql.DB fences concurrent close
@@ -1039,6 +1042,12 @@ func (a *actor) subscribe(ctx context.Context, c *Connection) (coreprotocol.Work
 	}
 }
 func (a *actor) unsubscribe(c *Connection) {
+	if a.projectTools != nil {
+		a.projectTools.Detach(document.Owner{ClientID: c.Owner.ClientID, Epoch: c.Owner.Epoch})
+	}
+	if a.runtime != nil {
+		a.runtime.codeTools.detach(c.Owner, a.id)
+	}
 	if a.runtime != nil && a.runtime.uploads != nil {
 		a.runtime.uploads.Detach(c.Owner, a.id)
 	}
@@ -1079,6 +1088,9 @@ func (a *actor) close() {
 		a.diagnosticClosing = true
 		a.diagnosticMu.Unlock()
 		close(a.stop)
+		if a.projectTools != nil {
+			a.projectTools.Close()
+		}
 		a.fileWatch.Close()
 		if a.stopGitFetch != nil {
 			a.stopGitFetch()
@@ -1480,7 +1492,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		command.result <- fault(request, "busy", "bounded workspace operation capacity is occupied; retry with a new request identity")
 		return true
 	}
-	journal := request.Method != coreprotocol.ListSessions && (request.Method == coreprotocol.ReviewedEditApply || historyRestore || (!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
+	journal := request.Method != coreprotocol.ListSessions && (request.Method == coreprotocol.ProjectToolsDecide || request.Method == coreprotocol.ReviewedEditApply || historyRestore || (!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
 	if journal {
 		prior, fresh, err := a.receipts.begin(a.ctx, request)
 		if err != nil {

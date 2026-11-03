@@ -70,6 +70,16 @@ func (e *PublicationUnconfirmedError) Error() string {
 
 func (e *PublicationUnconfirmedError) Unwrap() error { return e.Err }
 
+// EvaluationUnverifiedError means the exact staged process could not be joined.
+// Its executable bytes and pre-launch durable marker must remain for inspection.
+// It is not a successful check, an installed tool, or permission to retry.
+type EvaluationUnverifiedError struct{ Err error }
+
+func (e *EvaluationUnverifiedError) Error() string {
+	return fmt.Sprintf("the staged tool check could not be stopped; inspect the tools before trying again: %v", e.Err)
+}
+func (e *EvaluationUnverifiedError) Unwrap() error { return e.Err }
+
 func (r *Request) normalize() error {
 	if err := validComponent(r.Package); err != nil {
 		return fmt.Errorf("package: %w", err)
@@ -159,7 +169,12 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 	if err != nil {
 		return Tool{}, fmt.Errorf("create staging folder: %w", err)
 	}
-	defer func() { _ = removeTree(staging) }()
+	retain := false
+	defer func() {
+		if !retain {
+			_ = removeTree(staging)
+		}
+	}()
 
 	archivePath := filepath.Join(staging, "download")
 	digest, _, err := s.download(ctx, r.URL, r.MaxDownloadBytes, archivePath)
@@ -225,7 +240,52 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 	if err := sealTree(tree); err != nil {
 		return Tool{}, fmt.Errorf("make the tool read-only: %w", err)
 	}
+	if r.Evaluate != nil {
+		// Before launch, a crash or panic must leave a durable refusal to prune.
+		marker := filepath.Join(staging, evaluationPendingName)
+		if err := writeManifest(marker, m); err != nil {
+			return Tool{}, fmt.Errorf("save staged tool check: %w", err)
+		}
+		if err := syncDir(staging); err != nil {
+			retain = true
+			return Tool{}, fmt.Errorf("save staged tool check folder: %w", err)
+		}
+		retain = true
+		if err := syncDir(filepath.Dir(staging)); err != nil {
+			return Tool{}, fmt.Errorf("save staged tool check parent: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			retain = false // no process has been constructed
+			return Tool{}, err
+		}
+		err := r.Evaluate(ctx, toolFromManifest(tree, m))
+		var unverified *EvaluationUnverifiedError
+		if errors.As(err, &unverified) {
+			return Tool{}, err
+		}
+		// Callback return now positively verifies joined teardown, even on failure.
+		retain = false
+		if err != nil {
+			return Tool{}, fmt.Errorf("check staged tool: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return Tool{}, err
+		}
+		if err := os.Remove(marker); err != nil {
+			retain = true
+			return Tool{}, fmt.Errorf("finish staged tool check: %w", err)
+		}
+		if err := syncDir(staging); err != nil {
+			retain = true
+			return Tool{}, fmt.Errorf("save staged tool check completion: %w", err)
+		}
+	}
 	packageDir := filepath.Join(s.root, r.Package)
+	if r.PreparePublication != nil {
+		if err := r.PreparePublication(ctx); err != nil {
+			return Tool{}, fmt.Errorf("prepare tool publication: %w", err)
+		}
+	}
 	attempted, reservation, err := s.moveIntoPlace(ctx, r.AdmitPublication, packageDir, tree, final)
 	if err != nil {
 		if !attempted {

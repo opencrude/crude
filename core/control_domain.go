@@ -31,8 +31,9 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 		return a.prepareControlSettings(in, owner)
 	}
 	methods := map[string]string{
-		"session.list":  coreprotocol.ListSessions,
-		"document.open": coreprotocol.DocumentOpen, "document.read": coreprotocol.DocumentRead,
+		"code_tools.inventory": coreprotocol.ReadCodeToolInventory,
+		"session.list":         coreprotocol.ListSessions,
+		"document.open":        coreprotocol.DocumentOpen, "document.read": coreprotocol.DocumentRead,
 		"document.edit": coreprotocol.DocumentEdit, "document.save": coreprotocol.DocumentSave,
 		"document.undo": coreprotocol.DocumentUndo, "document.redo": coreprotocol.DocumentRedo, "document.format": coreprotocol.DocumentFormat,
 		"terminal.list": coreprotocol.TerminalList, "terminal.create": coreprotocol.TerminalCreate,
