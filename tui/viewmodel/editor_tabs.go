@@ -143,7 +143,7 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 // wins. If the project has no errors, shows a status bar message.
 func (m *App) gotoFirstDiagnostic() {
 	if m.ws.LSPMgr() == nil {
-		m.Feedback.NotifyInfo("Language servers are not available. Open Language servers settings to set them up.")
+		m.Feedback.NotifyInfo("Language servers are not available. Open Language Tools in Settings to set them up.")
 		return
 	}
 	all := m.ws.LSPMgr().AllDiagnostics()

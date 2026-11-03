@@ -34,6 +34,32 @@ type CodeToolsResultMsg struct {
 	Err, RefreshError error
 }
 
+// OpenProjectToolsMsg asks the shell to open its native project setup review.
+// It grants no installation authority and retains the Settings window below it.
+type OpenProjectToolsMsg struct {
+	Target     *Model
+	Generation uint64
+	ToolID     string
+	Selection  types.ProjectToolSetupRequest
+}
+
+func (s *WorkspaceSettingsSurface) ProjectToolsRequestRelevant(msg OpenProjectToolsMsg) bool {
+	if s.model == nil || s.model != msg.Target || s.model.selected != catLanguageServers ||
+		s.model.codeTools.generation != msg.Generation || s.lsp.draft != nil ||
+		s.lsp.history || s.model.codeTools.preview != nil {
+		return false
+	}
+	if msg.ToolID == "" {
+		return s.lsp.detail == nil && msg.Selection == (types.ProjectToolSetupRequest{Explicit: true})
+	}
+	if s.lsp.detail == nil || s.lsp.detail.id != msg.ToolID ||
+		s.lsp.detail.managed != nil || s.lsp.detail.external != nil {
+		return false
+	}
+	selection, ok := s.lsp.detail.setupTarget(s.model.codeTools.inventory.Project)
+	return ok && selection == msg.Selection
+}
+
 func codeToolSize(n int64) string {
 	if n < 1024 {
 		return fmt.Sprintf("%d bytes", n)
@@ -83,62 +109,13 @@ func toolFiles(t types.CodeTool) string {
 	return mapDefault(b.String(), "No files were reported.")
 }
 
-func (m *Model) buildCodeToolsForm() *ui.FormModel {
-	r := &m.codeTools
+func buildCodeToolRemovalForm(preview *types.CodeToolRemovalPreview) *ui.FormModel {
 	var fields []*ui.FieldState
-	if r.preview != nil {
-		fields = append(fields, remoteInfo("code-tools-delete-size", "Will remove", fmt.Sprintf("%s (%d bytes)", codeToolSize(r.preview.Bytes), r.preview.Bytes), "Only these managed tool folders and their contents will be removed."))
-		for i, tool := range r.preview.Tools {
+	if preview != nil {
+		fields = append(fields, remoteInfo("code-tools-delete-size", "Will remove", fmt.Sprintf("%s (%d bytes)", codeToolSize(preview.Bytes), preview.Bytes), "Only these managed tool folders and their contents will be removed."))
+		for i, tool := range preview.Tools {
 			fields = append(fields, codeToolText(fmt.Sprintf("code-tools-delete-%d", i), tool.Package+" "+tool.Version, toolDescription(tool)+"\n\nFiles to remove\n"+toolFiles(tool)))
 		}
-		return formModel(fields...)
-	}
-	for _, t := range r.inventory.Tools {
-		if r.detail == t.ID {
-			fields = append(fields, codeToolText("code-tools-overview", "Tool details", toolDescription(t)), codeToolText("code-tools-files", "Files", toolFiles(t)))
-			if r.notice != "" {
-				fields = append(fields, codeToolText("code-tools-detail-notice", "Status", r.notice), remoteOperation("settings.code-tools.refresh", "Refresh", "Read tools", "Read the tools again after an error.", r.busy))
-			}
-			return formModel(fields...)
-		}
-	}
-	status := r.notice
-	if status == "" {
-		switch {
-		case r.service == nil:
-			status = "Tool inventory is not available from this connection."
-		case r.busy:
-			status = "Loading tools…"
-		case !r.loaded:
-			status = "Choose Refresh to read the tools."
-		case len(r.inventory.Tools) == 0:
-			status = "Crude has not installed any tools."
-		default:
-			status = "User-installed tools are listed below and cannot be removed."
-		}
-	}
-	fields = append(fields, remoteInfo("code-tools-status", "Tools", status, "The shared inventory belongs to the selected core."), remoteInfo("code-tools-size", "Total managed size", codeToolSize(r.inventory.TotalBytes), "Content size of all tools installed by Crude."))
-	fields = append(fields, remoteOperation("settings.code-tools.refresh", "Refresh", "Read tools", "Read current tools and history without changing files.", r.service == nil || r.busy))
-	for _, t := range r.inventory.Tools {
-		fields = append(fields, remoteOperation("settings.code-tools.open/"+t.ID, t.Package+" "+t.Version, codeToolSize(t.Size), "Review the source, files, approval and workspace use.", r.busy))
-	}
-	for i, t := range r.inventory.Unmanaged {
-		fields = append(fields, codeToolText(fmt.Sprintf("code-tools-unmanaged-%d", i), t.Name+" (not managed by Crude)", "Not managed by Crude.\nCrude never removes this tool.\nCommand: "+t.Command+"\nExecutable: "+t.Executable+"\nSource: "+t.Source))
-	}
-	if len(r.inventory.Unrecognized) > 0 {
-		fields = append(fields, codeToolText("code-tools-unrecognized", "Other store entries", strings.Join(r.inventory.Unrecognized, "\n")+"\nCrude never removes these entries."))
-	}
-	var history strings.Builder
-	for _, e := range r.inventory.History {
-		fmt.Fprintf(&history, "%s  %s  %s %s\nBy: %s\nApproval: %s\n%s\n\n", codeToolTime(e.Time, "Time not recorded"), codeToolHistoryKind(e.Kind), e.Package, e.Version, e.By, e.Approval, e.Detail)
-	}
-	fields = append(fields, codeToolText("code-tools-history", "History", mapDefault(history.String(), "No tool history was recorded.")))
-	offset := r.inventory.HistoryOffset
-	if offset > 0 {
-		fields = append(fields, remoteOperation("settings.code-tools.newer", "Newer history", "Previous page", "Read newer history without changing tools.", r.busy))
-	}
-	if offset+len(r.inventory.History) < r.inventory.HistoryTotal {
-		fields = append(fields, remoteOperation("settings.code-tools.older", "Older history", "Next page", "Read older history without changing tools.", r.busy))
 	}
 	return formModel(fields...)
 }
@@ -158,12 +135,6 @@ func codeToolHistoryKind(kind string) string {
 	}
 }
 
-func (m *Model) rebuildCodeTools() {
-	if len(m.categories) > catCodeTools {
-		m.categories[catCodeTools].Form = m.buildCodeToolsForm()
-	}
-}
-
 func (s *WorkspaceSettingsSurface) SetCodeTools(service shellport.CodeTools) tea.Cmd {
 	if s.model == nil {
 		return nil
@@ -171,7 +142,6 @@ func (s *WorkspaceSettingsSurface) SetCodeTools(service shellport.CodeTools) tea
 	m := s.model
 	m.cancelCodeTools()
 	m.codeTools.service = service
-	m.rebuildCodeTools()
 	cmd := m.beginCodeTools("refresh", nil, false, 0)
 	s.refreshForm()
 	return cmd
@@ -180,7 +150,6 @@ func (s *WorkspaceSettingsSurface) SetCodeTools(service shellport.CodeTools) tea
 func (s *WorkspaceSettingsSurface) CancelCodeTools() {
 	if s.model != nil {
 		s.model.cancelCodeTools()
-		s.model.rebuildCodeTools()
 	}
 }
 
@@ -211,7 +180,6 @@ func (m *Model) beginCodeTools(operation string, ids []string, unused bool, offs
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	r.cancel = cancel
 	service, generation := r.service, r.generation
-	m.rebuildCodeTools()
 	return func() tea.Msg {
 		defer cancel()
 		out := CodeToolsResultMsg{Target: m, Generation: generation, Operation: operation}
@@ -272,13 +240,12 @@ func (m *Model) applyCodeToolsResult(msg CodeToolsResultMsg) tea.Cmd {
 			r.detail, r.notice = "", "Reviewed tools removed."
 		}
 	}
-	m.rebuildCodeTools()
 	return nil
 }
 
 func (s *WorkspaceSettingsSurface) codeToolsPromptRelevant(msg PromptMsg) bool {
 	m := s.model
-	return m != nil && msg.Target == m && m.selected == catCodeTools && !m.codeTools.busy &&
+	return m != nil && msg.Target == m && m.selected == catLanguageServers && !m.codeTools.busy &&
 		msg.codeToolGeneration == m.codeTools.generation && msg.CodeToolPreview != nil &&
 		reflect.DeepEqual(msg.CodeToolPreview, m.codeTools.preview)
 }
@@ -286,25 +253,20 @@ func (s *WorkspaceSettingsSurface) codeToolsPromptRelevant(msg PromptMsg) bool {
 func (s *WorkspaceSettingsSurface) handleCodeToolsAction(action ui.Action) ui.EventResult {
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	m := s.model
-	if m == nil || m.selected != catCodeTools || m.codeTools.busy {
+	if m == nil || m.selected != catLanguageServers || m.codeTools.busy {
 		return result
 	}
 	r := &m.codeTools
-	switch {
-	case action.ID == "settings.code-tools.refresh":
+	switch action.ID {
+	case "settings.code-tools.refresh":
 		result.Cmd = m.beginCodeTools("refresh", nil, false, 0)
-	case action.ID == "settings.code-tools.older":
+	case "settings.code-tools.older":
 		result.Cmd = m.beginCodeTools("refresh", nil, false, r.inventory.HistoryOffset+50)
-	case action.ID == "settings.code-tools.newer":
+	case "settings.code-tools.newer":
 		result.Cmd = m.beginCodeTools("refresh", nil, false, max(0, r.inventory.HistoryOffset-50))
-	case strings.HasPrefix(string(action.ID), "settings.code-tools.open/"):
-		r.detail = strings.TrimPrefix(string(action.ID), "settings.code-tools.open/")
-	case action.ID == "settings.code-tools.back":
-		m.cancelCodeTools()
-		r.detail, r.notice = "", ""
-	case action.ID == "settings.code-tools.remove-unused":
+	case "settings.code-tools.remove-unused":
 		result.Cmd = m.beginCodeTools("preview", nil, true, 0)
-	case action.ID == "settings.code-tools.remove":
+	case "settings.code-tools.remove":
 		if r.preview != nil {
 			p := PromptMsg{Target: m, Kind: PromptRemoveCodeTools, CodeToolPreview: r.preview, codeToolGeneration: r.generation}
 			r.prompt = &p
@@ -312,31 +274,12 @@ func (s *WorkspaceSettingsSurface) handleCodeToolsAction(action ui.Action) ui.Ev
 		} else if r.detail != "" {
 			result.Cmd = m.beginCodeTools("preview", []string{r.detail}, false, 0)
 		}
-	case action.ID == "settings.code-tools.confirm-remove":
+	case "settings.code-tools.confirm-remove":
 		if r.prompt != nil && s.codeToolsPromptRelevant(*r.prompt) {
 			result.Cmd = m.beginCodeTools("remove", nil, false, 0)
 		}
 	}
-	m.rebuildCodeTools()
-	s.syncCodeToolsBar()
+	s.lsp.syncModel()
 	s.refreshForm()
 	return result
-}
-
-func (s *WorkspaceSettingsSurface) syncCodeToolsBar() {
-	if s.model == nil || s.codeToolsBar == nil {
-		return
-	}
-	r := &s.model.codeTools
-	buttons := []ui.ActionBarButton{}
-	if r.detail != "" || r.preview != nil {
-		buttons = append(buttons, ui.ActionBarButton{Label: "Remove", Action: "settings.code-tools.remove", Variant: ui.VariantDanger, Enabled: !r.busy && r.service != nil},
-			ui.ActionBarButton{Label: "Back", Action: "settings.code-tools.back", Enabled: !r.busy})
-	} else {
-		buttons = append(buttons, ui.ActionBarButton{Label: "Remove unused", Action: "settings.code-tools.remove-unused", Variant: ui.VariantDanger, Enabled: !r.busy && r.loaded && len(r.inventory.Tools) > 0})
-	}
-	if !reflect.DeepEqual(s.codeToolsButtons, buttons) {
-		s.codeToolsBar.SetButtons(buttons...)
-		s.codeToolsButtons = buttons
-	}
 }

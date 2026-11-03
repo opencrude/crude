@@ -916,17 +916,12 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		}
 		if win := m.overlayHost.Window(ui.OverlayWorkspaceSettings); win != nil {
 			if body := m.settingsSurface(win); body != nil {
-				for i, category := range body.Model().Categories() {
-					if category.Name == "Language Servers" {
-						body.Model().SelectCategory(i)
-						break
-					}
-				}
-				body.SetModel(body.Model())
+				result := body.ShowLanguageTools()
 				if frame, ok := win.Content.(*ui.WindowFrameWidget); ok {
 					frame.Host().MarkLayout()
 				}
 				win.MarkContentDirty()
+				return result.Cmd
 			}
 		}
 		return nil
@@ -951,7 +946,7 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		m.startLSPForWorkspace()
 		return nil
 	case action == "lsp:setup":
-		return m.requestProjectTools(true)
+		return m.requestProjectTools(ttypes.ProjectToolSetupRequest{Explicit: true}, nil)
 	case action == "lsp:stop-all":
 		m.StopLSP()
 		return nil

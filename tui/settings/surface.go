@@ -70,8 +70,6 @@ type WorkspaceSettingsSurface struct {
 	reset            *ui.ActionBar
 	actions          *ui.ActionBar
 	closeBar         *ui.ActionBar // Close beside an editor's decisions
-	codeToolsBar     *ui.ActionBar
-	codeToolsButtons []ui.ActionBarButton
 	listScroll       *ui.ScrollbarControl
 	formScroll       *ui.ScrollbarControl
 	split            *ui.SplitModel
@@ -194,9 +192,6 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 		ui.ActionBarButton{Label: "Close", Action: "settings.close", Variant: ui.VariantSecondary, Enabled: true})
 	s.closeBar.SetExitActions("settings.closebar.forward", "settings.closebar.backward")
 	s.closeBar.SetCancelAction("settings.cancel")
-	s.codeToolsBar = ui.NewActionBar("workspace-settings/code-tools-actions", tokens)
-	s.codeToolsBar.SetCancelAction("settings.cancel")
-	s.codeToolsBar.SetExitActions("settings.closebar.forward", "settings.closebar.backward")
 	s.rebuildActions()
 	s.bindModel()
 	s.syncModel()
@@ -308,9 +303,6 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	// area. This lets a category switch focus its first input before the next
 	// frame's layout, without painting or hit-testing an empty form over rows.
 	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents, s.capCatalog, s.lsp}
-	if s.model != nil && s.model.selected == catCodeTools {
-		children = append(children, s.codeToolsBar)
-	}
 	switch {
 	case s.accountsOpen() && s.model.accountEditor != nil:
 		children = append(children, s.accountEditorBar)
@@ -345,9 +337,6 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 }
 func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
-	if s.codeToolsBar != nil {
-		s.codeToolsBar.SetTokens(tokens)
-	}
 	if s.agents != nil {
 		s.agents.SetTokens(tokens)
 	}
@@ -425,7 +414,7 @@ func (s *WorkspaceSettingsSurface) FocusSearch()                            { s.
 func (s *WorkspaceSettingsSurface) FocusCategories()                        { s.focusID(WorkspaceSettingsListID) }
 func (s *WorkspaceSettingsSurface) FocusForm() {
 	if s.lspServersOpen() {
-		if s.lsp.draft != nil {
+		if s.lsp.draft != nil || s.lsp.detail != nil || s.lsp.history || s.model.codeTools.preview != nil {
 			s.focusID(s.lsp.form.ID())
 		} else {
 			s.focusID(s.lsp.filter.ID())
@@ -481,6 +470,15 @@ func (s *WorkspaceSettingsSurface) ShowNetworkConnection() {
 	s.syncModel()
 	s.FocusForm()
 }
+
+// ShowLanguageTools opens the combined language tool collection.
+func (s *WorkspaceSettingsSurface) ShowLanguageTools() ui.EventResult {
+	result := s.openCategory(catLanguageServers)
+	if s.lspServersOpen() {
+		s.FocusForm()
+	}
+	return result
+}
 func (s *WorkspaceSettingsSurface) FocusReset() {
 	if s.showReset() {
 		s.focusID(WorkspaceSettingsResetBarID)
@@ -505,6 +503,17 @@ func (s *WorkspaceSettingsSurface) focusID(id ui.ComponentID) {
 }
 
 func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
+	if s.model != nil && s.model != model {
+		s.model.cancelCodeTools()
+		s.lsp.detail, s.lsp.history = nil, false
+		s.lsp.filterTouched = false
+		s.lsp.project.SetChecked(false)
+		s.lsp.installed.SetChecked(false)
+		s.lsp.all.SetChecked(true)
+		if s.lsp.draft != nil {
+			s.lsp.closeEditor()
+		}
+	}
 	s.model = model
 	s.bindModel()
 	s.search.owner, s.categories.owner = s, s
@@ -564,18 +573,6 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 	if s.model == nil {
 		return nil
 	}
-	if s.model.selected == catCodeTools {
-		parts := []string{"Code intelligence tools"}
-		if s.model.codeTools.preview != nil {
-			return append(parts, "Review removal")
-		}
-		for _, tool := range s.model.codeTools.inventory.Tools {
-			if tool.ID == s.model.codeTools.detail {
-				return append(parts, tool.Package+" "+tool.Version)
-			}
-		}
-		return parts
-	}
 	if s.capabilitiesOpen() {
 		parts := []string{s.capCatalog.title()}
 		if s.capCatalog.id != "" && (s.capCatalog.detail || s.capCatalog.edit != "") {
@@ -584,14 +581,23 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 		return parts
 	}
 	if s.lspServersOpen() {
+		if s.model.codeTools.preview != nil {
+			return []string{"Language Tools", "Review removal"}
+		}
 		if s.lsp.draft == nil {
-			return []string{"Language Servers"}
+			if s.lsp.detail != nil {
+				return []string{"Language Tools", s.lsp.detail.name}
+			}
+			if s.lsp.history {
+				return []string{"Language Tools", "History"}
+			}
+			return []string{"Language Tools"}
 		}
 		name := s.lsp.editing
 		if server, ok := s.model.lspServer(s.lsp.editing); ok {
 			name = server.name
 		}
-		return []string{"Language Servers", name}
+		return []string{"Language Tools", name}
 	}
 	if s.agentsOpen() {
 		if s.agents.draft == nil {
@@ -676,6 +682,18 @@ func (s *WorkspaceSettingsSurface) pageSubtitle() string {
 		return "Model, instructions and tool access for this agent."
 	case s.lspServersOpen() && s.lsp.draft != nil:
 		return "Command, files and environment for this server. Changes save with the window."
+	case s.lspServersOpen() && s.lsp.detail != nil:
+		return "Review this tool and its language configurations."
+	case s.lspServersOpen() && s.lsp.history:
+		return "Review the history of tools installed by Crude."
+	case s.lspServersOpen() && s.lsp.project.Checked() && s.model.codeTools.inventory.Project.State == ttypes.AssemblyScanning:
+		return "Crude is checking this project. Choose Refresh to check again."
+	case s.lspServersOpen() && s.lsp.project.Checked() && s.model.codeTools.inventory.Project.State != ttypes.AssemblyReady:
+		return "The project tools are not available. Choose Refresh to check again."
+	case s.lspServersOpen() && s.lsp.project.Checked() && s.model.codeTools.inventory.Project.Limited:
+		return "This project check was limited. Some tools may be missing."
+	case s.lspServersOpen() && s.lsp.installed.Checked():
+		return "Shows Crude tools and external tools found for this project."
 
 	case s.capabilitiesOpen() && s.capCatalog.choosing != "":
 		return "Choose " + strings.TrimPrefix(s.capCatalog.choosing, "filter-") + " · Enter applies · Esc returns"
@@ -811,7 +829,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	collection := s.accountsOpen() && s.model.accountEditor == nil ||
 		s.agentsOpen() && s.agents.draft == nil ||
 		s.capabilitiesOpen() && s.capCatalog.edit == "" && !s.capCatalog.detail ||
-		s.lspServersOpen() && s.lsp.draft == nil
+		s.lspServersOpen() && s.lsp.draft == nil && s.lsp.detail == nil && !s.lsp.history && s.model.codeTools.preview == nil
 	if !collection {
 		bodyBottom -= 2
 	}
@@ -991,16 +1009,15 @@ func (s *WorkspaceSettingsSurface) footer() pageFooter {
 		return footer
 	}
 	switch {
-	case s.model.selected == catCodeTools:
-		s.syncCodeToolsBar()
-		footer.bar, footer.notice, footer.ink = s.codeToolsBar, s.model.codeTools.notice, ui.ColorMuted
-		footer.help = s.form.HelpField()
 	case s.agentsOpen() && s.agents.draft != nil:
 		footer.bar, footer.origin, footer.notice = s.agents.bar, s.agents.Bounds(), s.agents.notice
 		footer.help = s.agents.form.HelpField()
-	case s.lspServersOpen() && s.lsp.draft != nil:
+	case s.lspServersOpen() && (s.lsp.draft != nil || s.lsp.detail != nil || s.lsp.history || s.model.codeTools.preview != nil):
 		footer.bar, footer.origin = s.lsp.bar, s.lsp.Bounds()
 		footer.notice, footer.ink = s.lsp.notice, ui.ColorError
+		if s.lsp.draft == nil {
+			footer.notice, footer.ink = s.model.codeTools.notice, ui.ColorMuted
+		}
 		footer.help = s.lsp.form.HelpField()
 	case s.capabilitiesOpen() && (s.capCatalog.edit != "" || s.capCatalog.detail):
 		footer.bar, footer.origin = s.capCatalog.bar, s.capCatalog.Bounds()
@@ -1326,8 +1343,6 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 		parts := s.paneTitleParts()
 		if len(parts) > 1 && ui.BreadcrumbIndex(parts, s.breadcrumbSeparator(), ctx.LocalX-s.contentRect.X, s.contentRect.W) == 0 {
 			switch {
-			case s.model.selected == catCodeTools:
-				return s.handleCodeToolsAction(ui.Action{ID: "settings.code-tools.back"})
 			case s.accountsOpen() && s.model.accountEditor != nil:
 				return s.cancelAccountEdit()
 			case s.agentsOpen() && s.agents.draft != nil:
@@ -1336,6 +1351,8 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 				return s.capCatalog.back()
 			case s.lspServersOpen() && s.lsp.draft != nil:
 				return s.lsp.back()
+			case s.lspServersOpen() && (s.lsp.detail != nil || s.lsp.history || s.model.codeTools.preview != nil):
+				return s.lsp.backTool()
 			}
 		}
 	}
@@ -1918,9 +1935,6 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 	if s.model != nil && s.model.Saving() {
 		return ui.EventResult{Handled: true}
 	}
-	if s.model != nil && s.model.selected == catCodeTools && (s.model.codeTools.detail != "" || s.model.codeTools.preview != nil) {
-		return s.handleCodeToolsAction(ui.Action{ID: "settings.code-tools.back"})
-	}
 	if s.capabilitiesOpen() && (s.capCatalog.detail || s.capCatalog.edit != "") {
 		return s.capCatalog.back()
 	}
@@ -1939,6 +1953,9 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 	}
 	if s.lspServersOpen() && s.lsp.draft != nil {
 		return s.lsp.back()
+	}
+	if s.lspServersOpen() && (s.lsp.detail != nil || s.lsp.history || s.model.codeTools.preview != nil) {
+		return s.lsp.backTool()
 	}
 	s.CancelRemoteAccess()
 	s.CancelCodeTools()

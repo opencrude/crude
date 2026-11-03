@@ -37,6 +37,9 @@ about how an IDE works.
 - Tool acquisition decisions live in
   [code-intelligence setup](docs/plans/code-intelligence-setup.md). Trust is a
   separate, finished flow.
+- **Setup is blocked.** Its review and Settings pages were rejected on
+  2026-11-03. Read that plan's blocking failures and checkpoints before any
+  setup, tool-store or Settings work; earlier captures do not accept them.
 
 ## Engineering standard
 

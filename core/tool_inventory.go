@@ -50,6 +50,7 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 		return out, err
 	}
 	out.TotalBytes, out.Unrecognized, out.HistoryTotal, out.HistoryOffset = total, unknown, count, offset
+	out.Project = types.CloneAssemblyPlan(plan)
 	for _, t := range tools {
 		value, err := inspectCodeTool(ctx, t)
 		if err != nil {
@@ -61,8 +62,36 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 		out.History = append(out.History, types.CodeToolHistoryEvent{Time: e.Time, Kind: e.Kind, ToolID: e.ToolID, Package: e.Package, Version: e.Version, Detail: e.Detail, By: e.By, Approval: e.Approval})
 	}
 	seen := make(map[string]bool)
+	managedFiles := make([]fs.FileInfo, 0, len(tools))
+	for _, tool := range tools {
+		info, err := os.Stat(tool.Executable)
+		if err != nil {
+			return out, err
+		}
+		managedFiles = append(managedFiles, info)
+	}
 	for _, l := range plan.Languages {
 		if l.Executable == "" || (l.Source != types.ToolSourcePath && l.Source != types.ToolSourceSettings) || seen[l.Executable] {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		info, err := os.Stat(l.Executable)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // The assembly snapshot is older than this inventory read.
+		}
+		if err != nil {
+			return out, err
+		}
+		managed := false
+		for _, known := range managedFiles {
+			if os.SameFile(info, known) {
+				managed = true
+				break
+			}
+		}
+		if managed {
 			continue
 		}
 		seen[l.Executable] = true

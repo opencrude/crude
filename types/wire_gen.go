@@ -2491,8 +2491,8 @@ func (z *CodeToolHistoryEvent) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CodeToolInventory) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 7
-	o = append(o, 0x97)
+	// array header, size 8
+	o = append(o, 0x98)
 	if z.Tools == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -2526,6 +2526,11 @@ func (z *CodeToolInventory) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	o, err = z.Project.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Project")
+		return
+	}
 	if z.History == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -2555,8 +2560,8 @@ func (z *CodeToolInventory) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 7 {
-		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -2645,6 +2650,11 @@ func (z *CodeToolInventory) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	bts, err = z.Project.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Project")
+		return
+	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
 		z.History = nil
@@ -2700,7 +2710,7 @@ func (z *CodeToolInventory) Msgsize() (s int) {
 	for za0003 := range z.Unmanaged {
 		s += z.Unmanaged[za0003].Msgsize()
 	}
-	s += msgp.ArrayHeaderSize
+	s += z.Project.Msgsize() + msgp.ArrayHeaderSize
 	for za0004 := range z.History {
 		s += z.History[za0004].Msgsize()
 	}
@@ -9674,6 +9684,58 @@ func (z *ProjectToolSetupItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ProjectToolSetupItem) Msgsize() (s int) {
 	s = 1 + msgp.StringPrefixSize + len(z.ItemID) + msgp.StringPrefixSize + len(z.ToolID) + msgp.StringPrefixSize + len(z.Message) + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.Evaluation) + msgp.StringPrefixSize + len(z.EvaluationMessage)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z ProjectToolSetupRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendBool(o, z.Explicit)
+	o = msgp.AppendString(o, z.LanguageID)
+	o = msgp.AppendUint64(o, z.AssemblyGeneration)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *ProjectToolSetupRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.Explicit, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Explicit")
+		return
+	}
+	z.LanguageID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "LanguageID")
+		return
+	}
+	z.AssemblyGeneration, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AssemblyGeneration")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z ProjectToolSetupRequest) Msgsize() (s int) {
+	s = 1 + msgp.BoolSize + msgp.StringPrefixSize + len(z.LanguageID) + msgp.Uint64Size
 	return
 }
 

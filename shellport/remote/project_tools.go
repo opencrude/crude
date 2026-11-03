@@ -10,9 +10,9 @@ import (
 
 var _ shellport.ProjectTools = (*Workspace)(nil)
 
-func (w *Workspace) ReviewProjectTools(ctx context.Context, explicit bool) (types.ProjectToolSetupReview, error) {
+func (w *Workspace) ReviewProjectTools(ctx context.Context, request types.ProjectToolSetupRequest) (types.ProjectToolSetupReview, error) {
 	var out coreprotocol.ProjectToolsReviewResult
-	err := w.callCancellable(ctx, coreprotocol.ProjectToolsReview, &coreprotocol.ProjectToolsReviewRequest{Explicit: explicit}, &out)
+	err := w.callCancellable(ctx, coreprotocol.ProjectToolsReview, &coreprotocol.ProjectToolsReviewRequest{Selection: request}, &out)
 	return out.Preview, err
 }
 

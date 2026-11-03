@@ -35,10 +35,13 @@ type UnmanagedCodeTool struct {
 
 // CodeToolInventory is a point-in-time read. History is newest first.
 type CodeToolInventory struct {
-	Tools         []CodeTool
-	TotalBytes    int64
-	Unrecognized  []string
-	Unmanaged     []UnmanagedCodeTool
+	Tools        []CodeTool
+	TotalBytes   int64
+	Unrecognized []string
+	Unmanaged    []UnmanagedCodeTool
+	// Project is the same bounded assembly snapshot used to resolve Unmanaged.
+	// An empty or incomplete snapshot is not evidence that a tool is absent.
+	Project       AssemblyPlan
 	History       []CodeToolHistoryEvent
 	HistoryTotal  int
 	HistoryOffset int

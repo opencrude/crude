@@ -40,7 +40,7 @@ Text follows ASD-STE100 (Simplified Technical English):
    claim that a project is clean when no checker ran.
 5. **Errors have three parts.** What failed, the reason the user can act on,
    and what to do: "Could not start gopls. The file `gopls` was not found.
-   Install gopls or set its path in Language servers settings." Put technical
+   Install gopls or set its path in Language Tools settings." Put technical
    detail in an expandable detail or the log, not in the headline.
 6. **One line first, detail on demand.** A status line, pill or header segment
    has one short phrase. Longer explanations go in a tooltip, details row or
