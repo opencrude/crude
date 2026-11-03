@@ -427,6 +427,11 @@ candidate installable until its real path is connected. Exit requires real
 representative installations, activation, refusal, cancellation, failure and
 retry, plus the native Windows journey. Policy integration follows.
 
+The first acquisition slice reads package-manager identity, program form,
+qualifiers and runtime name from catalog data. The native review now explains
+these prerequisites for recognized packages. This is metadata only: it does not
+install tools or runtimes, verify a runtime version or authorize execution.
+
 The replacement review is implemented with native list, reader and action bar.
 Focused Linux tests cover X, Escape, mixed selection, unavailable-only automatic
 review and exact selection. Linux captures show a real mixed project at 160x40

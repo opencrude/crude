@@ -77,7 +77,11 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	s.detail.SetReadOnly(true)
 	s.detail.SetBackgroundColor(tokens.Color(ui.ColorPopupBg))
 	s.intro = ui.NewLabel("project-tools/intro", "Project: "+review.Project, th)
-	s.caption = ui.NewLabel("project-tools/caption", "Select tools to install. Editing works without them.", th)
+	caption := "Select tools to install. Editing works without them."
+	if len(s.selected) == 0 {
+		caption = "Crude cannot install these tools yet. Editing works without them."
+	}
+	s.caption = ui.NewLabel("project-tools/caption", caption, th)
 	s.caption.SetColorRole(ui.ColorMuted)
 	s.actions = ui.NewActionBar(ActionsID, tokens,
 		ui.ActionBarButton{Label: "Install", Action: ActionInstall, Variant: ui.VariantPrimary},
@@ -86,7 +90,11 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	s.actions.SetShowRule(true)
 	s.actions.SetSurfaceBackground(ui.ColorPopupBg)
 	s.actions.SetCancelAction(ActionClose)
-	s.actions.SetHint("Space: select · Tab: details")
+	if len(s.selected) == 0 {
+		s.actions.SetHint("Tab: details")
+	} else {
+		s.actions.SetHint("Space: select · Tab: details")
+	}
 	s.actions.FocusLast()
 	s.updateActions()
 	s.updateDetail()
@@ -125,9 +133,11 @@ func (s *Screen) SelectedIDs() []string {
 
 func (s *Screen) updateActions() {
 	n := len(s.SelectedIDs())
-	label := fmt.Sprintf("Install %d tools", n)
+	label := "Install tools"
 	if n == 1 {
 		label = "Install 1 tool"
+	} else if n > 1 {
+		label = fmt.Sprintf("Install %d tools", n)
 	}
 	s.actions.SetLabel(ActionInstall, label)
 	s.actions.SetEnabled(ActionInstall, n > 0)
@@ -146,7 +156,15 @@ func (s *Screen) updateDetail() {
 		if index, exists := s.byID[row.ID]; exists && index >= 0 {
 			item := s.items[index]
 			if !item.Installable {
-				value = fmt.Sprintf("%s\n\n%s\n\nProject: %s", valueOr(item.Package, item.Command), valueOr(item.Reason, "Crude cannot install this tool on this computer."), s.project)
+				name := valueOr(item.Package, item.Command)
+				if item.Version != "" {
+					name += " " + item.Version
+				}
+				value = fmt.Sprintf("%s\n\n%s\n\nSource: %s\nProgram: %s\nLanguages: %s\nLicense: %s\nProject: %s",
+					name, valueOr(item.Reason, "Crude cannot install this tool on this computer."),
+					valueOr(item.Source, "Not provided"), valueOr(item.Command, "Not provided"),
+					valueOr(strings.Join(item.Languages, ", "), "Not provided"),
+					valueOr(strings.Join(item.Licenses, ", "), "Not provided"), s.project)
 			} else {
 				size := "Not provided by the source"
 				if item.SizeKnown {
