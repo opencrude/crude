@@ -208,7 +208,7 @@ so memory does not grow with the length of the log.
    files. If that final delete fails, the tools are already removed and the
    staged files remain for inspection.
 
-The native [Settings inventory](settings.md#code-intelligence-tools) adds an
+The native [Settings inventory](settings.md#language-tools-inventory) adds an
 owner/workspace-bound, ten-minute, one-shot removal preview (at most 64 retained
 previews). It rechecks retained workspace assembly references before calling
 `Remove`. Unmanaged tools and unrecognized entries are read-only. A removal error

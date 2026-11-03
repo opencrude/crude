@@ -1259,6 +1259,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
 	case settingsui.CodeToolsResultMsg:
 		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
+	case settingsui.OpenProjectToolsMsg:
+		if m.overlayHost != nil {
+			if body := m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings)); body != nil && body.ProjectToolsRequestRelevant(msg) {
+				cmds = append(cmds, m.requestProjectTools(msg.Selection, &msg))
+			}
+		}
 	case settingsui.RemotePairingExpiredMsg:
 		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
 	case settingsui.ScopeMsg:

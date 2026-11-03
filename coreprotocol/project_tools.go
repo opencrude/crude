@@ -8,9 +8,8 @@ const (
 )
 
 type ProjectToolsReviewRequest struct {
-	// Explicit requests a fresh human review of still-missing tools, including
-	// earlier refusals or failed attempts. It never authorizes installation.
-	Explicit bool
+	// Selection is an inspect-only request. It cannot authorize installation.
+	Selection types.ProjectToolSetupRequest
 }
 
 type ProjectToolsReviewResult struct {

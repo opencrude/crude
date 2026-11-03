@@ -36,7 +36,7 @@ func (a *actor) prepareProjectTools(request coreprotocol.Request) (func(context.
 			return fault(request, "setup_unavailable", "Code intelligence setup is unavailable. Reopen the folder and try again.")
 		}
 		if request.Method == coreprotocol.ProjectToolsReview {
-			preview, err := service.Review(ctx, owner, review.Explicit)
+			preview, err := service.Review(ctx, owner, review.Selection)
 			out := response(request, coreprotocol.ProjectToolsReviewResult{Preview: preview})
 			if err != nil {
 				out.Error = &coreprotocol.Fault{Code: "setup_failed", Message: err.Error()}

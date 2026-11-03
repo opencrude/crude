@@ -1026,17 +1026,20 @@ Visual contracts for this window:
 
 ## LSP
 
-Application and workspace settings share three pages. **Code Intelligence** holds
+Application and workspace settings share two pages. **Code Intelligence** holds
 the master enable, auto-detect, start-on-open, per-feature gates (diagnostics,
 completions, hover, definition, references, outline, rename and opt-in inlay hints), diagnostic display
 (editor / tree / status + minimum severity) and resource limits. **Language
-Servers** is a searchable server table with a per-server editor: enable,
+Tools** combines the server configurations and the installed-tool inventory.
+Each tool opens a per-language editor: enable,
 command, shell-style arguments, file extensions/language ID (custom servers),
 project markers, environment table, and the JSON `settings`/`initializationOptions`
 objects. The server list comes from the
 [code-intelligence catalog](code-intelligence-catalog.md): every catalog
-language that has a language server is a row, on by default, using its first
-catalog server. Per-language `Languages` entries hold only explicit choices: an
+language that has a language server is configured on by default, using its first
+catalog server. The table groups configurations with the same command and joins
+them to installed artifacts only when identity evidence matches. Per-language
+`Languages` entries hold only explicit choices: an
 entry without a command follows the catalog, a command that matches another
 catalog server of the language selects that server and its defaults, and any
 other command runs as written. Custom languages need extensions, a language ID
@@ -1044,9 +1047,9 @@ and a command, and cannot claim an extension that the catalog owns. A saved
 entry for a language the catalog does not have, with no extensions, matches no
 file and is ignored. Restore default returns a row to the catalog.
 `workspace.LSPManager` reads the **effective** `LSPSettings` and refuses to
-start or request gated features. **Code intelligence tools** reads the selected
-core's shared acquired-tool inventory; it is not another launch configuration
-or inherited preference store.
+start or request gated features. The tool inventory reads the selected core's
+shared store; it is not another launch configuration or inherited preference
+store.
 
 **Inlay hints** is the ordinary Boolean leaf `lsp.inlay_hints` and defaults
 **Off**. Explicit false overrides remain distinct from an absent inherited value;
@@ -1056,15 +1059,30 @@ Toggling it revokes old inlay evidence through a feature epoch without restartin
 the language server. Per-view Show/Hide never persists a settings choice or
 overrides the master/Trust gate. See [read-only inlay hints](editor.md#read-only-inlay-hints).
 
-### Code intelligence tools
+### Language tools inventory
 
-The collection shows total managed content size, installed versions, unmanaged
-tools and paged history. Each managed tool opens complete, copyable detail and
+The table shows the tool, its languages, and **Crude**, **Outside Crude**,
+**Not installed** or **Not checked** under Installed by. **Not installed**
+uses the current project's assembly evidence; a missing inventory match alone
+is not proof that a tool is absent. External tools are the executables resolved
+for the current project, not a complete scan of the computer. The **This
+project**, **Installed** and **All** filters select the project snapshot,
+observed installations or the full catalog. A project tool marked **Ready**
+has a resolved executable; this is not a claim that its server is running.
+On narrow screens the languages column is omitted, but the tool's Launch tab
+still lists its language configurations. The collection shows total managed
+content size, installed versions and paged history. Each managed tool opens
+Overview, Launch, Files and History tabs with complete, copyable detail and
 file readers: folder and executable, literal file paths/types/sizes/link targets,
 source/download address, digest and checksum origin, licenses, install time,
 installer/approval, workspace use and last use. Unrecognized store entries remain
-visible for inspection. Unmanaged tools are labelled **not managed by Crude** and
+visible for inspection. Unmanaged tools are labelled **Outside Crude** and
 cannot be removed.
+
+**Set up tools** on the collection opens the project-wide native setup review.
+The same action on a missing tool's detail reviews only that tool, using the
+current project generation. If different packages share the same command, use
+the project-wide review to choose between them. A stale project requires refresh.
 
 **Remove** and **Remove unused** prepare an exact review of managed folders,
 their files and measured bytes before showing a native confirmation with Cancel
@@ -1085,12 +1103,18 @@ Agents can read the same inventory through the semantic read-only
 
 ### Project tool setup
 
+> Setup remains blocked ([setup blockers](../plans/code-intelligence-setup.md#blocking-failures-and-rejected-design)).
+> Only GitHub release files can be installed today. The replacement review has
+> focused Linux evidence; native Windows and the complete journey remain open.
+
 Setup is separate from both analysis Trust and the inventory page. Trust permits
 project execution, not downloads; approval to download never trusts a folder.
 After trusted, complete discovery, the first native **Set up code intelligence**
 review groups the current known-source candidates. It shows exact versions,
 sources, programs, licenses and whether size/checksum information is
-known. The user can deselect tools. **Not now** records the refusal; closing
+known. Installable candidates have check rows. Unavailable candidates show their
+reason in a complete reader, not an inert switch. An unavailable-only result
+does not open an automatic review. The user can deselect tools. **Not now** records the refusal; closing
 without submitting does not manufacture a decision. Later needs give a quiet
 notice instead of interrupting editing. **Project Languages → Set up tools**
 opens a fresh explicit review, including still-missing tools refused or failed

@@ -36,8 +36,10 @@ required before LSP is accepted as complete.
   session wiring: `session/code_intelligence_test.go`.
 - Native Windows Settings captures on 2026-11-03 cover Code Intelligence,
   Language Servers list → Go (gopls) detail, and the shared Code intelligence
-  tools inventory at 160x40 and 80x24. The native setup preview also renders at
-  both sizes; its default **Not now** records no installation. Read-only source
+  tools inventory at 160x40 and 80x24. These captures do not accept the setup
+  review: the user rejected it on 2026-11-03, and the language server list and
+  inventory are being merged into one page (see
+  [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design)). Read-only source
   details open at the first line and retain deliberate scrolling. These captures
   use `scripts/tuishot.ps1`, not a painted test-only settings model.
 

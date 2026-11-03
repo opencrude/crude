@@ -1,5 +1,14 @@
 package types
 
+// ProjectToolSetupRequest selects either a complete project review or the
+// candidate for one language in an exact assembly generation. A request never
+// grants installation authority.
+type ProjectToolSetupRequest struct {
+	Explicit           bool
+	LanguageID         string
+	AssemblyGeneration uint64
+}
+
 // ProjectToolSetupReview is a native, owner-bound project setup preview. ID is
 // an expiring one-shot reference retained by the setup owner, not a grant.
 type ProjectToolSetupReview struct {
