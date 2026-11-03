@@ -10,10 +10,102 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
 )
+
+func TestCodeToolsDescribesPreparedTreeDigest(t *testing.T) {
+	text := toolDescription(types.CodeTool{Package: "fixture", DigestOrigin: "prepared-tree"})
+	if !strings.Contains(text, "Calculated from installed files, not a source checksum") ||
+		strings.Contains(text, "Checked against the source checksum") {
+		t.Fatalf("prepared digest provenance is misleading: %q", text)
+	}
+}
+
+func TestLanguageToolsManagedDetailsScrollInMountedSettings(t *testing.T) {
+	m, s, _ := codeToolsFixture(t)
+	for index, row := range s.lsp.table.Rows() {
+		if row.ID == "managed/fixture/v1-digest" {
+			s.lsp.table.SelectIndex(index)
+			break
+		}
+	}
+	s.lsp.openTool()
+	host := ui.NewHost(theme.DefaultDark(), s)
+	host.Resize(80, 24)
+	host.Layout()
+	formRect, ok := host.ScreenRect(LanguageServerFormID)
+	if !ok {
+		t.Fatal("tool details form is not mounted")
+	}
+	field := s.lsp.form.Field("tool-overview")
+	area := field.Area()
+	fieldRect, areaRect := field.Bounds(), area.Bounds()
+	x := formRect.X + fieldRect.X + areaRect.X + 1
+	y := formRect.Y + fieldRect.Y + areaRect.Y
+	seen := false
+	for i := 0; i < 12; i++ {
+		host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelDown})
+		// Inventory refreshes retain the same page; they must not throw away
+		// the reader's position while it is being browsed.
+		s.SetModel(m)
+		host.Layout()
+		buffer := surface.NewCellBuffer(80, 24)
+		host.Paint(buffer)
+		if strings.Contains(bufferPlain(buffer), "Checksum source") {
+			seen = true
+			break
+		}
+	}
+	if !seen {
+		t.Fatalf("managed tool checksum never became visible; scroll offset %d", area.ScrollOffset())
+	}
+	m.codeTools.inventory.Tools[0].Source = "updated registry"
+	s.SetModel(m)
+	host.Layout()
+	buffer := surface.NewCellBuffer(80, 24)
+	host.Paint(buffer)
+	if got := bufferPlain(buffer); !strings.Contains(got, "updated registry") {
+		t.Fatalf("changed tool details did not replace the reader at the top:\n%s", got)
+	}
+}
+
+func TestLanguageToolsReturnFromLaunchEditorRestoresDetails(t *testing.T) {
+	for _, action := range []string{"back", "keep"} {
+		t.Run(action, func(t *testing.T) {
+			m, s, _ := codeToolsFixture(t)
+			for index, row := range s.lsp.table.Rows() {
+				if row.ID == "managed/fixture/v1-digest" {
+					s.lsp.table.SelectIndex(index)
+					break
+				}
+			}
+			s.lsp.openTool()
+			var id string
+			for _, server := range m.lspServers() {
+				id = server.id
+				break
+			}
+			if id == "" {
+				t.Fatal("no language server is available for the launch editor")
+			}
+			s.lsp.begin(id)
+			if s.lsp.draft == nil {
+				t.Fatal("launch editor did not open")
+			}
+			if action == "back" {
+				s.lsp.back()
+			} else {
+				s.lsp.keep()
+			}
+			if s.lsp.draft != nil || s.lsp.form.Field("tool-overview") == nil {
+				t.Fatal("return from launch editor did not restore tool details")
+			}
+		})
+	}
+}
 
 type codeToolsStub struct {
 	inventory                types.CodeToolInventory

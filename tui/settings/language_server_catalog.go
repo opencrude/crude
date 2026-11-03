@@ -2,6 +2,7 @@ package settings
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -42,6 +43,7 @@ type lspCatalog struct {
 	draft         *ui.FormModel
 	editing       string
 	notice        string
+	detailFields  []*ui.FieldState
 	rows          map[string]languageToolRow
 	detail        *languageToolRow
 	detailPage    string
@@ -179,6 +181,7 @@ func (c *lspCatalog) model() *Model { return c.owner.model }
 func (c *lspCatalog) syncModel() {
 	if !c.owner.lspServersOpen() {
 		c.detail, c.history = nil, false
+		c.detailFields = nil
 	}
 	if c.draft != nil {
 		if _, ok := c.model().lspServer(c.editing); !ok {
@@ -191,6 +194,17 @@ func (c *lspCatalog) syncModel() {
 		c.all.SetChecked(false)
 	}
 	c.refreshRows()
+	if c.detail != nil && c.detail.managed != nil && c.model().codeTools.detail != "" {
+		// Use the latest store observation for an open identity, not the row
+		// copy captured when the detail first opened.
+		for _, tool := range c.model().codeTools.inventory.Tools {
+			if tool.ID == c.model().codeTools.detail {
+				latest := tool
+				c.detail.managed = &latest
+				break
+			}
+		}
+	}
 	if c.detail != nil && c.detail.managed != nil && c.model().codeTools.detail == "" &&
 		!c.model().codeTools.busy && c.model().codeTools.preview == nil {
 		c.detail = nil
@@ -347,6 +361,7 @@ func (c *lspCatalog) showDetail() {
 	var fields []*ui.FieldState
 	switch {
 	case r.preview != nil:
+		c.detailFields = nil
 		c.form.SetForm(buildCodeToolRemovalForm(r.preview), "", "")
 		c.rebuildBar()
 		return
@@ -414,7 +429,13 @@ func (c *lspCatalog) showDetail() {
 			}
 		}
 	}
-	c.form.SetForm(formModel(fields...), "", "")
+	// Settings can reproject the inventory on every frame. Reusing an
+	// identical detail form preserves the reader's scroll and selection.
+	if !reflect.DeepEqual(c.detailFields, fields) {
+		candidate := formModel(fields...)
+		c.detailFields = fields
+		c.form.SetForm(candidate, "", "")
+	}
 	c.rebuildBar()
 }
 
@@ -428,6 +449,7 @@ func (c *lspCatalog) openTool() ui.EventResult {
 		return c.changed()
 	}
 	c.detail, c.history, c.detailPage = &tool, false, "overview"
+	c.detailFields = nil
 	c.model().codeTools.detail = ""
 	if tool.managed != nil {
 		c.model().codeTools.detail = tool.managed.ID
@@ -447,6 +469,7 @@ func (c *lspCatalog) backTool() ui.EventResult {
 		c.model().cancelCodeTools()
 		r.detail, r.notice = "", ""
 		c.detail, c.history = nil, false
+		c.detailFields = nil
 		c.form.SetForm(nil, "", "")
 		c.refreshRows()
 		c.owner.focusID(c.table.ID())
@@ -520,6 +543,7 @@ func builtinLSP(id string) bool {
 func (c *lspCatalog) closeEditor() {
 	c.draft, c.editing, c.notice = nil, "", ""
 	c.before, c.beforeResets, c.snapshotted = nil, nil, false
+	c.detailFields = nil
 	c.form.SetForm(nil, "", "")
 	c.rebuildBar()
 }

@@ -159,6 +159,14 @@ func (ff *FormField) Control() *TextField {
 // Area returns the retained multi-line editor for FieldTextArea fields, or nil.
 func (ff *FormField) Area() *TextArea { return ff.area }
 
+// hasTextSelection reports whether the field's text control has selected text.
+func (ff *FormField) hasTextSelection() bool {
+	if ff.area != nil {
+		return ff.area.HasActiveSelection()
+	}
+	return ff.control != nil && ff.control.HasSelection()
+}
+
 // Grid returns the retained key/value table for FieldKeyValues fields, or nil.
 func (ff *FormField) Grid() *KeyValueGrid { return ff.grid }
 
@@ -1183,11 +1191,19 @@ func (ff *FormField) tokensColor(role SemanticColor, fallback cell.Color) cell.C
 }
 
 func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
-	if ff.field.Disabled || ff.field.ReadOnly {
+	if ff.field.Disabled {
+		return EventResult{}
+	}
+	// Read-only text controls remain readers: they own navigation, selection
+	// and copy, while the control itself rejects every mutation.
+	if ff.field.ReadOnly && ff.area == nil && ff.control == nil {
 		return EventResult{}
 	}
 	switch ff.field.Type {
 	case FieldText, FieldPassword:
+		if ff.control == nil {
+			return EventResult{}
+		}
 		before := ff.control.Value()
 		result := ff.control.Handle(ff.controlContext(ctx), evt)
 		if ff.control.Value() != before {
