@@ -163,7 +163,9 @@ documents to read before changing each area.
   checkpoint.
 - [Code-intelligence setup](plans/code-intelligence-setup.md): how Crude
   finds, asks for, installs and accounts for code-intelligence tools,
-  separate from workspace trust.
+  separate from workspace trust. Blocked by the rejected setup-page design,
+  unusable controls/dismissal and missing package-manager installation paths;
+  earlier setup-page acceptance is withdrawn.
 - [Human-workflow IDE acceptance](plans/ide-workflow-acceptance.md):
   proposed: actual TUI developer tasks, auditable feature checkpoints,
   independent VM devices, same-core pair/trio editing and local-first promotion
