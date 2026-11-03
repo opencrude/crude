@@ -397,17 +397,19 @@ func (v *View) Paint(buf *surface.CellBuffer, ox, oy, w, h int, t *ui.TokenSet, 
 			p := Point{x, v.Offset + y}
 			end := Point{x + width - 1, p.Y}
 			if v.selected && !less(end, a) && !less(b, p) {
-				out.FG = t.Color(ui.ColorTextSelectionFg)
-				out.BG = t.Color(ui.ColorTextSelection)
+				// Inverse cells display the child background as their ink.
+				// Resolve that before removing reverse for the selection.
+				ink := out.FG
+				if out.Attr.Has(cell.AttrReverse) {
+					ink = out.BG
+				}
+				out.FG, out.BG = t.TextSelectionColors(ink)
 				out.Attr &^= cell.AttrReverse | cell.AttrDim
 			}
 			cursor := v.presentedCursor
-			if v.Pinned() && v.Offset == v.presentedBottom && cursor.Visible && (!focused || blink) && x <= cursor.X && cursor.X < x+width && y == cursor.Y {
+			if v.Pinned() && v.Offset == v.presentedBottom && cursor.Visible && focused && blink && x <= cursor.X && cursor.X < x+width && y == cursor.Y {
 				out.FG = t.Color(ui.ColorCursor)
 				out.Attr ^= cell.AttrReverse
-				if !focused {
-					out.Attr |= cell.AttrDim
-				}
 			}
 			buf.Set(ox+x, oy+y, out)
 		}

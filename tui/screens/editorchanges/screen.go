@@ -31,7 +31,6 @@ type Screen struct {
 
 func New(th *theme.Theme, hunk editor.GitHunk, baseline string) *Screen {
 	s := &Screen{Base: ui.NewBase(ScreenID), th: th, baseline: baseline, area: shelleditor.New(th)}
-	s.area.SetFocused(true)
 	s.actions = ui.NewActionBar("editor-changes/actions", ui.NewTokenSet(th),
 		ui.ActionBarButton{ID: "editor-changes/previous", Label: "Previous change", Action: "changes.previous", Enabled: true},
 		ui.ActionBarButton{ID: "editor-changes/next", Label: "Next change", Action: "changes.next", Enabled: true})

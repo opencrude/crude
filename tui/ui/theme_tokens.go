@@ -94,6 +94,7 @@ type TokenSet struct {
 	MetricVersion uint64
 	theme         *theme.Theme
 	colors        map[SemanticColor]cell.Color
+	selectionInk  map[cell.Color]cell.Color
 	lastMetrics   theme.Metrics
 	lastSpacing   theme.Spacing
 }
@@ -108,6 +109,7 @@ func NewTokenSet(th *theme.Theme) *TokenSet {
 // Rebuild re-resolves all semantic colors and bumps Version.
 func (ts *TokenSet) Rebuild(th *theme.Theme) {
 	ts.theme = th
+	ts.selectionInk = nil
 	ts.Version++
 	ts.ColorVersion++
 	if th == nil {
@@ -387,12 +389,43 @@ func (ts *TokenSet) MenuInk(st ControlState, fg cell.Color) (primary, muted cell
 	return primary, muted
 }
 
-// TextSelectionColors preserves syntax ink when readable on the selected fill.
-// Otherwise the theme's selected foreground supplies at least 4.5:1 contrast.
+// TextSelectionColors keeps readable ink unchanged. When the selection fill
+// would obscure it, move the ink toward the theme's contrasting foreground
+// just enough to remain readable, retaining its color rather than flattening
+// every syntax token to the same foreground.
 func (ts *TokenSet) TextSelectionColors(fg cell.Color) (cell.Color, cell.Color) {
 	bg := ts.Color(ColorTextSelection)
-	if fg.IsDefault() || cell.ContrastRatio(fg, bg) < 4.5 {
-		fg = ts.Color(ColorTextSelectionFg)
+	if fg.IsDefault() {
+		return ts.Color(ColorTextSelectionFg), bg
 	}
-	return fg, bg
+	if ink, ok := ts.selectionInk[fg]; ok {
+		return ink, bg
+	}
+	ink := fg
+	if cell.ContrastRatio(fg, bg) < 4.5 {
+		target := ts.Color(ColorTextSelectionFg)
+		// An invalid custom fallback must still produce readable ink.
+		if target.IsDefault() || cell.ContrastRatio(target, bg) < 4.5 {
+			target = cell.ContrastInk(bg)
+		}
+		lo, hi := float32(0), float32(1)
+		for i := 0; i < 12; i++ {
+			mid := (lo + hi) / 2
+			if cell.ContrastRatio(fg.Blend(target, mid), bg) >= 4.5 {
+				hi = mid
+			} else {
+				lo = mid
+			}
+		}
+		ink = fg.Blend(target, hi)
+	}
+	// Source palettes are small, but untrusted rich text can supply arbitrary
+	// colors. Bound the cache and rebuild it with the theme.
+	if len(ts.selectionInk) < 256 {
+		if ts.selectionInk == nil {
+			ts.selectionInk = make(map[cell.Color]cell.Color)
+		}
+		ts.selectionInk[fg] = ink
+	}
+	return ink, bg
 }

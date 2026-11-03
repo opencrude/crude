@@ -34,9 +34,9 @@ func TestMountedEditorBackwardDragIncludesPressedCharacterAndRetainsPaint(t *tes
 			screen := shelleditor.New(th)
 			screen.Bind(ed)
 			screen.SetPadding(2, 2)
-			screen.SetFocused(true)
 			host := ui.NewHost(th, screen)
 			host.Resize(size.w, size.h)
+			host.Focus(screen.ID())
 			buf := surface.NewCellBuffer(size.w, size.h)
 			host.Paint(buf)
 			textX := -1

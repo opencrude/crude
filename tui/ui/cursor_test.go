@@ -66,13 +66,60 @@ func TestFloatingComponentReceivesSharedFrameClock(t *testing.T) {
 	widget := NewComponentWidget(th, field, 8, 1)
 	widget.Focus("field")
 	surf := surface.NewSurface("field", 8, 1, cell.TransparentBlank())
-	widget.Render(surf, &wm.RenderContext{Theme: th, SpinFrame: 1200})
+	widget.Render(surf, &wm.RenderContext{Theme: th, Focused: true, SpinFrame: 1200})
 	if surf.Buffer().Get(0, 0).Attr.Has(cell.AttrReverse) {
 		t.Fatal("floating field ignored shared off-phase frame")
 	}
-	widget.Render(surf, &wm.RenderContext{Theme: th, SpinFrame: 1600})
+	widget.Render(surf, &wm.RenderContext{Theme: th, Focused: true, SpinFrame: 1600})
 	if !surf.Buffer().Get(0, 0).Attr.Has(cell.AttrReverse) {
 		t.Fatal("floating field ignored shared on-phase frame")
+	}
+}
+
+func TestFloatingWindowFocusGatesTheRememberedCaret(t *testing.T) {
+	th := theme.DefaultDark()
+	manager := wm.NewWindowManager()
+	newWindow := func(id string) *wm.FloatingWindow {
+		field := NewTextField(ComponentID(id+"/field"), NewTokenSet(th))
+		field.SetValue("x")
+		field.Edit().SetCursor(0, false)
+		widget := NewComponentWidget(th, field, 8, 1)
+		widget.Focus(field.ID())
+		window := wm.NewFloatingWindow(id, "", widget, 8, 1, wm.WithDecoration(false))
+		manager.AddWindow(window)
+		return window
+	}
+	a, b := newWindow("a"), newWindow("b")
+	root := surface.NewSurface("root", 20, 5, cell.TransparentBlank())
+	ctx := &wm.RenderContext{Theme: th, SpinFrame: 0}
+	caret := func(window *wm.FloatingWindow) bool {
+		children := window.Surface().Children()
+		if len(children) != 1 {
+			t.Fatal("window content was not rendered")
+		}
+		return children[0].Buffer().Get(0, 0).Attr.Has(cell.AttrReverse)
+	}
+	manager.Render(root, ctx)
+	if caret(a) || !caret(b) {
+		t.Fatal("only the focused window may paint its field caret")
+	}
+	manager.FocusWindow("a")
+	manager.Render(root, ctx)
+	if !caret(a) || caret(b) {
+		t.Fatal("window focus change did not transfer the caret")
+	}
+	ctx.TerminalBlurred = true
+	a.MarkContentDirty()
+	b.MarkContentDirty()
+	manager.Render(root, ctx)
+	if caret(a) || caret(b) {
+		t.Fatal("terminal blur left a window caret visible")
+	}
+	ctx.TerminalBlurred = false
+	a.MarkContentDirty()
+	manager.Render(root, ctx)
+	if !caret(a) || caret(b) {
+		t.Fatal("terminal focus did not restore only the remembered caret")
 	}
 }
 

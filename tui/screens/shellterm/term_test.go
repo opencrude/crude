@@ -41,7 +41,7 @@ func TestScreenSelectionThemeSwitchPreservesChildInk(t *testing.T) {
 		host.Paint(buf)
 		tokens := ui.NewTokenSet(th)
 		c := buf.Get(0, 0)
-		if c.FG != tokens.Color(ui.ColorTextSelectionFg) || c.BG != tokens.Color(ui.ColorTextSelection) || c.Attr&(cell.AttrReverse|cell.AttrDim) != 0 {
+		if cell.ContrastRatio(c.FG, c.BG) < 4.5 || c.BG != tokens.Color(ui.ColorTextSelection) || c.Attr&(cell.AttrReverse|cell.AttrDim) != 0 {
 			t.Fatalf("theme selection=%+v", c)
 		}
 		if got := buf.Get(2, 0); got != original {

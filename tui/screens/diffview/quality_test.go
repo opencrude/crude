@@ -83,6 +83,35 @@ func TestSyntaxImmutablePreparationAndRuntimeTheme(t *testing.T) {
 	}
 }
 
+func TestSelectedComparisonKeepsSyntaxInk(t *testing.T) {
+	for _, th := range theme.AllPresets() {
+		t.Run(th.Name, func(t *testing.T) {
+			const source = "var greeting = \"hello\"\n"
+			s := New(th)
+			s.SetPrepared(Prepare(Comparison{Path: "example.go", After: source}))
+			h := host(s, 100, 12)
+			h.Focus(s.after.ID())
+			buf := surface.NewCellBuffer(100, 12)
+			h.Paint(buf)
+			x := s.after.Bounds().X + s.after.gutter()
+			col := strings.Index(source, "hello")
+			if buf.Get(x, 1).FG == buf.Get(x+col, 1).FG {
+				t.Fatal("fixture lacks distinct syntax")
+			}
+			h.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+			h.Paint(buf)
+			a, b := buf.Get(x, 1), buf.Get(x+col, 1)
+			bg := s.tokens.Color(ui.ColorTextSelection)
+			if a.BG != bg || b.BG != bg || a.FG == b.FG || cell.ContrastRatio(a.FG, bg) < 4.5 || cell.ContrastRatio(b.FG, bg) < 4.5 {
+				t.Fatalf("selected source lost readable syntax: %+v %+v", a, b)
+			}
+			if s.after.SelectedText() != source {
+				t.Fatalf("copy source changed: %q", s.after.SelectedText())
+			}
+		})
+	}
+}
+
 func TestSourceGeometryControlSafetyAndKeyboardSelection(t *testing.T) {
 	s := New(nil)
 	s.SetPrepared(Prepare(Comparison{After: "\t界é👩‍💻\x1bX\r\nlast"}))

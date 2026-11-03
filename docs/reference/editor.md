@@ -1035,7 +1035,9 @@ Protocol initialization alone proves neither semantic features nor complete
 project coverage. See [project setup](settings.md#project-tool-setup).
 
 The language-server manager derives the active file's visible language status.
-The editor header shows error and warning counts, or that status label. The
+The editor header shows its live one-based cursor position and total buffer line
+count, plus error and warning counts or that status label. The count follows the
+focused file and includes the final empty line after a line terminator. The
 Problems footer shows counts and marks restricted or stopped services as off,
 and failures as errors. Workspace health shows counts or the manager's status
 message and routes its next action to the existing trust, settings or server

@@ -46,6 +46,13 @@ shared control, never to one popup.
   list/chip Selection. Apply readable ink across input/chat/editor/diff/terminal
   consumers. Programmatic editor jumps reveal only when necessary after actual
   viewport geometry; landing highlights are not destructive edit selections.
+- Syntax and other colored text retain distinct ink under selection. The shared
+  selection palette keeps an already readable color unchanged; otherwise it
+  adjusts that color toward the contrasting selection foreground only as much
+  as needed for 4.5:1 contrast. Selection fills are restrained tints rather than
+  mid-tone blocks that force all syntax colors toward white or black. The bounded
+  palette cache is reset on theme changes. Comparisons, Git reviews and embedded
+  terminals use the same selection projection.
 
 ### Selection semantics (all editable text)
 
@@ -92,6 +99,11 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   floating Hosts receive the same frame through `ComponentWidget`. Focused
   frame-sensitive windows alone invalidate on idle ticks. `ColorCursor` maps to
   the softer muted palette before reverse-video, never full foreground white.
+- A caret paints only for the actual input owner. Nested deck and floating-window
+  Hosts retain their own focused control, but parent/window focus gates its paint.
+  Terminal focus reports suppress every caret on blur and restore the remembered
+  owner on focus, without changing text, selection or keyboard focus. A terminal
+  that does not send focus reports cannot signal OS-window blur.
 
 ## Clipboard
 

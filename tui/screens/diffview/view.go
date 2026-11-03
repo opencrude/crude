@@ -480,6 +480,7 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 						fg = ink
 					}
 				}
+				sourceFG := fg
 				for _, j := range s.search.ByRow[index] {
 					m := s.search.Matches[j]
 					if s.matchPane(m) == p && m.Row == index && unit.column < m.End && unit.column+unit.width > m.Start {
@@ -492,8 +493,7 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 					}
 				}
 				if p.contains(index, unit.column, unit.column+unit.width) {
-					fill = t.Color(ui.ColorTextSelection)
-					fg = t.Color(ui.ColorTextSelectionFg)
+					fg, fill = t.TextSelectionColors(sourceFG)
 				}
 				buf.WriteString(x+g+left, y+local+1, unit.display, fg, fill, 0)
 			}

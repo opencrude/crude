@@ -51,6 +51,12 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case tea.BlurMsg:
+		m.setTerminalBlurred(true)
+	case tea.FocusMsg:
+		m.setTerminalBlurred(false)
+	}
 	if _, blurred := msg.(tea.BlurMsg); blurred {
 		m.closeEditorGhost()
 		m.closeEditorSnippet()
@@ -598,7 +604,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	m.syncStatusOverview()
 	m.syncWorkspacePanels()
 	m.tickTerminalCursors(now)
-	if fw := m.windowManager.Focused(); fw != nil {
+	if fw := m.windowManager.Focused(); fw != nil && !m.terminalBlurred {
 		if animated, ok := fw.Content.(interface{ NeedsFrame() bool }); ok && animated.NeedsFrame() {
 			fw.MarkContentDirty()
 		}

@@ -35,7 +35,9 @@ func TestTextDragSelectionReadableAcrossRuntimeThemes(t *testing.T) {
 			if selected.Char != 'b' || plain.Char != 'f' {
 				t.Fatalf("%s area=%v: drag moved text", th.Name, area)
 			}
-			if ratio := cell.ContrastRatio(selected.BG, plain.BG); ratio < 3 {
+			// The restrained tint remains visible without forcing colored
+			// syntax toward a single white or black foreground.
+			if ratio := cell.ContrastRatio(selected.BG, plain.BG); ratio < 1.25 {
 				t.Fatalf("%s area=%v: selection fill barely visible (%.2f:1)", th.Name, area, ratio)
 			}
 			if ratio := cell.ContrastRatio(selected.FG, selected.BG); ratio < 4.5 {

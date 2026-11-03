@@ -48,7 +48,6 @@ func benchEditorPaint(b *testing.B, w, h, funcCount int) {
 
 	screen := shelleditor.New(th)
 	screen.Bind(ed)
-	screen.SetFocused(true)
 
 	// Production keeps a retained surface buffer (mainEditorSurf); paint
 	// reuses it every frame. Layout once, then measure steady-state paint.
@@ -100,7 +99,6 @@ func BenchmarkEditorScrollRepaint_120x40(b *testing.B) {
 
 	screen := shelleditor.New(th)
 	screen.Bind(ed)
-	screen.SetFocused(true)
 	buf := surface.NewCellBuffer(120, 40)
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 120, H: 40})
 	screen.Paint(buf, 0, 0, ui.PaintContext{Focused: true})

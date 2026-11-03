@@ -174,6 +174,14 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 		if context != "" {
 			segments = append(segments, shellheader.Segment{Text: context, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 1})
 		}
+		if strings.HasPrefix(target, "editor:") && m.EditorState.Editor != nil {
+			count := m.EditorState.Editor.LineCount()
+			label := "lines"
+			if count == 1 {
+				label = "line"
+			}
+			segments = append(segments, shellheader.Segment{Text: fmt.Sprintf("%d %s", count, label), Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 2})
+		}
 		if metrics != "" {
 			segments = append(segments, shellheader.Segment{Text: metrics, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 3})
 		}

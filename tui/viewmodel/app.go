@@ -190,6 +190,7 @@ type App struct {
 	mainSurf         *surface.Surface // full-screen shell surface (replaces all layer surfaces)
 	shell            *shellRoot
 	rootHost         *ui.Host
+	terminalBlurred  bool
 	mainPanes        *mainPaneLayout
 	paneFilePicker   *paneFilePickerOwner
 	paneFileOpenSeq  uint64
