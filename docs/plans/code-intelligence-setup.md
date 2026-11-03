@@ -306,6 +306,13 @@ and [pip install reference](https://pip.pypa.io/en/stable/cli/pip_install/).
 Do not treat the top-level package name as proof that every dependency came
 from an approved registry.
 
+The Go command can connect directly to its checksum database when a module
+proxy reports that the database endpoint is unavailable with HTTP 404 or 410.
+An installer bridge must prevent that fallback as well as omitting `direct`
+from `GOPROXY`; it must fail closed when it cannot proxy checksum requests.
+See the [module proxy protocol](https://go.dev/ref/mod#module-proxy-protocol)
+and [checksum database](https://go.dev/ref/mod#checksum-database).
+
 The imported package URLs also contain behavior needed by installation:
 PyPI extras, Cargo repository qualifiers and Go subpaths. Some npm entries
 start a script with Node.js rather than an npm binary. Preserve those fields
@@ -431,6 +438,11 @@ The first acquisition slice reads package-manager identity, program form,
 qualifiers and runtime name from catalog data. The native review now explains
 these prerequisites for recognized packages. This is metadata only: it does not
 install tools or runtimes, verify a runtime version or authorize execution.
+Package-manager execution must use an exact-argument, owned process tree with
+explicit environment and bounded output. A staging marker must survive a crash
+or an uncertain process teardown; publication is forbidden in either case.
+The store now has a prepared-tree primitive with those retention and
+publication fences. No package-manager installer is connected to it yet.
 
 The replacement review is implemented with native list, reader and action bar.
 Focused Linux tests cover X, Escape, mixed selection, unavailable-only automatic

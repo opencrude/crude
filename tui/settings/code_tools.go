@@ -91,6 +91,9 @@ func toolDescription(t types.CodeTool) string {
 	if t.DigestOrigin == "first-download" {
 		checksumSource = "Recorded at first download; the source provided no checksum"
 	}
+	if t.DigestOrigin == "prepared-tree" {
+		checksumSource = "Calculated from installed files, not a source checksum"
+	}
 	return fmt.Sprintf("Name: %s\nVersion: %s\nSize: %s (%d bytes)\nFolder: %s\nExecutable: %s\nSource: %s\nDownload: %s\nSHA-256: %s\nChecksum source: %s\nLicense: %s\nInstalled: %s\nInstalled by: %s\nApproval: %s\nWorkspaces: %s\nLast used: %s",
 		t.Package, t.Version, codeToolSize(t.Size), t.Size, t.Dir, t.Executable, t.Source, t.URL, t.SHA256, checksumSource,
 		mapDefault(strings.Join(t.Licenses, ", "), "Not recorded"), codeToolTime(t.InstalledAt, "Not recorded"), t.InstalledBy, t.Approval,
