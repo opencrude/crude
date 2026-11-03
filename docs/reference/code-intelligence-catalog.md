@@ -100,6 +100,13 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
   is not installable, and the second result says why in plain words
   (`TestEmbeddedServersResolveOrExplain`). The assembly plan uses it to mark a
   missing server as one Crude can install.
+- `Package.PackageManagerFor(command)` describes supported package-manager
+  metadata without running a program. The method data is in
+  `insight/catalog/package_managers.json`. It preserves the selected binary,
+  package version, supported qualifiers and Go subpath, and rejects ambiguous
+  or unsafe forms. It does not verify a runtime, authorize an install or make
+  the package installable. The setup review uses the description to name the
+  package manager and runtime while that installation path remains open.
 - `Names` lists every identifying string.
 
 ### Discovery and acquired tools
