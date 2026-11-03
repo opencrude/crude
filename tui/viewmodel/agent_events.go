@@ -280,8 +280,8 @@ func (m *App) handleAgentEnvelope(evt agent.AgentEvent) tea.Cmd {
 }
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
-	// Service notices do not mutate the conversation. Their presentation stays
-	// client-local while all semantic events enter the workspace reducer once.
+	// Service notices are already recorded by canonical ingress. Presentation
+	// never writes their status back to the owner.
 	if notice, ok := workspace.NoticeFromEvent(evt); ok {
 		return m.presentAgentNotice(notice)
 	}
@@ -292,33 +292,9 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 // subscriptions share it, so every attached shell presents notices alike.
 func (m *App) presentAgentNotice(notice workspace.AgentNotice) tea.Cmd {
 	switch notice.Type {
-	case workspace.NoticeAttachmentExcluded:
-		if center := m.ws.Status(); center != nil {
-			center.Notify(coretypes.NotificationRecord{DedupKey: "attachment:" + notice.AgentID + ":" + notice.Reason,
-				Owner: coretypes.ResourceRef{Kind: coretypes.ResourceAgent, ID: notice.AgentID}, Severity: coretypes.SeverityWarning,
-				Source: "attachment", Summary: notice.Reason, Detail: notice.Reason})
-		}
-		return nil
-	case workspace.NoticeResponseContinuationUnavailable:
-		message := "Responses delta unavailable: the endpoint returned no response ID; full uploads continue"
-		if notice.Reason == "response_not_stored" {
-			message = "Responses delta unavailable: the endpoint declined server storage; full uploads continue"
-		}
-		if m.Feedback != nil {
-			m.Feedback.NotifyInfo(message)
-		}
+	case workspace.NoticeAttachmentExcluded, workspace.NoticeResponseContinuationUnavailable:
 		return nil
 	case workspace.NoticeMemorySaved:
-		if notice.Count > 0 && m.Feedback != nil {
-			text := fmt.Sprintf("Memory: saved %d from this session", notice.Count)
-			if len(notice.Titles) > 0 {
-				text = fmt.Sprintf("Memory: saved %q", notice.Titles[0])
-				if notice.Count > 1 {
-					text += fmt.Sprintf(" +%d more", notice.Count-1)
-				}
-			}
-			m.Feedback.NotifyInfo(text)
-		}
 		return m.refreshMemoryBrowser()
 	case workspace.NoticeAsyncCommandStatus:
 		m.updateSessionBackgroundJobs(notice.AgentID, notice.Commands, time.Now())

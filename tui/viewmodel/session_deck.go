@@ -35,34 +35,6 @@ func (m *App) updateSessionBackgroundJobs(agentID string, commands []fileio.Asyn
 	}
 	jobs := make([]backgroundjobs.Job, 0, len(commands))
 	for _, command := range commands {
-		state := types.OperationRunning
-		switch command.Status {
-		case fileio.AsyncCompleted:
-			state = types.OperationSucceeded
-		case fileio.AsyncFailed:
-			state = types.OperationFailed
-		case fileio.AsyncKilled:
-			state = types.OperationCancelled
-		}
-		owner := types.ResourceRef{Kind: types.ResourceAgent, ID: agentID}
-		if session := m.ws.SessionsByAgent()[agentID]; session != nil {
-			owner.SessionID = session.SessionID
-		}
-		if m.ws.Status() != nil {
-			m.ws.Status().SetOperation(types.OperationSnapshot{
-				ID: "command:" + command.Handle, Owner: owner, Kind: "background-command",
-				Label: command.Command, State: state, StartedAt: command.StartedAt,
-				EndedAt: command.EndedAt, Error: command.Error, OutputRef: command.Handle,
-				Cancellable: state == types.OperationRunning,
-			})
-			if state == types.OperationFailed {
-				m.ws.Status().Notify(types.NotificationRecord{
-					DedupKey: "command-failed:" + command.Handle, Owner: owner,
-					Severity: types.SeverityError, Source: "background-command",
-					Summary: "Background command failed", Detail: command.Command + ": " + command.Error,
-				})
-			}
-		}
 		jobs = append(jobs, backgroundjobs.Job{
 			OwnerID: agentID, Handle: command.Handle, Command: command.Command, PID: command.PID, Status: string(command.Status),
 			StartedAt: command.StartedAt, EndedAt: command.EndedAt, Duration: command.Duration,

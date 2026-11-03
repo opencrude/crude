@@ -39,6 +39,10 @@ type sourceControlResultMsg struct {
 	// commit is the request a successful commit completes, so the panel
 	// clears only the draft that was actually committed.
 	commit *gitpanel.CommitRequest
+	// Mutation outcome is independent of its following status read. A newer
+	// refresh may supersede evidence, never whether an accepted action worked.
+	mutation  bool
+	completed bool
 	// silent marks a watcher-driven reconciliation. Nobody asked for it, so it
 	// never sets the panel's loading state, records a status operation, notifies
 	// a failure, or touches the commit field.
@@ -63,6 +67,7 @@ func (m *App) refreshSourceControl() tea.Cmd {
 	if m.gitPanel == nil {
 		return nil
 	}
+	m.cancelGitChangesPreparation()
 	m.ws.EnsureGit()
 	m.gitPanel.SetLoading(true)
 	gen := m.gitRefreshGen.Add(1)
@@ -82,6 +87,7 @@ func (m *App) sourceControlMutation(
 	commit *gitpanel.CommitRequest,
 	mutate func(context.Context, shellport.GitService) error,
 ) tea.Cmd {
+	m.cancelGitChangesPreparation()
 	m.ws.EnsureGit()
 	if m.gitPanel != nil {
 		m.gitPanel.SetLoading(true)
@@ -93,14 +99,14 @@ func (m *App) sourceControlMutation(
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
 		defer cancel()
+		result := sourceControlResultMsg{gen: gen, mutation: true}
 		if err := mutate(ctx, service); err != nil {
-			return sourceControlResultMsg{gen: gen, err: err}
+			result.err = err
+			return result
 		}
-		snapshot, err := service.Snapshot(ctx)
-		return sourceControlResultMsg{
-			gen: gen, snapshot: snapshot, err: err,
-			notice: notice, commit: commit,
-		}
+		result.completed, result.notice, result.commit = true, notice, commit
+		result.snapshot, result.err = service.Snapshot(ctx)
+		return result
 	}
 }
 
@@ -130,11 +136,21 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	if msg.remoteSeq != 0 {
 		return m.applyGitRemoteResult(msg)
 	}
-	if msg.gen == 0 || msg.gen != m.gitRefreshGen.Load() || m.gitPanel == nil {
+	if msg.gen == 0 || msg.gen <= m.gitReadsBoundary || m.gitPanel == nil {
+		return nil
+	}
+	if !msg.mutation && msg.gen != m.gitRefreshGen.Load() {
+		if m.gitReadsInFlight == 0 && m.gitPrepareDirty {
+			return m.prepareGitChangesIfVisible()
+		}
 		return nil
 	}
 	m.gitSnapshotAt = time.Now()
 	if msg.err != nil {
+		if msg.completed {
+			m.finishGitWithStatusError(msg)
+			return nil
+		}
 		if msg.silent {
 			// Unrequested reads never report: a workspace without a repository,
 			// or a transient failure, must not raise an issue or toast. The last
@@ -159,10 +175,8 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	if msg.silent {
 		// File bytes can change while every status code stays the same, so a
 		// visible diff re-reads even when the snapshot itself is unchanged.
-		if !sameGitSnapshot(m.gitPanel.Snapshot(), msg.snapshot) {
-			m.presentGitSnapshot(msg.snapshot)
-		} else {
-			m.gitPanel.SetLoading(false)
+		if !m.presentGitSnapshot(msg.snapshot) {
+			return nil
 		}
 		return m.prepareGitChangesIfVisible()
 	}
@@ -182,14 +196,33 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// A status read is evidence about the repository, not the outcome of an effect
+// that already completed. This rule is shared by local and remote Git actions.
+func (m *App) finishGitWithStatusError(msg sourceControlResultMsg) {
+	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
+	if msg.commit != nil {
+		m.gitPanel.CompleteCommit(*msg.commit)
+	}
+	detail := fmt.Sprintf("%s. Git status could not be refreshed. Refresh Git. %s", msg.notice, msg.err)
+	err := fmt.Errorf("%s", detail)
+	m.gitPanel.SetError(err)
+	m.setGitChangesError(err)
+	m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityWarning, Summary: "Git status could not be refreshed", Detail: detail})
+}
+
 // presentGitSnapshot publishes one repository projection to every surface that
 // derives from it: the Git panel, the header identity, the footer Git pill,
 // and the editor's gutter/blame annotation (a moved HEAD invalidates it).
-func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
-	if m == nil || m.gitPanel == nil {
-		return
+func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) bool {
+	if m == nil || m.gitPanel == nil || workspace.OlderGitSnapshot(snapshot, m.gitPanel.Snapshot()) {
+		return false
 	}
+	changed := !sameGitSnapshot(m.gitPanel.Snapshot(), snapshot)
 	m.gitPanel.SetSnapshot(snapshot)
+	if !changed {
+		// Advance the read boundary without rebuilding any retained reader.
+		return true
+	}
 	m.projectTreeGitSnapshot(snapshot)
 	if cmd := m.syncGitMergeDialog(snapshot); cmd != nil {
 		m.startSourceControlMutation(cmd)
@@ -197,6 +230,7 @@ func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
 	if m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 		m.markEditorGitStaleNow()
 	}
+	return true
 }
 
 func (m *App) recordGitOperation(generation uint64, label string) {
@@ -389,6 +423,12 @@ func (m *App) prepareGitChanges() tea.Cmd {
 	if m.gitPanel == nil {
 		return nil
 	}
+	if m.gitReadsInFlight > 0 {
+		// Topic delivery may update status while an explicit action owns the
+		// lane. Coalesce derivation until that action's status read settles.
+		m.gitPrepareDirty = true
+		return nil
+	}
 	if m.gitPrepareInFlight {
 		m.gitPrepareDirty = true
 		if m.gitPrepareCancel != nil {
@@ -396,6 +436,7 @@ func (m *App) prepareGitChanges() tea.Cmd {
 		}
 		return nil
 	}
+	m.gitPrepareDirty = false
 	m.ws.EnsureGit()
 	changes := append([]workspace.GitChange(nil), m.gitPanel.Snapshot().Changes...)
 	if len(changes) == 0 {
@@ -460,13 +501,19 @@ func (m *App) setGitChangesError(err error) {
 	}
 }
 
-func (m *App) cancelGitPreparation() {
+// An explicit action cannot queue behind a derived diff of the state it is
+// replacing. Cancel and fence only working comparisons, not immutable history.
+func (m *App) cancelGitChangesPreparation() {
 	if m.gitPrepareCancel != nil {
 		m.gitPrepareCancel()
 		m.gitPrepareCancel = nil
 	}
 	m.gitPrepareGen++
 	m.gitPrepareInFlight, m.gitPrepareDirty = false, false
+}
+
+func (m *App) cancelGitPreparation() {
+	m.cancelGitChangesPreparation()
 	for _, cancel := range m.gitEvidenceCancel {
 		cancel()
 	}

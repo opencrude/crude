@@ -407,6 +407,12 @@ SourceControl is the Git surface of a workspace.
 
 GitService owns source-control reads and mutations.
 
+`Snapshot(ctx)` is an explicit fresh core read, including manual Refresh,
+post-mutation status and the bounded watcher-loss fallback. Its immutable
+`SourceID`/`Sequence` evidence fences delayed older push/RPC results. It is not a
+read of the last shell topic cache. Stage/Unstage transfer exact selected paths
+over stdin to native Git, not a potentially oversized argv or expanded pathspec.
+
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
 | `AnnotateFile` | 1 | reads | yes | git.annotate_file |

@@ -34,6 +34,26 @@
 
 ## Completion delivery and output
 
+- The core's canonical service-notice ingress records command operations and
+  failure notifications before broadcasting presentation facts. A complete
+  periodic command snapshot is an observation, not another failure. Shells only
+  update their job panels; attaching, repainting or reconnecting cannot create
+  new command notifications or reset their read/dismiss/resolved choices.
+- Command outcome identity includes the exact agent/session, handle, PID and
+  start instant. Reusing a handle for a new process produces a new outcome.
+  Repeating an already observed outcome leaves timestamps, occurrence counts and
+  status revision unchanged. The existing StatusCenter rows retain this evidence;
+  there is no second durable notification registry.
+- Source observations last only while those jobs remain in the complete command
+  inventory. Pruning display history cannot make a retained finished job create
+  another outcome. Empty inventories and agent removal release observations.
+  Agent-turn completion does not settle independently running background jobs;
+  only their command manager owns that lifecycle.
+- Attachment, saved-memory and response-continuation service feedback use the
+  same canonical ingress, not one shared-history write per shell. Existing
+  runtime EventIDs make identified replays inert. Actual unkeyed source events
+  are recorded once at ingress, never from their presentation.
+
 - Tracked background commands notify their owning agent when they complete,
   fail or time out on their own (`AsyncCommandManager.SetSettleObserver` →
   durable `command_outcome` collaboration event, admitted at a safe boundary or

@@ -1012,6 +1012,7 @@ func (a *actor) reduced(reduction workspace.AgentReduction) {
 }
 
 func (a *actor) notice(notice workspace.AgentNotice) {
+	a.ws.ApplyAgentNotice(notice)
 	a.broadcast(coreprotocol.Change{Notices: []workspace.AgentNotice{notice}})
 }
 

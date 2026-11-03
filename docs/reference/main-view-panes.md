@@ -433,6 +433,19 @@ wins over prepared disk bytes. See the recorded measurements in
   remote operation succeeds. The moved `.git` refs reach the header and the Git
   panel through the core file watch. Both paint only non-zero `↑n`/`↓n` counts
   from the same snapshot.
+- Stage/Unstage, including section **Stage all** and **Commit all**, send exact
+  selected paths as literal NUL-delimited Git pathspecs on stdin. Large selections
+  do not become an oversized Windows command line, and glob-like filenames cannot
+  select neighboring files. Unstage preserves working bytes and unrelated index
+  entries, including before the first commit. The 400-file comparison bound limits
+  loaded review text only, not status rows or selected mutation paths.
+  Explicit refresh, index/checkout mutations, remote actions and message requests
+  cancel and fence obsolete working-diff preparation before entering the Git lane.
+  Otherwise hundreds of tracked-file comparisons can consume an action's entire
+  queue deadline. Immutable history readers keep their own lifetime.
+- Commit-message generation that finds no remaining selected changes preserves the
+  user's draft and refreshes repository evidence. It does not show a protocol
+  `generation_failed` prefix or imply that an external commit failed.
 - The commit message **Edit…** button opens a dialog with the full message
   (Save / Commit / Cancel) and the repository's commit conventions.
 - The Changes/History split collapses either side with the divider's ◂ ▸

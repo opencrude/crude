@@ -1194,7 +1194,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case gitCommitDeltaMsg:
 		m.applyCommitMessageDelta(msg)
 	case gitCommitWrittenMsg:
-		m.applyCommitMessageWritten(msg)
+		cmds = append(cmds, m.applyCommitMessageWritten(msg))
 	case gitDiscardPreviewMsg:
 		if msg.generation != m.workspaceSwitchGen.Load() || msg.sequence != m.gitDiscardSequence || m.GitDiscardPending == nil || m.GitDiscardPending.Path != msg.change.Path || !m.overlayHost.IsOpen(ui.OverlayTreeDelete) {
 			break

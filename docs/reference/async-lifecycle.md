@@ -50,11 +50,26 @@ subprocess rather than a process-name search.
   starts (`tui/viewmodel/git_snapshot.go`). Reconciliation is silent by
   contract — no panel loading flash, no toast, no `StatusCenter` operation, no
   commit-field touch — and it never starts while any Git read is in flight,
-  because superseding a refresh or mutation would drop that operation's notice,
-  commit clear, and error report. An unchanged projection must not rebuild the
+  so background evidence cannot compete with an explicit repository action.
+  An unchanged projection must not rebuild the
   panel list or invalidate the editor gutter. `beginWorkspaceSwitch` abandons
   in-flight read slots and `restore` gives them back, so an old project's
   result can never occupy the replacement project's slot.
+  Connected `GitService.Snapshot` performs a fresh core read; it never returns
+  the shell's last topic cache as a successful refresh. The repository lane
+  assigns each successful read a service-lifetime source ID and sequence.
+  Every Git surface rejects older evidence from that same source, including
+  queued topic data arriving after a fresh RPC. Equivalent reads advance this
+  boundary without rebuilding lists or invalidating gutters. A fresh core has
+  a new source identity. Mutation outcome settlement is independent of read
+  supersession: a failed post-action status read cannot turn a completed commit,
+  checkout, index action or remote operation into a reported failed effect.
+  It reports the evidence-read failure separately and clears only the draft
+  actually committed. Passive topic delivery defers working comparisons while
+  an action owns the lane; it cannot requeue obsolete diffs ahead of that action.
+  Git read RPCs use the shared cancel-and-join exchange. Cancelling the shell's
+  await alone does not retire a core job; exact admitted-job cancellation and
+  final-result acknowledgement release that read's repository ownership.
 
 - **Comparison preparation and search have explicit owners.** Git change sets,
   historical commits, disk/saved and shared/private snapshots carry tab/request

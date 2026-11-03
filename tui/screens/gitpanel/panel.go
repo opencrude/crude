@@ -317,10 +317,15 @@ func OwnsFocus(id ui.ComponentID) bool {
 func (panel *Panel) Snapshot() workspace.GitSnapshot { return panel.snapshot }
 
 func (panel *Panel) SetSnapshot(snapshot workspace.GitSnapshot) {
+	changed := !panel.haveSnapshot || !workspace.SameGitSnapshot(panel.snapshot, snapshot)
 	panel.snapshot, panel.haveSnapshot = snapshot, true
 	panel.loading = false
 	panel.errText = ""
-	panel.sync()
+	if changed {
+		panel.sync()
+	} else {
+		panel.syncCommit()
+	}
 }
 
 func (panel *Panel) SetLoading(loading bool) {

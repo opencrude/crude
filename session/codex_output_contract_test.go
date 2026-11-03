@@ -35,12 +35,43 @@ func TestExecuteCodexCommandCancellationReturnsPartialEvidenceWithoutSyntheticEx
 	mgr := fileio.NewAsyncCommandManager()
 	defer mgr.CloseAndWait()
 	command, shell := codexOutputContractCommand()
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	// Wait for both streams in the command manager, not just child startup:
+	// cancellation must exercise retention of output already captured.
+	ready := make(chan error, 1)
+	go func() {
+		deadline := time.NewTimer(10 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			page, readErr := mgr.ReadOutputPage("auto-1", 0, 4096)
+			if readErr == nil && strings.Contains(page.Output, "codex partial stdout") && strings.Contains(page.Output, "codex partial stderr") {
+				ready <- nil
+				cancel()
+				return
+			}
+			select {
+			case <-tick.C:
+			case <-deadline.C:
+				ready <- errors.New("child did not publish partial output")
+				cancel()
+				return
+			case <-t.Context().Done():
+				ready <- t.Context().Err()
+				cancel()
+				return
+			}
+		}
+	}()
 	toolResult, err := executeCodexCommand(ctx, mgr, t.TempDir(), "exec_command", map[string]any{
 		"cmd": command, "shell": shell, "login": false, "yield_time_ms": 5000,
 	}, safety.DefaultCommandPolicy())
-	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "exited with code -1") {
+	if readyErr := <-ready; readyErr != nil {
+		t.Fatal(readyErr)
+	}
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "exited with code -1") {
 		t.Fatalf("error=%v content=%s", err, toolResult.Content)
 	}
 	var result fileio.InteractiveResult

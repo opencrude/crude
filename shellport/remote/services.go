@@ -63,22 +63,10 @@ func (g gitService) InspectCommit(ctx context.Context, hash string) (workspace.G
 	return g.client().InspectCommit(ctx, hash)
 }
 func (g gitService) Snapshot(ctx context.Context) (workspace.GitSnapshot, error) {
-	g.w.auxMu.RLock()
-	value := g.w.gitState
-	stateErr := g.w.gitError
-	g.w.auxMu.RUnlock()
-	if stateErr != nil {
-		return workspace.GitSnapshot{}, stateErr
-	}
-	if value == nil {
-		return workspace.GitSnapshot{}, errors.New("Git state is not ready")
-	}
-	var out coreprotocol.GitSnapshotResult
-	body, err := coreprotocol.Marshal(value)
-	if err == nil {
-		err = coreprotocol.Decode(body, &out)
-	}
-	return out.Snapshot, err
+	// Refresh, fallback reconciliation and post-mutation reads must observe
+	// the core's repository now, not the last topic value applied by this UI.
+	// The response is immutable evidence; only Update installs presentation.
+	return g.client().Snapshot(ctx)
 }
 func (g gitService) Stage(ctx context.Context, paths ...string) error {
 	return g.w.call(ctx, coreprotocol.GitStagePaths, &coreprotocol.GitPathsRequest{Paths: paths}, &coreprotocol.BoolResult{})
@@ -139,6 +127,13 @@ func (c commitWriter) Write(ctx context.Context, stageAll bool, emit func(string
 	}
 	var out coreprotocol.CommitMessageResult
 	err := c.w.callWithProgress(ctx, coreprotocol.GitCommitMessage, coreprotocol.CommitMessageRequest{StageAll: stageAll}, &out, progress)
+	var failure *coreprotocol.Fault
+	if errors.As(err, &failure) {
+		if failure.Code == "git_no_changes" {
+			return "", workspace.ErrGitNoChanges
+		}
+		return "", errors.New(failure.Message)
+	}
 	return out.Message, err
 }
 
