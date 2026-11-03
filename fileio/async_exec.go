@@ -100,6 +100,20 @@ type ownedCommandTree struct {
 	close func()
 }
 
+func uncertainTreeStop(err error) error {
+	if err == nil || errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return &CommandTreeUnverifiedError{Err: err}
+}
+
+func joinTreeStop(waitErr, stopErr error) error {
+	if stopErr == nil || errors.Is(stopErr, os.ErrProcessDone) {
+		return waitErr
+	}
+	return errors.Join(waitErr, uncertainTreeStop(stopErr))
+}
+
 type asyncCmdState struct {
 	cmd              *exec.Cmd
 	output           bytes.Buffer
@@ -134,11 +148,41 @@ func (st *asyncCmdState) killGroup() {
 // settle maps exec.ErrWaitDelay, which Wait returns only when the command
 // otherwise succeeded, to success and records why output stopped.
 func (st *asyncCmdState) settle(err error) error {
+	var unverified *CommandTreeUnverifiedError
+	if errors.As(err, &unverified) {
+		return err
+	}
 	if !errors.Is(err, exec.ErrWaitDelay) {
 		return err
 	}
 	_, _ = st.Write([]byte(detachedOutputNote))
 	return nil
+}
+
+// finishOutcome runs under st.mu after waiting for the owned leader. A request
+// to stop is not evidence that the tree actually stopped.
+func (st *asyncCmdState) finishOutcome(ctxErr, waitErr error) {
+	st.info.EndedAt = time.Now()
+	if waitErr == nil {
+		st.info.Status, st.info.ExitCode = AsyncCompleted, 0
+		return
+	}
+	var unverified *CommandTreeUnverifiedError
+	if !errors.As(waitErr, &unverified) {
+		switch ctxErr {
+		case context.Canceled:
+			st.info.Status, st.info.Error = AsyncKilled, "killed"
+			return
+		case context.DeadlineExceeded:
+			st.info.Status, st.info.Error = AsyncKilled, "timed out"
+			return
+		}
+	}
+	st.info.Status, st.info.Error = AsyncFailed, waitErr.Error()
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		st.info.ExitCode = exitErr.ExitCode()
+	}
 }
 
 func (st *asyncCmdState) Write(data []byte) (int, error) {
@@ -467,34 +511,18 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		err := state.settle(tree.wait())
 		state.mu.Lock()
 		defer state.mu.Unlock()
-		state.info.EndedAt = time.Now()
-		if err != nil {
-			if ctx.Err() == context.Canceled {
-				state.info.Status = AsyncKilled
-				state.info.Error = "killed"
-				if m.logger != nil {
+		state.finishOutcome(ctx.Err(), err)
+		if m.logger != nil {
+			switch state.info.Status {
+			case AsyncKilled:
+				if ctx.Err() == context.Canceled {
 					m.logger.Warn("ASYNC", "killed", "handle", handle, "pid", state.info.PID, "duration", time.Since(state.info.StartedAt).Round(time.Second).String())
-				}
-			} else if ctx.Err() == context.DeadlineExceeded {
-				state.info.Status = AsyncKilled
-				state.info.Error = "timed out"
-				if m.logger != nil {
+				} else {
 					m.logger.Warn("ASYNC", "timeout", "handle", handle, "pid", state.info.PID, "timeout_seconds", timeoutSeconds)
 				}
-			} else {
-				state.info.Status = AsyncFailed
-				state.info.Error = err.Error()
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					state.info.ExitCode = exitErr.ExitCode()
-				}
-				if m.logger != nil {
-					m.logger.Warn("ASYNC", "failed", "handle", handle, "pid", state.info.PID, "exit_code", state.info.ExitCode, "error", err.Error())
-				}
-			}
-		} else {
-			state.info.Status = AsyncCompleted
-			state.info.ExitCode = 0
-			if m.logger != nil {
+			case AsyncFailed:
+				m.logger.Warn("ASYNC", "failed", "handle", handle, "pid", state.info.PID, "exit_code", state.info.ExitCode, "error", state.info.Error)
+			case AsyncCompleted:
 				m.logger.Info("ASYNC", "completed", "handle", handle, "pid", state.info.PID, "duration", time.Since(state.info.StartedAt).Round(time.Second).String())
 			}
 		}
@@ -810,25 +838,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 		}
 		state.mu.Lock()
 		defer state.mu.Unlock()
-		state.info.EndedAt = time.Now()
-		if err != nil {
-			if ctx.Err() == context.Canceled {
-				state.info.Status = AsyncKilled
-				state.info.Error = "killed"
-			} else if ctx.Err() == context.DeadlineExceeded {
-				state.info.Status = AsyncKilled
-				state.info.Error = "timed out"
-			} else {
-				state.info.Status = AsyncFailed
-				state.info.Error = err.Error()
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					state.info.ExitCode = exitErr.ExitCode()
-				}
-			}
-		} else {
-			state.info.Status = AsyncCompleted
-			state.info.ExitCode = 0
-		}
+		state.finishOutcome(ctx.Err(), err)
 	}()
 
 	return &UntrackedCmd{state: state, cancel: cancel, logger: lg}, nil
