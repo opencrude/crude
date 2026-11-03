@@ -3,9 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,53 +10,10 @@ import (
 	"crude/collaboration"
 	"crude/provider"
 	"crude/sessiondb"
-	"crude/types"
 	"crude/types/control"
 	recoverytypes "crude/types/recovery"
 	"crude/worktree"
 )
-
-func TestExecutionHygieneWarningsAreWorkspaceWideAndNeverBlockCreation(t *testing.T) {
-	root := t.TempDir()
-	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatal(err, string(out))
-	}
-	if err := os.WriteFile(filepath.Join(root, "baseline"), []byte("base"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "base"}} {
-		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
-			t.Fatal(err, string(out))
-		}
-	}
-	service, err := worktree.Open(root, t.TempDir(), worktree.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := service.Create(t.Context(), worktree.Request{Owner: worktree.Owner{AgentID: "another-parents-child", RunID: "old-run"}, Mode: worktree.Isolated})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &Session{}
-	s.SetExecutionService(&launchExecutionFixture{Service: service})
-	one, zero := 1, 0
-	settings := types.ExecutionHygieneSettings{RetainedCount: &one, AgeHours: &zero, StorageMB: &zero}
-	notice, digest := s.executionHygieneNotice(t.Context(), settings, "")
-	if notice == nil || !strings.Contains(notice.ContentString(), c.ID) || !strings.Contains(notice.ContentString(), "never a launch blocker") {
-		t.Fatal("missing workspace warning")
-	}
-	if same, _ := s.executionHygieneNotice(t.Context(), types.CloneExecutionHygiene(settings), digest); same != nil {
-		t.Fatal("unchanged warning repeated")
-	}
-	off := false
-	settings.Warnings = &off
-	if disabled, _ := s.executionHygieneNotice(t.Context(), settings, ""); disabled != nil {
-		t.Fatal("disabled reminder emitted")
-	}
-	if _, err := service.Create(t.Context(), worktree.Request{Owner: worktree.Owner{AgentID: "new-reader", RunID: "new"}, Mode: worktree.Shared}); err != nil {
-		t.Fatal("warning blocked launch", err)
-	}
-}
 
 func TestExecutionRetentionProtectsRecoverySelectionAndQueue(t *testing.T) {
 	db := sessiondb.OpenAndMigrateAt(t.TempDir())
@@ -240,6 +194,30 @@ func TestJanitorialSettlementRecoversChildOnlyLaunchCheckpoint(t *testing.T) {
 	}
 	if f.requests.Load() != 0 || f.effects.Load() != 0 {
 		t.Fatal("adoption restarted obsolete work")
+	}
+}
+
+// The parent hears about cleanup exactly once, when a child that owned a
+// separate worktree stops. Shared children leave nothing to clean.
+func TestChildOutcomeRemindsOnlyForSeparateWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		execution *collaboration.ExecutionOutcome
+		want      int
+	}{
+		{"own worktree", &collaboration.ExecutionOutcome{ID: "child-execution", Root: "/store/child/checkout", Mode: string(worktree.Isolated)}, 1},
+		{"shared logical checkout", &collaboration.ExecutionOutcome{Root: "/workspace", Mode: string(worktree.Shared)}, 0},
+		{"shares parent's worktree", &collaboration.ExecutionOutcome{ID: "parent-execution", Root: "/store/parent/checkout", Mode: string(worktree.Shared)}, 0},
+		{"no execution facts", nil, 0},
+	} {
+		event := collaboration.Event{ID: "outcome-" + tc.name, Kind: collaboration.EventRunOutcome, Origin: collaboration.OriginRuntime, SenderID: "child", SenderName: "Child", Body: "Child · completed", RunID: "run", Execution: tc.execution}
+		text := collaborationMessage(collaboration.PendingDelivery{Event: event}).ContentString()
+		if got := strings.Count(text, "<child_execution_disposition "); got != tc.want {
+			t.Errorf("%s: %d cleanup reminders, want %d", tc.name, got, tc.want)
+		}
+		if tc.want == 0 && (strings.Contains(text, "cleanup") || strings.Contains(text, "parent-execution")) {
+			t.Errorf("%s: parent was asked to clean work it does not own: %s", tc.name, text)
+		}
 	}
 }
 

@@ -226,9 +226,10 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			}
 		}
 		lines := []statusoverview.DetailLine{{Label: "State", Value: state, Role: mapBool(server.Error != "", ui.ColorError, ui.ColorMuted)}}
-		if server.Scope == ttypes.CoverageProject {
+		switch server.Scope {
+		case ttypes.CoverageProject:
 			lines = append(lines, statusoverview.DetailLine{Label: "Scope", Value: "Can report problems in files that are not open. Project coverage is not complete.", Role: ui.ColorMuted})
-		} else if server.Scope == ttypes.CoverageOpenFiles {
+		case ttypes.CoverageOpenFiles:
 			lines = append(lines, statusoverview.DetailLine{Label: "Scope", Value: "Can check open files only.", Role: ui.ColorMuted})
 		}
 		if server.Error != "" {
@@ -328,9 +329,10 @@ func assemblyPanelItems(plan ttypes.AssemblyPlan, status ttypes.LanguageServiceS
 			} else {
 				reason += " See Language Servers for its state."
 			}
-			if language.Scope == ttypes.CoverageProject {
+			switch language.Scope {
+			case ttypes.CoverageProject:
 				reason += " It can report problems in files that are not open. Project coverage is not complete."
-			} else if language.Scope == ttypes.CoverageOpenFiles {
+			case ttypes.CoverageOpenFiles:
 				reason += " It can check open files only."
 			}
 			item.Lines = append(item.Lines, statusoverview.DetailLine{Value: reason, Role: role})

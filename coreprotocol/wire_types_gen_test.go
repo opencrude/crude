@@ -416,7 +416,6 @@ var wireTypes = []any{
 	new(p14.EditorPredictionMode),
 	new(p14.EditorPredictionProtocol),
 	new(p14.EditorSettings),
-	new(p14.ExecutionHygieneSettings),
 	new(p14.FastMode),
 	new(p14.Goal),
 	new(p14.GoalStatus),

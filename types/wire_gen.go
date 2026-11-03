@@ -837,8 +837,8 @@ func (z *AgentStatusSnapshot) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AgentsSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 6
-	o = append(o, 0x96)
+	// array header, size 5
+	o = append(o, 0x95)
 	o = msgp.AppendBool(o, z.Enabled)
 	o = msgp.AppendString(o, z.ActiveProfile)
 	o = msgp.AppendInt(o, z.MaxConcurrent)
@@ -868,11 +868,6 @@ func (z *AgentsSettings) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
-	o, err = z.ExecutionHygiene.MarshalMsg(o)
-	if err != nil {
-		err = msgp.WrapError(err, "ExecutionHygiene")
-		return
-	}
 	return
 }
 
@@ -888,8 +883,8 @@ func (z *AgentsSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 6 {
-		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
 		return
 	}
 	z.Enabled, bts, err = msgp.ReadBoolBytes(bts)
@@ -981,11 +976,6 @@ func (z *AgentsSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.AgentProfiles[za0003] = za0004
 		}
 	}
-	bts, err = z.ExecutionHygiene.UnmarshalMsg(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ExecutionHygiene")
-		return
-	}
 	o = bts
 	return
 }
@@ -1006,7 +996,6 @@ func (z *AgentsSettings) Msgsize() (s int) {
 			s += msgp.StringPrefixSize + len(za0003) + za0004.Msgsize()
 		}
 	}
-	s += z.ExecutionHygiene.Msgsize()
 	return
 }
 
@@ -3457,144 +3446,6 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *EditorSettings) Msgsize() (s int) {
 	s = 1 + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize
-	return
-}
-
-// MarshalMsg implements msgp.Marshaler
-func (z *ExecutionHygieneSettings) MarshalMsg(b []byte) (o []byte, err error) {
-	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
-	if z.Warnings == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendBool(o, *z.Warnings)
-	}
-	if z.RetainedCount == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendInt(o, *z.RetainedCount)
-	}
-	if z.AgeHours == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendInt(o, *z.AgeHours)
-	}
-	if z.StorageMB == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendInt(o, *z.StorageMB)
-	}
-	return
-}
-
-// UnmarshalMsg implements msgp.Unmarshaler
-func (z *ExecutionHygieneSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
-	var zb0001 uint32
-	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err)
-		return
-	}
-	if uint64(zb0001)*1 > uint64(len(bts)) {
-		err = msgp.ErrShortBytes
-		return
-	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
-		return
-	}
-	if msgp.IsNil(bts) {
-		bts, err = msgp.ReadNilBytes(bts)
-		if err != nil {
-			return
-		}
-		z.Warnings = nil
-	} else {
-		if z.Warnings == nil {
-			z.Warnings = new(bool)
-		}
-		*z.Warnings, bts, err = msgp.ReadBoolBytes(bts)
-		if err != nil {
-			err = msgp.WrapError(err, "Warnings")
-			return
-		}
-	}
-	if msgp.IsNil(bts) {
-		bts, err = msgp.ReadNilBytes(bts)
-		if err != nil {
-			return
-		}
-		z.RetainedCount = nil
-	} else {
-		if z.RetainedCount == nil {
-			z.RetainedCount = new(int)
-		}
-		*z.RetainedCount, bts, err = msgp.ReadIntBytes(bts)
-		if err != nil {
-			err = msgp.WrapError(err, "RetainedCount")
-			return
-		}
-	}
-	if msgp.IsNil(bts) {
-		bts, err = msgp.ReadNilBytes(bts)
-		if err != nil {
-			return
-		}
-		z.AgeHours = nil
-	} else {
-		if z.AgeHours == nil {
-			z.AgeHours = new(int)
-		}
-		*z.AgeHours, bts, err = msgp.ReadIntBytes(bts)
-		if err != nil {
-			err = msgp.WrapError(err, "AgeHours")
-			return
-		}
-	}
-	if msgp.IsNil(bts) {
-		bts, err = msgp.ReadNilBytes(bts)
-		if err != nil {
-			return
-		}
-		z.StorageMB = nil
-	} else {
-		if z.StorageMB == nil {
-			z.StorageMB = new(int)
-		}
-		*z.StorageMB, bts, err = msgp.ReadIntBytes(bts)
-		if err != nil {
-			err = msgp.WrapError(err, "StorageMB")
-			return
-		}
-	}
-	o = bts
-	return
-}
-
-// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z *ExecutionHygieneSettings) Msgsize() (s int) {
-	s = 1
-	if z.Warnings == nil {
-		s += msgp.NilSize
-	} else {
-		s += msgp.BoolSize
-	}
-	if z.RetainedCount == nil {
-		s += msgp.NilSize
-	} else {
-		s += msgp.IntSize
-	}
-	if z.AgeHours == nil {
-		s += msgp.NilSize
-	} else {
-		s += msgp.IntSize
-	}
-	if z.StorageMB == nil {
-		s += msgp.NilSize
-	} else {
-		s += msgp.IntSize
-	}
 	return
 }
 

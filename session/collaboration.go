@@ -20,6 +20,7 @@ import (
 	"crude/tools"
 	captypes "crude/types/capability"
 	"crude/types/command"
+	"crude/worktree"
 )
 
 func (s *Session) SetCollaboration(store *collaboration.Store, instanceID string) {
@@ -202,8 +203,13 @@ func collaborationInput(delivery collaboration.PendingDelivery) provider.UserInp
 		Broadcast:  event.Broadcast,
 		References: references, Disposition: string(collaboration.EventDisposition(event)),
 	})
-	if event.Kind == collaboration.EventRunOutcome && event.Execution != nil {
-		text += "\n" + rootprompt.ChildExecutionDisposition(event.Execution.ID, event.Execution.Root, event.Execution.Mode)
+	// Only a child that stopped in its own worktree leaves something for the
+	// parent to settle. A shared child (even one pinning the parent's own
+	// isolated checkout) releases its pin by itself and gets no reminder.
+	if event.Kind == collaboration.EventRunOutcome && event.Execution != nil && event.Execution.Mode == string(worktree.Isolated) {
+		if disposition := rootprompt.ChildExecutionDisposition(event.Execution.ID, event.Execution.Root); disposition != "" {
+			text += "\n" + disposition
+		}
 	}
 	display := event.SenderName + " · " + collaborationKindLabel(event.Kind)
 	if event.Broadcast {

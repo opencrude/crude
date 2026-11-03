@@ -22,11 +22,6 @@ var controlFieldPaths = map[int]map[string]string{
 }
 
 func agentControlPath(category int, id string) string {
-	if category == catMain {
-		if path := executionHygienePath(id); path != "" {
-			return path
-		}
-	}
 	role := map[int]string{catMain: "default", catResearcher: "researcher", catCrafter: "crafter", catAeron: "aeron"}[category]
 	if role == "" {
 		return ""
@@ -54,9 +49,6 @@ func (s *WorkspaceSettingsSurface) controlField(id ui.ComponentID) (*ui.FieldSta
 				return field, "safety.auto_permission"
 			}
 			path := agentControlPath(catMain, field.ID)
-			if executionHygienePath(field.ID) != "" {
-				return field, path
-			}
 			leaf := strings.TrimPrefix(path, "agents.categories.default.")
 			if path == "" {
 				return field, "agents.unknown"
@@ -131,7 +123,6 @@ func (s *WorkspaceSettingsSurface) agentDraftAuthority() bool {
 		after.Agents.Categories[c.id] = cfg
 		if c.roleIndex == catMain {
 			after.Agents.Enabled = ui.BoolFieldValue(c.draft.Field(fieldMultiAgent))
-			after.Agents.ExecutionHygiene = executionHygieneFromForm(c.draft, after.Agents.ExecutionHygiene)
 			if field := c.draft.Field(fieldMaxSubAgents); field != nil {
 				after.Agents.MaxConcurrent = maxSubAgentsValue(field)
 			}

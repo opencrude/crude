@@ -978,7 +978,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, pendingCollaboration, "turn ended before context admission")
 	}()
 	childrenDigest := ""
-	hygieneDigest := ""
 	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {
 		if ctx.Err() != nil || s.isHardCancelled() {
 			return nil
@@ -998,13 +997,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if notice, digest := s.childrenStatusNotice(ctx, o.ID, childrenDigest); notice != nil {
 			notices = append(notices, *notice)
 			childrenDigest = digest
-		}
-		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
-		if notice, digest := s.executionHygieneNotice(ctx, current.Agents.ExecutionHygiene, hygieneDigest); notice != nil {
-			notices = append(notices, *notice)
-			hygieneDigest = digest
-		} else {
-			hygieneDigest = digest
 		}
 		return notices
 	}
