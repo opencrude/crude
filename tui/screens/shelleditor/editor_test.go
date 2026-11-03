@@ -31,8 +31,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	th := theme.DefaultDark()
 	screen := shelleditor.New(th)
 	screen.Bind(ed)
-	screen.SetFocused(true)
-	buf := screen.PaintTestBuffer(48, 10)
+	buf := screen.PaintTestBuffer(48, 10, true)
 
 	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
 		t.Fatal("shell editor paint produced no non-empty cells")
@@ -116,8 +115,7 @@ func TestScreenPaintsGutterDiagnosticsAndScrollbar(t *testing.T) {
 
 	screen := shelleditor.New(theme.DefaultDark())
 	screen.Bind(ed)
-	screen.SetFocused(true)
-	buf := screen.PaintTestBuffer(40, 8)
+	buf := screen.PaintTestBuffer(40, 8, true)
 	row := shelleditor.PlainRow(buf, 0, 40)
 	if !strings.Contains(row, "package") && !strings.Contains(row, "1") {
 		t.Fatalf("expected gutter/line content, got %q", row)
@@ -148,7 +146,7 @@ func TestScreenOmitsStatusFootline(t *testing.T) {
 	defer ed.Close()
 	screen := shelleditor.New(theme.DefaultDark())
 	screen.Bind(ed)
-	buf := screen.PaintTestBuffer(30, 6)
+	buf := screen.PaintTestBuffer(30, 6, false)
 	last := shelleditor.PlainRow(buf, 5, 30)
 	if strings.Contains(last, "1L") || strings.Contains(last, "a.go") {
 		t.Fatalf("shell editor must not paint status footline: %q", last)
@@ -168,7 +166,7 @@ func TestSearchHighlightPaintsInCellBuffer(t *testing.T) {
 	ed.SetQuery("foo")
 	screen := shelleditor.New(theme.DefaultDark())
 	screen.Bind(ed)
-	buf := screen.PaintTestBuffer(40, 6)
+	buf := screen.PaintTestBuffer(40, 6, false)
 	// Find first 'f' of foo in text area: must have selection/accent bg.
 	found := false
 	for x := 0; x < buf.Width(); x++ {

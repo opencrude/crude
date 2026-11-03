@@ -212,12 +212,24 @@ func TestDarkTextSelectionIsNeutralGrayAndReadable(t *testing.T) {
 		t.Fatalf("dark text-selection fill must be neutral gray, got RGB %d,%d,%d", r, g, b)
 	}
 	for _, background := range []color.Color{th.Colors.Bg, th.Colors.PopupBg, th.Colors.SubPaneBg} {
-		if ratio := contrastRatio(th.Colors.TextSelection, background); ratio < 3 {
+		if ratio := contrastRatio(th.Colors.TextSelection, background); ratio < 1.5 {
 			t.Fatalf("gray selection must remain distinct from its surface: %.2f:1", ratio)
 		}
 	}
 	if ratio := contrastRatio(th.Colors.TextSelectionFg, th.Colors.TextSelection); ratio < 4.5 {
 		t.Fatalf("gray selection ink must remain readable: %.2f:1", ratio)
+	}
+}
+
+func TestHighContrastTextSelectionRemainsDistinct(t *testing.T) {
+	th := DefaultHighContrast()
+	for _, background := range []color.Color{th.Colors.Bg, th.Colors.PopupBg, th.Colors.SubPaneBg} {
+		if ratio := contrastRatio(th.Colors.TextSelection, background); ratio < 3 {
+			t.Fatalf("high-contrast selection lacks distinction: %.2f:1", ratio)
+		}
+	}
+	if ratio := contrastRatio(th.Colors.TextSelectionFg, th.Colors.TextSelection); ratio < 4.5 {
+		t.Fatalf("high-contrast selection ink is unreadable: %.2f:1", ratio)
 	}
 }
 

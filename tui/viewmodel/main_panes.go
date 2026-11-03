@@ -371,7 +371,6 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 			left = 0
 		}
 		g.view.editor.SetPadding(left, pad)
-		g.view.editor.SetFocused(id == m.Win.ActiveGroup() && m.focusTarget() == FocusEditor)
 		g.add(g.view.editor, body)
 		g.editor = g.body
 	case m.isAgentTabTitle(tab.Title):

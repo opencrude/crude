@@ -25,15 +25,13 @@ const (
 // Render path (not ANSI View). Status/actions live in the top shell header.
 type Screen struct {
 	ui.Base
-	th      *theme.Theme
-	tokens  *ui.TokenSet
-	ed      *editor.Editor
-	padL    int
-	padR    int
-	width   int
-	height  int
-	focused bool
-
+	th        *theme.Theme
+	tokens    *ui.TokenSet
+	ed        *editor.Editor
+	padL      int
+	padR      int
+	width     int
+	height    int
 	paintSurf *surface.Surface
 }
 
@@ -71,9 +69,6 @@ func (s *Screen) SetPadding(padL, padR int) {
 	s.padL = padL
 	s.padR = padR
 }
-
-// SetFocused marks whether the editor should paint a focused cursor.
-func (s *Screen) SetFocused(v bool) { s.focused = v }
 
 func (s *Screen) SyntaxEditor() *editor.Editor { return s.ed }
 
@@ -140,7 +135,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	s.ed.SetStatusChrome(false)
 	s.ed.SetPadding(s.padL)
 	s.ed.SetPointerHovered(ctx.Hovered)
-	wctx := ui.PaintContext{Theme: s.th, Focused: s.focused, Hovered: ctx.Hovered, Frame: ctx.Frame}
+	wctx := ui.PaintContext{Theme: s.th, Focused: ctx.Focused, Hovered: ctx.Hovered, Frame: ctx.Frame}
 	s.ed.Render(s.paintSurf, wctx)
 	surface.BlitOpaque(buf, ox+b.X+s.padL, oy+b.Y, s.paintSurf.Buffer())
 }
@@ -207,10 +202,10 @@ func (s *Screen) Semantics() ui.Semantics {
 }
 
 // PaintTestBuffer lays out and paints into a fresh buffer for tests.
-func (s *Screen) PaintTestBuffer(w, h int) *surface.CellBuffer {
+func (s *Screen) PaintTestBuffer(w, h int, focused bool) *surface.CellBuffer {
 	buf := surface.NewCellBuffer(w, h)
 	s.Layout(ui.LayoutContext{}, ui.Rect{W: w, H: h})
-	s.Paint(buf, 0, 0, ui.PaintContext{Focused: s.focused})
+	s.Paint(buf, 0, 0, ui.PaintContext{Focused: focused})
 	return buf
 }
 

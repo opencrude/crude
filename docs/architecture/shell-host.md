@@ -124,6 +124,10 @@ Rules:
 - Editor keys route through viewmodel; pointers enter retained
   `shelleditor.Screen` with Host-local coordinates and capture. Deck panels keep their per-session
   `deckHost`; `deckMount` adapts paint (blit) and input (local coords).
+  A nested Host's remembered focus is gated by its containing deck/window's
+  input focus and by terminal focus reports. The editor paints its caret from
+  Host focus, not a separate pane-focused flag. Focus loss invalidates the
+  affected retained surfaces without consuming drafts or selections.
 - **Main panes have one selection/topology authority:** `window.Window` owns
   the recursive split tree, tab membership and selected tab per group. Moving
   tabs never clones resources. `mainPaneLayout` retains geometry/screens, not

@@ -39,14 +39,14 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Paste | `EncodePaste` — bracketed-paste wrapping + unsafe-control sanitization per DEC 2004 |
 | Mouse reporting | Ghostty mouse encoder when the child enables tracking (X10/normal/button/any, SGR/URXVT/UTF-8) |
 | Shift override | Shift+click/drag bypasses tracking for selection (standard escape hatch) |
-| Selection | Client-local `termview` click/drag, double-click word and triple-click line; theme TextSelection/TextSelectionFg preserves atomic wide glyphs independently of child reverse/faint |
+| Selection | Client-local `termview` click/drag, double-click word and triple-click line; shared selection colors keep readable child ink and atomic wide glyphs, resolving child reverse/faint before selection |
 | Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; client-local extraction uses projected soft-wrap metadata to unwrap and trim text |
 | Control keys | A focused dock/window PTY owns Ctrl+C/D/Z/\\/S/Q and application bindings before shell selection handling. Ctrl+C is always child input; explicit Ctrl+Shift+C is copy-only even without a selection. Exact Shift-only history chords are local; extra modifiers pass through. |
 | OSC 52 clipboard | Child writes become an offer, never an automatic system-clipboard write; the controlling shell exposes **Copy offered text** in the terminal menu. Clipboard reads are ignored |
 | Scrollback | Wheel scrolls viewport; `Shift+PgUp/PgDn/Home/End` on the primary screen; typing/paste snaps to bottom; right-edge scrollbar overlay while scrolled |
 | Alt screen wheel | No tracking + alternate screen → wheel sends arrow keys (3×), like Ghostty's alternate-scroll |
 | Focus reporting | DEC mode 1004 → CSI I/O on real pane-focus transitions (`syncTerminalFocusReports` sweep, idempotent) |
-| Cursor styles | DECSCUSR requests normalize to the shared reverse-video block geometry; embedded applications retain blink/steady timing, and the shell paints the projected cursor |
+| Cursor styles | DECSCUSR requests normalize to the shared reverse-video block geometry; embedded applications retain blink/steady timing while focused. An unfocused pane or blurred terminal paints no caret |
 | Synchronized output | DEC 2026 holds one completed active-grid render state (cells, wraps, cursor and visual metadata) until reset, resize or a one-second broken-client timeout; parsing and query replies continue |
 | Bell | BEL flags an unfocused dock tab or adds a `•` icon to an unfocused floating `WindowFrame`; focusing the terminal clears it |
 | OSC titles | Collected after Feed, committed by the service and delivered as neutral effects outside the engine lock |

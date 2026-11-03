@@ -31,6 +31,7 @@ func (m *App) View() tea.View {
 		return m.newSurfaceTerminalView()
 	}
 	m.renderCtx.SpinFrame = m.SpinFrame
+	m.renderCtx.TerminalBlurred = m.terminalBlurred
 	m.syncRenderFocus()
 	m.configureShell()
 	m.prepareShellSurface()
@@ -316,7 +317,8 @@ func (m *App) syncRootFocus() {
 	}
 	defer m.syncFloatingTerminalFocus()
 	defer m.syncTerminalFocusReports()
-	if m.termDockOwnsKeys() && m.termDock != nil {
+	if m.focusedPopup() == nil && m.termDockOwnsKeys() && m.termDock != nil {
+		m.rootHost.SetFocusActive(!m.terminalBlurred)
 		cur := m.rootHost.Focused()
 		if m.termDock.OwnsFocus(cur) {
 			return
@@ -325,59 +327,67 @@ func (m *App) syncRootFocus() {
 		return
 	}
 	var id ui.ComponentID
-	switch m.focusTarget() {
-	case FocusTree:
-		switch m.activityView {
-		case activityFiles:
-			id = shelltree.TreeID
-			if current := m.rootHost.Focused(); current == shelltree.FilterID || current == shelltree.TreeID {
+	if m.focusedPopup() == nil && m.sessionDeckCapturesInput() && m.mainPanes != nil && m.Win != nil {
+		if group := m.mainPanes.groups[m.Win.ActiveGroup()]; group != nil && group.view != nil && !group.deck.Empty() {
+			id = group.view.deck.ID()
+		}
+	}
+	if id == ui.RootID {
+		switch m.focusTarget() {
+		case FocusTree:
+			switch m.activityView {
+			case activityFiles:
+				id = shelltree.TreeID
+				if current := m.rootHost.Focused(); current == shelltree.FilterID || current == shelltree.TreeID {
+					id = current
+				}
+			default:
+				id = activitylist.ListID
+				if current := m.rootHost.Focused(); current == activitylist.FilterID || current == activitylist.ListID {
+					id = current
+				}
+			}
+		case FocusTabBar:
+			id = m.tabScreen.TabsControl().ID()
+		case FocusEditor:
+			id = m.editorScreen.ID()
+		case FocusLauncher:
+			id = launcher.ScreenID
+			if m.launcherScreen != nil && m.rootHost.Focused() == launcher.ScreenID {
+				m.launcherScreen.SyncFocus()
+			}
+			if current := m.rootHost.Focused(); m.launcherScreen != nil && m.launcherScreen.OwnsFocus(current) {
 				id = current
+			}
+		case FocusInput:
+			if m.emptyPaneActive() {
+				id = m.ensureMainPanes().group(m.Win.ActiveGroup()).empty.ID()
+			} else if view := m.activeGitReview(); view != nil {
+				id = view.screen.DocumentID()
+				if current := m.rootHost.Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
+					id = current
+				}
+			} else if content := m.activePanelTabContent(); content != nil {
+				id = preferredFocus(content)
+				if current := m.rootHost.Focused(); panelOwnsFocus(content, current) {
+					id = current
+				}
+			} else if view := m.activeLocalDiff(); view != nil {
+				id = view.screen.DocumentID()
+				if current := m.rootHost.Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
+					id = current
+				}
+			} else {
+				id = m.inputScreen.ID()
 			}
 		default:
-			id = activitylist.ListID
-			if current := m.rootHost.Focused(); current == activitylist.FilterID || current == activitylist.ListID {
-				id = current
-			}
+			id = m.chatScreen.ID()
 		}
-	case FocusTabBar:
-		id = m.tabScreen.TabsControl().ID()
-	case FocusEditor:
-		id = m.editorScreen.ID()
-	case FocusLauncher:
-		id = launcher.ScreenID
-		if m.launcherScreen != nil && m.rootHost.Focused() == launcher.ScreenID {
-			m.launcherScreen.SyncFocus()
-		}
-		if current := m.rootHost.Focused(); m.launcherScreen != nil && m.launcherScreen.OwnsFocus(current) {
-			id = current
-		}
-	case FocusInput:
-		if m.emptyPaneActive() {
-			id = m.ensureMainPanes().group(m.Win.ActiveGroup()).empty.ID()
-		} else if view := m.activeGitReview(); view != nil {
-			id = view.screen.DocumentID()
-			if current := m.rootHost.Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
-				id = current
-			}
-		} else if content := m.activePanelTabContent(); content != nil {
-			id = preferredFocus(content)
-			if current := m.rootHost.Focused(); panelOwnsFocus(content, current) {
-				id = current
-			}
-		} else if view := m.activeLocalDiff(); view != nil {
-			id = view.screen.DocumentID()
-			if current := m.rootHost.Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
-				id = current
-			}
-		} else {
-			id = m.inputScreen.ID()
-		}
-	default:
-		id = m.chatScreen.ID()
 	}
 	// The focused group may be mounted in a window: focus lives in exactly
 	// one host, so the other paints no second caret.
 	host := m.hostFor(id)
+	m.rootHost.SetFocusActive(!m.terminalBlurred && m.focusedPopup() == nil && host == m.rootHost)
 	var pane *ui.Host
 	if m.Win != nil {
 		pane = m.paneWindowHost(m.Win.ActiveGroup())
@@ -421,7 +431,7 @@ func (m *App) syncFloatingTerminalFocus() {
 func (m *App) syncTerminalFocusReports() {
 	focusedFloating := ""
 	wmFocused := false
-	if m.windowManager != nil {
+	if !m.terminalBlurred && m.windowManager != nil {
 		if fw := m.focusedPopup(); fw != nil {
 			wmFocused = true
 			if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
@@ -432,7 +442,7 @@ func (m *App) syncTerminalFocusReports() {
 		}
 	}
 	dockActive := ""
-	if focusedFloating == "" && !wmFocused && m.terminalDockOwnsKeys() && m.termDock != nil {
+	if !m.terminalBlurred && focusedFloating == "" && !wmFocused && m.terminalDockOwnsKeys() && m.termDock != nil {
 		dockActive = m.termDock.ActiveID()
 	}
 	if focusedFloating != "" {

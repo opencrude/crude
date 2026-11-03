@@ -1,5 +1,23 @@
 package viewmodel
 
+// The terminal focus report gates presentation without discarding the
+// remembered component/window focus or any draft.
+func (m *App) setTerminalBlurred(blurred bool) {
+	if m.terminalBlurred == blurred {
+		return
+	}
+	m.terminalBlurred = blurred
+	if m.rootHost != nil {
+		m.rootHost.MarkPaint()
+	}
+	if m.windowManager != nil {
+		for _, window := range m.windowManager.Windows() {
+			window.MarkContentDirty()
+		}
+	}
+	m.syncTerminalFocusReports()
+}
+
 type FocusTarget int
 
 const (

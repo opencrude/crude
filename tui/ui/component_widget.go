@@ -137,6 +137,7 @@ func (c *ComponentWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
 		applyTokenSet(c.host.Root(), c.host.Tokens())
 	}
 	if ctx != nil {
+		c.host.SetFocusActive(ctx.Focused)
 		if !c.frameKnown || c.lastFrame != ctx.SpinFrame {
 			c.host.SetFrame(ctx.SpinFrame)
 			c.host.MarkPaint()

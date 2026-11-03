@@ -8,11 +8,49 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
 )
+
+func TestGitDiffDragKeepsReadableSyntax(t *testing.T) {
+	const source = "var greeting = \"hello\"\n"
+	document := New("doc", ui.NewTokenSet(theme.DefaultDark()))
+	document.SetFiles(PrepareChanges([]workspace.GitChangeComparison{
+		comparisonItem("example.go", "", source, workspace.GitAreaWorking),
+	}))
+	document.Layout(ui.LayoutContext{}, ui.Rect{W: 80, H: 12})
+	buf := surface.NewCellBuffer(80, 12)
+	document.Paint(buf, 0, 0, ui.PaintContext{})
+	x, y := -1, -1
+	for row := 0; row < 12; row++ {
+		for col := 0; col < 60; col++ {
+			if buf.Get(col, row).Char == 'v' && buf.Get(col+1, row).Char == 'a' && buf.Get(col+2, row).Char == 'r' {
+				x, y = col, row
+			}
+		}
+	}
+	if x < 0 {
+		t.Fatal("fixture source was not painted")
+	}
+	col := strings.Index(source, "hello")
+	if buf.Get(x, y).FG == buf.Get(x+col, y).FG {
+		t.Fatal("fixture lacks distinct syntax")
+	}
+	document.Handle(ui.EventContext{LocalX: x, LocalY: y}, ui.Event{Kind: ui.EventMouseClick, MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft}})
+	document.Handle(ui.EventContext{LocalX: x + len(source) - 1, LocalY: y}, ui.Event{Kind: ui.EventMouseMotion, MouseMotion: tea.MouseMotionMsg{Button: tea.MouseLeft}})
+	document.Paint(buf, 0, 0, ui.PaintContext{})
+	a, b := buf.Get(x, y), buf.Get(x+col, y)
+	bg := document.tokens.Color(ui.ColorTextSelection)
+	if a.BG != bg || b.BG != bg || a.FG == b.FG || cell.ContrastRatio(a.FG, bg) < 4.5 || cell.ContrastRatio(b.FG, bg) < 4.5 {
+		t.Fatalf("drag selection flattened or obscured syntax: %+v %+v", a, b)
+	}
+	if got := document.SelectedText(); got != strings.TrimSuffix(source, "\n") {
+		t.Fatalf("drag selected %q", got)
+	}
+}
 
 func lines(n int, replace map[int]string) string {
 	var text strings.Builder

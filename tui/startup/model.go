@@ -246,6 +246,7 @@ func (m *Model) View() tea.View {
 	v := tea.NewView(m.comp.Present())
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true
 	return v
 }
 
@@ -271,6 +272,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch v := msg.(type) {
+	case tea.BlurMsg:
+		m.host.SetFocusActive(false)
+		m.host.CancelPointerCapture()
+		return m, nil
+	case tea.FocusMsg:
+		m.host.SetFocusActive(true)
+		return m, nil
 	case tea.WindowSizeMsg:
 		w, h := max(0, v.Width), max(0, v.Height)
 		m.host.Resize(w, h)

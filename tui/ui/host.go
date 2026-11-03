@@ -20,6 +20,9 @@ type Host struct {
 	height  int
 	focused ComponentID
 	hovered ComponentID
+	// inactive suppresses focus paint while a parent window or terminal owns
+	// input elsewhere. The remembered focus remains available on return.
+	inactive bool
 	// scopes is the active focus-scope stack (LIFO), pushed/popped by overlay
 	// open/close paths (see OverlayHost). Modal scopes trap keyboard focus
 	// within their subtree.
@@ -145,6 +148,16 @@ func (h *Host) Resize(w, hgt int) {
 
 // SetFrame sets the animation frame counter exposed to components in PaintContext.
 func (h *Host) SetFrame(frame int) { h.frame = frame }
+
+// SetFocusActive applies the containing input owner's focus without changing
+// this Host's remembered keyboard target.
+func (h *Host) SetFocusActive(active bool) {
+	if h == nil || h.inactive == !active {
+		return
+	}
+	h.inactive = !active
+	h.MarkComponentPaint(h.focused)
+}
 
 // Focus sets keyboard focus to id if registered. While a modal focus scope is
 // active, focus is trapped: it may not move to a component outside the
@@ -385,7 +398,7 @@ func (h *Host) Paint(buf *surface.CellBuffer) {
 	h.Layout()
 	pctx := PaintContext{
 		Theme:   h.theme,
-		Focused: h.focused == h.root.ID(),
+		Focused: !h.inactive && h.focused == h.root.ID(),
 		Hovered: h.hovered == h.root.ID(),
 		Frame:   h.frame,
 	}
@@ -397,7 +410,7 @@ func (h *Host) Paint(buf *surface.CellBuffer) {
 func (h *Host) paintNode(c Component, buf *surface.CellBuffer, ox, oy int, base PaintContext) {
 	h.lastPaint.Components++
 	pctx := base
-	pctx.Focused = h.focused == c.ID()
+	pctx.Focused = !h.inactive && h.focused == c.ID()
 	pctx.Hovered = h.hovered == c.ID()
 	pctx.Frame = h.frame
 	c.Paint(buf, ox, oy, pctx)

@@ -19,7 +19,9 @@ func TestNativeSelectionReadablePreservesGraphemesAndReadableSyntax(t *testing.T
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight(), theme.DefaultMidnight(), theme.DefaultWarm(), theme.DefaultHighContrast()} {
 		tokens := ui.NewTokenSet(th)
 		bg := tokens.Color(ui.ColorTextSelection)
-		if cell.ContrastRatio(bg, tokens.Color(ui.ColorBg)) < 3 || cell.ContrastRatio(bg, tokens.Color(ui.ColorPopupBg)) < 3 || cell.ContrastRatio(bg, tokens.Color(ui.ColorSubPaneBg)) < 3 {
+		// Selection is a restrained surface tint so syntax colors can stay
+		// recognizable; selected text itself retains 4.5:1 contrast.
+		if cell.ContrastRatio(bg, tokens.Color(ui.ColorBg)) < 1.25 || cell.ContrastRatio(bg, tokens.Color(ui.ColorPopupBg)) < 1.25 || cell.ContrastRatio(bg, tokens.Color(ui.ColorSubPaneBg)) < 1.25 {
 			t.Fatalf("%s: fill lacks contrast against text surfaces", th.Name)
 		}
 		readable := tokens.Color(ui.ColorTextSelectionFg)
@@ -32,7 +34,7 @@ func TestNativeSelectionReadablePreservesGraphemesAndReadableSyntax(t *testing.T
 		if c := buf.Get(0, 0); c.Content != "界" || c.Width != 2 || c.FG != readable || c.BG != bg {
 			t.Fatalf("%s: partial wide selection lost readable ink or grapheme: %+v", th.Name, c)
 		}
-		if c := buf.Get(2, 0); c.Content != "e\u0301" || c.FG != readable || c.BG != bg || c.Attr != cell.AttrBold {
+		if c := buf.Get(2, 0); c.Content != "e\u0301" || cell.ContrastRatio(c.FG, bg) < 4.5 || c.BG != bg || c.Attr != cell.AttrBold {
 			t.Fatalf("%s: unreadable syntax not corrected: %+v", th.Name, c)
 		}
 		if buf.Get(4, 0).BG != bg || buf.Get(5, 0).BG != tokens.Color(ui.ColorSubPaneBg) {

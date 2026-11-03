@@ -201,7 +201,7 @@ func (d *deckMount) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (d *deckMount) Layout(_ ui.LayoutContext, r ui.Rect) { d.SetBounds(r) }
 
-func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	b := d.Bounds()
 	proj := d.projection
 	if proj == nil || !proj.deck.IsOpen() || b.Empty() || buf == nil {
@@ -214,6 +214,7 @@ func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext
 	d.surf.Buffer().Fill(bg)
 	proj.deckHost.Resize(b.W, b.H)
 	proj.deckHost.SetFrame(d.app.SpinFrame)
+	proj.deckHost.SetFocusActive(ctx.Focused)
 	proj.deckHost.Layout()
 	if proj == d.app.activeSessionDeck() {
 		d.app.focusSessionDeckAfterLayout()

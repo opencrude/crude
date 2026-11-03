@@ -759,6 +759,7 @@ func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, 
 				fg = ink
 			}
 		}
+		sourceFG := fg
 		unitFill := fill
 		if matchFill, active, ok := document.matchAt(rowIndex, side, unit.Column, unit.Column+unit.Width); ok {
 			unitFill = matchFill
@@ -766,8 +767,7 @@ func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, 
 			_ = active
 		}
 		if document.selected(rowIndex, side, unit.Column, unit.Column+unit.Width) {
-			unitFill = document.tokens.Color(ui.ColorTextSelection)
-			fg = document.tokens.Color(ui.ColorTextSelectionFg)
+			fg, unitFill = document.tokens.TextSelectionColors(sourceFG)
 		}
 		buf.WriteString(x+left, y, unit.Display, fg, unitFill, 0)
 	}

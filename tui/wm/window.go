@@ -324,7 +324,7 @@ func (fw *FloatingWindow) Render(ctx *RenderContext) {
 			fw.contentSurf.SetPosition(fw.contentX, fw.contentY)
 
 			// Render the content widget with the appropriate focus state.
-			contentCtx := ctx.WithFocus(fw.focused)
+			contentCtx := ctx.WithFocus(fw.focused && !ctx.TerminalBlurred)
 			fw.Content.Render(fw.contentSurf, contentCtx)
 
 			// Attach the content surface as a child of the window surface.

@@ -16,6 +16,9 @@ type RenderContext struct {
 	// Focused reports whether the window has keyboard focus.
 	Focused bool
 
+	// TerminalBlurred means the containing terminal has lost OS focus.
+	TerminalBlurred bool
+
 	// SpinFrame is the current animation frame counter (for spinners, blink).
 	SpinFrame int
 }

@@ -32,7 +32,7 @@ func TestLegacyInverseAndSelectionInk(t *testing.T) {
 	for _, tokens := range []*ui.TokenSet{dark, ui.NewTokenSet(theme.DefaultLight())} {
 		v.Paint(buf, 0, 0, 8, 2, tokens, true, true)
 		got := buf.Get(0, 0)
-		if got.FG != tokens.Color(ui.ColorTextSelectionFg) || got.BG != tokens.Color(ui.ColorTextSelection) || got.Attr != original.Attr&^(cell.AttrReverse|cell.AttrDim) {
+		if cell.ContrastRatio(got.FG, got.BG) < 4.5 || got.BG != tokens.Color(ui.ColorTextSelection) || got.Attr != original.Attr&^(cell.AttrReverse|cell.AttrDim) {
 			t.Fatalf("selected=%+v", got)
 		}
 		if copied, ok := v.SelectionText(); !ok || copied != "X" {
@@ -84,7 +84,7 @@ func TestLegacyCursorFocusBlinkAndHistoryPaint(t *testing.T) {
 	for _, tc := range []struct {
 		focus, blink bool
 		attrs        cell.Attrs
-	}{{true, true, cell.AttrReverse}, {true, false, 0}, {false, false, cell.AttrReverse | cell.AttrDim}} {
+	}{{true, true, cell.AttrReverse}, {true, false, 0}, {false, false, 0}, {false, true, 0}} {
 		v.Paint(buf, 0, 0, 8, 2, tokens, tc.focus, tc.blink)
 		c := buf.Get(0, 0)
 		if c.Content != "x" || c.Attr != tc.attrs || c.BG != tokens.Color(ui.ColorBg) {
@@ -99,5 +99,27 @@ func TestLegacyCursorFocusBlinkAndHistoryPaint(t *testing.T) {
 	v.ScrollBottom()
 	if !v.Pinned() {
 		t.Fatal("bottom did not rearm follow")
+	}
+}
+
+func TestSelectedTerminalKeepsDistinctChildColors(t *testing.T) {
+	var v View
+	g := terminalvt.Projection{Cols: 8, GridRows: 2, Total: 2, Cells: [][]terminalvt.Cell{{
+		{Text: "K", Width: 1, FG: terminalvt.Color{Explicit: true, R: 255, G: 123, B: 114}},
+		{Text: "S", Width: 1, FG: terminalvt.Color{Explicit: true, R: 165, G: 214, B: 255}},
+	}, {}}}
+	v.Install(g, 1)
+	v.SelectionPress(0, 0, 1_000_000_000)
+	v.SelectionDrag(1, 0)
+	tokens := ui.NewTokenSet(theme.DefaultDark())
+	buf := surface.NewCellBuffer(8, 2)
+	v.Paint(buf, 0, 0, 8, 2, tokens, true, true)
+	a, b := buf.Get(0, 0), buf.Get(1, 0)
+	if a.FG == b.FG || a.BG != tokens.Color(ui.ColorTextSelection) || b.BG != a.BG ||
+		cell.ContrastRatio(a.FG, a.BG) < 4.5 || cell.ContrastRatio(b.FG, b.BG) < 4.5 {
+		t.Fatalf("terminal selection flattened or obscured child colors: %+v %+v", a, b)
+	}
+	if copied, ok := v.SelectionText(); !ok || copied != "KS" {
+		t.Fatalf("selection changed child text: %q", copied)
 	}
 }

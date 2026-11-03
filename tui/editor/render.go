@@ -228,7 +228,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							fg, bg := e.tokens.TextSelectionColors(fg)
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bg, 0, blankCell)
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bg, diagAttr, blankCell)
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
