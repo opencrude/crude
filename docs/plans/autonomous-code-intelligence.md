@@ -187,14 +187,19 @@ second language, and checks that the explanation clears after capacity returns.
 
 Remaining exit evidence:
 
-1. Consolidate final-tree normal/race and benchmark gates. Fresh explicit retry
+1. Finish the full native race campaign on `8f55bd46`. Fresh explicit retry
    after a saved refusal or failure now has focused normal/race evidence and a
    real native connected preview, without automatic reoffers or replayed
-   authority. Build, lint, design/docs,
+   authority. Build, lint, benchmarks, design/docs,
    catalog naming, nested syntax/LSP suites and Linux/macOS neutral primitive
    cross-builds pass. Native platform behavior is not inferred from cross-builds.
-   The monolithic viewmodel suite exceeds its aggregate 180-second budget; it is
-   not reported as passed. Do not bank the checkpoint before its exit tests pass.
+   The full native Windows ordinary suite passed: `go test -p 2 ./... -count=1
+   -timeout=300s`, the existing Windows CI command in
+   `.github/workflows/verify.yml`; no timeout or gate was changed. All 137 tested
+   packages passed. The earlier generic 180-second aggregate run timed out;
+   all 1,346 viewmodel cases also passed once each in four exhaustive partitions.
+   Ordinary-suite acceptance is now verified, not inferred from those partitions.
+   Do not bank the checkpoint before the remaining race verdict.
 2. Website work and its gate are excluded by the user's 2026-11-03 instruction;
    its npm routing failure is not a blocker for this code-intelligence task.
 3. Precompiled workspace-test-helper capture encountered an unexplained native
