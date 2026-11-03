@@ -29,6 +29,9 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, EndColumn: 6, LineText: "needle alpha", Context: "needle alpha", ContextStart: 1},
 		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, EndColumn: 6, LineText: "needle beta", Context: "first line\nneedle beta", ContextStart: 1},
 	}, nil, 5*time.Millisecond)
+	// This golden covers the plain first frame. Syntax is asynchronous and
+	// can finish before paint under load; syntax colors have separate tests.
+	screen.previewSrc.StopSyntax()
 	host.Layout()
 	buf := surface.NewCellBuffer(80, 24)
 	host.Paint(buf)
