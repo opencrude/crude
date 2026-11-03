@@ -39,17 +39,17 @@ func ownProcessTree(cmd *exec.Cmd) (*ownedCommandTree, error) {
 		wait: func() error {
 			if err := waitCommandExit(cmd.Process.Pid); err != nil {
 				mutex.Lock()
-				_ = kill()
+				stopErr := kill()
 				reaped = true
 				mutex.Unlock()
 				_ = cmd.Wait()
-				return err
+				return joinTreeStop(err, stopErr)
 			}
 			mutex.Lock()
-			_ = kill()
+			stopErr := kill()
 			reaped = true
 			mutex.Unlock()
-			return cmd.Wait()
+			return joinTreeStop(cmd.Wait(), stopErr)
 		},
 		close: func() {},
 	}, nil
