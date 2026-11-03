@@ -3,13 +3,12 @@
 // servers and tools lives in data (insight/catalog). Product code asks the
 // catalog; it never spells those names itself.
 //
-// The gate scans string literals in non-test Go files. A literal fails when it
-// exactly equals a catalog file extension, a file name or root marker that
-// contains a dot, a server ID, a server command, a package name or a package
-// binary of four or more letters. Language IDs, language names, bare-word file
-// names, short program names and script interpreters are not matched: many are
-// ordinary words ("json", "make", "C", "nil", "sh") that product code uses for
-// other meanings.
+// Distinctive strings are checked everywhere. Ambiguous catalog names are
+// checked in comparisons and switch cases whose operand names indicate language,
+// grammar, server, tool, command, file, extension or interpreter context.
+// Identifier operands in those branches are checked case-insensitively. This is
+// a heuristic, not a semantic proof: aliases, indirect values and opaque names
+// can hide knowledge, while unrelated code can share the same vocabulary.
 //
 // allow.txt lists reviewed exceptions, one per line: "path<TAB>literal<TAB>reason".
 // An exception covers one literal in one file. Unused exceptions fail the gate,
@@ -101,6 +100,16 @@ func run(root string) ([]finding, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	allNames := map[string]bool{}
+	c, err := catalog.Builtin()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, name := range c.Names() {
+		if name != "" && !notLanguageKnowledge[name] {
+			allNames[strings.ToLower(name)] = true
+		}
+	}
 	used := map[string]bool{}
 	var findings []finding
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -125,21 +134,86 @@ func run(root string) ([]finding, []string, error) {
 		if err != nil {
 			return err
 		}
+		// A function whose signature carries a language-related type can use
+		// a short local ID as its switch tag.
+		contextualIDs := map[*ast.SwitchStmt]bool{}
 		ast.Inspect(file, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
+			fn, ok := n.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || !relevantContext(fn.Type) {
 				return true
 			}
-			value, err := strconv.Unquote(lit.Value)
-			if err != nil || !names[value] {
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				sw, ok := n.(*ast.SwitchStmt)
+				if ok {
+					if id, ok := sw.Tag.(*ast.Ident); ok && strings.EqualFold(id.Name, "id") {
+						contextualIDs[sw] = true
+					}
+				}
 				return true
+			})
+			return false
+		})
+		reported := map[token.Pos]bool{}
+		report := func(node ast.Node, value string) {
+			if reported[node.Pos()] {
+				return
 			}
+			reported[node.Pos()] = true
 			key := rel + "\t" + value
 			if _, ok := allow[key]; ok {
 				used[key] = true
-				return true
+				return
 			}
-			findings = append(findings, finding{path: rel, line: fset.Position(lit.Pos()).Line, literal: value})
+			findings = append(findings, finding{path: rel, line: fset.Position(node.Pos()).Line, literal: value})
+		}
+		checkBranch := func(expr ast.Expr) {
+			ast.Inspect(expr, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.BasicLit:
+					if n.Kind == token.STRING {
+						value, err := strconv.Unquote(n.Value)
+						if err == nil && allNames[strings.ToLower(value)] {
+							report(n, value)
+						}
+					}
+				case *ast.Ident:
+					// Single-letter identifiers and predeclared values are too
+					// common to attribute to a language without type analysis.
+					if len(n.Name) > 1 && n.Name != "nil" && n.Name != "true" && n.Name != "false" && allNames[strings.ToLower(n.Name)] {
+						report(n, n.Name)
+					}
+				}
+				return true
+			})
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.BasicLit:
+				if n.Kind == token.STRING {
+					value, err := strconv.Unquote(n.Value)
+					if err == nil && names[value] {
+						report(n, value)
+					}
+				}
+			case *ast.BinaryExpr:
+				if n.Op == token.EQL || n.Op == token.NEQ {
+					if relevantContext(n.X) {
+						checkBranch(n.Y)
+					}
+					if relevantContext(n.Y) {
+						checkBranch(n.X)
+					}
+				}
+			case *ast.SwitchStmt:
+				if n.Tag != nil && (relevantContext(n.Tag) || contextualIDs[n]) {
+					for _, stmt := range n.Body.List {
+						clause := stmt.(*ast.CaseClause)
+						for _, expr := range clause.List {
+							checkBranch(expr)
+						}
+					}
+				}
+			}
 			return true
 		})
 		return nil
@@ -161,6 +235,27 @@ func run(root string) ([]finding, []string, error) {
 		return findings[i].line < findings[j].line
 	})
 	return findings, unused, nil
+}
+
+// relevantContext restricts ambiguous names to operands with a meaningful
+// code-intelligence role. It deliberately does not match arbitrary substrings.
+func relevantContext(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		name := strings.ToLower(id.Name)
+		for _, part := range []string{"language", "grammar", "server", "tool", "command", "filename", "filepath", "extension", "interpreter", "langid"} {
+			if strings.Contains(name, part) {
+				found = true
+				break
+			}
+		}
+		return true
+	})
+	return found
 }
 
 // gatedNames is the set of catalog strings that identify a language's files,

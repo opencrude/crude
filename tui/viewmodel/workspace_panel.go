@@ -173,7 +173,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			{Label: "Uptime", Value: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted},
 		},
 	}}
-	if insights.Errors == 0 && insights.Warnings == 0 && insights.Language.Message != "" {
+	if insights.Language.Message != "" && (insights.Errors == 0 && insights.Warnings == 0 || insights.Language.State != ttypes.LanguageReady) {
 		items[0].Lines = append([]statusoverview.DetailLine{{Value: insights.Language.Message, Role: ui.ColorFg}}, items[0].Lines...)
 	}
 	switch insights.Language.Action {
@@ -213,17 +213,28 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		switch {
 		case server.Error != "":
 			state = "Language server failed"
-		case server.Starting || server.Syncing:
+		case server.Status == "Stopping":
+			state = "Stopping"
+		case server.Status == "Waiting for slot":
+			state = "Waiting to start"
+		case server.Starting:
 			state = "Checking…"
 		case server.Connected:
 			state = "Running"
+			if server.Syncing {
+				state = "Checking…"
+			}
 		}
 		lines := []statusoverview.DetailLine{{Label: "State", Value: state, Role: mapBool(server.Error != "", ui.ColorError, ui.ColorMuted)}}
-		if server.Coverage != "" {
-			lines = append(lines, statusoverview.DetailLine{Label: "Checks", Value: server.Coverage, Role: ui.ColorMuted})
+		if server.Scope == ttypes.CoverageProject {
+			lines = append(lines, statusoverview.DetailLine{Label: "Scope", Value: "Can report problems in files that are not open. Project coverage is not complete.", Role: ui.ColorMuted})
+		} else if server.Scope == ttypes.CoverageOpenFiles {
+			lines = append(lines, statusoverview.DetailLine{Label: "Scope", Value: "Can check open files only.", Role: ui.ColorMuted})
 		}
 		if server.Error != "" {
 			lines = append(lines, statusoverview.DetailLine{Value: "The language server failed. Check its installation and settings. Restart the server.", Role: ui.ColorError}, statusoverview.DetailLine{Label: "Details", Value: server.Error, Role: ui.ColorMuted})
+		} else if state == "Stopped" {
+			lines = append(lines, statusoverview.DetailLine{Value: "The language server is stopped. Choose Retry to start it.", Role: ui.ColorMuted})
 		}
 		actions := lspServerActions(server)
 		if items[0].PrimaryAction == "lsp:restart" && items[0].Owner.ID == server.ID {
@@ -231,7 +242,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		}
 		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: state, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines, Actions: actions})
 	}
-	items = append(items, assemblyPanelItems(m.ws.LSPMgr().Assembly())...)
+	items = append(items, assemblyPanelItems(m.ws.LSPMgr().Assembly(), insights.Language)...)
 	diagnostics := m.lspFacts
 	if len(diagnostics) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-problems", Label: "Problems", Header: true})
@@ -252,7 +263,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		if len(facts.Diagnostics) == 0 {
 			continue
 		}
-		file := statusoverview.Item{ID: "problem-file:" + path, Label: filepath.Base(path), Summary: fmt.Sprintf("%d problems", len(facts.Diagnostics))}
+		file := statusoverview.Item{ID: "problem-file:" + path, Label: filepath.Base(path), Summary: diagnosticCount(len(facts.Diagnostics), "problem")}
 		if outdated {
 			file.Lines = []statusoverview.DetailLine{{Value: "Results are for an older version of this file.", Role: ui.ColorWarning}}
 		} else if unmatched {
@@ -284,9 +295,9 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 }
 
 // assemblyPanelItems is the coverage view: every language the project
-// contains, the server for it, and what that server checks. Languages without
-// a running server say why and what to do next.
-func assemblyPanelItems(plan ttypes.AssemblyPlan) []statusoverview.Item {
+// contains and the installed server's declared capability. Server health is
+// shown separately because the plan does not identify its live producer.
+func assemblyPanelItems(plan ttypes.AssemblyPlan, status ttypes.LanguageServiceStatus) []statusoverview.Item {
 	if plan.State == "" {
 		return nil
 	}
@@ -307,10 +318,22 @@ func assemblyPanelItems(plan ttypes.AssemblyPlan) []statusoverview.Item {
 		role := ui.ColorMuted
 		switch language.Status {
 		case ttypes.ToolReady:
-			item.Summary = "Whole project"
-			if language.Scope != ttypes.CoverageProject {
-				item.Summary = "Open files"
+			item.Summary = "Installed"
+			reason := "The server is installed but may not be running."
+			if status.State == ttypes.LanguageRestricted || status.State == ttypes.LanguageOff {
+				reason += " " + status.Message
+				if status.ActionLabel != "" {
+					reason += " Choose " + status.ActionLabel + "."
+				}
+			} else {
+				reason += " See Language Servers for its state."
 			}
+			if language.Scope == ttypes.CoverageProject {
+				reason += " It can report problems in files that are not open. Project coverage is not complete."
+			} else if language.Scope == ttypes.CoverageOpenFiles {
+				reason += " It can check open files only."
+			}
+			item.Lines = append(item.Lines, statusoverview.DetailLine{Value: reason, Role: role})
 		case ttypes.ToolMissing:
 			item.Summary, role = "Not installed", ui.ColorWarning
 			item.PrimaryAction, item.PrimaryLabel, item.PrimaryEnabled = "lsp:start-all", "Check again", true
@@ -319,7 +342,9 @@ func assemblyPanelItems(plan ttypes.AssemblyPlan) []statusoverview.Item {
 		default:
 			item.Summary = "No server"
 		}
-		item.Lines = append(item.Lines, statusoverview.DetailLine{Value: language.Reason, Role: role})
+		if language.Status != ttypes.ToolReady {
+			item.Lines = append(item.Lines, statusoverview.DetailLine{Value: language.Reason, Role: role})
+		}
 		if language.Command != "" {
 			item.Lines = append(item.Lines, statusoverview.DetailLine{Label: "Server", Value: filepath.Base(language.Command), Role: ui.ColorMuted})
 		}

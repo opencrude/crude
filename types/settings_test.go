@@ -1,12 +1,52 @@
 package types
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 
 	"crude/provider"
+	captypes "crude/types/capability"
 	"testing"
 )
+
+func TestProjectToolDecisionIsolationAndPreservation(t *testing.T) {
+	app := AppSettings{Capabilities: captypes.Settings{ProjectToolDecisions: json.RawMessage(`{"app":true}`)}}
+	if got := MergeAppWorkspace(app, WorkspaceOverrides{}).Capabilities.ProjectToolDecisions; got != nil {
+		t.Fatalf("inherited app authority: %s", got)
+	}
+	stored := json.RawMessage(`{"project_tool_decisions":{ "bad" : [ 1, 2 ] },"acquisition":{"mode":"ask"}}`)
+	out, err := MarshalWorkspaceOverridesPreservingToolDecisions(WorkspaceOverrides{Capabilities: json.RawMessage(`{"acquisition":{"mode":"auto"}}`)}, stored)
+	if err != nil || !strings.Contains(string(out), `"project_tool_decisions":{ "bad" : [ 1, 2 ] }`) {
+		t.Fatalf("authority not preserved: %s, %v", out, err)
+	}
+	for _, path := range [][]string{{"capabilities"}, {"capabilities", "project_tool_decisions"}, {"capabilities", "project_tool_decisions", "x"}} {
+		if ValidateProjectToolDecisionEdits([]SettingEdit{{Path: path}}) == nil {
+			t.Fatalf("accepted reset %v", path)
+		}
+	}
+	if err := ValidateProjectToolDecisionEdits([]SettingEdit{{Path: []string{"capabilities", "acquisition", "mode"}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProjectToolDecisionSnapshotMalformedAndMarkerCollision(t *testing.T) {
+	for _, current := range []json.RawMessage{json.RawMessage(`[]`), json.RawMessage(`"not an object"`), json.RawMessage(`{"broken":`)} {
+		if _, err := MarshalWorkspaceOverridesPreservingToolDecisions(WorkspaceOverrides{}, current); err == nil {
+			t.Fatalf("accepted malformed category %s", current)
+		}
+	}
+	// A nested occurrence of the reserved marker must not redirect the splice.
+	current := json.RawMessage(`{"project_tool_decisions":{"trusted":true}}`)
+	next := WorkspaceOverrides{Capabilities: json.RawMessage(`{"neighbor":{"project_tool_decisions":"__crude_reserved_project_tool_decisions_51bd5b__"}}`)}
+	if _, err := MarshalWorkspaceOverridesPreservingToolDecisions(next, current); err == nil {
+		t.Fatal("ambiguous splice did not fail closed")
+	}
+	out, err := MarshalWorkspaceOverridesPreservingToolDecisions(WorkspaceOverrides{Capabilities: json.RawMessage(`{"project_tool_decisions":{"forged":true}}`)}, nil)
+	if err != nil || strings.Contains(string(out), "project_tool_decisions") {
+		t.Fatalf("absent authority manufactured: %s, %v", out, err)
+	}
+}
 
 func TestMergeAppWorkspaceInheritsNilOverrides(t *testing.T) {
 	app := AppSettings{

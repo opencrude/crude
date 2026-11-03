@@ -1,8 +1,10 @@
 package types
 
 import (
+	"bytes"
 	"crude/insight/catalog"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"reflect"
 	"slices"
@@ -351,9 +353,16 @@ func capabilityDiff(base, working captypes.Settings) json.RawMessage {
 }
 
 func mergeCapabilities(base captypes.Settings, overlay json.RawMessage) captypes.Settings {
+	// Project decisions never inherit from application settings.
+	base.ProjectToolDecisions = nil
 	if len(overlay) == 0 {
 		return base
 	}
+	var rawFields map[string]json.RawMessage
+	if json.Unmarshal(overlay, &rawFields) != nil {
+		return base
+	}
+	projectDecisions := append(json.RawMessage(nil), rawFields["project_tool_decisions"]...)
 	var changes map[string]any
 	if json.Unmarshal(overlay, &changes) != nil {
 		return base
@@ -368,7 +377,59 @@ func mergeCapabilities(base captypes.Settings, overlay json.RawMessage) captypes
 	if json.Unmarshal(encoded, &merged) != nil {
 		return base
 	}
-	return captypes.Normalize(merged)
+	merged = captypes.Normalize(merged)
+	merged.ProjectToolDecisions = projectDecisions
+	return merged
+}
+
+// MarshalWorkspaceOverridesPreservingToolDecisions encodes a generic snapshot
+// while retaining the exact workspace-owned raw decision from the latest row.
+// It must be called under the workspace settings writer lock.
+func MarshalWorkspaceOverridesPreservingToolDecisions(next WorkspaceOverrides, current json.RawMessage) ([]byte, error) {
+	var old map[string]json.RawMessage
+	if len(current) != 0 && string(current) != "null" {
+		if err := json.Unmarshal(current, &old); err != nil {
+			return nil, err
+		}
+	}
+	var fields map[string]json.RawMessage
+	if len(next.Capabilities) != 0 && string(next.Capabilities) != "null" {
+		if err := json.Unmarshal(next.Capabilities, &fields); err != nil {
+			return nil, err
+		}
+	}
+	if fields == nil {
+		fields = make(map[string]json.RawMessage)
+	}
+	const marker = `"__crude_reserved_project_tool_decisions_51bd5b__"`
+	raw, exists := old["project_tool_decisions"]
+	if exists {
+		fields["project_tool_decisions"] = json.RawMessage(marker)
+	} else {
+		delete(fields, "project_tool_decisions")
+	}
+	if len(fields) == 0 {
+		next.Capabilities = nil
+	} else {
+		var err error
+		next.Capabilities, err = json.Marshal(fields)
+		if err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil || !exists {
+		return encoded, err
+	}
+	token := []byte(`"project_tool_decisions":` + marker)
+	if bytes.Count(encoded, token) != 1 || !json.Valid(raw) {
+		return nil, fmt.Errorf("invalid stored project tool decisions")
+	}
+	index := bytes.Index(encoded, token) + len(token) - len(marker)
+	out := append([]byte(nil), encoded[:index]...)
+	out = append(out, raw...)
+	out = append(out, encoded[index+len(marker):]...)
+	return out, nil
 }
 
 func mergeCapabilityObjects(values, changes map[string]any) {

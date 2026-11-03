@@ -70,7 +70,7 @@ func TestInstallEachArchiveKind(t *testing.T) {
 			if !ok || found.ID != tool.ID {
 				t.Fatalf("Lookup = %+v, %v", found, ok)
 			}
-			tools, total, err := store.List()
+			tools, total, err := store.List(t.Context())
 			if err != nil || len(tools) != 1 || total != tool.Size || tool.Size == 0 {
 				t.Fatalf("List = %d tools, total %d, size %d, %v", len(tools), total, tool.Size, err)
 			}
@@ -123,7 +123,45 @@ func TestInstallVerifiesExpectedDigest(t *testing.T) {
 
 	// A different expected digest for the installed version fails closed.
 	_, err = store.Install(context.Background(), wrong)
-	requireErrorContains(t, err, "already installed with the digest")
+	requireErrorContains(t, err, "different artifact identity or digest")
+}
+
+func TestInstallRejectsDifferentReviewedIdentity(t *testing.T) {
+	store := newStore(t)
+	server := serve(t, map[string][]byte{"/tool": []byte("binary")})
+	base := request(server.URL+"/tool", ArchiveRaw, "tool")
+	base.Command = "server"
+	installed, err := store.Install(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(store.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.allowLoopbackHTTP = true
+	found, ok := reopened.Lookup(base.Package, base.Version)
+	if !ok || found.Command != "server" || found.Bin != "tool" || found.ID != installed.ID {
+		t.Fatalf("reopened identity = %+v", found)
+	}
+	for name, change := range map[string]func(*Request){
+		"source":  func(r *Request) { r.Source = "another" },
+		"url":     func(r *Request) { r.URL += "?other" },
+		"archive": func(r *Request) { r.Archive = ArchiveGz },
+		"bin":     func(r *Request) { r.Bin = "another" },
+		"command": func(r *Request) { r.Command = "another" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := base
+			change(&r)
+			if _, err := reopened.Install(context.Background(), r); err == nil {
+				t.Fatal("different artifact was accepted")
+			}
+		})
+	}
+	if server.hits.Load() != 1 {
+		t.Fatalf("unexpected downloads: %d", server.hits.Load())
+	}
 }
 
 func TestInstallValidatesRequest(t *testing.T) {
@@ -244,7 +282,7 @@ func TestInstallCancelledDuringDownload(t *testing.T) {
 	}
 	requireErrorContains(t, err, "cancelled")
 	requireEmptyStaging(t, store)
-	if tools, _, _ := store.List(); len(tools) != 0 {
+	if tools, _, _ := store.List(t.Context()); len(tools) != 0 {
 		t.Fatalf("a cancelled install left tools: %+v", tools)
 	}
 	history := events(t, store)
@@ -399,11 +437,11 @@ func TestUnrecognizedEntriesAreListedNotRemoved(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store.root, "notes.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	unknown, err := store.Unrecognized()
+	unknown, err := store.Unrecognized(t.Context())
 	if err != nil || strings.Join(unknown, ",") != "notes.txt,other/1.0-abc" {
 		t.Fatalf("Unrecognized = %v, %v", unknown, err)
 	}
-	if tools, _, _ := store.List(); len(tools) != 0 {
+	if tools, _, _ := store.List(t.Context()); len(tools) != 0 {
 		t.Fatalf("List = %+v", tools)
 	}
 	if _, err := Open(store.root); err != nil {

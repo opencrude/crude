@@ -18,22 +18,25 @@ import (
 // serialized worker; merely enabling intelligence never opens sources. The
 // assembly service (lsp_assembly.go) lists file names to plan the project.
 type LSPManager struct {
-	analysisSettings      ttypes.WorkspaceAnalysisSettings
-	analysisRootIdentity  string
-	analysisBlocked       string
-	analysisGovernor      *governor.Governor
-	analysisWorkspace     string
-	analysisGeneration    string
-	analysisGovernorError string
-	analysisRetained      bool
-	analysisIdentity      func(string) (string, error)
-	contextGeneration     uint64
-	sources               *DocumentService
-	mu                    sync.Mutex
-	documentSend          sync.Mutex
-	states                map[string]*lspClientState
-	documents             map[string]*lspDocument
-	projects              map[string]ttypes.LSPProjectProducer // by server key
+	analysisSettings       ttypes.WorkspaceAnalysisSettings
+	analysisRootIdentity   string
+	analysisBlocked        string
+	analysisGovernor       *governor.Governor
+	analysisWorkspace      string
+	analysisGeneration     string
+	analysisGovernorError  string
+	analysisRetained       bool
+	analysisIdentity       func(string) (string, error)
+	contextGeneration      uint64
+	sources                *DocumentService
+	editStages             editStageRegistry
+	reviewWatch            reviewedWatchRegistry
+	mu                     sync.Mutex
+	documentSend           sync.Mutex
+	states                 map[string]*lspClientState
+	documents              map[string]*lspDocument
+	projects               map[string]ttypes.LSPProjectProducer // by server key
+	projectWatchUnreliable bool
 	// Assembly (lsp_assembly.go): the published plan, the cached project
 	// listing, and the tool locations the plan resolved.
 	toolStore                   *toolstore.Store
@@ -43,8 +46,8 @@ type LSPManager struct {
 	assemblyCancel              context.CancelFunc
 	assemblyWG                  sync.WaitGroup
 	discovery                   *assemblyDiscovery
-	toolPaths                   map[string]string // command -> tool store executable
-	toolMissing                 map[string]string // command -> user reason
+	toolPaths                   map[assemblyToolKey]string // server and command -> tool store executable
+	toolMissing                 map[assemblyToolKey]string // server and command -> user reason
 	updateTimers                map[string]*time.Timer
 	runtime                     LSPRuntime
 	settings                    ttypes.LSPSettings
@@ -223,6 +226,7 @@ func (m *LSPManager) Version() uint64 {
 // ProjectInsights combines lifecycle health with qualified, observed facts.
 func (m *LSPManager) ProjectInsights() ProjectInsights {
 	m.mu.Lock()
+	watchUnreliable := m.projectWatchUnreliable
 	ins := ProjectInsights{ServerName: m.activeServerNameLocked(), ServerReady: m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
 		ServerBusy: m.inflight > 0, ServerStarting: m.activeStatus == LSPStarting, ServerSyncing: m.syncing,
 		ServerFailed: m.isFailedLocked(), ServerError: m.activeError, Language: m.language, SymbolsCount: m.symbolCount}
@@ -238,6 +242,10 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 	summary.ServerName, summary.ServerReady, summary.ServerBusy = ins.ServerName, ins.ServerReady, ins.ServerBusy
 	summary.ServerStarting, summary.ServerSyncing, summary.ServerFailed = ins.ServerStarting, ins.ServerSyncing, ins.ServerFailed
 	summary.ServerError, summary.Language, summary.SymbolsCount = ins.ServerError, ins.Language, ins.SymbolsCount
+	if watchUnreliable {
+		summary.DiagnosticsLimited++
+		summary.CoverageDetail += " Project file observation is incomplete; results may be out of date."
+	}
 	return summary
 }
 func (m *LSPManager) ProjectDiagnosticCounts() (int, int, int) {
@@ -273,6 +281,9 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 		health.Scope, health.Coverage = ttypes.CoverageOpenFiles, "Checks open files only."
 		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == ttypes.CoverageProject {
 			health.Scope, health.Coverage = ttypes.CoverageProject, "Checks the whole project, including files that are not open."
+			if m.projectWatchUnreliable {
+				health.Coverage = "Project file observation is incomplete; results may be out of date."
+			}
 		}
 		if state.closing {
 			health.Status, health.Connected, health.Starting = "Stopping", false, false

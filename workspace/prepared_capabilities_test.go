@@ -5,8 +5,85 @@ import (
 	"crude/types"
 	captypes "crude/types/capability"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 )
+
+func TestProjectToolDecisionConcurrentPreferenceSaves(t *testing.T) {
+	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	defer w.Close()
+	if err := w.ensureWorkspacePersistence(); err != nil {
+		t.Fatal(err)
+	}
+	const decision = `{ "grant" : [ "exact", 2 ] }`
+	if err := w.WorkspaceDB.SetSetting(workspaceSettingsKey, `{"capabilities":{"project_tool_decisions":`+decision+`}}`); err != nil {
+		t.Fatal(err)
+	}
+	saves := []func() PreferencesSaveResult{
+		w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}}),
+		w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "word_wrap"}, After: json.RawMessage(`true`)}}),
+	}
+	var wg sync.WaitGroup
+	errors := make(chan error, len(saves))
+	for _, save := range saves {
+		wg.Add(1)
+		go func() { defer wg.Done(); errors <- save().Err }()
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := w.WorkspaceDB.GetSetting(workspaceSettingsKey)
+	if !strings.Contains(row, `"project_tool_decisions":`+decision) || !strings.Contains(row, `"tab_size":6`) || !strings.Contains(row, `"word_wrap":true`) {
+		t.Fatalf("concurrent saves lost data: %s", row)
+	}
+}
+
+func TestProjectToolDecisionGenericWriters(t *testing.T) {
+	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)
+	defer w.Close()
+	if err := w.ensureWorkspacePersistence(); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"capabilities":{"project_tool_decisions":{ "invalid" : [ 1, 2 ] }}}`
+	if err := w.WorkspaceDB.SetSetting(workspaceSettingsKey, initial); err != nil {
+		t.Fatal(err)
+	}
+	assertStored := func() {
+		t.Helper()
+		if row := w.WorkspaceDB.GetSetting(workspaceSettingsKey); !strings.Contains(row, `"project_tool_decisions":{ "invalid" : [ 1, 2 ] }`) {
+			t.Fatalf("decision changed: %s", row)
+		}
+	}
+	for _, edit := range []types.SettingEdit{
+		{Path: []string{"capabilities"}, After: json.RawMessage(`{"project_tool_decisions":{"grant":true}}`)},
+		{Path: []string{"capabilities", "project_tool_decisions"}},
+		{Path: []string{"capabilities", "project_tool_decisions", "grant"}, After: json.RawMessage(`true`)},
+	} {
+		if result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{edit})(); result.Err == nil {
+			t.Fatalf("accepted authority edit: %v", edit.Path)
+		}
+	}
+	if result := w.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}})(); result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	assertStored()
+	if err := w.SaveWorkspaceSettings(types.WorkspaceOverrides{Capabilities: json.RawMessage(`{"project_tool_decisions":{"forged":true}}`)}); err != nil {
+		t.Fatal(err)
+	}
+	assertStored()
+	before := w.LoadAppSettings()
+	after := types.CloneAppSettings(before)
+	after.Capabilities.ProjectToolDecisions = json.RawMessage(`{"forged":true}`)
+	if _, err := w.PrepareCapabilityOverlayCommit(captypes.Action{})(context.Background(), before, after, captypes.ScopeWorkspace); err == nil {
+		t.Fatal("capability snapshot accepted decision change")
+	}
+	assertStored()
+}
 
 func TestPreparedCapabilitiesDetachesActionAndRejectsUnreviewedAcquisition(t *testing.T) {
 	w := NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, nil)

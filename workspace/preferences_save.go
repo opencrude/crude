@@ -42,6 +42,9 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 	}
 	validationErr := types.ValidateSettingEdits(types.AppSettings{}, edits)
 	if validationErr == nil {
+		validationErr = types.ValidateProjectToolDecisionEdits(edits)
+	}
+	if validationErr == nil {
 		validationErr = types.ValidateAnalysisSettingEdits(scope, edits)
 	}
 	if validationErr == nil {
@@ -123,6 +126,9 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 // Capability cards have independent entity commits. A preference draft opened
 // before an agent install must not replace those authoritative registration maps.
 func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, edits []types.SettingEdit, analysisRoot string, prediction predictionPreferenceBinding) (types.WorkspaceOverrides, error) {
+	if err := types.ValidateProjectToolDecisionEdits(edits); err != nil {
+		return types.WorkspaceOverrides{}, err
+	}
 	if err := types.ValidateSettingEdits(types.AppSettings{}, edits); err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
@@ -144,6 +150,7 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 	if err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
+	storedCapabilities := append(json.RawMessage(nil), currentOverrides.Capabilities...)
 	// Ordinary sparse editing canonicalizes JSON objects. A neighbor save must
 	// never repair malformed authority data into a grant. Preserve its original
 	// bytes unless this exact transaction explicitly changes prediction.
@@ -179,7 +186,7 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 	if err := bindPredictionPreferences(&currentOverrides, edits, prediction, analysisRoot); err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
-	encoded, err := json.Marshal(currentOverrides)
+	encoded, err := types.MarshalWorkspaceOverridesPreservingToolDecisions(currentOverrides, storedCapabilities)
 	if err != nil {
 		return types.WorkspaceOverrides{}, err
 	}
@@ -193,6 +200,9 @@ func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings,
 		return types.WorkspaceOverrides{}, err
 	}
 	database.publishSettingsRow(string(encoded))
+	if err := json.Unmarshal(encoded, &currentOverrides); err != nil {
+		return types.WorkspaceOverrides{}, err
+	}
 	return currentOverrides, nil
 }
 

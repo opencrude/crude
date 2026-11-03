@@ -666,10 +666,10 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		summary := state
 		if errors+warnings > 0 {
 			if errors > 0 {
-				summary += fmt.Sprintf(" · %d errors", errors)
+				summary += " · " + diagnosticCount(errors, "error")
 			}
 			if warnings > 0 {
-				summary += fmt.Sprintf(" · %d warnings", warnings)
+				summary += " · " + diagnosticCount(warnings, "warning")
 			}
 		}
 		actionLabel := "Switch to Tab"
@@ -1150,10 +1150,10 @@ func workspaceHealthSummary(insights ttypes.ProjectInsights) string {
 	if insights.Errors > 0 || insights.Warnings > 0 {
 		parts := make([]string, 0, 2)
 		if insights.Errors > 0 {
-			parts = append(parts, fmt.Sprintf("%d errors", insights.Errors))
+			parts = append(parts, diagnosticCount(insights.Errors, "error"))
 		}
 		if insights.Warnings > 0 {
-			parts = append(parts, fmt.Sprintf("%d warnings", insights.Warnings))
+			parts = append(parts, diagnosticCount(insights.Warnings, "warning"))
 		}
 		return strings.Join(parts, ", ") + "."
 	}
@@ -1161,6 +1161,13 @@ func workspaceHealthSummary(insights ttypes.ProjectInsights) string {
 		return insights.Language.Message
 	}
 	return "No results yet."
+}
+
+func diagnosticCount(count int, noun string) string {
+	if count != 1 {
+		noun += "s"
+	}
+	return fmt.Sprintf("%d %s", count, noun)
 }
 
 func editorDiagnosticCounts(diags []workspace.LSPDiagnostic) (errors, warnings int) {

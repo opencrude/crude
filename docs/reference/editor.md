@@ -998,12 +998,12 @@ The workspace starts the service when its analysis runtime starts. Settings
 changes and **Start Language Servers** run it again; a newer run cancels an
 older one and a stale result is dropped. Close cancels and joins it.
 
-Coverage is shown where the user looks for problems. Each server row in the
-workspace panel states what it checks ("Checks the whole project, including
-files that are not open." or "Checks open files only."), and **Project
-Languages** lists every language found, with the server, the program and the
-reason. A language whose server is not installed offers **Check again** after
-installation.
+Coverage is shown where the user looks for problems. Server rows show their
+current state and declared scope as a capability, not proof of a complete
+project check. **Project Languages** lists every language found, with the
+installed server, its program and declared capability; installation alone does
+not mean it is running. A language whose server is not installed offers
+**Check again** after installation.
 
 The language-server manager derives the active file's visible language status.
 The editor header shows error and warning counts, or that status label. The

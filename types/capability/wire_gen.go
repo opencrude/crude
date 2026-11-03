@@ -2621,8 +2621,8 @@ func (z Scope) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Settings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 5
+	o = append(o, 0x95)
 	if z.Skills == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -2667,6 +2667,11 @@ func (z *Settings) MarshalMsg(b []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Acquisition")
 		return
 	}
+	if z.ProjectToolDecisions == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBytes(o, rawJSONToBytes(z.ProjectToolDecisions))
+	}
 	return
 }
 
@@ -2682,8 +2687,8 @@ func (z *Settings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -2801,6 +2806,23 @@ func (z *Settings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Acquisition")
 		return
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.ProjectToolDecisions = nil
+	} else {
+		{
+			var zb0005 []byte
+			zb0005, bts, err = msgp.ReadBytesBytes(bts, rawJSONToBytes(z.ProjectToolDecisions))
+			if err != nil {
+				err = msgp.WrapError(err, "ProjectToolDecisions")
+				return
+			}
+			if zb0005 == nil {
+				zb0005 = make([]byte, 0)
+			}
+			z.ProjectToolDecisions = bytesToRawJSON(zb0005)
+		}
+	}
 	o = bts
 	return
 }
@@ -2828,7 +2850,7 @@ func (z *Settings) Msgsize() (s int) {
 			s += msgp.StringPrefixSize + len(za0005) + za0006.Msgsize()
 		}
 	}
-	s += z.Acquisition.Msgsize()
+	s += z.Acquisition.Msgsize() + msgp.BytesPrefixSize + len(rawJSONToBytes(z.ProjectToolDecisions))
 	return
 }
 

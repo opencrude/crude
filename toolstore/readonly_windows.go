@@ -15,6 +15,10 @@ func unsealFile(name string) error { return os.Chmod(name, 0o666) }
 
 func unsealDir(string) error { return nil }
 
+// Extracted file contents were synced while their write handles were open.
+// Reopening a sealed file does not provide a writable sync handle on Windows.
+func syncFile(string) error { return nil }
+
 // syncDir is a no-op: os.Open cannot open a Windows directory for sync. The
 // store accepts that a rename is durable only when the file system commits it.
 func syncDir(string) error { return nil }

@@ -292,6 +292,17 @@ func (m *LSPManager) runWorker(done chan struct{}) {
 }
 
 func (m *LSPManager) reconcile() bool {
+	if event, ok := m.reviewWatch.nextReplay(); ok {
+		if event.ready != nil {
+			select {
+			case <-event.ctx.Done():
+				return true
+			case <-event.ready:
+			}
+		}
+		m.notifyWatchedFilesChanged(event.ctx, event.path, event.kind, false, event.invalidated)
+		return true
+	}
 	m.mu.Lock()
 	if len(m.closedDocuments) > 0 {
 		doc := m.closedDocuments[0]
@@ -948,22 +959,71 @@ func (m *LSPManager) clientForFile(path string) LSPClient {
 // Watchers report disk events, never read contents or take ownership of editor
 // overlays. Include manifests/configuration, not just known source extensions.
 func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int) {
-	m.mu.Lock()
-	m.advanceContextLocked("Observed project input changed; dependent context is unverified.")
-	m.signalLocked()
-	var clients []LSPClient
-	if !m.paused && !m.closed && m.analysisErrorLocked() == nil {
-		for _, state := range m.states {
-			root, err := fileuri.ToPath(state.rootURI)
-			if err == nil && state.status == LSPConnected && !state.closing && pathWithin(root, path) {
-				clients = append(clients, state.client)
-			}
-		}
+	m.notifyWatchedFilesChanged(ctx, path, changeType, true, false)
+}
+
+func (m *LSPManager) notifyWatchedFilesChanged(ctx context.Context, path string, changeType int, deferReview, invalidated bool) {
+	// The edit writer registers exact temporary paths before creating them.
+	// Wait for creation to resolve before classifying an event, so a failed
+	// exclusive create cannot hide a pre-existing project file.
+	if m.editStages.ownsEvent(ctx, path, changeType) || ctx.Err() != nil {
+		return
 	}
+	if deferReview && m.reviewWatch.deferEvent(ctx, path, changeType, func() {
+		m.invalidateWatchedContext(ctx, path)
+	}) {
+		return
+	}
+	m.mu.Lock()
+	// A watch generation can be cancelled while this callback waits for the
+	// lock. Check inside the same critical section that selects producers.
+	if ctx.Err() != nil || m.closed {
+		m.mu.Unlock()
+		return
+	}
+	clients := m.watchedClientsLocked(path, !invalidated)
 	m.mu.Unlock()
 	for _, client := range clients {
 		client.NotifyWatchedFilesChanged(ctx, path, changeType)
 	}
+}
+
+// Invalidate immediately even when ordered server delivery waits for a
+// reviewed transaction. This holds no document lock and performs no I/O.
+func (m *LSPManager) invalidateWatchedContext(ctx context.Context, path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ctx.Err() == nil && !m.closed {
+		m.watchedClientsLocked(path, true)
+	}
+}
+
+func (m *LSPManager) watchedClientsLocked(path string, invalidate bool) []LSPClient {
+	if invalidate {
+		m.advanceContextLocked("Observed project input changed; dependent context is unverified.")
+	}
+	var clients []LSPClient
+	if !m.paused && !m.closed && m.analysisErrorLocked() == nil {
+		for key, state := range m.states {
+			root, err := fileuri.ToPath(state.rootURI)
+			if err != nil || !pathWithin(root, path) {
+				continue
+			}
+			if _, project := m.projects[key]; invalidate && project && state.status == LSPStarting && !state.closing {
+				// An initializing producer cannot receive this event yet. Retire
+				// it so the next instance indexes after the observed change.
+				m.clearServerDiagnosticsLocked(key)
+				m.retireLocked(state)
+			}
+			if state.status == LSPConnected && !state.closing {
+				clients = append(clients, state.client)
+			}
+		}
+	}
+	if invalidate {
+		m.signalLocked()
+	}
+	return clients
 }
 
 // Stop is safe on Update: admission stops immediately; the worker owns teardown.
@@ -993,6 +1053,7 @@ func (m *LSPManager) stopLocked() {
 
 // Close joins all owned subprocess lifetimes at workspace teardown, off Update.
 func (m *LSPManager) Close() {
+	m.reviewWatch.close()
 	m.mu.Lock()
 	// Publish terminal admission and retirement together. A worker which sees
 	// closed must already see every owned server marked for joined shutdown;
@@ -1072,7 +1133,11 @@ func (m *LSPManager) requestClient(ctx context.Context, path string) (LSPClient,
 }
 
 func (m *LSPManager) clearServerDiagnosticsLocked(key string) {
-	m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Context.ID == key })
+	if m.sources != nil && m.sources.Insight != nil {
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b ttypes.InsightBoundary) bool {
+			return isProjectFact(b) && b.Context.ID == key
+		}, "Language server stopped; retained results are out of date.")
+	}
 	m.advanceContextLocked("Language server state changed; retained facts are stale.")
 }
 
@@ -1148,10 +1213,11 @@ func (m *LSPManager) resolveServerLocked(path string) (ttypes.LSPServerSpec, boo
 	if !ok {
 		return spec, false
 	}
-	if _, missing := m.toolMissing[spec.Command]; missing {
+	key := assemblyToolKey{spec.ServerID, spec.Command}
+	if _, missing := m.toolMissing[key]; missing {
 		return ttypes.LSPServerSpec{}, false
 	}
-	if executable := m.toolPaths[spec.Command]; executable != "" {
+	if executable := m.toolPaths[key]; executable != "" {
 		spec.Command = executable
 	}
 	return spec, true

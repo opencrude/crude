@@ -424,6 +424,9 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 		if scope != captypes.ScopeWorkspace || db == nil {
 			return types.AppSettings{}, errors.New("workspace capability persistence unavailable")
 		}
+		if action.Kind != "" && action.Kind != captypes.KindSkill && action.Kind != captypes.KindMCP && action.Kind != "source" {
+			return types.AppSettings{}, errors.New("unsupported capability settings kind")
+		}
 		db.settingsWriteMu.Lock()
 		defer db.settingsWriteMu.Unlock()
 		tx, err := db.DB.BeginTx(ctx, nil)
@@ -436,6 +439,12 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 			return types.AppSettings{}, err
 		}
 		edits := types.SettingsEdits(before.Capabilities, after.Capabilities)
+		for _, edit := range edits {
+			if len(edit.Path) > 0 && edit.Path[0] == "project_tool_decisions" {
+				return types.AppSettings{}, errors.New("project tool decisions require the workspace setup transaction")
+			}
+		}
+		storedCapabilities := append(json.RawMessage(nil), current.Capabilities...)
 		collection := "connections"
 		switch action.Kind {
 		case captypes.KindSkill:
@@ -458,11 +467,14 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 		if err != nil {
 			return types.AppSettings{}, err
 		}
-		effective := types.MergeAppWorkspace(defaults, current)
-		raw, err := json.Marshal(current)
+		raw, err := types.MarshalWorkspaceOverridesPreservingToolDecisions(current, storedCapabilities)
 		if err != nil {
 			return types.AppSettings{}, err
 		}
+		if err := json.Unmarshal(raw, &current); err != nil {
+			return types.AppSettings{}, err
+		}
+		effective := types.MergeAppWorkspace(defaults, current)
 		_, err = tx.ExecContext(ctx, `INSERT INTO workspace_metadata(key,value,updated_at) VALUES(?,?,unixepoch()*1000000000) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, workspaceSettingsKey, string(raw))
 		if err != nil {
 			return types.AppSettings{}, err

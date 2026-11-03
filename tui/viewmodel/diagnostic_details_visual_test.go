@@ -618,8 +618,13 @@ func (m *diagnosticDetailsVisualModel) observeDiagnosticDetails(phase int) (bool
 				return fmt.Errorf("%s lost full original message/source/provenance %q", id, literal)
 			}
 		}
+		for _, input := range m.facts.Boundary.Context.UnknownInputs {
+			if !strings.Contains(body, input) {
+				return fmt.Errorf("%s lost context input provenance %q", id, input)
+			}
+		}
 		lower := strings.ToLower(body)
-		if !strings.Contains(lower, "partial") || !strings.Contains(lower, "unknown") ||
+		if !strings.Contains(body, "Results are available for this file. Other files may not be checked.") ||
 			strings.Contains(lower, "project clean") || strings.Contains(lower, "project is clean") ||
 			strings.Contains(lower, "context: complete") || strings.Contains(lower, "coverage: complete") {
 			return fmt.Errorf("partial provider context misrepresented: %q", body)

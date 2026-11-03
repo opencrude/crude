@@ -122,7 +122,7 @@ func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p typ
 	m.mu.Lock()
 	sources := m.sources
 	doc := m.documents[p.Boundary.Source.Path]
-	if m.analysisErrorLocked() != nil || owner == nil || m.states[key] != owner || doc == nil || doc.source != p.Boundary.Source {
+	if m.analysisErrorLocked() != nil || m.projectWatchUnreliable && m.projects[key].Root != "" || owner == nil || m.states[key] != owner || doc == nil || doc.source != p.Boundary.Source {
 		m.mu.Unlock()
 		return
 	}
@@ -140,7 +140,7 @@ func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p typ
 	path := p.Boundary.Source.Path
 	doc = m.documents[path]
 	if m.states[key] != owner || owner.closing || owner.stopped || owner.teardownErr != nil ||
-		m.analysisErrorLocked() != nil || m.paused || m.closed || doc == nil || doc.key != key || doc.source != p.Boundary.Source ||
+		m.analysisErrorLocked() != nil || m.projectWatchUnreliable && m.projects[key].Root != "" || m.paused || m.closed || doc == nil || doc.key != key || doc.source != p.Boundary.Source ||
 		!sameInsightBoundary(m.diagnosticBoundaryLocked(doc, owner), p.Boundary) {
 		return
 	}

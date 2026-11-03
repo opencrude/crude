@@ -639,6 +639,28 @@ Path is mutable metadata. Durable batch intents fence rename, preserve dirty
 unsaved text and protect conflicted deletes. Core owns one project watcher and
 lazy document-directory watching; connected shells do not watch/read project
 source files. File browse/catalog/read and replace-plan RPCs use core paths.
+The retained project watcher forwards ordered create, change and delete events
+to language servers on a bounded worker queue independently of shell delivery.
+The retained workspace fences project producers before assembly starts; the
+watcher releases that fence only after its initial directory traversal succeeds.
+Startup traversal and observation gaps fence project producer coverage. Overflow
+discards queued events and requests a producer reindex after observation is
+restored; failed directory admission stays unreliable. Populated directory moves
+require subtree admission and a reindex, not just a directory notification.
+Each gap cancels the prior event generation; the manager checks that generation
+under its producer-selection lock, so an in-flight old callback cannot target
+a replacement producer. Root removal or rename stays unreliable until the
+watcher is restarted: the root's parent is not watched and a replacement root
+cannot be readmitted safely by this watcher.
+Reviewed workspace edits register their exact staging paths before creation.
+Those staging events do not invalidate the review; a matching filename alone
+never grants that treatment. Target events and subsequent events are retained
+in order until the edit settles. Ambiguous or unrelated changes invalidate
+semantic context immediately. A bounded queue applies backpressure, and a
+watch gap revokes the in-flight edit. The writer checks staged files and the
+committed postimages before it reports success. These checks do not make the
+filesystem a security sandbox.
+Shutdown cancels and joins the notification worker.
 
 The connected tree consumes the same Git snapshot as the header and Git panel,
 not a client-local resolver. It retains complete status and diagnostic metadata

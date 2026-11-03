@@ -7,7 +7,8 @@ import (
 )
 
 // sealTree makes every file and directory below dir read-only, children
-// before their parents. dir itself is not changed. Links are not followed.
+// before their parents, then syncs their metadata and directory entries. dir
+// itself is not made read-only. Links are not followed.
 func sealTree(dir string) error {
 	type item struct {
 		path string
@@ -37,13 +38,19 @@ func sealTree(dir string) error {
 			if err := sealDir(items[i].path); err != nil {
 				return err
 			}
+			if err := syncDir(items[i].path); err != nil {
+				return err
+			}
 		case items[i].mode.IsRegular():
 			if err := sealFile(items[i].path, items[i].mode&0o111 != 0); err != nil {
 				return err
 			}
+			if err := syncFile(items[i].path); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+	return syncDir(dir)
 }
 
 // unsealTree restores write permission on dir and everything below it,
