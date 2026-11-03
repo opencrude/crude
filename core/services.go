@@ -355,7 +355,7 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 
 func serviceMutation(method string) bool {
 	switch method {
-	case coreprotocol.RemoveCodeTools, coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
+	case coreprotocol.RemoveCodeTools, coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
 		coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation, coreprotocol.ResolveGitConflict,
 		coreprotocol.PinMemory, coreprotocol.ForgetMemoryRecord, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
 		return true

@@ -19,19 +19,19 @@ func NewGitService(client *Client, id string) *GitService {
 
 func (s *GitService) Snapshot(ctx context.Context) (workspace.GitSnapshot, error) {
 	var out coreprotocol.GitSnapshotResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitSnapshot, coreprotocol.GitSnapshotRequest{}, &out)
+	err := s.client.CallCancellable(ctx, s.workspaceID, coreprotocol.GitSnapshot, coreprotocol.GitSnapshotRequest{}, &out)
 	return out.Snapshot, err
 }
 
 func (s *GitService) Compare(ctx context.Context, change workspace.GitChange) (workspace.GitComparison, error) {
 	var out coreprotocol.GitCompareResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitCompare, &coreprotocol.GitCompareRequest{Change: change}, &out)
+	err := s.client.CallCancellable(ctx, s.workspaceID, coreprotocol.GitCompare, &coreprotocol.GitCompareRequest{Change: change}, &out)
 	return out.Comparison, err
 }
 
 func (s *GitService) CompareChanges(ctx context.Context, changes []workspace.GitChange) ([]workspace.GitChangeComparison, error) {
 	var out coreprotocol.GitCompareChangesResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitCompareChanges, &coreprotocol.GitCompareChangesRequest{Changes: changes}, &out)
+	err := s.client.CallCancellable(ctx, s.workspaceID, coreprotocol.GitCompareChanges, &coreprotocol.GitCompareChangesRequest{Changes: changes}, &out)
 	items := make([]workspace.GitChangeComparison, len(out.Comparisons))
 	for i, item := range out.Comparisons {
 		items[i] = workspace.GitChangeComparison{Change: item.Change, Comparison: item.Comparison}
@@ -44,7 +44,7 @@ func (s *GitService) CompareChanges(ctx context.Context, changes []workspace.Git
 
 func (s *GitService) AnnotateFile(ctx context.Context, path string, content string) (workspace.GitFileAnnotation, error) {
 	var out coreprotocol.GitAnnotateFileResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitAnnotateFile, coreprotocol.GitAnnotateFileRequest{Path: path, Content: content}, &out)
+	err := s.client.CallCancellable(ctx, s.workspaceID, coreprotocol.GitAnnotateFile, coreprotocol.GitAnnotateFileRequest{Path: path, Content: content}, &out)
 	return out.Annotation, err
 }
 
@@ -80,7 +80,7 @@ func (s *GitService) CommitStaged(ctx context.Context, expected []string, messag
 
 func (s *GitService) InspectCommit(ctx context.Context, hash string) (workspace.GitCommitEvidence, error) {
 	var out coreprotocol.GitInspectCommitResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitInspectCommit, coreprotocol.GitInspectCommitRequest{Hash: hash}, &out)
+	err := s.client.CallCancellable(ctx, s.workspaceID, coreprotocol.GitInspectCommit, coreprotocol.GitInspectCommitRequest{Hash: hash}, &out)
 	return out.Evidence, err
 }
 
@@ -122,7 +122,7 @@ func (s *GitService) Merge(ctx context.Context, ref string) (workspace.GitSyncRe
 
 func (s *GitService) ConflictFile(ctx context.Context, path string) (workspace.GitConflictFile, error) {
 	var out coreprotocol.GitConflictFileResult
-	err := s.client.Call(ctx, s.workspaceID, coreprotocol.GitConflictFile, coreprotocol.GitConflictFileRequest{Path: path}, &out)
+	err := s.client.CallCancellable(ctx, s.workspaceID, coreprotocol.GitConflictFile, coreprotocol.GitConflictFileRequest{Path: path}, &out)
 	return out.File, err
 }
 
@@ -134,7 +134,7 @@ func (s *GitService) Checkout(ctx context.Context, branch string) error {
 
 func (v *WorkspaceView) PreviewGitDiscard(ctx context.Context, change workspace.GitChange) (workspace.GitDiscardPreview, error) {
 	var out coreprotocol.PreviewGitDiscardResult
-	err := v.Client.Call(ctx, v.ID, coreprotocol.PreviewGitDiscard, &coreprotocol.PreviewGitDiscardRequest{Change: change}, &out)
+	err := v.Client.CallCancellable(ctx, v.ID, coreprotocol.PreviewGitDiscard, &coreprotocol.PreviewGitDiscardRequest{Change: change}, &out)
 	return out.Preview, err
 }
 

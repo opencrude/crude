@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -212,6 +213,9 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		return func(ctx context.Context) coreprotocol.Response {
 			message, err := writer.Write(ctx, in.StageAll, progress)
 			if err != nil {
+				if errors.Is(err, workspace.ErrGitNoChanges) {
+					return fault(request, "git_no_changes", err.Error())
+				}
 				return fault(request, "generation_failed", err.Error())
 			}
 			return response(request, coreprotocol.CommitMessageResult{Message: message})

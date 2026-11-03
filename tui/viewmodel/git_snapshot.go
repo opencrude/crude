@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,9 +54,8 @@ func (m *App) gitSnapshotDue(now time.Time) bool {
 
 // gitSnapshotReady reports whether the tick loop may start the reconciliation
 // read: a read is due and no Git read of any kind is in flight. Reconciliation
-// never supersedes an explicit refresh or a source-control mutation, because a
-// superseded result loses that operation's notice, commit-field clear, editor
-// invalidation, and error report.
+// yields to explicit refreshes and mutations instead of competing for the same
+// repository lane. Mutation settlement is independent of read supersession.
 func (m *App) gitSnapshotReady(now time.Time) bool {
 	if m == nil || m.gitPanel == nil || m.gitReadsInFlight > 0 {
 		return false
@@ -91,14 +89,5 @@ func (m *App) startGitSnapshotRead() tea.Cmd {
 // change must not rebuild the panel list or invalidate the editor's gutter
 // annotation (a Git read of its own) on every fallback pass.
 func sameGitSnapshot(a, b workspace.GitSnapshot) bool {
-	if a.RepositoryRoot != b.RepositoryRoot || a.Branch != b.Branch || a.Upstream != b.Upstream ||
-		a.Head != b.Head || a.Ahead != b.Ahead || a.Behind != b.Behind {
-		return false
-	}
-	return slices.Equal(a.Changes, b.Changes) &&
-		slices.Equal(a.Branches, b.Branches) &&
-		slices.EqualFunc(a.RecentCommits, b.RecentCommits, func(x, y workspace.GitCommitSummary) bool {
-			return x.Hash == y.Hash && x.ShortHash == y.ShortHash && x.Subject == y.Subject &&
-				x.Author == y.Author && x.When.Equal(y.When)
-		})
+	return workspace.SameGitSnapshot(a, b)
 }

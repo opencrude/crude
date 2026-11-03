@@ -61,6 +61,12 @@ type StatusCenter struct {
 	lifecycleMu  sync.Mutex
 	closed       bool
 	workWG       sync.WaitGroup
+
+	// Complete command snapshots bound these observations to retained source
+	// jobs, not notification/operation history. Display pruning must not turn
+	// the next snapshot of a settled job into a new outcome.
+	commandMu          sync.Mutex
+	backgroundCommands map[string]map[string]ttypes.OperationSnapshot
 }
 
 func NewStatusCenter(db *sql.DB, logger Logger) *StatusCenter {
@@ -193,6 +199,9 @@ func (c *StatusCenter) RemoveAgent(id string) {
 	if c == nil {
 		return
 	}
+	c.commandMu.Lock()
+	delete(c.backgroundCommands, id)
+	c.commandMu.Unlock()
 	c.mu.Lock()
 	if _, exists := c.agents[id]; exists {
 		delete(c.agents, id)
@@ -319,7 +328,9 @@ func (c *StatusCenter) FinishOperations(ownerID string, state ttypes.OperationSt
 	now := time.Now()
 	c.mu.Lock()
 	for id, op := range c.operations {
-		if op.Owner.ID != ownerID || operationTerminal(op.State) {
+		// A turn can finish while its background commands continue. Only their
+		// command manager's snapshot owns settlement of those operations.
+		if op.Owner.ID != ownerID || operationTerminal(op.State) || op.Kind == "background-command" {
 			continue
 		}
 		op.State, op.Error, op.UpdatedAt, op.EndedAt = state, errText, now, now
@@ -402,12 +413,31 @@ func (c *StatusCenter) Issues() []ttypes.IssueSnapshot {
 }
 
 func (c *StatusCenter) Notify(n ttypes.NotificationRecord) string {
+	return c.notify(n, false)
+}
+
+// notifyOnce records immutable evidence with an exact, source-owned ID. Unlike
+// Notify's repeated occurrences, a replay cannot reset its user-managed state.
+func (c *StatusCenter) notifyOnce(n ttypes.NotificationRecord) string {
+	if n.ID == "" {
+		return ""
+	}
+	return c.notify(n, true)
+}
+
+func (c *StatusCenter) notify(n ttypes.NotificationRecord, once bool) string {
 	if c == nil || strings.TrimSpace(n.Summary) == "" {
 		return ""
 	}
 	now := time.Now()
 	c.mu.Lock()
-	if n.DedupKey != "" {
+	if once {
+		if _, exists := c.byNoticeID[n.ID]; exists {
+			c.mu.Unlock()
+			return n.ID
+		}
+	}
+	if !once && n.DedupKey != "" {
 		for i := len(c.notifications) - 1; i >= 0; i-- {
 			old := &c.notifications[i]
 			if old.DedupKey == n.DedupKey && old.ResolvedAt.IsZero() && !old.Dismissed {

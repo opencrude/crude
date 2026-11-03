@@ -17,6 +17,8 @@ const (
 	commitMessageFileLimit = 12 << 10 // bytes of one file's diff
 )
 
+var ErrGitNoChanges = errors.New("there are no changes to describe")
+
 // CommitMessageWriter drafts a commit message with the Aeron model. It is
 // prepared on the UI goroutine (the configuration is read there); Write only
 // performs repository reads and the model request.
@@ -53,6 +55,9 @@ func (writer CommitMessageWriter) Write(ctx context.Context, stageAll bool, emit
 	if err != nil {
 		return "", err
 	}
+	if stageAll && len(snapshot.Changes) == 0 || !stageAll && len(snapshot.StagedPaths()) == 0 {
+		return "", ErrGitNoChanges
+	}
 	var comparisons []GitComparison
 	if stageAll {
 		results, err := writer.git.CompareChanges(ctx, snapshot.Changes)
@@ -72,7 +77,7 @@ func (writer CommitMessageWriter) Write(ctx context.Context, stageAll bool, emit
 		comparisons = review.Comparisons
 	}
 	if len(comparisons) == 0 {
-		return "", errors.New("there are no changes to describe")
+		return "", errors.New("the changes could not be loaded; refresh Git and review them before generating a message")
 	}
 	subjects := make([]string, 0, len(snapshot.RecentCommits))
 	for _, commit := range snapshot.RecentCommits {

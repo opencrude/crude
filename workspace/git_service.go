@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,10 @@ type GitBranchSummary struct {
 
 // GitSnapshot is an immutable source-control projection.
 type GitSnapshot struct {
+	// SourceID identifies the service lifetime; Sequence orders successful reads
+	// from that source, including reads of a workspace without a repository.
+	SourceID       string
+	Sequence       uint64
 	RepositoryRoot string
 	Branch         string
 	Upstream       string
@@ -78,6 +83,9 @@ type GitSnapshot struct {
 type GitService struct {
 	root string
 	gate chan struct{}
+	// sourceID is stable for this service; sequence is protected by gate.
+	sourceID string
+	sequence uint64
 	// remote serializes network operations (fetch, pull, push) separately from
 	// gate, so background fetches never hold status reads behind the network.
 	remote chan struct{}
@@ -87,7 +95,7 @@ type GitService struct {
 }
 
 func NewGitService(root string) *GitService {
-	return &GitService{root: root, gate: make(chan struct{}, 1), remote: make(chan struct{}, 1)}
+	return &GitService{root: root, gate: make(chan struct{}, 1), remote: make(chan struct{}, 1), sourceID: rand.Text()}
 }
 
 // The repository lane includes queue time in the caller's deadline. A fetch,
@@ -128,7 +136,7 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 		// A plain directory is a valid workspace. Absence of a repository is
 		// the empty source-control state, not an operational failure/modal.
 		if errors.Is(err, git.ErrRepositoryNotExists) {
-			return GitSnapshot{}, nil
+			return s.sequenceSnapshot(GitSnapshot{}), nil
 		}
 		return GitSnapshot{}, err
 	}
@@ -146,7 +154,14 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 	snapshot.Branches = gitBranches(repo, snapshot.Branch)
 	snapshot.Remotes = gitRemotes(repo)
 	snapshot.readOperation(ctx)
-	return snapshot, nil
+	return s.sequenceSnapshot(snapshot), nil
+}
+
+// sequenceSnapshot tags a successful read while the repository gate is held.
+func (s *GitService) sequenceSnapshot(snapshot GitSnapshot) GitSnapshot {
+	s.sequence++
+	snapshot.SourceID, snapshot.Sequence = s.sourceID, s.sequence
+	return snapshot
 }
 
 func (s *GitSnapshot) readTracking(ctx context.Context) {
@@ -195,6 +210,10 @@ func (s *GitService) open() (*git.Repository, string, error) {
 }
 
 func (s *GitService) run(ctx context.Context, args ...string) error {
+	return s.runInput(ctx, nil, args...)
+}
+
+func (s *GitService) runInput(ctx context.Context, input io.Reader, args ...string) error {
 	repo, root, err := s.open()
 	if err != nil {
 		return err
@@ -203,6 +222,7 @@ func (s *GitService) run(ctx context.Context, args ...string) error {
 	defer observeGit(args, time.Now())
 	cmdArgs := append([]string{"-C", root}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	cmd.Stdin = input
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -219,11 +239,7 @@ func (s *GitService) run(ctx context.Context, args ...string) error {
 
 // Stage adds the provided repository-relative paths to the index.
 func (s *GitService) Stage(ctx context.Context, paths ...string) error {
-	clean := cleanGitPaths(paths)
-	if len(clean) == 0 {
-		return nil
-	}
-	return s.mutate(ctx, append([]string{"add", "--"}, clean...)...)
+	return s.mutatePaths(ctx, "add", paths)
 }
 
 // StageAll stages tracked, untracked, and deleted files.
@@ -232,21 +248,9 @@ func (s *GitService) StageAll(ctx context.Context) error {
 }
 
 // Unstage restores the provided paths in the index while preserving working
-// tree edits. The reset fallback supports repositories without restore.
+// tree edits. A path-limited reset also works before the first commit.
 func (s *GitService) Unstage(ctx context.Context, paths ...string) error {
-	clean := cleanGitPaths(paths)
-	if len(clean) == 0 {
-		return nil
-	}
-	args := append([]string{"restore", "--staged", "--"}, clean...)
-	if err := s.lock(ctx); err != nil {
-		return err
-	}
-	defer s.unlock()
-	if err := s.run(ctx, args...); err == nil {
-		return nil
-	}
-	return s.run(ctx, append([]string{"reset", "--"}, clean...)...)
+	return s.mutatePaths(ctx, "reset", paths)
 }
 
 // UnstageAll resets the complete index to HEAD while preserving files.
@@ -311,23 +315,6 @@ func (s *GitService) mutate(ctx context.Context, args ...string) error {
 	}
 	defer s.unlock()
 	return s.run(ctx, args...)
-}
-
-func cleanGitPaths(paths []string) []string {
-	out := make([]string, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-		if path == "" || path == "." {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		out = append(out, path)
-	}
-	return out
 }
 
 func (s *GitSnapshot) readHead(repo *git.Repository) {

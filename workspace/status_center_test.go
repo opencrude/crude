@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,5 +175,33 @@ func TestStatusCenterChangedSupportsLiteralFixture(t *testing.T) {
 	case <-wake:
 	default:
 		t.Fatal("literal fixture lost mutation")
+	}
+}
+
+func TestStatusCenterExactEvidenceIsRecordedOnce(t *testing.T) {
+	center := NewStatusCenter(nil, nil)
+	defer center.Close()
+	n := types.NotificationRecord{ID: "immutable-outcome", DedupKey: "immutable-outcome", Summary: "Background command failed", Severity: types.SeverityError}
+	var wg sync.WaitGroup
+	for range 200 {
+		wg.Go(func() { center.notifyOnce(n) })
+	}
+	wg.Wait()
+	got := center.Notifications(true)
+	if len(got) != 1 || got[0].Occurrences != 1 || center.Version() != 1 {
+		t.Fatalf("exact evidence published multiple occurrences: %+v version=%d", got, center.Version())
+	}
+	center.Dismiss(n.ID)
+	center.ResolveNotification(n.ID)
+	updated := center.Notifications(true)[0].UpdatedAt
+	version := center.Version()
+	for range 200 {
+		wg.Go(func() { center.notifyOnce(n) })
+	}
+	wg.Wait()
+	got = center.Notifications(true)
+	if len(got) != 1 || !got[0].Read || !got[0].Dismissed || got[0].ResolvedAt.IsZero() ||
+		!got[0].UpdatedAt.Equal(updated) || center.Version() != version {
+		t.Fatalf("exact evidence replay reset user state: %+v version=%d", got, center.Version())
 	}
 }

@@ -194,3 +194,37 @@ func TestBackgroundJobRejectsWrongProjectionOrSettledRow(t *testing.T) {
 		t.Fatal("missing owner submitted termination")
 	}
 }
+
+func TestBackgroundJobNoticesOnlyUpdateShellProjection(t *testing.T) {
+	app := newFullTestApp(t)
+	owner := &workspace.Session{SessionID: "session"}
+	app.ws.AgentMgr().AddOrchestrator("root", &workspace.AgentState{})
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": owner}
+	app.ActiveSession = owner
+	now := time.Now()
+	commands := []fileio.AsyncCmdInfo{
+		{Handle: "failed-job", Command: "test failed command", PID: 123, StartedAt: now.Add(-time.Second), EndedAt: now, Status: fileio.AsyncFailed, Error: "exit status 1"},
+		{Handle: "running-job", Command: "test running command", PID: 124, StartedAt: now, Status: fileio.AsyncRunning},
+	}
+	center := wsOf(app).Status
+	version := center.Version()
+	for range 200 {
+		app.presentAgentNotice(workspace.AgentNotice{Type: workspace.NoticeAsyncCommandStatus, AgentID: "root", Commands: commands})
+	}
+	if center.Version() != version || len(center.Notifications(true)) != 0 || len(center.Operations()) != 0 {
+		t.Fatalf("shell projection wrote canonical command status: version %d -> %d; notices=%d operations=%d",
+			version, center.Version(), len(center.Notifications(true)), len(center.Operations()))
+	}
+	projection := app.activeSessionProjection()
+	if projection.backgroundJobs.VisibleCount() != 2 {
+		t.Fatal("command status was not projected into the background jobs panel")
+	}
+	app.width, app.height = 120, 35
+	app.compositor.Resize(app.width, app.height)
+	app.Tree.Visible = false
+	app.forceFrame()
+	painted := rendering.StripAnsi(app.View().RenderContent())
+	if !strings.Contains(painted, "failed-job") || !strings.Contains(painted, "FAILED") || !strings.Contains(painted, "running-job") {
+		t.Fatalf("projected command rows missing from rendered panel:\n%s", painted)
+	}
+}

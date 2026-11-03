@@ -44,6 +44,7 @@ func (m *App) runGitRemote(label, done string, op func(context.Context, shellpor
 	if m.gitPanel == nil || m.gitPanel.RemoteBusy() != "" {
 		return nil
 	}
+	m.cancelGitChangesPreparation()
 	m.ws.EnsureGit()
 	service := m.ws.Git()
 	if service == nil {
@@ -65,7 +66,7 @@ func (m *App) runGitRemote(label, done string, op func(context.Context, shellpor
 		if err != nil {
 			return msg
 		}
-		msg.notice, msg.conflicts = done, result.Conflicts
+		msg.completed, msg.notice, msg.conflicts = true, done, result.Conflicts
 		if len(result.Conflicts) > 0 {
 			msg.notice = fmt.Sprintf("%s stopped: %s", label, gitCountNoun(len(result.Conflicts), "conflicted file"))
 		}
@@ -83,6 +84,10 @@ func (m *App) applyGitRemoteResult(msg sourceControlResultMsg) tea.Cmd {
 	m.gitRemoteCancel = nil
 	m.gitPanel.SetRemoteBusy("")
 	if msg.err != nil {
+		if msg.completed {
+			m.finishGitWithStatusError(msg)
+			return nil
+		}
 		if errors.Is(msg.err, context.Canceled) {
 			m.finishGitOperation(msg.gen, types.OperationCancelled, "")
 			if m.Feedback != nil {
