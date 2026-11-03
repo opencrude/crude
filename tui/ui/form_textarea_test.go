@@ -225,3 +225,95 @@ func TestReadOnlyFormTextAreaStartsAtTopAndRetainsReading(t *testing.T) {
 		t.Fatalf("replacement reader text skipped its new source:\n%s", got)
 	}
 }
+
+func TestReadOnlyFormTextAreaReadsThroughMountedInput(t *testing.T) {
+	model := NewFormModel()
+	text := "FIRST SOURCE\nsecond\nthird\nfourth\nfifth\nLAST CHECKSUM"
+	state := TextAreaFieldState("reader", "Details", text, "")
+	state.ReadOnly, state.Rows = true, 2
+	model.AddField(state)
+	for i := 0; i < 8; i++ {
+		model.AddField(TextFieldState(string(NewID("other", string(rune('a'+i)))), "Other", "", ""))
+	}
+	form := NewForm("reader-form", model, "", "", NewTokenSet(theme.DefaultDark()))
+	host := NewHost(theme.DefaultDark(), form)
+	host.Resize(60, 8)
+	host.Layout()
+	host.Focus(form.ID())
+	field := form.Field("reader")
+	area := field.Area()
+	paint := func() string {
+		buffer := surface.NewCellBuffer(60, 8)
+		host.Paint(buffer)
+		var b strings.Builder
+		for y := 0; y < buffer.Height(); y++ {
+			b.WriteString(rowText(buffer, y))
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
+	if form.scroll.MaxOffset() == 0 {
+		t.Fatal("fixture did not create a scrollable parent form")
+	}
+	fr, ar := field.Bounds(), area.Bounds()
+	x, y := fr.X+ar.X+1, fr.Y+ar.Y
+	host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelDown})
+	if area.ScrollOffset() == 0 || form.scroll.Offset() != 0 {
+		t.Fatalf("wheel did not scroll the reader first: reader=%d form=%d", area.ScrollOffset(), form.scroll.Offset())
+	}
+	for i := 0; i < 5 && form.scroll.Offset() == 0; i++ {
+		host.Handle(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelDown})
+	}
+	if form.scroll.Offset() == 0 {
+		t.Fatal("wheel did not reach the parent at the reader's end")
+	}
+	form.scroll.ScrollTo(0)
+	host.Layout()
+	area.SetCursorFlat(0)
+	area.SetScrollOffset(0)
+	host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+	for range 5 {
+		host.Handle(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	}
+	if got := paint(); !strings.Contains(got, "LAST CHECKSUM") {
+		t.Fatalf("PageDown did not reveal complete reader text:\n%s", got)
+	}
+	host.Handle(tea.KeyPressMsg{Code: 'X', Text: "X"})
+	host.Handle(tea.PasteMsg{Content: "changed"})
+	if area.Value() != text || state.Value.String() != text {
+		t.Fatal("read-only input changed its content")
+	}
+	area.SetCursorFlat(0)
+	area.SetScrollOffset(0)
+	for range 5 {
+		host.Handle(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	}
+	var copied string
+	area.SetClipboardCopy(func(text string) tea.Cmd {
+		return func() tea.Msg { copied = text; return nil }
+	})
+	copyResult := host.Handle(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if copyResult.Cmd == nil {
+		t.Fatal("read-only selection did not offer copy")
+	}
+	_ = copyResult.Cmd()
+	if copied != "FIRST" {
+		t.Fatalf("copied %q, want FIRST", copied)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if area.HasActiveSelection() {
+		t.Fatal("Escape navigated away instead of clearing the reader selection")
+	}
+	// Without a selection, Escape must navigate back. A focused text control
+	// never swallows it.
+	back := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if back.Action == nil || back.Action.ID != "form.cancel" {
+		t.Fatalf("Escape without a selection did not go back: %+v", back.Action)
+	}
+	host.Focus(form.ID())
+	form.FocusLast()
+	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc}); result.Action == nil || result.Action.ID != "form.cancel" {
+		t.Fatalf("Escape in an empty text field did not go back: %+v", result.Action)
+	}
+}
