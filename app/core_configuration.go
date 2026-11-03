@@ -222,7 +222,6 @@ func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits
 			case "ActiveProfile":
 				path[1] = "active_profile"
 			case "agent_profiles":
-			case "execution_hygiene":
 			default:
 				return fmt.Errorf("unknown agent setting")
 			}

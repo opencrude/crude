@@ -65,9 +65,8 @@ staging state as a separate authority. Git administration (`.git` pointer files,
 common directories and linked-worktree administration) is excluded from capture,
 review, integration and Local History, even when ordinary ignore filtering is off.
 
-There is no execution-count admission or reopen limit. The retained-count,
-age and snapshot-storage thresholds are configurable hygiene warnings, never
-launch blockers. Snapshot safety bounds remain 20,000 baseline files, 256 MiB
+There is no execution-count admission or reopen limit, and no retained-count,
+age or storage threshold. Snapshot safety bounds remain 20,000 baseline files, 256 MiB
 total and 32 MiB per file. They bound one isolated capture, not a pool of launch
 slots, and never forcibly prune work. Format changes require backed-up manual
 alignment; no legacy reader or automatic upgrade.
@@ -163,12 +162,15 @@ committed/undone receipt and Local History safety snapshot.
 Removed executions retain a compact ledger with exact provenance and archive
 reference; baseline/result bytes move to an on-demand archive, not live inventory
 or every model warning. No passive startup cleanup or archive expiry is implied.
-Undo evidence is not deleted to meet a warning threshold.
+Undo evidence is never deleted to reduce storage.
 
-The early root/child system contract and context-only post-child outcome reminder
-state this workflow once. Request-boundary inventory notices are deduplicated;
-they are not new human requests, dialogs, repeated progress messages or permission
-to delete. See [settings](settings.md#worktree-hygiene).
+The early root/child system contract states this workflow once. The only
+reminder is a context-only disposition note on the outcome of a child that ran in
+its own worktree, delivered once when that child stops. Shared children get none.
+There is no per-turn or per-request workspace inventory reminder: it repeated on
+every step and reached agents that never delegated. Leftovers of a parent that
+never acted remain visible through `execution.list` for the human or any agent
+asked to clean up. See [prompt architecture](prompt-architecture.md#execution-lifecycle-and-workspace-wide-hygiene).
 
 ## Evidence and limits
 
@@ -187,7 +189,7 @@ connected TUI mode uses the repository visual capture workflow. Passing selected
 models is evidence for those journeys, not a guarantee of universal autonomy.
 The hygiene journey was exercised with configured GPT Sol 6.1 and DeepSeek 4.1
 Flash accounts, including connected Linux TUI captures at 160x40 and 80x24.
-Settings controls were inspected at both sizes, with an explicit zero threshold
-saved through the UI and persistence/inheritance checked across core restart.
+That run predates removal of the per-request inventory reminder; its explicit
+human cleanup goal does not depend on that reminder, but it has not been re-run.
 Research designs motivate isolation; they do not guarantee every repository,
 setup command, dependency, filter or developer workflow is supported.

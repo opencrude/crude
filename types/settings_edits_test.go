@@ -49,3 +49,16 @@ func TestStoredSettingsInvalidLeafInheritsWithoutPoisoningNeighbors(t *testing.T
 		t.Fatal("stale leaf lost valid neighbor or parent")
 	}
 }
+
+// Removed worktree-hygiene thresholds may remain in stored config files. They
+// must be ignored without losing the agent settings stored beside them.
+func TestStoredRemovedExecutionHygieneIsIgnored(t *testing.T) {
+	var value AppSettings
+	stored := `{"agents":{"MaxConcurrent":3,"execution_hygiene":{"warnings":false,"retained_count":0}}}`
+	if err := DecodeStoredSettings([]byte(stored), &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Agents.MaxConcurrent != 3 {
+		t.Fatalf("removed setting poisoned its neighbors: %+v", value.Agents)
+	}
+}

@@ -28,7 +28,6 @@ import (
 	"crude/shellport/remote"
 	"crude/tui"
 	"crude/tui/viewmodel"
-	"crude/types"
 	recoverytypes "crude/types/recovery"
 	"crude/workspace"
 	"crude/worktree"
@@ -94,8 +93,6 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 	profile.Categories[session.CategoryResearcher] = reader
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	cfg.Agents.Enabled = true
-	one := 1
-	cfg.Agents.ExecutionHygiene = types.ExecutionHygieneSettings{RetainedCount: &one}
 	cfg.Memory.AutoRecall, cfg.Memory.AutoExtract, cfg.Memory.Consolidation = "off", "off", "off"
 	fc.Agents = &cfg.Agents
 	fc.Memory = &cfg.Memory

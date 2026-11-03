@@ -54,7 +54,7 @@ func TestParentOwnsChildExecutionDispositionAcrossModels(t *testing.T) {
 				"crude_commands", "crude_control", "final evidence and authoritative terminal outcome",
 				"integrate useful changes", "explicitly discard unwanted work", "finished or failed worktrees",
 				"discard_digest, not its integration digest",
-				"Keep with a reason", "configurable reminders, never launch blockers",
+				"Keep with a reason", "one quiet context-only disposition reminder", "none blocks a launch",
 				"never automatically merges or deletes", "live or recoverable work",
 				"intentional human work", "primary cleanup responsibility",
 			} {
@@ -154,7 +154,7 @@ func TestWorkspaceWideExecutionHygieneReachesEveryCapableRole(t *testing.T) {
 					"execution.reconcile", "proven terminal", "no live commands or open recovery",
 					"live or recoverable work must be explicitly settled", "blindly unpin", "Keep with a reason",
 					"archived review evidence", "forgotten terminal pins", "before cleanup",
-					"intentional human work", "count thresholds never block launches", "context-only",
+					"intentional human work", "there is no other cleanup reminder", "context-only",
 				} {
 					if !strings.Contains(rules, required) {
 						t.Errorf("missing workspace hygiene boundary %q", required)

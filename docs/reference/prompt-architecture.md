@@ -120,8 +120,8 @@ Respect intentional human work and reasoned Keep; active users and recovery must
 settle before destructive cleanup. Completion never automatically merges or
 deletes a worktree. A blocked cleanup retains the work and reports why, rather
 than improvising forced Git
-removal. Hygiene warnings are configurable reminders, not launch blockers or an
-automatic cleanup policy.
+removal. The only cleanup reminder is the one attached to a worktree child's
+outcome; it is not a launch blocker or an automatic cleanup policy.
 
 Parent responsibility does not make janitorial inspection or cleanup
 descendant-only. Any capable root or child may review and clean another parent's
@@ -164,27 +164,24 @@ authoritative; prompt text alone neither
 enforces cleanup nor grants permission to discard work or to bypass a role's
 read-only policy.
 
-`ExecutionHygieneNotice` renders a context-only warning only when the session
-supplies threshold reasons. The session owns thresholds, configured in
-**Settings > Agents > Main Agent**, and delivery cadence; the renderer does not
-decide whether an artifact is stale or block a launch. Counts, age, storage,
-reasons and a sample of up to five exact execution IDs describe workspace-wide
-inventory, not just the recipient's descendants. Reason/ID text is escaped so it
-cannot become instruction markup. The notice references the early shared policy
-without repeating it or requesting user-facing narration. It never requests
-automatic merge/deletion, treats inventory age as authorization, or makes a
-count threshold block launches.
+There is no request-boundary workspace inventory reminder. An earlier design
+re-sent a workspace-wide worktree inventory at every root turn and whenever any
+execution's pins or manifest changed. It reached agents that had never delegated,
+repeated during every orchestration step, and filled context with the same
+warning. It was removed together with its threshold settings.
 
-`ChildExecutionDisposition` supplies one concise context-only reminder for each
-child run outcome, separately from the visible collaboration event body. It
-contains escaped exact ID/root/mode facts, references the shared contract, and
-reminds the parent to inspect evidence and terminal outcome, review/integrate or
-explicitly discard and clean when safe. With no ID and no mode it returns empty,
-even if a root was supplied. Shared mode with an empty ID explicitly has no
-separate worktree, and its root must not be deleted. Missing facts are never
-guessed. The session owns outcome-only delivery; this pure helper does not
-schedule repeated reminders, mutate the visible event or trigger automatic
-cleanup. Kept, human-owned, live and recoverable work retain the same protection.
+`ChildExecutionDisposition` supplies the one context-only reminder, appended to
+the outcome of a child that ran in its own worktree (resolved mode `worktree`),
+separately from the visible collaboration event body. A child runs once per
+launch, so this is once per stopped child. It contains escaped exact ID/root
+facts, references the shared contract, and reminds the parent to inspect evidence
+and terminal outcome, review/integrate or explicitly discard and clean when safe.
+Without an ID it returns empty. Shared children, including a child that pins the
+parent's own worktree, get no reminder: they have no separate checkout and their
+pin is released when their run ends. The session owns outcome-only delivery; this
+pure helper does not schedule repeated reminders, mutate the visible event or
+trigger automatic cleanup. Kept, human-owned, live and recoverable work retain
+the same protection.
 
 Exact tool schemas, descriptions, validation/denial messages and result payloads
 stay with the executing interface. They are not competing system prompts. External
