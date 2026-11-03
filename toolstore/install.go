@@ -1,11 +1,13 @@
 package toolstore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +29,9 @@ func (s *Store) Install(ctx context.Context, r Request) (Tool, error) {
 		return s.installFailure(ctx, r, Tool{}, err)
 	}
 	defer unlock()
+	if err := s.refusePendingPreparation(ctx, r.Package, r.Version); err != nil {
+		return s.installFailure(ctx, r, Tool{}, err)
+	}
 	if tool, ok, err := s.installed(ctx, r); err != nil || ok {
 		if err != nil {
 			return s.installFailure(ctx, r, Tool{}, err)
@@ -80,6 +85,15 @@ func (e *EvaluationUnverifiedError) Error() string {
 }
 func (e *EvaluationUnverifiedError) Unwrap() error { return e.Err }
 
+// PreparationUnverifiedError retains the exact staging tree because a
+// preparation process or its effects could not be retired with certainty.
+type PreparationUnverifiedError struct{ Err error }
+
+func (e *PreparationUnverifiedError) Error() string {
+	return fmt.Sprintf("the tool preparation needs inspection before another attempt: %v", e.Err)
+}
+func (e *PreparationUnverifiedError) Unwrap() error { return e.Err }
+
 func (r *Request) normalize() error {
 	if err := validComponent(r.Package); err != nil {
 		return fmt.Errorf("package: %w", err)
@@ -92,8 +106,15 @@ func (r *Request) normalize() error {
 	}
 	switch r.Archive {
 	case ArchiveZip, ArchiveTarGz, ArchiveTarXz, ArchiveGz, ArchiveRaw:
+		if r.Prepare != nil {
+			return errors.New("a download cannot have a preparation callback")
+		}
+	case ArchivePrepared:
+		if r.Prepare == nil || strings.TrimSpace(r.ExpectedSHA256) != "" {
+			return errors.New("a prepared tree needs a preparation callback and has no expected download digest")
+		}
 	default:
-		return fmt.Errorf("archive kind %q is not supported; use zip, tar.gz, tar.xz, gz or raw", r.Archive)
+		return fmt.Errorf("archive kind %q is not supported", r.Archive)
 	}
 	bin, err := cleanEntryName(r.Bin)
 	if err != nil || bin == "" {
@@ -107,8 +128,9 @@ func (r *Request) normalize() error {
 	if r.ExpectedSHA256 != "" && !validDigest(r.ExpectedSHA256) {
 		return errors.New("the expected digest is not a SHA-256 value in hex")
 	}
-	if r.MaxDownloadBytes <= 0 || r.MaxExtractedBytes <= 0 {
-		return errors.New("the download and extraction budgets must be more than zero")
+	if r.MaxDownloadBytes <= 0 || r.MaxExtractedBytes <= 0 ||
+		r.MaxDownloadBytes == math.MaxInt64 || r.MaxExtractedBytes == math.MaxInt64 {
+		return errors.New("the download and extraction budgets must be positive and bounded")
 	}
 	if r.MaxEntries < 0 {
 		return errors.New("the archive entry budget must not be negative")
@@ -169,24 +191,43 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 	if err != nil {
 		return Tool{}, fmt.Errorf("create staging folder: %w", err)
 	}
+	stageIdentity, err := os.Lstat(staging)
+	if err != nil {
+		return Tool{}, fmt.Errorf("inspect staging folder: %w", err)
+	}
 	retain := false
 	defer func() {
-		if !retain {
+		if !retain && sameStagingFolder(staging, stageIdentity) {
 			_ = removeTree(staging)
 		}
 	}()
 
+	tree := filepath.Join(staging, "tool")
+	content := filepath.Join(tree, contentDir)
+	if err := os.MkdirAll(content, 0o700); err != nil {
+		return Tool{}, err
+	}
 	archivePath := filepath.Join(staging, "download")
-	digest, _, err := s.download(ctx, r.URL, r.MaxDownloadBytes, archivePath)
+	var digest, origin string
+	var stats extractStats
+	if r.Archive == ArchivePrepared {
+		digest, stats, err = s.prepareTree(ctx, r, staging, stageIdentity, content, &retain)
+		origin = DigestPreparedTree
+	} else {
+		digest, _, err = s.download(ctx, r.URL, r.MaxDownloadBytes, archivePath)
+		origin = DigestFirstDownload
+		if err == nil && r.ExpectedSHA256 != "" {
+			if digest != r.ExpectedSHA256 {
+				return Tool{}, fmt.Errorf("the download digest %s differs from the expected digest %s", digest, r.ExpectedSHA256)
+			}
+			origin = DigestExpected
+		}
+	}
 	if err != nil {
 		return Tool{}, err
 	}
-	origin := DigestFirstDownload
-	if r.ExpectedSHA256 != "" {
-		if digest != r.ExpectedSHA256 {
-			return Tool{}, fmt.Errorf("the download digest %s differs from the expected digest %s", digest, r.ExpectedSHA256)
-		}
-		origin = DigestExpected
+	if !sameStagingFolder(staging, stageIdentity) {
+		return Tool{}, errors.New("the staging folder changed; inspect the tools before trying again")
 	}
 	dirName := versionDir(r.Version, digest)
 	id := r.Package + "/" + dirName
@@ -201,14 +242,14 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 		return tool, err
 	}
 
-	tree := filepath.Join(staging, "tool")
-	content := filepath.Join(tree, contentDir)
-	if err := os.MkdirAll(content, 0o700); err != nil {
-		return Tool{}, err
+	if r.Archive != ArchivePrepared {
+		stats, err = extractArchive(ctx, r.Archive, archivePath, content, r.Bin, extractLimits{bytes: r.MaxExtractedBytes, entries: r.MaxEntries})
+		if err != nil {
+			return Tool{}, err
+		}
 	}
-	stats, err := extractArchive(ctx, r.Archive, archivePath, content, r.Bin, extractLimits{bytes: r.MaxExtractedBytes, entries: r.MaxEntries})
-	if err != nil {
-		return Tool{}, err
+	if !sameStagingFolder(staging, stageIdentity) {
+		return Tool{}, errors.New("the staging folder changed; inspect the tools before trying again")
 	}
 	m := manifest{
 		ID:           id,
@@ -239,6 +280,9 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 	// parent needs write permission on it.
 	if err := sealTree(tree); err != nil {
 		return Tool{}, fmt.Errorf("make the tool read-only: %w", err)
+	}
+	if !sameStagingFolder(staging, stageIdentity) {
+		return Tool{}, errors.New("the staging folder changed; inspect the tools before trying again")
 	}
 	if r.Evaluate != nil {
 		// Before launch, a crash or panic must leave a durable refusal to prune.
@@ -284,6 +328,32 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 	if r.PreparePublication != nil {
 		if err := r.PreparePublication(ctx); err != nil {
 			return Tool{}, fmt.Errorf("prepare tool publication: %w", err)
+		}
+	}
+	if !sameStagingFolder(staging, stageIdentity) {
+		return Tool{}, errors.New("the staging folder changed; inspect the tools before trying again")
+	}
+	if r.Archive == ArchivePrepared {
+		// Evaluation and preflight may run code. Read-only permissions do not
+		// prevent the owner from changing them, so bind publication to the exact
+		// checked bytes and manifest, not merely the earlier prepared digest.
+		if err := sealTree(tree); err != nil {
+			return Tool{}, fmt.Errorf("make the checked tool read-only: %w", err)
+		}
+		current, err := preparedTreeDigest(ctx, content, extractLimits{bytes: r.MaxExtractedBytes, entries: r.MaxEntries})
+		if err != nil {
+			return Tool{}, fmt.Errorf("recheck the prepared tool: %w", err)
+		}
+		if current != digest {
+			return Tool{}, errors.New("the prepared tool changed after its check; review it again")
+		}
+		expectedManifest, err := json.MarshalIndent(m, "", "  ")
+		if err != nil {
+			return Tool{}, err
+		}
+		actualManifest, err := fileio.ReadRegularNoFollow(ctx, filepath.Join(tree, manifestName), maxManifestBytes)
+		if err != nil || !bytes.Equal(actualManifest, append(expectedManifest, '\n')) {
+			return Tool{}, errors.New("the prepared tool manifest changed after its check; review it again")
 		}
 	}
 	attempted, reservation, err := s.moveIntoPlace(ctx, r.AdmitPublication, packageDir, tree, final)
