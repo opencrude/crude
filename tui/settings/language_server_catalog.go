@@ -33,6 +33,7 @@ type lspCatalog struct {
 	project       *lspToolFilter
 	installed     *lspToolFilter
 	all           *lspToolFilter
+	rule          *ui.ProgressRule
 	table         *ui.Table
 	listScroll    *ui.ScrollbarControl
 	tabs          *ui.Tabs
@@ -80,10 +81,8 @@ func (f *lspCatalogFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventRes
 		case tea.KeyTab:
 			if evt.Key.Mod.Contains(tea.ModShift) {
 				f.owner.owner.FocusCategories()
-			} else if f.owner.project.Bounds().Empty() {
-				f.owner.owner.focusID(f.owner.table.ID())
 			} else {
-				f.owner.owner.focusID(f.owner.project.ID())
+				f.owner.focusScope()
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
@@ -97,37 +96,72 @@ func (f *lspCatalogFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventRes
 	return result
 }
 
+// lspToolFilter is one segment of the This project / Installed / All scope.
+// The three segments are one keyboard stop: Tab enters the chosen segment,
+// Left/Right choose the neighbouring scope (the ends hold), Up returns to the
+// search and Down or Tab continues to the table.
 type lspToolFilter struct {
 	*ui.ToggleButton
 	owner *lspCatalog
 }
 
 func (f *lspToolFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		c := f.owner
-		switch f.ID() {
-		case c.project.ID():
+	c := f.owner
+	if evt.IsKey() {
+		scopes := c.scopes()
+		index := slices.Index(scopes, f)
+		switch evt.Key.Code {
+		case tea.KeyTab:
 			if evt.Key.Mod.Contains(tea.ModShift) {
 				c.owner.focusID(c.filter.ID())
 			} else {
-				c.owner.focusID(c.installed.ID())
-			}
-		case c.installed.ID():
-			if evt.Key.Mod.Contains(tea.ModShift) {
-				c.owner.focusID(c.project.ID())
-			} else {
-				c.owner.focusID(c.all.ID())
-			}
-		default:
-			if evt.Key.Mod.Contains(tea.ModShift) {
-				c.owner.focusID(c.installed.ID())
-			} else {
 				c.owner.focusID(c.table.ID())
 			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		case tea.KeyUp:
+			c.owner.focusID(c.filter.ID())
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		case tea.KeyDown:
+			c.owner.focusID(c.table.ID())
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		case tea.KeyLeft, tea.KeyRight:
+			next := index - 1
+			if evt.Key.Code == tea.KeyRight {
+				next = index + 1
+			}
+			if next < 0 || next >= len(scopes) {
+				return ui.EventResult{Handled: true}
+			}
+			c.setScope(scopes[next])
+			c.owner.focusID(scopes[next].ID())
+			return c.changed()
 		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return f.ToggleButton.Handle(ctx, evt)
+}
+
+func (c *lspCatalog) scopes() []*lspToolFilter {
+	return []*lspToolFilter{c.project, c.installed, c.all}
+}
+
+// setScope makes one segment the page's scope.
+func (c *lspCatalog) setScope(scope *lspToolFilter) {
+	c.filterTouched = true
+	for _, candidate := range c.scopes() {
+		candidate.SetChecked(candidate == scope)
+	}
+	c.refreshRows()
+}
+
+// focusScope focuses the chosen segment, so the scope is one keyboard stop.
+func (c *lspCatalog) focusScope() {
+	for _, scope := range c.scopes() {
+		if scope.Checked() {
+			c.owner.focusID(scope.ID())
+			return
+		}
+	}
+	c.owner.focusID(c.all.ID())
 }
 
 func newLSPCatalog(owner *WorkspaceSettingsSurface) *lspCatalog {
@@ -144,6 +178,8 @@ func newLSPCatalog(owner *WorkspaceSettingsSurface) *lspCatalog {
 	c.installed.SetChip(true)
 	c.all.SetChip(true)
 	c.all.SetChecked(true)
+	c.rule = ui.NewProgressRule("settings/language-tools/progress", t)
+	c.rule.SetSurfaceBackground(ui.ColorPopupBg)
 	c.table = ui.NewTable("settings/language-servers/table", t)
 	c.table.SetActivateAction("lsp.open")
 	c.table.SetShowHeader(true)
@@ -175,6 +211,17 @@ func newLSPCatalog(owner *WorkspaceSettingsSurface) *lspCatalog {
 }
 
 func (c *lspCatalog) model() *Model { return c.owner.model }
+
+// inDetail reports a page below the collection: an editor, a tool, the
+// history or a removal review.
+func (c *lspCatalog) inDetail() bool {
+	return c.draft != nil || c.detail != nil || c.history || c.model().codeTools.preview != nil
+}
+
+// loading reports that the collection is reading the installed tools.
+func (c *lspCatalog) loading() bool {
+	return c.model() != nil && c.model().codeTools.busy && !c.inDetail()
+}
 
 // syncModel adopts a replaced settings model, dropping any editor that
 // belonged to the old one.
@@ -243,19 +290,7 @@ func (c *lspCatalog) refreshRows() {
 		if query != "" && !strings.Contains(strings.ToLower(search), query) {
 			continue
 		}
-		owner := "Not checked"
-		switch {
-		case tool.managed != nil:
-			owner = "Crude"
-		case tool.external != nil:
-			owner = "Outside Crude"
-		case inProject && project == "Not installed":
-			owner = "Not installed"
-		case m.codeTools.busy:
-			owner = "Checking"
-		case m.codeTools.service == nil || !m.codeTools.loaded:
-			owner = "Not checked"
-		}
+		owner := c.installedBy(tool)
 		c.rows[tool.id] = tool
 		cells := []ui.TableCell{{Text: tool.name}}
 		if !c.compact {
@@ -271,6 +306,46 @@ func (c *lspCatalog) refreshRows() {
 		}
 	}
 	c.rebuildBar()
+}
+
+// installedBy is the Installed by cell for one tool.
+func (c *lspCatalog) installedBy(tool languageToolRow) string {
+	m := c.model()
+	project, inProject := tool.projectState(m.codeTools.inventory.Project)
+	switch {
+	case tool.managed != nil:
+		return "Crude"
+	case tool.external != nil:
+		return "Outside Crude"
+	case inProject && project == "Not installed":
+		return "Not installed"
+	case m.codeTools.busy:
+		return "Checking"
+	default:
+		return "Not checked"
+	}
+}
+
+// detailState is the open tool's subtitle: who installed it and its state
+// in this project.
+func (c *lspCatalog) detailState() string {
+	if c.detail == nil {
+		return ""
+	}
+	tool := *c.detail
+	owner := map[string]string{
+		"Crude":         "Installed by Crude",
+		"Outside Crude": "Installed outside Crude",
+		"Not installed": "Not installed",
+		"Checking":      "Crude is checking this tool",
+	}[c.installedBy(tool)]
+	if owner == "" {
+		owner = "Crude has not checked this tool"
+	}
+	if state, inProject := tool.projectState(c.model().codeTools.inventory.Project); inProject && state != "Not installed" {
+		return owner + " · " + state + " in this project"
+	}
+	return owner
 }
 
 func (c *lspCatalog) selected() (lspServer, bool) {
@@ -400,15 +475,19 @@ func (c *lspCatalog) showDetail() {
 		case "history":
 			fields = c.historyFields(tool.managed)
 		default:
+			// The subtitle states who installed the tool; Overview gives the
+			// facts. Long paths and digests keep the full row width.
+			languages := "Languages: " + mapDefault(tool.languages(), "None") + "\n"
 			switch {
 			case tool.managed != nil:
-				fields = append(fields, codeToolText("tool-overview", "Tool details", toolDescription(*tool.managed)))
+				fields = append(fields, codeToolText("tool-overview", "Details", toolDescription(*tool.managed)))
 			case tool.external != nil:
 				t := tool.external
-				fields = append(fields, codeToolText("tool-overview", "Tool details",
-					"Installed outside Crude. Crude cannot remove this tool.\nCommand: "+t.Command+"\nExecutable: "+t.Executable))
+				fields = append(fields, codeToolText("tool-overview", "Details", languages+
+					"Command: "+t.Command+"\nExecutable: "+t.Executable+"\n\nCrude did not install this tool and cannot remove it."))
 			default:
-				status := "Crude has not checked whether this tool is installed."
+				// The subtitle already says the tool was not checked.
+				status := ""
 				if state, inProject := tool.projectState(r.inventory.Project); inProject {
 					switch state {
 					case "Not installed":
@@ -424,8 +503,8 @@ func (c *lspCatalog) showDetail() {
 						status = "Project status: " + state + ". Open Launch to review its configuration."
 					}
 				}
-				fields = append(fields, codeToolText("tool-overview", "Tool details",
-					"Command: "+tool.command+"\n"+status))
+				fields = append(fields, codeToolText("tool-overview", "Details", languages+
+					strings.TrimSpace("Command: "+mapDefault(tool.command, "Not set")+"\n\n"+status)))
 			}
 		}
 	}
@@ -669,11 +748,9 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 			return c.changed()
 		}
 	case "lsp.filter-project", "lsp.filter-installed", "lsp.filter-all":
-		c.filterTouched = true
-		c.project.SetChecked(action.ID == "lsp.filter-project")
-		c.installed.SetChecked(action.ID == "lsp.filter-installed")
-		c.all.SetChecked(action.ID == "lsp.filter-all")
-		c.refreshRows()
+		scope := map[string]*lspToolFilter{"lsp.filter-project": c.project, "lsp.filter-installed": c.installed, "lsp.filter-all": c.all}[action.ID]
+		c.setScope(scope)
+		c.owner.focusID(scope.ID())
 		return c.changed()
 	case "lsp.setup":
 		message := OpenProjectToolsMsg{Target: m, Generation: m.codeTools.generation, Selection: types.ProjectToolSetupRequest{Explicit: true}}
@@ -822,7 +899,7 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 }
 
 func (c *lspCatalog) Children() []ui.Component {
-	children := []ui.Component{c.filter, c.project, c.installed, c.all, c.table, c.tabs, c.form}
+	children := []ui.Component{c.filter, c.project, c.installed, c.all, c.rule, c.table, c.tabs, c.form}
 	if c.Bounds().Empty() {
 		return children
 	}
@@ -842,7 +919,7 @@ func (c *lspCatalog) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 func (c *lspCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	c.SetBounds(r)
 	if r.Empty() {
-		for _, child := range []ui.Component{c.filter, c.project, c.installed, c.all, c.table, c.listScroll, c.tabs, c.form, c.formScroll, c.bar, c.more} {
+		for _, child := range []ui.Component{c.filter, c.project, c.installed, c.all, c.rule, c.table, c.listScroll, c.tabs, c.form, c.formScroll, c.bar, c.more} {
 			child.Layout(ctx, ui.Rect{})
 		}
 		return
@@ -853,6 +930,7 @@ func (c *lspCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		c.project.Layout(ctx, ui.Rect{})
 		c.installed.Layout(ctx, ui.Rect{})
 		c.all.Layout(ctx, ui.Rect{})
+		c.rule.Layout(ctx, ui.Rect{})
 		c.table.Layout(ctx, ui.Rect{})
 		c.listScroll.Layout(ctx, ui.Rect{})
 		c.more.Layout(ctx, ui.Rect{})
@@ -876,20 +954,41 @@ func (c *lspCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: primaryW, H: 1})
 		c.more.Layout(ctx, ui.Rect{X: primaryW + 2, Y: h - 1, W: moreW, H: 1})
 	} else {
+		// Primary actions stay first when the row wraps.
 		actionRows = min(2, h)
-		c.more.Layout(ctx, ui.Rect{Y: h - actionRows, W: w, H: min(1, actionRows)})
-		c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: 1})
+		c.bar.Layout(ctx, ui.Rect{Y: h - actionRows, W: w, H: 1})
+		c.more.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: min(1, actionRows-1)})
 	}
 	c.tabs.Layout(ctx, ui.Rect{})
 	c.form.Layout(ctx, ui.Rect{})
 	c.formScroll.Layout(ctx, ui.Rect{})
-	c.filter.Layout(ctx, ui.Rect{W: w, H: 1})
-	x := 0
-	for _, chip := range []*lspToolFilter{c.project, c.installed, c.all} {
-		chipW := min(max(0, w-x), chip.Measure(ctx, ui.Loose(w, 1)).W)
-		chip.Layout(ctx, ui.Rect{X: x, Y: 1, W: chipW, H: 1})
-		x += chipW + 1
+	// One toolbar like the other collections: the search first, then the
+	// scope segments on the same row. Narrow panes wrap the scope below.
+	scopeW := 0
+	for _, scope := range c.scopes() {
+		scopeW += scope.Measure(ctx, ui.Loose(w, 1)).W
 	}
+	row := 0
+	x := 0
+	if w-scopeW-2 >= 28 {
+		searchW := w - scopeW - 2
+		c.filter.Layout(ctx, ui.Rect{W: searchW, H: 1})
+		x = searchW + 2
+	} else {
+		c.filter.Layout(ctx, ui.Rect{W: w, H: 1})
+		row++
+	}
+	for _, scope := range c.scopes() {
+		scopeW := min(max(0, w-x), scope.Measure(ctx, ui.Loose(w, 1)).W)
+		scope.Layout(ctx, ui.Rect{X: x, Y: row, W: scopeW, H: 1})
+		x += scopeW
+	}
+	row++
+	// The rule separates the toolbar from the tools and moves while Crude
+	// reads them.
+	c.rule.SetActive(c.loading())
+	c.rule.Layout(ctx, ui.Rect{Y: row, W: w, H: 1})
+	tableY := row + 2
 	compact := w < 60
 	if c.compact != compact {
 		c.compact = compact
@@ -908,9 +1007,15 @@ func (c *lspCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		gap = 1
 	}
 	c.table.SetColumnGap(gap)
-	tableH := max(1, h-actionRows-3-2)
-	c.table.Layout(ctx, ui.Rect{Y: 3, W: max(1, w-2), H: tableH})
-	c.listScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: 4, W: ui.ScrollbarWidth, H: max(1, tableH-1)})
+	// The status row sits directly above the actions.
+	tableH := max(1, h-actionRows-1-tableY)
+	// The table spans the toolbar's width unless it needs the scrollbar.
+	tableW := w
+	if c.listScroll.NeededForViewport(tableH - 1) {
+		tableW = max(1, w-2)
+	}
+	c.table.Layout(ctx, ui.Rect{Y: tableY, W: tableW, H: tableH})
+	c.listScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: tableY + 1, W: ui.ScrollbarWidth, H: max(1, tableH-1)})
 	if !c.listScroll.Needed() {
 		c.listScroll.Layout(ctx, ui.Rect{})
 	}
@@ -933,10 +1038,10 @@ func (c *lspCatalog) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContex
 				message = "Crude has not finished checking this project. Choose Refresh."
 			}
 		}
-		c.owner.paintEmptyState(buf, ox+r.X, oy+r.Y+4, r.W, "No matching tools", message, bg)
+		c.owner.paintEmptyState(buf, ox+r.X, oy+r.Y+c.table.Bounds().Y+1, r.W, "No matching tools", message, bg)
 	}
 	statusY := r.H - 2
-	if c.more.Bounds().Y < c.bar.Bounds().Y && !c.more.Bounds().Empty() {
+	if c.more.Bounds().Y > c.bar.Bounds().Y && !c.more.Bounds().Empty() {
 		statusY--
 	}
 	if c.notice != "" && c.draft == nil {
@@ -956,12 +1061,15 @@ func (c *lspCatalog) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.IsKey() && evt.Key.Code == tea.KeyEsc && (c.detail != nil || c.history || c.model().codeTools.preview != nil) {
 		return c.backTool()
 	}
+	// Tab leaves the table for the actions; Shift+Tab returns to the scope.
+	// Enter and a click open the selected tool through the table itself.
 	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		c.owner.focusID(c.bar.ID())
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
-	}
-	if evt.IsKey() && (evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeyRight) && c.draft == nil && c.detail == nil && !c.history {
-		return c.openTool()
+		if evt.Key.Mod.Contains(tea.ModShift) && !c.inDetail() {
+			c.focusScope()
+		} else {
+			c.owner.focusID(c.bar.ID())
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return ui.EventResult{}
 }
@@ -975,6 +1083,7 @@ func (c *lspCatalog) SetTokens(tokens *ui.TokenSet) {
 	c.project.SetTokens(tokens)
 	c.installed.SetTokens(tokens)
 	c.all.SetTokens(tokens)
+	c.rule.SetTokens(tokens)
 	c.table.SetTokens(tokens)
 	c.tabs.SetTokens(tokens)
 	c.listScroll.SetTokens(tokens)

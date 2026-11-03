@@ -766,3 +766,62 @@ func TestLanguageToolsRemovingCustomConfigurationReturnsToList(t *testing.T) {
 		t.Fatal("custom configuration was not removed from the draft")
 	}
 }
+
+// The scope segments share the search row like the other collection
+// toolbars, form one keyboard stop and never open a tool with an arrow key.
+func TestLanguageToolsScopeIsOneToolbarStop(t *testing.T) {
+	m := New(theme.DefaultDark(), types.AppSettings{LSP: types.DefaultLSPSettings()}, nil)
+	m.SelectCategory(catLanguageServers)
+	h := newEditorHarness(t, m, 140, 40)
+	lsp := h.surface.lsp
+	plain := bufferPlain(paintAccountSurface(t, h.surface, 140, 40))
+	toolbar := ""
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "Search tools") {
+			toolbar = line
+		}
+	}
+	for _, label := range []string{"This project", "Installed", "All"} {
+		if !strings.Contains(toolbar, label) {
+			t.Fatalf("%s is not on the search row:\n%s", label, plain)
+		}
+	}
+	if lsp.table.Bounds().Y != lsp.rule.Bounds().Y+2 {
+		t.Fatalf("table at %d, want one breathing row below the rule at %d", lsp.table.Bounds().Y, lsp.rule.Bounds().Y)
+	}
+
+	focused := func(want ui.ComponentID, step string) {
+		t.Helper()
+		if got := h.host.Focused(); got != want {
+			t.Fatalf("%s: focus %q, want %q", step, got, want)
+		}
+	}
+	h.host.Focus(lsp.filter.ID())
+	h.press(tea.KeyPressMsg{Code: tea.KeyTab})
+	focused(lsp.all.ID(), "Tab from search enters the chosen scope")
+	h.press(tea.KeyPressMsg{Code: tea.KeyLeft})
+	focused(lsp.installed.ID(), "Left")
+	if !lsp.installed.Checked() || lsp.all.Checked() {
+		t.Fatal("Left did not choose the previous scope")
+	}
+	h.press(tea.KeyPressMsg{Code: tea.KeyRight})
+	h.press(tea.KeyPressMsg{Code: tea.KeyRight})
+	if !lsp.all.Checked() || lsp.detail != nil {
+		t.Fatal("Right past the last scope must hold, not open a tool")
+	}
+	h.press(tea.KeyPressMsg{Code: tea.KeyTab})
+	focused(lsp.table.ID(), "Tab from the scope")
+	h.press(tea.KeyPressMsg{Code: tea.KeyRight})
+	if lsp.detail != nil {
+		t.Fatal("Right in the table opened a tool")
+	}
+	h.press(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	focused(lsp.all.ID(), "Shift+Tab from the table")
+	h.press(tea.KeyPressMsg{Code: tea.KeyUp})
+	focused(lsp.filter.ID(), "Up from the scope")
+	h.press(tea.KeyPressMsg{Code: tea.KeyDown})
+	h.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if lsp.detail == nil {
+		t.Fatal("Enter in the table did not open the selected tool")
+	}
+}

@@ -165,9 +165,15 @@ Language Tools joins server configuration and the core's installed-tool
 inventory in one table. Installed by identifies Crude-managed and external
 artifacts; an unmatched configuration says Not checked unless the project's
 assembly reports it missing. This project, Installed and All filter the same
-collection. This project uses an assembly snapshot and Ready means an executable
-was resolved, not that a server is running. The Installed filter is limited to
-the store and executables resolved for this project. Tool detail uses shared
+collection. They are adjacent chips on the search row (wrapped below it on
+narrow panes), with the shared progress rule beneath the toolbar while the
+tools load. The three chips are one keyboard stop: Tab enters the chosen one,
+Left/Right choose the neighbouring scope and hold at the ends, Up returns to
+the search and Down or Tab continues to the table. Only Enter or a click
+opens a tool; Shift+Tab from the table returns to the scope. A tool's
+subtitle states who installed it and its state in this project. This project
+uses an assembly snapshot and Ready means an executable was resolved, not that
+a server is running. The Installed filter is limited to the store
 Overview, Launch, Files and History tabs, with the latter two for managed tools.
 Overview and Files use selectable read-only text; Launch opens each associated
 language's editor. History provides Remove unused. Remove and Remove unused
