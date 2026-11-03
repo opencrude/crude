@@ -683,7 +683,7 @@ func (s *WorkspaceSettingsSurface) pageSubtitle() string {
 	case s.lspServersOpen() && s.lsp.draft != nil:
 		return "Command, files and environment for this server. Changes save with the window."
 	case s.lspServersOpen() && s.lsp.detail != nil:
-		return "Review this tool and its language configurations."
+		return s.lsp.detailState()
 	case s.lspServersOpen() && s.lsp.history:
 		return "Review the history of tools installed by Crude."
 	case s.lspServersOpen() && s.lsp.project.Checked() && s.model.codeTools.inventory.Project.State == ttypes.AssemblyScanning:
@@ -1208,10 +1208,11 @@ func (s *WorkspaceSettingsSurface) paintRailRow(buf *surface.CellBuffer, x, y, w
 // NeedsFrame keeps the window animating while a live capability search runs.
 func (s *WorkspaceSettingsSurface) NeedsFrame() bool { return s.NeedsAnimation() }
 
-// NeedsAnimation asks for frame-rate ticks while the search progress rule
-// moves; the idle cadence would step it at two frames a second.
+// NeedsAnimation asks for frame-rate ticks while a store search or the
+// Language Tools read moves its progress rule; the idle cadence would step
+// it at two frames a second.
 func (s *WorkspaceSettingsSurface) NeedsAnimation() bool {
-	return s.model != nil && s.capabilitiesOpen() && s.capCatalog.searching()
+	return s.model != nil && (s.capabilitiesOpen() && s.capCatalog.searching() || s.lspServersOpen() && s.lsp.loading())
 }
 
 // formPageOpen reports whether the content pane shows the shared settings
