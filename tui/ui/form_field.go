@@ -72,6 +72,9 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 		ff.area.SetValue(f.Value.String())
 		ff.area.SetPlaceholder(f.Placeholder)
 		ff.area.SetReadOnly(f.ReadOnly)
+		if f.ReadOnly {
+			ff.area.SetCursorFlat(0)
+		}
 	}
 	if f.Type == FieldKeyValues {
 		ff.grid = NewKeyValueGrid(NewID(id, "grid"), tokens)
@@ -204,6 +207,9 @@ func (ff *FormField) Sync() {
 	}
 	if ff.area != nil && ff.area.Value() != ff.field.Value.String() {
 		ff.area.SetValue(ff.field.Value.String())
+		if ff.field.ReadOnly {
+			ff.area.SetCursorFlat(0)
+		}
 	}
 	if ff.area != nil {
 		ff.area.SetPlaceholder(ff.field.Placeholder)

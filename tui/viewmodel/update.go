@@ -134,6 +134,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.handleWorkspaceTrustMessage(msg); handled {
 		return m, cmd
 	}
+	projectToolsHandled, projectToolsCmd := m.handleProjectToolsMessage(msg)
+	if projectToolsHandled {
+		return m, projectToolsCmd
+	}
 	if handled, cmd := m.handleWorkspaceOpenPromptInput(msg); handled {
 		return m, cmd
 	}
@@ -144,6 +148,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	var cmds []tea.Cmd
+	if projectToolsCmd != nil {
+		cmds = append(cmds, projectToolsCmd)
+	}
 	if onboardingCmd != nil {
 		cmds = append(cmds, onboardingCmd)
 	}
@@ -440,7 +447,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case types.TickMsg:
 		model, cmd := m.handleTick(msg)
-		return model, tea.Batch(cmd, onboardingCmd)
+		return model, tea.Batch(cmd, onboardingCmd, projectToolsCmd)
 	case editor.PointerScrollMsg:
 		return m, m.deliverPointerScroll(msg)
 
@@ -1243,6 +1250,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		cmds = append(cmds, m.continueOnboardingAccount(msg))
 	case settingsui.RemoteAccessResultMsg:
+		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
+	case settingsui.CodeToolsResultMsg:
 		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))
 	case settingsui.RemotePairingExpiredMsg:
 		cmds = append(cmds, m.applyRemoteSettingsMessage(msg.Target, msg))

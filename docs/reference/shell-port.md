@@ -35,6 +35,8 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
 | `memory.go` | `Memory`, `MemoryStore` | memory browse and curation |
 | `capabilities.go` | `Capabilities` | skills / MCP / acquisition |
+| `code_tools.go` | optional `CodeTools` | shared code-tool inventory and native previewed removal |
+| `project_tools.go` | optional `ProjectTools` | native owner-bound project setup review and decision |
 | `collaboration.go` | `Collaboration` | agent Board |
 | `terminals.go` | `TerminalHost`, `TerminalService`, `TerminalManager` | PTY services |
 | `status.go` | `StatusHost`, `StatusService` | workspace status center |
@@ -200,6 +202,28 @@ Settings loads, previews and persists application and workspace settings.
 | `ApplyPreferencesSave` | 1 | mutates | yes (data) | settings.application.save (result applied to replica) |
 | `PrepareAccountModels` | 1 | mutates | no: returns closure | settings.account.models |
 | `PrepareDraftAccountModels` | 1 | mutates | no: returns closure | settings.account.models |
+
+### `CodeTools` and `ProjectTools`
+
+These optional connected interfaces are discovered by type assertion, not added
+as mandatory methods to every `Workspace`. Their blocking calls run on joined,
+cancellable workers, never Update or paint. The remote adapters use the original
+attachment's cancellable command exchange; detach revokes its native previews.
+
+| Interface member | coreprotocol | Contract |
+|---|---|---|
+| `ReadCodeToolInventory(ctx, offset, limit)` | `code_tools.inventory` | Read managed details/files/accounting, current workspace unmanaged tools and a bounded history page. Also exposed as a semantic read-only command. |
+| `PreviewCodeToolRemoval(ctx, ids, unused)` | `code_tools.remove_preview` | Retain an expiring owner/workspace-bound exact review; managed tools only. |
+| `RemoveCodeTools(ctx, preview)` | `code_tools.remove` | Consume the unchanged native review once; recheck workspace references, store preimage and live executable leases. |
+| `ReviewProjectTools(ctx, explicit)` | `code_tools.project_review` | Native review bound to current project/root, assembly, settings, catalog, decision history and shell owner. Automatic reads suppress remembered candidates; an explicit human action can freshly review still-missing refused/failed tools. Neither read installs anything. |
+| `DecideProjectTools(ctx, previewID, selectedIDs)` | `code_tools.project_decide` | Consume the retained preview once; record the decision and run current-effect-fenced setup. Cannot supply replacement sources or an approval record. |
+
+Setup decisions and removal preview/confirmation reject generic JSON/control
+callers. Semantic control exposes inventory only: it cannot grant installation
+or removal by calling a generic action or editing settings. Trust, stored setup
+audit and live setup authority are distinct. See
+[project setup](settings.md#project-tool-setup) and
+[tool-store lifetimes](tool-store.md#executable-lifetimes).
 
 ### `ToolLayoutStore`
 

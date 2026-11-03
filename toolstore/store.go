@@ -36,12 +36,13 @@ import (
 )
 
 const (
-	manifestName = "manifest.json"
-	contentDir   = "files"
-	usageName    = "usage.json"
-	historyName  = "history.jsonl"
-	stagingName  = ".staging"
-	usageTemp    = ".usage-"
+	manifestName          = "manifest.json"
+	contentDir            = "files"
+	usageName             = "usage.json"
+	historyName           = "history.jsonl"
+	stagingName           = ".staging"
+	evaluationPendingName = ".evaluation-pending"
+	usageTemp             = ".usage-"
 
 	maxManifestBytes = 1 << 20
 	maxNameLength    = 128
@@ -98,6 +99,18 @@ type Request struct {
 	// "automatic". Approval references the caller's approval record. Both are
 	// required.
 	InstalledBy, Approval string
+	// Evaluate checks the exact sealed staged executable before publication.
+	// It runs off mu, under the install's exclusive package/version and staging
+	// ownership. It must join all owned processes before returning, including
+	// on failure/cancellation. EvaluationUnverifiedError retains its staging
+	// folder for inspection instead of deleting possibly live executable bytes.
+	// Existing artifacts do not invoke this callback.
+	Evaluate func(context.Context, Tool) error
+	// PreparePublication runs immediately before acquiring the publication
+	// lock. It may perform expensive caller-owned project/root/catalog checks.
+	// It must honor ctx. It does not replace the short AdmitPublication fence.
+	// Existing artifacts are returned without calling this function.
+	PreparePublication func(context.Context) error
 	// AdmitPublication is an optional caller-owned fence for a new artifact.
 	// It runs once, after staging and immediately before the rename, without
 	// performing I/O. The caller checks ctx while holding its authority gate.
@@ -140,6 +153,10 @@ type Store struct {
 	usage usageFile
 	// Retain a same-process refusal if a marker's removal could not be synced.
 	unconfirmed map[string]bool
+	// executableLeases pins exact tool identities through joined process stop.
+	// Acquisition and removal share mu; callers never hold their own manager
+	// lock while acquiring or releasing a lease.
+	executableLeases map[string]int
 
 	keysMu sync.Mutex
 	keys   map[string]*keyLock
@@ -216,13 +233,14 @@ func Open(root string) (*Store, error) {
 		return nil, fmt.Errorf("create tool store folder: %w", err)
 	}
 	s := &Store{
-		root:           root,
-		mu:             storeMutex{ch: make(chan struct{}, 1)},
-		unconfirmed:    make(map[string]bool),
-		keys:           make(map[string]*keyLock),
-		stallTimeout:   defaultStallTimeout,
-		now:            time.Now,
-		syncHistoryDir: syncDir,
+		root:             root,
+		mu:               storeMutex{ch: make(chan struct{}, 1)},
+		unconfirmed:      make(map[string]bool),
+		executableLeases: make(map[string]int),
+		keys:             make(map[string]*keyLock),
+		stallTimeout:     defaultStallTimeout,
+		now:              time.Now,
+		syncHistoryDir:   syncDir,
 	}
 	if err := s.removeStaleStaging(); err != nil {
 		return nil, err
@@ -257,6 +275,11 @@ func (s *Store) removeStaleStaging() error {
 		// did not settle. Never delete those tools during startup.
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") {
 			continue
+		}
+		if _, err := os.Lstat(filepath.Join(staging, entry.Name(), evaluationPendingName)); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect staged tool check: %w", err)
 		}
 		if err := removeTree(filepath.Join(staging, entry.Name())); err != nil {
 			return fmt.Errorf("remove stale staging data: %w", err)
@@ -352,10 +375,20 @@ func (s *Store) Unrecognized(ctx context.Context) ([]string, error) {
 // MarkUsed records that workspace uses the tool now. The first use by a
 // workspace is also recorded in the history.
 func (s *Store) MarkUsed(id, workspace string) error {
+	return s.MarkUsedContext(context.Background(), id, workspace, nil)
+}
+
+// MarkUsedContext records use only after a cancellable store-lock wait and a
+// short caller-owned admission check immediately before accounting. admit runs
+// under the store lock; it must not perform I/O or call back into the store.
+// Cancellation after successful admission does not undo the admitted effect.
+func (s *Store) MarkUsedContext(ctx context.Context, id, workspace string, admit func(context.Context) error) error {
 	if strings.TrimSpace(workspace) == "" {
 		return errors.New("workspace is empty")
 	}
-	s.mu.Lock()
+	if err := s.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 	tool, ok := s.index[id]
 	if ok {
@@ -371,6 +404,19 @@ func (s *Store) MarkUsed(id, workspace string) error {
 	if !ok {
 		return fmt.Errorf("no installed tool has the ID %q", id)
 	}
+	return s.markUsedLocked(ctx, tool, workspace, admit)
+}
+
+func (s *Store) markUsedLocked(ctx context.Context, tool Tool, workspace string, admit func(context.Context) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if admit != nil {
+		if err := admit(ctx); err != nil {
+			return err
+		}
+	}
+	id := tool.ID
 	previous, had := s.usage.Tools[id]
 	entry := usageEntry{Workspaces: append([]string(nil), previous.Workspaces...), LastUsed: s.now().UTC()}
 	first := !containsString(entry.Workspaces, workspace)
@@ -479,7 +525,14 @@ func (s *Store) scan(ctx context.Context) (map[string]Tool, []string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") {
+		pendingErr := os.ErrNotExist
+		if entry.IsDir() {
+			_, pendingErr = os.Lstat(filepath.Join(s.root, stagingName, entry.Name(), evaluationPendingName))
+			if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
+				return nil, nil, pendingErr
+			}
+		}
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") || pendingErr == nil {
 			unknown = append(unknown, stagingName+"/"+entry.Name())
 		}
 	}

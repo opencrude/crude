@@ -1,6 +1,10 @@
 package workspace
 
-import "crude/types"
+import (
+	"context"
+
+	"crude/types"
+)
 
 // SetProjectWatchReliable records whether project file observation is complete.
 // It only changes in-memory authority; the existing worker joins and starts
@@ -14,6 +18,13 @@ func (m *LSPManager) SetProjectWatchReliable(reliable bool) {
 		return
 	}
 	m.projectWatchUnreliable = !reliable
+	m.cancelAssemblyInvalidationLocked()
+	m.invalidateAssemblyDiscoveryLocked()
+	if reliable {
+		// The lost watch generation may have missed ignores or an entire source
+		// subtree. Refresh even if there are no active project producers.
+		m.scheduleAssemblyInvalidationLocked(context.Background())
+	}
 	if !reliable && m.sources != nil && m.sources.Insight != nil {
 		m.sources.Insight.diagnostics.InvalidateMatching(func(b types.InsightBoundary) bool {
 			_, project := m.projects[b.Context.ID]

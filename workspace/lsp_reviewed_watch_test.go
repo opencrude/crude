@@ -49,7 +49,7 @@ func TestReviewedWatchRetainsOnlyExactTargetEvents(t *testing.T) {
 }
 
 func TestReviewedWatchRefusesAmbiguousTargetChanges(t *testing.T) {
-	for _, when := range []string{"before commit", "unexpected write", "second create", "watch gap"} {
+	for _, when := range []string{"before commit", "remove before commit", "unexpected write", "second create", "second remove", "remove after create", "watch gap"} {
 		t.Run(when, func(t *testing.T) {
 			var registry reviewedWatchRegistry
 			a, b := filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")
@@ -57,7 +57,7 @@ func TestReviewedWatchRefusesAmbiguousTargetChanges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if when != "before commit" {
+			if when != "before commit" && when != "remove before commit" {
 				if err := tx.beginCommit(a); err != nil {
 					t.Fatal(err)
 				}
@@ -66,11 +66,19 @@ func TestReviewedWatchRefusesAmbiguousTargetChanges(t *testing.T) {
 			switch when {
 			case "before commit":
 				registry.deferEvent(t.Context(), a, 2, nil)
+			case "remove before commit":
+				registry.deferEvent(t.Context(), a, 3, nil)
 			case "unexpected write":
 				registry.deferEvent(t.Context(), a, 2, nil)
 			case "second create":
 				registry.deferEvent(t.Context(), a, 1, nil)
 				registry.deferEvent(t.Context(), a, 1, nil)
+			case "second remove":
+				registry.deferEvent(t.Context(), a, 3, nil)
+				registry.deferEvent(t.Context(), a, 3, nil)
+			case "remove after create":
+				registry.deferEvent(t.Context(), a, 1, nil)
+				registry.deferEvent(t.Context(), a, 3, nil)
 			case "watch gap":
 				registry.setReliable(false)
 			}
@@ -78,6 +86,47 @@ func TestReviewedWatchRefusesAmbiguousTargetChanges(t *testing.T) {
 				t.Fatal("ambiguous observation admitted another commit")
 			}
 			drainReviewedWatch(&registry, tx)
+		})
+	}
+}
+
+func TestReviewedWatchRetainsAtomicRemoveCreateSequence(t *testing.T) {
+	for _, beforeReturn := range []bool{true, false} {
+		t.Run(map[bool]string{true: "during commit", false: "after commit"}[beforeReturn], func(t *testing.T) {
+			var registry reviewedWatchRegistry
+			a, b := filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")
+			tx, err := registry.begin([]FileEdit{{Path: a}, {Path: b}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.beginCommit(a); err != nil {
+				t.Fatal(err)
+			}
+			if !beforeReturn {
+				tx.endCommit(a, true)
+			}
+			for _, kind := range []int{3, 1} {
+				if !registry.deferEvent(t.Context(), a, kind, func() {
+					t.Fatal("own atomic replacement invalidated its semantic source")
+				}) {
+					t.Fatal("own atomic replacement event was not retained")
+				}
+			}
+			if beforeReturn {
+				tx.endCommit(a, true)
+			}
+			if err := tx.beginCommit(b); err != nil {
+				t.Fatal("own atomic replacement stopped the next reviewed file", err)
+			}
+			tx.endCommit(b, true)
+			if err := tx.check(); err != nil {
+				t.Fatal(err)
+			}
+			events := drainReviewedWatch(&registry, tx)
+			if len(events) != 2 || events[0].path != a || events[0].kind != 3 ||
+				events[1].path != a || events[1].kind != 1 {
+				t.Fatalf("native replacement evidence was lost or reordered: %+v", events)
+			}
 		})
 	}
 }

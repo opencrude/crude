@@ -1,15 +1,21 @@
 package workspace
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+
+	"crude/fileio"
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
 	"crude/third_party/pathwalk"
@@ -67,6 +73,7 @@ func (m *LSPManager) Assembly() ttypes.AssemblyPlan {
 // changes and Start Language Servers run it again.
 func (m *LSPManager) RefreshAssembly() {
 	m.mu.Lock()
+	m.cancelAssemblyInvalidationLocked()
 	m.discovery = nil
 	m.assemblyActive = true
 	m.requestAssemblyLocked()
@@ -79,6 +86,7 @@ func (m *LSPManager) requestAssemblyLocked() {
 	if !m.assemblyActive || m.closed || m.workspaceRoot == "" || m.workspaceRoot == "." {
 		return
 	}
+	m.cancelAssemblyInvalidationLocked()
 	if m.assemblyCancel != nil {
 		m.assemblyCancel()
 	}
@@ -144,18 +152,30 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 }
 
 // discoverProjectLanguages lists the project and counts files per language.
-// Hidden folders and symbolic links are not followed. It reads names only.
+// Hidden folders and symbolic links are not followed. Only ignore files are read.
 func discoverProjectLanguages(ctx context.Context, root string, settings ttypes.LSPSettings) *assemblyDiscovery {
+	return discoverProjectLanguagesBounded(ctx, root, settings, assemblyMaxEntries)
+}
+
+func discoverProjectLanguagesBounded(ctx context.Context, root string, settings ttypes.LSPSettings, maxEntries int) *assemblyDiscovery {
 	out := &assemblyDiscovery{root: root, languages: map[string]*discoveredLanguage{}}
-	listing, err := pathwalk.Scan(ctx, pathwalk.Request{Root: root, MaxEntries: assemblyMaxEntries, MaxWorkers: pathwalk.DefaultWorkers})
+	root, err := filepath.Abs(root)
+	if err != nil {
+		out.err = err
+		return out
+	}
+	ignores := &assemblyIgnores{ctx: ctx, root: root, patterns: make(map[string][]gitignore.Pattern)}
+	listing, err := pathwalk.Scan(ctx, pathwalk.Request{Root: root, MaxEntries: maxEntries, MaxWorkers: pathwalk.DefaultWorkers,
+		SkipDir: func(path, name string) bool {
+			return defaultBrowserSkipDir(path, name) || ignores.ignored(path, true)
+		}})
+	out.limited = listing.Truncated
 	if err == pathwalk.ErrEntryLimit {
 		out.limited, err = true, nil
 	}
-	if err != nil && ctx.Err() == nil {
-		out.err = err
-	}
+	out.err = assemblyListingError(ctx, listing, err)
 	for _, entry := range listing.Entries {
-		if entry.IsDir || entry.IsSymlink {
+		if entry.IsDir || entry.IsSymlink || ignores.ignored(entry.Path, false) {
 			continue
 		}
 		out.seen++
@@ -173,7 +193,101 @@ func discoverProjectLanguages(ctx context.Context, root string, settings ttypes.
 			found.sample, found.depth = entry.Path, entry.Depth
 		}
 	}
+	if ignores.err != nil {
+		out.err = errors.Join(out.err, ignores.err)
+	}
 	return out
+}
+
+func assemblyListingError(ctx context.Context, listing pathwalk.Catalog, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if listing.Errors > 0 {
+		return errors.Join(err, fmt.Errorf("could not list %d project paths", listing.Errors))
+	}
+	return err
+}
+
+// assemblyIgnores caches each directory's inherited rules. The walk callback
+// can run concurrently; bounded rule reads and cache updates share one lock.
+type assemblyIgnores struct {
+	mu       sync.Mutex
+	ctx      context.Context
+	root     string
+	patterns map[string][]gitignore.Pattern
+	bytes    int64
+	err      error
+}
+
+const assemblyIgnoreBytes = 8 << 20
+
+func (m *assemblyIgnores) ignored(path string, dir bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rel, err := filepath.Rel(m.root, path)
+	if err != nil {
+		m.err = err
+		return true
+	}
+	patterns := m.rules(filepath.Dir(path))
+	if m.err != nil {
+		return true
+	}
+	return gitignore.NewMatcher(patterns).Match(strings.Split(filepath.ToSlash(rel), "/"), dir)
+}
+
+func (m *assemblyIgnores) rules(dir string) []gitignore.Pattern {
+	if err := m.ctx.Err(); err != nil {
+		m.err = err
+		return nil
+	}
+	if patterns, ok := m.patterns[dir]; ok {
+		return patterns
+	}
+	var patterns []gitignore.Pattern
+	if dir != m.root {
+		patterns = append(patterns, m.rules(filepath.Dir(dir))...)
+	}
+	if m.err != nil {
+		return nil
+	}
+	remaining := int64(assemblyIgnoreBytes) - m.bytes
+	data, err := fileio.ReadRegularNoFollow(m.ctx, filepath.Join(dir, ".gitignore"), remaining)
+	// Git does not follow worktree ignore symlinks. Other non-regular entries
+	// likewise supply no rules; never open a FIFO waiting for a writer.
+	if os.IsNotExist(err) || errors.Is(err, fileio.ErrNotRegular) {
+		m.patterns[dir] = patterns
+		return patterns
+	}
+	if err != nil {
+		m.err = fmt.Errorf("cannot read ignore rules in %s: %w", dir, err)
+		return nil
+	}
+	m.bytes += int64(len(data))
+	rel, err := filepath.Rel(m.root, dir)
+	if err != nil {
+		m.err = err
+		return nil
+	}
+	var domain []string
+	if rel != "." {
+		domain = strings.Split(filepath.ToSlash(rel), "/")
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner.Buffer(make([]byte, 4096), assemblyIgnoreBytes)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "#") && strings.TrimSpace(line) != "" {
+			patterns = append(patterns, gitignore.ParsePattern(line, domain))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		m.err = err
+		return nil
+	}
+	m.patterns[dir] = patterns
+	return patterns
 }
 
 // resolveAssembly decides, per discovered language, which tool serves it and

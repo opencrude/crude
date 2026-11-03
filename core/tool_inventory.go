@@ -3,6 +3,9 @@ package core
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 
 	"crude/toolstore"
@@ -48,7 +51,11 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 	}
 	out.TotalBytes, out.Unrecognized, out.HistoryTotal, out.HistoryOffset = total, unknown, count, offset
 	for _, t := range tools {
-		out.Tools = append(out.Tools, codeTool(t))
+		value, err := inspectCodeTool(ctx, t)
+		if err != nil {
+			return out, err
+		}
+		out.Tools = append(out.Tools, value)
 	}
 	for _, e := range history {
 		out.History = append(out.History, types.CodeToolHistoryEvent{Time: e.Time, Kind: e.Kind, ToolID: e.ToolID, Package: e.Package, Version: e.Version, Detail: e.Detail, By: e.By, Approval: e.Approval})
@@ -63,4 +70,44 @@ func readCodeToolInventory(ctx context.Context, store *toolstore.Store, plan typ
 	}
 	sort.Slice(out.Unmanaged, func(i, j int) bool { return out.Unmanaged[i].Executable < out.Unmanaged[j].Executable })
 	return out, nil
+}
+
+func inspectCodeTool(ctx context.Context, tool toolstore.Tool) (types.CodeTool, error) {
+	out := codeTool(tool)
+	err := filepath.WalkDir(tool.Dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if path == tool.Dir {
+			return nil
+		}
+		if len(out.FileEntries) >= 100000 {
+			return errors.New("the tool contains too many files to review; no files were removed")
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(tool.Dir, path)
+		if err != nil {
+			return err
+		}
+		file := types.CodeToolFile{Path: relative, Kind: "file", Size: info.Size()}
+		switch {
+		case entry.IsDir():
+			file.Kind, file.Size = "folder", 0
+		case entry.Type()&os.ModeSymlink != 0:
+			file.Kind = "link"
+			file.LinkTarget, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+		out.FileEntries = append(out.FileEntries, file)
+		return nil
+	})
+	return out, err
 }

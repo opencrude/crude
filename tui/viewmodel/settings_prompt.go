@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -89,6 +90,15 @@ func (m *App) showSettingsPrompt(msg settingsui.PromptMsg) {
 		spec.Detail = fmt.Sprintf("Device %q will be disconnected and cannot reconnect without pairing again.", msg.Label)
 		spec.Severity = ui.ConfirmPromptDanger
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Revoke device", ActionID: ui.ConfirmActionYes}, {Label: "Keep device", ActionID: ui.ConfirmActionCancel}}
+	case settingsui.PromptRemoveCodeTools:
+		if msg.CodeToolPreview == nil || len(msg.CodeToolPreview.Tools) == 0 {
+			return
+		}
+		spec.Title, spec.Question = "Remove code intelligence tools", "Remove the reviewed tools?"
+		spec.Detail = fmt.Sprintf("Crude will remove %d tool folders (%d bytes).\n%s\nTools installed outside Crude are not removed.",
+			len(msg.CodeToolPreview.Tools), msg.CodeToolPreview.Bytes, strings.Join(msg.CodeToolPreview.Paths, "\n"))
+		spec.Severity = ui.ConfirmPromptDanger
+		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove tools", ActionID: ui.ConfirmActionYes}, {Label: "Keep tools", ActionID: ui.ConfirmActionCancel}}
 	default:
 		return
 	}
@@ -145,6 +155,8 @@ func (m *App) activateSettingsPrompt(choice int) tea.Cmd {
 		}
 	case settingsui.PromptRevokeRemoteDevice:
 		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.remote.confirm-revoke", Payload: state.request.ID})
+	case settingsui.PromptRemoveCodeTools:
+		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.code-tools.confirm-remove"})
 	}
 	if frame, ok := state.parent.Content.(*ui.WindowFrameWidget); ok {
 		frame.Host().MarkLayout()

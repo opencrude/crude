@@ -8,6 +8,7 @@ import (
 	"crude/tui/screens/inlay"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/navigation"
+	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types/control"
 )
@@ -16,6 +17,16 @@ import (
 // label or an action prefix alone. Async reads/mutations still need the shell's
 // final receipt bridge; Write describes local navigation, not completion.
 func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentID, action string, op ui.ControlOperation) (control.Effect, bool, error) {
+	if state := m.settingsPrompt; state != nil && state.request.Kind == settingsui.PromptRemoveCodeTools &&
+		owner.window != nil && owner.window == m.overlayHost.Window(ui.OverlaySettingsPrompt) {
+		return control.Delete, true, nil
+	}
+	if request := m.projectTools.request; m.projectToolsCurrent(request) && owner.window != nil &&
+		owner.window == m.overlayHost.Window(projectToolsOverlay) {
+		// Selection and confirmation belong to the human who reviewed this exact
+		// project preview. Generic control or key injection cannot grant consent.
+		return control.Write, true, nil
+	}
 	if s := m.completion; m.completionCurrent(s) && owner.window == m.overlayHost.Window(ui.OverlayCompletion) {
 		if localID == completion.ListID {
 			switch action {

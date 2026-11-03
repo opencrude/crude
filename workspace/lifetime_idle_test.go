@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"crude/document"
+	"crude/internal/testterminal"
 )
 
 func TestIdleDocumentLeaseRefusesViewsAndRestoresOpen(t *testing.T) {
@@ -75,15 +76,17 @@ func TestIdleStorageLeaseExcludesReadersAndRollsBack(t *testing.T) {
 
 func TestIdleTerminalLeaseRefusesCreationAndControllers(t *testing.T) {
 	s, _ := testTerminalService(t)
+	command, args := testterminal.Command(t, "idle")
+	opts := TerminalCreateOpts{Command: command, Args: args, Cols: 20, Rows: 4}
 	u, err := s.beginIdleLease()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Create(TerminalCreateOpts{Command: "/bin/cat", Cols: 20, Rows: 4}); err == nil {
+	if _, err := s.Create(opts); err == nil {
 		t.Fatal("created terminal through idle fence")
 	}
 	u()
-	info, err := s.Create(TerminalCreateOpts{Command: "/bin/cat", Cols: 20, Rows: 4})
+	info, err := s.Create(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

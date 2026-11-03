@@ -6,9 +6,9 @@ Crude has three settings layers. Each stores only its explicit choices. A value
 not configured at that scope inherits from its parent. The last explicit write
 to a field wins; ordinary settings saves have no configuration revision,
 preimage or conflict gate. Users and agents use the same rule.
-Workspace analysis Trust and prediction consent are explicit, independent
-exceptions: neither inherits from the application or session layer, and only a
-human can change their authority.
+Workspace analysis Trust, prediction consent and project tool decisions are
+explicit, independent exceptions: none inherits from the application or session
+layer, and only the dedicated human flow can change its authority.
 
 ```
 Application  (~/.crude/config.json)
@@ -27,9 +27,10 @@ turning something off at the application level reaches the workspace even
 years later.
 Analysis Trust instead resolves to **Ask when the folder opens** when absent or invalid.
 Prediction consent resolves to **Off**, with no invented spending allowance.
-Project tool decisions are workspace-only raw authority; generic preference
-edits and capability snapshots cannot grant or reset them. Their dedicated
-workspace setup transaction is separate from ordinary settings.
+Project tool decisions are workspace-only audit evidence; generic preference
+edits and capability snapshots cannot grant or reset them. Installation authority
+belongs to the native setup owner's consumed, live decision, not the saved row.
+The dedicated workspace setup transaction is separate from ordinary settings.
 An application config may contain an inert value for this field; it is never
 published as application or inherited workspace authority. Unrelated application
 saves retain that data without accepting a new or changed value.
@@ -1025,7 +1026,7 @@ Visual contracts for this window:
 
 ## LSP
 
-Application and workspace settings share two pages. **Code Intelligence** holds
+Application and workspace settings share three pages. **Code Intelligence** holds
 the master enable, auto-detect, start-on-open, per-feature gates (diagnostics,
 completions, hover, definition, references, outline, rename and opt-in inlay hints), diagnostic display
 (editor / tree / status + minimum severity) and resource limits. **Language
@@ -1043,7 +1044,9 @@ and a command, and cannot claim an extension that the catalog owns. A saved
 entry for a language the catalog does not have, with no extensions, matches no
 file and is ignored. Restore default returns a row to the catalog.
 `workspace.LSPManager` reads the **effective** `LSPSettings` and refuses to
-start or request gated features.
+start or request gated features. **Code intelligence tools** reads the selected
+core's shared acquired-tool inventory; it is not another launch configuration
+or inherited preference store.
 
 **Inlay hints** is the ordinary Boolean leaf `lsp.inlay_hints` and defaults
 **Off**. Explicit false overrides remain distinct from an absent inherited value;
@@ -1052,6 +1055,76 @@ gate, not execution Trust or permission to apply provider edits/commands.
 Toggling it revokes old inlay evidence through a feature epoch without restarting
 the language server. Per-view Show/Hide never persists a settings choice or
 overrides the master/Trust gate. See [read-only inlay hints](editor.md#read-only-inlay-hints).
+
+### Code intelligence tools
+
+The collection shows total managed content size, installed versions, unmanaged
+tools and paged history. Each managed tool opens complete, copyable detail and
+file readers: folder and executable, literal file paths/types/sizes/link targets,
+source/download address, digest and checksum origin, licenses, install time,
+installer/approval, workspace use and last use. Unrecognized store entries remain
+visible for inspection. Unmanaged tools are labelled **not managed by Crude** and
+cannot be removed.
+
+**Remove** and **Remove unused** prepare an exact review of managed folders,
+their files and measured bytes before showing a native confirmation with Cancel
+focused. Unused means no recorded workspace use, not permission to delete a live
+process. The core binds the one-shot review to the authenticated shell and
+workspace, expires it after ten minutes, and rechecks workspace references and
+the store's tree/usage preimage. Store-owned executable leases block removal
+until every exact process joins `Stop`. Generic control cannot confirm removal.
+An error refreshes observed inventory rather than repeating a possibly committed
+deletion. See [tool-store removal](tool-store.md#removal).
+
+Inventory, file enumeration, history, preview and removal run off Update.
+Settings-model/request generations and cancellation fence page, scope, close,
+workspace-switch and reopened-window results. Changing the Settings scope does
+not create a second shared store or copy its accounting into preferences.
+Agents can read the same inventory through the semantic read-only
+`code_tools.inventory` command.
+
+### Project tool setup
+
+Setup is separate from both analysis Trust and the inventory page. Trust permits
+project execution, not downloads; approval to download never trusts a folder.
+After trusted, complete discovery, the first native **Set up code intelligence**
+review groups the current known-source candidates. It shows exact versions,
+sources, programs, licenses and whether size/checksum information is
+known. The user can deselect tools. **Not now** records the refusal; closing
+without submitting does not manufacture a decision. Later needs give a quiet
+notice instead of interrupting editing. **Project Languages → Set up tools**
+opens a fresh explicit review, including still-missing tools refused or failed
+earlier. This is a new human decision, not replay of the old approval.
+
+`ProjectToolSetupOwner` retains at most 16 five-minute previews, bound to the exact
+native shell owner, workspace database, root identity, assembly, settings and
+catalog and exact saved decision history. The history preimage is rechecked
+inside the settings transaction as well as before it, so another shell's newer
+choice invalidates an old preview. Decision consumes a preview once before
+effects and records selected and rejected candidates as audit evidence.
+Saved decisions suppress repeated automatic offers;
+an installed matching tool is not offered again. Neither a saved approval nor a
+review hash recreates live install authority after cancellation or restart.
+Native decision routes reject generic JSON/control callers. Generic settings,
+agents and permission reviewers cannot mint this consent.
+
+The joined worker rechecks current authority before download, staged evaluation,
+publication and usage. A new artifact runs its standard initialize/initialized
+protocol check at an independent inert root before publication, not against
+project source. Its exact process must successfully join `Stop` before the
+artifact can publish. Failed staged checks do not resolve; uncertain teardown
+retains the staged bytes and process reservation for inspection. Matching existing
+artifacts are checked before this setup uses them. This is protocol health only,
+not semantic feature or project-coverage evidence.
+
+Publication uses expensive off-lock preflight and a short in-memory admission
+gate under the store lock. Usage has its own current/cancellation gate. Successful
+admitted use refreshes assembly; activation still needs Trust and normal process
+admission. Individual results distinguish not attempted, installed, protocol
+failure and unverified teardown. Offline, rejected and unsupported candidates
+leave editing usable. Updates, broader sources and semantic evaluation remain
+work in the [setup plan](../plans/code-intelligence-setup.md), not implied by this
+thin path.
 
 ### Workspace prediction consent
 
@@ -1141,16 +1214,18 @@ proof that a subprocess was never created. Late callbacks and request results
 cannot revive the revoked context. Trust is an execution ceiling for this LSP
 fleet, not an acquisition, network or tool-effect grant.
 
-Enabling is lazy, not a workspace scan: with Trust granted and **Start on open**
-enabled, opening a supported source file starts its configured server. Saving enable also starts
-services for already-open source buffers without reopening or discarding their
-unsaved text. With no source open, Problems / Workspace health says **Waiting for
-source file** and its expanded details explain the next step. Disabled, paused,
+With Trust granted and **Start on open** enabled, opening a supported source file
+starts its configured server. Saving enable also starts services for already-open
+source buffers without reopening or discarding their unsaved text. Separately,
+bounded assembly discovery can activate catalog-declared project producers with
+no source open. When no applicable producer is active, Problems / Workspace health
+can show **Waiting for source file** with the next step. Disabled, paused,
 manual-start, unsupported-file and document-limit states have distinct owner-derived
 explanations; actual startup failures remain failures with their original reason.
-**Detect servers** selects configured commands by file type; it does not install
-their executables. The server must already be installed on the core host and
-available to its process environment.
+**Detect servers** selects configured commands by file type; it does not itself
+approve installation. Assembly can resolve an executable in the shared store or
+on the core host's allowed path. Missing installable tools use the separate native
+setup flow, never an implicit grant from detection.
 
 The environment table supplies explicit choices over the analyzer's positive
 OS/toolchain inheritance policy, not over every variable in the core's process.
@@ -1183,6 +1258,11 @@ Quota reductions do not evict running work. An unstarted reservation can be
 cancelled; a begun lease is released only after positively verified teardown.
 Failed cleanup retains its occupied slot and visible failure even across
 workspace reopen or core shutdown. A waiting slot is not a clean analysis result.
+An active file queued for capacity says **Waiting to start**, with the next
+step to close another language's files or change the server limit. It is not
+reported as a failed server or an oversized file. Actual file-size refusal is
+derived from the active source bytes and configured limit, not from any nonempty
+status explanation.
 This governor bounds process admission, not CPU/RSS, escaped descendants or
 heavy-project containment. Provider thread and memory fields remain hints;
 pressure controls and other analysis work classes remain planned. Remaining

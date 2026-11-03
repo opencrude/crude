@@ -1,7 +1,8 @@
 # Code-Intelligence Setup
 
-> Status: IN PROGRESS - the shared tool store and catalog download contract
-> exist. The project approval, acquisition and Settings journeys remain open.
+> Status: IN PROGRESS - native known-source project approval, staged evaluation,
+> acquisition and Settings/accountability are connected. Final thin-path gates
+> and the later outside-source/update checkpoints remain open.
 > This plan owns how Crude finds, asks for, installs and accounts for the tools
 > that give a project code intelligence. It implements the acquisition stage of
 > [autonomous code intelligence](autonomous-code-intelligence.md); read that
@@ -31,6 +32,9 @@ no second installer, approval store or registration table.
 | 2026-11-02 | Approvals and rejections are remembered. Another project that needs an already installed tool version does not ask again. A rejected or broken candidate is not tried again in a loop. |
 | 2026-11-02 | There is no disk cap and no automatic deletion. Settings accounts for every file (see [Accountability](#accountability)). |
 | 2026-11-02 | The Microsoft Visual Studio Marketplace is not a source. Its terms say that "you may only install and use Marketplace Offerings with Visual Studio Products and Services". |
+| 2026-11-03 | The initial project decision uses the existing authenticated native-shell consent boundary, like workspace trust and history protection. A bounded, expiring preview belongs to the exact shell owner and workspace; the setup owner consumes it once and rechecks trust, project and candidate identity before each effect. Generic control, settings and agent calls cannot manufacture this human decision. Agents can inspect setup and inventory; automatic/reviewer authorization never becomes a durable human grant. |
+| 2026-11-03 | Implementation rule: remembered refusals and failed attempts suppress automatic offers, not a later explicit **Set up tools** action. That action requests a fresh native preview and decision for still-missing candidates. A changed decision history invalidates an older preview; no old approval or failed request is replayed. |
+| 2026-11-03 | The user excluded website work and its gate from this task: keep the work on code intelligence and this plan. |
 
 ## Question flow
 
@@ -53,7 +57,7 @@ Confirmed by the user on 2026-11-02:
 
 | Source | Use | Known limits |
 |---|---|---|
-| [mason registry](https://github.com/mason-org/mason-registry) | What a tool is, its license, languages, and how to install it for each platform | The clangd and gopls entries checked on 2026-11-02 carry no file digests, so Crude records the digest at first download. Some entries need an ecosystem toolchain (gopls uses `go install`). The registry's own license still needs review. |
+| [mason registry](https://github.com/mason-org/mason-registry) | What a tool is, its license, languages, and how to install it for each platform | The clangd and gopls entries checked on 2026-11-02 carry no file digests, so Crude records the digest at first download. Some entries need an ecosystem toolchain (gopls uses `go install`). The pinned registry attribution is Apache-2.0 in `insight/catalog/NOTICE`. |
 | [aqua registry](https://github.com/aquaproj/aqua-registry) | Command-line tools with published checksums | Coverage of language servers is partial. |
 | Declarative launch configurations, such as Helix `languages.toml` | How to start a server: command, arguments, file types, root markers | Import only declarative fields. Never run editor plugin code, for example nvim-lspconfig Lua. |
 | [Open VSX](https://open-vsx.org/) | Language IDs, file extensions and settings schemas from extension manifests | Most extensions start their server from extension code, so they are not a launch source. Some well-known servers have licenses limited to Microsoft products. |
@@ -92,3 +96,23 @@ source, the once-per-project question and the Settings accountability page.
 Later checkpoints add the separate question for unplanned sources, more
 registries, updates and offline behavior. Write each checkpoint here before
 code changes start.
+
+The first implementation is connected on 2026-11-03. Native previews belong to
+an exact shell, project/root, assembly/settings generation and catalog. The
+one-shot decision records refusals and selections without making an audit row
+reusable authority. Install stages sealed bytes, checks initialize/initialized
+in an independent inert root, joins Stop, then rechecks publication and use.
+Failed/cancelled candidates do not publish or retry automatically; unverified
+teardown retains the exact process and marked staged bytes for inspection.
+
+Normal and native Windows race tests cover the acquired fixture language,
+refusal/reopen, partial failures, cancelled/changed owners, two-workspace use,
+exact executable leases and native Settings removal at both terminal sizes.
+Real installed-server captures verify unopened diagnostics and honest coverage.
+Native Settings and setup previews pass at 160x40 and 80x24. Fresh explicit retry
+after refusal/offline failure has focused normal/race and real connected-preview
+evidence; another shell's changed history invalidates the old preview inside the
+atomic writer as well as before it. Final combined repository gates remain open
+before the thin checkpoint is banked. There is no claim yet for a new
+agent-discovered source, additional registries, automatic updates, semantic
+feature certification or a recovery action for uncertain staged processes.

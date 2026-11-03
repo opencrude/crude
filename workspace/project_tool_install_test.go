@@ -28,6 +28,11 @@ func (f *installFake) Install(ctx context.Context, r toolstore.Request) (toolsto
 	if r.AdmitPublication == nil {
 		return toolstore.Tool{}, errors.New("missing publication admission")
 	}
+	if r.PreparePublication != nil {
+		if err := r.PreparePublication(ctx); err != nil {
+			return toolstore.Tool{}, err
+		}
+	}
 	if err := r.AdmitPublication(ctx); err != nil {
 		return toolstore.Tool{}, err
 	}
@@ -120,6 +125,7 @@ func TestReviewedProjectInstall(t *testing.T) {
 		t.Fatal("reviewed install omitted the publication fence")
 	}
 	got.AdmitPublication = nil
+	got.PreparePublication = nil
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("request/usage: %+v %v", f.requests[0], f.uses)
 	}
@@ -253,14 +259,14 @@ func TestReviewedProjectInstallRequiresCurrentEffectAuthority(t *testing.T) {
 		checks := 0
 		a := &installAuthorityFake{check: func(context.Context, string) error {
 			checks++
-			if checks == 2 {
+			if checks == 3 {
 				cancel()
 			}
 			return nil
 		}}
 		f := &installFake{}
 		res, err := installReviewedProjectToolsWithCatalog(ctx, f, a, review, ids, "receipt", "project", limits, c, []string{"linux_x64_gnu"})
-		if !errors.Is(err, context.Canceled) || checks != 2 || res[0].Tool.ID == "" || res[1].Attempted || len(f.uses) != 0 {
+		if !errors.Is(err, context.Canceled) || checks != 3 || res[0].Tool.ID == "" || res[1].Attempted || len(f.uses) != 0 {
 			t.Fatalf("cancelled validation was reported as success: %+v %v", res, err)
 		}
 	})

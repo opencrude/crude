@@ -161,6 +161,16 @@ Language Servers edits apply to the settings draft immediately (the rail marker
 and Save follow); an incomplete custom server stays open with guidance instead of
 being half-saved, and Save refuses an invalid inventory with the reason.
 
+Code intelligence tools uses the same retained frame, header, native form controls
+and Back/Close navigation as an operational collection, not a preference editor.
+Refresh and paged history read the selected core's shared inventory. Tool detail
+and Files use complete, selectable read-only text; Back returns to the collection
+inside the same frame. Remove/Remove unused first show the exact folders, files
+and measured size, then use the shared native Cancel-default confirmation.
+Unmanaged tools and unrecognized store entries never gain a destructive action.
+Loading/error states retain the page, and stale page/scope/close results cannot
+replace a newer reader. These operations do not wait for Settings Save.
+
 ## Skills and MCP store
 
 - **Live search.** Typing arms a 350 ms quiet period (`capabilitySearchInput`,

@@ -21,7 +21,7 @@ func documentFixture(t *testing.T, text string) (*DocumentService, document.Snap
 	saves := NewDocumentSaveService()
 	lsp := NewLSPManager(nil)
 	s := NewDocumentService(root, saves, lsp)
-	t.Cleanup(func() { s.Close(); lsp.Stop(); saves.Close() })
+	t.Cleanup(func() { s.Close(); lsp.Close(); saves.Close() })
 	a, b := document.Owner{ClientID: "a", Epoch: 1}, document.Owner{ClientID: "b", Epoch: 1}
 	snap, err := s.Open(a, "text.txt")
 	if err != nil {

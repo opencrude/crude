@@ -6,16 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"crude/document"
 	"crude/insight/catalog"
+	"crude/internal/fileuri"
+	"crude/toolstore"
 	model "crude/types"
 )
 
@@ -26,12 +27,13 @@ const fixturePack = `{
   "format": 1,
   "languages": [
     {"id": "fixturelang", "name": "Fixture", "extensions": [".fxl"], "lsp_language_id": "fixturelang",
-     "roots": ["fixture.toml"], "servers": ["fixture-ls"], "comment_tokens": [";;"]},
+      "roots": ["fixture.project"], "servers": ["fixture-ls"], "comment_tokens": [";;"]},
     {"id": "fixturemissing", "name": "Fixture Missing", "extensions": [".fxm"], "lsp_language_id": "fixturemissing",
      "servers": ["fixture-absent"]}
   ],
   "servers": [
-    {"id": "fixture-ls", "command": "fixture-ls", "diagnostic_scope": "project"},
+      {"id": "fixture-ls", "command": "fixture-ls", "diagnostic_scope": "project",
+       "args": ["-test.run=^TestFixtureLanguageServerHelper$"], "environment": {"CRUDE_FIXTURE_LS":"1"}},
     {"id": "fixture-absent", "command": "crude-fixture-server-that-is-not-installed"}
   ]
 }`
@@ -77,7 +79,7 @@ func TestFixtureLanguageServerHelper(t *testing.T) {
 						"range": map[string]any{"start": map[string]any{"line": line, "character": col}, "end": map[string]any{"line": line, "character": col + 5}}})
 				}
 			}
-			uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+			uri := fileuri.FromPath(path)
 			write(map[string]any{"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": map[string]any{"uri": uri, "diagnostics": diagnostics}})
 			return nil
 		})
@@ -112,8 +114,24 @@ func TestFixtureLanguageServerHelper(t *testing.T) {
 		}
 		switch msg.Method {
 		case "initialize":
-			if u, err := url.Parse(msg.Params.RootURI); err == nil {
-				root = filepath.FromSlash(u.Path)
+			if path, err := fileuri.ToPath(msg.Params.RootURI); err == nil {
+				root = path
+			}
+			if trace := os.Getenv("CRUDE_FIXTURE_TRACE"); trace != "" {
+				f, err := os.OpenFile(trace, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+				if err != nil {
+					os.Exit(3)
+				}
+				_, _ = fmt.Fprintln(f, root)
+				_ = f.Close()
+			}
+			switch os.Getenv("CRUDE_FIXTURE_MODE") {
+			case "fail_initialize":
+				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32603, "message": "fixture initialization refused"}})
+				continue
+			case "stall_initialize":
+				// Keep reading so shutdown can still join this exact process.
+				continue
 			}
 			write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
 		case "initialized", "workspace/didChangeWatchedFiles":
@@ -159,42 +177,76 @@ func assemblyLanguage(plan model.AssemblyPlan, id string) (model.AssemblyLanguag
 }
 
 // A language that exists only in a catalog pack runs through every stage
-// with no Go change: discovery finds its files, resolution finds its server
-// on the path, activation starts a whole-project check, and Problems gets an
+// with no Go change: discovery finds its files, native setup approves catalog
+// acquisition, independent evaluation initializes the staged executable, then
+// activation starts a whole-project check, and Problems gets an
 // error for a file nobody opened. Fixing the file clears the error.
 func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fixture server starts through a POSIX shell script")
+	var doc catalog.Document
+	if err := json.Unmarshal([]byte(fixturePack), &doc); err != nil {
+		t.Fatal(err)
 	}
-	useFixturePack(t)
-	exe, err := os.Executable()
+	doc.Servers[0].Package = "fixture-acquired"
+	trace := filepath.Join(t.TempDir(), "roots.txt")
+	doc.Servers[0].Environment["CRUDE_FIXTURE_TRACE"] = trace
+	doc.Packages = append(doc.Packages, catalog.PackageRecord{Name: "fixture-acquired", Licenses: []string{"MIT"},
+		Source: catalog.PackageSourceRecord{ID: "pkg:github/fixture/fixture-acquired@v1",
+			Assets: []catalog.AssetRecord{{Targets: catalog.CurrentTargets(), File: "server.zip", Bin: setupFixtureBin()}}},
+		Bin: map[string]string{"fixture-ls": "{{source.asset.bin}}"}})
+	pack := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pack, "fixture.json"), mustJSON(t, doc), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if problems := catalog.UsePacks(pack); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	t.Cleanup(func() { catalog.UsePacks(filepath.Join(pack, "none")) })
+	serveCatalogArtifact(t, fixtureExecutableArchive(t, setupFixtureBin()), "/fixture/fixture-acquired/releases/download/v1/server.zip")
+	store, err := toolstore.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := t.TempDir()
-	script := "#!/bin/sh\nCRUDE_FIXTURE_LS=1 exec '" + exe + "' -test.run='^TestFixtureLanguageServerHelper$'\n"
-	if err := os.WriteFile(filepath.Join(bin, "fixture-ls"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	root := t.TempDir()
-	writeTree(t, filepath.Join(root, "fixture.toml"), "")
+	w, _ := decisionFixture(t)
+	root, m := w.RootPath, w.LSPMgr
+	writeTree(t, filepath.Join(root, "fixture.project"), "")
 	broken := filepath.Join(root, "src", "broken.fxl")
 	writeTree(t, broken, "fine\nan ERROR here\n")
 	writeTree(t, filepath.Join(root, "src", "clean.fxl"), "fine\n")
+	writeTree(t, filepath.Join(root, "unsupported.fxm"), "still editable\n")
 
-	m := NewLSPManager(nil)
-	m.SetWorkspaceRoot(root)
+	m.SetToolStore(store)
 	probeSources(t, m, root)
 	trustAnalysis(t, m, root)
-	t.Cleanup(m.Close)
 	m.RefreshAssembly()
 
-	plan := awaitAssembly(t, m, func(p model.AssemblyPlan) bool { return p.State == model.AssemblyReady })
+	awaitAssembly(t, m, func(p model.AssemblyPlan) bool {
+		language, ok := assemblyLanguage(p, "fixturelang")
+		return p.State == model.AssemblyReady && ok && language.Status == model.ToolMissing
+	})
+	setup := NewProjectToolSetupOwner(w, store)
+	defer setup.Close()
+	owner := document.Owner{ClientID: "native-fixture-shell", Epoch: 1}
+	review := setupReview(t, setup, owner)
+	var selected []string
+	for _, item := range review.Review.Items {
+		if item.Package == "fixture-acquired" {
+			selected = append(selected, item.ID)
+		}
+	}
+	if len(selected) != 1 || !review.NeedsDecision {
+		t.Fatalf("native setup needs: %+v", review)
+	}
+	result, err := setup.Decide(t.Context(), owner, "native-fixture-install", review.ID, selected)
+	if err != nil || len(result.Items) != 1 || !result.Items[0].Installed || result.Items[0].Evaluation != toolEvaluationPassed {
+		t.Fatalf("acquire/evaluate: %+v %v", result, err)
+	}
+	plan := awaitAssembly(t, m, func(p model.AssemblyPlan) bool {
+		language, ok := assemblyLanguage(p, "fixturelang")
+		return p.State == model.AssemblyReady && ok && language.Status == model.ToolReady
+	})
 	language, ok := assemblyLanguage(plan, "fixturelang")
 	if !ok || language.Status != model.ToolReady || language.Scope != model.CoverageProject ||
-		language.Files != 2 || language.Root != root || language.Source != model.ToolSourcePath {
+		language.Files != 2 || language.Root != root || language.Source != model.ToolSourceStore {
 		t.Fatalf("fixture language plan = %+v (found %v)", language, ok)
 	}
 
@@ -211,6 +263,27 @@ func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
 	}
 	if summary := m.ProjectInsights(); summary.Errors != 1 || summary.FilesAffected != 1 {
 		t.Fatalf("status summary = %+v", summary)
+	}
+	m.mu.Lock()
+	openedDocuments := len(m.documents)
+	m.mu.Unlock()
+	if openedDocuments != 0 {
+		t.Fatalf("project diagnostic required opening %d documents", openedDocuments)
+	}
+	missing, ok := assemblyLanguage(plan, "fixturemissing")
+	if !ok || missing.Status != model.ToolMissing || !strings.Contains(plan.Message, "Install the missing servers") {
+		t.Fatalf("partial project support was hidden: %+v", plan)
+	}
+	roots, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkedRoots := strings.Split(strings.TrimSpace(string(roots)), "\n")
+	if len(checkedRoots) != 2 || checkedRoots[0] == root || checkedRoots[1] != root {
+		t.Fatalf("independent check must precede project activation: %q", checkedRoots)
+	}
+	if _, err := os.Stat(checkedRoots[0]); !os.IsNotExist(err) {
+		t.Fatalf("joined check retained its scratch root: %v", err)
 	}
 	var project bool
 	for _, health := range m.ServerHealthSnapshots() {

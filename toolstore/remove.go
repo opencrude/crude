@@ -20,6 +20,9 @@ import (
 // ErrPreviewStale reports that a removal preview no longer matches the store.
 var ErrPreviewStale = errors.New("the tools changed after the removal preview; preview the removal again")
 
+// ErrExecutableInUse means an exact process lifetime still pins the tool.
+var ErrExecutableInUse = errors.New("the tool is used by a language server; stop the server before removing the tool")
+
 // RemovalPreview is the exact set that Remove deletes. Token binds the tool
 // IDs, each manifest, a fingerprint of each tree and the usage of each tool.
 type RemovalPreview struct {
@@ -177,6 +180,14 @@ func (s *Store) Remove(ctx context.Context, p RemovalPreview, actor string) erro
 	defer s.mu.Unlock()
 	if err := s.refreshLocked(ctx); err != nil {
 		return err
+	}
+	// A pinned exact lifetime cannot be removed, regardless of whether its
+	// preview is also stale. Refuse before filesystem fingerprinting so callers
+	// get the actionable lifetime reason and no removal work can race Stop.
+	for _, id := range ids {
+		if s.executableLeases[id] > 0 {
+			return fmt.Errorf("%w: %s", ErrExecutableInUse, id)
+		}
 	}
 	current, err := s.previewLocked(ctx, ids)
 	if err != nil {

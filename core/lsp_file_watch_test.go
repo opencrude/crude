@@ -346,7 +346,7 @@ func TestRetainedCoreRefreshesUnopenedDiagnosticAfterDiskReplacement(t *testing.
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		t.Fatalf("timed out waiting for %s", what)
+		t.Fatalf("timed out waiting for %s; assembly=%+v; policy=%+v", what, manager.Assembly(), manager.AnalysisPolicy())
 	}
 	await("assembly", func() bool { return manager.Assembly().State == types.AssemblyReady })
 	manager.SetProjectProducers([]types.LSPProjectProducer{{

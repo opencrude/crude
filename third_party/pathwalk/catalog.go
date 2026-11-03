@@ -95,6 +95,11 @@ func Scan(ctx context.Context, req Request) (Catalog, error) {
 			return ctxErr
 		}
 		if walkErr != nil {
+			// The directory reader can return a callback's stop signal through
+			// this error path. Bounds and cancellation are not failed I/O.
+			if errors.Is(walkErr, ErrEntryLimit) || errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded) {
+				return walkErr
+			}
 			mu.Lock()
 			cat.Errors++
 			mu.Unlock()

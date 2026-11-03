@@ -92,6 +92,54 @@ subprocess rather than a process-name search.
   there immediately; an asynchronous RPC-cancellation relay interrupts work but
   cannot postpone retirement or authorize a late answer.
 
+## Code-intelligence effects
+
+Post-program shutdown retires parameter-help intent, its exact request and its
+card before the shared-document flush, alongside completion and other semantic
+readers. A late provider answer cannot keep that invocation alive or reacquire
+input after Stop. Shutdown still waits for canonical document recovery; test
+fixtures must not withhold a deliberately late answer until after that same
+shutdown has joined.
+
+Native project setup and tool removal have retained consent owners, separate from
+ordinary settings and Trust. Setup previews expire, bind the exact shell/workspace
+and reviewed project generations, and are consumed once before effects. Detach,
+workspace change, cancellation and revocation invalidate active authority; saved
+audit rows cannot revive it. Settings inventory/removal and setup commands run off
+Update through the original attachment's joined cancellable exchange. Model,
+request and workspace generations reject closed/reopened page results.
+The ready-project tick must return its review command with the other frame
+commands; retaining a request without scheduling it would also block the
+explicit setup action. `TestProjectToolsReadyTickActuallyRunsNativeReview`
+enters through `App.Update` and checks the mounted native review at both sizes.
+
+New tool installation seals staged bytes, performs the independent inert-root
+protocol check, joins the exact process, then prepares publication. Expensive
+`PreparePublication` validation runs outside the store mutex;
+`AdmitPublication` is a short no-I/O current/cancellation check under that mutex.
+Usage similarly waits cancellably and rechecks current authority immediately
+before accounting (`MarkUsedContext` / `MarkExecutableUsedContext`).
+Publication is not admission for a later use or launch.
+Shell detach synchronously cancels the retained removal lifetime, including an
+already consumed review queued behind store work. Cancellation of an individual
+RPC is also propagated. Consuming a preview is not an everlasting effect grant.
+
+An uncertain evaluation `Stop` retains its exact client, independent root,
+process reservation and staged executable bytes. The durable evaluation marker
+prevents startup pruning; failed or uncertain staged checks cannot publish or
+resolve. Published managed launches hold store-owned exact-client executable
+leases until successful joined `Stop`. Removal shares the store gate and refuses
+live leases; cancellation or manager shutdown is never retirement proof.
+See [tool store](tool-store.md#executable-lifetimes).
+
+Discovery invalidation fences old scans immediately, then debounces source
+topology and ignore changes with root/settings/epoch checks. Watch recovery queues
+a rescan even without producers; Close invalidates timers and joins scans.
+On Windows, native watcher state and buffers are pinned through kernel completion
+or cancellation. Close cancels I/O and joins the original readers before releasing
+handles. Root loss keeps coverage unreliable until watcher restart; a recreated
+path does not reauthorize old results.
+
 ## Pushed application and private effects
 
 Domain state arrives through the acknowledged workspace log, seven state topics

@@ -34,6 +34,12 @@ required before LSP is accepted as complete.
   diagnostics, and human-owned launch settings. Real `gopls` coverage:
   `workspace/lsp_probe_gopls_test.go` (skipped when `gopls` is absent);
   session wiring: `session/code_intelligence_test.go`.
+- Native Windows Settings captures on 2026-11-03 cover Code Intelligence,
+  Language Servers list → Go (gopls) detail, and the shared Code intelligence
+  tools inventory at 160x40 and 80x24. The native setup preview also renders at
+  both sizes; its default **Not now** records no installation. Read-only source
+  details open at the first line and retain deliberate scrolling. These captures
+  use `scripts/tuishot.ps1`, not a painted test-only settings model.
 
 ## Remaining
 
@@ -53,8 +59,7 @@ required before LSP is accepted as complete.
    first-error/F8, async definition/reference/status navigation and later-focus
    preservation. Keep real installed-provider/carrier and native acceptance
    evidence distinct from those deterministic rendered/App regressions.
-4. **Visual acceptance** of Settings → Code Intelligence and the Language Servers
-   list → detail pages at desktop and constrained sizes.
 
-Delete this plan when all four are complete and the references describe the
+Delete this plan when the three remaining items and the completed visual item
+are accepted together and the references describe the
 result.

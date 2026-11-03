@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -48,6 +49,46 @@ func TestCoreFileWatchMetadataAndLifetime(t *testing.T) {
 		case <-deadline.C:
 			t.Fatal("no Git metadata feed")
 		}
+	}
+}
+
+func TestCoreFileWatchConcurrentCloseJoinsCallbacks(t *testing.T) {
+	root := t.TempDir()
+	entered := make(chan struct{}, 1)
+	w, err := startCoreFileWatch(root, nil, func(ctx context.Context, _ string, _ int) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-w.ready
+	if err := os.WriteFile(filepath.Join(root, "file"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("callback did not start")
+	}
+	var group sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		group.Go(w.Close)
+	}
+	done := make(chan struct{})
+	go func() { group.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent close did not join")
+	}
+	select {
+	case <-entered:
+		t.Fatal("callback ran after close")
+	default:
 	}
 }
 
