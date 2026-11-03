@@ -101,7 +101,7 @@ func TestInstallRejectsUnsafeArchives(t *testing.T) {
 			r.MaxEntries = tc.maxEntries
 			_, err := store.Install(context.Background(), r)
 			requireErrorContains(t, err, tc.want)
-			if tools, _, _ := store.List(); len(tools) != 0 {
+			if tools, _, _ := store.List(t.Context()); len(tools) != 0 {
 				t.Fatalf("an unsafe archive was installed: %+v", tools)
 			}
 			requireEmptyStaging(t, store)
@@ -147,11 +147,11 @@ func TestInstallKeepsContainedLinks(t *testing.T) {
 		t.Fatalf("tool counts = %d files, %d bytes", tool.Files, tool.Size)
 	}
 	// Removal follows no link and deletes only the tool folder.
-	preview, err := store.PreviewRemove([]string{tool.ID})
+	preview, err := store.PreviewRemove(t.Context(), []string{tool.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(context.Background(), preview); err != nil {
+	if err := store.Remove(context.Background(), preview, "user"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(tool.Dir); !isNotExist(err) {

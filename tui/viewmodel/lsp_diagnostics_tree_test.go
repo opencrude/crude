@@ -21,6 +21,7 @@ type immediateTreeDiagRuntime struct {
 	filePath string
 	diags    []workspace.LSPDiagnostic
 	rootURIs []string
+	specs    []model.LSPServerSpec
 	client   *immediateTreeDiagClient
 }
 
@@ -35,10 +36,11 @@ type immediateTreeDiagClient struct {
 	admit       func() error
 }
 
-func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI string, startAdmission func() error) workspace.LSPClient {
+func (r *immediateTreeDiagRuntime) NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) workspace.LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.rootURIs = append(r.rootURIs, rootURI)
+	r.specs = append(r.specs, model.CloneLSPServerSpec(spec))
 	r.client = &immediateTreeDiagClient{filePath: r.filePath, diags: r.diags, admit: startAdmission}
 	return r.client
 }
@@ -226,7 +228,7 @@ func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, di
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	if len(runtime.rootURIs) != 1 {
-		t.Fatalf("started roots = %v, want exactly one", runtime.rootURIs)
+		t.Fatalf("started roots = %v, specs = %+v; want exactly one", runtime.rootURIs, runtime.specs)
 	}
 	got, err := protocol.DocumentURI(runtime.rootURIs[0]).Path()
 	if err != nil {

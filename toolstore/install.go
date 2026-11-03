@@ -9,37 +9,66 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"crude/fileio"
 )
 
 // Install downloads, verifies and extracts one tool. When the same package
 // and version is already installed with a matching digest, Install returns it
 // and downloads nothing. Concurrent installs of the same package and version
-// in this process install once. Every failure is recorded in the history.
+// in this process install once. A failure to record history is returned.
 func (s *Store) Install(ctx context.Context, r Request) (Tool, error) {
 	if err := r.normalize(); err != nil {
-		s.recordFailure(r, err)
-		return Tool{}, err
+		return s.installFailure(ctx, r, Tool{}, err)
 	}
 	unlock, err := s.lockKeys(ctx, []string{installKey(r.Package, r.Version)})
 	if err != nil {
 		err = fmt.Errorf("the install was cancelled: %w", err)
-		s.recordFailure(r, err)
-		return Tool{}, err
+		return s.installFailure(ctx, r, Tool{}, err)
 	}
 	defer unlock()
-	if tool, ok, err := s.installed(r); err != nil || ok {
+	if tool, ok, err := s.installed(ctx, r); err != nil || ok {
 		if err != nil {
-			s.recordFailure(r, err)
+			return s.installFailure(ctx, r, Tool{}, err)
 		}
-		return tool, err
+		if err := ctx.Err(); err != nil {
+			return s.installFailure(ctx, r, Tool{}, err)
+		}
+		return tool, nil
 	}
 	tool, err := s.install(ctx, r)
 	if err != nil {
-		s.recordFailure(r, err)
-		return Tool{}, err
+		return s.installFailure(ctx, r, tool, err)
 	}
 	return tool, nil
 }
+
+func (s *Store) installFailure(ctx context.Context, r Request, tool Tool, cause error) (Tool, error) {
+	err := errors.Join(cause, s.recordFailure(ctx, r, cause))
+	var unconfirmed *PublicationUnconfirmedError
+	if errors.As(cause, &unconfirmed) {
+		// Failure-history I/O can itself change or lose the pending record.
+		// Re-establish the refusal after that I/O, without overwriting a
+		// replacement record made by another writer.
+		return s.unconfirmedPublication(tool, unconfirmed.ToolID,
+			filepath.Join(s.root, r.Package), filepath.Base(unconfirmed.ToolID), err)
+	}
+	return tool, err
+}
+
+// PublicationUnconfirmedError means a rename was attempted or succeeded, but
+// its complete durable outcome is not established. The caller must inspect
+// ToolID and the store before taking another action; it must not replay.
+type PublicationUnconfirmedError struct {
+	ToolID string
+	Err    error
+}
+
+func (e *PublicationUnconfirmedError) Error() string {
+	return fmt.Sprintf("tool publication %s is not confirmed; inspect the store before trying again: %v", e.ToolID, e.Err)
+}
+
+func (e *PublicationUnconfirmedError) Unwrap() error { return e.Err }
 
 func (r *Request) normalize() error {
 	if err := validComponent(r.Package); err != nil {
@@ -85,22 +114,44 @@ func (r *Request) normalize() error {
 }
 
 // installed returns the existing tool for the request's package and version.
-func (s *Store) installed(r Request) (Tool, bool, error) {
-	s.mu.Lock()
+func (s *Store) installed(ctx context.Context, r Request) (Tool, bool, error) {
+	if err := s.mu.LockContext(ctx); err != nil {
+		return Tool{}, false, err
+	}
 	defer s.mu.Unlock()
+	prefix := r.Package + "/" + r.Version + "-"
+	for id := range s.unconfirmed {
+		if strings.HasPrefix(id, prefix) && len(id) == len(prefix)+12 {
+			return Tool{}, false, &PublicationUnconfirmedError{ToolID: id, Err: errors.New("the tool publication needs inspection before another install")}
+		}
+	}
+	pending, err := pendingVersion(ctx, filepath.Join(s.root, r.Package), r.Version)
+	if err != nil {
+		return Tool{}, false, err
+	}
+	if pending != "" {
+		return Tool{}, false, &PublicationUnconfirmedError{ToolID: r.Package + "/" + pending, Err: errors.New("the tool publication needs inspection before another install")}
+	}
 	matches := s.matchesLocked(r.Package, r.Version)
 	if len(matches) == 0 {
 		return Tool{}, false, nil
 	}
 	for _, tool := range matches {
-		if r.ExpectedSHA256 == "" && len(matches) == 1 || tool.SHA256 == r.ExpectedSHA256 {
+		if (r.ExpectedSHA256 == "" && len(matches) == 1 || tool.SHA256 == r.ExpectedSHA256) && sameArtifact(tool, r) {
 			return s.withUsageLocked(tool), true, nil
 		}
 	}
 	if len(matches) > 1 {
 		return Tool{}, false, fmt.Errorf("%s %s has more than one installed build; give the expected digest", r.Package, r.Version)
 	}
-	return Tool{}, false, fmt.Errorf("%s %s is already installed with the digest %s, which differs from the expected digest. Remove the installed tool before you install a different build", r.Package, r.Version, matches[0].SHA256)
+	return Tool{}, false, fmt.Errorf("%s %s is already installed with a different artifact identity or digest. Remove the installed tool before you install a different build", r.Package, r.Version)
+}
+
+func sameArtifact(tool Tool, r Request) bool {
+	return tool.Package == r.Package && tool.Version == r.Version &&
+		tool.Source == r.Source && tool.URL == r.URL && tool.Archive == r.Archive &&
+		tool.Bin == r.Bin && tool.Command == r.Command &&
+		(r.ExpectedSHA256 == "" || tool.SHA256 == r.ExpectedSHA256)
 }
 
 func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
@@ -125,7 +176,13 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 	dirName := versionDir(r.Version, digest)
 	id := r.Package + "/" + dirName
 	final := filepath.Join(s.root, r.Package, dirName)
-	if tool, ok, err := s.adopt(r.Package, dirName); ok || err != nil {
+	if tool, ok, err := s.adopt(ctx, r.Package, dirName); ok || err != nil {
+		if ok && !sameArtifact(tool, r) {
+			return Tool{}, errors.New("installed artifact identity differs from the reviewed request")
+		}
+		if err == nil && ctx.Err() != nil {
+			return Tool{}, ctx.Err()
+		}
 		return tool, err
 	}
 
@@ -145,6 +202,7 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 		SHA256:       digest,
 		DigestOrigin: origin,
 		Executable:   r.Bin,
+		Command:      r.Command,
 		Size:         stats.bytes,
 		Files:        stats.files,
 		Archive:      r.Archive,
@@ -168,22 +226,28 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 		return Tool{}, fmt.Errorf("make the tool read-only: %w", err)
 	}
 	packageDir := filepath.Join(s.root, r.Package)
-	if err := s.moveIntoPlace(packageDir, tree, final); err != nil {
-		if tool, ok, adoptErr := s.adopt(r.Package, dirName); ok || adoptErr != nil {
-			return tool, adoptErr
+	attempted, reservation, err := s.moveIntoPlace(ctx, r.AdmitPublication, packageDir, tree, final)
+	if err != nil {
+		if !attempted {
+			return Tool{}, fmt.Errorf("admit tool publication: %w", err)
 		}
-		return Tool{}, fmt.Errorf("move the tool into place: %w", err)
-	}
-	if err := sealDir(final); err != nil {
-		return Tool{}, fmt.Errorf("make the tool read-only: %w", err)
-	}
-	if err := syncDir(packageDir); err != nil {
-		return Tool{}, fmt.Errorf("save the tool folder: %w", err)
+		if fileio.WriteCommitted(err) {
+			return s.unconfirmedPublication(toolFromManifest(final, m), id, packageDir, dirName, err)
+		}
+		return s.unconfirmedPublication(Tool{}, id, packageDir, dirName, fmt.Errorf("move the tool into place: %w", err))
 	}
 	tool := toolFromManifest(final, m)
+	if err := sealDir(final); err != nil {
+		return s.unconfirmedPublication(tool, id, packageDir, dirName, fmt.Errorf("make the tool read-only: %w", err))
+	}
+	if err := syncDir(final); err != nil {
+		return s.unconfirmedPublication(tool, id, packageDir, dirName, fmt.Errorf("save the tool folder: %w", err))
+	}
+	if err := syncDir(packageDir); err != nil {
+		return s.unconfirmedPublication(tool, id, packageDir, dirName, fmt.Errorf("save the tool folder: %w", err))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.index[id] = tool
 	if err := s.appendLocked(Event{
 		Kind:     EventInstall,
 		ToolID:   id,
@@ -193,37 +257,90 @@ func (s *Store) install(ctx context.Context, r Request) (Tool, error) {
 		By:       r.InstalledBy,
 		Approval: r.Approval,
 	}); err != nil {
-		return s.withUsageLocked(tool), err
+		return s.unconfirmedPublicationLocked(s.withUsageLocked(tool), id, packageDir, dirName, err)
 	}
+	if err := finishPublication(packageDir, reservation); err != nil {
+		return s.unconfirmedPublicationLocked(s.withUsageLocked(tool), id, packageDir, dirName, err)
+	}
+	delete(s.unconfirmed, id)
+	s.index[id] = tool
 	return s.withUsageLocked(tool), nil
+}
+
+func (s *Store) unconfirmedPublication(tool Tool, id, packageDir, name string, cause error) (Tool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unconfirmedPublicationLocked(tool, id, packageDir, name, cause)
+}
+
+// Preserve both the current-process fence and, when possible, a durable
+// refusal for every error after publication was attempted.
+func (s *Store) unconfirmedPublicationLocked(tool Tool, id, packageDir, name string, cause error) (Tool, error) {
+	s.unconfirmed[id] = true
+	return tool, &PublicationUnconfirmedError{
+		ToolID: id, Err: errors.Join(cause, preservePublication(packageDir, name)),
+	}
 }
 
 // moveIntoPlace creates the package folder and renames the staged tree under
 // the store mutex, so a removal cannot delete the empty package folder between
-// the two steps.
-func (s *Store) moveIntoPlace(packageDir, tree, final string) error {
-	s.mu.Lock()
+// the two steps. The caller's short admission check runs after filesystem
+// preparation and before rename. It must not call back into the store.
+func (s *Store) moveIntoPlace(ctx context.Context, admit func(context.Context) error, packageDir, tree, final string) (bool, *publicationReservation, error) {
+	if err := s.mu.LockContext(ctx); err != nil {
+		return false, nil, err
+	}
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(packageDir, 0o700); err != nil {
-		return err
+		return false, nil, err
 	}
-	return os.Rename(tree, final)
+	if err := syncDir(s.root); err != nil {
+		return false, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, nil, err
+	}
+	name := filepath.Base(final)
+	reservation, err := beginPublication(packageDir, name)
+	if err != nil {
+		return false, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, nil, errors.Join(err, finishPublication(packageDir, reservation))
+	}
+	if admit != nil {
+		if err := admit(ctx); err != nil {
+			return false, nil, errors.Join(err, finishPublication(packageDir, reservation))
+		}
+	}
+	// Scans must not offer an artifact between rename and durable completion,
+	// even if its on-disk record is concurrently lost.
+	s.unconfirmed[filepath.Base(packageDir)+"/"+name] = true
+	return true, reservation, fileio.MoveDirectoryNoReplace(tree, final)
 }
 
 // adopt returns the tool at <root>/<pkg>/<dir> when another install already
 // put it there. A folder without a valid manifest is an error; the store does
 // not overwrite it.
-func (s *Store) adopt(pkg, dir string) (Tool, bool, error) {
+func (s *Store) adopt(ctx context.Context, pkg, dir string) (Tool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Tool{}, false, err
+	}
 	final := filepath.Join(s.root, pkg, dir)
 	if _, err := os.Lstat(final); errors.Is(err, fs.ErrNotExist) {
 		return Tool{}, false, nil
 	}
-	tool, err := s.readTool(pkg, dir)
-	if err != nil {
-		return Tool{}, false, fmt.Errorf("the folder %s exists but is not a valid tool. Inspect it and move it away, then install again", final)
+	if err := s.mu.LockContext(ctx); err != nil {
+		return Tool{}, false, err
 	}
-	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.unconfirmed[pkg+"/"+dir] {
+		return Tool{}, false, errors.New("the tool publication needs inspection before another install")
+	}
+	tool, err := s.readToolContext(ctx, pkg, dir)
+	if err != nil {
+		return Tool{}, false, fmt.Errorf("the folder %s exists but is not a valid tool. Inspect it and move it away, then install again: %w", final, err)
+	}
 	s.index[tool.ID] = tool
 	return s.withUsageLocked(tool), true, nil
 }
@@ -248,15 +365,26 @@ func writeManifest(name string, m manifest) error {
 	return file.Close()
 }
 
-func (s *Store) recordFailure(r Request, cause error) {
-	s.mu.Lock()
+func (s *Store) recordFailure(ctx context.Context, r Request, cause error) error {
+	if err := ctx.Err(); err != nil {
+		// Cancellation must not wait behind another store operation. Preserve
+		// the audit when the lock is free, and report when it cannot be taken.
+		if !s.mu.TryLock() {
+			return fmt.Errorf("record install failure: %w", err)
+		}
+	} else if err := s.mu.LockContext(ctx); err != nil {
+		return fmt.Errorf("record install failure: %w", err)
+	}
 	defer s.mu.Unlock()
-	_ = s.appendLocked(Event{
+	if err := s.appendLocked(Event{
 		Kind:     EventInstallFailed,
 		Package:  r.Package,
 		Version:  r.Version,
 		Detail:   cause.Error(),
 		By:       r.InstalledBy,
 		Approval: r.Approval,
-	})
+	}); err != nil {
+		return fmt.Errorf("record install failure: %w", err)
+	}
+	return nil
 }

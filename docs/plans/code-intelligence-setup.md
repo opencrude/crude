@@ -1,8 +1,9 @@
 # Code-Intelligence Setup
 
-> Status: IN PROGRESS - decisions recorded, implementation not started. This
-> plan owns how Crude finds, asks for, installs and accounts for the tools that
-> give a project code intelligence. It implements the acquisition stage of
+> Status: IN PROGRESS - the shared tool store and catalog download contract
+> exist. The project approval, acquisition and Settings journeys remain open.
+> This plan owns how Crude finds, asks for, installs and accounts for the tools
+> that give a project code intelligence. It implements the acquisition stage of
 > [autonomous code intelligence](autonomous-code-intelligence.md); read that
 > plan's top sections first.
 

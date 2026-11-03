@@ -11,8 +11,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // ErrPreviewStale reports that a removal preview no longer matches the store.
@@ -30,24 +32,28 @@ type RemovalPreview struct {
 }
 
 // PreviewRemove previews the removal of the given tools.
-func (s *Store) PreviewRemove(ids []string) (RemovalPreview, error) {
+func (s *Store) PreviewRemove(ctx context.Context, ids []string) (RemovalPreview, error) {
 	if len(ids) == 0 {
 		return RemovalPreview{}, errors.New("select at least one tool to remove")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.refreshLocked(); err != nil {
+	if err := s.mu.LockContext(ctx); err != nil {
 		return RemovalPreview{}, err
 	}
-	return s.previewLocked(ids)
+	defer s.mu.Unlock()
+	if err := s.refreshLocked(ctx); err != nil {
+		return RemovalPreview{}, err
+	}
+	return s.previewLocked(ctx, ids)
 }
 
 // PreviewRemoveUnused previews the removal of every tool that no workspace
 // uses. The preview is empty when every tool is in use.
-func (s *Store) PreviewRemoveUnused() (RemovalPreview, error) {
-	s.mu.Lock()
+func (s *Store) PreviewRemoveUnused(ctx context.Context) (RemovalPreview, error) {
+	if err := s.mu.LockContext(ctx); err != nil {
+		return RemovalPreview{}, err
+	}
 	defer s.mu.Unlock()
-	if err := s.refreshLocked(); err != nil {
+	if err := s.refreshLocked(ctx); err != nil {
 		return RemovalPreview{}, err
 	}
 	var ids []string
@@ -59,16 +65,19 @@ func (s *Store) PreviewRemoveUnused() (RemovalPreview, error) {
 	if len(ids) == 0 {
 		return RemovalPreview{}, nil
 	}
-	return s.previewLocked(ids)
+	return s.previewLocked(ctx, ids)
 }
 
-func (s *Store) previewLocked(ids []string) (RemovalPreview, error) {
+func (s *Store) previewLocked(ctx context.Context, ids []string) (RemovalPreview, error) {
 	unique := append([]string(nil), ids...)
 	sort.Strings(unique)
 	token := sha256.New()
 	_, _ = token.Write([]byte("toolstore-removal-v1\n"))
 	var preview RemovalPreview
 	for i, id := range unique {
+		if err := ctx.Err(); err != nil {
+			return RemovalPreview{}, err
+		}
 		if i > 0 && unique[i-1] == id {
 			continue
 		}
@@ -76,7 +85,7 @@ func (s *Store) previewLocked(ids []string) (RemovalPreview, error) {
 		if !ok {
 			return RemovalPreview{}, fmt.Errorf("no installed tool has the ID %q", id)
 		}
-		manifestData, err := readBounded(filepath.Join(tool.Dir, manifestName), maxManifestBytes)
+		manifestData, err := readBoundedContext(ctx, filepath.Join(tool.Dir, manifestName), maxManifestBytes)
 		if err != nil {
 			return RemovalPreview{}, fmt.Errorf("read the manifest of %s: %w", id, err)
 		}
@@ -86,13 +95,16 @@ func (s *Store) previewLocked(ids []string) (RemovalPreview, error) {
 			return RemovalPreview{}, err
 		}
 		_, _ = fmt.Fprintf(token, "tool %q\nmanifest %x\nusage %s\n", id, manifestDigest, usage)
-		size, err := fingerprintTree(token, tool.Dir)
+		size, err := fingerprintTree(ctx, token, tool.Dir)
 		if err != nil {
 			return RemovalPreview{}, fmt.Errorf("measure %s: %w", id, err)
 		}
 		preview.Tools = append(preview.Tools, s.withUsageLocked(tool))
 		preview.Paths = append(preview.Paths, tool.Dir)
 		preview.Bytes += size
+	}
+	if err := ctx.Err(); err != nil {
+		return RemovalPreview{}, err
 	}
 	preview.Token = hex.EncodeToString(token.Sum(nil))
 	return preview, nil
@@ -101,9 +113,12 @@ func (s *Store) previewLocked(ids []string) (RemovalPreview, error) {
 // fingerprintTree writes the path, type, permissions, size, modification time
 // and link target of every entry below dir into h. It returns the size of the
 // regular files. Links are not followed.
-func fingerprintTree(h hash.Hash, dir string) (int64, error) {
+func fingerprintTree(ctx context.Context, h hash.Hash, dir string) (int64, error) {
 	var size int64
 	err := filepath.WalkDir(dir, func(name string, entry fs.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			return err
 		}
@@ -127,6 +142,9 @@ func fingerprintTree(h hash.Hash, dir string) (int64, error) {
 		_, _ = fmt.Fprintf(h, "entry %q %s %d %d %q\n", filepath.ToSlash(rel), info.Mode(), info.Size(), info.ModTime().UnixNano(), target)
 		return nil
 	})
+	if err == nil {
+		err = ctx.Err()
+	}
 	return size, err
 }
 
@@ -135,7 +153,10 @@ func fingerprintTree(h hash.Hash, dir string) (int64, error) {
 // preview. It moves every tool folder into staging first and moves them back
 // when a move fails or ctx ends, so a removal applies to all tools or none.
 // It restores write permission only inside the previewed folders.
-func (s *Store) Remove(ctx context.Context, p RemovalPreview) error {
+func (s *Store) Remove(ctx context.Context, p RemovalPreview, actor string) error {
+	if strings.TrimSpace(actor) == "" {
+		return errors.New("removal requires an actor")
+	}
 	if len(p.Tools) == 0 || p.Token == "" {
 		return errors.New("the removal preview is empty; there is nothing to remove")
 	}
@@ -150,16 +171,21 @@ func (s *Store) Remove(ctx context.Context, p RemovalPreview) error {
 		return fmt.Errorf("the removal was cancelled: %w", err)
 	}
 	defer unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.refreshLocked(); err != nil {
+	if err := s.mu.LockContext(ctx); err != nil {
 		return err
 	}
-	current, err := s.previewLocked(ids)
+	defer s.mu.Unlock()
+	if err := s.refreshLocked(ctx); err != nil {
+		return err
+	}
+	current, err := s.previewLocked(ctx, ids)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w: %v", ErrPreviewStale, err)
 	}
-	if current.Token != p.Token || !equalStrings(current.Paths, p.Paths) {
+	if !reflect.DeepEqual(current, p) {
 		return ErrPreviewStale
 	}
 	if err := ctx.Err(); err != nil {
@@ -202,6 +228,9 @@ func (s *Store) Remove(ctx context.Context, p RemovalPreview) error {
 		moved = append(moved, move{from: tool.Dir, to: to})
 	}
 
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, rollback())
+	}
 	previousUsage := make(map[string]usageEntry)
 	for _, id := range ids {
 		if entry, ok := s.usage.Tools[id]; ok {
@@ -224,6 +253,7 @@ func (s *Store) Remove(ctx context.Context, p RemovalPreview) error {
 			ToolID:  tool.ID,
 			Package: tool.Package,
 			Version: tool.Version,
+			By:      actor,
 			Detail:  fmt.Sprintf("Removed %s (%d bytes of content).", tool.Dir, tool.Size),
 		}))
 		_ = syncDir(filepath.Dir(tool.Dir))
@@ -231,19 +261,7 @@ func (s *Store) Remove(ctx context.Context, p RemovalPreview) error {
 		_ = os.Remove(filepath.Dir(tool.Dir))
 	}
 	if err := removeTree(trash); err != nil {
-		failed = errors.Join(failed, fmt.Errorf("the tools are removed, but their files could not be deleted from %s. The next start of the tool store deletes them: %w", trash, err))
+		failed = errors.Join(failed, fmt.Errorf("the tools are removed, but their files could not be deleted from %s. Inspect that folder: %w", trash, err))
 	}
 	return failed
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

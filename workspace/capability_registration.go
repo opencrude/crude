@@ -82,6 +82,7 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	if err != nil {
 		return captypes.Settings{}, err
 	}
+	storedCapabilities := append(json.RawMessage(nil), overrides.Capabilities...)
 	current := ttypes.MergeAppWorkspace(defaults, overrides)
 	current.Capabilities = captypes.Normalize(current.Capabilities)
 	updatedCapabilities, err := captypes.ApplyRegistration(current.Capabilities, change, current.Capabilities)
@@ -94,7 +95,7 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	if err != nil {
 		return captypes.Settings{}, err
 	}
-	encoded, err := json.Marshal(overrides)
+	encoded, err := ttypes.MarshalWorkspaceOverridesPreservingToolDecisions(overrides, storedCapabilities)
 	if err != nil {
 		return captypes.Settings{}, fmt.Errorf("encode capability registration settings: %w", err)
 	}

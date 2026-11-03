@@ -51,7 +51,7 @@ func TestOpenFailsClosedOnDamagedUsage(t *testing.T) {
 
 func TestHistoryPagesNewestFirst(t *testing.T) {
 	store := newStore(t)
-	page, total, err := store.History(0, 10)
+	page, total, err := store.History(t.Context(), 0, 10)
 	if err != nil || total != 0 || len(page) != 0 {
 		t.Fatalf("empty history = %v, %d, %v", page, total, err)
 	}
@@ -63,24 +63,24 @@ func TestHistoryPagesNewestFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, total, err = store.History(0, 10)
+	page, total, err = store.History(t.Context(), 0, 10)
 	if err != nil || total != 25 || len(page) != 10 {
 		t.Fatalf("first page = %d events, total %d, %v", len(page), total, err)
 	}
 	if page[0].ToolID != "t/24" || page[9].ToolID != "t/15" {
 		t.Fatalf("first page order = %s..%s", page[0].ToolID, page[9].ToolID)
 	}
-	page, _, err = store.History(20, 10)
+	page, _, err = store.History(t.Context(), 20, 10)
 	if err != nil || len(page) != 5 || page[4].ToolID != "t/00" {
 		t.Fatalf("last page = %v, %v", page, err)
 	}
-	_, _, err = store.History(25, 10)
+	_, _, err = store.History(t.Context(), 25, 10)
 	requireErrorContains(t, err, "use an offset from 0 to 24")
-	_, _, err = store.History(-1, 10)
+	_, _, err = store.History(t.Context(), -1, 10)
 	requireErrorContains(t, err, "out of range")
-	_, _, err = store.History(0, 0)
+	_, _, err = store.History(t.Context(), 0, 0)
 	requireErrorContains(t, err, "use 1 to 1000")
-	_, _, err = store.History(0, MaxHistoryPage+1)
+	_, _, err = store.History(t.Context(), 0, MaxHistoryPage+1)
 	requireErrorContains(t, err, "use 1 to 1000")
 }
 
@@ -101,7 +101,7 @@ func TestHistorySkipsTornFinalLineAndSealsIt(t *testing.T) {
 	}
 	_ = handle.Close()
 
-	page, total, err := store.History(0, 10)
+	page, total, err := store.History(t.Context(), 0, 10)
 	if err != nil || total != 1 || page[0].ToolID != "a/1" {
 		t.Fatalf("history with a torn line = %v, %d, %v", page, total, err)
 	}
@@ -111,7 +111,7 @@ func TestHistorySkipsTornFinalLineAndSealsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.mu.Unlock()
-	page, total, err = store.History(0, 10)
+	page, total, err = store.History(t.Context(), 0, 10)
 	if err != nil || total != 2 || page[0].Kind != EventRemove {
 		t.Fatalf("history after a sealed torn line = %v, %d, %v", page, total, err)
 	}
@@ -129,7 +129,7 @@ func TestHistorySkipsTornFinalLineAndSealsIt(t *testing.T) {
 	if data[len(data)-1] != '\n' {
 		t.Fatal("Open did not seal the torn final line")
 	}
-	if _, total, _ := store.History(0, 10); total != 2 {
+	if _, total, _ := store.History(t.Context(), 0, 10); total != 2 {
 		t.Fatalf("total after reopen = %d, want 2", total)
 	}
 }

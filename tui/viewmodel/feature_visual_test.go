@@ -384,14 +384,25 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 				return fmt.Errorf("Performance pointer did not select %s (current=%s focus=%s):\n%s", sections[phase-1], v.perf.screen.Section(), v.rootHost.Focused(), ansi.Strip(v.View().RenderContent()))
 			}
 			if phase == 3 {
-				markers := []string{"Shell memory"}
-				if v.width >= 160 {
-					markers = append(markers, "Core memory")
+				report := v.perf.screen.Report()
+				merged := strings.Contains(report, "Crude memory")
+				split := strings.Contains(report, "Shell memory") && strings.Contains(report, "Core memory")
+				if merged == split || (merged && (strings.Contains(report, "Shell memory") || strings.Contains(report, "Core memory"))) {
+					return fmt.Errorf("resource report mixes or lacks owners:\n%s", report)
+				}
+				markers := []string{"Crude memory"}
+				if split {
+					markers = []string{"Shell memory"}
+					if v.width >= 160 {
+						markers = append(markers, "Core memory")
+					}
 				}
 				if err := featureVisualPaint(v, markers...); err != nil {
 					return err
 				}
-				if paint := ansi.Strip(v.View().RenderContent()); strings.Contains(paint, "Crude memory") {
+				paint := ansi.Strip(v.View().RenderContent())
+				if merged && (strings.Contains(paint, "Shell memory") || strings.Contains(paint, "Core memory")) ||
+					split && strings.Contains(paint, "Crude memory") {
 					return fmt.Errorf("%dx%d frame mixes resource owners:\n%s", v.width, v.height, paint)
 				}
 				return nil

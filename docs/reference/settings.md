@@ -27,6 +27,12 @@ turning something off at the application level reaches the workspace even
 years later.
 Analysis Trust instead resolves to **Ask when the folder opens** when absent or invalid.
 Prediction consent resolves to **Off**, with no invented spending allowance.
+Project tool decisions are workspace-only raw authority; generic preference
+edits and capability snapshots cannot grant or reset them. Their dedicated
+workspace setup transaction is separate from ordinary settings.
+An application config may contain an inert value for this field; it is never
+published as application or inherited workspace authority. Unrelated application
+saves retain that data without accepting a new or changed value.
 
 On a project switch, the target workspace database is opened before the old
 shell attachment is detached; peer work in that project is retained. Its effective theme is then applied before target-owned

@@ -23,16 +23,19 @@ func unsealFile(name string) error {
 
 func unsealDir(name string) error { return os.Chmod(name, 0o700) }
 
-// syncDir makes a rename inside dir durable.
-func syncDir(name string) error {
-	dir, err := os.Open(name)
+// syncFile and syncDir persist the named inode; for directories this also
+// persists its child entries.
+func syncFile(name string) error {
+	file, err := os.Open(name)
 	if err != nil {
 		return err
 	}
-	syncErr := dir.Sync()
-	closeErr := dir.Close()
+	syncErr := file.Sync()
+	closeErr := file.Close()
 	if syncErr != nil {
 		return syncErr
 	}
 	return closeErr
 }
+
+func syncDir(name string) error { return syncFile(name) }

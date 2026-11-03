@@ -83,6 +83,8 @@ type Request struct {
 	// Bin is the slash-separated executable path inside the extracted tree.
 	// For "gz" and "raw" it is the file name that the store writes.
 	Bin string
+	// Command is the catalog launch command bound to this artifact.
+	Command string
 	// ExpectedSHA256 is the artifact digest in hex. When it is empty, the
 	// store records the digest of the first download.
 	ExpectedSHA256 string
@@ -96,6 +98,13 @@ type Request struct {
 	// "automatic". Approval references the caller's approval record. Both are
 	// required.
 	InstalledBy, Approval string
+	// AdmitPublication is an optional caller-owned fence for a new artifact.
+	// It runs once, after staging and immediately before the rename, without
+	// performing I/O. The caller checks ctx while holding its authority gate.
+	// A successful return admits that publication even if the caller's
+	// authority changes afterward. It does not authorize tool use.
+	// Existing artifacts are returned without calling this function.
+	AdmitPublication func(context.Context) error
 }
 
 // Tool is one installed tool. The immutable fields come from the manifest;
@@ -104,6 +113,7 @@ type Tool struct {
 	ID, Package, Version string
 	// Dir is the tool directory. Executable is an absolute path inside it.
 	Dir, Executable string
+	Bin, Command    string
 	// SHA256 is the digest of the downloaded artifact.
 	SHA256 string
 	// Size is the number of extracted content bytes.
@@ -125,9 +135,11 @@ type Store struct {
 	root string
 
 	// mu guards index, usage, usage.json and history.jsonl.
-	mu    sync.Mutex
+	mu    storeMutex
 	index map[string]Tool
 	usage usageFile
+	// Retain a same-process refusal if a marker's removal could not be synced.
+	unconfirmed map[string]bool
 
 	keysMu sync.Mutex
 	keys   map[string]*keyLock
@@ -136,6 +148,36 @@ type Store struct {
 	allowLoopbackHTTP bool
 	stallTimeout      time.Duration
 	now               func() time.Time
+	syncHistoryDir    func(string) error
+}
+
+// storeMutex supports cancellation without leaving a waiter goroutine behind.
+type storeMutex struct{ ch chan struct{} }
+
+func (m *storeMutex) Lock()   { m.ch <- struct{}{} }
+func (m *storeMutex) Unlock() { <-m.ch }
+func (m *storeMutex) TryLock() bool {
+	select {
+	case m.ch <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+func (m *storeMutex) LockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case m.ch <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			m.Unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type keyLock struct {
@@ -150,6 +192,7 @@ type manifest struct {
 	SHA256       string    `json:"sha256"`
 	DigestOrigin string    `json:"digest_origin"`
 	Executable   string    `json:"executable"`
+	Command      string    `json:"command,omitempty"`
 	Size         int64     `json:"size"`
 	Files        int       `json:"files"`
 	Archive      string    `json:"archive"`
@@ -162,8 +205,8 @@ type manifest struct {
 }
 
 // Open opens or creates a store at root. root must be an absolute path that
-// the caller derives from CRUDE_HOME. Open removes stale staging directories
-// left by an interrupted install or removal.
+// the caller derives from CRUDE_HOME. Open removes stale installation scratch
+// but retains interrupted removals for inspection.
 func Open(root string) (*Store, error) {
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("tool store folder %q is not an absolute path", root)
@@ -173,10 +216,13 @@ func Open(root string) (*Store, error) {
 		return nil, fmt.Errorf("create tool store folder: %w", err)
 	}
 	s := &Store{
-		root:         root,
-		keys:         make(map[string]*keyLock),
-		stallTimeout: defaultStallTimeout,
-		now:          time.Now,
+		root:           root,
+		mu:             storeMutex{ch: make(chan struct{}, 1)},
+		unconfirmed:    make(map[string]bool),
+		keys:           make(map[string]*keyLock),
+		stallTimeout:   defaultStallTimeout,
+		now:            time.Now,
+		syncHistoryDir: syncDir,
 	}
 	if err := s.removeStaleStaging(); err != nil {
 		return nil, err
@@ -189,7 +235,7 @@ func Open(root string) (*Store, error) {
 	if err := sealHistoryTail(filepath.Join(root, historyName)); err != nil {
 		return nil, err
 	}
-	index, _, err := s.scan()
+	index, _, err := s.scan(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +253,11 @@ func (s *Store) removeStaleStaging() error {
 		return fmt.Errorf("read tool store staging folder: %w", err)
 	}
 	for _, entry := range entries {
+		// A removal staging folder can contain installed tools whose move
+		// did not settle. Never delete those tools during startup.
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") {
+			continue
+		}
 		if err := removeTree(filepath.Join(staging, entry.Name())); err != nil {
 			return fmt.Errorf("remove stale staging data: %w", err)
 		}
@@ -245,6 +296,11 @@ func (s *Store) matchesLocked(pkg, version string) []Tool {
 		if tool.Package != pkg || tool.Version != version {
 			continue
 		}
+		pending, err := publicationPending(filepath.Dir(tool.Dir), filepath.Base(tool.Dir))
+		if err != nil || pending || s.unconfirmed[id] {
+			delete(s.index, id)
+			continue
+		}
 		if _, err := os.Lstat(filepath.Join(tool.Dir, manifestName)); err != nil {
 			delete(s.index, id)
 			continue
@@ -257,29 +313,39 @@ func (s *Store) matchesLocked(pkg, version string) []Tool {
 
 // List reads the store from disk and returns every installed tool, sorted by
 // package and version, with the sum of their content sizes.
-func (s *Store) List() ([]Tool, int64, error) {
-	s.mu.Lock()
+func (s *Store) List(ctx context.Context) ([]Tool, int64, error) {
+	if err := s.mu.LockContext(ctx); err != nil {
+		return nil, 0, err
+	}
 	defer s.mu.Unlock()
-	if err := s.refreshLocked(); err != nil {
+	if err := s.refreshLocked(ctx); err != nil {
 		return nil, 0, err
 	}
 	tools := make([]Tool, 0, len(s.index))
 	var total int64
 	for _, tool := range s.index {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		tools = append(tools, s.withUsageLocked(tool))
 		total += tool.Size
 	}
 	sortTools(tools)
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	return tools, total, nil
 }
 
 // Unrecognized lists entries under the store root that are not tools or store
 // files, for example a folder without a valid manifest. The store never
 // removes them.
-func (s *Store) Unrecognized() ([]string, error) {
-	s.mu.Lock()
+func (s *Store) Unrecognized(ctx context.Context) ([]string, error) {
+	if err := s.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer s.mu.Unlock()
-	_, unknown, err := s.scan()
+	_, unknown, err := s.scan(ctx)
 	return unknown, err
 }
 
@@ -293,6 +359,10 @@ func (s *Store) MarkUsed(id, workspace string) error {
 	defer s.mu.Unlock()
 	tool, ok := s.index[id]
 	if ok {
+		pending, err := publicationPending(filepath.Dir(tool.Dir), filepath.Base(tool.Dir))
+		if err != nil || pending || s.unconfirmed[id] {
+			return fmt.Errorf("the tool publication needs inspection: %s", id)
+		}
 		if _, err := os.Lstat(filepath.Join(tool.Dir, manifestName)); err != nil {
 			delete(s.index, id)
 			ok = false
@@ -331,8 +401,8 @@ func (s *Store) withUsageLocked(tool Tool) Tool {
 	return tool
 }
 
-func (s *Store) refreshLocked() error {
-	index, _, err := s.scan()
+func (s *Store) refreshLocked(ctx context.Context) error {
+	index, _, err := s.scan(ctx)
 	if err != nil {
 		return err
 	}
@@ -342,7 +412,10 @@ func (s *Store) refreshLocked() error {
 
 // scan reads every tool manifest under the root. It returns the valid tools
 // and the root-relative paths it does not recognize.
-func (s *Store) scan() (map[string]Tool, []string, error) {
+func (s *Store) scan(ctx context.Context) (map[string]Tool, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	index := make(map[string]Tool)
 	var unknown []string
 	entries, err := os.ReadDir(s.root)
@@ -350,9 +423,12 @@ func (s *Store) scan() (map[string]Tool, []string, error) {
 		return nil, nil, fmt.Errorf("read tool store folder: %w", err)
 	}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		name := entry.Name()
 		switch name {
-		case stagingName, usageName, historyName:
+		case stagingName, usageName, historyName, publicationPendingDir:
 			continue
 		}
 		if !entry.IsDir() || validComponent(name) != nil {
@@ -364,27 +440,74 @@ func (s *Store) scan() (map[string]Tool, []string, error) {
 			return nil, nil, fmt.Errorf("read tool store folder: %w", err)
 		}
 		for _, version := range versions {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
 			rel := name + "/" + version.Name()
+			if s.unconfirmed[rel] {
+				unknown = append(unknown, rel)
+				continue
+			}
 			if !version.IsDir() {
 				unknown = append(unknown, rel)
 				continue
 			}
-			tool, err := s.readTool(name, version.Name())
+			tool, err := s.readToolContext(ctx, name, version.Name())
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil, nil, ctx.Err()
+				}
 				unknown = append(unknown, rel)
 				continue
 			}
 			index[tool.ID] = tool
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	pending, err := pendingPublications(ctx, s.root)
+	if err != nil {
+		return nil, nil, err
+	}
+	unknown = append(unknown, pending...)
+	stagingEntries, err := os.ReadDir(filepath.Join(s.root, stagingName))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read tool store staging folder: %w", err)
+	}
+	for _, entry := range stagingEntries {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") {
+			unknown = append(unknown, stagingName+"/"+entry.Name())
+		}
+	}
+	for id := range s.unconfirmed {
+		unknown = append(unknown, id)
+	}
 	sort.Strings(unknown)
+	if len(unknown) > 1 {
+		n := 1
+		for _, name := range unknown[1:] {
+			if name != unknown[n-1] {
+				unknown[n] = name
+				n++
+			}
+		}
+		unknown = unknown[:n]
+	}
 	return index, unknown, nil
 }
 
-// readTool reads and validates the manifest of <root>/<pkg>/<dir>.
-func (s *Store) readTool(pkg, dir string) (Tool, error) {
+func (s *Store) readToolContext(ctx context.Context, pkg, dir string) (Tool, error) {
 	toolDir := filepath.Join(s.root, pkg, dir)
-	data, err := readBounded(filepath.Join(toolDir, manifestName), maxManifestBytes)
+	if pending, err := publicationPending(filepath.Dir(toolDir), dir); err != nil {
+		return Tool{}, err
+	} else if pending {
+		return Tool{}, errors.New("the tool publication needs inspection")
+	}
+	data, err := readBoundedContext(ctx, filepath.Join(toolDir, manifestName), maxManifestBytes)
 	if err != nil {
 		return Tool{}, err
 	}
@@ -429,6 +552,8 @@ func toolFromManifest(toolDir string, m manifest) Tool {
 		Version:      m.Version,
 		Dir:          toolDir,
 		Executable:   filepath.Join(toolDir, contentDir, filepath.FromSlash(m.Executable)),
+		Bin:          m.Executable,
+		Command:      m.Command,
 		SHA256:       m.SHA256,
 		Size:         m.Size,
 		Files:        m.Files,
@@ -524,12 +649,31 @@ func cleanEntryName(name string) (string, error) {
 }
 
 func readBounded(name string, limit int64) ([]byte, error) {
+	return readBoundedContext(context.Background(), name, limit)
+}
+
+type boundedContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r boundedContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func readBoundedContext(ctx context.Context, name string, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	file, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	data, err := io.ReadAll(io.LimitReader(boundedContextReader{ctx, file}, limit+1))
 	if err != nil {
 		return nil, err
 	}

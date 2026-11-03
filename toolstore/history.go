@@ -2,6 +2,7 @@ package toolstore
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,67 +36,89 @@ type Event struct {
 // History returns a page of events, newest first, and the total number of
 // events. offset must be in the range of existing events; offset 0 is valid
 // for an empty history.
-func (s *Store) History(offset, limit int) ([]Event, int, error) {
+func (s *Store) History(ctx context.Context, offset, limit int) ([]Event, int, error) {
 	if limit < 1 || limit > MaxHistoryPage {
 		return nil, 0, fmt.Errorf("history page size %d is not permitted; use 1 to %d", limit, MaxHistoryPage)
 	}
-	s.mu.Lock()
-	events, err := readHistory(filepath.Join(s.root, historyName))
-	s.mu.Unlock()
+	if err := s.mu.LockContext(ctx); err != nil {
+		return nil, 0, err
+	}
+	defer s.mu.Unlock()
+	name := filepath.Join(s.root, historyName)
+	total, err := scanHistory(ctx, name, nil)
 	if err != nil {
 		return nil, 0, err
 	}
-	total := len(events)
 	if offset < 0 || offset > 0 && offset >= total {
 		if total == 0 {
 			return nil, 0, fmt.Errorf("history offset %d is out of range; the history is empty, so use offset 0", offset)
 		}
 		return nil, total, fmt.Errorf("history offset %d is out of range; use an offset from 0 to %d", offset, total-1)
 	}
-	page := make([]Event, 0, min(limit, total-offset))
-	for i := total - 1 - offset; i >= 0 && len(page) < limit; i-- {
-		page = append(page, events[i])
+	end := total - offset
+	start := max(0, end-limit)
+	page := make([]Event, 0, end-start)
+	_, err = scanHistory(ctx, name, func(i int, event Event) {
+		if i >= start && i < end {
+			page = append(page, event)
+		}
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	for i, j := 0, len(page)-1; i < j; i, j = i+1, j-1 {
+		page[i], page[j] = page[j], page[i]
 	}
 	return page, total, nil
 }
 
-// readHistory reads every complete event. A line that does not decode is a
-// torn write: the final line of an interrupted append, or such a line that a
-// later append sealed with a newline. It is skipped.
-func readHistory(name string) ([]Event, error) {
+// scanHistory skips invalid and oversized lines, keeping only the caller's page.
+func scanHistory(ctx context.Context, name string, visit func(int, Event)) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	file, err := os.Open(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return 0, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read tool history: %w", err)
+		return 0, fmt.Errorf("read tool history: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 	reader := bufio.NewReader(file)
-	var events []Event
+	total := 0
 	for {
-		line, err := readLine(reader)
+		line, err := readLine(ctx, reader)
 		if len(line) > 0 {
 			var event Event
 			if json.Unmarshal(line, &event) == nil && event.Kind != "" {
-				events = append(events, event)
+				if visit != nil {
+					visit(total, event)
+				}
+				total++
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			return events, nil
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			return total, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read tool history: %w", err)
+			return 0, fmt.Errorf("read tool history: %w", err)
 		}
 	}
 }
 
 // readLine returns one line without its newline. A line longer than
 // maxHistoryLine is returned empty so that the caller skips it.
-func readLine(reader *bufio.Reader) ([]byte, error) {
+func readLine(ctx context.Context, reader *bufio.Reader) ([]byte, error) {
 	var line []byte
 	tooLong := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		chunk, err := reader.ReadSlice('\n')
 		if !tooLong {
 			if len(line)+len(chunk) > maxHistoryLine {
@@ -115,9 +138,9 @@ func readLine(reader *bufio.Reader) ([]byte, error) {
 	}
 }
 
-// appendLocked appends one event and syncs the file. A torn final line from
-// an interrupted append is sealed with a newline first, so the new event
-// starts on its own line.
+// appendLocked appends one event, syncs the file and its parent directory.
+// A torn final line from an interrupted append is sealed with a newline first,
+// so the new event starts on its own line.
 func (s *Store) appendLocked(event Event) error {
 	if event.Time.IsZero() {
 		event.Time = s.now().UTC()
@@ -144,6 +167,9 @@ func (s *Store) appendLocked(event Event) error {
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("record tool history: %w", err)
+	}
+	if err := s.syncHistoryDir(s.root); err != nil {
+		return fmt.Errorf("record tool history directory: %w", err)
 	}
 	return nil
 }

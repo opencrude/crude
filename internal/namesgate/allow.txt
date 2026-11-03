@@ -59,3 +59,15 @@ workspace/editor_prediction_service.go	.env	Privacy rule: files never sent for A
 workspace/editor_prediction_service.go	.kube	Privacy rule: folders never sent for AI predictions.
 workspace/editor_prediction_service.go	.pem	Privacy rule: files never sent for AI predictions.
 syntax/registry.go	.scm	File suffix of the embedded highlight query files.
+fileio/interactive.go	powershell	Interactive shell invocation, not language intelligence.
+fileio/interactive.go	pwsh	Interactive shell invocation, not language intelligence.
+toolstore/store.go	Package	Generic package field in sorting, not a language name.
+toolstore/install.go	Package	Generic package identity field, not a language name.
+workspace/lsp_assembly.go	Package	Generic package identity field, not a language name.
+tui/screens/launcher/launcher.go	bb	Local path comparison variable, not a language name.
+workspace/path_browser.go	build	Generic directory browsing exclusion, not language detection.
+syntax/registry.go	Go	Static linked grammar binding and selection, not project language detection.
+syntax/registry.go	Python	Static linked grammar binding and selection, not project language detection.
+syntax/registry.go	JavaScript	Static linked grammar binding and selection, not project language detection.
+syntax/registry.go	TypeScript	Static linked grammar binding and selection, not project language detection.
+syntax/registry.go	TSX	Static linked grammar binding and selection, not project language detection.

@@ -15,6 +15,7 @@ type Kind string
 const (
 	KindSkill Kind = "skill"
 	KindMCP   Kind = "mcp"
+	KindTool  Kind = "tool"
 )
 
 type Scope string
@@ -39,6 +40,9 @@ type Settings struct {
 	Connections map[string]ConnectionConfig `json:"connections,omitempty"`
 	Sources     map[string]SourceConfig     `json:"sources,omitempty"`
 	Acquisition AcquisitionSettings         `json:"acquisition,omitempty"`
+	// ProjectToolDecisions is workspace-only authority owned by the dedicated
+	// project setup transaction, not by generic capability settings.
+	ProjectToolDecisions json.RawMessage `json:"project_tool_decisions,omitempty"`
 }
 
 type SkillConfig struct {
@@ -372,6 +376,8 @@ func (request *ApprovalRequired) CapabilityApproval() (string, string) {
 type AcquisitionApprovedKey struct{}
 
 func Clone(settings Settings) Settings {
+	raw := slices.Clone(settings.ProjectToolDecisions)
+	settings.ProjectToolDecisions = nil
 	encoded, err := json.Marshal(settings)
 	if err != nil {
 		return Settings{}
@@ -380,6 +386,7 @@ func Clone(settings Settings) Settings {
 	if json.Unmarshal(encoded, &cloned) != nil {
 		return Settings{}
 	}
+	cloned.ProjectToolDecisions = raw
 	if cloned.Skills == nil {
 		cloned.Skills = make(map[string]SkillConfig)
 	}
@@ -419,6 +426,9 @@ func (change RegistrationChange) RegistrationScope() Scope {
 // registrations and unrelated preferences are preserved. The workspace overlay
 // store and the application config owner both call this.
 func ApplyRegistration(current Settings, change RegistrationChange, policy Settings) (Settings, error) {
+	if change.Kind != KindSkill && change.Kind != KindMCP {
+		return Settings{}, fmt.Errorf("unsupported capability registration kind %q", change.Kind)
+	}
 	scope := change.RegistrationScope()
 	if scope != ScopeApplication && scope != ScopeWorkspace {
 		return Settings{}, fmt.Errorf("capability registration must target application or workspace scope, not %q", scope)
@@ -464,9 +474,10 @@ func ApplyRegistration(current Settings, change RegistrationChange, policy Setti
 // and unrelated preference is preserved.
 func WithRegistration(settings Settings, kind Kind, id string, skill SkillConfig, connection ConnectionConfig) Settings {
 	updated := Clone(settings)
-	if kind == KindSkill {
+	switch kind {
+	case KindSkill:
 		updated.Skills[id] = skill
-	} else {
+	case KindMCP:
 		updated.Connections[id] = connection
 	}
 	return updated

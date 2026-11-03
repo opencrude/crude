@@ -10,39 +10,101 @@ import (
 	"time"
 
 	"crude/coreprotocol"
-
 	"github.com/fsnotify/fsnotify"
 )
 
-// coreFileWatch is retained once per workspace, independently of shell count.
-// Startup traversal and directory admission run on its worker, not the actor.
-type coreFileWatch struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	ready  chan struct{}
-	once   sync.Once
+const coreWatchQueueSize = 1024
+
+type watchNotification struct {
+	path string
+	kind int
 }
 
-func startCoreFileWatch(root string, publish func(coreprotocol.FileChange)) (*coreFileWatch, error) {
+// coreFileWatch is retained once per workspace, independently of shell count.
+// Its ordered notification queue is independent of actor and shell delivery.
+type coreFileWatch struct {
+	cancel               context.CancelFunc
+	done, ready, lspDone chan struct{}
+	once                 sync.Once
+}
+
+// notify must honor cancellation; reliable must synchronously mark coverage stale
+// and request producer recovery. true means observation is restored; it does
+// not mean producer results are fresh.
+func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), notify func(context.Context, string, int), reliable func(bool)) (*coreFileWatch, error) {
+	// Fence existing and newly admitted project producers before starting a
+	// worker or attempting directory admission.
+	if reliable != nil {
+		reliable(false)
+	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &coreFileWatch{cancel: cancel, done: make(chan struct{}), ready: make(chan struct{})}
+	w := &coreFileWatch{cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), lspDone: make(chan struct{})}
+	type queuedNotification struct {
+		watchNotification
+		ctx context.Context
+	}
+	queue := make(chan queuedNotification, coreWatchQueueSize)
+	go func() {
+		defer close(w.lspDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case item := <-queue:
+				if ctx.Err() != nil {
+					return
+				}
+				if notify != nil {
+					notify(item.ctx, item.path, item.kind)
+				}
+			}
+		}
+	}()
 	root = filepath.Clean(root)
 	go func() {
 		defer close(w.done)
 		defer func() { _ = watcher.Close() }()
-		emit := func(change coreprotocol.FileChange) {
+		generation, cancelGeneration := context.WithCancel(ctx)
+		defer func() { cancelGeneration() }()
+		admissionFailed := false
+		var rootIdentity os.FileInfo
+		gap := func() {
+			// Cancellation is visible under the manager lock before a new
+			// producer can be admitted, including callbacks already dequeued.
+			cancelGeneration()
+			if reliable != nil {
+				reliable(false)
+			}
+			generation, cancelGeneration = context.WithCancel(ctx)
+			// The producer must reindex instead of consuming a partial queue.
+			for len(queue) > 0 {
+				select {
+				case <-queue:
+				default:
+				}
+			}
 			if ctx.Err() == nil && publish != nil {
-				publish(change)
+				publish(coreprotocol.FileChange{Resync: true})
 			}
 		}
-		add := func(path string) {
+		recoverObservation := func() {
+			current, err := os.Lstat(root)
+			if err != nil || rootIdentity == nil || !current.IsDir() || !os.SameFile(rootIdentity, current) {
+				admissionFailed = true
+			}
+			if !admissionFailed && ctx.Err() == nil && reliable != nil {
+				reliable(true)
+			}
+		}
+		dirs := make(map[string]bool)
+		add := func(path string) bool {
 			info, err := os.Lstat(path)
 			if err != nil || !info.IsDir() {
-				return
+				return false
 			}
 			err = filepath.WalkDir(path, func(path string, entry fs.DirEntry, err error) error {
 				if ctx.Err() != nil {
@@ -57,15 +119,27 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange)) (*co
 				if skipCoreWatchPath(root, path) {
 					return filepath.SkipDir
 				}
-				return watcher.Add(path)
+				if err := watcher.Add(path); err != nil {
+					return err
+				}
+				dirs[path] = true
+				return nil
 			})
-			if err != nil && ctx.Err() == nil {
-				emit(coreprotocol.FileChange{Resync: true})
-			}
+			return err == nil
 		}
-		watchStart := time.Now()
-		add(root)
-		fileWatchStart.Since(watchStart)
+		start := time.Now()
+		// The initial traversal cannot observe files in directories not yet
+		// admitted. Fence producers until the entire traversal completes.
+		if ctx.Err() == nil && publish != nil {
+			publish(coreprotocol.FileChange{Resync: true})
+		}
+		rootIdentity, _ = os.Lstat(root)
+		if !add(root) && ctx.Err() == nil {
+			admissionFailed = true
+			gap()
+		}
+		recoverObservation()
+		fileWatchStart.Since(start)
 		close(w.ready)
 		for {
 			select {
@@ -73,22 +147,86 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange)) (*co
 				return
 			case event, ok := <-watcher.Events:
 				if !ok {
+					if ctx.Err() == nil {
+						gap()
+					}
 					return
 				}
-				if skipCoreWatchPath(root, event.Name) {
+				path := filepath.Clean(event.Name)
+				if skipCoreWatchPath(root, path) {
 					continue
 				}
 				fileEvents.Inc()
+				rel, _ := filepath.Rel(root, path)
+				git := rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator))
 				if event.Op&fsnotify.Create != 0 {
-					add(event.Name)
+					info, err := os.Lstat(path)
+					if err == nil && info.IsDir() {
+						if !git {
+							gap()
+						}
+						if !add(path) && ctx.Err() == nil {
+							admissionFailed = true
+							gap()
+						}
+						if !git {
+							recoverObservation()
+						}
+					} else if err != nil && !os.IsNotExist(err) {
+						admissionFailed = true
+						gap()
+					}
 				}
-				rel, _ := filepath.Rel(root, event.Name)
-				emit(coreprotocol.FileChange{Path: filepath.Clean(event.Name), Removed: event.Op&(fsnotify.Remove|fsnotify.Rename) != 0, Git: rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator))})
-			case _, ok := <-watcher.Errors:
+				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && dirs[path] {
+					if !git {
+						gap()
+					}
+					// We do not observe the root's parent, so a replacement
+					// cannot be admitted reliably. Stay fenced until restart.
+					if path == root {
+						admissionFailed = true
+					}
+					for dir := range dirs {
+						if dir == path || strings.HasPrefix(dir, path+string(filepath.Separator)) {
+							delete(dirs, dir)
+						}
+					}
+					if !git {
+						recoverObservation()
+					}
+				}
+				if !git && notify != nil {
+					kind := 2
+					if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+						kind = 3
+					} else if event.Op&fsnotify.Create != 0 {
+						kind = 1
+					}
+					select {
+					case queue <- queuedNotification{watchNotification{path, kind}, generation}:
+					default:
+						gap()
+						recoverObservation()
+					}
+				}
+				if ctx.Err() == nil && publish != nil {
+					publish(coreprotocol.FileChange{Path: path, Removed: event.Op&(fsnotify.Remove|fsnotify.Rename) != 0, Git: git})
+				}
+			case watchErr, ok := <-watcher.Errors:
+				if ctx.Err() == nil {
+					gap()
+					if ok && watchErr == fsnotify.ErrEventOverflow {
+						if !add(root) {
+							admissionFailed = true
+						}
+						recoverObservation()
+					} else {
+						admissionFailed = true
+					}
+				}
 				if !ok {
 					return
 				}
-				emit(coreprotocol.FileChange{Resync: true})
 			}
 		}
 	}()
@@ -109,10 +247,9 @@ func skipCoreWatchPath(root, path string) bool {
 	return false
 }
 
-// Close cancels traversal and joins the worker. publish must use the actor's
-// stop-aware ingress so shutdown cannot wait on a stopped actor.
+// Close cancels traversal and joins both workers. Callbacks must cooperate.
 func (w *coreFileWatch) Close() {
 	if w != nil {
-		w.once.Do(func() { w.cancel(); <-w.done })
+		w.once.Do(func() { w.cancel(); <-w.done; <-w.lspDone })
 	}
 }

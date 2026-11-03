@@ -204,7 +204,7 @@ func request(url, archive, bin string) Request {
 
 func events(t *testing.T, store *Store) []Event {
 	t.Helper()
-	page, _, err := store.History(0, MaxHistoryPage)
+	page, _, err := store.History(t.Context(), 0, MaxHistoryPage)
 	if err != nil {
 		t.Fatal(err)
 	}

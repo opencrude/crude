@@ -110,7 +110,7 @@ func SettingsAuthority(path string) bool {
 	}
 	for _, part := range parts {
 		switch strings.ToLower(part) {
-		case "analysis", "prediction", "prediction_root_identity", "prediction_connection_identity", "prediction_grant_id", "safety", "network", "accounts", "capabilities", "multi_agent", "apikey", "api_key", "providerapikey", "provider_api_key", "environment", "allowedtools", "deniedtools", "allowed_tools", "denied_tools", "skill_modes", "policy", "file_ownership", "category":
+		case "analysis", "prediction", "project_tool_decisions", "prediction_root_identity", "prediction_connection_identity", "prediction_grant_id", "safety", "network", "accounts", "capabilities", "multi_agent", "apikey", "api_key", "providerapikey", "provider_api_key", "environment", "allowedtools", "deniedtools", "allowed_tools", "denied_tools", "skill_modes", "policy", "file_ownership", "category":
 			return true
 		}
 	}

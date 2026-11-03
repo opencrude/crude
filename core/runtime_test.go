@@ -208,6 +208,12 @@ func TestDomainPublicationNeverEntersPrivateSessionInbox(t *testing.T) {
 	a := c.attached[ws]
 	c.mu.Unlock()
 	if err := a.inspect(t.Context(), func() {
+		// Watcher startup may already have queued a resync. Publish that
+		// independent fact before measuring this burst.
+		if err := a.flushTopic(); err != nil {
+			t.Error(err)
+			return
+		}
 		before := a.revision
 		for i := range 1000 {
 			a.broadcast(coreprotocol.Change{Files: []coreprotocol.FileChange{{Path: fmt.Sprintf("file-%d", i)}}})
@@ -220,6 +226,23 @@ func TestDomainPublicationNeverEntersPrivateSessionInbox(t *testing.T) {
 		}
 		if err := a.flushTopic(); err != nil {
 			t.Error(err)
+			return
+		}
+		entry, _, _ := a.topic.hub.next(a.topic.hub.sequence() - 1)
+		var published coreprotocol.WorkspaceUpdate
+		if err := coreprotocol.Decode(entry.body, &published); err != nil {
+			t.Error(err)
+			return
+		}
+		if len(published.Files) != 1000 {
+			t.Errorf("published %d file facts, want 1000", len(published.Files))
+			return
+		}
+		for i, file := range published.Files {
+			if file.Path != fmt.Sprintf("file-%d", i) {
+				t.Errorf("published file %d out of order: %q", i, file.Path)
+				return
+			}
 		}
 	}); err != nil {
 		t.Fatal(err)

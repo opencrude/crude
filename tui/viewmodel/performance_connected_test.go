@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/metrics"
+	"crude/perfdata"
 	"crude/shellport"
 	"crude/shellport/remote"
 	"crude/tui/rendering"
@@ -135,8 +137,57 @@ func TestConnectedPerformanceSnapshotLifecycle(t *testing.T) {
 	selectSection("Core", perfdash.SectionCore)
 	paint("Workspace actor step", "Actor time by work")
 	selectSection("Resources", perfdash.SectionResources)
-	if text := paint("Shell memory", "Core memory", "Processes"); strings.Contains(text, "Crude memory") {
-		t.Fatal("connected resources must not conflate shell and core memory")
+	complete := func(r *metrics.Resources) bool {
+		if r == nil || !r.TreeComplete || r.ProcessesOmitted != 0 || len(r.Processes) == 0 {
+			return false
+		}
+		for _, p := range r.Processes {
+			if p.CreatedMS <= 0 {
+				return false
+			}
+		}
+		return true
+	}
+	merged := first.data.Shell.HostIdentity == "boot_id" && core.HostIdentity == "boot_id" &&
+		first.data.Shell.HostBootID != "" && first.data.Shell.HostBootID == core.HostBootID &&
+		complete(first.data.Shell.Resources) && complete(core.Resources)
+	views := perfdata.ResourceViews(perfdata.Data(first.data))
+	if merged {
+		if len(views) != 1 || views[0].Label != "Crude" {
+			t.Fatalf("qualified same-host resources not merged: %+v", views)
+		}
+		seen := map[[2]int64]bool{}
+		var memory int64
+		for _, p := range views[0].Processes {
+			key := [2]int64{int64(p.PID), p.CreatedMS}
+			if seen[key] {
+				t.Fatalf("merged resources double-count process %v", key)
+			}
+			seen[key] = true
+			if p.Memory >= 0 {
+				memory += p.Memory
+			}
+		}
+		for _, resources := range []*metrics.Resources{first.data.Shell.Resources, core.Resources} {
+			for _, p := range resources.Processes {
+				if !seen[[2]int64{int64(p.PID), p.CreatedMS}] {
+					t.Fatalf("merged resources omitted process pid=%d creation=%d", p.PID, p.CreatedMS)
+				}
+			}
+		}
+		if views[0].Memory != memory {
+			t.Fatalf("merged memory %d differs from deduplicated process total %d", views[0].Memory, memory)
+		}
+		if text := paint("Crude memory", "Processes"); strings.Contains(text, "Shell memory") || strings.Contains(text, "Core memory") {
+			t.Fatal("merged resource frame also displays split owners")
+		}
+	} else {
+		if len(views) != 2 || views[0].Label != "Shell" || views[1].Label != "Core" {
+			t.Fatalf("unqualified resource trees must stay split: %+v", views)
+		}
+		if text := paint("Shell memory", "Core memory", "Processes"); strings.Contains(text, "Crude memory") {
+			t.Fatal("unqualified resources displayed a combined total")
+		}
 	}
 
 	if cmd := footer(); cmd != nil {

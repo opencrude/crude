@@ -96,7 +96,7 @@ func (m *LSPManager) projectKeysLocked() []string {
 // start or an explicit start, and pause.
 func (m *LSPManager) projectWantedLocked(key string) bool {
 	_, ok := m.projects[key]
-	return ok && !m.paused && m.editorActiveLocked()
+	return ok && !m.projectWatchUnreliable && !m.paused && m.editorActiveLocked()
 }
 
 func (m *LSPManager) removeProjectFactsLocked(match func(ttypes.InsightBoundary) bool) {
@@ -117,7 +117,7 @@ func (m *LSPManager) receiveUnopenedDiagnostics(key string, owner *lspClientStat
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sources := m.sources
-	if sources == nil || sources.Insight == nil || m.closed || m.paused || m.analysisErrorLocked() != nil ||
+	if sources == nil || sources.Insight == nil || m.closed || m.paused || m.projectWatchUnreliable || m.analysisErrorLocked() != nil ||
 		m.states[key] != owner || owner.closing || owner.stopped || owner.teardownErr != nil || owner.instance == "" {
 		return
 	}

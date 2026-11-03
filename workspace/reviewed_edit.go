@@ -438,8 +438,12 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 	}
 	s.mu.Lock()
 	var changed []string
+	var watch *reviewedWatchTxn
 	defer func() {
 		s.mu.Unlock()
+		if watch != nil {
+			s.lsp.replayReviewedWatch(watch)
+		}
 		for _, documentID := range changed {
 			s.changed(documentID)
 		}
@@ -501,6 +505,9 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 		journal.Result = out
 		effectErr = s.saveReviewedJournal(journal)
 	}
+	if effectErr == nil && s.lsp != nil {
+		watch, effectErr = s.lsp.reviewWatch.begin(p.edits)
+	}
 	if effectErr != nil {
 		out.State, out.Error = "refused", effectErr.Error()
 	} else {
@@ -513,7 +520,7 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 			}
 			_, err := s.owned(owner, p.preview.Boundary.Source.DocumentID)
 			return err
-		})
+		}, s.lsp, watch)
 		out.State, out.Detail = "committed", result.Detail
 		effectErr = result.Err
 		if result.Err != nil && result.NoEffect {

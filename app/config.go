@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/gofrs/flock"
 
@@ -122,12 +124,34 @@ func updateFileConfigWithFallback(update func(*FileConfig) error, overwriteInval
 	} else if err != nil {
 		return FileConfig{}, err
 	}
+	decision := func(c FileConfig) json.RawMessage {
+		if c.Capabilities == nil {
+			return nil
+		}
+		return c.Capabilities.ProjectToolDecisions
+	}
+	oldDecision := append(json.RawMessage(nil), decision(cfg)...)
 	beforeData, _ := json.Marshal(cfg)
 	var before FileConfig
 	_ = json.Unmarshal(beforeData, &before)
 	originalRaw := append(json.RawMessage(nil), cfg.raw...)
 	if err := update(&cfg); err != nil {
 		return FileConfig{}, err
+	}
+	decodeDecision := func(raw json.RawMessage) (any, error) {
+		if len(raw) == 0 {
+			return nil, nil
+		}
+		var value any
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		err := decoder.Decode(&value)
+		return value, err
+	}
+	oldValue, oldErr := decodeDecision(oldDecision)
+	newValue, newErr := decodeDecision(decision(cfg))
+	if oldErr != nil || newErr != nil || (len(oldDecision) == 0) != (len(decision(cfg)) == 0) || !reflect.DeepEqual(oldValue, newValue) {
+		return FileConfig{}, fmt.Errorf("project tool decisions belong to Workspace setup")
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -171,6 +195,13 @@ func updateFileConfigWithFallback(update func(*FileConfig) error, overwriteInval
 func SaveFileConfig(cfg FileConfig) error {
 	cfg.raw = nil // an explicit full-file save, not an addressed preference patch
 	_, err := updateFileConfigWithFallback(func(current *FileConfig) error {
+		if current.Capabilities != nil && len(current.Capabilities.ProjectToolDecisions) != 0 &&
+			(cfg.Capabilities == nil || len(cfg.Capabilities.ProjectToolDecisions) == 0) {
+			if cfg.Capabilities == nil {
+				cfg.Capabilities = &captypes.Settings{}
+			}
+			cfg.Capabilities.ProjectToolDecisions = append(json.RawMessage(nil), current.Capabilities.ProjectToolDecisions...)
+		}
 		*current = cfg
 		return nil
 	}, true)
@@ -246,6 +277,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	}
 	if fc.Capabilities != nil {
 		s.Capabilities = captypes.Clone(*fc.Capabilities)
+		// Application data can never provide project authority, even to a
+		// caller holding an application-only settings snapshot.
+		s.Capabilities.ProjectToolDecisions = nil
 	}
 	if fc.Safety != nil {
 		s.Safety = *fc.Safety

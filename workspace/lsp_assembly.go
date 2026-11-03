@@ -43,6 +43,10 @@ type assemblyDiscovery struct {
 	err       error
 }
 
+type assemblyToolKey struct {
+	serverID, command string
+}
+
 // SetToolStore installs the shared tool store. The core owns it; nil means
 // tools come only from the system path and from settings.
 func (m *LSPManager) SetToolStore(store *toolstore.Store) {
@@ -94,8 +98,8 @@ func (m *LSPManager) requestAssemblyLocked() {
 		if discovery == nil || discovery.root != root {
 			discovery = discoverProjectLanguages(ctx, root, settings)
 		}
-		plan := resolveAssembly(root, settings, discovery, func(command string) (string, string) {
-			return locateTool(command, root, store)
+		plan := resolveAssembly(root, settings, discovery, func(command string, download *catalog.Download) (string, string) {
+			return locateTool(ctx, command, root, store, download)
 		})
 		plan.Generation = generation
 		m.publishAssembly(ctx, discovery, plan)
@@ -115,14 +119,14 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 	}
 	m.discovery = discovery
 	m.assembly = plan
-	m.toolPaths = map[string]string{}
-	m.toolMissing = map[string]string{}
+	m.toolPaths = map[assemblyToolKey]string{}
+	m.toolMissing = map[assemblyToolKey]string{}
 	var producers []ttypes.LSPProjectProducer
 	for _, language := range plan.Languages {
 		switch language.Status {
 		case ttypes.ToolReady:
 			if language.Source == ttypes.ToolSourceStore {
-				m.toolPaths[language.Command] = language.Executable
+				m.toolPaths[assemblyToolKey{language.ServerID, language.Command}] = language.Executable
 			}
 			if language.Scope != ttypes.CoverageProject || language.Root == "" {
 				continue
@@ -132,7 +136,7 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 				producers = append(producers, ttypes.LSPProjectProducer{Root: language.Root, Spec: spec})
 			}
 		case ttypes.ToolMissing:
-			m.toolMissing[language.Command] = language.Reason
+			m.toolMissing[assemblyToolKey{language.ServerID, language.Command}] = language.Reason
 		}
 	}
 	m.setProjectProducersLocked(producers)
@@ -174,7 +178,7 @@ func discoverProjectLanguages(ctx context.Context, root string, settings ttypes.
 
 // resolveAssembly decides, per discovered language, which tool serves it and
 // where it comes from. locate finds a program without running it.
-func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemblyDiscovery, locate func(string) (string, string)) ttypes.AssemblyPlan {
+func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemblyDiscovery, locate func(string, *catalog.Download) (string, string)) ttypes.AssemblyPlan {
 	plan := ttypes.AssemblyPlan{State: ttypes.AssemblyReady, FilesSeen: discovery.seen, Limited: discovery.limited}
 	if discovery.err != nil {
 		plan.State = ttypes.AssemblyFailed
@@ -198,14 +202,19 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 		default:
 			language.ServerID, language.Command = spec.ServerID, spec.Command
 			installReason := ""
+			var download *catalog.Download
 			if server, known := c.Server(spec.ServerID); known && server.Package != "" {
 				language.Package = server.Package
 				if pkg, ok := c.Package(server.Package); ok {
-					_, installReason = pkg.DownloadFor(server.Command, catalog.CurrentTargets())
+					var candidate catalog.Download
+					candidate, installReason = pkg.DownloadFor(spec.Command, catalog.CurrentTargets())
 					language.Installable = installReason == ""
+					if language.Installable {
+						download = &candidate
+					}
 				}
 			}
-			language.Executable, language.Source = locate(spec.Command)
+			language.Executable, language.Source = locate(spec.Command, download)
 			if spec.ServerID == "" {
 				language.Source = ttypes.ToolSourceSettings
 			}
@@ -270,7 +279,7 @@ func assemblyMessage(plan ttypes.AssemblyPlan) string {
 // path from settings, a tool in the tool store, then the system path.
 // Path entries inside the workspace are skipped, so a project cannot supply
 // its own server program.
-func locateTool(command, workspaceRoot string, store *toolstore.Store) (string, string) {
+func locateTool(ctx context.Context, command, workspaceRoot string, store *toolstore.Store, download *catalog.Download) (string, string) {
 	if command == "" {
 		return "", ""
 	}
@@ -280,12 +289,11 @@ func locateTool(command, workspaceRoot string, store *toolstore.Store) (string, 
 		}
 		return "", ""
 	}
-	if store != nil {
-		if tools, _, err := store.List(); err == nil {
+	if store != nil && download != nil {
+		if tools, _, err := store.List(ctx); err == nil {
 			var newest toolstore.Tool
 			for _, tool := range tools {
-				base := strings.TrimSuffix(filepath.Base(tool.Executable), ".exe")
-				if base == command && tool.InstalledAt.After(newest.InstalledAt) {
+				if managedToolMatches(tool, *download) && tool.InstalledAt.After(newest.InstalledAt) {
 					newest = tool
 				}
 			}
@@ -306,6 +314,13 @@ func locateTool(command, workspaceRoot string, store *toolstore.Store) (string, 
 		}
 	}
 	return "", ""
+}
+
+func managedToolMatches(tool toolstore.Tool, download catalog.Download) bool {
+	return tool.Package == download.Package && tool.Version == download.Version &&
+		tool.Source == download.Source && tool.URL == download.URL &&
+		tool.Archive == download.Archive && tool.Bin == download.Bin &&
+		tool.Command == download.Command
 }
 
 func executableNames(command string) []string {
@@ -339,7 +354,7 @@ func (m *LSPManager) assemblyStatusLocked(path string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	reason, missing := m.toolMissing[spec.Command]
+	reason, missing := m.toolMissing[assemblyToolKey{spec.ServerID, spec.Command}]
 	return reason, missing
 }
 

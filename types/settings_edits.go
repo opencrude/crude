@@ -16,6 +16,18 @@ type SettingEdit struct {
 	After json.RawMessage `json:"after,omitempty"`
 }
 
+// ValidateProjectToolDecisionEdits fences generic preference writers from the
+// workspace setup authority, including category replacement and reset.
+func ValidateProjectToolDecisionEdits(edits []SettingEdit) error {
+	for _, edit := range edits {
+		if len(edit.Path) > 0 && edit.Path[0] == "capabilities" &&
+			(len(edit.Path) == 1 || edit.Path[1] == "project_tool_decisions") {
+			return fmt.Errorf("project tool decisions require the workspace setup transaction")
+		}
+	}
+	return nil
+}
+
 // SettingsEdits compares drafts of the same layer, never a child with its
 // parent. Unchanged inherited values therefore cannot become overrides.
 func SettingsEdits(before, after any) []SettingEdit {

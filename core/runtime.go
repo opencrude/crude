@@ -55,6 +55,7 @@ type Runtime struct {
 	// workspace; nil when it cannot open.
 	toolsOnce        sync.Once
 	tools            *toolstore.Store
+	toolsErr         error
 	history          *history.Store
 	historyPath      string
 	uploads          *ReferenceUploads
@@ -544,7 +545,12 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 				// Retained resources initialize before an actor or shell can read
 				// them. This I/O belongs to the factory worker, never actor Update.
 				if ws.LSPMgr != nil {
-					r.toolsOnce.Do(func() { r.tools = openToolStore() })
+					// Assembly may start a project producer as soon as analysis
+					// policy is installed. Fence that admission before starting
+					// assembly, not later when the watcher is constructed.
+					// The watcher publishes reliable observation after its scan.
+					ws.LSPMgr.SetProjectWatchReliable(false)
+					r.toolsOnce.Do(func() { r.tools, r.toolsErr = openToolStore() })
 					ws.LSPMgr.SetToolStore(r.tools)
 				}
 				if analysisErr := ws.InitializeAnalysisRuntime(r.analysisGovernor, id, rand.Text()); analysisErr != nil {
@@ -678,11 +684,25 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	go a.run()
 	// newActor runs in the workspace factory worker. Watcher setup/traversal
 	// never executes on the actor or any shell's Update goroutine.
-	watch, err := startCoreFileWatch(ws.RootPath, func(change coreprotocol.FileChange) { a.Send(change) })
+	watch, err := startCoreFileWatch(ws.RootPath, func(change coreprotocol.FileChange) { a.Send(change) },
+		ws.LSPMgr.NotifyWatchedFilesChanged, ws.LSPMgr.SetProjectWatchReliable)
 	if err != nil {
 		ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
 	} else {
-		a.fileWatch = watch
+		installed := make(chan struct{})
+		select {
+		case a.commands <- actorCommand{inspect: func() {
+			a.fileWatch = watch
+			close(installed)
+		}}:
+			select {
+			case <-installed:
+			case <-a.stop:
+				watch.Close()
+			}
+		case <-a.stop:
+			watch.Close()
+		}
 	}
 	// Remote-tracking refs stay current for every attached shell; the fetch
 	// moves .git refs, which the file watch above turns into a reconcile.

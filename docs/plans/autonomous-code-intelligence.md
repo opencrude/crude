@@ -1,9 +1,9 @@
 # Autonomous Code Intelligence
 
-> Status: IN PROGRESS - the assembly-first design is agreed. The generic
-> assembly path (discover, resolve, acquire, evaluate, activate, maintain) is
-> not implemented. Workspace trust and several editor feature slices are done;
-> see [Stage status](#stage-status) and [Banked checkpoints](#banked-checkpoints).
+> Status: IN PROGRESS - work is paused at the user's request. The generic
+> assembly path is partial. Acquisition, operational evaluation and complete
+> coverage remain open. Workspace trust and several editor feature slices are
+> done; see [Stage status](#stage-status) and [Banked checkpoints](#banked-checkpoints).
 
 ## How to work on this plan
 
@@ -62,15 +62,15 @@ Update a row only with evidence.
 
 | Stage | This plan requires | Today |
 |---|---|---|
-| Detect languages | Linguist data through go-enry | Not started. Language identity comes from the hard-coded list `DefaultLSPLanguages` in `types/language_servers.go` (12 language-named entries with extensions, root markers and commands). go-enry is not a dependency. |
-| Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Not started. The [project-context owner](../reference/project-context.md) observes explicit selections only. |
-| Resolve | Ordered resolver; compatibility rules as data | Not started. Each list entry has one default command. **Detect servers** does not install anything. |
-| Acquire | Tools as a capability kind; one shared store under `CRUDE_HOME` | Not started. Capability kinds are skill and MCP only (`types/capability/types.go`). See [code-intelligence setup](code-intelligence-setup.md). |
-| Evaluate | Operational checks and independent fixtures; evidence for each feature | Not started. |
-| Activate | Project-scoped producers, enabled feature by feature | Not started. Servers start only for open documents (`workspace/lsp_lifecycle.go`), guarded by `TestLSPEnabledUnusedWorkspaceDoesNotOpenSources`. |
-| Maintain | Invalidation, staged replacement, bounded repair, memory of failed candidates | Watcher invalidation for explicit project selections only. |
+| Detect languages | Linguist data through go-enry | The catalog importer uses Linguist data at build time. Product detection uses catalog file names and extensions; ambiguous extensions still need content rules. |
+| Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Assembly lists at most 100,000 entries without running project code and reports a limited scan. Rich project context remains separate and explicit. |
+| Resolve | Ordered resolver; compatibility rules as data | Assembly resolves launch data from the catalog, settings, the shared tool store and the system path. Compatibility evaluation remains incomplete. |
+| Acquire | Tools as a capability kind; one shared store under `CRUDE_HOME` | The tool store and a catalog download contract exist. The capability kind, project review and Settings page are not complete. See [code-intelligence setup](code-intelligence-setup.md). |
+| Evaluate | Operational checks and independent fixtures; evidence for each feature | A test fixture starts a server and checks a diagnostic. Product evaluation and per-feature evidence remain incomplete. |
+| Activate | Project-scoped producers, enabled feature by feature | Assembly starts project-scoped producers through the existing trust and process-admission gates. Open documents can share their server process. |
+| Maintain | Invalidation, staged replacement, bounded repair, memory of failed candidates | The retained-core watcher forwards file changes and fences results during observation gaps. An automated test checks that an unopened-file error clears after a disk replacement. The capture images have not been verified. Root loss stays unreliable until the watcher restarts. Kernel-overflow and concurrent-shutdown recovery need further verification. |
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
-| Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostics only. |
+| Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including reports for unopened files. Assembly shows declared server scope; live coverage and invalidation still need verification. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
 | Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites. |
 
@@ -121,6 +121,79 @@ Out of scope: work classes and containment beyond current process admission
 (so no new bulk project-wide work), project checks and build observation,
 policy presets, Aeron, remote campaigns.
 
+### Progress at pause (2026-11-03)
+
+Work stopped at the user's request. The checkpoint is **not complete**. The
+main checkout is on `master` at `e29f0c88`; earlier milestones are committed,
+but the current watcher, tool-store and approval groundwork is uncommitted.
+Run `git status --short` before resuming and preserve both tracked and
+untracked changes.
+
+**Implemented so far:**
+
+- The catalog, data-driven assembly, editor cutover and project-scoped
+  diagnostic producers have landed. The names gate passes but is a syntactic
+  heuristic; it does not prove that all language-specific product code is
+  absent.
+- `TestFixtureLanguageRunsThroughEveryStage` exercises a language from a
+  catalog pack through discovery, resolution, server startup, an unopened-file
+  diagnostic and the disk fix. It does not exercise acquisition or an
+  independent operational evaluation.
+- The uncommitted work adds watcher recovery and reviewed-edit fencing, a
+  project tool review preimage, an inert decision transaction, an internal
+  reviewed-install worker, inventory data and tool-store publication safety.
+  These are building blocks, not a connected approval or installation flow.
+  Stored decisions and the tool-store publication hook are not human consent.
+- Unconfirmed tool publications and interrupted removal folders are retained
+  for inspection. There is not yet a product recovery action for them.
+  `MarkUsed` has no production caller on the install path; usage and last-use
+  accounting still need an owner.
+
+**Remaining for this checkpoint:**
+
+1. Connect the project-level tool review and human approval to a retained,
+   owner-bound, one-shot authority. Remember approvals and refusals, avoid
+   repeat prompts, and recheck authority and the reviewed project before
+   download and publication. Choose and record the control-surface caller
+   policy before wiring it. Trust and tool approval remain separate.
+2. Run approved installation on a cancellable worker, refresh assembly after
+   installation, and provide clear denied, offline and unsupported states
+   without interrupting editing. Complete the separate operational evaluation
+   and include acquisition in the fixture-language journey.
+3. Connect the inventory to the shell and agents, then build the
+   **Code intelligence tools** Settings page. Include managed and unmanaged
+   tools, accountability and history, plus previewed removal. Never remove
+   user-installed tools. The inventory bridge in retained worktree
+   `720e80d06b4774cc5ddbb47457343bf7` is not integrated and needs review for
+   caller, workspace isolation and cancellation races before use.
+4. Finish the real TUI acceptance journeys, including an unopened-file error
+   appearing and clearing, honest coverage, and constrained terminal sizes.
+   The existing capture images have not been visually verified. No 80x24
+   capture has been produced.
+5. Verify watcher overflow and concurrent shutdown recovery. Root replacement
+   after a watcher starts remains unreliable until restart. Re-run the
+   repository gates on the final tree, then commit and push verified
+   milestones with their documentation.
+
+**Verification at pause:** on the then-current uncommitted checkout,
+`go build ./...` and `go test ./... -count=1 -timeout=300s` passed. The
+tool-store race tests passed three runs; the selected workspace and core
+watcher race tests and four connected TUI tests passed three runs. The
+previously failing diagnostic startup test passed 20 runs after the startup
+fence. The generated-wire check and names gate passed. Windows and macOS
+cross-builds passed for the tool-store, file-I/O and insight packages only.
+
+The complete lint, documentation, design, benchmark, site, catalog
+regeneration, LSP/syntax and full cross-platform gates have not been rerun
+together on that tree. A prior full-suite wrapper reported success despite a
+failing diagnostic test; that earlier result is not a pass. The later
+build-and-test run above checked each command's exit status.
+
+The last cleanup attempt for worktree `e0ca19a17ca30cbc72cc5fca25bb055b`
+returned an uncertain outcome. Inspect the original request
+`control-326b6cf4d678f5b75e7a05102d6a98466d914a7bffda25a3a3d05b09ff4adcab`
+before any further action on that worktree; do not repeat the cleanup.
+
 Findings that shape the slices (2026-11-02):
 
 - Diagnostics for a file that is not open are dropped today:
@@ -164,10 +237,12 @@ parallel, then 4, 5 and 6, then 7.
    user did not open. **Manager and Problems part landed 2026-11-02:**
    `SetProjectProducers`, unopened-file facts that Problems lists and the
    status summary counts, an open document that owns its file, and removal of a
-   producer's facts when it stops. Nothing calls `SetProjectProducers` yet;
-   the assembly service (slice 4) does. The coverage view is not built yet.
-   **Coverage view landed with slice 4:** server rows state what they check
-   and Project Languages lists every language with its reason.
+   producer's facts when it stops. The assembly service (slice 4) calls
+   `SetProjectProducers`; server rows state their declared scope and Project
+   Languages lists every language with its reason. Automated tests cover the
+   disk fix and distinguish installed tools from running servers. The capture
+   images have not been verified. Watch recovery and incomplete-coverage
+   presentation still need the remaining acceptance checks.
 4. **Assembly service** (workspace). Bounded discovery that runs no project
    code, resolution against installed tools, the tool store and the catalog,
    and one assembly plan published to shells and to the control API.
@@ -185,11 +260,11 @@ parallel, then 4, 5 and 6, then 7.
    a whole project, the non-blocking project question, and the Settings page
    for installed tools.
 7. **Proof.** The names gate, the end-to-end fixture language, visual captures
-   and the repository gates. **Names gate and fixture landed 2026-11-02:**
-   `internal/namesgate` passes (352 findings at the start), and
-   `TestFixtureLanguageRunsThroughEveryStage` runs a language that exists only
-   in a catalog pack through discovery, resolution, a real server process,
-   Problems for a file nobody opened, and the fix.
+   and the repository gates. `internal/namesgate` passes, but is a syntactic
+   heuristic. `TestFixtureLanguageRunsThroughEveryStage` exercises a catalog-pack
+   language through discovery, resolution, a real server process, an unopened
+   file diagnostic and its fix. It does not yet exercise acquisition or a
+   separate operational evaluation. The checkpoint proof remains open.
 
 ## Problem
 

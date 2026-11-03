@@ -1,0 +1,46 @@
+package types
+
+import "time"
+
+// CodeTool describes a managed tool installed by Crude.
+type CodeTool struct {
+	ID, Package, Version, Dir, Executable, Bin, Command string
+	SHA256, DigestOrigin, Source, URL, Archive          string
+	Size                                                int64
+	Files                                               int
+	Licenses, Workspaces                                []string
+	InstalledAt, LastUsed                               time.Time
+	InstalledBy, Approval                               string
+}
+
+// CodeToolHistoryEvent records an install, failure, use or removal.
+type CodeToolHistoryEvent struct {
+	Time                                   time.Time
+	Kind, ToolID, Package, Version, Detail string
+	By, Approval                           string
+}
+
+// UnmanagedCodeTool is a program resolved from outside the shared store.
+// It is informational and cannot be selected for removal.
+type UnmanagedCodeTool struct {
+	Name, Command, Executable, Source string
+}
+
+// CodeToolInventory is a point-in-time read. History is newest first.
+type CodeToolInventory struct {
+	Tools         []CodeTool
+	TotalBytes    int64
+	Unrecognized  []string
+	Unmanaged     []UnmanagedCodeTool
+	History       []CodeToolHistoryEvent
+	HistoryTotal  int
+	HistoryOffset int
+}
+
+// CodeToolRemovalPreview is an immutable description of the exact removal.
+type CodeToolRemovalPreview struct {
+	Tools []CodeTool
+	Paths []string
+	Bytes int64
+	Token string
+}

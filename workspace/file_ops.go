@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -279,7 +280,7 @@ func (s *FileOpsService) DeletePath(path string) FileOperationResultMsg {
 // ApplyWorkspaceEdit validates and stages the entire transaction before publishing
 // any edit. It holds the shared mutation lease through commit and rollback.
 func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResultMsg {
-	return s.applyWorkspaceEdit(edits, nil, nil).FileOperationResultMsg
+	return s.applyWorkspaceEdit(edits, nil, nil, nil, nil).FileOperationResultMsg
 }
 
 // NoEffect is positive evidence that the writer never admitted a commit.
@@ -293,7 +294,7 @@ type workspaceEditResult struct {
 // Reviewed edits retain native preimages from their immutable preview. This
 // shares the ordinary staging/commit/rollback writer, but does not rebind equal
 // bytes to a replacement inode, parent or mode between review and approval.
-func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspaceEditFile, beforeCommit func() error) workspaceEditResult {
+func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspaceEditFile, beforeCommit func() error, lsp *LSPManager, watch *reviewedWatchTxn) workspaceEditResult {
 	msg := workspaceEditResult{FileOperationResultMsg: FileOperationResultMsg{Op: FileOpApplyEdit, Path: "(workspace edit)"}, NoEffect: true}
 	if len(edits) == 0 {
 		msg.Err = fmt.Errorf("no edits provided")
@@ -386,21 +387,9 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 		p.newData = []byte(edit.NewContent)
 		prepared = append(prepared, p)
 		target := &prepared[len(prepared)-1]
-		target.backup, err = stageWorkspaceEditFile(p.path, p.data, p.info.Mode())
+		target.backup, target.backupImage, err = stageWorkspaceEditFile(p.path, p.data, p.info.Mode(), lsp)
 		if err == nil {
-			target.next, err = stageWorkspaceEditFile(p.path, p.newData, p.info.Mode())
-		}
-		if err != nil {
-			msg.Err = err
-			return msg
-		}
-		// Stat the open handle: Windows Lstat defers file identity lookup until
-		// SameFile, when the staged path may already have been renamed away.
-		var staged *os.File
-		staged, err = os.Open(target.next)
-		if err == nil {
-			target.postimage, err = staged.Stat()
-			err = errors.Join(err, staged.Close())
+			target.next, target.postimage, err = stageWorkspaceEditFile(p.path, p.newData, p.info.Mode(), lsp)
 		}
 		if err != nil {
 			msg.Err = err
@@ -424,11 +413,23 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 		if err == nil && beforeCommit != nil {
 			err = beforeCommit()
 		}
+		if err == nil {
+			err = p.checkStage(p.next, p.newData, p.postimage)
+		}
+		if err == nil {
+			err = p.checkStage(p.backup, p.data, p.backupImage)
+		}
+		if err == nil && watch != nil {
+			err = watch.beginCommit(p.path)
+		}
 		committed := false
 		if err == nil {
 			msg.NoEffect = false
 			err = commit(p.next, p.path)
 			committed = err == nil || fileio.WriteCommitted(err)
+			if watch != nil {
+				watch.endCommit(p.path, committed)
+			}
 		}
 		if err == nil {
 			continue
@@ -443,6 +444,9 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 			// Never overwrite an external actor's later content during recovery.
 			rollbackErr := restore.check(restore.newData, restore.postimage)
 			if rollbackErr == nil {
+				rollbackErr = restore.checkStage(restore.backup, restore.data, restore.backupImage)
+			}
+			if rollbackErr == nil {
 				rollbackErr = fileio.CommitAtomicFile(restore.backup, restore.path)
 			}
 			if rollbackErr != nil {
@@ -452,6 +456,22 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 		}
 		msg.Detail = "workspace edit failed; rollback attempted"
 		return msg
+	}
+	// Check the complete postimage once before claiming success. If another
+	// writer changed a committed target, do not overwrite that later work.
+	for _, p := range prepared {
+		if err := p.check(p.newData, p.postimage); err != nil {
+			msg.Err = fmt.Errorf("workspace edit postimage changed: %w", err)
+			msg.Detail = "workspace edit result needs inspection"
+			return msg
+		}
+	}
+	if watch != nil {
+		if err := watch.check(); err != nil {
+			msg.Err = err
+			msg.Detail = "workspace edit result needs inspection"
+			return msg
+		}
 	}
 	msg.Detail = fmt.Sprintf("applied %d edits", len(edits))
 	if s.logger != nil {
@@ -468,6 +488,7 @@ type workspaceEditFile struct {
 	data, newData []byte
 	info          os.FileInfo
 	postimage     os.FileInfo
+	backupImage   os.FileInfo
 	parents       map[string]os.FileInfo
 	next, backup  string
 }
@@ -535,18 +556,43 @@ func (p workspaceEditFile) check(data []byte, identity os.FileInfo) error {
 			return fmt.Errorf("workspace edit parent changed: %s", path)
 		}
 	}
-	if identity == nil || !bytes.Equal(data, current.data) || current.info.Mode() != identity.Mode() || !os.SameFile(identity, current.info) {
+	if identity == nil || !bytes.Equal(data, current.data) || current.info.Mode() != identity.Mode() ||
+		!current.info.ModTime().Equal(identity.ModTime()) || !os.SameFile(identity, current.info) {
 		return fmt.Errorf("content mismatch or file identity/mode changed in %s", p.path)
 	}
 	return nil
 }
 
-func stageWorkspaceEditFile(path string, data []byte, mode os.FileMode) (name string, err error) {
-	f, err := os.CreateTemp(filepath.Dir(path), ".crude-workspace-edit-*")
-	if err != nil {
-		return "", err
+func (p workspaceEditFile) checkStage(path string, data []byte, identity os.FileInfo) error {
+	p.path = path
+	return p.check(data, identity)
+}
+
+func stageWorkspaceEditFile(path string, data []byte, mode os.FileMode, lsp *LSPManager) (name string, identity os.FileInfo, err error) {
+	var f *os.File
+	for range 10 {
+		name = filepath.Join(filepath.Dir(path), ".crude-workspace-edit-"+rand.Text())
+		var stage *editStage
+		if lsp != nil {
+			stage = lsp.editStages.reserve(name)
+			if stage == nil {
+				continue
+			}
+		}
+		f, err = os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if stage != nil {
+			lsp.editStages.resolve(name, stage, err == nil)
+		}
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", nil, err
+		}
 	}
-	name = f.Name()
+	if f == nil {
+		return "", nil, fmt.Errorf("cannot create a unique workspace edit staging file")
+	}
 	defer func() {
 		_ = f.Close()
 		if err != nil {
@@ -554,16 +600,22 @@ func stageWorkspaceEditFile(path string, data []byte, mode os.FileMode) (name st
 		}
 	}()
 	if _, err = f.Write(data); err != nil {
-		return name, err
+		return name, nil, err
 	}
 	if err = f.Chmod(fileio.MutationFileMode(mode)); err != nil {
-		return name, err
+		return name, nil, err
 	}
 	if err = f.Sync(); err != nil {
-		return name, err
+		return name, nil, err
+	}
+	// Stat the open handle: Windows Lstat may defer file identity lookup until
+	// after the staged path has been renamed.
+	identity, err = f.Stat()
+	if err != nil {
+		return name, nil, err
 	}
 	err = f.Close()
-	return name, err
+	return name, identity, err
 }
 
 // FileEdit represents a single text edit to apply to a file.

@@ -30,7 +30,7 @@ func TestRemoveDeletesExactlyThePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	preview, err := store.PreviewRemove([]string{one.ID, one.ID})
+	preview, err := store.PreviewRemove(t.Context(), []string{one.ID, one.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRemoveDeletesExactlyThePreview(t *testing.T) {
 	if preview.Bytes <= one.Size {
 		t.Fatalf("preview bytes %d do not include the manifest (content %d)", preview.Bytes, one.Size)
 	}
-	if err := store.Remove(context.Background(), preview); err != nil {
+	if err := store.Remove(context.Background(), preview, "user"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(one.Dir); !isNotExist(err) {
@@ -55,7 +55,7 @@ func TestRemoveDeletesExactlyThePreview(t *testing.T) {
 	if _, ok := store.Lookup("demo-server", "1.0.0"); ok {
 		t.Fatal("Lookup still finds the removed tool")
 	}
-	tools, total, err := store.List()
+	tools, total, err := store.List(t.Context())
 	if err != nil || len(tools) != 1 || tools[0].ID != two.ID || total != two.Size {
 		t.Fatalf("List after removal = %+v, %d, %v", tools, total, err)
 	}
@@ -67,17 +67,17 @@ func TestRemoveDeletesExactlyThePreview(t *testing.T) {
 		t.Fatal("usage of the removed tool was kept")
 	}
 	history := events(t, store)
-	if history[0].Kind != EventRemove || history[0].ToolID != one.ID {
+	if history[0].Kind != EventRemove || history[0].ToolID != one.ID || history[0].By != "user" {
 		t.Fatalf("latest event = %+v", history[0])
 	}
 	requireEmptyStaging(t, store)
 
 	// Removing the last version also removes the empty package folder.
-	preview, err = store.PreviewRemove([]string{two.ID})
+	preview, err = store.PreviewRemove(t.Context(), []string{two.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(context.Background(), preview); err != nil {
+	if err := store.Remove(context.Background(), preview, "user"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(store.root, "demo-server")); !isNotExist(err) {
@@ -89,7 +89,7 @@ func TestRemoveFailsClosedWhenTreeChanged(t *testing.T) {
 	store := newStore(t)
 	server := serve(t, map[string][]byte{})
 	tool := installVersion(t, store, server, "1.0.0", "one")
-	preview, err := store.PreviewRemove([]string{tool.ID})
+	preview, err := store.PreviewRemove(t.Context(), []string{tool.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestRemoveFailsClosedWhenTreeChanged(t *testing.T) {
 	if err := sealDir(share); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(context.Background(), preview); !errors.Is(err, ErrPreviewStale) {
+	if err := store.Remove(context.Background(), preview, "user"); !errors.Is(err, ErrPreviewStale) {
 		t.Fatalf("Remove after a tree change = %v, want ErrPreviewStale", err)
 	}
 	if _, err := os.Stat(tool.Executable); err != nil {
@@ -111,14 +111,14 @@ func TestRemoveFailsClosedWhenTreeChanged(t *testing.T) {
 	}
 	requireEmptyStaging(t, store)
 	// A fresh preview covers the new file and succeeds.
-	fresh, err := store.PreviewRemove([]string{tool.ID})
+	fresh, err := store.PreviewRemove(t.Context(), []string{tool.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fresh.Token == preview.Token || fresh.Bytes != preview.Bytes+3 {
 		t.Fatalf("fresh preview = %d bytes, old %d", fresh.Bytes, preview.Bytes)
 	}
-	if err := store.Remove(context.Background(), fresh); err != nil {
+	if err := store.Remove(context.Background(), fresh, "user"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -127,14 +127,14 @@ func TestRemoveFailsClosedWhenUsedAfterPreview(t *testing.T) {
 	store := newStore(t)
 	server := serve(t, map[string][]byte{})
 	tool := installVersion(t, store, server, "1.0.0", "one")
-	preview, err := store.PreviewRemoveUnused()
+	preview, err := store.PreviewRemoveUnused(t.Context())
 	if err != nil || len(preview.Tools) != 1 {
 		t.Fatalf("unused preview = %+v, %v", preview, err)
 	}
 	if err := store.MarkUsed(tool.ID, "/work/a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(context.Background(), preview); !errors.Is(err, ErrPreviewStale) {
+	if err := store.Remove(context.Background(), preview, "user"); !errors.Is(err, ErrPreviewStale) {
 		t.Fatalf("Remove after a use = %v, want ErrPreviewStale", err)
 	}
 	if _, ok := store.Lookup("demo-server", "1.0.0"); !ok {
@@ -142,29 +142,60 @@ func TestRemoveFailsClosedWhenUsedAfterPreview(t *testing.T) {
 	}
 }
 
+func TestRemoveRejectsTamperedPreviewFields(t *testing.T) {
+	store := newStore(t)
+	server := serve(t, map[string][]byte{})
+	tool := installVersion(t, store, server, "1.0.0", "one")
+	preview, err := store.PreviewRemove(t.Context(), []string{tool.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove(context.Background(), preview, " "); err == nil {
+		t.Fatal("removal without an actor succeeded")
+	}
+	for _, mutate := range []func(*RemovalPreview){
+		func(p *RemovalPreview) { p.Bytes++ },
+		func(p *RemovalPreview) { p.Tools[0].Package = "other" },
+		func(p *RemovalPreview) { p.Tools[0].Version = "other" },
+		func(p *RemovalPreview) { p.Tools[0].Source = "other" },
+	} {
+		preview, err := store.PreviewRemove(t.Context(), []string{tool.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(&preview)
+		if err := store.Remove(context.Background(), preview, "user"); !errors.Is(err, ErrPreviewStale) {
+			t.Fatalf("tampered preview accepted: %v", err)
+		}
+		if _, err := os.Stat(tool.Executable); err != nil {
+			t.Fatalf("tampered preview removed the tool: %v", err)
+		}
+	}
+}
+
 func TestRemoveFailsClosedWhenToolReplaced(t *testing.T) {
 	store := newStore(t)
 	server := serve(t, map[string][]byte{})
 	tool := installVersion(t, store, server, "1.0.0", "one")
-	preview, err := store.PreviewRemove([]string{tool.ID})
+	preview, err := store.PreviewRemove(t.Context(), []string{tool.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := store.PreviewRemove([]string{tool.ID})
+	other, err := store.PreviewRemove(t.Context(), []string{tool.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(context.Background(), other); err != nil {
+	if err := store.Remove(context.Background(), other, "user"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(context.Background(), preview); !errors.Is(err, ErrPreviewStale) {
+	if err := store.Remove(context.Background(), preview, "user"); !errors.Is(err, ErrPreviewStale) {
 		t.Fatalf("Remove of a removed tool = %v, want ErrPreviewStale", err)
 	}
 	forged := RemovalPreview{Tools: []Tool{tool}, Paths: []string{tool.Dir}, Token: "forged"}
-	if err := store.Remove(context.Background(), forged); !errors.Is(err, ErrPreviewStale) {
+	if err := store.Remove(context.Background(), forged, "user"); !errors.Is(err, ErrPreviewStale) {
 		t.Fatalf("Remove with a forged token = %v, want ErrPreviewStale", err)
 	}
-	if err := store.Remove(context.Background(), RemovalPreview{}); err == nil {
+	if err := store.Remove(context.Background(), RemovalPreview{}, "user"); err == nil {
 		t.Fatal("Remove accepted an empty preview")
 	}
 }
@@ -177,24 +208,24 @@ func TestPreviewRemoveUnusedSelectsOnlyUnusedTools(t *testing.T) {
 	if err := store.MarkUsed(used.ID, "/work/a"); err != nil {
 		t.Fatal(err)
 	}
-	preview, err := store.PreviewRemoveUnused()
+	preview, err := store.PreviewRemoveUnused(t.Context())
 	if err != nil || len(preview.Tools) != 1 || preview.Tools[0].ID != unused.ID {
 		t.Fatalf("unused preview = %+v, %v", preview, err)
 	}
-	if err := store.Remove(context.Background(), preview); err != nil {
+	if err := store.Remove(context.Background(), preview, "user"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := store.Lookup("demo-server", "1.0.0"); !ok {
 		t.Fatal("the used tool was removed")
 	}
-	preview, err = store.PreviewRemoveUnused()
+	preview, err = store.PreviewRemoveUnused(t.Context())
 	if err != nil || len(preview.Tools) != 0 || preview.Token != "" {
 		t.Fatalf("second unused preview = %+v, %v", preview, err)
 	}
-	if _, err := store.PreviewRemove(nil); err == nil {
+	if _, err := store.PreviewRemove(t.Context(), nil); err == nil {
 		t.Fatal("PreviewRemove accepted no tools")
 	}
-	if _, err := store.PreviewRemove([]string{"missing/1-000000000000"}); err == nil {
+	if _, err := store.PreviewRemove(t.Context(), []string{"missing/1-000000000000"}); err == nil {
 		t.Fatal("PreviewRemove accepted an unknown tool")
 	}
 }
@@ -203,19 +234,19 @@ func TestRemoveCancelledBeforeStartKeepsTools(t *testing.T) {
 	store := newStore(t)
 	server := serve(t, map[string][]byte{})
 	tool := installVersion(t, store, server, "1.0.0", "one")
-	preview, err := store.PreviewRemove([]string{tool.ID})
+	preview, err := store.PreviewRemove(t.Context(), []string{tool.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := store.Remove(ctx, preview); !errors.Is(err, context.Canceled) {
+	if err := store.Remove(ctx, preview, "user"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled Remove = %v", err)
 	}
 	if _, err := os.Stat(tool.Executable); err != nil {
 		t.Fatalf("a cancelled removal deleted files: %v", err)
 	}
-	if err := store.Remove(context.Background(), preview); err != nil {
+	if err := store.Remove(context.Background(), preview, "user"); err != nil {
 		t.Fatalf("the preview is still valid after a cancelled removal: %v", err)
 	}
 }
