@@ -111,3 +111,59 @@ func TestProjectToolReview(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectToolReviewNamesPackageManagerPrerequisites(t *testing.T) {
+	c, err := catalog.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := types.AssemblyPlan{State: types.AssemblyReady, Generation: 10, Languages: []types.AssemblyLanguage{{
+		ID: "fixture", ServerID: "fixture", Status: types.ToolMissing,
+		Package: "pyright", Command: "pyright-langserver",
+	}}}
+	review, err := buildProjectToolReview("project", "root", plan, c, catalog.CurrentTargets())
+	if err != nil || len(review.Items) != 1 {
+		t.Fatalf("package manager review: %+v %v", review, err)
+	}
+	item := review.Items[0]
+	if item.Installable || item.Version != "1.1.414" || item.Source != "npm registry" || item.URL != "pkg:npm/pyright@1.1.414" ||
+		item.Bin != "npm:pyright-langserver" ||
+		!strings.Contains(item.Reason, "Node.js") || !strings.Contains(item.Reason, "npm") {
+		t.Fatalf("package manager prerequisite was not explained accurately: %+v", item)
+	}
+}
+
+func TestProjectToolReviewTracksPackageManagerRecipeChanges(t *testing.T) {
+	plan := types.AssemblyPlan{State: types.AssemblyReady, Generation: 8, Languages: []types.AssemblyLanguage{{
+		ID: "fixture", ServerID: "fixture", Status: types.ToolMissing, Package: "fixture", Command: "serve",
+	}}}
+	build := func(source, program string) types.ProjectToolReview {
+		t.Helper()
+		doc := catalog.Document{Format: 1, Packages: []catalog.PackageRecord{{
+			Name: "fixture", Source: catalog.PackageSourceRecord{ID: source},
+			Bin: map[string]string{"serve": program},
+		}}}
+		data, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := catalog.Load(nil, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		review, err := buildProjectToolReview("project", "root", plan, c, nil)
+		if err != nil || len(review.Items) != 1 {
+			t.Fatalf("review: %+v %v", review, err)
+		}
+		return review
+	}
+	first := build("pkg:pypi/fixture@1.0?extra=one", "pypi:serve")
+	for _, changed := range []types.ProjectToolReview{
+		build("pkg:pypi/fixture@1.0?extra=two", "pypi:serve"),
+		build("pkg:pypi/fixture@1.0?extra=one", "pypi:other"),
+	} {
+		if changed.Items[0].Installable || changed.Items[0].ID == first.Items[0].ID || changed.Token == first.Token {
+			t.Fatalf("changed recipe reused an earlier review: %+v", changed)
+		}
+	}
+}

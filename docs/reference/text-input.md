@@ -31,7 +31,12 @@ shared control, never to one popup.
 - Read-only Form text areas open replacement content at its first line, so a
   source or warning cannot start below the visible viewport. Unchanged Form
   refreshes retain the user's reading position and selection. Editable areas
-  keep their ordinary end-of-content insertion behavior.
+  keep their ordinary end-of-content insertion behavior. The form routes
+  keyboard, selection and copy to read-only text controls without enabling
+  editing. Wheel input over a text area scrolls that reader first; at its
+  boundary, the containing form can scroll. Escape clears a text selection
+  first; without a selection it always goes back, so a focused text control
+  never swallows it.
 - Explicit wheel reading survives vertical expansion, including a popup's
   opening reveal. Adding visible rows cannot hide the caret and must not snap
   back to it. Width reflow or shrinking can reveal the caret again; an actual

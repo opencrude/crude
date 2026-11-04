@@ -485,6 +485,7 @@ var wireTypes = []any{
 	new(p14.ProjectToolCandidate),
 	new(p14.ProjectToolReview),
 	new(p14.ProjectToolSetupItem),
+	new(p14.ProjectToolSetupRequest),
 	new(p14.ProjectToolSetupResult),
 	new(p14.ProjectToolSetupReview),
 	new(p14.RepairTarget),

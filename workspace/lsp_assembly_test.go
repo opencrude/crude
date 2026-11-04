@@ -202,7 +202,7 @@ func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
 	}
 	t.Cleanup(func() { catalog.UsePacks(filepath.Join(pack, "none")) })
 	serveCatalogArtifact(t, fixtureExecutableArchive(t, setupFixtureBin()), "/fixture/fixture-acquired/releases/download/v1/server.zip")
-	store, err := toolstore.Open(t.TempDir())
+	store, err := toolstore.Open(temporaryToolStore(t))
 	if err != nil {
 		t.Fatal(err)
 	}

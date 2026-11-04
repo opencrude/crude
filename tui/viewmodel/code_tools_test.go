@@ -44,13 +44,13 @@ func integrationCodeToolsSettings(t *testing.T, app *App) *settingsui.WorkspaceS
 		t.Fatal("Settings not mounted")
 	}
 	for i, c := range body.Model().Categories() {
-		if c.Name == "Code intelligence tools" {
+		if c.Name == "Language Tools" {
 			body.Model().SelectCategory(i)
 			body.SetModel(body.Model())
 			return body
 		}
 	}
-	t.Fatal("Code intelligence tools page absent")
+	t.Fatal("Language Tools page absent")
 	return nil
 }
 
@@ -68,8 +68,12 @@ func TestCodeToolsMountedSettingsJourneyAndSafeConfirmation(t *testing.T) {
 				t.Fatal("opening settings did blocking I/O")
 			}
 			runAppCommand(t, app, app.drainRemoteUICommands())
+			body.FocusForm()
+			for _, r := range "fixture" {
+				app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+			}
 			paint := ansi.Strip(app.View().RenderContent())
-			if !strings.Contains(paint, "Code intelligence tools") || !strings.Contains(paint, "fixture v1") || !strings.Contains(paint, "Remove unused") {
+			if !strings.Contains(paint, "Language Tools") || !strings.Contains(paint, "fixture v1") || !strings.Contains(paint, "Crude") {
 				t.Fatalf("mounted inventory unavailable:\n%s", paint)
 			}
 			runAppCommand(t, app, body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.code-tools.remove-unused"}).Cmd)

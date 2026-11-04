@@ -280,4 +280,14 @@ func TestReviewedProjectInstallRequiresCurrentEffectAuthority(t *testing.T) {
 			t.Fatalf("unconfirmed publication offered a blind retry: %+v %v", res, err)
 		}
 	})
+	t.Run("unverified preparation stops the remaining work", func(t *testing.T) {
+		cause := &toolstore.PreparationUnverifiedError{Err: errors.New("process teardown is uncertain")}
+		f := &installFake{install: func(context.Context, toolstore.Request) (toolstore.Tool, error) {
+			return toolstore.Tool{}, cause
+		}}
+		res, err := installReviewedProjectToolsWithCatalog(t.Context(), f, &installAuthorityFake{}, review, ids, "receipt", "project", limits, c, []string{"linux_x64_gnu"})
+		if !errors.Is(err, cause) || !strings.Contains(res[0].Message, "Check the tools") || res[1].Attempted {
+			t.Fatalf("uncertain preparation was treated as retryable: %+v %v", res, err)
+		}
+	})
 }

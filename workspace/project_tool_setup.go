@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,11 @@ func setupRandomID() (string, error) {
 // Review suppresses remembered choices during discovery. An explicit native
 // Set up tools action may review still-missing tools again, but never restores
 // effect authority from an earlier choice.
-func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner, explicit bool) (types.ProjectToolSetupReview, error) {
+func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner, request types.ProjectToolSetupRequest) (types.ProjectToolSetupReview, error) {
+	if request.LanguageID != "" && (!request.Explicit || request.AssemblyGeneration == 0) ||
+		request.LanguageID == "" && request.AssemblyGeneration != 0 {
+		return types.ProjectToolSetupReview{}, errors.New("select a tool from the current project before reviewing it")
+	}
 	o.mu.Lock()
 	lifetime, err := o.lifetimeLocked(owner)
 	o.mu.Unlock()
@@ -143,6 +148,9 @@ func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner
 	p, err := o.snapshot(ctx)
 	if err != nil {
 		return types.ProjectToolSetupReview{}, err
+	}
+	if request.LanguageID != "" && request.AssemblyGeneration != p.full.AssemblyGeneration {
+		return types.ProjectToolSetupReview{}, errors.New("the project tools changed; refresh the list and try again")
 	}
 	records, history, err := readProjectToolDecisions(ctx, p.db)
 	if err != nil {
@@ -161,9 +169,15 @@ func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner
 	p.offered = types.CloneProjectToolReview(p.full)
 	p.offered.Items = nil
 	for _, item := range p.full.Items {
-		if (explicit || !known[item.ID]) && !setupCandidateInstalled(item, installed) {
+		if request.LanguageID != "" && !slices.Contains(item.Languages, request.LanguageID) {
+			continue
+		}
+		if (request.Explicit || !known[item.ID]) && !setupCandidateInstalled(item, installed) {
 			p.offered.Items = append(p.offered.Items, item)
 		}
+	}
+	if request.LanguageID != "" && len(p.offered.Items) > 1 {
+		return types.ProjectToolSetupReview{}, errors.New("more than one tool matches this language; review project tools instead")
 	}
 	p.offered.Token = ""
 	p.offered.Token = reviewHash(p.offered)

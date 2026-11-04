@@ -84,12 +84,12 @@ func ownProcessTree(cmd *exec.Cmd) (*ownedCommandTree, error) {
 		wait: func() error {
 			status, err := windows.WaitForSingleObject(process, windows.INFINITE)
 			if err != nil || status != windows.WAIT_OBJECT_0 {
-				_ = tree.Terminate()
+				stopErr := tree.Terminate()
 				_ = cmd.Wait()
-				return fmt.Errorf("wait for owned command: status %d: %v", status, err)
+				return joinTreeStop(fmt.Errorf("wait for owned command: status %d: %v", status, err), stopErr)
 			}
-			_ = tree.Terminate()
-			return cmd.Wait()
+			stopErr := tree.Terminate()
+			return joinTreeStop(cmd.Wait(), stopErr)
 		},
 		close: sync.OnceFunc(func() {
 			_ = windows.CloseHandle(process)

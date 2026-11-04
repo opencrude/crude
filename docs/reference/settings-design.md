@@ -30,7 +30,7 @@ format. The reference implementation is `tui/settings/surface.go` (anatomy),
 
 - **Header (three rows)**, painted by the surface for every page, list or form:
   title, subtitle, one breathing row. Editors show a breadcrumb trail
-  (`Language Servers ▸ Go (gopls)`): parents are muted and clicking the first
+  (`Language Tools ▸ Go (gopls)`): parents are muted and clicking the first
   segment goes back; the current page is accent and bold. Collections show their
   size as a muted count after the title. Catalogs never paint their own title.
   Detail pages use the subtitle for their install state and description.
@@ -145,7 +145,7 @@ the Auto Review Agent inherit their account.
 
 ## Collections (list → detail)
 
-Accounts, Agents, Language Servers and the Skills/MCP/Sources store share one
+Accounts, Agents, Language Tools and the Skills/MCP/Sources store share one
 rhythm: header, toolbar row (search first, then filters), the collection, a
 status row, then a left-aligned action row (`[ Add … ]` primary first,
 destructive last). Opening an item replaces only the right pane and adds a
@@ -153,23 +153,35 @@ breadcrumb; Esc, the breadcrumb parent and `[ Back … ]` return with selection,
 query and scroll retained.
 
 Collection pages do not reserve form-help rows: Accounts, Agents, Skills,
-MCP, Language Servers and Sources anchor their last action row immediately
+MCP, Language Tools and Sources anchor their last action row immediately
 above the shared footer rule. Status stays above the actions, never below
 them; wrapping actions on narrow panes does not introduce blank bottom rows.
 
-Language Servers edits apply to the settings draft immediately (the rail marker
+Language Tools server edits apply to the settings draft immediately (the rail marker
 and Save follow); an incomplete custom server stays open with guidance instead of
 being half-saved, and Save refuses an invalid inventory with the reason.
 
-Code intelligence tools uses the same retained frame, header, native form controls
-and Back/Close navigation as an operational collection, not a preference editor.
-Refresh and paged history read the selected core's shared inventory. Tool detail
-and Files use complete, selectable read-only text; Back returns to the collection
-inside the same frame. Remove/Remove unused first show the exact folders, files
-and measured size, then use the shared native Cancel-default confirmation.
-Unmanaged tools and unrecognized store entries never gain a destructive action.
-Loading/error states retain the page, and stale page/scope/close results cannot
-replace a newer reader. These operations do not wait for Settings Save.
+Language Tools joins server configuration and the core's installed-tool
+inventory in one table. Installed by identifies Crude-managed and external
+artifacts; an unmatched configuration says Not checked unless the project's
+assembly reports it missing. This project, Installed and All filter the same
+collection. They are adjacent chips on the search row (wrapped below it on
+narrow panes), with the shared progress rule beneath the toolbar while the
+tools load. The three chips are one keyboard stop: Tab enters the chosen one,
+Left/Right choose the neighbouring scope and hold at the ends, Up returns to
+the search and Down or Tab continues to the table. Only Enter or a click
+opens a tool; Shift+Tab from the table returns to the scope. A tool's
+subtitle states who installed it and its state in this project. This project
+uses an assembly snapshot and Ready means an executable was resolved, not that
+a server is running. The Installed filter is limited to the store
+Overview, Launch, Files and History tabs, with the latter two for managed tools.
+Overview and Files use selectable read-only text; Launch opens each associated
+language's editor. History provides Remove unused. Remove and Remove unused
+first show exact folders, files and measured size, then use the shared native
+Cancel-default confirmation. External and unrecognized entries never gain a
+destructive action. Loading/error states retain the page; stale page/scope/close
+results cannot replace a newer reader. These operations do not wait for Settings
+Save.
 
 ## Skills and MCP store
 
@@ -199,4 +211,4 @@ replace a newer reader. These operations do not wait for Settings Save.
 - `LSPSettings.Servers`/`ServerArgs` were a second, extension-keyed server
   authority beside per-language definitions; Languages is the only one.
 - The Code Intelligence page's raw "Custom servers / advanced JSON" editor is
-  replaced by the Language Servers list and per-server editor.
+  replaced by the Language Tools collection and per-language editor.

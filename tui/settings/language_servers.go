@@ -58,11 +58,11 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 	fields := []*ui.FieldState{
 		m.analysisTrustField(m.layerBase.Analysis),
 		ui.SeparatorFieldState("language-intelligence", "General"),
-		ui.BoolFieldState("enabled", "Language intelligence", lsp.Enabled, "Enable services for open source files; this does not scan the workspace."),
+		ui.BoolFieldState("enabled", "Code intelligence", lsp.Enabled, "Enable services for open source files; this does not scan the workspace."),
 		ui.BoolFieldState("auto-detect", "Detect servers", lsp.AutoDetect, "Choose configured servers by file type; install their executables separately."),
 		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Start a language server when its first document opens, not at startup."),
 		lspNumberField("debounce", "Update delay", "ms", lsp.UpdateDebounceMS, 60000, "Pause after typing before the server re-analyzes the document."),
-		{ID: "servers-nav", Label: "Language servers", Type: ui.FieldNav, Target: "settings.lsp.servers", Columns: []string{lspServerSummary(lsp.Languages)}, Description: "Commands, arguments and environment for each language server."},
+		{ID: "servers-nav", Label: "Language tools", Type: ui.FieldNav, Target: "settings.lsp.servers", Columns: []string{lspServerSummary(lsp.Languages)}, Description: "Review installed tools and configure language servers."},
 		ui.SeparatorFieldState("features", "Features"),
 		ui.BoolFieldState("diagnostics", "Diagnostics", lsp.Diagnostics, "Publish errors, warnings and hints from the server."),
 		ui.BoolFieldState("completions", "Completions", lsp.Completions, "Offer completion items at the cursor."),
@@ -81,7 +81,7 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 		ui.SeparatorFieldState("resources", "Resources"),
 		lspNumberField("max-servers", "Running servers", "max", lsp.MaxServers, 32, "How many language servers may run at once. Idle ones retire first."),
 		lspNumberField("idle-timeout", "Retire idle after", "seconds", lsp.IdleTimeoutSeconds, 86400, "Stop a server that has had no open documents for this long."),
-		lspNumberField("max-document", "Skip documents over", "MB", max(1, lsp.MaxDocumentBytes/mebibyte), 64, "Larger files open without language intelligence to keep servers responsive."),
+		lspNumberField("max-document", "Skip documents over", "MB", max(1, lsp.MaxDocumentBytes/mebibyte), 64, "Larger files open without code intelligence to keep servers responsive."),
 		lspNumberField("server-threads", "Threads per server", "threads", lsp.ServerThreads, 64, "Parallelism hint for supported servers; explicit arguments take priority."),
 		lspNumberField("server-memory", "Memory per server", "MiB", lsp.ServerMemoryMB, 65536, "Heap hint for Go and TypeScript, not a hard process memory limit."),
 	}

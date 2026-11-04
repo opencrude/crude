@@ -1,0 +1,33 @@
+{
+  "npm": {
+    "manager": "npm",
+    "registry": "npm registry",
+    "runtime": "Node.js",
+    "name_form": "scoped",
+    "program_forms": {"npm": "name", "node": "path"}
+  },
+  "pypi": {
+    "manager": "pip",
+    "registry": "PyPI",
+    "runtime": "Python 3",
+    "name_form": "simple",
+    "program_forms": {"pypi": "name"},
+    "qualifiers": {"extra": "names"}
+  },
+  "golang": {
+    "manager": "go",
+    "registry": "Go module proxy",
+    "runtime": "Go",
+    "name_form": "path",
+    "program_forms": {"golang": "name"},
+    "subpath": true
+  },
+  "cargo": {
+    "manager": "cargo",
+    "registry": "Cargo registry",
+    "runtime": "Rust",
+    "name_form": "simple",
+    "program_forms": {"cargo": "name"},
+    "qualifiers": {"repository_url": "https"}
+  }
+}

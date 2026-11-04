@@ -9,6 +9,7 @@ import (
 	"crude/prompt"
 	"crude/shellport"
 	"crude/tui/screens/toolsetup"
+	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/types"
@@ -32,7 +33,8 @@ type projectToolsRequest struct {
 	screen     *toolsetup.Screen
 	ctx        context.Context
 	cancel     context.CancelFunc
-	explicit   bool
+	selection  types.ProjectToolSetupRequest
+	origin     *settingsui.OpenProjectToolsMsg
 	submitted  bool
 }
 
@@ -87,8 +89,14 @@ func (m *App) closeProjectTools() {
 
 // requestProjectTools is a joined, cancellable read. A later language or catalog
 // change gets a quiet notice; only the first project choice opens automatically.
-func (m *App) requestProjectTools(explicit bool) tea.Cmd {
-	if m.ws == nil || m.projectTools.request != nil || !m.ws.LoadAppSettings().Analysis.Trusted() {
+func (m *App) requestProjectTools(selection types.ProjectToolSetupRequest, origin *settingsui.OpenProjectToolsMsg) tea.Cmd {
+	if m.ws == nil || m.projectTools.request != nil {
+		return nil
+	}
+	if !m.ws.LoadAppSettings().Analysis.Trusted() {
+		if selection.Explicit && m.Feedback != nil {
+			m.Feedback.NotifyInfo("Trust this folder before setting up project tools.")
+		}
 		return nil
 	}
 	port, ok := m.ws.(shellport.ProjectTools)
@@ -97,12 +105,12 @@ func (m *App) requestProjectTools(explicit bool) tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	request := &projectToolsRequest{workspace: m.ws, generation: m.workspaceSwitchGen.Load(),
-		port: port, ctx: ctx, cancel: cancel, explicit: explicit}
+		port: port, ctx: ctx, cancel: cancel, selection: selection, origin: origin}
 	m.projectTools.request = request
 	return m.clientIOCommand(ctx, func(ctx context.Context) tea.Msg {
 		ctx, stop := context.WithTimeout(ctx, 30*time.Second)
 		defer stop()
-		preview, err := port.ReviewProjectTools(ctx, request.explicit)
+		preview, err := port.ReviewProjectTools(ctx, request.selection)
 		return projectToolsReviewedMsg{request: request, preview: preview, err: err}
 	})
 }
@@ -137,18 +145,28 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.projectToolsCurrent(request) {
 			return true, nil
 		}
+		if request.origin != nil {
+			var body *settingsui.WorkspaceSettingsSurface
+			if m.overlayHost != nil {
+				body = m.settingsSurface(m.overlayHost.Window(ui.OverlayWorkspaceSettings))
+			}
+			if body == nil || !body.ProjectToolsRequestRelevant(*request.origin) {
+				m.closeProjectTools()
+				return true, nil
+			}
+		}
 		if msg.err != nil || !msg.preview.NeedsDecision || msg.preview.ID == "" {
 			m.projectTools.request = nil
 			request.cancel()
-			if msg.err != nil && request.explicit && m.Feedback != nil {
+			if msg.err != nil && request.selection.Explicit && m.Feedback != nil {
 				m.Feedback.NotifyError("Could not review project tools. " + msg.err.Error())
-			} else if request.explicit && m.Feedback != nil {
+			} else if request.selection.Explicit && m.Feedback != nil {
 				m.Feedback.NotifyInfo(msg.preview.Message)
 			}
 			return true, nil
 		}
 		request.preview = msg.preview
-		if !request.explicit && (msg.preview.Quiet || m.overlayHost == nil || len(m.overlayHost.All()) != 0) {
+		if !request.selection.Explicit && (msg.preview.Quiet || m.overlayHost == nil || len(m.overlayHost.All()) != 0) {
 			m.projectTools.request = nil
 			request.cancel()
 			if m.projectTools.notified != msg.preview.Review.Token && m.Feedback != nil {
@@ -213,7 +231,7 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		plan := m.ws.LSPMgr().Assembly()
 		if plan.State == types.AssemblyReady && !plan.Limited && plan.Generation != state.checked {
 			state.checked = plan.Generation
-			return false, m.requestProjectTools(false)
+			return false, m.requestProjectTools(types.ProjectToolSetupRequest{}, nil)
 		}
 	}
 	return false, nil
