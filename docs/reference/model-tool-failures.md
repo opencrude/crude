@@ -1,5 +1,8 @@
 # Model tool failures
 
+> Status: Current reference (2026-11-04) — tool failures caused by how a model
+> family calls tools, with their causes, fixes and tests.
+
 This page records tool failures that come from how a model family calls tools,
 not from a defect in one task. Each entry gives the observed failure, its
 cause, the fix and the test that keeps it fixed. Add an entry when a model
@@ -34,9 +37,9 @@ affected less.
   the edit is refused and nothing changes.
 
 The failure was reproduced again while this page was written: an edit of
-`docs/README.md` whose `old_string` ended at `[Workspace collaboration
-runtime]` deleted the rest of that line, `(reference/workspace-collaboration.md) —`.
-The running Crude still had the old patcher.
+`docs/README.md` whose `old_string` ended at the link text of the "Workspace
+collaboration runtime" entry deleted the link target after it. The running
+Crude still had the old patcher.
 
 **Tests.** `fileio/patcher_fragment_test.go`. Two older tests in
 `fileio/patcher_test.go` pinned the lost function signature as expected
