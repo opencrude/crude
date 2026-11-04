@@ -68,6 +68,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, pasted := msg.(tea.PasteMsg); pasted && m.completion != nil {
 		m.closeCompletionPopup()
 	}
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg, tea.PasteMsg:
+		// Background maintenance (the workspace Aeron) waits for a quiet
+		// shell. Every real interaction resets that quiet period.
+		m.LastInteractionTime = time.Now()
+	}
 	m.syncEditorGhost()
 	m.syncEditorSnippet()
 	defer m.invalidateMessageRegions(msg)
@@ -255,6 +261,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellport.SettingsChangedMsg:
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+		if m.aeronEnsureFailed {
+			// The first attempt may have waited for an account or model. A
+			// settings change is the user's chance to provide it.
+			m.requestWorkspaceAeronEnsure()
+		}
 		return m, nil
 	case shellport.ReplicaFailureMsg:
 		if msg.Owner == m.ws {
@@ -677,6 +688,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	m.syncAgentStatusInventory()
 	m.syncPerfAttention(now)
 	perfCmd := m.requestPerfSnapshot(false)
+	aeronCmd := m.workspaceAeronTick(now)
 	var launcherCmd tea.Cmd
 	if m.capabilityObservationVisible() {
 		launcherCmd = m.launcherCapabilitiesCmd(now)
@@ -690,10 +702,10 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, aeronCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, aeronCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right

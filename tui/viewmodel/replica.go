@@ -21,12 +21,18 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 	var commands []tea.Cmd
 	for i, id := range applied.Attached {
 		activate := applied.Initial && i == 0
+		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[id])
+		if aeron {
+			// The workspace agent is permanent background inventory. It must
+			// never replace the launcher or the user's selected tab.
+			activate = false
+		}
 		if m.pendingOrchestrators[id] {
 			activate = true
 			delete(m.pendingOrchestrators, id)
 		}
 		m.addOrchestrator(id, activate)
-		if workspace.SessionIsAeron(m.ws.SessionsByAgent()[id]) {
+		if aeron {
 			m.prepareAeronAgent(id)
 		}
 		commands = append(commands, m.takePendingFirstInput(id))

@@ -95,7 +95,38 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		return nil
 	}
 	m.sessionLifecyclePending = false
+	if msg.aeron {
+		m.aeronEnsureInFlight = false
+	}
 	if msg.result == nil || msg.result.Error != "" {
+		if msg.aeron {
+			if msg.result != nil && aeronEnsureRetryable(msg.result.Error) {
+				// A restore, another lifecycle operation or bounded admission
+				// owns the core. A background ensure retries when the shell is
+				// quiet; a work order keeps its text and asks the user to send
+				// it again instead of dropping it silently.
+				if msg.initial.Text != "" {
+					if m.Feedback != nil {
+						m.Feedback.NotifyInfo("Aeron could not start because other work was running. Send the request again in a moment.")
+					}
+					m.requestWorkspaceAeronEnsure()
+					return nil
+				}
+				m.retryWorkspaceAeron()
+				return nil
+			}
+			m.aeronEnsureFailed = true
+			detail := "Aeron could not start. Check your model settings and try again."
+			if msg.result != nil && msg.result.NeedsAccount {
+				detail = "Aeron is waiting for an account. Choose an account in Settings, then set up the tools again."
+			} else if msg.result != nil && msg.result.NeedsModel {
+				detail = "Aeron is waiting for a model. Choose a model in Settings, then set up the tools again."
+			}
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo(detail)
+			}
+			return nil
+		}
 		if msg.forked {
 			detail := "Core returned no session result."
 			if msg.result != nil {
@@ -120,9 +151,14 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		return nil
 	}
 	if msg.aeron {
+		m.aeronEnsureFailed = false
+		m.aeronEnsureAttempts = 0
 		m.prepareAeronAgent(msg.result.OrchID)
 		if m.ws.AgentMgr().Get(msg.result.OrchID) != nil {
 			m.addOrchestrator(msg.result.OrchID, false)
+		}
+		if msg.initial.Text == "" {
+			return nil
 		}
 		return m.submitFirstInput(msg.result.OrchID, msg.initial)
 	}
@@ -132,6 +168,11 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	}
 	if msg.initial.Text != "" {
 		return m.submitFirstInput(msg.result.OrchID, msg.initial)
+	}
+	if msg.sessionID != "" || msg.forked {
+		// A resumed or forked session can be the tail of a workspace switch.
+		// Retry the permanent Aeron once the shell is quiet again.
+		m.requestWorkspaceAeronEnsure()
 	}
 	return nil
 }
@@ -358,6 +399,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	m.discardTerminalUI()
 	old := m.ws.(shellport.Connection)
 	m.ws = msg.next
+	m.resetWorkspaceAeron()
 	if m.remotes != nil && backendID != "" {
 		m.remotes.current = backendID
 	}
@@ -399,6 +441,8 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		return nil
 	}
 	if msg.resumeID != "" {
+		// The resumed session owns the lifecycle slot; the tick ensures Aeron
+		// after it settles.
 		return tea.Batch(closeOld, m.remoteSessionCommand(msg.resumeID), m.onboardingCmd())
 	}
 	return tea.Batch(closeOld, m.onboardingCmd())

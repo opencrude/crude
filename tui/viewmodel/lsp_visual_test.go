@@ -396,7 +396,7 @@ func (m *lspVisualModel) journeyLSP(key, phase int) error {
 			if !seen["lib.go:3:5"] || !seen["main.go:2:13"] {
 				return fmt.Errorf("references disagree with independent source oracle: %+v", rows)
 			}
-			return paint(v, "Find references", "lib.go", "main.go", "Inspect")
+			return paint(v, "References", "lib.go", "main.go")
 		})
 		label = "Alt+; references lib.go:4:6 and main.go:3:14"
 	case 5:

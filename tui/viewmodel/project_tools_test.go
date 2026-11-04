@@ -63,12 +63,22 @@ type projectToolsTestPort struct {
 	selections []types.ProjectToolSetupRequest
 	choices    [][]string
 	roles      []string
+	onEnsure   func()
 }
 
 // NewAgentSessionAs records the role instead of opening a real session.
 func (p *projectToolsTestPort) NewAgentSessionAs(role string) *workspace.NewSessionResult {
 	p.roles = append(p.roles, role)
 	return &workspace.NewSessionResult{SessionID: "aeron-session", OrchID: "aeron-agent"}
+}
+
+// EnsureAeronSession follows the same test path: the setup action must reuse
+// the workspace's one Aeron, never create a second identity.
+func (p *projectToolsTestPort) EnsureAeronSession() *workspace.NewSessionResult {
+	if p.onEnsure != nil {
+		p.onEnsure()
+	}
+	return p.NewAgentSessionAs("aeron")
 }
 
 func (p *projectToolsTestPort) LoadAppSettings() types.AppSettings { return p.settings }

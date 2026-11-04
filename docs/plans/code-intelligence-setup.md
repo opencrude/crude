@@ -61,11 +61,14 @@ they disagree. Keep it small: the effort goes to editor interaction and the
 cooperation with the language server, not to a trust framework around setup.
 
 - **One Aeron per workspace.** Aeron is the existing narrow-task agent role, not
-  a new kind of agent. The workspace has one instance. It is created when first
-  needed, starts minimized, and shows in the Agents sidebar like any agent. The
-  user can open it to see what it does. Crude parts and the main agent task it
-  with normal messages. The user can also task the main agent to do the same job
-  if Aeron falls short.
+  a new kind of agent. The workspace has one instance. The shell opens it
+  shortly after the workspace opens, once startup has settled and the user is
+  not working, so a restore or first input never competes with it. It starts
+  minimized, and shows in the Agents sidebar like any agent with its idle or
+  running state. A restart reopens the same saved session. The user can open it
+  to see what it does and task it whenever they choose. Crude parts and the main
+  agent task it with normal messages. The user can also task the main agent to
+  do the same job if Aeron falls short.
 - **The setup screen stays.** It shows the languages Crude found. Its switches
   say what Aeron should set up and what it should leave alone. **Set up** builds
   a prompt from them and sends it to Aeron. The screen installs nothing itself.
@@ -99,8 +102,13 @@ RPC); the Aeron role with no tool or capability restriction; the setup screen
 (the 2026-11-03 list-and-details review, with every tool selectable and
 selected at first) that sends `prompt.ToolSetupMessage` to the workspace's
 Aeron, minimized and on automatic approval (`tui/viewmodel/workspace_aeron.go`);
-the close button of the setup window. Not built or not verified: finding a
-saved Aeron session after a cold core restart (a new one opens), a rendered
+the close button of the setup window; and the permanent workspace Aeron
+(`EnsureAeronSession`): the core records its session in `workspace_metadata`,
+reopens that saved session on the next attach, reports `idle` in the Agents
+panel, and never takes the user's tab. The shell creates it after startup
+settles and only while no restore, lifecycle operation or user input is
+running; a temporary admission conflict retries quietly. Not built or not
+verified: a rendered
 native Windows run of the whole journey, and an end-to-end Aeron installation
 run with a real model.
 

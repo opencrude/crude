@@ -1266,7 +1266,7 @@ func (a *actor) execute(request coreprotocol.Request) coreprotocol.Response {
 	}
 
 	switch request.Method {
-	case coreprotocol.NewSession, coreprotocol.OpenSession, coreprotocol.ForkSession, coreprotocol.SubmitInput, coreprotocol.SteerInput, coreprotocol.Decide, coreprotocol.CancelAgent, coreprotocol.TerminateAgent:
+	case coreprotocol.NewSession, coreprotocol.OpenSession, coreprotocol.ForkSession, coreprotocol.EnsureSession, coreprotocol.SubmitInput, coreprotocol.SteerInput, coreprotocol.Decide, coreprotocol.CancelAgent, coreprotocol.TerminateAgent:
 	default:
 		return fault(request, "unknown_method", "method is not offered by this core")
 	}
@@ -1440,11 +1440,11 @@ func (a *actor) bindInputExecution(input *provider.UserInput, agentID string) {
 func (a *actor) startJob(command actorCommand) bool {
 	request := *command.request
 	historyRestore := request.Method == coreprotocol.HistoryApply
-	if a.historyBusy && (request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession || request.Method == coreprotocol.SubmitInput || request.Method == coreprotocol.SteerInput || request.Method == coreprotocol.AgentRecover || request.Method == coreprotocol.AgentCompact) {
+	if a.historyBusy && (request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession || request.Method == coreprotocol.EnsureSession || request.Method == coreprotocol.SubmitInput || request.Method == coreprotocol.SteerInput || request.Method == coreprotocol.AgentRecover || request.Method == coreprotocol.AgentCompact) {
 		command.result <- fault(request, "restore_busy", "history restore owns admission; input and work are retained")
 		return true
 	}
-	lifecycle := request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession
+	lifecycle := request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession || request.Method == coreprotocol.EnsureSession
 	service, serviceKnown := a.prepareService(request)
 	resource, resourceKnown := a.prepareResource(request)
 	if resourceKnown {

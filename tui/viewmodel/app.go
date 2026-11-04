@@ -227,6 +227,11 @@ type App struct {
 	activityList          *activitylist.Screen
 	agentFolded           map[string]bool // agent IDs whose children the Agents sidebar hides
 	aeronPrepared         map[string]bool // Aeron agents already minimized and set to automatic approval
+	aeronEnsureInFlight   bool            // one workspace-Aeron ensure request is running
+	aeronEnsureScheduled  bool            // the low-priority ensure is waiting for a quiet moment
+	aeronEnsureEarliest   time.Time       // do not create the workspace agent before this time
+	aeronEnsureAttempts   int             // bounded retries of an admission conflict
+	aeronEnsureFailed     bool            // this attachment could not create Aeron; do not loop
 	gitPanel              *gitpanel.Panel
 	activityView          activitybar.View
 	termScreens           map[string]*shellterm.Screen
@@ -647,6 +652,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
+	m.requestWorkspaceAeronEnsure()
 	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
 }
 

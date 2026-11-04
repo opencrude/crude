@@ -187,7 +187,8 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			return
 		}
 		label := workspace.AgentDisplayLabel(n)
-		if n.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[n.ID]) {
+		aeron := n.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[n.ID])
+		if aeron {
 			label = "Aeron"
 		}
 		if label == "" {
@@ -206,18 +207,32 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		case n.IsActive():
 			detail = "running"
 			icon = "●"
-		case n.IsCompleted():
+		case n.IsCompleted() && !aeron:
 			icon = "✓"
+		case aeron && n.IsCompleted():
+			// The workspace agent keeps a readable state after a turn, so the
+			// user always knows whether it is free to task.
+			detail = "finished"
+			icon = "✓"
+		case aeron:
+			// The workspace agent is permanent. Its row says it is idle so the
+			// user knows it is present and can choose to use it.
+			detail = "idle"
 		}
 		// Minimized agents stay listed here: this panel is how they come
 		// back, so the row has to say the tab is gone, not that the agent is.
 		if m.AgentView.IsHidden(n.ID) {
-			if n.IsCompleted() {
+			switch {
+			case n.IsCompleted():
 				icon = "✓"
-			} else if detail == "running" {
-				detail = "running · minimized"
-			} else {
+				if detail != "" {
+					detail += " · minimized"
+				}
+			case detail == "":
 				detail = "minimized"
+				icon = "▪"
+			default:
+				detail += " · minimized"
 				icon = "▪"
 			}
 		}

@@ -257,6 +257,11 @@ ownership are all retained. A stray click must never destroy work in flight.
 - Restoring: the Agents panel lists minimized agents with a `minimized`
   detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
   on its own so every path back works.
+- The workspace Aeron is permanent. Each attachment ensures exactly one after
+  startup settles and a quiet period without user work, minimized by default,
+  and its row always reports a state (`idle`, `running`, `finished`, with
+  `minimized` while its tab is closed). Reopening the workspace resumes the
+  saved session instead of creating another agent.
 - Terminating is explicit: `terminateAgent` (tab and Agents-panel context
   menus) still cancels the turn, stops the orchestrator, and drops state.
   `cleanupAgent` remains the destructive path; do not wire it to tab close.
