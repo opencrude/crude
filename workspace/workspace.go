@@ -155,6 +155,11 @@ type Workspace struct {
 	// A session may own more than one orchestrator over its lifetime.
 	SessionsByAgent map[string]*Session
 
+	// aeronSessionID is the workspace's one Aeron session. It is persisted in
+	// workspace_metadata so a restart reopens the existing agent instead of
+	// creating another one. The zero value means Aeron has not been created.
+	aeronSessionID string
+
 	// Agent admission and snapshots share the workspace's serialized owner.
 	// These are runtime facts, never a client's selected tab or pane geometry.
 	agentRevision uint64
@@ -283,6 +288,10 @@ func NewWorkspace(
 	if dbErr != nil {
 		lg.Warn("WORKSPACE", "db_open_failed", "error", dbErr.Error())
 	}
+	aeronSessionID := ""
+	if wsDB != nil {
+		aeronSessionID = wsDB.GetSetting(workspaceAeronSessionKey)
+	}
 	historyStore, historyErr := openLocalHistory(rootPath, wsDir)
 	if historyErr != nil {
 		lg.Warn("WORKSPACE", "local_history_open_failed", "error", historyErr.Error())
@@ -323,6 +332,7 @@ func NewWorkspace(
 		Sessions:           make([]*Session, 0),
 		SessionsByID:       make(map[string]*Session),
 		SessionsByAgent:    make(map[string]*Session),
+		aeronSessionID:     aeronSessionID,
 		Logger:             lg,
 		InitialModelName:   modelName,
 		InitialSettings:    initial,
@@ -380,8 +390,10 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	oldDB := w.WorkspaceDB
 	oldStatus := w.Status
 	oldWriter := w.registryCostWriter
+	oldAeronSessionID := w.aeronSessionID
 	w.WorkspaceDB = db
 	w.workspaceDBErr = nil
+	w.aeronSessionID = db.GetSetting(workspaceAeronSessionKey)
 	collaborationStore, collaborationErr := collaboration.Attach(
 		db.DB, canonicalizePath(w.RootPath), filepath.Join(w.WorkspaceDir, "collaboration-locks"),
 	)
@@ -389,6 +401,7 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 		_ = db.Close()
 		w.WorkspaceDB = oldDB
 		w.workspaceDBErr = previousErr
+		w.aeronSessionID = oldAeronSessionID
 		return fmt.Errorf("restore collaboration runtime: %w", collaborationErr)
 	}
 	w.Collaboration = collaborationStore

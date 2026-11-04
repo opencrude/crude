@@ -37,6 +37,14 @@ type SessionLifecycleOperation struct {
 	backend                                      *session.Session
 	expectedAgentID                              string
 	start                                        bool
+	// createIfMissing lets an ensure operation replace a remembered session
+	// whose database was removed, instead of failing the workspace agent.
+	createIfMissing bool
+	// rememberRole makes a created session persist its root role, so resume
+	// restores the same role. rememberAeron records it as the workspace's one
+	// Aeron session.
+	rememberRole  string
+	rememberAeron bool
 	// fork, when set, writes the new saved session from an open one before it
 	// is opened; the operation then names that new session.
 	fork   func() error
@@ -54,6 +62,8 @@ type SessionLifecycleResult struct {
 	registryErr     error
 	gate            *lifecycleEventGate
 	expectedAgentID string
+	// aeronSessionID is the exact session recorded as the workspace's Aeron.
+	aeronSessionID string
 }
 
 // Cold runtimes may announce retained recovery immediately. Keep that evidence
@@ -201,6 +211,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 	if owner == nil {
 		var backend *session.Session
 		var err error
+		created := false
 		root := filepath.Join(op.directory, "sessions")
 		if op.fork != nil {
 			if err := op.fork(); err != nil {
@@ -208,23 +219,45 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 				return
 			}
 		}
-		if op.sessionID == "" {
-			backend, err = session.NewWithSessionDir("", op.cfg, op.home, root)
-		} else {
+		create := op.sessionID == ""
+		if !create {
 			path, pathErr := SessionDBPath(op.root, op.sessionID)
 			if pathErr != nil {
 				result.Err = pathErr
 				return
 			}
-			if _, err = os.Stat(path); err == nil {
+			if _, statErr := os.Stat(path); statErr == nil {
 				backend, err = session.ResumeSessionWithDir(path, op.cfg, op.home, root)
+				if err == nil && op.rememberRole != "" && backend.SettingsSnapshot().SessionMainAgent != op.rememberRole {
+					// The saved session now belongs to a different root role.
+					// Keep that user choice and make the missing role session.
+					backend.Close()
+					backend, err = nil, nil
+					create = true
+				}
+			} else if op.createIfMissing {
+				create = true
 			} else {
-				err = fmt.Errorf("session database unavailable: %w", err)
+				err = fmt.Errorf("session database unavailable: %w", statErr)
 			}
+		}
+		if err == nil && create {
+			op.sessionID = ""
+			backend, err = session.NewWithSessionDir("", op.cfg, op.home, root)
+			created = err == nil
 		}
 		if err != nil {
 			result.Err = err
 			return
+		}
+		if op.rememberRole != "" && created {
+			settings := backend.SettingsSnapshot()
+			settings.SessionMainAgent = op.rememberRole
+			if _, err := backend.SaveSettingsSnapshot(settings); err != nil {
+				backend.Close()
+				result.Err = fmt.Errorf("persist session role: %w", err)
+				return
+			}
 		}
 		backend.SetWorkDir(op.root)
 		backend.SetMemoryStore(op.database.Memory)
@@ -254,6 +287,12 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		owner.installSettings(backend.SettingsSnapshots())
 		result.cold = true
 		result.registryErr = op.database.RegisterSession(owner.SessionID, op.root, filepath.Base(op.root), backend.ModelName(), backend.SettingsSnapshot().ProviderID)
+		if op.rememberAeron {
+			if err := op.database.SetSetting(workspaceAeronSessionKey, owner.SessionID); err != nil {
+				result.registryErr = errors.Join(result.registryErr, fmt.Errorf("remember workspace Aeron: %w", err))
+			}
+			result.aeronSessionID = owner.SessionID
+		}
 		if op.sessionID == "" || op.fork != nil {
 			_ = op.database.SetAgentName(owner.SessionID, backend.AgentName())
 		}
@@ -342,6 +381,9 @@ func (w *Workspace) ApplyAgentSession(result SessionLifecycleResult) *NewSession
 	owner := result.owner
 	if owner == nil || w.SessionsByID[owner.SessionID] != owner {
 		return &NewSessionResult{Error: "Session owner changed"}
+	}
+	if result.aeronSessionID != "" {
+		w.aeronSessionID = result.aeronSessionID
 	}
 	owner.AgentID = result.agentID
 	if owner.AgentID == "" {

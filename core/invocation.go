@@ -2,6 +2,7 @@ package core
 
 import (
 	"crude/coreprotocol"
+	"crude/session"
 	"crude/workspace"
 	"errors"
 )
@@ -12,6 +13,12 @@ func (a *actor) prepareInvocation(request coreprotocol.Request) (*workspace.Invo
 	var input coreprotocol.InvocationSessionRequest
 	if err := decodeRequest(request, &input); err != nil {
 		return nil, errors.New("invalid invocation request")
+	}
+	if request.Method == coreprotocol.EnsureSession {
+		if input.SessionID != "" || !input.Selection.SelectsOnlyMainAgent(session.CategoryAeron) {
+			return nil, errors.New("the workspace agent request names only the Aeron role")
+		}
+		return a.ws.PrepareAeronSession()
 	}
 	if (request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession) && input.SessionID == "" {
 		return nil, errors.New("session identity is required")

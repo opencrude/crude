@@ -18,7 +18,10 @@ const (
 	NewSession   = "session.create"
 	OpenSession  = "session.open"
 	// ForkSession copies an open session (SessionID) into a new one and opens it.
-	ForkSession    = "session.fork"
+	ForkSession = "session.fork"
+	// EnsureSession returns the workspace's one Aeron session, reopening the
+	// remembered one or creating it on first use. It never submits input.
+	EnsureSession  = "session.ensure"
 	ListSessions   = "session.list"
 	SubmitInput    = "agent.submit"
 	SteerInput     = "agent.steer"

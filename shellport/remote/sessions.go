@@ -66,6 +66,13 @@ func (w *Workspace) NewAgentSessionAs(mainAgent string) *workspace.NewSessionRes
 	return w.lifecycle(coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: coreprotocol.InvocationSelection{MainAgent: mainAgent}})
 }
 
+// EnsureAeronSession asks the core for the workspace's one Aeron. The core
+// decides whether to reuse, resume or create it; the shell never keeps a
+// second identity for the same agent.
+func (w *Workspace) EnsureAeronSession() *workspace.NewSessionResult {
+	return w.lifecycle(coreprotocol.EnsureSession, &coreprotocol.InvocationSessionRequest{Selection: coreprotocol.InvocationSelection{MainAgent: session.CategoryAeron}})
+}
+
 func (w *Workspace) OpenAgentSession(sessionID string) *workspace.NewSessionResult {
 	return w.lifecycle(coreprotocol.OpenSession, &coreprotocol.InvocationSessionRequest{SessionID: sessionID, Selection: w.invocation})
 }

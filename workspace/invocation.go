@@ -17,8 +17,11 @@ import (
 type InvocationLifecycleOperation struct {
 	op        *SessionLifecycleOperation
 	selection InvocationSelection
-	once      sync.Once
-	result    SessionLifecycleResult
+	// ready is set when the workspace already has the exact live session the
+	// caller asked for. Run returns it without touching retained state.
+	ready  *SessionLifecycleResult
+	once   sync.Once
+	result SessionLifecycleResult
 }
 
 // InvocationSelection is write-only lifecycle input, not a settings read model.
@@ -35,6 +38,13 @@ type InvocationSelection struct {
 
 func (s InvocationSelection) Empty() bool {
 	return s.AccountID == "" && s.Model == "" && s.ProviderID == "" && s.APIKey == "" && s.Instructions == "" && s.MainAgent == ""
+}
+
+// SelectsOnlyMainAgent reports that the selection carries exactly the named
+// root role and no connection or instruction override.
+func (s InvocationSelection) SelectsOnlyMainAgent(role string) bool {
+	return s.AccountID == "" && s.Model == "" && s.ProviderID == "" && s.APIKey == "" &&
+		s.Instructions == "" && s.MainAgent != "" && s.MainAgent == role
 }
 
 // connectionEmpty reports that the selection names no account, model or
@@ -182,7 +192,13 @@ func (w *Workspace) PrepareInvocationFork(sourceID string) (*InvocationLifecycle
 }
 
 func (op *InvocationLifecycleOperation) Run(ctx context.Context) SessionLifecycleResult {
-	op.once.Do(func() { op.result = op.run(ctx) })
+	op.once.Do(func() {
+		if op.ready != nil {
+			op.result = *op.ready
+			return
+		}
+		op.result = op.run(ctx)
+	})
 	return op.result
 }
 

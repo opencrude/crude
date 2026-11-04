@@ -45,3 +45,79 @@ func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 		t.Fatal("an unknown role was accepted")
 	}
 }
+
+// The workspace keeps exactly one Aeron, and reopening the workspace resumes
+// that same saved agent instead of creating another one.
+func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
+	setTestHome(t)
+	root := t.TempDir()
+	makeWorkspace := func() *Workspace {
+		w := NewWorkspace(root, "history-model", "tester", types.Settings{}, nopLogger{})
+		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		cfg := historyE2EConfig("http://127.0.0.1:1")
+		prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
+		if _, ok := prof.Categories[session.CategoryAeron]; !ok {
+			prof.Categories[session.CategoryAeron] = session.CategoryConfig{Inherit: session.InheritMain}
+			cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = prof
+		}
+		w.SetBackendConfig(cfg, t.TempDir())
+		w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
+		return w
+	}
+
+	w := makeWorkspace()
+	first := w.EnsureAeronSession()
+	if first.Error != "" {
+		t.Fatal(first.Error)
+	}
+	if !SessionIsAeron(w.SessionsByID[first.SessionID]) {
+		t.Fatalf("ensure did not root the session in Aeron: %+v", w.SessionsByID[first.SessionID])
+	}
+	if got := w.WorkspaceDB.GetSetting(workspaceAeronSessionKey); got != first.SessionID {
+		t.Fatalf("remembered Aeron = %q, want %q", got, first.SessionID)
+	}
+	second := w.EnsureAeronSession()
+	if second.Error != "" || second.SessionID != first.SessionID || second.OrchID != first.OrchID {
+		t.Fatalf("second ensure created another agent: first=%+v second=%+v", first, second)
+	}
+	if got := w.BackendSession(first.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryAeron {
+		t.Fatalf("saved role = %q, want %q", got, session.CategoryAeron)
+	}
+	// A session with no turns is pruned on close by design. Retain evidence so
+	// this test checks the reopen path, not the empty-session cleanup path.
+	if err := w.BackendSession(first.SessionID).AppendWorkspaceHistoryEvent("retained fixture history", "retained fixture history"); err != nil {
+		t.Fatal(err)
+	}
+	w.CloseAllSessions()
+	w.Close()
+
+	w = makeWorkspace()
+	t.Cleanup(w.Close)
+	resumed := w.EnsureAeronSession()
+	if resumed.Error != "" {
+		t.Fatal(resumed.Error)
+	}
+	if resumed.SessionID != first.SessionID {
+		t.Fatalf("reopen created %q, want saved Aeron %q", resumed.SessionID, first.SessionID)
+	}
+	if !SessionIsAeron(w.SessionsByID[resumed.SessionID]) {
+		t.Fatal("reopened session lost its Aeron role")
+	}
+	if other := w.EnsureAeronSession(); other.SessionID != resumed.SessionID {
+		t.Fatalf("reopened workspace made a second Aeron: %+v", other)
+	}
+}
+
+func TestInvocationSelectionSelectsOnlyMainAgent(t *testing.T) {
+	if !(InvocationSelection{MainAgent: "aeron"}).SelectsOnlyMainAgent("aeron") {
+		t.Fatal("the bare role selection was not recognized")
+	}
+	for _, selection := range []InvocationSelection{
+		{}, {MainAgent: "other"}, {MainAgent: "aeron", Model: "model"},
+		{MainAgent: "aeron", AccountID: "account"}, {MainAgent: "aeron", Instructions: "policy"},
+	} {
+		if selection.SelectsOnlyMainAgent("aeron") {
+			t.Fatalf("accepted an overridden workspace-agent selection: %+v", selection)
+		}
+	}
+}

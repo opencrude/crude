@@ -358,6 +358,34 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 	assertAgentIsPaintedView(t, one.app, id)
 }
 
+func TestRemoteWorkspaceAeronIsEnsuredListedAndIdle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return len(shell.fifo) == 0 })
+
+	shell.app.requestWorkspaceAeronEnsure()
+	shell.app.aeronEnsureEarliest = time.Now().Add(-time.Millisecond)
+	shell.app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod - time.Second)
+	cmd := shell.app.workspaceAeronTick(time.Now())
+	if cmd == nil {
+		t.Fatal("the workspace Aeron was not due after the shell became quiet")
+	}
+	runAppCommand(t, shell.app, cmd)
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.workspaceAeronAgent() != "" })
+	id := shell.app.workspaceAeronAgent()
+	if !shell.app.AgentView.IsHidden(id) {
+		t.Fatal("the workspace Aeron took the user's tab")
+	}
+	row := findSidebarAgent(t, shell.app, id)
+	if row.Label != "Aeron" || row.Detail != "idle · minimized" {
+		t.Fatalf("Aeron row does not report its state: %#v", row)
+	}
+	if again := shell.app.workspaceAeronTick(time.Now()); again != nil {
+		t.Fatal("a second tick created or resumed the workspace Aeron again")
+	}
+}
+
 func TestRemoteAppJourneyQuestionResolvedFromPeerOnce(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var calls atomic.Int32
