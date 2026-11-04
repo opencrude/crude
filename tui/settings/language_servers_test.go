@@ -98,7 +98,7 @@ func TestLanguageServerEditorAppliesToDraft(t *testing.T) {
 	model.SelectCategory(catLanguageServers)
 	root.syncModel()
 	root.lsp.begin("python")
-	if root.lsp.draft == nil || root.PaneTitle() != "Language Servers ▸ Python (pyright)" {
+	if root.lsp.draft == nil || root.PaneTitle() != "Language Tools ▸ Python (pyright)" {
 		t.Fatalf("editor not open: %q", root.PaneTitle())
 	}
 	root.lsp.draft.SetValue(lspFieldArgs, ui.StringValue(`--stdio "a path with spaces"`))

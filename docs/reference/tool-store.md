@@ -53,10 +53,14 @@ to `toolstore.Open`. `Open` refuses a relative root.
 | `<root>/history.jsonl` | Append-only history, one JSON object for each line. |
 | `<root>/.staging/` | Temporary install and removal folders. |
 | `<root>/.staging/install-*/.evaluation-pending` | Durable pre-launch marker; uncertain staged checks retain their executable bytes here for inspection. |
+| `<root>/.staging/install-*/.preparation-pending` | Durable preparation marker; interrupted or uncertain processes retain their output and scratch for inspection. |
+| `<root>/.preparation-pending/<package>/<version>` | Separate durable reservation that prevents replay and preserves its staging path even if that path is replaced. |
 | `<root>/.publication-pending/<package>/<version>-<sha256[:12]>` | An install whose publication is not yet confirmed. |
 
-The tool ID is `<package>/<version>-<sha256[:12]>`. The digest is the SHA-256
-of the downloaded artifact. Package and version names are one portable path
+The tool ID is `<package>/<version>-<sha256[:12]>`. For downloads, the digest
+is the SHA-256 of the downloaded artifact. For prepared trees, it binds file
+paths, executable bits, link targets and file contents, not a source checksum.
+Package and version names are one portable path
 component: letters, digits, `.`, `_`, `-`, `+` and `@`, with no leading dot or
 hyphen, at most 128 characters.
 
@@ -74,17 +78,24 @@ manifest.
 3. If the version is installed, return it only when source, URL, archive,
    executable path and command binding also match the request, and the expected
    digest is empty or matches. A different identity fails: remove the tool first.
-4. Download into `.staging/install-*/download`.
-5. Compare the digest with `ExpectedSHA256` when it is set. Otherwise record
-   the digest of the first download (`DigestOrigin` is `first-download`).
-6. Extract into the staged tool folder, write the manifest and make the tree
-   read-only.
+4. For a download, fetch into `.staging/install-*/download`. Compare the digest
+   with `ExpectedSHA256` when it is set; otherwise record the first-download
+   digest.
+5. For a prepared tree, save `.preparation-pending` before calling the
+   authorized producer, with a separate reservation outside the staging tree.
+   The caller owns source policy and must join its process. The store copies
+   its output into a separate tree, checks paths and links,
+   enforces output bounds and records the tree digest. An uncertain process
+   retains the exact staging tree and blocks another install of that version.
+6. Write the manifest and make the staged tree read-only.
 7. If supplied, run `Request.Evaluate(ctx, tool)` on the exact sealed staged
    executable, outside the store mutex. The install owns these bytes exclusively
    under its package/version lock. A durable `.evaluation-pending` marker is
    written before launch. The callback must join the exact process even on failure
    or cancellation; `EvaluationUnverifiedError` retains the marker and staging
    tree. Failed or uncertain checks never publish or enter ordinary resolution.
+   Before publication, prepared content and manifest are rechecked after the
+   evaluation and preflight. Changed bytes are not published under the old digest.
 8. Run `PreparePublication(ctx)` outside the store mutex for expensive current
    preflight. Then take the mutex, prepare the durable publication record, and run
    `AdmitPublication(ctx)` immediately before rename. This second check must be
@@ -107,11 +118,11 @@ retry or use the artifact. Pending records remain after a restart. Lookup,
 automatic assembly, usage and ordinary removal do not accept the tool while
 its record exists; `Unrecognized` includes its identity for inspection. There
 is not yet a product recovery action for these records. The store attempts to
-delete ordinary staging scratch. `Open` keeps staged checks with an evaluation
-marker and interrupted removal folders for inspection; it does not prune bytes
-whose process retirement is unknown. These entries appear in `Unrecognized`.
-There is no product recovery action for retained uncertain evaluation processes
-or their staging trees.
+delete ordinary staging scratch. `Open` keeps staged checks and preparations
+with pending markers, and interrupted removal folders, for inspection. It does
+not prune bytes whose process retirement is unknown. These entries appear in
+`Unrecognized`. There is no product recovery action for retained uncertain
+processes or their staging trees.
 This is not a filesystem security sandbox. Directory synchronization is a
 no-op on Windows, so crash durability there has not been verified.
 
@@ -208,7 +219,7 @@ so memory does not grow with the length of the log.
    files. If that final delete fails, the tools are already removed and the
    staged files remain for inspection.
 
-The native [Settings inventory](settings.md#code-intelligence-tools) adds an
+The native [Settings inventory](settings.md#language-tools-inventory) adds an
 owner/workspace-bound, ten-minute, one-shot removal preview (at most 64 retained
 previews). It rechecks retained workspace assembly references before calling
 `Remove`. Unmanaged tools and unrecognized entries are read-only. A removal error

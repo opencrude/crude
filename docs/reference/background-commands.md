@@ -28,6 +28,18 @@
 - Noninteractive Windows commands use `CREATE_NO_WINDOW` plus `HideWindow`;
   package managers such as WinGet must never attach to or paint into Crude's host
   console. Stdout/stderr is visible only through the captured tool/job result.
+- `fileio.RunOwnedCommand` is the non-shell invocation primitive for a caller
+  that owns a specific installation process. It requires an absolute program
+  and working directory, explicit environment and bounded output. Cancellation
+  stops the retained tree and joins its leader. If an escaped process retains
+  an output pipe, the result is uncertain even when the leader exits with an
+  error. Failure to stop the retained tree is also uncertain. The caller must
+  retain staged data in either case. This is not a sandbox: a process that
+  detaches and closes its output cannot be detected by the pipe check. The
+  primitive does not grant execution or configure network policy.
+- A background command whose tree could not be stopped settles as failed with
+  that error, even when cancellation or a timeout was requested. A stop request
+  is not evidence that its process tree stopped.
 - Interactive ConPTY commands explicitly invalidate their initial standard
   handles under `STARTF_USESTDHANDLES`, with inheritance disabled, so redirected
   host streams cannot replace the pseudoconsole's captured console streams.

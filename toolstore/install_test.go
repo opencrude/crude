@@ -3,6 +3,7 @@ package toolstore
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -197,6 +198,25 @@ func TestInstallValidatesRequest(t *testing.T) {
 	}
 	if history := events(t, store); len(history) != len(cases) {
 		t.Fatalf("history has %d failures, want %d", len(history), len(cases))
+	}
+	requireEmptyStaging(t, store)
+}
+
+func TestInstallRejectsOverflowBudgetsBeforeDownload(t *testing.T) {
+	store := newStore(t)
+	server := serve(t, map[string][]byte{"/tool": []byte("fixture")})
+	for _, change := range []func(*Request){
+		func(r *Request) { r.MaxDownloadBytes = math.MaxInt64 },
+		func(r *Request) { r.MaxExtractedBytes = math.MaxInt64 },
+	} {
+		req := request(server.URL+"/tool", ArchiveRaw, "server")
+		change(&req)
+		if _, err := store.Install(t.Context(), req); err == nil || !strings.Contains(err.Error(), "bounded") {
+			t.Fatalf("overflow budget was not rejected before download: %v", err)
+		}
+	}
+	if server.hits.Load() != 0 {
+		t.Fatal("an invalid budget started a download")
 	}
 	requireEmptyStaging(t, store)
 }

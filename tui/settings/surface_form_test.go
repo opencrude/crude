@@ -172,9 +172,9 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 		host.Layout()
 
 		wantFields := category.Form.Fields()
-		if category.Name == "Accounts" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" || category.Name == "Language Servers" {
+		if category.Name == "Accounts" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" || category.Name == "Language Tools" {
 			want := "Add account"
-			if category.Name == "Language Servers" {
+			if category.Name == "Language Tools" {
 				want = "Add server"
 			}
 			if category.Name == "Agents" {
@@ -187,7 +187,7 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 				want = "Add source"
 			}
 			if painted := bufferPlain(paintAccountSurface(t, surface, 90, 24)); !strings.Contains(painted, want) {
-				t.Fatalf("%s overview controls are not painted", category.Name)
+				t.Fatalf("%s overview controls are not painted:\n%s", category.Name, painted)
 			}
 			continue
 		}

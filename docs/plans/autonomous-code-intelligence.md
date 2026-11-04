@@ -1,9 +1,12 @@
 # Autonomous Code Intelligence
 
-> Status: IN PROGRESS - the thin assembly implementation is connected; final
-> combined acceptance remains open. Rich project modeling, per-feature evidence,
-> containment and later workflow phases are not complete. See
-> [Stage status](#stage-status) and [Banked checkpoints](#banked-checkpoints).
+> Status: IN PROGRESS - BLOCKED on setup. The thin assembly implementation is
+> connected, but the user rejected the setup review on 2026-11-03 and most
+> catalog tools cannot be installed. The thin checkpoint cannot be banked until
+> the [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design)
+> close. Rich project modeling, per-feature evidence, containment and later
+> workflow phases are not complete. See [Stage status](#stage-status) and
+> [Banked checkpoints](#banked-checkpoints).
 
 ## How to work on this plan
 
@@ -52,13 +55,16 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-02 | No signed index yet. The catalog is built into the program and verified against pinned checksums when it is generated, so it is as trusted as the program. Tool downloads without a published checksum record the checksum at the first download, and the install preview says so in plain words. A signature with one built-in public key comes when Crude updates its catalog between releases. | User |
 | 2026-11-03 | Resume and finish the plan in checkpoint order, starting with the Windows watcher failures and misleading project-language detection. Use parallel bounded implementation while the parent owns architecture, integration and acceptance. Do not replace completion with a handoff. | User |
 | 2026-11-03 | Website work and its gate are outside this task. Keep the work on code intelligence and the plan. | User |
+| 2026-11-03 | Resolve plan divergences first. Merge Language Servers and Code intelligence tools, keeping Code Intelligence preferences separate; show whether Crude or the user installed each tool. Offer missing runtimes, use JetBrains products as a reference, and use the existing Acquisition policy for tools. The name and layout in [setup](code-intelligence-setup.md#replacement-design) are implementation choices, not separate user approvals. | User |
 | 2026-11-04 | Tool setup is done by one workspace Aeron agent (minimized by default, automatic approval, tasked by a prompt that the setup screen builds). No extra trust, scope or question machinery. Close setup quickly; spend the effort on editor interaction and cooperation with the language server. See [the direction](code-intelligence-setup.md#direction-a-workspace-aeron-does-the-setup-2026-11-04). | User |
 | 2026-11-04 | Aeron needs the full normal tool set, including web research and writing LSP launch settings. Navigation must survive Restart Language Servers, jump to a selected location without an inspect/confirm page, and use plain UI text. Code actions must have a usable path to their edits, and tree markers must match Problems. | User |
 | 2026-11-04 | Delegate only UI design, to Opus. Keep implementation and other work with the main agent. Reuse the existing components and state owners; do not add duplicate logic or competing authorities. | User |
+| 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
 
 ### Open decisions
 
-None.
+None. The 2026-11-03 setup questions are answered in
+[code-intelligence setup](code-intelligence-setup.md#decisions).
 
 ## Stage status
 
@@ -70,7 +76,7 @@ Update a row only with evidence.
 | Detect languages | Linguist data through go-enry | The importer uses Linguist data at build time. Product detection uses catalog names/extensions plus bounded ignore-aware evidence and example paths. Dependency/temp false positives are fixed; ambiguous extensions still need content rules. |
 | Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Assembly lists at most 100,000 entries without running project code and reports a limited scan. Rich project context remains separate and explicit. |
 | Resolve | Ordered resolver; compatibility rules as data | Assembly resolves launch data from the catalog, settings, the shared tool store and the system path. Compatibility evaluation remains incomplete. |
-| Acquire | Tools as a capability kind; one shared store under `CRUDE_HOME` | Native known-source review, one-shot consent, cancellable acquisition and Settings/accountability/removal are connected, with focused real-store and connected-shell evidence. Outside-source proposals and final acceptance remain open; see [code-intelligence setup](code-intelligence-setup.md). |
+| Acquire | Project decisions in workspace capability settings, one install policy; one shared store under `CRUDE_HOME` | **Blocked.** One-shot consent, the shared store, cancellable acquisition and removal are connected. Only GitHub release files can install; 57 of 121 catalog packages use them. The other 64 (npm 27, PyPI 12, Cargo 9, Go 5, NuGet 3, generic 3, gem 2, LuaRocks 2, opam 1) cannot. The replacement review has focused Linux dismissal and selection evidence, but full setup acceptance remains open. See [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design). |
 | Evaluate | Operational checks and independent fixtures; evidence for each feature | Acquired tools initialize in an independent inert root and join Stop before publication. Native real acquisition/activation and failed/cancelled/uncertain checks have normal/race evidence. This is protocol health, not per-feature semantic certification. |
 | Activate | Project-scoped producers, enabled feature by feature | Assembly starts project-scoped producers through the existing trust and process-admission gates. Open documents can share their server process. |
 | Maintain | Invalidation, staged replacement, bounded repair, memory of failed candidates | The watcher fences gaps and refreshes source/ignore topology across policy boundaries. Native move/root-loss, kernel-overflow, concurrent-close and exact reviewed-replacement tests pass; installed-server captures show unopened errors clear. Root loss stays fenced until restart; broader maintenance remains open. |
@@ -101,7 +107,32 @@ match Problems, and the affected build/test/wire/docs gates pass. Verify the
 rendered interaction at desktop and constrained sizes. Do not call unsupported
 server commands implemented merely because their labels changed.
 
+Open limits of this correction (recorded 2026-11-04). These items are not done;
+do not report them as complete:
+
+- **Code-action support is not complete.** Command-based code actions
+  (`workspace/executeCommand`) and code actions that change more than one file
+  are not supported. Crude lists them as not available.
+- **Aeron is not verified with a real model.** No end-to-end run has installed
+  a tool through Aeron with a real model. Crude also does not find a saved Aeron
+  session after a cold core restart; it opens a new one.
+- **The Linux-only headless captures did not run.** `TestNavigationVisualHeadless`
+  and `TestCodeActionVisualHeadless` need Linux (`/proc`). They were not run on
+  the Windows development machine, so their changed phase tables are not
+  verified. The native Windows captures at 80x24 and 160x40 passed.
+
 **Thin assembly path. In progress since 2026-11-02.**
+
+The current setup sub-checkpoint is **Package-manager acquisition**: describe
+the catalog's package-manager sources without guessing tools, then install
+through the existing reviewed store, staged checks and publication gates.
+Missing runtimes must be offered as private dependencies. Preserve source and
+network policy, cancellation, failure and explicit retry. The combined
+Language Tools collection and replacement review have Linux evidence, but
+native Windows and complete acceptance remain open. The shared acquisition
+policy follows. See [setup](code-intelligence-setup.md#checkpoints). Since
+2026-11-04 the setup screen tasks Aeron, which can use a package manager
+itself; this sub-checkpoint remains for installs that the store owns.
 
 Goal: open a trusted project that uses a language Crude's Go code never names,
 and see real diagnostics in Problems without opening a file. Every stage takes
@@ -122,7 +153,8 @@ Scope:
   being an authority.
 - Bounded discovery that produces an assembly plan users and agents can read.
 - Resolution against installed tools and one registry source.
-- Acquisition as a capability kind, with the once-per-project question, the
+- Acquisition through workspace project decisions and the tool store, with
+  the once-per-project question, the
   shared store and its Settings view
   ([code-intelligence setup](code-intelligence-setup.md)).
 - A minimal operational evaluation: the server starts, initializes and answers
@@ -184,9 +216,12 @@ Verified focused normal and Windows race journeys:
   error, its disappearance after atomic disk replacement, and the explicit
   statement that project coverage is not complete. Each capture window closes
   and its disk-fix worker joins. Native Settings Code Intelligence, language
-  server list/detail, inventory and setup previews also pass at both sizes.
-  The default Not now records a refusal, not an installation. Old unreviewed
-  images are not counted.
+  server list/detail and inventory captures rendered at both sizes. The setup
+  review acceptance is **withdrawn**: the user rejected its design and controls
+  on 2026-11-03 ([setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design)),
+  and the user decided the same day to merge the language server list and the
+  inventory into one page, so those captures no longer accept the current page
+  design either. Old unreviewed images are not counted.
 
 Wider acceptance exposed and guarded additional native defects. Reviewed atomic
 replacement emits REMOVE then CREATE on Windows; exact staged identity and
@@ -206,6 +241,12 @@ second language, and checks that the explanation clears after capacity returns.
 
 Remaining exit evidence:
 
+0. **Close the setup blockers first.** The rejected review's inert switches and X
+   have a replacement with focused Linux evidence, but the complete dismissal
+   journey and the reported package-manager installation still need acceptance.
+   Package-manager installation, runtimes and the merged Language Tools page are listed in
+   [code-intelligence setup](code-intelligence-setup.md#checkpoints-of-the-replacement). The
+   remaining items below do not bank the checkpoint without them.
 1. Finish the full native race campaign on `8f55bd46`. Fresh explicit retry
    after a saved refusal or failure now has focused normal/race evidence and a
    real native connected preview, without automatic reoffers or replayed
@@ -661,11 +702,12 @@ passing these checks does not prove completeness for unseen projects.
 The [code-intelligence setup](code-intelligence-setup.md) plan owns the user
 decisions and checkpoints for this section.
 
-Tools become a new capability kind in the existing capability system
-([capabilities](../reference/capabilities.md)). They use the same Manual, Auto
-Review and YOLO policy, the same immutable source and digest preimage for
-approval, and the same registration publication. Crude gets no second
-installer.
+Tools are not registered like skills or MCP connections. Project decisions
+live in workspace capability settings, the bytes and accounting in the
+[tool store](../reference/tool-store.md). They use the same Manual, Auto Review
+and YOLO meaning, the same capability **Acquisition** install policy (decided
+2026-11-03) and an immutable source and digest preimage for approval. Crude
+gets no second installer.
 
 - The resolver turns a need ("C++ semantic diagnostics", "Nim language
   server") into candidates, in this order:

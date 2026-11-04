@@ -275,17 +275,28 @@ func TestProjectToolSetupOperationalFailureNeverPublishesOrActivates(t *testing.
 }
 
 func TestProjectToolSetupUnverifiedStagedCheckKeepsExactOwnerAndBytes(t *testing.T) {
+	root := temporaryToolStore(t)
 	w, o, _, owner := setupServiceFixture(t)
 	runtime := &lifecycleRuntime{stopErr: errors.New("exact process teardown is unverified")}
 	w.LSPMgr.SetRuntime(runtime)
 	serveSetupCatalogArtifact(t)
-	store, err := toolstore.Open(t.TempDir())
+	store, err := toolstore.Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	o.store = store
 	review := setupReview(t, o, owner)
-	result, err := o.Decide(t.Context(), owner, "uncertain-check", review.ID, setupInstallable(review)[:1])
+	var selected string
+	for _, item := range review.Review.Items {
+		if item.Package == "setup-alpha" {
+			selected = item.ID
+			break
+		}
+	}
+	if selected == "" {
+		t.Fatal("review did not offer the served fixture")
+	}
+	result, err := o.Decide(t.Context(), owner, "uncertain-check", review.ID, []string{selected})
 	var unverified *toolstore.EvaluationUnverifiedError
 	if !errors.As(err, &unverified) || len(result.Items) != 1 || result.Items[0].Installed ||
 		result.Items[0].Evaluation != toolEvaluationTeardownUnverified {

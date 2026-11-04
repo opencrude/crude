@@ -411,9 +411,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		Category{Name: "MCP", Group: "AI", Description: "Tools and services your agents can call. Search registries or add your own server.", Form: formModel()},
 		Category{Name: "Sources", Group: "AI", Description: "Where Skills and MCP search: built-in registries plus your own repositories and folders.", Form: formModel()},
 		Category{Name: "Acquisition", Group: "AI", Description: "When agents may pick or install capabilities on their own, and the limits they work within.", Form: m.buildAcquisitionForm()},
-		Category{Name: "Language Servers", Group: "IDE", Description: "The server behind each language. Open one to change its command, arguments or environment.", Form: formModel()},
+		Category{Name: "Language Tools", Group: "IDE", Description: "Configure language servers and review installed tools.", Form: formModel()},
 		Category{Name: "Terminal", Group: "IDE", Description: "The shell integrated terminals start, its environment, and where new terminals open.", Form: m.buildTerminalForm(current.Terminal)},
-		Category{Name: "Code intelligence tools", Group: "IDE", Description: "Review installed tools, their files, disk use and history.", Form: m.buildCodeToolsForm()},
 	)
 	for index := range m.categories {
 		category := index
@@ -2286,9 +2285,9 @@ func (m *Model) rebased(application, effective types.AppSettings, overrides type
 
 func (m *Model) SelectCategory(index int) {
 	if index >= 0 && index < len(m.categories) && (index != catAccounts || m.Scope() == types.SettingsScopeApplication) {
-		if m.selected == catCodeTools && index != m.selected {
+		if m.selected == catLanguageServers && index != m.selected {
 			m.cancelCodeTools()
-			m.rebuildCodeTools()
+			m.codeTools.detail, m.codeTools.notice = "", ""
 		}
 		if m.selected == catNetworkRemoteAccess && index != m.selected {
 			m.cancelRemoteAccess()
@@ -2508,15 +2507,13 @@ func (m *Model) ensureVisibleSelection() {
 }
 
 // railPosition orders pages inside a rail group. Pages appear in definition
-// order, except that Language Servers sits directly after Code Intelligence,
+// order, except that Language Tools sits directly after Code Intelligence,
 // the page whose behavior it configures, and Agents stands where the Main
 // Agent role is defined.
 func railPosition(index int) int {
 	switch index {
 	case catLanguageServers:
 		return catLSP*4 + 1
-	case catCodeTools:
-		return catLSP*4 + 2
 	case catTerminal:
 		// Terminal follows Interface, the other window-chrome page.
 		return catUI*4 + 1
@@ -2556,7 +2553,6 @@ const (
 	catAcquisition
 	catLanguageServers
 	catTerminal
-	catCodeTools
 )
 
 // AppSettings returns the values held by the shared form models.

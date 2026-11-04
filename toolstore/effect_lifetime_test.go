@@ -182,10 +182,18 @@ func TestExecutableLeaseRejectsUnconfirmedUnknownAndMissing(t *testing.T) {
 			case "unknown":
 				executable = filepath.Join(store.root, "foreign", "tool")
 			case "missing":
+				// The fixture deliberately damages one sealed file. Unseal its
+				// parent first so this test also works for non-root users.
+				if err := unsealDir(filepath.Dir(tool.Executable)); err != nil {
+					t.Fatal(err)
+				}
 				if err := removeTree(tool.Executable); err != nil {
 					t.Fatal(err)
 				}
 			case "manifest":
+				if err := unsealDir(tool.Dir); err != nil {
+					t.Fatal(err)
+				}
 				if err := removeTree(filepath.Join(tool.Dir, manifestName)); err != nil {
 					t.Fatal(err)
 				}

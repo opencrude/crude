@@ -425,6 +425,22 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 				return f.handleField(index, f.fieldContext(ctx, field), evt)
 			}
 		}
+		// A reader under the pointer gets the first chance to scroll. If it
+		// reaches its boundary, the containing form may scroll instead.
+		for index, field := range f.fields {
+			area := field.Area()
+			if area == nil || field.FieldState().Disabled {
+				continue
+			}
+			local := f.fieldContext(ctx, field)
+			if !area.Bounds().Contains(local.LocalX, local.LocalY) {
+				continue
+			}
+			if result := f.handleField(index, local, evt); result.Handled {
+				return result
+			}
+			break
+		}
 		if f.scroll != nil && f.scroll.MaxOffset() > 0 {
 			switch evt.MouseWheel.Button {
 			case tea.MouseWheelUp:
@@ -492,6 +508,13 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 		key := evt.Key
 		field := f.fields[f.focused]
 		if key.Code == tea.KeyEsc && !field.SelectOpen() {
+			// Escape first clears a text selection. Without a selection it
+			// always navigates back, so a focused text field never swallows it.
+			if field.hasTextSelection() {
+				if result := f.handleField(f.focused, f.fieldContext(ctx, field), evt); result.Handled {
+					return result
+				}
+			}
 			return EventResult{Handled: true, Action: &Action{ID: "form.cancel"}, Invalidate: InvalidateFocus | InvalidatePaint}
 		}
 		if key.Code == tea.KeyTab && !field.SelectOpen() {

@@ -156,6 +156,11 @@ func installReviewedProjectToolsWithCatalog(ctx context.Context, installer proje
 				results[i].Message = "Crude could not stop the tool check. Check the tools before you try again."
 				return results, errors.Join(failures, err)
 			}
+			var preparationUnverified *toolstore.PreparationUnverifiedError
+			if errors.As(err, &preparationUnverified) {
+				results[i].Message = "Crude cannot confirm the tool setup. Check the tools before you try again."
+				return results, errors.Join(failures, err)
+			}
 			var authorityError *projectToolAuthorityError
 			if errors.As(err, &authorityError) {
 				results[i].Message = fmt.Sprintf("Crude cannot finish setting up %s. Review the tools again.", item.Package)

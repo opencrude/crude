@@ -11344,11 +11344,15 @@ func (z *ProjectToolsDecideResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z ProjectToolsReviewRequest) MarshalMsg(b []byte) (o []byte, err error) {
+func (z *ProjectToolsReviewRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 1
 	o = append(o, 0x91)
-	o = msgp.AppendBool(o, z.Explicit)
+	o, err = z.Selection.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Selection")
+		return
+	}
 	return
 }
 
@@ -11368,9 +11372,9 @@ func (z *ProjectToolsReviewRequest) UnmarshalMsg(bts []byte) (o []byte, err erro
 		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
 		return
 	}
-	z.Explicit, bts, err = msgp.ReadBoolBytes(bts)
+	bts, err = z.Selection.UnmarshalMsg(bts)
 	if err != nil {
-		err = msgp.WrapError(err, "Explicit")
+		err = msgp.WrapError(err, "Selection")
 		return
 	}
 	o = bts
@@ -11378,8 +11382,8 @@ func (z *ProjectToolsReviewRequest) UnmarshalMsg(bts []byte) (o []byte, err erro
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z ProjectToolsReviewRequest) Msgsize() (s int) {
-	s = 1 + msgp.BoolSize
+func (z *ProjectToolsReviewRequest) Msgsize() (s int) {
+	s = 1 + z.Selection.Msgsize()
 	return
 }
 

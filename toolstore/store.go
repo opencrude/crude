@@ -36,13 +36,14 @@ import (
 )
 
 const (
-	manifestName          = "manifest.json"
-	contentDir            = "files"
-	usageName             = "usage.json"
-	historyName           = "history.jsonl"
-	stagingName           = ".staging"
-	evaluationPendingName = ".evaluation-pending"
-	usageTemp             = ".usage-"
+	manifestName           = "manifest.json"
+	contentDir             = "files"
+	usageName              = "usage.json"
+	historyName            = "history.jsonl"
+	stagingName            = ".staging"
+	evaluationPendingName  = ".evaluation-pending"
+	preparationPendingName = ".preparation-pending"
+	usageTemp              = ".usage-"
 
 	maxManifestBytes = 1 << 20
 	maxNameLength    = 128
@@ -55,12 +56,15 @@ const (
 	ArchiveTarXz = "tar.xz"
 	ArchiveGz    = "gz"
 	ArchiveRaw   = "raw"
+	// ArchivePrepared is a tree produced by a caller-owned preparation process.
+	ArchivePrepared = "prepared"
 )
 
 // Digest origins recorded in Tool.DigestOrigin.
 const (
 	DigestExpected      = "expected"
 	DigestFirstDownload = "first-download"
+	DigestPreparedTree  = "prepared-tree"
 )
 
 // Event kinds recorded in the history.
@@ -78,16 +82,16 @@ const DefaultMaxEntries = 65536
 // Request describes one tool artifact to install.
 type Request struct {
 	Package, Version, URL string
-	// Archive is one of "zip", "tar.gz", "tar.xz", "gz" (one compressed
-	// file) or "raw" (the download is the executable).
+	// Archive is "zip", "tar.gz", "tar.xz", "gz" (one compressed file),
+	// "raw" (the download is the executable), or "prepared".
 	Archive string
 	// Bin is the slash-separated executable path inside the extracted tree.
 	// For "gz" and "raw" it is the file name that the store writes.
 	Bin string
 	// Command is the catalog launch command bound to this artifact.
 	Command string
-	// ExpectedSHA256 is the artifact digest in hex. When it is empty, the
-	// store records the digest of the first download.
+	// ExpectedSHA256 is the downloaded artifact digest in hex. When it is
+	// empty, the store records the first download or prepared-tree digest.
 	ExpectedSHA256 string
 	// MaxDownloadBytes and MaxExtractedBytes are required budgets.
 	MaxDownloadBytes, MaxExtractedBytes int64
@@ -99,6 +103,14 @@ type Request struct {
 	// "automatic". Approval references the caller's approval record. Both are
 	// required.
 	InstalledBy, Approval string
+	// Prepare produces files in output and uses scratch for temporary work.
+	// It must join every owned process on every return. If teardown is
+	// uncertain it returns PreparationUnverifiedError or
+	// fileio.CommandTreeUnverifiedError, so the store retains the staging tree.
+	// It owns source/network admission and download-budget enforcement and
+	// must never run without authority.
+	// Required only when Archive is ArchivePrepared.
+	Prepare func(ctx context.Context, output, scratch string) error
 	// Evaluate checks the exact sealed staged executable before publication.
 	// It runs off mu, under the install's exclusive package/version and staging
 	// ownership. It must join all owned processes before returning, including
@@ -127,7 +139,7 @@ type Tool struct {
 	// Dir is the tool directory. Executable is an absolute path inside it.
 	Dir, Executable string
 	Bin, Command    string
-	// SHA256 is the digest of the downloaded artifact.
+	// SHA256 is the digest of the downloaded artifact or prepared tree.
 	SHA256 string
 	// Size is the number of extracted content bytes.
 	Size        int64
@@ -135,7 +147,7 @@ type Tool struct {
 	Source, URL string
 	Archive     string
 	Licenses    []string
-	// DigestOrigin is "expected" or "first-download".
+	// DigestOrigin is "expected", "first-download" or "prepared-tree".
 	DigestOrigin          string
 	InstalledAt           time.Time
 	InstalledBy, Approval string
@@ -153,6 +165,8 @@ type Store struct {
 	usage usageFile
 	// Retain a same-process refusal if a marker's removal could not be synced.
 	unconfirmed map[string]bool
+	// A reservation that could not be confirmed remains a same-process fence.
+	preparationUnconfirmed map[string]bool
 	// executableLeases pins exact tool identities through joined process stop.
 	// Acquisition and removal share mu; callers never hold their own manager
 	// lock while acquiring or releasing a lease.
@@ -233,14 +247,15 @@ func Open(root string) (*Store, error) {
 		return nil, fmt.Errorf("create tool store folder: %w", err)
 	}
 	s := &Store{
-		root:             root,
-		mu:               storeMutex{ch: make(chan struct{}, 1)},
-		unconfirmed:      make(map[string]bool),
-		executableLeases: make(map[string]int),
-		keys:             make(map[string]*keyLock),
-		stallTimeout:     defaultStallTimeout,
-		now:              time.Now,
-		syncHistoryDir:   syncDir,
+		root:                   root,
+		mu:                     storeMutex{ch: make(chan struct{}, 1)},
+		unconfirmed:            make(map[string]bool),
+		preparationUnconfirmed: make(map[string]bool),
+		executableLeases:       make(map[string]int),
+		keys:                   make(map[string]*keyLock),
+		stallTimeout:           defaultStallTimeout,
+		now:                    time.Now,
+		syncHistoryDir:         syncDir,
 	}
 	if err := s.removeStaleStaging(); err != nil {
 		return nil, err
@@ -266,6 +281,10 @@ func (s *Store) Root() string { return s.root }
 
 func (s *Store) removeStaleStaging() error {
 	staging := filepath.Join(s.root, stagingName)
+	retained, _, uncertain, err := preparationReservations(context.Background(), s.root)
+	if err != nil {
+		return fmt.Errorf("inspect tool preparation records: %w", err)
+	}
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return fmt.Errorf("read tool store staging folder: %w", err)
@@ -276,10 +295,19 @@ func (s *Store) removeStaleStaging() error {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(staging, entry.Name(), evaluationPendingName)); err == nil {
+		if uncertain || retained[entry.Name()] {
 			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect staged tool check: %w", err)
+		}
+		retained := false
+		for _, marker := range []string{evaluationPendingName, preparationPendingName} {
+			if _, err := os.Lstat(filepath.Join(staging, entry.Name(), marker)); err == nil {
+				retained = true
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect staged tool operation: %w", err)
+			}
+		}
+		if retained {
+			continue
 		}
 		if err := removeTree(filepath.Join(staging, entry.Name())); err != nil {
 			return fmt.Errorf("remove stale staging data: %w", err)
@@ -474,7 +502,7 @@ func (s *Store) scan(ctx context.Context) (map[string]Tool, []string, error) {
 		}
 		name := entry.Name()
 		switch name {
-		case stagingName, usageName, historyName, publicationPendingDir:
+		case stagingName, usageName, historyName, publicationPendingDir, preparationPendingDir:
 			continue
 		}
 		if !entry.IsDir() || validComponent(name) != nil {
@@ -517,6 +545,11 @@ func (s *Store) scan(ctx context.Context) (map[string]Tool, []string, error) {
 		return nil, nil, err
 	}
 	unknown = append(unknown, pending...)
+	retainedStages, preparations, uncertain, err := preparationReservations(ctx, s.root)
+	if err != nil {
+		return nil, nil, err
+	}
+	unknown = append(unknown, preparations...)
 	stagingEntries, err := os.ReadDir(filepath.Join(s.root, stagingName))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read tool store staging folder: %w", err)
@@ -525,14 +558,18 @@ func (s *Store) scan(ctx context.Context) (map[string]Tool, []string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		pendingErr := os.ErrNotExist
+		pending := false
 		if entry.IsDir() {
-			_, pendingErr = os.Lstat(filepath.Join(s.root, stagingName, entry.Name(), evaluationPendingName))
-			if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) {
-				return nil, nil, pendingErr
+			for _, marker := range []string{evaluationPendingName, preparationPendingName} {
+				_, pendingErr := os.Lstat(filepath.Join(s.root, stagingName, entry.Name(), marker))
+				if pendingErr == nil {
+					pending = true
+				} else if !errors.Is(pendingErr, os.ErrNotExist) {
+					return nil, nil, pendingErr
+				}
 			}
 		}
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") || pendingErr == nil {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") || pending || uncertain || retainedStages[entry.Name()] {
 			unknown = append(unknown, stagingName+"/"+entry.Name())
 		}
 	}
@@ -592,8 +629,11 @@ func (m manifest) validate(pkg, dir string) error {
 	if _, err := cleanEntryName(m.Executable); err != nil || m.Executable == "" {
 		return errors.New("executable path is not contained in the tool")
 	}
-	if m.DigestOrigin != DigestExpected && m.DigestOrigin != DigestFirstDownload {
+	if m.DigestOrigin != DigestExpected && m.DigestOrigin != DigestFirstDownload && m.DigestOrigin != DigestPreparedTree {
 		return errors.New("digest origin is not valid")
+	}
+	if (m.DigestOrigin == DigestPreparedTree) != (m.Archive == ArchivePrepared) {
+		return errors.New("digest origin does not match the artifact")
 	}
 	return nil
 }

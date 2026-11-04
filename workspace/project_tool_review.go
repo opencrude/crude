@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -62,6 +63,19 @@ func buildProjectToolReview(project, rootIdentity string, plan types.AssemblyPla
 			} else {
 				item.Reason = reason + " Install it yourself, then check again."
 				item.Licenses = sortedUnique(pkg.Licenses)
+				if recipe, ok := pkg.PackageManagerFor(language.Command); ok {
+					// The literal source and program remain in the review
+					// preimage, including qualifiers and subpaths. A changed
+					// recipe is not the same remembered decision.
+					item.Version = recipe.Version
+					item.Source, item.URL = recipe.Registry, pkg.Source.ID
+					if repository := recipe.Qualifiers["repository_url"]; repository != "" {
+						item.Source = repository
+					}
+					item.Bin = recipe.ProgramKind + ":" + recipe.Program
+					item.Reason = fmt.Sprintf("%s uses %s and needs %s. Crude cannot install it yet. Install it yourself, then check again.",
+						item.Package, recipe.Manager, recipe.Runtime)
+				}
 			}
 		} else {
 			item.Reason = "Crude cannot install this tool yet. Install it yourself, then check again."
