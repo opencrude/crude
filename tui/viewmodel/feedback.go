@@ -73,13 +73,19 @@ func (s *feedbackSink) NotifyAgentTransient(agentID, message string, severity ty
 }
 
 func (s *feedbackSink) NotifyError(message string) {
+	s.NotifyErrorDetail(message, message)
+}
+
+// NotifyErrorDetail reports a failure with a one-line summary and the full
+// technical text as its detail.
+func (s *feedbackSink) NotifyErrorDetail(summary, detail string) {
 	center, owner := s.center(), s.owner()
-	if center == nil || strings.TrimSpace(message) == "" {
+	if center == nil || strings.TrimSpace(summary) == "" {
 		return
 	}
 	center.Notify(types.NotificationRecord{
-		DedupKey: "error:" + string(owner.Kind) + ":" + owner.ID + ":" + message,
+		DedupKey: "error:" + string(owner.Kind) + ":" + owner.ID + ":" + summary,
 		Owner:    owner, Severity: types.SeverityError, Source: "operation",
-		Summary: message, Detail: message,
+		Summary: summary, Detail: detail,
 	})
 }

@@ -16,6 +16,7 @@ import (
 	"crude/tui/screens/gitmerge"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -31,6 +32,13 @@ func syncGit(t *testing.T, dir string, args ...string) {
 // conflictingClones returns a clone one commit ahead of and one behind its
 // origin, with a conflicting edit to app.txt on each side.
 func conflictingClones(t *testing.T) string {
+	t.Helper()
+	return divergedClone(t, true)
+}
+
+// divergedClone builds the conflicting clone. Without fetched, the clone has
+// not seen the origin's new commit: the user forgot to pull.
+func divergedClone(t *testing.T, fetched bool) string {
 	t.Helper()
 	base := t.TempDir()
 	origin, theirs, ours := filepath.Join(base, "origin.git"), filepath.Join(base, "theirs"), filepath.Join(base, "ours")
@@ -55,7 +63,9 @@ func conflictingClones(t *testing.T) string {
 	syncGit(t, theirs, "push")
 	write(ours, "top\nvalue = 3\nbottom\n")
 	syncGit(t, ours, "commit", "-am", "ours")
-	syncGit(t, ours, "fetch")
+	if fetched {
+		syncGit(t, ours, "fetch")
+	}
 	return ours
 }
 
@@ -212,6 +222,53 @@ func TestGitMessageEditorSavesOrCancels(t *testing.T) {
 		t.Fatalf("save did not replace the draft: %q", app.gitPanel.Message())
 	}
 	_ = gitmerge.DecideSave
+}
+
+// The user forgot to pull and pressed Push. The status row, the notification
+// and the Pull button must explain the failure and the next step, and the
+// status row must keep the reason after the refresh that follows the push.
+func TestGitPushRejectedForMissingCommitsTellsTheUserToPull(t *testing.T) {
+	root := divergedClone(t, false)
+	app := gitSyncApp(t, root)
+	pumpGit(t, app, app.toggleGitPanel())
+	app.paintShellFrame()
+	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "Push ↑1") || strings.Contains(plain, "Pull ↓") {
+		t.Fatalf("fixture: the panel must not know about the remote commit yet:\n%s", plain)
+	}
+	cmd, handled := app.handleGitPanelAction(ui.Action{ID: gitpanel.ActionPush})
+	if !handled || cmd == nil {
+		t.Fatal("Push did not start")
+	}
+	pumpGit(t, app, cmd)
+	const want = "Push failed. The remote branch has commits that your branch does not have. Pull, then push again."
+	if got := app.gitPanel.RemoteError(); got != want {
+		t.Fatalf("panel failure = %q, want %q", got, want)
+	}
+	app.paintShellFrame()
+	plain := bufferPlain(app.mainSurf.Buffer())
+	// The docked status row is narrow: it shows the whole first sentence, not
+	// a cut one; the notification below carries the reason and next step.
+	if !strings.Contains(plain, "✕ Push failed.") || strings.Contains(plain, "Push failed. Th…") {
+		t.Fatalf("the status row does not show that Push failed:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Pull ↓1") {
+		t.Fatalf("Pull does not show the commit that the push needs first:\n%s", plain)
+	}
+	var notice *types.NotificationRecord
+	for _, record := range app.ws.Status().Notifications(false) {
+		if record.Severity == types.SeverityError && strings.HasPrefix(record.Summary, "Push failed.") {
+			notice = &record
+		}
+	}
+	if notice == nil || notice.Summary != want || !strings.Contains(notice.Detail, "[rejected]") || strings.Contains(notice.Summary, "\n") {
+		t.Fatalf("notification = %+v", notice)
+	}
+	// Pull clears the failure as soon as it starts.
+	cmd, _ = app.handleGitPanelAction(ui.Action{ID: gitpanel.ActionPull})
+	if app.gitPanel.RemoteError() != "" {
+		t.Fatal("the old push failure outlived the next remote command")
+	}
+	pumpGit(t, app, cmd)
 }
 
 // A mutation superseded by a refresh still releases its read slot; a leaked

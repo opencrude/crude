@@ -132,7 +132,87 @@ func (s *GitService) execRemote(ctx context.Context, env []string, args ...strin
 	if text == "" {
 		text = err.Error()
 	}
-	return text, fmt.Errorf("git %s: %s", args[0], text)
+	return text, gitRemoteFailure(args[0], text)
+}
+
+// ErrGitPushBehind marks a push that the remote rejected because the remote
+// branch has commits that the local branch does not have.
+var ErrGitPushBehind = errors.New("the remote branch has commits that the local branch does not have")
+
+// gitRemoteError is a failed fetch, pull, push or merge. Its text crosses the
+// core connection unchanged: the first paragraph says what failed, why and
+// what to do next; Git's own output follows after a blank line as detail.
+type gitRemoteError struct {
+	text   string
+	behind bool
+}
+
+func (e *gitRemoteError) Error() string { return e.text }
+
+func (e *gitRemoteError) Is(target error) bool { return e.behind && target == ErrGitPushBehind }
+
+func gitRemoteFailure(operation, output string) error {
+	name := operation
+	if name != "" {
+		name = strings.ToUpper(name[:1]) + name[1:]
+	}
+	behind := operation == "push" && gitPushRejectedBehind(output)
+	reason := ""
+	switch {
+	case behind:
+		reason = "The remote branch has commits that your branch does not have. Pull, then push again."
+	case strings.Contains(output, "[remote rejected]"):
+		reason = "The remote refused it"
+		if why := gitParenthesized(output, "[remote rejected]"); why != "" {
+			reason += ": " + why
+		}
+		reason += "."
+	default:
+		if line := gitErrorLine(output); line != "" {
+			reason = "Git reported: " + strings.TrimSuffix(line, ".") + "."
+		}
+	}
+	text := strings.TrimSpace(name + " failed. " + reason)
+	if output != "" {
+		text += "\n\n" + output
+	}
+	return &gitRemoteError{text: text, behind: behind}
+}
+
+// gitPushRejectedBehind recognizes Git's non-fast-forward rejection, for
+// example "! [rejected] main -> main (fetch first)".
+func gitPushRejectedBehind(output string) bool {
+	return strings.Contains(output, "Updates were rejected because") ||
+		(strings.Contains(output, "[rejected]") && (strings.Contains(output, "fetch first") || strings.Contains(output, "non-fast-forward")))
+}
+
+// gitParenthesized returns the last parenthesized text on the first line
+// that contains marker.
+func gitParenthesized(output, marker string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, marker) {
+			continue
+		}
+		open, end := strings.LastIndex(line, "("), strings.LastIndex(line, ")")
+		if open >= 0 && end > open {
+			return strings.TrimSpace(line[open+1 : end])
+		}
+	}
+	return ""
+}
+
+// gitErrorLine is Git's first "fatal:" or "error:" line without its prefix,
+// or the last output line when Git printed neither.
+func gitErrorLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"fatal:", "error:"} {
+			if rest, ok := strings.CutPrefix(line, prefix); ok {
+				return strings.TrimSpace(rest)
+			}
+		}
+	}
+	return lastLine(output)
 }
 
 func gitNeedsCredentials(output string) bool {
@@ -250,6 +330,13 @@ func (s *GitService) Push(ctx context.Context) error {
 	}
 	if snapshot.Upstream != "" {
 		_, err = s.runRemote(ctx, "push")
+		if errors.Is(err, ErrGitPushBehind) {
+			// Show the user how far behind the branch is, so Pull names
+			// the commits that the push needs first.
+			if remote, ok := s.upstreamRemote(); ok {
+				_, _ = s.runRemote(ctx, "fetch", "--prune", remote)
+			}
+		}
 		return err
 	}
 	remote := ""

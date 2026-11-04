@@ -142,6 +142,7 @@ type Panel struct {
 	loading         bool
 	busy            string
 	errText         string
+	remoteErr       string
 	dockHeaderInset int
 	wide            bool
 	statusRow       ui.Rect
@@ -275,10 +276,24 @@ func (panel *Panel) statusButtons() []*ui.Button {
 }
 
 // SetRemoteBusy labels a running fetch, pull, push or merge; empty clears it.
+// Starting a remote command clears the previous remote failure.
 func (panel *Panel) SetRemoteBusy(label string) {
 	panel.remoteBusy = label
+	if label != "" {
+		panel.remoteErr = ""
+	}
 	panel.syncCommit()
 }
+
+// SetRemoteError shows why the last fetch, pull, push or merge failed. A
+// snapshot refresh does not clear it: the failure stays in the status row
+// until the next remote command starts or succeeds. Empty clears it.
+func (panel *Panel) SetRemoteError(summary string) {
+	panel.remoteErr = summary
+}
+
+// RemoteError is the failure that the status row shows, or empty.
+func (panel *Panel) RemoteError() string { return panel.remoteErr }
 
 func (panel *Panel) RemoteBusy() string { return panel.remoteBusy }
 
@@ -851,6 +866,16 @@ func (panel *Panel) paintStatus(buf *surface.CellBuffer, x, y int) {
 	}
 	if panel.errText != "" {
 		write("✕ "+panel.errText, ui.ColorError, 0)
+		return
+	}
+	if panel.remoteErr != "" {
+		// A cut sentence reads as broken text: show the whole failure when
+		// it fits, else its first sentence. The notification has the rest.
+		text := "✕ " + panel.remoteErr
+		if first, _, ok := strings.Cut(panel.remoteErr, ". "); ok && rendering.VisibleWidth(text) > end-col {
+			text = "✕ " + first + "."
+		}
+		write(text, ui.ColorError, 0)
 		return
 	}
 	if panel.prepareError != "" {

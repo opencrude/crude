@@ -1131,13 +1131,10 @@ func TestApplySearchReplace_absoluteIndentSingleLineReplace(t *testing.T) {
 }
 
 func TestApplySearchReplace_mixedIndentLevelsAcrossBlock(t *testing.T) {
-	// Regression: search spans from inside a block to the top level.
-	// The closing } is at \t indent, and a blank line + top-level func follow.
-	// The \t} in the search matches \t} in the file (absolute), so the
-	// replacement } at column 0 should be re-indented to \t.
-	// The blank line stays blank. The top-level func line stays at column 0.
-	// Note: the search "func" line only matches as substring, so the full
-	// content line (with signature) gets replaced by just the search text.
+	// Search spans from inside a block to the top level and ends inside the
+	// "func bar() {" line. The search is exact text, so the replacement is
+	// exact text too: the } moves to column 0 as written, and the rest of
+	// the last line (the signature) is kept. It used to be dropped.
 	content := "func foo() {\n\treturn i\n\t}\n\nfunc bar() {"
 	search := "return i\n\t}\n\nfunc bar"
 	replace := "return i\n}\n\nfunc bar"
@@ -1145,11 +1142,7 @@ func TestApplySearchReplace_mixedIndentLevelsAcrossBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// } gets re-indented from col 0 to \t (matching content's \t).
-	// func bar stays at col 0 (both search and content are at col 0, so absolute).
-	// But since splice replaces 4 lines including the full content line "func bar() {",
-	// and the replacement only has "func bar", the signature is lost.
-	want := "func foo() {\n\treturn i\n\t}\n\nfunc bar"
+	want := "func foo() {\n\treturn i\n}\n\nfunc bar() {"
 	if got != want {
 		t.Errorf("\ngot:  %q\nwant: %q", got, want)
 	}
@@ -1165,11 +1158,10 @@ func TestApplySearchReplace_mixedIndentTopLevelFuncNotDoubled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// doOther() at col 0 → gets \t\t (matching content's \t\t)
-	// } at col 0 → gets \t (matching content's \t from \t})
-	// blank line stays blank
-	// func next at col 0 → stays at col 0 (both search and content are at col 0)
-	want := "if true {\n\t\tdoOther()\n\t}\n\nfunc next"
+	// The exact text starts after the line's indentation, so doOther() keeps
+	// \t\t; } is written at column 0 as the replacement says; func next stays
+	// at column 0 and keeps the rest of its line.
+	want := "if true {\n\t\tdoOther()\n}\n\nfunc next() {"
 	if got != want {
 		t.Errorf("\ngot:  %q\nwant: %q", got, want)
 	}

@@ -47,6 +47,25 @@ func findToolDef(name string, defs []tools.ToolDef) *tools.ToolFuncDef {
 	return nil
 }
 
+// closestToolHint names the available tool that a rejected name ends with
+// (the longest, so "x_async_execute_command" names async_execute_command). A
+// model that sees namespaced tool names sometimes drops or garbles the
+// namespace ("jewel_grep_files" for grep_files); the hint lets it retry at
+// once instead of guessing again. It never runs the other tool.
+func closestToolHint(name string, defs []tools.ToolDef) string {
+	match := ""
+	for i := range defs {
+		candidate := defs[i].Function.Name
+		if candidate != "" && len(candidate) > len(match) && strings.HasSuffix(name, "_"+candidate) {
+			match = candidate
+		}
+	}
+	if match == "" {
+		return ""
+	}
+	return fmt.Sprintf(" The closest available tool is %q. Call it by the exact name in your tool list, including its prefix.", match)
+}
+
 func validateRequiredParams(toolName string, params map[string]any, defs []tools.ToolDef) string {
 	if toolName == "apply_patch" {
 		if _, err := codexio.Parse(getStr(params, "input")); err != nil {
@@ -236,7 +255,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	}
 	errMsg := ""
 	if a.FilteredTools != nil && findToolDef(tc.Function.Name, validationDefs) == nil {
-		errMsg = fmt.Sprintf("Error: tool %q is not available to this agent.", tc.Function.Name)
+		errMsg = fmt.Sprintf("Error: tool %q is not available to this agent.", tc.Function.Name) + closestToolHint(tc.Function.Name, validationDefs)
 	} else {
 		errMsg = validateRequiredParams(tc.Function.Name, params, validationDefs)
 	}
