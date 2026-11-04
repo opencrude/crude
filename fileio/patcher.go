@@ -73,6 +73,16 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 		return "", fmt.Errorf("search is only whitespace after trimming blank edges")
 	}
 
+	// Phase 0: the exact text, anywhere in the file. Models trained on exact
+	// string replacement start and end old_string inside lines. A unique
+	// exact occurrence is precisely the edit they asked for, and the
+	// line-based phases below would widen it to whole lines. A search with
+	// blank edge lines keeps the line-based handling of trailing newlines.
+	if len(trimmedSearchLines) == len(fullSearchLines) && strings.Count(content, search) == 1 {
+		lg.Debug("DIFF", "phase0_exact_substring", "search_len", len(search))
+		return strings.Replace(content, search, replace, 1), nil
+	}
+
 	if hits := findMatches(contentLines, trimmedSearchLines, func(a, b string) bool { return a == b }); len(hits) == 1 {
 		lg.Debug("DIFF", "phase1_exact_trimmed", "match_line", hits[0]+1, "search_lines", len(trimmedSearchLines))
 		return splice(contentLines, hits[0], len(trimmedSearchLines), replaceLines), nil
@@ -158,9 +168,18 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 				return strings.Join(contentLines, "\n"), nil
 			}
 		}
-		reIndented := reindentBlock(contentLines, trimmedSearchLines, start, replaceLines)
-		lg.Debug("DIFF", "phase5_ws_adjusted", "match_line", start+1, "reindented", reIndented[0] != replaceLines[0])
-		return splice(contentLines, start, len(trimmedSearchLines), reIndented), nil
+		fragment, ok := spliceFragment(contentLines, start, trimmedSearchLines, replaceLines)
+		if !ok {
+			// A middle line matched only part of its content line. Replacing
+			// it would silently drop the rest of that line.
+			lg.Warn("DIFF", "phase5_partial_middle_line", "match_line", start+1)
+			return "", fmt.Errorf(
+				"search text matches only part of a line in the middle of the block at line %d; nothing was changed:\n  %s\n\n"+
+					"ⓘ  HINT: Copy the exact text from read_file output, or include each middle line in full",
+				start+1, preview(op.Search))
+		}
+		lg.Debug("DIFF", "phase5_fragment_splice", "match_line", start+1)
+		return fragment, nil
 	} else if len(subHits) > 1 {
 		lg.Warn("DIFF", "phase5_ambiguous", "match_count", len(subHits), "locations", multiMatchLocations(subHits))
 		return "", multiMatchErr(subHits, "by substring", op.Search)
@@ -307,6 +326,51 @@ func substringReplaceInLine(contentLine, searchLine string, replaceLines []strin
 		return "", false
 	}
 	return contentLine[:idx] + replaceLines[0] + contentLine[idx+len(searchLine):], true
+}
+
+// spliceFragment replaces a search block that starts and ends inside content
+// lines. The text before the match on its first line and the text after the
+// match on its last line are kept, so a fragment edit never drops the rest of
+// an edge line. Every middle line must match its content line in full (after
+// whitespace trimming); otherwise ok is false and nothing is replaced.
+func spliceFragment(contentLines []string, start int, searchLines, replaceLines []string) (string, bool) {
+	n := len(searchLines)
+	first, last := contentLines[start], contentLines[start+n-1]
+	firstAt := strings.Index(first, searchLines[0])
+	if firstAt < 0 {
+		return "", false
+	}
+	for j := 1; j < n-1; j++ {
+		if strings.TrimSpace(contentLines[start+j]) != strings.TrimSpace(searchLines[j]) {
+			return "", false
+		}
+	}
+	lastAt := firstAt
+	if n > 1 {
+		lastAt = strings.Index(last, searchLines[n-1])
+		if lastAt < 0 {
+			return "", false
+		}
+	}
+	prefix := first[:firstAt]
+	suffix := last[lastAt+len(searchLines[n-1]):]
+	out := append([]string(nil), replaceLines...)
+	if strings.TrimSpace(prefix) == "" {
+		// The match starts at the code of its line: keep the existing
+		// indentation rules and the line's own indentation.
+		out = reindentBlock(contentLines, searchLines, start, out)
+		if len(out) > 0 && leadingWS(out[0]) == "" {
+			out[0] = prefix + out[0]
+		}
+	} else if len(out) > 0 {
+		out[0] = prefix + out[0]
+	}
+	if len(out) == 0 {
+		out = []string{prefix + suffix}
+	} else {
+		out[len(out)-1] += suffix
+	}
+	return splice(contentLines, start, n, out), true
 }
 
 // reindent adjusts replacement indentation based on the relationship between

@@ -454,6 +454,41 @@ func TestCollaborationWaitNonaddressedPublicationDuringWaitDoesNotInterrupt(t *t
 	}
 }
 
+// Claude Opus called agent_wait with only timeout_seconds to wait for its
+// background command, and the call failed with "agent_wait requires agent_id,
+// run_id, or artifact_id". A wait without a target now waits for the next
+// event addressed to the caller, including a background command outcome.
+func TestCollaborationWaitWithoutTargetWakesOnCommandOutcome(t *testing.T) {
+	s, store, recipient, _ := collaborationContractFixture(t)
+	wrapped := &collaborationWaitBoundaryStore{Store: store}
+	published := false
+	wrapped.afterPage = func(query collaboration.PageQuery, _ collaboration.Page) {
+		if query.Unadmitted || published {
+			return
+		}
+		published = true
+		if _, err := store.Publish(t.Context(), collaboration.PublishRequest{
+			SenderID: recipient.ID, RecipientIDs: []string{recipient.ID}, Origin: collaboration.OriginRuntime,
+			Kind: collaboration.EventCommandOutcome, IdempotencyKey: "command-outcome:build", Body: "Background command \"build\" settled.",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: recipient.ID})
+	value, err := s.waitForCollaboration(ctx, wrapped, map[string]any{"timeout_seconds": 30})
+	if err != nil {
+		t.Fatalf("a wait without a target failed: %v", err)
+	}
+	observation := value.(collaborationWaitObservation)
+	if observation.Status != "directed_event" || observation.Event == nil || observation.Event.Kind != collaboration.EventCommandOutcome {
+		t.Fatalf("wait did not end at the command outcome: %+v", observation)
+	}
+	// Without an agent identity there is nothing addressed to wait for.
+	if _, err := s.waitForCollaboration(t.Context(), store, map[string]any{"timeout_seconds": 1}); err == nil {
+		t.Fatal("a wait without a target or identity was accepted")
+	}
+}
+
 func TestCollaborationWaitToolEntryWakesRootAndChildWithoutAdmission(t *testing.T) {
 	for _, childWaiter := range []bool{false, true} {
 		t.Run(fmt.Sprintf("child=%t", childWaiter), func(t *testing.T) {

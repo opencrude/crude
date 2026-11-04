@@ -95,16 +95,23 @@ func (m *App) applyGitRemoteResult(msg sourceControlResultMsg) tea.Cmd {
 			}
 			return m.refreshSourceControl()
 		}
-		m.finishGitOperation(msg.gen, types.OperationFailed, msg.err.Error())
-		m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityError, Summary: msg.remoteLabel + " failed", Detail: msg.err.Error()})
-		m.gitPanel.SetError(msg.err)
+		summary, detail := gitRemoteFailureText(msg.remoteLabel, msg.err)
+		m.finishGitOperation(msg.gen, types.OperationFailed, detail)
+		m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityError, Summary: summary, Detail: detail})
+		// The panel keeps the failure through the refresh below, until the
+		// next remote command starts or succeeds.
+		m.gitPanel.SetRemoteError(summary)
 		if m.Feedback != nil {
-			m.Feedback.NotifyError(msg.remoteLabel + ": " + msg.err.Error())
+			m.Feedback.NotifyErrorDetail(summary, detail)
+		}
+		if logger := m.ws.Logger(); logger != nil {
+			logger.Warn("GIT", "remote_failed", "operation", msg.remoteLabel, "output", detail)
 		}
 		return m.refreshSourceControl()
 	}
 	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
 	m.ws.Status().ResolveIssue("git")
+	m.gitPanel.SetRemoteError("")
 	m.gitSnapshotAt = time.Now()
 	m.presentGitSnapshot(msg.snapshot)
 	if m.Feedback != nil && msg.notice != "" {
@@ -122,6 +129,23 @@ func (m *App) applyGitRemoteResult(msg sourceControlResultMsg) tea.Cmd {
 		cmds = append(cmds, m.openGitMergeDialog())
 	}
 	return tea.Batch(cmds...)
+}
+
+// gitRemoteFailureText splits a remote failure into the sentence the user
+// reads and the full text for details. The workspace writes the sentence
+// first and Git's output after a blank line; an error without that shape
+// still names the operation that failed.
+func gitRemoteFailureText(label string, err error) (summary, detail string) {
+	detail = strings.TrimSpace(err.Error())
+	summary, _, _ = strings.Cut(detail, "\n\n")
+	summary = strings.Join(strings.Fields(summary), " ")
+	if !strings.HasPrefix(summary, label+" failed") {
+		if summary != "" {
+			summary = strings.ToUpper(summary[:1]) + summary[1:]
+		}
+		summary = label + " failed. " + strings.TrimSuffix(summary, ".") + "."
+	}
+	return summary, detail
 }
 
 func (m *App) handleGitSyncAction(action ui.Action) (tea.Cmd, bool) {

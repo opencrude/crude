@@ -43,8 +43,13 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 	runID := getStrParam(params, "run_id")
 	artifactID := getStrParam(params, "artifact_id")
 	afterRevision := getIntParam(params, "after_revision")
-	if agentID == "" && runID == "" && artifactID == "" {
-		return nil, fmt.Errorf("agent_wait requires agent_id, run_id, or artifact_id")
+	identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
+	// Without a target the wait ends at the next event addressed to the
+	// caller: a child report, a peer note or a background command outcome.
+	// Models reach for exactly this, so it is a supported wait, not an error.
+	nextEvent := agentID == "" && runID == "" && artifactID == ""
+	if nextEvent && identity.AgentID == "" {
+		return nil, fmt.Errorf("agent_wait without agent_id, run_id or artifact_id waits for the next event addressed to you, and this call has no agent identity; name the agent, run or report to wait for")
 	}
 	timeout := getIntParam(params, "timeout_seconds")
 	if timeout <= 0 {
@@ -53,7 +58,6 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 	started := time.Now()
 	waitCtx, stopWait := context.WithDeadlineCause(ctx, started.Add(time.Duration(timeout)*time.Second), errCollaborationWaitElapsed)
 	defer stopWait()
-	identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
 	if err := ctx.Err(); err != nil {
 		return collaborationWaitObservation{Status: "caller_interrupted", Reason: context.Cause(ctx).Error()}, nil
 	}
@@ -81,6 +85,9 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 	defer unsubscribe()
 	observe := func(readCtx context.Context) (collaborationWaitObservation, bool, error) {
 		result := collaborationWaitObservation{Status: "ready", ElapsedMs: time.Since(started).Milliseconds(), Snapshot: snapshot, ObservedAt: time.Now(), Source: "collaboration_store"}
+		if nextEvent {
+			result.Unmet = append(result.Unmet, "addressed_event")
+		}
 		if agentID != "" {
 			value, err := store.Agent(readCtx, agentID)
 			if err != nil {

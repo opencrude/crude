@@ -122,6 +122,14 @@ agent, run and artifact identities. A requested run returns its typed terminal
 outcome; report-only waits return the artifact. A report becoming available is
 never interpreted as execution success.
 
+`agent_wait` with no `agent_id`, `run_id` or `artifact_id` waits for the next
+event addressed to the caller (a report, note, request or background command
+outcome) and returns it as `directed_event`, or `timeout_no_match`. It is an
+error only for a caller without an agent identity. Before 2026-11-04 every
+untargeted call failed with "agent_wait requires agent_id, run_id, or
+artifact_id"; Claude Opus made that call to wait for its own background
+command (see [model tool failures](model-tool-failures.md)).
+
 Committed run transitions and agent availability/presence changes independently
 wake store subscribers after their transaction commits. A report observed before
 terminal settlement cannot be the only wake for a combined wait. These signals

@@ -45,6 +45,8 @@ documents to read before changing each area.
   child reporting, ownership and connections.
 - [Unfinished run recovery](reference/run-recovery.md) — supervised attempts,
   provider failure classification, durable pending work and cooldowns.
+- [Model tool failures](reference/model-tool-failures.md) — tool failures that
+  come from how a model family calls tools, with causes, fixes and tests.
 - [Workspace collaboration runtime](reference/workspace-collaboration.md) —
   durable agents/runs, directed delivery, reports, controls and recovery.
 - [Skills, MCP and capabilities](reference/capabilities.md) — registration,

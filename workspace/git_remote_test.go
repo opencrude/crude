@@ -185,6 +185,51 @@ func TestGitConflictParsingStylesAndErrors(t *testing.T) {
 	}
 }
 
+// The user forgot to pull: the branch is ahead and the remote has commits that
+// were never fetched. Push must say why it failed and what to do, and fetch
+// so the branch shows how far behind it is. Git's text stays as detail.
+func TestGitPushBehindRemoteExplainsAndFetches(t *testing.T) {
+	_, ours, _ := remoteFixture(t)
+	service := NewGitService(ours)
+	before, err := service.Snapshot(t.Context())
+	if err != nil || before.Ahead != 1 || before.Behind != 0 {
+		t.Fatalf("fixture: ahead=%d behind=%d err=%v", before.Ahead, before.Behind, err)
+	}
+	err = service.Push(t.Context())
+	if !errors.Is(err, ErrGitPushBehind) {
+		t.Fatalf("rejected push was not classified: %v", err)
+	}
+	summary, detail, _ := strings.Cut(err.Error(), "\n\n")
+	if summary != "Push failed. The remote branch has commits that your branch does not have. Pull, then push again." {
+		t.Fatalf("summary = %q", summary)
+	}
+	if !strings.Contains(detail, "[rejected]") {
+		t.Fatalf("Git's output is not kept as detail: %q", detail)
+	}
+	after, err := service.Snapshot(t.Context())
+	if err != nil || after.Ahead != 1 || after.Behind != 1 {
+		t.Fatalf("push did not fetch the missing commit: ahead=%d behind=%d err=%v", after.Ahead, after.Behind, err)
+	}
+}
+
+func TestGitRemoteFailureSentences(t *testing.T) {
+	for _, tc := range []struct{ operation, output, want string }{
+		{"push", " ! [remote rejected] main -> main (protected branch hook declined)\nerror: failed to push some refs",
+			"Push failed. The remote refused it: protected branch hook declined."},
+		{"fetch", "fatal: 'nowhere' does not appear to be a git repository\nfatal: Could not read from remote repository.",
+			"Fetch failed. Git reported: 'nowhere' does not appear to be a git repository."},
+		{"pull", "", "Pull failed."},
+	} {
+		err := gitRemoteFailure(tc.operation, tc.output)
+		if summary, _, _ := strings.Cut(err.Error(), "\n\n"); summary != tc.want {
+			t.Errorf("%s: summary = %q, want %q", tc.operation, summary, tc.want)
+		}
+		if errors.Is(err, ErrGitPushBehind) {
+			t.Errorf("%s: classified as behind", tc.operation)
+		}
+	}
+}
+
 func TestGitCredentialFailuresAreRecognised(t *testing.T) {
 	for _, output := range []string{
 		"fatal: could not read Username for 'https://github.com': terminal prompts disabled",
