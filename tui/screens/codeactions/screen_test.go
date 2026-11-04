@@ -56,7 +56,7 @@ func actionPaint(host *ui.Host, w, h int) string {
 	return text.String()
 }
 
-func TestCodeActionsNativeListDetailDefaultCloseAndExplicitPreview(t *testing.T) {
+func TestChoosingCodeActionRequestsReviewDirectly(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			s := New(nil)
@@ -66,41 +66,26 @@ func TestCodeActionsNativeListDetailDefaultCloseAndExplicitPreview(t *testing.T)
 			set.Items[0].Title = "forged"
 			set.Boundary.Context.UnknownInputs[0] = "forged"
 			host := actionHost(s, size[0], size[1])
-			if paint := actionPaint(host, size[0], size[1]); !strings.Contains(paint, "Preferred") ||
-				!strings.Contains(paint, "Do not execute") || !strings.Contains(paint, "Disabled") {
+			if paint := actionPaint(host, size[0], size[1]); !strings.Contains(paint, "Recommended") ||
+				!strings.Contains(paint, "Do not execute") || !strings.Contains(paint, "Not available") ||
+				strings.Contains(paint, "forged") || strings.Contains(paint, "literal, complete") {
 				t.Fatalf("native list omitted eligible/unsupported/disabled rows:\n%s", paint)
 			}
-			host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-			host.Layout()
-			if s.InList() || !strings.Contains(s.text.Value(), "Fix exact literal") ||
-				!strings.Contains(s.text.Value(), "original-unknown-build-context") {
-				t.Fatal("row activation failed to expose complete original evidence")
-			}
-			if got := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); got.Cmd == nil {
-				t.Fatal("safe default Close did not emit an owned command")
-			} else if close, ok := got.Cmd().(CloseMsg); !ok || close.Target != s {
-				t.Fatal("detail Enter defaulted to preview or lost its owner")
-			}
-			// Only an explicit action selection requests a preview.
-			host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
-			host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
 			got := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 			if got.Cmd == nil {
-				t.Fatal("native action scope did not reach explicit Preview")
+				t.Fatal("one Enter did not request the selected action's review")
 			}
 			prepared, ok := got.Cmd().(PrepareMsg)
 			if !ok || prepared.Target != s || prepared.Index != 0 {
 				t.Fatal("preview lost its original set index or owner", prepared)
 			}
-			if again := s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionPrepare}); again.Cmd != nil {
+			if !s.InList() {
+				t.Fatal("choosing an action inserted a second details page before its review")
+			}
+			if again := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); again.Cmd != nil {
 				t.Fatal("busy action was issued twice")
 			}
 			s.SetBusy(false)
-			host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
-			host.Layout()
-			if !s.InList() || host.Focused() != ListID {
-				t.Fatal("Escape did not return from detail to the same list")
-			}
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 			host.Layout()
@@ -110,11 +95,23 @@ func TestCodeActionsNativeListDetailDefaultCloseAndExplicitPreview(t *testing.T)
 			if !strings.Contains(s.text.Value(), "Actions containing commands are not supported.") {
 				t.Fatal("unsupported reason was not readable")
 			}
+			if strings.Contains(s.text.Value(), "original-unknown-build-context") {
+				t.Fatal("the unavailable explanation contains a protocol dump")
+			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+			if !s.InList() || host.Focused() != ListID {
+				t.Fatal("Escape did not return to the action list")
+			}
+			if close := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc}); close.Cmd == nil {
+				t.Fatal("Escape did not close the list")
+			} else if msg, ok := close.Cmd().(CloseMsg); !ok || msg.Target != s {
+				t.Fatal("Close did not retain its owner")
+			}
 		})
 	}
 }
 
-func TestCodeActionsNativeEmptyErrorLongEvidenceCopyAndBounds(t *testing.T) {
+func TestCodeActionsEmptyErrorCopyAndBounds(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}, {9, 5}, {1, 1}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			s := New(nil)
@@ -122,8 +119,8 @@ func TestCodeActionsNativeEmptyErrorLongEvidenceCopyAndBounds(t *testing.T) {
 			set.Items = nil
 			s.SetSet(set)
 			host := actionHost(s, size[0], size[1])
-			if !strings.Contains(s.text.Value(), "not proof") || !strings.Contains(s.text.Value(), "Source byte selection: [4,7)") {
-				t.Fatal("empty evidence lost scope or implied project cleanliness")
+			if s.text.Value() != "No code actions available here." {
+				t.Fatal("empty list did not explain the state in plain words")
 			}
 			s.SetError("literal transport failure")
 			s.SetSet(actionFixture())
@@ -132,6 +129,7 @@ func TestCodeActionsNativeEmptyErrorLongEvidenceCopyAndBounds(t *testing.T) {
 			if !host.Focus(ListID) {
 				t.Fatal("delivered action list was not registered")
 			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 			host.Layout()
 			host.Focus(TextID)
@@ -154,8 +152,8 @@ func TestCodeActionsNativeEmptyErrorLongEvidenceCopyAndBounds(t *testing.T) {
 				t.Fatal("native copy was missing or did I/O synchronously")
 			}
 			result.Cmd()
-			if copied != s.text.Value() || !strings.Contains(copied, set.Digest) {
-				t.Fatal("copy omitted complete evidence or original digest")
+			if copied != s.text.Value() || !strings.Contains(copied, "Actions containing commands are not supported.") {
+				t.Fatal("copy omitted the unavailable action's explanation")
 			}
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc}) // native selection first
 			if s.InList() {
@@ -170,5 +168,50 @@ func TestCodeActionsNativeEmptyErrorLongEvidenceCopyAndBounds(t *testing.T) {
 				_ = actionPaint(host, size[0], size[1])
 			}
 		})
+	}
+}
+
+func TestCodeActionOrderKeepsOriginalIndices(t *testing.T) {
+	set := actionFixture()
+	set.Items = []workspace.CodeActionSummary{
+		{Index: 0, Title: "Command action", UnsupportedReason: "This action needs a server command."},
+		{Index: 1, Title: "Other fix", CanReview: true},
+		{Index: 2, Title: "Recommended fix", CanReview: true, HasPreferred: true, Preferred: true},
+	}
+	s := New(nil)
+	s.SetSet(set)
+	host := actionHost(s, 80, 24)
+	paint := actionPaint(host, 80, 24)
+	if strings.Index(paint, "Recommended fix") > strings.Index(paint, "Other fix") ||
+		strings.Index(paint, "Other fix") > strings.Index(paint, "Command action") {
+		t.Fatalf("available actions were not presented before unavailable actions:\n%s", paint)
+	}
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("the recommended fix did not request its review")
+	}
+	if msg, ok := result.Cmd().(PrepareMsg); !ok || msg.Index != 2 || msg.Target != s {
+		t.Fatal("presentation order replaced the original action identity", msg)
+	}
+}
+
+func TestCodeActionsAllUnavailableHasOneExplanation(t *testing.T) {
+	set := actionFixture()
+	set.Items = set.Items[1:]
+	for i := range set.Items {
+		set.Items[i].Index = i
+	}
+	s := New(nil)
+	s.SetSet(set)
+	host := actionHost(s, 80, 24)
+	paint := actionPaint(host, 80, 24)
+	if strings.Count(paint, "Crude cannot apply these actions yet.") != 1 ||
+		strings.Contains(paint, "Not available") || strings.Contains(paint, "Unsupported") ||
+		strings.Contains(paint, "Close") {
+		t.Fatalf("unavailable list repeats warnings or old inspection chrome:\n%s", paint)
+	}
+	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil ||
+		!strings.Contains(s.text.Value(), "Actions containing commands are not supported.") {
+		t.Fatal("choosing an unavailable row requested a review or lost its explanation")
 	}
 }

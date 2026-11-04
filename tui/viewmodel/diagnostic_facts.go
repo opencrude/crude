@@ -9,19 +9,20 @@ import (
 )
 
 type diagnosticTreeProjection struct {
-	id               string
-	state            types.InsightState
-	visible, current bool
+	id      string
+	state   types.InsightState
+	visible bool
 }
 
+// projectTreeDiagnostic counts exactly what the Problems panel lists: every
+// problem in the file's retained facts, whatever their freshness. Freshness is
+// told in the panel and the editor, not by hiding the marker. Hiding it for
+// project-check and older facts made the tree disagree with Problems.
 func (m *App) projectTreeDiagnostic(path string, facts types.InsightDiagnostics) {
 	if m.Tree == nil || m.Tree.Model == nil {
 		return
 	}
-	projection := diagnosticTreeProjection{id: facts.ID, state: facts.State, visible: m.ws.LSPMgr() == nil || m.ws.LSPMgr().ShowDiagnosticsInTree(), current: facts.HasExactSource()}
-	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
-		projection.current = tab.Editor.MatchesDiagnosticSource(facts)
-	}
+	projection := diagnosticTreeProjection{id: facts.ID, state: facts.State, visible: m.ws.LSPMgr() == nil || m.ws.LSPMgr().ShowDiagnosticsInTree()}
 	if m.lspTreeProjection == nil {
 		m.lspTreeProjection = make(map[string]diagnosticTreeProjection)
 	}
@@ -30,7 +31,7 @@ func (m *App) projectTreeDiagnostic(path string, facts types.InsightDiagnostics)
 	}
 	m.lspTreeProjection[path] = projection
 	errors, warnings, hints := 0, 0, 0
-	if projection.visible && projection.current {
+	if projection.visible {
 		for _, d := range facts.Diagnostics {
 			switch d.Severity {
 			case editor.DiagError:

@@ -185,11 +185,12 @@ func TestCodeActionLiteralImmutableReviewRecoverableCanonicalApply(t *testing.T)
 	f.client.list[0] = '!'
 	f.client.actionMu.Unlock()
 	preview := f.prepare(t, set)
-	want := fmt.Sprintf("Action title (literal): \"Replace \\\"old\\\"\\n\\tliteral\"\nKind (literal): \"quickfix.custom\"\nOriginal action SHA-256: %s\nReviewed action SHA-256: %s\n\n%q\nBefore SHA-256: %s\nAfter SHA-256: %s\n@@ UTF-16 1:5 to 1:8 @@\n- \"old\"\n+ \"new\"\n@@ UTF-16 2:1 to 2:4 @@\n- \"old\"\n+ \"new\"\n",
-		codeActionHash(raw), codeActionHash(raw), f.path,
-		codeActionHash("var old = 1\r\nold\r\n"), codeActionHash("var new = 1\r\nnew\r\n"))
+	want := "main.go  +2  -2\nLine 1\n- var old = 1\\r\n- old\\r\n+ var new = 1\\r\n+ new\\r\n\n"
 	if preview.Text != want || len(preview.Files) != 1 || preview.Boundary.Source != f.source ||
-		strings.Contains(preview.Text, "FORGED") || !reflect.DeepEqual(preview.Boundary.Context.UnknownInputs, unknownInputs) {
+		strings.Contains(preview.Evidence, "FORGED") || !reflect.DeepEqual(preview.Boundary.Context.UnknownInputs, unknownInputs) ||
+		!strings.Contains(preview.Evidence, "Original action SHA-256: "+codeActionHash(raw)) ||
+		preview.Files[0].BeforeSHA256 != codeActionHash("var old = 1\r\nold\r\n") ||
+		preview.Files[0].AfterSHA256 != codeActionHash("var new = 1\r\nnew\r\n") {
 		t.Fatalf("immutable literal review differs:\ngot: %q\nwant: %q", preview.Text, want)
 	}
 	f.assertUnchanged(t)
@@ -287,7 +288,7 @@ func TestCodeActionVersionedLiteralRequiresExactWireAndRetainsSafety(t *testing.
 				t.Fatal("exact versioned ordinary text edit was refused", set)
 			}
 			p := f.prepare(t, set)
-			if !strings.Contains(p.Text, `- "old"`) || !strings.Contains(p.Text, `+ "new"`) {
+			if !strings.Contains(p.Text, "- var old = 1") || !strings.Contains(p.Text, "+ var new = 1") {
 				t.Fatal("versioned action lost literal changed-span review")
 			}
 			out := f.workspace.LiveDocuments.ApplyReviewedEdit(t.Context(), f.owner, p.ID, p.Digest,
@@ -515,6 +516,7 @@ func TestCodeActionSourceAndManagerAdmissionRefuseWithoutRPC(t *testing.T) {
 		t.Run(invalid, func(t *testing.T) {
 			f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
 			owner, source := f.owner, f.source
+			ctx := t.Context()
 			switch invalid {
 			case "foreign-owner":
 				owner = document.Owner{ClientID: "not-an-editor", Epoch: 1}
@@ -538,8 +540,12 @@ func TestCodeActionSourceAndManagerAdmissionRefuseWithoutRPC(t *testing.T) {
 				f.workspace.LSPMgr.mu.Lock()
 				f.workspace.LSPMgr.documents[f.path].syncPending = true
 				f.workspace.LSPMgr.mu.Unlock()
+				// A permanently held send must cancel without reaching the RPC.
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 50*time.Millisecond)
+				defer cancel()
 			}
-			if set, err := f.workspace.RequestLSPCodeActions(t.Context(), owner, source, 0, 0); err == nil || set.ID != "" {
+			if set, err := f.workspace.RequestLSPCodeActions(ctx, owner, source, 0, 0); err == nil || set.ID != "" {
 				t.Fatalf("invalid source acquired list: %+v %v", set, err)
 			}
 			f.client.actionMu.Lock()
@@ -652,8 +658,8 @@ func TestCodeActionLazyResolvePreservesOriginalBytesAndCurrentWire(t *testing.T)
 	inputs, wires := f.client.resolveInputs, f.client.resolveWires
 	f.client.actionMu.Unlock()
 	if len(inputs) != 1 || string(inputs[0]) != original || len(wires) != 1 || wires[0] != wire ||
-		!strings.Contains(preview.Text, "Original action SHA-256: "+codeActionHash(original)) ||
-		!strings.Contains(preview.Text, "- \"old\"\n+ \"new\"") {
+		!strings.Contains(preview.Evidence, "Original action SHA-256: "+codeActionHash(original)) ||
+		!strings.Contains(preview.Text, "- var old = 1") || !strings.Contains(preview.Text, "+ var new = 1") {
 		t.Fatalf("resolve rewrote original bytes or lost synchronized wire: inputs=%q wires=%v review=%q", inputs, wires, preview.Text)
 	}
 	f.assertUnchanged(t)

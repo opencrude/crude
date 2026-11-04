@@ -312,7 +312,7 @@ complete semantic-feature acceptance.
 
 The manual code-action regression uses
 `go test ./tui/viewmodel -run '^TestCodeActionVisualHeadless$'` with installed
-gopls. It drives actual Alt+Enter/list/detail keys, safe-default Close and Cancel,
+gopls. It drives actual Alt+Enter and list-row selection, Escape and default Cancel,
 fresh immutable review and explicit Apply against independently authored unused
 import bytes. A supported row is required; unsupported is never a successful
 mutation. The receipt, selected original safety content and exact provider join
@@ -321,8 +321,8 @@ are checked separately.
 For its native captures select `CRUDE_VISUAL_CODE_ACTION=1`,
 `CRUDE_ARGS='-test.run=^TestCodeActionVisualAcceptance$ -test.count=1 -test.timeout=600s'`
 and `CRUDE_CODE_ACTION_VISUAL_RESULT` with the compiled viewmodel test binary.
-F3 sets up only the fixture; F4 passively observes list/detail/default-Close,
-fresh list/detail/preview/default-Cancel, and fresh list/detail/preview/Apply.
+F3 sets up only the fixture; F4 passively observes list/Escape,
+fresh list/review/default-Cancel, and fresh list/review/Apply.
 `CODE_ACTION_ROW_INDEX` records which literal row to reach with ordinary Down
 keys. Use sequential `scripts/tuishot.sh` captures at 160x40 and 80x24, wait for
 each original observer boundary and finish with `quit:F9`. No observer may
@@ -331,8 +331,8 @@ rendered evidence, not distinct-host or native Windows/macOS acceptance.
 
 Qualified navigation uses `TestNavigationVisualHeadless` with installed real
 gopls. It drives all four registry keys, a two-target implementation chooser,
-inspect-only Enter, safe-default Close, detail Back and explicit second-target
-Open. Literal fixture positions, original provider response metadata, unchanged
+Esc that closes without opening, and Enter on the second row that lands in its
+code. Literal fixture positions, original provider response metadata, unchanged
 source/private drafts and exact provider cleanup are independent assertions.
 For sequential native captures select `CRUDE_VISUAL_NAVIGATION=1`,
 `CRUDE_ARGS='-test.run=^TestNavigationVisualAcceptance$ -test.count=1 -test.timeout=600s'`
@@ -342,6 +342,18 @@ in `lsp_navigation_visual_test.go`, wait for each original `F4 VERIFIED` marker,
 and finish with `quit:F9`. Use the same compiled image at 160x40 and 80x24,
 inspect the actual native frames, and verify zero exit and joined cleanup.
 Neither a headless pass nor a cross-build supplies native pixel or device evidence.
+
+On Windows, `TestLSPInteractionNativeCapture` is an opt-in real-gopls fixture for
+`scripts/tuishot.ps1`. Precompile the viewmodel test binary, select
+`CRUDE_CAPTURE_LSP=references` or `actions`, and set
+`CRUDE_ARGS='-test.run=^TestLSPInteractionNativeCapture$ -test.count=1 -test.timeout=90s -test.v'`.
+Set `CRUDE_CAPTURE_LSP_RESULT` to a temporary result path. Ordinary keys or the
+editor Code context menu perform the actions; F4 only observes the picker,
+landing or edit review, and F9 exits. References require two observations
+(list, chosen-code landing). Actions require three (list, exact import-removal
+review, Cancel). Verify `passed=true`, the full phase count, unchanged source
+and private draft, and inspect the screenshots at 160x40 and 80x24. A capture
+script's exit alone does not establish that the fixture assertions passed.
 
 Read-only inlay hints use `TestInlayVisualHeadless` with installed gopls v0.21.1
 and explicit generic `gopls.hints` fixture settings. The test independently checks

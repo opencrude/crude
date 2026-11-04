@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/prompt"
 	"crude/shellport"
 	"crude/tui/screens/toolsetup"
 	"crude/tui/ui"
@@ -45,6 +46,28 @@ type projectToolsDecidedMsg struct {
 	request *projectToolsRequest
 	result  types.ProjectToolSetupResult
 	err     error
+	// quiet means Aeron took the work, so Crude's own record needs no notice.
+	quiet bool
+}
+
+// projectToolSetupTask turns the user's switches into the work order for
+// Aeron: switched-on tools are set up, the others are left alone.
+func projectToolSetupTask(project string, items []types.ProjectToolCandidate, selected []string) prompt.ToolSetupTask {
+	on := make(map[string]bool, len(selected))
+	for _, id := range selected {
+		on[id] = true
+	}
+	task := prompt.ToolSetupTask{Project: project}
+	for _, item := range items {
+		entry := prompt.ToolSetupItem{Languages: item.Languages, Package: item.Package, Version: item.Version,
+			Source: item.Source, Command: item.Command, Status: item.Reason}
+		if on[item.ID] {
+			task.Setup = append(task.Setup, entry)
+		} else {
+			task.Skip = append(task.Skip, entry)
+		}
+	}
+	return task
 }
 
 func (m *App) projectToolsCurrent(request *projectToolsRequest) bool {
@@ -92,7 +115,7 @@ func (m *App) showProjectTools(request *projectToolsRequest) {
 	frame.Focus(toolsetup.ActionsID)
 	window := wm.NewFloatingWindow(string(projectToolsOverlay), "", frame, w, h,
 		wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true),
-		wm.WithClosable(false), wm.WithFocusable(true), wm.WithModal(true),
+		wm.WithClosable(true), wm.WithFocusable(true), wm.WithModal(true),
 		wm.WithClickOutside(wm.ClickOutsideIgnore))
 	wm.CenterOnScreen(window, m.width, m.height)
 	if m.rootHost != nil {
@@ -148,14 +171,20 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		request.submitted = true
 		m.overlayHost.Close(projectToolsOverlay)
-		selected := append([]string(nil), msg.Selected...)
-		if len(selected) > 0 && m.Feedback != nil {
-			m.Feedback.NotifyInfo("Installing selected tools. You can continue editing.")
+		var task tea.Cmd
+		if len(msg.Selected) > 0 {
+			// Aeron does the work. Crude only records that the user answered,
+			// so the question is not asked again for this project.
+			task = m.taskWorkspaceAeron(prompt.ToolSetupMessage(projectToolSetupTask(m.ws.RootPath(), msg.Target.Items(), msg.Selected)))
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Aeron is setting up the tools. You can keep editing; open Aeron in the Agents panel to watch.")
+			}
 		}
-		return true, m.clientIOCommand(request.ctx, func(ctx context.Context) tea.Msg {
-			result, err := request.port.DecideProjectTools(ctx, request.preview.ID, selected)
-			return projectToolsDecidedMsg{request: request, result: result, err: err}
+		decide := m.clientIOCommand(request.ctx, func(ctx context.Context) tea.Msg {
+			result, err := request.port.DecideProjectTools(ctx, request.preview.ID, nil)
+			return projectToolsDecidedMsg{request: request, result: result, err: err, quiet: len(msg.Selected) > 0}
 		})
+		return true, tea.Batch(task, decide)
 	case projectToolsDecidedMsg:
 		if !m.projectToolsCurrent(msg.request) {
 			return true, nil
@@ -165,7 +194,7 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if m.Feedback != nil {
 			if msg.err != nil {
 				m.Feedback.NotifyError("Could not finish code intelligence setup. " + msg.err.Error())
-			} else if msg.result.Message != "" {
+			} else if msg.result.Message != "" && !msg.quiet {
 				m.Feedback.NotifyInfo(msg.result.Message)
 			}
 		}

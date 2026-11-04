@@ -23,7 +23,7 @@ func renameReviewRequest(msg lspRenameResultMsg) reviewedEditDialogRequest {
 		owner: msg.owner, revision: msg.revision, generation: msg.generation,
 		filePath: msg.filePath, preview: msg.preview, port: msg.port,
 		title: "Review rename", intro: fmt.Sprintf("Rename to %q in %d files.", msg.newName, len(msg.preview.Files)),
-		applyLabel: "Apply rename", committedLabel: "Renamed", operationLabel: "Rename",
+		applyLabel: "Apply rename", committedLabel: "Renamed",
 	}
 }
 

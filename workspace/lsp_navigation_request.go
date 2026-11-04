@@ -35,6 +35,8 @@ func (m *LSPManager) RequestNavigation(ctx context.Context, path, kind string, l
 }
 
 func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, line, col int, includeDeclaration bool) (types.LSPNavigation, error) {
+	ctx, stop := context.WithTimeout(ctx, ManualLSPRequestTimeout)
+	defer stop()
 	gate, err := navigationGate(kind)
 	if err != nil {
 		return types.LSPNavigation{}, err
@@ -47,7 +49,10 @@ func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, l
 	}
 	var out types.LSPNavigation
 	err = m.trackInflight(func() error {
-		client, requestCtx, valid, cancel := m.requestClient(ctx, path)
+		if err := m.awaitSynchronized(ctx, path); err != nil {
+			return err
+		}
+		client, requestCtx, valid, cancel := m.requestClientWithin(ctx, path, ManualLSPRequestTimeout)
 		defer cancel()
 		if client == nil {
 			return errors.New("navigation needs a synchronized language server")

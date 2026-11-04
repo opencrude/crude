@@ -240,7 +240,7 @@ func (a *actor) staticControlDescriptor(request control.Request) (control.Descri
 		if err := controlDecode(request.Input, &input); err != nil {
 			return control.Descriptor{}, err
 		}
-		if ControlSettingsAuthority(input.Path) {
+		if ControlSettingsAuthority(input.Path) && !a.aeronOwnsSetting(request.Caller, input.Path) {
 			descriptor.Effect, descriptor.HumanOnly = control.Authority, true
 		}
 	}

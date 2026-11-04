@@ -1170,7 +1170,13 @@ func (m *LSPManager) StopServer(id string) bool {
 }
 
 func (m *LSPManager) requestClient(ctx context.Context, path string) (LSPClient, context.Context, func() bool, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	return m.requestClientWithin(ctx, path, 10*time.Second)
+}
+
+// requestClientWithin is requestClient with the caller's own answer limit. A
+// search across a large project is slow while the server still reads it.
+func (m *LSPManager) requestClientWithin(ctx context.Context, path string, limit time.Duration) (LSPClient, context.Context, func() bool, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	path = filepath.Clean(path)
 	m.mu.Lock()
 	doc := m.documents[path]

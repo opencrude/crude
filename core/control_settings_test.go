@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"crude/coreprotocol"
@@ -54,6 +55,50 @@ func TestControlSettingsApplicationCaptureCommitApply(t *testing.T) {
 	again, _, _ := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 	if out := again(context.Background()); out.Fault != nil {
 		t.Fatal("explicit set required a revision", out.Fault)
+	}
+}
+
+func TestAeronCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	t.Cleanup(ws.Close)
+	ws.SessionsByAgent["aeron"] = &workspace.Session{AgentID: "aeron",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}}}
+	ws.SessionsByAgent["main"] = &workspace.Session{AgentID: "main",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{}}}
+	a := &actor{ws: ws}
+	command := filepath.Join(t.TempDir(), "language-server.exe")
+	for _, agentID := range []string{"main", "aeron"} {
+		raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": "lsp.languages.go.command", "value": command})
+		in := control.Request{ID: "lsp-" + agentID, CommandID: "settings.set", Input: raw,
+			Caller: control.Caller{Kind: control.AgentCaller, AgentID: agentID}}
+		desc, err := a.staticControlDescriptor(in)
+		if err != nil || desc.HumanOnly != (agentID != "aeron") {
+			t.Fatalf("%s descriptor has the wrong authority: %+v, %v", agentID, desc, err)
+		}
+		run, apply, handled := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
+		if !handled {
+			t.Fatal("settings mutation was not routed")
+		}
+		out := run(t.Context())
+		if agentID == "main" {
+			if out.Fault == nil || out.Fault.Code != control.Denied {
+				t.Fatalf("ordinary agent changed the server launch command: %+v", out)
+			}
+			continue
+		}
+		if out.State != control.Committed || out.Fault != nil {
+			t.Fatalf("Aeron could not configure its installed server: %+v", out)
+		}
+		if apply != nil {
+			apply(out)
+		}
+		if got := ws.LoadAppSettings().LSP.Languages["go"].Command; got != command {
+			t.Fatalf("Aeron's launch command did not reach live settings: %q", got)
+		}
+	}
+	// The exception does not include unrelated authority.
+	if a.aeronOwnsSetting(control.Caller{Kind: control.AgentCaller, AgentID: "aeron"}, "safety.confirm_at") {
+		t.Fatal("language-server setup granted unrelated authority")
 	}
 }
 

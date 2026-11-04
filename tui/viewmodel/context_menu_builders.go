@@ -61,9 +61,10 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	factID, _ := ed.DiagnosticCursor()
 	diags := m.EditorState.Editor.DiagnosticsAt(pos.Line, pos.Col)
 	hasLSP := m.ws.LSPMgr() != nil && m.ws.LSPMgr().ServerReady()
+	canRequest := hasLSP || m.manualLSPAvailable()
 
 	lspSection := ui.ContextMenuSection{SectionLabel: "Code"}
-	if hasLSP {
+	if canRequest {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Go to definition", Detail: "Alt+.", Action: func() {
 				m.runDetachedAsyncCmd(m.requestNavigationCmd(types.LSPNavigationDefinition))
@@ -84,12 +85,12 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
-			Label: "Rename symbol", Detail: "F2", Action: func() {
+			Label: "Rename symbol", Detail: "F2", Disabled: !hasLSP, Action: func() {
 				m.startRename()
 			},
 		})
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
-			Label: "Parameter information", Detail: "Alt+I", Action: func() {
+			Label: "Parameter information", Detail: "Alt+I", Disabled: !hasLSP, Action: func() {
 				m.runDetachedAsyncCmd(m.requestSignatureHelpCmd())
 			},
 		})
@@ -148,7 +149,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				m.openFindReplace(true)
 			}},
 			{Label: "Document outline", Detail: "Alt+O", Disabled: !hasLSP, Action: func() {
-				_, _ = m.requestDocumentSymbolsCmd(), 0
+				m.runDetachedAsyncCmd(m.requestDocumentSymbolsCmd())
 			}},
 			{Label: "Inspect inlay hints", Detail: "Alt+J", Disabled: !hasLSP, Action: func() {
 				m.runDetachedAsyncCmd(m.openInlayInspectorCmd())

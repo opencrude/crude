@@ -60,6 +60,12 @@ func (w *Workspace) NewAgentSession() *workspace.NewSessionResult {
 	return w.lifecycle(coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: w.invocation})
 }
 
+// NewAgentSessionAs sends only the role: the shell's own account and model
+// selection must not leak into a session that runs under another role.
+func (w *Workspace) NewAgentSessionAs(mainAgent string) *workspace.NewSessionResult {
+	return w.lifecycle(coreprotocol.NewSession, &coreprotocol.InvocationSessionRequest{Selection: coreprotocol.InvocationSelection{MainAgent: mainAgent}})
+}
+
 func (w *Workspace) OpenAgentSession(sessionID string) *workspace.NewSessionResult {
 	return w.lifecycle(coreprotocol.OpenSession, &coreprotocol.InvocationSessionRequest{SessionID: sessionID, Selection: w.invocation})
 }

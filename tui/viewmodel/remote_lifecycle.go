@@ -21,6 +21,9 @@ type remoteSessionReadyMsg struct {
 	forked    bool
 	// initial is sent as the new session's first message once it is open.
 	initial provider.UserInput
+	// aeron marks the workspace's Aeron. It opens minimized and never takes
+	// the user's selection.
+	aeron bool
 }
 
 // newSessionWithInput opens a new session in its own tab and sends input as
@@ -115,6 +118,13 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		}
 		m.showOperationFailure("Session could not be opened", detail)
 		return nil
+	}
+	if msg.aeron {
+		m.prepareAeronAgent(msg.result.OrchID)
+		if m.ws.AgentMgr().Get(msg.result.OrchID) != nil {
+			m.addOrchestrator(msg.result.OrchID, false)
+		}
+		return m.submitFirstInput(msg.result.OrchID, msg.initial)
 	}
 	m.AddOrchestrator(msg.result.OrchID)
 	if msg.forked {

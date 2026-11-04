@@ -52,6 +52,9 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-02 | No signed index yet. The catalog is built into the program and verified against pinned checksums when it is generated, so it is as trusted as the program. Tool downloads without a published checksum record the checksum at the first download, and the install preview says so in plain words. A signature with one built-in public key comes when Crude updates its catalog between releases. | User |
 | 2026-11-03 | Resume and finish the plan in checkpoint order, starting with the Windows watcher failures and misleading project-language detection. Use parallel bounded implementation while the parent owns architecture, integration and acceptance. Do not replace completion with a handoff. | User |
 | 2026-11-03 | Website work and its gate are outside this task. Keep the work on code intelligence and the plan. | User |
+| 2026-11-04 | Tool setup is done by one workspace Aeron agent (minimized by default, automatic approval, tasked by a prompt that the setup screen builds). No extra trust, scope or question machinery. Close setup quickly; spend the effort on editor interaction and cooperation with the language server. See [the direction](code-intelligence-setup.md#direction-a-workspace-aeron-does-the-setup-2026-11-04). | User |
+| 2026-11-04 | Aeron needs the full normal tool set, including web research and writing LSP launch settings. Navigation must survive Restart Language Servers, jump to a selected location without an inspect/confirm page, and use plain UI text. Code actions must have a usable path to their edits, and tree markers must match Problems. | User |
+| 2026-11-04 | Delegate only UI design, to Opus. Keep implementation and other work with the main agent. Reuse the existing components and state owners; do not add duplicate logic or competing authorities. | User |
 
 ### Open decisions
 
@@ -81,6 +84,22 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Immediate correction: LSP interaction and workspace Aeron (2026-11-04).**
+This user-requested correction takes priority over the remaining thin-assembly
+campaign below. Keep the existing acquisition/evaluation/store machinery; the
+setup checklist tasks Aeron instead of prescribing installation recipes.
+
+Scope: remove Aeron's role-specific restrictions, permit its `lsp.*` settings
+writes, repair restart and cold-server requests, remove navigation's redundant
+inspection step, make supported code actions lead directly to their review, and
+derive tree markers from the same retained facts as Problems.
+
+Exit: connected-shell entry-point tests cover restart, navigation and action
+selection, real installed-server tests cover cold start and restart, tree counts
+match Problems, and the affected build/test/wire/docs gates pass. Verify the
+rendered interaction at desktop and constrained sizes. Do not call unsupported
+server commands implemented merely because their labels changed.
 
 **Thin assembly path. In progress since 2026-11-02.**
 

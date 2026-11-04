@@ -1,9 +1,7 @@
 package navigation
 
 import (
-	"crude/internal/fileuri"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -21,7 +19,7 @@ func navigationFixture() types.LSPNavigation {
 		End:   types.LSPNavigationPosition{Line: 6, Character: 18},
 	}
 	return types.LSPNavigation{
-		Kind: types.LSPNavigationDefinition, Answer: types.LSPNavigationTargets,
+		Kind: types.LSPNavigationReferences, Answer: types.LSPNavigationTargets,
 		WireVersion: 17, Line: 2, Col: 4, IncludeDeclaration: true,
 		Boundary: types.InsightBoundary{
 			Source: types.InsightSource{Kind: "canonical", DocumentID: "source-document",
@@ -33,7 +31,7 @@ func navigationFixture() types.LSPNavigation {
 				ToolIdentity: "tool-identity"},
 		},
 		Targets: []types.LSPNavigationTarget{
-			{URI: "file:///workspace/first.go", Path: "/workspace/first.go", Range: r,
+			{URI: "file:///workspace/pkg/first.go", Path: "/workspace/pkg/first.go", Range: r,
 				Selection: types.LSPNavigationRange{Start: r.Start, End: r.Start}, Origin: &r, Link: true},
 			{URI: "custom://unavailable", UnavailableReason: "Unsupported URI scheme", Range: r, Selection: r},
 			{URI: "file:///external/third.go", Path: "/external/third.go", External: true, Range: r, Selection: r},
@@ -93,193 +91,135 @@ func navigationAssertBounds(t *testing.T, component ui.Component, w, h int) {
 	}
 }
 
-func TestNavigationRenderedInspectDefaultCloseExplicitOpenAndBack(t *testing.T) {
+// A list of places reads like an IDE: file and position, nothing else. Debug
+// words never appear.
+func TestResultsListFilesAndPositionsInPlainWords(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			s := New(nil)
 			s.SetResult(navigationFixture())
 			host := navigationHost(s, size[0], size[1])
 			paint := navigationPaint(host, size[0], size[1])
-			for _, label := range []string{"first.go", "Unavailable", "Outside workspace", "Close"} {
-				if !strings.Contains(paint, label) {
-					t.Fatalf("list omitted %q:\n%s", label, paint)
+			for _, want := range []string{"first.go:4:3", "pkg", "cannot be opened", "outside the project"} {
+				if !strings.Contains(paint, want) {
+					t.Fatalf("list omitted %q:\n%s", want, paint)
 				}
 			}
-			// List Tab reaches Close without inspecting or implicitly opening.
-			navigationKey(host, tea.KeyTab)
-			if host.Focused() != ActionsID || !s.InList() {
-				t.Fatal("list Tab did not visit actions")
-			}
-			navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-			navigationKey(host, tea.KeyTab)
-			if host.Focused() != ListID {
-				t.Fatal("actions Tab did not return to list")
-			}
-			if got := navigationKey(host, tea.KeyEnter); got.Cmd != nil || s.InList() {
-				t.Fatal("Enter must inspect, never emit Open")
-			}
-			// No test-side MarkLayout: inspect must invalidate the real action tree.
-			paint = navigationPaint(host, size[0], size[1])
-			for _, label := range []string{"URI (literal, complete)", "targetRange: [3:2, 6:18)",
-				"targetSelectionRange: [3:2, 3:2)", "originSelectionRange: [3:2, 6:18)", "Open", "Back", "Close"} {
-				if !strings.Contains(paint, label) {
-					t.Fatalf("detail omitted %q or had stale action geometry:\n%s", label, paint)
+			for _, banned := range []string{"Close", "Inspect", "literal", "provenance", "Provider", "wire", "UTF-16", "file:///"} {
+				if strings.Contains(paint, banned) {
+					t.Fatalf("list shows internal word %q:\n%s", banned, paint)
 				}
 			}
-			if host.Focused() != ActionsID {
-				t.Fatal("detail did not default to actions")
+		})
+	}
+}
+
+// Choosing a row is the whole decision: one Enter or click emits the jump.
+// There is no inspect page and no Open button between the choice and the code.
+func TestChoosingARowGoesStraightToTheCode(t *testing.T) {
+	s := New(nil)
+	s.SetResult(navigationFixture())
+	host := navigationHost(s, 100, 24)
+	result := navigationKey(host, tea.KeyEnter)
+	if result.Cmd == nil {
+		t.Fatal("Enter on a row did not open it")
+	}
+	if open, ok := result.Cmd().(OpenMsg); !ok || open.Target != s || open.Index != 0 {
+		t.Fatalf("Enter emitted %#v, want Open of row 0", open)
+	}
+	if !s.InList() {
+		t.Fatal("choosing a row replaced the list with another page")
+	}
+	// While the file opens, a second Enter changes nothing.
+	if again := navigationKey(host, tea.KeyEnter); again.Cmd != nil {
+		t.Fatal("a second Enter opened the row twice")
+	}
+}
+
+func TestRowsThatCannotBeOpenedDoNothing(t *testing.T) {
+	s := New(nil)
+	s.SetResult(navigationFixture())
+	host := navigationHost(s, 100, 24)
+	if got := s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen, Payload: ui.ListItem{Payload: 1}}); got.Cmd != nil {
+		t.Fatal("a row without a file emitted Open")
+	}
+	navigationKey(host, tea.KeyDown)
+	got := navigationKey(host, tea.KeyEnter)
+	if got.Cmd == nil {
+		t.Fatal("an outside-the-project row must still open when chosen")
+	}
+	if open, ok := got.Cmd().(OpenMsg); !ok || open.Index != 2 {
+		t.Fatalf("emitted %#v", open)
+	}
+}
+
+func TestEscClosesWithoutFooterAndTabKeepsTheList(t *testing.T) {
+	s := New(nil)
+	s.SetResult(navigationFixture())
+	host := navigationHost(s, 100, 24)
+	navigationKey(host, tea.KeyTab)
+	if host.Focused() != ListID {
+		t.Fatal("Tab left the list for a redundant footer")
+	}
+	navigationAssertClose(t, navigationKey(host, tea.KeyEsc), s)
+}
+
+func TestEmptyAnswersSayWhatWasNotFound(t *testing.T) {
+	cases := []struct{ kind, answer, want string }{
+		{types.LSPNavigationReferences, types.LSPNavigationEmpty, "No references found."},
+		{types.LSPNavigationDefinition, types.LSPNavigationNull, "No definition found."},
+		{types.LSPNavigationImplementation, types.LSPNavigationEmpty, "No implementation found."},
+		{types.LSPNavigationTypeDefinition, types.LSPNavigationNull, "No type definition found."},
+		{types.LSPNavigationReferences, types.LSPNavigationUnsupported, "This language server cannot do that for this file."},
+	}
+	for _, c := range cases {
+		t.Run(c.kind+"/"+c.answer, func(t *testing.T) {
+			s := New(nil)
+			result := navigationFixture()
+			result.Kind, result.Answer, result.Targets = c.kind, c.answer, nil
+			s.SetResult(result)
+			host := navigationHost(s, 80, 24)
+			paint := navigationPaint(host, 80, 24)
+			if !strings.Contains(paint, c.want) || s.InList() {
+				t.Fatalf("want %q:\n%s", c.want, paint)
 			}
-			navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-			// Only choosing Open deliberately emits a selected-row request.
-			navigationKey(host, tea.KeyLeft)
-			navigationKey(host, tea.KeyLeft)
-			got := navigationKey(host, tea.KeyEnter)
-			if got.Cmd == nil {
-				t.Fatal("explicit Open is missing")
-			}
-			message, ok := got.Cmd().(OpenMsg)
-			if !ok || message.Target != s || message.Index != 0 {
-				t.Fatalf("Open lost selected row or owner: %#v", message)
-			}
-			if got := s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen}); got.Cmd != nil {
-				t.Fatal("Open could be issued twice while busy")
-			}
-			navigationKey(host, tea.KeyEsc) // Back remains usable while busy.
-			if !s.InList() || host.Focused() != ListID || s.list.SelectedIndex() != 0 {
-				t.Fatal("detail Esc did not return to retained list selection")
-			}
-			if got := navigationKey(host, tea.KeyEnter); got.Cmd != nil || !s.InList() {
-				t.Fatal("busy list reactivated a target")
-			}
-			s.SetBusy(false)
-			navigationKey(host, tea.KeyDown)
-			navigationKey(host, tea.KeyEnter)
-			navigationPaint(host, size[0], size[1])
-			if got := s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen}); got.Cmd != nil {
-				t.Fatal("unavailable target acquired Open authority")
-			}
-			if !strings.Contains(s.text.Value(), `"Unsupported URI scheme"`) {
-				t.Fatal("unavailable reason is not inspectable")
-			}
-			// Close → Back via actual native action navigation, retaining row one.
-			navigationKey(host, tea.KeyLeft)
-			navigationKey(host, tea.KeyEnter)
-			if !s.InList() || s.list.SelectedIndex() != 1 {
-				t.Fatal("Back action lost unavailable row selection")
-			}
-			navigationKey(host, tea.KeyDown)
-			navigationKey(host, tea.KeyEnter)
-			paint = navigationPaint(host, size[0], size[1])
-			for _, label := range []string{"outside workspace", "Open external file", "No target file contents have been read yet",
-				"unversioned", "structural validation", "cannot guarantee semantic freshness"} {
-				if !strings.Contains(strings.ReplaceAll(paint, "\n", " "), label) &&
-					!strings.Contains(s.text.Value(), label) {
-					t.Fatalf("external detail omitted %q:\n%s", label, paint)
+			for _, banned := range []string{"unknown-build-input", "not proof", "null", "[]", "literal"} {
+				if strings.Contains(paint, banned) {
+					t.Fatalf("empty answer shows %q:\n%s", banned, paint)
 				}
 			}
-			if !strings.Contains(paint, "[ Open external file ]") {
-				t.Fatalf("external native Open footer not visible:\n%s", paint)
-			}
-			navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-			navigationKey(host, tea.KeyEsc)
 			navigationAssertClose(t, navigationKey(host, tea.KeyEsc), s)
 		})
 	}
 }
 
-func TestNavigationImmutableLiteralEvidenceAndCopy(t *testing.T) {
+func TestLoadingAndFailureShowOnlyPlainText(t *testing.T) {
 	s := New(nil)
-	result := navigationFixture()
-	uri := "file:///workspace/\"quoted\"\\tab\t.go"
-	path := "/workspace/\"quoted\"\\tab\t.go"
-	result.Targets[0].URI, result.Targets[0].Path = uri, path
-	s.SetResult(result)
-	result.Targets[0].URI = "forged"
-	result.Targets[0].Origin.Start.Line = 999
-	result.Boundary.Context.UnknownInputs[0] = "forged"
+	s.SetResult(navigationFixture())
+	s.SetLoading(types.LSPNavigationReferences)
 	host := navigationHost(s, 80, 24)
-	navigationKey(host, tea.KeyEnter)
-	value := s.text.Value()
-	for _, literal := range []string{strconv.Quote(uri), strconv.Quote(path), "source-document", "source-lifetime",
-		"workspace-generation", "source-context", "unknown-build-input", "provider-instance", "test-provider",
-		"tool-identity", "originSelectionRange: [3:2, 6:18)", "Source wire version: 17",
-		"Invocation (zero-based UTF-16): 2:4", "References includeDeclaration: true"} {
-		if !strings.Contains(value, literal) {
-			t.Fatalf("complete immutable evidence omitted %q: %s", literal, value)
+	paint := navigationPaint(host, 80, 24)
+	if s.InList() || !strings.Contains(paint, "Searching") || strings.Contains(paint, "Close") {
+		t.Fatalf("loading state:\n%s", paint)
+	}
+	if got := s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen, Payload: ui.ListItem{Payload: 0}}); got.Cmd != nil {
+		t.Fatal("a stale row opened while searching")
+	}
+	s.SetError("The language server did not answer in time.")
+	host = navigationHost(s, 80, 24)
+	paint = navigationPaint(host, 80, 24)
+	if !strings.Contains(paint, "did not answer in time") {
+		t.Fatalf("failure lost its reason:\n%s", paint)
+	}
+	for _, banned := range []string{"Failure (literal)", "No target was opened", "\"The language", "Navigation failed"} {
+		if strings.Contains(paint, banned) {
+			t.Fatalf("failure shows %q:\n%s", banned, paint)
 		}
 	}
-	if strings.Contains(value, "forged") {
-		t.Fatal("caller mutated retained presentation")
-	}
-	navigationKey(host, tea.KeyTab) // Close → reader
-	if host.Focused() != TextID {
-		t.Fatal("detail Tab did not reach reader")
-	}
-	var copied string
-	s.text.SetClipboardCopy(func(text string) tea.Cmd {
-		return func() tea.Msg { copied = text; return nil }
-	})
-	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
-	copyResult := host.Handle(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	if copyResult.Cmd == nil || copied != "" {
-		t.Fatal("copy missing or performed synchronously")
-	}
-	copyResult.Cmd()
-	if copied != value {
-		t.Fatal("copy did not include complete literal metadata and provenance")
-	}
-	navigationKey(host, tea.KeyEsc)
-	if s.InList() {
-		t.Fatal("Esc skipped native text selection cleanup")
-	}
-	host.Handle(tea.PasteMsg{Content: "mutate"})
-	if s.text.Value() != value {
-		t.Fatal("read-only evidence was editable")
-	}
-	navigationKey(host, tea.KeyTab)
-	if host.Focused() != ActionsID {
-		t.Fatal("reader Tab failed to reach native actions")
-	}
-	navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
+	navigationAssertClose(t, navigationKey(host, tea.KeyEsc), s)
 }
 
-func TestNavigationDistinctNonTargetLoadingFailureAndInvalidStates(t *testing.T) {
-	for answer, description := range map[string]string{
-		types.LSPNavigationNull:        "Provider returned null.",
-		types.LSPNavigationEmpty:       "Provider returned an empty array [].",
-		types.LSPNavigationUnsupported: "Navigation is unsupported for this source/provider.",
-	} {
-		t.Run(answer, func(t *testing.T) {
-			s := New(nil)
-			result := navigationFixture()
-			result.Answer, result.Targets = answer, nil
-			s.SetResult(result)
-			host := navigationHost(s, 80, 24)
-			paint := navigationPaint(host, 80, 24)
-			if !strings.Contains(paint, description) || !strings.Contains(s.text.Value(), "unknown-build-input") ||
-				!strings.Contains(paint, "not proof") || s.InList() {
-				t.Fatalf("non-target answer lost literal distinction/provenance:\n%s", paint)
-			}
-			navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-		})
-	}
-	s := New(nil)
-	for _, state := range []string{"loading", "error"} {
-		s.SetResult(navigationFixture())
-		if state == "loading" {
-			s.SetLoading(types.LSPNavigationReferences)
-		} else {
-			s.SetError("transport failed\nquoted failure")
-		}
-		host := navigationHost(s, 80, 24)
-		paint := navigationPaint(host, 80, 24)
-		if s.InList() || !strings.Contains(paint, "Close") ||
-			s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen}).Cmd != nil ||
-			s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionInspect, Payload: ui.ListItem{Payload: 0}}).Cmd != nil {
-			t.Fatalf("%s allowed a stale target activation:\n%s", state, paint)
-		}
-		navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-	}
+func TestInvalidAnswersAreRefusedWithoutActiveRows(t *testing.T) {
 	for name, invalidate := range map[string]func(*types.LSPNavigation){
 		"target count": func(r *types.LSPNavigation) { r.Targets = make([]types.LSPNavigationTarget, 1025) },
 		"uri":          func(r *types.LSPNavigation) { r.Targets[0].URI = strings.Repeat("u", 4097) },
@@ -307,16 +247,16 @@ func TestNavigationDistinctNonTargetLoadingFailureAndInvalidStates(t *testing.T)
 			s.SetResult(invalid)
 			host := navigationHost(s, 80, 24)
 			paint := navigationPaint(host, 80, 24)
-			if s.InList() || !strings.Contains(paint, "refused") ||
-				len(s.result.Targets) != 0 || s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen}).Cmd != nil {
+			if s.InList() || !strings.Contains(paint, "cannot be shown") || len(s.result.Targets) != 0 ||
+				s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionOpen, Payload: ui.ListItem{Payload: 0}}).Cmd != nil {
 				t.Fatalf("invalid data left active results:\n%s", paint)
 			}
-			navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
+			navigationAssertClose(t, navigationKey(host, tea.KeyEsc), s)
 		})
 	}
 }
 
-func TestNavigationRenderedScrollingResizeAndTinyBounds(t *testing.T) {
+func TestLongListScrollsAndSurvivesResizeAndTinyBounds(t *testing.T) {
 	s := New(nil)
 	result := navigationFixture()
 	base := result.Targets[0]
@@ -326,10 +266,6 @@ func TestNavigationRenderedScrollingResizeAndTinyBounds(t *testing.T) {
 		result.Targets[i].URI = fmt.Sprintf("file:///workspace/target-%04d.go", i)
 		result.Targets[i].Path = fmt.Sprintf("/workspace/target-%04d.go", i)
 	}
-	result.Boundary.Context.UnknownInputs = make([]string, 100)
-	for i := range result.Boundary.Context.UnknownInputs {
-		result.Boundary.Context.UnknownInputs[i] = fmt.Sprintf("unknown-context-%03d", i)
-	}
 	s.SetResult(result)
 	host := navigationHost(s, 80, 24)
 	before := navigationPaint(host, 80, 24)
@@ -337,37 +273,16 @@ func TestNavigationRenderedScrollingResizeAndTinyBounds(t *testing.T) {
 	after := navigationPaint(host, 80, 24)
 	if !strings.Contains(before, "target-0000") || !strings.Contains(after, "target-1023") ||
 		strings.Contains(after, "target-0000") || s.list.Scroll().Offset() == 0 {
-		t.Fatal("native list navigation did not move rendered viewport")
-	}
-	navigationKey(host, tea.KeyEnter)
-	navigationPaint(host, 80, 24)
-	navigationKey(host, tea.KeyTab)
-	before = navigationPaint(host, 80, 24)
-	for range 12 {
-		navigationKey(host, tea.KeyPgDown)
-	}
-	after = navigationPaint(host, 80, 24)
-	if s.text.ScrollOffset() == 0 || before == after || !strings.Contains(after, "unknown-context-099") ||
-		!strings.Contains(after, "Close") {
-		t.Fatalf("long provenance was not genuinely scrollable with pinned actions:\n%s", after)
+		t.Fatal("list navigation did not move the viewport")
 	}
 	for _, size := range [][2]int{{160, 40}, {80, 24}, {9, 5}, {1, 1}, {80, 24}} {
 		host.Resize(size[0], size[1])
 		host.Layout()
 		navigationAssertBounds(t, s, size[0], size[1])
 		paint := navigationPaint(host, size[0], size[1])
-		if size[0] >= 80 && !strings.Contains(paint, "Close") {
-			t.Fatalf("resizing lost native actions:\n%s", paint)
+		if size[0] >= 80 && strings.Contains(paint, "Close") {
+			t.Fatalf("resizing added a redundant footer:\n%s", paint)
 		}
-		if size[0] > 0 && size[1] > 0 {
-			host.Focus(ActionsID)
-			navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-		}
-	}
-	navigationKey(host, tea.KeyEsc)
-	host.Layout()
-	if !s.InList() || s.list.SelectedIndex() != 1023 {
-		t.Fatal("resizing/reading/back lost original row selection")
 	}
 	for _, th := range []*theme.Theme{theme.DefaultLight(), theme.DefaultDark()} {
 		host.SetTheme(th)
@@ -376,68 +291,23 @@ func TestNavigationRenderedScrollingResizeAndTinyBounds(t *testing.T) {
 	// Parent offsets never leak into child-local geometry.
 	s.Layout(ui.LayoutContext{}, ui.Rect{X: 7, Y: 9, W: 9, H: 5})
 	navigationAssertBounds(t, s, 9, 5)
-	// Host deliberately skips zero-sized layouts; check the body's contract
-	// directly instead of mistaking the Host's last geometry for new geometry.
 	s.Layout(ui.LayoutContext{}, ui.Rect{})
 	navigationAssertBounds(t, s, 0, 0)
 }
 
-func TestNavigationNarrowListKeepsDestinationNamesVisible(t *testing.T) {
+// The file name and position stay visible however long the folders are.
+func TestNarrowListKeepsFileNamesVisible(t *testing.T) {
 	result := navigationFixture()
 	root := "/workspace/" + strings.Repeat("a-long-directory/", 8)
 	first, second := result.Targets[0], result.Targets[0]
 	first.Path, second.Path = root+"lib.go", root+"main.go"
-	first.URI, second.URI = fileuri.FromPath(first.Path), fileuri.FromPath(second.Path)
+	result.Boundary.Context.Root = "/workspace"
 	result.Targets = []types.LSPNavigationTarget{first, second}
 	s := New(nil)
 	s.SetResult(result)
-	host := navigationHost(s, 54, 14) // Actual content width of the 60-column shell.
+	host := navigationHost(s, 54, 14)
 	paint := navigationPaint(host, 54, 14)
 	if !strings.Contains(paint, "lib.go") || !strings.Contains(paint, "main.go") {
-		t.Fatalf("narrow chooser clipped both destination names behind shared path prefixes:\n%s", paint)
-	}
-	navigationKey(host, tea.KeyDown)
-	navigationKey(host, tea.KeyEnter)
-	if !strings.Contains(s.text.Value(), strconv.Quote(second.URI)) || !strings.Contains(s.text.Value(), strconv.Quote(second.Path)) {
-		t.Fatal("compact row label lost complete literal destination metadata")
-	}
-}
-
-func TestNavigationUnavailableOpenGatesAndMaximumLiteral(t *testing.T) {
-	for _, target := range []types.LSPNavigationTarget{
-		{URI: "file:///missing-path"},
-		{URI: "file:///blocked", Path: "/blocked", UnavailableReason: "not available"},
-	} {
-		s := New(nil)
-		result := navigationFixture()
-		result.Targets = []types.LSPNavigationTarget{target}
-		s.SetResult(result)
-		host := navigationHost(s, 80, 24)
-		navigationKey(host, tea.KeyEnter)
-		paint := navigationPaint(host, 80, 24)
-		if !strings.Contains(paint, "Unavailable") || !strings.Contains(paint, "Close") {
-			t.Fatalf("missing unavailable explanation or native Close:\n%s", paint)
-		}
-		navigationKey(host, tea.KeyLeft)
-		navigationKey(host, tea.KeyLeft)
-		if got := navigationKey(host, tea.KeyEnter); got.Cmd != nil {
-			t.Fatal("unavailable Open button could activate")
-		}
-		navigationKey(host, tea.KeyRight)
-		navigationKey(host, tea.KeyRight)
-		navigationAssertClose(t, navigationKey(host, tea.KeyEnter), s)
-	}
-	s := New(nil)
-	result := navigationFixture()
-	result.Kind = types.LSPNavigationTypeDefinition
-	result.Targets[0].URI, result.Targets[0].Path = strings.Repeat("u", 4096), strings.Repeat("p", 4096)
-	s.SetResult(result)
-	host := navigationHost(s, 80, 24)
-	navigationKey(host, tea.KeyEnter)
-	navigationPaint(host, 80, 24)
-	if !strings.Contains(s.text.Value(), strconv.Quote(result.Targets[0].URI)) ||
-		!strings.Contains(s.text.Value(), strconv.Quote(result.Targets[0].Path)) ||
-		!strings.Contains(s.text.Value(), `"type-definition"`) {
-		t.Fatal("maximum valid literal was truncated or closed kind changed")
+		t.Fatalf("narrow list clipped the file names behind shared folders:\n%s", paint)
 	}
 }

@@ -53,20 +53,32 @@ type navigationConnectedRuntime struct {
 	navigationCalls  []navigationConnectedCall
 	watched          chan struct{}
 	targetStart      <-chan struct{}
+	restartStart     <-chan struct{}
 }
 
 type navigationConnectedClient struct {
 	*renameConnectedClient
 	runtime     *navigationConnectedRuntime
 	startTarget bool
+	startGate   <-chan struct{}
 }
 
 func (r *navigationConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	base := r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient)
-	return &navigationConnectedClient{renameConnectedClient: base, runtime: r, startTarget: spec.LanguageID == "rust" && r.targetStart != nil}
+	r.mu.Lock()
+	start := r.restartStart
+	r.mu.Unlock()
+	return &navigationConnectedClient{renameConnectedClient: base, runtime: r, startTarget: spec.LanguageID == "rust" && r.targetStart != nil, startGate: start}
 }
 
 func (c *navigationConnectedClient) Start(ctx context.Context) error {
+	if c.startGate != nil {
+		select {
+		case <-c.startGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if c.startTarget {
 		select {
 		case <-c.runtime.targetStart:
@@ -213,22 +225,24 @@ func (f navigationConnectedFixture) open(t *testing.T, key tea.KeyPressMsg) *nav
 	return one.app.navigation
 }
 
-func (f navigationConnectedFixture) inspect(t *testing.T) {
+// listed checks that the places are listed in plain words, with no debug text.
+func (f navigationConnectedFixture) listed(t *testing.T) {
 	t.Helper()
-	f.key(t, tea.KeyPressMsg{Code: tea.KeyEnter})
 	paint := navigationConnectedPaint(f.shells[0].app)
-	for _, text := range []string{"URI (literal, complete)", "targetSelectionRange", "Back", "Close"} {
-		if !strings.Contains(paint, text) {
-			t.Fatalf("Enter did not paint literal inspect-only metadata %q:\n%s", text, paint)
+	if !f.shells[0].app.navigation.screen.InList() ||
+		!strings.Contains(paint, ".go:") && !strings.Contains(paint, ".rs:") {
+		t.Fatalf("the places are not listed:\n%s", paint)
+	}
+	for _, banned := range []string{"literal", "Inspect", "targetSelectionRange", "No target file contents"} {
+		if strings.Contains(paint, banned) {
+			t.Fatalf("the list shows debug text %q:\n%s", banned, paint)
 		}
 	}
 }
 
-func (f navigationConnectedFixture) explicitOpen(t *testing.T) {
+// choose picks the highlighted row: one Enter goes straight to the code.
+func (f navigationConnectedFixture) choose(t *testing.T) {
 	t.Helper()
-	// Detail's initial action is Close. Open is two left-arrow moves away.
-	f.key(t, tea.KeyPressMsg{Code: tea.KeyLeft})
-	f.key(t, tea.KeyPressMsg{Code: tea.KeyLeft})
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool { return f.shells[0].app.navigation == nil })
 }
@@ -269,7 +283,7 @@ func TestConnectedNavigationFourKeysAndCodeContextActions(t *testing.T) {
 					f.open(t, tea.KeyPressMsg{Code: entry.code, Mod: tea.ModAlt})
 				}
 				paint := navigationConnectedPaint(one.app)
-				if !strings.Contains(paint, entry.label) || !strings.Contains(paint, "Inspect") {
+				if !strings.Contains(paint, ".go:") || strings.Contains(paint, "[ Close ]") {
 					t.Fatalf("entry did not paint its actual chooser:\n%s", paint)
 				}
 				if one.app.EditorState.Editor != f.main || f.main.CursorLine() != 2 || f.main.CursorCol() != 4 ||
@@ -289,28 +303,23 @@ func TestConnectedNavigationFourKeysAndCodeContextActions(t *testing.T) {
 	}
 }
 
-func TestConnectedReferencesInspectCloseBackAndExplicitSecondTarget(t *testing.T) {
+func TestConnectedReferencesEscClosesAndEnterOnSecondRowGoesToCode(t *testing.T) {
 	f := newNavigationConnectedFixture(t, navigationConnectedMultiple, "\t😀name\r\n")
 	one, two := f.shells[0], f.shells[1]
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		one.app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
 		f.key(t, tea.KeyPressMsg{Code: tea.KeyDown})
-		f.inspect(t)
-		f.key(t, tea.KeyPressMsg{Code: tea.KeyEnter}) // Default Close, never Open.
+		f.listed(t)
+		f.key(t, tea.KeyPressMsg{Code: tea.KeyEsc}) // Esc closes and opens nothing.
 		if one.app.navigation != nil || one.app.EditorState.Tabs[f.engine.target] != nil || f.main.CursorCol() != 4 {
-			t.Fatal("detail's default Enter opened a target")
+			t.Fatal("Esc opened a target or left the list open")
 		}
 	}
 	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyDown})
-	f.inspect(t)
-	f.key(t, tea.KeyPressMsg{Code: tea.KeyEsc}) // Explicit Back to original list.
-	if one.app.navigation == nil || !one.app.navigation.screen.InList() || !strings.Contains(navigationConnectedPaint(one.app), "Inspect") {
-		t.Fatal("Back lost the original chooser")
-	}
-	f.inspect(t) // Retains selected second row, rather than resetting to first.
-	f.explicitOpen(t)
+	f.listed(t)
+	f.choose(t) // One Enter on the second row lands in the code.
 	dest := one.app.EditorState.Editor
 	if dest.FilePath() != f.engine.target || dest.CursorLine() != 0 || dest.CursorCol() != 6 || dest.HasSelection() ||
 		dest.Value() != "\t😀name\r\n" {
@@ -328,7 +337,87 @@ func TestConnectedReferencesInspectCloseBackAndExplicitSecondTarget(t *testing.T
 	}
 }
 
-func TestConnectedNavigationExternalListDoesNotReadAndRequiresExplicitOpen(t *testing.T) {
+func TestConnectedNavigationCompactPickerPreservesCaretAtBothSizes(t *testing.T) {
+	f := newNavigationConnectedFixture(t, navigationConnectedMultiple, "\t😀name\r\n")
+	one := f.shells[0]
+	for _, size := range [][2]int{{160, 40}, {80, 24}} {
+		one.app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
+		paint := navigationConnectedPaint(one.app)
+		fw := one.app.overlayHost.Window(navigationOverlay)
+		w, h := fw.Size()
+		x, y := fw.Position()
+		if w > 40 || h != 4 || x < 0 || y < 0 || x+w > size[0] || y+h > size[1] {
+			t.Fatalf("two references should make a small four-row picker, got %d,%d %dx%d", x, y, w, h)
+		}
+		rect, _ := one.app.screenRectOf(one.app.editorScreen.ID())
+		cx, cy, visible := f.main.PositionScreenPosition(editor.Position{Line: f.main.CursorLine(), Col: f.main.CursorCol()}, rect.X, rect.Y)
+		if !visible || cy >= y && cy < y+h {
+			t.Fatalf("picker covers its source caret %d,%d; picker=%d,%d %dx%d", cx, cy, x, y, w, h)
+		}
+		if strings.Contains(paint, "[ Close ]") || !strings.Contains(paint, "References · 2") {
+			t.Fatalf("compact picker kept old chrome or omitted its result count:\n%s", paint)
+		}
+		f.key(t, tea.KeyPressMsg{Code: tea.KeyEsc})
+	}
+}
+
+func TestConnectedNavigationDuringRestartLanguageServers(t *testing.T) {
+	f := newNavigationConnectedFixture(t, navigationConnectedMultiple, "\t😀name\r\n")
+	one := f.shells[0]
+	start := make(chan struct{})
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(start)
+		}
+	})
+	f.engine.mu.Lock()
+	f.engine.restartStart = start
+	f.engine.mu.Unlock()
+
+	runAppCommand(t, one.app, one.app.executePaletteCommand("lsp.restart"))
+	remoteJourneyUntil(t, f.shells, func() bool {
+		_, status, _ := one.app.ws.LSPMgr().Status()
+		return status == workspace.LSPStarting
+	})
+	menu := one.app.buildEditorContextMenu(tea.Mouse{X: -1, Y: -1})
+	found := false
+	for _, section := range menu.Sections {
+		for _, item := range section.Items {
+			found = found || item.Label == "Find references" && !item.Disabled
+		}
+	}
+	if !found {
+		t.Fatal("Restart Language Servers removed Find references from the Code menu")
+	}
+	_, cmd := one.app.Update(tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
+	if cmd == nil || one.app.navigation == nil {
+		t.Fatal("Find references during restart was refused instead of waiting")
+	}
+	close(start)
+	released = true
+	answer := captureNavigationCommand[navigationResultMsg](t, one, cmd)
+	if answer.err != nil {
+		t.Fatal(answer.err)
+	}
+	t.Logf("restart answer context=%d; replica=%v; current=%t, canceled=%v, source=%t, focus=%v/%v",
+		answer.result.Boundary.Context.Generation, one.app.ws.LSPMgr().ProjectInsights(),
+		one.app.navigationCurrent(answer.owner), answer.owner.ctx.Err(),
+		f.main.MatchesInsightSource(answer.owner.source), one.app.FocusStack.Top(), answer.owner.focus)
+	_, delivered := one.app.Update(answer)
+	runAppCommand(t, one.app, delivered)
+	remoteJourneyUntil(t, f.shells, func() bool {
+		return one.app.navigation != nil && one.app.navigation.shown
+	})
+	f.key(t, tea.KeyPressMsg{Code: tea.KeyDown})
+	f.choose(t)
+	if ed := one.app.EditorState.Editor; ed.FilePath() != f.engine.target || ed.CursorCol() != 6 {
+		t.Fatal("Find references did not land in the selected code after restart")
+	}
+}
+
+func TestConnectedNavigationExternalListDoesNotReadUntilChosen(t *testing.T) {
 	raw := strings.ReplaceAll(navigationConnectedPoint, "$TARGET", "$EXTERNAL")
 	f := newNavigationConnectedFixture(t, raw, "\t😀name\r\n")
 	one := f.shells[0]
@@ -337,22 +426,22 @@ func TestConnectedNavigationExternalListDoesNotReadAndRequiresExplicitOpen(t *te
 		s.result.Targets[0].UnavailableReason != "" || one.app.EditorState.Tabs[f.engine.external] != nil {
 		t.Fatal("nonexistent external destination was read, made unavailable, or auto-opened during listing")
 	}
-	f.inspect(t)
-	if paint := navigationConnectedPaint(one.app); !strings.Contains(paint, "Open external file") || !strings.Contains(paint, "outside workspace") {
-		t.Fatalf("external detail omitted the explicit decision:\n%s", paint)
+	f.listed(t)
+	if paint := navigationConnectedPaint(one.app); !strings.Contains(paint, "outside the project") {
+		t.Fatalf("the list did not say the file is outside the project:\n%s", paint)
 	}
-	f.key(t, tea.KeyPressMsg{Code: tea.KeyEnter})
+	f.key(t, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if one.app.navigation != nil || one.app.EditorState.Tabs[f.engine.external] != nil {
-		t.Fatal("external detail's default action was not Close")
+		t.Fatal("Esc opened the external file or left the list open")
 	}
-	// No source existed when listed or inspected. Explicit Open must observe the
+	// No source existed when listed. Choosing the row must observe the
 	// now-created bytes, not a prefetched or fabricated list-time source.
 	if err := os.WriteFile(f.engine.external, []byte("\t😀external\r\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	f.open(t, tea.KeyPressMsg{Code: '.', Mod: tea.ModAlt})
-	f.inspect(t)
-	f.explicitOpen(t)
+	f.listed(t)
+	f.choose(t)
 	ed := one.app.EditorState.Editor
 	if ed.FilePath() != f.engine.external || ed.Value() != "\t😀external\r\n" || ed.CursorCol() != 6 {
 		t.Fatal("explicit external Open did not observe and render the selected source", ed.FilePath(), ed.Value(), ed.CursorCol())
@@ -378,8 +467,8 @@ func TestConnectedNavigationCanonicalUnsavedUTF16RangeWinsOverDisk(t *testing.T)
 	if one.app.EditorState.Editor != f.main || one.app.EditorState.Tabs[f.engine.target] != nil {
 		t.Fatal("single reference auto-jumped")
 	}
-	f.inspect(t)
-	f.explicitOpen(t)
+	f.listed(t)
+	f.choose(t)
 	ed := one.app.EditorState.Editor
 	if ed.FilePath() != f.engine.target || ed.Value() != "\t界é😀abc\r\nab\t界é😀XYZ!\r\n" ||
 		ed.CursorLine() != 0 || ed.CursorCol() != 9 || ed.HasSelection() {
@@ -407,8 +496,8 @@ func TestConnectedNavigationLocationLinkRetainsRangesAndOrigin(t *testing.T) {
 		target.Origin == nil || target.Origin.Start.Line != 2 || target.Origin.Start.Character != 4 {
 		t.Fatalf("connected LocationLink lost literal source/target ranges: %+v", target)
 	}
-	f.inspect(t)
-	f.explicitOpen(t)
+	f.listed(t)
+	f.choose(t)
 	ed := f.shells[0].app.EditorState.Editor
 	if ed.FilePath() != f.engine.target || ed.CursorCol() != 9 || ed.HasSelection() || ed.Value() != text {
 		t.Fatal("LocationLink selection failed to land without creating an editable selection")
@@ -420,12 +509,7 @@ func TestConnectedNavigationControlOpenAwaitsActualLanding(t *testing.T) {
 	one := f.shells[0]
 	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyDown})
-	inspected := journeySettingsControl(t, f.runtime, f.shells, one, "navigation/list", ui.ControlOperation{Verb: "activate", ItemID: "1"})
-	if inspected.State != control.Applied || one.app.navigation == nil || one.app.navigation.screen.InList() ||
-		one.app.EditorState.Tabs[f.engine.target] != nil {
-		t.Fatalf("metadata inspect read source or failed to mount its exact detail: %+v", inspected)
-	}
-	opened := journeySettingsControl(t, f.runtime, f.shells, one, "navigation/actions/open", ui.ControlOperation{Verb: "activate"})
+	opened := journeySettingsControl(t, f.runtime, f.shells, one, "navigation/list", ui.ControlOperation{Verb: "activate", ItemID: "1"})
 	ed := one.app.EditorState.Editor
 	if opened.State != control.Applied || len(opened.ResourceIDs) != 2 || one.app.navigation != nil ||
 		ed.FilePath() != f.engine.target || ed.CursorCol() != 6 || ed.HasSelection() {
@@ -436,10 +520,10 @@ func TestConnectedNavigationControlOpenAwaitsActualLanding(t *testing.T) {
 	f = newNavigationConnectedFixture(t, `[{"uri":$TARGET,"range":{"start":{"line":99,"character":0},"end":{"line":99,"character":0}}}]`, "\t😀name\r\n")
 	one = f.shells[0]
 	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
-	f.inspect(t)
-	refused := journeySettingsControl(t, f.runtime, f.shells, one, "navigation/actions/open", ui.ControlOperation{Verb: "activate"})
+	f.listed(t)
+	refused := journeySettingsControl(t, f.runtime, f.shells, one, "navigation/list", ui.ControlOperation{Verb: "activate", ItemID: "0"})
 	if refused.State != control.Failed || one.app.EditorState.Tabs[f.engine.target] != nil ||
-		one.app.EditorState.Editor != f.main || !strings.Contains(navigationConnectedPaint(one.app), "Navigation failed") {
+		one.app.EditorState.Editor != f.main || !strings.Contains(navigationConnectedPaint(one.app), "Could not open the file") {
 		t.Fatalf("invalid target received successful Open: %+v", refused)
 	}
 }
@@ -466,7 +550,7 @@ func holdNavigationControlOpen(t *testing.T, f navigationConnectedFixture) (shel
 			t.Fatal(err)
 		}
 		for _, node := range page.Nodes {
-			if strings.HasSuffix(node.ID, "::navigation/actions/open") {
+			if strings.HasSuffix(node.ID, "::navigation/list") {
 				componentID = node.ID
 			}
 		}
@@ -478,7 +562,7 @@ func holdNavigationControlOpen(t *testing.T, f navigationConnectedFixture) (shel
 	if componentID == "" {
 		t.Fatal("navigation Open control is not mounted")
 	}
-	intent := shellControlIntent{ComponentID: componentID, Operation: ui.ControlOperation{Verb: "activate"}}
+	intent := shellControlIntent{ComponentID: componentID, Operation: ui.ControlOperation{Verb: "activate", ItemID: "0"}}
 	described := requestShellForTest(t, f.runtime, f.shells, one, "shell.describe_control", intent, nil)
 	if described.State != control.Applied {
 		t.Fatalf("navigation Open description: %+v", described)
@@ -599,7 +683,7 @@ func TestConnectedNavigationLandingTracksSourceProducerNotDestinationReadiness(t
 			}
 			one := f.shells[0]
 			s := f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
-			f.inspect(t)
+			f.listed(t)
 			instance := s.result.Boundary.Producer.InstanceID
 			sourceID := ""
 			for _, health := range one.app.ws.LSPMgr().ServerHealthSnapshots() {
@@ -683,10 +767,10 @@ func TestConnectedNavigationNullEmptyUnsupportedAndErrorRemainDistinct(t *testin
 		unsupported       bool
 		err               error
 	}{
-		{"null", "null", "Provider returned null.", false, nil},
-		{"empty", "[]", "Provider returned an empty array [].", false, nil},
-		{"unsupported", "", "Navigation is unsupported", true, nil},
-		{"error", "", "Literal connected navigation failure", false, errors.New("Literal connected navigation failure")},
+		{"null", "null", "No references found.", false, nil},
+		{"empty", "[]", "No references found.", false, nil},
+		{"unsupported", "", "cannot do that for this file", true, nil},
+		{"error", "", "Could not search.", false, errors.New("Literal connected navigation failure")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f.engine.mu.Lock()
@@ -701,10 +785,10 @@ func TestConnectedNavigationNullEmptyUnsupportedAndErrorRemainDistinct(t *testin
 				strings.Contains(paint, "Open external file") || strings.Contains(paint, "[ Open ]") {
 				t.Fatalf("negative result retained actionable stale destinations:\n%s", paint)
 			}
-			if tc.err == nil && !strings.Contains(paint, "not proof") {
-				t.Fatalf("negative provider result became a cleanliness claim:\n%s", paint)
+			if tc.err == nil && strings.Contains(paint, "literal") {
+				t.Fatalf("negative provider result shows debug text:\n%s", paint)
 			}
-			f.key(t, tea.KeyPressMsg{Code: tea.KeyEnter}) // Close is safe for each negative result.
+			f.key(t, tea.KeyPressMsg{Code: tea.KeyEsc})
 			if one.app.navigation != nil {
 				t.Fatal("negative-result Close did not retire its exact invocation")
 			}
@@ -826,13 +910,11 @@ func TestConnectedNavigationLateResultAndPaneOpenCannotStealRetiredSource(t *tes
 				if stage == "pane-open" {
 					_, cmd := one.app.Update(result)
 					runAppCommand(t, one.app, cmd)
-					// Enter has only inspected metadata. Capture the exact explicit
-					// Open command's observation and completed asynchronous pane read.
-					f.inspect(t)
-					f.key(t, tea.KeyPressMsg{Code: tea.KeyLeft})
-					f.key(t, tea.KeyPressMsg{Code: tea.KeyLeft})
-					_, inspect := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-					target := captureNavigationCommand[navigationTargetMsg](t, one, inspect)
+					// Choosing the row starts the open. Capture its observation and
+					// the completed asynchronous pane read.
+					f.listed(t)
+					_, choose := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+					target := captureNavigationCommand[navigationTargetMsg](t, one, choose)
 					if target.err != nil {
 						t.Fatal(target.err)
 					}
@@ -910,12 +992,12 @@ func TestConnectedNavigationInvalidSurrogateTargetNeverOpensOrClamps(t *testing.
 	f := newNavigationConnectedFixture(t, raw, "\t😀name\r\n")
 	one := f.shells[0]
 	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
-	f.inspect(t)
+	f.listed(t)
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyLeft})
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyLeft})
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool {
-		return strings.Contains(navigationConnectedPaint(one.app), "Navigation failed")
+		return strings.Contains(navigationConnectedPaint(one.app), "Could not open the file")
 	})
 	if one.app.EditorState.Tabs[f.engine.target] != nil || one.app.EditorState.Editor != f.main ||
 		f.main.CursorLine() != 2 || f.main.CursorCol() != 4 {
@@ -968,8 +1050,8 @@ func TestConnectedNavigationPrivateTargetRecoveryDoesNotInstallOrMove(t *testing
 		return generation == contextGeneration && current && one.app.ws.LSPMgr().ServerReady()
 	})
 	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
-	f.inspect(t)
-	f.explicitOpen(t)
+	f.listed(t)
+	f.choose(t)
 	if one.app.EditorState.Tabs[f.engine.target] != nil || one.app.EditorState.Editor != f.main ||
 		f.main.CursorLine() != 2 || f.main.CursorCol() != 4 {
 		t.Fatal("navigation installed a target with unresolved private recovery before validating the landing")
@@ -1010,8 +1092,8 @@ func TestConnectedNavigationOriginalContextPublicationBarrierIncludesNull(t *tes
 	_, deferredCmd := one.app.Update(result)
 	// Do not pump queued publications until after asserting the rendered result.
 	paint := navigationConnectedPaint(one.app)
-	if one.app.navigation == nil || one.app.navigation.shown || strings.Contains(paint, "Provider returned null.") ||
-		!strings.Contains(paint, "Requesting navigation") {
+	if one.app.navigation == nil || one.app.navigation.shown || strings.Contains(paint, "No references found.") ||
+		!strings.Contains(paint, "Searching") {
 		t.Fatalf("null evidence became visible before its original context publication:\n%s", paint)
 	}
 	for _, msg := range held {
@@ -1021,11 +1103,11 @@ func TestConnectedNavigationOriginalContextPublicationBarrierIncludesNull(t *tes
 	runAppCommand(t, one.app, deferredCmd)
 	remoteJourneyUntil(t, f.shells, func() bool {
 		return one.app.navigation != nil && one.app.navigation.shown &&
-			strings.Contains(navigationConnectedPaint(one.app), "Provider returned null.")
+			strings.Contains(navigationConnectedPaint(one.app), "No references found.")
 	})
 	one.app.ws.LSPMgr().NotifyWatchedFilesChanged(t.Context(), filepath.Join(one.app.ws.RootPath(), "go.mod"), 2)
 	remoteJourneyUntil(t, f.shells, func() bool { return one.app.navigation == nil })
-	if strings.Contains(navigationConnectedPaint(one.app), "Provider returned null.") {
+	if strings.Contains(navigationConnectedPaint(one.app), "No references found.") {
 		t.Fatal("negative evidence outlived the exact context in which it was observed")
 	}
 }

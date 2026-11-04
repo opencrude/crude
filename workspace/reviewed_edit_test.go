@@ -72,7 +72,7 @@ func (f reviewedFixture) prepare(t *testing.T, check func() error) ReviewedEditP
 func TestReviewedEditExactCanonicalPreviewSafetyApplyReplayAndRestore(t *testing.T) {
 	f := newReviewedFixture(t)
 	p := f.prepare(t, func() error { return nil })
-	if !strings.Contains(p.Text, `- "old"`) || !strings.Contains(p.Text, `+ "new"`) || len(p.Files) != 1 {
+	if !strings.Contains(p.Text, "- var old = 1") || !strings.Contains(p.Text, "+ var new = 1") || len(p.Files) != 1 {
 		t.Fatal("review does not expose the literal independent expected changes")
 	}
 	disk, err := os.ReadFile(f.path)

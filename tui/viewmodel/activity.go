@@ -187,6 +187,9 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			return
 		}
 		label := workspace.AgentDisplayLabel(n)
+		if n.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[n.ID]) {
+			label = "Aeron"
+		}
 		if label == "" {
 			if n.IsOrchestrator() {
 				label = "Main Agent"
@@ -218,6 +221,21 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 				icon = "▪"
 			}
 		}
+		foldable := len(n.Children) > 0
+		folded := foldable && m.agentFolded[n.ID]
+		if folded {
+			// A folded row still says what it hides: the number of
+			// agents below it and whether any of them is working.
+			hidden, working := agentSubtreeSummary(n)
+			if working && detail == "" {
+				detail = "running"
+			}
+			if detail == "running" || detail == "" {
+				detail = strings.TrimSpace(detail + fmt.Sprintf(" +%d", hidden))
+			} else {
+				detail += fmt.Sprintf(" +%d", hidden)
+			}
+		}
 		items = append(items, ui.ListItem{
 			ID:       "agent:" + n.ID,
 			Label:    label,
@@ -225,8 +243,13 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			Icon:     icon,
 			Depth:    depth,
 			TreeLast: last,
+			Foldable: foldable,
+			Folded:   folded,
 			Active:   n.ID == m.AgentView.ActiveID(),
 		})
+		if folded {
+			return
+		}
 		for i, child := range n.Children {
 			appendTree(child, depth+1, i == len(n.Children)-1)
 		}
@@ -235,6 +258,39 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		appendTree(root, 0, i == len(roots)-1)
 	}
 	return items
+}
+
+// agentSubtreeSummary counts the agents below n and reports whether any of
+// them is still working.
+func agentSubtreeSummary(n *workspace.AgentNode) (count int, working bool) {
+	for _, child := range n.Children {
+		if child == nil {
+			continue
+		}
+		count++
+		working = working || child.IsActive()
+		c, w := agentSubtreeSummary(child)
+		count += c
+		working = working || w
+	}
+	return count, working
+}
+
+// toggleAgentFold hides or shows the subtree below an agent row. The fold
+// belongs to the shell, keyed by agent ID, so it survives list rebuilds.
+func (m *App) toggleAgentFold(itemID string) {
+	id := strings.TrimPrefix(itemID, "agent:")
+	if id == itemID || id == "" {
+		return
+	}
+	if m.agentFolded == nil {
+		m.agentFolded = map[string]bool{}
+	}
+	if m.agentFolded[id] {
+		delete(m.agentFolded, id)
+		return
+	}
+	m.agentFolded[id] = true
 }
 
 func sidebarCountBadge(items []ui.ListItem) string {
@@ -408,6 +464,11 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if ok {
 			return m.handleSidebarActivate(item)
 		}
+	case activitylist.ActionToggleFold:
+		if item, ok := action.Payload.(ui.ListItem); ok && item.Foldable {
+			m.toggleAgentFold(item.ID)
+		}
+		return nil
 	case chatprojection.ChatAgentOpenActionID:
 		payload, ok := action.Payload.(chatprojection.ChatAgentOpenPayload)
 		if !ok || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(payload.AgentID) == nil {

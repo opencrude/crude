@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
+	"crude/workspace"
 )
 
 // applyReplicaChanges is the sole connected-state installation path. Core
@@ -25,6 +26,9 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 			delete(m.pendingOrchestrators, id)
 		}
 		m.addOrchestrator(id, activate)
+		if workspace.SessionIsAeron(m.ws.SessionsByAgent()[id]) {
+			m.prepareAeronAgent(id)
+		}
 		commands = append(commands, m.takePendingFirstInput(id))
 	}
 	for id := range m.pendingOrchestrators {

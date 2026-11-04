@@ -15,8 +15,43 @@ import (
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/control"
+	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// The title ✕ closes the setup window with the pointer: it neither drags the
+// window nor installs anything, and the original shell gets input back.
+func TestProjectToolsCloseButtonClosesWithoutDeciding(t *testing.T) {
+	for _, size := range [][2]int{{160, 40}, {80, 24}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			app, port := projectToolsTestApp(t, size[0], size[1])
+			_, cmd := app.Update(statusoverview.NavigateMsg{Action: "lsp:setup"})
+			runAppCommand(t, app, cmd)
+			if !app.overlayHost.IsOpen(projectToolsOverlay) {
+				t.Fatal("setup window not mounted")
+			}
+			x, y := -1, -1
+			for row, line := range strings.Split(ansi.Strip(app.View().RenderContent()), "\n") {
+				if col := strings.Index(line, "Set up code intelligence"); col >= 0 {
+					if at := strings.Index(line, "✕"); at > col {
+						x, y = len([]rune(line[:at])), row
+					}
+				}
+			}
+			if x < 0 {
+				t.Fatal("the title shows no close button")
+			}
+			app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+			if app.overlayHost.IsOpen(projectToolsOverlay) {
+				t.Fatal("the close button left the setup window open")
+			}
+			if len(port.choices) != 0 || len(port.roles) != 0 {
+				t.Fatal("closing the window decided or tasked something", port.choices, port.roles)
+			}
+		})
+	}
+}
 
 type projectToolsTestPort struct {
 	shellport.Workspace
@@ -25,6 +60,13 @@ type projectToolsTestPort struct {
 	reads    int
 	explicit []bool
 	choices  [][]string
+	roles    []string
+}
+
+// NewAgentSessionAs records the role instead of opening a real session.
+func (p *projectToolsTestPort) NewAgentSessionAs(role string) *workspace.NewSessionResult {
+	p.roles = append(p.roles, role)
+	return &workspace.NewSessionResult{SessionID: "aeron-session", OrchID: "aeron-agent"}
 }
 
 func (p *projectToolsTestPort) LoadAppSettings() types.AppSettings { return p.settings }
@@ -81,7 +123,7 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 				t.Fatal("native review not mounted")
 			}
 			paint := ansi.Strip(app.View().RenderContent())
-			for _, want := range []string{"Set up code intelligence", "Install selected", "Not now"} {
+			for _, want := range []string{"Set up code intelligence", "fixture-server", "Set up with Aeron", "Not now"} {
 				if !strings.Contains(paint, want) {
 					t.Fatalf("missing %q at %v:\n%s", want, size, paint)
 				}
@@ -107,8 +149,22 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 			app.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 			_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			runAppCommand(t, app, cmd)
-			if len(port.choices) != 2 || len(port.choices[1]) != 1 || port.choices[1][0] != "server" {
-				t.Fatal("native Install did not preserve reviewed selection", port.choices)
+			// Aeron does the work: Crude only records that the user answered and
+			// installs nothing itself.
+			if len(port.choices) != 2 || len(port.choices[1]) != 0 {
+				t.Fatal("Set up with Aeron made Crude install tools itself", port.choices)
+			}
+			if len(port.roles) != 1 || port.roles[0] != "aeron" {
+				t.Fatal("Set up with Aeron did not open the workspace's Aeron", port.roles)
+			}
+			order := app.pendingFirstInputs["aeron-agent"].Text
+			for _, want := range []string{"<set_up>", `package="fixture-server"`, "<leave_alone/>", "lsp.languages.&lt;id&gt;.command"} {
+				if !strings.Contains(order, want) {
+					t.Fatalf("work order for Aeron lacks %q:\n%s", want, order)
+				}
+			}
+			if app.overlayHost.IsOpen(projectToolsOverlay) {
+				t.Fatal("the setup window stayed open after Set up with Aeron")
 			}
 		})
 	}

@@ -884,6 +884,17 @@ func (w *Workspace) OpenAgentSession(sessionID string) *NewSessionResult {
 	return w.openAgentSessionOperation(sessionID)
 }
 
+// NewAgentSessionAs creates a session whose root is the named built-in role or
+// profile (for example "aeron"), like NewAgentSession otherwise. The role's own
+// connection settings stay in force.
+func (w *Workspace) NewAgentSessionAs(mainAgent string) *NewSessionResult {
+	op, err := w.PrepareInvocationSession("", InvocationSelection{MainAgent: mainAgent})
+	if err != nil {
+		return &NewSessionResult{Error: err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired), NeedsModel: errors.Is(err, session.ErrModelRequired)}
+	}
+	return w.ApplyAgentSession(op.Run(context.Background()))
+}
+
 func (w *Workspace) openAgentSessionOperation(id string) *NewSessionResult {
 	op, err := w.PrepareAgentSession(id)
 	if err != nil {

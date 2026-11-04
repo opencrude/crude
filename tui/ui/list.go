@@ -25,6 +25,8 @@ type ListItem struct {
 	Active    bool // resource currently open; independent of the browsing cursor
 	Depth     int  // optional hierarchy depth for feature-specific row painters
 	TreeLast  bool // final sibling at Depth (feature-specific tree connector)
+	Foldable  bool // row owns a subtree the owner can hide (feature-specific row painters)
+	Folded    bool // the owned subtree is currently hidden
 	Payload   any  // optional feature data (e.g. menu section/item index)
 }
 
@@ -48,6 +50,8 @@ type List struct {
 	rowPainter    ListRowPainter
 	defaultBgRole SemanticColor
 	defaultBgSet  bool
+	contentWidth  int
+	measured      bool
 }
 
 // NewList creates a list (clamp navigation, not wrap).
@@ -70,7 +74,7 @@ func (l *List) SetWrap(wrap bool) {
 }
 
 // SetTokens updates theme tokens.
-func (l *List) SetTokens(ts *TokenSet) { l.tokens = ts }
+func (l *List) SetTokens(ts *TokenSet) { l.tokens, l.measured = ts, false }
 
 // SetDefaultRowBackground overrides the background role for rows in the
 // default/disabled states (and for empty cells, headers, and separators).
@@ -89,6 +93,7 @@ func (l *List) SetSelectionMarker(_ bool) {}
 
 // SetItems replaces items and selects the first selectable row if needed.
 func (l *List) SetItems(items []ListItem) {
+	l.measured = false
 	l.items = items
 	l.sel.SetCount(len(items))
 	l.scroll.SetContent(len(items))
@@ -109,6 +114,7 @@ func (l *List) SetItems(items []ListItem) {
 // previous selection no longer exists (filtering, removal), behavior falls
 // back to SetItems semantics.
 func (l *List) SetItemsStable(items []ListItem) {
+	l.measured = false
 	prevID := ""
 	if cur, ok := l.Selected(); ok && cur.Selectable() {
 		prevID = cur.ID
@@ -243,6 +249,35 @@ func (l *List) Scroll() *ScrollModel { return l.scroll }
 
 func (l *List) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: cs.MaxH})
+}
+
+// ContentSize is an opt-in intrinsic size for compact pickers. Ordinary lists
+// still fill their parent through Measure. Width is derived once per item/theme
+// change, not once per frame; Selection and Scroll remain the only row owners.
+func (l *List) ContentSize(cs Constraints, maxRows int) Size {
+	if !l.measured {
+		l.contentWidth = 0
+		for _, item := range l.items {
+			width := rendering.VisibleWidth(item.Label)
+			if !item.Header {
+				width += l.itemIndent()
+			}
+			if item.Icon != "" {
+				width += rendering.VisibleWidth(item.Icon) + 1
+			}
+			if item.Detail != "" {
+				width += TableMinGap + rendering.VisibleWidth(item.Detail)
+			}
+			l.contentWidth = max(l.contentWidth, width)
+		}
+		l.measured = true
+	}
+	height := min(min(len(l.items), max(0, maxRows)), max(0, cs.MaxH))
+	width := l.contentWidth
+	if len(l.items) > height {
+		width++
+	}
+	return cs.ClampSize(Size{W: max(32, width), H: height})
 }
 
 func (l *List) Layout(_ LayoutContext, r Rect) {
