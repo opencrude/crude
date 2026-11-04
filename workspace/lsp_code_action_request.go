@@ -14,6 +14,8 @@ import (
 // paths, including empty/null evidence. It does not start another provider or
 // accept the adapter's unqualified Boundary as authoritative.
 func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call func(context.Context, LSPClient, types.InsightBoundary, int) (types.LSPCodeActionResponse, error)) (types.LSPCodeActionResponse, error) {
+	ctx, stop := context.WithTimeout(ctx, ManualLSPRequestTimeout)
+	defer stop()
 	if err := ctx.Err(); err != nil {
 		return types.LSPCodeActionResponse{}, err
 	}
@@ -22,7 +24,10 @@ func (m *LSPManager) codeActionRequest(ctx context.Context, path string, call fu
 	}
 	var out types.LSPCodeActionResponse
 	err := m.trackInflight(func() error {
-		client, requestCtx, valid, cancel := m.requestClient(ctx, path)
+		if err := m.awaitSynchronized(ctx, path); err != nil {
+			return err
+		}
+		client, requestCtx, valid, cancel := m.requestClientWithin(ctx, path, ManualLSPRequestTimeout)
 		defer cancel()
 		if client == nil {
 			return errors.New("code actions unavailable: no synchronized language server")

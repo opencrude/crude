@@ -86,7 +86,14 @@ func (w *Workspace) callCancellable(ctx context.Context, method string, input co
 	if client == nil {
 		return errDisconnected
 	}
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	// The caller's own deadline wins: a search that is allowed two minutes
+	// must not die at the generic call cap.
+	var cancel context.CancelFunc
+	if _, bounded := ctx.Deadline(); bounded {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, callTimeout)
+	}
 	defer cancel()
 	cancelled := make(chan struct{})
 	stop := context.AfterFunc(w.ctx, func() {

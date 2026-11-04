@@ -28,9 +28,18 @@ type InvocationSelection struct {
 	ProviderID   string `json:"provider_id,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	Instructions string `json:"instructions,omitempty"`
+	// MainAgent roots a new session in a built-in role (for example "aeron")
+	// or a named profile, exactly as the session settings page would.
+	MainAgent string `json:"main_agent,omitempty"`
 }
 
 func (s InvocationSelection) Empty() bool {
+	return s.AccountID == "" && s.Model == "" && s.ProviderID == "" && s.APIKey == "" && s.Instructions == "" && s.MainAgent == ""
+}
+
+// connectionEmpty reports that the selection names no account, model or
+// instructions, so the role's own connection settings stay in force.
+func (s InvocationSelection) connectionEmpty() bool {
 	return s.AccountID == "" && s.Model == "" && s.ProviderID == "" && s.APIKey == "" && s.Instructions == ""
 }
 
@@ -38,7 +47,7 @@ func invocationConfig(base *session.Config, s InvocationSelection) (*session.Con
 	if base == nil {
 		return nil, errors.New("session configuration is unavailable")
 	}
-	if len(s.Instructions) > 64*1024 || len(s.APIKey) > 64*1024 || len(s.AccountID) > 256 || len(s.Model) > 1024 || len(s.ProviderID) > 256 {
+	if len(s.Instructions) > 64*1024 || len(s.APIKey) > 64*1024 || len(s.AccountID) > 256 || len(s.Model) > 1024 || len(s.ProviderID) > 256 || len(s.MainAgent) > 256 {
 		return nil, errors.New("invocation selection exceeds its input bounds")
 	}
 	copy := *base
@@ -54,6 +63,15 @@ func invocationConfig(base *session.Config, s InvocationSelection) (*session.Con
 	cfg.AccountManager = base.AccountManager
 	if s.Empty() {
 		return &cfg, nil
+	}
+	if s.MainAgent != "" {
+		cfg.SelectedAgent = s.MainAgent
+		if err := cfg.ValidateSelectedAgent(); err != nil {
+			return nil, err
+		}
+		if s.connectionEmpty() {
+			return &cfg, nil
+		}
 	}
 	main := cfg.GetActiveDefaultCategory()
 	if s.APIKey != "" && s.AccountID == "" {
@@ -171,19 +189,26 @@ func (op *InvocationLifecycleOperation) Run(ctx context.Context) SessionLifecycl
 func (op *InvocationLifecycleOperation) run(ctx context.Context) SessionLifecycleResult {
 	if op.op.sessionID == "" || op.selection.Empty() {
 		result := op.op.Run(ctx)
-		if result.Err == nil && result.owner != nil && op.op.sessionID == "" && (op.selection.AccountID != "" || op.selection.Model != "" || op.selection.APIKey != "") {
+		if result.Err == nil && result.owner != nil && op.op.sessionID == "" && (op.selection.AccountID != "" || op.selection.Model != "" || op.selection.APIKey != "" || op.selection.MainAgent != "") {
 			backend := result.owner.backend
 			settings := backend.SettingsSnapshot()
-			main := op.op.cfg.GetActiveDefaultCategory()
-			override := types.CategorySettings{}
-			if op.selection.AccountID != "" || op.selection.APIKey != "" {
-				override.AccountID = main.AccountID
+			if op.selection.AccountID != "" || op.selection.Model != "" || op.selection.APIKey != "" {
+				main := op.op.cfg.GetActiveDefaultCategory()
+				override := types.CategorySettings{}
+				if op.selection.AccountID != "" || op.selection.APIKey != "" {
+					override.AccountID = main.AccountID
+				}
+				if op.selection.Model != "" {
+					override.Model = main.Model
+				}
+				settings.SessionOverrides = map[string]types.CategorySettings{session.CategoryDefault: override}
 			}
-			if op.selection.Model != "" {
-				override.Model = main.Model
-			}
-			settings.SessionOverrides = map[string]types.CategorySettings{session.CategoryDefault: override}
+			// Persist the role so the session keeps it across resume.
+			settings.SessionMainAgent = op.selection.MainAgent
 			_, result.Err = backend.SaveSettingsSnapshot(settings)
+			if result.Err == nil {
+				result.owner.installSettings(backend.SettingsSnapshots())
+			}
 		}
 		return result
 	}

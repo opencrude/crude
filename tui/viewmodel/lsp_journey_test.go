@@ -120,7 +120,8 @@ func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 			app.showRenameReview(request)
 			app.View()
 			p := app.LSPPopup.EditPreview
-			if p == nil || !strings.Contains(p.area.Value(), "retained Local History safety") {
+			if p == nil || !strings.Contains(p.area.Value(), "Crude saves a Local History copy") ||
+				!strings.Contains(p.area.Value(), "- old\n+ new\n") {
 				t.Fatal("missing exact review and recovery notice")
 			}
 			action := "cancel"
@@ -164,7 +165,7 @@ func TestLSPRenameRefusesStaleSourceAndNeverReportsEmptySafetySuccess(t *testing
 	p := app.LSPPopup.EditPreview
 	cmd := app.handleReviewedEditAction(reviewedEditActionMsg{p, "apply"})
 	app.handleReviewedEditApplied(cmd().(reviewedEditAppliedMsg))
-	if app.LSPPopup.EditPreview != p || !strings.Contains(p.area.Value(), "Outcome unconfirmed") {
+	if app.LSPPopup.EditPreview != p || !strings.Contains(p.area.Value(), "could not confirm the change") {
 		t.Fatal("empty safety became a success")
 	}
 	if cmd := app.handleReviewedEditAction(reviewedEditActionMsg{p, "apply"}); cmd != nil || port.calls != 1 {

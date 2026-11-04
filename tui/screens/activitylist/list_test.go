@@ -273,6 +273,77 @@ func TestEnterActivatesSelection(t *testing.T) {
 	}
 }
 
+func foldItems(folded bool) []ui.ListItem {
+	items := []ui.ListItem{{ID: "agent:root", Label: "Main", Foldable: true, Folded: folded}}
+	if !folded {
+		items = append(items, ui.ListItem{ID: "agent:kid", Label: "Kid", Depth: 1, TreeLast: true})
+	}
+	return items
+}
+
+func chevronCell(buf *surface.CellBuffer, y int) int {
+	for x := 0; x < buf.Width(); x++ {
+		if c := buf.Get(x, y); c.Char == '▾' || c.Char == '▸' {
+			return x
+		}
+	}
+	return -1
+}
+
+func TestFoldChevronClickTogglesWithoutActivatingOrSelecting(t *testing.T) {
+	for _, folded := range []bool{false, true} {
+		s, host := newTestScreen(t, foldItems(folded))
+		buf := paintFrame(host, testW, testH)
+		x := chevronCell(buf, listTop)
+		want := '▾'
+		if folded {
+			want = '▸'
+		}
+		if x < 0 || buf.Get(x, listTop).Char != want {
+			t.Fatalf("folded=%v: chevron not painted, row=%q", folded, rowText(buf, listTop))
+		}
+		res := host.Handle(tea.MouseClickMsg{X: x, Y: listTop, Button: tea.MouseLeft})
+		if res.Action == nil || res.Action.ID != ActionToggleFold {
+			t.Fatalf("folded=%v: chevron click action=%+v want %s", folded, res.Action, ActionToggleFold)
+		}
+		if item, ok := res.Action.Payload.(ui.ListItem); !ok || item.ID != "agent:root" || item.Folded != folded {
+			t.Fatalf("folded=%v: payload=%+v", folded, res.Action.Payload)
+		}
+		host.Handle(tea.MouseReleaseMsg{X: x, Y: listTop, Button: tea.MouseLeft})
+
+		// The label is not the chevron: it keeps the arm-then-open policy.
+		label := host.Handle(tea.MouseClickMsg{X: x + 4, Y: listTop, Button: tea.MouseLeft})
+		if label.Action != nil {
+			t.Fatalf("folded=%v: first click on the label must only select, got %+v", folded, label.Action)
+		}
+		_ = s
+	}
+}
+
+func TestFoldKeysFoldAndUnfoldOnlyTheMatchingState(t *testing.T) {
+	_, host := newTestScreen(t, foldItems(false))
+	paintFrame(host, testW, testH)
+	host.Focus(ListID)
+	if res := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight}); res.Action != nil {
+		t.Fatalf("Right on an open subtree must not act, got %+v", res.Action)
+	}
+	res := host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if res.Action == nil || res.Action.ID != ActionToggleFold {
+		t.Fatalf("Left on an open subtree action=%+v want %s", res.Action, ActionToggleFold)
+	}
+
+	_, host = newTestScreen(t, foldItems(true))
+	paintFrame(host, testW, testH)
+	host.Focus(ListID)
+	if res := host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft}); res.Action != nil {
+		t.Fatalf("Left on a folded subtree must not act, got %+v", res.Action)
+	}
+	res = host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
+	if res.Action == nil || res.Action.ID != ActionToggleFold {
+		t.Fatalf("Right on a folded subtree action=%+v want %s", res.Action, ActionToggleFold)
+	}
+}
+
 func TestEmptyStateAndDisabledPlaceholder(t *testing.T) {
 	s, host := newTestScreen(t, nil)
 	buf := paintFrame(host, testW, testH)

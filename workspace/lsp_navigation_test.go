@@ -266,6 +266,12 @@ func TestNavigationStrictSourcePositionAndAdmissionReturnNoPayload(t *testing.T)
 				f.w.LSPMgr.mu.Lock()
 				f.w.LSPMgr.documents[f.path].syncPending = true
 				f.w.LSPMgr.mu.Unlock()
+				// A manual request now waits for synchronization. This fault
+				// never completes its send, so exercise its bounded cancellation
+				// rather than consume the full interactive wait budget.
+				var stop context.CancelFunc
+				ctx, stop = context.WithTimeout(ctx, 50*time.Millisecond)
+				defer stop()
 			}
 			result, err := f.w.RequestLSPNavigation(ctx, owner, source, kind, 0, 3, include)
 			if err == nil || !reflect.DeepEqual(result, types.LSPNavigation{}) {

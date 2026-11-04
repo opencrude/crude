@@ -404,12 +404,21 @@ the JSON-RPC library's initial frame allocation or native heap/RSS.
 
 A single supported in-project definition-family target can jump directly.
 Multiple targets, all references and external destinations use the native
-chooser. Enter on a row inspects complete copyable URI/path, ranges and original
-source/provider/context metadata without reading destination content. Detail
-defaults to **Close**; **Back** returns to the list. **Open** explicitly selects
-one target, with distinct outside-workspace wording. Non-file URIs, remote file
-authorities, query/fragment-bearing or malformed paths stay inspectable but
-unavailable. Listing never eagerly reads a private or dependency file.
+caret-anchored popover, sized to its rows. Each row shows its file name and
+one-based line/column, with its folder in muted native List detail. The title
+shows the result count. There is no Close-only footer; Escape and × dismiss it.
+Enter or a click opens the selected location directly, without a metadata page or a
+second Open confirmation. Outside-project and unavailable locations say so in
+the row. Listing never eagerly reads a private or dependency file. Empty
+answers and failures use plain text; protocol evidence remains in the request
+and tests, not a dump in the chooser.
+
+Manual navigation and code-action requests share a two-minute total limit for
+startup, synchronization and the answer. The manager waits on lifecycle
+broadcasts rather than polling or retrying the RPC. Stopped, missing, failed
+and changed-source cases terminate promptly. A result waits for both its
+original context and exact connected producer in the shell replica, including
+after **Restart Language Servers**.
 
 The selected-target command alone observes current canonical unsaved text or
 one bounded regular-file source off Update. Strict UTF-16 range checks reject
@@ -624,8 +633,11 @@ containment. All protocol and text preparation runs off Update.
 
 F2 on a connected, saved and acknowledged editor opens the native symbol-name
 prompt. Enter requests an immutable **Review rename** from the core, not a shell
-read or a reconstructed `WorkspaceEdit`. The review shows exact quoted changed
-spans, UTF-16 coordinates, paths and before/after hashes. Cancel is initially
+read or a reconstructed `WorkspaceEdit`. The shared review shows relative file
+paths, line numbers and the actual removed/added lines before any action.
+Control characters, mixed line endings and missing final newlines remain visible.
+File hashes, source/provider boundaries and action provenance stay in the
+immutable retained evidence, not the ordinary dialog text. Cancel is initially
 selected. Enter on Cancel or Escape changes no source. Left/Right and Enter select
 an explicit action; the read-only body supports pointer scrolling and keyboard
 line/page movement.
@@ -650,7 +662,8 @@ overlapping edits and malformed ranges are refused atomically.
 Bounds are 1 MiB original provider JSON, 200 targets, 1,024 edits, 64 KiB per
 consumed string and 1 MiB aggregate replacement text. Reviewed source and result
 are each at most 2 MiB per file, 16 MiB combined across the operation. Exact
-quoted preview text is at most 64 KiB, at most four pending previews are retained,
+preview text and its audit evidence together are at most 64 KiB,
+at most four pending previews are retained,
 and a pending preview expires after five minutes. These adapter bounds do not
 bound the external JSON-RPC library's initial frame allocation.
 
@@ -692,11 +705,14 @@ endpoints to UTF-8 source bytes, then the canonical coordinator maps them to
 UTF-16. Split, ambiguous, reversed or out-of-source endpoints are refused, never
 clamped or widened. The query does not mutate source, view state or history.
 
-The native list keeps disabled and unsupported actions visible for inspection.
-Enter opens complete quoted title/kind, eligibility, diagnostic inclusion detail
-and source/provider/context provenance. Detail defaults to **Close**, not Preview.
-**Preview changes** requests only the retained original row's edit, including lazy
-resolution when the static provider supports it. It cannot execute a command.
+The compact caret-anchored native list shows action titles in plain text.
+Available actions come first, with recommended actions first within that group.
+If every action is unavailable, a single header explains the state instead of
+repeating a warning on every row. Enter or a click on an available action
+requests its changes directly, including lazy resolution when
+the static provider supports it. There is no intermediate inspection page.
+Unavailable rows remain visible and explain the reason when selected.
+Requesting changes does not execute a command.
 The resulting **Review code action** composes the same read-only,
 Cancel-default review, Apply/Release/Check-result state machine and selected Local
 History safety used by rename. There is no second file writer or receipt machine.
@@ -742,8 +758,8 @@ Lists admit at most 1 MiB of original JSON, 64 items, 64 KiB per item, 64 nested
 levels and 64 KiB of display evidence. Titles are at most 4 KiB and kinds 256 bytes.
 Source/result, exact-preview and retained-review bounds are the rename bounds
 above. Supported null/empty lists pass the same source/context replica barrier
-as positive results. They mean only **No actions returned for this source and
-selection**, never that the file or project is clean. Selection comparison during
+as positive results. They mean only **No code actions available here**, never
+that the file or project is clean. Selection comparison during
 Update is constant-time; source-byte conversion runs once per explicit request,
 not once per tick or painted frame.
 

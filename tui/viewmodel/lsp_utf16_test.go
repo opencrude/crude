@@ -84,8 +84,8 @@ func TestConnectedDefinitionAndReferencesUTF16PointPreservePrivateSource(t *test
 			one := f.shells[0]
 			if kind == "references" {
 				f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
-				f.inspect(t)
-				f.explicitOpen(t)
+				f.listed(t)
+				f.choose(t)
 			} else {
 				f.key(t, tea.KeyPressMsg{Code: '.', Mod: tea.ModAlt})
 				remoteJourneyUntil(t, f.shells, func() bool {

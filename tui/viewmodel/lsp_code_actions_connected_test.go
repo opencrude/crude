@@ -132,22 +132,23 @@ func actionConnectedPreview(t *testing.T, f renameConnectedFixture) workspace.Re
 	t.Helper()
 	actionConnectedOpen(t, f)
 	one := f.shells[0]
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter}) // Inspect row, no provider mutation.
-	paint := ansi.Strip(one.app.View().RenderContent())
-	if !strings.Contains(paint, "Action title (literal, complete)") || !strings.Contains(paint, "Preview changes") {
-		t.Fatalf("row did not expose inspect-before-preview detail:\n%s", paint)
-	}
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
+	// Choosing the action enters its real review, without a metadata page.
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
 	remoteJourneyUntil(t, f.shells, func() bool { return one.app.LSPPopup.EditPreview != nil })
 	p := one.app.LSPPopup.EditPreview
 	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Review code action") ||
-		!strings.Contains(paint, "Apply changes") {
+		!strings.Contains(paint, "Apply changes") || !strings.Contains(paint, "- var old = 1") ||
+		!strings.Contains(paint, "+ var new = 1") {
 		t.Fatalf("action did not enter the shared literal review:\n%s", paint)
+	} else {
+		for _, banned := range []string{"SHA-256", "canonical", "UTF-16", "literal", "Set digest:"} {
+			if strings.Contains(paint, banned) {
+				t.Fatalf("the change review shows internal evidence %q:\n%s", banned, paint)
+			}
+		}
 	}
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
-	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, `- "old"`) || !strings.Contains(paint, `+ "new"`) {
+	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "- var old = 1") || !strings.Contains(paint, "+ var new = 1") {
 		t.Fatalf("complete changed spans are not reachable through the native reader:\n%s", paint)
 	}
 	return p.request.preview
@@ -215,6 +216,21 @@ func TestConnectedCodeActionKeysDefaultCancelAndExactSharedApplyReceipt(t *testi
 	}
 }
 
+func TestConnectedCodeActionAfterRestartLanguageServers(t *testing.T) {
+	f, _ := newActionConnectedFixture(t, actionConnectedRaw)
+	one := f.shells[0]
+	before := one.app.ws.LSPMgr().ServerHealthSnapshots()[0].InstanceID
+	runAppCommand(t, one.app, one.app.executePaletteCommand("lsp.restart"))
+	remoteJourneyUntil(t, f.shells, func() bool {
+		health := one.app.ws.LSPMgr().ServerHealthSnapshots()
+		return len(health) != 0 && health[0].Connected && health[0].InstanceID != before
+	})
+	actionConnectedPreview(t, f)
+	actionConnectedBytes(t, f, renameConnectedMain)
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
+	remoteJourneyUntil(t, f.shells, func() bool { return one.app.LSPPopup.EditPreview == nil })
+}
+
 func TestConnectedCodeActionsUnsupportedEmptyAndSelectionUseActualChooser(t *testing.T) {
 	f, engine := newActionConnectedFixture(t, actionConnectedRaw)
 	one := f.shells[0]
@@ -241,10 +257,10 @@ func TestConnectedCodeActionsUnsupportedEmptyAndSelectionUseActualChooser(t *tes
 	engine.actions = "null"
 	engine.mu.Unlock()
 	empty := actionConnectedOpen(t, f)
-	if len(empty.set.Items) != 0 || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "No actions returned") {
+	if len(empty.set.Items) != 0 || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "No code actions available here") {
 		t.Fatal("supported null became failure or stale actionable rows")
 	}
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter}) // Close default.
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
 	actionConnectedBytes(t, f, renameConnectedMain)
 }
 
@@ -252,8 +268,7 @@ func TestConnectedCodeActionPrepareControlWaitsForReviewAndCloseRevokesSet(t *te
 	f, _ := newActionConnectedFixture(t, actionConnectedRaw)
 	one := f.shells[0]
 	s := actionConnectedOpen(t, f)
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
-	result := journeySettingsControl(t, f.runtime, f.shells, one, "code-actions/actions/Preview changes", ui.ControlOperation{Verb: "activate"})
+	result := journeySettingsControl(t, f.runtime, f.shells, one, "code-actions/list", ui.ControlOperation{Verb: "activate", ItemID: "0"})
 	if result.State != control.Applied || len(result.ResourceIDs) != 1 || one.app.LSPPopup.EditPreview == nil {
 		t.Fatal("semantic Preview did not await exact mounted review", result)
 	}
@@ -263,9 +278,9 @@ func TestConnectedCodeActionPrepareControlWaitsForReviewAndCloseRevokesSet(t *te
 		t.Fatal("closing the shared review failed to retire its original action set")
 	}
 	actionConnectedOpen(t, f)
-	closed := journeySettingsControl(t, f.runtime, f.shells, one, "code-actions/actions/Close", ui.ControlOperation{Verb: "activate"})
-	if closed.State != control.Applied || one.app.codeActions != nil {
-		t.Fatal("semantic Close did not await original list release", closed)
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if one.app.codeActions != nil {
+		t.Fatal("Escape did not retire the action list")
 	}
 	actionConnectedBytes(t, f, renameConnectedMain)
 }

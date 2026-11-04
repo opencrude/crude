@@ -23,6 +23,9 @@ type Sessions interface {
 	// selecting it in any shell. Callers must serialize workspace lifecycle
 	// operations.
 	NewAgentSession() *workspace.NewSessionResult
+	// NewAgentSessionAs does the same for a session rooted in the named
+	// built-in role or profile, such as the workspace's Aeron.
+	NewAgentSessionAs(mainAgent string) *workspace.NewSessionResult
 	// OpenAgentSession opens an exact saved session or returns its existing
 	// runtime. Opening never selects a client view or starts a provider turn.
 	OpenAgentSession(sessionID string) *workspace.NewSessionResult

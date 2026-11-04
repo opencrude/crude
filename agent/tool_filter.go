@@ -36,21 +36,10 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 			DeniedTools:  []string{"delete_file"},
 		}
 	case CatAeron:
-		return CategoryToolConfig{
-			AllowedTools: []string{
-				"read_file", "write_file", "edit_file", "glob_files", "grep_files",
-				"list_directory",
-				"publish_report", "reply", "wait",
-				"capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt",
-				"agent_list", "agent_inspect", "agent_send", "agent_respond",
-				"artifact_read", "agent_wait", "board_read",
-			},
-			DeniedTools: []string{
-				"delete_file", "move_file", "copy_file",
-				"execute_command", "async_execute_command",
-				"web_search", "web_fetch", "arxiv_search",
-			},
-		}
+		// Aeron is the workspace's errand runner and has full control: no
+		// allow-list and no denied tools. The user's permission mode is its
+		// only limit.
+		return CategoryToolConfig{}
 	default:
 		return CategoryToolConfig{}
 	}

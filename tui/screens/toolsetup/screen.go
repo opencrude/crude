@@ -3,7 +3,6 @@
 package toolsetup
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -46,44 +45,25 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	tokens := ui.NewTokenSet(th)
 	s := &Screen{Base: ui.NewBase(ScreenID), model: ui.NewFormModel()}
 	intro := ui.TextAreaFieldState("about", "Project", review.Project+
-		"\nSelect the tools Crude can install. Editing works without them.", "")
-	intro.ReadOnly, intro.Rows = true, 3
+		"\nAeron sets up the tools you leave on. It works in the background; open it in the Agents panel to watch. Editing works without these tools.", "")
+	intro.ReadOnly, intro.Rows = true, 4
 	s.model.AddField(intro)
-	for i, item := range review.Items {
+	for _, item := range review.Items {
 		s.items = append(s.items, types.CloneProjectToolCandidate(item))
 		label := item.Package
 		if label == "" {
 			label = item.Command
 		}
-		selected := ui.BoolFieldState(item.ID, label, item.Installable, "Install this tool for the project.")
-		selected.Disabled = !item.Installable
+		selected := ui.BoolFieldState(item.ID, label, true, itemDescription(item))
 		s.model.AddField(selected)
-		size := "Download size: not supplied by the source."
-		if item.SizeKnown {
-			size = fmt.Sprintf("Download size: %d bytes.", item.SizeBytes)
-		}
-		checksum := "Crude records the checksum at the first download."
-		if item.ChecksumPublished {
-			checksum = "Crude checks the checksum supplied by the source."
-		}
-		detail := fmt.Sprintf("Version: %s\nLanguages: %s\nSource: %s\nFile: %s\nRuns: %s\nLicense: %s\n%s\n%s",
-			item.Version, strings.Join(item.Languages, ", "), item.URL, item.File,
-			item.Command, strings.Join(item.Licenses, ", "), size, checksum)
-		if !item.Installable {
-			detail = item.Reason
-		}
-		field := ui.TextAreaFieldState(fmt.Sprintf("details-%d", i), "Details", detail, "Read the exact source and program before you install.")
-		field.ReadOnly, field.Rows = true, min(8, strings.Count(detail, "\n")+1)
-		s.model.AddField(field)
 	}
 	s.form = ui.NewForm(FormID, s.model, "", "", tokens)
 	s.form.SetFieldGap(1)
-	s.form.SetHideDescriptions(true)
 	s.form.SetArrowExitsForm(true)
 	s.scrollbar = ui.NewScrollbarControl("project-tools/scroll", s.form.Scroll(), tokens)
 	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 	s.actions = ui.NewActionBar(ActionsID, tokens,
-		ui.ActionBarButton{Label: "Install selected", Action: ActionInstall, Enabled: len(s.SelectedIDs()) > 0, Variant: ui.VariantPrimary},
+		ui.ActionBarButton{Label: "Set up with Aeron", Action: ActionInstall, Enabled: len(s.SelectedIDs()) > 0, Variant: ui.VariantPrimary},
 		ui.ActionBarButton{Label: "Not now", Action: ActionDecline, Enabled: true, Variant: ui.VariantSecondary})
 	s.actions.SetAlignEnd(false)
 	s.actions.SetShowRule(true)
@@ -95,14 +75,45 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	return s
 }
 
+// itemDescription is the one line under a switch: what the tool serves and
+// where it comes from, or why Crude cannot fetch it directly.
+func itemDescription(item types.ProjectToolCandidate) string {
+	parts := []string{}
+	if len(item.Languages) > 0 {
+		parts = append(parts, strings.Join(item.Languages, ", "))
+	}
+	if item.Version != "" {
+		parts = append(parts, "version "+item.Version)
+	}
+	switch {
+	case item.Reason != "":
+		parts = append(parts, item.Reason)
+	case item.Source != "":
+		parts = append(parts, "from "+item.Source)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// SelectedIDs lists the tools whose switch is on. Aeron decides how to get
+// each one, so every tool is a real choice, whether or not Crude can download
+// it itself.
 func (s *Screen) SelectedIDs() []string {
 	var selected []string
 	for _, item := range s.items {
-		if item.Installable && ui.BoolFieldValue(s.model.Field(item.ID)) {
+		if ui.BoolFieldValue(s.model.Field(item.ID)) {
 			selected = append(selected, item.ID)
 		}
 	}
 	return selected
+}
+
+// Items returns the tools this screen offers.
+func (s *Screen) Items() []types.ProjectToolCandidate {
+	items := make([]types.ProjectToolCandidate, len(s.items))
+	for i, item := range s.items {
+		items[i] = types.CloneProjectToolCandidate(item)
+	}
+	return items
 }
 
 func (s *Screen) Children() []ui.Component {

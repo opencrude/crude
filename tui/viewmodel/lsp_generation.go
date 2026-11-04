@@ -3,7 +3,40 @@ package viewmodel
 import (
 	"context"
 	"crude/tui/editor"
+	"crude/workspace"
 )
+
+// A manual request can wait through startup. Automatic popup requests continue
+// to require readiness so ordinary typing never starts a long-lived search.
+func (m *App) manualLSPAvailable() bool {
+	service := m.ws.LSPMgr()
+	if service == nil {
+		return false
+	}
+	if service.ServerReady() {
+		return true
+	}
+	_, state, _ := service.Status()
+	return state == workspace.LSPStarting
+}
+
+func (m *App) lspProducerConnected(instance string) bool {
+	if instance == "" || m.ws.LSPMgr() == nil {
+		return false
+	}
+	for _, health := range m.ws.LSPMgr().ServerHealthSnapshots() {
+		if health.InstanceID == instance && health.Connected {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *App) logLSPFailure(operation string, err error) {
+	if err != nil && m.ws.Logger() != nil {
+		m.ws.Logger().Warn("LSP", "request_failed", "operation", operation, "error", err.Error())
+	}
+}
 
 // resetLSPRequestContext invalidates every request issued by the previous
 // workspace generation. Result messages still carry a generation as a second

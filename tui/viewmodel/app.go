@@ -225,6 +225,8 @@ type App struct {
 	sidebarScreen         *shelltree.Screen
 	activityBar           *activitybar.Screen
 	activityList          *activitylist.Screen
+	agentFolded           map[string]bool // agent IDs whose children the Agents sidebar hides
+	aeronPrepared         map[string]bool // Aeron agents already minimized and set to automatic approval
 	gitPanel              *gitpanel.Panel
 	activityView          activitybar.View
 	termScreens           map[string]*shellterm.Screen

@@ -18,6 +18,7 @@ import (
 
 	"crude/localhistory"
 	"crude/shellport"
+	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
 )
@@ -27,10 +28,9 @@ import (
 // CRUDE_CODE_ACTION_VISUAL_RESULT receives each observer's rendered evidence.
 //
 // F3 opens/synchronizes the disposable fixture. Each F4 observes one boundary:
-// list, detail, default Close, list, detail, preview, default Cancel, list,
-// detail, fresh preview, committed. Between observers the capture driver supplies
-// actual Alt+Enter, Down x printed zero-based row index, Enter to inspect, and
-// Left/Left/Enter to Preview changes. Review Enter cancels; Left/Enter applies.
+// list, Escape, list, preview, default Cancel, list, fresh preview, committed.
+// Between observers the driver supplies actual Alt+Enter, Down x the printed
+// row index, and Enter to review. Review Enter cancels; Left/Enter applies.
 // F9 exits after all observations. Observers never invoke a scored action.
 func TestCodeActionVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_CODE_ACTION") != "1" {
@@ -216,8 +216,8 @@ func runCodeActionVisual(t *testing.T, headless bool, width, height int) {
 		}
 		t.Fatal(m.failure)
 	}
-	if m.phase != 12 {
-		t.Fatalf("code-action observation boundaries incomplete: %d/12", m.phase)
+	if m.phase != 9 {
+		t.Fatalf("code-action observation boundaries incomplete: %d/9", m.phase)
 	}
 	if got, err := os.ReadFile(path); err != nil || string(got) != codeActionVisualAfter {
 		t.Fatalf("actual code-action final disk bytes=%q want=%q err=%v", got, codeActionVisualAfter, err)
@@ -249,7 +249,7 @@ func (m *codeActionVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Code == tea.KeyF9 && !m.busy {
 			return m, tea.Quit
 		}
-		if v.Code == tea.KeyF3 && m.phase == 0 || v.Code == tea.KeyF4 && m.phase > 0 && m.phase < 12 {
+		if v.Code == tea.KeyF3 && m.phase == 0 || v.Code == tea.KeyF4 && m.phase > 0 && m.phase < 9 {
 			if m.busy {
 				return m, nil
 			}
@@ -290,16 +290,10 @@ func (m *codeActionVisualModel) driveCodeActionVisual(ctx context.Context) {
 		for range index {
 			key(tea.KeyDown)
 		}
-		key(tea.KeyEnter) // Inspect only; Close must remain the default.
-		if !observe(tea.KeyF4) {
-			return
-		}
 		if invocation == 0 {
-			key(tea.KeyEnter) // Actual safe-default Close, not preview.
+			key(tea.KeyEsc) // Close without preparing any action.
 		} else {
-			key(tea.KeyLeft)
-			key(tea.KeyLeft)
-			key(tea.KeyEnter) // Explicit Preview changes.
+			key(tea.KeyEnter) // Choosing the row enters its review.
 			if !observe(tea.KeyF4) {
 				return
 			}
@@ -374,13 +368,23 @@ func (m *codeActionVisualModel) observeCodeAction(phase int) error {
 		m.pids = seen
 		return m.recordCodeAction(fmt.Sprintf("F3 VERIFIED unused-import canonical source synchronized; real gopls pids=%v", seen))
 	}
-	if phase == 1 || phase == 4 || phase == 8 {
+	if phase == 1 || phase == 3 || phase == 6 {
 		var set workspace.CodeActionSet
+		displayRows := map[int]int{}
 		if err := m.await(func(v *controlVisualModel) error {
 			if v.codeActions == nil || v.codeActions.set.ID == "" {
 				return fmt.Errorf("real code-action chooser not mounted:\n%s", ansi.Strip(v.View().RenderContent()))
 			}
 			set = v.codeActions.set
+			for _, child := range v.codeActions.screen.Children() {
+				if list, ok := child.(*ui.List); ok {
+					for at, item := range list.Items() {
+						if original, ok := item.Payload.(int); ok {
+							displayRows[original] = at
+						}
+					}
+				}
+			}
 			return featureVisualPaint(v, "Code actions")
 		}); err != nil {
 			return err
@@ -398,51 +402,32 @@ func (m *codeActionVisualModel) observeCodeAction(phase int) error {
 		}
 		for _, row := range set.Items {
 			if row.Title == "Organize Imports" && row.Kind == "source.organizeImports" {
+				if !row.CanReview {
+					return fmt.Errorf("real organize-imports action is unavailable: %+v", row)
+				}
 				m.row = row
-				if err := m.recordCodeAction(fmt.Sprintf("CODE_ACTION_ROW_INDEX=%d title=%q needsResolve=%t canReview=%t unsupported=%q",
-					row.Index, row.Title, row.NeedsResolve, row.CanReview, row.UnsupportedReason)); err != nil {
+				displayIndex, visible := displayRows[row.Index]
+				if !visible {
+					return fmt.Errorf("the original organize-imports action was not presented in the list")
+				}
+				if err := m.recordCodeAction(fmt.Sprintf("CODE_ACTION_ROW_INDEX=%d original_index=%d title=%q needsResolve=%t canReview=%t unsupported=%q",
+					displayIndex, row.Index, row.Title, row.NeedsResolve, row.CanReview, row.UnsupportedReason)); err != nil {
 					return err
 				}
 				select {
 				case <-m.listRowIndex:
 				default:
 				}
-				m.listRowIndex <- row.Index
+				m.listRowIndex <- displayIndex
 				return nil
 			}
 		}
 		return fmt.Errorf("real gopls did not offer the observed literal Organize Imports action; rows=%+v", set.Items)
 	}
-	if phase == 2 || phase == 5 || phase == 9 {
-		var paint string
-		if err := m.await(func(v *controlVisualModel) error {
-			if v.codeActions == nil || v.codeActions.screen.InList() || v.LSPPopup.EditPreview != nil {
-				return fmt.Errorf("row Enter did not inspect without preview")
-			}
-			paint = ansi.Strip(v.View().RenderContent())
-			return featureVisualPaint(v, "Action title (literal, complete)", "Close")
-		}); err != nil {
-			return err
-		}
-		if err := m.recordCodeAction(fmt.Sprintf("F4 INSPECT boundary=%d original row=%+v\n%s", phase, m.row, paint)); err != nil {
-			return err
-		}
-		if err := m.unchangedCodeAction(); err != nil {
-			return err
-		}
-		if !m.row.CanReview {
-			return fmt.Errorf("real gopls unused-import action cannot reach review: title=%q kind=%q lazy=%t disabled=%q unsupported=%q",
-				m.row.Title, m.row.Kind, m.row.NeedsResolve, m.row.DisabledReason, m.row.UnsupportedReason)
-		}
-		if !strings.Contains(paint, "Preview changes") {
-			return fmt.Errorf("eligible inspected row did not paint Preview changes:\n%s", paint)
-		}
-		return nil
-	}
-	if phase == 3 || phase == 7 {
+	if phase == 2 || phase == 5 {
 		if err := m.await(func(v *controlVisualModel) error {
 			if v.codeActions != nil || v.LSPPopup.EditPreview != nil {
-				return fmt.Errorf("default %s left an action overlay open", map[int]string{3: "Close", 7: "Cancel"}[phase])
+				return fmt.Errorf("default %s left an action overlay open", map[int]string{2: "Close", 5: "Cancel"}[phase])
 			}
 			return featureVisualPaint(v, `import "fmt"`)
 		}); err != nil {
@@ -451,14 +436,14 @@ func (m *codeActionVisualModel) observeCodeAction(phase int) error {
 		if err := m.unchangedCodeAction(); err != nil {
 			return err
 		}
-		if phase == 7 {
+		if phase == 5 {
 			if out, err := m.ws.(shellport.ReviewedEdits).InspectReviewedEdit(m.ctx, m.cancelled.ID, m.cancelled.Digest); err != nil || out.State != "pending" || out.SafetySnapshotID != "" {
 				return fmt.Errorf("cancelled preview invented an admitted mutation or safety: %+v %v", out, err)
 			}
 		}
 		return m.recordCodeAction(fmt.Sprintf("F4 SAFE_DEFAULT boundary=%d actual Enter closed without source mutation", phase))
 	}
-	if phase == 6 || phase == 10 {
+	if phase == 4 || phase == 7 {
 		if err := m.await(func(v *controlVisualModel) error {
 			p := v.LSPPopup.EditPreview
 			if p == nil || p.request.preview.ID == "" || len(p.request.preview.Files) != 1 {
@@ -469,7 +454,7 @@ func (m *codeActionVisualModel) observeCodeAction(phase int) error {
 				file.AfterSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(codeActionVisualAfter))) {
 				return fmt.Errorf("review differs from the independently expected literal import removal: %+v", file)
 			}
-			if phase == 6 {
+			if phase == 4 {
 				m.cancelled = p.request.preview
 			} else {
 				m.plan = p.request.preview

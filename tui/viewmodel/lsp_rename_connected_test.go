@@ -258,7 +258,7 @@ func (f renameConnectedFixture) preview(t *testing.T) workspace.ReviewedEditPrev
 	}
 	p := one.app.LSPPopup.EditPreview.request.preview
 	paint := ansi.Strip(one.app.View().RenderContent())
-	for _, want := range []string{"Review rename", "Apply rename", "Cancel", `- "old"`, `+ "new"`, "Local History"} {
+	for _, want := range []string{"Review rename", "Apply rename", "Cancel", "- var old = 1", "+ var new = 1", "Local History"} {
 		if !strings.Contains(paint, want) {
 			t.Fatalf("immutable review does not paint %q:\n%s", want, paint)
 		}
@@ -401,7 +401,7 @@ func TestConnectedRenamePeerChangesInvalidateImmutableReview(t *testing.T) {
 			renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
 			renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
 			remoteJourneyUntil(t, f.shells, func() bool {
-				return strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Rename refused without a disk effect")
+				return strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Could not apply the change.")
 			})
 			f.assertBytes(t, renameConnectedMain, renameConnectedPeer)
 			if f.main.Value() != renameConnectedMain || (!undo && f.peer.Value() != "packageX journey\n\nvar use = old\n") || (undo && f.peer.Value() != renameConnectedPeer) {

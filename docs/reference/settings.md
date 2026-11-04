@@ -1285,7 +1285,8 @@ agent probe holds (and vice versa). Diagnostics settle on the server's progress
 reports, not a fixed sleep. Server launch and resource settings (command,
 arguments, environment, settings, initialization options, limits) are
 human-owned: an agent may toggle `lsp.languages.<id>.enabled` through the
-control API but cannot change what runs.
+control API but cannot change what runs. The workspace's Aeron, which sets up
+language servers for the user, is the one agent that may write these fields.
 
 ## Semantic settings control and authority
 

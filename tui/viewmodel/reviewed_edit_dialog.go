@@ -20,14 +20,14 @@ const reviewedEditOverlay ui.OverlayID = "reviewed-edit-preview"
 // Rename and code actions compose the same immutable review/receipt owner.
 // These are presentation labels, not behavioral modes or caller-authored edits.
 type reviewedEditDialogRequest struct {
-	owner                                                    *editor.Editor
-	revision                                                 uint64
-	generation                                               uint64
-	filePath                                                 string
-	preview                                                  workspace.ReviewedEditPreview
-	port                                                     shellport.ReviewedEdits
-	title, intro, applyLabel, committedLabel, operationLabel string
-	retire                                                   func(context.Context) error
+	owner                                    *editor.Editor
+	revision                                 uint64
+	generation                               uint64
+	filePath                                 string
+	preview                                  workspace.ReviewedEditPreview
+	port                                     shellport.ReviewedEdits
+	title, intro, applyLabel, committedLabel string
+	retire                                   func(context.Context) error
 }
 
 type reviewedEditAppliedMsg struct {
@@ -65,7 +65,7 @@ func newReviewedEditDialog(th *theme.Theme, msg reviewedEditDialogRequest) *revi
 	p := &reviewedEditDialog{Base: ui.NewBase("reviewed-edit/body"), request: msg}
 	p.area = ui.NewTextArea("reviewed-edit/detail", tokens, true)
 	p.area.SetReadOnly(true)
-	p.area.SetValue(msg.intro + "\nApply requires an unchanged canonical source and a retained Local History safety snapshot.\n\n" + msg.preview.Text)
+	p.area.SetValue(msg.intro + "\nCrude saves a Local History copy before it changes files.\n\n" + msg.preview.Text)
 	p.area.SetCursorFlat(0)
 	p.bar = ui.NewActionBar("reviewed-edit/actions", tokens, ui.ActionBarButton{Label: msg.applyLabel, Action: "apply", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	p.bar.SetCancelAction("cancel")
@@ -73,8 +73,9 @@ func newReviewedEditDialog(th *theme.Theme, msg reviewedEditDialogRequest) *revi
 	return p
 }
 func (p *reviewedEditDialog) Children() []ui.Component { return []ui.Component{p.area, p.bar} }
-func (p *reviewedEditDialog) Measure(_ ui.LayoutContext, c ui.Constraints) ui.Size {
-	return c.ClampSize(ui.Size{W: c.MaxW, H: c.MaxH})
+func (p *reviewedEditDialog) Measure(ctx ui.LayoutContext, c ui.Constraints) ui.Size {
+	size := p.area.Measure(ctx, ui.Constraints{MaxW: c.MaxW, MaxH: max(0, c.MaxH-2)})
+	return c.ClampSize(ui.Size{W: c.MaxW, H: size.H + 2})
 }
 func (p *reviewedEditDialog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	p.SetBounds(r)
@@ -139,8 +140,12 @@ func retireReviewedEditRequest(msg reviewedEditDialogRequest) tea.Cmd {
 func (m *App) showReviewedEditDialog(msg reviewedEditDialogRequest) {
 	p := newReviewedEditDialog(m.Theme, msg)
 	m.LSPPopup.EditPreview = p
-	w, h := min(100, max(1, m.width-4)), min(26, max(1, m.height-4))
+	w, h := min(120, max(1, m.width-4)), max(1, m.height-4)
 	frame := ui.NewWindowFrameWidget(m.Theme, "reviewed-edit/frame", ui.FrameDialog, msg.title, p, nil, false, w, h)
+	size := frame.Frame().Measure(ui.LayoutContext{}, ui.Constraints{
+		MinW: w, MaxW: w, MinH: min(10, h), MaxH: h,
+	})
+	w, h = size.W, size.H
 	frame.Host().Focus(p.bar.ID())
 	fw := wm.NewFloatingWindow(string(reviewedEditOverlay), "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))
 	wm.CenterOnScreen(fw, m.width, m.height)
@@ -210,7 +215,7 @@ func (m *App) handleReviewedEditAction(msg reviewedEditActionMsg) tea.Cmd {
 		return nil
 	}
 	if !checking && !m.acceptsLSPDocument(r.generation, r.filePath, r.owner, r.revision) {
-		m.Feedback.NotifyError("Edit review is stale; request a new review")
+		m.Feedback.NotifyError("The file changed. Request a new review.")
 		m.overlayHost.Close(reviewedEditOverlay)
 		return nil
 	}
@@ -244,8 +249,8 @@ func (m *App) handleReviewedEditReleased(msg reviewedEditReleasedMsg) {
 		m.overlayHost.Close(reviewedEditOverlay)
 		return
 	}
-	p.area.SetValue("Could not confirm cancellation of review " + p.request.preview.ID +
-		". Cancel this original review again; do not apply it.\n\n" + msg.err.Error())
+	m.logLSPFailure("reviewed-edit-cancel", msg.err)
+	p.area.SetValue("Could not cancel the review. Choose Cancel review again. Do not apply the change.")
 	p.area.SetCursorFlat(0)
 	p.bar.SetButtons(ui.ActionBarButton{Label: "Cancel review", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	m.markReviewedEditDirty(p)
@@ -260,30 +265,24 @@ func (m *App) handleReviewedEditApplied(msg reviewedEditAppliedMsg) {
 	exact := result.ID == p.request.preview.ID && result.Digest == p.request.preview.Digest
 	if msg.err == nil && p.confirmsCommit(result) {
 		// Canonical topics, not this private receipt, publish all open editor text.
-		m.Feedback.NotifyInfo(fmt.Sprintf("%s in %d files · recover via Local History (%s)", p.request.committedLabel, len(p.request.preview.Files), result.SafetySnapshotID[:min(8, len(result.SafetySnapshotID))]))
+		m.Feedback.NotifyInfo(p.request.committedLabel + ". You can restore the files from Local History.")
 		m.overlayHost.Close(reviewedEditOverlay)
 		return
 	}
-	status := "Outcome unconfirmed. Check the original result; do not apply again."
+	m.logLSPFailure("reviewed-edit-apply", msg.err)
+	if result.Error != "" || result.Detail != "" {
+		m.logLSPFailure("reviewed-edit-result", fmt.Errorf("state=%s error=%s detail=%s", result.State, result.Error, result.Detail))
+	}
+	status := "Crude could not confirm the change. Choose Check result. Do not apply it again."
 	if exact && result.State == "refused" && msg.err == nil {
-		status = p.request.operationLabel + " refused without a disk effect: " + result.Error
+		status = "Could not apply the change. No files changed. Close this review and request the change again."
 		p.bar.SetButtons(ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true})
 	} else {
-		if exact && result.Error != "" {
-			status += "\n" + result.Error
-		}
-		if exact && result.Detail != "" {
-			status += "\n" + result.Detail
-		}
-		if msg.err != nil {
-			status += "\n" + msg.err.Error()
-		}
 		p.bar.SetButtons(ui.ActionBarButton{Label: "Check result", Action: "inspect", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Close", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
-		m.Feedback.NotifyError("Edit outcome requires inspection. Review " + p.request.preview.ID +
-			"; safety snapshot " + result.SafetySnapshotID + ". Check the original result or use Local History. Do not apply it again.")
+		m.Feedback.NotifyError("Crude could not confirm the change. Choose Check result. Do not apply it again.")
 	}
 	p.bar.FocusLast()
-	p.area.SetValue(status + "\nReview: " + p.request.preview.ID + "\nSafety snapshot: " + result.SafetySnapshotID + "\n\n" + p.request.preview.Text)
+	p.area.SetValue(status + "\n\n" + p.request.preview.Text)
 	p.area.SetCursorFlat(0)
 	m.markReviewedEditDirty(p)
 }
@@ -295,6 +294,6 @@ func (p *reviewedEditDialog) confirmsCommit(result workspace.ReviewedEditResult)
 
 func (m *App) handleReviewedEditCleanup(msg reviewedEditCleanupMsg) {
 	if msg.err != nil && m.acceptsLSPGeneration(msg.request.generation) {
-		m.Feedback.NotifyInfo("Pending edit-capability release is unconfirmed; original outcomes and retained recovery are unchanged.")
+		m.logLSPFailure("reviewed-edit-release", msg.err)
 	}
 }

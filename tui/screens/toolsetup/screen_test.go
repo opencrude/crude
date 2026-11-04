@@ -1,6 +1,7 @@
 package toolsetup
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,27 +13,43 @@ import (
 
 func setupFixture() types.ProjectToolReview {
 	return types.ProjectToolReview{Project: "/project", Items: []types.ProjectToolCandidate{
-		{ID: "selected", Package: "fixture-server", Version: "v1", URL: "https://example.invalid/server.zip",
+		{ID: "download", Package: "fixture-server", Version: "v1", Source: "github", URL: "https://example.invalid/server.zip",
 			File: "server.zip", Command: "fixture-server", Languages: []string{"fixture"}, Licenses: []string{"MIT"}, Installable: true},
-		{ID: "unsupported", Package: "unsupported", Reason: "Install this tool yourself, then check again."},
+		{ID: "manager", Package: "package-manager-server", Languages: []string{"other"},
+			Reason: "Crude cannot download this tool itself.", Installable: false},
 	}}
 }
 
-func TestProjectToolsSelectionUsesExactReviewedInstallableItems(t *testing.T) {
+// Every offered tool is a working choice. A tool that Crude cannot download
+// itself stays on: Aeron works out how to get it.
+func TestEveryToolIsARealChoiceAndStartsOn(t *testing.T) {
 	screen := New(theme.DefaultDark(), setupFixture())
-	if got := screen.SelectedIDs(); len(got) != 1 || got[0] != "selected" {
-		t.Fatal("default selection does not match installable reviewed items", got)
+	if got := screen.SelectedIDs(); !slices.Equal(got, []string{"download", "manager"}) {
+		t.Fatalf("both tools must start on, got %v", got)
 	}
-	screen.model.SetValue("selected", ui.StringValue("off"))
-	screen.model.SetValue("unsupported", ui.StringValue("on"))
+	screen.model.SetValue("download", ui.StringValue("off"))
+	if got := screen.SelectedIDs(); !slices.Equal(got, []string{"manager"}) {
+		t.Fatalf("switching a tool off must remove only that tool, got %v", got)
+	}
+	screen.model.SetValue("manager", ui.StringValue("off"))
 	if len(screen.SelectedIDs()) != 0 {
-		t.Fatal("an unsupported or deselected item can be installed")
+		t.Fatal("all switches off must select nothing")
 	}
 	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionInstall}); result.Cmd != nil {
-		t.Fatal("empty selection emitted an install")
+		t.Fatal("an empty selection sent a work order")
 	}
-	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionDecline})
+}
+
+func TestSetUpSendsExactlyTheSwitchedOnTools(t *testing.T) {
+	screen := New(theme.DefaultDark(), setupFixture())
+	screen.model.SetValue("download", ui.StringValue("off"))
+	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionInstall})
 	decision, ok := result.Cmd().(DecisionMsg)
+	if !ok || decision.Target != screen || !slices.Equal(decision.Selected, []string{"manager"}) {
+		t.Fatalf("Set up with Aeron sent %+v", decision)
+	}
+	result = screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionDecline})
+	decision, ok = result.Cmd().(DecisionMsg)
 	if !ok || len(decision.Selected) != 0 || decision.Target != screen {
 		t.Fatal("Not now invented a selection")
 	}
@@ -59,7 +76,7 @@ func TestProjectToolsPreviewRendersAtDesktopAndConstrainedSizes(t *testing.T) {
 			plain.WriteByte('\n')
 		}
 		text := plain.String()
-		for _, want := range []string{"Project", "fixture-server", "Install selected", "Not now"} {
+		for _, want := range []string{"Project", "fixture-server", "package-manager-server", "Set up with Aeron", "Not now"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("missing %q at %v:\n%s", want, size, text)
 			}

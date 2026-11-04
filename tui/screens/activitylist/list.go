@@ -23,7 +23,17 @@ const (
 	ProgressID  ui.ComponentID = "activitylist/progress"
 
 	ActionActivate = "sidebar.activate"
+	// ActionToggleFold carries the foldable ListItem whose subtree the user
+	// asked to hide or show. The owner of the items decides and re-publishes.
+	ActionToggleFold = "sidebar.toggle-fold"
 )
+
+// foldMarkerWidth is the chevron plus its trailing space. foldMarkerX is the
+// row-local cell where the chevron starts for a given depth, matching the
+// three-cell tree connectors painted before it.
+const foldMarkerWidth = 2
+
+func foldMarkerX(depth int) int { return 1 + 3*depth }
 
 // doubleClickWindow matches the picker screens' click-arming interval.
 const doubleClickWindow = 500 * time.Millisecond
@@ -249,7 +259,7 @@ func itemsEquivalent(a, b []ui.ListItem) bool {
 		if x.Active != y.Active {
 			return false
 		}
-		if x.Depth != y.Depth || x.TreeLast != y.TreeLast {
+		if x.Depth != y.Depth || x.TreeLast != y.TreeLast || x.Foldable != y.Foldable || x.Folded != y.Folded {
 			return false
 		}
 	}
@@ -576,6 +586,15 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, row ui.Virt
 		cx += pw
 		remain -= pw
 	}
+	if item.Foldable && remain > foldMarkerWidth+2 {
+		glyph := tokens.Glyphs().TreeExpanded
+		if item.Folded {
+			glyph = tokens.Glyphs().TreeCollapsed
+		}
+		buf.WriteString(cx, y, glyph+" ", tokens.Color(ui.ColorMuted), bg, 0)
+		cx += foldMarkerWidth
+		remain -= foldMarkerWidth
+	}
 	if item.Icon != "" && remain > 2 {
 		iconFG := tokens.Color(ui.ColorAccent)
 		if item.Disabled {
@@ -649,6 +668,15 @@ func (l *sidebarList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return ui.EventResult{}
 		}
+		// The chevron is a control of its own: one click folds, never
+		// selects or opens the resource behind the row.
+		if row, ok := l.inner.ItemAtViewportRow(ctx.LocalY); ok {
+			if item, ok := row.Payload.(ui.ListItem); ok && item.Foldable && !item.Disabled {
+				if x := foldMarkerX(item.Depth); ctx.LocalX >= x && ctx.LocalX < x+foldMarkerWidth {
+					return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint, Action: &ui.Action{ID: ActionToggleFold, Payload: item}}
+				}
+			}
+		}
 		res := l.inner.Handle(ctx, evt)
 		if !l.activateOnClick && res.Action != nil && res.Action.ID == ActionActivate && !activateIsCommand(res.Action) {
 			// Resource rows (agents, terminals, changed files) arm on the
@@ -681,6 +709,15 @@ func (l *sidebarList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			l.inner.EnsureSelectedVisible()
 			l.inner.Scroll().SetAutoScroll(false)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		// Left folds and Right unfolds the selected subtree owner, as in the
+		// file tree. Rows that cannot fold leave the keys to the list.
+		if evt.Key.Code == tea.KeyLeft || evt.Key.Code == tea.KeyRight {
+			if row, ok := l.inner.Selected(); ok {
+				if item, ok := row.Payload.(ui.ListItem); ok && item.Foldable && !item.Disabled && item.Folded == (evt.Key.Code == tea.KeyRight) {
+					return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint, Action: &ui.Action{ID: ActionToggleFold, Payload: item}}
+				}
+			}
 		}
 		res := l.inner.Handle(ctx, evt)
 		if res.Handled {

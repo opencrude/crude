@@ -9,13 +9,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -39,8 +37,11 @@ const (
 // select the backend's immutable plan; replacing this DTO never changes it.
 type ReviewedEditPreview struct {
 	ID, Digest, Label, Text string
-	Boundary                types.InsightBoundary
-	Files                   []ReviewedEditFile
+	// Evidence retains action provenance for the immutable journal. Ordinary
+	// review UI renders Text, not hashes, wire metadata or internal identities.
+	Evidence string
+	Boundary types.InsightBoundary
+	Files    []ReviewedEditFile
 }
 
 type ReviewedEditFile struct {
@@ -155,20 +156,20 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		return ReviewedEditPreview{}, err
 	}
 	plan := &reviewedEdit{owner: owner, expires: time.Now().Add(reviewedEditLifetime), check: check}
-	plan.preview = ReviewedEditPreview{ID: "review-" + rand.Text(), Label: label, Boundary: boundary}
+	plan.preview = ReviewedEditPreview{ID: "review-" + rand.Text(), Label: label, Evidence: summary, Boundary: boundary}
 	plan.preview.Boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
 	seen := make(map[string]bool, len(targets))
 	total, editCount := 0, 0
+	if len(summary) > reviewedEditTextBytes {
+		return ReviewedEditPreview{}, errors.New("edit evidence exceeds its review bound")
+	}
 	var text strings.Builder
 	appendText := func(value string) error {
-		if len(value) > reviewedEditTextBytes-text.Len() {
+		if len(value) > reviewedEditTextBytes-text.Len()-len(summary) {
 			return errors.New("exact edit preview exceeds its 64 KiB review bound")
 		}
 		text.WriteString(value)
 		return nil
-	}
-	if err := appendText(summary); err != nil {
-		return ReviewedEditPreview{}, err
 	}
 	// Provider order cannot make one target's validation apply to a different
 	// target. Sort only after validating the bounded outer declaration.
@@ -231,22 +232,12 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		}
 		meta.Path, meta.BeforeSHA256, meta.AfterSHA256 = path, reviewedHash(before), reviewedHash(after)
 		meta.Mode, meta.BeforeBytes, meta.AfterBytes = uint32(file.info.Mode()), len(before), len(after)
-		if err := appendText(fmt.Sprintf("%q\nBefore SHA-256: %s\nAfter SHA-256: %s\n", path, meta.BeforeSHA256, meta.AfterSHA256)); err != nil {
+		displayPath, err := filepath.Rel(s.root, path)
+		if err != nil {
 			return ReviewedEditPreview{}, err
 		}
-		for _, edit := range target.Edits {
-			start, _ := lspedit.Offset(before, edit.Line, edit.Col)
-			end, _ := lspedit.Offset(before, edit.EndLine, edit.EndCol)
-			// Exact quoted spans expose CRLF/control bytes rather than silently
-			// normalizing them or pretending a truncated diff is reviewable.
-			span := before[start:end]
-			if len(span)+len(edit.NewText) > reviewedEditTextBytes-text.Len() {
-				return ReviewedEditPreview{}, errors.New("exact changed spans exceed the review bound")
-			}
-			if err := appendText(fmt.Sprintf("@@ UTF-16 %d:%d to %d:%d @@\n- %s\n+ %s\n",
-				edit.Line+1, edit.Col+1, edit.EndLine+1, edit.EndCol+1, strconv.Quote(span), strconv.Quote(edit.NewText))); err != nil {
-				return ReviewedEditPreview{}, err
-			}
+		if err := appendReviewedDiff(filepath.ToSlash(displayPath), before, after, appendText); err != nil {
+			return ReviewedEditPreview{}, err
 		}
 		plan.files = append(plan.files, file)
 		plan.edits = append(plan.edits, FileEdit{Path: path, OldContent: before, NewContent: after})

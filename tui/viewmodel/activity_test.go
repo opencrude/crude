@@ -132,6 +132,35 @@ func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	}
 }
 
+// A finished subtree can be folded from the Agents sidebar and unfolded again.
+// The folded row keeps saying how many agents it hides and whether one runs.
+func TestAgentSidebarFoldsAndUnfoldsSubtree(t *testing.T) {
+	app := newFullTestApp(t)
+	root := app.ws.AgentMgr().AddOrchestrator("root", workspace.NewAgentState("root", nil, nil))
+	root.Category = "default"
+	app.ws.AgentMgr().AddSubAgent("child-a", "root", "Research", "model-a", "researcher", workspace.NewAgentState("child-a", nil, nil))
+	app.ws.AgentMgr().AddSubAgent("child-b", "root", "Build", "model-b", "crafter", workspace.NewAgentState("child-b", nil, nil))
+
+	items := app.agentSidebarItems()
+	if !items[1].Foldable || items[1].Folded || items[2].Foldable {
+		t.Fatalf("only the parent may fold: %#v", items)
+	}
+
+	app.handleHostAction(&ui.Action{ID: activitylist.ActionToggleFold, Payload: items[1]})
+	folded := app.agentSidebarItems()
+	if len(folded) != 2 || !folded[1].Folded || !strings.Contains(folded[1].Detail, "+2") {
+		t.Fatalf("folded parent must hide both children and count them: %#v", folded)
+	}
+	if got := sidebarCountBadge(folded); got != "1" {
+		t.Fatalf("badge counts visible rows only, got %q", got)
+	}
+
+	app.handleHostAction(&ui.Action{ID: activitylist.ActionToggleFold, Payload: folded[1]})
+	if again := app.agentSidebarItems(); len(again) != 4 || again[1].Folded {
+		t.Fatalf("unfold must restore the children: %#v", again)
+	}
+}
+
 func TestActivityPanelsShareConfiguredSidebarWidth(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120

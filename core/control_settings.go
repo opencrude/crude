@@ -13,6 +13,7 @@ import (
 	"crude/coreprotocol"
 	"crude/types"
 	"crude/types/control"
+	"crude/workspace"
 )
 
 type controlSettingsInput struct {
@@ -26,6 +27,17 @@ type controlSettingsInput struct {
 // writes, or a nested authority/secret field under an otherwise ordinary page.
 func ControlSettingsAuthority(path string) bool {
 	return control.SettingsAuthority(path)
+}
+
+// aeronOwnsSetting reports that the caller is the workspace's Aeron and the
+// path is a language-server setting. Aeron installs and configures language
+// servers for the user, so it may write their launch commands and limits; every
+// other agent keeps the human-only rule.
+func (a *actor) aeronOwnsSetting(caller control.Caller, path string) bool {
+	if caller.Kind != control.AgentCaller || caller.AgentID == "" || !strings.HasPrefix(path, "lsp.") {
+		return false
+	}
+	return workspace.SessionIsAeron(a.ws.SessionForAgent(caller.AgentID))
 }
 
 func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Owner) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
@@ -72,7 +84,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	if input.Path == "" {
 		return controlFailure(in, control.Invalid, "exact field path is required")
 	}
-	if ControlSettingsAuthority(input.Path) {
+	if ControlSettingsAuthority(input.Path) && !a.aeronOwnsSetting(in.Caller, input.Path) {
 		return controlFailure(in, control.Denied, "authority, secret and entity settings require a human-owned operation")
 	}
 	reset := in.CommandID == "settings.reset"

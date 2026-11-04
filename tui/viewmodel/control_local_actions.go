@@ -55,9 +55,7 @@ func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentI
 	if s := m.navigation; m.navigationCurrent(s) && owner.window == m.overlayHost.Window(navigationOverlay) &&
 		strings.HasPrefix(string(localID), string(navigation.ScreenID)+"/") {
 		switch action {
-		case navigation.ActionInspect:
-			return control.Read, false, nil
-		case navigation.ActionOpen, navigation.ActionBack, navigation.ActionClose:
+		case navigation.ActionOpen, navigation.ActionClose:
 			// Open includes a selected source read and private tab/caret change.
 			return control.Write, false, nil
 		}
@@ -65,7 +63,7 @@ func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentI
 	if s := m.codeActions; m.codeActionsVisible(s) && owner.window == m.overlayHost.Window(codeActionsOverlay) &&
 		strings.HasPrefix(string(localID), string(codeactions.ScreenID)+"/") {
 		switch action {
-		case codeactions.ActionInspect, codeactions.ActionPrepare:
+		case codeactions.ActionPrepare:
 			return control.Read, false, nil
 		case codeactions.ActionBack, codeactions.ActionClose:
 			return control.Write, false, nil

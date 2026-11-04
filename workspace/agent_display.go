@@ -24,6 +24,12 @@ func AgentDisplayLabel(node *AgentNode) string {
 	return CategoryDisplayName(node.Category)
 }
 
+// SessionIsAeron reports whether the session's root agent is the Aeron role:
+// the workspace's errand runner for tool setup and similar jobs.
+func SessionIsAeron(s *Session) bool {
+	return s != nil && s.Settings != nil && s.Settings.Effective.SessionMainAgent == session.CategoryAeron
+}
+
 // CategoryDisplayName maps an agent category/role key to its UI name.
 // Unknown empty categories yield "" so presentation can omit the label.
 func CategoryDisplayName(category string) string {

@@ -34,7 +34,7 @@ import (
 // Alt+m F4; Down Enter F4; Left Left Enter F4;
 // Ctrl+Home Down Down Down End Left x10 Alt+. F4;
 // Alt+; F4; Enter F4; Escape F4; Escape F4; F9.
-// F4 never navigates, chooses a row, inspects, opens, closes, or changes focus.
+// F4 never navigates, chooses a row, opens, closes, or changes focus.
 func TestNavigationVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_NAVIGATION") != "1" {
 		t.Skip("dedicated terminal real-provider navigation acceptance only")
@@ -235,8 +235,8 @@ func runNavigationVisual(t *testing.T, headless bool, width, height int) {
 		}
 		t.Fatal(m.failure)
 	}
-	if m.phase != 17 {
-		t.Fatalf("navigation observations incomplete: %d/17", m.phase)
+	if m.phase != 11 {
+		t.Fatalf("navigation observations incomplete: %d/11", m.phase)
 	}
 }
 
@@ -263,7 +263,7 @@ func (m *navigationVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Code == tea.KeyF9 && !m.busy {
 			return m, tea.Quit
 		}
-		if v.Code == tea.KeyF3 && m.phase == 0 || v.Code == tea.KeyF4 && m.phase > 0 && m.phase < 17 {
+		if v.Code == tea.KeyF3 && m.phase == 0 || v.Code == tea.KeyF4 && m.phase > 0 && m.phase < 11 {
 			if m.busy {
 				return m, nil
 			}
@@ -319,25 +319,10 @@ func (m *navigationVisualModel) driveNavigationVisual(ctx context.Context) {
 			return
 		}
 		if invocation == 2 {
-			key(tea.KeyDown) // Deliberately not the initial/first implementation.
-		}
-		key(tea.KeyEnter)
-		if !observe(tea.KeyF4) {
-			return
-		}
-		switch invocation {
-		case 0:
-			key(tea.KeyEnter) // Safe default Close.
-		case 1:
-			key(tea.KeyEsc) // Detail Back, not entire chooser Close.
-			if !observe(tea.KeyF4) {
-				return
-			}
-			key(tea.KeyEsc) // List Close.
-		case 2:
-			key(tea.KeyLeft)
-			key(tea.KeyLeft)
-			key(tea.KeyEnter) // Explicit second-target Open.
+			key(tea.KeyDown)  // Deliberately not the initial/first implementation.
+			key(tea.KeyEnter) // Choosing the second row goes straight to its code.
+		} else {
+			key(tea.KeyEsc) // Close without opening anything.
 		}
 		if !observe(tea.KeyF4) {
 			return
@@ -359,11 +344,9 @@ func (m *navigationVisualModel) driveNavigationVisual(ctx context.Context) {
 	if !observe(tea.KeyF4) {
 		return
 	}
-	for _, code := range []rune{tea.KeyEnter, tea.KeyEsc, tea.KeyEsc} {
-		key(code)
-		if !observe(tea.KeyF4) {
-			return
-		}
+	key(tea.KeyEsc) // Close the references list without opening anything.
+	if !observe(tea.KeyF4) {
+		return
 	}
 	key(tea.KeyF9)
 }
@@ -618,9 +601,9 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 		if err := m.navigationTargets(types.LSPNavigationTypeDefinition); err != nil {
 			return err
 		}
-	case 2, 5, 9, 13:
+	case 2, 4, 6, 9:
 		kind, sourceName, line, col := types.LSPNavigationImplementation, "contract.go", 2, 5
-		if phase == 13 {
+		if phase == 9 {
 			kind, sourceName = types.LSPNavigationReferences, "helper.go"
 		}
 		label = strings.ToUpper(kind) + "_LIST"
@@ -632,7 +615,11 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 			if v.EditorState.Editor.FilePath() != filepath.Join(m.root, sourceName) {
 				return fmt.Errorf("listing silently chose/opened a target")
 			}
-			return featureVisualPaint(v, "Inspect", "Close")
+			paint := ansi.Strip(v.View().RenderContent())
+			if strings.Contains(paint, "[ Close ]") {
+				return fmt.Errorf("navigation list kept a redundant Close footer")
+			}
+			return nil
 		}); err != nil {
 			return err
 		}
@@ -651,90 +638,24 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 				return err
 			}
 		}
-	case 3, 6, 10, 14:
-		label = "INSPECT_ONLY_CLOSE_DEFAULT"
-		index := 0
-		if phase == 10 {
-			index = 1
-		}
-		if err := m.await(func(v *controlVisualModel) error {
-			s := v.navigation
-			if s == nil || s.screen.InList() || s.reading || s.landing || s.selected != -1 {
-				return fmt.Errorf("Enter bypassed inspect-only detail")
-			}
-			if err := featureVisualPaint(v, "URI (literal, complete)", "Back", "Close"); err != nil {
-				return err
-			}
-			// The mounted native read-only reader retains all metadata even
-			// when the viewport requires scrolling to see its lower lines.
-			var detail string
-			for _, child := range s.screen.Children() {
-				if reader, ok := child.(interface{ Value() string }); ok {
-					detail = reader.Value()
-				}
-			}
-			target := s.result.Targets[index]
-			boundary, err := json.MarshalIndent(s.result.Boundary, "", "  ")
-			if err != nil {
-				return err
-			}
-			for _, want := range []string{
-				fmt.Sprintf("Target %d of %d", index+1, len(s.result.Targets)),
-				fmt.Sprintf("URI (literal, complete): %q", target.URI),
-				fmt.Sprintf("Path (literal, complete): %q", target.Path),
-				fmt.Sprintf("LocationLink: %t", target.Link),
-				fmt.Sprintf("targetRange: [%d:%d, %d:%d)", target.Range.Start.Line, target.Range.Start.Character, target.Range.End.Line, target.Range.End.Character),
-				fmt.Sprintf("targetSelectionRange: [%d:%d, %d:%d)", target.Selection.Start.Line, target.Selection.Start.Character, target.Selection.End.Line, target.Selection.End.Character),
-				"Ranges are zero-based UTF-16", "Standard LSP targets are unversioned.",
-				"cannot guarantee semantic freshness", string(boundary),
-			} {
-				if !strings.Contains(detail, want) {
-					return fmt.Errorf("mounted metadata missing %q:\n%s", want, detail)
-				}
-			}
-			if target.Origin != nil {
-				origin := target.Origin
-				if !strings.Contains(detail, fmt.Sprintf("originSelectionRange: [%d:%d, %d:%d)",
-					origin.Start.Line, origin.Start.Character, origin.End.Line, origin.End.Character)) {
-					return fmt.Errorf("original LocationLink origin lost")
-				}
-			} else if !strings.Contains(detail, "originSelectionRange: not reported") {
-				return fmt.Errorf("missing origin was inferred")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	case 4, 8, 16:
+	case 3, 5, 10:
 		label = "CLOSE_NO_LANDING"
 		name := "contract.go"
-		if phase == 16 {
+		if phase == 10 {
 			name = "helper.go"
 		}
 		if err := m.navigationLanding(name, 2, 5); err != nil {
 			return err
 		}
-	case 7, 15:
-		label = "ESCAPE_BACK_PRESERVED_LIST"
-		if err := m.await(func(v *controlVisualModel) error {
-			s := v.navigation
-			if s == nil || s.result == nil || !s.screen.InList() ||
-				!reflect.DeepEqual(*s.result, m.lastResult) || !v.overlayHost.IsOpen(navigationOverlay) {
-				return fmt.Errorf("detail Escape did not preserve exact chooser result")
-			}
-			return featureVisualPaint(v, "Inspect", "Close")
-		}); err != nil {
-			return err
-		}
-	case 11:
-		label = "EXPLICIT_SECOND_IMPLEMENTATION_OPEN"
+	case 7:
+		label = "SECOND_IMPLEMENTATION_OPEN"
 		if err := m.navigationLanding(filepath.Base(m.second.Path), 2, 5); err != nil {
 			return err
 		}
 		if m.second.Path == m.implementation.Targets[0].Path {
 			return fmt.Errorf("second-target oracle accidentally selected first target")
 		}
-	case 12:
+	case 8:
 		label = "DEFINITION_AUTO"
 		if err := m.navigationLanding("helper.go", 2, 5); err != nil {
 			return err

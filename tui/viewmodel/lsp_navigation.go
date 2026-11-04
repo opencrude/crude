@@ -16,6 +16,7 @@ import (
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/types"
+	"crude/workspace"
 )
 
 const navigationOverlay = ui.OverlayNavigation
@@ -92,13 +93,13 @@ func (m *App) requestNavigationCmd(kind string) tea.Cmd {
 	m.closeCodeActions()
 	ed := m.EditorState.Editor
 	port, ok := m.ws.(shellport.Navigation)
-	if !ok || ed == nil || !ed.IsOpen() || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
-		m.Feedback.NotifyInfo("Navigation needs a connected shared document and language server")
+	if !ok || ed == nil || !ed.IsOpen() || !m.manualLSPAvailable() {
+		m.Feedback.NotifyInfo("The language server is not running for this file. Open Language Servers to start it.")
 		return nil
 	}
 	source, current := ed.CurrentInsightSource()
 	if !current || source.Kind != "canonical" {
-		m.Feedback.NotifyInfo("Navigation waits for acknowledged source text and resolved shared changes")
+		m.Feedback.NotifyInfo("The file is still syncing. Try again in a moment.")
 		return nil
 	}
 	base, generation := m.lspRequestContext()
@@ -108,7 +109,7 @@ func (m *App) requestNavigationCmd(kind string) tea.Cmd {
 		workspace: m.ws, editor: ed, source: source, selection: currentCodeActionSelection(ed),
 		path: ed.FilePath(), kind: kind, line: line, col: col, revision: ed.Revision(),
 		generation: generation, port: port, screen: navigation.New(m.Theme), ctx: ctx, cancel: cancel,
-		deadline: time.Now().Add(10 * time.Second), selected: -1,
+		deadline: time.Now().Add(workspace.ManualLSPRequestTimeout + 5*time.Second), selected: -1,
 	}
 	if m.FocusStack != nil {
 		s.focus = m.FocusStack.Top()
@@ -118,10 +119,10 @@ func (m *App) requestNavigationCmd(kind string) tea.Cmd {
 	w, h := min(104, max(1, m.width-4)), min(28, max(1, m.height-4))
 	frame := ui.NewWindowFrameWidget(m.Theme, "navigation/frame", ui.FramePopover, navigationTitle(kind), s.screen, nil, true, w, h)
 	frame.Focus(s.screen.DefaultFocus())
-	fw := wm.NewFloatingWindow(string(navigationOverlay), "", frame, w, h, wm.WithDecoration(true),
-		wm.WithMovable(true), wm.WithResizable(true), wm.WithClosable(true), wm.WithFocusable(true),
+	fw := wm.NewFloatingWindow(string(navigationOverlay), "", frame, w, h, wm.WithDecoration(false),
+		wm.WithMovable(false), wm.WithResizable(false), wm.WithClosable(true), wm.WithFocusable(true),
 		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	wm.CenterOnScreen(fw, m.width, m.height)
+	m.placeEditorPicker(fw, frame, ed)
 	m.overlayHost.Open(navigationOverlay, fw, ui.PopoverPolicy(true), func() {
 		if m.navigation == s && !s.landing {
 			m.navigation = nil
@@ -129,7 +130,7 @@ func (m *App) requestNavigationCmd(kind string) tea.Cmd {
 		}
 	})
 	return func() tea.Msg {
-		request, stop := context.WithTimeout(s.ctx, 10*time.Second)
+		request, stop := context.WithTimeout(s.ctx, workspace.ManualLSPRequestTimeout)
 		defer stop()
 		result, err := port.RequestLSPNavigation(request, source, kind, line, col, kind == types.LSPNavigationReferences)
 		return navigationResultMsg{owner: s, result: result, err: err}
@@ -169,7 +170,7 @@ func (m *App) navigationCurrent(s *navigationState) bool {
 		}
 		return m.focusTarget() == FocusEditor && !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput()
 	}
-	if !m.ws.LSPMgr().ServerReady() {
+	if s.shown && (s.result == nil || !m.lspProducerConnected(s.result.Boundary.Producer.InstanceID)) {
 		return false
 	}
 	if m.overlayHost == nil {
@@ -189,6 +190,12 @@ func (m *App) markNavigationDirty(s *navigationState) {
 	}
 	if fw := m.overlayHost.Window(navigationOverlay); fw != nil {
 		frame := fw.Content.(*ui.WindowFrameWidget)
+		title := s.screen.Title()
+		if title == "" {
+			title = navigationTitle(s.kind)
+		}
+		frame.Frame().SetTitle(title)
+		m.placeEditorPicker(fw, frame, s.editor)
 		frame.Host().MarkLayout()
 		frame.Host().Layout()
 		frame.Focus(s.screen.DefaultFocus())
@@ -205,13 +212,14 @@ func (m *App) handleNavigationResult(msg navigationResultMsg) {
 	}
 	if msg.err != nil {
 		s.deadline = time.Time{}
-		s.screen.SetError(msg.err.Error())
+		m.logLSPFailure("navigation", msg.err)
+		s.screen.SetError("Could not search. The language server returned an error. Try again.")
 		m.markNavigationDirty(s)
 		return
 	}
 	if msg.result.Kind != s.kind || msg.result.Line != s.line || msg.result.Col != s.col ||
 		msg.result.IncludeDeclaration != (s.kind == types.LSPNavigationReferences) {
-		s.screen.SetError("The result does not identify the original navigation invocation.")
+		s.screen.SetError("The answer does not match this search. Search again.")
 		s.deadline = time.Time{}
 		m.markNavigationDirty(s)
 		return
@@ -232,13 +240,13 @@ func (m *App) syncNavigation() {
 	if !s.deadline.IsZero() && time.Now().After(s.deadline) {
 		if s.landing {
 			m.closeNavigation()
-			m.Feedback.NotifyInfo("Navigation target open timed out; no late tab will be installed")
+			m.Feedback.NotifyInfo("Opening the file took too long. Search again.")
 			return
 		}
 		s.cancel()
 		s.deadline = time.Time{}
 		s.result = nil
-		s.screen.SetError("Navigation timed out or its exact source context could not be observed.")
+		s.screen.SetError("The language server did not answer in time. It may still be loading the project. Try again in a moment.")
 		m.markNavigationDirty(s)
 		return
 	}
@@ -253,6 +261,12 @@ func (m *App) syncNavigation() {
 		return
 	}
 	if generation < boundary.Context.Generation || s.shown {
+		return
+	}
+	// The context can be published while its replacement server is still
+	// starting. Wait for that exact producer's connected publication too; do
+	// not show an answer and retire it on the next Update's older readiness.
+	if !m.lspProducerConnected(boundary.Producer.InstanceID) {
 		return
 	}
 	s.shown, s.deadline = true, time.Time{}
@@ -296,13 +310,14 @@ func (m *App) handleNavigationTarget(msg navigationTargetMsg) tea.Cmd {
 	}
 	s.reading, s.deadline = false, time.Time{}
 	if msg.err != nil {
-		s.screen.SetError(msg.err.Error())
+		m.logLSPFailure("navigation-open", msg.err)
+		s.screen.SetError("Could not open the file. It may have moved or changed. Search again.")
 		m.markNavigationDirty(s)
 		return nil
 	}
 	if !reflect.DeepEqual(msg.landing.Boundary, s.result.Boundary) ||
 		!reflect.DeepEqual(msg.landing.Target, s.result.Targets[msg.index]) || len(msg.landing.TextHash) != 64 {
-		s.screen.SetError("The selected-target observation lost its original identity.")
+		s.screen.SetError("That place changed while it was opened. Search again.")
 		m.markNavigationDirty(s)
 		return nil
 	}
@@ -375,7 +390,7 @@ func (m *App) applyNavigationLanding(msg paneFilesOpenedMsg) {
 	source := navigationOpenedSource(*msg.files[0].snapshot)
 	if n.hash != n.landing.TextHash || !ed.MatchesInsightSource(source) ||
 		(n.landing.Source.Kind == "canonical" && !ed.MatchesInsightSource(n.landing.Source)) {
-		m.Feedback.NotifyInfo("Navigation target changed; the current editor is preserved. Request the location again.")
+		m.Feedback.NotifyInfo("The file changed. Search again.")
 		return
 	}
 	r := n.landing.Target.Selection
@@ -384,5 +399,4 @@ func (m *App) applyNavigationLanding(msg paneFilesOpenedMsg) {
 		return
 	}
 	ed.ScrollToCursor()
-	m.Feedback.NotifyInfo("Opened unversioned LSP target; range checked against the observed text")
 }

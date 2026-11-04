@@ -318,6 +318,10 @@ func (l *local) NewAgentSession() *workspace.NewSessionResult {
 	return l.ws.NewAgentSession()
 }
 
+func (l *local) NewAgentSessionAs(mainAgent string) *workspace.NewSessionResult {
+	return l.ws.NewAgentSessionAs(mainAgent)
+}
+
 func (l *local) OpenAgentSession(sessionID string) *workspace.NewSessionResult {
 	return l.ws.OpenAgentSession(sessionID)
 }

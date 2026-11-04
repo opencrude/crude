@@ -1,9 +1,11 @@
 # Code-Intelligence Setup
 
-> Status: IN PROGRESS - BLOCKED. The user rejected the setup-page design and
-> reported unusable switches and dismissal on 2026-11-03. Common package-manager
-> installations are unimplemented. Connected approval/store/evaluation primitives
-> do not establish a usable setup workflow. See [blocking failures](#blocking-failures-and-rejected-design).
+> Status: IN PROGRESS. The setup checklist now builds a task for workspace
+> Aeron. Its unrestricted normal tools cover research, installation and LSP
+> configuration; the earlier rigid installer is not the setup-screen path.
+> Native LSP navigation and edit-review interactions are verified at 80x24 and
+> 160x40. Real-model setup acceptance remains open. See
+> [the current direction](#direction-a-workspace-aeron-does-the-setup-2026-11-04).
 > This plan owns how Crude finds, asks for, installs and accounts for the tools
 > that give a project code intelligence. It implements the acquisition stage of
 > [autonomous code intelligence](autonomous-code-intelligence.md); read that
@@ -38,12 +40,108 @@ no second installer, approval store or registration table.
 | 2026-11-03 | The user excluded website work and its gate from this task: keep the work on code intelligence and this plan. |
 | 2026-11-03 | The user rejected the current setup page: "the design of this page is completely unacceptable", and asked to document its failures. The page is not accepted and needs a replacement design, not cosmetic approval of the existing form. |
 
+## Direction: a workspace Aeron does the setup (2026-11-04)
+
+This section supersedes the [question flow](#question-flow), the one-shot
+consent preview and the "install through catalog recipes only" assumption where
+they disagree. Keep it small: the effort goes to editor interaction and the
+cooperation with the language server, not to a trust framework around setup.
+
+- **One Aeron per workspace.** Aeron is the existing narrow-task agent role, not
+  a new kind of agent. The workspace has one instance. It is created when first
+  needed, starts minimized, and shows in the Agents sidebar like any agent. The
+  user can open it to see what it does. Crude parts and the main agent task it
+  with normal messages. The user can also task the main agent to do the same job
+  if Aeron falls short.
+- **The setup screen stays.** It shows the languages Crude found. Its switches
+  say what Aeron should set up and what it should leave alone. **Set up** builds
+  a prompt from them and sends it to Aeron. The screen installs nothing itself.
+  Tools that the catalog cannot install directly are no longer fake switches:
+  Aeron works out how to get them (a package manager, a release file).
+- **Auto approve by default.** Aeron runs with the session permission mode and
+  starts in the automatic mode. There is no second approval store, no scope
+  compiler and no deduplicating question service. The switches are prompt text.
+- **Aeron has full control.** It has no tool allow-list or deny-list and no
+  capability limit beyond the session permission mode. It searches the web,
+  finds the right server and settings for the project, downloads and installs
+  the tool, and writes the server's launch command and arguments in the
+  workspace settings (`lsp.*` paths, through `crude_control`). That is the
+  point of an agent here: the user does not do these steps. Only Aeron may
+  write the `lsp.*` authority paths; every other agent keeps the human-only
+  rule (`aeronOwnsSetting` in `core/control_settings.go`). The existing check
+  (start, initialize, answer a fixture) runs after the change, and Problems
+  shows the result.
+- **Few interruptions.** Aeron asks the user only for a decision it cannot make
+  (for example, a tool that needs administrator rights). It uses the normal agent
+  question. The prompt tells it to ask once, to keep progress in its own view and
+  to report a failure once. The prompt text lives in `prompt/`.
+- **Cleanup.** Removal of tools stays on the Settings page. Aeron removes a tool
+  only when the user asks.
+
+### Implementation status (2026-11-04)
+
+Built: the Agents sidebar fold; `InvocationSelection.MainAgent` and
+`NewAgentSessionAs` (a session rooted in a built-in role, over the same core
+RPC); the Aeron role with no tool or capability restriction; the setup screen
+with real switches that sends `prompt.ToolSetupMessage` to the workspace's
+Aeron, minimized and on automatic approval (`tui/viewmodel/workspace_aeron.go`);
+the close button of the setup window. Not built or not verified: finding a
+saved Aeron session after a core restart (a new one opens), a rendered native
+Windows run of the whole journey, and an end-to-end run with a real model.
+
+### Language-server interaction fixes (2026-11-04)
+
+- **Navigation no longer fails while the server loads.** Measured with real
+  gopls on this repository: the first references search took about 50 s and
+  about 10 s after a restart, and every try was cancelled at 10 s, so the user
+  only saw "Navigation timed out". Manual requests now share `ManualLSPRequestTimeout`
+  (two minutes) in the manager, the connection and the shell. A request made
+  while the server starts or restarts waits for it (`awaitSynchronized`)
+  instead of failing. Guarded by `TestEditorNavigationWaitsForRealServerAfterStartAndRestart`.
+- **Restart remains usable through the UI.** The Code menu keeps navigation and
+  code actions while the server starts. Results wait for the exact connected
+  producer as well as the context publication, instead of appearing and closing
+  against older readiness. `TestConnectedNavigationDuringRestartLanguageServers`
+  exercises the actual restart command.
+- **Choose a place and go there.** Navigation rows open the code on one Enter
+  or click. Available code actions go directly to their shared change review.
+  Removed the metadata inspection page and extra Open/Preview step. Real gopls
+  import removal after restart is exercised by
+  `TestRealServerQuickFixWorksAfterRestart`. Server commands, resource operations
+  and multi-file code actions remain unsupported; these UI changes do not
+  implement those protocol paths.
+- **Compact native pickers.** Opus supplied a UI-only design review: size each
+  picker to its rows, place it beside the source caret, use muted native list
+  detail for folders, show the result count, and remove Close-only footers.
+  Both pickers share one placement helper and the List's cached intrinsic
+  measurement. WindowFrame still owns chrome and the editor owns caret geometry.
+- **The shared change review shows the code first.** Rename and code actions
+  use one relative-path line diff and one Cancel-default review. Opus designed
+  its compact header and layout after the native capture exposed a second
+  hash dump. Original action provenance remains in `ReviewedEditPreview.Evidence`,
+  while file hashes and source/provider checks stay in their existing fields.
+  The ordinary review and error messages no longer print those internal values.
+- **File tree markers match Problems.** The tree counted only exact-source
+  facts, so files found by a project check and facts kept after a restart showed
+  in Problems but not in the tree. The tree now counts every problem Problems
+  lists; the switch hides markers only. Guarded by
+  `TestFileTreeMarkersMatchProblemsPanel`.
+
+Native Windows acceptance uses `TestLSPInteractionNativeCapture` with installed
+gopls and sequential `scripts/tuishot.ps1` captures at both sizes. The actual Code
+menu opens the two-reference picker, Enter on its second row lands in code, and
+the real Organize Imports action opens its exact import-removal review directly.
+Cancel leaves the source and private draft unchanged. The observer checks the
+actual changed line is visible and no action hash, canonical-source text or
+protocol wording is shown. These checks do not certify unimplemented command
+actions or a model-driven tool installation.
+
 ## Blocking failures and rejected design
 
 Recorded on 2026-11-03 after the user's real-project report, **Pasted IMG5**
-(reference ref-32b150624c394e46db3c2519a2da945e). These failures remain open.
-No product correction or replacement-design acceptance was completed during
-this documentation pass.
+(reference ref-32b150624c394e46db3c2519a2da945e). This section preserves the
+rejected design and its evidence. The 2026-11-04 direction above supersedes its
+catalog-only installation requirements; it does not claim real-model acceptance.
 
 ### Functional failures and evidence
 
