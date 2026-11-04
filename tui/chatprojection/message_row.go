@@ -32,6 +32,7 @@ type ChatRecoveryRetryPayload struct {
 
 // ChatTogglePayload carries the message whose disclosure row was clicked.
 type ChatTogglePayload struct {
+	AgentID   string
 	MessageID string
 }
 

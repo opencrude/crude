@@ -4526,13 +4526,14 @@ func (z *MemoryDetail) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *NewSessionResult) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 5
-	o = append(o, 0x95)
+	// array header, size 6
+	o = append(o, 0x96)
 	o = msgp.AppendString(o, z.SessionID)
 	o = msgp.AppendString(o, z.OrchID)
 	o = msgp.AppendString(o, z.Error)
 	o = msgp.AppendBool(o, z.NeedsAccount)
 	o = msgp.AppendBool(o, z.NeedsModel)
+	o = msgp.AppendBool(o, z.Busy)
 	return
 }
 
@@ -4548,8 +4549,8 @@ func (z *NewSessionResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 5 {
-		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
 		return
 	}
 	z.SessionID, bts, err = msgp.ReadStringBytes(bts)
@@ -4577,13 +4578,18 @@ func (z *NewSessionResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "NeedsModel")
 		return
 	}
+	z.Busy, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Busy")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *NewSessionResult) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.SessionID) + msgp.StringPrefixSize + len(z.OrchID) + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize
+	s = 1 + msgp.StringPrefixSize + len(z.SessionID) + msgp.StringPrefixSize + len(z.OrchID) + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
 	return
 }
 

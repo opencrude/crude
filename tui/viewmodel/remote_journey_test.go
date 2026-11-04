@@ -378,7 +378,7 @@ func TestRemoteWorkspaceAeronIsEnsuredListedAndIdle(t *testing.T) {
 		t.Fatal("the workspace Aeron took the user's tab")
 	}
 	row := findSidebarAgent(t, shell.app, id)
-	if row.Label != "Aeron" || row.Detail != "idle · minimized" {
+	if row.Label != "Aeron" || row.Detail != "idle" {
 		t.Fatalf("Aeron row does not report its state: %#v", row)
 	}
 	if again := shell.app.workspaceAeronTick(time.Now()); again != nil {

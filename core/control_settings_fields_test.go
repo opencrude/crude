@@ -145,6 +145,9 @@ func TestControlFieldsProgressiveRedactedExact(t *testing.T) {
 		if out.Fault != nil {
 			t.Fatal(out.Fault)
 		}
+		if fault := out.Validate(); fault != nil {
+			t.Fatalf("settings discovery cannot pass the control gateway: %v", fault)
+		}
 		if len(out.Output) > control.MaxValueBytes {
 			t.Fatal("unbounded page")
 		}

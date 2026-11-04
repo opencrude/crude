@@ -13,6 +13,8 @@ type RootOptions struct {
 	WorkDir  string
 	TempDir  string
 	Model    string
+	// WorkspaceAgent adds the contract of the workspace's permanent Aeron.
+	WorkspaceAgent bool
 }
 
 func BuildRoot(options RootOptions) string {
@@ -24,6 +26,10 @@ func BuildRoot(options RootOptions) string {
 	if options.PlanMode {
 		planMode = PlanModeContract
 	}
+	workspaceAgent := ""
+	if options.WorkspaceAgent {
+		workspaceAgent = WorkspaceAgentContract
+	}
 	return strings.Join(slices.DeleteFunc([]string{
 		`<crude_agent version="3">`,
 		`<identity>You are Crude, a production-quality coding agent. Own correctness, safety, maintainability, and the complete user-visible outcome.</identity>`,
@@ -32,6 +38,7 @@ func BuildRoot(options RootOptions) string {
 		mode,
 		planMode,
 		ActivityCommunication,
+		workspaceAgent,
 		EngineeringContract,
 		ToolContract,
 		RuntimeCapabilities,

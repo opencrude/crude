@@ -237,10 +237,11 @@ func DefaultAgentRoleCategories() map[string]CategorySettings {
 			DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 		},
 		"crafter": {Policy: "no-delete", Description: "Implementer - writes code, edits files, runs tests", DeniedTools: []string{"delete_file"}},
-		"aeron": {
-			Policy: "read-only", Description: "Grunt - formatting, linting, boilerplate, monitoring",
-			DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search"},
-		},
+		// Aeron is the workspace agent that installs and configures tools. It
+		// keeps the Main Agent's full tool set; agent.CategoryToolDefaults and
+		// agent.categoryPolicy say the same, and the user's permission mode is
+		// its only limit.
+		"aeron":  {Description: "Workspace agent - sets up tools and runs project errands"},
 		"memory": {},
 	}
 }

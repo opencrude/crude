@@ -270,8 +270,7 @@ func (m *App) normalizeSessionDeckFocus(projection *sessionProjection) {
 	projection.deckHost.Focus(ui.RootID)
 }
 
-func (m *App) focusSessionDeckAfterLayout() {
-	projection := m.activeSessionDeck()
+func (m *App) focusSessionDeckAfterLayout(projection *sessionProjection) {
 	if projection == nil || !projection.deckFocused || projection.deckFocus == ui.RootID {
 		return
 	}

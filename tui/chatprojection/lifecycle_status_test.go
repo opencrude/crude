@@ -341,3 +341,31 @@ func TestCompactAgentWaitKeepsNameAndIdentityWithoutJSON(t *testing.T) {
 		t.Fatalf("compact agent wait label: %q", text.String())
 	}
 }
+
+func TestCompactWaitTitleMatchesItsTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, status, phase, content, want string
+	}{
+		{"next update", `{"agent_id":"","run_id":"","artifact_id":"","timeout_seconds":600}`,
+			types.ToolStatusStreaming, types.ToolPreviewStreaming, "", "Waiting for an update"},
+		{"named agent", `{"agent_id":"agent-8f21","timeout_seconds":600}`,
+			types.ToolStatusStreaming, types.ToolPreviewStreaming, "", "Waiting for agent event agent-8f21"},
+		{"command update", `{"timeout_seconds":600}`, types.ToolStatusSuccess, types.ToolPreviewDone,
+			`{"status":"directed_event","event":{"id":"event-1","origin":"runtime","kind":"command_outcome"}}`, "Wait finished"},
+		{"no update", `{"timeout_seconds":600}`, types.ToolStatusSuccess, types.ToolPreviewDone,
+			`{"status":"timeout_no_match"}`, "Wait finished"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := &types.ChatMessage{Role: types.RoleTool, ToolName: "agent_wait", ToolInput: tc.input,
+				ToolStatus: tc.status, ToolPreviewPhase: tc.phase, Content: tc.content}
+			lines, _ := NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*types.ChatMessage{msg}, 80, 0)
+			var text strings.Builder
+			for _, line := range lines {
+				text.WriteString(line.PlainText())
+			}
+			if !strings.Contains(text.String(), tc.want) {
+				t.Fatalf("wait row does not describe its actual target: got %q, want %q", text.String(), tc.want)
+			}
+		})
+	}
+}

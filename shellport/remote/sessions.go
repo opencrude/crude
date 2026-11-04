@@ -48,6 +48,7 @@ func (w *Workspace) lifecycle(method string, payload coreprotocol.Value) *worksp
 			result.Error = fault.Message
 			result.NeedsAccount = fault.Code == "account_required"
 			result.NeedsModel = fault.Code == "model_required"
+			result.Busy = fault.Code == "busy" || fault.Code == "restore_busy"
 		} else {
 			result.Error = err.Error()
 		}

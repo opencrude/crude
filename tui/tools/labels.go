@@ -209,6 +209,9 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		}
 		verbs = [3]string{"Preparing " + strings.ToLower(name), "Running " + name, name}
 	}
+	if msg.ToolName == "agent_wait" && target == "" {
+		verbs[1], verbs[2] = "Waiting for an update", "Wait finished"
+	}
 	title := ToolTitle{Action: verbs[stage], Operand: target}
 	if stage == 2 {
 		title.Metadata = duration

@@ -32,9 +32,6 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 			delete(m.pendingOrchestrators, id)
 		}
 		m.addOrchestrator(id, activate)
-		if aeron {
-			m.prepareAeronAgent(id)
-		}
 		commands = append(commands, m.takePendingFirstInput(id))
 	}
 	for id := range m.pendingOrchestrators {

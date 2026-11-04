@@ -81,6 +81,15 @@ func (i UserInput) EffectiveOrigin() MessageOrigin {
 	return i.Origin
 }
 
+// DisplayContent is the transcript text for prepared input. Text remains the
+// full model-facing payload, including any structured work order.
+func (i UserInput) DisplayContent() string {
+	if i.DisplayText != "" {
+		return i.DisplayText
+	}
+	return i.Text
+}
+
 type MessageOrigin string
 
 const (

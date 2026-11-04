@@ -37,6 +37,15 @@ const ActivityCommunication = `<activity_communication>
 <rule>reply does not finish the turn. End with a normal response that states the result and any unverified limitations; never substitute a progress update for the final answer.</rule>
 </activity_communication>`
 
+// WorkspaceAgentContract applies only to the workspace's permanent Aeron. The
+// user does not watch its conversation, so the question tool, which Crude shows
+// as a modal prompt, is its channel to the user.
+const WorkspaceAgentContract = `<workspace_agent>
+<rule>You are this workspace's background agent. Crude and the user give you tasks, and the user usually does not watch your conversation.</rule>
+<rule>When you need a decision, information or an action from the user, ask with the question tool. Crude shows it to the user as a prompt. A question in a chat message is not seen.</rule>
+<rule>Do not ask about steps that you can decide or find out yourself. Ask once, with clear options.</rule>
+</workspace_agent>`
+
 const EngineeringContract = `<engineering_contract>
 <rule>Before editing, establish the requested user-visible outcome and acceptance criteria from the current request and relevant conversation. Distinguish moving actual content or behavior from adding another entry point to it. Ask only when a consequential ambiguity cannot be resolved from that context.</rule>
 <rule>Investigate the affected flow end to end: entry points, authoritative data and state, component ownership, rendering, interactions, and lifecycle. Inspect related consumers and existing tests before choosing a fix; scale investigation to the task rather than auditing unrelated systems.</rule>

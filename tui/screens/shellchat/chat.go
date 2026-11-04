@@ -62,7 +62,10 @@ type Screen struct {
 	activitySet       bool
 	activityStrip     chatprojection.ActivityStrip
 	stripLineWidth    int
+	agentID           string
 }
+
+func (s *Screen) SetAgentID(id string) { s.agentID = id }
 
 func (s *Screen) SetActivity(activity ctypes.AgentActivityView) {
 	s.activity = activity
@@ -362,7 +365,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			s.activity.ThinkingID != "" && s.activity.ThinkingDisplay.Kind.HasCompactPreview() &&
 			ctx.LocalX >= s.layout.padLR && ctx.LocalX < s.layout.padLR+s.stripLineWidth {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint,
-				Action: &ui.Action{ID: chatprojection.ChatToggleActionID, Payload: chatprojection.ChatTogglePayload{MessageID: s.activity.ThinkingID}}}
+				Action: &ui.Action{ID: chatprojection.ChatToggleActionID, Payload: chatprojection.ChatTogglePayload{AgentID: s.agentID, MessageID: s.activity.ThinkingID}}}
 		}
 		return ui.EventResult{Handled: true}
 	}

@@ -235,7 +235,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 					backend, err = nil, nil
 					create = true
 				}
-			} else if op.createIfMissing {
+			} else if op.createIfMissing && errors.Is(statErr, os.ErrNotExist) {
 				create = true
 			} else {
 				err = fmt.Errorf("session database unavailable: %w", statErr)
@@ -257,6 +257,15 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 				backend.Close()
 				result.Err = fmt.Errorf("persist session role: %w", err)
 				return
+			}
+		}
+		if op.rememberAeron {
+			// The saved workspace identity survives even if startup fails.
+			backend.Retain()
+			// Apply the workspace default once. Resume preserves the user's
+			// permission mode, just like ensuring an already-live session.
+			if created {
+				backend.SetYolo(true)
 			}
 		}
 		backend.SetWorkDir(op.root)

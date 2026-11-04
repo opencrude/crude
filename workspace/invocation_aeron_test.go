@@ -73,6 +73,9 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	if !SessionIsAeron(w.SessionsByID[first.SessionID]) {
 		t.Fatalf("ensure did not root the session in Aeron: %+v", w.SessionsByID[first.SessionID])
 	}
+	if !w.YoloForAgent(first.OrchID) {
+		t.Fatal("the workspace Aeron did not start in automatic approval mode")
+	}
 	if got := w.WorkspaceDB.GetSetting(workspaceAeronSessionKey); got != first.SessionID {
 		t.Fatalf("remembered Aeron = %q, want %q", got, first.SessionID)
 	}
@@ -83,10 +86,11 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	if got := w.BackendSession(first.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryAeron {
 		t.Fatalf("saved role = %q, want %q", got, session.CategoryAeron)
 	}
-	// A session with no turns is pruned on close by design. Retain evidence so
-	// this test checks the reopen path, not the empty-session cleanup path.
-	if err := w.BackendSession(first.SessionID).AppendWorkspaceHistoryEvent("retained fixture history", "retained fixture history"); err != nil {
-		t.Fatal(err)
+	// An idle workspace agent is still a saved identity. Do not add a fake
+	// transcript row to keep it alive: it must survive before its first task.
+	w.SetYoloForAgent(first.OrchID, false)
+	if again := w.EnsureAeronSession(); again.Error != "" || w.YoloForAgent(first.OrchID) {
+		t.Fatal("ensuring a live Aeron replaced the user's permission mode")
 	}
 	w.CloseAllSessions()
 	w.Close()
@@ -102,6 +106,9 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	}
 	if !SessionIsAeron(w.SessionsByID[resumed.SessionID]) {
 		t.Fatal("reopened session lost its Aeron role")
+	}
+	if w.YoloForAgent(resumed.OrchID) {
+		t.Fatal("reopening Aeron replaced the saved permission mode")
 	}
 	if other := w.EnsureAeronSession(); other.SessionID != resumed.SessionID {
 		t.Fatalf("reopened workspace made a second Aeron: %+v", other)

@@ -279,7 +279,9 @@ func controlField(v reflect.Value, parts []string) (reflect.Value, error) {
 	if v.Kind() == reflect.Map && v.Type().Key().Kind() == reflect.String {
 		entry := v.MapIndex(reflect.ValueOf(parts[0]).Convert(v.Type().Key()))
 		if !entry.IsValid() {
-			return reflect.Value{}, fmt.Errorf("unknown map entry %q", parts[0])
+			// Map keys are data, not struct fields. Inspect a missing entry's
+			// declared type so a sparse preference can configure a new key.
+			entry = reflect.New(v.Type().Elem()).Elem()
 		}
 		return controlField(entry, parts[1:])
 	}
@@ -312,39 +314,10 @@ func controlFieldJSON(value any, path string) (json.RawMessage, error) {
 }
 
 func controlSetField(value any, path string, raw json.RawMessage) error {
-	return controlAssignField(reflect.ValueOf(value).Elem(), strings.Split(path, "."), raw)
-}
-
-func controlAssignField(root reflect.Value, parts []string, raw json.RawMessage) error {
-	if root.Kind() == reflect.Pointer && len(parts) > 0 {
-		if root.IsNil() {
-			root.Set(reflect.New(root.Type().Elem()))
-		}
-		return controlAssignField(root.Elem(), parts, raw)
+	v, err := controlField(reflect.ValueOf(value), strings.Split(path, "."))
+	if err != nil {
+		return err
 	}
-	if root.Kind() == reflect.Map && len(parts) > 0 {
-		key := reflect.ValueOf(parts[0]).Convert(root.Type().Key())
-		old := root.MapIndex(key)
-		if !old.IsValid() {
-			return fmt.Errorf("unknown map entry %q", parts[0])
-		}
-		next := reflect.New(old.Type()).Elem()
-		next.Set(old)
-		if err := controlAssignField(next, parts[1:], raw); err != nil {
-			return err
-		}
-		root.SetMapIndex(key, next)
-		return nil
-	}
-	if len(parts) > 0 {
-		v, err := controlField(root, parts[:1])
-		if err != nil {
-			return err
-		}
-		return controlAssignField(v, parts[1:], raw)
-	}
-	v := root
-	var err error
 	next := reflect.New(v.Type())
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) && v.Kind() != reflect.Pointer && v.Kind() != reflect.Map && v.Kind() != reflect.Slice {
 		return errors.New("null is not valid for this field")
@@ -359,11 +332,7 @@ func controlAssignField(root reflect.Value, parts []string, raw json.RawMessage)
 	if err = controlExactJSONKeys(v.Type(), object); err != nil {
 		return err
 	}
-	if !v.CanSet() {
-		return errors.New("field cannot be assigned")
-	}
-	v.Set(next.Elem())
-	return nil
+	return types.ApplySettingsEdits(value, []types.SettingEdit{{Path: strings.Split(path, "."), After: raw}})
 }
 
 func controlExactJSONKeys(t reflect.Type, value any) error {

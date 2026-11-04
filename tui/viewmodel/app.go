@@ -113,7 +113,7 @@ type App struct {
 	pendingOrchestrators map[string]bool
 	// pendingFirstInputs are first messages for new sessions whose tab is
 	// still pending; each is sent once its session reaches this shell.
-	pendingFirstInputs          map[string]provider.UserInput
+	pendingFirstInputs          map[string][]provider.UserInput
 	workspaceAttachSequence     uint64
 	workspaceAttachCancel       context.CancelFunc
 	workspaceAttachPending      bool
@@ -225,13 +225,16 @@ type App struct {
 	sidebarScreen         *shelltree.Screen
 	activityBar           *activitybar.Screen
 	activityList          *activitylist.Screen
-	agentFolded           map[string]bool // agent IDs whose children the Agents sidebar hides
-	aeronPrepared         map[string]bool // Aeron agents already minimized and set to automatic approval
-	aeronEnsureInFlight   bool            // one workspace-Aeron ensure request is running
-	aeronEnsureScheduled  bool            // the low-priority ensure is waiting for a quiet moment
-	aeronEnsureEarliest   time.Time       // do not create the workspace agent before this time
-	aeronEnsureAttempts   int             // bounded retries of an admission conflict
-	aeronEnsureFailed     bool            // this attachment could not create Aeron; do not loop
+	agentFolded           map[string]bool      // agent IDs whose children the Agents sidebar hides
+	aeronPrepared         map[string]bool      // Aeron agents already minimized in this shell
+	aeronEnsureInFlight   bool                 // one workspace-Aeron ensure request is running
+	aeronEnsureScheduled  bool                 // an ensure waits for its start time and a free lifecycle slot
+	aeronEnsureEarliest   time.Time            // do not start the ensure before this time
+	aeronEnsureFailed     bool                 // Aeron could not start; wait for a settings change or new work
+	aeronOrders           []provider.UserInput // work waiting until the workspace Aeron is open
+	aeronEnsureError      string               // the last open failure, shown when the user opens Aeron
+	aeronOpenRequested    bool                 // the user opened Aeron before the core returned it
+	tooltip               pointerTooltip       // the one hover tooltip of the shell
 	gitPanel              *gitpanel.Panel
 	activityView          activitybar.View
 	termScreens           map[string]*shellterm.Screen
@@ -788,11 +791,15 @@ func (m *App) openApplicationAccounts() {
 }
 
 func (m *App) openApplicationMainAgent() tea.Cmd {
+	return m.openApplicationAgent("role/default")
+}
+
+func (m *App) openApplicationAgent(id string) tea.Cmd {
 	m.openSettingsTo(roottypes.SettingsScopeApplication, false)
 	if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
 			if body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface); ok {
-				cmd := body.ShowMainAgent()
+				cmd := body.ShowAgent(id)
 				frame.Host().MarkLayout()
 				return cmd
 			}
@@ -1096,7 +1103,7 @@ func (m *App) registerOverlayHandlers() {
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
 		switch id {
-		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayInlayHints, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth:
+		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayInlayHints, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth, ui.OverlayTooltip:
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {

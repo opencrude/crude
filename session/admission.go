@@ -242,12 +242,9 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 	prepared, _ := s.prepareInput(context.WithoutCancel(ctx), input, cfg, orchestrator)
 	message := prepared.Message
 	message.InternalID = input.InternalID
-	message.DisplayContent = input.Text
-	if input.DisplayText != "" {
-		message.DisplayContent = input.DisplayText
-	}
+	message.DisplayContent = input.DisplayContent()
 	createdAt := time.Now()
-	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: input.Text, ReferenceLabels: prepared.ReferenceLabels, Attachments: prepared.Attachments, TurnGeneration: request.generation}, "", 0, createdAt)
+	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: message.DisplayContent, ReferenceLabels: prepared.ReferenceLabels, Attachments: prepared.Attachments, TurnGeneration: request.generation}, "", 0, createdAt)
 	s.msgsMu.Lock()
 	turn := request.sessionTurn
 	deltas := []sessiondb.ContextMessageDelta{contextDelta(message, meta, turn, createdAt, intent.AgentID)}

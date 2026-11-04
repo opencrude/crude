@@ -64,6 +64,8 @@ type projectToolsTestPort struct {
 	choices    [][]string
 	roles      []string
 	onEnsure   func()
+	// busy answers that many ensure requests with busy admission first.
+	busy int
 }
 
 // NewAgentSessionAs records the role instead of opening a real session.
@@ -75,6 +77,10 @@ func (p *projectToolsTestPort) NewAgentSessionAs(role string) *workspace.NewSess
 // EnsureAeronSession follows the same test path: the setup action must reuse
 // the workspace's one Aeron, never create a second identity.
 func (p *projectToolsTestPort) EnsureAeronSession() *workspace.NewSessionResult {
+	if p.busy > 0 {
+		p.busy--
+		return &workspace.NewSessionResult{Error: "bounded workspace operation capacity is occupied", Busy: true}
+	}
 	if p.onEnsure != nil {
 		p.onEnsure()
 	}
@@ -170,11 +176,16 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 			if len(port.roles) != 1 || port.roles[0] != "aeron" {
 				t.Fatal("Set up with Aeron did not open the workspace's Aeron", port.roles)
 			}
-			order := app.pendingFirstInputs["aeron-agent"].Text
+			pending := app.pendingFirstInputs["aeron-agent"][0]
+			order := pending.Text
 			for _, want := range []string{"<set_up>", `package="fixture-server"`, "<leave_alone/>", "lsp.languages.&lt;id&gt;.command"} {
 				if !strings.Contains(order, want) {
 					t.Fatalf("work order for Aeron lacks %q:\n%s", want, order)
 				}
+			}
+			// The chat shows the request in plain words, not the XML order.
+			if pending.DisplayText != "Set up 1 code intelligence tool: fixture-server." {
+				t.Fatalf("work order shows %q in the chat", pending.DisplayText)
 			}
 			if app.overlayHost.IsOpen(projectToolsOverlay) {
 				t.Fatal("the setup window stayed open after Set up with Aeron")
@@ -291,7 +302,7 @@ func TestProjectToolsMixedSelectionMountedJourney(t *testing.T) {
 			if len(port.choices) != 1 || len(port.choices[0]) != 0 || len(port.roles) != 1 {
 				t.Fatalf("Set up with Aeron did not hand the work to Aeron: choices=%v roles=%v", port.choices, port.roles)
 			}
-			order := app.pendingFirstInputs["aeron-agent"].Text
+			order := app.pendingFirstInputs["aeron-agent"][0].Text
 			setUp, leaveAlone, ok := strings.Cut(order, "<leave_alone>")
 			if !ok || !strings.Contains(setUp, `package="fixture-server"`) || !strings.Contains(setUp, `package="missing-server"`) ||
 				strings.Contains(setUp, `package="second-server"`) || !strings.Contains(leaveAlone, `package="second-server"`) {

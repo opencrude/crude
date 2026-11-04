@@ -3,6 +3,7 @@ package shelltabs
 
 import (
 	"fmt"
+	"strconv"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
@@ -94,6 +95,22 @@ func (s *Screen) TabsControl() *ui.Tabs { return s.tabs }
 
 // SetDraggable opts this main strip into shared drag/drop gesture actions.
 func (s *Screen) SetDraggable(v bool) { s.tabs.SetDraggable(v) }
+
+// SetTooltipFunc supplies the hover text of a window tab. The strip asks only
+// for the hovered tab, when the shell shows its tooltip.
+func (s *Screen) SetTooltipFunc(fn func(window.TabID) string) {
+	if fn == nil {
+		s.tabs.SetTooltipFunc(nil)
+		return
+	}
+	s.tabs.SetTooltipFunc(func(id string) string {
+		value, err := strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			return ""
+		}
+		return fn(window.TabID(value))
+	})
+}
 
 // SetNewButton opts into the retained trailing New session control.
 func (s *Screen) SetNewButton(v bool) { s.newEnabled = v }

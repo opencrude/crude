@@ -95,6 +95,9 @@ type Tabs struct {
 	// focus baseline is reserved for deliberate keyboard navigation, so a
 	// click never leaves the strip looking "stuck" in focus.
 	pointerFocus bool
+	// tooltip describes a tab on demand. It runs only for the hovered tab
+	// when the shell asks, never per frame.
+	tooltip func(id string) string
 }
 
 // ActivatedByPointer reports whether the latest selection came from a click.
@@ -113,6 +116,26 @@ func (t *Tabs) SetDraggable(v bool) {
 	if !v {
 		t.CancelPointerCapture()
 	}
+}
+
+// SetTooltipFunc supplies the hover text of a tab by its ID. An empty result
+// means the tab has no tooltip.
+func (t *Tabs) SetTooltipFunc(fn func(id string) string) { t.tooltip = fn }
+
+// Tooltip implements TooltipSource for the hovered tab's label cell.
+func (t *Tabs) Tooltip() (string, Rect, bool) {
+	if t.tooltip == nil || t.dragging || t.hover < 0 || t.hover >= len(t.items) || t.hover >= len(t.ranges) {
+		return "", Rect{}, false
+	}
+	r := t.ranges[t.hover]
+	if r.start < 0 || r.end <= r.start {
+		return "", Rect{}, false
+	}
+	text := t.tooltip(t.items[t.hover].ID)
+	if strings.TrimSpace(text) == "" {
+		return "", Rect{}, false
+	}
+	return text, Rect{X: r.start, W: r.end - r.start, H: 1}, true
 }
 
 // Dragging reports whether the pressed tab has crossed the drag threshold.

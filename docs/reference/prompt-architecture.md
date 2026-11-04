@@ -40,6 +40,13 @@ reviewer must not inherit the whole coding-agent prompt or acquire its tools.
 Domain packages may redact, bound and serialize source data before rendering;
 validation and state mutation do not move into a prompt builder.
 
+A root session whose selected main agent is the `aeron` role is the workspace's
+permanent background agent. `RootOptions.WorkspaceAgent` adds only
+`prompt.WorkspaceAgentContract`: the user does not watch its chat, so it asks
+with the question tool, which the shell always shows as a modal prompt. The
+flag is part of the session's system-prompt cache key; no other root prompt
+changes.
+
 Editor prediction prerequisites use a dedicated prompt rather than a coding-agent
 conversation. The request owner qualifies canonical source/diagnostic facts and
 bounds the complete escaped chat envelope (instructions included) to about 2,000

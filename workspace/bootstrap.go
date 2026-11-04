@@ -152,7 +152,7 @@ func (w *Workspace) installSessionHydration(frontend *Session, views []ChatMessa
 	// passive resume never runs them until the owner next admits input.
 	if frontend.backend != nil {
 		for _, queued := range frontend.backend.QueuedInputs() {
-			node.State.Messages.AppendMessageIfAbsent(queuedInputMessage(queued.Input.InternalID, queued.Input.Text, queued.Input.DisplayText, queued.QueuedAt))
+			node.State.Messages.AppendMessageIfAbsent(queuedInputMessage(queued.Input.InternalID, queued.Input, queued.QueuedAt))
 		}
 	}
 	frontend.hydrated = true
@@ -583,7 +583,7 @@ func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput)
 			}
 		}
 		node.State.Messages.AppendMessageIfAbsent(Message{InternalID: input.InternalID,
-			Role: MessageRoleUser, Origin: provider.OriginHumanSteering, Content: input.Text,
+			Role: MessageRoleUser, Origin: provider.OriginHumanSteering, Content: input.DisplayContent(),
 			ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: time.Now(), PendingSteering: true})
 		w.agentRevision++
 	}

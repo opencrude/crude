@@ -59,8 +59,8 @@ type inputAdmissionMsg struct {
 	references      []sessiondb.Reference
 	result          workspace.InputAdmissionResult
 	composerWindow  *wm.FloatingWindow
-	composerEditor  *ui.TextArea
-	composerState   ui.TextAreaState
+	draftEditor     *ui.TextArea
+	draftState      ui.TextAreaState
 	submitted       time.Time
 }
 
@@ -128,15 +128,32 @@ func (m *App) submitComposerInput(sessionID, text string) tea.Cmd {
 	if editor == nil {
 		return nil
 	}
-	state := editor.EditState()
-	command := m.submitPreparedInput(sessionID, provider.PlainInput(text), 0)
+	command := m.submitTextEditorInput(sessionID, provider.PlainInput(text), editor)
 	if command == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		message := command()
 		if admission, ok := message.(inputAdmissionMsg); ok {
-			admission.composerWindow, admission.composerEditor, admission.composerState = window, editor, state
+			admission.composerWindow = window
+			return admission
+		}
+		return message
+	}
+}
+
+// submitTextEditorInput gives auxiliary editors the same admission owner as the
+// main composer. Only an unchanged submitted draft is consumed on acceptance.
+func (m *App) submitTextEditorInput(agentID string, input provider.UserInput, editor *ui.TextArea) tea.Cmd {
+	state := editor.EditState()
+	command := m.submitPreparedInput(agentID, input, 0)
+	if command == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		message := command()
+		if admission, ok := message.(inputAdmissionMsg); ok {
+			admission.draftEditor, admission.draftState = editor, state
 			return admission
 		}
 		return message
@@ -187,13 +204,15 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 			return nil
 		}
 		m.syncAgentMessages(msg.agentID, true)
-		if msg.composerWindow == nil && m.ActiveSession == msg.session && m.AgentView.ActiveID() == msg.agentID &&
+		if msg.draftEditor == nil && msg.composerWindow == nil && m.ActiveSession == msg.session && m.AgentView.ActiveID() == msg.agentID &&
 			m.Input.DraftEpoch() == msg.draftEpoch && m.Input.ClearInputAtRevision(msg.draftRevision) {
 			m.persistComposerDraftIfChanged()
 		}
-		if msg.composerWindow != nil && m.overlayHost.Window(ui.OverlayComposer) == msg.composerWindow &&
-			msg.composerEditor.EditState() == msg.composerState {
-			m.overlayHost.Close(ui.OverlayComposer)
+		if msg.draftEditor != nil && msg.draftEditor.EditState() == msg.draftState {
+			msg.draftEditor.Clear()
+			if msg.composerWindow != nil && m.overlayHost.Window(ui.OverlayComposer) == msg.composerWindow {
+				m.overlayHost.Close(ui.OverlayComposer)
+			}
 		}
 		historyCmd := m.recordPromptWithReferences(msg.input.Text, msg.references)
 		if msg.result.Status == workspace.InputAdmissionPreservationPending && m.Feedback != nil {
@@ -429,7 +448,7 @@ func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 	if msg.generation != 0 && (node.State == nil || node.State.TurnIdentity.Generation != msg.generation) {
 		return // a later turn owns the selected agent now
 	}
-	label := workspace.AgentDisplayLabel(node)
+	label := m.agentLabel(node)
 	if label == "" {
 		label = "Main Agent"
 	}

@@ -29,6 +29,9 @@ type NewSessionResult struct {
 	Error        string
 	NeedsAccount bool
 	NeedsModel   bool
+	// Busy means other session work or a history restore held admission.
+	// Nothing was created; the same request can be sent again later.
+	Busy bool
 }
 
 // Workspace is the project-scoped composition root for one IDE instance.

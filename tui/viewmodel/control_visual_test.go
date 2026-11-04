@@ -22,6 +22,7 @@ import (
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types/control"
+	"crude/workspace"
 )
 
 // Build: go test -c ./tui/viewmodel -o /tmp/control-visual.test
@@ -49,7 +50,8 @@ func runControlVisual(t *testing.T, headless bool, width, height int) {
 	t.Setenv("CRUDE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	runtime := remoteJourneyRuntime(t, "")
+	// This journey exercises controls, not a first-open trust decision.
+	runtime := remoteJourneyRuntime(t, "", func(w *workspace.Workspace) { restrictFixture(t, w) })
 	root := t.TempDir()
 	path := filepath.Join(root, "control-guide.txt")
 	if err := os.WriteFile(filepath.Join(root, "welcome.txt"), []byte("Control acceptance workspace\n\nF2: connected editor and split\nF3: retained PTY\nF4: saved workspace settings\nF9: verify and exit\n"), 0600); err != nil {

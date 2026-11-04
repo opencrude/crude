@@ -537,6 +537,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		return
 	}
 	screen := view.chat
+	screen.SetAgentID(agentID)
 	pad, inner := boundedContentGeometry(rect.W, m.Theme.Spacing.PadLR)
 	layout := contentLayout{ContentW: rect.W, InnerW: inner, PadLR: pad}
 	projection := m.subPaneProjections.GetExisting(agentID)

@@ -98,6 +98,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
 	m.syncDiagnosticPopups()
+	command = tea.Batch(command, m.syncPointerTooltip(msg))
 	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
 	m.syncNavigation()
@@ -262,8 +263,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 		if m.aeronEnsureFailed {
-			// The first attempt may have waited for an account or model. A
-			// settings change is the user's chance to provide it.
+			// Aeron may have waited for an account or model. A settings
+			// change is the user's chance to provide it.
 			m.requestWorkspaceAeronEnsure()
 		}
 		return m, nil
@@ -472,6 +473,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Shortcut captions name the chord this terminal delivers; the answer
 		// to the keyboard query can arrive after the first frame.
 		ui.NoteKeyboardEnhancements(msg)
+		return m, nil
+
+	case tooltipDueMsg:
+		m.handleTooltipDue(msg)
 		return m, nil
 
 	case tea.KeyPressMsg:

@@ -6,6 +6,16 @@ The canonical conversation is the audit log. The chat renderer projects it into 
 
 ## Nested scroll ownership
 
+Disclosure actions carry their owning agent ID so a background pane or window
+cannot toggle the selected main agent's message. Work that Crude sends to the
+workspace Aeron shows a readable summary, not its structured order:
+`provider.UserInput.DisplayContent` selects that text for session persistence,
+input-receipt publication, queued rows and steering. A receipt that arrives before
+the provider events must show the same summary as a cold transcript.
+An untargeted `agent_wait` row says **Waiting for an update**, then **Wait
+finished**. It can wake for a background command or a message without another
+agent running. A named target retains its identity and agent-specific title.
+
 One continuous wheel gesture keeps its starting scroll owner even as streaming
 or scrolling moves nested content under a stationary pointer. Direct pane-body
 scrolling remains available without a modifier or a tiny-only hit target: move

@@ -174,23 +174,22 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		Icon:    "+",
 		Command: true,
 	}}
+	aeronID := m.workspaceAeronAgent()
+	if aeronID == "" {
+		items = append(items, ui.ListItem{ID: sidebarItemAeron, Label: "Aeron", Icon: "◆",
+			Detail: m.aeronStatus()})
+	}
 	if m.ws.AgentMgr() == nil {
-		return append(items, ui.ListItem{ID: "none", Label: "No agents", Disabled: true})
+		return items
 	}
 	roots := m.ws.AgentMgr().Orchestrators()
-	if len(roots) == 0 {
-		return append(items, ui.ListItem{ID: "none", Label: "No agents", Disabled: true})
-	}
 	var appendTree func(*workspace.AgentNode, int, bool)
 	appendTree = func(n *workspace.AgentNode, depth int, last bool) {
 		if n == nil {
 			return
 		}
-		label := workspace.AgentDisplayLabel(n)
+		label := m.agentLabel(n)
 		aeron := n.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[n.ID])
-		if aeron {
-			label = "Aeron"
-		}
 		if label == "" {
 			if n.IsOrchestrator() {
 				label = "Main Agent"
@@ -207,21 +206,14 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		case n.IsActive():
 			detail = "running"
 			icon = "●"
-		case n.IsCompleted() && !aeron:
+		case n.IsCompleted():
 			icon = "✓"
-		case aeron && n.IsCompleted():
-			// The workspace agent keeps a readable state after a turn, so the
-			// user always knows whether it is free to task.
-			detail = "finished"
-			icon = "✓"
-		case aeron:
-			// The workspace agent is permanent. Its row says it is idle so the
-			// user knows it is present and can choose to use it.
-			detail = "idle"
 		}
 		// Minimized agents stay listed here: this panel is how they come
 		// back, so the row has to say the tab is gone, not that the agent is.
-		if m.AgentView.IsHidden(n.ID) {
+		if aeron {
+			detail = m.aeronStatus()
+		} else if m.AgentView.IsHidden(n.ID) {
 			switch {
 			case n.IsCompleted():
 				icon = "✓"
@@ -269,8 +261,13 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			appendTree(child, depth+1, i == len(n.Children)-1)
 		}
 	}
+	if aeronID != "" {
+		appendTree(m.ws.AgentMgr().Get(aeronID), 0, len(roots) == 1)
+	}
 	for i, root := range roots {
-		appendTree(root, 0, i == len(roots)-1)
+		if root.ID != aeronID {
+			appendTree(root, 0, i == len(roots)-1)
+		}
 	}
 	return items
 }
@@ -326,6 +323,8 @@ func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 		return m.handleRemoteSidebar(item)
 	}
 	switch {
+	case item.ID == sidebarItemAeron:
+		return m.openWorkspaceAeron()
 	case item.ID == sidebarItemNewWorkspace:
 		if m.activityView == activityWorkspaces && m.sidebarHostVisible() {
 			m.openFolderPicker()
@@ -514,8 +513,8 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		if ml := m.activeMessageList(); ml != nil {
-			ml.ToggleDisclosure(payload.MessageID)
+		if projection := m.subPaneProjections.GetExisting(payload.AgentID); projection != nil {
+			projection.renderer.ToggleDisclosure(payload.MessageID)
 		}
 		return nil
 	case ui.ActionSplitResize:

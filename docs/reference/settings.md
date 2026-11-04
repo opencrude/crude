@@ -525,6 +525,12 @@ actual multiline editor, not encoded JSON. Tool access offers role defaults or
 explicit checkboxes; role safety ceilings remain in force, unavailable tools
 are disabled, and child reporting stays required.
 
+Aeron's shipped role has the Main Agent's full tool set: it can research,
+install and configure workspace tools. It has no shipped allow-list, deny-list
+or read-only policy. Explicit user tool choices still apply. Its workspace
+session starts with automatic approval once, at creation; reopening it preserves
+the saved permission mode.
+
 **Instructions extend policy; they do not replace it.** `prompt/` owns the
 canonical model-neutral root/child policy and specialized background-job
 contracts. User profile text is escaped as a lower-priority overlay; changing it
@@ -1311,6 +1317,9 @@ arguments, environment, settings, initialization options, limits) are
 human-owned: an agent may toggle `lsp.languages.<id>.enabled` through the
 control API but cannot change what runs. The workspace's Aeron, which sets up
 language servers for the user, is the one agent that may write these fields.
+It can create a new language entry by setting its exact leaf paths, not just
+edit entries that already exist. Control writes use the same sparse settings-edit
+owner as the Settings form.
 
 ## Semantic settings control and authority
 

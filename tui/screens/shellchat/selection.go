@@ -252,7 +252,7 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 			Invalidate: ui.InvalidatePaint,
 			Action: &ui.Action{
 				ID:      chatprojection.ChatToggleActionID,
-				Payload: chatprojection.ChatTogglePayload{MessageID: toggleMsgID},
+				Payload: chatprojection.ChatTogglePayload{AgentID: s.agentID, MessageID: toggleMsgID},
 			},
 		}
 	}

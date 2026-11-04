@@ -264,12 +264,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// Submission is immutable even when subsequent reference preparation fails.
 		userMsg := inputMessage(provider.NewTextMessage("user", userInput.Text), userInput)
 		userMsg.InternalID = currentMsgID
-		userMsg.DisplayContent = userInput.Text
-		if userInput.DisplayText != "" {
-			userMsg.DisplayContent = userInput.DisplayText
-		}
+		userMsg.DisplayContent = userInput.DisplayContent()
 		createdAt := time.Now()
-		meta := sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userInput.Text}
+		meta := sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userMsg.DisplayContent}
 		if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
 			// Runtime-started turns (goal continuations) are provider input,
 			// never a human message in the transcript.
@@ -1294,9 +1291,9 @@ func (s *Session) preserveUnstartedInput(request turnRequest, o *Orchestrator) {
 	}
 	message := inputMessage(provider.NewTextMessage("user", input.Text), input)
 	message.InternalID = input.InternalID
-	message.DisplayContent = input.Text
+	message.DisplayContent = input.DisplayContent()
 	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{
-		DisplayRole: "user", DisplayContent: input.Text,
+		DisplayRole: "user", DisplayContent: message.DisplayContent,
 	}, "", 0, time.Now())
 	createdAt := time.Now()
 	s.msgsMu.Lock()

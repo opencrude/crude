@@ -161,6 +161,7 @@ type Session struct {
 	// pruned records that Close found nothing durable to keep and removed the
 	// session's storage; the workspace registry must then forget the session.
 	pruned        atomic.Bool
+	retained      atomic.Bool // a workspace service owns this identity even before its first input
 	hardCancelled int32
 	activeTurns   atomic.Int32
 	turnGate      sync.RWMutex
@@ -602,7 +603,7 @@ func (s *Session) Close() {
 	// provider work resumes from durable watermarks on the next open.
 	s.finishMemoryJobs()
 
-	hasMsgs := s.HasMessages() || len(s.QueuedInputs()) != 0 || len(s.Loops()) != 0
+	hasMsgs := s.retained.Load() || s.HasMessages() || len(s.QueuedInputs()) != 0 || len(s.Loops()) != 0
 	// A preflight-blocked turn may own an exact pending input without a
 	// transcript yet. Never prune its recovery DB as an empty session.
 	if s.db != nil && !hasMsgs {
@@ -653,6 +654,10 @@ func (s *Session) Close() {
 // Pruned reports that Close removed this empty session's storage, so it no
 // longer exists anywhere and must not stay registered.
 func (s *Session) Pruned() bool { return s != nil && s.pruned.Load() }
+
+// Retain keeps a service-owned session on close even before its first input.
+// The service's saved identity is authoritative; it calls this again on resume.
+func (s *Session) Retain() { s.retained.Store(true) }
 
 func (s *Session) SessionDir() string {
 	return s.logger.SessionDir()
@@ -765,6 +770,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	if s.cfg != nil {
 		cfg = copyConfig(s.cfg)
 	}
+	workspaceAgent := s.selectedMainAgent == CategoryAeron
 	s.mu.Unlock()
 	s.systemPromptMu.Lock()
 	defer s.systemPromptMu.Unlock()
@@ -779,7 +785,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	if multiAgent {
 		catalog = agentProfileCatalog(cfg)
 	}
-	key := fmt.Sprintf("%t:%t:%s:%s:%s:%s", multiAgent, planMode, model, instructions, catalog, root)
+	key := fmt.Sprintf("%t:%t:%t:%s:%s:%s:%s", multiAgent, planMode, workspaceAgent, model, instructions, catalog, root)
 	if prompt, ok := s.systemPrompts[key]; ok {
 		return prompt
 	}
@@ -788,6 +794,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	// switch even when execution itself is correctly re-rooted.
 	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
 		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
+		WorkspaceAgent: workspaceAgent,
 	})
 	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt

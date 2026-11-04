@@ -457,10 +457,15 @@ func (s *WorkspaceSettingsSurface) ShowAccountSetup() {
 // ShowMainAgent opens the Main Agent editor; the returned command fetches
 // its account's models so the capability rows fill.
 func (s *WorkspaceSettingsSurface) ShowMainAgent() tea.Cmd {
+	return s.ShowAgent("role/default")
+}
+
+// ShowAgent opens an exact existing role or named-profile editor.
+func (s *WorkspaceSettingsSurface) ShowAgent(id string) tea.Cmd {
 	s.model.SetScope(ttypes.SettingsScopeApplication)
 	s.model.SelectCategory(catAgents)
 	s.syncModel()
-	return s.agents.begin("role/default", false)
+	return s.agents.begin(id, false)
 }
 
 // ShowNetworkConnection reconciles the retained form and category list together;

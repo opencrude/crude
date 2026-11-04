@@ -130,6 +130,12 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 			content: `{"results":[{"title":"Undo verified","summary":"byte-exact restore"}]}`,
 		},
 		{
+			name: "background command wake-up", tool: "agent_wait",
+			rawArgs: `{"timeout_seconds":600}`,
+			content: `{"status":"directed_event","event":{"id":"event-command","origin":"runtime","kind":"command_outcome"}}`,
+			want:    []string{"Wait finished"},
+		},
+		{
 			name:      "agent wait succeeded",
 			tool:      "agent_wait",
 			rawArgs:   `{"run_id":"run-1"}`,
