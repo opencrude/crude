@@ -159,13 +159,13 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	}
 	items := app.agentSidebarItems()
 	if retainedAgents == 0 {
-		if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].Label != "No agents" {
+		if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].ID != sidebarItemAeron {
 			t.Fatalf("Agents panel disagrees with closed lifecycle: %#v", items)
 		}
 	} else {
 		got := 0
 		for _, item := range items {
-			if item.Command || item.ID == "none" {
+			if item.Command || item.ID == sidebarItemAeron {
 				continue
 			}
 			got++

@@ -178,3 +178,19 @@ func TestCollaborationEventMarksRareRunningAgentBroadcast(t *testing.T) {
 		}
 	}
 }
+
+// Only the workspace's Aeron learns that the question tool is its channel to
+// the user; every other root prompt stays byte-identical.
+func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
+	plain := BuildRoot(RootOptions{WorkDir: "/workspace"})
+	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true})
+	if strings.Contains(plain, "<workspace_agent>") {
+		t.Fatal("an ordinary root prompt carries the workspace-agent contract")
+	}
+	if !strings.Contains(aeron, WorkspaceAgentContract) || !strings.Contains(aeron, "question tool") {
+		t.Fatal("Aeron's root prompt does not name the question tool as its channel")
+	}
+	if strings.Replace(aeron, WorkspaceAgentContract+"\n", "", 1) != plain {
+		t.Fatal("the workspace-agent flag changed more than its own section")
+	}
+}

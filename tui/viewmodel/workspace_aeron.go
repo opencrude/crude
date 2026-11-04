@@ -1,24 +1,27 @@
 package viewmodel
 
 import (
-	"strings"
+	"context"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
+	"crude/retry"
+	"crude/types"
 	"crude/workspace"
 )
 
+// sidebarItemAeron is the Agents row shown until the core returns Aeron.
+const sidebarItemAeron = "aeron:workspace"
+
 const (
-	// The workspace agent is background inventory. Create it after the shell
-	// has had time to paint and only while the user is not working, so an
-	// automatic session never competes with a restore, switch or first input.
+	// The workspace agent is background inventory. The shell opens it after it
+	// has had time to paint and only while the user is not working, so it never
+	// competes with a restore, switch or first input. Work for Aeron does not
+	// wait for a quiet shell: it starts as soon as the lifecycle slot is free.
 	aeronEnsureStartupDelay = 2 * time.Second
 	aeronEnsureQuietPeriod  = 3 * time.Second
-	// A temporary admission conflict is retried a bounded number of times. A
-	// permanent one is reported once and never retried in a loop.
-	aeronEnsureMaxAttempts = 4
 )
 
 // workspaceAeronAgent returns the root agent of this workspace's open Aeron
@@ -35,9 +38,81 @@ func (m *App) workspaceAeronAgent() string {
 	return ""
 }
 
-// requestWorkspaceAeronEnsure schedules the low-priority creation/resume. The
-// tick starts it only after the startup delay and a quiet period without user
-// work.
+func (m *App) isAeronAgent(id string) bool {
+	if m.ws == nil || m.ws.AgentMgr() == nil {
+		return false
+	}
+	root := m.ws.AgentMgr().OrchestratorFor(id)
+	return root != nil && workspace.SessionIsAeron(m.ws.SessionsByAgent()[root.ID])
+}
+
+// agentLabel is the shell's one display name for an agent. The workspace's
+// Aeron root is always "Aeron", not its generated session name, so its tab,
+// Agents row, notices, tooltip and prompts name the same agent.
+func (m *App) agentLabel(node *workspace.AgentNode) string {
+	if node != nil && node.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID]) {
+		return "Aeron"
+	}
+	return workspace.AgentDisplayLabel(node)
+}
+
+// aeronStatus is the one state text of the permanent Aeron row. Before the
+// core returns Aeron, it says whether it is starting or needs setup.
+func (m *App) aeronStatus() string {
+	if m.aeronEnsureFailed {
+		return "needs setup"
+	}
+	id := m.workspaceAeronAgent()
+	if m.ws == nil || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(id) == nil {
+		return "starting"
+	}
+	return m.agentStatus(id)
+}
+
+// agentStatus is the short user text of an agent's state, shared by the Aeron
+// row and agent tab tooltips.
+func (m *App) agentStatus(id string) string {
+	activity := m.ws.AgentActivity(id)
+	switch activity.Status.Phase {
+	case types.AgentApproval, types.AgentQuestion:
+		return "needs an answer"
+	case types.AgentFailed, types.AgentNeedsAttention, types.AgentInterrupted:
+		return "needs attention"
+	case types.AgentCancelled:
+		return "stopped"
+	case types.AgentCompleted:
+		return "finished"
+	case types.AgentCancelling:
+		return "stopping"
+	}
+	if activity.Active {
+		return "running"
+	}
+	return "idle"
+}
+
+// openWorkspaceAeron opens Aeron like any other agent, as a tab. Before the
+// core has returned it, the request waits and the tab opens when it arrives.
+// A failed start opens Aeron's settings, where the cause can be fixed.
+func (m *App) openWorkspaceAeron() tea.Cmd {
+	if id := m.workspaceAeronAgent(); id != "" {
+		m.restoreAgent(id)
+		return nil
+	}
+	if m.aeronEnsureFailed {
+		if m.Feedback != nil && m.aeronEnsureError != "" {
+			m.Feedback.NotifyError(m.aeronEnsureError)
+		}
+		return m.openApplicationAgent("role/aeron")
+	}
+	m.aeronOpenRequested = true
+	m.aeronEnsureScheduled = true
+	m.aeronEnsureEarliest = time.Time{}
+	return m.ensureWorkspaceAeron()
+}
+
+// requestWorkspaceAeronEnsure schedules the background open of Aeron. The
+// tick starts it after the startup delay and a quiet period without user work.
 func (m *App) requestWorkspaceAeronEnsure() {
 	if m.ws == nil {
 		return
@@ -47,49 +122,29 @@ func (m *App) requestWorkspaceAeronEnsure() {
 	m.aeronEnsureFailed = false
 }
 
-// retryWorkspaceAeron schedules one bounded retry of an admission conflict.
-// It reports false when the shell has tried often enough and must stop.
-func (m *App) retryWorkspaceAeron() bool {
-	if m.aeronEnsureAttempts >= aeronEnsureMaxAttempts {
-		m.aeronEnsureScheduled = false
-		m.aeronEnsureFailed = true
-		return false
-	}
-	m.requestWorkspaceAeronEnsure()
-	return true
-}
-
-// workspaceAeronTick is the only automatic start point. It yields to any user
-// work, history restore or lifecycle operation already in flight.
+// workspaceAeronTick is the only automatic start point. It yields to user
+// work, history restore and any lifecycle operation already in flight.
 func (m *App) workspaceAeronTick(now time.Time) tea.Cmd {
 	if !m.aeronEnsureScheduled || m.aeronEnsureInFlight || m.aeronEnsureFailed {
 		return nil
 	}
-	if m.workspaceAeronAgent() != "" {
+	if id := m.workspaceAeronAgent(); id != "" {
 		m.aeronEnsureScheduled = false
-		return nil
+		return m.deliverAeronOrders(id)
 	}
 	if now.Before(m.aeronEnsureEarliest) || m.sessionLifecyclePending || m.workspaceAttachPending ||
 		m.historyOperation != nil || m.historySafetyOperation != nil {
 		return nil
 	}
-	if !m.LastInteractionTime.IsZero() && now.Sub(m.LastInteractionTime) < aeronEnsureQuietPeriod {
+	if len(m.aeronOrders) == 0 && !m.aeronOpenRequested && !m.LastInteractionTime.IsZero() && now.Sub(m.LastInteractionTime) < aeronEnsureQuietPeriod {
 		return nil
 	}
-	m.aeronEnsureScheduled = false
 	return m.ensureWorkspaceAeron()
 }
 
-// aeronEnsureRetryable reports a temporary admission conflict. The scheduler
-// retries it after the competing work settles instead of interrupting the user.
-func aeronEnsureRetryable(detail string) bool {
-	detail = strings.ToLower(detail)
-	return strings.Contains(detail, "restore") || strings.Contains(detail, "busy") || strings.Contains(detail, "capacity")
-}
-
-// ensureWorkspaceAeron opens or resumes the workspace's permanent Aeron once
-// per attachment. The agent is created in the core and reaches this shell as
-// normal inventory; it never takes the user's tab.
+// ensureWorkspaceAeron asks the core for the workspace's one Aeron: it reuses,
+// resumes or creates it. The agent reaches this shell as normal inventory and
+// never takes the user's tab.
 func (m *App) ensureWorkspaceAeron() tea.Cmd {
 	if m.ws == nil || m.aeronEnsureInFlight || m.workspaceAeronAgent() != "" {
 		return nil
@@ -97,31 +152,81 @@ func (m *App) ensureWorkspaceAeron() tea.Cmd {
 	if m.sessionLifecyclePending || m.workspaceAttachPending {
 		return nil
 	}
+	m.aeronEnsureScheduled = false
 	m.sessionLifecycleSequence++
 	sequence, owner := m.sessionLifecycleSequence, m.ws
 	m.sessionLifecyclePending = true
 	m.aeronEnsureInFlight = true
-	m.aeronEnsureAttempts++
-	return func() tea.Msg {
+	return m.clientIOCommand(context.Background(), func(context.Context) tea.Msg {
 		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: owner.EnsureAeronSession(), aeron: true}
+	})
+}
+
+// applyAeronEnsure settles one ensure result. Busy admission tries again later.
+// Any other failure is reported only when work was waiting for Aeron; an
+// automatic open stays silent so a new user is not interrupted before setup.
+func (m *App) applyAeronEnsure(result *workspace.NewSessionResult) tea.Cmd {
+	m.aeronEnsureInFlight = false
+	if result != nil && result.Error == "" {
+		m.aeronEnsureFailed = false
+		m.aeronEnsureError = ""
+		if m.ws.AgentMgr().Get(result.OrchID) != nil {
+			m.addOrchestrator(result.OrchID, false)
+		}
+		return m.deliverAeronOrders(result.OrchID)
 	}
+	if result != nil && result.Busy {
+		m.aeronEnsureScheduled = true
+		m.aeronEnsureEarliest = time.Now().Add(retry.Clamp(aeronEnsureStartupDelay))
+		return nil
+	}
+	m.aeronEnsureFailed = true
+	m.aeronEnsureScheduled = false
+	detail := "Aeron could not start. Check the Aeron model in Settings."
+	switch {
+	case result != nil && result.NeedsAccount:
+		detail = "Aeron needs an account. Choose an account in Settings."
+	case result != nil && result.NeedsModel:
+		detail = "Aeron needs a model. Choose a model in Settings."
+	}
+	m.aeronEnsureError = detail
+	if (len(m.aeronOrders) > 0 || m.aeronOpenRequested) && m.Feedback != nil {
+		m.Feedback.NotifyError(detail)
+	}
+	m.aeronOpenRequested = false
+	return nil
+}
+
+// deliverAeronOrders uses the normal input owner, including its wait for replica
+// inventory. Multiple tasks cannot overwrite each other while the agent opens.
+func (m *App) deliverAeronOrders(id string) tea.Cmd {
+	if len(m.aeronOrders) == 0 || id == "" {
+		return nil
+	}
+	commands := make([]tea.Cmd, 0, len(m.aeronOrders))
+	for _, order := range m.aeronOrders {
+		commands = append(commands, m.submitFirstInput(id, order))
+	}
+	m.aeronOrders = nil
+	return tea.Sequence(commands...)
 }
 
 // resetWorkspaceAeron forgets the previous attachment's Aeron presentation.
 // The session itself remains workspace-owned and is found again on attach.
+// Work for the previous workspace's Aeron is not carried to another project.
 func (m *App) resetWorkspaceAeron() {
 	m.aeronPrepared = nil
 	m.aeronEnsureInFlight = false
-	m.aeronEnsureFailed = false
-	m.aeronEnsureAttempts = 0
+	m.aeronOrders = nil
+	m.aeronEnsureError = ""
+	m.aeronOpenRequested = false
 	m.requestWorkspaceAeronEnsure()
 }
 
-// prepareAeronAgent keeps Aeron out of the way: it is minimized, so it never
-// takes the user's tab. Automatic approval is best effort; a failed policy
-// update must not make the agent disappear. It is safe to call again; it acts
-// once the agent is known to this shell.
-func (m *App) prepareAeronAgent(id string) {
+// prepareAeronAgent keeps Aeron out of the way: the first time this shell sees
+// it, it is minimized unless the user opened it. Approval defaults belong to
+// the core session lifecycle; this presentation path does no RPC or persistence.
+func (m *App) prepareAeronAgent(id string, open bool) {
 	if id == "" || m.ws == nil || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(id) == nil || m.aeronPrepared[id] {
 		return
 	}
@@ -129,30 +234,27 @@ func (m *App) prepareAeronAgent(id string) {
 		m.aeronPrepared = map[string]bool{}
 	}
 	m.aeronPrepared[id] = true
-	m.ws.SetYoloForAgent(id, true)
-	m.minimizeAgent(id)
+	if !open {
+		m.minimizeAgent(id)
+	}
 }
 
-// taskWorkspaceAeron sends a work order to this workspace's Aeron. It opens or
-// resumes the Aeron first when the shell does not know it yet. The user keeps
-// their tab; they can open Aeron from the Agents panel to see what it does.
-func (m *App) taskWorkspaceAeron(text string) tea.Cmd {
-	input := provider.PlainInput(text)
+// taskWorkspaceAeron sends a work order to this workspace's Aeron. The chat
+// shows display, not the full order. When Aeron is not open yet, the order
+// waits and Aeron opens as soon as no other session work runs. The user keeps
+// their tab: Aeron asks for attention with modal prompts, and the user can
+// open it from the Agents panel like any other agent.
+func (m *App) taskWorkspaceAeron(text, display string) tea.Cmd {
+	input := provider.UserInput{Text: text, DisplayText: display, Origin: provider.OriginHuman}
 	if id := m.workspaceAeronAgent(); id != "" {
-		m.prepareAeronAgent(id)
+		m.prepareAeronAgent(id, false)
 		return m.submitPreparedInput(id, input, 0)
 	}
-	if m.sessionLifecyclePending || m.workspaceAttachPending {
-		if m.Feedback != nil {
-			m.Feedback.NotifyInfo("A session is still opening; set up the tools again when it is ready")
-		}
-		return nil
-	}
-	m.sessionLifecycleSequence++
-	sequence, owner := m.sessionLifecycleSequence, m.ws
-	m.sessionLifecyclePending = true
-	m.aeronEnsureInFlight = true
-	return func() tea.Msg {
-		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: owner.EnsureAeronSession(), initial: input, aeron: true}
-	}
+	m.aeronOrders = append(m.aeronOrders, input)
+	m.aeronEnsureScheduled = true
+	m.aeronEnsureEarliest = time.Time{}
+	m.aeronEnsureFailed = false
+	m.aeronEnsureError = ""
+	// A busy slot is not an error: the tick starts Aeron when it is free.
+	return m.ensureWorkspaceAeron()
 }

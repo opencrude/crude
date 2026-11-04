@@ -158,6 +158,9 @@ func (c *Conversation) Messages() []Message {
 	return out
 }
 
+// Empty inspects presence without exporting the conversation.
+func (c *Conversation) Empty() bool { return c == nil || len(c.messages) == 0 }
+
 // Message returns a detached copy of one current record.
 func (c *Conversation) Message(id string) (Message, bool) {
 	if c == nil {

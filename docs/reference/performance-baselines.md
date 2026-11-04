@@ -7,6 +7,25 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Narrow chat margin check (2026-11-04)
+
+The Aeron sidebar page (removed the same day; Aeron now opens as a normal agent
+tab) mounted the existing transcript and question deck. A trial change
+to the shared message margin also enabled rich Markdown in narrow views that
+previously used plain wrapping. That was not a free geometry correction:
+`BenchmarkDenseChatWidthCommit_500HeavyMsgs` rose to 6.34–6.42 ms, 1.47 MB and
+110,676 allocations per committed frame (Linux amd64, Go 1.25.9, GOMAXPROCS=2,
+two 120-operation runs). CPU and allocation profiles located most of the added
+cost in Glamour and Lip Gloss's byte-at-a-time wrapping.
+
+The margin change was removed, not hidden behind an Aeron mode or a second
+renderer. Two runs with the established margin measured 0.837–0.854 ms,
+311,305–311,487 bytes and 1,589–1,595 allocations. An isolated upstream-writer
+backport experiment reduced the trial's allocations but still failed the
+existing ceiling, so no dependency fork or cache was added. The original
+455,000-byte / 2,180-allocation gate is unchanged. This is committed reflow
+evidence, not native terminal latency or certification of every Markdown width.
+
 ## Dense-session streaming and resume (2026-11-01)
 
 Reproduced on a read-only copy of a real 850 MiB session (17,447 messages)

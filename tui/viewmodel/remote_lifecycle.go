@@ -22,7 +22,7 @@ type remoteSessionReadyMsg struct {
 	// initial is sent as the new session's first message once it is open.
 	initial provider.UserInput
 	// aeron marks the workspace's Aeron. It opens minimized and never takes
-	// the user's selection.
+	// the user's selection; work for it waits in App.aeronOrders, not initial.
 	aeron bool
 }
 
@@ -96,37 +96,9 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	}
 	m.sessionLifecyclePending = false
 	if msg.aeron {
-		m.aeronEnsureInFlight = false
+		return m.applyAeronEnsure(msg.result)
 	}
 	if msg.result == nil || msg.result.Error != "" {
-		if msg.aeron {
-			if msg.result != nil && aeronEnsureRetryable(msg.result.Error) {
-				// A restore, another lifecycle operation or bounded admission
-				// owns the core. A background ensure retries when the shell is
-				// quiet; a work order keeps its text and asks the user to send
-				// it again instead of dropping it silently.
-				if msg.initial.Text != "" {
-					if m.Feedback != nil {
-						m.Feedback.NotifyInfo("Aeron could not start because other work was running. Send the request again in a moment.")
-					}
-					m.requestWorkspaceAeronEnsure()
-					return nil
-				}
-				m.retryWorkspaceAeron()
-				return nil
-			}
-			m.aeronEnsureFailed = true
-			detail := "Aeron could not start. Check your model settings and try again."
-			if msg.result != nil && msg.result.NeedsAccount {
-				detail = "Aeron is waiting for an account. Choose an account in Settings, then set up the tools again."
-			} else if msg.result != nil && msg.result.NeedsModel {
-				detail = "Aeron is waiting for a model. Choose a model in Settings, then set up the tools again."
-			}
-			if m.Feedback != nil {
-				m.Feedback.NotifyInfo(detail)
-			}
-			return nil
-		}
 		if msg.forked {
 			detail := "Core returned no session result."
 			if msg.result != nil {
@@ -150,29 +122,12 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		m.showOperationFailure("Session could not be opened", detail)
 		return nil
 	}
-	if msg.aeron {
-		m.aeronEnsureFailed = false
-		m.aeronEnsureAttempts = 0
-		m.prepareAeronAgent(msg.result.OrchID)
-		if m.ws.AgentMgr().Get(msg.result.OrchID) != nil {
-			m.addOrchestrator(msg.result.OrchID, false)
-		}
-		if msg.initial.Text == "" {
-			return nil
-		}
-		return m.submitFirstInput(msg.result.OrchID, msg.initial)
-	}
 	m.AddOrchestrator(msg.result.OrchID)
 	if msg.forked {
 		m.Feedback.NotifyInfo("Forked into a new session; the original is unchanged")
 	}
 	if msg.initial.Text != "" {
 		return m.submitFirstInput(msg.result.OrchID, msg.initial)
-	}
-	if msg.sessionID != "" || msg.forked {
-		// A resumed or forked session can be the tail of a workspace switch.
-		// Retry the permanent Aeron once the shell is quiet again.
-		m.requestWorkspaceAeronEnsure()
 	}
 	return nil
 }
@@ -184,20 +139,24 @@ func (m *App) submitFirstInput(agentID string, input provider.UserInput) tea.Cmd
 		return m.submitPreparedInput(agentID, input, 0)
 	}
 	if m.pendingFirstInputs == nil {
-		m.pendingFirstInputs = make(map[string]provider.UserInput)
+		m.pendingFirstInputs = make(map[string][]provider.UserInput)
 	}
-	m.pendingFirstInputs[agentID] = input
+	m.pendingFirstInputs[agentID] = append(m.pendingFirstInputs[agentID], input)
 	return nil
 }
 
 // takePendingFirstInput sends the first message held for an activated tab.
 func (m *App) takePendingFirstInput(agentID string) tea.Cmd {
-	input, ok := m.pendingFirstInputs[agentID]
-	if !ok {
+	inputs := m.pendingFirstInputs[agentID]
+	if len(inputs) == 0 || m.ws.AgentMgr().Get(agentID) == nil {
 		return nil
 	}
 	delete(m.pendingFirstInputs, agentID)
-	return m.submitPreparedInput(agentID, input, 0)
+	commands := make([]tea.Cmd, 0, len(inputs))
+	for _, input := range inputs {
+		commands = append(commands, m.submitPreparedInput(agentID, input, 0))
+	}
+	return tea.Sequence(commands...)
 }
 
 type remoteWorkspaceReadyMsg struct {

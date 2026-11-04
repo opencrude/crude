@@ -1,8 +1,9 @@
 # Autonomous Code Intelligence
 
-> Status: IN PROGRESS - BLOCKED on setup. The thin assembly implementation is
-> connected, but the user rejected the setup review on 2026-11-03 and most
-> catalog tools cannot be installed. The thin checkpoint cannot be banked until
+> Status: IN PROGRESS. The thin assembly implementation is connected. Setup now
+> tasks workspace Aeron, with one real-model npm installation verified. The
+> core-managed store still lacks most package-manager methods, and complete setup
+> acceptance remains open after the 2026-11-03 rejection. The thin checkpoint cannot be banked until
 > the [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design)
 > close. Rich project modeling, per-feature evidence, containment and later
 > workflow phases are not complete. See [Stage status](#stage-status) and
@@ -59,7 +60,11 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-04 | Tool setup is done by one workspace Aeron agent (minimized by default, automatic approval, tasked by a prompt that the setup screen builds). No extra trust, scope or question machinery. Close setup quickly; spend the effort on editor interaction and cooperation with the language server. See [the direction](code-intelligence-setup.md#direction-a-workspace-aeron-does-the-setup-2026-11-04). | User |
 | 2026-11-04 | Aeron needs the full normal tool set, including web research and writing LSP launch settings. Navigation must survive Restart Language Servers, jump to a selected location without an inspect/confirm page, and use plain UI text. Code actions must have a usable path to their edits, and tree markers must match Problems. | User |
 | 2026-11-04 | The workspace Aeron is permanent. It is created or resumed shortly after the workspace opens, once the shell is idle, stays in the Agents sidebar with its idle/running state visible, and never takes the user's tab unless the user opens it. The user can choose to task it at any time. | User |
+| 2026-11-04 | Aeron opens in place in the Agents sidebar, with a Back button and a small task input, not the normal composer or a main chat tab. Its own view is its primary communication surface. Repair the failed setup and the previous Aeron commit without legacy adapters or a new approval framework. **Replaced by the next row.** | User |
+| 2026-11-04 | The sidebar page was rejected as duplicated, ugly UI. Remove it and all sidebar hosting of agents. Crude tasks Aeron autonomously (LSP setup, cleanup and similar IDE work); the user opens it like any other agent, as a tab or a window. Aeron's main channel to the user is the existing modal question and confirmation prompt, also while its tab is open. Main tabs get an official hover tooltip (absolute path for files). | User |
 | 2026-11-04 | Delegate only UI design, to Opus. Keep implementation and other work with the main agent. Reuse the existing components and state owners; do not add duplicate logic or competing authorities. | User |
+| 2026-11-04 | Keep the repair focused and clean: no overengineering, arbitrary restrictions or fragile replacements for established primitives. Regression tests must exercise actual failures and useful user outcomes, not merely check that rejected code is gone. | User |
+| 2026-11-04 | An untargeted wait can correctly wait for the agent's own background command. Its chat title must describe waiting for an update, not imply that another agent exists. | User |
 | 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
 
 ### Open decisions
@@ -77,7 +82,7 @@ Update a row only with evidence.
 | Detect languages | Linguist data through go-enry | The importer uses Linguist data at build time. Product detection uses catalog names/extensions plus bounded ignore-aware evidence and example paths. Dependency/temp false positives are fixed; ambiguous extensions still need content rules. |
 | Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Assembly lists at most 100,000 entries without running project code and reports a limited scan. Rich project context remains separate and explicit. |
 | Resolve | Ordered resolver; compatibility rules as data | Assembly resolves launch data from the catalog, settings, the shared tool store and the system path. Compatibility evaluation remains incomplete. |
-| Acquire | Project decisions in workspace capability settings, one install policy; one shared store under `CRUDE_HOME` | **Blocked.** One-shot consent, the shared store, cancellable acquisition and removal are connected. Only GitHub release files can install; 57 of 121 catalog packages use them. The other 64 (npm 27, PyPI 12, Cargo 9, Go 5, NuGet 3, generic 3, gem 2, LuaRocks 2, opam 1) cannot. The replacement review has focused Linux dismissal and selection evidence, but full setup acceptance remains open. See [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design). |
+| Acquire | Project decisions in workspace capability settings, one install policy; one shared store under `CRUDE_HOME` | The setup screen tasks Aeron; a real-model npm installation is verified. **Core-managed package methods remain blocked:** the store installs only GitHub release files (57 of 121 catalog packages). The other 64 (npm 27, PyPI 12, Cargo 9, Go 5, NuGet 3, generic 3, gem 2, LuaRocks 2, opam 1) have no store-owned installer. Existing decisions, staged acquisition and removal remain connected. Full setup acceptance remains open; see [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design). |
 | Evaluate | Operational checks and independent fixtures; evidence for each feature | Acquired tools initialize in an independent inert root and join Stop before publication. Native real acquisition/activation and failed/cancelled/uncertain checks have normal/race evidence. This is protocol health, not per-feature semantic certification. |
 | Activate | Project-scoped producers, enabled feature by feature | Assembly starts project-scoped producers through the existing trust and process-admission gates. Open documents can share their server process. |
 | Maintain | Invalidation, staged replacement, bounded repair, memory of failed candidates | The watcher fences gaps and refreshes source/ignore topology across policy boundaries. Native move/root-loss, kernel-overflow, concurrent-close and exact reviewed-replacement tests pass; installed-server captures show unopened errors clear. Root loss stays fenced until restart; broader maintenance remains open. |
@@ -101,6 +106,11 @@ Scope: remove Aeron's role-specific restrictions, permit its `lsp.*` settings
 writes, repair restart and cold-server requests, remove navigation's redundant
 inspection step, make supported code actions lead directly to their review, and
 derive tree markers from the same retained facts as Problems.
+The Aeron correction also covers its saved identity while idle, command and
+settings access through the real root-session path, delivery of setup work while
+another session opens, opening it as a normal agent tab, and modal prompts as
+its channel to the user. The main agent owns implementation; Opus supplies UI
+design only.
 
 Exit: connected-shell entry-point tests cover restart, navigation and action
 selection, real installed-server tests cover cold start and restart, tree counts
@@ -114,9 +124,13 @@ do not report them as complete:
 - **Code-action support is not complete.** Command-based code actions
   (`workspace/executeCommand`) and code actions that change more than one file
   are not supported. Crude lists them as not available.
-- **Aeron is not verified with a real model.** No end-to-end run has installed
-  a tool through Aeron with a real model. Crude also does not find a saved Aeron
-  session after a cold core restart; it opens a new one.
+- **Aeron installation coverage is limited.** The failed first run is repaired.
+  The configured `ollama/deepseek-v4.1-flash:1017` model installed
+  yaml-language-server 2.0.0 with npm in a private Linux workspace, configured its
+  absolute launch path and returned real diagnostics. An independent Crude
+  diagnostic probe confirmed the known error with the source unchanged.
+  This does not certify other package managers, native Windows or every tool.
+  See the [setup evidence](code-intelligence-setup.md#implementation-status-2026-11-04).
 - **The Linux-only headless captures did not run.** `TestNavigationVisualHeadless`
   and `TestCodeActionVisualHeadless` need Linux (`/proc`). They were not run on
   the Windows development machine, so their changed phase tables are not

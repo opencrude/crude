@@ -68,13 +68,32 @@ func TestEverySettingsCatalogActionsTouchFooterRule(t *testing.T) {
 					t.Fatal("catalog moved or obscured the shared footer")
 				}
 				// Exercise an enabled painted action, not layout alone.
+				// Language Tools wraps its primary actions above History/Refresh.
+				// With no connected inventory service, those secondary actions
+				// are disabled; Set up tools is still a usable primary action.
+				if category == catLanguageServers && !strings.Contains(row, "[ Set up tools ]") {
+					y--
+					row = settingsRow(buf, y, size.W)
+					if !strings.Contains(row, "[ Set up tools ]") {
+						t.Fatal("Language Tools did not retain its setup action on wrap")
+					}
+				}
 				index := strings.Index(row, "[ ")
 				if category == catSources { // Reset inherited is disabled in app scope.
 					index = strings.LastIndex(row, "[ ")
 				}
 				x := utf8.RuneCountInString(row[:index]) + 2
-				if result := host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}); !result.Handled {
+				result := host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+				if !result.Handled {
 					t.Fatal("painted catalog action has no matching hit target")
+				}
+				if category == catLanguageServers {
+					if result.Cmd == nil {
+						t.Fatal("the setup action did not open its review")
+					}
+					if request, ok := result.Cmd().(OpenProjectToolsMsg); !ok || !request.Selection.Explicit {
+						t.Fatal("the setup action did not request an explicit project review")
+					}
 				}
 			})
 		}

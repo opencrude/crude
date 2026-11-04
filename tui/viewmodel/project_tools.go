@@ -2,6 +2,8 @@ package viewmodel
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -70,6 +72,20 @@ func projectToolSetupTask(project string, items []types.ProjectToolCandidate, se
 		}
 	}
 	return task
+}
+
+// projectToolSetupDisplay is what the chat shows for the work order: the
+// request in plain words, not the structured order that Aeron reads.
+func projectToolSetupDisplay(task prompt.ToolSetupTask) string {
+	names := make([]string, 0, len(task.Setup))
+	for _, item := range task.Setup {
+		names = append(names, item.Package)
+	}
+	noun := "tools"
+	if len(names) == 1 {
+		noun = "tool"
+	}
+	return fmt.Sprintf("Set up %d code intelligence %s: %s.", len(names), noun, strings.Join(names, ", "))
 }
 
 func (m *App) projectToolsCurrent(request *projectToolsRequest) bool {
@@ -193,9 +209,10 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if len(msg.Selected) > 0 {
 			// Aeron does the work. Crude only records that the user answered,
 			// so the question is not asked again for this project.
-			task = m.taskWorkspaceAeron(prompt.ToolSetupMessage(projectToolSetupTask(m.ws.RootPath(), msg.Target.Items(), msg.Selected)))
+			order := projectToolSetupTask(m.ws.RootPath(), msg.Target.Items(), msg.Selected)
+			task = m.taskWorkspaceAeron(prompt.ToolSetupMessage(order), projectToolSetupDisplay(order))
 			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("Aeron is setting up the tools. You can keep editing; open Aeron in the Agents panel to watch.")
+				m.Feedback.NotifyInfo("Tool setup was sent to Aeron. It shows a prompt when it needs your answer.")
 			}
 		}
 		decide := m.clientIOCommand(request.ctx, func(ctx context.Context) tea.Msg {

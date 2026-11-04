@@ -94,6 +94,7 @@ func (p *mainPaneLayout) group(id window.GroupID) *mainPaneGroup {
 	}
 	tabs.SetNewButton(true)
 	tabs.SetDraggable(true)
+	tabs.SetTooltipFunc(p.app.tabTooltip)
 	g := &mainPaneGroup{Base: ui.NewBase(base), id: id, tabs: tabs, empty: newEmptyMainPane(ui.NewID(base, "empty"), id)}
 	p.groups[id] = g
 	return g
@@ -110,30 +111,7 @@ func (p *mainPaneLayout) view(tab *window.Tab) *mainPaneView {
 	v := &mainPaneView{}
 	if p.app.isAgentTabTitle(tab.Title) {
 		agentID := p.app.agentIDFromTabTitle(tab.Title)
-		if retained := p.agentViews[agentID]; retained != nil {
-			p.views[tab.ID] = retained
-			return retained
-		}
-		v.embedded = p.app.subPaneProjections.ForOwner(agentID)
-		if proj := p.app.subPaneProjections.GetExisting(agentID); proj != nil {
-			proj.renderer.SetSubPaneContentFn(p.app.subPaneContentForRegistry(v.embedded))
-		}
-		first := !p.initialChatUsed
-		p.initialChatUsed = true
-		if first {
-			v.chat, v.input = p.app.chatScreen, p.app.inputScreen
-		} else {
-			v.chat = shellchat.NewWithID(p.app.Theme, ui.NewID(base, "chat"))
-			v.input = shellinput.NewWithID(p.app.Theme, ui.NewID(base, "input"))
-		}
-		v.deck = newDeckMount(p.app)
-		v.deck.Base = ui.NewBase(ui.NewID(base, "deck"))
-		_, v.deck.projection = p.app.sessionProjectionForAgent(p.app.agentIDFromTabTitle(tab.Title))
-		if node := p.app.ws.AgentMgr().Get(agentID); node != nil && node.State != nil && node.State.Completed {
-			v.chat.ScrollModel().SetAutoScroll(false)
-			v.chat.ScrollModel().ScrollTo(0)
-		}
-		p.agentViews[agentID] = v
+		v = p.agentView(agentID)
 	} else if p.app.isEditorTabTitle(tab.Title) {
 		first := true
 		for _, old := range p.views {
@@ -150,6 +128,36 @@ func (p *mainPaneLayout) view(tab *window.Tab) *mainPaneView {
 		v.editor.Bind(p.app.editorForWindowTab(tab.Title))
 	}
 	p.views[tab.ID] = v
+	return v
+}
+
+// agentView is retained by agent identity, so a tab and a window of the same
+// agent share one chat, composer and deck.
+func (p *mainPaneLayout) agentView(agentID string) *mainPaneView {
+	if v := p.agentViews[agentID]; v != nil {
+		return v
+	}
+	base := ui.ComponentID("main-panes/agent-" + agentID)
+	v := &mainPaneView{embedded: p.app.subPaneProjections.ForOwner(agentID)}
+	if proj := p.app.subPaneProjections.GetExisting(agentID); proj != nil {
+		proj.renderer.SetSubPaneContentFn(p.app.subPaneContentForRegistry(v.embedded))
+	}
+	first := !p.initialChatUsed
+	if first {
+		p.initialChatUsed = true
+		v.chat, v.input = p.app.chatScreen, p.app.inputScreen
+	} else {
+		v.chat = shellchat.NewWithID(p.app.Theme, ui.NewID(base, "chat"))
+		v.input = shellinput.NewWithID(p.app.Theme, ui.NewID(base, "input"))
+	}
+	v.deck = newDeckMount(p.app)
+	v.deck.Base = ui.NewBase(ui.NewID(base, "deck"))
+	_, v.deck.projection = p.app.sessionProjectionForAgent(agentID)
+	if node := p.app.ws.AgentMgr().Get(agentID); node != nil && node.State != nil && node.State.Completed {
+		v.chat.ScrollModel().SetAutoScroll(false)
+		v.chat.ScrollModel().ScrollTo(0)
+	}
+	p.agentViews[agentID] = v
 	return v
 }
 

@@ -170,7 +170,7 @@ func (m *App) AgentTabViews() []workspace.TabView {
 		if node.Parent != nil {
 			kind = "sub-agent"
 		}
-		label := workspace.AgentDisplayLabel(node)
+		label := m.agentLabel(node)
 		views = append(views, workspace.TabView{
 			ID:           node.ID,
 			Title:        "agent:" + node.ID,

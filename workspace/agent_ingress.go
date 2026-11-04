@@ -197,7 +197,7 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		id, _ := data["input_id"].(string)
 		text, _ := data["text"].(string)
 		display, _ := data["display_text"].(string)
-		state.Messages.AppendMessageIfAbsent(queuedInputMessage(id, text, display, time.Now()))
+		state.Messages.AppendMessageIfAbsent(queuedInputMessage(id, provider.UserInput{Text: text, DisplayText: display}, time.Now()))
 		result.EvidenceOnly = true
 	case "queued_input_admitted":
 		state.Messages.ConsumePendingSteering(agentEventString(evt.Data, "input_id"))
@@ -495,7 +495,7 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 			node == nil || node.State == nil || owner == nil || owner.SessionID != receipt.SessionID {
 			return false
 		}
-		message := queuedInputMessage(receipt.InputID, input.Text, input.DisplayText, receipt.AcceptedAt)
+		message := queuedInputMessage(receipt.InputID, input, receipt.AcceptedAt)
 		message.ReferenceLabels = labels
 		message.Attachments = inputAttachmentTargets(owner, input)
 		if node.State.Messages.AppendMessageIfAbsent(message) {
@@ -520,7 +520,7 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 	}
 	state := node.State
 	if !state.Messages.AppendMessageIfAbsent(Message{InternalID: receipt.InputID, Role: MessageRoleUser,
-		Origin: input.EffectiveOrigin(), Content: input.Text, ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: receipt.AcceptedAt}) {
+		Origin: input.EffectiveOrigin(), Content: input.DisplayContent(), ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: receipt.AcceptedAt}) {
 		return true
 	}
 	if result.Status == InputAdmissionAccepted && !state.Cancelling && !state.IsActive() && state.TurnIdentity.Generation < receipt.TurnGeneration {
@@ -546,9 +546,6 @@ func inputAttachmentTargets(owner *Session, input provider.UserInput) []attachme
 
 // queuedInputMessage is the pending row for a prompt waiting in the durable
 // queue. Admission consumes the pending mark in place, keeping one identity.
-func queuedInputMessage(id, text, display string, at time.Time) Message {
-	if display != "" {
-		text = display
-	}
-	return Message{InternalID: id, Role: MessageRoleUser, Origin: provider.OriginHuman, Content: text, Time: at, PendingSteering: true}
+func queuedInputMessage(id string, input provider.UserInput, at time.Time) Message {
+	return Message{InternalID: id, Role: MessageRoleUser, Origin: input.EffectiveOrigin(), Content: input.DisplayContent(), Time: at, PendingSteering: true}
 }

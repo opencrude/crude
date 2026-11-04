@@ -216,9 +216,7 @@ func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintConte
 	proj.deckHost.SetFrame(d.app.SpinFrame)
 	proj.deckHost.SetFocusActive(ctx.Focused)
 	proj.deckHost.Layout()
-	if proj == d.app.activeSessionDeck() {
-		d.app.focusSessionDeckAfterLayout()
-	}
+	d.app.focusSessionDeckAfterLayout(proj)
 	proj.deckHost.Paint(d.surf.Buffer())
 	surface.BlitOpaque(buf, ox+b.X, oy+b.Y, d.surf.Buffer())
 }

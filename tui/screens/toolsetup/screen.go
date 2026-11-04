@@ -80,7 +80,7 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	s.detail.SetBackgroundColor(tokens.Color(ui.ColorPopupBg))
 	s.intro = ui.NewLabel("project-tools/intro", "Project: "+review.Project, th)
 	s.caption = ui.NewLabel("project-tools/caption",
-		"Aeron sets up the tools you select. It works in the background; open it in the Agents panel to watch. Editing works without these tools.", th)
+		"Aeron sets up the tools you select. It works in the background and shows a prompt when it needs your answer. Editing works without these tools.", th)
 	s.caption.SetColorRole(ui.ColorMuted)
 	s.actions = ui.NewActionBar(ActionsID, tokens,
 		ui.ActionBarButton{Label: "Set up with Aeron", Action: ActionInstall, Variant: ui.VariantPrimary},

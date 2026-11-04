@@ -4,7 +4,7 @@
 > Aeron. Its unrestricted normal tools cover research, installation and LSP
 > configuration; the earlier rigid installer is not the setup-screen path.
 > Native LSP navigation and edit-review interactions are verified at 80x24 and
-> 160x40. Real-model setup acceptance remains open; see the
+> 160x40. A real-model Linux npm installation is verified; broader acceptance remains open. See the
 > [open limits](#open-limits-2026-11-04) and
 > [the current direction](#direction-a-workspace-aeron-does-the-setup-2026-11-04).
 > This plan owns how Crude finds, asks for, installs and accounts for the tools
@@ -52,6 +52,8 @@ There is no other installer, approval store or registration table.
 | 2026-11-03 | The user decided that Settings has no separate Language Servers and Code intelligence tools pages: language servers are code-intelligence tools. One page lists them in one table that shows whether Crude or the user installed each tool, with a much better design. The user asked to resolve the plan divergences before more IDE plan work. |
 | 2026-11-03 | The user asked whether the feature should be called "intellisense". Research: "IntelliSense" is a registered Microsoft trademark and names only part of the feature. Keep **code intelligence** ([Name](#name)). |
 | 2026-11-03 | Merge only **Language Servers** and **Code intelligence tools**; keep **Code Intelligence** preferences separate. The user delegated the setup review design. Offer to install missing runtimes and use JetBrains products as a reference instead of asking the user to settle such details. The existing **Acquisition** install policy also governs code-intelligence tools. |
+| 2026-11-04 | Aeron's primary surface is a compact view inside the Agents sidebar, with Back and a small task input. Do not expose its structured work order or the normal composer. Opus supplies UI design only; the main agent implements and verifies the repairs. **Replaced by the next row.** |
+| 2026-11-04 | The sidebar page is removed. Aeron opens like any agent (tab or window, normal composer). Its questions and confirmations always use the modal agent prompt, and its system prompt tells it that the question tool is its channel to the user. Do not expose its structured work order. |
 
 ## Direction: a workspace Aeron does the setup (2026-11-04)
 
@@ -66,8 +68,10 @@ cooperation with the language server, not to a trust framework around setup.
   not working, so a restore or first input never competes with it. It starts
   minimized, and shows in the Agents sidebar like any agent with its idle or
   running state. A restart reopens the same saved session. The user can open it
-  to see what it does and task it whenever they choose. Crude parts and the main
-  agent task it with normal messages. The user can also task the main agent to
+  to see what it does and task it whenever they choose. Opening its row opens it
+  like any agent, as a tab or a window. It reaches the user through modal
+  question and confirmation prompts. Crude parts and the main agent task it
+  through the same session input owner. The user can also task the main agent to
   do the same job if Aeron falls short.
 - **The setup screen stays.** It shows the languages Crude found. Its switches
   say what Aeron should set up and what it should leave alone. **Set up** builds
@@ -75,7 +79,8 @@ cooperation with the language server, not to a trust framework around setup.
   Tools that the catalog cannot install directly are no longer fake switches:
   Aeron works out how to get them (a package manager, a release file).
 - **Auto approve by default.** Aeron runs with the session permission mode and
-  starts in the automatic mode. There is no second approval store, no scope
+  starts in the automatic mode. The core sets this once when it creates the
+  session; reopening it preserves the saved mode. There is no second approval store, no scope
   compiler and no deduplicating question service. The switches are prompt text.
 - **Aeron has full control.** It has no tool allow-list or deny-list and no
   capability limit beyond the session permission mode. It searches the web,
@@ -98,19 +103,60 @@ cooperation with the language server, not to a trust framework around setup.
 
 Built: the Agents sidebar fold; `InvocationSelection.MainAgent` and
 `NewAgentSessionAs` (a session rooted in a built-in role, over the same core
-RPC); the Aeron role with no tool or capability restriction; the setup screen
-(the 2026-11-03 list-and-details review, with every tool selectable and
-selected at first) that sends `prompt.ToolSetupMessage` to the workspace's
-Aeron, minimized and on automatic approval (`tui/viewmodel/workspace_aeron.go`);
-the close button of the setup window; and the permanent workspace Aeron
-(`EnsureAeronSession`): the core records its session in `workspace_metadata`,
-reopens that saved session on the next attach, reports `idle` in the Agents
-panel, and never takes the user's tab. The shell creates it after startup
-settles and only while no restore, lifecycle operation or user input is
-running; a temporary admission conflict retries quietly. Not built or not
-verified: a rendered
-native Windows run of the whole journey, and an end-to-end Aeron installation
-run with a real model.
+RPC); the Aeron role with no tool or capability restriction, in the agent
+filter, the role policy and the shipped role defaults
+(`types.DefaultAgentRoleCategories`, guarded by
+`session/aeron_tools_test.go`); the setup screen (the 2026-11-03
+list-and-details review, with every tool selectable and selected at first)
+that sends `prompt.ToolSetupMessage` to the workspace's Aeron, minimized and
+on automatic approval (`tui/viewmodel/workspace_aeron.go`), with a one-line
+summary as the chat text; the close button of the setup window; and the
+permanent workspace Aeron (`EnsureAeronSession`): the core records its session
+in `workspace_metadata`, reopens that saved session on the next attach, reports
+`idle` in the Agents panel, and never takes the user's tab. The shell opens it
+after startup settles and the user is idle. A setup order waits while other
+session work holds the core and is delivered when Aeron opens. Multiple orders
+cannot overwrite each other. An open failure marks the Aeron row **needs setup**;
+opening the row then shows the cause and opens Aeron's settings. It sends a
+notice at once only when an order or an open request was waiting.
+
+Aeron has no surface of its own. Its row opens it as a normal agent tab (or a
+window from the context menu) with the normal composer, model choice and status
+bar. Its questions and confirmations always use the modal agent prompt, also
+while its tab is visible (`agentPromptInlineEligible`), and its root system
+prompt carries `prompt.WorkspaceAgentContract`, which makes the question tool its
+channel to the user. `TestAeronOpensAsAgentTabAndRunsTools` uses the real
+connected core, provider tool loop and shell Update path at 160x40 and 80x24: it
+opens Aeron from its row as a tab, sends a task from the normal composer, runs a
+command and creates an LSP command entry through the control gateway, and checks
+the contract in the system prompt. The gateway uses the shared sparse
+settings-edit owner instead of a second recursive writer.
+`TestAeronQuestionIsAModalPrompt` covers a background question that opens the
+modal without changing the user's tab or draft, and stays modal when Aeron's tab
+opens. `TestEnsureAeronSessionIsOneAndReopens` covers the saved empty
+identity and permission mode.
+The full-suite run exposed a second display path: a core input receipt could
+publish the raw order before provider events arrived. Input publication, queue,
+steering and persistence now use `UserInput.DisplayContent`; the existing
+`TestAgentIngressInputReceiptPublishesOnce` fails deterministically without that
+fix and asserts the actual readable summary.
+
+The first real run (2026-11-04) failed: the shipped Aeron default was still
+read-only without commands or web access, and the saved application config had
+stored that default. Both were corrected.
+
+Real-model acceptance (2026-11-04): the configured
+`ollama/deepseek-v4.1-flash:1017` Aeron received the setup screen's
+`prompt.ToolSetupMessage` through the connected core's `session.ensure` and
+ordinary input admission in a disposable trusted Linux workspace. It used web
+research, npm and normal settings control to install yaml-language-server 2.0.0
+privately, select a stable absolute Node runtime, configure its absolute launcher
+with `--stdio`, and enable YAML. No global install or real project edit was used.
+The model checked startup, diagnostics and symbols; after its turn completed, an
+independent `LSPManager.ProbeDiagnostics` through Crude found the known syntax
+error from that exact installed launcher. The original source bytes were
+unchanged. This proves one working model-driven installation, not the whole
+package ecosystem or all schema-driven features.
 
 ### Open limits (2026-11-04)
 
@@ -119,9 +165,9 @@ These items are not done. Do not report them as complete.
 - **Code-action support is not complete.** Command-based code actions
   (`workspace/executeCommand`) and code actions that change more than one file
   are not supported. Crude lists them as not available.
-- **Aeron is not verified with a real model.** No end-to-end run has installed
-  a tool through Aeron with a real model. After a cold core restart, Crude does
-  not find the saved Aeron session; it opens a new one.
+- **Aeron installation coverage is limited.** One real-model Linux npm install
+  is verified above. Other package managers, native Windows and the whole setup
+  journey on Windows are not verified.
 - **The Linux-only headless captures did not run.** `TestNavigationVisualHeadless`
   and `TestCodeActionVisualHeadless` need Linux (`/proc`). They were not run on
   the Windows development machine, so their changed phase tables are not
@@ -132,8 +178,10 @@ These items are not done. Do not report them as complete.
   `TestPreparedInstallRetainsReservationIfStagingIsReplaced` (Windows does not
   let the test rename an open staging folder), and
   `TestEverySettingsCatalogActionsTouchFooterRule` for Language Tools at 88x24
-  and 70x18 (the painted catalog action has no hit target). That work has only
-  Linux evidence.
+  and 70x18. The latter also failed on Linux: its click selected disabled History
+  after the primary actions wrapped. The test now clicks the rendered enabled
+  Set up tools action and checks its actual review request. Native Windows
+  verification remains open.
 
 ### Language-server interaction fixes (2026-11-04)
 

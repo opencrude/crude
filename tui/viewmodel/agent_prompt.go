@@ -11,6 +11,7 @@ import (
 	"crude/tui/screens/question"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace"
 )
 
 type agentPromptKind uint8
@@ -101,6 +102,8 @@ func (m *App) agentYoloEnabled(agentID string) bool {
 func (m *App) openNextAgentPrompt() {
 	// Registry order is arrival order. Docked requests stay retained in their
 	// family when the user leaves; only never-docked requests enter the FIFO modal.
+	// Aeron works in the background, so its requests always use the modal,
+	// even while its own tab is visible.
 	for _, state := range append([]*agentPromptState(nil), m.agentPrompts...) {
 		if m.ws.AgentMgr().Get(state.request.agentID) == nil {
 			m.removeAgentPrompt(state)
@@ -138,7 +141,7 @@ func (m *App) openNextAgentPrompt() {
 
 func (m *App) agentPromptInlineEligible(agentID string) bool {
 	owner := m.ws.AgentMgr().OrchestratorFor(agentID)
-	if owner == nil || m.Win == nil {
+	if owner == nil || m.Win == nil || workspace.SessionIsAeron(m.ws.SessionsByAgent()[owner.ID]) {
 		return false
 	}
 	for _, group := range m.Win.AllGroupIDs() {
@@ -295,6 +298,9 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 }
 
 func (m *App) promptOwnerLabel(agentID string) string {
+	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.IsOrchestrator() && m.isAeronAgent(agentID) {
+		return m.agentLabel(node)
+	}
 	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.Label != "" {
 		return node.Label + " (" + agentID + ")"
 	}

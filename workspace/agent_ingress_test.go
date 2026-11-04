@@ -157,7 +157,8 @@ func TestAgentIngressInputReceiptPublishesOnce(t *testing.T) {
 	result := InputAdmissionResult{Status: InputAdmissionAccepted, Receipt: InputAdmissionReceipt{
 		SessionID: "session", AgentID: "root", InputID: "input", DraftRevision: 7, OwnerEpoch: 1, TurnGeneration: 1, ContextRevision: 1, AcceptedAt: time.Now(),
 	}}
-	input := provider.PlainInput("accepted human request")
+	input := provider.UserInput{Text: "<tool_setup_task>accepted full order</tool_setup_task>",
+		DisplayText: "Set up the requested tool.", Origin: provider.OriginHuman}
 	if !w.ApplyAgentInputAdmission(intent, result, input, []string{"image"}) {
 		t.Fatal("receipt rejected")
 	}
@@ -169,8 +170,8 @@ func TestAgentIngressInputReceiptPublishesOnce(t *testing.T) {
 	for _, message := range w.SnapshotAgents().Agents[0].Messages {
 		if message.Role == MessageRoleUser {
 			count++
-			if message.Content != input.Text || message.Origin != provider.OriginHuman {
-				t.Fatal("input lost content or origin")
+			if message.Content != "Set up the requested tool." || message.Origin != provider.OriginHuman {
+				t.Fatalf("the accepted task lost its readable summary or origin: %+v", message)
 			}
 		}
 	}

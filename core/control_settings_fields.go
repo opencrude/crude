@@ -267,7 +267,7 @@ func (a *actor) prepareControlSettingsFields(in control.Request) (func(context.C
 		if strings.Contains(path, ".Profiles") || strings.Contains(path, "Price") || strings.HasSuffix(path, "ActiveProfile") {
 			return
 		}
-		human := ControlSettingsAuthority(path)
+		human := ControlSettingsAuthority(path) && !a.aeronOwnsSetting(in.Caller, path)
 		readonly := false
 		ownership := input.Scope
 		if input.Scope == "workspace" && (strings.HasPrefix(path, "accounts.") || strings.HasPrefix(path, "network.")) {
@@ -316,6 +316,6 @@ func (a *actor) prepareControlSettingsFields(in control.Request) (func(context.C
 	}
 	raw, _ := json.Marshal(page)
 	return func(context.Context) control.Result {
-		return control.Result{RequestID: in.ID, State: control.Committed, Output: raw}
+		return control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed, Output: raw}
 	}, nil, true
 }

@@ -45,6 +45,7 @@ const (
 	OverlaySnippetChoices    OverlayID = "snippet-choices"
 	OverlayDiagContext       OverlayID = "diag-context"
 	OverlayDiagHover         OverlayID = "diag-hover"
+	OverlayTooltip           OverlayID = "tooltip"
 	OverlayPlanHover         OverlayID = "plan-hover"
 	OverlayConnectionHealth  OverlayID = "connection-health"
 	OverlaySessionPicker     OverlayID = "session-picker"

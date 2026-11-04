@@ -121,7 +121,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?", tool: "bash"})
 		projection.deckHost.Resize(100, 12)
 		projection.deckHost.Layout()
-		app.focusSessionDeckAfterLayout()
+		app.focusSessionDeckAfterLayout(projection)
 		if projection.deckHost.Focused() != confirmation.ActionsID {
 			t.Fatalf("confirmation focus=%q want %q", projection.deckHost.Focused(), confirmation.ActionsID)
 		}
@@ -153,7 +153,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		}
 		projection.deckHost.Resize(100, 12)
 		projection.deckHost.Layout()
-		app.focusSessionDeckAfterLayout()
+		app.focusSessionDeckAfterLayout(projection)
 		app.Input.SetInput("blocked")
 		// First Esc: the answer pane hands focus back to the question rail
 		// without denying anything.
@@ -195,7 +195,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		app.openSessionYoloPanel()
 		projection.deckHost.Resize(100, 12)
 		projection.deckHost.Layout()
-		app.focusSessionDeckAfterLayout()
+		app.focusSessionDeckAfterLayout(projection)
 		if projection.deckHost.Focused() != decision.ActionsID {
 			t.Fatalf("YOLO focus=%q want %q", projection.deckHost.Focused(), decision.ActionsID)
 		}
@@ -285,7 +285,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 	t.Run("settings_tab_navigation_documented_via_form", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
 		app.openSessionSettings()
-		app.focusSessionDeckAfterLayout()
+		app.focusSessionDeckAfterLayout(projection)
 		_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyTab})
 		if !projection.deck.IsOpen() || !app.sessionDeckCapturesInput() {
 			t.Fatal("settings deck should remain focused for Tab navigation")

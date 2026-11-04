@@ -258,10 +258,19 @@ ownership are all retained. A stray click must never destroy work in flight.
   detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
   on its own so every path back works.
 - The workspace Aeron is permanent. Each attachment ensures exactly one after
-  startup settles and a quiet period without user work, minimized by default,
-  and its row always reports a state (`idle`, `running`, `finished`, with
-  `minimized` while its tab is closed). Reopening the workspace resumes the
-  saved session instead of creating another agent.
+  startup settles and a quiet period without user work; it arrives minimized
+  and never takes the user's tab by itself. Its row shows its state and opens
+  it **like any other agent**: a normal agent tab with the normal chat,
+  composer and status bar, or a window from the row's context menu. Before the
+  core has returned it, opening the row waits and opens the tab when it
+  arrives; a failed start opens Aeron's settings. Aeron is permanent, so it has
+  no Terminate action. Reopening the workspace resumes the saved identity even
+  before its first task. The core supplies automatic approval only when it
+  creates the session; attaching and resuming do not change a saved mode.
+- Aeron's questions and confirmations always use the modal agent prompt
+  (`OverlayAgentPrompt`), also while its own tab is visible: it works in the
+  background, so the modal is its channel to the user. Other agents keep the
+  in-tab deck when their tab is visible.
 - Terminating is explicit: `terminateAgent` (tab and Agents-panel context
   menus) still cancels the turn, stops the orchestrator, and drops state.
   `cleanupAgent` remains the destructive path; do not wire it to tab close.
@@ -276,7 +285,7 @@ summary after it finishes (`agentPaneControls`; dropped only when the row is too
 narrow to keep a readable title), and the Agents panel lists it with Open / Open
 in window actions. The rest of this section concerns root agents and explicit opens.
 
-Creating or restoring an agent **must add its window tab and make it the
+Creating or restoring an ordinary agent **must add its window tab and make it the
 painted main view even while editor tabs are open**. A stray early return
 in `syncAgentWindowTabs` when `EditorState.ActiveView != ""` used to skip
 `OpenTab` entirely: New Agent created the session in `AgentMgr`, but the

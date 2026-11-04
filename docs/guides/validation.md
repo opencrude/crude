@@ -282,6 +282,19 @@ the sanitized result marker and a clean test exit independently. The connected
 TUI paints the same private core's event log; this is not distinct-host or
 cross-process-core acceptance.
 
+### Aeron and tab tooltip acceptance
+
+`TestAeronAndTabTooltipVisualAcceptance` (`CRUDE_VISUAL_AERON=1`) drives the
+connected shell with a fixture provider. Precompile the viewmodel test binary
+and run it through `scripts/tuishot.sh` with `CRUDE_BIN`/`CRUDE_ARGS`, at
+160x40 and 80x24, one capture at a time. Rest the pointer on the file tab and
+press F4 (the painted tooltip shows the absolute path). F3 releases Aeron's
+question; F4 checks that it is a modal over the unchanged tab and draft.
+Click the modal's **Cancel**, then F4 checks that it closed. F5 shows the
+Agents panel; Home, Down and Enter open Aeron's row; F4 checks its normal
+agent tab. F9 exits. `CRUDE_AERON_VISUAL_RESULT` receives
+`AERON_VISUAL_SUCCESS` or the failed phase and its state.
+
 ### Shared language diagnostic acceptance
 
 The source-qualified language slice has independent tests in `insight/facts`,

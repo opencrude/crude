@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/provider"
 	"crude/shellport"
 	"crude/tui/ui"
 	"crude/types"
@@ -48,7 +49,7 @@ func TestWorkspaceAeronIsEnsuredOnceAndListedIdle(t *testing.T) {
 		t.Fatal("the workspace Aeron took the user's tab")
 	}
 	row := findSidebarAgent(t, app, "aeron-agent")
-	if row.Label != "Aeron" || row.Detail != "idle · minimized" {
+	if row.Label != "Aeron" || row.Detail != "idle" {
 		t.Fatalf("Aeron row does not report its state: %#v", row)
 	}
 	app.setActivity(activityAgents, true)
@@ -115,24 +116,64 @@ func TestWorkspaceAeronWaitsForQuietAndRestore(t *testing.T) {
 	if app.workspaceAeronAgent() != "aeron-agent" {
 		t.Fatal("the quiet ensure did not install the workspace Aeron")
 	}
-	if app.aeronEnsureAttempts != 0 {
-		t.Fatalf("a successful ensure kept its retry budget: %d", app.aeronEnsureAttempts)
+}
+
+// Work for Aeron is never dropped because other session work held the core:
+// it waits, Aeron opens when admission is free, and the order is delivered.
+// The user is not asked to send it again and is not told about the wait.
+func TestWorkspaceAeronWorkWaitsThroughBusyAdmission(t *testing.T) {
+	app, port := projectToolsTestApp(t, 120, 36)
+	port.busy = 1
+	cmd := app.taskWorkspaceAeron("<order/>", "Set up 1 code intelligence tool: marksman.")
+	if cmd == nil {
+		t.Fatal("work for Aeron did not start Aeron")
+	}
+	runAppCommand(t, app, cmd)
+	if len(app.aeronOrders) == 0 || app.aeronEnsureFailed || !app.aeronEnsureScheduled {
+		t.Fatalf("busy admission dropped the work: orders=%v failed=%v scheduled=%v", app.aeronOrders, app.aeronEnsureFailed, app.aeronEnsureScheduled)
+	}
+	if port.roles != nil {
+		t.Fatal("a busy answer opened an agent")
+	}
+	// The order does not wait for a quiet shell, only for the retry time.
+	app.LastInteractionTime = time.Now()
+	retry := app.workspaceAeronTick(time.Now().Add(aeronEnsureStartupDelay + time.Millisecond))
+	if retry == nil {
+		t.Fatal("waiting work did not retry Aeron")
+	}
+	runAppCommand(t, app, retry)
+	sent := app.pendingFirstInputs["aeron-agent"][0]
+	if sent.Text != "<order/>" || sent.DisplayText != "Set up 1 code intelligence tool: marksman." || len(app.aeronOrders) != 0 {
+		t.Fatalf("the waiting work was not delivered: sent=%+v orders=%v", sent, app.aeronOrders)
 	}
 }
 
-// An admission conflict retries a bounded number of times, then stops instead
-// of looping against the core for the rest of the session.
-func TestWorkspaceAeronRetryBudgetIsBounded(t *testing.T) {
+// A background open that fails is silent and stops; work that cannot reach
+// Aeron is reported once with the next step and is not retried in a loop.
+func TestWorkspaceAeronFailureStopsAndReportsOnlyWork(t *testing.T) {
 	app, _ := projectToolsTestApp(t, 120, 36)
-	app.aeronEnsureAttempts = aeronEnsureMaxAttempts
-	if app.retryWorkspaceAeron() {
-		t.Fatal("the retry budget kept retrying past its limit")
+	app.aeronEnsureInFlight = true
+	if cmd := app.applyAeronEnsure(&workspace.NewSessionResult{Error: "no model", NeedsModel: true}); cmd != nil {
+		t.Fatal("a failed background open started more work")
 	}
-	if !app.aeronEnsureFailed || app.aeronEnsureScheduled {
-		t.Fatalf("bounded retry did not stop quietly: failed=%v scheduled=%v", app.aeronEnsureFailed, app.aeronEnsureScheduled)
+	if !app.aeronEnsureFailed || app.aeronEnsureInFlight {
+		t.Fatal("a failed background open did not stop")
 	}
-	app.aeronEnsureAttempts = 0
-	if !app.retryWorkspaceAeron() || !app.aeronEnsureScheduled {
-		t.Fatal("a fresh budget did not schedule a retry")
+	if cmd := app.workspaceAeronTick(time.Now().Add(time.Hour)); cmd != nil {
+		t.Fatal("a failed background open retried in a loop")
+	}
+	app.aeronOrders = []provider.UserInput{{Text: "<order/>"}}
+	app.aeronEnsureInFlight = true
+	app.applyAeronEnsure(&workspace.NewSessionResult{Error: "no model", NeedsModel: true})
+	if len(app.aeronOrders) != 1 || app.aeronEnsureScheduled {
+		t.Fatal("failed work was lost or started an automatic retry loop")
+	}
+	reported := false
+	for _, notice := range app.ws.Status().Notifications(false) {
+		reported = reported || strings.Contains(notice.Summary, "Aeron needs a model") &&
+			strings.Contains(notice.Summary, "Choose a model in Settings")
+	}
+	if !reported {
+		t.Fatal("failed work was not reported with its next step")
 	}
 }

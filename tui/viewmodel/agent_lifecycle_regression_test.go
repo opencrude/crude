@@ -187,8 +187,8 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	}
 
 	items := app.agentSidebarItems()
-	if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].Label != "No agents" {
-		t.Fatalf("Agents panel disagrees with empty lifecycle state: %#v", items)
+	if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].ID != sidebarItemAeron {
+		t.Fatalf("Agents panel did not retain its workspace-agent entry: %#v", items)
 	}
 }
 

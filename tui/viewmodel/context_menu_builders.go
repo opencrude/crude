@@ -382,7 +382,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 	node := m.ws.AgentMgr().Get(agentID)
 	title := activitybar.ViewAgents.Glyph() + " Agents"
 	if node != nil {
-		label := workspace.AgentDisplayLabel(node)
+		label := m.agentLabel(node)
 		if label == "" {
 			label = item.Label
 		}
@@ -390,31 +390,35 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 	}
 	st := &ui.ContextMenuState{Title: title}
 	if node != nil {
-		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Agent",
-			Items: []ui.ContextMenuItem{
-				{Label: "Open agent", Action: func() {
-					m.restoreAgent(node.ID)
-				}},
-				{Label: "Open in window", Detail: "movable, resizable", Action: func() {
-					m.openAgentInWindow(node.ID)
-				}},
-				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Detail: "from saved work", Action: func() {
-					m.runDetachedAsyncCmd(m.retryAgentRecovery(node.ID))
-				}},
-				{Label: "Minimize agent", Disabled: m.AgentView.IsHidden(node.ID), Detail: "keeps running", Action: func() {
-					m.minimizeAgent(node.ID)
-				}},
-				{Label: "Cancel agent", Disabled: !m.canCancelAgent(node.ID), Action: func() {
-					m.cancelAgentTurn(node.ID)
-				}},
-				{Label: "Terminate agent", Detail: "stops work", Action: func() {
+		// Aeron opens like any agent but is permanent: it has no Terminate.
+		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID])
+		items := []ui.ContextMenuItem{
+			{Label: "Open agent", Action: func() { m.restoreAgent(node.ID) }},
+			{Label: "Open in window", Detail: "movable, resizable", Action: func() {
+				m.openAgentInWindow(node.ID)
+			}},
+			{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Detail: "from saved work", Action: func() {
+				m.runDetachedAsyncCmd(m.retryAgentRecovery(node.ID))
+			}},
+			{Label: "Minimize agent", Disabled: m.AgentView.IsHidden(node.ID), Detail: "keeps running", Action: func() {
+				m.minimizeAgent(node.ID)
+			}},
+			{Label: "Cancel agent", Disabled: !m.canCancelAgent(node.ID), Action: func() {
+				m.cancelAgentTurn(node.ID)
+			}},
+		}
+		if !aeron {
+			items = append(items,
+				ui.ContextMenuItem{Label: "Terminate agent", Detail: "stops work", Action: func() {
 					m.terminateAgent(node.ID)
 				}},
-				{Label: "Copy agent name", Action: func() { m.copyToClipboard(item.Label) }},
-				{Label: "Copy model", Disabled: node.Model == "", Action: func() { m.copyToClipboard(node.Model) }},
-			},
-		})
+			)
+		}
+		items = append(items,
+			ui.ContextMenuItem{Label: "Copy agent name", Action: func() { m.copyToClipboard(item.Label) }},
+			ui.ContextMenuItem{Label: "Copy model", Disabled: node.Model == "", Action: func() { m.copyToClipboard(node.Model) }},
+		)
+		st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Agent", Items: items})
 	}
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Sessions",
