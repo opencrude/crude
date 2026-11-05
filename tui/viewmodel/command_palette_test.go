@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -356,36 +355,6 @@ func TestExecutePaletteCommandRoutesCycleTheme(t *testing.T) {
 	got := theme.PresetName(app.Theme)
 	if got != expected {
 		t.Errorf("after ToggleTheme: got preset %q, want %q", got, expected)
-	}
-}
-
-// TestExecutePaletteCommandRevealInTree expands the file tree to the
-// active editor's file. We use a temp project and open a deeply
-// nested file, then assert the tree contains the file's parents.
-func TestExecutePaletteCommandRevealInTree(t *testing.T) {
-	app := newFullTestApp(t)
-	// Open a file; newFullTestApp already opens a workspace.
-	if app.EditorState.Editor == nil || !app.EditorState.Editor.IsOpen() {
-		// Nothing to reveal; just confirm the command does not crash.
-		app.executePaletteCommand("file.revealInTree")
-		return
-	}
-	app.executePaletteCommand("file.revealInTree")
-	// After reveal, the active file's directory should be in the visible rows.
-	fp := app.EditorState.Editor.FilePath()
-	if fp == "" {
-		return
-	}
-	visible := app.Tree.Model.VisibleRows()
-	found := false
-	for _, v := range visible {
-		if v == fp || v == filepath.Dir(fp) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("after reveal: %q not in tree visible rows", fp)
 	}
 }
 

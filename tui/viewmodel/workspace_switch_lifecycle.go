@@ -70,6 +70,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.overlayHost.Close(ui.OverlayWorkspaceDelete)
 	m.cancelCapabilityOperations()
 	m.closeMemoryBrowser()
+	m.cancelTreeReveal()
 	m.invalidateTreePathSearch()
 	state := workspaceSwitchState{
 		workspaceGen:     m.workspaceSwitchGen.Load(),

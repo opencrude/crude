@@ -1,25 +1,19 @@
 package viewmodel
 
 import (
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/shellport"
-	"crude/tui/filetree"
-	"crude/tui/screens/shelltree"
 	"crude/types/control"
 )
 
 type treeControlCompletion struct {
-	model       *filetree.FileTreeModel
-	screen      *shelltree.Screen
-	sequence    uint64
-	paths       []string
-	directories []string
-	query       string
-	filter      bool
-	message     tea.Msg
+	treeRevealTraversal
+	sequence uint64
+	query    string
+	filter   bool
+	message  tea.Msg
 }
 
 func (m *App) shellControlStillOwned(msg shellport.ControlRequestMsg, generation uint64) bool {
@@ -46,7 +40,7 @@ func (m *App) beginTreeControl(msg shellport.ControlRequestMsg) tea.Cmd {
 	if _, ok := m.ws.(shellport.ClientFiles); !ok {
 		return m.failShellControl(msg, control.Unavailable, "connected tree service required")
 	}
-	c := treeControlCompletion{model: m.Tree.Model, screen: m.sidebarScreen}
+	c := treeControlCompletion{treeRevealTraversal: treeRevealTraversal{model: m.Tree.Model, screen: m.sidebarScreen}}
 	r := msg.Envelope.Request
 	if r.CommandID == "tree.filter" {
 		var in struct {
@@ -69,40 +63,16 @@ func (m *App) beginTreeControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if len(in.Paths) == 0 || len(in.Paths) > control.MaxPageLimit {
 			return m.failShellControl(msg, control.Invalid, "1 to 128 paths required")
 		}
-		root := c.model.RootPath()
-		seen := map[string]bool{}
-		for _, path := range in.Paths {
-			if strings.TrimSpace(path) == "" {
-				return m.failShellControl(msg, control.Invalid, "empty path")
-			}
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(root, path)
-			}
-			path = filepath.Clean(path)
-			rel, err := filepath.Rel(root, path)
-			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return m.failShellControl(msg, control.Invalid, "path must name a descendant of the workspace root")
-			}
-			c.paths = append(c.paths, path)
-			parent := root
-			for _, segment := range strings.Split(filepath.Dir(rel), string(filepath.Separator)) {
-				if !seen[parent] {
-					c.directories = append(c.directories, parent)
-					seen[parent] = true
-				}
-				if segment != "." {
-					parent = filepath.Join(parent, segment)
-				}
-			}
-			if !seen[parent] {
-				c.directories = append(c.directories, parent)
-				seen[parent] = true
-			}
+		traversal, err := newTreeRevealTraversal(c.model, c.screen, in.Paths)
+		if err != nil {
+			return m.failShellControl(msg, control.Invalid, err.Error())
 		}
+		c.treeRevealTraversal = traversal
 	}
 	if m.shellControlPending >= 16 {
 		return m.failShellControl(msg, control.Unavailable, "shell operation capacity exceeded")
 	}
+	m.cancelTreeReveal()
 	state := asyncIOStateFor(m)
 	state.mu.Lock()
 	state.treeControlSequence++
@@ -138,8 +108,7 @@ func (m *App) continueTreeReveal(msg shellport.ControlRequestMsg, c treeControlC
 	if len(c.directories) != 0 {
 		path := c.directories[0]
 		c.directories = c.directories[1:]
-		node := c.model.NodeByPath(path)
-		if node == nil || !node.IsDir || node.IsSymlink {
+		if !c.directoryValid(path, false) {
 			return m.failShellControl(msg, control.Invalid, "ancestor missing or unsafe")
 		}
 		cmd := c.model.RequestRemoteDirectory(path)
@@ -148,31 +117,8 @@ func (m *App) continueTreeReveal(msg shellport.ControlRequestMsg, c treeControlC
 		}
 		return m.awaitTreeControl(msg, c, cmd)
 	}
-	for _, path := range c.paths {
-		node := c.model.NodeByPath(path)
-		if node == nil || node.IsSymlink {
-			return m.failShellControl(msg, control.Invalid, "requested path missing or unsafe")
-		}
-	}
-	for _, path := range c.paths {
-		for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
-			// Every ancestor was loaded asynchronously; Expand cannot perform I/O.
-			_ = c.model.Expand(parent)
-			if parent == c.model.RootPath() {
-				break
-			}
-		}
-	}
-	c.model.SetSelectionMarks(func() map[string]bool {
-		out := map[string]bool{}
-		for _, p := range c.paths {
-			out[p] = true
-		}
-		return out
-	}())
-	c.model.Select(c.paths[len(c.paths)-1])
-	if node := c.model.SelectedNode(); node == nil || node.Path != c.paths[len(c.paths)-1] {
-		return m.failShellControl(msg, control.Unavailable, "path is not visible in tree")
+	if !c.selectPaths(false, false, true) {
+		return m.failShellControl(msg, control.Invalid, "requested path missing, unsafe, or not visible")
 	}
 	m.configureShell()
 	m.rootHost.MarkLayout()
@@ -187,6 +133,11 @@ func (m *App) finishTreeControl(done shellControlDoneMsg, c treeControlCompletio
 	latest := state.treeControlSequence
 	state.mu.Unlock()
 	if !valid || c.sequence != latest || m.Tree == nil || m.Tree.Model != c.model || m.sidebarScreen != c.screen {
+		// A stale reveal cannot select rows, but its completed directory page
+		// can still settle the current tree refresh under its own fences.
+		if result, ok := c.message.(clientTreeDirectoryMsg); ok {
+			m.applyClientTreeDirectory(result)
+		}
 		return m.failShellControl(done.request, control.Stale, "tree owner or intent changed")
 	}
 	if c.filter {
@@ -214,11 +165,12 @@ func (m *App) finishTreeControl(done shellControlDoneMsg, c treeControlCompletio
 	if !ok {
 		return m.failShellControl(done.request, control.OperationFailed, "unexpected directory completion")
 	}
-	if result.result.Err != nil {
-		return m.failShellControl(done.request, control.OperationFailed, result.result.Err.Error())
-	}
 	if result.latest == nil || result.result.Generation != result.latest() {
 		return m.failShellControl(done.request, control.Stale, "directory changed while loading")
+	}
+	if result.result.Err != nil {
+		m.applyClientTreeDirectory(result)
+		return m.failShellControl(done.request, control.OperationFailed, result.result.Err.Error())
 	}
 	m.applyClientTreeDirectory(result)
 	return m.continueTreeReveal(done.request, c)

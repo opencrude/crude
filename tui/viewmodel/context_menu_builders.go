@@ -471,11 +471,6 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					m.Tree.Model.ToggleExpand(path)
 				}
 			}},
-			{Label: "Reveal in tree", Disabled: path == "", Action: func() {
-				if path != "" {
-					m.Tree.Model.ExpandToPath(path)
-				}
-			}},
 			{Label: desktopRevealLabel(), Disabled: path == "", Action: func() {
 				if path != "" && m.ws == owner && generation == m.workspaceSwitchGen.Load() {
 					m.runDetachedAsyncCmd(m.revealTreePath(path, isDir))
@@ -618,9 +613,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					m.copyToClipboard(path)
 				}},
 				{Label: "Reveal in tree", Action: func() {
-					if m.Tree.Model != nil {
-						m.Tree.Model.ExpandToPath(path)
-					}
+					m.runDetachedAsyncCmd(m.beginUserTreeReveal(path, owner))
 				}},
 			},
 		})

@@ -1,6 +1,7 @@
 package filetree
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -86,7 +87,7 @@ func TestPickerFileTreeDoesNotSynchronouslyLoadUnloadedChildOnFilter(t *testing.
 	root := t.TempDir()
 	model := NewPickerFileTreeModel(root, false)
 	model.SetDirectoryEntries(root, []DirectoryEntry{{Name: "src", Path: filepath.Join(root, "src"), IsDir: true}})
-	model.SetDirectoryLoader(func(string) tea.Cmd { return nil })
+	model.SetDirectoryLoader(func(context.Context, string) tea.Cmd { return nil })
 	model.SetFilter("src")
 	if node := model.NodeByPath(filepath.Join(root, "src")); node == nil || !node.IsDir {
 		t.Fatal("filter removed loaded picker directory")

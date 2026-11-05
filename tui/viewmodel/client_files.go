@@ -24,13 +24,14 @@ func newClientFileTree(m *App) *filetree.FileTreeModel {
 	var mu sync.Mutex
 	sequences := make(map[string]uint64)
 	generation := m.workspaceSwitchGen.Load()
-	model = filetree.NewRemoteModel(m.ws.RootPath(), func(path string) tea.Cmd {
+	model = filetree.NewRemoteModel(m.ws.RootPath(), nil)
+	model.SetDirectoryLoader(func(parent context.Context, path string) tea.Cmd {
 		mu.Lock()
 		sequences[path]++
 		sequence := sequences[path]
 		mu.Unlock()
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		return m.clientIOCommand(parent, func(ctx context.Context) tea.Msg {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			entries, err := files.BrowseDirectory(ctx, path)
 			converted := make([]filetree.DirectoryEntry, len(entries))
@@ -38,7 +39,7 @@ func newClientFileTree(m *App) *filetree.FileTreeModel {
 				converted[i] = filetree.DirectoryEntry{Name: e.Name, Path: e.Path, IsDir: e.IsDir, IsSymlink: e.IsSymlink, ModTime: e.ModTime}
 			}
 			return clientTreeDirectoryMsg{generation: generation, latest: func() uint64 { mu.Lock(); defer mu.Unlock(); return sequences[path] }, result: filetree.RemoteDirectoryMsg{Model: model, Path: path, Generation: sequence, Entries: converted, Err: err}}
-		}
+		})
 	})
 	return model
 }

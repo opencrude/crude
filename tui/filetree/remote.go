@@ -29,7 +29,7 @@ func (m *FileTreeModel) SetRemoteGitStatuses(statuses map[string]GitStatus) {
 
 // NewRemoteModel constructs a pure projection. loader must return a command,
 // not perform I/O itself. Root requests are explicit via RequestRemoteDirectory.
-func NewRemoteModel(root string, loader func(string) tea.Cmd) *FileTreeModel {
+func NewRemoteModel(root string, loader func(context.Context, string) tea.Cmd) *FileTreeModel {
 	m := NewFileTreeModelWithOptions(root, ModelOptions{NoLocalIO: true})
 	m.Root.Loading = false
 	m.SetDirectoryLoader(loader)
@@ -57,6 +57,16 @@ func RemoteDirectoryCommand(ctx context.Context, model *FileTreeModel, path stri
 // RequestRemoteDirectory provides the async refresh hook for core file events
 // and initial root load. No client watcher or Git process is created.
 func (m *FileTreeModel) RequestRemoteDirectory(path string) tea.Cmd {
+	return m.requestRemoteDirectory(context.Background(), path, true)
+}
+
+// RequestRemoteDirectoryContext reads without changing expansion/loading state.
+// It is used by an owned reveal which installs the result only while current.
+func (m *FileTreeModel) RequestRemoteDirectoryContext(ctx context.Context, path string) tea.Cmd {
+	return m.requestRemoteDirectory(ctx, path, false)
+}
+
+func (m *FileTreeModel) requestRemoteDirectory(ctx context.Context, path string, markLoading bool) tea.Cmd {
 	m.mu.Lock()
 	path = filepath.Clean(path)
 	node := m.nodes[path]
@@ -65,9 +75,11 @@ func (m *FileTreeModel) RequestRemoteDirectory(path string) tea.Cmd {
 		m.mu.Unlock()
 		return nil
 	}
-	node.Loading = true
+	if markLoading {
+		node.Loading = true
+	}
 	m.mu.Unlock()
-	return loader(path)
+	return loader(ctx, path)
 }
 
 // InstallRemoteDirectory rejects results for another model or intent sequence.
