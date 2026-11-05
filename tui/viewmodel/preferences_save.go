@@ -53,6 +53,7 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 	m.clearFramePreview()
 	m.applyThemePreset(themePresetFromSettings(effective))
 	m.applyEditorSettings(effective.Editor)
+	m.runDetachedAsyncCmd(m.applyTreeHiddenSetting())
 	m.refreshAllSessionSettingsProjections()
 	if m.Feedback != nil {
 		label := "Application settings saved"

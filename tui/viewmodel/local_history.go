@@ -330,7 +330,7 @@ func (m *App) historyCheckCmd(id string) tea.Cmd {
 			return msg
 		}
 		if receipt.State != "completed" {
-			msg.err = fmt.Errorf("original restore is %s; do not repeat", receipt.State)
+			msg.err = errors.New("the restore has not finished. Check again in a moment")
 			return msg
 		}
 		if len(receipt.Response.Payload) > 0 {
@@ -363,10 +363,10 @@ func (m *App) applyHistoryResult(msg historyApplyResultMsg) tea.Cmd {
 	switch {
 	case errors.As(msg.err, &uncertain):
 		state.RequestID = uncertain.RequestID
-		state.Error = msg.err.Error() + " · Check original result; do not repeat"
+		state.Error = "Crude did not get the restore result. Press Enter to check it before you restore again."
 	case msg.requestID != "":
 		state.RequestID = msg.requestID
-		state.Error = msg.err.Error() + " · Check original result; do not repeat"
+		state.Error = "Crude did not get the restore result. Press Enter to check it before you restore again."
 	case msg.err != nil && msg.result.SafetySnapshotID != "":
 		state.Warning = msg.err.Error()
 		state.Incomplete = !fileio.WriteCommitted(msg.err)
@@ -438,14 +438,7 @@ func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
 		}
 	}
 	if m.Feedback != nil {
-		m.Feedback.NotifyInfo(fmt.Sprintf("Restored %d path(s) · safety %s", len(result.Paths), shortHistoryID(result.SafetySnapshotID)))
+		m.Feedback.NotifyInfo(fmt.Sprintf("Restored %d file(s). Open Local History to undo.", len(result.Paths)))
 	}
 	return tea.Batch(cmds...)
-}
-
-func shortHistoryID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
 }

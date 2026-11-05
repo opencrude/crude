@@ -60,6 +60,17 @@ editor/chat facts. Workspace status remains workspace-owned.
 
 ## Pointer interaction
 
+- A tab drag starts as a reorder. While the pointer stays on the tab's own
+  strip, the strip owns the gesture (`ui.Tabs`, `tui/ui/tabs_reorder.go`): the
+  pressed tab follows the pointer, the other tabs slide out of its way with a
+  140 ms ease-out (the sortable-list model of dnd-kit/SortableJS: lay out at
+  the target slot, paint the eased offset from the last shown position), and
+  no pane placement preview appears. Release on the strip emits
+  `tabs.reorder`; the host, which owns tab order, moves the tab with the same
+  `Window.PlaceTab` operation as any strip drop. The strip never reorders its
+  own items. Leaving the strip withdraws the reorder preview and starts the
+  pane placement flow below (`TabDrag.InStrip` is false). Strips request
+  frames only while dragging or settling.
 - Drag a tab into a body's left/right/top/bottom edge to split that target
   group and move the tab into the new leaf. The preview uses theme
   `ColorHover`, shared split rounding and a reserved divider. It changes no
@@ -71,9 +82,9 @@ editor/chat facts. Workspace status remains workspace-owned.
   still split just the pane; tab-strip drops always insert/reorder, even at
   the strip's outermost columns. **Arrange Tab…** (below) provides every exact
   subtree when a nested boundary is not independently reachable by pointer.
-- Drop into the body center to move into the existing group. Drop onto a tab
-  strip to insert before the hit tab, or append when no tab is hit. This also
-  supports reordering within a group; a center drop is a tab move, not Merge All.
+- Drop into the body center to move into the existing group. Drop onto
+  another group's tab strip to insert before the hit tab, or append when no
+  tab is hit. A center drop is a tab move, not Merge All.
 - Esc cancels the preview and captured drag. Release outside a valid main-pane
   target, or over a floating window, leaves membership/topology unchanged.
   A sole tab cannot edge-split its own group through a drag.
@@ -138,6 +149,10 @@ action. Closing/moving that tab or changing workspace invalidates the menu.
 activating its tab. It cancels an active tree search and loads ancestor folders
 through the connected workspace. Tree navigation or a newer reveal cancels an
 outstanding request. Hidden entries are shown when needed.
+The file tab's desktop reveal action uses the same file-manager path as the
+file tree, targets the clicked file without activating it, and retains the
+workspace and tab ownership checks. For a foreign core it opens a labelled
+client-local preview, not a core path on the local desktop.
 Scope follow-ups retain the exact `PaneNode` identity, not a path or split axis;
 a collapsed/replaced scope safely does nothing. Native keyboard and pointer
 activation close the old popup before invoking its action, so the scope→edge

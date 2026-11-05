@@ -566,7 +566,7 @@ func (w *Workspace) ApplyReplicaChanges(msg shellport.ReplicaChangesMsg) shellpo
 		}
 	}
 	if err != nil {
-		applied = shellport.ReplicaApplied{Follow: []any{shellport.ReplicaFailureMsg{Owner: w, Operation: "Apply " + batch.topic, Error: err.Error()}}}
+		applied = shellport.ReplicaApplied{Follow: []any{shellport.ReplicaFailureMsg{Owner: w, Operation: "Apply " + batch.topic, Error: err.Error(), Reloaded: true}}}
 		err = coreclient.ErrTopicReset
 	}
 	return applied

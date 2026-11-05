@@ -390,3 +390,74 @@ func TestMainPaneJourneyKeyboardReorderAndMergeReleaseControls(t *testing.T) {
 		}
 	}
 }
+
+// A tab drag starts as a reorder inside its strip: tabs slide, no split
+// preview appears, and release changes only the order. Leaving the strip
+// switches to pane placement.
+func TestMainPaneJourneyTabDragReordersBeforeSplitting(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
+	paneJourneySize(app, 160, 40)
+	paths := openEditorTabs(t, app, "first_marker.go", "second_marker.go", "third_marker.go")
+	_ = app.View()
+	group := app.Win.ActiveGroup()
+	first := app.Win.TabByTitle(app.editorTabTitle(paths[0])).ID
+	second := app.Win.TabByTitle(app.editorTabTitle(paths[1])).ID
+	third := app.Win.TabByTitle(app.editorTabTitle(paths[2])).ID
+	g := app.mainPanes.groups[group]
+	strip, ok := app.rootHost.ScreenRect(g.tabs.TabsControl().ID())
+	if !ok {
+		t.Fatal("tab strip is not mounted")
+	}
+	// Drag the first tab right along the label row, past the second tab.
+	order := func() []window.TabID {
+		var ids []window.TabID
+		for _, tab := range app.Win.GroupTabs(group) {
+			ids = append(ids, tab.ID)
+		}
+		return ids
+	}
+	if got := order(); !reflect.DeepEqual(got[len(got)-3:], []window.TabID{first, second, third}) {
+		t.Fatalf("unexpected initial order %v", got)
+	}
+	// Move the first tab by one slot.
+	start := func(id window.TabID) int {
+		for local := 0; local < strip.W; local++ {
+			if i, _ := g.tabs.TabsControl().HitTest(local); i >= 0 && app.Win.GroupTabs(group)[i].ID == id {
+				return local
+			}
+		}
+		t.Fatalf("tab %d is not visible", id)
+		return -1
+	}
+	// The press lands on the first tab's first column; moving the pointer to
+	// just before the second tab's start carries the dragged center past the
+	// second tab's center but not the third's.
+	thirdX := strip.X + start(second) - 2
+	paneJourneyDrag(t, app, first, thirdX, strip.Y)
+	if app.mainPanes.drop != nil || bufferContainsPlain(app.mainSurf.Buffer(), "Move tab here") || bufferContainsPlain(app.mainSurf.Buffer(), "Split ") {
+		t.Fatal("dragging inside the strip showed a pane placement preview")
+	}
+	if !app.wantsFastTick() {
+		t.Fatal("a dragged tab must animate at frame rate")
+	}
+	_, _ = app.Update(tea.MouseReleaseMsg{X: thirdX, Y: strip.Y, Button: tea.MouseLeft})
+	_ = app.View()
+	got := order()
+	if len(app.Win.GroupIDs()) != 1 || !reflect.DeepEqual(got[len(got)-3:], []window.TabID{second, first, third}) {
+		t.Fatalf("release inside the strip did not reorder only: groups=%v order=%v", app.Win.GroupIDs(), got)
+	}
+
+	// Leaving the strip downward starts pane placement.
+	body := app.mainPanes.groups[group].body
+	x, y := body.X+body.W-2, body.Y+body.H/2
+	paneJourneyDrag(t, app, first, x, y)
+	if !bufferContainsPlain(app.mainSurf.Buffer(), "Split right") {
+		t.Fatal("leaving the strip did not start the split preview")
+	}
+	_, _ = app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+	_ = app.View()
+	if ids := app.Win.GroupIDs(); len(ids) != 2 || app.Win.GroupOf(first) != ids[1] {
+		t.Fatalf("drop outside the strip did not split: %v", ids)
+	}
+}

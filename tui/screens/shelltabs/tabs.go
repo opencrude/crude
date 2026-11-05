@@ -258,7 +258,7 @@ func (s *Screen) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
-	case "tabs.activate", "tabs.close", "tabs.enter", "tabs.drag", "tabs.drop", "tabs.new":
+	case "tabs.activate", "tabs.close", "tabs.enter", "tabs.drag", "tabs.drop", "tabs.reorder", "tabs.new":
 		return ui.EventResult{Handled: true, Action: &action}
 	}
 	return ui.EventResult{Action: &action}

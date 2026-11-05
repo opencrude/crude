@@ -121,10 +121,10 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	title := "Timeline"
 	hint := "Enter preview · Esc close"
 	if s.lastRestore != nil {
-		hint = "Enter/U preview undo of restore · Esc close"
+		hint = "Enter or U preview undo · Esc close"
 	}
 	if s.requestID != "" {
-		hint = "Enter check original result · Esc close"
+		hint = "Enter check the result · Esc close"
 	}
 	s.list.Paint(buf, ox+r.X, oy+r.Y, ctx)
 	s.scrollbar.Paint(buf, ox+r.X, oy+r.Y, ctx)
@@ -133,16 +133,16 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	}
 	if s.plan != nil {
 		title = "Restore preview"
-		hint = "Space select · E exact · Enter review/apply · Esc back"
+		hint = "Space select · E replace conflict · Enter restore · Esc back"
 		if len(s.plan.Changes) == 0 {
-			hint = "Snapshot matches the workspace · Esc back"
+			hint = "The files match this snapshot · Esc back"
 		}
 	}
 	if s.loading {
-		title = "Loading local history…"
+		title = "Loading Local History…"
 	}
 	if s.errorText != "" {
-		title = "Local history error"
+		title = "Local History cannot load"
 	}
 	buf.WriteString(ox+r.X, oy+r.Y+r.H-2, truncate(title, r.W), fg, bg, cell.AttrBold)
 	line := hint
@@ -212,7 +212,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 				s.errorText = msg.Error
 				s.plan = nil
 				s.lastRestore = nil
-				s.list.SetItems([]ui.ListItem{{ID: "check-result", Label: "Check original restore result", Detail: msg.RequestID, Command: true}})
+				s.list.SetItems([]ui.ListItem{{ID: "check-result", Label: "Check the restore result", Detail: "the reply did not arrive", Command: true}})
 			} else if msg.Error != "" {
 				s.errorText = msg.Error
 				s.requestID = ""
@@ -222,17 +222,17 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 				s.rebuildTimeline()
 			} else {
 				s.errorText, s.requestID = "", ""
-				s.status = fmt.Sprintf("Restored %d path(s). Safety snapshot %s", len(msg.Result.Paths), short(msg.Result.SafetySnapshotID))
+				s.status = "Restored " + fileCount(len(msg.Result.Paths)) + ". Press U to undo."
 				if msg.Incomplete {
-					s.status = "Restore incomplete. Review safety snapshot " + short(msg.Result.SafetySnapshotID)
+					s.status = "The restore did not complete. Press U to return to the files before the restore."
 				}
 				if msg.Warning != "" {
-					s.status += " · warning: " + msg.Warning
+					s.status += " " + msg.Warning
 				}
 				copy := msg.Result
 				s.lastRestore = &copy
 				s.plan = nil
-				s.list.SetItems([]ui.ListItem{{ID: "undo-restore", Label: "Undo this restore", Detail: "preview safety snapshot", Command: true}})
+				s.list.SetItems([]ui.ListItem{{ID: "undo-restore", Label: "Undo this restore", Detail: "preview the files before the restore", Command: true}})
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
@@ -296,9 +296,9 @@ func (s *Screen) setTimeline(msg TimelineMsg) {
 	if msg.Error == "" {
 		prefix := ""
 		if len(msg.Paths) > 0 {
-			prefix = "History for " + strings.Join(msg.Paths, ", ") + " · "
+			prefix = "History of " + strings.Join(msg.Paths, ", ") + " · "
 		}
-		s.status = prefix + fmt.Sprintf("%d snapshots · %s stored · %d chunk objects", msg.Stats.Snapshots, humanBytes(msg.Stats.PhysicalBytes), msg.Stats.ChunkObjects)
+		s.status = prefix + countLabel(msg.Stats.Snapshots, "snapshot") + " · " + humanBytes(msg.Stats.PhysicalBytes) + " on disk"
 	}
 	s.plan = nil
 	s.rebuildTimeline()
@@ -315,17 +315,74 @@ func humanBytes(n int64) string {
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
+
+// snapshotDescription names a snapshot by what the user did, not by the
+// capture mechanism or internal identifiers.
+func snapshotDescription(r localhistory.SnapshotRecord) (label, detail string) {
+	switch r.Kind {
+	case "before_message":
+		return "Before agent changes", "your message"
+	case "after_message":
+		return "After agent changes", "agent turn ended"
+	case "external_change", "reconcile", "automatic":
+		return "File changes", "saved outside agent turns"
+	case "startup_reconcile":
+		return "File changes found at startup", "made while Crude was closed"
+	case "baseline":
+		return "First snapshot", "workspace opened"
+	case "safety_before_restore":
+		return "Before restore", "files before a restore"
+	case "after_restore":
+		return "After restore", "restored files"
+	case "safety":
+		if r.Label != "" {
+			return r.Label, "kept for safety"
+		}
+		return "Safety snapshot", "kept for safety"
+	case "manual":
+		if r.Label != "" {
+			return r.Label, "manual snapshot"
+		}
+		return "Manual snapshot", ""
+	}
+	if r.Label != "" {
+		return r.Label, ""
+	}
+	return "Snapshot", ""
+}
+
+func snapshotTime(at, now time.Time) string {
+	const day = "2006-01-02"
+	switch at.Format(day) {
+	case now.Format(day):
+		return "Today     " + at.Format("15:04:05")
+	case now.AddDate(0, 0, -1).Format(day):
+		return "Yesterday " + at.Format("15:04:05")
+	}
+	if at.Year() == now.Year() {
+		return at.Format("Jan 02    15:04:05")
+	}
+	return at.Format("2006-01-02 15:04")
+}
+
+func countLabel(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+func fileCount(n int) string { return countLabel(n, "file") }
+
 func (s *Screen) rebuildTimeline() {
 	items := make([]ui.ListItem, 0, len(s.timeline))
 	if s.safetyAvailable {
-		items = append(items, ui.ListItem{ID: "review-safety", Label: "Review safety references", Detail: "inspect retained evidence and protection decisions", Command: true})
+		items = append(items, ui.ListItem{ID: "review-safety", Label: "Review safety references", Detail: "snapshots kept for reviewed edits", Command: true})
 	}
+	now := time.Now()
 	for _, r := range s.timeline {
-		label := r.Label
-		if label == "" {
-			label = r.Kind
-		}
-		items = append(items, ui.ListItem{ID: r.ID, Label: time.Unix(0, r.CreatedAt).Format("2006-01-02 15:04:05") + "  " + label, Detail: r.Kind, Payload: r})
+		label, detail := snapshotDescription(r)
+		items = append(items, ui.ListItem{ID: r.ID, Label: snapshotTime(time.Unix(0, r.CreatedAt), now) + "  " + label, Detail: detail, Payload: r})
 	}
 	if len(items) == 0 && !s.loading {
 		items = []ui.ListItem{{ID: "empty", Label: "No history snapshots yet", Disabled: true}}
@@ -368,23 +425,23 @@ func (s *Screen) rebuildPlan() {
 			detail = "move · " + c.MovePeer
 		}
 		if c.AutoMerged {
-			detail = "auto-merged"
+			detail = "merged with later edits"
 		}
 		if c.ConflictReason != "" {
-			detail = "conflict: " + c.ConflictReason
+			detail = "conflict: " + c.ConflictReason + " · E to replace"
 			if s.exact[c.Path] {
-				detail = "EXACT replacement"
+				detail = "replace · later edits are lost"
 			}
 		}
 		if c.UnsafeReason != "" {
-			detail = "blocked: " + c.UnsafeReason
+			detail = "cannot restore: " + c.UnsafeReason
 		}
 		items = append(items, ui.ListItem{ID: c.Path, Label: mark + " " + c.Path, Detail: detail, Disabled: c.UnsafeReason != "", Payload: c})
 	}
 	if len(items) == 0 {
-		label := "No workspace differences from this snapshot"
+		label := "The files match this snapshot"
 		if s.plan.MessageID != "" {
-			label = "No changes from this message"
+			label = "This message changed no files"
 		}
 		items = []ui.ListItem{{ID: "empty", Label: label, Disabled: true}}
 	}
@@ -470,7 +527,7 @@ func (s *Screen) activate() ui.EventResult {
 		}
 	}
 	if len(choices) == 0 {
-		s.status = "Select at least one safe path"
+		s.status = "Select a file to restore. Press Space to select."
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	if !s.armed {
@@ -482,19 +539,13 @@ func (s *Screen) activate() ui.EventResult {
 			}
 		}
 		if exact > 0 {
-			s.status = fmt.Sprintf("WARNING: %d exact replacement(s) overwrite later edits. Press Enter again.", exact)
+			s.status = fmt.Sprintf("Later edits in %s will be lost. Press Enter again to restore %s.", fileCount(exact), fileCount(len(choices)))
 		} else {
-			s.status = fmt.Sprintf("Ready to restore %d path(s). Press Enter again to confirm.", len(choices))
+			s.status = "Press Enter again to restore " + fileCount(len(choices)) + "."
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	s.loading = true
 	s.armed = false
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionApply, Payload: ApplyRequest{PlanID: s.plan.ID, Choices: choices}}, Invalidate: ui.InvalidatePaint}
-}
-func short(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
 }

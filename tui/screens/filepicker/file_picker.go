@@ -315,7 +315,7 @@ func (s *Screen) Open(root string, mode Mode, entries []Entry) {
 	s.selected = make(map[string]bool)
 	s.searchActive = false
 	s.searchQuery = ""
-	s.showHidden = false
+	s.showHidden = true
 	s.entries = append(s.entries[:0], entries...)
 	if mode == ModeFolder {
 		s.filter.field.SetPlaceholder("Search folders")

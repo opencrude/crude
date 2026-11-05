@@ -63,7 +63,8 @@ workspace resets it. Header telemetry follows the focused group.
 | Grow / shrink pane | Ctrl+Alt+= / Ctrl+Alt+- | Shared split sizing with minimum bounds |
 | New Session in Pane | Group +; Ctrl+Alt+N; Ctrl+T then N/+ | + sits after content-sized tabs, pinned at the trailing edge during overflow |
 | Populate empty pane | New Session / Open File; N / O | Tab/Shift+Tab chooses and Enter/Space activates; Ctrl+W closes only that empty group |
-| Move / reorder tab | Drag tab to body center or group strip | Existing identity moves; strip drop inserts before hit tab or appends; empty source collapses |
+| Reorder tab | Drag tab along its own strip | Other tabs slide aside with a short ease-out; no split preview while the pointer stays on the strip; release moves only the order |
+| Move tab | Drag tab off its strip to a body center or another group's strip | Existing identity moves; strip drop inserts before hit tab or appends; empty source collapses |
 | Edge split preview | Drag to left/right/top/bottom body edge | Theme ColorHover preview only until release; Esc or release outside a valid target cancels; floating windows are not drop targets |
 | Divider resize | Drag shared SplitDivider | Root Host capture retains motion/release outside divider |
 | Split/move/merge/open/new/resize/focus/close | Shortcuts above; tab context menu for split/move/merge | Registry-backed operations retain modal and terminal input ownership |
@@ -228,9 +229,28 @@ explicit empty result instead of unrelated suggestions.
 |--------|---------|-------|
 | Search files | click persistent search, `/`, or any printable char | Hint is `Search in <workspace>`; trailing badge shows aggregated git + diagnostics like the Agents count; fuzzy subsequence; ancestors auto-expand; Esc clears; mouse focus and type-to-filter share one field |
 | Refresh tree | Ctrl+R | Relocated from `r` (typing now filters) |
-| Toggle hidden files | Ctrl+. | Relocated from `.` |
+| Toggle hidden files | Ctrl+. | Dotfiles are visible by default in the workspace tree and file/folder pickers. The workspace tree's Interface setting can choose a different default. The picker toggle is local to its open view. An active tree search is rerun with the selected visibility. |
 | Reveal an open file in the tree | File tab context menu **Reveal in tree**; palette **Reveal in Tree** | Opens the file explorer, clears its search, loads and expands the file's ancestors, and selects and scrolls to the file. The tab menu targets the clicked file without activating its tab. If the path contains a hidden entry, hidden files are shown. A newer tree action or workspace change cancels a pending reveal. Missing and outside-workspace files report a failure. |
 | Reveal a file/folder on the desktop | Tree context menu **Reveal in Explorer** (Windows), **Reveal in Finder** (macOS), **Show in file manager** (Linux) | Targets the clicked row, not the keyboard cursor; available without an agent session. Same-host authenticated cores reveal the original path (Linux opens its containing folder). Foreign-host files materialize a bounded client-local preview; folders open an explicitly labelled local listing preview, never a remote path passed to the local OS. Workspace switches cancel pending opens; shell shutdown joins them and removes previews. |
+| Reveal an open file on the desktop | File tab context menu, same platform-specific reveal action | Targets the clicked file without activating its tab; uses the same same-host and foreign-core behavior as the tree. |
+| Open / toggle | Click a row | Activation happens on release without movement, so a press can start a drag. |
+| Move by drag and drop | Drag a row onto a folder (a file row means its folder; empty space means the workspace root) | The receiving folder is highlighted and the bottom row states the result (**Move to target**, **Drop on another folder**). Release asks **Move name to folder?** with the exact from/to paths; nothing changes until Move. Esc cancels the drag. A folder is never offered to itself or its descendants. Open editors follow the move. |
+| Open by drag | Drag a file onto a main pane | Opens the file in that pane. |
+| Cut / Copy / Paste | Ctrl+X / Ctrl+C / Ctrl+V on the selected row; context menu **Edit** | Paste targets the selected folder, or the folder of the selected file. Cut + Paste moves; Copy + Paste copies, picking `name copy`, `name copy 2`… when the name is taken. The clipboard belongs to the workspace and does not survive a workspace switch. |
+| Duplicate | Ctrl+D; context menu | Copies beside the original with a free copy name. |
+| Rename / Delete | F2 / Delete; context menu | Same prompts as the menu. Delete keeps a Local History copy first when Local History is on. |
+| Undo move | Ctrl+Z in the tree; context menu **Undo move** | Moves the last drag or cut/paste move back. |
+| Open to the side | Context menu | Splits the active pane and opens the file in the new one. |
+| Copy relative path | Context menu | Copies the workspace-relative path. |
+
+Every pointer, key and menu file action runs one owner
+(`tui/viewmodel/tree_file_actions.go`); the tree (`shelltree/tree_drag.go`)
+only proposes actions. Moves use `RenamePath`; copies use `CopyPath`, which
+builds the copy in a hidden staging entry beside the target (`os.CopyFS`,
+links copied as links) and publishes it with one rename, so a failed copy
+leaves nothing. Both refuse an existing target and run through the core's
+shared document authority, so local and remote shells behave the same. Copies
+run off the update goroutine and drop stale results across workspace switches.
 
 Connected trees project the core Git snapshot and versioned LSP diagnostics,
 including status arriving before a directory page and collapsed or filtered

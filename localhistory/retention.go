@@ -49,7 +49,6 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 	if err != nil {
 		return PruneResult{}, err
 	}
-	originalPhysical := before.PhysicalBytes
 	records, err := s.timeline(-1)
 	if err != nil {
 		return PruneResult{}, err
@@ -109,61 +108,86 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 			remove = append(remove, record.ID)
 		}
 	}
-	if policy.BudgetBytes > 0 && before.PhysicalBytes > policy.BudgetBytes {
-		// Content-addressed objects are shared, so a snapshot's logical size
-		// cannot predict physical bytes freed. When over budget, remove every
-		// unprotected generation and measure the store after GC.
-		for index := len(records) - 1; index >= 0; index-- {
-			record := records[index]
-			if protected[record.ID] || record.ID == records[0].ID || containsString(remove, record.ID) {
-				continue
-			}
-			remove = append(remove, record.ID)
+	var result PruneResult
+	removed := make(map[string]bool, len(remove))
+	current := before
+	if len(remove) > 0 {
+		if current, err = s.removeSnapshots(ctx, remove, &result); err != nil {
+			return PruneResult{}, err
+		}
+		for _, id := range remove {
+			removed[id] = true
 		}
 	}
-	if len(remove) == 0 {
+	// Content-addressed objects are shared, so a snapshot's logical size cannot
+	// predict the physical bytes it frees. Over budget, remove the oldest
+	// unprotected generations in shrinking batches and measure after each
+	// collection, so the newest history survives instead of every generation.
+	for policy.BudgetBytes > 0 && current.PhysicalBytes > policy.BudgetBytes {
+		var candidates []string
+		for index := len(records) - 1; index > 0; index-- {
+			if id := records[index].ID; !protected[id] && !removed[id] {
+				candidates = append(candidates, id)
+			}
+		}
+		if len(candidates) == 0 {
+			break
+		}
+		batch := candidates[:max(1, len(candidates)/4)]
+		if current, err = s.removeSnapshots(ctx, batch, &result); err != nil {
+			return PruneResult{}, err
+		}
+		for _, id := range batch {
+			removed[id] = true
+		}
+	}
+	if result.RemovedSnapshots == 0 {
 		return PruneResult{}, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return PruneResult{}, err
-	}
-	for _, id := range remove {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history_message_scopes WHERE state='closed' AND (before_snapshot_id=? OR after_snapshot_id=?)`, id, id); err != nil {
-			_ = tx.Rollback()
-			return PruneResult{}, err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history_restore_events WHERE notified=1 AND (target_snapshot_id=? OR safety_snapshot_id=? OR after_snapshot_id=?)`, id, id, id); err != nil {
-			_ = tx.Rollback()
-			return PruneResult{}, err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history_snapshots WHERE snapshot_id=?`, id); err != nil {
-			_ = tx.Rollback()
-			return PruneResult{}, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return PruneResult{}, err
-	}
-	for _, id := range remove {
-		_ = os.Remove(filepath.Join(s.root, "manifests", id+".json"))
-	}
-	s.forgetVerifiedSnapshots(remove)
-	if err := s.removeStalePlans(); err != nil {
-		return PruneResult{}, err
-	}
-	removedObjects, err := s.collectGarbage(ctx)
-	if err != nil {
-		return PruneResult{}, err
-	}
-	after, err := s.stats()
-	if err != nil {
-		return PruneResult{}, err
-	}
-	result := PruneResult{RemovedSnapshots: len(remove), RemovedObjects: removedObjects, FreedBytes: max64(0, originalPhysical-after.PhysicalBytes)}
+	result.FreedBytes = max64(0, before.PhysicalBytes-current.PhysicalBytes)
 	_, _ = s.db.Exec(`INSERT INTO history_retention_runs(created_at,removed_snapshots,removed_objects,freed_bytes) VALUES(?,?,?,?)`,
 		time.Now().UnixNano(), result.RemovedSnapshots, result.RemovedObjects, result.FreedBytes)
 	return result, nil
+}
+
+// removeSnapshots deletes unprotected generations in one transaction, then
+// collects unreferenced objects and returns the measured store size.
+func (s *Store) removeSnapshots(ctx context.Context, ids []string, result *PruneResult) (Stats, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Stats{}, err
+	}
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history_message_scopes WHERE state='closed' AND (before_snapshot_id=? OR after_snapshot_id=?)`, id, id); err != nil {
+			_ = tx.Rollback()
+			return Stats{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history_restore_events WHERE notified=1 AND (target_snapshot_id=? OR safety_snapshot_id=? OR after_snapshot_id=?)`, id, id, id); err != nil {
+			_ = tx.Rollback()
+			return Stats{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history_snapshots WHERE snapshot_id=?`, id); err != nil {
+			_ = tx.Rollback()
+			return Stats{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Stats{}, err
+	}
+	for _, id := range ids {
+		_ = os.Remove(filepath.Join(s.root, "manifests", id+".json"))
+	}
+	s.forgetVerifiedSnapshots(ids)
+	result.RemovedSnapshots += len(ids)
+	if err := s.removeStalePlans(); err != nil {
+		return Stats{}, err
+	}
+	removedObjects, err := s.collectGarbage(ctx)
+	result.RemovedObjects += removedObjects
+	if err != nil {
+		return Stats{}, err
+	}
+	return s.stats()
 }
 
 func (s *Store) removeStalePlans() error {
@@ -410,15 +434,6 @@ func removeUnreferenced(root, suffix string, keep map[string]bool) (int, error) 
 		return nil
 	})
 	return removed, err
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func max64(a, b int64) int64 {

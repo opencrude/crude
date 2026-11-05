@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -137,6 +138,74 @@ func TestFileTreeRevealTargetsClickedPathOffUpdate(t *testing.T) {
 			t.Fatalf("revealed %q, want %q", got, path)
 		}
 	}
+}
+
+func TestTabDesktopRevealTargetsClickedInactiveFile(t *testing.T) {
+	for _, size := range [][2]int{{160, 40}, {80, 24}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(root, "a&b.txt")
+			other := filepath.Join(root, "other.txt")
+			for _, path := range []string{target, other} {
+				if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			app := newEditorPaintApp(t, root)
+			app.registerOverlayHandlers()
+			paneJourneySize(app, size[0], size[1])
+			for _, path := range []string{target, other} {
+				if _, err := app.openEditorTab(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			active := app.Win.ActiveTab().ID
+			tab := app.Win.TabByTitle(app.editorTabTitle(target))
+			calls := recordDesktopLauncher(t, app)
+			messages := make(chan tea.Msg, 1)
+			restore := installDetachedMessageSinkForTest(app, func(msg tea.Msg) { messages <- msg })
+			defer restore()
+			paneOpenTabMenu(t, app, tab.ID)
+			paneChooseMenu(t, app, treeRevealLabel(), size[0] == 80)
+			select {
+			case msg := <-messages:
+				if result, ok := msg.(desktopPathOpenedMsg); !ok || result.err != nil {
+					t.Fatalf("desktop reveal failed: %#v", msg)
+				}
+				app.Update(msg)
+			case <-time.After(3 * time.Second):
+				t.Fatal("tab reveal did not complete")
+			}
+			if got := requireDesktopLaunch(t, calls, true); got != target {
+				t.Fatalf("revealed %q, want clicked file %q", got, target)
+			}
+			if app.Win.ActiveTab().ID != active {
+				t.Fatal("revealing the inactive file changed the selected tab")
+			}
+		})
+	}
+}
+
+func TestTabDesktopRevealRejectsRetargetedTab(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "before.txt")
+	if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := newEditorPaintApp(t, root)
+	app.registerOverlayHandlers()
+	paneJourneySize(app, 120, 30)
+	if _, err := app.openEditorTab(path); err != nil {
+		t.Fatal(err)
+	}
+	tab := app.Win.TabByTitle(app.editorTabTitle(path))
+	calls := recordDesktopLauncher(t, app)
+	paneOpenTabMenu(t, app, tab.ID)
+	action := menuItem(t, app.LastContextMenu, treeRevealLabel()).Action
+	app.Win.SetTabTitleByIndex(app.Win.IndexOf(tab.ID), app.editorTabTitle(filepath.Join(root, "after.txt")))
+	action()
+	asyncIOStateFor(app).detachedCommands.Wait()
+	requireNoDesktopLaunch(t, calls)
 }
 
 type desktopFilesPort struct {

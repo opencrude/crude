@@ -162,7 +162,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 			matches, err := fileio.SearchProject(ctx, root, in.Query, in.Options)
 			return wire(coreprotocol.FileSearchResult{Matches: matches}), err
 		})
-	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit:
+	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesCopy, coreprotocol.FilesDelete, coreprotocol.FilesEdit:
 		if ops == nil {
 			return bad("unavailable", "workspace file operations unavailable")
 		}
@@ -209,7 +209,28 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 					if documents == nil {
 						return nil, errors.New("shared document authority unavailable")
 					}
+					if history != nil {
+						rel, err := filepath.Rel(root, path)
+						if err != nil {
+							return nil, err
+						}
+						if err := history.KeepBeforeDelete(ctx, filepath.ToSlash(rel)); err != nil {
+							return nil, err
+						}
+					}
 					result = documents.MutateFiles(ctx, workspace.FileOpDelete, []string{path}, nil, func() workspace.FileOperationResultMsg { return ops.DeletePath(path) })
+				case coreprotocol.FilesCopy:
+					target, err := workspaceFilePath(root, in.NewPath, true)
+					if err != nil {
+						return nil, err
+					}
+					if target == root {
+						return nil, errors.New("workspace root mutation forbidden")
+					}
+					if documents == nil {
+						return nil, errors.New("shared document authority unavailable")
+					}
+					result = documents.MutateFiles(ctx, workspace.FileOpCopy, []string{target}, nil, func() workspace.FileOperationResultMsg { return ops.CopyPath(path, target) })
 				case coreprotocol.FilesRename:
 					target, err := workspaceFilePath(root, in.NewPath, true)
 					if err != nil {
@@ -326,7 +347,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 
 func filesMutation(method string) bool {
 	switch method {
-	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent, coreprotocol.HistorySafetyChange:
+	case coreprotocol.FilesCreate, coreprotocol.FilesCreateFolder, coreprotocol.FilesRename, coreprotocol.FilesCopy, coreprotocol.FilesDelete, coreprotocol.FilesEdit, coreprotocol.HistoryPrune, coreprotocol.HistoryCapture, coreprotocol.HistoryPlan, coreprotocol.HistoryPlanPaths, coreprotocol.HistoryPlanMessage, coreprotocol.HistoryPlanAgent, coreprotocol.HistorySafetyChange:
 		return true
 	}
 	return false

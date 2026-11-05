@@ -43,7 +43,7 @@ func TestOpenFileKeyboardSelectsDocumentWithoutAttach(t *testing.T) {
 
 func TestOpenFileMouseArmsThenOpensExactFile(t *testing.T) {
 	screen, host := pickerHost(t, ModeOpenFile)
-	click := tea.MouseClickMsg{X: 3, Y: 8, Button: tea.MouseLeft}
+	click := tea.MouseClickMsg{X: 3, Y: 9, Button: tea.MouseLeft}
 	first := host.Handle(click)
 	if first.Cmd != nil || !first.Handled || screen.FocusedPath() != pickerPath("a.txt") {
 		t.Fatalf("first click must only select file: %#v path=%q", first, screen.FocusedPath())
@@ -162,7 +162,7 @@ func TestOpenFileSearchAndDirectoryIntentsRetainOwnerFences(t *testing.T) {
 
 func TestAttachModeStillTogglesMultipleFilesOnSingleClick(t *testing.T) {
 	screen, host := pickerHost(t, ModeFile)
-	for _, click := range []tea.MouseClickMsg{{X: 3, Y: 8, Button: tea.MouseLeft}, {X: 3, Y: 9, Button: tea.MouseLeft}} {
+	for _, click := range []tea.MouseClickMsg{{X: 3, Y: 9, Button: tea.MouseLeft}, {X: 3, Y: 10, Button: tea.MouseLeft}} {
 		toggle := commandMessage[ToggleMsg](t, host.Handle(click))
 		if !toggle.ValidFor(screen) || !screen.TogglePath(toggle.Path) {
 			t.Fatal("attach click failed to toggle")

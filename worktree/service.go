@@ -501,9 +501,7 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	firstBytes, _ := json.Marshal(baseline)
-	secondBytes, _ := json.Marshal(second)
-	if !bytes.Equal(firstBytes, secondBytes) {
+	if !baselinesEqual(baseline, second) {
 		return Context{}, errors.New("source changed during baseline capture")
 	}
 	if isGit && !unborn {
@@ -536,6 +534,10 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if mode == Isolated {
 		c.Root = filepath.Join(s.store, c.ID, "checkout")
 	}
+	// Cancellation before the first save leaves nothing to inspect or clean.
+	if err := ctx.Err(); err != nil {
+		return Context{}, err
+	}
 	// Preparation-incomplete contexts stay inspectable, never runnable. Readiness
 	// is not intentional Keep: a parent can review/discard a failed setup.
 	if err := s.save(c); err != nil {
@@ -559,6 +561,9 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 			return clone(c), err
 		}
 		for _, p := range nulPaths(tracked) {
+			if err := ctx.Err(); err != nil {
+				return clone(c), err
+			}
 			if err := safeRelative(p); err != nil {
 				return clone(c), err
 			}
@@ -568,7 +573,13 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 				}
 			}
 		}
+		// The checkout is new and private, and an interrupted preparation is
+		// never Ready, so per-file atomic replacement and fsync buy nothing.
+		// Readiness is published only after every file is written.
 		for p, f := range baseline {
+			if err := ctx.Err(); err != nil {
+				return clone(c), err
+			}
 			target, err := safePath(c.Root, p)
 			if err != nil {
 				return clone(c), err
@@ -576,7 +587,7 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return clone(c), err
 			}
-			if err := fileio.WriteAtomicChecked(target, f.Data, os.FileMode(f.Mode), nil); err != nil {
+			if err := os.WriteFile(target, f.Data, os.FileMode(f.Mode)); err != nil {
 				return clone(c), err
 			}
 			if err := os.Chmod(target, os.FileMode(f.Mode)); err != nil {
@@ -589,6 +600,21 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 		return clone(c), err
 	}
 	return clone(c), nil
+}
+
+// baselinesEqual compares two captures by content identity. Each File's Hash
+// is computed from its Data, so serializing every byte again is not needed.
+func baselinesEqual(a, b map[string]File) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for path, left := range a {
+		right, ok := b[path]
+		if !ok || left.Type != right.Type || left.Mode != right.Mode || left.Hash != right.Hash || left.DocumentRevision != right.DocumentRevision {
+			return false
+		}
+	}
+	return true
 }
 
 func nulPaths(data []byte) []string {

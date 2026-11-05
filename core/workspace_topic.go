@@ -144,7 +144,10 @@ func (a *actor) flushTopic() error {
 			next = append(next, publicationCursor{id: id, revision: delta.Revision})
 		}
 	}
-	if p.Sessions {
+	// Removing an agent can release a session root. Shells validate session
+	// roots against the agent inventory, so a removal always carries the
+	// session inventory it produced.
+	if p.Sessions || len(u.Changes.Removed) > 0 {
 		sessions := coreprotocol.SessionSnapshotList(a.sessionSnapshots())
 		u.Sessions = &sessions
 	}

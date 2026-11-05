@@ -39,6 +39,9 @@ func (v *WorkspaceView) CreateFolder(ctx context.Context, path string) workspace
 func (v *WorkspaceView) RenamePath(ctx context.Context, path, target string) workspace.FileOperationResultMsg {
 	return v.fileOperation(ctx, coreprotocol.FilesRename, coreprotocol.FilePathRequest{Path: path, NewPath: target})
 }
+func (v *WorkspaceView) CopyPath(ctx context.Context, path, target string) workspace.FileOperationResultMsg {
+	return v.fileOperation(ctx, coreprotocol.FilesCopy, coreprotocol.FilePathRequest{Path: path, NewPath: target})
+}
 func (v *WorkspaceView) DeletePath(ctx context.Context, path string) workspace.FileOperationResultMsg {
 	return v.fileOperation(ctx, coreprotocol.FilesDelete, coreprotocol.FilePathRequest{Path: path})
 }

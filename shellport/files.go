@@ -25,6 +25,10 @@ type Files interface {
 	// be absolute and under the workspace root. The result is returned directly to
 	// the caller.
 	RenamePath(oldPath, newPath string) workspace.FileOperationResultMsg
+	// CopyPath copies a file or folder to newPath, which must not exist. Both
+	// paths must be absolute and under the workspace root. A failed copy
+	// leaves nothing behind.
+	CopyPath(oldPath, newPath string) workspace.FileOperationResultMsg
 	// DeletePath removes a file or directory at the given path. Directories are
 	// removed recursively. The path must be absolute and under the workspace root.
 	// The result is returned directly to the caller.

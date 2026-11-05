@@ -13,6 +13,7 @@ const (
 	FilesCreate        = "files.create"
 	FilesCreateFolder  = "files.create_folder"
 	FilesRename        = "files.rename"
+	FilesCopy          = "files.copy"
 	FilesDelete        = "files.delete"
 	FilesEdit          = "files.edit"
 	FilesSearch        = "files.search"

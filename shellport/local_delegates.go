@@ -26,6 +26,10 @@ func (l *local) RenamePath(oldPath, newPath string) workspace.FileOperationResul
 	return l.ws.RenamePath(oldPath, newPath)
 }
 
+func (l *local) CopyPath(oldPath, newPath string) workspace.FileOperationResultMsg {
+	return l.ws.CopyPath(oldPath, newPath)
+}
+
 func (l *local) DeletePath(path string) workspace.FileOperationResultMsg {
 	return l.ws.DeletePath(path)
 }

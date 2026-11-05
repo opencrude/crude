@@ -181,6 +181,35 @@ func TestFilePickerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 	}
 }
 
+func TestPickerShowsHiddenEntriesByDefaultAndCanToggle(t *testing.T) {
+	entries := []Entry{
+		{Name: ".config", Path: pickerPath(".config"), IsDir: true},
+		{Name: ".env", Path: pickerPath(".env")},
+		{Name: "normal", Path: pickerPath("normal"), IsDir: true},
+	}
+	for _, mode := range []Mode{ModeFile, ModeFolder, ModeOpenFile} {
+		screen := New(theme.DefaultDark())
+		screen.Open(pickerPath(""), mode, entries)
+		host := ui.NewHost(theme.DefaultDark(), screen)
+		host.Resize(80, 18)
+		host.Layout()
+		host.Focus(ListID)
+		buf := surface.NewCellBuffer(80, 18)
+		host.Paint(buf)
+		if !strings.Contains(pickerBufferText(buf), ".config") || !screen.ShowHidden() {
+			t.Fatalf("mode %v did not paint the hidden folder", mode)
+		}
+		if mode != ModeFolder && !strings.Contains(pickerBufferText(buf), ".env") {
+			t.Fatalf("mode %v did not paint the hidden file", mode)
+		}
+		host.Handle(tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
+		host.Paint(buf)
+		if screen.ShowHidden() || strings.Contains(pickerBufferText(buf), ".config") || strings.Contains(pickerBufferText(buf), ".env") {
+			t.Fatalf("mode %v did not hide entries after Ctrl+.", mode)
+		}
+	}
+}
+
 func TestFilePickerBreadcrumbSegmentEmitsNavigation(t *testing.T) {
 	screen := New(theme.DefaultDark())
 	screen.Open(pickerPath("src/nested"), ModeFolder, []Entry{})

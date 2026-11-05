@@ -358,6 +358,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if cmd, handled := m.handleMainPaneAction(action); handled {
 		return cmd
 	}
+	if cmd, handled := m.handleTreeAction(action); handled {
+		return cmd
+	}
 	if m.handleTerminalAction(*action) {
 		return nil
 	}

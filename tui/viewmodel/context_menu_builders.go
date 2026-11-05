@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"crude/tui/screens/gitdiff"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -461,6 +462,12 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					_, _ = m.openFileFromTree(path)
 				}
 			}},
+			{Label: "Open to the side", Disabled: path == "" || isDir, Action: func() {
+				if path != "" && m.ws == owner && generation == m.workspaceSwitchGen.Load() {
+					m.focusMainGroup(m.Win.SplitGroup(m.Win.ActiveGroup(), ui.Horizontal, false))
+					_, _ = m.openFileFromTree(path)
+				}
+			}},
 			{Label: "Open in window", Disabled: path == "" || isDir, Action: func() {
 				if path != "" {
 					m.runDetachedAsyncCmd(m.openFileInWindow(path))
@@ -514,22 +521,41 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		st.Sections = append(st.Sections, createSection)
 	}
 
-	if path != "" {
-		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Modify",
-			Items: []ui.ContextMenuItem{
-				{Label: "Rename", Action: func() {
-					m.startRenameInTree(path)
-				}},
-				{Label: "Delete", Action: func() {
-					m.startDeleteInTree(path)
-				}},
-				{Label: "Copy path", Action: func() {
-					m.copyToClipboard(path)
-				}},
-			},
-		})
+	// Each item runs the same tree action as its key, so menu, keyboard and
+	// drag and drop share one path.
+	treeAction := func(id string) func() {
+		return func() {
+			if m.ws == owner && generation == m.workspaceSwitchGen.Load() {
+				cmd, _ := m.handleTreeAction(&ui.Action{ID: id, Payload: path})
+				m.runDetachedAsyncCmd(cmd)
+			}
+		}
 	}
+	pasteDetail := "Ctrl+V"
+	if m.treeClipboardReady() {
+		pasteDetail = filepath.Base(m.treeClip.path) + " · Ctrl+V"
+	}
+	editItems := []ui.ContextMenuItem{}
+	if path != "" {
+		editItems = append(editItems,
+			ui.ContextMenuItem{Label: "Cut", Detail: "Ctrl+X", Action: treeAction(shelltree.ActionCut)},
+			ui.ContextMenuItem{Label: "Copy", Detail: "Ctrl+C", Action: treeAction(shelltree.ActionCopy)},
+		)
+	}
+	editItems = append(editItems, ui.ContextMenuItem{Label: "Paste", Detail: pasteDetail, Disabled: !m.treeClipboardReady(), Action: treeAction(shelltree.ActionPaste)})
+	if path != "" {
+		editItems = append(editItems,
+			ui.ContextMenuItem{Label: "Duplicate", Detail: "Ctrl+D", Action: treeAction(shelltree.ActionDuplicate)},
+			ui.ContextMenuItem{Label: "Rename", Detail: "F2", Action: treeAction(shelltree.ActionRename)},
+			ui.ContextMenuItem{Label: "Delete", Detail: "Delete", Action: treeAction(shelltree.ActionDelete)},
+			ui.ContextMenuItem{Label: "Copy path", Action: func() { m.copyToClipboard(path) }},
+			ui.ContextMenuItem{Label: "Copy relative path", Action: func() { m.copyToClipboard(m.treeRel(path)) }},
+		)
+	}
+	if m.treeLastMove != nil && m.treeLastMove.owner == m.ws {
+		editItems = append(editItems, ui.ContextMenuItem{Label: "Undo move", Detail: "Ctrl+Z", Action: treeAction(shelltree.ActionUndo)})
+	}
+	st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Edit", Items: editItems})
 	if section, ok := m.explorerGitSection(path, isDir); ok {
 		st.Sections = append(st.Sections, section)
 	}
@@ -544,6 +570,10 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		})
 	}
 
+	hiddenLabel := "Show hidden files"
+	if m.Tree.Model.ShowHidden() {
+		hiddenLabel = "Hide hidden files"
+	}
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Explorer",
 		Items: []ui.ContextMenuItem{
@@ -557,8 +587,8 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				m.startSourceControlMutation(m.Tree.Model.RefreshFromDisk())
 			}},
 			{Label: "Collapse folders", Action: m.Tree.Model.CollapseAll},
-			{Label: "Show hidden files", Detail: "Ctrl+.", Action: func() {
-				m.Tree.Model.SetShowHidden(!m.Tree.Model.ShowHidden())
+			{Label: hiddenLabel, Detail: "Ctrl+.", Action: func() {
+				m.runDetachedAsyncCmd(m.sidebarScreen.SetShowHidden(!m.Tree.Model.ShowHidden()))
 			}},
 		},
 	})
@@ -614,6 +644,13 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				}},
 				{Label: "Reveal in tree", Action: func() {
 					m.runDetachedAsyncCmd(m.beginUserTreeReveal(path, owner))
+				}},
+				{Label: desktopRevealLabel(), Action: func() {
+					current := m.Win.TabByTitle(tab.Title)
+					if current == nil || current.ID != tab.ID {
+						return
+					}
+					m.runDetachedAsyncCmd(m.revealTreePath(path, false))
 				}},
 			},
 		})

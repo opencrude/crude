@@ -346,6 +346,10 @@ func (s *Session) prepareHistoryMutation(ctx context.Context, receipt fileio.Mut
 		return nil, nil
 	}
 	if err := record(ctx, HistoryMutation{SessionID: scope.sessionID, MessageID: scope.messageID, AgentID: scope.agentID, Receipt: receipt}); err != nil {
+		if errors.Is(err, ErrHistoryDisabled) {
+			// Local History is off: the mutation proceeds unrecorded.
+			return nil, nil
+		}
 		if s.logger != nil {
 			s.logger.Warn("HISTORY", "agent_mutation_prepare_failed", "agent_id", scope.agentID, "source", receipt.OperationName, "error", err.Error())
 		}

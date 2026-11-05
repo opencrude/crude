@@ -108,7 +108,10 @@ func TestEditorRoutesSurviveRetainedMissingParent(t *testing.T) {
 				x, y := editorTreePoint(t, app, "healthy.txt")
 				switch route {
 				case "click":
+					// Tree rows activate on release, so a press can start a drag.
 					_, cmd := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+					runAppCommand(t, app, cmd)
+					_, cmd = app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
 					runAppCommand(t, app, cmd)
 				case "context open", "context window":
 					_, cmd := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseRight})

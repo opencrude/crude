@@ -194,9 +194,9 @@ func (m *historySafetyVisualModel) journeySafety(phase int) error {
 		case 1, 4:
 			return featureVisualPaint(v, "Restore preview", "safety.txt")
 		case 2, 5:
-			return featureVisualPaint(v, "Ready to restore 1 path(s)", "Press Enter again")
+			return featureVisualPaint(v, "Press Enter again to restore 1 file.")
 		case 3, 6:
-			return featureVisualPaint(v, "Undo this restore", "Safety snapshot")
+			return featureVisualPaint(v, "Undo this restore", "Restored 1 file. Press U to undo.")
 		}
 		return nil
 	}); err != nil {

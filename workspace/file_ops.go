@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"crude/fileio"
 )
@@ -46,6 +47,7 @@ const (
 	FileOpRename
 	FileOpDelete
 	FileOpApplyEdit
+	FileOpCopy
 )
 
 func (o FileOperation) String() string {
@@ -60,6 +62,8 @@ func (o FileOperation) String() string {
 		return "delete"
 	case FileOpApplyEdit:
 		return "apply-edit"
+	case FileOpCopy:
+		return "copy"
 	default:
 		return "unknown"
 	}
@@ -232,6 +236,105 @@ func (s *FileOpsService) RenamePath(oldPath, newPath string) FileOperationResult
 		s.logger.Info("file-ops", "renamed", "from", oldPath, "to", newPath)
 	}
 	return msg
+}
+
+// CopyPath copies a file or folder to newPath, which must not exist. The copy
+// is built in a hidden staging entry beside newPath and published with one
+// rename, so a failure or cancellation never leaves a partial copy behind.
+// Folders use os.CopyFS, which copies symbolic links as links and never
+// follows them.
+func (s *FileOpsService) CopyPath(oldPath, newPath string) FileOperationResultMsg {
+	msg := FileOperationResultMsg{Op: FileOpCopy, Path: newPath, OldPath: oldPath, NewPath: newPath}
+	for _, path := range []string{oldPath, newPath} {
+		if v := s.validatePath(path); v.Err != nil {
+			msg.Err, msg.Detail = v.Err, v.Detail
+			return msg
+		}
+	}
+	if rel, err := filepath.Rel(oldPath, newPath); err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		msg.Err, msg.Detail = fmt.Errorf("cannot copy %s into itself", filepath.Base(oldPath)), "target inside source"
+		return msg
+	}
+	unlock, ok := fileio.TryLockMutation()
+	if !ok {
+		msg.Err = fmt.Errorf("another file mutation is in progress")
+		return msg
+	}
+	defer unlock()
+	info, err := os.Lstat(oldPath)
+	if err != nil {
+		msg.Err, msg.Detail = fmt.Errorf("source does not exist: %s", filepath.Base(oldPath)), "source not found"
+		return msg
+	}
+	msg.IsDir = info.IsDir()
+	if _, err := os.Lstat(newPath); err == nil {
+		msg.Err, msg.Detail = fmt.Errorf("target already exists: %s", filepath.Base(newPath)), "target exists"
+		return msg
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(newPath), "."+filepath.Base(newPath)+".copy-*")
+	if err != nil {
+		msg.Err = err
+		return msg
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	entry := staging
+	switch {
+	case info.IsDir():
+		err = os.CopyFS(staging, os.DirFS(oldPath))
+		if err == nil {
+			err = os.Chmod(staging, info.Mode().Perm())
+		}
+	case info.Mode().IsRegular():
+		entry = filepath.Join(staging, filepath.Base(newPath))
+		err = copyRegularFile(oldPath, entry, info.Mode().Perm())
+	default:
+		err = fmt.Errorf("cannot copy %s: only files and folders can be copied", filepath.Base(oldPath))
+	}
+	if err != nil {
+		msg.Err = err
+		return msg
+	}
+	if _, err := os.Lstat(newPath); err == nil {
+		msg.Err, msg.Detail = fmt.Errorf("target already exists: %s", filepath.Base(newPath)), "target exists"
+		return msg
+	}
+	if err := os.Rename(entry, newPath); err != nil {
+		msg.Err = err
+		return msg
+	}
+	if entry == staging {
+		published = true
+	}
+	if s.logger != nil {
+		s.logger.Info("file-ops", "copied", "from", oldPath, "to", newPath)
+	}
+	return msg
+}
+
+func copyRegularFile(source, target string, mode os.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // DeletePath removes a file or directory at the given path.
