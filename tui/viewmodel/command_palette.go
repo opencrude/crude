@@ -540,11 +540,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.closeEditorTab()
 
 	case "file.revealInTree":
-		if m.Tree.Model != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+		if m.Tree != nil && m.Tree.Model != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 			if fp := m.EditorState.Editor.FilePath(); fp != "" {
-				m.Tree.Model.ExpandToPath(fp)
-				if !m.Tree.Visible {
-					m.ToggleSidebar()
+				if tab := m.Win.TabByTitle(m.editorTabTitle(fp)); tab != nil {
+					return m.beginUserTreeReveal(fp, m.paneOwner(tab.ID, tab.Group))
 				}
 			}
 		}

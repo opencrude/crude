@@ -5,6 +5,7 @@
 package filetree
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -424,10 +425,9 @@ type FileTreeModel struct {
 	// The metadata watcher never performs repository I/O or mutates tree rows.
 	onGitChanged func()
 
-	// directoryLoader is installed only by asynchronous picker projections.
-	// It returns a command that owns the filesystem request; the tree never
-	// performs picker I/O itself.
-	directoryLoader func(path string) tea.Cmd
+	// directoryLoader returns an owned asynchronous directory request.
+	// The tree never performs that I/O itself.
+	directoryLoader func(context.Context, string) tea.Cmd
 
 	// onFileSelected adapts file activation for picker selection. The persistent
 	// tree leaves this nil and emits FileSelectedMsg as before.
@@ -640,10 +640,9 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 	return nil
 }
 
-// SetDirectoryLoader installs the asynchronous child-directory request hook
-// used by picker projections. The callback is never invoked while the model
-// lock is held.
-func (m *FileTreeModel) SetDirectoryLoader(fn func(string) tea.Cmd) {
+// SetDirectoryLoader installs an asynchronous, cancellable directory request.
+// The callback is never invoked while the model lock is held.
+func (m *FileTreeModel) SetDirectoryLoader(fn func(context.Context, string) tea.Cmd) {
 	if m == nil {
 		return
 	}
@@ -854,7 +853,7 @@ func (m *FileTreeModel) ToggleExpand(path string) tea.Cmd {
 				m.rebuildVisibleNodes()
 				loader := m.directoryLoader
 				m.mu.Unlock()
-				return loader(path)
+				return loader(context.Background(), path)
 			}
 			_ = m.loadDirectory(node)
 		}
@@ -888,7 +887,7 @@ func (m *FileTreeModel) Expand(path string) tea.Cmd {
 			m.rebuildVisibleNodes()
 			loader := m.directoryLoader
 			m.mu.Unlock()
-			return loader(path)
+			return loader(context.Background(), path)
 		}
 		_ = m.loadDirectory(node)
 	}
@@ -987,6 +986,19 @@ func (m *FileTreeModel) Select(path string) {
 	m.cursorIndex = 0
 	m.selectedPath = m.rootPath
 	m.scrollOffset = 0
+}
+
+// SelectVisible selects and scrolls to an existing visible row without changing
+// selection when the path is absent.
+func (m *FileTreeModel) SelectVisible(path string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if i := m.visibleIndexLocked(path); i >= 0 {
+		m.setCursorIndexLocked(i)
+		m.clampViewportLocked()
+		return true
+	}
+	return false
 }
 
 // MoveUp moves the cursor up by one visible item.

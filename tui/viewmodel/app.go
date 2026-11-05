@@ -88,6 +88,7 @@ type App struct {
 	Win                       *window.Window
 	BufferMgr                 *editor.BufferManager
 	Tree                      *TreeState
+	treeReveal                *treeRevealIntent
 	FindReplace               *popup.FindReplaceState
 	LastContextMenu           *ui.ContextMenuState
 	ContextMenuOpenedAt       time.Time

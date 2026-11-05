@@ -51,6 +51,7 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.cancelTreeRevealOnInput(msg)
 	switch msg.(type) {
 	case tea.BlurMsg:
 		m.setTerminalBlurred(true)
@@ -87,6 +88,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
+	if m.treeReveal != nil && !m.treeRevealCurrent(m.treeReveal) {
+		m.cancelTreeReveal()
+	}
 	command = tea.Batch(command, m.drainRemoteUICommands())
 	command = tea.Batch(command, m.drainTerminalCommands())
 	command = tea.Batch(command, m.continueRemoteWorkspaceSwitch())
@@ -219,6 +223,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clientTreeDirectoryMsg:
 		m.applyClientTreeDirectory(msg)
 		return m, nil
+	case treeRevealDirectoryDone:
+		return m, m.finishUserTreeReveal(msg)
 	case shellport.ClientFilesChangedMsg:
 		if msg.Owner == m.ws {
 			return m, m.applyCoreFileChanges(msg.Changes)

@@ -134,6 +134,10 @@ policy (surface returns to dock; comparison closes only its snapshot).
 Menu callbacks retain the clicked tab identity, its original group, Window and
 workspace generation. Reordering tabs or changing focus does not retarget an
 action. Closing/moving that tab or changing workspace invalidates the menu.
+**Reveal in tree** opens the file explorer and selects the clicked file without
+activating its tab. It cancels an active tree search and loads ancestor folders
+through the connected workspace. Tree navigation or a newer reveal cancels an
+outstanding request. Hidden entries are shown when needed.
 Scope follow-ups retain the exact `PaneNode` identity, not a path or split axis;
 a collapsed/replaced scope safely does nothing. Native keyboard and pointer
 activation close the old popup before invoking its action, so the scope→edge

@@ -1,6 +1,7 @@
 package filetree
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,7 @@ func TestRemoteModelNeverLoadsClientDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	m := NewRemoteModel(root, func(string) tea.Cmd { requests++; return func() tea.Msg { return nil } })
+	m := NewRemoteModel(root, func(context.Context, string) tea.Cmd { requests++; return func() tea.Msg { return nil } })
 	if len(m.VisibleNodes()) != 0 || !m.Root.ModTime.IsZero() || m.GitResolver() != nil {
 		t.Fatal("constructor read local metadata")
 	}

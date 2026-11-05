@@ -2,6 +2,7 @@
 package filepicker
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -936,7 +937,7 @@ func (s *Screen) configureModel() {
 	}
 	model := s.model
 	model.SetShowHidden(s.showHidden)
-	model.SetDirectoryLoader(func(path string) tea.Cmd { return s.requestChildLoad(path) })
+	model.SetDirectoryLoader(func(_ context.Context, path string) tea.Cmd { return s.requestChildLoad(path) })
 	model.SetFileSelectedHandler(func(path string) tea.Cmd { return s.requestFileActivation(path) })
 }
 
