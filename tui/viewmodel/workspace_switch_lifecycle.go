@@ -182,6 +182,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.Input.ClearInput()
 	m.composerHydratedFor = nil
 	m.composerDraftOwners = nil
+	m.workspaceResumeID = ""
 	m.composerDraftEpoch++
 
 	m.BufferMgr = editor.NewBufferManager()

@@ -41,6 +41,9 @@ type Colors struct {
 	// the app feels like one coherent GUI rather than a collection of
 	// panels that each have their own idea of what "hover" looks like.
 	Hover color.Color
+	// Shadow darkens what lies under a lifted element, such as the item that
+	// follows the pointer during a drag.
+	Shadow color.Color
 	// Popup chrome colors. All popups (context menu, find/replace,
 	// save dialog, text prompt, file picker, diagnostic) use a
 	// unified design system; see widgets.PopupChromeConfig.
@@ -173,6 +176,7 @@ func DefaultDark() *Theme {
 		TextSelection:   lipgloss.Color("#424242"),
 		TextSelectionFg: lipgloss.Color("#ffffff"),
 		Hover:           lipgloss.Color("#21262d"),
+		Shadow:          lipgloss.Color("#010409"),
 		SubPaneBg:       lipgloss.Color("#1c2333"),
 		Gutter:          lipgloss.Color("#11161d"),
 		IncompleteBg:    lipgloss.Color("#3a1a1a"),

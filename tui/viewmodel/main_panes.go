@@ -22,17 +22,19 @@ const mainPaneID ui.ComponentID = "main-panes"
 // corresponding controls and geometry; changing focus never clones a resource.
 type mainPaneLayout struct {
 	ui.Base
-	app             *App
-	groups          map[window.GroupID]*mainPaneGroup
-	views           map[window.TabID]*mainPaneView
-	agentViews      map[string]*mainPaneView
-	dividers        map[uint64]*ui.SplitDivider
-	children        []ui.Component
-	placements      map[window.GroupID]ui.Rect
-	dividerRects    map[uint64]ui.Rect
-	dividerFirst    map[uint64]int
-	drop            *paneDrop
-	drag            *paneDrag
+	app          *App
+	groups       map[window.GroupID]*mainPaneGroup
+	views        map[window.TabID]*mainPaneView
+	agentViews   map[string]*mainPaneView
+	dividers     map[uint64]*ui.SplitDivider
+	children     []ui.Component
+	placements   map[window.GroupID]ui.Rect
+	dividerRects map[uint64]ui.Rect
+	dividerFirst map[uint64]int
+	drop         *paneDrop
+	drag         *paneDrag
+	// dragAt is the pointer of the tab drag in screen cells, for its ghost.
+	dragAt          [2]int
 	windows         map[window.GroupID]*paneWindow
 	compact         bool
 	initialChatUsed bool

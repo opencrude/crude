@@ -99,6 +99,7 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		return m.applyAeronEnsure(msg.result)
 	}
 	if msg.result == nil || msg.result.Error != "" {
+		m.workspaceResumeID = ""
 		if msg.forked {
 			detail := "Core returned no session result."
 			if msg.result != nil {

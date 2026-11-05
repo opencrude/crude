@@ -423,7 +423,7 @@ func TestMainPaneOwnershipPreviewKeepsDenseRowsWarm(t *testing.T) {
 	body := app.mainPanes.groups[left].body
 	tab := app.Win.ActiveTab().ID
 	paneJourneyDrag(t, app, tab, body.X+1, body.Y+body.H/2)
-	if !bufferContainsPlain(app.mainSurf.Buffer(), "Split left") {
+	if app.mainPanes.drop == nil || app.dragGhost().Intent != "Split left" {
 		t.Fatal("missing actual drag preview")
 	}
 	if renderer.ExportMessageRowsSnapshot(v.reflowInnerW).Generation != generation {

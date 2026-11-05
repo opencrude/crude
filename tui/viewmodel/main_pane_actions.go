@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,8 +16,11 @@ import (
 	"crude/tui/window"
 )
 
+// paneDrop is a proposed destination in the main area. Its source is either
+// a dragged tab or, when path is set, a file dragged from the file tree.
 type paneDrop struct {
 	tab       window.TabID
+	path      string
 	group     window.GroupID
 	node      uint64
 	beforeTab window.TabID
@@ -503,6 +507,7 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 			// Over its own strip the tab reorders in place; pane placement
 			// starts only once the pointer leaves the strip.
 			p.drop = nil
+			p.dragAt = [2]int{gesture.X, gesture.Y}
 			if !gesture.InStrip {
 				p.drop = m.mainPaneDrop(window.TabID(id), gesture.X, gesture.Y)
 			}
@@ -557,10 +562,9 @@ func (m *App) repaintAnimatingTabs() {
 	}
 }
 
-func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
-	if m.Win.IndexOf(tab) < 0 {
-		return nil
-	}
+// dockedPaneAt is the docked pane under a drag pointer; floating windows on
+// top of it take no drops.
+func (m *App) dockedPaneAt(x, y int) *mainPaneGroup {
 	if m.windowManager != nil {
 		for _, w := range m.windowManager.Windows() {
 			if w.Visible() && w.ContainsPoint(x, y) {
@@ -568,7 +572,30 @@ func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
 			}
 		}
 	}
-	g := m.paneAt(x, y)
+	return m.paneAt(x, y)
+}
+
+// paneEdgeZone is the split side for a drop at a pane-local point: the outer
+// quarters split, the middle does not. Tab and file drops share this rule.
+func paneEdgeZone(r ui.Rect, xl, yl int) string {
+	switch {
+	case xl < r.W/4:
+		return "left"
+	case xl >= r.W-r.W/4:
+		return "right"
+	case yl < max(ui.StripHeight+1, r.H/4):
+		return "top"
+	case yl >= r.H-r.H/4:
+		return "bottom"
+	}
+	return ""
+}
+
+func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
+	if m.Win.IndexOf(tab) < 0 {
+		return nil
+	}
+	g := m.dockedPaneAt(x, y)
 	if g == nil {
 		return nil
 	}
@@ -610,21 +637,57 @@ func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {
 	}
 	// Edges split, middle merges. Preview uses the exact half-cell rounding
 	// of SplitModel, including the reserved divider, before committing anything.
-	xl, yl := x-r.X, y-r.Y
-	switch {
-	case xl < r.W/4:
-		d.edge = "left"
-	case xl >= r.W-r.W/4:
-		d.edge = "right"
-	case yl < max(ui.StripHeight+1, r.H/4):
-		d.edge = "top"
-	case yl >= r.H-r.H/4:
-		d.edge = "bottom"
-	}
-	if d.edge == "" {
-		return m.resolvePaneDrop(d)
-	}
+	d.edge = paneEdgeZone(r, x-r.X, y-r.Y)
 	return m.resolvePaneDrop(d)
+}
+
+// fileDropAt proposes where a file dragged from the tree opens: over a tab
+// strip or the middle of a pane it opens in that pane; over an edge zone it
+// opens in a new split on that side, previewed with the exact split geometry.
+// A pane too small to split opens the file in itself from every zone.
+func (m *App) fileDropAt(path string, x, y int) *paneDrop {
+	g := m.dockedPaneAt(x, y)
+	if g == nil {
+		return nil
+	}
+	here := &paneDrop{path: path, group: g.id, rect: g.body}
+	r := g.screen(ui.Rect{W: g.Bounds().W, H: g.Bounds().H})
+	scopes := m.Win.PaneScopes(g.id)
+	if y < g.body.Y || len(scopes) == 0 {
+		return here
+	}
+	edge := paneEdgeZone(r, x-r.X, y-r.Y)
+	if edge == "" {
+		return here
+	}
+	dir, before := paneEdge(edge)
+	root, target := m.Win.PreviewSplitPane(scopes[0].ID, dir, before)
+	bounds := m.mainPanes.Bounds()
+	if w, h := paneMinimum(root); target == 0 || w > bounds.W || h > bounds.H {
+		return here
+	}
+	rect := paneGroupRect(root, target, bounds)
+	if rect.Empty() {
+		return here
+	}
+	return &paneDrop{path: path, group: g.id, node: scopes[0].ID, edge: edge, rect: rect}
+}
+
+// openFileDrop opens a file at a confirmed fileDropAt destination.
+func (m *App) openFileDrop(d *paneDrop) tea.Cmd {
+	group := d.group
+	if d.edge != "" {
+		dir, before := paneEdge(d.edge)
+		if group = m.Win.SplitPane(d.node, dir, before); group == 0 {
+			return nil
+		}
+	}
+	m.focusMainGroup(group)
+	cmd, err := m.openFileFromTree(d.path)
+	if err != nil {
+		m.Feedback.NotifyError("Cannot open " + filepath.Base(d.path) + ": " + err.Error())
+	}
+	return cmd
 }
 
 func (d *paneDrop) placement() window.TabPlacement {
@@ -657,20 +720,35 @@ func (m *App) resolvePaneDrop(d *paneDrop) *paneDrop {
 	return d
 }
 
+// paneDropLive reports whether the gesture that proposed the drop is still
+// in progress, so a cancelled or finished drag never leaves a preview behind.
+func (m *App) paneDropLive(d *paneDrop) bool {
+	p := m.mainPanes
+	if d.path != "" {
+		state, ok := m.sidebarScreen.DragState()
+		return ok && state.Source == d.path && !state.InTree
+	}
+	for _, g := range p.groups {
+		if g.tabs.TabsControl().Dragging() {
+			return true
+		}
+	}
+	return false
+}
+
+// paintPaneDropPreview tints the area a drop would fill and outlines it. The
+// drag ghost at the pointer states what the drop does.
 func (m *App) paintPaneDropPreview() {
 	p := m.mainPanes
 	if p == nil || p.drop == nil || m.mainSurf == nil {
 		return
 	}
-	if !p.drag.valid(m, p.drop.tab) {
+	if p.drop.path == "" && !p.drag.valid(m, p.drop.tab) {
+		// The layout changed under the drag: end it rather than retarget.
 		m.cancelMainPaneDrag()
 		return
 	}
-	armed := false
-	for _, g := range p.groups {
-		armed = armed || g.tabs.TabsControl().Dragging()
-	}
-	if !armed {
+	if !m.paneDropLive(p.drop) {
 		p.drop = nil
 		return
 	}
@@ -679,23 +757,23 @@ func (m *App) paintPaneDropPreview() {
 		return
 	}
 	t := m.rootHost.Tokens()
-	bg, fg := t.Color(ui.ColorHover), t.Color(ui.ColorMuted)
+	bg, edge := t.Color(ui.ColorHover), t.Color(ui.ColorAccent)
 	buf := m.mainSurf.Buffer()
 	ui.FillRect(buf, 0, 0, r, cell.BlankCell(bg))
-	label := "Move tab here"
-	if p.drop.edge != "" {
-		label = "Split " + p.drop.edge
-		if p.drop.scope != "" {
-			label += " · " + p.drop.scope
-		}
+	right, bottom := r.X+r.W-1, r.Y+r.H-1
+	for x := r.X; x <= right; x++ {
+		buf.Set(x, r.Y, cell.NewCell('─', edge, bg, 0))
+		buf.Set(x, bottom, cell.NewCell('─', edge, bg, 0))
 	}
-	label = rendering.TruncateVisual(label, r.W, "")
-	buf.WriteString(r.X+max(0, (r.W-rendering.VisibleWidth(label))/2), r.Y+r.H/2, label, fg, bg, 0)
-	for x := r.X; x < r.X+r.W; x++ {
-		buf.Set(x, r.Y, cell.NewCell('─', t.Color(ui.ColorBorder), bg, 0))
-		if r.H > 1 {
-			buf.Set(x, r.Y+r.H-1, cell.NewCell('─', t.Color(ui.ColorBorder), bg, 0))
-		}
+	for y := r.Y; y <= bottom; y++ {
+		buf.Set(r.X, y, cell.NewCell('│', edge, bg, 0))
+		buf.Set(right, y, cell.NewCell('│', edge, bg, 0))
+	}
+	if r.W > 1 && r.H > 1 {
+		buf.Set(r.X, r.Y, cell.NewCell('╭', edge, bg, 0))
+		buf.Set(right, r.Y, cell.NewCell('╮', edge, bg, 0))
+		buf.Set(r.X, bottom, cell.NewCell('╰', edge, bg, 0))
+		buf.Set(right, bottom, cell.NewCell('╯', edge, bg, 0))
 	}
 }
 

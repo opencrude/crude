@@ -595,6 +595,11 @@ func (c *Compositor) BeginFrame() { ... }
 // cell level.
 func (c *Compositor) Composite() { ... }
 
+// Composited is the frame being built. Between Composite and Present it holds
+// every surface, so pointer-attached ink (the drag ghost) drawn here lies above
+// floating windows. BeginFrame clears it; such ink lasts exactly one frame.
+func (c *Compositor) Composited() *surface.CellBuffer { ... }
+
 // PresentSurface publishes the completed grid and swaps buffers. The drawable
 // borrows the front grid until BeginFrame/Resize. Bubble Tea snapshots it before
 // another Update and UV diffs/replaces changed row spans for terminal output.
@@ -979,6 +984,8 @@ App.View()
   3. mount mainSurf + PaintRegions    one shell surface, theme-owned background
   4. windowManager.Render(ctx)        FloatingWindow content surfaces
   5. compositor.Composite()           flatten z-order and blit
+  5b. ui.PaintDragGhost(Composited()) pointer-attached drag ghost above every
+                                      surface and window; one frame only
   6. compositor.PresentSurface()      swap/publish cells → tea.View.Surface
 Bubble Tea snapshot → UV Replace → changed-row terminal diff/output
 ```

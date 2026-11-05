@@ -76,6 +76,7 @@ func (m *App) addOrchestrator(orchID string, activate bool) {
 	m.RestoreAgent(orchID)
 	m.syncAgentWindowTabs()
 	m.activateAgentWindowTab(orchID)
+	m.finishWorkspaceResume()
 	m.offerGoalResume(orchID)
 }
 

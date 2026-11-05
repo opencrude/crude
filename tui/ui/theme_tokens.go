@@ -26,6 +26,7 @@ const (
 	ColorTextSelection
 	ColorTextSelectionFg
 	ColorHover
+	ColorShadow
 	ColorSubPaneBg
 	ColorPopupBg
 	ColorPopupBorder
@@ -141,6 +142,7 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorTextSelection:      rendering.ThemeColorToCell(c.TextSelection),
 		ColorTextSelectionFg:    rendering.ThemeColorToCell(c.TextSelectionFg),
 		ColorHover:              rendering.ThemeColorToCell(c.Hover),
+		ColorShadow:             rendering.ThemeColorToCell(c.Shadow),
 		ColorSubPaneBg:          rendering.ThemeColorToCell(c.SubPaneBg),
 		ColorPopupBg:            rendering.ThemeColorToCell(c.PopupBg),
 		ColorPopupBorder:        rendering.ThemeColorToCell(c.PopupBorder),

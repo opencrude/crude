@@ -39,7 +39,9 @@ func (m *App) View() tea.View {
 	// floating layers, a clean retained Host is already the complete frame;
 	// reuse its publication rather than clearing/composing/snapshotting it.
 	// Floating owners keep their ordinary independent composition path.
-	if m.framePresented && !m.rootHost.NeedsPaint() && !m.windowManager.HasWindows() && !m.windowManager.NeedsRender() {
+	ghost := m.dragGhost()
+	if m.framePresented && !m.rootHost.NeedsPaint() && !m.windowManager.HasWindows() && !m.windowManager.NeedsRender() &&
+		!ghost.Active() && !m.dragGhostPainted {
 		return m.newSurfaceTerminalView()
 	}
 	m.compositor.BeginFrame()
@@ -77,6 +79,7 @@ func (m *App) View() tea.View {
 	m.windowManager.ClearNeedsRender()
 
 	m.compositor.Composite()
+	m.dragGhostPainted = m.paintDragGhost(ghost)
 	m.captureTerminalImages()
 
 	m.compositor.PresentSurface()

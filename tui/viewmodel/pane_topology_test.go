@@ -600,7 +600,7 @@ func TestPaneAncestorDragPreviewAllEdges(t *testing.T) {
 			tabs, topology := app.Win.Tabs(), paneTestShape(app.Win.PaneRoot())
 			paneJourneyDrag(t, app, source, x, y)
 			drop := app.mainPanes.drop
-			if drop == nil || drop.node != app.Win.PaneRoot().ID || drop.edge != edge || !strings.Contains(paneJourneyText(app, drop.rect), "Entire layout") {
+			if drop == nil || drop.node != app.Win.PaneRoot().ID || drop.edge != edge || !strings.Contains(frameText(app), "Split "+edge+" · Entire layout") {
 				t.Fatal("outer rim did not preview exact entire-layout edge")
 			}
 			if !reflect.DeepEqual(tabs, app.Win.Tabs()) || topology != paneTestShape(app.Win.PaneRoot()) {
