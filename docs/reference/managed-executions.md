@@ -28,7 +28,12 @@ Use the service, not ad hoc shell `git worktree` setup or merge improvisation.
 Creation captures the current dirty tracked/untracked files and accepted shared
 document revisions, including unsaved **accepted** text, not private shell drafts.
 Ignored paths require explicit inclusion (accepted documents are included).
-Two bounded captures must agree; HEAD and common Git ownership are checked.
+Two bounded captures must agree by path, type, mode and content hash; HEAD and
+common Git ownership are checked. Preparation honors cancellation at every
+capture, Git command and per-file step until the context is Ready, so stopping
+the launching turn does not wait for a whole checkout. The new private checkout
+is written with plain writes: it is not Ready, and therefore never used, until
+every file is written.
 A child of a selected managed execution uses the current parent's exact
 `SourceContextID` checkout, including its newer dirty bytes, rather than stale
 logical-workspace document overlays. Missing/foreign/unready source contexts fail

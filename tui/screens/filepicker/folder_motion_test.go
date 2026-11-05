@@ -254,10 +254,14 @@ func TestFolderPickerHiddenPolicyAndSearchMatchingSurviveNavigation(t *testing.T
 	screen, host := pickerHost(t, ModeFolder)
 	host.Handle(tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	screen.SetDirectory(pickerPath("src"), []Entry{{Name: ".nested", Path: pickerPath("src/.nested"), IsDir: true}})
-	if screen.VisibleCount() != 1 {
+	if screen.VisibleCount() != 0 {
 		t.Fatal("root replacement lost hidden policy")
 	}
 	assertNoPickerRow(t, screen, host)
+	host.Handle(tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
+	if screen.VisibleCount() != 1 {
+		t.Fatal("hidden folder did not return when hidden files were enabled")
+	}
 	search := commandMessage[SearchMsg](t, host.Handle(tea.KeyPressMsg{Code: 'n', Text: "n"}))
 	screen.BeginPathSearch(search.Query)
 	screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: pathwalk.Entry{Name: ".nested", Path: pickerPath("src/.nested"), IsDir: true}}})

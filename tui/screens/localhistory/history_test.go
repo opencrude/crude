@@ -149,7 +149,7 @@ func TestRestoreFailureEvidenceGatesFurtherMutation(t *testing.T) {
 	for y := range 20 {
 		screen += plain(buf, y) + "\n"
 	}
-	if !strings.Contains(screen, "Check original restore result") || !strings.Contains(screen, "do not repeat") || strings.Contains(screen, "Apply") {
+	if !strings.Contains(screen, "Check the restore result") || !strings.Contains(screen, "do not repeat") || strings.Contains(screen, "Apply") {
 		t.Fatalf("unresolved restore screen:\n%s", screen)
 	}
 	s.loading = false
@@ -157,11 +157,45 @@ func TestRestoreFailureEvidenceGatesFurtherMutation(t *testing.T) {
 		t.Fatalf("check action=%+v", got.Action)
 	}
 	s.Handle(ui.EventContext{}, ui.CustomEvent(AppliedMsg{Result: model.RestoreResult{SafetySnapshotID: "safety", Paths: []string{"file"}}, Warning: "publication failed", Incomplete: true}))
-	if s.requestID != "" || !strings.Contains(s.status, "Restore incomplete") {
+	if s.requestID != "" || !strings.Contains(s.status, "The restore did not complete") {
 		t.Fatalf("committed partial restore status=%q request=%q", s.status, s.requestID)
 	}
 	res := s.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'u'}))
 	if res.Action == nil || res.Action.ID != ActionPreview || res.Action.Payload.(PreviewRequest).SnapshotID != "safety" {
 		t.Fatalf("committed partial restore lost its safety Undo: %+v", res.Action)
+	}
+}
+
+// Timeline rows name what happened to the files, never capture kinds or
+// message identifiers.
+func TestTimelineRowsUseUserLanguage(t *testing.T) {
+	s := New(theme.DefaultDark())
+	host := ui.NewHost(theme.DefaultDark(), s)
+	host.Resize(100, 12)
+	now := time.Now()
+	s.Handle(ui.EventContext{}, ui.CustomEvent(TimelineMsg{
+		Records: []model.SnapshotRecord{
+			{ID: "a", CreatedAt: now.UnixNano(), Kind: "after_message", Label: "After message client-8bceda086ff50f2410d9"},
+			{ID: "b", CreatedAt: now.Add(-time.Minute).UnixNano(), Kind: "external_change", Label: "External workspace changes"},
+			{ID: "c", CreatedAt: now.AddDate(0, 0, -1).UnixNano(), Kind: "before_message", Label: "Before message client-8bceda086ff50f2410d9"},
+		},
+		Stats: model.Stats{Snapshots: 3, PhysicalBytes: 3 << 20, ChunkObjects: 812},
+	}))
+	host.Layout()
+	buf := surface.NewCellBuffer(100, 12)
+	host.Paint(buf)
+	var text strings.Builder
+	for row := 0; row < 12; row++ {
+		text.WriteString(plain(buf, row) + "\n")
+	}
+	for _, want := range []string{"Today", "After agent changes", "File changes", "Yesterday", "Before agent changes", "3 snapshots · 3.0 MiB on disk"} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("timeline missing %q:\n%s", want, text.String())
+		}
+	}
+	for _, unwanted := range []string{"client-8bceda", "external_change", "after_message", "chunk objects"} {
+		if strings.Contains(text.String(), unwanted) {
+			t.Fatalf("timeline shows internal text %q:\n%s", unwanted, text.String())
+		}
 	}
 }

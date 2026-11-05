@@ -56,10 +56,27 @@ type LocalHistoryService struct {
 	restoring  bool
 	stopping   bool
 	opWg       sync.WaitGroup
+
+	// Agent work owns the store while it runs. Maintenance (reconciliation
+	// and retention) waits for a quiet gap and yields as soon as work starts.
+	scopeMu     sync.Mutex      // serializes continuation scope open/close
+	working     int             // running message and continuation turns
+	idleSince   time.Time       // when the last turn finished
+	leases      map[string]int  // continuation turns per message scope
+	reopened    map[string]bool // scopes a continuation opened after retention removed them
+	maintenance context.CancelFunc
 }
 
+// maintenanceQuietPeriod is how long agents must stay idle before Local
+// History reconciles and prunes. Agent turns often follow each other within
+// seconds; maintenance must not take the store from them.
+const maintenanceQuietPeriod = 30 * time.Second
+
 func NewLocalHistoryService(root string, store *localhistory.Store, logger Logger) *LocalHistoryService {
-	return &LocalHistoryService{root: root, store: store, logger: logger, pending: make(map[string]bool), active: make(map[string]*historyScopeState)}
+	return &LocalHistoryService{
+		root: root, store: store, logger: logger, pending: make(map[string]bool), active: make(map[string]*historyScopeState),
+		leases: make(map[string]int), reopened: make(map[string]bool),
+	}
 }
 
 func (s *LocalHistoryService) SetEventBus(bus *EventBus) { s.mu.Lock(); s.bus = bus; s.mu.Unlock() }
@@ -120,6 +137,24 @@ func (s *LocalHistoryService) Status() HistoryServiceStatus {
 		status.Error = s.lastErr.Error()
 	}
 	return status
+}
+
+// KeepBeforeDelete records a safety snapshot that includes rel, so a deleted
+// file or folder can be restored from Local History. It is a no-op when Local
+// History is off. A failure means the caller must not delete.
+func (s *LocalHistoryService) KeepBeforeDelete(ctx context.Context, rel string) error {
+	s.mu.Lock()
+	settings := s.settings
+	s.mu.Unlock()
+	if s.store == nil || !settings.EnabledValue() {
+		return nil
+	}
+	opts := historyOptions(settings, "safety", "Before delete: "+rel, "")
+	opts.IncludePaths = []string{rel}
+	if _, err := s.store.Snapshot(ctx, opts); err != nil {
+		return fmt.Errorf("local history could not keep a copy of %s, so it was not deleted: %w", rel, err)
+	}
+	return nil
 }
 
 func historyOptions(settings ttypes.LocalHistorySettings, kind, label, parent string) localhistory.SnapshotOptions {
@@ -185,6 +220,7 @@ func (s *LocalHistoryService) run(ctx context.Context, done chan struct{}, gener
 	}
 	ticker := time.NewTicker(reconcile)
 	defer ticker.Stop()
+	pruneDue := true
 	var timer *time.Timer
 	var timerC <-chan time.Time
 	resetTimer := func() {
@@ -236,15 +272,27 @@ func (s *LocalHistoryService) run(ctx context.Context, done chan struct{}, gener
 			}
 		case <-timerC:
 			timerC = nil
-			if settings.CaptureExternalValue() {
-				_, _, _ = s.captureIfChanged(ctx, historyOptions(settings, "external_change", "External workspace changes", ""))
-				s.prune(settings)
+			// While agents work, their turns record message scopes and
+			// operation receipts. Changed paths stay pending for the next gap.
+			if settings.CaptureExternalValue() && !s.agentsWorking() {
+				if _, changed, _ := s.captureIfChanged(ctx, historyOptions(settings, "external_change", "External workspace changes", "")); changed {
+					pruneDue = true
+				}
 			}
 		case <-ticker.C:
-			if settings.CaptureExternalValue() {
-				_, _, _ = s.captureIfChanged(ctx, historyOptions(settings, "reconcile", "Periodic reconciliation", ""))
-				s.prune(settings)
+			maintenanceCtx, ok := s.beginMaintenance(ctx)
+			if !ok {
+				continue
 			}
+			if settings.CaptureExternalValue() {
+				if _, changed, _ := s.captureIfChanged(maintenanceCtx, historyOptions(settings, "reconcile", "Periodic reconciliation", "")); changed {
+					pruneDue = true
+				}
+			}
+			if pruneDue && maintenanceCtx.Err() == nil {
+				pruneDue = s.prune(maintenanceCtx, settings) != nil
+			}
+			s.endMaintenance()
 		}
 	}
 }
@@ -286,7 +334,10 @@ func (s *LocalHistoryService) captureIfChanged(ctx context.Context, opts localhi
 	s.mu.Lock()
 	s.capturing = false
 	if err != nil {
-		s.lastErr = err
+		// Maintenance that yields to agent work is not a failure.
+		if ctx.Err() == nil {
+			s.lastErr = err
+		}
 	} else {
 		s.lastErr = nil
 		if changed {
@@ -313,11 +364,59 @@ func (s *LocalHistoryService) setError(generation uint64, err error) {
 	}
 }
 
-func (s *LocalHistoryService) prune(settings ttypes.LocalHistorySettings) {
-	_, _ = s.store.Prune(context.Background(), localhistory.RetentionPolicy{
+func (s *LocalHistoryService) prune(ctx context.Context, settings ttypes.LocalHistorySettings) error {
+	_, err := s.store.Prune(ctx, localhistory.RetentionPolicy{
 		KeepHours: settings.RetentionKeepHours, KeepDaily: settings.RetentionKeepDaily,
 		MaxSnapshots: settings.RetentionMaxSnapshots, BudgetBytes: int64(settings.StorageBudgetMB) * 1024 * 1024,
 	})
+	if err != nil && ctx.Err() == nil && s.logger != nil {
+		s.logger.Warn("HISTORY", "retention_failed", "error", err.Error())
+	}
+	return err
+}
+
+func (s *LocalHistoryService) agentsWorking() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.working > 0
+}
+
+// beginMaintenance admits reconciliation and retention only after agents have
+// been idle for the quiet period. Starting agent work cancels the context.
+func (s *LocalHistoryService) beginMaintenance(parent context.Context) (context.Context, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.working > 0 || s.restoring || time.Since(s.idleSince) < maintenanceQuietPeriod {
+		return nil, false
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s.maintenance = cancel
+	return ctx, true
+}
+
+func (s *LocalHistoryService) endMaintenance() {
+	s.mu.Lock()
+	s.yieldMaintenanceLocked()
+	s.mu.Unlock()
+}
+
+func (s *LocalHistoryService) yieldMaintenanceLocked() {
+	if s.maintenance != nil {
+		s.maintenance()
+		s.maintenance = nil
+	}
+}
+
+func (s *LocalHistoryService) beginWorkLocked() {
+	s.working++
+	s.yieldMaintenanceLocked()
+}
+
+func (s *LocalHistoryService) endWork() {
+	s.mu.Lock()
+	s.working--
+	s.idleSince = time.Now()
+	s.mu.Unlock()
 }
 
 func scopeKey(sessionID, messageID string) string { return sessionID + "\x00" + messageID }
@@ -336,13 +435,36 @@ func (s *LocalHistoryService) BeginMessage(ctx context.Context, sessionID, messa
 		return session.ErrHistoryRecorded
 	}
 	s.activityMu.RLock()
-	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "before_message", "Before message "+messageID, ""))
-	if err != nil {
+	s.mu.Lock()
+	s.beginWorkLocked()
+	s.mu.Unlock()
+	if err := s.openScope(ctx, settings, sessionID, messageID); err != nil {
+		s.endWork()
 		s.activityMu.RUnlock()
 		return err
 	}
+	return nil
+}
+
+func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, messageID string) error {
+	key := scopeKey(sessionID, messageID)
+	s.mu.Lock()
+	open := s.active[key] != nil
+	s.mu.Unlock()
+	if !open {
+		return nil
+	}
+	defer s.activityMu.RUnlock()
+	defer s.endWork()
+	return s.closeScope(ctx, key)
+}
+
+func (s *LocalHistoryService) openScope(ctx context.Context, settings ttypes.LocalHistorySettings, sessionID, messageID string) error {
+	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "before_message", "Before message "+messageID, ""))
+	if err != nil {
+		return err
+	}
 	if err := s.store.BeginMessageScope(sessionID, messageID, manifest.ID, time.Now()); err != nil {
-		s.activityMu.RUnlock()
 		return err
 	}
 	s.mu.Lock()
@@ -351,8 +473,7 @@ func (s *LocalHistoryService) BeginMessage(ctx context.Context, sessionID, messa
 	return nil
 }
 
-func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, messageID string) error {
-	key := scopeKey(sessionID, messageID)
+func (s *LocalHistoryService) closeScope(ctx context.Context, key string) error {
 	s.mu.Lock()
 	scope := s.active[key]
 	settings := s.settings
@@ -360,8 +481,7 @@ func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, message
 	if scope == nil {
 		return nil
 	}
-	defer s.activityMu.RUnlock()
-	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "after_message", "After message "+messageID, scope.beforeID))
+	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "after_message", "After message "+scope.messageID, scope.beforeID))
 	if err != nil {
 		return err
 	}
@@ -382,32 +502,103 @@ func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, message
 	}
 	collisions := mapKeys(scope.collisions)
 	s.mu.Unlock()
-	if err := s.store.CloseMessageScope(sessionID, messageID, manifest.ID, changed, collisions, time.Now()); err != nil {
+	if err := s.store.CloseMessageScope(scope.sessionID, scope.messageID, manifest.ID, changed, collisions, time.Now()); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	if s.active[key] == scope {
 		delete(s.active, key)
 	}
+	// Pending paths are covered by this snapshot.
+	s.pending = make(map[string]bool)
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *LocalHistoryService) BeginContinuation(_ context.Context, _, _ string) error {
+// BeginContinuation leases an accepted message's scope for a continuing or
+// delegated turn. Retention never runs while the lease is held. When
+// retention removed the scope before the continuation started, the turn opens
+// a fresh scope for the same message, so its edits stay recorded and
+// undoable instead of failing.
+func (s *LocalHistoryService) BeginContinuation(ctx context.Context, sessionID, messageID string) error {
 	s.activityMu.RLock()
+	key := scopeKey(sessionID, messageID)
 	s.mu.Lock()
-	stopping := s.stopping
-	s.mu.Unlock()
-	if stopping {
+	if s.stopping {
+		s.mu.Unlock()
 		s.activityMu.RUnlock()
 		return errors.New("local history service is stopping")
+	}
+	s.beginWorkLocked()
+	s.leases[key]++
+	settings := s.settings
+	s.mu.Unlock()
+	if err := s.ensureContinuationScope(ctx, settings, key, sessionID, messageID); err != nil {
+		s.releaseLease(key)
+		s.endWork()
+		s.activityMu.RUnlock()
+		return err
 	}
 	return nil
 }
 
-func (s *LocalHistoryService) EndContinuation(_ context.Context, _, _ string) error {
-	s.activityMu.RUnlock()
+func (s *LocalHistoryService) ensureContinuationScope(ctx context.Context, settings ttypes.LocalHistorySettings, key, sessionID, messageID string) error {
+	if !settings.EnabledValue() {
+		return nil
+	}
+	s.scopeMu.Lock()
+	defer s.scopeMu.Unlock()
+	s.mu.Lock()
+	open := s.active[key] != nil
+	s.mu.Unlock()
+	if open {
+		return nil
+	}
+	accepts, err := s.store.MessageScopeAcceptsOperations(sessionID, messageID)
+	if err != nil || accepts {
+		return err
+	}
+	if _, exists, err := s.store.MessageScope(sessionID, messageID); err != nil {
+		return err
+	} else if exists {
+		// An interrupted scope is finalized by startup recovery; never
+		// replace its identity.
+		return nil
+	}
+	if err := s.openScope(ctx, settings, sessionID, messageID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.reopened[key] = true
+	s.mu.Unlock()
 	return nil
+}
+
+// releaseLease drops one continuation lease and reports whether the last
+// lease of a scope opened by a continuation ended.
+func (s *LocalHistoryService) releaseLease(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leases[key]--
+	if s.leases[key] > 0 {
+		return false
+	}
+	delete(s.leases, key)
+	reopened := s.reopened[key]
+	delete(s.reopened, key)
+	return reopened
+}
+
+func (s *LocalHistoryService) EndContinuation(ctx context.Context, sessionID, messageID string) error {
+	defer s.activityMu.RUnlock()
+	defer s.endWork()
+	key := scopeKey(sessionID, messageID)
+	s.scopeMu.Lock()
+	defer s.scopeMu.Unlock()
+	if !s.releaseLease(key) {
+		return nil
+	}
+	return s.closeScope(ctx, key)
 }
 
 // RecordAgentMutation persists the direct tool's exact operation receipt before
@@ -419,6 +610,12 @@ func (s *LocalHistoryService) RecordAgentMutation(ctx context.Context, mutation 
 	}
 	if mutation.Committed != nil {
 		return s.store.CompleteAgentOperation(mutation.Receipt.OperationID, *mutation.Committed)
+	}
+	s.mu.Lock()
+	enabled := s.settings.EnabledValue()
+	s.mu.Unlock()
+	if !enabled {
+		return session.ErrHistoryDisabled
 	}
 	operation := localhistory.AgentOperation{
 		ID: mutation.Receipt.OperationID, SessionID: mutation.SessionID, MessageID: mutation.MessageID,
@@ -616,6 +813,7 @@ func (s *LocalHistoryService) ApplyRestore(ctx context.Context, planID string, s
 	s.opWg.Add(1)
 	s.restoring = true
 	s.suppress = true
+	s.yieldMaintenanceLocked()
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -652,6 +850,7 @@ func (s *LocalHistoryService) ApplyRestoreChoices(ctx context.Context, planID st
 	s.opWg.Add(1)
 	s.restoring = true
 	s.suppress = true
+	s.yieldMaintenanceLocked()
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()

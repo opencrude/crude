@@ -459,6 +459,32 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 			}
 		}
 		return m.handleTabBarHostResult(ui.EventResult{Action: a}), true
+	case "tabs.reorder":
+		reorder, ok := a.Payload.(ui.TabReorder)
+		if !ok {
+			return nil, true
+		}
+		id, err := strconv.ParseUint(reorder.ID, 10, 64)
+		if err != nil {
+			return nil, true
+		}
+		p := m.ensureMainPanes()
+		valid := p.drag.valid(m, window.TabID(id))
+		p.drop, p.drag = nil, nil
+		if !valid {
+			return nil, true
+		}
+		var before uint64
+		if reorder.BeforeID != "" {
+			if before, err = strconv.ParseUint(reorder.BeforeID, 10, 64); err != nil {
+				return nil, true
+			}
+		}
+		group := m.Win.GroupOf(window.TabID(id))
+		if target := m.Win.PlaceTab(window.TabPlacement{Tab: window.TabID(id), Group: group, BeforeTab: window.TabID(before)}); target != 0 {
+			m.focusMainGroup(target)
+		}
+		return nil, true
 	case "tabs.drag", "tabs.drop":
 		gesture, ok := a.Payload.(ui.TabDrag)
 		if !ok {
@@ -474,7 +500,12 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 			return nil, true
 		}
 		if a.ID == "tabs.drag" {
-			p.drop = m.mainPaneDrop(window.TabID(id), gesture.X, gesture.Y)
+			// Over its own strip the tab reorders in place; pane placement
+			// starts only once the pointer leaves the strip.
+			p.drop = nil
+			if !gesture.InStrip {
+				p.drop = m.mainPaneDrop(window.TabID(id), gesture.X, gesture.Y)
+			}
 			return nil, true
 		}
 		drop := p.drop
@@ -492,6 +523,38 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 		return nil, true
 	}
 	return nil, false
+}
+
+// tabsAnimating reports a tab strip that is dragging or sliding tabs.
+func (p *mainPaneLayout) tabsAnimating() bool {
+	if p == nil {
+		return false
+	}
+	for _, g := range p.groups {
+		if g.tabs.TabsControl().NeedsAnimation() {
+			return true
+		}
+	}
+	return false
+}
+
+// repaintAnimatingTabs damages only the strips whose tabs are in motion.
+func (m *App) repaintAnimatingTabs() {
+	p := m.mainPanes
+	if p == nil {
+		return
+	}
+	for id, g := range p.groups {
+		control := g.tabs.TabsControl()
+		if !control.NeedsAnimation() {
+			continue
+		}
+		if pw := p.windows[id]; pw != nil {
+			pw.frame.MarkContentDirty()
+		} else if m.rootHost != nil {
+			m.rootHost.MarkComponentPaint(control.ID())
+		}
+	}
 }
 
 func (m *App) mainPaneDrop(tab window.TabID, x, y int) *paneDrop {

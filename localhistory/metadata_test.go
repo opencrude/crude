@@ -789,3 +789,48 @@ func TestInternalTimelineScanIsNotCappedAtTenThousand(t *testing.T) {
 		t.Fatalf("timeline records=%d", len(records))
 	}
 }
+
+// A store over its budget must shed its oldest generations first. Removing
+// every unprotected generation at once discarded the last hours of history and
+// the message scopes that running agents still recorded into.
+func TestBudgetRetentionRemovesOldestHistoryFirst(t *testing.T) {
+	store, workspace := newTestStore(t)
+	var snapshots []Manifest
+	for index := 0; index < 6; index++ {
+		writeTestFile(t, workspace, fmt.Sprintf("file-%d.txt", index), bytes.Repeat([]byte{byte('a' + index)}, 4096), 0o644)
+		snapshot, err := store.Snapshot(context.Background(), SnapshotOptions{Kind: "timeline"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	stats, err := store.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.Prune(context.Background(), RetentionPolicy{KeepHours: 24, MaxSnapshots: 500, BudgetBytes: stats.PhysicalBytes - 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RemovedSnapshots == 0 {
+		t.Fatal("over-budget store removed nothing")
+	}
+	if _, err := store.LoadManifest(snapshots[0].ID); err == nil {
+		t.Fatal("oldest snapshot survived over-budget retention")
+	}
+	for _, kept := range snapshots[result.RemovedSnapshots:] {
+		if _, err := store.LoadManifest(kept.ID); err != nil {
+			t.Fatalf("newer snapshot %s removed before older history: %v (removed %d)", kept.ID, err, result.RemovedSnapshots)
+		}
+	}
+	if result.RemovedSnapshots > 2 {
+		t.Fatalf("removed %d snapshots to free one byte", result.RemovedSnapshots)
+	}
+	after, err := store.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PhysicalBytes > stats.PhysicalBytes-1 {
+		t.Fatalf("store still over budget: %d > %d", after.PhysicalBytes, stats.PhysicalBytes-1)
+	}
+}

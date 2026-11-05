@@ -29,6 +29,7 @@ func NewPlaceholderFileTreeModel(rootPath string) *FileTreeModel {
 		nodes:              map[string]*TreeNode{absPath: root},
 		selectedPath:       absPath,
 		sortBy:             SortByType,
+		showHidden:         true,
 		iconResolver:       NewIconResolver(),
 		gitResolver:        &GitStatusResolver{repoPath: absPath, statuses: make(map[string]GitStatus)},
 		diagnosticResolver: make(map[string]DiagCounts),

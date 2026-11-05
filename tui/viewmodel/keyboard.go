@@ -539,6 +539,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleTreePromptInput(msg)
 		case "tree-delete-confirm":
 			return m, m.handleTreeDeleteConfirmKey(msg)
+		case string(overlayTreeMove):
+			return m, m.treeMoveConfirmKey(msg)
 		case completionPopupID:
 			return m.handleCompletionKey(fw, msg)
 		case "outline-popup":

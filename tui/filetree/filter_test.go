@@ -217,12 +217,12 @@ func TestTypeToFilterIgnoresModifiedKeys(t *testing.T) {
 func TestTreeCtrlChordsSurviveTypeToFilter(t *testing.T) {
 	m, _ := filterFixture(t)
 
-	if m.ShowHidden() {
-		t.Fatal("precondition: hidden files off")
+	if !m.ShowHidden() {
+		t.Fatal("hidden files should be visible by default")
 	}
 	m.Update(TreeKeyPressMsg{Key: tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl}})
-	if !m.ShowHidden() {
-		t.Fatal("Ctrl+. should toggle hidden files")
+	if m.ShowHidden() {
+		t.Fatal("Ctrl+. should hide hidden files")
 	}
 	if m.FilterActive() {
 		t.Fatal("Ctrl+. must not start the filter")

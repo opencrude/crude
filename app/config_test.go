@@ -82,7 +82,7 @@ func TestFileConfigRoundTrip(t *testing.T) {
 		},
 		UI: &typesmodel.UISettings{
 			SidebarWidth:    30,
-			ShowHiddenFiles: false,
+			ShowHiddenFiles: boolPtr(false),
 			ShowIcons:       true,
 			UseNerdFont:     true,
 			ShowGitStatus:   true,
@@ -161,6 +161,33 @@ func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	}
 	if fc.UI != nil {
 		t.Error("Default FileConfig should have nil UI")
+	}
+}
+
+func TestHiddenFilesDefaultAndExplicitPreference(t *testing.T) {
+	for _, tc := range []struct {
+		name, config string
+		want         bool
+	}{
+		{"empty", `{}`, true},
+		{"unrelated UI preference", `{"ui":{"sidebar_width":40}}`, true},
+		{"explicitly hidden", `{"ui":{"show_hidden_files":false}}`, false},
+		{"explicitly shown", `{"ui":{"show_hidden_files":true}}`, true},
+		{"invalid value", `{"ui":{"show_hidden_files":"no"}}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadFileConfigFrom(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := FileConfigToAppSettings(cfg).UI.ShowHiddenFilesOrDefault(); got != tc.want {
+				t.Fatalf("ShowHiddenFiles=%v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

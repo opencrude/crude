@@ -94,6 +94,9 @@ type App struct {
 	ContextMenuOpenedAt       time.Time
 	TreePrompt                *ui.TextPromptState
 	TreeDeletePending         string
+	treeMovePending           *treeMoveRequest
+	treeClip                  *treeClipboard
+	treeLastMove              *treeMove
 	TreeDeleteChoice          int
 	GitDiscardPending         *workspace.GitChange
 	gitDiscardPreview         *workspace.GitDiscardPreview
@@ -161,12 +164,13 @@ type App struct {
 	LastSettings        roottypes.Settings
 
 	// Display state (owned by viewmodel; tracks what's visible/active)
-	EditorState    *EditorState
-	OverlayState   *OverlayState
-	LSPPopup       *LSPPopupState
-	editorSettings roottypes.EditorSettings
-	editorSaves    map[string]*editorSaveState
-	editorChanges  *editorChangesView
+	EditorState       *EditorState
+	OverlayState      *OverlayState
+	LSPPopup          *LSPPopupState
+	editorSettings    roottypes.EditorSettings
+	treeHiddenSetting bool
+	editorSaves       map[string]*editorSaveState
+	editorChanges     *editorChangesView
 
 	eventBus *workspace.EventBus
 	width    int
@@ -394,6 +398,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	} else {
 		treeModel = filetree.NewFileTreeModel(ws.RootPath())
 	}
+	treeModel.SetShowHidden(ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault())
 	tree := NewTreeState(treeModel, th.Tree.Config.DefaultWidth)
 	sidebarScreen := shelltree.New(th, treeModel)
 	activityBar := activitybar.New(th)
@@ -459,6 +464,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 		OverlayState:        NewOverlayState(),
 		LSPPopup:            NewLSPPopupState(),
 		editorSettings:      ws.LoadAppSettings().Editor,
+		treeHiddenSetting:   ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault(),
 		editorSaves:         make(map[string]*editorSaveState),
 		headerScreen:        headerScreen,
 		footerScreen:        footerScreen,

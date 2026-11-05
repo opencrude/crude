@@ -54,6 +54,8 @@ owner applies those entries to its latest file/row. Untouched siblings are not
 replayed. An explicit `false`, zero, empty collection or parent-equal value stays
 stored according to the field's declared semantics; it is not re-diffed away
 against the parent. Arrays are one field, not separately merged items.
+The file tree shows dotfiles when **Hidden files** is unset. An explicit Off
+stays distinct from the default and from workspace inheritance.
 
 Application commits patch the original config JSON under its existing lock;
 workspace commits patch the sparse overlay in one SQLite transaction. Session

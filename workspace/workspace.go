@@ -644,6 +644,14 @@ func (w *Workspace) DeletePath(path string) FileOperationResultMsg {
 	return w.FileOps.DeletePath(path)
 }
 
+// CopyPath copies a file or folder to a new path that must not exist.
+func (w *Workspace) CopyPath(oldPath, newPath string) FileOperationResultMsg {
+	if w.FileOps == nil {
+		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
+	}
+	return w.FileOps.CopyPath(oldPath, newPath)
+}
+
 // ApplyWorkspaceEdit applies a set of text edits to files on disk.
 // This is used for LSP rename/refactor operations that modify multiple files.
 // The result is returned directly to the caller.

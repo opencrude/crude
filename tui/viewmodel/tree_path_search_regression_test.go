@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/filetree"
 	"crude/tui/screens/shelltree"
 )
@@ -41,6 +42,83 @@ func TestTreePathSearchFindsRootFileThroughRealAsyncPath(t *testing.T) {
 	}
 	if !strings.Contains(painted.String(), "README.md") {
 		t.Fatalf("root file missing from search projection:\n%s", painted.String())
+	}
+}
+
+func TestTreePreferenceUpdatesWithoutOverridingLocalToggle(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := newEditorPaintApp(t, root)
+	app.setActivity(activityFiles, true)
+	// This fixture constructs App without NewApp; initialize its preference
+	// observation as a real shell does.
+	app.treeHiddenSetting = app.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault()
+	settings := wsOf(app).AppDefaults()
+	off := false
+	settings.UI.ShowHiddenFiles = &off
+	wsOf(app).SetAppDefaults(settings)
+	_, cmd := app.Update(shellport.SettingsChangedMsg{})
+	runAppCommand(t, app, cmd)
+	if app.Tree.Model.ShowHidden() {
+		t.Fatal("turning the preference Off did not update the mounted tree")
+	}
+
+	runAppCommand(t, app, app.sidebarScreen.SetShowHidden(true))
+	_, cmd = app.Update(shellport.SettingsChangedMsg{})
+	runAppCommand(t, app, cmd)
+	if !app.Tree.Model.ShowHidden() {
+		t.Fatal("an unrelated settings publication discarded the local toggle")
+	}
+
+	settings.UI.ShowHiddenFiles = nil
+	wsOf(app).SetAppDefaults(settings)
+	_, cmd = app.Update(shellport.SettingsChangedMsg{})
+	runAppCommand(t, app, cmd)
+	if !app.Tree.Model.ShowHidden() {
+		t.Fatal("reset did not restore the default visible state")
+	}
+}
+
+func TestConnectedTreeShowsHiddenFilesAndSearchHonorsToggle(t *testing.T) {
+	root := t.TempDir()
+	hidden := filepath.Join(root, ".secret-config")
+	if err := os.WriteFile(hidden, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, ""), root)
+	app := shell.app
+	app.setActivity(activityFiles, true)
+	runAppCommand(t, app, app.beginClientFileTreeLoad())
+	_ = app.View()
+	if !strings.Contains(app.View().RenderContent(), ".secret-config") {
+		t.Fatal("connected file tree did not paint the hidden file by default")
+	}
+
+	runAppCommand(t, app, app.beginTreePathSearch("secret"))
+	painted := func() string {
+		buf := app.sidebarScreen.PaintTestBuffer(40, 12)
+		var text strings.Builder
+		for row := range 12 {
+			text.WriteString(shelltree.PlainRow(buf, row, 40))
+		}
+		return text.String()
+	}
+	if !strings.Contains(painted(), ".secret-config") {
+		t.Fatal("recursive search did not show the hidden file")
+	}
+	app.setFocusTree()
+	app.rootHost.Focus(shelltree.FilterID)
+	_, cmd := app.Update(tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
+	runAppCommand(t, app, cmd)
+	if app.Tree.Model.ShowHidden() || strings.Contains(painted(), ".secret-config") {
+		t.Fatalf("Ctrl+. did not hide the file: visible=%v focus=%v host=%s text=%q", app.Tree.Model.ShowHidden(), app.focusTarget(), app.rootHost.Focused(), painted())
+	}
+	_, cmd = app.Update(tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
+	runAppCommand(t, app, cmd)
+	if !app.Tree.Model.ShowHidden() || !strings.Contains(painted(), ".secret-config") {
+		t.Fatal("Ctrl+. did not restore the hidden search result")
 	}
 }
 

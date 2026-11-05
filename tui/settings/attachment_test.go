@@ -70,7 +70,7 @@ func TestAttachmentOpenSparseFormEditsPreserveSiblings(t *testing.T) {
 			}
 			want := current.UI
 			want.AttachmentOpen = "system"
-			if got := m.AppSettings().UI; got != want {
+			if got := m.AppSettings().UI; !reflect.DeepEqual(got, want) {
 				t.Fatalf("collector changed untouched Interface values: %+v, want %+v", got, want)
 			}
 			if scope == types.SettingsScopeWorkspace {
@@ -80,6 +80,37 @@ func TestAttachmentOpenSparseFormEditsPreserveSiblings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHiddenFilePreferenceDefaultsAndExplicitOff(t *testing.T) {
+	app := types.AppSettings{}
+	m := New(theme.DefaultDark(), app, nil)
+	if field := m.categories[catUI].Form.Field("show-hidden"); field == nil || field.Value.String() != "on" {
+		t.Fatal("the Interface page did not show the default On value")
+	}
+	if edits := m.Edits(); len(edits) != 0 {
+		t.Fatalf("opening Settings made a default explicit: %+v", edits)
+	}
+	m.SetValueForTest(catUI, "show-hidden", "off")
+	edits := m.Edits()
+	if len(edits) != 1 || strings.Join(edits[0].Path, ".") != "ui.show_hidden_files" || string(edits[0].After) != "false" {
+		t.Fatalf("hiding files did not create the exact preference: %+v", edits)
+	}
+	stored, err := types.PatchStoredSettings(nil, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded types.AppSettings
+	if err := types.DecodeStoredSettings(stored, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.UI.ShowHiddenFilesOrDefault() {
+		t.Fatal("explicit Off did not survive a reload")
+	}
+	workspace := types.WorkspaceOverrides{UI: json.RawMessage(`{"show_hidden_files":true}`)}
+	if !types.MergeAppWorkspace(reloaded, workspace).UI.ShowHiddenFilesOrDefault() {
+		t.Fatal("the workspace could not override the application choice")
 	}
 }
 

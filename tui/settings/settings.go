@@ -395,7 +395,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 				{ID: types.AttachmentOpenCrude, Label: "Crude"},
 			}, uiSettings.AttachmentOpenOrDefault(), "Crude uses terminal graphics when supported; otherwise a low-resolution preview."),
 			ui.SeparatorFieldState("workspace-tree", "File tree"),
-			ui.BoolFieldState("show-hidden", "Hidden files", uiSettings.ShowHiddenFiles, "Include dotfiles in the workspace tree."),
+			ui.BoolFieldState("show-hidden", "Hidden files", uiSettings.ShowHiddenFilesOrDefault(), "Include dotfiles in the workspace tree."),
 			ui.BoolFieldState("show-icons", "File icons", uiSettings.ShowIcons, "Show file-type icons beside names."),
 			ui.BoolFieldState("nerd-font", "Nerd Font icons", uiSettings.UseNerdFont, "Use extended icon glyphs. Turn on only if your terminal font is a Nerd Font."),
 			ui.BoolFieldState("git-status", "Git status", uiSettings.ShowGitStatus, "Mark changed files in the tree."),
@@ -2883,7 +2883,10 @@ func (m *Model) collectEditor(cfg *types.EditorSettings) {
 func (m *Model) collectUI(cfg *types.UISettings) {
 	*cfg = m.layerBase.UI
 	cfg.SidebarWidth = parseOpt(m.value(catUI, "sidebar-width"), 30)
-	cfg.ShowHiddenFiles = m.value(catUI, "show-hidden") == "on"
+	showHidden := m.value(catUI, "show-hidden") == "on"
+	if showHidden != cfg.ShowHiddenFilesOrDefault() {
+		cfg.ShowHiddenFiles = &showHidden
+	}
 	cfg.ShowIcons = m.value(catUI, "show-icons") == "on"
 	cfg.UseNerdFont = m.value(catUI, "nerd-font") == "on"
 	cfg.ShowGitStatus = m.value(catUI, "git-status") == "on"

@@ -20,6 +20,12 @@
 - Continuing an accepted human input reuses its existing message scope and
   original safety snapshots through a continuation lease. It never inserts a
   second scope with the same identity or rewrites its before/after snapshots.
+  If retention removed a finished scope before a delegated or compacted
+  continuation starts, the continuation opens a fresh scope for that message
+  (checked under the Store gate, so it cannot race retention) and closes it
+  when its last lease ends. File tools never fail because a scope expired.
+- With Local History off, direct file tools proceed unrecorded; the mutation
+  hook returns `session.ErrHistoryDisabled` instead of failing the tool.
 - Never write history inside the project, follow a symlink parent, or apply a
   plan whose current hash/mode/type differs from preview. Safety snapshots are
   mandatory; every failure after mutation rolls back before returning.
@@ -65,11 +71,17 @@
 
 ## Retention cost
 
-- Retention runs after every capture and on every reconcile tick while holding
-  the Store/process mutation gate that message scopes and every direct file
-  tool's operation receipt wait on. It must stay cheap: re-reading every
-  protected snapshot's content on each pass once held that gate for over a
-  minute per pass in a real store, so turns and edits stalled behind it.
+- Reconciliation and retention are maintenance. They hold the Store/process
+  mutation gate that message scopes and every direct file tool's operation
+  receipt wait on, so they never run while an agent turn (message scope or
+  continuation lease) is active. They run on the reconcile tick only after
+  agents have been idle for `maintenanceQuietPeriod` (30 s), prune only when a
+  snapshot was added since the last pass, and yield: starting a turn or a
+  restore cancels the maintenance context. Watcher captures also wait while
+  agents work; changed paths stay pending and the turn's after-message
+  snapshot or the next gap records them.
+- Retention must stay cheap: re-reading every protected snapshot's content on
+  each pass once held the gate for over a minute per pass in a real store.
 - Protected evidence is content-verified once per open Store. Retention keeps
   that proof for immutable content-addressed objects and protected snapshots;
   later passes still check the index row and manifest presence and fail closed
@@ -77,6 +89,11 @@
   same proofs and evicts proofs for objects it deletes. Explicit
   Verify/VerifyAll, loading a retained snapshot for use, and restore always read
   content again.
+- Over budget, retention removes the oldest unprotected generations in
+  shrinking batches (a quarter of the remaining candidates, at least one) and
+  measures the store after each collection. It never removes every generation
+  at once: that discarded the last hours of history and the scopes running
+  agents still recorded into.
 - The storage budget measures retained content: objects, manifests, plans and
   SQLite's in-use pages. Free pages left by pruned snapshots and the WAL/shm
   sidecars are reusable working space, never budget usage; counting them kept a
@@ -103,6 +120,12 @@
   its path is external. Managed execution separately bounds native writes to its
   exact checkout and the owning agent's private scratch directory; Local History
   does not widen that execution or file-ownership authority.
+- Deleting from the file tree first records a `safety` snapshot that includes
+  the deleted path (`LocalHistoryService.KeepBeforeDelete`, called by the core
+  for every `files.delete`), so the file or folder can be restored from Local
+  History, even when Git ignores it. If Local History is on and the snapshot
+  fails, nothing is deleted. With Local History off, delete proceeds and the
+  prompt does not promise a copy.
 - Restores append one hidden `<workspace_history_event>` to provider context and
   one visible canonical `history_restored` context-boundary table without
   rewriting accepted conversation prefix. The completed boundary is static,

@@ -757,19 +757,24 @@ const (
 )
 
 type UISettings struct {
-	SidebarWidth      int  `json:"sidebar_width,omitempty"`
-	ShowHiddenFiles   bool `json:"show_hidden_files,omitempty"`
-	ShowIcons         bool `json:"show_icons,omitempty"`
-	UseNerdFont       bool `json:"use_nerd_font,omitempty"`
-	ShowGitStatus     bool `json:"show_git_status,omitempty"`
-	ShowDiagnostics   bool `json:"show_diagnostics,omitempty"`
-	CompactMode       bool `json:"compact_mode,omitempty"`
-	MessageDelay      int  `json:"message_delay,omitempty"`
-	AnimationsEnabled bool `json:"animations_enabled,omitempty"`
+	SidebarWidth      int   `json:"sidebar_width,omitempty"`
+	ShowHiddenFiles   *bool `json:"show_hidden_files,omitempty"`
+	ShowIcons         bool  `json:"show_icons,omitempty"`
+	UseNerdFont       bool  `json:"use_nerd_font,omitempty"`
+	ShowGitStatus     bool  `json:"show_git_status,omitempty"`
+	ShowDiagnostics   bool  `json:"show_diagnostics,omitempty"`
+	CompactMode       bool  `json:"compact_mode,omitempty"`
+	MessageDelay      int   `json:"message_delay,omitempty"`
+	AnimationsEnabled bool  `json:"animations_enabled,omitempty"`
 	// ContextHelp is compact, expanded, or off. Full Help remains available.
 	ContextHelp string `json:"context_help,omitempty"`
 	// AttachmentOpen selects the destination for opening chat attachments.
 	AttachmentOpen string `json:"attachment_open,omitempty"`
+}
+
+// ShowHiddenFilesOrDefault shows dotfiles unless the user explicitly hid them.
+func (s UISettings) ShowHiddenFilesOrDefault() bool {
+	return s.ShowHiddenFiles == nil || *s.ShowHiddenFiles
 }
 
 // AttachmentOpenOrDefault returns a supported attachment destination.

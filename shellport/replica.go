@@ -22,6 +22,9 @@ type ReplicaFailureMsg struct {
 	Owner     Workspace
 	Operation string
 	Error     string
+	// Reloaded reports that the replica rejected an update and reloads the
+	// core state by itself. Nothing is left for the user to do.
+	Reloaded bool
 }
 
 // Connection owns one client attachment, not the retained core workspace.

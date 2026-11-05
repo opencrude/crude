@@ -101,67 +101,75 @@ func (m *App) startRenameInTree(path string) {
 			if value == base {
 				return fmt.Errorf("name unchanged")
 			}
-			dir := filepath.Dir(path)
-			newPath := filepath.Join(dir, value)
-			msg := m.ws.RenamePath(path, newPath)
-			if !msg.Succeeded() {
-				return msg.Err
-			}
-			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
-				Type: filetree.FileRenamed, OldPath: path, Path: newPath,
-			})
-			type editorRetarget struct {
-				oldPath, newPath string
-				tab              *EditorTab
-			}
-			var retargets []editorRetarget
-			_, connected := m.ws.(shellport.ClientFiles)
-			for tabPath, tab := range m.EditorState.Tabs {
-				// Shared path metadata belongs to canonical snapshot synchronization,
-				// never local Retarget (which starts a second disk watcher/LSP view).
-				if connected || tab != nil && tab.Editor != nil && tab.Editor.DocumentState().DocumentID != "" {
-					continue
-				}
-				target := ""
-				if tabPath == path {
-					target = newPath
-				}
-				if msg.IsDir {
-					rel, err := filepath.Rel(path, tabPath)
-					if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-						target = filepath.Join(newPath, rel)
-					}
-				}
-				if target != "" {
-					retargets = append(retargets, editorRetarget{tabPath, target, tab})
-				}
-			}
-			for _, item := range retargets {
-				if m.ws.Documents() != nil {
-					m.ws.Documents().Cancel(item.tab.Editor.BufferID())
-				}
-				if m.BufferMgr != nil {
-					if err := m.BufferMgr.Retarget(item.oldPath, item.newPath); err != nil {
-						return err
-					}
-				}
-				if err := item.tab.Editor.Retarget(item.newPath); err != nil {
-					return err
-				}
-				delete(m.EditorState.Tabs, item.oldPath)
-				item.tab.Path = item.newPath
-				m.EditorState.Tabs[item.newPath] = item.tab
-				if m.EditorState.ActiveView == item.oldPath {
-					m.EditorState.ActiveView = item.newPath
-				}
-				m.retitleEditorWindowTab(item.oldPath, item.newPath, item.tab.Editor)
-			}
-			if len(retargets) > 0 {
-				m.markEditorGitStaleNow()
+			if err := m.relocateTreePath(path, filepath.Join(filepath.Dir(path), value)); err != nil {
+				return err
 			}
 			m.Feedback.NotifyInfo(fmt.Sprintf("Renamed to %s", value))
 			return nil
 		})
+}
+
+// relocateTreePath renames or moves path to newPath through the workspace
+// file owner and carries open editors with it. Rename, drag and drop, paste
+// and undo all use it, so they keep editors and the tree identical.
+func (m *App) relocateTreePath(path, newPath string) error {
+	msg := m.ws.RenamePath(path, newPath)
+	if !msg.Succeeded() {
+		return msg.Err
+	}
+	m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
+		Type: filetree.FileRenamed, OldPath: path, Path: newPath,
+	})
+	type editorRetarget struct {
+		oldPath, newPath string
+		tab              *EditorTab
+	}
+	var retargets []editorRetarget
+	_, connected := m.ws.(shellport.ClientFiles)
+	for tabPath, tab := range m.EditorState.Tabs {
+		// Shared path metadata belongs to canonical snapshot synchronization,
+		// never local Retarget (which starts a second disk watcher/LSP view).
+		if connected || tab != nil && tab.Editor != nil && tab.Editor.DocumentState().DocumentID != "" {
+			continue
+		}
+		target := ""
+		if tabPath == path {
+			target = newPath
+		}
+		if msg.IsDir {
+			rel, err := filepath.Rel(path, tabPath)
+			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				target = filepath.Join(newPath, rel)
+			}
+		}
+		if target != "" {
+			retargets = append(retargets, editorRetarget{tabPath, target, tab})
+		}
+	}
+	for _, item := range retargets {
+		if m.ws.Documents() != nil {
+			m.ws.Documents().Cancel(item.tab.Editor.BufferID())
+		}
+		if m.BufferMgr != nil {
+			if err := m.BufferMgr.Retarget(item.oldPath, item.newPath); err != nil {
+				return err
+			}
+		}
+		if err := item.tab.Editor.Retarget(item.newPath); err != nil {
+			return err
+		}
+		delete(m.EditorState.Tabs, item.oldPath)
+		item.tab.Path = item.newPath
+		m.EditorState.Tabs[item.newPath] = item.tab
+		if m.EditorState.ActiveView == item.oldPath {
+			m.EditorState.ActiveView = item.newPath
+		}
+		m.retitleEditorWindowTab(item.oldPath, item.newPath, item.tab.Editor)
+	}
+	if len(retargets) > 0 {
+		m.markEditorGitStaleNow()
+	}
+	return nil
 }
 
 // startDeleteInTree starts a destructive-action confirmation. For
@@ -196,6 +204,9 @@ func (m *App) startDeleteInTree(path string) {
 			}
 			break
 		}
+	}
+	if m.ws.LoadAppSettings().LocalHistory.EnabledValue() {
+		detail += "\nLocal History keeps a copy, so you can restore it."
 	}
 	// Default focus No (safe) so accidental Enter does not delete.
 	m.GitDiscardPending = nil

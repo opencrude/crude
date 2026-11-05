@@ -18,13 +18,16 @@ import (
 func newClientFileTree(m *App) *filetree.FileTreeModel {
 	files, ok := m.ws.(shellport.ClientFiles)
 	if !ok {
-		return filetree.NewPlaceholderFileTreeModel(m.ws.RootPath())
+		model := filetree.NewPlaceholderFileTreeModel(m.ws.RootPath())
+		model.SetShowHidden(m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault())
+		return model
 	}
 	var model *filetree.FileTreeModel
 	var mu sync.Mutex
 	sequences := make(map[string]uint64)
 	generation := m.workspaceSwitchGen.Load()
 	model = filetree.NewRemoteModel(m.ws.RootPath(), nil)
+	model.SetShowHidden(m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault())
 	model.SetDirectoryLoader(func(parent context.Context, path string) tea.Cmd {
 		mu.Lock()
 		sequences[path]++
@@ -42,6 +45,23 @@ func newClientFileTree(m *App) *filetree.FileTreeModel {
 		})
 	})
 	return model
+}
+
+// A tree toggle is local to the current view. Only a changed preference
+// replaces it; unrelated settings publications leave the user's view alone.
+func (m *App) applyTreeHiddenSetting() tea.Cmd {
+	if m == nil || m.ws == nil {
+		return nil
+	}
+	show := m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault()
+	if show == m.treeHiddenSetting {
+		return nil
+	}
+	m.treeHiddenSetting = show
+	if m.sidebarScreen == nil {
+		return nil
+	}
+	return m.sidebarScreen.SetShowHidden(show)
 }
 
 type clientTreeDirectoryMsg struct {

@@ -462,7 +462,7 @@ func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTre
 		noLocalIO:          options.NoLocalIO,
 		nodes:              make(map[string]*TreeNode),
 		sortBy:             SortByType,
-		showHidden:         false,
+		showHidden:         true,
 		directoriesOnly:    options.DirectoriesOnly,
 		iconResolver:       NewIconResolver(),
 		diagnosticResolver: make(map[string]DiagCounts),

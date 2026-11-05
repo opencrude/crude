@@ -429,6 +429,11 @@ func (w *Workspace) RenamePath(oldPath, newPath string) workspace.FileOperationR
 	defer cancel()
 	return w.rpc().RenamePath(ctx, oldPath, newPath)
 }
+func (w *Workspace) CopyPath(oldPath, newPath string) workspace.FileOperationResultMsg {
+	ctx, cancel := w.fileContext()
+	defer cancel()
+	return w.rpc().CopyPath(ctx, oldPath, newPath)
+}
 func (w *Workspace) DeletePath(path string) workspace.FileOperationResultMsg {
 	ctx, cancel := w.fileContext()
 	defer cancel()

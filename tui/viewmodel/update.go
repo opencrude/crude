@@ -268,15 +268,22 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellport.SettingsChangedMsg:
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+		treeCmd := m.applyTreeHiddenSetting()
 		if m.aeronEnsureFailed {
 			// Aeron may have waited for an account or model. A settings
 			// change is the user's chance to provide it.
 			m.requestWorkspaceAeronEnsure()
 		}
-		return m, nil
+		return m, treeCmd
 	case shellport.ReplicaFailureMsg:
 		if msg.Owner == m.ws {
-			m.showOperationFailure(msg.Operation+" failed", msg.Error)
+			if msg.Reloaded {
+				// The replica reloads core state itself. A rejected update is a
+				// protocol defect to diagnose, not a decision for the user.
+				m.ws.Logger().Error("REMOTE", "replica_update_rejected", "operation", msg.Operation, "error", msg.Error)
+			} else {
+				m.showOperationFailure(msg.Operation+" failed", msg.Error)
+			}
 		}
 		return m, nil
 	case remoteWorkspaceReadyMsg:
@@ -654,6 +661,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 		treeGitCmd = m.Tree.Model.RefreshGitStatus()
 		m.treeGitRefreshAt = now
 	}
+	m.repaintAnimatingTabs()
 	// Advance popup reveal animations (slide-in on open). Returns true while
 	// any reveal is mid-flight so the frame keeps repainting until done.
 	if m.advanceReveals(time.Now()) {
@@ -742,6 +750,10 @@ func (m *App) wantsFastTick() bool {
 	if m.anyAgentAnimating() {
 		return true
 	}
+	// Dragged and settling tabs move at frame rate.
+	if m.mainPanes.tabsAnimating() {
+		return true
+	}
 	// Long transcripts settle offscreen history a few milliseconds per frame.
 	if m.subPaneProjections.AnyMaterializing() {
 		return true
@@ -773,6 +785,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	switch msg := msg.(type) {
 	case inputAdmissionMsg:
 		cmds = append(cmds, m.applyInputAdmission(msg))
+	case treeCopyResultMsg:
+		cmds = append(cmds, m.applyTreeCopyResult(msg))
 	case workspaceDeletePreviewMsg:
 		m.applyWorkspaceDeletePreview(msg)
 	case workspaceDeleteIntent:
@@ -1396,7 +1410,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case workspace.HistoryServiceStatus:
 		if msg.Error != "" {
 			m.ws.Logger().Error("HISTORY", "service_error", "error", msg.Error)
-			m.Feedback.NotifyError("Local history: " + msg.Error)
+			m.Feedback.NotifyError("Local History is not recording changes: " + msg.Error)
 		}
 	case settingsui.ChatGPTSignInResultMsg, settingsui.ChatGPTSignOutMsg:
 		// The settings owner validates account identity and generation. Auth edits

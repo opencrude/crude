@@ -42,6 +42,8 @@ type Screen struct {
 	breadcrumb        string
 	viewportContext   filetree.TreeViewportContext
 
+	press *treePress
+
 	filter    *treeFilterField
 	tree      *fileTreeView
 	scrollbar *ui.ScrollbarControl
@@ -89,6 +91,7 @@ func (v *fileTreeView) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (v *fileTreeView) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	v.tree.Paint(buf, ox, oy, ctx)
 	v.paintFilterEmptyState(buf, ox, oy)
+	v.paintDragLabel(buf, ox, oy)
 }
 
 // paintFilterEmptyState shows a hint row when an active filter matches
@@ -116,6 +119,17 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	}
 	model := v.owner.displayModel()
 	localY := ctx.LocalY
+	if v.owner.breadcrumb != "" {
+		localY--
+	}
+	// A press owns motion and release wherever the pointer goes, including
+	// the breadcrumb row and outside the tree.
+	if v.owner.press != nil && (evt.Kind == ui.EventMouseMotion || evt.Kind == ui.EventMouseRelease) {
+		if res, ok := v.handlePointer(ctx, evt, localY); ok {
+			return res
+		}
+	}
+	localY = ctx.LocalY
 	// ctx.LocalY comes from the Host hit tree relative to the tree view's own
 	// screen rect. The shell places that rect BELOW the filter row (treeY=1),
 	// and the filter row is a sibling painted by the Screen above this rect;
@@ -142,8 +156,30 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 		}
 		localY--
 	}
+	if evt.Kind == ui.EventMouseClick {
+		if res, ok := v.handlePointer(ctx, evt, localY); ok {
+			return res
+		}
+	}
 	switch evt.Kind {
 	case ui.EventKey:
+		if evt.Key.Code == tea.KeyEsc && v.owner.Dragging() {
+			v.owner.CancelDrag()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		if id := fileKeyAction(evt.Key); id != "" && !model.FilterActive() {
+			if node := model.SelectedNode(); node != nil || id == ActionPaste || id == ActionUndo {
+				path := ""
+				if node != nil {
+					path = node.Path
+				}
+				return ui.EventResult{Handled: true, Action: &ui.Action{ID: id, Payload: path}}
+			}
+		}
+		if evt.Key.Code == '.' && evt.Key.Mod.Contains(tea.ModCtrl) {
+			cmd := v.owner.SetShowHidden(!v.owner.model.ShowHidden())
+			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+		}
 		if v.owner.filter != nil &&
 			(evt.Key.Code == tea.KeyEsc && model.FilterActive() ||
 				evt.Key.Text != "" && !evt.Key.Mod.Contains(tea.ModCtrl) &&
@@ -251,6 +287,23 @@ func (s *Screen) SetPathSearchHandler(fn func(string) tea.Cmd) {
 	if s != nil {
 		s.pathSearchHandler = fn
 	}
+}
+
+// SetShowHidden updates both the retained tree and its search projection. A
+// recursive search must be rerun because its catalog is visibility-specific.
+func (s *Screen) SetShowHidden(show bool) tea.Cmd {
+	if s == nil || s.model == nil || s.model.ShowHidden() == show {
+		return nil
+	}
+	s.model.SetShowHidden(show)
+	if s.searchModel != nil {
+		s.searchModel.SetShowHidden(show)
+	}
+	s.syncFromModel()
+	if s.searchActive && s.pathSearchHandler != nil {
+		return s.pathSearchHandler(s.searchQuery)
+	}
+	return nil
 }
 
 // BeginPathSearch marks the sidebar as presenting the asynchronous path
@@ -789,6 +842,10 @@ func (f *treeFilterField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResu
 			}
 		case 'r', '.':
 			if evt.Key.Mod.Contains(tea.ModCtrl) {
+				if evt.Key.Code == '.' {
+					cmd := f.owner.SetShowHidden(!f.owner.model.ShowHidden())
+					return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+				}
 				cmd := model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 				return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 			}

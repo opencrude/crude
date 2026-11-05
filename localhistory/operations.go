@@ -79,7 +79,7 @@ func (s *Store) RecordAgentOperation(ctx context.Context, operation AgentOperati
 	}
 	defer func() { _ = tx.Rollback() }()
 	var active bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM history_message_scopes WHERE session_id=? AND message_id=? AND state IN ('active','closed'))`, operation.SessionID, operation.MessageID).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, scopeAcceptsOperationsQuery, operation.SessionID, operation.MessageID).Scan(&active); err != nil {
 		return err
 	}
 	if !active {
@@ -102,6 +102,23 @@ func (s *Store) RecordAgentOperation(ctx context.Context, operation AgentOperati
 		}
 	}
 	return tx.Commit()
+}
+
+const scopeAcceptsOperationsQuery = `SELECT EXISTS(SELECT 1 FROM history_message_scopes WHERE session_id=? AND message_id=? AND state IN ('active','closed'))`
+
+// MessageScopeAcceptsOperations reports whether a message scope can still
+// record operation receipts. It is serialized with retention, so a scope it
+// reports cannot be in the middle of being pruned.
+func (s *Store) MessageScopeAcceptsOperations(sessionID, messageID string) (bool, error) {
+	if err := s.beginOperation(); err != nil {
+		return false, err
+	}
+	defer s.endOperation()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var accepts bool
+	err := s.db.QueryRow(scopeAcceptsOperationsQuery, sessionID, messageID).Scan(&accepts)
+	return accepts, err
 }
 
 func cleanOperationPath(path string) (string, bool) {

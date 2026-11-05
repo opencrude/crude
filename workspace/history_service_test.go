@@ -217,3 +217,148 @@ func TestHistoryServiceUndoUsesAgentProvenanceNotWatcherScope(t *testing.T) {
 		t.Fatalf("agent undo plan includes unowned paths: %+v", plan.Changes)
 	}
 }
+
+// Retention may remove a finished message's scope before a delegated or
+// compacted continuation of that message starts. The continuation must keep
+// recording its edits instead of failing every file tool with
+// "message history scope is unavailable".
+func TestContinuationAfterRetentionKeepsRecordingEdits(t *testing.T) {
+	service, store, root := historyServiceHarness(t)
+	service.settings = ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}
+	ctx := context.Background()
+	path := filepath.Join(root, "work.txt")
+	if err := os.WriteFile(path, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.BeginMessage(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EndMessage(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"three", "four"} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "external_change"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Prune(ctx, localhistory.RetentionPolicy{MaxSnapshots: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists, err := store.MessageScope("session", "message"); err != nil || exists {
+		t.Fatalf("retention kept the finished scope (exists=%v err=%v); the test no longer reproduces the failure", exists, err)
+	}
+
+	if err := service.BeginContinuation(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("five"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prepareHistoryWrite(t, service, "session", "message", "agent", path, "four", "five")
+	if err := service.EndContinuation(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	scope, exists, err := store.MessageScope("session", "message")
+	if err != nil || !exists || scope.State != "closed" {
+		t.Fatalf("continuation scope=%+v exists=%v err=%v", scope, exists, err)
+	}
+	scopes, err := store.AgentUndoableScopes("session", "agent", 10)
+	if err != nil || len(scopes) != 1 {
+		t.Fatalf("continuation edit is not undoable: scopes=%+v err=%v", scopes, err)
+	}
+}
+
+// Reconciliation and retention are maintenance: they wait for a quiet gap in
+// agent work and yield as soon as a turn starts.
+func TestMaintenanceRunsOnlyBetweenAgentTurns(t *testing.T) {
+	service, _, _ := historyServiceHarness(t)
+	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	ctx := context.Background()
+	if err := service.BeginContinuation(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := service.beginMaintenance(ctx); ok {
+		t.Fatal("maintenance started while an agent turn was running")
+	}
+	if err := service.EndContinuation(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := service.beginMaintenance(ctx); ok {
+		t.Fatal("maintenance started without a quiet gap after the turn")
+	}
+	service.mu.Lock()
+	service.idleSince = time.Now().Add(-maintenanceQuietPeriod)
+	service.mu.Unlock()
+	maintenance, ok := service.beginMaintenance(ctx)
+	if !ok {
+		t.Fatal("maintenance did not start in a quiet gap")
+	}
+	if err := service.BeginContinuation(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if maintenance.Err() == nil {
+		t.Fatal("maintenance kept running after an agent turn started")
+	}
+	if err := service.EndContinuation(ctx, "session", "message"); err != nil {
+		t.Fatal(err)
+	}
+	service.endMaintenance()
+}
+
+func TestDisabledHistoryLetsContinuationEditsProceed(t *testing.T) {
+	service, _, root := historyServiceHarness(t)
+	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	err := service.RecordAgentMutation(context.Background(), session.HistoryMutation{
+		SessionID: "session", MessageID: "message", AgentID: "agent",
+		Receipt: fileio.MutationReceipt{OperationID: "op", OperationName: "write_file", Paths: []fileio.MutationPathState{{
+			Path: filepath.Join(root, "file"), Before: fileio.MutationState{Kind: fileio.MutationAbsent},
+			After: fileio.MutationState{Kind: fileio.MutationRegular, Bytes: []byte("x"), Mode: 0o644},
+		}}},
+	})
+	if !errors.Is(err, session.ErrHistoryDisabled) {
+		t.Fatalf("disabled history mutation error=%v, want the not-recorded signal", err)
+	}
+}
+
+// A deleted folder can be restored from the copy Local History keeps first.
+func TestKeepBeforeDeleteMakesDeletionRestorable(t *testing.T) {
+	service, store, root := historyServiceHarness(t)
+	service.settings = ttypes.LocalHistorySettings{}
+	if err := os.MkdirAll(filepath.Join(root, "gone"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gone", "kept.txt"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.KeepBeforeDelete(context.Background(), "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "gone")); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.Timeline(1)
+	if err != nil || len(records) != 1 || records[0].Kind != "safety" {
+		t.Fatalf("timeline %+v err=%v", records, err)
+	}
+	plan, err := store.PlanRestorePaths(context.Background(), records[0].ID, localhistory.SnapshotOptions{}, []string{"gone/kept.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyRestore(context.Background(), plan.ID, []string{"gone/kept.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "gone", "kept.txt")); err != nil || string(data) != "kept" {
+		t.Fatalf("restored %q err=%v", data, err)
+	}
+
+	service.settings = ttypes.LocalHistorySettings{Enabled: "off"}
+	if err := service.KeepBeforeDelete(context.Background(), "gone"); err != nil {
+		t.Fatalf("disabled history must not block a delete: %v", err)
+	}
+}

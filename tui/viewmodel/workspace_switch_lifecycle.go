@@ -195,6 +195,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	// Build it off the Bubble Tea goroutine; the placeholder keeps every
 	// projection non-nil while that project-bound I/O is pending.
 	treeModel := newClientFileTree(m)
+	m.treeHiddenSetting = m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault()
 	m.Tree = NewTreeState(treeModel, m.Theme.Tree.Config.DefaultWidth)
 	if m.sidebarScreen != nil {
 		m.sidebarScreen.SetModel(treeModel)
@@ -281,6 +282,7 @@ func (m *App) applyWorkspaceTreeReady(msg workspaceTreeReadyMsg) {
 		return
 	}
 	if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model != msg.model {
+		msg.model.SetShowHidden(m.Tree.Model.ShowHidden())
 		m.Tree.Model.SetOnFileChanged(nil)
 		m.Tree.Model.SetOnGitChanged(nil)
 		m.Tree.Model.StopWatcher()

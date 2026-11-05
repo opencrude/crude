@@ -634,6 +634,10 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 
 func cloneAppSettings(s AppSettings) AppSettings {
 	out := s
+	if s.UI.ShowHiddenFiles != nil {
+		value := *s.UI.ShowHiddenFiles
+		out.UI.ShowHiddenFiles = &value
+	}
 	out.Capabilities = captypes.Clone(s.Capabilities)
 	out.Accounts = provider.CloneAccounts(s.Accounts)
 	out.Agents = cloneAgents(s.Agents)

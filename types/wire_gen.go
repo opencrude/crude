@@ -11130,7 +11130,11 @@ func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 	// array header, size 11
 	o = append(o, 0x9b)
 	o = msgp.AppendInt(o, z.SidebarWidth)
-	o = msgp.AppendBool(o, z.ShowHiddenFiles)
+	if z.ShowHiddenFiles == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBool(o, *z.ShowHiddenFiles)
+	}
 	o = msgp.AppendBool(o, z.ShowIcons)
 	o = msgp.AppendBool(o, z.UseNerdFont)
 	o = msgp.AppendBool(o, z.ShowGitStatus)
@@ -11164,10 +11168,21 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "SidebarWidth")
 		return
 	}
-	z.ShowHiddenFiles, bts, err = msgp.ReadBoolBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ShowHiddenFiles")
-		return
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.ShowHiddenFiles = nil
+	} else {
+		if z.ShowHiddenFiles == nil {
+			z.ShowHiddenFiles = new(bool)
+		}
+		*z.ShowHiddenFiles, bts, err = msgp.ReadBoolBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "ShowHiddenFiles")
+			return
+		}
 	}
 	z.ShowIcons, bts, err = msgp.ReadBoolBytes(bts)
 	if err != nil {
@@ -11220,7 +11235,13 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *UISettings) Msgsize() (s int) {
-	s = 1 + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen)
+	s = 1 + msgp.IntSize
+	if z.ShowHiddenFiles == nil {
+		s += msgp.NilSize
+	} else {
+		s += msgp.BoolSize
+	}
+	s += msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen)
 	return
 }
 

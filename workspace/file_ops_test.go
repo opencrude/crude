@@ -809,3 +809,106 @@ func assertWorkspaceEditFile(t *testing.T, path, content string, mode os.FileMod
 		t.Fatalf("%s: mode %v, want %v", path, info.Mode(), mode)
 	}
 }
+
+func listEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func TestCopyPathCopiesFilesAndFoldersExactly(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewFileOpsService(dir, NewEventBus(), testLogger{})
+	if err := os.MkdirAll(filepath.Join(dir, "src", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "src", "nested", "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("note"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if res := svc.CopyPath(filepath.Join(dir, "src"), filepath.Join(dir, "src copy")); !res.Succeeded() || !res.IsDir {
+		t.Fatalf("folder copy: %+v", res)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "src copy", "nested", "run.sh"))
+	if err != nil || string(data) != "#!/bin/sh\n" {
+		t.Fatalf("copied folder content %q err=%v", data, err)
+	}
+	if info, _ := os.Stat(filepath.Join(dir, "src copy", "nested", "run.sh")); runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("copied script lost its execute bit: %v", info.Mode())
+	}
+	if res := svc.CopyPath(filepath.Join(dir, "note.txt"), filepath.Join(dir, "src", "note.txt")); !res.Succeeded() {
+		t.Fatalf("file copy: %+v", res)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "src", "note.txt")); string(data) != "note" {
+		t.Fatalf("copied file content %q", data)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "note.txt")); string(data) != "note" {
+		t.Fatal("copy changed the source")
+	}
+	// No staging entries remain.
+	for _, name := range append(listEntries(t, dir), listEntries(t, filepath.Join(dir, "src"))...) {
+		if strings.Contains(name, ".copy-") {
+			t.Fatalf("staging entry left behind: %s", name)
+		}
+	}
+}
+
+func TestCopyPathRefusesUnsafeTargetsAndLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewFileOpsService(dir, NewEventBus(), testLogger{})
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a", "x"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := svc.CopyPath(filepath.Join(dir, "a", "x"), filepath.Join(dir, "b")); res.Succeeded() {
+		t.Fatal("copy overwrote an existing file")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "b")); string(data) != "keep" {
+		t.Fatal("refused copy changed the existing target")
+	}
+	if res := svc.CopyPath(filepath.Join(dir, "a"), filepath.Join(dir, "a", "inner")); res.Succeeded() {
+		t.Fatal("copied a folder into itself")
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Symlink("x", filepath.Join(dir, "a", "link")); err != nil {
+			t.Fatal(err)
+		}
+		if res := svc.CopyPath(filepath.Join(dir, "a"), filepath.Join(dir, "c")); !res.Succeeded() {
+			t.Fatalf("folder with a link: %+v", res)
+		}
+		if target, err := os.Readlink(filepath.Join(dir, "c", "link")); err != nil || target != "x" {
+			t.Fatalf("links must be copied as links, not followed: target=%q err=%v", target, err)
+		}
+		// A copy that cannot finish leaves no partial target.
+		if err := os.Chmod(filepath.Join(dir, "a", "x"), 0); err != nil {
+			t.Fatal(err)
+		}
+		if os.Getuid() != 0 {
+			if res := svc.CopyPath(filepath.Join(dir, "a"), filepath.Join(dir, "d")); res.Succeeded() {
+				t.Fatal("copied an unreadable file")
+			}
+			if _, err := os.Lstat(filepath.Join(dir, "d")); !os.IsNotExist(err) {
+				t.Fatal("failed copy left a partial target")
+			}
+		}
+	}
+	for _, name := range listEntries(t, dir) {
+		if strings.Contains(name, ".copy-") {
+			t.Fatalf("staging entry left behind: %s", name)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -44,9 +45,12 @@ type TabItem struct {
 
 // TabDrag identifies a dragged tab and the current screen-coordinate pointer.
 // Tabs emits tabs.drag and tabs.drop without changing tab order or ownership.
+// InStrip reports that the pointer is over the tab's own strip, where the
+// strip previews a reorder itself; hosts show placement only outside it.
 type TabDrag struct {
-	ID   string
-	X, Y int
+	ID      string
+	X, Y    int
+	InStrip bool
 }
 
 type tabRange struct {
@@ -91,6 +95,12 @@ type Tabs struct {
 	pressID        string
 	pressX, pressY int
 	dragging       bool
+	grabOffset     int // pointer column inside the pressed tab
+	dragLocalX     int
+	inStrip        bool
+	slides         map[string]tabSlide
+	settleUntil    time.Time
+	now            func() time.Time // test clock; nil uses time.Now
 	// pointerFocus marks focus that arrived by clicking a tab. The heavy
 	// focus baseline is reserved for deliberate keyboard navigation, so a
 	// click never leaves the strip looking "stuck" in focus.
@@ -142,8 +152,12 @@ func (t *Tabs) Tooltip() (string, Rect, bool) {
 func (t *Tabs) Dragging() bool { return t.dragging }
 
 // CancelPointerCapture clears the gesture without changing selection or order.
+// Tabs shown in a previewed order slide back to their slots.
 func (t *Tabs) CancelPointerCapture() {
-	t.pressID, t.dragging = "", false
+	if t.dragging {
+		t.beginSettle()
+	}
+	t.pressID, t.dragging, t.inStrip = "", false, false
 }
 
 // LabelRowEnd returns the end of painted labels and overflow controls, in local
@@ -255,6 +269,11 @@ func (t *Tabs) SetItems(items []TabItem, activeID string) {
 		anchor = t.items[t.scroll].ID
 	}
 	t.items = append(t.items[:0], items...)
+	for id := range t.slides {
+		if t.indexOfID(id) < 0 {
+			delete(t.slides, id)
+		}
+	}
 	if t.pressID != "" {
 		found := false
 		for _, item := range t.items {
@@ -536,20 +555,39 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 	}
 
-	for i, item := range t.items {
-		if i >= len(t.ranges) {
-			break
+	shown := t.paintRanges(r.W)
+	drag := -1
+	if t.dragging {
+		drag = t.indexOfID(t.pressID)
+	}
+	order := make([]int, 0, len(t.items))
+	for i := range t.items {
+		if i != drag {
+			order = append(order, i)
 		}
-		hit := t.ranges[i]
+	}
+	if drag >= 0 {
+		// The dragged tab paints last, above the tabs it slides over.
+		order = append(order, drag)
+	}
+	for _, i := range order {
+		item := t.items[i]
+		if i >= len(shown) {
+			continue
+		}
+		hit := shown[i]
 		w := hit.end - hit.start
-		if w <= 0 || hit.start < 0 {
+		if w <= 0 || hit.start < 0 || hit.end > r.W {
 			continue
 		}
 		itemFG, itemBG, attr := muted, bg, cell.Attrs(0)
-		switch i {
-		case t.active:
+		switch {
+		case i == drag:
+			// Lifted: hover fill marks the tab that moves with the pointer.
+			itemFG, itemBG, attr = accent, hover, cell.AttrBold
+		case i == t.active:
 			itemFG, attr = accent, cell.AttrBold
-		case t.hover:
+		case i == t.hover && !t.dragging:
 			itemBG = hover
 		}
 
@@ -574,7 +612,7 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		// The active tab owns its slice of the baseline: same slot as the
 		// rule, accent ink, so the selected mode is unambiguous even when the
 		// strip itself is unfocused.
-		if i == t.active && r.H > 1 {
+		if i == t.active && i != drag && r.H > 1 {
 			for underlineX := hit.start; underlineX < hit.end; underlineX++ {
 				buf.Set(originX+r.X+underlineX, originY+r.Y+1, cell.NewCell(glyph, accent, bg, cell.AttrBold))
 			}
@@ -631,8 +669,12 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		if t.pressID != "" {
 			dx, dy := ctx.ScreenX-t.pressX, ctx.ScreenY-t.pressY
 			if t.dragging || dx >= 2 || dx <= -2 || dy >= 1 || dy <= -1 {
+				if !t.dragging {
+					t.seedSlides()
+				}
 				t.dragging = true
-				return EventResult{Handled: true, Action: &Action{ID: "tabs.drag", Payload: TabDrag{ID: t.pressID, X: ctx.ScreenX, Y: ctx.ScreenY}}, Invalidate: InvalidatePaint}
+				inStrip := t.dragMotion(ctx)
+				return EventResult{Handled: true, Action: &Action{ID: "tabs.drag", Payload: TabDrag{ID: t.pressID, X: ctx.ScreenX, Y: ctx.ScreenY, InStrip: inStrip}}, Invalidate: InvalidatePaint}
 			}
 		}
 		index, _ := t.hit(ctx.LocalX)
@@ -671,6 +713,7 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		if t.draggable && ctx.LocalY == 0 {
 			t.pressID, t.pressX, t.pressY = t.items[index].ID, ctx.ScreenX, ctx.ScreenY
+			t.grabOffset = ctx.LocalX - t.ranges[index].labelStart
 		}
 		t.active = index
 		t.manualScroll = false
@@ -682,7 +725,16 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 	case EventMouseRelease:
 		if evt.MouseRelease.Button == tea.MouseLeft && t.pressID != "" {
 			id, dragged := t.pressID, t.dragging
+			var reorder *TabReorder
+			if dragged && t.dragMotion(ctx) {
+				if drag := t.indexOfID(id); drag >= 0 && drag < len(t.ranges) && t.ranges[drag].start >= 0 {
+					reorder = &TabReorder{ID: id, BeforeID: t.reorderTarget(drag, t.reorderSlot(drag))}
+				}
+			}
 			t.CancelPointerCapture()
+			if reorder != nil {
+				return EventResult{Handled: true, Action: &Action{ID: "tabs.reorder", Payload: *reorder}, Invalidate: InvalidatePaint}
+			}
 			if dragged {
 				return EventResult{Handled: true, Action: &Action{ID: "tabs.drop", Payload: TabDrag{ID: id, X: ctx.ScreenX, Y: ctx.ScreenY}}, Invalidate: InvalidatePaint}
 			}
