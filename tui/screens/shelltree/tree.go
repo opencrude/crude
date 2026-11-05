@@ -91,7 +91,7 @@ func (v *fileTreeView) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (v *fileTreeView) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	v.tree.Paint(buf, ox, oy, ctx)
 	v.paintFilterEmptyState(buf, ox, oy)
-	v.paintDragLabel(buf, ox, oy)
+	v.paintDrag(buf, ox, oy)
 }
 
 // paintFilterEmptyState shows a hint row when an active filter matches
@@ -163,10 +163,6 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	}
 	switch evt.Kind {
 	case ui.EventKey:
-		if evt.Key.Code == tea.KeyEsc && v.owner.Dragging() {
-			v.owner.CancelDrag()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
 		if id := fileKeyAction(evt.Key); id != "" && !model.FilterActive() {
 			if node := model.SelectedNode(); node != nil || id == ActionPaste || id == ActionUndo {
 				path := ""

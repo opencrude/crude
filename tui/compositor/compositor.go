@@ -122,6 +122,14 @@ func (c *Compositor) Composite() {
 	}
 }
 
+// Composited is the frame being built. Between Composite and Present it
+// holds every surface, including floating windows, so pointer-attached ink
+// (a drag ghost) drawn here lies above all of them. BeginFrame clears it, so
+// such ink lasts exactly one frame.
+func (c *Compositor) Composited() *surface.CellBuffer {
+	return c.back
+}
+
 // Present finalizes the frame:
 //  1. Generate ANSI output from the back buffer
 //  2. Swap front and back buffers

@@ -71,14 +71,26 @@ editor/chat facts. Workspace status remains workspace-owned.
   own items. Leaving the strip withdraws the reorder preview and starts the
   pane placement flow below (`TabDrag.InStrip` is false). Strips request
   frames only while dragging or settling.
+- Off its strip the tab is shown by the shared drag ghost
+  (`ui.DragGhost`, `tui/viewmodel/drag_ghost.go`): a small card with the
+  tab's label and the drop it would make, below-right of the pointer, with a
+  soft `ColorShadow` shadow. The shell derives it each frame from the live
+  gesture and paints it on the composited frame (`Compositor.Composited`), so
+  it lies above floating windows and disappears with the gesture. File-tree
+  drags use the same ghost.
 - Drag a tab into a body's left/right/top/bottom edge to split that target
-  group and move the tab into the new leaf. The preview uses theme
-  `ColorHover`, shared split rounding and a reserved divider. It changes no
-  topology or membership until release.
+  group and move the tab into the new leaf. The preview tints the exact
+  resulting area with theme `ColorHover` and outlines it in the accent color,
+  using shared split rounding and a reserved divider; the ghost names the
+  split. It changes no topology or membership until release.
+- A file dragged from the tree uses the same zones (`paneEdgeZone`): a strip
+  or body middle opens it in that pane, an outer quarter opens it in a new
+  split on that side; a pane too small to split takes the file itself. Release
+  opens exactly the previewed destination.
 - The one-cell outer body rim selects a containing layout rather than only
   the leaf: left/right/bottom boundaries, and the first body row below that
   layout's tab strip for above. Where several scopes share a boundary, the
-  outermost layout wins. The preview names its scope. Interior edge zones
+  outermost layout wins. The ghost names the scope. Interior edge zones
   still split just the pane; tab-strip drops always insert/reorder, even at
   the strip's outermost columns. **Arrange Tab…** (below) provides every exact
   subtree when a nested boundary is not independently reachable by pointer.

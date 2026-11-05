@@ -111,7 +111,13 @@ type App struct {
 
 	// Composer state changes at session activation, never from Paint. Warm
 	// sessions retain their editor; cold persisted drafts load asynchronously.
-	composerHydratedFor  *workspace.Session
+	composerHydratedFor *workspace.Session
+	// workspaceResumeID is the session the Workspace panel asked to resume;
+	// its composer takes the keyboard once the session is shown.
+	workspaceResumeID string
+	// dragGhostPainted reports that the last frame carried a drag ghost, so
+	// the next frame is composed again to remove it.
+	dragGhostPainted     bool
 	composerDraftEpoch   uint64
 	composerDraftClient  *composerDraftClient
 	pendingOrchestrators map[string]bool

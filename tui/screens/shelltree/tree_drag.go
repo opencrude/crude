@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/filetree"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
 )
@@ -16,14 +16,17 @@ import (
 //
 // A press selects the row. Release without movement activates it exactly as
 // a click always did (open the file, toggle the folder). Movement past the
-// drag threshold turns the press into a drag: the folder that would receive
-// the entry is highlighted and named on the bottom row, and release emits
-// tree.drop. The tree never changes files; the shell owns every mutation and
-// its confirmation, so pointer, keyboard and menu actions share one path.
+// drag threshold turns the press into a drag: the dragged row dims, the folder
+// that would receive the entry is tinted with its visible contents, every
+// motion emits tree.drag and release emits tree.drop. The shell paints the
+// pointer ghost and pane targets from DragState. The tree never changes files;
+// the shell owns every mutation and its confirmation, so pointer, keyboard and
+// menu actions share one path.
 
 // Tree action IDs. Payloads are TreeDrop for tree.drop and the selected path
 // for the keyboard file actions.
 const (
+	ActionDrag      = "tree.drag"
 	ActionDrop      = "tree.drop"
 	ActionRename    = "tree.rename"
 	ActionDelete    = "tree.delete"
@@ -34,11 +37,13 @@ const (
 	ActionUndo      = "tree.undo"
 )
 
-// TreeDrop is a completed drag. InTree reports a release over the tree;
-// TargetDir is then the folder that receives Source. Otherwise X and Y are
-// the screen release point, for drops on other surfaces such as panes.
+// TreeDrop is a drag in progress (tree.drag, DragState) or completed
+// (tree.drop). InTree reports the pointer over the tree; TargetDir is then the
+// folder that receives Source, or empty when no folder can. X and Y are the
+// pointer in screen cells, for drops on other surfaces such as panes.
 type TreeDrop struct {
 	Source    string
+	IsDir     bool
 	TargetDir string
 	InTree    bool
 	X, Y      int
@@ -46,12 +51,23 @@ type TreeDrop struct {
 
 type treePress struct {
 	path           string
+	isDir          bool
 	screenX        int
 	screenY        int
 	localX, localY int
 	dragging       bool
 	inTree         bool
 	target         string
+	pointerX       int
+	pointerY       int
+}
+
+func (p *treePress) state() TreeDrop {
+	target := p.target
+	if !ValidMoveTarget(p.path, target) {
+		target = ""
+	}
+	return TreeDrop{Source: p.path, IsDir: p.isDir, TargetDir: target, InTree: p.inTree, X: p.pointerX, Y: p.pointerY}
 }
 
 // fileKeyAction maps the explorer's file-action keys.
@@ -86,7 +102,23 @@ func ValidMoveTarget(source, dir string) bool {
 }
 
 // Dragging reports an active tree drag.
-func (s *Screen) Dragging() bool { return s.press != nil && s.press.dragging }
+func (s *Screen) Dragging() bool { return s != nil && s.press != nil && s.press.dragging }
+
+// DragState is the drag in progress, if any.
+func (s *Screen) DragState() (TreeDrop, bool) {
+	if !s.Dragging() {
+		return TreeDrop{}, false
+	}
+	return s.press.state(), true
+}
+
+// DragIcon is the tree's own icon for the dragged entry.
+func (s *Screen) DragIcon() filetree.IconResult {
+	if s == nil || s.press == nil || s.icons == nil {
+		return filetree.IconResult{}
+	}
+	return s.icons.ResolveIcon(filepath.Base(s.press.path), s.press.isDir, false, false)
+}
 
 // CancelDrag ends a press or drag without any action.
 func (s *Screen) CancelDrag() {
@@ -117,12 +149,12 @@ func (v *fileTreeView) handlePointer(ctx ui.EventContext, evt ui.Event, localY i
 			s.press = nil
 			return ui.EventResult{}, false
 		}
-		_, path, _ := v.rowNode(localY)
+		_, path, isDir := v.rowNode(localY)
 		if path == "" {
 			s.press = nil
 			return ui.EventResult{}, false
 		}
-		s.press = &treePress{path: path, screenX: ctx.ScreenX, screenY: ctx.ScreenY, localX: ctx.LocalX, localY: localY}
+		s.press = &treePress{path: path, isDir: isDir, screenX: ctx.ScreenX, screenY: ctx.ScreenY, localX: ctx.LocalX, localY: localY}
 		model.Select(path)
 		s.syncFromModel()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}, true
@@ -137,7 +169,7 @@ func (v *fileTreeView) handlePointer(ctx ui.EventContext, evt ui.Event, localY i
 		}
 		p.dragging = true
 		v.updateDropTarget(p, ctx, localY)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}, true
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionDrag, Payload: p.state()}, Invalidate: ui.InvalidatePaint}, true
 	case ui.EventMouseRelease:
 		p := s.press
 		if p == nil || evt.MouseRelease.Button != tea.MouseLeft {
@@ -152,8 +184,7 @@ func (v *fileTreeView) handlePointer(ctx ui.EventContext, evt ui.Event, localY i
 		}
 		v.updateDropTarget(p, ctx, localY)
 		s.clearHover()
-		drop := TreeDrop{Source: p.path, TargetDir: p.target, InTree: p.inTree, X: ctx.ScreenX, Y: ctx.ScreenY}
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionDrop, Payload: drop}, Invalidate: ui.InvalidatePaint}, true
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionDrop, Payload: p.state()}, Invalidate: ui.InvalidatePaint}, true
 	}
 	return ui.EventResult{}, false
 }
@@ -165,72 +196,78 @@ func (v *fileTreeView) updateDropTarget(p *treePress, ctx ui.EventContext, local
 	s := v.owner
 	model := s.displayModel()
 	r := v.Bounds()
+	p.pointerX, p.pointerY = ctx.ScreenX, ctx.ScreenY
 	p.inTree = ctx.LocalX >= 0 && ctx.LocalX < r.W && ctx.LocalY >= 0 && ctx.LocalY < r.H
 	p.target = ""
+	// paintDrag marks the receiving folder; row hover would compete with it.
+	s.clearHover()
 	if !p.inTree {
-		s.clearHover()
 		return
 	}
-	index, path, isDir := v.rowNode(localY)
+	_, path, isDir := v.rowNode(localY)
 	switch {
 	case path == "":
 		p.target = model.RootPath()
-		index = -1
 	case isDir:
 		p.target = path
 	default:
 		p.target = filepath.Dir(path)
-		index = -1
-		for i, node := range model.VisibleNodes() {
-			if node.Path == p.target {
-				index = i
+	}
+}
+
+// paintDrag marks the drag in the tree itself: the dragged row is dimmed and
+// the receiving folder is tinted together with its visible contents, the way
+// a desktop file manager shows where an entry lands.
+func (v *fileTreeView) paintDrag(buf *surface.CellBuffer, ox, oy int) {
+	p := v.owner.press
+	r := v.Bounds()
+	if p == nil || !p.dragging || r.Empty() || buf == nil {
+		return
+	}
+	model := v.owner.displayModel()
+	nodes := model.VisibleNodes()
+	first := model.ScrollOffset()
+	top := r.Y
+	if v.owner.breadcrumb != "" {
+		top++
+	}
+	rowY := func(index int) int { return oy + top + index - first }
+	tokens := v.owner.tokens
+	tint := func(index int, apply func(*cell.Cell)) {
+		y := rowY(index)
+		if index < first || y >= oy+r.Y+r.H {
+			return
+		}
+		for x := ox + r.X; x < ox+r.X+r.W; x++ {
+			c := buf.Get(x, y)
+			apply(&c)
+			buf.Set(x, y, c)
+		}
+	}
+	muted := tokens.Color(ui.ColorMuted)
+	for index, node := range nodes {
+		if node.Path == p.path {
+			tint(index, func(c *cell.Cell) { c.FG = muted })
+		}
+	}
+	if !p.inTree || !ValidMoveTarget(p.path, p.target) {
+		return
+	}
+	hover, accent := tokens.Color(ui.ColorHover), tokens.Color(ui.ColorAccent)
+	root := p.target == model.RootPath()
+	prefix := p.target + string(filepath.Separator)
+	for index, node := range nodes {
+		inside := root || node.Path == p.target || strings.HasPrefix(node.Path, prefix)
+		if !inside {
+			continue
+		}
+		tint(index, func(c *cell.Cell) { c.BG = hover })
+		if node.Path == p.target {
+			if y := rowY(index); index >= first && y < oy+r.Y+r.H {
+				buf.Set(ox+r.X, y, cell.NewCell('▎', accent, hover, 0))
 			}
 		}
 	}
-	if !ValidMoveTarget(p.path, p.target) {
-		index = -1
-	}
-	if index >= 0 {
-		model.Hover.Set(index)
-	} else {
-		model.Hover.Clear()
-	}
-	s.tree.tree.SyncHover(model.Hover.Index)
-}
-
-// dragLabel states what release does, on the tree's bottom row.
-func (s *Screen) dragLabel() string {
-	p := s.press
-	if p == nil || !p.dragging {
-		return ""
-	}
-	if !p.inTree {
-		if s.displayModel().IsDir(p.path) {
-			return "Drop on a folder to move"
-		}
-		return "Drop on a pane to open"
-	}
-	if !ValidMoveTarget(p.path, p.target) {
-		return "Drop on another folder"
-	}
-	dir := filepath.Base(p.target)
-	if p.target == s.displayModel().RootPath() {
-		dir = "the workspace root"
-	}
-	return "Move to " + dir
-}
-
-func (v *fileTreeView) paintDragLabel(buf *surface.CellBuffer, ox, oy int) {
-	label := v.owner.dragLabel()
-	r := v.Bounds()
-	if label == "" || r.Empty() {
-		return
-	}
-	tokens := v.owner.tokens
-	bg := tokens.Color(ui.ColorHover)
-	text := rendering.TruncateVisual(" "+label, r.W, "…")
-	text += strings.Repeat(" ", max(0, r.W-rendering.VisibleWidth(text)))
-	buf.WriteString(ox+r.X, oy+r.Y+r.H-1, text, tokens.Color(ui.ColorAccent), bg, 0)
 }
 
 func treeClick(x, y int) filetree.TreeMsg {

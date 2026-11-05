@@ -53,8 +53,13 @@ func (m *App) handleTreeAction(a *ui.Action) (tea.Cmd, bool) {
 	if a == nil || !strings.HasPrefix(a.ID, "tree.") {
 		return nil, false
 	}
-	if a.ID == shelltree.ActionDrop {
-		if drop, ok := a.Payload.(shelltree.TreeDrop); ok {
+	if a.ID == shelltree.ActionDrag || a.ID == shelltree.ActionDrop {
+		drop, ok := a.Payload.(shelltree.TreeDrop)
+		switch {
+		case !ok:
+		case a.ID == shelltree.ActionDrag:
+			m.trackTreeDrag(drop)
+		default:
 			return m.dropTreeEntry(drop), true
 		}
 		return nil, true
@@ -101,23 +106,22 @@ func (m *App) treeRel(path string) string {
 }
 
 func (m *App) dropTreeEntry(drop shelltree.TreeDrop) tea.Cmd {
-	if !drop.InTree {
-		// A file released over a pane opens there.
-		if m.Tree.Model.IsDir(drop.Source) {
-			return nil
-		}
-		g := m.paneAt(drop.X, drop.Y)
-		if g == nil {
-			return nil
-		}
-		m.focusMainGroup(g.id)
-		cmd, err := m.openFileFromTree(drop.Source)
-		if err != nil {
-			m.Feedback.NotifyError("Cannot open " + filepath.Base(drop.Source) + ": " + err.Error())
-		}
-		return cmd
+	proposed := m.treeFileDrop(drop.Source)
+	if m.mainPanes != nil {
+		m.mainPanes.drop = nil
 	}
-	if !shelltree.ValidMoveTarget(drop.Source, drop.TargetDir) {
+	if !drop.InTree {
+		// A file released over a pane opens exactly where the preview showed.
+		if drop.IsDir || proposed == nil {
+			return nil
+		}
+		confirmed := m.fileDropAt(drop.Source, drop.X, drop.Y)
+		if confirmed == nil || confirmed.group != proposed.group || confirmed.edge != proposed.edge || confirmed.rect != proposed.rect {
+			return nil
+		}
+		return m.openFileDrop(confirmed)
+	}
+	if drop.TargetDir == "" {
 		return nil
 	}
 	m.confirmTreeMove(drop.Source, drop.TargetDir)

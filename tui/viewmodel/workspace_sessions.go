@@ -102,12 +102,26 @@ func (m *App) resumeWorkspaceSession(id string) tea.Cmd {
 		if meta.ID != id {
 			continue
 		}
+		m.workspaceResumeID = id
 		cmd := m.launcherResumeSession(id, &meta)
-		if m.ActiveSession != nil && m.ActiveSession.SessionID == id {
-			m.termDock.ClosePanel()
-			m.setTermDockFocused(false)
-		}
+		m.finishWorkspaceResume()
 		return cmd
 	}
 	return nil
+}
+
+// finishWorkspaceResume hands the keyboard from the Workspace panel to the
+// resumed session's composer once that session is shown. A connected shell
+// shows it only after the core's inventory arrives, so this runs from tab
+// activation rather than when the resume is requested.
+func (m *App) finishWorkspaceResume() {
+	if m.workspaceResumeID == "" || m.ActiveSession == nil || m.ActiveSession.SessionID != m.workspaceResumeID {
+		return
+	}
+	m.workspaceResumeID = ""
+	if m.termDock != nil {
+		m.termDock.ClosePanel()
+	}
+	m.setTermDockFocused(false)
+	m.setFocusInput()
 }

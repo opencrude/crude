@@ -52,6 +52,14 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if m.sidebarScreen.Dragging() && msg.Code == tea.KeyEsc {
+		m.sidebarScreen.CancelDrag()
+		if m.mainPanes != nil {
+			m.mainPanes.drop = nil
+		}
+		m.forceFrame()
+		return m, nil
+	}
 	if m.mainPaneDragActive() && msg.Code == tea.KeyEsc {
 		m.cancelMainPaneDrag()
 		m.forceFrame()

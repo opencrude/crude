@@ -20,6 +20,7 @@ func DefaultWarm() *Theme {
 		TextSelection:      lipgloss.Color("#594330"),
 		TextSelectionFg:    lipgloss.Color("#ffffff"),
 		Hover:              lipgloss.Color("#292524"),
+		Shadow:             lipgloss.Color("#0c0a09"),
 		SubPaneBg:          lipgloss.Color("#231f1c"),
 		Gutter:             lipgloss.Color("#211d1a"),
 		IncompleteBg:       lipgloss.Color("#3f1d1d"),

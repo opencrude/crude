@@ -151,6 +151,20 @@ func (t *Tabs) Tooltip() (string, Rect, bool) {
 // Dragging reports whether the pressed tab has crossed the drag threshold.
 func (t *Tabs) Dragging() bool { return t.dragging }
 
+// DraggedItem is the tab being dragged out of its strip. Inside the strip the
+// tab itself follows the pointer, so hosts show a drag ghost only for this.
+func (t *Tabs) DraggedItem() (TabItem, bool) {
+	if !t.dragging || t.inStrip {
+		return TabItem{}, false
+	}
+	for _, item := range t.items {
+		if item.ID == t.pressID {
+			return item, true
+		}
+	}
+	return TabItem{}, false
+}
+
 // CancelPointerCapture clears the gesture without changing selection or order.
 // Tabs shown in a previewed order slide back to their slots.
 func (t *Tabs) CancelPointerCapture() {

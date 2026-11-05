@@ -98,7 +98,7 @@ func TestMainPaneJourneyEditorDragPreviewCancelAndCommit(t *testing.T) {
 	if len(app.Win.GroupIDs()) != 1 || !reflect.DeepEqual(app.Win.GroupTabs(original), before) {
 		t.Fatal("preview changed topology or tab membership before release")
 	}
-	if !bufferContainsPlain(app.mainSurf.Buffer(), "Split right") {
+	if !strings.Contains(frameText(app), "Split right") {
 		t.Fatal("right-edge drag did not paint its split preview")
 	}
 	preview := app.mainSurf.Buffer().Get(x, y)
@@ -108,7 +108,7 @@ func TestMainPaneJourneyEditorDragPreviewCancelAndCommit(t *testing.T) {
 	paneJourneyKey(app, tea.KeyEscape, 0)
 	_, _ = app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
 	_ = app.View()
-	if len(app.Win.GroupIDs()) != 1 || !reflect.DeepEqual(app.Win.GroupTabs(original), before) || bufferContainsPlain(app.mainSurf.Buffer(), "Split right") {
+	if len(app.Win.GroupIDs()) != 1 || !reflect.DeepEqual(app.Win.GroupTabs(original), before) || strings.Contains(frameText(app), "Split right") {
 		t.Fatal("Escape did not cancel preview without changing membership")
 	}
 	paneJourneyDrag(t, app, tab, x, y)
@@ -435,7 +435,7 @@ func TestMainPaneJourneyTabDragReordersBeforeSplitting(t *testing.T) {
 	// second tab's center but not the third's.
 	thirdX := strip.X + start(second) - 2
 	paneJourneyDrag(t, app, first, thirdX, strip.Y)
-	if app.mainPanes.drop != nil || bufferContainsPlain(app.mainSurf.Buffer(), "Move tab here") || bufferContainsPlain(app.mainSurf.Buffer(), "Split ") {
+	if app.mainPanes.drop != nil || strings.Contains(frameText(app), "Move tab here") || strings.Contains(frameText(app), "Split ") {
 		t.Fatal("dragging inside the strip showed a pane placement preview")
 	}
 	if !app.wantsFastTick() {
@@ -452,8 +452,11 @@ func TestMainPaneJourneyTabDragReordersBeforeSplitting(t *testing.T) {
 	body := app.mainPanes.groups[group].body
 	x, y := body.X+body.W-2, body.Y+body.H/2
 	paneJourneyDrag(t, app, first, x, y)
-	if !bufferContainsPlain(app.mainSurf.Buffer(), "Split right") {
+	if !strings.Contains(frameText(app), "Split right") {
 		t.Fatal("leaving the strip did not start the split preview")
+	}
+	if ghost := app.dragGhost(); ghost.Label == "" || ghost.Icon == "" || ghost.Intent != "Split right" {
+		t.Fatalf("the tab off its strip is not shown as a file ghost: %+v", ghost)
 	}
 	_, _ = app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
 	_ = app.View()

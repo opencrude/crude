@@ -88,7 +88,7 @@ func TestTreeDragMovesAfterConfirmAndUndoes(t *testing.T) {
 	app, root := treeActionsApp(t)
 	tx, ty := editorTreePoint(t, app, "target")
 	treeDrag(t, app, "notes.txt", tx, ty)
-	if !bufferContainsPlain(app.mainSurf.Buffer(), "Move to target") {
+	if !strings.Contains(frameText(app), "Move to target") {
 		t.Fatal("drag did not name the receiving folder")
 	}
 	requireFile(t, filepath.Join(root, "notes.txt"), "notes")
@@ -134,7 +134,7 @@ func TestTreeDragCancelAndInvalidDropsChangeNothing(t *testing.T) {
 	// A folder dropped into itself is not offered.
 	sx, sy := editorTreePoint(t, app, "src")
 	treeDrag(t, app, "src", sx, sy)
-	if !bufferContainsPlain(app.mainSurf.Buffer(), "Drop on another folder") {
+	if !strings.Contains(frameText(app), "Drop on another folder") {
 		t.Fatal("dropping a folder into itself was offered")
 	}
 	treeRelease(t, app, sx, sy)
