@@ -112,7 +112,6 @@ class ReleaseTests(unittest.TestCase):
             "release.yml": {"workflow_dispatch"},
             "native-preflight.yml": {"workflow_dispatch"},
             "public-install-smoke.yml": {"workflow_dispatch"},
-            "pages.yml": {"workflow_dispatch"},
             "verify.yml": {"workflow_call"},
         }
         workflows = release.ROOT / ".github/workflows"
@@ -135,17 +134,6 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("(instant)", workflow)
         self.assertIn("Instant release.", workflow)
         self.assertIn("deliberately skipped the full verification chain", workflow)
-
-    def test_pages_deploys_only_the_reviewed_site_artifact(self):
-        workflow = (release.ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("npm --prefix site run lint", workflow)
-        self.assertIn("npm --prefix site run build", workflow)
-        self.assertIn("python3 scripts/test_site.py -v", workflow)
-        self.assertIn("path: site/dist", workflow)
-        self.assertIn("actions/deploy-pages@", workflow)
-        self.assertIn("permissions:\n      pages: write", workflow)
-        self.assertIn("id-token: write", workflow)
 
     def test_every_external_action_is_pinned_to_a_full_commit(self):
         workflows = release.ROOT / ".github/workflows"

@@ -55,10 +55,12 @@ tmp/
 temp/
 __pycache__/
 
-# Generated libghostty-vt outputs (see third_party/libghostty-vt/README.md)
-/third_party/libghostty-vt/include/
-/third_party/libghostty-vt/lib/
-/third_party/libghostty-vt/share/
+# Generated libghostty-vt install prefix (see third_party/libghostty-vt/README.md).
+# Only the pin, licenses and notices are tracked; every installed subdirectory
+# (include, lib, share, bin and any later output) belongs to the native platform
+# that built it. Ignoring the whole level keeps the release clean-tree gate from
+# drifting when a platform installs another directory.
+/third_party/libghostty-vt/*/
 /third_party/libghostty-vt/.crude-*
 
 # Agent-tool local state

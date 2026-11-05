@@ -82,8 +82,12 @@ def build(args):
     target = {"linux": "linux", "win32": "windows"}.get(sys.platform)
     if target is None or platform.machine().lower() not in ("amd64", "x86_64"):
         raise ValueError("release builds require a native Linux/Windows x86-64 runner")
-    if run("git", "status", "--porcelain"):
-        raise ValueError("release builds require a clean committed checkout (including generated terminfo)")
+    dirty = run("git", "status", "--porcelain")
+    if dirty:
+        raise ValueError(
+            "release builds require a clean committed checkout (including generated terminfo); "
+            f"git status reports:\n{dirty}"
+        )
     # A clean commit can still contain stale generated protocol identities.
     # Check source bytes without changing the release checkout on either host.
     run("go", "run", "./internal/wiregen", "-check")
