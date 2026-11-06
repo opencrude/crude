@@ -282,6 +282,16 @@ the sanitized result marker and a clean test exit independently. The connected
 TUI paints the same private core's event log; this is not distinct-host or
 cross-process-core acceptance.
 
+### Streaming separator and thinking pane acceptance
+
+`TestStreamSeparatorVisualAcceptance` (`CRUDE_VISUAL_STREAM=1`) replays the
+event shape of a provider that streams late `\n` deltas between parallel tool
+calls, over a long transcript. Precompile the viewmodel test binary and run it
+through `scripts/tuishot.sh` with `CRUDE_BIN`/`CRUDE_ARGS`, at 160x40 and
+80x24, one capture at a time. F2 streams a thought that overflows its pane: the
+earlier replies must keep their wrapping. F3 and F4 send and settle three reads:
+they must show as one `Read 3 files` group one blank row under the answer.
+
 ### Aeron and tab tooltip acceptance
 
 `TestAeronAndTabTooltipVisualAcceptance` (`CRUDE_VISUAL_AERON=1`) drives the

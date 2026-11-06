@@ -41,8 +41,10 @@ func redundantStopNotice(msg *types.ChatMessage) bool {
 }
 
 // Empty assistant envelopes separate provider calls but contain no visible
-// communication. They must neither consume a row nor split adjacent activity.
-// Keep the live streaming placeholder until it is replaced by real content.
+// communication; neither does a reply of only whitespace, which providers
+// send as separators between output items. They must neither consume a row
+// nor split adjacent activity. Keep the live streaming placeholder until it is
+// replaced by real content.
 func (r *Renderer) activityInvisible(msg *types.ChatMessage) bool {
 	if redundantStopNotice(msg) {
 		return true
@@ -59,7 +61,7 @@ func (r *Renderer) activityInvisible(msg *types.ChatMessage) bool {
 			return true // transient lifecycle belongs to the fixed activity strip
 		}
 	}
-	return msg.Role == types.RoleAssistant && msg.Content == "" && msg.SubPaneID == "" && !msg.Incomplete && !r.isStreamingCursor(msg)
+	return msg.Role == types.RoleAssistant && strings.TrimSpace(msg.Content) == "" && msg.SubPaneID == "" && !msg.Incomplete && !r.isStreamingCursor(msg)
 }
 
 func activityEligible(msg *types.ChatMessage) bool {

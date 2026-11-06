@@ -76,12 +76,13 @@ type composeRowGeometry struct {
 
 // layoutComposeRow is the single source for both native paint geometry and
 // composed test rows. Every value is bounded by rowInnerW; narrow terminals
-// never gain synthetic minimum-width columns.
-func layoutComposeRow(ctx composeCtx, contentVisW int) composeRowGeometry {
+// never gain synthetic minimum-width columns. Only pane rows reserve the
+// nested pane gutter, so other rows keep their width while a pane scrolls.
+func layoutComposeRow(ctx composeCtx, contentVisW int, paneRow bool) composeRowGeometry {
 	contentW := max(0, contentVisW)
 	contentMax := ctx.rowInnerW
 	gutter := 0
-	if ctx.paneSBW > 0 {
+	if ctx.paneSBW > 0 && paneRow {
 		gutter = min(ctx.rowInnerW, ctx.paneSBW+ctx.paneGapW)
 		contentMax = max(0, ctx.rowInnerW-gutter)
 	}
@@ -105,9 +106,9 @@ type RowLayout struct {
 }
 
 // LayoutRow mirrors ComposeRow width math without building ANSI strings.
-func LayoutRow(p ComposeParams, contentVisW int, _ chatprojection.PaneLineInfo) RowLayout {
+func LayoutRow(p ComposeParams, contentVisW int, pane chatprojection.PaneLineInfo) RowLayout {
 	ctx := buildComposeCtx(p)
-	geometry := layoutComposeRow(ctx, contentVisW)
+	geometry := layoutComposeRow(ctx, contentVisW, pane.PaneID != "")
 
 	return RowLayout{
 		PadLeft:    ctx.padW,
@@ -126,13 +127,13 @@ func ComposeRow(p ComposeParams, vpRow int, globalLine int, rawLine string, pane
 		return ""
 	}
 	ctx := buildComposeCtx(p)
-	return composeOneRow(ctx, rawLine)
+	return composeOneRow(ctx, rawLine, paneInfo.PaneID != "")
 }
 
-func composeOneRow(ctx composeCtx, line string) string {
+func composeOneRow(ctx composeCtx, line string, paneRow bool) string {
 	trimmed := rendering.TrimRightAnsiSpaces(line)
 	visW := rendering.VisibleWidth(trimmed)
-	geometry := layoutComposeRow(ctx, visW)
+	geometry := layoutComposeRow(ctx, visW, paneRow)
 	if visW > geometry.contentMax {
 		if geometry.contentMax == 0 {
 			trimmed = ""
@@ -140,7 +141,7 @@ func composeOneRow(ctx composeCtx, line string) string {
 			trimmed = rendering.TruncateLine(trimmed, geometry.contentMax)
 		}
 		visW = rendering.VisibleWidth(trimmed)
-		geometry = layoutComposeRow(ctx, visW)
+		geometry = layoutComposeRow(ctx, visW, paneRow)
 	}
 
 	// The gutter reserve is spaces only; native paint fills the final gutter
@@ -160,7 +161,7 @@ func Compose(p ComposeParams) []string {
 	ctx := buildComposeCtx(p)
 	out := make([]string, len(p.RawLines))
 	for i, line := range p.RawLines {
-		out[i] = composeOneRow(ctx, line)
+		out[i] = composeOneRow(ctx, line, i < len(p.PaneLineMap) && p.PaneLineMap[i].PaneID != "")
 	}
 	return out
 }

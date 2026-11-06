@@ -364,7 +364,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		effects.setStatus(status.Summary)
 		effects.setThinking(a.Running, false, false)
 	case "thinking":
-		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Text != "" && delta.Kind != reasoning.Encrypted {
+		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Kind != reasoning.Encrypted && target.AcceptsStreamText(MessageRoleThinking, delta.Text) {
 			a.logIfInvalidUTF8("thinking", delta.Text)
 			if inactive {
 				// Reasoning queued behind Stop or completion is not accepted
@@ -393,7 +393,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		}
 
 	case "stream_token":
-		if s, ok := evt.Data.(string); ok && s != "" {
+		if s, ok := evt.Data.(string); ok && target.AcceptsStreamText(MessageRoleAssistant, s) {
 			a.logIfInvalidUTF8("stream_token", s)
 			s = SanitizeForTerminal(s)
 			if !a.Streaming && !inactive {

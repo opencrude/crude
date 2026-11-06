@@ -167,6 +167,18 @@ one leading spacer per item, including groups and panes. Subpanes return content
 only, never a trailing separator; spacing must not depend on the previous frame's
 pane height or the unprojected canonical neighbor. Tree leaves are contiguous.
 
+Whitespace is not communication. A streamed delta of only whitespace continues
+an open reply or thought but never opens one (`Conversation.AcceptsStreamText`):
+some providers keep sending `\n` for an answer item after its tool calls
+started, and a reply made of them would be a blank gap that splits parallel
+reads out of their group. The projection treats a hydrated whitespace-only
+reply the same way as an empty envelope: no row and no group boundary.
+
+A nested pane scrollbar belongs to the pane rows. When a thinking pane starts
+or stops overflowing, only that pane re-renders at its narrower body width;
+every other row keeps its width, wrapping and cached render. Only the main chat
+scrollbar narrows the whole transcript.
+
 Thinking blocks and panes, attributed peer messages, agent/Board operations and
 sub-agent panes share the theme's `ColorSubPaneBg` as an edge-to-edge transcript
 band. The fill includes the row's left/right padding, nested scrollbar and blank

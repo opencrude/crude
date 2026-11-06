@@ -247,6 +247,29 @@ func (c *Conversation) lastNonPending() *Message {
 	return nil
 }
 
+// AcceptsStreamText reports whether streamed text for a message of role may
+// enter the conversation. Text always continues the open message of its role;
+// starting a new message needs a visible character. Providers stream
+// separator newlines between output items, including late deltas of an
+// answer item that closed before the tool calls that follow it. A message made
+// only of them would be a blank row that splits the surrounding activity.
+func (c *Conversation) AcceptsStreamText(role, text string) bool {
+	if c == nil || text == "" {
+		return false
+	}
+	if strings.TrimSpace(text) != "" {
+		return true
+	}
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		message := c.messages[i]
+		if message.PendingSteering || message.Role == MessageRoleStatus && message.LifecycleOperationID == "" {
+			continue // queued steering and transient turn status are not content
+		}
+		return message.Role == role && (role != MessageRoleThinking || message.ThinkingActive)
+	}
+	return false
+}
+
 // ActiveThinking returns the current live thought without exporting the dense
 // transcript. Promoted thoughts live in their owning pane's Conversation.
 func (c *Conversation) ActiveThinking() (Message, bool) {
