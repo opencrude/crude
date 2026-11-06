@@ -309,10 +309,13 @@ func commandActionOutcome(response types.LSPCommandResponse) (message, url strin
 	}
 	if url == "" {
 		for _, candidate := range response.Messages {
-			if start := strings.Index(candidate, "http://"); start >= 0 {
-				url = strings.TrimRight(candidate[start:], ".,;: ")
-			} else if start := strings.Index(candidate, "https://"); start >= 0 {
-				url = strings.TrimRight(candidate[start:], ".,;: ")
+			// A message names a page inside prose; take only the one word.
+			for _, word := range strings.Fields(candidate) {
+				word = strings.TrimLeft(strings.TrimRight(word, ".,;:)]}>\"'"), "([{<\"'")
+				if isBrowserURL(word) {
+					url = word
+					break
+				}
 			}
 			if url != "" {
 				break
@@ -330,8 +333,13 @@ func commandActionOutcome(response types.LSPCommandResponse) (message, url strin
 }
 
 func isBrowserURL(value string) bool {
+	// Mirror the browser opener: HTTPS, or HTTP only on this computer.
 	u, err := url.Parse(value)
-	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http")
+	if err != nil || u.Host == "" || u.User != nil {
+		return false
+	}
+	host := u.Hostname()
+	return u.Scheme == "https" || u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1")
 }
 
 // PrepareLSPCodeAction resolves at most this exact retained row and returns the

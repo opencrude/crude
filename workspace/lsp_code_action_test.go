@@ -843,3 +843,44 @@ func TestCodeActionMultiFileEditReviewsAndAppliesAllTargets(t *testing.T) {
 		}
 	}
 }
+
+// A create operation without text edits is a valid request for an empty file;
+// the code-action list offers it, so its review must also admit it.
+func TestCodeActionCreateEmptyFileReviewAndApply(t *testing.T) {
+	f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
+	target := filepath.Join(filepath.Dir(f.path), "empty.go")
+	raw := fmt.Sprintf(`{"title":"Add empty file","kind":"refactor","edit":{"documentChanges":[{"kind":"create","uri":%q}]}}`, fileuri.FromPath(target))
+	set := f.list(t, "["+raw+"]", false)
+	if len(set.Items) != 1 || !set.Items[0].CanReview {
+		t.Fatalf("empty create action was not offered for review: %+v", set)
+	}
+	preview := f.prepare(t, set)
+	if preview.ID == "" || len(preview.Files) != 1 || !preview.Files[0].Created || preview.Files[0].AfterBytes != 0 {
+		t.Fatalf("empty create preview = %+v", preview)
+	}
+	result := f.workspace.LiveDocuments.ApplyReviewedEdit(t.Context(), f.owner, preview.ID, preview.Digest,
+		f.workspace.LocalHistory, NewFileOpsService(filepath.Dir(f.path), nil, nil))
+	if result.State != "committed" || result.Error != "" {
+		t.Fatalf("empty create did not commit: %+v", result)
+	}
+	if info, err := os.Stat(target); err != nil || info.Size() != 0 {
+		t.Fatalf("created empty file = %v, %v", info, err)
+	}
+}
+
+// A server message names a page inside prose. Only the page address may reach
+// the browser, and only an address the browser opener accepts.
+func TestCodeActionCommandOutcomeExtractsOnlyThePageFromMessages(t *testing.T) {
+	for _, tc := range []struct{ message, url string }{
+		{"See https://example.test/docs for details.", "https://example.test/docs"},
+		{"Open (https://example.test/a).", "https://example.test/a"},
+		{"Server at http://127.0.0.1:6060/pkg ready", "http://127.0.0.1:6060/pkg"},
+		{"Read http://example.test/plain first", ""},
+		{"No page here.", ""},
+	} {
+		message, url := commandActionOutcome(types.LSPCommandResponse{Messages: []string{tc.message}})
+		if url != tc.url || message != tc.message {
+			t.Errorf("message %q: got message %q url %q, want url %q", tc.message, message, url, tc.url)
+		}
+	}
+}

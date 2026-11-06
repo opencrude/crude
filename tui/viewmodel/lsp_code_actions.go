@@ -322,7 +322,7 @@ func (m *App) handleCodeActionPrepared(msg codeActionPreparedMsg) tea.Cmd {
 		m.codeActions = nil
 		s.cancel()
 		m.overlayHost.Close(codeActionsOverlay)
-		if message != "" {
+		if message != "" && m.Feedback != nil {
 			m.Feedback.NotifyInfo(message)
 		}
 		release := releaseCodeActionSet(s, s.retainedSet())

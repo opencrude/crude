@@ -274,7 +274,7 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 		case state.formatOnly && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			formatter, ok := m.ws.(shellport.LiveDocumentFormatter)
 			if !ok {
-				state.formatOnly = false
+				state.formatOnly, state.notifyFormat = false, false
 				m.liveEditorFailure(state, errors.New("core formatter unavailable"))
 				continue
 			}
@@ -467,6 +467,10 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 		state.uncertain, state.err = nil, nil
 	}
 	if msg.err != nil {
+		if msg.kind == "format" {
+			// The failure is the outcome; a later save format is not this request.
+			state.notifyFormat = false
+		}
 		// An edit/undo may have committed even though its response was lost.
 		// Keep the exact outstanding projection; never replay under a fresh ID.
 		var fault *coreprotocol.Fault

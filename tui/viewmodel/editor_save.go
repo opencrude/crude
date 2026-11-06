@@ -44,6 +44,7 @@ type editorFormatResultMsg struct {
 
 type editorFormatOnlyResultMsg struct {
 	ed         *editor.Editor
+	bufferID   string
 	revision   uint64
 	generation uint64
 	data       []byte
@@ -93,7 +94,7 @@ func (m *App) requestActiveEditorFormat() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		data, err := workspace.FormatDocument(ctx, snapshot.Path, snapshot.Data)
-		return editorFormatOnlyResultMsg{ed: ed, revision: snapshot.Revision, generation: generation, data: data, err: err}
+		return editorFormatOnlyResultMsg{ed: ed, bufferID: snapshot.ID, revision: snapshot.Revision, generation: generation, data: data, err: err}
 	}
 }
 
@@ -155,7 +156,8 @@ func (m *App) handleProjectFormatResult(msg projectFormatResultMsg) {
 
 func (m *App) handleEditorFormatOnlyResult(msg editorFormatOnlyResultMsg) {
 	ed := msg.ed
-	if ed == nil || msg.generation != m.workspaceSwitchGen.Load() || !ed.IsOpen() || ed.Revision() != msg.revision {
+	// Revisions restart per buffer; the buffer identity rejects another file.
+	if ed == nil || msg.generation != m.workspaceSwitchGen.Load() || !ed.IsOpen() || ed.BufferID() != msg.bufferID || ed.Revision() != msg.revision {
 		return
 	}
 	if msg.err != nil {
