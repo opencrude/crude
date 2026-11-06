@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -183,7 +184,7 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		if err := ctx.Err(); err != nil {
 			return ReviewedEditPreview{}, err
 		}
-		if len(target.URI) == 0 || len(target.URI) > 4096 || len(target.Edits) == 0 ||
+		if len(target.URI) == 0 || len(target.URI) > 4096 || len(target.Edits) == 0 && !target.Create ||
 			len(target.Edits) > document.MaxEdits-editCount {
 			return ReviewedEditPreview{}, errors.New("invalid or oversized reviewed target")
 		}
@@ -252,7 +253,13 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		if err != nil {
 			return ReviewedEditPreview{}, err
 		}
-		if err := appendReviewedDiff(filepath.ToSlash(displayPath), before, after, appendText); err != nil {
+		if target.Create && after == "" {
+			// An empty new file has no lines to diff; name it so the review still shows it.
+			err = appendText(strconv.Quote(filepath.ToSlash(displayPath)) + "  new empty file\n")
+		} else {
+			err = appendReviewedDiff(filepath.ToSlash(displayPath), before, after, appendText)
+		}
+		if err != nil {
 			return ReviewedEditPreview{}, err
 		}
 		plan.files = append(plan.files, file)

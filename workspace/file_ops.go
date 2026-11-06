@@ -557,7 +557,13 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 		committed := false
 		if err == nil {
 			msg.NoEffect = false
-			err = commit(p.next, p.path)
+			if p.create && s.commitWorkspaceEdit == nil {
+				// A file that appeared after the absence check is later work;
+				// never replace it.
+				err = fileio.MoveDirectoryNoReplace(p.next, p.path)
+			} else {
+				err = commit(p.next, p.path)
+			}
 			committed = err == nil || fileio.WriteCommitted(err)
 			if watch != nil {
 				watch.endCommit(p.path, committed)

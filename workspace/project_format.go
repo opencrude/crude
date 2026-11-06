@@ -96,6 +96,13 @@ func (w *Workspace) FormatProject(ctx context.Context) (FormatProjectResult, err
 		return nil
 	}, nil, nil)
 	if apply.Err != nil {
+		if apply.NoEffect {
+			// Only positive no-effect evidence relinquishes the retained preimage.
+			if err := w.LocalHistory.ReleaseRetainedSnapshot(context.WithoutCancel(ctx), reference); err != nil {
+				return result, errors.Join(apply.Err, err)
+			}
+			result.SafetySnapshotID = ""
+		}
 		return result, apply.Err
 	}
 	result.Changed = len(edits)
