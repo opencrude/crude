@@ -8,6 +8,8 @@ Installs or updates the Windows x64 release of Crude. No elevation is needed.
 .\install.ps1 -Yes -Gui
 .NOTES
 Only public GitHub releases are supported. No Go, Zig, or source checkout is needed.
+-Gui adds a window that opens Crude, with its own terminal and font. The same
+command updates Crude and the window together.
 Dot-sourcing defines the installer functions without starting an installation.
 #>
 [CmdletBinding()]
