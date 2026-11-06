@@ -11,14 +11,24 @@ main() (
     # for a terminal; the same text reads correctly in a log file.
     color=''
     if [[ -t 2 && -z ${NO_COLOR:-} && ${TERM:-dumb} != dumb ]]; then
-        color=$'\033['
+        color=1
     fi
     say() { printf '%s\n' "$*" >&2; }
-    step() { printf '  %s%s%s %-9s %s\n' "$color" "${1}" "$([[ -n $color ]] && printf '\033[0m')" "${2}" "${3}" >&2; }
-    ok() { step '✓' "$1" "$2"; }
+    # paint CODE TEXT colours one symbol in a terminal and prints it plain in a
+    # log file, so both read the same.
+    paint() {
+        if [[ -n $color ]]; then printf '\033[%sm%s\033[0m' "$1" "$2"; else printf '%s' "$2"; fi
+    }
+    step() { printf '  %s %-9s %s\n' "$1" "$2" "$3" >&2; }
+    ok() { step "$(paint 32 '✓')" "$1" "$2"; }
     note() { step '·' "$1" "$2"; }
-    warn() { step '!' "$1" "$2"; }
+    warn() { step "$(paint 33 '!')" "$1" "$2"; }
     die() { printf '\nCrude installer: %s\nNothing was changed.\n' "$*" >&2; exit 1; }
+    download() {
+        curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --tlsv1.2 --retry 3 --connect-timeout 15 --max-time 600 "$@"
+    }
+
     ask() {
         # ask PROMPT DEFAULT: prints the prompt, reads one answer.
         local prompt=$1 default=${2:-n} answer=''
@@ -167,19 +177,216 @@ EOF
         ok 'Stop' 'Crude is closed'
     }
 
-    version_old=''
-    if [[ -x "$install_dir/crude" ]]; then
-        version_old=$(timeout 5 "$install_dir/crude" --version 2>/dev/null) || version_old=''
-        version_old=${version_old#crude }
-        version_old=${version_old%% (*}
-    fi
-    plan_stop
+    # ---- Optional window ----------------------------------------------------
+    # One pinned terminal with one configuration, for this user only. It is the
+    # same Crude; the window only makes it open like an application.
+    wezterm_version='20240203-110809-5046fc22'
+    wezterm_sha256='142cb46de648200b852cc4b1d932e6b8f2a9d3c55f6dc5af44b6d4eeb9385f5c'
+    font_version='v3.5.1'
+    font_sha256='04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
+    data="${XDG_DATA_HOME:-$HOME/.local/share}/crude"
+    window_root="$data/window"
+    window_prefix="$window_root/wezterm-$wezterm_version"
+    window_lua="$window_root/wezterm.lua"
+    window_launcher="$install_dir/crude-window"
+    fonts_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/JetBrainsMonoNerdFont"
 
-    # ---- Release ------------------------------------------------------------
-    download() {
-        curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-            --tlsv1.2 --retry 3 --connect-timeout 15 --max-time 600 "$@"
+    # decide_window sets install, update or skip before anything is downloaded,
+    # so the question never waits behind a long transfer.
+    decide_window() {
+        window_state=skip window_asked=0
+        if [[ "$gui" == 0 ]]; then
+            return 0
+        fi
+        if [[ "$gui" == 1 ]] || [[ -x "$window_launcher" ]]; then
+            window_state=install
+            return 0
+        fi
+        # An unattended install adds the program only; a graphical session gets
+        # one short question.
+        ((accept)) && return 0
+        [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] || return 0
+        window_asked=1
+        if ask 'Do you want the GUI version as well?' y; then window_state=install; fi
     }
+
+    install_window_terminal() {
+        [[ -x "$window_prefix/usr/bin/wezterm" ]] && return 0
+        mkdir -p -- "$window_root"
+        local archive="$window_root/wezterm-$wezterm_version.Ubuntu22.04.tar.xz"
+        download --output "$archive" "https://github.com/wezterm/wezterm/releases/download/$wezterm_version/wezterm-$wezterm_version.Ubuntu22.04.tar.xz" || {
+            warn 'Window' 'cannot download the window. Check your network connection'
+            return 1
+        }
+        local sum
+        sum=$(sha256sum "$archive")
+        if [[ "${sum%% *}" != "$wezterm_sha256" ]]; then
+            warn 'Window' 'the downloaded window does not match its pinned checksum'
+            return 1
+        fi
+        tar -tvJf "$archive" > "$window_root/details" 2>/dev/null || {
+            warn 'Window' 'the downloaded window archive is damaged'
+            return 1
+        }
+        if grep -qEv '^[-d]' "$window_root/details"; then
+            warn 'Window' 'the downloaded window archive holds links or special files'
+            return 1
+        fi
+        local member
+        while IFS= read -r member; do
+            if [[ "$member" == /* || "/$member/" == *'/../'* ]]; then
+                warn 'Window' 'the downloaded window archive holds an unsafe path'
+                return 1
+            fi
+        done < <(tar -tJf "$archive")
+        local unpack staged
+        unpack=$(mktemp -d "$window_root/.unpack.XXXXXXXX")
+        staged="$window_root/.staged.$$"
+        tar -xJf "$archive" --no-same-owner --no-same-permissions -C "$unpack" || {
+            rm -rf -- "$unpack"
+            warn 'Window' 'the downloaded window archive could not be unpacked'
+            return 1
+        }
+        # The archive holds one program tree in a folder named wezterm.
+        if [[ -d "$unpack/wezterm" ]]; then
+            rm -rf -- "$staged"
+            mv -T -- "$unpack/wezterm" "$staged" && rm -rf -- "$unpack"
+        else
+            mkdir -p -- "${staged%/*}" && rm -rf -- "$staged"
+            mv -T -- "$unpack" "$staged"
+        fi
+        rm -f -- "$archive" "$window_root/details"
+        rm -rf -- "$window_prefix"
+        mv -T -- "$staged" "$window_prefix" || {
+            warn 'Window' 'the downloaded window could not be put in place'
+            return 1
+        }
+    }
+
+    install_window_fonts() {
+        local stamp="$fonts_dir/.crude-font"
+        if compgen -G "$fonts_dir/*.ttf" >/dev/null && [[ -f "$stamp" ]] && [[ "$(cat "$stamp")" == "$font_version" ]]; then
+            return 0
+        fi
+        local archive="$window_root/JetBrainsMono-$font_version.tar.xz" sum
+        if ! download --output "$archive" "https://github.com/ryanoasis/nerd-fonts/releases/download/$font_version/JetBrainsMono.tar.xz"; then
+            [[ -n $(compgen -G "$fonts_dir/*.ttf") ]] || warn 'Font' 'the font for the window is missing. Icons may look wrong'
+            return 0
+        fi
+        sum=$(sha256sum "$archive")
+        if [[ "${sum%% *}" != "$font_sha256" ]]; then
+            rm -f -- "$archive"
+            warn 'Font' 'the downloaded font does not match its pinned checksum'
+            return 0
+        fi
+        mkdir -p -- "$fonts_dir"
+        tar -xJf "$archive" --no-same-owner --no-same-permissions -C "$fonts_dir" 2>/dev/null || true
+        rm -f -- "$archive"
+        # Keep one flat folder whatever the archive layout is.
+        find "$fonts_dir" -mindepth 2 -name '*.ttf' -exec mv -f -- {} "$fonts_dir"/ \; 2>/dev/null || true
+        find "$fonts_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+        if compgen -G "$fonts_dir/*.ttf" >/dev/null; then
+            printf '%s\n' "$font_version" > "$stamp"
+            if command -v fc-cache >/dev/null; then fc-cache --force >/dev/null 2>&1 || true; fi
+        else
+            warn 'Font' 'the font for the window is missing. Icons may look wrong'
+        fi
+    }
+
+    write_window_files() {
+        # One configuration, rewritten on every run so an update also refreshes
+        # the window settings.
+        cat > "$window_lua" <<LUA
+-- Written by the Crude installer. This window opens Crude only.
+local wezterm = require 'wezterm'
+
+-- Open as an application window: use the desktop area, not a small terminal.
+wezterm.on('gui-startup', function(cmd)
+    local _, _, window = wezterm.mux.spawn_window(cmd or {})
+    local gui = window:gui_window()
+    if gui then gui:maximize() end
+end)
+
+return {
+    default_prog = { '$install_dir/crude' },
+    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
+    font_size = 13.0,
+    window_decorations = 'TITLE | RESIZE',
+    initial_cols = 190,
+    initial_rows = 50,
+    hide_tab_bar_if_only_one_tab = true,
+    enable_kitty_keyboard = true,
+    window_close_confirmation = 'NeverPrompt',
+    check_for_updates = false,
+    audible_bell = 'Disabled',
+    -- Crude owns these keys, so the terminal must not act on them here.
+    keys = {
+        { key = 'n', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
+        { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
+        { key = 'w', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
+    },
+}
+LUA
+        cat > "$window_launcher" <<LAUNCH
+#!/bin/sh
+# Open Crude in its own window.
+exec "$window_prefix/usr/bin/wezterm" --config-file "$window_lua" start --always-new-process --class crude
+LAUNCH
+        chmod 755 "$window_launcher"
+
+        local icon="$data/icons/crude.png"
+        if [[ -f "$stage/crude-icon.png" ]]; then
+            mkdir -p -- "$data/icons"
+            cp -- "$stage/crude-icon.png" "$icon"
+            [[ ! -f "$stage/crude-icon.svg" ]] || cp -- "$stage/crude-icon.svg" "$data/icons/crude.svg"
+        fi
+        if [[ -f "$icon" ]]; then
+            local themed="$HOME/.local/share/icons/hicolor/512x512/apps"
+            mkdir -p -- "$themed"
+            cp -- "$icon" "$themed/crude.png"
+        fi
+        local desktop="$HOME/.local/share/applications" icon_line=''
+        mkdir -p -- "$desktop"
+        # An Icon line must name a file that exists, or the menu shows a warning.
+        [[ ! -f "$icon" ]] || icon_line="Icon=$icon"
+        {
+            printf '%s\n' \
+                '[Desktop Entry]' \
+                'Type=Application' \
+                'Name=Crude' \
+                'Comment=Editor, terminals and AI agents in one window' \
+                "Exec=\"$install_dir/crude-window\""
+            [[ -z "$icon_line" ]] || printf '%s\n' "$icon_line"
+            printf '%s\n' 'Terminal=false' 'Categories=Development;IDE;' 'StartupWMClass=crude'
+        } > "$desktop/crude.desktop"
+        chmod 644 "$desktop/crude.desktop"
+        if command -v update-desktop-database >/dev/null; then update-desktop-database "$desktop" >/dev/null 2>&1 || true; fi
+    }
+
+    prune_window_versions() {
+        local old
+        for old in "$window_root"/wezterm-*; do
+            [[ -d "$old" && "$old" != "$window_prefix" ]] || continue
+            rm -rf -- "$old"
+        done
+        return 0
+    }
+
+    install_window() {
+        install_window_terminal || return 1
+        if ! "$window_prefix/usr/bin/wezterm" --version >/dev/null 2>&1; then
+            warn 'Window' 'the window cannot start on this system'
+            say '  Install these packages, then run this installer again:'
+            say '    libxkbcommon0 libfontconfig1 libwayland-client0 libx11-6'
+            return 1
+        fi
+        # The new copy is in place, so the older pins can go.
+        prune_window_versions
+        install_window_fonts
+        write_window_files
+        ok 'Window' 'Crude is in your application menu'
+    }
+
     if [[ -z "$version" ]]; then
         local resolved prefix
         resolved=$(download --head --output /dev/null --write-out '%{url_effective}' "https://github.com/$repository/releases/latest") ||
@@ -192,6 +399,16 @@ EOF
     local asset="crude_${version}_linux_amd64.tar.gz" base="https://github.com/$repository/releases/download/$version"
     say "Version $version · linux/amd64"
 
+    version_old=''
+    if [[ -x "$install_dir/crude" ]]; then
+        version_old=$(timeout 5 "$install_dir/crude" --version 2>/dev/null) || version_old=''
+        version_old=${version_old#crude }
+        version_old=${version_old%% (*}
+    fi
+    plan_stop
+    decide_window
+
+    # ---- Release ------------------------------------------------------------
     local work='' stage='' locked=0 lock=''
     # Invoked by the EXIT trap inside this installation subshell.
     # shellcheck disable=SC2317
@@ -292,149 +509,15 @@ EOF
         done
     fi
 
-    # ---- Optional desktop window -------------------------------------------
-    # One pinned terminal, configured to start Crude and nothing else. It is
-    # installed for this user only; no system package and no elevation.
-    wezterm_version='20240203-110809-5046fc22'
-    wezterm_sha256='142cb46de648200b852cc4b1d932e6b8f2a9d3c55f6dc5af44b6d4eeb9385f5c'
-    font_version='v3.5.1'
-    font_sha256='04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
-    data="${XDG_DATA_HOME:-$HOME/.local/share}/crude"
-    install_window() {
-        local root="$data/window"
-        local prefix="$root/wezterm-$wezterm_version"
-        local archive="$root/wezterm-$wezterm_version.Ubuntu22.04.tar.xz"
-        local font_archive="$root/JetBrainsMono-$font_version.tar.xz"
-        mkdir -p -- "$root"
-        if [[ ! -x "$prefix/usr/bin/wezterm" ]]; then
-            download --output "$archive" "https://github.com/wezterm/wezterm/releases/download/$wezterm_version/wezterm-$wezterm_version.Ubuntu22.04.tar.xz" || {
-                warn 'Window' 'cannot download the desktop window. Check your network connection'
-                return 1
-            }
-            local sum
-            sum=$(sha256sum "$archive")
-            if [[ "${sum%% *}" != "$wezterm_sha256" ]]; then
-                warn 'Window' 'the desktop window does not match its pinned checksum'
-                return 1
-            fi
-            tar -tvJf "$archive" > "$root/details" || { warn 'Window' 'the desktop window archive is damaged'; return 1; }
-            if grep -qEv '^[-d]' "$root/details"; then
-                warn 'Window' 'the desktop window archive holds links or special files'
-                return 1
-            fi
-            while IFS= read -r member; do
-                if [[ "$member" == /* || "/$member/" == *'/../'* ]]; then
-                    warn 'Window' 'the desktop window archive holds an unsafe path'
-                    return 1
-                fi
-            done < <(tar -tJf "$archive")
-            local unpack
-            unpack=$(mktemp -d "$root/.unpack.XXXXXXXX")
-            tar -xJf "$archive" --no-same-owner --no-same-permissions -C "$unpack"
-            rm -rf -- "$prefix"
-            # The archive holds one program tree in a 'wezterm' folder.
-            if [[ -d "$unpack/wezterm" ]]; then mv -T -- "$unpack/wezterm" "$prefix"; rm -rf -- "$unpack"; else mv -T -- "$unpack" "$prefix"; fi
-            rm -f -- "$archive" "$root/details"
-        fi
-        if ! "$prefix/usr/bin/wezterm" --version >/dev/null 2>&1; then
-            warn 'Window' 'the desktop window cannot start on this system'
-            say '  Install these packages, then run this installer again with --gui:'
-            say '    libxkbcommon0 libfontconfig1 libwayland-client0 libx11-6'
-            return 1
-        fi
-
-        # The font makes the file icons and box drawing in Crude align.
-        local fonts="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/JetBrainsMonoNerdFont" found=1
-        if [[ ! -d "$fonts" ]] || ! compgen -G "$fonts/*.ttf" >/dev/null; then
-            found=0
-            if download --output "$font_archive" "https://github.com/ryanoasis/nerd-fonts/releases/download/$font_version/JetBrainsMono.tar.xz"; then
-                local sum
-                sum=$(sha256sum "$font_archive")
-                if [[ "${sum%% *}" == "$font_sha256" ]]; then
-                    mkdir -p -- "$fonts"
-                    tar -xJf "$font_archive" --no-same-owner --no-same-permissions -C "$fonts" 2>/dev/null || true
-                    rm -f -- "$font_archive"
-                    # Keep one flat folder of fonts whatever the archive layout is.
-                    find "$fonts" -mindepth 2 -name '*.ttf' -exec mv -f -- {} "$fonts"/ \; 2>/dev/null || true
-                    find "$fonts" -mindepth 1 -type d -empty -delete 2>/dev/null || true
-                    if command -v fc-cache >/dev/null; then fc-cache --force >/dev/null 2>&1 || true; fi
-                    compgen -G "$fonts/*.ttf" >/dev/null && found=1
-                fi
-            fi
-        fi
-        [[ "$found" == 1 ]] || warn 'Font' 'JetBrainsMono Nerd Font is missing. File icons may look wrong'
-
-        local crude_bin="$install_dir/crude" lua="$root/wezterm.lua"
-        cat > "$lua" <<LUA
--- Written by the Crude installer. This window runs Crude only.
-local wezterm = require 'wezterm'
-return {
-    default_prog = { '$crude_bin' },
-    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
-    font_size = 13.0,
-    window_decorations = 'TITLE | RESIZE',
-    hide_tab_bar_if_only_one_tab = true,
-    window_close_confirmation = 'NeverPrompt',
-    check_for_updates = false,
-    audible_bell = 'Disabled',
-    keys = {
-        { key = 'n', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-    },
-}
-LUA
-        cat > "$install_dir/crude-window" <<LAUNCH
-#!/bin/sh
-# Open Crude in its own window. Nothing else runs here.
-exec "$prefix/usr/bin/wezterm" --config-file "$lua" start --always-new-process --class crude "\$@"
-LAUNCH
-        chmod 755 "$install_dir/crude-window"
-
-        local icon="$data/icons/crude.png"
-        if [[ -f "$stage/crude-icon.png" ]]; then
-            mkdir -p -- "$data/icons"
-            cp -- "$stage/crude-icon.png" "$icon"
-            [[ ! -f "$stage/crude-icon.svg" ]] || cp -- "$stage/crude-icon.svg" "$data/icons/crude.svg"
-        fi
-        if [[ -f "$icon" ]]; then
-            local themed="$HOME/.local/share/icons/hicolor/512x512/apps"
-            mkdir -p -- "$themed"
-            cp -- "$icon" "$themed/crude.png"
-        fi
-        local desktop="$HOME/.local/share/applications" icon_line=''
-        mkdir -p -- "$desktop"
-        # An Icon line must name a file that exists, or the menu shows a warning.
-        [[ ! -f "$icon" ]] || icon_line="Icon=$icon"
-        {
-            printf '%s\n' \
-                '[Desktop Entry]' \
-                'Type=Application' \
-                'Name=Crude' \
-                'Comment=Editor, terminals and AI agents in one window' \
-                "Exec=\"$install_dir/crude-window\""
-            [[ -z "$icon_line" ]] || printf '%s\n' "$icon_line"
-            printf '%s\n' 'Terminal=false' 'Categories=Development;IDE;' 'StartupWMClass=crude'
-        } > "$desktop/crude.desktop"
-        chmod 644 "$desktop/crude.desktop"
-        if command -v update-desktop-database >/dev/null; then update-desktop-database "$desktop" >/dev/null 2>&1 || true; fi
-        ok 'Window' 'Crude is in your application menu'
-        return 0
-    }
-    if [[ -z "$gui" ]]; then
-        # A machine with no graphical session cannot show the window, so do not
-        # download it or ask about it. An explicit --gui still installs it.
-        if ((accept)) || [[ -z ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
-            gui=0
-        elif ask 'Install the Crude window? It runs Crude in its own window and nothing else' y; then
-            gui=1
-        else
-            gui=0
-        fi
-    fi
-    if ((gui)); then
-        install_window || note 'Window' 'the window was not installed. Run this installer again with --gui'
+    # ---- The window --------------------------------------------------------
+    if [[ "$window_state" == install ]]; then
+        install_window || true
+    elif [[ -x "$window_launcher" ]]; then
+        note 'Window' 'not updated. Run this installer with --gui to update it'
+    elif ((window_asked)); then
+        note 'Window' 'not added'
     else
-        note 'Window' 'not installed. Run this installer with --gui to add it'
+        note 'Window' 'not added. Run this installer with --gui to add it'
     fi
 
     # ---- Summary -----------------------------------------------------------

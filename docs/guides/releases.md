@@ -94,28 +94,40 @@ this exact installation.
 
 No force path runs automatically, and no other program is signalled.
 
-### The desktop window
+### The window
 
-`--gui` adds a window that runs Crude and nothing else. Without `--gui` or
-`--no-gui`, an interactive terminal in a graphical session asks once and the
-default is yes. A session without a display does not ask and does not download.
+`--gui` adds a window that opens Crude. Once the window is installed, every
+later run of the installer updates it together with the program: the pinned
+terminal, the font, the configuration, the menu entry and the icon.
+
+Without `--gui` or `--no-gui`, a terminal in a graphical session asks one
+question, `Do you want the GUI version as well?`, and the default is yes. A
+session without a display does not ask and does not download. An unattended
+`--yes` run never starts a window download, and still updates a window that is
+already installed.
 
 - It installs one pinned WezTerm build for this user, after a checksum check.
   Linux gets `wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz` under
   `~/.local/share/crude/window`; Windows gets the matching zip under
   `%LOCALAPPDATA%\Crude\window`. No system package and no elevation.
-- It writes one configuration that starts the installed `crude` program, uses
-  JetBrainsMono Nerd Font first, hides the tab bar and disables the automatic
-  updater and the bell. Shell shortcuts cannot open a second terminal in that
-  window.
+- It writes one configuration that opens the installed `crude` program and
+  fills the desktop area, the way an application window opens. It uses
+  JetBrainsMono Nerd Font first, hides the tab bar, reports keys precisely, and
+  disables the automatic updater and the bell. The terminal does not act on
+  Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns those keys.
+  The launcher passes no arguments, so the window has one job. The
+  configuration is rewritten on every run, so an update keeps it current.
 - It adds `crude-window` next to the program, an application-menu entry with
   `StartupWMClass=crude` on Linux and `Crude.lnk` in the Start menu on Windows,
   and the Crude icon from the release archive.
 - It installs JetBrainsMono Nerd Font for this user only:
   `~/.local/share/fonts/JetBrainsMonoNerdFont` on Linux, a per-user font copy
-  plus one `HKCU` value on Windows.
-- A download, checksum or start failure reports the cause and keeps the program
-  install. It never leaves a half-written window folder.
+  plus one `HKCU` value on Windows. A version stamp skips a font that is
+  already current.
+- The new terminal is unpacked beside the old one, the old one is removed only
+  after the new one is in place, and an older pin is deleted. A download,
+  checksum or start failure reports the cause and keeps the program install, and
+  never leaves a half-written window folder.
 
 ### Files the installers change
 

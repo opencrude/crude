@@ -126,8 +126,10 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
     $install = Join-Path $Fixture.Directory 'install with spaces'
     $savedPath = $env:Path
     $savedLocalAppData = $env:LOCALAPPDATA
+    $savedAppData = $env:APPDATA
     $env:Path = 'C:\Windows\system32;C:\Machine Tools;C:\Existing User Tools'
     $env:LOCALAPPDATA = Join-Path $Fixture.Directory 'profile'
+    $env:APPDATA = Join-Path $Fixture.Directory 'appdata'
     function Assert-CrudePlatform { }
     function Get-CrudeSetupStatus { return [pscustomobject] @{ WindowsTerminal = $false; FontPresent = $false; FontsKnown = $false } }
     function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes) {
@@ -169,6 +171,7 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
     try { . $Action } finally {
         $env:Path = $savedPath
         $env:LOCALAPPDATA = $savedLocalAppData
+        $env:APPDATA = $savedAppData
     }
 }
 
@@ -291,6 +294,55 @@ try {
         }
     }
 
+    Test-Case 'the window question is one short line and an installed window stays current' {
+        With-Fixture (New-Fixture) {
+            Assert-Equal (Confirm-CrudeWindow -NoGui) 'skip' '-NoGui must not add the window'
+            Assert-Equal (Confirm-CrudeWindow -Gui) 'install' '-Gui must add the window'
+            $asked = $null
+            $defaultWasYes = $false
+            function Test-CrudeInteractive { return $true }
+            function Confirm-CrudeQuestion([string] $Question, [bool] $DefaultYes = $false) {
+                $script:asked = $Question
+                $script:defaultWasYes = $DefaultYes
+                return $false
+            }
+            Assert-Equal (Confirm-CrudeWindow) 'skip' 'A no answer adds nothing'
+            Assert-Equal $script:asked 'Do you want the GUI version as well?' 'The question must be one short line'
+            Assert-Equal $script:defaultWasYes $true 'The default answer must be yes'
+            # An installed window is updated on every run, with no question.
+            $paths = Get-CrudeWindowPaths
+            [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($paths.Link))
+            [IO.File]::WriteAllText($paths.Link, 'shortcut')
+            $script:asked = $null
+            Assert-Equal (Confirm-CrudeWindow) 'install' 'An installed window must keep itself current'
+            Assert-True ($null -eq $script:asked) 'An installed window must not ask again'
+        }
+    }
+
+    Test-Case 'a window update rewrites the configuration and drops older copies' {
+        With-Fixture (New-Fixture) {
+            $paths = Get-CrudeWindowPaths
+            $prefix = Join-Path $paths.Root "wezterm-$($paths.Version)"
+            $inner = Join-Path $prefix 'WezTerm-windows-20240203-110809-5046fc22'
+            [void] [IO.Directory]::CreateDirectory($inner)
+            [IO.File]::WriteAllText((Join-Path $inner 'wezterm-gui.exe'), 'window')
+            $old = Join-Path $paths.Root 'wezterm-20200101-000000-old'
+            [void] [IO.Directory]::CreateDirectory($old)
+            $fonts = Join-Path $paths.Root 'fonts'
+            [void] [IO.Directory]::CreateDirectory($fonts)
+            [IO.File]::WriteAllText((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
+            [IO.File]::WriteAllText((Join-Path $fonts '.crude-font'), $paths.FontVersion)
+            [IO.File]::WriteAllText((Join-Path $paths.Root 'wezterm.lua'), 'stale configuration')
+            $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
+            [void] [IO.Directory]::CreateDirectory($payload)
+            Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
+            Assert-True ([IO.File]::ReadAllText((Join-Path $paths.Root 'wezterm.lua')).Contains('default_prog')) 'An update must rewrite the configuration'
+            Assert-True (-not [IO.Directory]::Exists($old)) 'An update must remove an older pinned copy'
+            Assert-True ([IO.Directory]::Exists($prefix)) 'An update must keep the current pinned copy'
+            Assert-Equal $fixtureState.Attempts 0 'An update must not download a copy that is already present'
+        }
+    }
+
     Test-Case 'the window writes one configuration for the installed program' {
         With-Fixture (New-Fixture) {
             $savedLocalAppData = $env:LOCALAPPDATA
@@ -308,12 +360,14 @@ try {
                 [void] [IO.Directory]::CreateDirectory($payload)
                 [IO.File]::WriteAllText((Join-Path $payload 'crude-icon.ico'), 'icon')
                 # No download happens: the pinned window is already present.
-                Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Gui
+                Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
                 $lua = [IO.File]::ReadAllText((Join-Path $root 'wezterm.lua'))
                 $program = "default_prog = { " + [char] 39 + (Join-Path $install 'crude.exe') + [char] 39 + " }"
                 Assert-True ($lua.Contains($program)) "The window must start the installed program, got: $lua"
                 Assert-True ($lua.Contains('JetBrainsMono Nerd Font')) 'The window must prefer the installed Nerd Font'
                 Assert-True ($lua.Contains('check_for_updates = false')) 'The window must not update itself'
+                Assert-True ($lua.Contains('gui-startup')) 'The window must open as an application window'
+                Assert-True ($lua.Contains('enable_kitty_keyboard = true')) 'The window must report keys precisely'
                 Assert-True ([IO.File]::Exists((Join-Path $env:LOCALAPPDATA 'Crude/crude.ico'))) 'The window must carry the Crude icon'
             } finally { $env:LOCALAPPDATA = $savedLocalAppData }
         }
