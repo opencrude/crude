@@ -52,50 +52,93 @@ authentication, release signing or native-platform acceptance. Local `BuildID` /
 ## Install and update
 
 Download install.sh or install.ps1 from a **published release**, review it, then
-run it. No compiler, source checkout or elevation is required. Rerun to update.
-Default latest excludes GitHub prereleases; an explicit version can select one.
+run it. No compiler, source checkout or elevation is required. Run the same
+command again to update. The latest release is used unless you name a version;
+an explicit version can select a prerelease.
 
-| Option | Linux | Windows |
+| Action | Linux | Windows |
 |---|---|---|
-| Acknowledge active-development risks | `--accept-beta-risk` | `-AcceptBetaRisk` |
+| Accept the warning without a prompt | `--yes` | `-Yes` |
+| Add the desktop window | `--gui` | `-Gui` |
+| Do not add the desktop window | `--no-gui` | `-NoGui` |
+| Stop a running Crude without asking | `--stop` | `-Stop` |
+| Keep a running Crude open | `--no-stop` | `-NoStop` |
 | Exact version | `--version v0.1.0-beta.1` | `-Version v0.1.0-beta.1` |
 | Install directory | `--install-dir /absolute/path` or CRUDE_INSTALL_DIR | `-InstallDir <path>` |
 | Leave PATH alone | `--no-path` | `-NoPath` |
 | Public fork | `--repository owner/repo` | `-Repository owner/repo` |
 
-Consent is required on every installation/update. Without the flag, only a
-genuinely interactive terminal can accept by typing exactly yes. A piped or
-noninteractive invocation fails closed. The warning explicitly covers bugs,
-agent mistakes, work loss, independent backups and committing important work.
+The installer prints one short line per step: the download, the program, the
+stop, the window and the next command. It does not print a licence essay, a
+terminal-font lecture or a list of optional tools.
 
-- Linux installs under ~/.local/bin by default, retains redistribution notices
-  alongside it, and adds one idempotent PATH line to .profile and the active
-  Bash/Zsh rc file. Fish receives manual fish_add_path guidance. Use --no-path
-  for managed shell setups. A verified executable is published by same-directory
-  atomic rename. A stale installer lock requires manual inspection/removal.
-- Windows defaults to LOCALAPPDATA/Crude/bin, retains notices, holds a per-directory
-  lock, atomically replaces individual files (binary last), and rolls back failed
-  updates. Raw user PATH placeholders/value kind and the process PATH are
-  preserved; machine PATH is never changed. Interrupted/failed rollback retains
-  transaction preimages/backups and refuses another update until inspected.
-- Neither installer stops a core, deletes app data, installs fonts or changes
-  terminal settings. An update changes the executable, not a core already running
-  from a staged image. Finish agent work and close/stop the old core yourself
-  before opening the new cohort if a mismatch is reported. Automatic handover
-  refuses even idle retained workspaces and uses only the verified owner helper
-  with an exact generation fence; it never kills the core. All staged images
-  currently remain retained because unlink is not lifecycle proof, so disk use
-  may grow across updates. Never use force as an automatic updater step.
-- The opinionated setup advice recommends Kitty/Alacritty or Windows Terminal,
-  truecolor and JetBrainsMono Nerd Font **NF**, not NFM. Installed-font discovery
-  is advisory: the actual terminal font cannot be proven from an installer.
-  Missing/unverifiable prerequisites produce warnings, official install pointers
-  and an invitation to ask Crude itself to help, with explicit approval for changes.
+Consent is required on every installation and update. Without `--yes` an
+interactive terminal asks `Install anyway? [y/N]`. A piped or noninteractive
+invocation fails closed and states the flag that accepts the warning. The
+warning covers bugs, agent mistakes, work lost and the need for backups.
 
-`scripts/test_install.py` and `scripts/test_install.ps1` exercise real archives,
-checksums and file operations while intercepting transport. Native release jobs
-also install/repeat the actual platform package. Portable PowerShell fixtures do
-not establish native Windows registry, executable-lock or ConPTY acceptance.
+### A running Crude
+
+Crude keeps working in a detached core after a window closes, and that core
+runs the installed program. The installer finds only the processes that run
+this exact installation.
+
+- Without an answer it stops and changes nothing: close Crude and run the
+  installer again, or pass `--stop`.
+- With `--stop` it asks the core to stop, waits ten seconds, and only then asks
+  again before it forces the stop. A forced stop can lose text that was never
+  written to a file.
+- With `--no-stop` it installs the new program and leaves the old core running.
+  The new version starts at the next launch.
+
+No force path runs automatically, and no other program is signalled.
+
+### The desktop window
+
+`--gui` adds a window that runs Crude and nothing else. Without `--gui` or
+`--no-gui` an interactive terminal asks once, and the default is yes.
+
+- It installs one pinned WezTerm build for this user, after a checksum check.
+  Linux gets `wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz` under
+  `~/.local/share/crude/window`; Windows gets the matching zip under
+  `%LOCALAPPDATA%\Crude\window`. No system package and no elevation.
+- It writes one configuration that starts the installed `crude` program, uses
+  JetBrainsMono Nerd Font first, hides the tab bar and disables the automatic
+  updater and the bell. Shell shortcuts cannot open a second terminal in that
+  window.
+- It adds `crude-window` next to the program, an application-menu entry with
+  `StartupWMClass=crude` on Linux and `Crude.lnk` in the Start menu on Windows,
+  and the Crude icon from the release archive.
+- It installs JetBrainsMono Nerd Font for this user only:
+  `~/.local/share/fonts/JetBrainsMonoNerdFont` on Linux, a per-user font copy
+  plus one `HKCU` value on Windows.
+- A download, checksum or start failure reports the cause and keeps the program
+  install. It never leaves a half-written window folder.
+
+### Files the installers change
+
+- Linux installs under `~/.local/bin` by default and retains the
+  redistribution notices in `.crude-licenses` beside it. It adds one idempotent
+  PATH line to `.profile` and the active Bash/Zsh rc file; Fish receives a
+  `fish_add_path` line to run. `--no-path` leaves every shell file alone. The
+  verified program is published by same-directory atomic rename. A lock left by
+  a killed installer needs manual removal, and the message says so.
+- Windows defaults to `LOCALAPPDATA/Crude/bin`, retains notices, holds a
+  per-directory lock, replaces files one at a time with the program last, and
+  rolls back a failed update. The raw user PATH value and its registry kind and
+  the process PATH are preserved. Machine PATH is never changed. Interrupted
+  rollback keeps transaction preimages and refuses another update until you
+  inspect them.
+- Neither installer deletes application data, changes a core image, or stops
+  anything without the answer described above.
+
+`scripts/test_install.py` and `scripts/test_install.ps1` run the real installers
+against real archives, checksums and file operations and replace only the
+network client. They cover consent, an idempotent PATH, update in place, damaged
+archives, path traversal, links, a busy program, a refused stop, the window
+entry and a window checksum refusal. Native release jobs also install and repeat
+the actual platform package. Portable PowerShell fixtures do not establish
+native Windows registry, shortcut, executable-lock or ConPTY acceptance.
 
 ## Release modes
 

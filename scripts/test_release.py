@@ -22,7 +22,8 @@ class ReleaseTests(unittest.TestCase):
         self.stage.mkdir()
         self.output = self.root / "dist"
         self.output.mkdir()
-        for name in ("crude", "crude.exe", "LICENSE-MIT", "LICENSE-APACHE", "README.md"):
+        for name in ("crude", "crude.exe", "LICENSE-MIT", "LICENSE-APACHE", "README.md",
+                     "crude-icon.png", "crude-icon.svg", "crude-icon.ico"):
             (self.stage / name).write_text(name, encoding="utf-8")
         (self.stage / "licenses/dependency").mkdir(parents=True)
         (self.stage / "licenses/dependency/LICENSE").write_text("fixture", encoding="utf-8")
@@ -47,6 +48,9 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn("crude.exe", names)
             self.assertIn("licenses/dependency/LICENSE", names)
             self.assertIn("licenses/SYNTAX-QUERIES-NOTICE", names)
+            # The installers read these for the window icon and menu entry.
+            for icon in ("crude-icon.png", "crude-icon.svg", "crude-icon.ico"):
+                self.assertIn(icon, names)
             self.assertEqual(archive.extractfile("licenses/SYNTAX-QUERIES-NOTICE").read(),
                              (release.ROOT / "syntax/queries/NOTICE").read_bytes())
         with zipfile.ZipFile(windows) as archive:
@@ -81,6 +85,12 @@ class ReleaseTests(unittest.TestCase):
         (self.stage / "LICENSE-APACHE").unlink()
         with self.assertRaises(ValueError):
             release.package(self.stage, self.output, "v0.1.0", "linux")
+
+    def test_missing_icon_fails_closed(self):
+        (self.stage / "crude-icon.ico").unlink()
+        for target in release.TARGETS:
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                release.package(self.stage, self.output, "v0.1.0", target)
 
     def test_missing_embedded_query_notice_fails_closed(self):
         (self.stage / "licenses/SYNTAX-QUERIES-NOTICE").unlink()

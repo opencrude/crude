@@ -208,7 +208,7 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
     $marker = Join-Path $env:CRUDE_HOME '.crude/preserved.txt'
     [IO.File]::WriteAllText($marker, 'application data must survive install/update')
     try {
-        Install-Crude -AcceptBetaRisk -Version $Tag -InstallDir $install -NoPath
+        Install-Crude -Yes -NoGui -Version $Tag -InstallDir $install -NoPath
         $binary = Join-Path $install 'crude.exe'
         $version = Get-CrudeCandidateVersion $binary
         Assert-True ($version -cmatch ('\Acrude ' + [Regex]::Escape($Tag) + ' \([a-f0-9]{40}; [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z; windows/amd64\)\r?\n?\z')) 'Installed real release must report the requested version and native platform'
@@ -219,7 +219,7 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
         $installedHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
         $sentinelTime = [DateTime]::UtcNow.AddDays(-2)
         [IO.File]::SetLastWriteTimeUtc($binary, $sentinelTime)
-        Install-Crude -AcceptBetaRisk -Version $Tag -InstallDir $install -NoPath
+        Install-Crude -Yes -NoGui -Version $Tag -InstallDir $install -NoPath
         Assert-Equal (Get-Item -LiteralPath $binary).LastWriteTimeUtc $sentinelTime 'Identical real release must not replace installed executable'
         Assert-Equal (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash $installedHash 'Repeat installation must preserve verified executable bytes'
         Assert-Equal (Get-CrudeUserPath) $oldUser 'Real-release NoPath must not persist user PATH'
@@ -236,7 +236,7 @@ try {
         $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref] $null, [ref] $parseErrors)
         Assert-Equal @($parseErrors).Count 0 'PowerShell source must parse'
         $names = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        Assert-Equal ($names -join ',') 'Version,Repository,InstallDir,NoPath,AcceptBetaRisk' 'No HTTP or checksum bypass parameters are exposed'
+        Assert-Equal ($names -join ',') 'Version,Repository,InstallDir,NoPath,Yes,Gui,NoGui,Stop,NoStop' 'No HTTP or checksum bypass parameters are exposed'
         $batch = [IO.File]::ReadAllText((Join-Path (Split-Path $installer -Parent) 'install.bat'))
         Assert-True ($batch -match 'powershell\.exe.+-File "%~dp0install\.ps1" %\*') 'Batch must forward arguments to the adjacent installer'
         Assert-True ($batch -notmatch 'go build|setx|crude-beta') 'Batch must not build source or rewrite PATH'
@@ -246,42 +246,48 @@ try {
         With-Fixture (New-Fixture) {
             function Test-CrudeInteractive { return $false }
             function Read-Host { throw 'Noninteractive installation must never prompt' }
-            Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'consent is required.+-AcceptBetaRisk.+noninteractive'
+            Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'needs an answer.+-Yes'
             Assert-True (-not [IO.Directory]::Exists($install)) 'Missing consent must not create installation state'
             Assert-Equal $fixtureState.Attempts 0 'Missing consent must not download'
-            Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
             $fixtureState.Fixture = New-Fixture -Tag v2.3.4
             $attempts = $fixtureState.Attempts
-            Assert-Fails { Install-Crude -InstallDir $install -NoPath } '-AcceptBetaRisk'
+            Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'add -Yes'
             Assert-Equal $fixtureState.Attempts $attempts 'Update without consent must not download'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'Update without consent must preserve installed build'
         }
     }
 
-    Test-Case 'interactive consent accepts exactly lowercase yes and declines everything else' {
+    Test-Case 'interactive consent asks once and accepts y or yes in any letter case' {
         With-Fixture (New-Fixture) {
             function Test-CrudeInteractive { return $true }
             $answer = 'no'
             function Read-Host { return $answer }
-            foreach ($answer in @('no', 'YES', 'y', 'yes ', '')) {
-                Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'cancelled.+not accepted'
+            foreach ($decline in @('no', 'N', 'nope', '')) {
+                $answer = $decline
+                Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'did not accept the warning'
             }
             Assert-Equal $fixtureState.Attempts 0 'Rejected consent must not download'
-            $answer = 'yes'
-            Install-Crude -InstallDir $install -NoPath
-            Assert-True ([IO.File]::Exists((Join-Path $install 'crude.exe'))) 'Exact yes must permit interactive install'
+            foreach ($accept in @('y', 'Y', 'yes', 'YES')) {
+                $answer = $accept
+                Install-Crude -InstallDir $install -NoPath
+                Assert-True ([IO.File]::Exists((Join-Path $install 'crude.exe'))) "Answer '$accept' must permit interactive install"
+                Remove-Item -LiteralPath $install -Recurse -Force
+            }
         }
     }
 
-    Test-Case 'preferred setup warnings are actionable, non-mutating, and license identity is Apache' {
+    Test-Case 'reporting is short, states each step and the next command, and changes no setting' {
         With-Fixture (New-Fixture) {
-            # PowerShell 5.1 formats WarningRecords at the host width. Check
-            # the actual warning text, not line wraps inserted by Out-String.
-            $output = ((Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
-            foreach ($required in @('beta-testing', 'lose or corrupt work', 'Back up important data and commit', 'cannot guarantee', 'Windows Terminal', '24-bit truecolor', 'JetBrainsMono Nerd Font NF \(not NFM\)', 'DEVCOM.JetBrainsMonoNerdFont --exact', 'Without admin rights', 'Appearance > Font face', 'ask Crude itself', 'Apache-2.0 \(LICENSE-APACHE\)')) {
-                Assert-True ($output -match $required) "Installer output must explain '$required'"
+            $output = ((Install-Crude -Yes -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            $next = 'Next: run: ' + [Regex]::Escape((Join-Path $install 'crude.exe'))
+            foreach ($required in @('Version v1\.2\.3', 'Program', 'Window', 'Crude v1\.2\.3 is ready', $next, 'Run this installer again to update')) {
+                Assert-True ($output -match $required) "Installer output must state '$required'"
             }
-            Assert-Equal $fixtureState.UserWrites 0 'Setup advice with NoPath must not mutate user settings'
+            foreach ($absent in @('beta-testing', 'SETUP WARNING', 'Windows Terminal', 'winget', 'truecolor', 'ask Crude itself')) {
+                Assert-True ($output -notmatch $absent) "Installer output must not lecture about '$absent'"
+            }
+            Assert-Equal $fixtureState.UserWrites 0 'A NoPath install must not mutate user settings'
         }
     }
 
@@ -297,7 +303,7 @@ try {
                 $output = & $shell -NoLogo -NoProfile -NonInteractive -File $installer -InstallDir $destination 2>&1 | Out-String
             } finally { $ErrorActionPreference = $savedPreference }
             Assert-True ($LASTEXITCODE -ne 0) 'Unattended script must exit nonzero without consent'
-            Assert-True ($output -match '-AcceptBetaRisk') 'Entry point must explain explicit consent option'
+            Assert-True ($output -match '\-Yes') 'Entry point must explain explicit consent option'
             Assert-True (-not [IO.Directory]::Exists($destination)) 'Unattended entry must not create state'
         } else {
             . $installer
@@ -309,7 +315,7 @@ try {
         With-Fixture (New-Fixture) {
             $oldUser = $fixtureState.UserPath
             $oldProcess = $env:Path
-            Install-Crude -AcceptBetaRisk -InstallDir $install
+            Install-Crude -Yes -NoGui -InstallDir $install
             Assert-Equal $fixtureState.Calls[0] 'https://api.github.com/repos/opencrude/crude/releases/latest' 'Stable must resolve GitHub latest'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'The release executable must be installed'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'licenses/third-party/NOTICE.txt'))) 'third-party notice v1.2.3' 'Third-party notices must be installed'
@@ -320,7 +326,7 @@ try {
             $sentinelTime = [DateTime]::UtcNow.AddDays(-3)
             $binary.LastWriteTimeUtc = $sentinelTime
             [IO.File]::WriteAllText((Join-Path $install 'unrelated.txt'), 'keep me')
-            Install-Crude -AcceptBetaRisk -InstallDir $install
+            Install-Crude -Yes -NoGui -InstallDir $install
             Assert-Equal (Get-Item -LiteralPath $binary.FullName).LastWriteTimeUtc $sentinelTime 'Identical executable must not be replaced'
             Assert-Equal $fixtureState.UserWrites 1 'Repeated install must not duplicate or rewrite PATH'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'unrelated.txt'))) 'keep me' 'Unrelated files must survive'
@@ -332,7 +338,7 @@ try {
         With-Fixture (New-Fixture) {
             $oldUser = $fixtureState.UserPath
             $oldProcess = $env:Path
-            Install-Crude -AcceptBetaRisk -NoPath
+            Install-Crude -Yes -NoGui -NoPath
             $default = Join-Path $env:LOCALAPPDATA 'Crude/bin'
             Assert-True ([IO.File]::Exists((Join-Path $default 'crude.exe'))) 'Default must be LOCALAPPDATA/Crude/bin'
             Assert-Equal $fixtureState.UserPath $oldUser 'NoPath must preserve user PATH'
@@ -343,9 +349,9 @@ try {
 
     Test-Case 'repeat script updates to a newly published stable version' {
         With-Fixture (New-Fixture) {
-            Install-Crude -AcceptBetaRisk -InstallDir $install
+            Install-Crude -Yes -NoGui -InstallDir $install
             $fixtureState.Fixture = New-Fixture -Tag v2.3.4
-            Install-Crude -AcceptBetaRisk -InstallDir $install
+            Install-Crude -Yes -NoGui -InstallDir $install
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v2.3.4' 'Repeat install must update the executable'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'LICENSE-MIT'))) 'MIT license v2.3.4' 'Update must replace notices too'
             Assert-Equal $fixtureState.UserWrites 1 'Update must preserve idempotent user PATH'
@@ -355,7 +361,7 @@ try {
 
     Test-Case 'explicit prerelease version and repository override' {
         With-Fixture (New-Fixture -Tag v1.2.3-rc.1 -Repository 'example/fork') {
-            Install-Crude -AcceptBetaRisk -Version v1.2.3-rc.1 -Repository example/fork -InstallDir $install -NoPath
+            Install-Crude -Yes -NoGui -Version v1.2.3-rc.1 -Repository example/fork -InstallDir $install -NoPath
             Assert-Equal $fixtureState.Calls[0] 'https://api.github.com/repos/example/fork/releases/tags/v1.2.3-rc.1' 'Pinned release must resolve its exact tag'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3-rc.1' 'Explicit prerelease must install'
         }
@@ -364,10 +370,10 @@ try {
     Test-Case 'strict SemVer and repository validation happens before downloads' {
         With-Fixture (New-Fixture) {
             foreach ($bad in @('1.2.3', 'v01.2.3', 'v1.2', 'v1.2.3+build', 'v1.2.3-01', 'v1.2.3-rc..1', '../tag')) {
-                Assert-Fails { Install-Crude -AcceptBetaRisk -Version $bad -InstallDir $install -NoPath } 'Invalid version'
+                Assert-Fails { Install-Crude -Yes -NoGui -Version $bad -InstallDir $install -NoPath } 'Invalid version'
             }
             foreach ($bad in @('https://github.com/owner/repo', 'owner/repo/path', '../repo', 'owner/repo?x=1')) {
-                Assert-Fails { Install-Crude -AcceptBetaRisk -Repository $bad -InstallDir $install -NoPath } 'Repository must'
+                Assert-Fails { Install-Crude -Yes -NoGui -Repository $bad -InstallDir $install -NoPath } 'Repository must'
             }
             Assert-Equal $fixtureState.Attempts 0 'Invalid arguments must not reach HTTP'
             Assert-True (-not [IO.Directory]::Exists($install)) 'Invalid arguments must not create installation state'
@@ -376,14 +382,14 @@ try {
 
     Test-Case 'latest prerelease, draft, and tag mismatches fail closed' {
         With-Fixture (New-Fixture -Tag v1.2.3-rc.1) {
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'must be stable'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'must be stable'
             $fixtureState.Fixture.Metadata.draft = $true
             Save-FixtureMetadata $fixtureState.Fixture
-            Assert-Fails { Install-Crude -AcceptBetaRisk -Version v1.2.3-rc.1 -InstallDir $install -NoPath } 'stable and published'
+            Assert-Fails { Install-Crude -Yes -NoGui -Version v1.2.3-rc.1 -InstallDir $install -NoPath } 'stable and published'
             $fixtureState.Fixture.Metadata.draft = $false
             $fixtureState.Fixture.Metadata.tag_name = 'v9.9.9'
             Save-FixtureMetadata $fixtureState.Fixture
-            Assert-Fails { Install-Crude -AcceptBetaRisk -Version v1.2.3-rc.1 -InstallDir $install -NoPath } 'not the requested'
+            Assert-Fails { Install-Crude -Yes -NoGui -Version v1.2.3-rc.1 -InstallDir $install -NoPath } 'not the requested'
             Assert-True (-not [IO.File]::Exists((Join-Path $install 'crude.exe'))) 'Rejected releases must not install'
         }
     }
@@ -399,7 +405,7 @@ try {
                     'wrong-url' { $fixture.Metadata.assets[0].browser_download_url = 'http://example.invalid/payload.zip' }
                 }
                 Save-FixtureMetadata $fixture
-                Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'exactly one|unexpected download URL'
+                Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'exactly one|unexpected download URL'
                 Assert-Equal $fixtureState.ProbeCalls 0 'Invalid assets must not execute'
                 Assert-Equal $fixtureState.Attempts 1 'Invalid assets must not download payloads'
             }
@@ -409,7 +415,7 @@ try {
     Test-Case 'checksum mismatch, duplicate record, and missing record preserve old installation' {
         foreach ($mutation in @('mismatch', 'duplicate', 'missing', 'malformed')) {
             With-Fixture (New-Fixture) {
-                Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+                Install-Crude -Yes -NoGui -InstallDir $install -NoPath
                 $fixtureState.Fixture = New-Fixture -Tag v2.3.4
                 $fixture = $fixtureState.Fixture
                 $sums = Join-Path $fixture.Directory 'SHA256SUMS'
@@ -419,7 +425,7 @@ try {
                     'missing' { [IO.File]::WriteAllText($sums, (('0' * 64) + '  another.zip')) }
                     'malformed' { [IO.File]::WriteAllText($sums, 'not a SHA-256 checksum') }
                 }
-                Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'checksum mismatch|exactly one checksum|invalid checksum record'
+                Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'checksum mismatch|exactly one checksum|invalid checksum record'
                 Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'Checksum failure must keep old executable'
                 Assert-Equal $fixtureState.ProbeCalls 1 'Checksum failure must not execute new candidate'
                 Assert-NoStaging $install
@@ -442,7 +448,7 @@ try {
         )
         foreach ($entry in $entries) {
             With-Fixture (New-Fixture -ExtraEntries @($entry)) {
-                Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'Unsafe archive path|Duplicate archive path|links or special files'
+                Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'Unsafe archive path|Duplicate archive path|links or special files'
                 Assert-Equal $fixtureState.ProbeCalls 0 'Unsafe archive must not execute'
                 Assert-True (-not [IO.File]::Exists((Join-Path $install 'crude.exe'))) 'Unsafe archive must not install'
                 Assert-True (-not [IO.File]::Exists((Join-Path $fixtureState.Fixture.Directory 'escaped.txt'))) 'Traversal must not escape extraction'
@@ -459,7 +465,7 @@ try {
                 try { $zip.GetEntry($missing).Delete() } finally { $zip.Dispose() }
                 $hash = (Get-FileHash -LiteralPath $fixture.Archive -Algorithm SHA256).Hash
                 [IO.File]::WriteAllText((Join-Path $fixture.Directory 'SHA256SUMS'), "$hash *$($fixture.Asset)`n")
-                Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'missing root|missing third-party'
+                Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'missing root|missing third-party'
                 Assert-Equal $fixtureState.ProbeCalls 0 'Incomplete archive must not execute'
             }
         }
@@ -478,7 +484,7 @@ try {
                 [void] [IO.Directory]::CreateDirectory($install)
                 [IO.File]::WriteAllText((Join-Path $install 'crude.exe'), 'original executable')
                 $fixtureState.Fixture.VersionOutput = $output
-                Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install } 'does not identify|invalid release date'
+                Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install } 'does not identify|invalid release date'
                 Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'original executable' 'Candidate failure must leave executable untouched'
                 Assert-Equal $fixtureState.UserWrites 0 'Candidate failure must not change PATH'
                 Assert-NoStaging $install
@@ -489,13 +495,13 @@ try {
     Test-Case 'bounded retries clean partial responses and explain private/unpublished releases' {
         With-Fixture (New-Fixture) {
             $fixtureState.DownloadsFail = $true
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'no public release.+private.+3 attempts'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'no public release.+private.+3 attempts'
             Assert-Equal $fixtureState.Attempts 3 'Network failures must stop after three attempts'
             Assert-Equal $fixtureState.ProbeCalls 0 'Failed download must not execute'
             Assert-NoStaging $install
             $fixtureState.DownloadsFail = $false
             $fixtureState.TransientFailures = 1
-            Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
             Assert-Equal $fixtureState.Attempts 7 'A transient error must retry once then complete metadata, sums, and archive'
         }
     }
@@ -513,9 +519,9 @@ try {
         With-Fixture (New-Fixture) {
             [void] [IO.Directory]::CreateDirectory($install)
             $held = [IO.File]::Open((Join-Path $install '.crude-install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-            try { Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'installation lock.+Another installer' } finally { $held.Dispose() }
+            try { Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'installation lock.+Another installer' } finally { $held.Dispose() }
             Assert-Equal $fixtureState.Attempts 0 'Concurrent installer must not reach network'
-            Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
             Assert-True ([IO.File]::Exists((Join-Path $install 'crude.exe'))) 'Retry must succeed after lock release'
         }
     }
@@ -525,7 +531,7 @@ try {
             $unfinished = Join-Path $install '.crude-install-interrupted'
             [void] [IO.Directory]::CreateDirectory($unfinished)
             [IO.File]::WriteAllText((Join-Path $unfinished 'old.backup'), 'original work')
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'interrupted installation needs inspection'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'interrupted installation needs inspection'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $unfinished 'old.backup'))) 'original work' 'Recovery evidence must not be deleted'
             Assert-Equal $fixtureState.Attempts 0 'Unfinished transaction must fail before downloads'
         }
@@ -534,13 +540,13 @@ try {
     Test-Case 'PATH failure rolls back replaced executable, notices, and partial PATH writes' {
         foreach ($afterWrite in @($false, $true)) {
             With-Fixture (New-Fixture) {
-                Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+                Install-Crude -Yes -NoGui -InstallDir $install -NoPath
                 $oldUser = $fixtureState.UserPath
                 $oldProcess = $env:Path
                 $fixtureState.Fixture = New-Fixture -Tag v2.3.4
                 $fixtureState.PathWriteFailure = -not $afterWrite
                 $fixtureState.FailAfterPathWrite = $afterWrite
-                Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install } 'fixture .+PATH'
+                Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install } 'fixture .+PATH'
                 Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'PATH failure must roll back executable'
                 Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'LICENSE-APACHE'))) 'Apache license v1.2.3' 'PATH failure must roll back notices'
                 Assert-Equal $fixtureState.UserPath $oldUser 'PATH failure must restore original user PATH'
@@ -555,7 +561,7 @@ try {
             [void] [IO.Directory]::CreateDirectory($install)
             [IO.File]::WriteAllText((Join-Path $install 'keep.txt'), 'unrelated')
             $fixtureState.PathWriteFailure = $true
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install } 'fixture user PATH access denied'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install } 'fixture user PATH access denied'
             Assert-True (-not [IO.File]::Exists((Join-Path $install 'crude.exe'))) 'Failed first install must remove newly installed binary'
             Assert-True (-not [IO.Directory]::Exists((Join-Path $install 'licenses'))) 'Failed first install must remove newly created notice directories'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'keep.txt'))) 'unrelated' 'Rollback must not delete unrelated files'
@@ -565,7 +571,7 @@ try {
 
     Test-Case 'file replacement failure rolls back earlier notices and keeps binary' {
         With-Fixture (New-Fixture) {
-            Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
             $fixtureState.Fixture = New-Fixture -Tag v2.3.4
             $realSetFiles = ${function:Set-CrudeFiles}
             function Set-CrudeFiles($Transaction) {
@@ -573,7 +579,7 @@ try {
                 [IO.File]::Delete($binaryChange.Source)
                 & $realSetFiles $Transaction
             }
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'No changes to the previous installation'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'No changes to the previous installation'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'Failed final replacement must leave original binary'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'LICENSE-MIT'))) 'MIT license v1.2.3' 'Earlier replacement must be rolled back'
             Assert-NoStaging $install
@@ -582,13 +588,13 @@ try {
 
     Test-Case 'rollback refuses later work and retains backups for manual recovery' {
         With-Fixture (New-Fixture) {
-            Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
             $fixtureState.Fixture = New-Fixture -Tag v2.3.4
             function Set-CrudeUserPath([string] $Value) {
                 [IO.File]::WriteAllText((Join-Path $install 'crude.exe'), 'later independent edit')
                 throw 'fixture error after independent file edit'
             }
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install } 'Rollback needs attention.+Backups and transaction details are retained'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install } 'Rollback needs attention.+Backups and transaction details are retained'
             Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'later independent edit' 'Rollback must preserve later changes'
             $retained = @([IO.Directory]::GetDirectories($install, '.crude-install-*'))
             Assert-Equal $retained.Count 1 'Failed rollback must retain transaction directory'
@@ -658,29 +664,29 @@ class VersionFixture {
                 $probeAst = [Management.Automation.Language.Parser]::ParseFile($installer, [ref] $null, [ref] $null)
                 $probe = $probeAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-CrudeCandidateVersion' }, $false)
                 . ([scriptblock]::Create($probe.Extent.Text))
-                Install-Crude -AcceptBetaRisk -Version v1.2.3 -InstallDir $install -NoPath
+                Install-Crude -Yes -NoGui -Version v1.2.3 -InstallDir $install -NoPath
                 Assert-Equal (Get-CrudeCandidateVersion (Join-Path $install 'crude.exe')) $fixture.VersionOutput.Replace("`n", "`r`n") 'Installed native binary must report the verified version'
             }
         }
 
         Test-Case 'native locked binary failure is actionable and rolls back notices' {
             With-Fixture (New-Fixture) {
-                Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+                Install-Crude -Yes -NoGui -InstallDir $install -NoPath
                 $fixtureState.Fixture = New-Fixture -Tag v2.3.4
                 $held = [IO.File]::Open((Join-Path $install 'crude.exe'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
                 try {
-                    Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath } 'close the Crude shells/cores.+retry'
+                    Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'close the Crude shells/cores.+retry'
                     Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'Locked binary must be preserved'
                     Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'LICENSE-MIT'))) 'MIT license v1.2.3' 'Notices must roll back when binary is locked'
                 } finally { $held.Dispose() }
-                Install-Crude -AcceptBetaRisk -InstallDir $install -NoPath
+                Install-Crude -Yes -NoGui -InstallDir $install -NoPath
                 Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v2.3.4' 'Retry after closing lock must update'
             }
         }
     } else {
         Test-Case 'non-Windows entry point rejects unsupported platform without downloads' {
             . $installer
-            Assert-Fails { Install-Crude -AcceptBetaRisk -InstallDir (Join-Path $root 'unsupported') } 'supports Windows x64.+only'
+            Assert-Fails { Install-Crude -Yes -NoGui -InstallDir (Join-Path $root 'unsupported') } 'supports Windows x64.+only'
             Assert-True (-not [IO.Directory]::Exists((Join-Path $root 'unsupported'))) 'Unsupported platform must not create install state'
         }
         Write-Host 'SKIP native Windows architecture/EXE/locked-binary checks (run this script on Windows PowerShell 5.1 and PowerShell 7).'
