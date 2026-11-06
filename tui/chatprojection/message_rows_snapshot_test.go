@@ -208,3 +208,90 @@ func TestLargeTranscriptMaterializesProgressivelyWithinBudget(t *testing.T) {
 		t.Fatalf("settled height %d should exceed estimated %d", settled.ContentHeight, first.ContentHeight)
 	}
 }
+
+func TestMessageRowVersionNamesTheRenderThatProducedTheLines(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 10)
+	r.SetSize(60, 20)
+	messages := []types.ChatMessage{{InternalID: "a", Role: types.RoleAssistant, Content: "first", Time: time.Now()}, {InternalID: "b", Role: types.RoleAssistant, Content: "second", Time: time.Now()}}
+	r.SyncMessages(messages, 1, 0)
+	// Exported rows are borrowed and updated in place, so read versions now.
+	versions := func() (uint64, uint64) {
+		rows := r.ExportMessageRowsSnapshot(56).Rows
+		return rows[0].Version, rows[1].Version
+	}
+	a1, b1 := versions()
+	if a1 == 0 || b1 == 0 || a1 == b1 {
+		t.Fatalf("rendered rows need distinct nonzero versions: %d %d", a1, b1)
+	}
+	if a, b := versions(); a != a1 || b != b1 {
+		t.Fatal("an unchanged transcript changed row versions")
+	}
+	r.InvalidateItem("b")
+	a2, b2 := versions()
+	if a2 != a1 {
+		t.Fatal("invalidating one message changed another row's version")
+	}
+	if b2 == b1 {
+		t.Fatal("a re-rendered row kept its old version")
+	}
+	messages[1].Content = "second, edited"
+	r.SyncMessages(messages, 2, 0)
+	if a3, b3 := versions(); a3 != a1 || b3 == b2 {
+		t.Fatalf("an edit must renew only the edited row: %d %d", a3, b3)
+	}
+}
+
+func TestSettleHistoryDrawsRowsThatAWidthReflowLeftBlank(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 6)
+	r.SetSize(80, 20)
+	r.MaterializeBudget = time.Nanosecond // history draws slower than the first frames
+	messages := make([]types.ChatMessage, 40)
+	for i := range messages {
+		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant, Content: fmt.Sprintf("message %d with a needle", i), Time: time.Now()}
+	}
+	r.SyncMessages(messages, 1, 0)
+	scroll := ui.NewScrollModel()
+	r.BindScroll(scroll)
+	first := r.ExportMessageRowsSnapshot(76)
+	scroll.SetContent(first.ContentHeight)
+	scroll.SetViewport(6)
+	scroll.SetAutoScroll(false)
+	scroll.ScrollTo(0)
+	blank := func() int {
+		n := 0
+		for _, row := range r.ExportMessageRowsSnapshot(r.width - 4).Rows {
+			if row.Version == 0 {
+				n++
+			}
+		}
+		return n
+	}
+	r.SetSize(60, 20) // width-only reflow: offscreen rows stay undrawn until exposed
+	if before := blank(); before == 0 {
+		t.Fatal("setup: every row was drawn, nothing left for find to wait for")
+	}
+	for range 10 {
+		if blank() == 0 {
+			t.Fatal("a width reflow alone must not draw history; the test would prove nothing")
+		}
+	}
+	r.MaterializeBudget = 0 // the default budget
+	r.SettleHistory()
+	if !r.Materializing() {
+		t.Fatal("settling history must keep frames coming")
+	}
+	for i := 0; i < 400 && blank() > 0; i++ {
+	}
+	if n := blank(); n != 0 {
+		t.Fatalf("%d rows are still blank after history settled", n)
+	}
+	if r.Materializing() {
+		t.Fatal("the renderer still asks for frames after history settled")
+	}
+	r.SettleHistory() // nothing pending: must be a no-op
+	if r.Materializing() {
+		t.Fatal("settling twice woke the renderer")
+	}
+}

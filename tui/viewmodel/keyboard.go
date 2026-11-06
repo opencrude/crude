@@ -692,6 +692,14 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 }
 
 func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
+	// A focused find field owns every key, Esc included.
+	if _, host := m.chatFindOwner(); host != nil {
+		return m.routeChatFind(host, msg)
+	}
+	if m.chatFindChord(msg) {
+		m.openChatFind()
+		return m, nil
+	}
 	// Chat input copy/cut/clear chords are owned by the composer's
 	// TextArea (see tui/input applyClipboardChord): Ctrl+C and Ctrl+Shift+C
 	// copy a live selection, Ctrl+C with no selection clears the draft, and
@@ -922,6 +930,10 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmds...)
+	}
+
+	if _, host := m.chatFindOwner(); host != nil && m.focusTarget() != FocusFloatingWindow {
+		return m.routeChatFind(host, msg)
 	}
 
 	// FocusInput / FocusNone → route to chat input. Other root-host focus

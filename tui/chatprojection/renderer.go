@@ -27,6 +27,10 @@ type Renderer struct {
 	sync       *MessageSync
 	theme      *theme.Theme
 	sourceID   uint64
+	// renderSeq stamps every item render. It never repeats within this
+	// Renderer, so a replaced item cannot reuse the stamp of the one it
+	// replaced.
+	renderSeq uint64
 
 	chatAreaTop    int
 	chatAreaHeight int
@@ -1298,8 +1302,13 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 			toggleLine = 1
 		}
 	}
+	version := item.Version
+	if len(item.Rendered) == 0 {
+		version = 0
+	}
 	return MessageRow{
 		ID:                   item.ID,
+		Version:              version,
 		Lines:                lines,
 		Native:               native,
 		SubPaneID:            subPaneID,
@@ -1472,6 +1481,8 @@ func (r *Renderer) PaneScrollMaxOffset() int {
 }
 
 func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
+	r.renderSeq++
+	item.Version = r.renderSeq
 	item.PaneLines = nil
 	if group, ok := item.Data.(*activityGroup); ok {
 		lines, native := r.renderActivity(group)
@@ -1953,6 +1964,20 @@ func (r *Renderer) materializeOffscreen(width int) {
 		r.vl.ScrollTo(line)
 		r.syncScrollFromVL()
 	}
+}
+
+// SettleHistory lets every offscreen row render at the current width, nearest
+// the view first and within the same per-frame budget as any other history. A
+// width-only reflow otherwise leaves rows that were never drawn blank until the
+// user scrolls to them, and text find needs their text. It is a no-op once no
+// reflow is pending, so a consumer may call it every frame it still waits.
+func (r *Renderer) SettleHistory() {
+	if r == nil || !r.lazyWidthReflow {
+		return
+	}
+	r.lazyWidthReflow = false
+	r.materializing = true
+	r.materializedAt = time.Now()
 }
 
 // Materializing reports whether offscreen history is still rendering in

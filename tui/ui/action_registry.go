@@ -789,6 +789,16 @@ var defaultActions = []*ActionDef{
 		DisplayOnly:  true,
 	},
 	{
+		ID:           "chat.find",
+		Label:        "Find in chat",
+		Description:  "search the conversation shown in this chat",
+		Category:     "Chat",
+		FocusContext: "chat",
+		Bindings:     []KeyBinding{{Key: "ctrl+f"}},
+		HintKey:      "Ctrl+F",
+		Contextual:   true,
+	},
+	{
 		ID:           "chat.toggle-details",
 		Label:        "Expand/collapse details",
 		Description:  "toggle the newest expandable chat block",

@@ -43,6 +43,11 @@ BenchmarkNativeSyntaxIncremental 700000 96
 BenchmarkNativeSyntaxColdSession 72000 640
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
+# Chat find over 20 000 messages: counting reads text into reused buffers (the
+# allocations are the benchmark query and rows, not the scan); a streaming frame
+# recounts one row.
+BenchmarkChatFindCount_20000Rows 4500 3
+BenchmarkChatFindStreamFrame_20000Rows 450 6
 BenchmarkFooterOverflowPaint 200 17
 # Scenario benches (tui/viewmodel): steady-state work budgets.
 BenchmarkIdleTick_200Msgs 15000 325
