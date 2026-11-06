@@ -490,9 +490,6 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if m.gitPanelOpen() && m.termDockFocused {
 		return []ui.HintSegment{ui.ChordSeg("Space", "stage"), ui.ChordSeg("Enter", "review"), ui.ChordSeg("C", "commit message"), ui.ChordSeg("Tab", "next area")}
 	}
-	if screen, _ := m.chatFindOwner(); screen != nil {
-		return chatFindHints()
-	}
 	if m.isGitReviewActive() && m.focusTarget() == FocusInput {
 		return []ui.HintSegment{ui.ChordSeg("]/[", "file"), ui.ChordSeg("n/p", "hunk"), ui.ChordSeg("V", "split"), ui.ChordSeg("Esc", "back")}
 	}

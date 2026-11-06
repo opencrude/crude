@@ -34,7 +34,7 @@ func BenchmarkChatFindCount_20000Rows(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		f.setQuery(fmt.Sprintf("needle%d", i&1), -1)
+		f.setQuery(fmt.Sprintf("needle%d", i&1), FindOptions{}, -1)
 		f.observe(rows, 1, false)
 		if f.pending(len(rows)) {
 			b.Fatal("count did not finish")
@@ -48,7 +48,7 @@ func BenchmarkChatFindCount_20000Rows(b *testing.B) {
 func BenchmarkChatFindStreamFrame_20000Rows(b *testing.B) {
 	rows := denseChat(20000, 4)
 	f := chatFind{limit: time.Hour}
-	f.setQuery("needle", -1)
+	f.setQuery("needle", FindOptions{}, -1)
 	f.observe(rows, 1, false)
 	last := len(rows) - 1
 	b.ReportAllocs()

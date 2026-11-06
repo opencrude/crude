@@ -38,8 +38,14 @@ func TestFindRevealsExactPaintedSubstringAndClearsStaleQuery(t *testing.T) {
 	s.after.horizontal.ScrollTo(90)
 	h.Paint(buf)
 	x = s.after.Bounds().X + s.after.gutter() + 91 - s.after.horizontal.Offset()
-	if c := buf.Get(x+7, 1); c.BG != s.tokens.Color(ui.ColorWarning) {
-		t.Fatal("inactive occurrence not distinguished")
+	// Every match is marked; the inactive one must be visibly its own color and
+	// not the accent the selected match uses.
+	inactive := s.tokens.FindMatchFill(false)
+	if inactive == s.tokens.FindMatchFill(true) {
+		t.Fatal("inactive and selected matches must not share a fill")
+	}
+	if c := buf.Get(x+7, 1); c.BG != inactive {
+		t.Fatalf("inactive occurrence bg %v, want %v", c.BG, inactive)
 	}
 	s.SetQuery("absent")
 	settleSearch(t, s)

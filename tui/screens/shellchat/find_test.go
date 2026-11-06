@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -40,7 +38,7 @@ func settle(t *testing.T, f *chatFind, rows []chatprojection.MessageRow) {
 func TestFindIgnoresCaseAndKeepsSourceOffsets(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "Voilà l'ÉCOLE du Zoo")}
 	var f chatFind
-	f.setQuery("école", -1)
+	f.setQuery("école", FindOptions{}, -1)
 	settle(t, &f, rows)
 	if f.total != 1 {
 		t.Fatalf("total=%d", f.total)
@@ -51,10 +49,49 @@ func TestFindIgnoresCaseAndKeepsSourceOffsets(t *testing.T) {
 	}
 }
 
+func TestFindHonorsTheCaseWholeWordAndRegexToggles(t *testing.T) {
+	rows := []chatprojection.MessageRow{findRow("a", 1, "Cat cat catalog CAT")}
+	cases := []struct {
+		name  string
+		query string
+		opts  FindOptions
+		want  int
+	}{
+		{"folded", "cat", FindOptions{}, 4},
+		{"case", "cat", FindOptions{CaseSensitive: true}, 2},
+		{"word", "cat", FindOptions{WholeWord: true}, 3},
+		{"word and case", "cat", FindOptions{CaseSensitive: true, WholeWord: true}, 1},
+		{"regex", "c.t", FindOptions{Regex: true}, 4},
+		{"regex case", "C.T", FindOptions{Regex: true, CaseSensitive: true}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var f chatFind
+			f.setQuery(tc.query, tc.opts, -1)
+			settle(t, &f, rows)
+			if f.total != tc.want {
+				t.Fatalf("query %q with %+v found %d, want %d", tc.query, tc.opts, f.total, tc.want)
+			}
+		})
+	}
+}
+
+func TestFindReportsAnInvalidRegularExpression(t *testing.T) {
+	var f chatFind
+	f.setQuery("a(", FindOptions{Regex: true}, -1)
+	if f.err == "" {
+		t.Fatal("an invalid regular expression must report an error")
+	}
+	settle(t, &f, []chatprojection.MessageRow{findRow("a", 1, "a(")})
+	if f.total != 0 {
+		t.Fatalf("an invalid expression matched %d rows", f.total)
+	}
+}
+
 func TestFindMatchesAPhraseThatWrapsOntoTheNextLine(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "the quick brown", "    fox jumps over", "the lazy dog")}
 	var f chatFind
-	f.setQuery("brown fox", -1)
+	f.setQuery("brown fox", FindOptions{}, -1)
 	settle(t, &f, rows)
 	if f.total != 1 {
 		t.Fatalf("a wrapped phrase must match once, got %d", f.total)
@@ -71,7 +108,7 @@ func TestFindMatchesAPhraseThatWrapsOntoTheNextLine(t *testing.T) {
 func TestFindDoesNotJoinAcrossAParagraphBreak(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "alpha", "", "beta")}
 	var f chatFind
-	f.setQuery("alpha beta", -1)
+	f.setQuery("alpha beta", FindOptions{}, -1)
 	settle(t, &f, rows)
 	if f.total != 0 {
 		t.Fatalf("a blank line separates paragraphs, got %d matches", f.total)
@@ -81,7 +118,7 @@ func TestFindDoesNotJoinAcrossAParagraphBreak(t *testing.T) {
 func TestFindCountsEveryNonOverlappingMatchInARow(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "aaaa aa"), findRow("b", 2, "no hit"), findRow("c", 3, "AA")}
 	var f chatFind
-	f.setQuery("aa", -1)
+	f.setQuery("aa", FindOptions{}, -1)
 	settle(t, &f, rows)
 	if f.total != 4 || f.counts[0] != 3 || f.counts[1] != 0 || f.counts[2] != 1 {
 		t.Fatalf("total=%d counts=%v", f.total, f.counts)
@@ -91,7 +128,7 @@ func TestFindCountsEveryNonOverlappingMatchInARow(t *testing.T) {
 func TestFindRecountsOnlyRowsWhoseVersionChanged(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "needle"), findRow("b", 2, "needle")}
 	var f chatFind
-	f.setQuery("needle", -1)
+	f.setQuery("needle", FindOptions{}, -1)
 	settle(t, &f, rows)
 	// The streaming row is replaced under a new version; the other row's lines
 	// change in place but keep their version, so they must not be read again.
@@ -112,7 +149,7 @@ func TestFindResumesAnUnfinishedPassOnTheNextFrame(t *testing.T) {
 		rows[i] = findRow(string(rune('A'+i%26))+strings.Repeat("x", i/26), uint64(i+1), "line with needle")
 	}
 	f := chatFind{limit: time.Nanosecond}
-	f.setQuery("needle", -1)
+	f.setQuery("needle", FindOptions{}, -1)
 	f.observe(rows, 1, false)
 	if !f.pending(len(rows)) || f.total == 0 || f.total >= len(rows) {
 		t.Fatalf("first frame should count part of the history: pending=%v total=%d", f.pending(len(rows)), f.total)
@@ -133,7 +170,7 @@ func TestFindRowsChangingMidPassAreRecountedByTheNextPass(t *testing.T) {
 		rows[i] = findRow(string(rune(i+1)), uint64(i+1), "needle")
 	}
 	f := chatFind{limit: time.Nanosecond}
-	f.setQuery("needle", -1)
+	f.setQuery("needle", FindOptions{}, -1)
 	f.observe(rows, 1, false)
 	rows[0] = findRow(rows[0].ID, 1000, "needle needle") // behind the cursor
 	f.observe(rows, 1, true)
@@ -148,7 +185,7 @@ func TestFindRowsChangingMidPassAreRecountedByTheNextPass(t *testing.T) {
 func TestFindStepWrapsInBothDirectionsAndKeepsItsRowWhenRowsShift(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "x"), findRow("b", 2, "hit hit"), findRow("c", 3, "x"), findRow("d", 4, "hit")}
 	var f chatFind
-	f.setQuery("hit", -1)
+	f.setQuery("hit", FindOptions{}, -1)
 	settle(t, &f, rows)
 	starts := []int{0, 1, 2, 3}
 	if !f.selectNear(rows, starts, 0) || f.cur.id != "b" || f.cur.match != 0 {
@@ -173,7 +210,7 @@ func TestFindStepWrapsInBothDirectionsAndKeepsItsRowWhenRowsShift(t *testing.T) 
 func TestFindSelectsTheMatchNearestTheAnchorAndPrefersTheEarlierOnATie(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "hit"), findRow("b", 2, "x"), findRow("c", 3, "hit")}
 	var f chatFind
-	f.setQuery("hit", -1)
+	f.setQuery("hit", FindOptions{}, -1)
 	settle(t, &f, rows)
 	if !f.selectNear(rows, []int{0, 1, 2}, 1) || f.cur.id != "a" {
 		t.Fatalf("a tie must choose the earlier match: %+v", f.cur)
@@ -183,36 +220,29 @@ func TestFindSelectsTheMatchNearestTheAnchorAndPrefersTheEarlierOnATie(t *testin
 	}
 }
 
-func TestFindStatusTellsTheStateAndTheNextStep(t *testing.T) {
+func TestFindStatusSpeaksOnlyWhileItLacksAPhase(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "one hit"), {ID: "b"}}
 	f := chatFind{limit: time.Nanosecond}
-	if f.status(2) != "" {
+	if f.findStatusText() != "" {
 		t.Fatal("no query, no status")
 	}
-	f.setQuery("hit", -1)
-	if f.status(2) != "Searching…" {
-		t.Fatalf("status before counting: %q", f.status(2))
+	f.setQuery("hit", FindOptions{}, -1)
+	if got := f.findStatusText(); got != "Searching…" {
+		t.Fatalf("status while counting: %q", got)
 	}
 	settle(t, &f, rows)
-	if got := f.status(2); got != "1 match · loading" {
+	if got := f.findStatusText(); got != "1 match · loading" {
 		t.Fatalf("a row without rendered lines is still loading: %q", got)
 	}
-	f.selectNear(rows, []int{0, 1}, 0)
-	if got := f.status(2); got != "1 of 1 · loading" {
+	f.setQuery("zzz", FindOptions{}, -1)
+	settle(t, &f, rows)
+	if got := f.findStatusText(); got != "No results · loading" {
 		t.Fatalf("status=%q", got)
 	}
-	f.setQuery("zzz", -1)
-	settle(t, &f, rows)
-	if got := f.status(2); got != "No matches yet · loading" {
-		t.Fatalf("status=%q", got)
-	}
-	f.setQuery("hit", -1)
-	rows[1] = findRow("b", 2, "nothing")
-	settle(t, &f, rows)
-	f.setQuery("zzz", -1)
-	settle(t, &f, rows)
-	if got := f.status(2); got != "No matches" {
-		t.Fatalf("status=%q", got)
+	f.setQuery("hit", FindOptions{}, -1)
+	settle(t, &f, []chatprojection.MessageRow{findRow("a", 1, "one hit")})
+	if got := f.findStatusText(); got != "" {
+		t.Fatalf("a settled count lets the window state it: %q", got)
 	}
 }
 
@@ -220,7 +250,7 @@ func TestFindDropsEverythingWhenTheRowSourceChanges(t *testing.T) {
 	first := []chatprojection.MessageRow{findRow("a", 1, "hit")}
 	second := []chatprojection.MessageRow{findRow("a", 1, "miss")}
 	var f chatFind
-	f.setQuery("hit", -1)
+	f.setQuery("hit", FindOptions{}, -1)
 	f.observe(first, 1, false)
 	for f.pending(1) {
 		f.observe(first, 1, false)
@@ -237,7 +267,27 @@ func TestFindDropsEverythingWhenTheRowSourceChanges(t *testing.T) {
 	}
 }
 
-// ---- Screen journey -------------------------------------------------------
+func TestFindForgetsRemovedRowsWhenTheTranscriptShrinksAndGrowsAgain(t *testing.T) {
+	rows := []chatprojection.MessageRow{findRow("a", 1, "hit"), findRow("b", 2, "hit"), findRow("c", 3, "hit")}
+	var f chatFind
+	f.setQuery("hit", FindOptions{}, -1)
+	settle(t, &f, rows)
+	f.observe(rows[:1], 1, true)
+	for f.pending(1) {
+		f.observe(rows[:1], 1, false)
+	}
+	// Two new rows with no match must not inherit the counts of the removed ones.
+	grown := []chatprojection.MessageRow{rows[0], findRow("x", 2, "miss"), findRow("y", 3, "miss")}
+	f.observe(grown, 1, true)
+	for f.pending(len(grown)) {
+		f.observe(grown, 1, false)
+	}
+	if f.total != 1 || f.counts[1] != 0 || f.counts[2] != 0 {
+		t.Fatalf("total=%d counts=%v, want only the first row to match", f.total, f.counts)
+	}
+}
+
+// ---- Screen API ---------------------------------------------------------
 
 type findFixture struct {
 	t    *testing.T
@@ -263,44 +313,19 @@ func newFindFixture(t *testing.T, rows []chatprojection.MessageRow, viewport int
 	return f
 }
 
-// sync mirrors one viewmodel frame: size the transcript, install rows, lay out.
+// sync mirrors one viewmodel frame: size the transcript and install the rows.
 func (f *findFixture) sync(bottom bool) {
 	contentH := 0
 	for _, row := range f.rows {
 		contentH += max(1, len(row.Lines))
 	}
-	f.s.SyncScrollMetrics(f.s.TranscriptRows(f.h), contentH)
+	f.s.SyncScrollMetrics(f.h-ActivityRows(f.h), contentH)
 	if bottom {
 		f.s.StickToBottom()
 	}
 	f.s.SetMessages(f.rows, PaintParams{Compose: ComposeParams{InnerW: 40, PadLR: f.pad, Theme: f.th}})
 	f.host.MarkLayout()
 	f.host.Layout()
-}
-
-func (f *findFixture) key(text string, code rune) ui.EventResult {
-	f.t.Helper()
-	res := f.host.Handle(tea.KeyPressMsg{Code: code, Text: text})
-	f.sync(false)
-	return res
-}
-
-func (f *findFixture) typeQuery(query string) {
-	f.t.Helper()
-	for _, r := range query {
-		f.key(string(r), r)
-	}
-}
-
-func (f *findFixture) open() {
-	f.t.Helper()
-	f.s.OpenFind()
-	f.host.MarkLayout()
-	f.host.Layout()
-	if !f.host.Focus(f.s.FindID()) {
-		f.t.Fatal("the find bar did not mount")
-	}
-	f.sync(false)
 }
 
 func (f *findFixture) paint() *surface.CellBuffer {
@@ -310,10 +335,12 @@ func (f *findFixture) paint() *surface.CellBuffer {
 	return buf
 }
 
-// rowOnScreen reports the screen row showing global line g, or -1.
+// rowOnScreen reports the screen row showing global line g, or -1. Chat
+// content sticks to the bottom when it is shorter than the viewport.
 func (f *findFixture) rowOnScreen(g int) int {
-	y := g - f.s.ScrollModel().Offset()
-	if y < 0 || y >= f.s.ScrollModel().Viewport() {
+	scroll := f.s.ScrollModel()
+	y := max(0, scroll.Viewport()-scroll.Content()) + g - scroll.Offset()
+	if y < 0 || y >= scroll.Viewport() {
 		return -1
 	}
 	return y
@@ -329,6 +356,21 @@ func (f *findFixture) cellAt(g, col int) (fg, bg string) {
 	return c.FG.ANSIFG(), c.BG.ANSIBG()
 }
 
+// search opens find with a query and runs the frames the shell would run
+// until the count settles.
+func (f *findFixture) search(query string, opts FindOptions) {
+	f.t.Helper()
+	f.s.OpenFind()
+	f.s.SetFindQuery(query, opts)
+	for i := 0; i < 2000 && f.s.find.pending(len(f.s.rows)); i++ {
+		f.sync(false)
+	}
+	if f.s.find.pending(len(f.s.rows)) {
+		f.t.Fatal("find never settled")
+	}
+	f.sync(false)
+}
+
 func longChat() []chatprojection.MessageRow {
 	rows := make([]chatprojection.MessageRow, 30)
 	for i := range rows {
@@ -339,110 +381,103 @@ func longChat() []chatprojection.MessageRow {
 	return rows
 }
 
-func TestFindOpensWithAMatchInViewWithoutMovingTheTranscript(t *testing.T) {
+func TestFindSelectsTheMatchNearestTheViewAndDoesNotMoveIt(t *testing.T) {
 	f := newFindFixture(t, longChat(), 10)
 	before := f.s.ScrollModel().Offset()
-	f.open()
-	if f.s.TranscriptRows(f.h) != f.h-1 {
-		t.Fatalf("an open bar must take exactly one row, transcript has %d of %d", f.s.TranscriptRows(f.h), f.h)
+	f.search("needle", FindOptions{})
+	count, current := f.s.FindCounts()
+	if count != 2 || current != 1 {
+		t.Fatalf("count=%d current=%d, want the newest visible match selected", count, current)
 	}
-	f.typeQuery("needle")
-	if !f.s.find.cur.ok || f.s.find.cur.id != "z" {
-		t.Fatalf("the visible match must be selected first: %+v", f.s.find.cur)
-	}
-	if got := f.s.ScrollModel().Offset(); got != before+1 {
-		t.Fatalf("a visible match must not scroll: offset %d -> %d (bar takes one bottom row)", before, got)
-	}
-	if got := f.s.find.status(len(f.rows)); got != "2 of 2" {
-		t.Fatalf("status=%q", got)
+	if got := f.s.ScrollModel().Offset(); got != before {
+		t.Fatalf("a match already in view must not scroll: %d -> %d", before, got)
 	}
 }
 
-func TestFindHighlightsEveryMatchAndMarksTheCurrentOne(t *testing.T) {
+func TestFindHighlightsAllMatchesAndTheSelectedOneDifferently(t *testing.T) {
 	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
+	f.search("needle", FindOptions{})
 	tokens := ui.NewTokenSet(f.th)
-	_, bg := f.cellAt(25, len("a recent ")) // first letter of the match
-	if bg != tokens.Color(ui.ColorAccent).ANSIBG() {
-		t.Fatalf("current match background %q, want accent %q", bg, tokens.Color(ui.ColorAccent).ANSIBG())
+	current := tokens.FindMatchFill(true).ANSIBG()
+	other := tokens.FindMatchFill(false).ANSIBG()
+	if current == other {
+		t.Fatal("the selected match and the other matches need different fills")
 	}
-	if _, bgOutside := f.cellAt(25, 0); bgOutside == bg {
+	if _, bg := f.cellAt(25, len("a recent ")); bg != current {
+		t.Fatalf("selected match fill %q, want %q", bg, current)
+	}
+	if _, bg := f.cellAt(25, 0); bg == current || bg == other {
 		t.Fatal("text outside the match was highlighted")
 	}
-	f.key("", tea.KeyUp) // previous = older match, scrolls to it
-	_, other := f.cellAt(3, len("an old "))
-	if other != tokens.Color(ui.ColorAccent).ANSIBG() {
-		t.Fatalf("stepping must move the current mark to the older match: %q", other)
+	f.s.StepFind(-1) // the older match, off screen
+	if _, bg := f.cellAt(3, len("an old ")); bg != current {
+		t.Fatalf("stepping must move the selected fill to the older match: %q", bg)
 	}
-	if f.s.find.cur.id != "d" {
-		t.Fatalf("cur=%+v", f.s.find.cur)
+}
+
+func TestFindMarksOtherMatchesOnTheSameRowWithTheOtherFill(t *testing.T) {
+	rows := []chatprojection.MessageRow{findRow("a", 1, "needle and needle again")}
+	f := newFindFixture(t, rows, 4)
+	f.search("needle", FindOptions{})
+	tokens := ui.NewTokenSet(f.th)
+	first, second := tokens.FindMatchFill(true).ANSIBG(), tokens.FindMatchFill(false).ANSIBG()
+	_, bg1 := f.cellAt(0, 0)
+	_, bg2 := f.cellAt(0, len("needle and "))
+	if bg1 != first || bg2 != second {
+		t.Fatalf("fills %q/%q, want the selected %q and the other %q", bg1, bg2, first, second)
 	}
+	f.s.StepFind(1)
+	if _, bg := f.cellAt(0, 0); bg != second {
+		t.Fatalf("the first match must become an ordinary match after stepping: %q", bg)
+	}
+	if _, bg := f.cellAt(0, len("needle and ")); bg != first {
+		t.Fatalf("the second match must become the selected one: %q", bg)
+	}
+}
+
+func TestFindRevealStopsFollowingNewMessages(t *testing.T) {
+	f := newFindFixture(t, longChat(), 10)
+	f.search("needle", FindOptions{})
+	f.s.StepFind(-1)
 	if got := f.s.ScrollModel().Offset(); got > 3 {
-		t.Fatalf("older match must be revealed, offset=%d", got)
+		t.Fatalf("the older match must be revealed, offset=%d", got)
 	}
 	if f.s.ScrollModel().AutoScroll() {
 		t.Fatal("leaving the bottom must stop following new messages")
 	}
 }
 
-func TestFindEnterAndShiftEnterStepThroughMatches(t *testing.T) {
+func TestFindCloseRemovesEveryMarkAndFreesTheCounts(t *testing.T) {
 	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
-	f.host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	f.sync(false)
-	if f.s.find.cur.id != "d" {
-		t.Fatalf("Enter must wrap to the first match: %+v", f.s.find.cur)
-	}
-	f.host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
-	f.sync(false)
-	if f.s.find.cur.id != "z" {
-		t.Fatalf("Shift+Enter must go back: %+v", f.s.find.cur)
-	}
-}
-
-func TestFindEscClosesTheBarGivesBackItsRowAndRemovesEveryMark(t *testing.T) {
-	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
+	f.search("needle", FindOptions{})
 	tokens := ui.NewTokenSet(f.th)
-	if _, bg := f.cellAt(25, len("a recent ")); bg != tokens.Color(ui.ColorAccent).ANSIBG() {
+	if _, bg := f.cellAt(25, len("a recent ")); bg != tokens.FindMatchFill(true).ANSIBG() {
 		t.Fatal("setup: no mark")
 	}
-	f.key("", tea.KeyEsc)
-	if f.s.FindOpen() || f.s.TranscriptRows(f.h) != f.h {
-		t.Fatalf("Esc must close the bar and return its row")
-	}
+	f.s.CloseFind()
 	f.sync(false)
 	_, bg := f.cellAt(25, len("a recent "))
-	if bg == tokens.Color(ui.ColorAccent).ANSIBG() || bg == tokens.Color(ui.ColorWarning).ANSIBG() {
-		t.Fatalf("a mark outlived the find bar: %q", bg)
+	if bg == tokens.FindMatchFill(true).ANSIBG() || bg == tokens.FindMatchFill(false).ANSIBG() {
+		t.Fatalf("a mark outlived the search: %q", bg)
 	}
 	if f.s.find.querying() || f.s.find.counts != nil {
 		t.Fatal("closing find must free its counts")
 	}
 }
 
-func TestFindKeepsTheTextForTheNextOpen(t *testing.T) {
+func TestFindKeepsTheQueryForTheNextOpen(t *testing.T) {
 	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
-	f.key("", tea.KeyEsc)
-	f.open()
-	f.sync(false)
-	if got := f.s.findBar.field.Value(); got != "needle" {
-		t.Fatalf("field=%q", got)
-	}
-	if f.s.find.total != 2 {
-		t.Fatalf("a retained query must be searched again, total=%d", f.s.find.total)
+	f.search("needle", FindOptions{})
+	f.s.CloseFind()
+	f.search("needle", FindOptions{})
+	if count, _ := f.s.FindCounts(); count != 2 {
+		t.Fatalf("a retained query must be searched again, count=%d", count)
 	}
 }
 
 func TestFindSelectionStaysVisibleOverAMatch(t *testing.T) {
 	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
+	f.search("needle", FindOptions{})
 	y := f.rowOnScreen(25)
 	start := f.pad + len("a recent ")
 	f.s.selection.selAnchorLine, f.s.selection.selAnchorCol = 25, len("a recent ")
@@ -452,30 +487,18 @@ func TestFindSelectionStaysVisibleOverAMatch(t *testing.T) {
 	tokens := ui.NewTokenSet(f.th)
 	c := f.paint().Get(start, y)
 	if c.BG != tokens.Color(ui.ColorTextSelection) {
-		t.Fatalf("selection must win over the find mark, got bg %v", c.BG)
-	}
-}
-
-func TestFindBarNeedsRoomAndNeverHidesTheLastTranscriptRows(t *testing.T) {
-	f := newFindFixture(t, longChat(), 3)
-	f.s.OpenFind()
-	if f.s.FindRows(3) != 0 || f.s.TranscriptRows(3) != 3 {
-		t.Fatalf("a 3-row chat has no room for the bar")
-	}
-	if f.s.FindRows(4) != 1 {
-		t.Fatal("a 4-row chat keeps 3 rows for the transcript")
+		t.Fatalf("selection must win over the mark, got bg %v", c.BG)
 	}
 }
 
 func TestFindFollowsRowsThatGrowWhileStreaming(t *testing.T) {
 	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
+	f.search("needle", FindOptions{})
 	last := len(f.rows) - 1
 	f.rows[last] = findRow(f.rows[last].ID, 500, "needle again", "and needle once more")
 	f.sync(true)
-	if f.s.find.total != 4 {
-		t.Fatalf("a replaced row must be recounted, total=%d", f.s.find.total)
+	if count, _ := f.s.FindCounts(); count != 4 {
+		t.Fatalf("a replaced row must be recounted, count=%d", count)
 	}
 }
 
@@ -486,48 +509,13 @@ func TestFindPendingExpiresWhenTheChatIsNoLongerObserved(t *testing.T) {
 	}
 	f := newFindFixture(t, rows, 10)
 	f.s.find.limit = time.Nanosecond
-	f.open()
-	f.typeQuery("needle")
+	f.s.OpenFind()
+	f.s.SetFindQuery("needle", FindOptions{})
 	if !f.s.FindPending() {
 		t.Fatal("a long history needs more frames to count")
 	}
 	f.s.findSeen = time.Now().Add(-2 * time.Second)
 	if f.s.FindPending() {
 		t.Fatal("a chat nobody renders must not keep the shell awake")
-	}
-}
-
-func TestFindForgetsRemovedRowsWhenTheTranscriptShrinksAndGrowsAgain(t *testing.T) {
-	rows := []chatprojection.MessageRow{findRow("a", 1, "hit"), findRow("b", 2, "hit"), findRow("c", 3, "hit")}
-	var f chatFind
-	f.setQuery("hit", -1)
-	settle(t, &f, rows)
-	f.observe(rows[:1], 1, true)
-	for f.pending(1) {
-		f.observe(rows[:1], 1, false)
-	}
-	// Two new rows with no match must not inherit the counts of the removed ones.
-	grown := []chatprojection.MessageRow{rows[0], findRow("x", 2, "miss"), findRow("y", 3, "miss")}
-	f.observe(grown, 1, true)
-	for f.pending(len(grown)) {
-		f.observe(grown, 1, false)
-	}
-	if f.total != 1 || f.counts[1] != 0 || f.counts[2] != 0 {
-		t.Fatalf("total=%d counts=%v, want only the first row to match", f.total, f.counts)
-	}
-}
-
-func TestFindBarPageKeysScrollTheTranscriptWhileTheFieldHasTheKeyboard(t *testing.T) {
-	f := newFindFixture(t, longChat(), 10)
-	f.open()
-	f.typeQuery("needle")
-	before := f.s.ScrollModel().Offset()
-	f.host.Handle(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	f.sync(false)
-	if got := f.s.ScrollModel().Offset(); got >= before {
-		t.Fatalf("PgUp must scroll the transcript up: %d -> %d", before, got)
-	}
-	if f.host.Focused() != f.s.FindID() || f.s.findBar.field.Value() != "needle" {
-		t.Fatal("scrolling must not move the keyboard out of the find field or change its text")
 	}
 }

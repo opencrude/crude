@@ -10,6 +10,8 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
+	"crude/tui/ui"
+	"crude/tui/wm"
 	ttypes "crude/types"
 )
 
@@ -27,8 +29,28 @@ func findChatApp(t *testing.T) (*App, *shellchat.Screen) {
 		app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: fmt.Sprintf("filler reply %d", i), Time: time.Unix(3+int64(i), 0)})
 	}
 	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "one more needle at the end", Time: time.Unix(100, 0)})
+	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.paintShellFrame()
 	return app, screen
+}
+
+// chatFindFrame is the window a chat search must use: the same one the editor
+// uses, not a second design.
+func chatFindFrame(t *testing.T, app *App) (*wm.FloatingWindow, *ui.ComponentWidget) {
+	t.Helper()
+	fw := app.windowManager.Window(string(ui.OverlayFindReplace))
+	if fw == nil {
+		t.Fatal("no find window")
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		t.Fatal("find window content is not a frame")
+	}
+	ww, hh := fw.Size()
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
+	return fw, cw
 }
 
 func pressKey(app *App, code rune, text string, mod tea.KeyMod) {
@@ -50,64 +72,112 @@ func shellText(app *App) string {
 	return strings.Join(lines, "\n")
 }
 
-func TestChatFindJourneyFromKeyboardToMarkedMatch(t *testing.T) {
+func TestChatFindUsesTheEditorFindWindow(t *testing.T) {
 	app, screen := findChatApp(t)
-	if screen.FindOpen() {
-		t.Fatal("find must start closed")
-	}
-	rowsBefore := screen.ScrollModel().Viewport()
-
 	pressKey(app, 'f', "", tea.ModCtrl)
-	if !screen.FindOpen() || app.rootHost.Focused() != screen.FindID() {
-		t.Fatalf("Ctrl+F must open find and focus its field; open=%v focus=%q", screen.FindOpen(), app.rootHost.Focused())
+	if !screen.FindOpen() {
+		t.Fatal("Ctrl+F did not start a search in the chat")
 	}
-	if got := screen.ScrollModel().Viewport(); got != rowsBefore-1 {
-		t.Fatalf("the bar must take one transcript row: %d -> %d", rowsBefore, got)
+	fw, cw := chatFindFrame(t, app)
+	if app.windowManager.Window("find-replace") != fw {
+		t.Fatal("the chat search must use the shared find window")
 	}
+	labels := ui.FindReplaceButtonLabels(cw)
+	if strings.Join(labels, ",") != "↑,↓" {
+		t.Fatalf("action row labels %v, want the shared ↑/↓ pair", labels)
+	}
+	for i, want := range []string{"Aa", "ab", ".*"} {
+		r, ok := ui.FindReplaceFrameToggleBounds(cw, i)
+		if !ok || r.Empty() {
+			t.Fatalf("filter pill %q is missing", want)
+		}
+	}
+	// Top-right of the transcript, the editor window's own anchor.
+	w, _ := fw.Size()
+	x, y := fw.Position()
+	if got := app.chatRect.X + app.chatRect.W - w - 2; x != got {
+		t.Fatalf("window x=%d, want %d (top-right of the chat)", x, got)
+	}
+	if y != app.chatRect.Y+1 {
+		t.Fatalf("window y=%d, want %d", y, app.chatRect.Y+1)
+	}
+	if title := ui.FindReplaceFrameTitle(cw); title != "Main Agent" {
+		t.Fatalf("title %q must name the searched surface, as a buffer name does", title)
+	}
+}
 
+func TestChatFindCountsAndStepsThroughMatches(t *testing.T) {
+	app, screen := findChatApp(t)
+	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "needle")
 	if got := app.Input.Value(); got != "" {
 		t.Fatalf("typing in find leaked into the composer: %q", got)
 	}
-	if !strings.Contains(shellText(app), "Find in chat") && !strings.Contains(shellText(app), "needle") {
-		t.Fatal("the find field is not painted")
-	}
-	if !strings.Contains(shellText(app), "of 2") {
-		t.Fatalf("the bar must show the match count:\n%s", shellText(app))
+	_, cw := chatFindFrame(t, app)
+	if got := ui.FindReplaceFrameStatus(cw); got != "2 of 2" {
+		t.Fatalf("counter %q, want the newest match selected", got)
 	}
 	if !strings.Contains(shellText(app), "one more needle at the end") {
-		t.Fatal("the newest match, nearest the bottom, must be in view")
+		t.Fatal("the selected match must be in view")
 	}
-
-	pressKey(app, tea.KeyUp, "", 0)
+	pressKey(app, tea.KeyEnter, "", 0)
+	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "1 of 2" {
+		t.Fatalf("Enter must go to the next match, counter=%q", got)
+	}
 	if !strings.Contains(shellText(app), "the Needle is in the haystack") {
-		t.Fatalf("Up must reveal the older match:\n%s", shellText(app))
+		t.Fatalf("the older match must be revealed:\n%s", shellText(app))
 	}
 	if screen.ScrollModel().AutoScroll() {
 		t.Fatal("revealing history must stop following new messages")
 	}
-
-	pressKey(app, tea.KeyEsc, "", 0)
-	if screen.FindOpen() || app.rootHost.Focused() == screen.FindID() {
-		t.Fatal("Esc must close find and give the keyboard back")
-	}
-	typeText(app, "ok")
-	if got := app.Input.Value(); got != "ok" {
-		t.Fatalf("after closing find the composer must get the keys, got %q", got)
+	pressKey(app, tea.KeyEnter, "", tea.ModShift)
+	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "2 of 2" {
+		t.Fatalf("Shift+Enter must go back, counter=%q", got)
 	}
 }
 
-func TestChatFindEscDoesNotTouchTheDraft(t *testing.T) {
+func chatFindFrameOrFail(t *testing.T, app *App) *ui.ComponentWidget {
+	t.Helper()
+	_, cw := chatFindFrame(t, app)
+	return cw
+}
+
+func TestChatFindFilterPillsChangeTheSearch(t *testing.T) {
+	app, _ := findChatApp(t)
+	pressKey(app, 'f', "", tea.ModCtrl)
+	typeText(app, "needle")
+	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "2 of 2" {
+		t.Fatalf("setup counter %q", got)
+	}
+	pressKey(app, 'c', "", tea.ModAlt) // Aa: case sensitive
+	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "1 of 1" {
+		t.Fatalf("case-sensitive counter %q, want only the lowercase match", got)
+	}
+	pressKey(app, 'c', "", tea.ModAlt) // back to folded
+	pressKey(app, 'w', "", tea.ModAlt) // ab: whole word
+	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "2 of 2" {
+		t.Fatalf("whole-word counter %q", got)
+	}
+}
+
+func TestChatFindEscClosesAndKeepsTheDraft(t *testing.T) {
 	app, screen := findChatApp(t)
 	typeText(app, "half-written note")
 	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "needle")
 	pressKey(app, tea.KeyEsc, "", 0)
-	if screen.FindOpen() {
-		t.Fatal("find still open")
+	if screen.FindOpen() || app.windowManager.Window("find-replace") != nil {
+		t.Fatal("Esc did not close the chat search")
+	}
+	if count, _ := screen.FindCounts(); count != 0 {
+		t.Fatal("closing find must drop its counts")
 	}
 	if got := app.Input.Value(); got != "half-written note" {
-		t.Fatalf("Esc in the find bar must not reach the draft, got %q", got)
+		t.Fatalf("Esc in find must not reach the draft, got %q", got)
+	}
+	typeText(app, "ok")
+	if got := app.Input.Value(); got != "half-written noteok" {
+		t.Fatalf("the composer must get the keys again, got %q", got)
 	}
 }
 
@@ -119,8 +189,8 @@ func TestChatFindPasteGoesToTheFindField(t *testing.T) {
 	if app.Input.Value() != "" {
 		t.Fatalf("paste leaked into the composer: %q", app.Input.Value())
 	}
-	if !strings.Contains(shellText(app), "1 of 1") {
-		t.Fatalf("pasted query was not searched:\n%s", shellText(app))
+	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "1 of 1" {
+		t.Fatalf("pasted query counter %q", got)
 	}
 }
 
@@ -152,6 +222,8 @@ func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 	rows := []chatprojection.MessageRow{{ID: "seed", Lines: []string{"seed"}}}
 	app, screen := setupChatRoutingApp(t, 10, rows)
 	app.Input.ClearInput()
+	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	renderer := app.activeMessageList()
 	renderer.MaterializeBudget = time.Nanosecond // history draws slower than the first frames
 	for i := 0; i < 60; i++ {
@@ -164,16 +236,17 @@ func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 
 	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "viewport")
-	if !strings.Contains(shellText(app), "loading") {
-		t.Fatalf("setup: history was fully drawn, so find has nothing to wait for:\n%s", shellText(app))
+	status := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app))
+	if !strings.Contains(status, "loading") && status != "Searching…" {
+		t.Fatalf("setup: every row was drawn, so find has nothing to wait for; status=%q", status)
 	}
 
 	renderer.MaterializeBudget = 0 // normal budget from here on
 	for i := 0; i < 600 && (screen.FindPending() || screen.FindWaiting() || renderer.Materializing()); i++ {
 		app.paintShellFrame()
 	}
-	text := shellText(app)
-	if strings.Contains(text, "loading") || !strings.Contains(text, "of 60") {
-		t.Fatalf("find must finish the whole history and count all 60 replies:\n%s", text)
+	status = ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app))
+	if strings.Contains(status, "loading") || !strings.HasSuffix(status, "of 60") {
+		t.Fatalf("find must finish the whole history and count all 60 replies, status=%q", status)
 	}
 }

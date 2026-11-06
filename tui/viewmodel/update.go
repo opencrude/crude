@@ -1850,6 +1850,11 @@ func (m *App) handleTabSwitch() {
 			m.closeOutlinePopup()
 			m.closeNavigation()
 		}
+		// A chat search is bound to the conversation it describes, exactly as
+		// the editor's window is bound to its buffer.
+		if prevAgentID != m.AgentView.ActiveID() || m.EditorState.ActiveView != "" {
+			m.closeChatFind()
+		}
 	}()
 	defer m.openNextAgentPrompt()
 	// Always reset before re-deriving. This is the single source of
