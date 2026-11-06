@@ -693,7 +693,21 @@ return {
     # configuration is never read.
     $pending = $lua + '.new'
     [IO.File]::WriteAllText($pending, $text.Replace('@@PROGRAM@@', (Join-Path $InstallDir 'crude.exe').Replace('\', '\\')))
-    [IO.File]::Move($pending, $lua, $true)
+    # Windows PowerShell 5.1 has no File.Move(source, target, overwrite), and
+    # File.Replace is a single step on Windows but unavailable elsewhere, so use
+    # it first and fall back to delete-then-move.
+    if (-not [IO.File]::Exists($lua)) {
+        [IO.File]::Move($pending, $lua)
+    } else {
+        try {
+            # [NullString]::Value passes a real null, which File.Replace
+            # requires for "no backup copy".
+            [IO.File]::Replace($pending, $lua, [NullString]::Value)
+        } catch [PlatformNotSupportedException] {
+            [IO.File]::Delete($lua)
+            [IO.File]::Move($pending, $lua)
+        }
+    }
 
     $iconSource = Join-Path $Payload 'crude-icon.ico'
     if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $Paths.Icon -Force }
