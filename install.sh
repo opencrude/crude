@@ -312,11 +312,15 @@ return {
     font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
     font_size = 13.0,
     window_decorations = 'TITLE | RESIZE',
-    initial_cols = 190,
-    initial_rows = 50,
+    -- A sane size when the window manager cannot maximise; the handler below
+    -- asks for the full desktop area.
+    initial_cols = 120,
+    initial_rows = 36,
     hide_tab_bar_if_only_one_tab = true,
     enable_kitty_keyboard = true,
     window_close_confirmation = 'NeverPrompt',
+    -- If Crude exits because of an error, keep the message on screen.
+    exit_behavior = 'CloseOnCleanExit',
     check_for_updates = false,
     audible_bell = 'Disabled',
     -- Crude owns these keys, so the terminal must not act on them here.

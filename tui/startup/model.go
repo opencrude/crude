@@ -234,6 +234,10 @@ func (m *Model) Close() {
 	m.closed = true
 }
 
+// startupTitle names the window before a project is open. The shell replaces it
+// with the workspace name once one is chosen.
+const startupTitle = "Crude"
+
 func (m *Model) layout() { m.host.MarkLayout(); m.host.Layout() }
 
 func (m *Model) View() tea.View {
@@ -247,6 +251,10 @@ func (m *Model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true
+	// The welcome screen is the first frame a new user sees, so the window and
+	// its taskbar icon must already carry the product name.
+	v.WindowTitle = startupTitle
+	v.IconName = startupTitle
 	return v
 }
 

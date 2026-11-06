@@ -293,7 +293,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
                          "JetBrainsMono Nerd Font",
                          "gui-startup",
                          "maximize()",
-                         "initial_cols = 190",
+                         "initial_cols = 120",
                          "enable_kitty_keyboard = true",
                          "check_for_updates = false"):
             self.assertIn(required, config, f"the window configuration needs '{required}'")
