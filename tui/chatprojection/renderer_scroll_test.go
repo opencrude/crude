@@ -62,28 +62,30 @@ func TestRendererMainExportMutatesExtScrollOnly(t *testing.T) {
 
 func TestRendererScrollbarWidthUsesPresentationScrollOwner(t *testing.T) {
 	r, ext, pane := testRendererWithDualScroll(t)
+	// A nested pane scrollbar is reserved by pane rows alone; it never
+	// narrows the main row width.
 	r.SetPaneScrollbarWidth(2)
 	pane.SetContent(50)
 	pane.SetViewport(3)
 	ext.SetContent(3)
 	ext.SetViewport(10)
 	r.vl.SetViewport(10)
-	if got := r.ScrollbarWidth(); got != 2 {
-		t.Fatalf("compact overflow reserved main gutter: width=%d want 2", got)
+	if got := r.ScrollbarWidth(); got != 0 {
+		t.Fatalf("compact overflow reserved main gutter: width=%d want 0", got)
 	}
 	ext.SetContent(50)
 	pane.SetContent(0)
 	seedScrollableMessages(r, 8)
 	r.vl.EnsureHeights(r.renderItem, 40)
-	if got := r.ScrollbarWidth(); got != 2+ui.ScrollbarWidth {
+	if got := r.ScrollbarWidth(); got != ui.ScrollbarWidth {
 		t.Fatalf("main overflow omitted main gutter: width=%d", got)
 	}
 	r.BindScroll(nil)
-	if got := r.ScrollbarWidth(); got != 2 {
+	if got := r.ScrollbarWidth(); got != 0 {
 		t.Fatalf("pane-only fitting content reserved gutter: width=%d", got)
 	}
 	pane.SetContent(50)
-	if got := r.ScrollbarWidth(); got != 2+ui.ScrollbarWidth {
+	if got := r.ScrollbarWidth(); got != ui.ScrollbarWidth {
 		t.Fatalf("pane-only overflow omitted gutter: width=%d", got)
 	}
 }

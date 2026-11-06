@@ -256,20 +256,22 @@ func (r *Renderer) PaneLineMap() []PaneLineInfo {
 	return r.paneLineMap
 }
 
+// SetPaneScrollbarWidth sets the columns a nested pane scrollbar reserves.
+// Only pane rows give up those columns, so a thinking pane that starts or
+// stops overflowing re-renders itself and never reflows the transcript.
 func (r *Renderer) SetPaneScrollbarWidth(w int) bool {
 	w = max(0, w)
-	if w != r.paneScrollbarW {
-		if r.exportSnapshot.Generation != 0 {
-			r.lazyWidthReflow = true
-		}
-		r.paneScrollbarW = w
-		for _, msg := range r.sync.Messages {
-			r.invalidateMessageCache(msg)
-		}
-		r.vl.InvalidateAll()
-		return true
+	if w == r.paneScrollbarW {
+		return false
 	}
-	return false
+	r.paneScrollbarW = w
+	for _, msg := range r.sync.Messages {
+		if msg.SubPaneID != "" {
+			r.invalidateMessageCache(msg)
+			r.vl.InvalidateItem(msg.InternalID)
+		}
+	}
+	return true
 }
 
 func (r *Renderer) PaneScrollbarWidth() int {
@@ -1447,10 +1449,11 @@ func (r *Renderer) buildPaneLineMap(visible []string) {
 	}
 }
 
-// ScrollbarWidth returns reserved scrollbar columns for message layout width.
+// ScrollbarWidth returns the columns the main chat scrollbar reserves from
+// every row. A nested pane scrollbar is reserved by pane rows alone.
 func (r *Renderer) ScrollbarWidth() int {
 	r.vl.BuildIndex()
-	w := r.paneScrollbarW
+	w := 0
 	// Main content/height belongs to this renderer's indexed rows. extScroll
 	// owns user offset, but its metrics are published after export; reading
 	// last frame's metrics here causes a second width invalidation next frame.
@@ -1502,7 +1505,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		if maxH < 5 {
 			maxH = 5
 		}
-		paneWidth := max(0, width-r.scrollbarFootprint())
+		paneWidth := max(0, width-scrollbarFootprint(r.ScrollbarWidth()+r.paneScrollbarW))
 		expanded := r.disclosureState(msg) == DisclosureExpanded
 		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame, expanded)
 		frameSensitive := false
@@ -1603,7 +1606,7 @@ func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
 	if r.thinkingBodyOnly {
 		padLR = 0
 	}
-	innerW = max(0, r.width-padLR*2-r.scrollbarFootprint())
+	innerW = max(0, r.width-padLR*2-scrollbarFootprint(r.ScrollbarWidth()))
 	if r.thinkingBodyOnly {
 		// The parent pane owns chrome. Reserve only the body gutter so text
 		// reaches one column before its own scrollbar footprint.
@@ -1615,13 +1618,13 @@ func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
 
 // scrollbarFootprint is the shared horizontal contract for chat content:
 // every visible scrollbar occupies one column, and the group has one blank
-// separator immediately before the outermost (main chat) scrollbar.
-func (r *Renderer) scrollbarFootprint() int {
-	w := max(0, r.ScrollbarWidth())
-	if w > 0 {
-		w++
+// separator immediately before the outermost scrollbar. Ordinary rows pass
+// the main scrollbar; pane rows add their nested pane scrollbar.
+func scrollbarFootprint(scrollbars int) int {
+	if scrollbars <= 0 {
+		return 0
 	}
-	return w
+	return scrollbars + 1
 }
 
 func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {
