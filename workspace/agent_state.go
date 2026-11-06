@@ -649,6 +649,16 @@ func (a *AgentState) HasCancellableWork() bool {
 	return a.IsActive() || a.PendingBlockID != "" || a.ActiveCompaction.OperationID != ""
 }
 
+// CanStop is the single Stop precondition for every entry point: live work,
+// or a recovery parked for retry. Entering the stopping boundary without one
+// would never receive the terminal acknowledgement that clears it.
+func (a *AgentState) CanStop() bool {
+	if a == nil || a.Cancelling || a.Completed {
+		return false
+	}
+	return a.HasCancellableWork() || a.RecoveryStatus().CanRetry()
+}
+
 func finishThinkingBlocks(target *Conversation) {
 	if target != nil {
 		target.MarkAllThinkingDone()

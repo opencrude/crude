@@ -146,7 +146,7 @@ func (t *terminalReplica) Detach(workspace.TerminalController) {
 	t.leases = nil
 	t.leaseMu.Unlock()
 	for _, lease := range leases {
-		t.w.commands.push(func(ctx context.Context) {
+		t.w.services.push(func(ctx context.Context) {
 			_ = t.w.call(ctx, coreprotocol.TerminalRelease, &lease, &coreprotocol.Empty{})
 		})
 	}
@@ -176,7 +176,7 @@ func (t *terminalReplica) Close(id string) {
 	t.leaseMu.Lock()
 	delete(t.leases, id)
 	t.leaseMu.Unlock()
-	t.w.commands.push(func(ctx context.Context) {
+	t.w.services.push(func(ctx context.Context) {
 		_ = t.w.call(ctx, coreprotocol.TerminalClose, coreprotocol.TerminalIDRequest{ID: id}, &coreprotocol.Empty{})
 	})
 }

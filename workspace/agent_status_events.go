@@ -9,6 +9,13 @@ import (
 	"crude/types/recovery"
 )
 
+// StoppingStatus is the one presentation of an agent whose Stop is in
+// progress, shared by the core reducer and a shell's optimistic Stop.
+func StoppingStatus(status ttypes.AgentStatusSnapshot) ttypes.AgentStatusSnapshot {
+	status.Phase, status.Detail, status.NeedsAction = ttypes.AgentCancelling, "Stopping", false
+	return status
+}
+
 // ApplyAgentStatusEvent reduces an accepted agent event into workspace status.
 // Call after applying the event to the owning agent state; ingress owns identity
 // and stale-upload rejection. Like AgentManager, it requires serialized admission.
@@ -90,8 +97,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		(state.Cancelling || state.terminal || state.Completed) &&
 		(!state.terminal || state.Cancelling || state.Completed || !isManualCompactionEvent(evt)) {
 		if state.Cancelling {
-			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentCancelling, "Stopping", false
-			center.SetAgent(snapshot)
+			center.SetAgent(StoppingStatus(snapshot))
 		}
 		return
 	}

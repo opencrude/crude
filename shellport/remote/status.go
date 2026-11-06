@@ -57,7 +57,7 @@ func (s *statusReplica) install(snapshot statusSnapshot) bool {
 func (s *statusReplica) resetRevision() { s.core.Version, s.version = 0, 0 }
 
 func (s *statusReplica) send(mutation coreprotocol.StatusMutation) {
-	s.w.commands.push(func(ctx context.Context) {
+	s.w.services.push(func(ctx context.Context) {
 		if err := s.w.call(ctx, coreprotocol.StatusMutateMethod, &mutation, &coreprotocol.StatusMutationResult{}); err != nil {
 			s.w.logger.Warn("REMOTE", "status_mutation_failed", "op", mutation.Op, "error", err.Error())
 		}
@@ -227,6 +227,13 @@ func (s *statusReplica) SetIssue(issue types.IssueSnapshot) {
 	if issue.ID == "" {
 		return
 	}
+	// Mirror the core: an unchanged open report is not a mutation, so callers
+	// that reconcile every frame send nothing to the core.
+	for _, previous := range s.core.Issues {
+		if previous.ID == issue.ID && issue.SameOpenReport(previous) {
+			return
+		}
+	}
 	issue.UpdatedAt = time.Now()
 	replaced := false
 	for i := range s.core.Issues {
@@ -241,14 +248,17 @@ func (s *statusReplica) SetIssue(issue types.IssueSnapshot) {
 	s.send(coreprotocol.StatusMutation{Op: coreprotocol.StatusSetIssue, Issue: &issue})
 }
 
+// ResolveIssue mirrors the core: only an open issue changes, so resolving an
+// absent or already resolved issue sends nothing.
 func (s *statusReplica) ResolveIssue(id string) {
 	for i := range s.core.Issues {
 		if s.core.Issues[i].ID == id && s.core.Issues[i].ResolvedAt.IsZero() {
 			s.core.Issues[i].ResolvedAt = time.Now()
 			s.version++
+			s.send(coreprotocol.StatusMutation{Op: coreprotocol.StatusResolveIssue, ID: id})
+			return
 		}
 	}
-	s.send(coreprotocol.StatusMutation{Op: coreprotocol.StatusResolveIssue, ID: id})
 }
 
 func (s *statusReplica) SetOperation(op types.OperationSnapshot) {

@@ -155,7 +155,7 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 | `ResolveConfirmation` | 2 | mutates | yes | agent.decide |
 | `PrepareAgentRecovery` | 1 | mutates | no: returns closure | agent.recover |
 | `PrepareCancelAgentRecovery` | 1 | mutates | no: returns closure | agent.recover_cancel |
-| `RejectAgentRecoveryCancellation` | 1 | mutates | yes | agent.recover_reject |
+| `RejectAgentRecoveryCancellation` | 1 | mutates | yes | none: withdraws the shell's optimistic Stop; the core never entered one |
 | `PrepareAsyncCommandTermination` | 1 | mutates | no: returns closure | agent.stop_command (exact AsyncCmdRef) |
 | `PrepareCompactForAgent` | 1 | mutates | no: returns live PreparedCompaction | agent.compact (request progress, no live PreparedCompaction on wire) |
 | `HydrateSubAgents` | 1 | mutates | yes | none (workspace topic delivers hydrated children) |

@@ -256,6 +256,13 @@ type IssueSnapshot struct {
 	Actions    []StatusAction
 }
 
+// SameOpenReport reports whether issue is the open report already held as
+// previous. Republishing an unchanged open issue is not a status change.
+func (issue IssueSnapshot) SameOpenReport(previous IssueSnapshot) bool {
+	return previous.ResolvedAt.IsZero() && previous.Owner == issue.Owner && previous.Severity == issue.Severity &&
+		previous.Summary == issue.Summary && previous.Detail == issue.Detail
+}
+
 type LSPServerHealth struct {
 	ID string
 	// InstanceID is the exact live producer instance; empty when no instance is running.

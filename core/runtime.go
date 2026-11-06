@@ -1346,7 +1346,12 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 			a.ws.CloseAgent(input.AgentID)
 			a.ws.ForgetAgentInventory(input.AgentID)
 		} else {
-			a.ws.BeginAgentCancellation(input.AgentID)
+			// Stop applies only to live work; a parked recovery is stopped by
+			// its own incident method. A Stop that arrives after the turn ended,
+			// or repeats one in progress, changes nothing.
+			if !node.State.HasCancellableWork() || !a.ws.BeginAgentCancellation(input.AgentID) {
+				return response(request, coreprotocol.DecisionResult{})
+			}
 			a.ws.CancelAgent(input.AgentID)
 		}
 		a.changed([]string{input.AgentID})

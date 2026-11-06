@@ -58,17 +58,17 @@ func TestLSPReplicaReadIsolationAndClear(t *testing.T) {
 
 func TestLSPMutationsQueueWithoutRPC(t *testing.T) {
 	w := &Workspace{}
-	w.commands.init()
+	w.services.init()
 	l := newLSPReplica(w)
 	l.NotifyWatchedFilesChanged(context.Background(), "a.go", 2)
 	l.SetActiveFile("a.go")
 	l.Stop()
 	for i := 0; i < 3; i++ {
-		if fn, ok := w.commands.pop(); !ok || fn == nil {
+		if fn, ok := w.services.pop(); !ok || fn == nil {
 			t.Fatal("mutation not queued", i)
 		}
 	}
-	if _, ok := w.commands.pop(); ok {
+	if _, ok := w.services.pop(); ok {
 		t.Fatal("extra commands (implicit startup/stop)")
 	}
 }

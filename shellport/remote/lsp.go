@@ -65,7 +65,7 @@ func cloneLSPSnapshot(in coreprotocol.LSPSnapshot) coreprotocol.LSPSnapshot {
 }
 
 func (l *lspReplica) send(method string, input coreprotocol.LSPRequest) {
-	l.w.commands.push(func(ctx context.Context) {
+	l.w.services.push(func(ctx context.Context) {
 		var out coreprotocol.LSPResult
 		if err := l.w.call(ctx, method, &input, &out); err != nil {
 			l.w.logger.Warn("REMOTE", "lsp_mutation_failed", "method", method, "error", err.Error())

@@ -364,7 +364,7 @@ func (c *StatusCenter) SetIssue(issue ttypes.IssueSnapshot) {
 		return
 	}
 	c.mu.Lock()
-	if previous, exists := c.issues[issue.ID]; exists && previous.Owner == issue.Owner && previous.Severity == issue.Severity && previous.Summary == issue.Summary && previous.Detail == issue.Detail && previous.ResolvedAt.IsZero() {
+	if previous, exists := c.issues[issue.ID]; exists && issue.SameOpenReport(previous) {
 		c.mu.Unlock()
 		return
 	}
