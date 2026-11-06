@@ -1,11 +1,11 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-Installs or updates the verified Windows x64 release of Crude, without elevation.
+Installs or updates the Windows x64 release of Crude. No elevation is needed.
 .EXAMPLE
 .\install.ps1
 .EXAMPLE
-.\install.ps1 -AcceptBetaRisk -Version v1.2.3 -InstallDir "$env:LOCALAPPDATA\Crude\bin" -NoPath
+.\install.ps1 -Yes -Gui
 .NOTES
 Only public GitHub releases are supported. No Go, Zig, or source checkout is needed.
 Dot-sourcing defines the installer functions without starting an installation.
@@ -16,8 +16,24 @@ param(
     [string] $Repository = 'opencrude/crude',
     [string] $InstallDir,
     [switch] $NoPath,
-    [switch] $AcceptBetaRisk
+    [switch] $Yes,
+    [switch] $Gui,
+    [switch] $NoGui,
+    [switch] $Stop,
+    [switch] $NoStop
 )
+
+function Mark([string] $Name) {
+    switch ($Name) {
+        'check' { return [string] [char] 0x2713 }
+        'dot' { return [string] [char] 0x00B7 }
+        default { return '!' }
+    }
+}
+
+function Write-CrudeStep([string] $Mark, [string] $Name, [string] $Detail) {
+    Write-Host ('  {0} {1,-9} {2}' -f $Mark, $Name, $Detail)
+}
 
 function Test-CrudeInteractive {
     try {
@@ -29,45 +45,26 @@ function Test-CrudeInteractive {
     } catch { return $false }
 }
 
-function Confirm-CrudeBetaRisk([switch] $Accepted) {
-    Write-Warning 'Crude is in active development: installing or updating is beta-testing. Bugs may lose or corrupt work. Back up important data and commit your work before proceeding; checksums and rollback cannot guarantee application safety.'
+function Confirm-CrudeWarning([switch] $Accepted) {
+    Write-Host 'Crude is in active development. It changes files and runs commands.'
+    Write-Host 'Bugs and agent mistakes can lose work. Commit and back up important work.'
+    Write-Host ''
     if ($Accepted) { return }
     if (-not (Test-CrudeInteractive)) {
-        throw 'Explicit beta-risk consent is required. Review the warning, then rerun with -AcceptBetaRisk. Piped or noninteractive installation cannot prompt.'
+        throw 'This installer needs an answer. Run it in a terminal window, or add -Yes to accept the warning.'
     }
-    if ((Read-Host 'I understand the beta-testing risk and have backed up/committed my work. Type exactly yes to install or update') -cne 'yes') {
-        throw 'Installation cancelled: beta risk was not accepted. No installation changes were made.'
+    $answer = Read-Host 'Install anyway? [y/N]'
+    if ($answer -notmatch '^(?i)y(es)?$') {
+        throw 'You did not accept the warning. Nothing was installed.'
     }
 }
 
-function Get-CrudeSetupStatus {
-    $fontPresent = $false
-    $fontsKnown = $false
-    $collection = $null
-    try {
-        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-        $collection = New-Object Drawing.Text.InstalledFontCollection
-        $fontsKnown = $true
-        foreach ($family in $collection.Families) {
-            if ($family.Name -in @('JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'JetBrainsMono Nerd Font NF')) { $fontPresent = $true }
-        }
-    } catch {
-        # Font discovery is advisory. Never install a font or alter terminal settings.
-    } finally { if ($collection) { $collection.Dispose() } }
-    return [pscustomobject] @{ WindowsTerminal = [bool] $env:WT_SESSION; FontPresent = $fontPresent; FontsKnown = $fontsKnown }
-}
-
-function Show-CrudeSetupAdvice {
-    $setup = Get-CrudeSetupStatus
-    Write-Host 'Crude is opinionated: the ideal Windows setup is Windows Terminal, modern 24-bit truecolor, and JetBrainsMono Nerd Font NF (not NFM).'
-    if (-not $setup.WindowsTerminal) { Write-Warning 'Windows Terminal is not detected. Recommended: winget install --id Microsoft.WindowsTerminal --exact' }
-    if (-not $setup.FontsKnown -or -not $setup.FontPresent) {
-        Write-Warning 'The preferred JetBrainsMono Nerd Font NF is absent or could not be verified. Optional font installer: winget install --id DEVCOM.JetBrainsMonoNerdFont --exact (that separate package may request elevation). Without admin rights, download JetBrainsMono.zip from https://www.nerdfonts.com/font-downloads and use the regular Install action for this user, not Install for all users.'
-    }
-    Write-Warning 'The active terminal font and truecolor settings cannot be verified reliably by this installer. In Windows Terminal > Settings > your profile > Appearance > Font face, select JetBrainsMono Nerd Font (NF), not the NFM/Mono variant. Keep modern 24-bit/truecolor rendering enabled and restart the terminal after font installation.'
-    Write-Host 'winget is optional (available through Microsoft App Installer); alternatively install Windows Terminal and the JetBrainsMono Nerd Font from their official sites. Review any separate installation/elevation prompt yourself.'
-    Write-Host 'Optional developer tools: Git for version control, ripgrep for search, and language servers for your languages. None are required to install or launch Crude; Go and Zig are not needed for release installation.'
-    Write-Host 'You can ask Crude itself to help you reach the ideal terminal, font, truecolor, and optional-tool setup. This installer does not change fonts or terminal settings.'
+function Confirm-CrudeQuestion([string] $Question, [bool] $DefaultYes = $false) {
+    if (-not (Test-CrudeInteractive)) { return $false }
+    $hint = if ($DefaultYes) { '[Y/n]' } else { '[y/N]' }
+    $answer = Read-Host "$Question $hint"
+    if (-not $answer) { return $DefaultYes }
+    return [bool] ($answer -match '^(?i)y(es)?$')
 }
 
 function Get-CrudeArchitecture {
@@ -239,7 +236,7 @@ function Expand-CrudeArchive([string] $Archive, [string] $Destination) {
             if (-not $seen.Add($name)) { throw "Duplicate archive path '$name'." }
             $mode = ($entry.ExternalAttributes -shr 16) -band 61440
             if ($mode -notin @(0, 16384, 32768) -or ($entry.ExternalAttributes -band 1024)) { throw "Archive links or special files are not allowed: '$name'." }
-            if ($name -cnotin @('crude.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'licenses') -and -not $name.StartsWith('licenses/', [StringComparison]::Ordinal)) {
+            if ($name -cnotin @('crude.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'crude-icon.png', 'crude-icon.svg', 'crude-icon.ico', 'licenses') -and -not $name.StartsWith('licenses/', [StringComparison]::Ordinal)) {
                 throw "Unexpected release archive path '$name'."
             }
             if (($isDirectory -and ($entry.Length -ne 0 -or ($name -cne 'licenses' -and -not $name.StartsWith('licenses/')))) -or (-not $isDirectory -and $name -ceq 'licenses')) {
@@ -477,13 +474,195 @@ function Undo-CrudePath($Transaction) {
     }
 }
 
-function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crude', [string] $InstallDir, [switch] $NoPath, [switch] $AcceptBetaRisk) {
+function Get-CrudeInstalledProcesses([string] $Executable) {
+    # Only processes that run this installation block the update.
+    $full = [IO.Path]::GetFullPath($Executable)
+    $list = New-Object 'System.Collections.Generic.List[object]'
+    try {
+        foreach ($process in (Get-CimInstance -ClassName Win32_Process -Filter "Name = 'crude.exe'" -ErrorAction Stop)) {
+            if ($process.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($process.ExecutablePath), $full, [StringComparison]::OrdinalIgnoreCase)) {
+                $list.Add($process)
+            }
+        }
+    } catch {
+        # Windows can refuse process discovery. The file transaction then reports
+        # a locked program instead of stopping anything silently.
+    }
+    return $list.ToArray()
+}
+
+function Stop-CrudeInstallation([string] $Executable, [switch] $Stop, [switch] $NoStop) {
+    $running = @(Get-CrudeInstalledProcesses $Executable)
+    if (-not $running.Count) { return }
+    if ($NoStop) {
+        Write-CrudeStep (Mark 'dot') 'Running' 'Crude stays open and keeps the installed version until you restart it'
+        return
+    }
+    if (-not $Stop) {
+        $question = "Crude is running ($($running.Count) processes). Stop it now? Open sessions end. Unsaved editor text stays in History"
+        if (-not (Confirm-CrudeQuestion $question $false)) {
+            throw 'Crude is still running. Close it and run this installer again, or add -Stop.'
+        }
+    }
+    $ids = @($running | ForEach-Object { [int] $_.ProcessId })
+    foreach ($id in $ids) { Stop-Process -Id $id -ErrorAction SilentlyContinue }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $deadline -and @($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }).Count) {
+        Start-Sleep -Milliseconds 250
+    }
+    $left = @($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+    if ($left.Count) {
+        if (-not $Stop -and -not (Confirm-CrudeQuestion 'Crude did not stop. Force it to stop? Unsaved work in open files can be lost' $false)) {
+            throw 'Crude is still running. Nothing was installed.'
+        }
+        foreach ($id in $left) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 1
+        $left = @($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+        if ($left.Count) { throw 'Crude is still running. Nothing was installed.' }
+    }
+    Write-CrudeStep (Mark 'check') 'Stop' 'Crude is closed'
+}
+
+function Expand-CrudeWindowArchive([string] $Archive, [string] $Destination) {
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        $root = [IO.Path]::GetFullPath($Destination) + [IO.Path]::DirectorySeparatorChar
+        foreach ($entry in $zip.Entries) {
+            $name = $entry.FullName.Replace('\', '/')
+            if (-not $name -or $name.StartsWith('/') -or $name -match '(^|/)\.\.?(/|$)') { throw "Unsafe window archive path '$($entry.FullName)'." }
+            $target = [IO.Path]::GetFullPath((Join-Path $Destination $name.Replace('/', [IO.Path]::DirectorySeparatorChar)))
+            if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'Window archive path escapes its folder.' }
+            if ($name.EndsWith('/')) { [void] [IO.Directory]::CreateDirectory($target); continue }
+            [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $false)
+        }
+    } finally { $zip.Dispose() }
+}
+
+function Register-CrudeFonts([string] $Folder) {
+    # A per-user font is a file copy plus one value under HKCU. No elevation.
+    $target = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    [void] [IO.Directory]::CreateDirectory($target)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Fonts')
+    try {
+        foreach ($font in @(Get-ChildItem -LiteralPath $Folder -Filter '*.ttf' -File)) {
+            $copy = Join-Path $target $font.Name
+            Copy-Item -LiteralPath $font.FullName -Destination $copy -Force
+            $key.SetValue($font.BaseName + ' (TrueType)', $copy, [Microsoft.Win32.RegistryValueKind]::String)
+        }
+    } finally { $key.Dispose() }
+}
+
+function Install-CrudeWindow([string] $InstallDir, [string] $Payload, [string] $WorkDir, [switch] $Gui, [switch] $NoGui) {
+    if ($NoGui) {
+        Write-CrudeStep (Mark 'dot') 'Window' 'not installed. Run this installer with -Gui to add it'
+        return
+    }
+    if (-not $Gui) {
+        if (-not (Confirm-CrudeQuestion 'Install the Crude window? It runs Crude in its own window and nothing else' $true)) {
+            Write-CrudeStep (Mark 'dot') 'Window' 'not installed. Run this installer with -Gui to add it'
+            return
+        }
+    }
+    # A window problem never undoes the program install; report the cause and stop.
+    try {
+        Install-CrudeWindowFiles -InstallDir $InstallDir -Payload $Payload -WorkDir $WorkDir
+        Write-CrudeStep (Mark 'check') 'Window' 'Crude is in the Start menu'
+    } catch {
+        Write-CrudeStep (Mark 'warn') 'Window' "the window was not installed: $($_.Exception.Message)"
+    }
+}
+
+function Install-CrudeWindowFiles([string] $InstallDir, [string] $Payload, [string] $WorkDir) {
+    $windowVersion = '20240203-110809-5046fc22'
+    $windowAsset = "WezTerm-windows-$windowVersion.zip"
+    $windowSha256 = '57e5d03b585303d81e8b8e96d1230362852eb39aca92b3b29c7a42cfb82f9ac4'
+    $fontVersion = 'v3.5.1'
+    $fontSha256 = '04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
+    $windowHome = Join-Path $env:LOCALAPPDATA 'Crude'
+    $root = Join-Path $windowHome 'window'
+    $prefix = Join-Path $root "wezterm-$windowVersion"
+    [void] [IO.Directory]::CreateDirectory($root)
+    $gui = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $gui) {
+        $archive = Join-Path $WorkDir 'wezterm.zip'
+        Get-CrudeDownload "https://github.com/wezterm/wezterm/releases/download/$windowVersion/$windowAsset" $archive
+        if ((Get-CrudeHash $archive) -cne $windowSha256) {
+            throw 'The desktop window does not match its pinned checksum. Nothing was installed.'
+        }
+        $unpack = Join-Path $root ('.unpack-' + [Guid]::NewGuid().ToString('N'))
+        try {
+            Expand-CrudeWindowArchive $archive $unpack
+            if ([IO.Directory]::Exists($prefix)) { [IO.Directory]::Delete($prefix, $true) }
+            [IO.Directory]::Move($unpack, $prefix)
+        } finally {
+            if ([IO.Directory]::Exists($unpack)) { try { [IO.Directory]::Delete($unpack, $true) } catch { } }
+        }
+        $gui = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse | Select-Object -First 1
+        if (-not $gui) { throw 'The desktop window archive does not hold the program it needs.' }
+    }
+
+    $fonts = Join-Path $root 'fonts'
+    $installed = @(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File -ErrorAction SilentlyContinue)
+    if (-not $installed.Count) {
+        $fontArchive = Join-Path $WorkDir 'fonts.tar.xz'
+        if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
+            Write-CrudeStep (Mark 'warn') 'Font' 'tar.exe is missing. File icons may look wrong'
+        } else {
+            Get-CrudeDownload "https://github.com/ryanoasis/nerd-fonts/releases/download/$fontVersion/JetBrainsMono.tar.xz" $fontArchive
+            if ((Get-CrudeHash $fontArchive) -cne $fontSha256) {
+                Write-CrudeStep (Mark 'warn') 'Font' 'the font archive did not match its pinned checksum'
+            } else {
+                [void] [IO.Directory]::CreateDirectory($fonts)
+                & tar.exe -xJf $fontArchive -C $fonts
+                Register-CrudeFonts $fonts
+            }
+        }
+    }
+
+    $crudeBin = Join-Path $InstallDir 'crude.exe'
+    $lua = Join-Path $root 'wezterm.lua'
+    $luaText = @"
+-- Written by the Crude installer. This window runs Crude only.
+local wezterm = require 'wezterm'
+return {
+    default_prog = { '@@DEFAULT_PROG@@' },
+    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
+    font_size = 13.0,
+    window_decorations = 'TITLE | RESIZE',
+    hide_tab_bar_if_only_one_tab = true,
+    window_close_confirmation = 'NeverPrompt',
+    check_for_updates = false,
+    audible_bell = 'Disabled',
+}
+"@
+    [IO.File]::WriteAllText($lua, $luaText.Replace('@@DEFAULT_PROG@@', $crudeBin.Replace('\', '\\')))
+
+    $icon = Join-Path $windowHome 'crude.ico'
+    $iconSource = Join-Path $Payload 'crude-icon.ico'
+    if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $icon -Force }
+
+    $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    [void] [IO.Directory]::CreateDirectory($startMenu)
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut((Join-Path $startMenu 'Crude.lnk'))
+    $link.TargetPath = $gui.FullName
+    $link.Arguments = "--config-file ""$lua"" start --always-new-process --class crude"
+    $link.WorkingDirectory = $HOME
+    $link.Description = 'Editor, terminals and AI agents in one window'
+    if ([IO.File]::Exists($icon)) { $link.IconLocation = $icon }
+    $link.Save()
+}
+
+function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crude', [string] $InstallDir,
+    [switch] $NoPath, [switch] $Yes, [switch] $Gui, [switch] $NoGui, [switch] $Stop, [switch] $NoStop) {
     $ErrorActionPreference = 'Stop'
     Assert-CrudePlatform
     if ($Repository -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$') { throw 'Repository must be a public GitHub owner/repository name.' }
     if ($Version) { Assert-CrudeVersion $Version }
-    Confirm-CrudeBetaRisk -Accepted:$AcceptBetaRisk
-    Show-CrudeSetupAdvice
+    Confirm-CrudeWarning -Accepted:$Yes
     if (-not $InstallDir) {
         if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is unavailable; specify -InstallDir explicitly.' }
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Crude\bin'
@@ -510,7 +689,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         if ($unfinished.Count) { throw "An interrupted installation needs inspection before retrying. Preserve and inspect its transaction.json and backups in '$($unfinished -join "', '")'; restore affected files or remove verified unused staging directories manually. Nothing was changed." }
         [void] [IO.Directory]::CreateDirectory($work)
         $release = Get-CrudeRelease $Repository $Version $work
-        Write-Host "Installing Crude $($release.Tag) (windows/amd64) into $InstallDir"
+        Write-Host "Version $($release.Tag) · windows/amd64"
         $archive = Join-Path $work $release.AssetName
         $checksums = Join-Path $work 'SHA256SUMS'
         Get-CrudeDownload "$($release.BaseUrl)/SHA256SUMS" $checksums 4194304
@@ -519,6 +698,8 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         $payload = Join-Path $work 'payload'
         $relativeFiles = @(Expand-CrudeArchive $archive $payload)
         Assert-CrudeCandidate (Join-Path $payload 'crude.exe') $release.Tag
+        Write-CrudeStep (Mark 'check') 'Download' 'SHA-256 matches'
+        Stop-CrudeInstallation (Join-Path $InstallDir 'crude.exe') -Stop:$Stop -NoStop:$NoStop
         $files = New-CrudeFileTransaction $payload $InstallDir $relativeFiles $work
         if (-not $NoPath) { $path = New-CrudePathTransaction $InstallDir }
         # Persist immutable preimages before replacing anything. If interrupted,
@@ -532,10 +713,17 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         } finally { $journalFile.Dispose() }
         Set-CrudeFiles $files
         if ($path) { Set-CrudePath $path }
-        Write-Host "Installed Crude $($release.Tag): $(Join-Path $InstallDir 'crude.exe')"
-        Write-Host 'Crude is licensed under Apache-2.0 (LICENSE-APACHE). LICENSE-MIT and licenses/ retain applicable third-party notices.'
-        if ($NoPath) { Write-Host 'PATH was not changed (-NoPath).' } else { Write-Host 'User PATH and this PowerShell process are ready. Restart other existing terminals to refresh their PATH.' }
-        Write-Host 'Existing Crude cores and application data were not stopped or removed. Close older Crude shells/cores yourself before using a different build if prompted.'
+        Write-CrudeStep (Mark 'check') 'Program' (Join-Path $InstallDir 'crude.exe')
+        Install-CrudeWindow -InstallDir $InstallDir -Payload $payload -WorkDir $work -Gui:$Gui -NoGui:$NoGui
+        Write-Host ''
+        Write-Host "Crude $($release.Tag) is ready."
+        if ($NoPath) {
+            Write-Host ('Next: run: ' + (Join-Path $InstallDir 'crude.exe'))
+            Write-Host 'PATH was not changed. Add the install folder to PATH to run crude by name.'
+        } else {
+            Write-Host 'Next: open a new terminal window, then run: crude'
+        }
+        Write-Host 'Run this installer again to update. Your sessions and settings were not changed.'
         $cleanupWork = $true
     } catch {
         $failure = $_.Exception.Message
@@ -547,7 +735,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
             throw "$failure Rollback needs attention: $($rollbackFailures -join '; '). Backups and transaction details are retained in '$work'; do not delete them."
         }
         $cleanupWork = $true
-        throw "$failure No changes to the previous installation or PATH were retained. If a binary is in use or access is denied, close the Crude shells/cores using this installation yourself, then retry; the installer never stops them."
+        throw "$failure No changes to the previous installation or PATH were retained. If the program is in use or access is denied, close Crude and run this installer again, or add -Stop."
     } finally {
         [Net.ServicePointManager]::SecurityProtocol = $oldTls
         if ($cleanupWork -and -not $retainWork -and [IO.Directory]::Exists($work)) {
@@ -560,7 +748,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
 
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        Install-Crude -Version $Version -Repository $Repository -InstallDir $InstallDir -NoPath:$NoPath -AcceptBetaRisk:$AcceptBetaRisk
+        Install-Crude -Version $Version -Repository $Repository -InstallDir $InstallDir -NoPath:$NoPath -Yes:$Yes -Gui:$Gui -NoGui:$NoGui -Stop:$Stop -NoStop:$NoStop
     } catch {
         Write-Error "Crude installation failed: $($_.Exception.Message)" -ErrorAction Continue
         exit 1

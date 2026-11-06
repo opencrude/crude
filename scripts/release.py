@@ -56,9 +56,10 @@ def package(stage, output, version, target):
     if destination.exists():
         raise ValueError(f"refusing to overwrite existing artifact: {destination}")
     executable = "crude.exe" if target == "windows" else "crude"
-    entries = [stage / executable, stage / "LICENSE-MIT", stage / "LICENSE-APACHE", stage / "README.md", stage / "licenses"]
+    entries = [stage / executable, stage / "LICENSE-MIT", stage / "LICENSE-APACHE", stage / "README.md",
+               stage / "crude-icon.png", stage / "crude-icon.svg", stage / "crude-icon.ico", stage / "licenses"]
     if not all(path.exists() for path in entries):
-        raise ValueError("release is missing its binary or redistribution notices")
+        raise ValueError("release is missing its binary, icon or redistribution notices")
     if not (stage / "licenses/SYNTAX-QUERIES-NOTICE").is_file():
         raise ValueError("release is missing its embedded syntax query notice")
     if target == "linux":
@@ -114,6 +115,11 @@ def build(args):
             raise ValueError(f"release smoke failed: {actual!r} != {expected!r}")
         for name in ("LICENSE-MIT", "LICENSE-APACHE", "README.md"):
             shutil.copyfile(ROOT / name, stage / name)
+        # The installer uses these for the desktop window icon and the Start
+        # menu entry. They are program assets, not redistribution notices.
+        shutil.copyfile(ROOT / "assets/crude-icon-512.png", stage / "crude-icon.png")
+        shutil.copyfile(ROOT / "assets/crude-icon.svg", stage / "crude-icon.svg")
+        shutil.copyfile(ROOT / "assets/crude-icon.ico", stage / "crude-icon.ico")
         # Dependency tool is version-pinned by CI; it fails on missing notices
         # rather than silently shipping an incomplete Go dependency bundle.
         subprocess.run(["go-licenses", "save", ".", "--ignore=crude", f"--save_path={stage / 'licenses/go'}"], cwd=ROOT, check=True)

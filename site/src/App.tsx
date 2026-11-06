@@ -40,11 +40,11 @@ const ISSUES = `${REPOSITORY}/issues`;
 
 const LINUX_COMMAND = `# Download the installer, read it, then run it.
 curl -fsSL ${RELEASES}/latest/download/install.sh -o install.sh
-bash install.sh --accept-beta-risk`;
+bash install.sh --yes`;
 
 const WINDOWS_COMMAND = `# Download the installer, read it, then run it.
 Invoke-WebRequest ${RELEASES}/latest/download/install.ps1 -OutFile install.ps1
-.\\install.ps1 -AcceptBetaRisk`;
+.\\install.ps1 -Yes`;
 
 const SHOT_WIDTH = 1920;
 const SHOT_HEIGHT = 1056;

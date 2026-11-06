@@ -41,12 +41,12 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
             --retry 3 --connect-timeout 15 --max-time 180 \
             https://github.com/opencrude/crude/releases/latest/download/install.sh -o "$installer"
-          bash "$installer" --accept-beta-risk
+          bash "$installer" --yes --no-gui
           binary="$HOME/.local/bin/crude"
           version=$("$binary" --version)
           [[ "$version" == "crude $RELEASE_TAG ($RELEASE_COMMIT; "*'; linux/amd64)' ]]
           hash=$(sha256sum "$binary")
-          bash "$installer" --accept-beta-risk --version "$RELEASE_TAG"
+          bash "$installer" --yes --no-gui --version "$RELEASE_TAG"
           test "$(sha256sum "$binary")" = "$hash"
           test "$(cat "$HOME/.crude/preserved.txt")" = 'retained work'
           test "$(grep -c '^export PATH=' "$HOME/.profile")" -eq 1
@@ -80,14 +80,14 @@ jobs:
           [IO.File]::WriteAllText($marker, 'retained work')
           $installer = Join-Path $env:RUNNER_TEMP 'crude-public-install.ps1'
           Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile $installer -UseBasicParsing -ErrorAction Stop
-          & $installer -AcceptBetaRisk
+          & $installer -Yes -NoGui
           $binary = Join-Path $env:LOCALAPPDATA 'Crude/bin/crude.exe'
           $version = & $binary --version
           if ($LASTEXITCODE -ne 0 -or $version -cnotmatch ('^crude ' + [Regex]::Escape($env:RELEASE_TAG) + ' \(' + $env:RELEASE_COMMIT + '; [0-9TZ:-]+; windows/amd64\)$')) { throw "Wrong public binary: $version" }
           $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
           $stamp = [DateTime]::UtcNow.AddDays(-2)
           [IO.File]::SetLastWriteTimeUtc($binary, $stamp)
-          & $installer -AcceptBetaRisk -Version $env:RELEASE_TAG
+          & $installer -Yes -NoGui -Version $env:RELEASE_TAG
           if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne $hash -or [IO.File]::GetLastWriteTimeUtc($binary) -ne $stamp) { throw 'Repeat replaced an identical verified binary' }
           if ([IO.File]::ReadAllText($marker) -cne 'retained work') { throw 'Install changed application data' }
           if (-not (Test-Path -LiteralPath (Join-Path (Split-Path $binary) 'LICENSE-APACHE'))) { throw 'Redistribution license missing' }

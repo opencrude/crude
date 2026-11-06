@@ -47,18 +47,19 @@ Crude is not a security sandbox. Agent commands run with your user permissions.
 
 ```bash
 curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh
-bash install.sh --accept-beta-risk
+bash install.sh --yes
 ```
 
 **Windows x64** (PowerShell 5.1 or later):
 
 ```powershell
 Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1
-.\install.ps1 -AcceptBetaRisk
+.\install.ps1 -Yes
 ```
 
 Read the installer before you run it. To update Crude, run the same command again.
-You do not need administrator rights.
+Add `--gui` (`-Gui`) to also install a Crude window that runs Crude and nothing
+else, with its own font and a menu entry. You do not need administrator rights.
 
 ## Get started
 
@@ -73,7 +74,8 @@ Press **Ctrl+Alt+P** to see all commands and their shortcuts. Press **Alt+F12** 
 **Recommended setup:** Use Kitty or Alacritty on Linux, or Windows Terminal on Windows,
 with truecolor. Install [JetBrainsMono Nerd Font](https://www.nerdfonts.com/font-downloads)
 (NF, not NFM). Then enable **Nerd font** and **Show file icons** in
-**Settings → IDE → Interface**. The installers do not change your terminal or fonts.
+**Settings → IDE → Interface**. The installers change your terminal or fonts only
+when you ask for the Crude window.
 
 <details>
 <summary><strong>More captures</strong></summary>
