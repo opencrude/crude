@@ -777,7 +777,9 @@ function Install() {
         <div className="min-w-0 lg:col-span-4">
           <SectionHeading eyebrow="Install" title="One command. No compiler.">
             The installer downloads a verified release. Run the same command
-            again to update. You do not need administrator rights.
+            again to update. You do not need administrator rights. Add{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">--gui</code>{" "}
+            for a window that opens Crude, with its own terminal and font.
           </SectionHeading>
 
           <ol className="mt-8 space-y-4 text-sm leading-6">

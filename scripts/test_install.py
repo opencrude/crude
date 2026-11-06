@@ -349,6 +349,9 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertIn("default_prog", lua.read_text(), "an update must rewrite the configuration")
         self.assertFalse(old.exists(), "an update must remove an older pinned copy")
         self.assertTrue(self.window.exists(), "an update must keep the current pinned copy")
+        leftovers = [item.name for item in (self.home / ".local/share/crude/window").iterdir()
+                     if item.name.startswith((".previous", ".unpack", ".staged"))]
+        self.assertEqual(leftovers, [], "a finished install must leave no working folders")
 
     def test_a_window_kept_by_no_gui_is_not_left_silently_stale(self):
         self.archive()
