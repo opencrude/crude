@@ -364,6 +364,27 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertEqual(lua.read_text(), "stale configuration\n")
         self.assertTrue((self.home / ".local/bin/crude-window").exists())
 
+    def test_a_window_that_cannot_write_its_configuration_reports_it(self):
+        self.archive()
+        self.installed_window()
+        self.run_installer("--gui")
+        config = self.home / ".local/share/crude/window/wezterm.lua"
+        config.write_text("previous configuration\n")
+        # Fail only the rename of the configuration, so the rest of the install
+        # is a real success and the window step is the one that fails.
+        mv = self.bin / "mv"
+        mv.write_text("#!/bin/sh\nfor last; do :; done\n"
+                      'case "$last" in *wezterm.lua) echo "read-only file system" >&2; exit 1 ;; esac\n'
+                      'exec /bin/mv "$@"\n')
+        mv.chmod(0o755)
+        result = self.run_installer("--gui")
+        self.assertIn("cannot write the window configuration", result.stderr)
+        self.assertIn("the window is not up to date", result.stderr)
+        self.assertEqual(config.read_text(), "previous configuration\n",
+                         "a failed write must keep the configuration that worked")
+        self.assertTrue((self.home / ".local/bin/crude").exists(), "the program install must stand")
+        self.assertTrue((self.home / ".local/bin/crude-window").exists(), "the launcher must stand")
+
     def test_a_window_without_an_icon_names_no_missing_file(self):
         self.archive()
         self.installed_window()

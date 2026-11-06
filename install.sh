@@ -341,14 +341,16 @@ return {
     },
 }
 LUA
-        mv -f -- "$window_lua.new" "$window_lua"
+        mv -f -- "$window_lua.new" "$window_lua" ||
+            { warn 'Window' 'cannot write the window configuration'; return 1; }
         cat > "$window_launcher.new" <<LAUNCH
 #!/bin/sh
 # Open Crude in its own window.
 exec "$window_prefix/usr/bin/wezterm" --config-file "$window_lua" start --always-new-process --class crude
 LAUNCH
         chmod 755 "$window_launcher.new"
-        mv -f -- "$window_launcher.new" "$window_launcher"
+        mv -f -- "$window_launcher.new" "$window_launcher" ||
+            { warn 'Window' 'cannot write the window launcher'; return 1; }
 
         local icon="$data/icons/crude.png"
         if [[ -f "$stage/crude-icon.png" ]]; then
@@ -399,7 +401,7 @@ LAUNCH
         # The new copy is in place, so the older pins can go.
         prune_window_versions
         install_window_fonts
-        write_window_files
+        write_window_files || return 1
         ok 'Window' 'Crude is in your application menu'
     }
 
@@ -527,7 +529,11 @@ LAUNCH
 
     # ---- The window --------------------------------------------------------
     if [[ "$window_state" == install ]]; then
-        install_window || true
+        # A command inside install_window that fails must not end the install,
+        # because the program is already in place.
+        if ! install_window; then
+            warn 'Window' 'the window is not up to date. Run this installer again'
+        fi
     elif [[ -x "$window_launcher" ]]; then
         note 'Window' 'not updated. Run this installer with --gui to update it'
     elif ((window_asked)); then
