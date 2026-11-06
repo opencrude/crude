@@ -671,14 +671,14 @@ func TestFileOpsService_ApplyWorkspaceEdit_ValidationIsTransactional(t *testing.
 			if err := os.WriteFile(b, []byte("old-b"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			edits := []FileEdit{{a, "old-a", "new-a"}, {b, "old-b", "new-b"}}
+			edits := []FileEdit{{Path: a, OldContent: "old-a", NewContent: "new-a"}, {Path: b, OldContent: "old-b", NewContent: "new-b"}}
 			switch kind {
 			case "later mismatch":
 				edits[1].OldContent = "wrong"
 			case "empty preimage":
 				edits[1].OldContent = ""
 			case "duplicate":
-				edits[1] = FileEdit{a, "new-a", "second"}
+				edits[1] = FileEdit{Path: a, OldContent: "new-a", NewContent: "second"}
 			case "outside root":
 				edits[1].Path = filepath.Join(t.TempDir(), "outside")
 			case "directory":
@@ -732,7 +732,7 @@ func TestFileOpsService_ApplyWorkspaceEdit_EmptyFileAndModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := NewFileOpsService(dir, nil, nil)
-	if msg := svc.ApplyWorkspaceEdit([]FileEdit{{path, "", "filled"}}); !msg.Succeeded() {
+	if msg := svc.ApplyWorkspaceEdit([]FileEdit{{Path: path, OldContent: "", NewContent: "filled"}}); !msg.Succeeded() {
 		t.Fatal(msg.Err)
 	}
 	assertWorkspaceEditFile(t, path, "filled", 0o751)
@@ -749,7 +749,7 @@ func TestFileOpsService_ApplyWorkspaceEdit_CommitFailureRollsBack(t *testing.T) 
 				if err := os.WriteFile(path, []byte("before"), 0o751); err != nil {
 					t.Fatal(err)
 				}
-				edits[i] = FileEdit{path, "before", "after"}
+				edits[i] = FileEdit{Path: path, OldContent: "before", NewContent: "after"}
 			}
 			calls := 0
 			svc.commitWorkspaceEdit = func(from, to string) error {
@@ -786,7 +786,7 @@ func TestFileOpsService_ApplyWorkspaceEdit_MutationLease(t *testing.T) {
 	unlock := fileio.LockTreeMutation()
 	defer unlock()
 	svc := NewFileOpsService(dir, nil, nil)
-	if msg := svc.ApplyWorkspaceEdit([]FileEdit{{path, "old", "new"}}); msg.Succeeded() {
+	if msg := svc.ApplyWorkspaceEdit([]FileEdit{{Path: path, OldContent: "old", NewContent: "new"}}); msg.Succeeded() {
 		t.Fatal("edit bypassed mutation lease")
 	}
 	assertWorkspaceEditFile(t, path, "old", 0o644)

@@ -153,7 +153,7 @@ func (m *App) closePaneWindowTabs(group window.GroupID) tea.Cmd {
 //              outline-popup, diag-context
 // KeepRoute:   find-replace, composer, command-palette,
 //              textoverlay
-// Ignore:      dirty-close-prompt, tree-prompt, tree-delete-confirm, filepicker,
+// Ignore:      dirty-close-prompt, text-prompt, tree-delete-confirm, filepicker,
 //              workspace-settings
 
 // =============================================================================
@@ -560,13 +560,13 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 // Row N: ╰    ─╯
 // =============================================================================
 
-func (m *App) clickTreePrompt(localX, localY int, msg tea.Msg) tea.Cmd {
-	if m.TreePrompt == nil || m.windowManager == nil {
+func (m *App) clickTextPrompt(localX, localY int, msg tea.Msg) tea.Cmd {
+	if m.TextPrompt == nil || m.windowManager == nil {
 		return nil
 	}
 	// Presses on the name field go to the bound TextField: caret placement,
 	// Shift+click, word/line selection and captured drag selection.
-	fw, field := m.treePromptField()
+	fw, field := m.textPromptField()
 	if field == nil {
 		return nil
 	}

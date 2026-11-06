@@ -78,13 +78,17 @@ the caller still owns source-relative UTF-16 boundaries and diagnostic provenanc
 Bounds are 256 original diagnostics and 256 KiB aggregate diagnostic bytes,
 64 KiB per resolve object and 1 MiB per raw action-list response. These encoded
 data bounds do not bound the external connection decoder's initial allocation.
-The transport neither executes commands nor applies edits or authorizes URIs.
-Initialize advertises literal/data/disabled/preferred support and edit-only
-resolution. `CodeActionSupport` observes only the current initialized static
-provider capability. The adapter and canonical coordinator qualify original
+The transport executes only commands that the initialized server advertised and
+accepts create-file workspace edits requested by that server. `workspace/applyEdit`
+is answered with `applied: false`; the adapter retains the original edit for the
+canonical coordinator's review instead of mutating files. Initialize advertises
+literal/data/disabled/preferred support, edit resolution, `workspace/applyEdit`,
+create-file resource operations and `workspace/executeCommand`.
+`CodeActionSupport` and `CommandSupport` observe only current static provider
+capabilities. The adapter and canonical coordinator qualify original
 diagnostic/action evidence; the transport alone grants no mutation authority.
-No dynamic registration, resource operation,
-annotation, `workspace/applyEdit` or command-execution support is granted.
+Dynamic registration, rename/delete resource operations, annotations and
+arbitrary shell execution remain unsupported.
 
 Both module consumers use the pinned local
 [`jsonrpc2` request decoder](../jsonrpc2/README.md). This authority preserves

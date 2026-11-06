@@ -22,7 +22,7 @@ const (
 	OverlayAgentPrompt       OverlayID = "agent-prompt"
 	OverlayTabStats          OverlayID = "tab-stats"
 	OverlayPromptHistory     OverlayID = "prompt-history"
-	OverlayTreePrompt        OverlayID = "tree-prompt"
+	OverlayTextPrompt        OverlayID = "text-prompt"
 	OverlayTreeDelete        OverlayID = "tree-delete-confirm"
 	OverlayWorkspaceDelete   OverlayID = "workspace-delete"
 	OverlayWorkspaceSwitch   OverlayID = "workspace-switch"
@@ -130,7 +130,7 @@ func DefaultOverlayPolicy() OverlayPolicy {
 }
 
 // ModalDialogPolicy returns a policy for modal dialogs (dirty-close,
-// tree-delete, tree-prompt).
+// tree-delete, text-prompt).
 func ModalDialogPolicy() OverlayPolicy {
 	return OverlayPolicy{
 		Modal:     true,

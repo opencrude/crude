@@ -76,7 +76,7 @@ func TestEditorTabMarkerTracksRenamedPath(t *testing.T) {
 	}
 
 	app.startRenameInTree(oldPath)
-	app.TreePrompt.Edit.SetValue(filepath.Base(newPath))
+	app.TextPrompt.Edit.SetValue(filepath.Base(newPath))
 	updateTreeMutationWithoutDeadlock(t, app, "rename with a dirty editor tab")
 
 	got := paintedTabStrip(t, app, 40)

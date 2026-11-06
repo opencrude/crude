@@ -10,6 +10,8 @@ const (
 	TextPromptNewFolder
 	TextPromptRename
 	TextPromptGeneric
+	// TextPromptGoToLine asks for a line in the focused editor.
+	TextPromptGoToLine
 )
 
 // TextPromptState holds the data for a single text-input popup. The
@@ -36,6 +38,9 @@ type TextPromptState struct {
 	OnSubmit func(value string) error
 	// OnCancel is called on Esc. Optional.
 	OnCancel func()
+	// Error states why the submitted value was rejected. It replaces the
+	// prompt's guidance line until the next edit or a successful submit.
+	Error string
 }
 
 // NewTextPromptState constructs a prompt with a shared TextEdit engine.
@@ -88,6 +93,11 @@ func (st *TextPromptState) CursorPos() int {
 // TextPromptPopupWidth computes the popup total width.
 func TextPromptPopupWidth(st *TextPromptState) int {
 	w := len(st.Prompt) + 12
+	// A rejected value's message occupies the guidance row; the dialog widens
+	// to show it whole instead of clipping the reason.
+	if len(st.Error)+12 > w {
+		w = len(st.Error) + 12
+	}
 	if len(st.Title)+12 > w {
 		w = len(st.Title) + 12
 	}
@@ -113,6 +123,8 @@ func kindIcon(k TextPromptKind) string {
 		return "▤"
 	case TextPromptRename:
 		return "↪"
+	case TextPromptGoToLine:
+		return "↦"
 	default:
 		return "•"
 	}

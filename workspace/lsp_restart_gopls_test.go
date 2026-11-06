@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,5 +115,62 @@ func TestRealServerQuickFixWorksAfterRestart(t *testing.T) {
 	disk, err := os.ReadFile(f.path)
 	if err != nil || string(disk) != "package probe\n\nvar answer = 42\n" {
 		t.Fatalf("quick fix did not remove the unused import: %q, %v", disk, err)
+	}
+}
+
+// A real gopls code action can be command-based. Crude must execute it once,
+// capture the server's create-file edit, review it and apply it transactionally.
+func TestRealServerAddTestCommandReachesReviewedCreate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a real language server")
+	}
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls is not installed")
+	}
+	text := "package probe\n\nimport \"context\"\n\n// AsyncHandler runs each call in its own goroutine.\nfunc AsyncHandler(h func(context.Context)) func(context.Context) {\n\treturn func(ctx context.Context) { go h(ctx) }\n}\n"
+	f := newCodeActionFixture(t, text)
+	root := filepath.Dir(f.path)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module probe\n\ngo 1.22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := f.workspace.LSPMgr
+	m.SetRuntime(defaultLSPRuntime{})
+	m.StartForWorkspace(root)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	if err := m.awaitSynchronized(ctx, f.path); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Count(text[:strings.Index(text, "func A")], "\n") + 1
+	offset := strings.Index(text, "func A") + len("func A")
+	set, err := f.workspace.RequestLSPCodeActions(ctx, f.owner, f.source, offset, offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := -1
+	for _, row := range set.Items {
+		t.Logf("action %q review=%t resolve=%t reason=%s", row.Title, row.CanReview, row.NeedsResolve, row.UnsupportedReason)
+		if strings.HasPrefix(row.Title, "Add test for AsyncHandler") && row.CanReview {
+			index = row.Index
+		}
+	}
+	if index < 0 {
+		t.Fatalf("gopls did not offer the command action at line %d: %+v", line+1, set.Items)
+	}
+	preview, err := f.workspace.PrepareLSPCodeAction(ctx, f.owner, set.ID, set.Digest, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.ID == "" || len(preview.Files) != 1 || !preview.Files[0].Created ||
+		!strings.HasSuffix(preview.Files[0].Path, "_test.go") {
+		t.Fatalf("add-test action was not a reviewed create: %+v", preview)
+	}
+	result := f.workspace.LiveDocuments.ApplyReviewedEdit(ctx, f.owner, preview.ID, preview.Digest,
+		f.workspace.LocalHistory, NewFileOpsService(root, nil, nil))
+	if result.State != "committed" || result.Error != "" {
+		t.Fatalf("add-test action did not commit: %+v", result)
+	}
+	if data, err := os.ReadFile(preview.Files[0].Path); err != nil || !strings.Contains(string(data), "func TestAsyncHandler") {
+		t.Fatalf("generated test file = %q, %v", data, err)
 	}
 }

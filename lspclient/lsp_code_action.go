@@ -52,6 +52,7 @@ func (l *LSPIntegration) RequestCodeActions(ctx context.Context, path string, li
 		return types.LSPCodeActionResponse{}, context.Canceled
 	}
 	_, resolve := client.CodeActionSupport()
+	commands := client.CommandSupport()
 	raw, err := client.RequestCodeActions(ctx, protocol.DocumentURI(uri), protocol.Range{
 		Start: protocol.Position{Line: uint32(line), Character: uint32(col)},
 		End:   protocol.Position{Line: uint32(endLine), Character: uint32(endCol)},
@@ -66,7 +67,7 @@ func (l *LSPIntegration) RequestCodeActions(ctx context.Context, path string, li
 		return types.LSPCodeActionResponse{}, err
 	}
 	return types.LSPCodeActionResponse{
-		WireVersion: version, JSON: bytes.Clone(raw), ResolveSupported: resolve,
+		WireVersion: version, JSON: bytes.Clone(raw), ResolveSupported: resolve, CommandSupported: commands,
 		DiagnosticsIncluded: len(diagnostics), DiagnosticsDetail: detail,
 	}, nil
 }
@@ -104,7 +105,7 @@ func (l *LSPIntegration) ResolveCodeAction(ctx context.Context, path string, wir
 	_, resolve := client.CodeActionSupport()
 	return types.LSPCodeActionResponse{
 		WireVersion: wireVersion, JSON: bytes.Clone(raw), ResolveSupported: resolve,
-		DiagnosticsDetail: "diagnostics are not sent during resolve",
+		CommandSupported: client.CommandSupport(), DiagnosticsDetail: "diagnostics are not sent during resolve",
 	}, nil
 }
 

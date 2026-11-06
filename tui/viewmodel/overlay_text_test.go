@@ -199,19 +199,19 @@ func TestCommandPalettePasteAndCut(t *testing.T) {
 	}
 }
 
-// The tree prompt (new file / rename) takes bracketed paste and keyboard
+// The text prompt (new file / rename / go to line) takes bracketed paste and keyboard
 // selection through the shared field; its painted field is the edited value.
-func TestTreePromptPasteAndSelection(t *testing.T) {
+func TestTextPromptPasteAndSelection(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	app.registerOverlayHandlers()
 	app.width, app.height = 100, 30
-	app.openTreeTextPrompt(ui.TextPromptRename, "Rename", "old.go", "", "old.go", func(string) error { return nil })
+	app.openTextPrompt(ui.TextPromptRename, "Rename", "old.go", "old.go", func(string) error { return nil })
 	app.Update(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift})
 	app.Update(tea.PasteMsg{Content: "new"})
-	if got := app.TreePrompt.ValueText(); got != "new" {
+	if got := app.TextPrompt.ValueText(); got != "new" {
 		t.Fatalf("paste over the Shift+Home selection = %q, want new", got)
 	}
-	cw := app.windowManager.Window(string(ui.OverlayTreePrompt)).Content.(*ui.ComponentWidget)
+	cw := app.windowManager.Window(string(ui.OverlayTextPrompt)).Content.(*ui.ComponentWidget)
 	if got := ui.TextPromptField(cw).Value(); got != "new" {
 		t.Fatalf("painted field = %q", got)
 	}

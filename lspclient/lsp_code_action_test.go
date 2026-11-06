@@ -207,9 +207,9 @@ func TestCodeActionAdapterInitializeAndOpaqueTransport(t *testing.T) {
 		string(initialize.Capabilities.TextDocument["publishDiagnostics"]) != `{"versionSupport":true}` {
 		t.Fatal("initialize did not advertise the narrow actual capability")
 	}
-	for _, forbidden := range []string{"applyEdit", "workspaceEdit", "executeCommand"} {
-		if _, present := initialize.Capabilities.Workspace[forbidden]; present {
-			t.Fatalf("initialize granted %s", forbidden)
+	for _, required := range []string{"applyEdit", "workspaceEdit", "executeCommand"} {
+		if _, present := initialize.Capabilities.Workspace[required]; !present {
+			t.Fatalf("initialize did not advertise %s", required)
 		}
 	}
 	actionPublish(t, integration, root, path, actionEnvelope(path, fmt.Sprintf(`"version":%d,`, version), "["+actionDiagnostic+"]"))

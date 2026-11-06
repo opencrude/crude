@@ -44,6 +44,7 @@ const (
 	MethodWorkspaceDidChangeConfiguration    = "workspace/didChangeConfiguration"
 	MethodWorkspaceDidChangeWorkspaceFolders = "workspace/didChangeWorkspaceFolders"
 	MethodWorkspaceDidChangeWatchedFiles     = "workspace/didChangeWatchedFiles"
+	MethodWorkspaceExecuteCommand            = "workspace/executeCommand"
 )
 
 // ErrProcessCleanupUnverified marks a failed launch whose owned subprocess or
@@ -577,11 +578,13 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 			"documentSymbol":     map[string]any{"hierarchicalDocumentSymbolSupport": true},
 			"publishDiagnostics": map[string]any{"versionSupport": true},
 		},
-		"workspace": map[string]any{"configuration": true, "workspaceFolders": true},
-		"general":   map[string]any{"positionEncodings": []string{"utf-16"}},
-		// Crude patch: progress lets the client tell "still analyzing" from
-		// "analyzed, no problems" before reporting diagnostics as settled.
-		"window": map[string]any{"workDoneProgress": true},
+		"workspace": map[string]any{
+			"configuration": true, "workspaceFolders": true, "applyEdit": true,
+			"workspaceEdit":  map[string]any{"documentChanges": true, "resourceOperations": []string{"create"}},
+			"executeCommand": map[string]any{},
+		},
+		"window":  map[string]any{"workDoneProgress": true, "showDocument": map[string]any{"support": true}},
+		"general": map[string]any{"positionEncodings": []string{"utf-16"}},
 	}
 }
 

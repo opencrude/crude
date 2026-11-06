@@ -447,6 +447,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleAutosaveDue(msg)
 	case editorSaveResultMsg:
 		return m, m.handleEditorSaveResult(msg)
+	case editorFormatOnlyResultMsg:
+		m.handleEditorFormatOnlyResult(msg)
+		return m, nil
+	case projectFormatResultMsg:
+		m.handleProjectFormatResult(msg)
+		return m, nil
 	case editorFormatResultMsg:
 		return m, m.handleEditorFormatResult(msg)
 	case editorDiskResultMsg:
@@ -1012,6 +1018,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.closeCodeActionScreen(msg))
 	case codeActionReleasedMsg:
 		m.handleCodeActionReleased(msg)
+	case codeActionURLResultMsg:
+		m.handleCodeActionURLResult(msg)
 	case lspDocumentSymbolsResultMsg:
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleDocumentSymbolsResult(msg)
@@ -1699,7 +1707,7 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 		return cmd
 	}
 	// A drag that a ComponentWidget overlay's text field captured (find /
-	// replace, palette filter, tree prompt) keeps its motion and release in
+	// replace, palette filter, text prompt) keeps its motion and release in
 	// that field until the button is released. Presses and keys keep their
 	// overlay-specific owners.
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok {

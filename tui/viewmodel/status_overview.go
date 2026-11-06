@@ -505,7 +505,7 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	case FocusLauncher:
 		return nil
 	case FocusEditor:
-		return []ui.HintSegment{ui.ActionSeg("edit.find"), ui.ActionSeg("tabs.next"), ui.ActionSeg("view.focus.sidebar")}
+		return []ui.HintSegment{ui.ActionSeg("edit.find"), ui.ActionSeg("edit.gotoLine"), ui.ActionSeg("tabs.next"), ui.ActionSeg("view.focus.sidebar")}
 	case FocusTabBar:
 		return []ui.HintSegment{ui.ActionSeg("tabbar.previous"), ui.ActionSeg("tabbar.next"), ui.ActionSeg("tabbar.select")}
 	}

@@ -28,7 +28,8 @@ type liveEditorState struct {
 	undo                                    *editor.DocumentUndoIntent
 	due                                     time.Time
 	err                                     error
-	format                                  bool
+	format, formatOnly                      bool
+	notifyFormat                            bool
 	uncertain                               *liveEditorResult
 	recoverDue                              time.Time
 	refs                                    *liveDocumentRefs
@@ -270,6 +271,24 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			operation = func(ctx context.Context) {
 				msg.receipt, msg.err = live.UndoDocument(ctx, ds.DocumentID, id, intent.ExpectedRevision, intent.Redo)
 			}
+		case state.formatOnly && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
+			formatter, ok := m.ws.(shellport.LiveDocumentFormatter)
+			if !ok {
+				state.formatOnly = false
+				m.liveEditorFailure(state, errors.New("core formatter unavailable"))
+				continue
+			}
+			state.formatOnly = false
+			msg.kind = "format"
+			msg.requestID = fmt.Sprintf("format-%x", rand.Uint64())
+			snapshotCommands, _ := msg.owner.(shellport.LiveDocumentCommands)
+			operation = func(ctx context.Context) {
+				if snapshotCommands != nil {
+					msg.snapshot, msg.err = snapshotCommands.FormatDocumentRequest(ctx, ds.DocumentID, ds.Revision, msg.requestID)
+				} else {
+					msg.snapshot, msg.err = formatter.FormatDocument(ctx, ds.DocumentID, ds.Revision)
+				}
+			}
 		case state.save && state.format && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			formatter, ok := m.ws.(shellport.LiveDocumentFormatter)
 			if !ok {
@@ -506,6 +525,12 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 	case "format":
 		// Fetch the authoritative change group and rebase any typing that
 		// arrived while formatting. A snapshot replacement would lose it.
+		if state.notifyFormat {
+			state.notifyFormat = false
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Formatted")
+			}
+		}
 		state.sync = true
 		if state.pushedRevision >= msg.snapshot.Revision {
 			state.sync = false

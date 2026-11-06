@@ -65,6 +65,21 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   parking the cursor on blank lines — and SA4004 flagged it as a dead loop.
   When a "dead loop" warning appears, check for a swallowed `continue` first.
 
+## Go to line
+
+- Ctrl+G and the editor View menu open the shared text prompt with the lines
+  this file has and the cursor's line pre-filled and selected, so a typed
+  number replaces it. Enter jumps; Esc leaves the cursor and view untouched.
+  `line:column` is accepted, and a column past the end of the line lands at its
+  end. Rejected input (not a number, or a line beyond the file) keeps the
+  prompt open and states the cause in the dialog's guidance row, which the
+  next edit clears; nothing moves.
+- The jump sets the cursor and marks the whole target line as a landing cue: a
+  visible highlight that is not a selection, so typing inserts instead of
+  replacing the line. An already-visible target does not move the viewport; an
+  off-screen target lands with context above and below through the same reveal
+  path as LSP navigation and search results.
+
 ## Pointer selection and scrolling
 
 - One gesture owns character, whole-word, or whole-line selection, including
@@ -219,7 +234,15 @@ refresh after success without dropping the query/replacement draft.
   The formatter is the one the [catalog](code-intelligence-catalog.md) names
   for the file's language (`FormatDocument` in `workspace/document_format.go`),
   run over standard input and output; a language without one keeps its exact
-  bytes. Toggle comment uses the language's first catalog line comment token.
+  bytes. **Format Document** (Shift+Alt+F, the editor menu and the palette)
+  formats the current buffer without saving it; a connected editor sends its
+  exact revision to the core formatter. **Format Project** formats saved files
+  through the same catalog formatters and one transactional file owner. It
+  skips open documents because their live text belongs to the editor, captures
+  one Local History safety snapshot before writing and reports the changed and
+  skipped counts. A project above the 200-file or 16 MiB review bound asks for
+  individual formatting instead of applying a partial result. Toggle comment
+  uses the language's first catalog line comment token.
 - Save acknowledgements identify an exact buffer revision. Newer text remains
   dirty. Exact watcher reconciliation replaces time-based self-event suppression;
   known external changes fail closed and preserve both local and disk content.
@@ -691,8 +714,8 @@ unattributed or corrupt evidence stays protected. This is retention metadata
 administration, not another Apply or undo path; see
 [safety protection](local-history.md#reviewed-edit-safety-protection).
 
-This is a bounded manual text-only rename workflow, not general refactoring,
-dynamic registration or `workspace/applyEdit` support.
+This is a bounded manual text-only rename workflow, not general refactoring or
+dynamic registration.
 
 ### Manual code actions
 
@@ -712,22 +735,34 @@ repeating a warning on every row. Enter or a click on an available action
 requests its changes directly, including lazy resolution when
 the static provider supports it. There is no intermediate inspection page.
 Unavailable rows remain visible and explain the reason when selected.
-Requesting changes does not execute a command.
-The resulting **Review code action** composes the same read-only,
-Cancel-default review, Apply/Release/Check-result state machine and selected Local
-History safety used by rename. There is no second file writer or receipt machine.
-Successful source effects arrive through canonical document topics, not a shell
-reload or private result. Other shells retain their private cursors and drafts.
 
-This slice accepts a literal `WorkspaceEdit.changes` map or exactly one ordinary
-`TextDocumentEdit` in `documentChanges`, targeting the invoking clean canonical
-file. A versioned target must carry a nonnull positive int32 version exactly
-equal to the original synchronized provider wire clock. Missing, null, zero,
-stale or future versions are not inferred. Commands (including edit-plus-command),
-resource operations, annotations, notebooks, mixed representations,
-multiple/foreign files and no-op edits remain visibly unsupported.
-It never drops the unsupported part and
-applies the remainder. Resolved objects may add only `edit`; changing/removing
+An edit action produces the shared **Review code action** read-only,
+Cancel-default review, Apply/Release/Check-result state machine and selected Local
+History safety used by rename. Ordinary edits may target several workspace files,
+and a create-file operation is shown as a new file in the same review. The
+transactional file owner creates and edits the complete set or refuses it; the
+review remains the only mutation path. Successful source effects arrive through
+canonical document topics, not a shell reload or private result. Other shells
+retain their private cursors and drafts.
+
+A command action executes one command that the initialized server advertised.
+Crude advertises `workspace/executeCommand`, `workspace/applyEdit` and create-file
+workspace-edit support. A server `workspace/applyEdit` during the command is
+answered with `applied: false` and retained as original evidence, never applied
+inside the transport. That evidence then enters the same immutable review. A
+command whose result is a URL or whose `window/showDocument` names a browser
+destination closes the list, shows its message and opens the page through the
+existing bounded browser launcher. Informational results without an edit show a
+notice instead of an empty review.
+
+Accepted edits are bounded `WorkspaceEdit.changes` maps or ordered
+`documentChanges`: ordinary `TextDocumentEdit` targets and `create` operations.
+A versioned existing target must carry a nonnull int32 version exactly equal to
+the original synchronized provider wire clock; a new file may carry version zero
+or null. Rename/delete resource operations, annotations, notebooks, mixed
+`changes`/`documentChanges` representations, edit-plus-command actions and no-op
+edits remain visibly unsupported. Crude never drops an unsupported part and
+applies the remainder. Resolved objects may add only `edit`; changing or removing
 original attributes, opaque data or numeric token spelling is refused. This is a
 deliberate bounded protocol subset, not general provider interoperability or a
 complete quick-fix/refactoring claim.

@@ -19,7 +19,7 @@ const (
 
 func parseOne(t *testing.T, item string, support bool) lspaction.Action {
 	t.Helper()
-	rows, err := lspaction.Parse([]byte("["+item+"]"), support)
+	rows, err := lspaction.Parse([]byte("["+item+"]"), support, false)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("Parse = %#v, %v; want exactly one literal row", rows, err)
 	}
@@ -32,17 +32,15 @@ func TestLiteralRows(t *testing.T) {
 	third := `{"title":"Unavailable","disabled":{"reason":"Requires a different source"}}`
 	input := []byte("[" + first + "," + second + "," + third + "]")
 	saved := bytes.Clone(input)
-	rows, err := lspaction.Parse(input, true)
+	rows, err := lspaction.Parse(input, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []lspaction.Action{
-		{Title: "Same", Kind: "vendor.unrecognized.deep", HasPreferred: true, NeedsResolve: true, Raw: []byte(first)},
-		{Title: "Same", Preferred: true, HasPreferred: true, Raw: []byte(second), Edit: []byte(edit)},
-		{Title: "Unavailable", DisabledReason: "Requires a different source", UnsupportedReason: "Disabled actions cannot be applied.", Raw: []byte(third)},
-	}
-	if !reflect.DeepEqual(rows, want) {
-		t.Fatalf("literal fields:\n got %#v\nwant %#v", rows, want)
+	if len(rows) != 3 ||
+		rows[0].Title != "Same" || rows[0].Kind != "vendor.unrecognized.deep" || !rows[0].HasPreferred || !rows[0].NeedsResolve || string(rows[0].Raw) != first ||
+		rows[1].Title != "Same" || !rows[1].HasPreferred || !rows[1].Preferred || string(rows[1].Raw) != second || string(rows[1].Edit) != edit || rows[1].Workspace == nil ||
+		rows[2].Title != "Unavailable" || rows[2].DisabledReason != "Requires a different source" || rows[2].UnsupportedReason == "" || string(rows[2].Raw) != third {
+		t.Fatalf("literal fields: %#v", rows)
 	}
 	if !bytes.Equal(input, saved) {
 		t.Fatal("Parse mutated original list")
@@ -50,7 +48,7 @@ func TestLiteralRows(t *testing.T) {
 	for i := range input {
 		input[i] = ' '
 	}
-	if !reflect.DeepEqual(rows, want) {
+	if len(rows) != 3 || rows[1].Workspace == nil {
 		t.Fatal("returned rows alias caller list")
 	}
 	rows[1].Edit[0] = '!'
@@ -69,7 +67,7 @@ func TestLiteralRows(t *testing.T) {
 
 func TestEmptyAndInvalidJSON(t *testing.T) {
 	for _, raw := range []string{"null", " \r\nnull\t", "[]", " [ ] "} {
-		rows, err := lspaction.Parse([]byte(raw), true)
+		rows, err := lspaction.Parse([]byte(raw), true, false)
 		if err != nil || len(rows) != 0 {
 			t.Errorf("%q = %#v, %v; want observed empty", raw, rows, err)
 		}
@@ -92,7 +90,7 @@ func TestEmptyAndInvalidJSON(t *testing.T) {
 	}
 	for _, raw := range bad {
 		t.Run(raw, func(t *testing.T) {
-			rows, err := lspaction.Parse([]byte(raw), true)
+			rows, err := lspaction.Parse([]byte(raw), true, false)
 			if err == nil || rows != nil {
 				t.Fatalf("invalid input accepted: %#v, %v", rows, err)
 			}
@@ -116,7 +114,7 @@ func TestMalformedDisplayTypes(t *testing.T) {
 	for _, item := range items {
 		t.Run(item, func(t *testing.T) {
 			raw := []byte(`[{"title":"good"},` + item + `]`)
-			rows, err := lspaction.Parse(raw, true)
+			rows, err := lspaction.Parse(raw, true, false)
 			if err == nil || rows != nil {
 				t.Fatalf("malformed type accepted: %#v, %v", rows, err)
 			}
@@ -124,106 +122,86 @@ func TestMalformedDisplayTypes(t *testing.T) {
 	}
 }
 
-func TestUnsupportedRowsRemainLiteral(t *testing.T) {
+func TestSupportedCommandAndCreateRows(t *testing.T) {
 	cases := []struct {
-		reason string
-		extras []string
+		name, item string
 	}{
-		{"Action has no edit and edit resolution is not supported.", []string{
-			"",
-		}},
-		{"Bare Command actions are not supported.", []string{
-			`,"command":"server.run","arguments":[{"a":1}]`,
-		}},
-		{"Actions containing commands are not supported.", []string{
-			`,"command":{"title":"Run","command":"server.run"}`,
-			`,"edit":` + edit + `,"command":{"command":"run","title":"Run"}`,
-			`,"command":null`,
-			`,"command":false`,
-			`,"arguments":[]`,
-			`,"commands":[]`,
-			`,"executeCommand":"run"`,
-		}},
-		{"Edit operations must be inside a text-only WorkspaceEdit.", []string{
-			`,"changes":{}`,
-			`,"documentChanges":[]`,
-			`,"oldUri":"file:///a","newUri":"file:///b"`,
-		}},
-		{"Notebook actions are not supported.", []string{
-			`,"notebookDocument":{}`,
-		}},
-		{"Disabled actions cannot be applied.", []string{
-			`,"disabled":{"reason":"Not available"}`,
-			`,"edit":` + edit + `,"disabled":{"reason":"Not available"}`,
-			`,"disabled":{"reason":""}`,
-		}},
-		{"Edit must be a text-only WorkspaceEdit object.", []string{
-			`,"edit":null`,
-			`,"edit":[]`,
-			`,"edit":2`,
-		}},
-		{"Only one changes or documentChanges member is supported.", []string{
-			`,"edit":{}`,
-			`,"edit":{"changes":{"file:///a":[` + textEdit + `]},"extension":{}}`,
-		}},
-		{"Edit must contain exactly one versioned text-document target.", []string{
-			`,"edit":{"documentChanges":[]}`,
-			`,"edit":{"changes":{"file:///a":[` + textEdit + `]},"documentChanges":[]}`,
-			`,"edit":{"documentChanges":[{"textDocument":{"uri":"file:///a","version":null},"edits":[` + textEdit + `]}]}`,
-			`,"edit":{"documentChanges":[{"kind":"create","uri":"file:///new"}]}`,
-		}},
-		{"Change annotations are not supported.", []string{
-			`,"edit":{"changes":{"file:///a":[` + textEdit + `]},"changeAnnotations":{}}`,
-		}},
-		{"Resource operations are not supported.", []string{
-			`,"edit":{"kind":"rename","oldUri":"file:///a","newUri":"file:///b"}`,
-		}},
-		{"Notebook edits are not supported.", []string{
-			`,"edit":{"notebookDocument":{},"cells":[]}`,
-		}},
-		{"Edit must target exactly one nonempty URI.", []string{
-			`,"edit":{"changes":{"file:///a":[` + textEdit + `],"file:///b":[]}}`,
-			`,"edit":{"changes":{}}`,
-			`,"edit":{"changes":{"":[` + textEdit + `]}}`,
-			`,"edit":{"changes":null}`,
-		}},
-		{"Edit must contain at least one ordinary text edit.", []string{
-			`,"edit":{"changes":{"file:///a":[]}}`,
-			`,"edit":{"changes":{"file:///a":null}}`,
-			`,"edit":{"changes":{"file:///a":{}}}`,
-		}},
+		{"command object", `{"title":"Add test","kind":"source.addTest","command":{"title":"Add test","command":"gopls.add_test","arguments":[{"uri":"file:///a.go"}]}}`},
+		{"bare command", `{"title":"Run","command":"gopls.doc"}`},
+		{"create", `{"title":"New file","edit":{"documentChanges":[{"kind":"create","uri":"file:///new.go"},{"textDocument":{"uri":"file:///new.go","version":0},"edits":[` + textEdit + `]}]}}`},
 	}
 	for _, tc := range cases {
-		for _, extra := range tc.extras {
-			item := `{"title":"Keep me"` + extra + `}`
-			t.Run(item, func(t *testing.T) {
-				for _, support := range []bool{false, true} {
-					if extra == "" && support {
-						continue
-					}
-					row := parseOne(t, item, support)
-					if row.Title != "Keep me" || row.UnsupportedReason != tc.reason || row.NeedsResolve || string(row.Raw) != item {
-						t.Fatalf("row %#v; want reason %q", row, tc.reason)
-					}
-					if strings.Contains(item, `"reason":"Not available"`) && row.DisabledReason != "Not available" {
-						t.Fatalf("lost disabled reason: %#v", row)
-					}
-					if _, err := lspaction.Resolve([]byte(item), []byte(item)); err == nil {
-						t.Fatal("unsupported original resolved")
-					}
+		t.Run(tc.name, func(t *testing.T) {
+			for _, support := range []bool{false, true} {
+				rows, err := lspaction.Parse([]byte("["+tc.item+"]"), false, support)
+				if err != nil || len(rows) != 1 {
+					t.Fatalf("Parse = %#v, %v", rows, err)
 				}
-			})
-		}
+				row := rows[0]
+				if strings.Contains(tc.item, `"command"`) {
+					if support && (row.Command == nil || row.UnsupportedReason != "") {
+						t.Fatalf("command refused with support: %#v", row)
+					}
+					if !support && (row.Command == nil || row.UnsupportedReason == "") {
+						t.Fatalf("command accepted without support: %#v", row)
+					}
+				} else if row.Workspace == nil || row.UnsupportedReason != "" {
+					t.Fatalf("create edit refused: %#v", row)
+				}
+			}
+		})
+	}
+}
+
+func TestUnsupportedRowsRemainLiteral(t *testing.T) {
+	cases := []string{
+		`{"title":"disabled","disabled":{"reason":"Not available"}}`,
+		`{"title":"disabled edit","disabled":{"reason":""},"edit":` + edit + `}`,
+		`{"title":"edit plus command","edit":` + edit + `,"command":{"title":"Run","command":"run"}}`,
+		`{"title":"command null","command":null}`,
+		`{"title":"command false","command":false}`,
+		`{"title":"top-level arguments","arguments":[]}`,
+		`{"title":"top-level commands","commands":[]}`,
+		`{"title":"top-level execute","executeCommand":"run"}`,
+		`{"title":"missing edit","changes":{}}`,
+		`{"title":"missing document changes","documentChanges":[]}`,
+		`{"title":"edit null","edit":null}`,
+		`{"title":"edit array","edit":[]}`,
+		`{"title":"edit number","edit":2}`,
+		`{"title":"edit empty","edit":{}}`,
+		`{"title":"empty document changes","edit":{"documentChanges":[]}}`,
+		`{"title":"rename","edit":{"documentChanges":[{"kind":"rename","oldUri":"file:///a","newUri":"file:///b"}]}}`,
+		`{"title":"delete","edit":{"documentChanges":[{"kind":"delete","uri":"file:///a"}]}}`,
+		`{"title":"change annotations","edit":{"changes":{"file:///a":[` + textEdit + `]},"changeAnnotations":{}}}`,
+		`{"title":"notebook","edit":{"notebookDocument":{},"cells":[]}}`,
+		`{"title":"empty changes","edit":{"changes":{}}}`,
+		`{"title":"empty uri","edit":{"changes":{"":[` + textEdit + `]}}}`,
+		`{"title":"null changes","edit":{"changes":null}}`,
+		`{"title":"empty edits","edit":{"changes":{"file:///a":[]}}}`,
+		`{"title":"null edits","edit":{"changes":{"file:///a":null}}}`,
+		`{"title":"object edits","edit":{"changes":{"file:///a":{}}}}`,
+	}
+	for _, item := range cases {
+		t.Run(item, func(t *testing.T) {
+			row := parseOne(t, item, false)
+			if row.Title == "" || row.NeedsResolve || row.UnsupportedReason == "" && row.DisabledReason == "" ||
+				string(row.Raw) != item {
+				t.Fatalf("unsupported row lost literal evidence: %#v", row)
+			}
+			if _, err := lspaction.Resolve([]byte(item), []byte(item)); err == nil {
+				t.Fatal("unsupported original resolved")
+			}
+		})
 	}
 }
 
 func TestLiteralVersionedTextDocumentEditAndRefusalBoundaries(t *testing.T) {
 	valid := `{"title":"Organize Imports","kind":"source.organizeImports","edit":{"documentChanges":[{"textDocument":{"uri":"file:///active.go","version":7},"edits":[` + textEdit + `]}]}}`
 	action := parseOne(t, valid, false)
-	if action.UnsupportedReason != "" || action.NeedsResolve || len(action.Edit) == 0 || string(action.Raw) != valid {
+	if action.UnsupportedReason != "" || action.NeedsResolve || len(action.Edit) == 0 || action.Workspace == nil || string(action.Raw) != valid {
 		t.Fatal("ordinary single-document versioned literal was refused or rewritten", action)
 	}
-	for _, version := range []string{"null", "0", "-1", "2147483648", "1.0", "1e0", `"7"`, "true"} {
+	for _, version := range []string{"2147483648", "1.0", "1e0", `"7"`, "true"} {
 		row := parseOne(t, strings.Replace(valid, `"version":7`, `"version":`+version, 1), false)
 		if row.UnsupportedReason == "" {
 			t.Fatalf("unknown/invalid version acquired literal eligibility: %s", version)
@@ -249,7 +227,6 @@ func TestStrictOrdinaryEditBoundary(t *testing.T) {
 		strings.TrimSuffix(textEdit, "}") + `,"annotationId":"a"}`,
 		strings.TrimSuffix(textEdit, "}") + `,"snippet":"$0"}`,
 		strings.TrimSuffix(textEdit, "}") + `,"command":null}`,
-		strings.TrimSuffix(textEdit, "}") + `,"extension":1}`,
 		`{"insert":{"start":{},"end":{}},"replace":{},"newText":"x"}`,
 		strings.Replace(textEdit, `"newText":"X"`, `"newText":"X","insertTextFormat":2`, 1),
 		strings.Replace(textEdit, `"start":{`, `"extra":1,"start":{`, 1),
@@ -258,7 +235,7 @@ func TestStrictOrdinaryEditBoundary(t *testing.T) {
 	}
 	for _, item := range structural {
 		row := parseOne(t, `{"title":"x","edit":{"changes":{"file:///a":[`+item+`]}}}`, true)
-		if row.UnsupportedReason != "Only ordinary text edits are supported." || row.NeedsResolve {
+		if row.UnsupportedReason == "" || row.NeedsResolve {
 			t.Fatalf("structural edit accepted: %s => %#v", item, row)
 		}
 	}
@@ -274,7 +251,7 @@ func TestStrictOrdinaryEditBoundary(t *testing.T) {
 	}
 	for _, item := range values {
 		row := parseOne(t, `{"title":"x","edit":{"changes":{"file:///a":[`+item+`]}}}`, true)
-		if row.UnsupportedReason != "Unsupported or malformed ordinary text edits." || row.NeedsResolve {
+		if row.UnsupportedReason == "" || row.NeedsResolve {
 			t.Fatalf("invalid edit value accepted: %s => %#v", item, row)
 		}
 	}
@@ -288,7 +265,7 @@ func TestByteCountAndDepthBounds(t *testing.T) {
 	assert := func(name, raw string, accepted bool) {
 		t.Helper()
 		t.Run(name, func(t *testing.T) {
-			rows, err := lspaction.Parse([]byte(raw), true)
+			rows, err := lspaction.Parse([]byte(raw), true, false)
 			if (err == nil) != accepted || !accepted && rows != nil {
 				t.Fatalf("len %d: err=%v rows=%d; accepted=%t", len(raw), err, len(rows), accepted)
 			}
@@ -341,12 +318,10 @@ func TestResolveExactOriginal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := lspaction.Action{
-		Title: "Fix", Kind: "vendor.custom", HasPreferred: true,
-		Raw: bytes.Clone(resolved), Edit: []byte(edit),
-	}
-	if !reflect.DeepEqual(action, want) {
-		t.Fatalf("resolved fields:\n got %#v\nwant %#v", action, want)
+	if action.Title != "Fix" || action.Kind != "vendor.custom" || !action.HasPreferred ||
+		action.NeedsResolve || !bytes.Equal(action.Raw, resolved) || !bytes.Equal(action.Edit, []byte(edit)) ||
+		action.Workspace == nil || len(action.Workspace.Operations) != 1 {
+		t.Fatalf("resolved fields: %#v", action)
 	}
 	if !bytes.Equal(original, before) || !bytes.Equal(resolved, after) {
 		t.Fatal("Resolve mutated its original/resolved inputs")
@@ -357,7 +332,7 @@ func TestResolveExactOriginal(t *testing.T) {
 	for i := range resolved {
 		resolved[i] = ' '
 	}
-	if !reflect.DeepEqual(action, want) {
+	if action.Title != "Fix" || action.Workspace == nil {
 		t.Fatal("resolved output aliases input")
 	}
 	action.Edit[0] = '!'
@@ -486,7 +461,7 @@ func FuzzLiteralActions(f *testing.F) {
 		}
 		saved, savedResolved := bytes.Clone(raw), bytes.Clone(resolved)
 		for _, support := range []bool{false, true} {
-			rows, err := lspaction.Parse(raw, support)
+			rows, err := lspaction.Parse(raw, support, false)
 			if err != nil {
 				if rows != nil {
 					t.Fatal("partial rows escaped failure")

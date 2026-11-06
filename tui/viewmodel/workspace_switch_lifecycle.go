@@ -429,7 +429,7 @@ func (m *App) closeWorkspaceBoundOverlays() {
 	m.FindReplace = nil
 	m.LastContextMenu = nil
 	m.ContextMenuOpenedAt = time.Time{}
-	m.TreePrompt = nil
+	m.TextPrompt = nil
 	m.TreeDeletePending = ""
 	m.TreeDeleteChoice = 0
 	m.GitDiscardPending = nil

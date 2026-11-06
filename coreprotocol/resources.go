@@ -16,6 +16,7 @@ const (
 	DocumentRedo    = "document.redo"
 	DocumentSave    = "document.save"
 	DocumentFormat  = "document.format"
+	ProjectFormat   = "project.format"
 	TerminalList    = "terminal.list"
 	TerminalCreate  = "terminal.create"
 	TerminalRows    = "terminal.rows"
@@ -46,6 +47,9 @@ type DocumentRevisionRequest struct {
 	ID       string                       `json:"id"`
 	Revision uint64                       `json:"revision"`
 	Reason   workspace.DocumentSaveReason `json:"reason,omitempty"`
+}
+type ProjectFormatRequest struct {
+	RequestID string `json:"request_id,omitempty"`
 }
 type TerminalIDRequest struct {
 	ID string `json:"id"`

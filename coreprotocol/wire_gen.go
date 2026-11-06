@@ -11040,6 +11040,46 @@ func (z Progress) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z ProjectFormatRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o = msgp.AppendString(o, z.RequestID)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *ProjectFormatRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	z.RequestID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "RequestID")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z ProjectFormatRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.RequestID)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *ProjectReplaceRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 4

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crude/internal/fileuri"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,8 +32,15 @@ type codeActionClient struct {
 	requests         [][4]int
 	resolveInputs    [][]byte
 	resolveWires     []int
-	entered          chan<- struct{}
-	release          <-chan struct{}
+	commandSupported bool
+	commandResponse  types.LSPCommandResponse
+	commandErr       error
+	commands         []struct {
+		name string
+		args string
+	}
+	entered chan<- struct{}
+	release <-chan struct{}
 }
 
 func (c *codeActionClient) answer(path string, resolving bool, wire int, original []byte, position [4]int) (types.LSPCodeActionResponse, error) {
@@ -49,7 +58,7 @@ func (c *codeActionClient) answer(path string, resolving bool, wire int, origina
 	}
 	response := types.LSPCodeActionResponse{
 		JSON: append([]byte(nil), raw...), WireVersion: currentWire + c.wireDelta,
-		ResolveSupported: c.resolveSupported,
+		ResolveSupported: c.resolveSupported, CommandSupported: c.commandSupported,
 		// Adapter provenance is deliberately false. The synchronized manager
 		// must stamp its own source even for null and empty responses.
 		Boundary: types.InsightBoundary{Source: types.InsightSource{Path: "forged-adapter-path"}},
@@ -71,6 +80,14 @@ func (c *codeActionClient) RequestCodeActions(_ context.Context, path string, li
 
 func (c *codeActionClient) ResolveCodeAction(_ context.Context, path string, wire int, raw []byte) (types.LSPCodeActionResponse, error) {
 	return c.answer(path, true, wire, raw, [4]int{})
+}
+
+func (c *codeActionClient) ExecuteCommand(_ context.Context, _ string, _ int, name string, arguments json.RawMessage) (types.LSPCommandResponse, error) {
+	c.actionMu.Lock()
+	c.commands = append(c.commands, struct{ name, args string }{name, string(arguments)})
+	response, err := c.commandResponse, c.commandErr
+	c.actionMu.Unlock()
+	return response, err
 }
 
 type codeActionRuntime struct{ client *codeActionClient }
@@ -318,10 +335,7 @@ func TestCodeActionUnsupportedRowsRemainVisibleWithoutPartialReview(t *testing.T
 		{"command-only", `{"title":"run tool","command":"provider.run","arguments":["literal"]}`},
 		{"lazy-no-resolve", `{"title":"unresolvable","data":{"opaque":true}}`},
 		{"edit-plus-command", `{"title":"do both","command":{"title":"run","command":"provider.run"},"edit":` + edit + `}`},
-		{"resource", fmt.Sprintf(`{"title":"create","edit":{"documentChanges":[{"kind":"create","uri":%q}]}}`, fileuri.FromPath(other))},
 		{"invalid-versioned-documentChanges", `{"title":"versioned","edit":` + docChanges + `}`},
-		{"multi-file", `{"title":"two files","edit":` + strings.TrimSuffix(edit, "}}") + "," + strings.TrimPrefix(codeActionEdit(other), `{"changes":{`) + `}`},
-		{"foreign-uri", `{"title":"foreign","edit":` + codeActionEdit(other) + `}`},
 		{"remote-uri", `{"title":"remote","edit":` + strings.ReplaceAll(edit, fileuri.FromPath(f.path), "https://example.invalid/source.go") + `}`},
 		{"no-op", `{"title":"same bytes","edit":` + strings.ReplaceAll(edit, `"newText":"new"`, `"newText":"old"`) + `}`},
 	} {
@@ -722,5 +736,110 @@ func TestCodeActionLazyResolveFencesAndRejectsChangedOriginal(t *testing.T) {
 			}
 			f.assertUnchanged(t)
 		})
+	}
+}
+func TestCodeActionCreateFileReviewAndApply(t *testing.T) {
+	f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
+	target := filepath.Join(filepath.Dir(f.path), "new.go")
+	uri := fileuri.FromPath(target)
+	raw := fmt.Sprintf(`{"title":"Add file","kind":"refactor.extract.toNewFile","edit":{"documentChanges":[{"kind":"create","uri":%q},{"textDocument":{"uri":%q,"version":0},"edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"package new\n"}]}]}}`, uri, uri)
+	set := f.list(t, "["+raw+"]", false)
+	if len(set.Items) != 1 || !set.Items[0].CanReview || set.Items[0].UnsupportedReason != "" {
+		t.Fatalf("create action was not offered for review: %+v", set)
+	}
+	preview := f.prepare(t, set)
+	if preview.ID == "" || len(preview.Files) != 1 || !preview.Files[0].Created ||
+		preview.Files[0].AfterSHA256 != codeActionHash("package new\n") || preview.Files[0].Path != target {
+		t.Fatalf("create preview lost exact postimage: %+v", preview)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("preview created the file early: %v", err)
+	}
+	result := f.workspace.LiveDocuments.ApplyReviewedEdit(t.Context(), f.owner, preview.ID, preview.Digest,
+		f.workspace.LocalHistory, NewFileOpsService(filepath.Dir(f.path), nil, nil))
+	if result.State != "committed" || result.Error != "" {
+		t.Fatalf("create action did not commit: %+v", result)
+	}
+	disk, err := os.ReadFile(target)
+	if err != nil || string(disk) != "package new\n" {
+		t.Fatalf("created source = %q, %v", disk, err)
+	}
+}
+func TestCodeActionCommandEditRunsOnceAndReviewsCreate(t *testing.T) {
+	f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
+	f.client.actionMu.Lock()
+	f.client.commandSupported = true
+	target := filepath.Join(filepath.Dir(f.path), "generated.go")
+	uri := fileuri.FromPath(target)
+	f.client.commandResponse = types.LSPCommandResponse{WorkspaceEdits: [][]byte{[]byte(fmt.Sprintf(
+		`{"documentChanges":[{"kind":"create","uri":%q},{"textDocument":{"uri":%q,"version":0},"edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"package generated\n"}]}]}`,
+		uri, uri))}}
+	f.client.actionMu.Unlock()
+	raw := `{"title":"Generate file","kind":"refactor.extract.toNewFile","command":{"title":"Generate","command":"provider.generate","arguments":[{"uri":"file:///main.go"}]}}`
+	set := f.list(t, "["+raw+"]", false)
+	if len(set.Items) != 1 || !set.Items[0].CanReview || set.Items[0].UnsupportedReason != "" {
+		t.Fatalf("command action was not offered: %+v", set)
+	}
+	preview := f.prepare(t, set)
+	if preview.ID == "" || len(preview.Files) != 1 || !preview.Files[0].Created ||
+		preview.Files[0].AfterSHA256 != codeActionHash("package generated\n") {
+		t.Fatalf("command edit lost its exact review: %+v", preview)
+	}
+	f.client.actionMu.Lock()
+	calls := len(f.client.commands)
+	f.client.actionMu.Unlock()
+	if calls != 1 {
+		t.Fatalf("command executions = %d, want exactly one", calls)
+	}
+	result := f.workspace.LiveDocuments.ApplyReviewedEdit(t.Context(), f.owner, preview.ID, preview.Digest,
+		f.workspace.LocalHistory, NewFileOpsService(filepath.Dir(f.path), nil, nil))
+	if result.State != "committed" || result.Error != "" {
+		t.Fatalf("command create did not commit: %+v", result)
+	}
+	disk, err := os.ReadFile(target)
+	if err != nil || string(disk) != "package generated\n" {
+		t.Fatalf("generated source = %q, %v", disk, err)
+	}
+}
+
+func TestCodeActionCommandBrowserOutcomeHasNoReview(t *testing.T) {
+	f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
+	f.client.actionMu.Lock()
+	f.client.commandSupported = true
+	f.client.commandResponse = types.LSPCommandResponse{Result: []byte(`"https://go.dev/gopls/features"`)}
+	f.client.actionMu.Unlock()
+	raw := `{"title":"Browse documentation","kind":"source.doc","command":{"title":"Browse","command":"provider.doc"}}`
+	set := f.list(t, "["+raw+"]", false)
+	preview := f.prepare(t, set)
+	if preview.ID != "" || preview.Message != "https://go.dev/gopls/features" ||
+		preview.URL != "https://go.dev/gopls/features" {
+		t.Fatalf("browser command outcome = %+v", preview)
+	}
+}
+func TestCodeActionMultiFileEditReviewsAndAppliesAllTargets(t *testing.T) {
+	f := newCodeActionFixture(t, "var old = 1\r\nold\r\n")
+	other := filepath.Join(filepath.Dir(f.path), "other.go")
+	if err := os.WriteFile(other, []byte("var old = 1\r\nold\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"title":"two files","edit":` + strings.TrimSuffix(codeActionEdit(f.path), "}}") + "," + strings.TrimPrefix(codeActionEdit(other), `{"changes":{`) + `}`
+	set := f.list(t, "["+raw+"]", false)
+	if len(set.Items) != 1 || !set.Items[0].CanReview || set.Items[0].UnsupportedReason != "" {
+		t.Fatalf("multi-file action was not offered: %+v", set)
+	}
+	preview := f.prepare(t, set)
+	if preview.ID == "" || len(preview.Files) != 2 {
+		t.Fatalf("multi-file preview = %+v", preview)
+	}
+	result := f.workspace.LiveDocuments.ApplyReviewedEdit(t.Context(), f.owner, preview.ID, preview.Digest,
+		f.workspace.LocalHistory, NewFileOpsService(filepath.Dir(f.path), nil, nil))
+	if result.State != "committed" || result.Error != "" {
+		t.Fatalf("multi-file action did not commit: %+v", result)
+	}
+	for _, path := range []string{f.path, other} {
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != "var new = 1\r\nnew\r\n" {
+			t.Fatalf("multi-file result %s = %q, %v", path, data, err)
+		}
 	}
 }

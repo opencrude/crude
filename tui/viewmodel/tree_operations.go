@@ -37,8 +37,8 @@ func (m *App) openFileFromTree(path string) (tea.Cmd, error) {
 // above the active editor. On Enter, the file is created (empty)
 // and the tree is updated.
 func (m *App) startNewFileInTree(dir string) {
-	m.openTreeTextPrompt(ui.TextPromptNewFile, "New file",
-		"in "+dir, dir, "", func(value string) error {
+	m.openTextPrompt(ui.TextPromptNewFile, "New file",
+		"in "+dir, "", func(value string) error {
 			if value == "" {
 				return fmt.Errorf("name cannot be empty")
 			}
@@ -64,8 +64,8 @@ func (m *App) startNewFileInTree(dir string) {
 // folder inside the given directory. On Enter, the folder is
 // created and the tree is updated.
 func (m *App) startNewFolderInTree(dir string) {
-	m.openTreeTextPrompt(ui.TextPromptNewFolder, "New folder",
-		"in "+dir, dir, "", func(value string) error {
+	m.openTextPrompt(ui.TextPromptNewFolder, "New folder",
+		"in "+dir, "", func(value string) error {
 			if value == "" {
 				return fmt.Errorf("name cannot be empty")
 			}
@@ -93,8 +93,8 @@ func (m *App) startRenameInTree(path string) {
 		return
 	}
 	base := filepath.Base(path)
-	m.openTreeTextPrompt(ui.TextPromptRename, "Rename",
-		path, "", base, func(value string) error {
+	m.openTextPrompt(ui.TextPromptRename, "Rename",
+		path, base, func(value string) error {
 			if value == "" {
 				return fmt.Errorf("name cannot be empty")
 			}
@@ -230,21 +230,22 @@ func (m *App) startDeleteInTree(path string) {
 	m.TreeDeletePending = path
 }
 
-// openTreeTextPrompt opens the focused text-input popup used by
-// new-file / new-folder / rename. Centralizes the popup creation
-// so the three callers stay small. The submit callback returns a
-// non-nil error to surface validation issues; the popup stays open
-// in that case so the user can fix the name.
-func (m *App) openTreeTextPrompt(kind ui.TextPromptKind, title, prompt, dir, initial string, onSubmit func(value string) error) {
+// openTextPrompt opens the focused text-input popup shared by
+// new-file / new-folder / rename / rename-symbol / go-to-line.
+// Centralizes the popup creation so the callers stay small. The
+// submit callback returns a non-nil error to surface validation
+// issues; the popup stays open in that case so the user can fix
+// the value.
+func (m *App) openTextPrompt(kind ui.TextPromptKind, title, prompt, initial string, onSubmit func(value string) error) *ui.TextPromptState {
 	if onSubmit == nil {
-		return
+		return nil
 	}
 	st := ui.NewTextPromptState(kind, title, prompt, initial)
 	st.OnSubmit = onSubmit
 	st.OnCancel = func() {}
 	// First product surface on unified WindowFrame chrome.
 	frame := ui.BuildTextPromptFrame(m.Theme, st)
-	fw := wm.NewFloatingWindow(string(ui.OverlayTreePrompt), "", frame,
+	fw := wm.NewFloatingWindow(string(ui.OverlayTextPrompt), "", frame,
 		ui.TextPromptPopupWidth(st),
 		ui.TextPromptPopupHeight(st),
 		wm.WithDecoration(false),
@@ -256,21 +257,22 @@ func (m *App) openTreeTextPrompt(kind ui.TextPromptKind, title, prompt, dir, ini
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
-	m.overlayHost.Open(ui.OverlayTreePrompt, fw, ui.ModalDialogPolicy(), func() {
-		m.TreePrompt = nil
+	m.overlayHost.Open(ui.OverlayTextPrompt, fw, ui.ModalDialogPolicy(), func() {
+		m.TextPrompt = nil
 	})
-	m.TreePrompt = st
+	m.TextPrompt = st
+	return st
 }
 
-// handleTreePromptInput routes a key or bracketed paste to the tree prompt.
+// handleTextPromptInput routes a key or bracketed paste to the text prompt.
 // Enter submits and Esc cancels (after dropping a selection); everything else
 // edits the name through the shared TextField contract, whose field is bound
 // to the prompt's TextEdit.
-func (m *App) handleTreePromptInput(input tea.Msg) tea.Cmd {
-	if m.TreePrompt == nil || m.windowManager == nil {
+func (m *App) handleTextPromptInput(input tea.Msg) tea.Cmd {
+	if m.TextPrompt == nil || m.windowManager == nil {
 		return nil
 	}
-	st := m.TreePrompt
+	st := m.TextPrompt
 	if msg, ok := input.(tea.KeyPressMsg); ok {
 		switch msg.Code {
 		case tea.KeyEsc:
@@ -280,38 +282,45 @@ func (m *App) handleTreePromptInput(input tea.Msg) tea.Cmd {
 			if st.OnCancel != nil {
 				st.OnCancel()
 			}
-			m.closeTreePrompt()
+			m.closeTextPrompt()
 			return nil
 		case tea.KeyEnter:
 			st.SyncFromEdit()
 			if st.OnSubmit != nil {
 				if err := st.OnSubmit(st.ValueText()); err != nil {
-					m.Feedback.NotifyError(err.Error())
+					st.Error = err.Error()
+					m.refreshTextPrompt()
 					return nil
 				}
 			}
-			m.closeTreePrompt()
+			m.closeTextPrompt()
 			return nil
 		}
 	}
-	fw, field := m.treePromptField()
+	// The first edit answers the complaint: drop it before the field moves so
+	// the dialog never shows a stale reason beside a corrected value.
+	if st.Error != "" {
+		st.Error = ""
+		m.refreshTextPrompt()
+	}
+	fw, field := m.textPromptField()
 	if field == nil {
 		return nil
 	}
 	deliver := func(content string) tea.Cmd {
-		if m.TreePrompt != st {
+		if m.TextPrompt != st {
 			return nil
 		}
-		return m.handleTreePromptInput(tea.PasteMsg{Content: content})
+		return m.handleTextPromptInput(tea.PasteMsg{Content: content})
 	}
 	_, cmd := m.routeOverlayText(fw, field, input, deliver)
 	st.SyncFromEdit()
 	return cmd
 }
 
-// treePromptField returns the mounted prompt window and its bound field.
-func (m *App) treePromptField() (*wm.FloatingWindow, *ui.TextField) {
-	fw := m.windowManager.Window(string(ui.OverlayTreePrompt))
+// textPromptField returns the mounted prompt window and its bound field.
+func (m *App) textPromptField() (*wm.FloatingWindow, *ui.TextField) {
+	fw := m.windowManager.Window(string(ui.OverlayTextPrompt))
 	if fw == nil {
 		return nil, nil
 	}
@@ -322,8 +331,35 @@ func (m *App) treePromptField() (*wm.FloatingWindow, *ui.TextField) {
 	return fw, ui.TextPromptField(cw)
 }
 
-func (m *App) closeTreePrompt() {
-	m.overlayHost.Close(ui.OverlayTreePrompt)
+func (m *App) closeTextPrompt() {
+	m.overlayHost.Close(ui.OverlayTextPrompt)
+}
+
+// refreshTextPrompt swaps the mounted prompt's content for a fresh frame built
+// from its state, keeping the window, its position and the shared TextEdit (so
+// the value, caret and selection survive). It is used only when the state
+// shown by chrome changes: a rejected value, or the return to guidance.
+func (m *App) refreshTextPrompt() {
+	if m.TextPrompt == nil || m.windowManager == nil {
+		return
+	}
+	fw := m.windowManager.Window(string(ui.OverlayTextPrompt))
+	if fw == nil {
+		return
+	}
+	frame := ui.BuildTextPromptFrame(m.Theme, m.TextPrompt)
+	fw.SetContent(frame)
+	fw.SetSize(ui.TextPromptPopupWidth(m.TextPrompt), ui.TextPromptPopupHeight(m.TextPrompt))
+	fw.MarkContentDirty()
+	w, h := fw.Size()
+	// A longer message can widen the dialog past the screen edge it was
+	// centred against; keep the whole frame visible.
+	x, y := fw.Position()
+	fw.SetPosition(min(x, max(0, m.width-w)), min(y, max(0, m.height-h)))
+	if host := frame.Host(); host != nil {
+		host.Resize(w, h)
+		host.Layout()
+	}
 }
 
 // handleTreeDeleteConfirmKey is the keyboard handler for the

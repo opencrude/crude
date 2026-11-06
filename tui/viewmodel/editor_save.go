@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types"
@@ -39,6 +40,140 @@ type editorFormatResultMsg struct {
 	generation uint64
 	data       []byte
 	err        error
+}
+
+type editorFormatOnlyResultMsg struct {
+	ed         *editor.Editor
+	revision   uint64
+	generation uint64
+	data       []byte
+	err        error
+}
+
+// requestActiveEditorFormat formats the current buffer as one undo group. A
+// connected editor sends the exact revision to the core formatter; a local
+// editor formats its immutable snapshot without writing the file.
+func (m *App) requestActiveEditorFormat() tea.Cmd {
+	if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Open a file to format it.")
+		}
+		return nil
+	}
+	ed := m.EditorState.Editor
+	if ed.ReadOnly() {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("This file is read-only.")
+		}
+		return nil
+	}
+	if state := m.liveEditors[ed]; state != nil {
+		if state.busy || state.save || state.formatOnly || state.closeView {
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Wait for the current file operation to finish.")
+			}
+			return nil
+		}
+		state.formatOnly = true
+		state.notifyFormat = true
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Formatting…")
+		}
+		return nil
+	}
+	snapshot := ed.BufferSnapshot()
+	if snapshot.ID == "" || snapshot.Path == "" {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Save the file before you format it.")
+		}
+		return nil
+	}
+	generation := m.workspaceSwitchGen.Load()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		data, err := workspace.FormatDocument(ctx, snapshot.Path, snapshot.Data)
+		return editorFormatOnlyResultMsg{ed: ed, revision: snapshot.Revision, generation: generation, data: data, err: err}
+	}
+}
+
+type projectFormatResultMsg struct {
+	generation uint64
+	result     workspace.FormatProjectResult
+	err        error
+}
+
+// requestProjectFormat formats saved project files in the core. Open documents
+// are skipped because the editor owns their live text.
+func (m *App) requestProjectFormat() tea.Cmd {
+	formatter, ok := m.ws.(shellport.ProjectFormatter)
+	if !ok {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Project formatting is not available in this shell.")
+		}
+		return nil
+	}
+	if m.projectFormatting {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Project formatting is already running.")
+		}
+		return nil
+	}
+	m.projectFormatting = true
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Formatting project…")
+	}
+	generation := m.workspaceSwitchGen.Load()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		result, err := formatter.FormatProject(ctx)
+		return projectFormatResultMsg{generation: generation, result: result, err: err}
+	}
+}
+
+func (m *App) handleProjectFormatResult(msg projectFormatResultMsg) {
+	m.projectFormatting = false
+	if msg.generation != m.workspaceSwitchGen.Load() || m.Feedback == nil {
+		return
+	}
+	if msg.err != nil {
+		m.Feedback.NotifyError("Could not format the project: " + msg.err.Error())
+		return
+	}
+	if msg.result.Changed == 0 {
+		m.Feedback.NotifyInfo("No formatting changes were needed.")
+		return
+	}
+	message := fmt.Sprintf("Formatted %d files.", msg.result.Changed)
+	if msg.result.SkippedOpen != 0 {
+		message += fmt.Sprintf(" Skipped %d open files; use Format Document for those.", msg.result.SkippedOpen)
+	}
+	message += " You can restore the files from Local History."
+	m.Feedback.NotifyInfo(message)
+}
+
+func (m *App) handleEditorFormatOnlyResult(msg editorFormatOnlyResultMsg) {
+	ed := msg.ed
+	if ed == nil || msg.generation != m.workspaceSwitchGen.Load() || !ed.IsOpen() || ed.Revision() != msg.revision {
+		return
+	}
+	if msg.err != nil {
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Could not format: " + msg.err.Error())
+		}
+		return
+	}
+	if string(msg.data) == ed.Value() {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("No formatting changes were needed, or no formatter is configured for this file.")
+		}
+		return
+	}
+	ed.ApplyFormatted(string(msg.data))
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Formatted")
+	}
 }
 
 func (m *App) handleEditorFormatResult(msg editorFormatResultMsg) tea.Cmd {

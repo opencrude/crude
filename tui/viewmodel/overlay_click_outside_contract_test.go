@@ -33,7 +33,7 @@ type overlayOutsideFixture struct {
 // Policy groups:
 //   - CloseRoute (PopoverPolicy closeOnOutside=true): context-menu, LSP list popups, diag-context
 //   - KeepRoute (DefaultOverlayPolicy / PopoverPolicy false): find/replace, palette, composer, FIF, replace-in-files, textoverlay, diag-hover
-//   - Ignore (ModalDialogPolicy): dirty-close, tree prompts, file/workspace pickers, session-picker, help
+//   - Ignore (ModalDialogPolicy): dirty-close, text prompts, file/workspace pickers, session-picker, help
 var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayContextMenu, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayNavigation, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -59,7 +59,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: projectReplaceOverlay, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayOperationIssue, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayAISetup, policy: ui.ModalDialogPolicy(), wantSuppress: true},
-	{id: ui.OverlayTreePrompt, policy: ui.ModalDialogPolicy(), wantSuppress: true},
+	{id: ui.OverlayTextPrompt, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayTreeDelete, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayFilePicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayWorkspaceSettings, policy: ui.ModalDialogPolicy(), wantSuppress: true},
@@ -251,7 +251,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		projectReplaceOverlay:       ui.OutsideIgnoreAndConsume,
 		ui.OverlayOperationIssue:    ui.OutsideIgnoreAndConsume,
 		ui.OverlayAISetup:           ui.OutsideIgnoreAndConsume,
-		ui.OverlayTreePrompt:        ui.OutsideIgnoreAndConsume,
+		ui.OverlayTextPrompt:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayTreeDelete:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayFilePicker:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayWorkspaceSettings: ui.OutsideIgnoreAndConsume,
