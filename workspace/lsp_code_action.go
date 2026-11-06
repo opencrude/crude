@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -119,7 +121,7 @@ func (w *Workspace) RequestLSPCodeActions(ctx context.Context, owner document.Ow
 	if response.Boundary.Source != expected {
 		return CodeActionSet{}, document.ErrRevision
 	}
-	items, err := lspaction.Parse(response.JSON, response.ResolveSupported)
+	items, err := lspaction.Parse(response.JSON, response.ResolveSupported, response.CommandSupported)
 	if err != nil {
 		return CodeActionSet{}, err
 	}
@@ -150,12 +152,12 @@ func (w *Workspace) RequestLSPCodeActions(ctx context.Context, owner document.Ow
 			Preferred: item.Preferred, HasPreferred: item.HasPreferred, NeedsResolve: item.NeedsResolve,
 			DisabledReason: item.DisabledReason, UnsupportedReason: item.UnsupportedReason,
 		}
-		if row.UnsupportedReason == "" && len(item.Edit) != 0 {
-			if _, err := s.codeActionTargets(expected, set.wire, string(text), item.Edit); err != nil {
+		if row.UnsupportedReason == "" && item.Workspace != nil {
+			if _, err := s.codeActionTargets(expected, set.wire, string(text), item.Workspace); err != nil {
 				row.UnsupportedReason = err.Error()
 			}
 		}
-		row.CanReview = row.UnsupportedReason == "" && (item.NeedsResolve || len(item.Edit) != 0)
+		row.CanReview = row.UnsupportedReason == "" && (item.NeedsResolve || item.Workspace != nil || item.Command != nil)
 		set.view.Items = append(set.view.Items, row)
 		rawDigests[index] = reviewedHash(string(item.Raw))
 	}
@@ -190,35 +192,146 @@ func (w *Workspace) RequestLSPCodeActions(ctx context.Context, owner document.Ow
 	return cloneCodeActionSet(set.view), nil
 }
 
-// codeActionTargets admits only the invoking canonical path and strict original
-// ordinary text edits. Unsupported rows remain inspectable but cannot acquire an
-// Apply permit or drop a command/resource/multi-file part.
-func (s *DocumentService) codeActionTargets(source types.InsightSource, wireVersion int, text string, edit []byte) ([]lspedit.DocumentEdit, error) {
-	targets, err := lspedit.Parse(edit)
-	if err != nil {
-		return nil, errors.New("the action's ordinary text edits are malformed or exceed review bounds")
+// codeActionTargets admits only workspace-local ordinary text edits and file
+// creation. Resource operations other than create are refused as a whole.
+func (s *DocumentService) codeActionTargets(source types.InsightSource, wireVersion int, text string, edit *lspedit.WorkspaceEdit) ([]lspedit.DocumentEdit, error) {
+	if edit == nil || len(edit.Operations) == 0 {
+		return nil, errors.New("the action has no source changes")
 	}
-	if len(targets) != 1 {
-		return nil, errors.New("only ordinary text edits to the current document are supported")
+	targets := make([]lspedit.DocumentEdit, 0, len(edit.Operations))
+	index := make(map[string]int)
+	for _, operation := range edit.Operations {
+		path, err := reviewedURIPath(s.root, operation.URI)
+		if err != nil {
+			return nil, errors.New("the action targets another or unsupported file")
+		}
+		if operation.Kind == lspedit.OperationCreate {
+			if operation.Versioned || len(operation.Edits) != 0 {
+				return nil, errors.New("the action's create operation is malformed")
+			}
+			if existing, ok := index[path]; ok {
+				if !targets[existing].Create {
+					return nil, errors.New("the action edits a file it also creates")
+				}
+				continue
+			}
+			index[path] = len(targets)
+			targets = append(targets, lspedit.DocumentEdit{URI: operation.URI, Create: true})
+			continue
+		}
+		if operation.Kind != lspedit.OperationText || len(operation.Edits) == 0 {
+			return nil, errors.New("the action's edit operation is malformed")
+		}
+		if existing, ok := index[path]; ok {
+			if targets[existing].Create && len(targets[existing].Edits) == 0 {
+				if operation.Versioned && operation.Version != nil && *operation.Version != 0 {
+					return nil, errors.New("the new file's edit does not name version zero")
+				}
+				targets[existing].Edits = append(targets[existing].Edits, operation.Edits...)
+				continue
+			}
+			return nil, errors.New("the action has more than one edit range for a file")
+		}
+		if operation.Versioned && (operation.Version == nil || wireVersion <= 0 || int(*operation.Version) != wireVersion) {
+			return nil, errors.New("the text-document edit does not name the exact original synchronized source version")
+		}
+		index[path] = len(targets)
+		targets = append(targets, lspedit.DocumentEdit{URI: operation.URI, Edits: operation.Edits, Versioned: operation.Versioned, Version: operation.Version})
 	}
-	if targets[0].Versioned && (targets[0].Version == nil || wireVersion <= 0 || int(*targets[0].Version) != wireVersion) {
-		return nil, errors.New("the text-document edit does not name the exact original synchronized source version")
-	}
-	path, err := reviewedURIPath(s.root, targets[0].URI)
-	if err != nil || path != source.Path {
-		return nil, errors.New("the action targets another or unsupported file, not the current canonical document")
-	}
-	after, err := lspedit.Apply(text, targets[0].Edits)
-	if err != nil {
-		return nil, errors.New("the action's ranges are invalid, ambiguous or outside this exact source")
-	}
-	if after == text {
-		return nil, errors.New("the action proposes no source changes")
-	}
-	if len(after) > reviewedEditFileBytes {
-		return nil, errors.New("the action's result exceeds the 2 MiB recoverable review bound")
+	for _, target := range targets {
+		if target.Create {
+			continue
+		}
+		path, _ := reviewedURIPath(s.root, target.URI)
+		if path != source.Path {
+			// prepareReviewedEdit owns the exact preimage for every other
+			// workspace file, including its canonical version fence.
+			continue
+		}
+		after, err := lspedit.ApplyOrdered(text, target.Edits)
+		if err != nil {
+			return nil, errors.New("the action's ranges are invalid, ambiguous or outside this exact source")
+		}
+		if after == text {
+			return nil, errors.New("the action proposes no source changes")
+		}
+		if len(after) > reviewedEditFileBytes {
+			return nil, errors.New("the action's result exceeds the 2 MiB recoverable review bound")
+		}
 	}
 	return targets, nil
+}
+
+func (w *Workspace) executeCodeActionCommand(ctx context.Context, set *codeActionSet, item lspaction.Action) (types.LSPCommandResponse, error) {
+	if item.Command == nil {
+		return types.LSPCommandResponse{}, errors.New("the action has no command")
+	}
+	return w.LSPMgr.ExecuteCodeActionCommand(ctx, set.view.Boundary, set.wire, item.Command.Name, item.Command.Arguments)
+}
+
+// combineCommandWorkspaceEdits preserves documentChanges order across the
+// captured applyEdit requests. Duplicate text targets are refused because their
+// relative order would be ambiguous.
+func combineCommandWorkspaceEdits(raw [][]byte) (*lspedit.WorkspaceEdit, error) {
+	combined := &lspedit.WorkspaceEdit{}
+	for _, edit := range raw {
+		parsed, err := lspedit.ParseWorkspace(edit)
+		if err != nil {
+			return nil, err
+		}
+		combined.Operations = append(combined.Operations, parsed.Operations...)
+	}
+	if len(combined.Operations) == 0 {
+		return nil, errors.New("the command edit has no operations")
+	}
+	return combined, nil
+}
+
+func commandActionOutcome(response types.LSPCommandResponse) (message, url string) {
+	if response.ShowDocument != nil && response.ShowDocument.URI != "" {
+		if isBrowserURL(response.ShowDocument.URI) {
+			url = response.ShowDocument.URI
+		} else {
+			message = "Open " + response.ShowDocument.URI
+		}
+	}
+	if len(response.Result) != 0 {
+		var text string
+		if json.Unmarshal(response.Result, &text) == nil && text != "" {
+			message = text
+			if isBrowserURL(text) {
+				url = text
+			}
+		}
+	}
+	if len(response.Messages) != 0 {
+		message = response.Messages[len(response.Messages)-1]
+	}
+	if url == "" {
+		for _, candidate := range response.Messages {
+			if start := strings.Index(candidate, "http://"); start >= 0 {
+				url = strings.TrimRight(candidate[start:], ".,;: ")
+			} else if start := strings.Index(candidate, "https://"); start >= 0 {
+				url = strings.TrimRight(candidate[start:], ".,;: ")
+			}
+			if url != "" {
+				break
+			}
+		}
+	}
+	if message == "" {
+		if url != "" {
+			message = "Opened " + url
+		} else {
+			message = "The action completed without a visible result."
+		}
+	}
+	return message, url
+}
+
+func isBrowserURL(value string) bool {
+	u, err := url.Parse(value)
+	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http")
 }
 
 // PrepareLSPCodeAction resolves at most this exact retained row and returns the
@@ -266,15 +379,34 @@ func (w *Workspace) PrepareLSPCodeAction(ctx context.Context, owner document.Own
 			return ReviewedEditPreview{}, err
 		}
 	}
-	if item.UnsupportedReason != "" || len(item.Edit) == 0 {
-		return ReviewedEditPreview{}, errors.New("the action is not a supported edit-only literal")
+	if item.UnsupportedReason != "" || item.Workspace == nil && item.Command == nil {
+		return ReviewedEditPreview{}, errors.New("the action has no supported edit or command")
 	}
-	targets, err := s.codeActionTargets(set.view.Boundary.Source, set.wire, string(text), item.Edit)
+	if item.Command != nil {
+		response, err := w.executeCodeActionCommand(ctx, set, item)
+		if err != nil {
+			return ReviewedEditPreview{}, err
+		}
+		if len(response.WorkspaceEdits) != 0 {
+			combined, err := combineCommandWorkspaceEdits(response.WorkspaceEdits)
+			if err != nil {
+				return ReviewedEditPreview{}, err
+			}
+			item.Workspace = combined
+		} else {
+			message, url := commandActionOutcome(response)
+			return ReviewedEditPreview{Message: message, URL: url}, nil
+		}
+	}
+	targets, err := s.codeActionTargets(set.view.Boundary.Source, set.wire, string(text), item.Workspace)
 	if err != nil {
 		return ReviewedEditPreview{}, err
 	}
 	summary := fmt.Sprintf("Action title (literal): %s\nKind (literal): %s\nOriginal action SHA-256: %s\nReviewed action SHA-256: %s\n\n",
 		strconv.Quote(item.Title), strconv.Quote(item.Kind), originalDigest, reviewedHash(string(item.Raw)))
+	if item.Command != nil {
+		summary += "Command (literal): " + strconv.Quote(item.Command.Name) + "\n"
+	}
 	// A release during the resolve RPC or native staging revokes preparation and
 	// Apply without taking DocumentService.mu recursively in the memory fence.
 	return s.prepareReviewedEdit(ctx, owner, "LSP code action", summary, set.view.Boundary, targets, set.check)

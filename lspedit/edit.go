@@ -55,6 +55,16 @@ func Offset(text string, line, col int) (int, error) {
 // output. Equal-start edits are deliberately unsupported: their order is ambiguous.
 // Neither the caller's edit vector nor its source is modified.
 func Apply(text string, edits []types.LSPTextEdit) (string, error) {
+	return apply(text, edits, false)
+}
+
+// ApplyOrdered preserves provider order for valid equal-start zero-width
+// inserts. Overlapping ranges and equal-start replacements remain invalid.
+func ApplyOrdered(text string, edits []types.LSPTextEdit) (string, error) {
+	return apply(text, edits, true)
+}
+
+func apply(text string, edits []types.LSPTextEdit, ordered bool) (string, error) {
 	if len(text) > document.MaxBytes || len(edits) > document.MaxEdits || !utf8.ValidString(text) {
 		return "", fmt.Errorf("LSP edit: source encoding or document/edit bound exceeded")
 	}
@@ -85,9 +95,13 @@ func Apply(text string, edits []types.LSPTextEdit) (string, error) {
 		size += int64(len(edit.NewText)) - int64(end-start)
 		positions = append(positions, position{start, end, edit.NewText})
 	}
-	sort.Slice(positions, func(i, j int) bool { return positions[i].start < positions[j].start })
+	sort.SliceStable(positions, func(i, j int) bool { return positions[i].start < positions[j].start })
 	for i := 1; i < len(positions); i++ {
-		if positions[i].start < positions[i-1].end || positions[i].start == positions[i-1].start {
+		previous, current := positions[i-1], positions[i]
+		if current.start < previous.end {
+			return "", fmt.Errorf("LSP edit: overlapping or ambiguous edits")
+		}
+		if current.start == previous.start && (!ordered || previous.end > previous.start || current.end > current.start) {
 			return "", fmt.Errorf("LSP edit: overlapping or ambiguous edits")
 		}
 	}

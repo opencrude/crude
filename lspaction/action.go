@@ -26,16 +26,26 @@ const (
 )
 
 // Action is detached evidence, not authority. Raw is the original item JSON;
-// Edit is its original edit leaf, including unsupported shapes. Neither belongs
-// in shell DTOs. A row is eligible for later domain review only when it has Edit,
-// no UnsupportedReason and no disabled object; NeedsResolve is never eligibility.
-// Optional preferred presence and open kind strings are preserved literally.
+// Edit is its supported ordinary/create WorkspaceEdit leaf. Neither belongs in
+// shell DTOs. A row is eligible for later domain execution only when it has a
+// supported edit, a supported command, or edit resolution, with no
+// UnsupportedReason and no disabled object; NeedsResolve is never eligibility by
+// itself. Optional preferred presence and open kind strings are preserved literally.
 type Action struct {
 	Title, Kind                       string
 	Preferred, HasPreferred           bool
 	DisabledReason, UnsupportedReason string
 	NeedsResolve                      bool
 	Raw, Edit                         json.RawMessage
+	Workspace                         *lspedit.WorkspaceEdit
+	Command                           *Command
+}
+
+// Command is one provider command retained for explicit execution. Arguments
+// stay opaque JSON and are never interpreted as shell input.
+type Command struct {
+	Title, Name string
+	Arguments   json.RawMessage
 }
 
 // Parse observes null/[] as empty. Malformed JSON, ambiguous duplicate members,
@@ -45,7 +55,7 @@ type Action struct {
 // list), 4 KiB title/disabled reason, 256-byte kind and 64 KiB total visible text.
 // Source-relative endpoint/overlap checks and same-active-URI authorization
 // necessarily belong to the later canonical-source owner, not this parser.
-func Parse(raw []byte, resolveSupported bool) ([]Action, error) {
+func Parse(raw []byte, resolveSupported, commandSupported bool) ([]Action, error) {
 	if len(raw) > maxListBytes {
 		return nil, fmt.Errorf("LSP action: list byte bound exceeded")
 	}
@@ -69,7 +79,7 @@ func Parse(raw []byte, resolveSupported bool) ([]Action, error) {
 		if err := decoder.Decode(&item); err != nil {
 			return nil, err
 		}
-		action, err := parseItem(item, resolveSupported)
+		action, err := parseItem(item, resolveSupported, commandSupported)
 		if err != nil {
 			return nil, err
 		}
@@ -98,11 +108,11 @@ func Resolve(originalRaw, resolvedRaw []byte) (Action, error) {
 			return Action{}, err
 		}
 	}
-	original, err := parseItem(originalRaw, true)
+	original, err := parseItem(originalRaw, true, false)
 	if err != nil {
 		return Action{}, err
 	}
-	if !original.NeedsResolve || original.UnsupportedReason != "" || len(original.Edit) != 0 {
+	if !original.NeedsResolve || original.UnsupportedReason != "" || len(original.Edit) != 0 || original.Command != nil {
 		return Action{}, fmt.Errorf("LSP action: original is not a supported resolvable literal")
 	}
 	before, err := shape(originalRaw)
@@ -125,7 +135,7 @@ func Resolve(originalRaw, resolvedRaw []byte) (Action, error) {
 			return Action{}, fmt.Errorf("LSP action: resolve changed an existing attribute")
 		}
 	}
-	action, err := parseItem(resolvedRaw, false)
+	action, err := parseItem(resolvedRaw, false, false)
 	if err != nil {
 		return Action{}, err
 	}
@@ -135,7 +145,7 @@ func Resolve(originalRaw, resolvedRaw []byte) (Action, error) {
 	return action, nil
 }
 
-func parseItem(raw []byte, resolveSupported bool) (Action, error) {
+func parseItem(raw []byte, resolveSupported, commandSupported bool) (Action, error) {
 	if len(raw) > maxItemBytes {
 		return Action{}, fmt.Errorf("LSP action: item byte bound exceeded")
 	}
@@ -181,111 +191,101 @@ func parseItem(raw []byte, resolveSupported bool) (Action, error) {
 		}
 	}
 	action.Raw = bytes.Clone(raw)
+	editPresent, editErr := false, error(nil)
 	if edit, exists := fields["edit"]; exists {
-		action.Edit = bytes.Clone(edit)
+		editPresent = true
+		parsed, parseErr := lspedit.ParseWorkspace(edit)
+		if parseErr == nil && len(parsed.Operations) != 0 {
+			action.Edit = bytes.Clone(edit)
+			action.Workspace = &parsed
+		} else if parseErr != nil {
+			editErr = parseErr
+		}
+	}
+	if value, exists := fields["command"]; exists {
+		action.Command, action.UnsupportedReason = parseCommand(value, commandSupported)
 	}
 	switch {
-	case fields["command"] != nil:
-		if bytes.HasPrefix(fields["command"], []byte(`"`)) {
-			action.UnsupportedReason = "Bare Command actions are not supported."
-		} else {
-			action.UnsupportedReason = "Actions containing commands are not supported."
-		}
 	case has(fields, "arguments", "commands", "executeCommand"):
-		action.UnsupportedReason = "Actions containing commands are not supported."
-	case has(fields, "changes", "documentChanges", "changeAnnotations", "textDocument",
-		"edits", "newText", "range", "oldUri", "newUri", "uri", "options", "annotationId"):
-		action.UnsupportedReason = "Edit operations must be inside a text-only WorkspaceEdit."
+		action.UnsupportedReason = "Actions with top-level command fields are not supported."
+	case disabled:
+		action.UnsupportedReason = "Disabled actions cannot be applied."
+	case editPresent && action.Command != nil:
+		action.UnsupportedReason = "Actions that both edit and run a command are not supported."
+	case editPresent && action.Workspace == nil:
+		action.UnsupportedReason = editReason(editErr)
 	case has(fields, "notebookDocument", "notebookDocumentEdit", "cellTextDocuments", "cells"):
 		action.UnsupportedReason = "Notebook actions are not supported."
-	case disabled:
-		// Also guards a disabled object whose (valid) reason is the empty string:
-		// Action has no HasDisabled field and must never mistake it for enabled.
-		action.UnsupportedReason = "Disabled actions cannot be applied."
-	case len(action.Edit) != 0:
-		action.UnsupportedReason = editReason(action.Edit)
+	case action.UnsupportedReason != "":
+		// Keep the exact refusal; never fall through to a resolve request.
+	case action.Command != nil:
+		// A command is executable evidence. It may produce reviewed edits,
+		// an informational answer or a browser destination.
+	case action.Edit != nil:
+		// Parsed text/create workspace edit.
 	case resolveSupported:
 		action.NeedsResolve = true
 	default:
-		action.UnsupportedReason = "Action has no edit and edit resolution is not supported."
+		action.UnsupportedReason = "Action has no edit or command and edit resolution is not supported."
 	}
 	return action, nil
 }
 
-func editReason(raw json.RawMessage) string {
-	edit, err := object(raw)
+func parseCommand(raw []byte, supported bool) (*Command, string) {
+	if len(raw) > maxItemBytes {
+		return nil, "The command exceeds the action size limit."
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, "The command is empty."
+	}
+	command := &Command{}
+	unsupported := ""
+	if !supported {
+		unsupported = "This language server does not offer executable commands."
+	}
+	if trimmed[0] == '"' {
+		value, err := text(trimmed, 4096)
+		if err != nil || value == "" {
+			return nil, "The command name is invalid."
+		}
+		command.Name = value
+		return command, unsupported
+	}
+	fields, err := object(trimmed)
 	if err != nil {
-		return "Edit must be a text-only WorkspaceEdit object."
+		return nil, "The command must be an object or a command name."
 	}
-	if has(edit, "changeAnnotations") {
-		return "Change annotations are not supported."
-	}
-	if has(edit, "kind", "oldUri", "newUri", "options") {
-		return "Resource operations are not supported."
-	}
-	if has(edit, "notebookDocument", "notebookDocumentEdit", "cellTextDocuments", "cells") {
-		return "Notebook edits are not supported."
-	}
-	var rawEdits json.RawMessage
-	if has(edit, "documentChanges") {
-		targets, err := array(edit["documentChanges"])
-		if len(edit) != 1 || err != nil || len(targets) != 1 {
-			return "Edit must contain exactly one versioned text-document target."
-		}
-		target, err := exactObject(targets[0], "textDocument", "edits")
-		if err != nil {
-			return "Edit must contain exactly one versioned text-document target."
-		}
-		doc, err := exactObject(target["textDocument"], "uri", "version")
-		if err != nil {
-			return "Edit must contain exactly one versioned text-document target."
-		}
-		var version int32
-		uri, uriErr := text(doc["uri"], 4096)
-		if uriErr != nil || uri == "" || json.Unmarshal(doc["version"], &version) != nil || version <= 0 {
-			return "Edit must contain exactly one versioned text-document target."
-		}
-		rawEdits = target["edits"]
-	} else {
-		if len(edit) != 1 || edit["changes"] == nil {
-			return "Only one changes or documentChanges member is supported."
-		}
-		targets, err := object(edit["changes"])
-		if err != nil || len(targets) != 1 {
-			return "Edit must target exactly one nonempty URI."
-		}
-		for uri, edits := range targets {
-			if uri == "" {
-				return "Edit must target exactly one nonempty URI."
-			}
-			rawEdits = edits
+	if value, exists := fields["title"]; exists {
+		if command.Title, err = text(value, maxTitle); err != nil {
+			return nil, "The command title is invalid."
 		}
 	}
-	items, err := array(rawEdits)
-	if err != nil || len(items) == 0 {
-		return "Edit must contain at least one ordinary text edit."
+	value, exists := fields["command"]
+	if !exists {
+		return nil, "The command has no name."
 	}
-	for _, item := range items {
-		// lspedit validates values/ranges. This boundary also rejects every
-		// extra edit member rather than silently ignoring an operation.
-		entry, err := exactObject(item, "range", "newText")
-		if err != nil {
-			return "Only ordinary text edits are supported."
-		}
-		r, err := exactObject(entry["range"], "start", "end")
-		if err != nil {
-			return "Only ordinary text edits are supported."
-		}
-		for _, endpoint := range []string{"start", "end"} {
-			if _, err := exactObject(r[endpoint], "line", "character"); err != nil {
-				return "Only ordinary text edits are supported."
-			}
-		}
+	if command.Name, err = text(value, 4096); err != nil || command.Name == "" {
+		return nil, "The command name is invalid."
 	}
-	if _, err := lspedit.Parse(raw); err != nil {
-		return "Unsupported or malformed ordinary text edits."
+	if arguments, exists := fields["arguments"]; exists {
+		if len(arguments) > maxItemBytes {
+			return nil, "The command arguments exceed the action size limit."
+		}
+		var items []json.RawMessage
+		if json.Unmarshal(arguments, &items) != nil {
+			return nil, "The command arguments must be an array."
+		}
+		command.Arguments = bytes.Clone(arguments)
 	}
-	return ""
+	return command, unsupported
+}
+
+func editReason(err error) string {
+	if err != nil {
+		return "The action edit is malformed or unsupported."
+	}
+	return "The action has no source changes."
 }
 
 func has(fields map[string]json.RawMessage, names ...string) bool {
@@ -304,22 +304,6 @@ func object(raw []byte) (map[string]json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
-	}
-	return fields, nil
-}
-
-func exactObject(raw []byte, names ...string) (map[string]json.RawMessage, error) {
-	fields, err := object(raw)
-	if err != nil {
-		return nil, err
-	}
-	if len(fields) != len(names) {
-		return nil, fmt.Errorf("LSP action: unexpected edit member")
-	}
-	for _, name := range names {
-		if _, exists := fields[name]; !exists {
-			return nil, fmt.Errorf("LSP action: missing edit member")
-		}
 	}
 	return fields, nil
 }

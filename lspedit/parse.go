@@ -29,6 +29,7 @@ type DocumentEdit struct {
 	Versioned bool
 	Version   *int32
 	Edits     []types.LSPTextEdit
+	Create    bool
 }
 
 // Parse consumes original WorkspaceEdit JSON, not a generated protocol value:
@@ -150,7 +151,7 @@ func (b *parseBudget) edits(raw json.RawMessage) ([]types.LSPTextEdit, error) {
 	b.count += len(items)
 	result := make([]types.LSPTextEdit, 0, len(items))
 	for _, item := range items {
-		edit, err := object(item, "range", "newText")
+		edit, err := exactObject(item, "range", "newText")
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +163,7 @@ func (b *parseBudget) edits(raw json.RawMessage) ([]types.LSPTextEdit, error) {
 		if b.replacements > MaxReplacementBytes {
 			return nil, fmt.Errorf("LSP edit: aggregate replacement bound exceeded")
 		}
-		r, err := object(edit["range"], "start", "end")
+		r, err := exactObject(edit["range"], "start", "end")
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +186,7 @@ func (b *parseBudget) edits(raw json.RawMessage) ([]types.LSPTextEdit, error) {
 }
 
 func position(raw json.RawMessage) (int, int, error) {
-	p, err := object(raw, "line", "character")
+	p, err := exactObject(raw, "line", "character")
 	if err != nil {
 		return 0, 0, err
 	}
@@ -251,6 +252,22 @@ func object(raw json.RawMessage, allowed ...string) (map[string]json.RawMessage,
 		}
 		if !found {
 			return nil, fmt.Errorf("LSP edit: unsupported operative field %q", key)
+		}
+	}
+	return fields, nil
+}
+
+func exactObject(raw json.RawMessage, names ...string) (map[string]json.RawMessage, error) {
+	fields, err := decodeObject(raw, MaxDocuments)
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) != len(names) {
+		return nil, fmt.Errorf("LSP edit: unexpected object member")
+	}
+	for _, name := range names {
+		if _, exists := fields[name]; !exists {
+			return nil, fmt.Errorf("LSP edit: missing object member")
 		}
 	}
 	return fields, nil

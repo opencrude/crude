@@ -100,6 +100,15 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			value, err := docs.Redo(owner, input.ID, request.ID, input.Revision)
 			return ok(wire(value), err)
 		}, true
+	case coreprotocol.ProjectFormat:
+		var input coreprotocol.ProjectFormatRequest
+		if err := decodeRequest(request, &input); err != nil {
+			return bad(err)
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			value, err := a.ws.FormatProject(ctx)
+			return ok(wire(value), err)
+		}, true
 	case coreprotocol.TerminalList:
 		return func(context.Context) coreprotocol.Response {
 			return ok(wire(coreprotocol.TerminalInfos(manager.List())), nil)
@@ -225,7 +234,7 @@ func resourceMutation(method string) bool {
 	switch method {
 	case coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:
 		return false
-	case coreprotocol.DocumentOpen, coreprotocol.DocumentClose, coreprotocol.DocumentFormat, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave,
+	case coreprotocol.DocumentOpen, coreprotocol.DocumentClose, coreprotocol.DocumentFormat, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave, coreprotocol.ProjectFormat,
 		coreprotocol.TerminalCreate, coreprotocol.TerminalControl, coreprotocol.TerminalRelease, coreprotocol.TerminalInput, coreprotocol.TerminalResize, coreprotocol.TerminalClose:
 		return true
 	}

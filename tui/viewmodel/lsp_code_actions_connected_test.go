@@ -247,7 +247,7 @@ func TestConnectedCodeActionsUnsupportedEmptyAndSelectionUseActualChooser(t *tes
 	}
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyDown})
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "containing commands") || strings.Contains(paint, "Preview changes") {
+	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "does not offer executable commands") || strings.Contains(paint, "Preview changes") {
 		t.Fatalf("unsupported command became actionable or invisible:\n%s", paint)
 	}
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc}) // Back to original list.

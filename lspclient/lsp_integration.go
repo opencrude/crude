@@ -67,6 +67,16 @@ type LSPIntegration struct {
 	// onUnopened receives unversioned publications for files this client has
 	// not opened, for example from a server that checks a whole project.
 	onUnopened func(path string, p model.InsightDiagnosticPublication)
+
+	// command captures only the server effects of the one explicit
+	// workspace/executeCommand in flight. It is never a mutation path.
+	command *commandCapture
+}
+
+type commandCapture struct {
+	edits    [][]byte
+	messages []string
+	show     *model.LSPShowDocument
 }
 
 // LSPIntegrationOption configures a new LSPIntegration.
@@ -284,6 +294,15 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 			})
 			client.RegisterHandler("window/workDoneProgress/create", func(context.Context, string, json.RawMessage) (any, error) {
 				return nil, nil
+			})
+			client.RegisterHandler("workspace/applyEdit", func(_ context.Context, _ string, params json.RawMessage) (any, error) {
+				return l.captureApplyEdit(client, params)
+			})
+			client.RegisterHandler("window/showDocument", func(_ context.Context, _ string, params json.RawMessage) (any, error) {
+				return l.captureShowDocument(client, params)
+			})
+			client.RegisterNotificationHandler("window/showMessage", func(_ context.Context, _ string, params json.RawMessage) {
+				l.captureShowMessage(client, params)
 			})
 			client.RegisterNotificationHandler("$/progress", func(_ context.Context, _ string, params json.RawMessage) {
 				var progress struct {

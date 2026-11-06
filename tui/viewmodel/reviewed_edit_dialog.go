@@ -65,7 +65,15 @@ func newReviewedEditDialog(th *theme.Theme, msg reviewedEditDialogRequest) *revi
 	p := &reviewedEditDialog{Base: ui.NewBase("reviewed-edit/body"), request: msg}
 	p.area = ui.NewTextArea("reviewed-edit/detail", tokens, true)
 	p.area.SetReadOnly(true)
-	p.area.SetValue(msg.intro + "\nCrude saves a Local History copy before it changes files.\n\n" + msg.preview.Text)
+	intro := msg.intro + "\nCrude saves a Local History copy before it changes files.\n\n"
+	allCreated := len(msg.preview.Files) != 0
+	for _, file := range msg.preview.Files {
+		allCreated = allCreated && file.Created
+	}
+	if allCreated {
+		intro = msg.intro + "\nCrude creates new files and changes no existing file.\n\n"
+	}
+	p.area.SetValue(intro + msg.preview.Text)
 	p.area.SetCursorFlat(0)
 	p.bar = ui.NewActionBar("reviewed-edit/actions", tokens, ui.ActionBarButton{Label: msg.applyLabel, Action: "apply", Enabled: true, Variant: ui.VariantPrimary}, ui.ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true, Variant: ui.VariantSecondary})
 	p.bar.SetCancelAction("cancel")
@@ -265,7 +273,11 @@ func (m *App) handleReviewedEditApplied(msg reviewedEditAppliedMsg) {
 	exact := result.ID == p.request.preview.ID && result.Digest == p.request.preview.Digest
 	if msg.err == nil && p.confirmsCommit(result) {
 		// Canonical topics, not this private receipt, publish all open editor text.
-		m.Feedback.NotifyInfo(p.request.committedLabel + ". You can restore the files from Local History.")
+		message := p.request.committedLabel + "."
+		if result.SafetySnapshotID != "" {
+			message += " You can restore the files from Local History."
+		}
+		m.Feedback.NotifyInfo(message)
 		m.overlayHost.Close(reviewedEditOverlay)
 		return
 	}

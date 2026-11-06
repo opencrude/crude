@@ -92,7 +92,7 @@ type App struct {
 	FindReplace               *popup.FindReplaceState
 	LastContextMenu           *ui.ContextMenuState
 	ContextMenuOpenedAt       time.Time
-	TreePrompt                *ui.TextPromptState
+	TextPrompt                *ui.TextPromptState
 	TreeDeletePending         string
 	treeMovePending           *treeMoveRequest
 	treeClip                  *treeClipboard
@@ -362,6 +362,7 @@ type App struct {
 	signatureHelp         *signatureHelpState
 	signatureHelpIntent   *signatureHelpIntent
 	codeActions           *codeActionState
+	projectFormatting     bool
 	navigation            *navigationState
 	completion            *completionState
 	completionSequence    uint64
@@ -1190,8 +1191,8 @@ func (m *App) registerOverlayHandlers() {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
 
-	oh.RegisterContentHandler(ui.OverlayTreePrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		return m.clickTreePrompt(localX, localY, msg)
+	oh.RegisterContentHandler(ui.OverlayTextPrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickTextPrompt(localX, localY, msg)
 	})
 
 	oh.RegisterContentHandler(ui.OverlayTreeDelete, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {

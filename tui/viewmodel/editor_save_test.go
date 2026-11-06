@@ -332,7 +332,7 @@ func TestRenameBeforeSaveAcknowledgementKeepsCommittedBaseline(t *testing.T) {
 	// The write is on disk; the acknowledgement is still in flight while the
 	// tree renames the file and retargets the open tab.
 	app.startRenameInTree(oldPath)
-	app.TreePrompt.Edit.SetValue(filepath.Base(newPath))
+	app.TextPrompt.Edit.SetValue(filepath.Base(newPath))
 	updateTreeMutationWithoutDeadlock(t, app, "rename before save acknowledgement")
 	if ed.FilePath() != newPath {
 		t.Fatalf("rename did not retarget the editor: %q", ed.FilePath())

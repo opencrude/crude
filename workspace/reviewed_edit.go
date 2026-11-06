@@ -42,6 +42,9 @@ type ReviewedEditPreview struct {
 	Evidence string
 	Boundary types.InsightBoundary
 	Files    []ReviewedEditFile
+	// Message and URL are set only for a command action with no source edit.
+	// They are presentation evidence; the command has already run exactly once.
+	Message, URL string
 }
 
 type ReviewedEditFile struct {
@@ -49,6 +52,7 @@ type ReviewedEditFile struct {
 	Source                          types.InsightSource
 	Mode                            uint32
 	BeforeBytes, AfterBytes         int
+	Created                         bool
 }
 
 // ReviewedEditResult distinguishes a refusal from an accepted disk effect whose
@@ -192,25 +196,36 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 			return ReviewedEditPreview{}, errors.New("duplicate reviewed target")
 		}
 		seen[path] = true
-		// Bound the native read before allocating its full contents.
-		info, err := os.Lstat(path)
-		if err != nil {
-			return ReviewedEditPreview{}, err
-		}
-		if !info.Mode().IsRegular() || info.Size() > reviewedEditFileBytes {
-			return ReviewedEditPreview{}, errors.New("review requires a regular file within its 2 MiB source bound")
-		}
-		file, err := readWorkspaceEditFileBounded(path, reviewedEditFileBytes)
-		if err != nil {
-			return ReviewedEditPreview{}, err
+		var file workspaceEditFile
+		var before string
+		mode := os.FileMode(0o644)
+		if target.Create {
+			file, err = absentWorkspaceEditFile(path)
+			if err != nil {
+				return ReviewedEditPreview{}, err
+			}
+		} else {
+			// Bound the native read before allocating its full contents.
+			info, err := os.Lstat(path)
+			if err != nil {
+				return ReviewedEditPreview{}, err
+			}
+			if !info.Mode().IsRegular() || info.Size() > reviewedEditFileBytes {
+				return ReviewedEditPreview{}, errors.New("review requires a regular file within its 2 MiB source bound")
+			}
+			file, err = readWorkspaceEditFileBounded(path, reviewedEditFileBytes)
+			if err != nil {
+				return ReviewedEditPreview{}, err
+			}
+			before = string(file.data)
+			mode = file.info.Mode()
 		}
 		for _, previous := range plan.files {
-			if os.SameFile(previous.info, file.info) {
+			if file.info != nil && previous.info != nil && os.SameFile(previous.info, file.info) {
 				return ReviewedEditPreview{}, errors.New("review contains native file aliases")
 			}
 		}
-		before := string(file.data)
-		after, err := lspedit.Apply(before, target.Edits)
+		after, err := lspedit.ApplyOrdered(before, target.Edits)
 		if err != nil {
 			return ReviewedEditPreview{}, err
 		}
@@ -227,11 +242,12 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		if sourceErr != nil {
 			return ReviewedEditPreview{}, sourceErr
 		}
-		if before == after {
+		if before == after && !target.Create {
 			continue
 		}
 		meta.Path, meta.BeforeSHA256, meta.AfterSHA256 = path, reviewedHash(before), reviewedHash(after)
-		meta.Mode, meta.BeforeBytes, meta.AfterBytes = uint32(file.info.Mode()), len(before), len(after)
+		meta.Mode, meta.BeforeBytes, meta.AfterBytes = uint32(mode), len(before), len(after)
+		meta.Created = target.Create
 		displayPath, err := filepath.Rel(s.root, path)
 		if err != nil {
 			return ReviewedEditPreview{}, err
@@ -240,12 +256,14 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 			return ReviewedEditPreview{}, err
 		}
 		plan.files = append(plan.files, file)
-		plan.edits = append(plan.edits, FileEdit{Path: path, OldContent: before, NewContent: after})
+		plan.edits = append(plan.edits, FileEdit{Path: path, OldContent: before, NewContent: after, Create: target.Create})
 		splices := make([]document.Edit, 0, len(target.Edits))
-		for _, edit := range target.Edits {
-			start, _ := lspedit.Offset(before, edit.Line, edit.Col)
-			end, _ := lspedit.Offset(before, edit.EndLine, edit.EndCol)
-			splices = append(splices, document.Edit{Start: start, End: end, Text: edit.NewText})
+		if !target.Create {
+			for _, edit := range target.Edits {
+				start, _ := lspedit.Offset(before, edit.Line, edit.Col)
+				end, _ := lspedit.Offset(before, edit.EndLine, edit.EndCol)
+				splices = append(splices, document.Edit{Start: start, End: end, Text: edit.NewText})
+			}
 		}
 		plan.splices = append(plan.splices, splices)
 		plan.preview.Files = append(plan.preview.Files, meta)
@@ -284,6 +302,12 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 
 func (s *DocumentService) reviewedFileSourceLocked(path string, before []byte, target lspedit.DocumentEdit) (ReviewedEditFile, error) {
 	d := s.documentAtPath(path)
+	if target.Create {
+		if d != nil {
+			return ReviewedEditFile{}, errors.New("a new file cannot replace an open or retained document")
+		}
+		return ReviewedEditFile{}, nil
+	}
 	if d == nil {
 		if target.Versioned && target.Version != nil {
 			return ReviewedEditFile{}, errors.New("versioned target has no synchronized canonical source")
@@ -311,6 +335,15 @@ func (s *DocumentService) validateReviewedPlanLocked(ctx context.Context, p *rev
 		return err
 	}
 	for i, expected := range p.preview.Files {
+		if expected.Created {
+			if s.documentAtPath(expected.Path) != nil {
+				return document.ErrRevision
+			}
+			if err := p.files[i].checkAbsent(); err != nil {
+				return err
+			}
+			continue
+		}
 		d := s.documentAtPath(expected.Path)
 		if expected.Source.DocumentID == "" {
 			if d != nil {
@@ -466,25 +499,34 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 		return fail(err)
 	}
 	delete(s.reviewed, id) // admission consumes this exact plan, even on failure
-	include := make([]string, len(p.edits))
-	preimages := make([]localhistory.RetainedFile, len(p.edits))
+	preimages := make([]localhistory.RetainedFile, 0, len(p.edits))
 	for i, edit := range p.edits {
+		if p.preview.Files[i].Created {
+			continue
+		}
 		rel, err := filepath.Rel(s.root, edit.Path)
 		if err != nil {
 			out.State = "refused"
 			return fail(err)
 		}
-		include[i] = filepath.ToSlash(rel)
-		preimages[i] = localhistory.RetainedFile{Path: include[i], Data: p.files[i].data, Mode: p.preview.Files[i].Mode}
+		preimages = append(preimages, localhistory.RetainedFile{Path: filepath.ToSlash(rel), Data: p.files[i].data, Mode: p.preview.Files[i].Mode})
 	}
-	safety, effectErr := store.SnapshotRetainedFiles(ctx, out.SafetyReference, "Before "+p.preview.Label, preimages)
-	out.SafetySnapshotID = safety.ID
-	if effectErr == nil {
-		for i, meta := range p.preview.Files {
-			entry, found := safety.Entries[include[i]]
-			if !found || entry.Type != localhistory.EntryFile || entry.Hash != meta.BeforeSHA256 || entry.Mode != meta.Mode {
-				effectErr = errors.New("reviewed preimage changed before mandatory safety capture")
-				break
+	var safety localhistory.Manifest
+	var effectErr error
+	if len(preimages) != 0 {
+		safety, effectErr = store.SnapshotRetainedFiles(ctx, out.SafetyReference, "Before "+p.preview.Label, preimages)
+		out.SafetySnapshotID = safety.ID
+		if effectErr == nil {
+			for _, meta := range p.preview.Files {
+				if meta.Created {
+					continue
+				}
+				rel, _ := filepath.Rel(s.root, meta.Path)
+				entry, found := safety.Entries[filepath.ToSlash(rel)]
+				if !found || entry.Type != localhistory.EntryFile || entry.Hash != meta.BeforeSHA256 || entry.Mode != meta.Mode {
+					effectErr = errors.New("reviewed preimage changed before mandatory safety capture")
+					break
+				}
 			}
 		}
 	}

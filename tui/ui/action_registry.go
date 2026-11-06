@@ -439,6 +439,40 @@ var defaultActions = []*ActionDef{
 		HintKey:      "Ctrl+H",
 	},
 	{
+		ID:           "edit.gotoLine",
+		Label:        "Go to Line",
+		Description:  "jump to a line in the current file",
+		Icon:         "↦",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+g"}},
+		HintKey:      "Ctrl+G",
+	},
+	{
+		ID:           "edit.format",
+		Label:        "Format Document",
+		Description:  "format the current file with its language formatter",
+		Icon:         "⇶",
+		Category:     "Edit",
+		FocusContext: "editor",
+		// Terminals spell modified letters in canonical alt-then-shift order and
+		// may carry the shifted character as text, so match the modifier/Code pair.
+		Bindings: []KeyBinding{
+			{Key: "alt+shift+f"},
+			{Key: "shift+alt+f"},
+			{Mod: tea.ModAlt | tea.ModShift, Code: 'f'},
+		},
+		HintKey: "Shift+Alt+F",
+	},
+	{
+		ID:           "edit.formatProject",
+		Label:        "Format Project",
+		Description:  "format saved project files with each language's formatter",
+		Icon:         "⇶",
+		Category:     "Edit",
+		FocusContext: "editor",
+	},
+	{
 		ID:           "edit.moveLineUp",
 		Label:        "Move Line Up",
 		Description:  "move the current line or selection up",

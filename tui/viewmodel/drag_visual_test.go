@@ -11,7 +11,8 @@ import (
 
 // This fixture mounts a real shell with a file tree and three file tabs for
 // the repository capture workflow (scripts/tuishot.sh), which drags tabs and
-// tree rows with the real pointer. F9 exits.
+// tree rows with the real pointer. F9 exits. visualAcceptanceModel is shared
+// with the other capture fixtures.
 func TestDragVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_DRAG") != "1" {
 		t.Skip("dedicated sequential native capture")
@@ -36,7 +37,7 @@ func TestDragVisualAcceptance(t *testing.T) {
 	openEditorTabs(t, app, "alpha.go", "beta.go", "gamma.go")
 	app.setActivity(activityFiles, true)
 	runAppCommand(t, app, app.Tree.Model.RefreshFromDisk())
-	model := &dragVisualModel{App: app}
+	model := &visualAcceptanceModel{App: app}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)
 	restore := installDetachedMessageSinkForTest(app, program.Send)
@@ -46,13 +47,13 @@ func TestDragVisualAcceptance(t *testing.T) {
 	}
 }
 
-type dragVisualModel struct {
+type visualAcceptanceModel struct {
 	*App
 }
 
-func (*dragVisualModel) Init() tea.Cmd { return tickCmd() }
+func (*visualAcceptanceModel) Init() tea.Cmd { return tickCmd() }
 
-func (m *dragVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *visualAcceptanceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyF9 {
 		return m, tea.Quit
 	}

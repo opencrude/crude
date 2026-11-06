@@ -104,7 +104,7 @@ func TestTreeMutationsDoNotReenterEventBus(t *testing.T) {
 		path := filepath.Join(root, "created.go")
 
 		app.startNewFileInTree(root)
-		app.TreePrompt.Edit.SetValue(filepath.Base(path))
+		app.TextPrompt.Edit.SetValue(filepath.Base(path))
 		updateTreeMutationWithoutDeadlock(t, app, "create file")
 
 		assertPathExists(t, path, false)
@@ -118,7 +118,7 @@ func TestTreeMutationsDoNotReenterEventBus(t *testing.T) {
 		path := filepath.Join(root, "created-folder")
 
 		app.startNewFolderInTree(root)
-		app.TreePrompt.Edit.SetValue(filepath.Base(path))
+		app.TextPrompt.Edit.SetValue(filepath.Base(path))
 		updateTreeMutationWithoutDeadlock(t, app, "create folder")
 
 		assertPathExists(t, path, true)
@@ -140,7 +140,7 @@ func TestTreeMutationsDoNotReenterEventBus(t *testing.T) {
 		app.EditorState.Editor.InsertRune('x')
 
 		app.startRenameInTree(oldPath)
-		app.TreePrompt.Edit.SetValue(filepath.Base(newPath))
+		app.TextPrompt.Edit.SetValue(filepath.Base(newPath))
 		updateTreeMutationWithoutDeadlock(t, app, "rename")
 
 		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {

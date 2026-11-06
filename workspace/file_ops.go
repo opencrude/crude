@@ -452,12 +452,22 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 				}
 			}
 		}
-		p, err := readWorkspaceEditFileBounded(path, limit)
+		var p workspaceEditFile
+		var err error
+		if edit.Create {
+			if edit.OldContent != "" {
+				msg.Err = fmt.Errorf("create target has a nonempty preimage: %s", edit.Path)
+				return msg
+			}
+			p, err = absentWorkspaceEditFile(path)
+		} else {
+			p, err = readWorkspaceEditFileBounded(path, limit)
+		}
 		if err != nil {
 			msg.Err = err
 			return msg
 		}
-		if string(p.data) != edit.OldContent {
+		if !edit.Create && string(p.data) != edit.OldContent {
 			msg.Err = fmt.Errorf("content mismatch in %s (file changed on disk?)", edit.Path)
 			return msg
 		}
@@ -465,19 +475,30 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 			if expected.path != p.path {
 				continue
 			}
-			if !os.SameFile(expected.info, p.info) || expected.info.Mode() != p.info.Mode() {
-				msg.Err = fmt.Errorf("reviewed workspace edit file was replaced: %s", edit.Path)
+			if expected.create != edit.Create {
+				msg.Err = fmt.Errorf("reviewed workspace edit kind changed: %s", edit.Path)
 				return msg
 			}
-			for parent, info := range expected.parents {
-				if current := p.parents[parent]; current == nil || !os.SameFile(info, current) {
-					msg.Err = fmt.Errorf("reviewed workspace edit parent was replaced: %s", parent)
+			if edit.Create {
+				if err := expected.checkAbsent(); err != nil {
+					msg.Err = err
 					return msg
+				}
+			} else {
+				if !os.SameFile(expected.info, p.info) || expected.info.Mode() != p.info.Mode() {
+					msg.Err = fmt.Errorf("reviewed workspace edit file was replaced: %s", edit.Path)
+					return msg
+				}
+				for parent, info := range expected.parents {
+					if current := p.parents[parent]; current == nil || !os.SameFile(info, current) {
+						msg.Err = fmt.Errorf("reviewed workspace edit parent was replaced: %s", parent)
+						return msg
+					}
 				}
 			}
 		}
 		for _, previous := range prepared {
-			if os.SameFile(previous.info, p.info) {
+			if p.info != nil && previous.info != nil && os.SameFile(previous.info, p.info) {
 				msg.Err = fmt.Errorf("duplicate native workspace edit file: %s", edit.Path)
 				return msg
 			}
@@ -490,9 +511,13 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 		p.newData = []byte(edit.NewContent)
 		prepared = append(prepared, p)
 		target := &prepared[len(prepared)-1]
-		target.backup, target.backupImage, err = stageWorkspaceEditFile(p.path, p.data, p.info.Mode(), lsp)
-		if err == nil {
-			target.next, target.postimage, err = stageWorkspaceEditFile(p.path, p.newData, p.info.Mode(), lsp)
+		if edit.Create {
+			target.next, target.postimage, err = stageWorkspaceEditFile(p.path, p.newData, 0o644, lsp)
+		} else {
+			target.backup, target.backupImage, err = stageWorkspaceEditFile(p.path, p.data, p.info.Mode(), lsp)
+			if err == nil {
+				target.next, target.postimage, err = stageWorkspaceEditFile(p.path, p.newData, p.info.Mode(), lsp)
+			}
 		}
 		if err != nil {
 			msg.Err = err
@@ -517,9 +542,13 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 			err = beforeCommit()
 		}
 		if err == nil {
-			err = p.checkStage(p.next, p.newData, p.postimage)
+			if p.create {
+				err = checkWorkspaceEditStage(p.next, p.newData, p.postimage)
+			} else {
+				err = p.checkStage(p.next, p.newData, p.postimage)
+			}
 		}
-		if err == nil {
+		if err == nil && !p.create {
 			err = p.checkStage(p.backup, p.data, p.backupImage)
 		}
 		if err == nil && watch != nil {
@@ -546,11 +575,21 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 			restore := &prepared[j]
 			// Never overwrite an external actor's later content during recovery.
 			rollbackErr := restore.check(restore.newData, restore.postimage)
-			if rollbackErr == nil {
-				rollbackErr = restore.checkStage(restore.backup, restore.data, restore.backupImage)
+			if restore.create {
+				rollbackErr = restore.checkCreated(restore.newData, restore.postimage)
 			}
 			if rollbackErr == nil {
-				rollbackErr = fileio.CommitAtomicFile(restore.backup, restore.path)
+				if restore.create {
+					rollbackErr = os.Remove(restore.path)
+					if errors.Is(rollbackErr, os.ErrNotExist) {
+						rollbackErr = nil
+					}
+				} else {
+					rollbackErr = restore.checkStage(restore.backup, restore.data, restore.backupImage)
+					if rollbackErr == nil {
+						rollbackErr = fileio.CommitAtomicFile(restore.backup, restore.path)
+					}
+				}
 			}
 			if rollbackErr != nil {
 				msg.Err = errors.Join(msg.Err, fmt.Errorf("rollback %s: %w (preimage retained at %s)", restore.path, rollbackErr, restore.backup))
@@ -563,7 +602,11 @@ func (s *FileOpsService) applyWorkspaceEdit(edits []FileEdit, reviewed []workspa
 	// Check the complete postimage once before claiming success. If another
 	// writer changed a committed target, do not overwrite that later work.
 	for _, p := range prepared {
-		if err := p.check(p.newData, p.postimage); err != nil {
+		check := p.check
+		if p.create {
+			check = p.checkCreated
+		}
+		if err := check(p.newData, p.postimage); err != nil {
 			msg.Err = fmt.Errorf("workspace edit postimage changed: %w", err)
 			msg.Detail = "workspace edit result needs inspection"
 			return msg
@@ -588,6 +631,7 @@ const maxWorkspaceEditBytes int64 = 256 << 20
 type workspaceEditFile struct {
 	path          string
 	limit         int64
+	create        bool
 	data, newData []byte
 	info          os.FileInfo
 	postimage     os.FileInfo
@@ -603,18 +647,8 @@ func readWorkspaceEditFileBounded(path string, limit int64) (workspaceEditFile, 
 	if limit <= 0 || limit > maxWorkspaceEditBytes {
 		return p, errors.New("invalid workspace edit read bound")
 	}
-	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
-		info, err := os.Lstat(parent)
-		if err != nil {
-			return p, err
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return p, fmt.Errorf("unsafe workspace edit parent: %s", parent)
-		}
-		p.parents[parent] = info
-		if parent == filepath.Dir(parent) {
-			break
-		}
+	if err := captureWorkspaceEditParents(&p); err != nil {
+		return p, err
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -650,6 +684,9 @@ func readWorkspaceEditFileBounded(path string, limit int64) (workspaceEditFile, 
 }
 
 func (p workspaceEditFile) check(data []byte, identity os.FileInfo) error {
+	if p.create {
+		return p.checkAbsent()
+	}
 	current, err := readWorkspaceEditFileBounded(p.path, p.limit)
 	if err != nil {
 		return err
@@ -666,9 +703,82 @@ func (p workspaceEditFile) check(data []byte, identity os.FileInfo) error {
 	return nil
 }
 
+func (p workspaceEditFile) checkAbsent() error {
+	current, err := absentWorkspaceEditFile(p.path)
+	if err != nil {
+		return err
+	}
+	for path, info := range p.parents {
+		if !os.SameFile(info, current.parents[path]) {
+			return fmt.Errorf("workspace edit parent changed: %s", path)
+		}
+	}
+	return nil
+}
+
+func (p workspaceEditFile) checkCreated(data []byte, identity os.FileInfo) error {
+	current, err := readWorkspaceEditFileBounded(p.path, maxWorkspaceEditBytes)
+	if err != nil {
+		return err
+	}
+	for path, info := range p.parents {
+		if !os.SameFile(info, current.parents[path]) {
+			return fmt.Errorf("workspace edit parent changed: %s", path)
+		}
+	}
+	if identity == nil || !bytes.Equal(data, current.data) || !os.SameFile(identity, current.info) {
+		return fmt.Errorf("created workspace edit file changed: %s", p.path)
+	}
+	return nil
+}
+
+func captureWorkspaceEditParents(p *workspaceEditFile) error {
+	for parent := filepath.Dir(p.path); ; parent = filepath.Dir(parent) {
+		info, err := os.Lstat(parent)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("unsafe workspace edit parent: %s", parent)
+		}
+		p.parents[parent] = info
+		if parent == filepath.Dir(parent) {
+			return nil
+		}
+	}
+}
+
+// absentWorkspaceEditFile captures the parent identity and proves that the
+// create target is still absent. It never follows a link or reads a file.
+func absentWorkspaceEditFile(path string) (workspaceEditFile, error) {
+	p := workspaceEditFile{path: path, create: true, parents: make(map[string]os.FileInfo)}
+	if err := captureWorkspaceEditParents(&p); err != nil {
+		return p, err
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return p, fmt.Errorf("workspace edit create target already exists: %s", path)
+		}
+		return p, err
+	}
+	return p, nil
+}
+
 func (p workspaceEditFile) checkStage(path string, data []byte, identity os.FileInfo) error {
 	p.path = path
 	return p.check(data, identity)
+}
+
+func checkWorkspaceEditStage(path string, data []byte, identity os.FileInfo) error {
+	current, err := readWorkspaceEditFileBounded(path, maxWorkspaceEditBytes)
+	if err != nil {
+		return err
+	}
+	if identity == nil || !bytes.Equal(data, current.data) || current.info.Mode() != identity.Mode() ||
+		!current.info.ModTime().Equal(identity.ModTime()) || !os.SameFile(identity, current.info) {
+		return fmt.Errorf("content mismatch or file identity/mode changed in staged workspace edit %s", path)
+	}
+	return nil
 }
 
 func stageWorkspaceEditFile(path string, data []byte, mode os.FileMode, lsp *LSPManager) (name string, identity os.FileInfo, err error) {
@@ -729,6 +839,8 @@ type FileEdit struct {
 	OldContent string
 	// NewContent is the content to write.
 	NewContent string
+	// Create requires the target to be absent before this transaction.
+	Create bool
 }
 
 // validatePath checks that a path is absolute and under the workspace root.

@@ -378,6 +378,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "edit.replace":
 				m.openFindReplace(true)
 				return m, nil
+			case "edit.gotoLine":
+				m.openGoToLine()
+				return m, nil
 			case "lsp.definition":
 				return m, m.requestNavigationCmd(types.LSPNavigationDefinition)
 			case "lsp.typeDefinition":
@@ -390,6 +393,10 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.requestSignatureHelpCmd()
 			case "lsp.codeActions":
 				return m, m.requestCodeActionsCmd()
+			case "edit.format":
+				return m, m.requestActiveEditorFormat()
+			case "edit.formatProject":
+				return m, m.requestProjectFormat()
 			case "lsp.inlayInspect":
 				return m, m.openInlayInspectorCmd()
 			}
@@ -543,8 +550,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleSettingsPromptKey(msg)
 		case "agent-prompt":
 			return m, m.handleAgentPromptKey(msg)
-		case "tree-prompt":
-			return m, m.handleTreePromptInput(msg)
+		case "text-prompt":
+			return m, m.handleTextPromptInput(msg)
 		case "tree-delete-confirm":
 			return m, m.handleTreeDeleteConfirmKey(msg)
 		case string(overlayTreeMove):
@@ -895,7 +902,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 
 	case FocusFloatingWindow:
 		// A popup is focused. Text overlays whose fields are bound to
-		// retained state (find/replace, palette filter, tree prompt) take the
+		// retained state (find/replace, palette filter, text prompt) take the
 		// paste through the same owner path as their keys; every other
 		// window content handles it itself.
 		if fw := m.windowManager.Focused(); fw != nil {
@@ -905,8 +912,8 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 				cmd = m.pasteFindReplace(msg)
 			case string(ui.OverlayCommandPalette):
 				_, cmd = m.handleCommandPaletteInput(msg)
-			case string(ui.OverlayTreePrompt):
-				cmd = m.handleTreePromptInput(msg)
+			case string(ui.OverlayTextPrompt):
+				cmd = m.handleTextPromptInput(msg)
 			default:
 				cmd = m.pasteToWindowContent(fw, msg)
 			}
@@ -1040,7 +1047,7 @@ func (m *App) startRenameCmd() tea.Cmd {
 			return nil
 		}
 	}
-	m.openTreeTextPrompt(ui.TextPromptRename, "Rename symbol", "Enter the new symbol name. Changes will be previewed before applying.", "", "", func(value string) error {
+	m.openTextPrompt(ui.TextPromptRename, "Rename symbol", "Enter the new symbol name. Changes will be previewed before applying.", "", func(value string) error {
 		if value == "" {
 			return fmt.Errorf("name cannot be empty")
 		}

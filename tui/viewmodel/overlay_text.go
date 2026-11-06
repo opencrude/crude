@@ -8,7 +8,7 @@ import (
 )
 
 // routeOverlayText delivers a key press or bracketed paste to a text field of
-// a ComponentWidget overlay (find/replace, command palette, tree prompt)
+// a ComponentWidget overlay (find/replace, command palette, text prompt)
 // through the shared ui.TextField contract: editing, selection, undo/redo,
 // Ctrl+C / Ctrl+X / Ctrl+V and bracketed paste behave exactly as in every
 // other text control. The field is bound to the overlay's retained TextEdit

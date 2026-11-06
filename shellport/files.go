@@ -1,9 +1,18 @@
 package shellport
 
 import (
+	"context"
+
 	"crude/fileio"
 	"crude/workspace"
 )
+
+// ProjectFormatter formats saved project files through the core-owned catalog
+// formatter and one transactional file owner. It is optional for read-only
+// shells and test doubles.
+type ProjectFormatter interface {
+	FormatProject(context.Context) (workspace.FormatProjectResult, error)
+}
 
 // Files is the filesystem mutation and project-search surface.
 type Files interface {

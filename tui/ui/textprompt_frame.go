@@ -1,15 +1,19 @@
 package ui
 
 import (
+	"unicode"
+	"unicode/utf8"
+
 	"crude/tui/cell"
 	"crude/tui/theme"
 )
 
 // TextPromptFieldID is the focused TextField id inside the frame.
-const TextPromptFieldID = "tree-prompt/field"
+const TextPromptFieldID = "text-prompt/field"
 
-// BuildTextPromptFrame builds a WindowFrame-backed dialog for tree create/rename.
-// This is the first product surface on the unified WindowFrame chrome path.
+// BuildTextPromptFrame builds the shared WindowFrame-backed text dialog used by
+// file create/rename, symbol rename, attachment rename and go to line. It is
+// the reference surface on the unified WindowFrame chrome path.
 func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget {
 	if st == nil {
 		st = NewTextPromptState(TextPromptGeneric, "Prompt", "", "")
@@ -21,9 +25,15 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	h := TextPromptPopupHeight(st)
 
 	// Body: prompt label, input field, spacer, hint; colors via semantic
-	// tokens (same pipeline as every other dialog).
-	promptLabel := NewLabel(NewID(RootID, "tree-prompt/prompt"), st.Prompt, th)
-	promptLabel.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), 0)
+	// tokens (same pipeline as every other dialog). A rejected value states
+	// why in the guidance row, where the accepted input normally stands, so
+	// the dialog itself says what to do next.
+	guidance, guidanceColor := st.Prompt, tokens.Color(ColorMuted)
+	if st.Error != "" {
+		guidance, guidanceColor = sentenceStart(st.Error), tokens.Color(ColorError)
+	}
+	promptLabel := NewLabel(NewID(RootID, "text-prompt/prompt"), guidance, th)
+	promptLabel.SetStyle(guidanceColor, tokens.Color(ColorPopupBg), 0)
 
 	placeholder := "name"
 	switch st.Kind {
@@ -33,6 +43,8 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 		placeholder = "folder"
 	case TextPromptRename:
 		placeholder = "new name"
+	case TextPromptGoToLine:
+		placeholder = "42"
 	}
 
 	field := NewTextField(ComponentID(TextPromptFieldID), tokens)
@@ -52,20 +64,22 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 		hintText = "enter create · esc cancel"
 	case TextPromptRename:
 		hintText = "enter rename · esc cancel"
+	case TextPromptGoToLine:
+		hintText = "enter jump · esc cancel"
 	}
-	hint := NewLabel(NewID(RootID, "tree-prompt/hint"), hintText, th)
+	hint := NewLabel(NewID(RootID, "text-prompt/hint"), hintText, th)
 	hint.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), cell.AttrItalic)
 
 	// Blank row between the field and hint becomes Inset bottom padding on the
 	// field, preserving the exact 4-row body layout.
-	fieldPad := NewInset(NewID(RootID, "tree-prompt/field-pad"),
+	fieldPad := NewInset(NewID(RootID, "text-prompt/field-pad"),
 		Insets{Top: 0, Right: 0, Bottom: 1, Left: 0}, field)
 
-	body := NewStack(NewID(RootID, "tree-prompt/body"), Vertical, 0,
+	body := NewStack(NewID(RootID, "text-prompt/body"), Vertical, 0,
 		promptLabel, fieldPad, hint,
 	)
 
-	frame := NewWindowFrame(NewID(RootID, "tree-prompt"), FrameDialog, tokens)
+	frame := NewWindowFrame(NewID(RootID, "text-prompt"), FrameDialog, tokens)
 	frame.SetTitle(st.Title)
 	frame.SetIcon(kindIcon(st.Kind))
 	frame.SetClosable(false)
@@ -76,7 +90,18 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	return cw
 }
 
-// TextPromptField returns the bound name field of a framed tree prompt.
+// sentenceStart renders a rejection message as dialog copy: the guidance row
+// reads as a sentence, while the message itself stays a conventional lowercase
+// Go error.
+func sentenceStart(message string) string {
+	r, size := utf8.DecodeRuneInString(message)
+	if size == 0 {
+		return message
+	}
+	return string(unicode.ToUpper(r)) + message[size:]
+}
+
+// TextPromptField returns the bound name field of a framed text prompt.
 func TextPromptField(cw *ComponentWidget) *TextField {
 	if cw == nil {
 		return nil

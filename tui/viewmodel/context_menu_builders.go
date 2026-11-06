@@ -56,6 +56,18 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		SectionLabel: "Edit",
+		Items: []ui.ContextMenuItem{
+			{Label: "Format document", Detail: "Shift+Alt+F", Disabled: ed.ReadOnly(), Action: func() {
+				m.runDetachedAsyncCmd(m.requestActiveEditorFormat())
+			}},
+			{Label: "Format project", Disabled: ed.ReadOnly(), Action: func() {
+				m.runDetachedAsyncCmd(m.requestProjectFormat())
+			}},
+		},
+	})
+
 	// Inspect the clicked source point even when a private selection retains
 	// the caret elsewhere. A stale menu cannot inspect a newer publication.
 	pos := diagnosticPosition
@@ -148,6 +160,9 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}},
 			{Label: "Find & replace", Detail: "Ctrl+H", Action: func() {
 				m.openFindReplace(true)
+			}},
+			{Label: "Go to line", Detail: "Ctrl+G", Action: func() {
+				m.openGoToLine()
 			}},
 			{Label: "Document outline", Detail: "Alt+O", Disabled: !hasLSP, Action: func() {
 				m.runDetachedAsyncCmd(m.requestDocumentSymbolsCmd())
@@ -827,8 +842,8 @@ func (m *App) startAttachmentRename(refID, current string) {
 		return
 	}
 	spans := m.refRangesFor(refID)
-	m.openTreeTextPrompt(ui.TextPromptRename, "Rename attachment",
-		"label", "", current, func(value string) error {
+	m.openTextPrompt(ui.TextPromptRename, "Rename attachment",
+		"label", current, func(value string) error {
 			final, ok := m.RefStore().RenameReference(refID, value)
 			if !ok {
 				return fmt.Errorf("cannot rename this attachment")

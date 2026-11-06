@@ -350,7 +350,9 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 			p := msg["params"].(map[string]any)
 			caps := p["capabilities"].(map[string]any)
 			window, _ := caps["window"].(map[string]any)
-			if len(window) != 1 || window["workDoneProgress"] != true || caps["workspace"].(map[string]any)["applyEdit"] != nil {
+			workspace := caps["workspace"].(map[string]any)
+			if len(window) != 2 || window["workDoneProgress"] != true || workspace["applyEdit"] != true ||
+				workspace["executeCommand"] == nil || workspace["workspaceEdit"] == nil {
 				t.Fatalf("unsupported capabilities: %v", caps)
 			}
 			for _, feature := range caps["textDocument"].(map[string]any) {

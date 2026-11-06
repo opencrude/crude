@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 
 	model "crude/types"
 )
@@ -55,6 +56,12 @@ type LSPClient interface {
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.
 	AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool)
+}
+
+// LSPCommandClient is the optional command capability of a transport client.
+// Read-only and test clients need not implement it.
+type LSPCommandClient interface {
+	ExecuteCommand(context.Context, string, int, string, json.RawMessage) (model.LSPCommandResponse, error)
 }
 
 // LSPRuntime creates transport clients; language and project policy stay in the workspace.

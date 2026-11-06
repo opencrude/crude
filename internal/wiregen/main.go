@@ -48,6 +48,7 @@ var payloadRoots = []string{
 	"crude/localhistory.RestoreResult",
 	"crude/localhistory.Stats",
 	"crude/workspace.DirectoryListing",
+	"crude/workspace.FormatProjectResult",
 	"crude/workspace.TerminalProjection",
 	"crude/metrics.Query",
 	"crude/metrics.Snapshot",

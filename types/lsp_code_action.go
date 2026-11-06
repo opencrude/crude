@@ -9,6 +9,7 @@ type LSPCodeActionResponse struct {
 	WireVersion         int
 	JSON                []byte
 	ResolveSupported    bool
+	CommandSupported    bool
 	DiagnosticsIncluded int
 	DiagnosticsDetail   string
 }

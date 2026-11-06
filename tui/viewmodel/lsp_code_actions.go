@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/fileio"
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/codeactions"
@@ -72,6 +73,11 @@ type codeActionReleasedMsg struct {
 	owner      *codeActionState
 	id, digest string
 	err        error
+}
+
+type codeActionURLResultMsg struct {
+	url string
+	err error
 }
 
 func (s *codeActionState) retainedSet() workspace.CodeActionSet {
@@ -298,11 +304,39 @@ func (m *App) handleCodeActionPrepared(msg codeActionPreparedMsg) tea.Cmd {
 		return releaseReviewedEditPreview(r)
 	}
 	s.preparing = false
-	if msg.err != nil || msg.preview.ID == "" || msg.preview.Digest == "" || len(msg.preview.Files) != 1 ||
-		!reflect.DeepEqual(msg.preview.Boundary, s.set.Boundary) {
-		if msg.err != nil {
-			m.logLSPFailure("code-action-review", msg.err)
+	if msg.err != nil {
+		m.logLSPFailure("code-action-review", msg.err)
+		s.screen.SetError("Crude cannot run this action. Choose another action.")
+		m.markCodeActionsDirty(s)
+		return releaseReviewedEditPreview(r)
+	}
+	if msg.preview.ID == "" {
+		// A command action with no source edit has already completed exactly
+		// once. Its message or browser destination is the visible outcome.
+		message, url := msg.preview.Message, msg.preview.URL
+		if message == "" && url == "" {
+			s.screen.SetError("The action completed without a visible result.")
+			m.markCodeActionsDirty(s)
+			return nil
 		}
+		m.codeActions = nil
+		s.cancel()
+		m.overlayHost.Close(codeActionsOverlay)
+		if message != "" {
+			m.Feedback.NotifyInfo(message)
+		}
+		release := releaseCodeActionSet(s, s.retainedSet())
+		if url == "" {
+			return release
+		}
+		return tea.Batch(release, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			return codeActionURLResultMsg{url: url, err: fileio.OpenBrowserURL(ctx, url)}
+		})
+	}
+	if msg.preview.Digest == "" || len(msg.preview.Files) == 0 ||
+		!reflect.DeepEqual(msg.preview.Boundary, s.set.Boundary) {
 		s.screen.SetError("Crude cannot preview this action. Choose another action.")
 		m.markCodeActionsDirty(s)
 		return releaseReviewedEditPreview(r)
@@ -338,5 +372,11 @@ func (m *App) closeCodeActionScreen(msg codeactions.CloseMsg) tea.Cmd {
 func (m *App) handleCodeActionReleased(msg codeActionReleasedMsg) {
 	if msg.err != nil && msg.owner != nil && msg.owner.workspace == m.ws && m.acceptsLSPGeneration(msg.owner.generation) {
 		m.logLSPFailure("code-action-release", msg.err)
+	}
+}
+
+func (m *App) handleCodeActionURLResult(msg codeActionURLResultMsg) {
+	if msg.err != nil && m.Feedback != nil {
+		m.Feedback.NotifyError("Could not open the action's page: " + msg.err.Error())
 	}
 }

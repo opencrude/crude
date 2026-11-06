@@ -64,6 +64,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-04 | The sidebar page was rejected as duplicated, ugly UI. Remove it and all sidebar hosting of agents. Crude tasks Aeron autonomously (LSP setup, cleanup and similar IDE work); the user opens it like any other agent, as a tab or a window. Aeron's main channel to the user is the existing modal question and confirmation prompt, also while its tab is open. Main tabs get an official hover tooltip (absolute path for files). | User |
 | 2026-11-04 | Delegate only UI design, to Opus. Keep implementation and other work with the main agent. Reuse the existing components and state owners; do not add duplicate logic or competing authorities. | User |
 | 2026-11-04 | Keep the repair focused and clean: no overengineering, arbitrary restrictions or fragile replacements for established primitives. Regression tests must exercise actual failures and useful user outcomes, not merely check that rejected code is gone. | User |
+| 2026-11-06 | Every offered code action must reach a usable outcome. Command actions run once through the server; a server apply-edit is captured and reviewed like an ordinary edit, and a browser or informational result is shown to the user. Listing a provider action as unsupported is acceptable only when the protocol shape itself is unsupported. | User |
+| 2026-11-06 | Formatting must exist as explicit editor commands: Format Document for the current buffer and Format Project for saved files. They reuse the one catalog formatter owner, one transactional writer and one Local History safety snapshot; they do not add a second formatter or file writer. | User |
 | 2026-11-04 | An untargeted wait can correctly wait for the agent's own background command. Its chat title must describe waiting for an update, not imply that another agent exists. | User |
 | 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
 
@@ -121,9 +123,10 @@ server commands implemented merely because their labels changed.
 Open limits of this correction (recorded 2026-11-04). These items are not done;
 do not report them as complete:
 
-- **Code-action support is not complete.** Command-based code actions
-  (`workspace/executeCommand`) and code actions that change more than one file
-  are not supported. Crude lists them as not available.
+- **Code-action support is not complete.** Command-based actions, ordinary
+  edits to several files, and create-file operations now execute through one
+  review. Rename and delete resource operations, annotations, notebooks and
+  edit-plus-command actions remain visibly unsupported.
 - **Aeron installation coverage is limited.** The failed first run is repaired.
   The configured `ollama/deepseek-v4.1-flash:1017` model installed
   yaml-language-server 2.0.0 with npm in a private Linux workspace, configured its

@@ -180,8 +180,8 @@ func validCodeActionList(raw json.RawMessage) bool {
 // codeActionClientCapabilities constructs only the textDocument.codeAction leaf.
 // Its initialize wiring is deliberately owned by makeClientCapabilities. Kinds
 // are open hierarchical strings: known values are hints, not a request filter,
-// and consumers must handle unknown kinds. No diagnostic, workspace-edit,
-// annotation or execution support is granted here.
+// and consumers must handle unknown kinds. Workspace-edit and command capability
+// leaves are declared separately by makeClientCapabilities.
 func codeActionClientCapabilities() map[string]any {
 	return map[string]any{
 		"codeActionLiteralSupport": map[string]any{
