@@ -276,6 +276,7 @@ class SiteTests(unittest.TestCase):
         self.assertIn("/latest/download/install.ps1", self.app)
         self.assertIn("install.sh --yes", self.app)
         self.assertIn("install.ps1 -Yes", self.app)
+        self.assertIn("--gui", self.app)
         self.assertIn("Linux x86-64", self.app)
         self.assertIn("Windows x64", self.app)
 

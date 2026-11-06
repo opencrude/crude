@@ -598,12 +598,22 @@ function Install-CrudeWindowTerminal($Paths, [string] $WorkDir) {
         throw 'the downloaded window does not match its pinned checksum'
     }
     $unpack = Join-Path $Paths.Root ('.unpack-' + [Guid]::NewGuid().ToString('N'))
+    $previous = Join-Path $Paths.Root ('.previous-' + [Guid]::NewGuid().ToString('N'))
     try {
         Expand-CrudeWindowArchive $archive $unpack
-        if ([IO.Directory]::Exists($prefix)) { [IO.Directory]::Delete($prefix, $true) }
-        [IO.Directory]::Move($unpack, $prefix)
+        # Move the old copy aside first, so a failed move can put it back.
+        if ([IO.Directory]::Exists($prefix)) { [IO.Directory]::Move($prefix, $previous) }
+        try {
+            [IO.Directory]::Move($unpack, $prefix)
+        } catch {
+            if ([IO.Directory]::Exists($previous) -and -not [IO.Directory]::Exists($prefix)) { [IO.Directory]::Move($previous, $prefix) }
+            throw
+        }
+        if ([IO.Directory]::Exists($previous)) { try { [IO.Directory]::Delete($previous, $true) } catch { } }
     } finally {
-        if ([IO.Directory]::Exists($unpack)) { try { [IO.Directory]::Delete($unpack, $true) } catch { } }
+        foreach ($leftover in @($unpack, $previous)) {
+            if ([IO.Directory]::Exists($leftover)) { try { [IO.Directory]::Delete($leftover, $true) } catch { } }
+        }
     }
     $exe = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse | Select-Object -First 1
     if (-not $exe) { throw 'the downloaded window does not hold the program it needs' }
@@ -679,7 +689,11 @@ return {
     },
 }
 "@
-    [IO.File]::WriteAllText($lua, $text.Replace('@@PROGRAM@@', (Join-Path $InstallDir 'crude.exe').Replace('\', '\\')))
+    # Write beside the file and replace it in one step, so a half-written
+    # configuration is never read.
+    $pending = $lua + '.new'
+    [IO.File]::WriteAllText($pending, $text.Replace('@@PROGRAM@@', (Join-Path $InstallDir 'crude.exe').Replace('\', '\\')))
+    [IO.File]::Move($pending, $lua, $true)
 
     $iconSource = Join-Path $Payload 'crude-icon.ico'
     if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $Paths.Icon -Force }

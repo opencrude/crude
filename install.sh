@@ -256,11 +256,19 @@ EOF
             mv -T -- "$unpack" "$staged"
         fi
         rm -f -- "$archive" "$window_root/details"
-        rm -rf -- "$window_prefix"
-        mv -T -- "$staged" "$window_prefix" || {
+        # Replace the old copy in one step, and put it back if the new one
+        # cannot take its place.
+        local previous="$window_root/.previous.$$"
+        rm -rf -- "$previous"
+        [[ ! -d "$window_prefix" ]] || mv -T -- "$window_prefix" "$previous"
+        if mv -T -- "$staged" "$window_prefix"; then
+            rm -rf -- "$previous"
+        else
+            [[ ! -d "$previous" ]] || mv -T -- "$previous" "$window_prefix"
+            rm -rf -- "$staged"
             warn 'Window' 'the downloaded window could not be put in place'
             return 1
-        }
+        fi
     }
 
     install_window_fonts() {
@@ -296,7 +304,9 @@ EOF
     write_window_files() {
         # One configuration, rewritten on every run so an update also refreshes
         # the window settings.
-        cat > "$window_lua" <<LUA
+        # Write beside the file and rename, so a half-written configuration is
+        # never read.
+        cat > "$window_lua.new" <<LUA
 -- Written by the Crude installer. This window opens Crude only.
 local wezterm = require 'wezterm'
 
@@ -331,12 +341,14 @@ return {
     },
 }
 LUA
-        cat > "$window_launcher" <<LAUNCH
+        mv -f -- "$window_lua.new" "$window_lua"
+        cat > "$window_launcher.new" <<LAUNCH
 #!/bin/sh
 # Open Crude in its own window.
 exec "$window_prefix/usr/bin/wezterm" --config-file "$window_lua" start --always-new-process --class crude
 LAUNCH
-        chmod 755 "$window_launcher"
+        chmod 755 "$window_launcher.new"
+        mv -f -- "$window_launcher.new" "$window_launcher"
 
         local icon="$data/icons/crude.png"
         if [[ -f "$stage/crude-icon.png" ]]; then
