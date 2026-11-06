@@ -284,6 +284,18 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertFalse(self.window.exists(), "a failed window download must leave no partial folder")
         self.assertTrue(self.dest.exists(), "the program install must survive a failed window download")
 
+    def test_another_platform_is_refused_with_a_next_step(self):
+        uname = self.bin / "uname"
+        for system, machine, expected in (("Darwin", "arm64", "no macOS release yet"),
+                                          ("Linux", "aarch64", "Only Linux x86-64 is available")):
+            uname.write_text(f"#!/bin/sh\ncase \"$1\" in -s) echo {system} ;; -m) echo {machine} ;; esac\n")
+            uname.chmod(0o755)
+            with self.subTest(system=system):
+                result = self.run_installer("--no-gui", success=False)
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(self.log.exists(), "a refused platform must not use the network")
+                self.assertFalse(self.dest.exists())
+
     def test_explicit_prerelease_and_custom_path(self):
         self.archive("v0.2.0-rc.1")
         destination = self.home / "custom bin"

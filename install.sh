@@ -107,6 +107,74 @@ EOF
         fi
     fi
 
+    # ---- Stop a running Crude ----------------------------------------------
+    # Crude keeps working in a detached core after the window closes. The
+    # update replaces that program, so the user decides whether it stops.
+    running_pids() {
+        local target resolved path pid
+        target=$1
+        resolved=$(readlink -f -- "$target" 2>/dev/null) || resolved=$target
+        for path in /proc/[0-9]*/exe; do
+            pid=${path#/proc/}
+            pid=${pid%/exe}
+            [[ "$pid" != "$$" && "$pid" != "$BASHPID" ]] || continue
+            target=$(readlink -- "$path" 2>/dev/null) || continue
+            target=${target% (deleted)}
+            [[ "$target" == "$resolved" ]] && printf '%s\n' "$pid"
+        done
+        return 0
+    }
+    # The decision comes before the download so the user answers once, at the
+    # start; the program is signalled only after the new one is verified.
+    stop_pids=()
+    stop_choice=go
+    plan_stop() {
+        mapfile -t stop_pids < <(running_pids "$install_dir/crude")
+        ((${#stop_pids[@]})) || return 0
+        if [[ "$stop" == 0 ]]; then
+            stop_choice=keep
+            return 0
+        fi
+        [[ "$stop" == 1 ]] && return 0
+        ask "Crude is running (${#stop_pids[@]} processes). Stop it now? Open sessions end. Unsaved editor text stays in History" n ||
+            die 'Crude is still running. Close it and run this installer again, or pass --stop'
+    }
+    do_stop() {
+        if [[ "$stop_choice" == keep ]]; then
+            note 'Running' "Crude stays open on ${version_old:-the old version}. It changes at the next start"
+            return 0
+        fi
+        ((${#stop_pids[@]})) || return 0
+        local pid alive
+        kill -TERM "${stop_pids[@]}" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 0.5
+            alive=0
+            for pid in "${stop_pids[@]}"; do kill -0 "$pid" 2>/dev/null && alive=1; done
+            ((alive)) || break
+        done
+        if ((alive)); then
+            if [[ "$stop" == 1 ]] || ask 'Crude did not stop. Force it to stop? Unsaved work in open files can be lost' n; then
+                for pid in "${stop_pids[@]}"; do kill -KILL "$pid" 2>/dev/null || true; done
+                sleep 1
+            else
+                die 'Crude is still running. Nothing was installed'
+            fi
+        fi
+        alive=0
+        for pid in "${stop_pids[@]}"; do kill -0 "$pid" 2>/dev/null && alive=1; done
+        ((alive == 0)) || die 'Crude is still running. Nothing was installed'
+        ok 'Stop' 'Crude is closed'
+    }
+
+    version_old=''
+    if [[ -x "$install_dir/crude" ]]; then
+        version_old=$(timeout 5 "$install_dir/crude" --version 2>/dev/null) || version_old=''
+        version_old=${version_old#crude }
+        version_old=${version_old%% (*}
+    fi
+    plan_stop
+
     # ---- Release ------------------------------------------------------------
     download() {
         curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -193,66 +261,8 @@ EOF
     [[ "$reported" == "crude $version ("*'; linux/amd64)' ]] ||
         die "the downloaded program reports '$reported', not $version. Nothing was installed"
 
-    # ---- Stop a running Crude ----------------------------------------------
-    # Crude keeps working in a detached core after the window closes. The
-    # update replaces that program, so the user decides whether it stops.
-    running_pids() {
-        local target resolved path pid
-        target=$1
-        resolved=$(readlink -f -- "$target" 2>/dev/null) || resolved=$target
-        for path in /proc/[0-9]*/exe; do
-            pid=${path#/proc/}
-            pid=${pid%/exe}
-            [[ "$pid" != "$$" && "$pid" != "$BASHPID" ]] || continue
-            target=$(readlink -- "$path" 2>/dev/null) || continue
-            target=${target% (deleted)}
-            [[ "$target" == "$resolved" ]] && printf '%s\n' "$pid"
-        done
-        return 0
-    }
-    stop_running_crude() {
-        local -a pids=()
-        mapfile -t pids < <(running_pids "$install_dir/crude")
-        ((${#pids[@]})) || return 0
-        local count=${#pids[@]} pid alive
-        if [[ "$stop" == 0 ]]; then
-            note 'Running' "Crude stays open on ${version_old:-the old version}. It changes at the next start"
-            return 0
-        fi
-        if [[ "$stop" != 1 ]]; then
-            if ! ask "Crude is running ($count processes). Stop it now? Open sessions end. Unsaved editor text stays in History" n; then
-                die 'Crude is still running. Close it and run this installer again, or pass --stop'
-            fi
-        fi
-        kill -TERM "${pids[@]}" 2>/dev/null || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            sleep 0.5
-            alive=0
-            for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && alive=1; done
-            ((alive)) || break
-        done
-        if ((alive)); then
-            if [[ "$stop" == 1 ]] || ask 'Crude did not stop. Force it to stop? Unsaved work in open files can be lost' n; then
-                for pid in "${pids[@]}"; do kill -KILL "$pid" 2>/dev/null || true; done
-                sleep 1
-            else
-                die 'Crude is still running. Nothing was installed'
-            fi
-        fi
-        alive=0
-        for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && alive=1; done
-        ((alive == 0)) || die 'Crude is still running. Nothing was installed'
-        ok 'Stop' "Crude is closed"
-    }
-    version_old=''
-    if [[ -x "$install_dir/crude" ]]; then
-        version_old=$(timeout 5 "$install_dir/crude" --version 2>/dev/null) || version_old=''
-        version_old=${version_old#crude }
-        version_old=${version_old%% (*}
-    fi
-    stop_running_crude
-
     # ---- Install -----------------------------------------------------------
+    do_stop
     # Retain the redistribution notices next to the program, not in the profile.
     local notices="$install_dir/.crude-licenses/${version}-${actual:0:12}"
     if [[ ! -d "$notices" ]]; then
@@ -411,7 +421,15 @@ LAUNCH
         return 0
     }
     if [[ -z "$gui" ]]; then
-        if ((accept)); then gui=0; elif ask 'Install the Crude window? It runs Crude in its own window and nothing else' y; then gui=1; else gui=0; fi
+        # A machine with no graphical session cannot show the window, so do not
+        # download it or ask about it. An explicit --gui still installs it.
+        if ((accept)) || [[ -z ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
+            gui=0
+        elif ask 'Install the Crude window? It runs Crude in its own window and nothing else' y; then
+            gui=1
+        else
+            gui=0
+        fi
     fi
     if ((gui)); then
         install_window || note 'Window' 'the window was not installed. Run this installer again with --gui'

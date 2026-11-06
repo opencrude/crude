@@ -491,19 +491,24 @@ function Get-CrudeInstalledProcesses([string] $Executable) {
     return $list.ToArray()
 }
 
-function Stop-CrudeInstallation([string] $Executable, [switch] $Stop, [switch] $NoStop) {
+function Confirm-CrudeStop([string] $Executable, [switch] $Stop, [switch] $NoStop) {
+    # The answer comes before the download; the program is signalled only after
+    # the new one is verified.
     $running = @(Get-CrudeInstalledProcesses $Executable)
-    if (-not $running.Count) { return }
-    if ($NoStop) {
-        Write-CrudeStep (Mark 'dot') 'Running' 'Crude stays open and keeps the installed version until you restart it'
-        return
-    }
+    if (-not $running.Count) { return 'none' }
+    if ($NoStop) { return 'keep' }
     if (-not $Stop) {
         $question = "Crude is running ($($running.Count) processes). Stop it now? Open sessions end. Unsaved editor text stays in History"
         if (-not (Confirm-CrudeQuestion $question $false)) {
             throw 'Crude is still running. Close it and run this installer again, or add -Stop.'
         }
     }
+    return 'go'
+}
+
+function Stop-CrudeProcess([string] $Executable, [switch] $Force) {
+    $running = @(Get-CrudeInstalledProcesses $Executable)
+    if (-not $running.Count) { return }
     $ids = @($running | ForEach-Object { [int] $_.ProcessId })
     foreach ($id in $ids) { Stop-Process -Id $id -ErrorAction SilentlyContinue }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -512,7 +517,7 @@ function Stop-CrudeInstallation([string] $Executable, [switch] $Stop, [switch] $
     }
     $left = @($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
     if ($left.Count) {
-        if (-not $Stop -and -not (Confirm-CrudeQuestion 'Crude did not stop. Force it to stop? Unsaved work in open files can be lost' $false)) {
+        if (-not $Force -and -not (Confirm-CrudeQuestion 'Crude did not stop. Force it to stop? Unsaved work in open files can be lost' $false)) {
             throw 'Crude is still running. Nothing was installed.'
         }
         foreach ($id in $left) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
@@ -688,6 +693,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         $unfinished = @([IO.Directory]::GetDirectories($InstallDir, '.crude-install-*'))
         if ($unfinished.Count) { throw "An interrupted installation needs inspection before retrying. Preserve and inspect its transaction.json and backups in '$($unfinished -join "', '")'; restore affected files or remove verified unused staging directories manually. Nothing was changed." }
         [void] [IO.Directory]::CreateDirectory($work)
+        $stopPlan = Confirm-CrudeStop (Join-Path $InstallDir 'crude.exe') -Stop:$Stop -NoStop:$NoStop
         $release = Get-CrudeRelease $Repository $Version $work
         Write-Host "Version $($release.Tag) · windows/amd64"
         $archive = Join-Path $work $release.AssetName
@@ -699,7 +705,11 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         $relativeFiles = @(Expand-CrudeArchive $archive $payload)
         Assert-CrudeCandidate (Join-Path $payload 'crude.exe') $release.Tag
         Write-CrudeStep (Mark 'check') 'Download' 'SHA-256 matches'
-        Stop-CrudeInstallation (Join-Path $InstallDir 'crude.exe') -Stop:$Stop -NoStop:$NoStop
+        if ($stopPlan -eq 'keep') {
+            Write-CrudeStep (Mark 'dot') 'Running' 'Crude stays open on the old version. It changes at the next start'
+        } elseif ($stopPlan -eq 'go') {
+            Stop-CrudeProcess (Join-Path $InstallDir 'crude.exe') -Force:$Stop
+        }
         $files = New-CrudeFileTransaction $payload $InstallDir $relativeFiles $work
         if (-not $NoPath) { $path = New-CrudePathTransaction $InstallDir }
         # Persist immutable preimages before replacing anything. If interrupted,
