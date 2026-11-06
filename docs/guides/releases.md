@@ -83,8 +83,9 @@ Crude keeps working in a detached core after a window closes, and that core
 runs the installed program. The installer finds only the processes that run
 this exact installation.
 
-- Without an answer it stops and changes nothing: close Crude and run the
-  installer again, or pass `--stop`.
+- The question comes before the download, so a refusal costs nothing. Without
+  an answer it stops and changes nothing: close Crude and run the installer
+  again, or pass `--stop`.
 - With `--stop` it asks the core to stop, waits ten seconds, and only then asks
   again before it forces the stop. A forced stop can lose text that was never
   written to a file.
@@ -96,7 +97,8 @@ No force path runs automatically, and no other program is signalled.
 ### The desktop window
 
 `--gui` adds a window that runs Crude and nothing else. Without `--gui` or
-`--no-gui` an interactive terminal asks once, and the default is yes.
+`--no-gui`, an interactive terminal in a graphical session asks once and the
+default is yes. A session without a display does not ask and does not download.
 
 - It installs one pinned WezTerm build for this user, after a checksum check.
   Linux gets `wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz` under
