@@ -99,6 +99,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
         fonts = self.home / ".local/share/fonts/JetBrainsMonoNerdFont"
         fonts.mkdir(parents=True)
         (fonts / "JetBrainsMonoNerdFont-Regular.ttf").write_bytes(b"font")
+        (fonts / ".crude-font").write_text("v3.5.1\n")
 
     def run_installer(self, *args, success=True, yes=True):
         command = ["bash", str(ROOT / "install.sh")]
@@ -112,6 +113,44 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertFalse(list(self.dest.parent.glob(".crude-install*")))
         self.assertFalse(list(self.root.glob("crude-install.*")))
         return result
+
+    def run_in_pty(self, answers, *args):
+        """Run the installer in a terminal, answering each question in order."""
+        import pty
+        import select
+        master, slave = pty.openpty()
+        process = subprocess.Popen(["bash", str(ROOT / "install.sh"), *args], env=self.env,
+                                   stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+        os.close(slave)
+        output, pending, answered = b"", list(answers), 0
+        try:
+            while True:
+                ready, _, _ = select.select([master], [], [], 20)
+                if not ready:
+                    break
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+                # Every prompt prints "  ? " and ends with "? [..] ", so two hits
+                # mark one question.
+                prompts = output.count(b"? ") // 2
+                if prompts > answered:
+                    if answered >= len(pending):
+                        break
+                    os.write(master, pending[answered].encode() + b"\n")
+                    answered += 1
+        finally:
+            try:
+                process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            os.close(master)
+        return process.returncode, output.decode(errors="replace")
 
     def assert_no_window(self):
         self.assertFalse((self.home / ".local/bin/crude-window").exists())
@@ -248,9 +287,18 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertIn(f"{self.window}/usr/bin/wezterm", text)
         self.assertIn("--config-file", text)
         self.assertIn("start --always-new-process --class crude", text)
-        config = self.home / ".local/share/crude/window/wezterm.lua"
-        self.assertIn(f"default_prog = {{ '{self.home}/.local/bin/crude' }}", config.read_text())
-        self.assertIn("JetBrainsMono Nerd Font", config.read_text())
+        self.assertNotIn('"$@"', text, "the launcher has one job and forwards no arguments")
+        config = (self.home / ".local/share/crude/window/wezterm.lua").read_text()
+        for required in (f"default_prog = {{ '{self.home}/.local/bin/crude' }}",
+                         "JetBrainsMono Nerd Font",
+                         "gui-startup",
+                         "maximize()",
+                         "initial_cols = 190",
+                         "enable_kitty_keyboard = true",
+                         "check_for_updates = false"):
+            self.assertIn(required, config, f"the window configuration needs '{required}'")
+        for owned in ("'n', mods = 'CTRL|SHIFT'", "'t', mods = 'CTRL|SHIFT'", "'w', mods = 'CTRL|SHIFT'"):
+            self.assertIn(owned, config, "the terminal must not act on a key Crude owns")
         desktop = (self.home / ".local/share/applications/crude.desktop").read_text()
         self.assertIn(f'Exec="{launcher}"', desktop)
         self.assertIn("StartupWMClass=crude", desktop)
@@ -265,6 +313,53 @@ shutil.copyfile(source, a[a.index('--output')+1])
         broken = self.run_installer("--gui")
         self.assertIn("cannot start", broken.stderr)
         self.assert_no_window()
+
+    def test_the_window_is_one_short_question(self):
+        self.archive()
+        self.installed_window()
+        self.env["DISPLAY"] = ":0"
+        code, output = self.run_in_pty(["y", "y"], "--no-path")
+        self.assertEqual(code, 0, output)
+        self.assertIn("Do you want the GUI version as well? [Y/n]", output)
+        # A broken colour escape would show as a literal bracket code.
+        self.assertNotIn("\x1b[\u2713", output.replace("\x1b[32m", ""))
+        self.assertTrue((self.home / ".local/bin/crude-window").exists(), "a yes answer adds the window")
+        for discouraged in ("noob", "fallback", "beginner", "not a developer", "simple users"):
+            self.assertNotIn(discouraged, output.lower())
+
+        decline = self.root / "declined"
+        decline.mkdir()
+        self.env["HOME"] = str(decline)
+        code, output = self.run_in_pty(["y", "n"], "--no-path")
+        self.assertEqual(code, 0, output)
+        self.assertFalse((decline / ".local/bin/crude-window").exists(), "a no answer adds nothing")
+
+    def test_an_installed_window_is_updated_without_asking(self):
+        self.archive()
+        self.installed_window()
+        self.run_installer("--gui")
+        lua = self.home / ".local/share/crude/window/wezterm.lua"
+        lua.write_text("stale configuration\n")
+        old = self.home / f".local/share/crude/window/wezterm-20200101-000000-old"
+        old.mkdir(parents=True)
+        self.env["DISPLAY"] = ":0"
+        code, output = self.run_in_pty(["y"], "--no-path")
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("Do you want the GUI version", output, "an installed window must not ask again")
+        self.assertIn("default_prog", lua.read_text(), "an update must rewrite the configuration")
+        self.assertFalse(old.exists(), "an update must remove an older pinned copy")
+        self.assertTrue(self.window.exists(), "an update must keep the current pinned copy")
+
+    def test_a_window_kept_by_no_gui_is_not_left_silently_stale(self):
+        self.archive()
+        self.installed_window()
+        self.run_installer("--gui")
+        lua = self.home / ".local/share/crude/window/wezterm.lua"
+        lua.write_text("stale configuration\n")
+        result = self.run_installer("--no-gui")
+        self.assertIn("not updated", result.stderr)
+        self.assertEqual(lua.read_text(), "stale configuration\n")
+        self.assertTrue((self.home / ".local/bin/crude-window").exists())
 
     def test_a_window_without_an_icon_names_no_missing_file(self):
         self.archive()

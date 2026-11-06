@@ -528,6 +528,32 @@ function Stop-CrudeProcess([string] $Executable, [switch] $Force) {
     Write-CrudeStep (Mark 'check') 'Stop' 'Crude is closed'
 }
 
+function Get-CrudeWindowPaths {
+    $windowHome = Join-Path $env:LOCALAPPDATA 'Crude'
+    return [pscustomobject] @{
+        Home = $windowHome
+        Root = Join-Path $windowHome 'window'
+        Version = '20240203-110809-5046fc22'
+        Asset = 'WezTerm-windows-20240203-110809-5046fc22.zip'
+        Sha256 = '57e5d03b585303d81e8b8e96d1230362852eb39aca92b3b29c7a42cfb82f9ac4'
+        FontVersion = 'v3.5.1'
+        FontSha256 = '04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
+        Icon = Join-Path $windowHome 'crude.ico'
+        Link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Crude.lnk'
+    }
+}
+
+function Confirm-CrudeWindow([switch] $Gui, [switch] $NoGui) {
+    # The answer comes before the download, so the question never waits behind it.
+    if ($NoGui) { return 'skip' }
+    if ($Gui) { return 'install' }
+    $paths = Get-CrudeWindowPaths
+    if ([IO.File]::Exists($paths.Link)) { return 'install' }
+    if (-not (Test-CrudeInteractive)) { return 'skip' }
+    if (Confirm-CrudeQuestion 'Do you want the GUI version as well?' $true) { return 'install' }
+    return 'skip'
+}
+
 function Expand-CrudeWindowArchive([string] $Archive, [string] $Destination) {
     Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
@@ -560,105 +586,141 @@ function Register-CrudeFonts([string] $Folder) {
     } finally { $key.Dispose() }
 }
 
-function Install-CrudeWindow([string] $InstallDir, [string] $Payload, [string] $WorkDir, [switch] $Gui, [switch] $NoGui) {
-    if ($NoGui) {
-        Write-CrudeStep (Mark 'dot') 'Window' 'not installed. Run this installer with -Gui to add it'
+function Install-CrudeWindowTerminal($Paths, [string] $WorkDir) {
+    $prefix = Join-Path $Paths.Root "wezterm-$($Paths.Version)"
+    $exe = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($exe) { return $exe }
+    [void] [IO.Directory]::CreateDirectory($Paths.Root)
+    $archive = Join-Path $WorkDir 'wezterm.zip'
+    Get-CrudeDownload "https://github.com/wezterm/wezterm/releases/download/$($Paths.Version)/$($Paths.Asset)" $archive
+    if ((Get-CrudeHash $archive) -cne $Paths.Sha256) {
+        throw 'the downloaded window does not match its pinned checksum'
+    }
+    $unpack = Join-Path $Paths.Root ('.unpack-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        Expand-CrudeWindowArchive $archive $unpack
+        if ([IO.Directory]::Exists($prefix)) { [IO.Directory]::Delete($prefix, $true) }
+        [IO.Directory]::Move($unpack, $prefix)
+    } finally {
+        if ([IO.Directory]::Exists($unpack)) { try { [IO.Directory]::Delete($unpack, $true) } catch { } }
+    }
+    $exe = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse | Select-Object -First 1
+    if (-not $exe) { throw 'the downloaded window does not hold the program it needs' }
+    return $exe
+}
+
+function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
+    $fonts = Join-Path $Paths.Root 'fonts'
+    $stamp = Join-Path $fonts '.crude-font'
+    $present = @(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File -ErrorAction SilentlyContinue)
+    if ($present.Count -and [IO.File]::Exists($stamp) -and ([IO.File]::ReadAllText($stamp)).Trim() -ceq $Paths.FontVersion) {
         return
     }
-    if (-not $Gui) {
-        if (-not (Confirm-CrudeQuestion 'Install the Crude window? It runs Crude in its own window and nothing else' $true)) {
-            Write-CrudeStep (Mark 'dot') 'Window' 'not installed. Run this installer with -Gui to add it'
-            return
+    if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
+        if (-not $present.Count) { Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong' }
+        return
+    }
+    $archive = Join-Path $WorkDir 'fonts.tar.xz'
+    try {
+        Get-CrudeDownload "https://github.com/ryanoasis/nerd-fonts/releases/download/$($Paths.FontVersion)/JetBrainsMono.tar.xz" $archive
+    } catch {
+        if (-not $present.Count) { Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong' }
+        return
+    }
+    if ((Get-CrudeHash $archive) -cne $Paths.FontSha256) {
+        Write-CrudeStep (Mark 'warn') 'Font' 'the downloaded font does not match its pinned checksum'
+        return
+    }
+    [void] [IO.Directory]::CreateDirectory($fonts)
+    & tar.exe -xJf $archive -C $fonts
+    Register-CrudeFonts $fonts
+    if (@(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File).Count) {
+        [IO.File]::WriteAllText($stamp, $Paths.FontVersion)
+    } else {
+        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
+    }
+}
+
+function Write-CrudeWindowFiles($Paths, [string] $InstallDir, [string] $Payload, [string] $Gui) {
+    $lua = Join-Path $Paths.Root 'wezterm.lua'
+    $text = @"
+-- Written by the Crude installer. This window opens Crude only.
+local wezterm = require 'wezterm'
+
+-- Open as an application window: use the desktop area, not a small terminal.
+wezterm.on('gui-startup', function(cmd)
+    local _, _, window = wezterm.mux.spawn_window(cmd or {})
+    local gui = window:gui_window()
+    if gui then gui:maximize() end
+end)
+
+return {
+    default_prog = { '@@PROGRAM@@' },
+    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
+    font_size = 13.0,
+    window_decorations = 'TITLE | RESIZE',
+    initial_cols = 190,
+    initial_rows = 50,
+    hide_tab_bar_if_only_one_tab = true,
+    enable_kitty_keyboard = true,
+    window_close_confirmation = 'NeverPrompt',
+    check_for_updates = false,
+    audible_bell = 'Disabled',
+    -- Crude owns these keys, so the terminal must not act on them here.
+    keys = {
+        { key = 'n', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
+        { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
+        { key = 'w', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
+    },
+}
+"@
+    [IO.File]::WriteAllText($lua, $text.Replace('@@PROGRAM@@', (Join-Path $InstallDir 'crude.exe').Replace('\', '\\')))
+
+    $iconSource = Join-Path $Payload 'crude-icon.ico'
+    if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $Paths.Icon -Force }
+
+    [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Paths.Link))
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($Paths.Link)
+    $link.TargetPath = $Gui
+    $link.Arguments = "--config-file ""$lua"" start --always-new-process --class crude"
+    $link.WorkingDirectory = $HOME
+    $link.Description = 'Editor, terminals and AI agents in one window'
+    if ([IO.File]::Exists($Paths.Icon)) { $link.IconLocation = $Paths.Icon }
+    $link.Save()
+}
+
+function Remove-CrudeWindowOldVersions($Paths) {
+    $current = "wezterm-$($Paths.Version)"
+    foreach ($old in @(Get-ChildItem -LiteralPath $Paths.Root -Directory -ErrorAction SilentlyContinue)) {
+        if ($old.Name -like 'wezterm-*' -and $old.Name -cne $current) {
+            try { [IO.Directory]::Delete($old.FullName, $true) } catch { }
         }
+    }
+}
+
+function Install-CrudeWindow([string] $InstallDir, [string] $Payload, [string] $WorkDir, [string] $Plan) {
+    $paths = Get-CrudeWindowPaths
+    if ($Plan -ne 'install') {
+        if ([IO.File]::Exists($paths.Link)) {
+            Write-CrudeStep (Mark 'dot') 'Window' 'not updated. Run this installer with -Gui to update it'
+        } else {
+            Write-CrudeStep (Mark 'dot') 'Window' 'not added. Run this installer with -Gui to add it'
+        }
+        return
     }
     # A window problem never undoes the program install; report the cause and stop.
     try {
-        Install-CrudeWindowFiles -InstallDir $InstallDir -Payload $Payload -WorkDir $WorkDir
+        $gui = Install-CrudeWindowTerminal $paths $WorkDir
+        # The new copy is in place, so the older pins can go.
+        Remove-CrudeWindowOldVersions $paths
+        Install-CrudeWindowFonts $paths $WorkDir
+        Write-CrudeWindowFiles $paths $InstallDir $Payload $gui.FullName
         Write-CrudeStep (Mark 'check') 'Window' 'Crude is in the Start menu'
     } catch {
         Write-CrudeStep (Mark 'warn') 'Window' "the window was not installed: $($_.Exception.Message)"
     }
-}
-
-function Install-CrudeWindowFiles([string] $InstallDir, [string] $Payload, [string] $WorkDir) {
-    $windowVersion = '20240203-110809-5046fc22'
-    $windowAsset = "WezTerm-windows-$windowVersion.zip"
-    $windowSha256 = '57e5d03b585303d81e8b8e96d1230362852eb39aca92b3b29c7a42cfb82f9ac4'
-    $fontVersion = 'v3.5.1'
-    $fontSha256 = '04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
-    $windowHome = Join-Path $env:LOCALAPPDATA 'Crude'
-    $root = Join-Path $windowHome 'window'
-    $prefix = Join-Path $root "wezterm-$windowVersion"
-    [void] [IO.Directory]::CreateDirectory($root)
-    $gui = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $gui) {
-        $archive = Join-Path $WorkDir 'wezterm.zip'
-        Get-CrudeDownload "https://github.com/wezterm/wezterm/releases/download/$windowVersion/$windowAsset" $archive
-        if ((Get-CrudeHash $archive) -cne $windowSha256) {
-            throw 'The desktop window does not match its pinned checksum. Nothing was installed.'
-        }
-        $unpack = Join-Path $root ('.unpack-' + [Guid]::NewGuid().ToString('N'))
-        try {
-            Expand-CrudeWindowArchive $archive $unpack
-            if ([IO.Directory]::Exists($prefix)) { [IO.Directory]::Delete($prefix, $true) }
-            [IO.Directory]::Move($unpack, $prefix)
-        } finally {
-            if ([IO.Directory]::Exists($unpack)) { try { [IO.Directory]::Delete($unpack, $true) } catch { } }
-        }
-        $gui = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse | Select-Object -First 1
-        if (-not $gui) { throw 'The desktop window archive does not hold the program it needs.' }
-    }
-
-    $fonts = Join-Path $root 'fonts'
-    $installed = @(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File -ErrorAction SilentlyContinue)
-    if (-not $installed.Count) {
-        $fontArchive = Join-Path $WorkDir 'fonts.tar.xz'
-        if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
-            Write-CrudeStep (Mark 'warn') 'Font' 'tar.exe is missing. File icons may look wrong'
-        } else {
-            Get-CrudeDownload "https://github.com/ryanoasis/nerd-fonts/releases/download/$fontVersion/JetBrainsMono.tar.xz" $fontArchive
-            if ((Get-CrudeHash $fontArchive) -cne $fontSha256) {
-                Write-CrudeStep (Mark 'warn') 'Font' 'the font archive did not match its pinned checksum'
-            } else {
-                [void] [IO.Directory]::CreateDirectory($fonts)
-                & tar.exe -xJf $fontArchive -C $fonts
-                Register-CrudeFonts $fonts
-            }
-        }
-    }
-
-    $crudeBin = Join-Path $InstallDir 'crude.exe'
-    $lua = Join-Path $root 'wezterm.lua'
-    $luaText = @"
--- Written by the Crude installer. This window runs Crude only.
-local wezterm = require 'wezterm'
-return {
-    default_prog = { '@@DEFAULT_PROG@@' },
-    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
-    font_size = 13.0,
-    window_decorations = 'TITLE | RESIZE',
-    hide_tab_bar_if_only_one_tab = true,
-    window_close_confirmation = 'NeverPrompt',
-    check_for_updates = false,
-    audible_bell = 'Disabled',
-}
-"@
-    [IO.File]::WriteAllText($lua, $luaText.Replace('@@DEFAULT_PROG@@', $crudeBin.Replace('\', '\\')))
-
-    $icon = Join-Path $windowHome 'crude.ico'
-    $iconSource = Join-Path $Payload 'crude-icon.ico'
-    if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $icon -Force }
-
-    $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-    [void] [IO.Directory]::CreateDirectory($startMenu)
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut((Join-Path $startMenu 'Crude.lnk'))
-    $link.TargetPath = $gui.FullName
-    $link.Arguments = "--config-file ""$lua"" start --always-new-process --class crude"
-    $link.WorkingDirectory = $HOME
-    $link.Description = 'Editor, terminals and AI agents in one window'
-    if ([IO.File]::Exists($icon)) { $link.IconLocation = $icon }
-    $link.Save()
 }
 
 function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crude', [string] $InstallDir,
@@ -693,9 +755,12 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         $unfinished = @([IO.Directory]::GetDirectories($InstallDir, '.crude-install-*'))
         if ($unfinished.Count) { throw "An interrupted installation needs inspection before retrying. Preserve and inspect its transaction.json and backups in '$($unfinished -join "', '")'; restore affected files or remove verified unused staging directories manually. Nothing was changed." }
         [void] [IO.Directory]::CreateDirectory($work)
-        $stopPlan = Confirm-CrudeStop (Join-Path $InstallDir 'crude.exe') -Stop:$Stop -NoStop:$NoStop
+        # State the version first, then ask the two questions, so a question
+        # never waits behind a large download.
         $release = Get-CrudeRelease $Repository $Version $work
         Write-Host "Version $($release.Tag) · windows/amd64"
+        $stopPlan = Confirm-CrudeStop (Join-Path $InstallDir 'crude.exe') -Stop:$Stop -NoStop:$NoStop
+        $windowPlan = Confirm-CrudeWindow -Gui:$Gui -NoGui:$NoGui
         $archive = Join-Path $work $release.AssetName
         $checksums = Join-Path $work 'SHA256SUMS'
         Get-CrudeDownload "$($release.BaseUrl)/SHA256SUMS" $checksums 4194304
@@ -724,7 +789,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         Set-CrudeFiles $files
         if ($path) { Set-CrudePath $path }
         Write-CrudeStep (Mark 'check') 'Program' (Join-Path $InstallDir 'crude.exe')
-        Install-CrudeWindow -InstallDir $InstallDir -Payload $payload -WorkDir $work -Gui:$Gui -NoGui:$NoGui
+        Install-CrudeWindow -InstallDir $InstallDir -Payload $payload -WorkDir $work -Plan $windowPlan
         Write-Host ''
         Write-Host "Crude $($release.Tag) is ready."
         if ($NoPath) {

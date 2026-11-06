@@ -58,8 +58,9 @@ Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/in
 ```
 
 Read the installer before you run it. To update Crude, run the same command again.
-Add `--gui` (`-Gui`) to also install a Crude window that runs Crude and nothing
-else, with its own font and a menu entry. You do not need administrator rights.
+Add `--gui` (`-Gui`) for a window that opens Crude, with its own font and a menu
+entry; the same command keeps the window and Crude up to date together. You do
+not need administrator rights.
 
 ## Get started
 
@@ -74,8 +75,8 @@ Press **Ctrl+Alt+P** to see all commands and their shortcuts. Press **Alt+F12** 
 **Recommended setup:** Use Kitty or Alacritty on Linux, or Windows Terminal on Windows,
 with truecolor. Install [JetBrainsMono Nerd Font](https://www.nerdfonts.com/font-downloads)
 (NF, not NFM). Then enable **Nerd font** and **Show file icons** in
-**Settings → IDE → Interface**. The installers change your terminal or fonts only
-when you ask for the Crude window.
+**Settings → IDE → Interface**. To skip that setup, run the installer with `--gui`
+(`-Gui`): it adds a window that already has the terminal and the font.
 
 <details>
 <summary><strong>More captures</strong></summary>
