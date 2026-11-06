@@ -43,7 +43,7 @@ main() (
 Usage: bash install.sh [options]
 
   --yes                 Accept the warning and use the defaults. No prompt.
-  --gui, --no-gui       Install or skip the Crude desktop window.
+  --gui, --no-gui       Add or skip the GUI version.
   --stop, --no-stop     Stop or keep a running Crude while updating.
   --version vX.Y.Z      Install one exact release. Prereleases are allowed.
   --install-dir DIR     Install the program somewhere else (default ~/.local/bin).
@@ -51,8 +51,9 @@ Usage: bash install.sh [options]
   --repository OWNER/REPO
   --help                Show this text.
 
-The desktop window is a pinned terminal that starts Crude and nothing else.
-Run the same command again to update. Press Ctrl+C at any time to stop.
+The GUI version opens Crude in its own window, with its own terminal and font.
+Run the same command again to update Crude and the window together.
+Press Ctrl+C at any time to stop.
 EOF
     }
 
