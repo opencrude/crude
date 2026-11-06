@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"crude/coreprotocol"
@@ -22,7 +23,12 @@ func (w *Workspace) AdvanceAgentState(time.Time) workspace.AgentReduction {
 }
 
 func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
-	return w.view.AgentActivity(agentID)
+	view := w.view.AgentActivity(agentID)
+	if w.stops.held(agentID) {
+		view.Active = false
+		view.Status = workspace.StoppingStatus(view.Status)
+	}
+	return view
 }
 
 func (w *Workspace) AgentModelIdentity(agentID string) types.TurnIdentity {
@@ -153,8 +159,13 @@ func (w *Workspace) CancelAgent(agentID string) {
 		request.OperationID = node.State.ActiveCompaction.OperationID
 	}
 	w.commands.push(func(ctx context.Context) {
-		if err := w.call(ctx, coreprotocol.CancelAgent, request, &coreprotocol.Empty{}); err != nil {
+		var out coreprotocol.DecisionResult
+		if err := w.call(ctx, coreprotocol.CancelAgent, request, &out); err != nil {
 			w.logger.Warn("REMOTE", "cancel_failed", "agent", agentID, "error", err.Error())
+			// The core may not have seen Stop: release the optimistic boundary
+			// and reinstall the authoritative state.
+			w.stops.release(agentID, request.Generation)
+			w.requestResync()
 		}
 	})
 }
@@ -162,15 +173,69 @@ func (w *Workspace) CancelAgent(agentID string) {
 // BeginAgentCancellation shows the stopping boundary immediately. Only the core
 // may settle transcript rows: AgentState.BeginCancellation also mutates its
 // Conversation, which would advance this replica beyond the next core delta.
+// The boundary is fenced: publications the core produced before it admitted
+// Stop cannot resume the turn's animation (see stopFence).
 func (w *Workspace) BeginAgentCancellation(id string) bool {
 	node := w.view.AgentMgr.Get(id)
-	if node == nil || node.State == nil {
+	if node == nil || !node.State.CanStop() {
 		return false
 	}
-	state := node.State
+	w.stops.hold(id, node.State.TurnIdentity.Generation)
+	showStopping(node.State)
+	return true
+}
+
+func showStopping(state *workspace.AgentState) {
 	state.Running, state.Thinking, state.Streaming = false, false, false
 	state.Cancelling = true
-	return true
+}
+
+// stopFence holds this shell's optimistic Stop per agent turn until the core's
+// published state reflects it (Cancelling), supersedes it (a newer turn) or
+// leaves nothing to stop (the turn ended). Without it, every publication that
+// was already in flight when the user pressed Stop reinstalls the running turn,
+// so Stop flashes and invites repeated presses.
+type stopFence struct {
+	mu      sync.Mutex
+	pending map[string]uint64
+}
+
+func (f *stopFence) hold(id string, generation uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.pending == nil {
+		f.pending = make(map[string]uint64)
+	}
+	f.pending[id] = generation
+}
+
+func (f *stopFence) release(id string, generation uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if held, ok := f.pending[id]; ok && held == generation {
+		delete(f.pending, id)
+	}
+}
+
+func (f *stopFence) held(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.pending[id]
+	return ok
+}
+
+// reconcile runs on Update after each installed publication.
+func (f *stopFence) reconcile(agents *workspace.AgentManager) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, generation := range f.pending {
+		node := agents.Get(id)
+		if node == nil || node.State.TurnIdentity.Generation != generation || node.State.Cancelling || !node.State.CanStop() {
+			delete(f.pending, id)
+			continue
+		}
+		showStopping(node.State)
+	}
 }
 
 func (w *Workspace) CloseAgent(agentID string) {
@@ -266,11 +331,16 @@ func (w *Workspace) PrepareCancelAgentRecovery(agentID, incidentID string, gener
 	return w.recovery(coreprotocol.AgentRecoverCancel, agentID, incidentID, generation)
 }
 
+// RejectAgentRecoveryCancellation withdraws this shell's optimistic Stop for
+// the exact incident whose cancellation the core refused. The core never
+// enters a stopping boundary for a parked recovery, so nothing is sent.
 func (w *Workspace) RejectAgentRecoveryCancellation(id, incident string) {
-	request := coreprotocol.RecoveryRequest{AgentID: id, IncidentID: incident}
-	w.commands.push(func(ctx context.Context) {
-		_ = w.call(ctx, coreprotocol.AgentRecoverReject, request, &coreprotocol.BoolResult{})
-	})
+	node := w.view.AgentMgr.Get(id)
+	if node == nil || node.State.RecoveryStatus().ID != incident {
+		return
+	}
+	w.stops.release(id, node.State.TurnIdentity.Generation)
+	node.State.Cancelling = false
 }
 
 func (w *Workspace) PrepareAsyncCommandTermination(agentID string, ref fileio.AsyncCmdRef) (func() error, error) {

@@ -49,10 +49,7 @@ func (m *App) handleCancel() tea.Cmd {
 // (Esc, palette, menus, prompts): live work, or a recovery parked for retry.
 func (m *App) canCancelAgent(agentID string) bool {
 	node := m.ws.AgentMgr().Get(agentID)
-	if node == nil || node.State == nil {
-		return false
-	}
-	return node.State.HasCancellableWork() || m.canRetryAgentRecovery(agentID)
+	return node != nil && node.State.CanStop()
 }
 
 // cancelAgentTurn stops agentID's current work and reports whether there was

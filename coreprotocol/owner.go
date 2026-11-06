@@ -17,7 +17,6 @@ const (
 	AgentAppendMessages   = "agent.append_messages"
 	AgentRecover          = "agent.recover"
 	AgentRecoverCancel    = "agent.recover_cancel"
-	AgentRecoverReject    = "agent.recover_reject"
 	AgentStopCommand      = "agent.stop_command"
 	AgentCompact          = "agent.compact"
 	WorkspaceStartup      = "workspace.startup"

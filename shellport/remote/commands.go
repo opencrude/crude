@@ -5,9 +5,9 @@ import (
 	"sync"
 )
 
-// commandQueue preserves the order of a shell's fire-and-forget mutations.
-// push never blocks the Update goroutine; one worker sends in FIFO order, so
-// "stop" can never overtake the "steer" typed before it.
+// commandQueue preserves the order of one lane of fire-and-forget mutations.
+// push never blocks the Update goroutine; one worker per lane sends in FIFO
+// order, so "stop" can never overtake the "steer" typed before it.
 type commandQueue struct {
 	mu    sync.Mutex
 	items []func(context.Context)
@@ -38,16 +38,16 @@ func (q *commandQueue) pop() (func(context.Context), bool) {
 	return fn, true
 }
 
-func (w *Workspace) runCommands() {
+func (w *Workspace) runCommands(queue *commandQueue) {
 	defer w.wg.Done()
 	for {
 		select {
 		case <-w.stop:
 			return
-		case <-w.commands.ready:
+		case <-queue.ready:
 		}
 		for {
-			fn, ok := w.commands.pop()
+			fn, ok := queue.pop()
 			if !ok {
 				break
 			}

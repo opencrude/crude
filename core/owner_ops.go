@@ -62,14 +62,6 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 			a.changed([]string{in.AgentID})
 		}
 		return response(request, coreprotocol.BoolResult{OK: ok}), true
-	case coreprotocol.AgentRecoverReject:
-		var in coreprotocol.RecoveryRequest
-		if err := decodeRequest(request, &in); err != nil {
-			return fault(request, "invalid_request", err.Error()), true
-		}
-		a.ws.RejectAgentRecoveryCancellation(in.AgentID, in.IncidentID)
-		a.changed([]string{in.AgentID})
-		return response(request, coreprotocol.BoolResult{OK: true}), true
 	case coreprotocol.WorkspaceStartup:
 		out := coreprotocol.StartupResult{Issues: a.ws.TakeStartupIssues()}
 		if err := a.ws.LastRegistryError(); err != nil {

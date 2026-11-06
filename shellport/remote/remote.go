@@ -81,19 +81,24 @@ type Workspace struct {
 	initialized        bool
 	liveDocumentMu     sync.Mutex
 	liveDocumentTopics map[string]*liveDocumentTopic
-	commands           commandQueue
-	status             *statusReplica
-	terminals          *terminalReplica
-	settings           *settingsReplica
-	settingsMu         sync.RWMutex
-	lsp                *lspReplica
-	documents          *documentService
-	startup            coreprotocol.StartupResult
-	registryMu         sync.RWMutex
-	registry           []sessiondb.SessionMeta
-	searchMu           sync.Mutex
-	searchSeq          uint64
-	searchCancel       context.CancelFunc
+	// commands carries agent lifecycle and input in typed order, so Stop never
+	// overtakes the steer typed before it. services carries status, language
+	// server and terminal housekeeping; it never delays an agent command.
+	commands     commandQueue
+	services     commandQueue
+	stops        stopFence
+	status       *statusReplica
+	terminals    *terminalReplica
+	settings     *settingsReplica
+	settingsMu   sync.RWMutex
+	lsp          *lspReplica
+	documents    *documentService
+	startup      coreprotocol.StartupResult
+	registryMu   sync.RWMutex
+	registry     []sessiondb.SessionMeta
+	searchMu     sync.Mutex
+	searchSeq    uint64
+	searchCancel context.CancelFunc
 
 	// admissions holds submitted input between Prepare (Update goroutine) and
 	// Commit (a command goroutine).
@@ -181,10 +186,12 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 	}
 	w.admissions = make(map[*workspace.InputAdmissionIntent]provider.UserInput)
 	w.commands.init()
-	w.wg.Add(2)
+	w.services.init()
+	w.wg.Add(3)
 	go w.collect(client)
 	w.startTopics(client)
-	go w.runCommands()
+	go w.runCommands(&w.commands)
+	go w.runCommands(&w.services)
 	return w, nil
 }
 
@@ -616,6 +623,7 @@ func (w *Workspace) applyPublication(batch publicationBatch) (shellport.ReplicaA
 		}
 		applied.SessionsChanged = u.Sessions != nil
 	}
+	w.stops.reconcile(w.view.AgentMgr)
 	// Effects and follow-up invalidations are emitted only after successful commit.
 	applied.Notices = u.Notices
 	applied.Reductions = u.Reductions

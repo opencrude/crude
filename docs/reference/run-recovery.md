@@ -404,6 +404,24 @@ keeps the unfinished work. A subsequent failure updates the same incident.
 Needs attention and interrupted incidents remain static and expose Retry now.
 Recovered/cancelled incidents remove the retry target.
 
+Stop has one precondition, `AgentState.CanStop`: live work, a pending prompt
+or compaction, or a recovery parked for retry. Every shell Stop entry point and
+the core's stopping boundary use it. The core admits `agent.cancel` only for live work (a parked
+recovery uses `agent.recover_cancel`) and refuses a Stop that arrives after the
+turn ended or repeats one in progress, without changing state. A stopping
+boundary entered with nothing to stop never receives the terminal
+acknowledgement that clears it, so an agent that finished must never show
+Stopping.
+
+A connected shell shows Stop at once and holds it per agent turn until the
+core's publication shows `Cancelling`, a newer turn, or nothing left to stop.
+Publications the core produced before it admitted Stop cannot resume the
+stopped turn, so Stop never flashes back and never invites repeated presses. A
+failed call releases the hold and resynchronizes. The shell sends agent input
+and control on its own ordered lane; status, language server and terminal
+housekeeping use a separate lane and never delay Stop. Housekeeping that
+reconciles every frame sends only real changes.
+
 Explicitly stopped turns retain their ordinary stop boundary and cancelled
 recovery incident as canonical history, but both contribute zero chat geometry.
 The fixed activity strip alone shows one quiet **Stopped** label. Other recovery

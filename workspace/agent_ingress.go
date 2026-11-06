@@ -301,13 +301,15 @@ func (w *Workspace) AdvanceAgentState(now time.Time) AgentReduction {
 }
 
 // BeginAgentCancellation publishes the stopping boundary independently of a
-// shell. Execution cancellation is separately routed to the exact backend.
+// shell. Execution cancellation is separately routed to the exact backend. It
+// refuses an agent with nothing to stop, so a late or repeated Stop can never
+// leave a finished agent showing Stopping.
 func (w *Workspace) BeginAgentCancellation(id string) bool {
 	if w == nil || w.AgentMgr == nil {
 		return false
 	}
 	node := w.AgentMgr.Get(id)
-	if node == nil || node.State == nil {
+	if node == nil || !node.State.CanStop() {
 		return false
 	}
 	node.State.BeginCancellation()

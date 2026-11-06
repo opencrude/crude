@@ -39,7 +39,7 @@ func (w *Workspace) SyncAgentStatusInventory() {
 		incident := state.RecoveryStatus()
 		switch {
 		case state.Cancelling:
-			status.Phase, status.Detail, status.NeedsAction = types.AgentCancelling, "Stopping", false
+			status = StoppingStatus(status)
 		case question:
 			status.Phase, status.Detail = types.AgentQuestion, "Needs answer"
 		case approval:
