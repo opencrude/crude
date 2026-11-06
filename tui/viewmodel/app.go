@@ -90,6 +90,8 @@ type App struct {
 	Tree                      *TreeState
 	treeReveal                *treeRevealIntent
 	FindReplace               *popup.FindReplaceState
+	findDomain                findDomain
+	findChat                  *shellchat.Screen
 	LastContextMenu           *ui.ContextMenuState
 	ContextMenuOpenedAt       time.Time
 	TextPrompt                *ui.TextPromptState

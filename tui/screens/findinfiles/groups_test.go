@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -224,10 +223,15 @@ func TestPreviewNonSelectedMatchPaintsHighlightBg(t *testing.T) {
 	host.Paint(buf)
 
 	th := theme.DefaultDark()
-	selBg := rendering.ThemeColorToCell(th.Colors.Selection)
 	// The selected match is a.go line 4 ("needle first"); a.go line 9
-	// ("needle second") is inside the same context excerpt and must carry
-	// the highlight bg on its matched cells.
+	// ("needle second") is inside the same context excerpt and must carry the
+	// shared inactive-match fill on its matched cells — the same pair every
+	// find surface marks with.
+	tokens := ui.NewTokenSet(th)
+	selBg := tokens.FindMatchFill(false)
+	if selBg.Equal(tokens.FindMatchFill(true)) {
+		t.Fatal("inactive and selected matches must not share a fill")
+	}
 	found := false
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x+5 < buf.Width(); x++ {
@@ -242,7 +246,7 @@ func TestPreviewNonSelectedMatchPaintsHighlightBg(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("non-selected match on a previewed line should paint the selection-tint background")
+		t.Fatal("non-selected match on a previewed line must paint the inactive-match fill")
 	}
 }
 

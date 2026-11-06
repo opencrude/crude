@@ -484,10 +484,7 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 				for _, j := range s.search.ByRow[index] {
 					m := s.search.Matches[j]
 					if s.matchPane(m) == p && m.Row == index && unit.column < m.End && unit.column+unit.width > m.Start {
-						fill = t.Color(ui.ColorWarning)
-						if j == s.search.Active {
-							fill = t.Color(ui.ColorAccent)
-						}
+						fill = t.FindMatchFill(j == s.search.Active)
 						fg = cell.ContrastInk(fill)
 						break
 					}

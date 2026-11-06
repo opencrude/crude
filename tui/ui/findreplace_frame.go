@@ -58,6 +58,11 @@ type FindReplaceFrameSpec struct {
 	MatchCount int
 	CurrentIdx int
 	Error      string
+
+	// StatusText replaces the derived counter when the owning search cannot
+	// state a settled count yet (still counting, or waiting for text the
+	// renderer has not drawn). Empty uses the counter.
+	StatusText string
 }
 
 // frGapRow is a fixed-height vertical spacer between find/replace content
@@ -159,6 +164,9 @@ func BuildFindReplaceFrame(th *theme.Theme, spec FindReplaceFrameSpec) *Componen
 	statusLabel := NewLabel(FRStatus, "", th)
 	statusLabel.SetColorRole(ColorMuted)
 	statusLabel.SetText(matchCountText(spec.MatchCount, spec.CurrentIdx))
+	if spec.StatusText != "" {
+		statusLabel.SetText(spec.StatusText)
+	}
 	if spec.Error != "" {
 		statusLabel.SetText("Invalid regex: " + spec.Error)
 		statusLabel.SetColorRole(ColorError)
@@ -553,6 +561,30 @@ func FindReplaceFrameReplaceField(cw *ComponentWidget) *TextField {
 		return nil
 	}
 	return findTextField(cw.Root(), FRReplaceField)
+}
+
+// FindReplaceFrameStatus returns the painted counter text ("3 of 10",
+// "No results", or the owner's own text while it cannot state a count).
+func FindReplaceFrameStatus(cw *ComponentWidget) string {
+	if cw == nil {
+		return ""
+	}
+	if lbl := findLabel(cw.Root(), FRStatus); lbl != nil {
+		return lbl.Text()
+	}
+	return ""
+}
+
+// FindReplaceFrameTitle returns the frame's title, which names the surface the
+// search describes.
+func FindReplaceFrameTitle(cw *ComponentWidget) string {
+	if cw == nil {
+		return ""
+	}
+	if fr := findFrame(cw.Root()); fr != nil {
+		return fr.Title()
+	}
+	return ""
 }
 
 // FindReplaceFrameToggleBounds reports the POPUP-LOCAL bounds of a filter

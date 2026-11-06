@@ -368,10 +368,8 @@ func (document *Document) matchAt(rowIndex, side, start, end int) (cell.Color, b
 	for _, index := range document.search.ByRow[rowIndex] {
 		m := document.search.Matches[index]
 		if m.Side == side && start < m.End && end > m.Start {
-			if index == document.search.Active {
-				return document.tokens.Color(ui.ColorAccent), true, true
-			}
-			return document.tokens.Color(ui.ColorWarning), false, true
+			current := index == document.search.Active
+			return document.tokens.FindMatchFill(current), current, true
 		}
 	}
 	return cell.NoColor, false, false

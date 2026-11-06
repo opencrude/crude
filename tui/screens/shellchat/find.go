@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"crude/textsearch"
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
 )
@@ -18,6 +19,15 @@ import (
 // does not finish resumes on the next frame, so a very long history never
 // stalls typing or scrolling.
 const findBudget = 3 * time.Millisecond
+
+// FindOptions are the filter toggles the find window offers. They mean the
+// same thing here as in the editor: a case-sensitive, whole-word or regular
+// expression search.
+type FindOptions struct {
+	CaseSensitive bool
+	WholeWord     bool
+	Regex         bool
+}
 
 // findSegment is the part of one match that sits on one painted line. A match
 // that wraps onto the next line has one segment per line. from and to are byte
@@ -38,7 +48,10 @@ type findSegment struct {
 // nothing per row. With find closed the Screen never calls into this type.
 type chatFind struct {
 	query  string
+	opts   FindOptions
 	needle []byte // query after folding; empty = no search
+	re     *textsearch.Matcher
+	err    string
 
 	// Per-row results, parallel to the shown rows. stamps[i] is the row
 	// Version counts[i] was computed for.
@@ -50,8 +63,11 @@ type chatFind struct {
 	waiting int
 
 	// A pass visits every row once. next is the first row it has not visited;
-	// again asks for one more pass when rows changed behind it.
+	// again asks for one more pass when rows changed behind it. counted says a
+	// pass has finished, so the window can state a count instead of
+	// "Searching…".
 	next     int
+	counted  bool
 	again    bool
 	counting int // rows without lines seen so far in the running pass
 	source   uint64
@@ -92,41 +108,68 @@ func (c paintCache) holds(gen uint64, row int, version uint64) bool {
 }
 
 // rowText is the reusable scratch for one row: its lines joined into one
-// folded string, plus where each line starts in it.
+// string, plus where each line starts in it.
 type rowText struct {
-	raw   []byte
-	flat  []byte
-	lines []lineSpan
-	hits  []int
+	raw    []byte
+	orig   []byte // the painted text, lines joined with one space
+	hay    []byte // orig lowercased (same length) for a case-insensitive search
+	lines  []lineSpan
+	starts []int // byte offset of every literal match in orig
+	length int   // bytes of every literal match in orig
+	spans  []findSpan
 }
 
-// lineSpan maps a range of rowText.flat back to one painted line.
+// findSpan is one match in the joined row text.
+type findSpan struct{ start, end int }
+
+// lineSpan maps a range of rowText.orig back to one painted line.
 type lineSpan struct {
-	line int // line index within the row
-	flat int // offset of the line's first kept byte in flat
-	trim int // bytes of leading space removed from the plain text
-	n    int // kept bytes
+	line  int // line index within the row
+	start int // offset of the line's first kept byte in orig
+	trim  int // bytes of leading space removed from the plain text
+	n     int // kept bytes
 }
 
-// querying reports whether a non-empty query is active.
-func (f *chatFind) querying() bool { return len(f.needle) > 0 }
+// querying reports whether a query is active, literal or regular expression.
+func (f *chatFind) querying() bool { return len(f.needle) > 0 || f.re != nil }
 
 // pending reports whether counting is unfinished for the shown rows.
 func (f *chatFind) pending(rows int) bool { return f.querying() && f.next < rows }
 
-// setQuery installs a new query and discards every count. anchor is the global
-// line the first selection should be near, or negative for the middle of the
-// view.
-func (f *chatFind) setQuery(query string, anchor int) {
+// setQuery installs a new query and options, and discards every count. anchor
+// is the global line the first selection should be near, or negative for the
+// middle of the view.
+func (f *chatFind) setQuery(query string, opts FindOptions, anchor int) {
 	query = strings.TrimSpace(query)
-	if query == f.query {
+	if query == f.query && opts == f.opts {
 		return
 	}
 	f.anchor = anchor
-	f.query = query
-	f.needle = appendFolded(f.needle[:0], []byte(query))
+	f.query, f.opts = query, opts
+	f.needle, f.re, f.err = f.needle[:0], nil, ""
+	switch {
+	case query == "":
+	case opts.Regex:
+		matcher, err := textsearch.Compile(query, textsearch.Options{CaseSensitive: opts.CaseSensitive, WholeWord: opts.WholeWord, Regex: true})
+		if err != nil {
+			f.err = err.Error()
+			break
+		}
+		f.re = matcher
+	default:
+		f.needle = appendPlainNeedle(f.needle, query, opts.CaseSensitive)
+	}
 	f.clear()
 	f.selecting = f.querying()
+}
+
+// appendPlainNeedle appends the query bytes, folded unless the search is
+// case-sensitive, so one byte-length-preserving fold covers both sides.
+func appendPlainNeedle(dst []byte, query string, caseSensitive bool) []byte {
+	if caseSensitive {
+		return append(dst, query...)
+	}
+	return appendFolded(dst, []byte(query))
 }
 
 // clear drops counts and the selection, keeping the query text.
@@ -134,7 +177,7 @@ func (f *chatFind) clear() {
 	clear(f.stamps)
 	clear(f.counts)
 	f.total, f.waiting, f.counting = 0, 0, 0
-	f.next, f.again = 0, false
+	f.next, f.again, f.counted = 0, false, false
 	f.cur = findCurrent{}
 	f.gen++
 }
@@ -192,6 +235,7 @@ func (f *chatFind) observe(rows []chatprojection.MessageRow, source uint64, chan
 		return false
 	}
 	f.waiting, f.counting = f.counting, 0
+	f.counted = true
 	if f.again {
 		f.again, f.next = false, 0
 	}
@@ -219,9 +263,9 @@ func (f *chatFind) fit(n int) {
 func (f *chatFind) count(i int, row chatprojection.MessageRow) {
 	f.total -= int(f.counts[i])
 	n := 0
-	if row.Version != 0 {
-		f.text.flatten(row)
-		n = f.text.find(f.needle)
+	if row.Version != 0 && (f.re != nil || len(f.needle) > 0) {
+		f.text.flatten(row, !f.opts.CaseSensitive)
+		n = f.text.find(f, f.needle)
 	}
 	f.counts[i], f.stamps[i] = int32(n), row.Version
 	f.total += n
@@ -243,9 +287,9 @@ func (f *chatFind) segments(index int, row chatprojection.MessageRow) []findSegm
 	if f.paint.holds(f.gen, index, row.Version) {
 		return f.paint.segments
 	}
-	f.text.flatten(row)
-	f.text.find(f.needle)
-	segs := f.text.segments(len(f.needle))
+	f.text.flatten(row, !f.opts.CaseSensitive)
+	f.text.find(f, f.needle)
+	segs := f.text.segments()
 	if segs == nil {
 		segs = []findSegment{}
 	}
@@ -339,36 +383,11 @@ func (f *chatFind) ordinal() int {
 	return n
 }
 
-// status is the short text beside the find field.
-func (f *chatFind) status(rows int) string {
-	switch {
-	case !f.querying():
-		return ""
-	case f.pending(rows):
-		return "Searching…"
-	case f.total == 0 && f.waiting > 0:
-		return "No matches yet · loading"
-	case f.total == 0:
-		return "No matches"
-	}
-	text := fmt.Sprintf("%d matches", f.total)
-	if f.total == 1 {
-		text = "1 match"
-	}
-	if f.cur.ok {
-		text = fmt.Sprintf("%d of %d", f.ordinal(), f.total)
-	}
-	if f.waiting > 0 {
-		text += " · loading"
-	}
-	return text
-}
-
-// flatten reads the plain text of every line of row into one folded string.
-// Lines join with a single space, so a phrase that wraps still matches. A
-// blank line is a paragraph break and never joins its neighbours.
-func (t *rowText) flatten(row chatprojection.MessageRow) {
-	t.flat, t.lines = t.flat[:0], t.lines[:0]
+// flatten reads the plain text of every line of row into one string. Lines
+// join with a single space, so a phrase that wraps still matches. A blank line
+// is a paragraph break and never joins its neighbours.
+func (t *rowText) flatten(row chatprojection.MessageRow, fold bool) {
+	t.orig, t.lines = t.orig[:0], t.lines[:0]
 	apart := false
 	for i := range row.Lines {
 		t.raw = appendPlain(t.raw[:0], row, i)
@@ -377,51 +396,103 @@ func (t *rowText) flatten(row chatprojection.MessageRow) {
 			apart = true
 			continue
 		}
-		if len(t.flat) > 0 {
+		if len(t.orig) > 0 {
 			sep := byte(' ')
 			if apart {
 				sep = '\n'
 			}
-			t.flat = append(t.flat, sep)
+			t.orig = append(t.orig, sep)
 		}
 		apart = false
-		start := len(t.flat)
-		t.flat = appendFolded(t.flat, t.raw[lo:hi])
-		t.lines = append(t.lines, lineSpan{line: i, flat: start, trim: lo, n: hi - lo})
+		start := len(t.orig)
+		t.orig = append(t.orig, t.raw[lo:hi]...)
+		t.lines = append(t.lines, lineSpan{line: i, start: start, trim: lo, n: hi - lo})
 	}
+	if !fold {
+		t.hay = t.hay[:0]
+		return
+	}
+	t.hay = appendFolded(t.hay[:0], t.orig)
 }
 
-// find records the start of every non-overlapping match of needle in the
-// flattened row and returns how many there are.
-func (t *rowText) find(needle []byte) int {
-	t.hits = t.hits[:0]
+// find records the start of every non-overlapping match of needle in the row
+// and returns how many there are.
+func (t *rowText) find(f *chatFind, needle []byte) int {
+	// Both results are rebuilt for every row: a stale span from the row read
+	// before would paint its match on this one.
+	t.starts, t.spans, t.length = t.starts[:0], t.spans[:0], len(needle)
+	if f.re != nil {
+		// A regular expression may match different lengths, so a match is a
+		// (start, end) pair here. This mode is explicit and never the default.
+		for _, hit := range f.re.FindAll(string(t.orig), 0) {
+			t.spans = append(t.spans, findSpan{start: hit.Start, end: hit.End})
+		}
+		return len(t.spans)
+	}
+	hay := t.orig
+	if len(t.hay) == len(t.orig) {
+		hay = t.hay
+	}
 	if len(needle) == 0 {
 		return 0
 	}
-	for off := 0; off < len(t.flat); {
-		i := bytes.Index(t.flat[off:], needle)
+	for off := 0; off < len(hay); {
+		i := bytes.Index(hay[off:], needle)
 		if i < 0 {
 			break
 		}
-		t.hits = append(t.hits, off+i)
-		off += i + len(needle)
+		start := off + i
+		if f.opts.WholeWord && !wholeWordAt(t.orig, start, start+len(needle)) {
+			off = start + 1
+			continue
+		}
+		t.starts = append(t.starts, start)
+		off = start + len(needle)
 	}
-	return len(t.hits)
+	return len(t.starts)
+}
+
+// spans returns the recorded matches as (start, end) pairs.
+func (t *rowText) spansOf() []findSpan {
+	if len(t.spans) > 0 || len(t.starts) == 0 {
+		return t.spans
+	}
+	for _, start := range t.starts {
+		t.spans = append(t.spans, findSpan{start: start, end: start + t.length})
+	}
+	return t.spans
 }
 
 // segments maps the recorded matches onto painted lines.
-func (t *rowText) segments(width int) []findSegment {
+func (t *rowText) segments() []findSegment {
 	var out []findSegment
-	for match, start := range t.hits {
-		end := start + width
-		first := sort.Search(len(t.lines), func(k int) bool { return t.lines[k].flat+t.lines[k].n > start })
-		for k := first; k < len(t.lines) && t.lines[k].flat < end; k++ {
+	for match, span := range t.spansOf() {
+		start, end := span.start, span.end
+		first := sort.Search(len(t.lines), func(k int) bool { return t.lines[k].start+t.lines[k].n > start })
+		for k := first; k < len(t.lines) && t.lines[k].start < end; k++ {
 			ln := t.lines[k]
-			from, to := max(start, ln.flat), min(end, ln.flat+ln.n)
-			out = append(out, findSegment{line: ln.line, from: ln.trim + from - ln.flat, to: ln.trim + to - ln.flat, match: match})
+			from, to := max(start, ln.start), min(end, ln.start+ln.n)
+			out = append(out, findSegment{line: ln.line, from: ln.trim + from - ln.start, to: ln.trim + to - ln.start, match: match})
 		}
 	}
 	return out
+}
+
+// wholeWordAt reports whether [start,end) in text stands alone as a word, using
+// the same character class the shared text search uses.
+func wholeWordAt(text []byte, start, end int) bool {
+	word := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) || r == '_' }
+	if start > 0 {
+		if r, _ := utf8.DecodeLastRune(text[:start]); word(r) {
+			return false
+		}
+	}
+	if end < len(text) {
+		if r, _ := utf8.DecodeRune(text[end:]); word(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // appendPlain appends the plain text of one line, the same text selection and
@@ -487,4 +558,25 @@ func absInt(n int) int {
 		return -n
 	}
 	return n
+}
+
+// findStatusText is the window's counter text for a search that is still
+// running; settled counts come from the shared frame's matchCountText.
+func (f *chatFind) findStatusText() string {
+	switch {
+	case f.err != "":
+		return ""
+	case !f.querying():
+		return ""
+	case !f.counted:
+		return "Searching…"
+	case f.total == 0 && f.waiting > 0:
+		return "No results · loading"
+	case f.total > 0 && f.waiting > 0:
+		if f.total == 1 {
+			return "1 match · loading"
+		}
+		return fmt.Sprintf("%d matches · loading", f.total)
+	}
+	return ""
 }

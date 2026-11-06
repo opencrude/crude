@@ -16,6 +16,12 @@ func (m *App) openFindReplace(replaceMode bool) {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 		return
 	}
+	// The window is one design with one state; a chat search cannot survive a
+	// switch to the buffer it does not describe.
+	if m.findDomain == findInChat {
+		m.closeChatFind()
+	}
+	m.findDomain = findInEditor
 	ed := m.EditorState.Editor
 	wasOpen := m.FindReplace != nil
 	inside := m.focusedPopup() != nil && m.focusedPopup().ID == string(ui.OverlayFindReplace)
@@ -122,7 +128,7 @@ func selectedSearchQuery(text string, regex bool) (string, bool) {
 // open popup. Callers pass prev as the ActiveView before re-derivation and
 // next as the re-derived view ("" when no editor tab is active).
 func (m *App) closeFindReplaceForTab(prev, next string) {
-	if m.FindReplace == nil {
+	if m.FindReplace == nil || m.findDomain == findInChat {
 		return
 	}
 	if prev != "" && prev == next {
@@ -136,6 +142,9 @@ func (m *App) closeFindReplaceForTab(prev, next string) {
 // but highlights stop rendering because Open is set to false on the
 // editor's SearchState.
 func (m *App) closeFindReplace() {
+	if m.overlayHost == nil {
+		return
+	}
 	m.overlayHost.Close(ui.OverlayFindReplace)
 }
 
@@ -176,6 +185,10 @@ func (m *App) findReplaceSpec(fr *popup.FindReplaceState, w, h int) ui.FindRepla
 // next render derives fresh geometry from the new tree.
 func (m *App) refreshFindReplacePopup() {
 	if m.windowManager == nil || m.FindReplace == nil {
+		return
+	}
+	if m.findDomain == findInChat {
+		m.refreshChatFindPopup()
 		return
 	}
 	fr := m.FindReplace
@@ -388,13 +401,22 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.openFindReplace(false)
 		return nil
 	case "ctrl+h":
+		// A chat has nothing to replace in; the window stays a find form.
+		if m.findDomain == findInChat {
+			return nil
+		}
 		m.openFindReplace(true)
 		return nil
 	}
 
 	switch msg.Code {
 	case tea.KeyEsc:
-		// The field drops an active selection first; Esc then closes.
+		// A chat search has one level: Esc closes it. In a buffer the field
+		// drops an active selection first, then Esc closes.
+		if m.findDomain == findInChat {
+			m.closeFindReplace()
+			return nil
+		}
 		if fr.ActiveEdit().HasSelection() {
 			return m.findReplaceText(fr, fr.ActiveEdit(), msg)
 		}

@@ -381,8 +381,6 @@ func (m *App) syncRootFocus() {
 				if current := m.rootHost.Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
 					id = current
 				}
-			} else if screen, _ := m.chatFindOwner(); screen != nil {
-				id = screen.FindID()
 			} else {
 				id = m.inputScreen.ID()
 			}
@@ -542,6 +540,11 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		return
 	}
 	screen := view.chat
+	if m.findDomain == findInChat && m.findChat != nil && m.findChat != screen {
+		// Another pane shows a different chat: the open search belongs to the
+		// conversation it was started in.
+		m.closeChatFind()
+	}
 	screen.SetAgentID(agentID)
 	pad, inner := boundedContentGeometry(rect.W, m.Theme.Spacing.PadLR)
 	layout := contentLayout{ContentW: rect.W, InnerW: inner, PadLR: pad}
@@ -585,7 +588,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		activity.ThinkingExpanded = activeML.DisclosureExpanded(activity.ThinkingID)
 	}
 	screen.SetActivity(activity)
-	chatH := screen.TranscriptRows(rect.H)
+	chatH := rect.H - shellchat.ActivityRows(rect.H)
 
 	var activeAgent *workspace.AgentState
 	if node := m.ws.AgentMgr().Get(agentID); node != nil {
@@ -755,9 +758,6 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			ui.ActionSeg("panel.next"),
 			ui.ActionSeg("panel.close"),
 		}
-	}
-	if screen, _ := m.chatFindOwner(); screen != nil {
-		return "find in chat", chatFindHints()
 	}
 	switch m.focusTarget() {
 	case FocusTree:

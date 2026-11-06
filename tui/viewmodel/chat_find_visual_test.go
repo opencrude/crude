@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,7 +23,22 @@ func TestChatFindVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_CHAT_FIND") != "1" {
 		t.Skip("requires the dedicated tuishot terminal")
 	}
-	app := newEditorPaintApp(t, t.TempDir())
+	root := t.TempDir()
+	buffer := filepath.Join(root, "renderer.go")
+	if err := os.WriteFile(buffer, []byte(strings.Join([]string{
+		"package chatprojection",
+		"",
+		"// The renderer exports one row per message. The viewport is measured,",
+		"// the scroll model keeps the offset, and the viewport stays still while",
+		"// history settles below it.",
+		"func (r *Renderer) Export(width int) {",
+		"\tviewport := r.vl.ViewportHeight()",
+		"\t_ = viewport",
+		"}",
+	}, "\n")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	app := newEditorPaintApp(t, root)
 	app.registerOverlayHandlers()
 	// The fixture starts after dismissing the unrelated trust question.
 	app.onboarding.trust.askedOwner = app.ws
@@ -43,7 +59,7 @@ func TestChatFindVisualAcceptance(t *testing.T) {
 		state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: body})
 	}
 	app.syncAgentMessages(state.ID, false)
-	model := &chatFindVisualModel{App: app, owner: state.ID}
+	model := &chatFindVisualModel{App: app, owner: state.ID, buffer: buffer}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)
 	restore := installDetachedMessageSinkForTest(app, program.Send)
@@ -56,13 +72,16 @@ func TestChatFindVisualAcceptance(t *testing.T) {
 
 type chatFindVisualModel struct {
 	*App
-	owner string
-	n     int
+	owner  string
+	buffer string
+	n      int
 }
 
 func (m *chatFindVisualModel) Init() tea.Cmd { return tickCmd() }
 
 func (m *chatFindVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Keys arrive through the real dispatch chain, so the fixture only labels
+	// the steps a capture drives.
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
@@ -70,6 +89,13 @@ func (m *chatFindVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			state := m.ws.AgentMgr().Get(m.owner).State
 			state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: strings.Repeat("streamed viewport ", m.n)})
 			m.syncAgentMessages(m.owner, false)
+			return m, nil
+		case tea.KeyF3:
+			// The same window over a buffer: one design, two search domains.
+			if _, err := m.openEditorTab(m.buffer); err != nil {
+				return m, tea.Quit
+			}
+			m.setFocusEditor()
 			return m, nil
 		case tea.KeyF9:
 			return m, tea.Quit

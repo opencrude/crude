@@ -548,11 +548,11 @@ func (e *Editor) searchHighlightAt(line, col int) (int, bool) {
 // searchHighlightBg returns the background color used for search
 // match highlights. The current match uses a saturated accent; other
 // matches use a softer selection tint.
+// searchHighlightBg is the shared find-match fill: the selected match in the
+// accent, every other match in the secondary accent, so the two never read as
+// one block and a match looks the same in the editor, a comparison and a chat.
 func (e *Editor) searchHighlightBg(isCurrent bool) cell.Color {
-	if isCurrent {
-		return e.cellColor(e.th.Colors.Accent2)
-	}
-	return e.cellColor(e.th.Colors.Selection)
+	return e.tokens.FindMatchFill(isCurrent)
 }
 
 func (e *Editor) lineVisualWidth(lineIdx int) int {

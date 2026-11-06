@@ -395,6 +395,18 @@ func (ts *TokenSet) MenuInk(st ControlState, fg cell.Color) (primary, muted cell
 // would obscure it, move the ink toward the theme's contrasting foreground
 // just enough to remain readable, retaining its color rather than flattening
 // every syntax token to the same foreground.
+// FindMatchFill returns the background of one search match. The selected match
+// uses the accent; every other match uses the secondary accent at reduced
+// strength, so the two are different hues on every theme and a transcript full
+// of matches never reads as one undifferentiated block. Editor, comparison and
+// chat find all take this one pair, so a match looks the same everywhere.
+func (ts *TokenSet) FindMatchFill(current bool) cell.Color {
+	if current {
+		return ts.Color(ColorAccent)
+	}
+	return ts.Color(ColorAccent2).Blend(ts.Color(ColorBg), 0.45)
+}
+
 func (ts *TokenSet) TextSelectionColors(fg cell.Color) (cell.Color, cell.Color) {
 	bg := ts.Color(ColorTextSelection)
 	if fg.IsDefault() {
