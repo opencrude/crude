@@ -381,6 +381,8 @@ func (m *App) syncRootFocus() {
 				if current := m.rootHost.Focused(); current == view.screen.ID() || strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
 					id = current
 				}
+			} else if screen, _ := m.chatFindOwner(); screen != nil {
+				id = screen.FindID()
 			} else {
 				id = m.inputScreen.ID()
 			}
@@ -583,7 +585,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		activity.ThinkingExpanded = activeML.DisclosureExpanded(activity.ThinkingID)
 	}
 	screen.SetActivity(activity)
-	chatH := rect.H - shellchat.ActivityRows(rect.H)
+	chatH := screen.TranscriptRows(rect.H)
 
 	var activeAgent *workspace.AgentState
 	if node := m.ws.AgentMgr().Get(agentID); node != nil {
@@ -665,6 +667,12 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol = screen.SelectionRange()
 	}
 	screen.SetMessages(msgRows, paint)
+	if screen.FindWaiting() {
+		activeML.SettleHistory()
+	}
+	if screen.TakeFindDirty() {
+		m.hostFor(screen.ID()).MarkSubtreePaint(screen.ID())
+	}
 }
 
 func syncPaneScroll(screen *shellchat.Screen, viewport, content int) {
@@ -747,6 +755,9 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			ui.ActionSeg("panel.next"),
 			ui.ActionSeg("panel.close"),
 		}
+	}
+	if screen, _ := m.chatFindOwner(); screen != nil {
+		return "find in chat", chatFindHints()
 	}
 	switch m.focusTarget() {
 	case FocusTree:

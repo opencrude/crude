@@ -10,9 +10,12 @@ import (
 )
 
 type renderItem struct {
-	ID        string
-	Height    int
-	Dirty     bool
+	ID     string
+	Height int
+	Dirty  bool
+	// Version is the Renderer.renderSeq of the render that produced Rendered
+	// and Native; zero until the item is first rendered.
+	Version   uint64
 	Rendered  []string
 	Native    []PaintLine
 	PaneLines []PaneLineInfo // exact per-row scroll metadata, parallel to Rendered

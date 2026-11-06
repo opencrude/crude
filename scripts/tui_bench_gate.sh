@@ -75,6 +75,7 @@ run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation|MapInlineDeco
 run_bench '^BenchmarkSnippetTypingDense$/^lines20000$/^mirrors(8|64)$/^paint(false|true)$' ./tui/editor
 run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./syntax
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
+run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
 run_bench '^BenchmarkFooterOverflowPaint$' ./tui/screens/shellfooter
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
 run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview

@@ -47,6 +47,12 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	if s == nil {
 		return
 	}
+	rebuilt := s.installMessages(rows, paint)
+	s.observeFind(paint.SourceID, rebuilt)
+}
+
+// installMessages replaces the shown rows and reports whether any row changed.
+func (s *Screen) installMessages(rows []chatprojection.MessageRow, paint PaintParams) bool {
 	oldLen := len(s.rows)
 	s.rows = rows
 	s.onPaneScroll = paint.OnPaneScroll
@@ -67,7 +73,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 			selSL, selSC, selEL, selEC = s.selection.Range()
 		}
 		s.paintState = messagePaintState{compose: paint.Compose, paneLineMap: paint.PaneLineMap, globalStart: starts, hasSel: hasSel, selSL: selSL, selSC: selSC, selEL: selEL, selEC: selEC}
-		return
+		return false
 	}
 	if !sourceChanged && paint.Generation != 0 && s.rowsGeneration != 0 && !paint.StructureChanged && oldLen == len(rows) {
 		hasSel := paint.HasSelection || s.selection.HasActive()
@@ -85,7 +91,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 		}
 		s.rowsSourceID = paint.SourceID
 		s.rowsGeneration = paint.Generation
-		return
+		return true
 	}
 	items := s.list.Items()
 	if cap(items) < len(rows) {
@@ -139,6 +145,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	if s.list.Scroll().AutoScroll() {
 		s.list.StickToBottom()
 	}
+	return true
 }
 
 func (s *Screen) MessageAtLocalY(localY int) (chatprojection.MessageRow, bool) {
@@ -216,6 +223,9 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	}
 	chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
+	if s.find.querying() {
+		s.paintFindMatches(buf, lineX, y, layout.ContentMax, index, row, localRow, selStart, selEnd, tokens)
+	}
 	drawn := pl.VisibleWidth()
 	if drawn > layout.ContentMax {
 		drawn = layout.ContentMax

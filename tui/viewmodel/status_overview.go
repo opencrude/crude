@@ -490,6 +490,9 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if m.gitPanelOpen() && m.termDockFocused {
 		return []ui.HintSegment{ui.ChordSeg("Space", "stage"), ui.ChordSeg("Enter", "review"), ui.ChordSeg("C", "commit message"), ui.ChordSeg("Tab", "next area")}
 	}
+	if screen, _ := m.chatFindOwner(); screen != nil {
+		return chatFindHints()
+	}
 	if m.isGitReviewActive() && m.focusTarget() == FocusInput {
 		return []ui.HintSegment{ui.ChordSeg("]/[", "file"), ui.ChordSeg("n/p", "hunk"), ui.ChordSeg("V", "split"), ui.ChordSeg("Esc", "back")}
 	}
@@ -513,7 +516,7 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if len(hints) > 0 && hints[0].Kind == ui.HintKindText && strings.Contains(hints[0].Label, "note") {
 		return []ui.HintSegment{ui.ChordSeg("Enter", "send note"), ui.ChordSeg("Esc", "cancel")}
 	}
-	return []ui.HintSegment{ui.ActionSeg("input.newline"), ui.ActionSeg("file.attach"), ui.ActionSeg("input.history")}
+	return []ui.HintSegment{ui.ActionSeg("input.newline"), ui.ActionSeg("file.attach"), ui.ActionSeg("input.history"), ui.ActionSeg("chat.find")}
 }
 
 func (m *App) hintSegmentText(segment ui.HintSegment) string {

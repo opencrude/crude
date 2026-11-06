@@ -63,6 +63,13 @@ type Screen struct {
 	activityStrip     chatprojection.ActivityStrip
 	stripLineWidth    int
 	agentID           string
+	find              chatFind
+	findBar           *findBar
+	findOpen          bool
+	findDirty         bool
+	// findSeen is when rows were last counted, so a chat that stopped being
+	// shown never keeps the shell awake.
+	findSeen time.Time
 }
 
 func (s *Screen) SetAgentID(id string) { s.agentID = id }
@@ -120,6 +127,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	// separator, but never expand across it and steal nested-pane interaction.
 	s.scrollbar.SetPointerTargetSize(2)
 	s.scrollbar.OnScroll(func(_, _ int) { s.syncScrollAfterUserScroll() })
+	s.findBar = newFindBar(s, tokens)
 	return s
 }
 
@@ -140,6 +148,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	s.list.SetTokens(s.tokens)
 	s.jumpLatest.SetTokens(s.tokens)
 	s.jumpLatest.SetSurfaceBackground(s.tokens.Color(ui.ColorBg))
+	s.findBar.field.SetTokens(s.tokens)
 	if s.scrollbar != nil {
 		s.scrollbar.SetTokens(s.tokens)
 	}
@@ -151,6 +160,7 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.list.SetTokens(tokens)
 	s.jumpLatest.SetTokens(tokens)
 	s.jumpLatest.SetSurfaceBackground(tokens.Color(ui.ColorBg))
+	s.findBar.field.SetTokens(tokens)
 	if s.scrollbar != nil {
 		s.scrollbar.SetTokens(tokens)
 	}
@@ -244,6 +254,9 @@ func (s *Screen) Children() []ui.Component {
 	if s.latestVisible() {
 		children = append(children, s.jumpLatest)
 	}
+	if s.findVisible() {
+		children = append(children, s.findBar)
+	}
 	return children
 }
 
@@ -268,9 +281,7 @@ func (s *Screen) mainScrollbarVisible() bool {
 
 func (s *Screen) listLayoutRect(r ui.Rect) ui.Rect {
 	list := r
-	if s.activitySet {
-		list.H -= ActivityRows(list.H)
-	}
+	list.H -= s.activityRows(list.H) + s.FindRows(list.H)
 	if !s.layout.mainSBVisible || s.scrollbar == nil {
 		return list
 	}
@@ -286,9 +297,7 @@ func (s *Screen) listLayoutRect(r ui.Rect) ui.Rect {
 }
 
 func (s *Screen) scrollbarLayoutRect(r ui.Rect) ui.Rect {
-	if s.activitySet {
-		r.H -= ActivityRows(r.H)
-	}
+	r.H -= s.activityRows(r.H) + s.FindRows(r.H)
 	gw := ui.ScrollbarWidth
 	sbX := r.W - s.layout.padLR - gw
 	if sbX < 0 {
@@ -339,6 +348,11 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	}
 	if s.activitySet {
 		s.activityStrip.Update(s.activity, max(0, r.W-2*s.layout.padLR), s.th, s.tokens)
+	}
+	if s.findVisible() {
+		s.findBar.Layout(ui.LayoutContext{}, s.findRect(local))
+	} else {
+		s.findBar.Layout(ui.LayoutContext{}, ui.Rect{})
 	}
 }
 

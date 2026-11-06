@@ -763,6 +763,49 @@ implementation is copied or depended on.
   its history from the recovery archive, which holds them, and they painted as
   human messages.
 
+## Find in chat
+
+Ctrl+F opens a one-row find bar under the transcript of the focused chat
+(`shellchat.Screen`; a tab and a window of one agent share it). The Screen owns
+the search; nothing is added to the renderer, the conversation or the session.
+
+- **Searched text is painted text.** `chatFind` reads each exported
+  `MessageRow` (`Native` spans, the text selection and copy read) and joins its
+  lines with one space, so a phrase that wraps still matches; a blank line is a
+  paragraph break and never joins. Case is folded with a rule that keeps byte
+  length, so a highlight maps back to the source line exactly. Collapsed
+  activity groups are searched by what they show and nested panes by the lines
+  they currently show; opening a group makes its text searchable. Rows the
+  renderer has not drawn yet (`MessageRow.Version == 0`) are counted as loading,
+  never guessed from the conversation. While an open search waits for such
+  rows, the chat asks the renderer to finish them (`Renderer.SettleHistory`):
+  a width-only reflow normally leaves undrawn history blank until the user
+  scrolls to it, so without this a resize would hide history from find for
+  good. The rows then draw nearest-first inside the ordinary per-frame budget
+  (`DefaultMaterializeBudget`); nothing renders in one frame and nothing
+  renders when find is closed.
+- **Cost follows change, not history.** `MessageRow.Version` is the
+  `Renderer.renderSeq` stamp of the render that produced the lines; it never
+  repeats within one renderer. A pass compares stamps and reads only rows whose
+  stamp moved, so a streaming reply recounts one row. Counting reuses buffers
+  and allocates nothing per row. A pass runs at most `findBudget` (3 ms) per
+  frame and resumes on the next one (`Screen.FindPending` keeps frames coming,
+  but only while the chat is still observed). With find closed, `Screen`
+  skips all of it and frees the counts.
+  Measured on 20 000 messages (80 000 lines, 6.7 MB): a full count is about
+  16 ms (415 MB/s); `textsearch.Matcher` over the same text runs at 23 to
+  31 MB/s because its case-insensitive regular expression has no literal prefix.
+  A streaming frame costs about 80 µs. Gated by `BenchmarkChatFind*`.
+- **One owner for each piece of state.** The renderer owns rows and heights;
+  `chatFind` owns counts and the selected match (kept by row ID, so inserted
+  rows do not move it); the Screen owns scroll and paint. Highlights restyle
+  cells the line painter just wrote, so a text selection stays visible on top of
+  a match. The bar's row comes out of the transcript through
+  `Screen.TranscriptRows`, the same way the activity strip does.
+- **Where a match lands.** The first selection is the match nearest the middle
+  of the view (or nearest the previous selection while the query is refined).
+  Reveal never moves a transcript whose match is already visible.
+
 ## Replica source identity and renderer generations
 
 Accepted stream tokens mutate the canonical core Conversation immediately; there

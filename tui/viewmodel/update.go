@@ -764,6 +764,10 @@ func (m *App) wantsFastTick() bool {
 	if m.subPaneProjections.AnyMaterializing() {
 		return true
 	}
+	// Find counts a very long transcript a few milliseconds per frame.
+	if m.chatFindPending() {
+		return true
+	}
 	// Aeron drafting a commit message animates its progress rule.
 	if m.gitPanel != nil && m.gitPanel.Writing() && m.gitPanelOpen() {
 		return true

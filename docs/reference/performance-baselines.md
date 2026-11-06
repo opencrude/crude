@@ -7,6 +7,25 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Chat find (2026-11-06)
+
+Find in chat counts matches in the rows the chat paints (see
+[chat activity](chat-activity.md#find-in-chat)). Linux amd64, Go 1.25,
+GOMAXPROCS=2, `-count=3`, 20 000 messages of 4 lines (6.7 MB of text):
+
+| Benchmark | Result | Ceiling |
+|---|---|---|
+| `BenchmarkChatFindCount_20000Rows` | 15.8–16.1 ms, 415 MB/s, 3.3 KB, 1 alloc | 4,500 B / 3 allocs |
+| `BenchmarkChatFindStreamFrame_20000Rows` | 78–90 µs, 304 B, 4 allocs | 450 B / 6 allocs |
+
+The same text through `textsearch.Compile` (a case-insensitive regular
+expression, the editor's matcher) ran at 23–31 MB/s: 330–450 ms per query
+change. A purpose-built folded literal scan is the reason chat does not reuse
+it; the allocations above come from the benchmark's own query and rows. Find is
+time-sliced to 3 ms per frame, so even a count that exceeds one frame never
+holds a key press. With find closed the paint path adds one boolean check;
+`BenchmarkChatStreamPaint_*` ceilings are unchanged.
+
 ## Narrow chat margin check (2026-11-04)
 
 The Aeron sidebar page (removed the same day; Aeron now opens as a normal agent
