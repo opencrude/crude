@@ -115,8 +115,10 @@ already installed.
   JetBrainsMono Nerd Font first, hides the tab bar, reports keys precisely, and
   disables the automatic updater and the bell. The terminal does not act on
   Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns those keys.
-  The launcher passes no arguments, so the window has one job. The
-  configuration is rewritten on every run, so an update keeps it current.
+  The launcher passes no arguments, so the window has one job. When Crude exits
+  because of an error, the window stays open with the message, so a failure is
+  never a window that vanishes. The configuration is rewritten on every run, so
+  an update keeps it current.
 - It adds `crude-window` next to the program, an application-menu entry with
   `StartupWMClass=crude` on Linux and `Crude.lnk` in the Start menu on Windows,
   and the Crude icon from the release archive.

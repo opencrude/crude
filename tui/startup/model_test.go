@@ -123,6 +123,21 @@ func click(t *testing.T, m *Model, id ui.ComponentID) {
 	send(t, m, tea.MouseReleaseMsg{X: r.X, Y: r.Y, Button: tea.MouseLeft})
 }
 
+// The welcome screen is the first window a new user sees in the desktop
+// window. A terminal otherwise names it after the program, so the screen must
+// name itself and carry the same name to the taskbar.
+func TestWelcomeWindowNamesItself(t *testing.T) {
+	m := fixture(t, &fakeStartup{}, true)
+	send(t, m, tea.WindowSizeMsg{Width: 120, Height: 36})
+	view := m.View()
+	if view.WindowTitle != "Crude" {
+		t.Fatalf("window title = %q, want %q", view.WindowTitle, "Crude")
+	}
+	if view.IconName != view.WindowTitle {
+		t.Fatalf("icon name = %q, want %q", view.IconName, view.WindowTitle)
+	}
+}
+
 func TestNativePaintThemesAndSizes(t *testing.T) {
 	for _, preset := range []string{"dark", "light"} {
 		for _, size := range [][2]int{{160, 40}, {80, 24}} {
