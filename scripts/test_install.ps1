@@ -291,6 +291,34 @@ try {
         }
     }
 
+    Test-Case 'the window writes one configuration for the installed program' {
+        With-Fixture (New-Fixture) {
+            $savedLocalAppData = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = Join-Path $fixtureState.Fixture.Directory 'window profile'
+            try {
+                $root = Join-Path $env:LOCALAPPDATA 'Crude/window'
+                $prefix = Join-Path $root 'wezterm-20240203-110809-5046fc22'
+                $inner = Join-Path $prefix 'WezTerm-windows-20240203-110809-5046fc22'
+                [void] [IO.Directory]::CreateDirectory($inner)
+                [IO.File]::WriteAllText((Join-Path $inner 'wezterm-gui.exe'), 'window executable')
+                $fonts = Join-Path $root 'fonts'
+                [void] [IO.Directory]::CreateDirectory($fonts)
+                [IO.File]::WriteAllText((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
+                $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
+                [void] [IO.Directory]::CreateDirectory($payload)
+                [IO.File]::WriteAllText((Join-Path $payload 'crude-icon.ico'), 'icon')
+                # No download happens: the pinned window is already present.
+                Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Gui
+                $lua = [IO.File]::ReadAllText((Join-Path $root 'wezterm.lua'))
+                $program = "default_prog = { " + [char] 39 + (Join-Path $install 'crude.exe') + [char] 39 + " }"
+                Assert-True ($lua.Contains($program)) "The window must start the installed program, got: $lua"
+                Assert-True ($lua.Contains('JetBrainsMono Nerd Font')) 'The window must prefer the installed Nerd Font'
+                Assert-True ($lua.Contains('check_for_updates = false')) 'The window must not update itself'
+                Assert-True ([IO.File]::Exists((Join-Path $env:LOCALAPPDATA 'Crude/crude.ico'))) 'The window must carry the Crude icon'
+            } finally { $env:LOCALAPPDATA = $savedLocalAppData }
+        }
+    }
+
     Test-Case 'redirected real script without consent fails before HTTP on Windows' {
         if ($nativeWindows) {
             $shell = (Get-Process -Id $PID).Path
