@@ -169,9 +169,10 @@ Releases are deliberately two different products:
 full-chain evidence at all. It still validates the immutable tag/commit,
 performs native Linux/Windows packaging smoke checks, verifies the release
 inventory and checksums, and creates a **draft** with an explicit `Instant
-release` warning in the body and an `(instant)` title suffix. Never publish an
-instant draft as a normal release without inspecting it and recording what was
-skipped.
+release` warning in the body. The tag and release title stay the plain version
+in both modes, so installers, links and the latest-release lookup treat an
+instant build like any other release. Never publish an instant draft as a normal
+release without inspecting it and recording what was skipped.
 
 Dispatch either mode with the tag selected as the ref so the workflow code and
 the packaged source are the same immutable revision:

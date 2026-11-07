@@ -150,8 +150,9 @@ jobs:
           set -euo pipefail
           flags=()
           if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          # The title stays the plain version in both modes. The body records
+          # the skipped verification instead of marking the release name.
           title="Crude $RELEASE_TAG"
-          if [[ "$RELEASE_MODE" == "instant" ]]; then title="$title (instant)"; fi
           # Existing releases deliberately fail; no --clobber or overwrite.
           gh release create "$RELEASE_TAG" \
             "dist/crude_${RELEASE_TAG}_linux_amd64.tar.gz" \
