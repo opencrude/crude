@@ -151,9 +151,9 @@ editor/chat facts. Workspace status remains workspace-owned.
 |-----------|-------|
 | Split focused group right / down | Ctrl+Alt+L / Ctrl+Alt+D (also `Ctrl+\` for right). A file is shown again in the new pane at the same caret and scroll; any other tab gets an empty pane |
 | Arrow aliases for right / down split | Ctrl+Alt+Right / Ctrl+Alt+Down; the OS may intercept these, so letter chords are the displayed defaults |
-| Split with an agent / with a file | **Split Right with Agent** (the last agent, or a new session in the new pane), **Split Right with File** (the last file, or the file picker); palette also offers Down |
-| Open a file in the pane on a side | **Open in Right Pane** (and Left / Above / Below) in the tab menu and palette: the pane's view of the file is selected or added; a new split is made when there is no pane on that side |
-| Move a tab into the pane on a side | **Move to Right Pane** (and Left / Above / Below); when no pane is there, **Move to New Split …**. A file already shown there keeps that view |
+| Split with an agent / with a file | **Split right with agent** (the last agent, or a new session in the new pane), **Split right with file** (the last file, or the file picker); palette also offers Down |
+| Open a file in the pane on a side | **Open in pane to the right** (and left / above / below) in the tab menu and palette: the pane's view of the file is selected or added; a new split is made when there is no pane on that side |
+| Move a tab into the pane on a side | **Move to pane to the right** (and left / above / below); when no pane is there, **Move to new split …**. A file already shown there keeps that view |
 | Go Back / Go Forward | Alt+Left / Alt+Right, the mouse back/forward buttons, and the ← → arrows after the header wordmark (muted when there is no place, so their place stays visible). A focused diff keeps Alt+Left/Right for its previous/next file |
 | Previous / next group | Alt+[ / Alt+] |
 | Previous / next tab in focused group | Ctrl+[ / Ctrl+] |
@@ -162,9 +162,9 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses, Enter/Space activates |
 | Close an empty group | Ctrl+W, or palette Close Empty Pane; never closes a populated group through this operation |
 | Split an empty pane or move a tab to a new left/right/upper/lower split | Command palette and tab context menu; moving is one preview-validated placement including sole-tab source collapse |
-| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu / palette **Arrange Tab…** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
-| Split a containing subtree, initially empty | **Split Containing Layout…** → this pane / containing layout / entire layout → edge |
-| Move active tab to next/previous group; Merge All | Command palette and tab context menu |
+| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu / palette **Arrange tab** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
+| Split a containing subtree, initially empty | **Split layout** → this pane / containing layout / entire layout → edge |
+| Move active tab to next/previous pane; Merge all panes | Command palette and tab context menu |
 | Reorder selected tab inside its group | Palette Move Tab Left/Right in Group |
 | Open File in Pane and all pane operations above | Ctrl+Alt+P Command Palette, registry-backed labels |
 
@@ -277,7 +277,7 @@ composer path.
   minimizes, a workspace surface hides, and a file with unsaved edits still asks
   first; the window disappears with its last tab. Esc is never a window close
   for pane windows; it belongs to the editor or composer.
-- Entry points: tab context menu **Open in Window** (in a window: **Move to Main
+- Entry points: tab context menu **Open in window** (in a window: **Move to Main
   Area**), file tree **Open in window**, Agents panel **Open in window**, the
   **⇱ window** control on a sub-agent's transcript pane, the dock header **⇱**,
   and palette **Open Tab in Window** / **Move Window to Main Area**. A
@@ -353,8 +353,10 @@ reads or changes them, so concurrent users do not disturb each other.
   minimized agents and opened sub-agents (by durable agent ID), the selected
   agent, folded Agents-list rows, the tree's hidden-files toggle (only when it
   differs from the setting), sidebar visibility, the active rail destination,
-  and the layout: rail order, per-destination width/filter/selection/offset and
-  panel heights. Workspace inventory and canonical state stay in the workspace;
+  and the layout: rail order, per-destination width/filter/selection/offset,
+  panel heights, and the docked pane work: the split tree, each pane's open
+  documents in tab order, the selected document in each pane and the active
+  pane. Workspace inventory and canonical state stay in the workspace;
   nothing here is written to workspace or session storage.
 - **Restore before inventory.** Startup reads the record before the first
   frame; a workspace switch reads the destination's record while the
@@ -364,9 +366,17 @@ reads or changes them, so concurrent users do not disturb each other.
   to the remembered agent, else the first one this client did not minimize,
   else the workspace home. Defaults (completed review children closed) never
   override a remembered choice.
+- **Editor work survives a switch.** A workspace switch clears the window and
+  editor state. `restoreViewPanes` rebuilds the saved split tree and queues one
+  open per pane before the first frame. A remembered path outside the current
+  workspace is dropped; a missing file is skipped without a notice because the
+  user did not ask to open it now. Existing work always wins, and a deliberate
+  open during restoration cancels the rest. A record that names a pane twice,
+  nests too deep or exceeds the bounds is ignored as a whole.
 - **One save trigger.** `noteViewMemoryChange` compares cheap marks once per
   Update (agent-view revision, selection, folds, tree toggle, sidebar, rail
-  destination) plus the layout version, then saves 400 ms later off Update.
+  destination, pane-work hash) plus the layout version, then saves 400 ms later
+  off Update.
   `viewMemoryStore` serializes writes and drops a version older than the last
   stored one. The workspace switch stores the old workspace's record before
   reading the next one; `StopAsyncIO` flushes the latest record before the
@@ -376,8 +386,9 @@ reads or changes them, so concurrent users do not disturb each other.
   terminal does not reopen everything; the copy is never written back.
 - **Settings stay explicit.** Changing **Show hidden files** in Settings
   replaces this client's quick toggle; other settings are not view memory.
-- Guarded by `clientstate/view_memory_test.go` and
-  `tui/viewmodel/client_view_memory_test.go`.
+- Guarded by `clientstate/view_memory_test.go`,
+  `tui/viewmodel/client_view_memory_test.go` and
+  `tui/viewmodel/client_view_memory_panes_test.go`.
 
 ## New agents surface a tab immediately
 

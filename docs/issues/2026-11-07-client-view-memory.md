@@ -33,5 +33,8 @@ workspace at the same time.
   never open by themselves; the remembered agent gets the focus again.
 - One save trigger per Update; serialized, version-ordered writes; flushed on
   workspace switch and shutdown.
+- The same record keeps each docked pane's split tree, open documents, selected
+  document and active pane, so a switch or a new client reopens the editor
+  work the user left.
 - The workspace-database layout store and its two core methods
   (`workspace.tool_layout`, `workspace.tool_layout_save`) are removed.

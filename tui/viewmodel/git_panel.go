@@ -853,7 +853,7 @@ func (m *App) handleGitPanelAction(action ui.Action) (tea.Cmd, bool) {
 func (m *App) startGitCheckout(branch workspace.GitBranchSummary) {
 	snapshot := m.gitPanel.Snapshot()
 	state := &ui.ContextMenuState{Title: "Switch to " + branch.Name, Sections: []ui.ContextMenuSection{{Items: []ui.ContextMenuItem{
-		{Label: "Switch branch", Detail: "uncommitted changes move with you", Action: func() {
+		{Label: "Switch branch", Action: func() {
 			m.startSourceControlMutation(m.sourceControlMutation("Switched to "+branch.Name, nil, func(ctx context.Context, service shellport.GitService) error {
 				current, err := service.Snapshot(ctx)
 				if err != nil {
@@ -881,7 +881,7 @@ func (m *App) confirmDiscardGitHunk(intent gitdiff.FileIntent) {
 	name := filepath.Base(intent.Change.Path)
 	state := &ui.ContextMenuState{Title: fmt.Sprintf("Discard hunk in %s (lines %d–%d)?", name, hunk.NewStart+1, hunk.NewEnd), Sections: []ui.ContextMenuSection{{Items: []ui.ContextMenuItem{
 		{Label: "Cancel"},
-		{Label: "Discard hunk", Detail: "recoverable in Local History", Action: func() {
+		{Label: "Discard hunk", Action: func() {
 			m.startSourceControlMutation(m.sourceControlMutation("Discarded a hunk of "+name+" · recover through Local History", nil, func(ctx context.Context, _ shellport.GitService) error {
 				_, err := owner.DiscardGitHunk(ctx, comparison, hunk)
 				return err

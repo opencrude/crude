@@ -47,6 +47,7 @@ type List struct {
 	tokens        *TokenSet
 	activate      string // action ID on Enter/click
 	hoverIdx      int
+	followPointer bool
 	rowPainter    ListRowPainter
 	defaultBgRole SemanticColor
 	defaultBgSet  bool
@@ -72,6 +73,11 @@ func (l *List) SetWrap(wrap bool) {
 		l.sel.SetWrap(wrap)
 	}
 }
+
+// SetFollowPointer makes the selection follow the pointer, as in a menu: the
+// row under the mouse is the row Enter opens. Popup choice lists use it so
+// they behave like every context menu.
+func (l *List) SetFollowPointer(follow bool) { l.followPointer = follow }
 
 // SetTokens updates theme tokens.
 func (l *List) SetTokens(ts *TokenSet) { l.tokens, l.measured = ts, false }
@@ -455,6 +461,11 @@ func (l *List) Handle(ctx EventContext, evt Event) EventResult {
 				l.hoverIdx = -1
 			}
 			return EventResult{Handled: true}
+		}
+		if l.followPointer && l.items[idx].Selectable() && l.sel.Index() != idx {
+			l.sel.SetIndex(idx)
+			l.hoverIdx = idx
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
 		if l.hoverIdx != idx {
 			l.hoverIdx = idx

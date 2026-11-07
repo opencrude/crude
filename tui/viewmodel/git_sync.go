@@ -190,10 +190,10 @@ func (m *App) handleGitSyncAction(action ui.Action) (tea.Cmd, bool) {
 func (m *App) openGitBranchMenu(branch workspace.GitBranchSummary) {
 	snapshot := m.gitPanel.Snapshot()
 	items := []ui.ContextMenuItem{
-		{Label: "Switch to " + branch.Name, Detail: "uncommitted changes move with you", Action: func() { m.startGitCheckout(branch) }},
+		{Label: "Switch to " + branch.Name, Action: func() { m.startGitCheckout(branch) }},
 	}
 	if snapshot.Operation == "" && !strings.HasPrefix(snapshot.Branch, "detached@") {
-		items = append(items, ui.ContextMenuItem{Label: "Merge into " + snapshot.Branch, Detail: "conflicts open the resolver", Action: func() {
+		items = append(items, ui.ContextMenuItem{Label: "Merge into " + snapshot.Branch, Action: func() {
 			m.startSourceControlMutation(m.runGitRemote("Merge", "Merged "+branch.Name+" into "+snapshot.Branch, func(ctx context.Context, service shellport.GitService) (workspace.GitSyncResult, error) {
 				current, err := service.Snapshot(ctx)
 				if err != nil {

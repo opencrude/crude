@@ -337,6 +337,23 @@ func TestConnectedReferencesEscClosesAndEnterOnSecondRowGoesToCode(t *testing.T)
 	}
 }
 
+// The References list behaves like every menu: the highlighted row follows the
+// pointer, so Enter after a mouse move opens the row under the mouse.
+func TestConnectedReferencesHighlightFollowsPointer(t *testing.T) {
+	f := newNavigationConnectedFixture(t, navigationConnectedMultiple, "\t😀name\r\n")
+	one := f.shells[0]
+	f.open(t, tea.KeyPressMsg{Code: ';', Mod: tea.ModAlt})
+	f.listed(t)
+	fw := one.app.overlayHost.Window(navigationOverlay)
+	x, y := fw.Position()
+	// Row y+1 is the first place, y+2 the second: move to the second.
+	_, _ = one.app.Update(tea.MouseMotionMsg{X: x + 4, Y: y + 2})
+	f.choose(t)
+	if dest := one.app.EditorState.Editor; dest.FilePath() != f.engine.target || dest.CursorCol() != 6 {
+		t.Fatalf("Enter after hovering the second row opened %s col %d", dest.FilePath(), dest.CursorCol())
+	}
+}
+
 func TestConnectedNavigationCompactPickerPreservesCaretAtBothSizes(t *testing.T) {
 	f := newNavigationConnectedFixture(t, navigationConnectedMultiple, "\t😀name\r\n")
 	one := f.shells[0]

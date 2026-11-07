@@ -596,6 +596,12 @@ not change table widths, wrapping, selection text, or the painted transcript.
   only the raw-HTML parsers removed: chat text is not HTML, so `<context>` or
   `Vec<T>` stays literal instead of being sanitized away. Never add an escaping
   pre-pass or restore `glamour.NewTermRenderer` for chat.
+- **Each fenced block copies its source.** A complete fence gets one
+  `Copy code` chip row under it. The chip carries the exact block text
+  (`ChatCopyCodePayload`), never the painted rows: Glamour pads fenced rows and
+  uses no-break spaces inside inline code, so a selection copy would keep that
+  layout text. `ExtractLastCodeBlock` still serves the chat-wide **Copy last
+  code block** command; it is not the per-block path.
 - **Child assignments display typed fields, never their envelope.** Providers
   receive `prompt.BuildChild`'s escaped `<delegated_assignment>`; live events,
   persisted snapshots and recovery checkpoints carry `childAssignmentDisplay`

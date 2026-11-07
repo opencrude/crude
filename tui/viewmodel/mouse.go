@@ -640,6 +640,9 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		return m, m.openContextMenuState(mouse, m.textClipboardMenu("", hit))
 	}
 
+	if st := m.problemsMenuAt(mouse); st != nil {
+		return m, m.openContextMenuState(mouse, st)
+	}
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 	var st *ui.ContextMenuState
 	if g := m.paneAt(mouse.X, mouse.Y); g != nil && m.Win.GroupActiveTab(g.id) == nil && !m.launcherHostVisible() {

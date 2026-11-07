@@ -268,7 +268,7 @@ func (m *App) remoteMenuAction(a remoteSidebarAction) func() {
 func (m *App) remoteNavigationActions() ui.ContextMenuSection {
 	unavailable := m.remotes == nil || m.remotes.manager == nil || m.remotes.stopped
 	return ui.ContextMenuSection{SectionLabel: "Connections", Items: []ui.ContextMenuItem{
-		{Label: "Add connection…", Disabled: unavailable, Action: m.remoteMenuAction(remoteSidebarAction{action: "add"})},
+		{Label: "Add connection", Disabled: unavailable, Action: m.remoteMenuAction(remoteSidebarAction{action: "add"})},
 		{Label: "Refresh connections", Disabled: unavailable || m.remotes.loading, Action: m.remoteMenuAction(remoteSidebarAction{action: "refresh"})},
 	}}
 }

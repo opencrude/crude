@@ -71,7 +71,7 @@ func (m *App) explorerGitSection(path string, isDir bool) (ui.ContextMenuSection
 		reveal = gitdiff.ChangeKey(changes[0])
 	}
 	section := ui.ContextMenuSection{SectionLabel: "Git", Items: []ui.ContextMenuItem{
-		{Label: "View Changes", Detail: viewDetail, Disabled: len(changes) == 0, Action: func() {
+		{Label: "Show changes", Detail: viewDetail, Disabled: len(changes) == 0, Action: func() {
 			m.startSourceControlMutation(m.openGitReview(scope, reveal))
 		}},
 	}}
@@ -88,7 +88,7 @@ func (m *App) explorerGitSection(path string, isDir bool) (ui.ContextMenuSection
 		}},
 	)
 	if !isDir && path != "" {
-		section.Items = append(section.Items, ui.ContextMenuItem{Label: "Discard Changes…", Disabled: len(discardable) == 0, Action: func() {
+		section.Items = append(section.Items, ui.ContextMenuItem{Label: "Discard changes", Disabled: len(discardable) == 0, Action: func() {
 			if len(discardable) > 0 {
 				m.startDiscardGitChange(discardable[0])
 			}

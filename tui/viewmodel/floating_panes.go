@@ -243,8 +243,8 @@ func (m *App) paneWindowNewTabMenu(group window.GroupID) *ui.ContextMenuState {
 	return &ui.ContextMenuState{Title: "New tab", Sections: []ui.ContextMenuSection{{
 		SectionLabel: "New tab in this window",
 		Items: []ui.ContextMenuItem{
-			{Label: "New Session", Detail: "agent", Action: action("pane.new-session")},
-			{Label: "Open File…", Detail: "editor", Action: action("pane.open-file")},
+			{Label: "New session", Detail: m.menuShortcut("pane.new-session"), Action: action("pane.new-session")},
+			{Label: "Open file", Action: action("pane.open-file")},
 		},
 	}}}
 }

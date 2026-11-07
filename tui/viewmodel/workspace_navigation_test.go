@@ -34,7 +34,7 @@ func TestWorkspaceRailAvailableDuringNestedWorkflow(t *testing.T) {
 		t.Fatal("rail did not reach workspace navigation during nested flow")
 	}
 	paint := bufferPlain(app.mainSurf.Buffer())
-	for _, label := range []string{"New Workspace…", "Search workspaces", "alpha", "beta"} {
+	for _, label := range []string{"New workspace", "Search workspaces", "alpha", "beta"} {
 		if !strings.Contains(paint, label) {
 			t.Fatalf("missing %q in nested workflow:\n%s", label, paint)
 		}
@@ -143,7 +143,7 @@ func TestWorkspaceSidebarHasNamePathPairsWithoutGapsAndAuthoritativeCurrentFill(
 	app.paintShellFrame()
 	list, _ := app.rootHost.ScreenRect(activitylist.ListID)
 	pane, _ := app.rootHost.ScreenRect(activitylist.ScreenID)
-	for row, label := range []string{"New Workspace…", "crude", "crude", "ox", "ox"} {
+	for row, label := range []string{"New workspace", "crude", "crude", "ox", "ox"} {
 		item, ok := app.activityList.ItemAtLocalY(list.Y - pane.Y + row)
 		if !ok || item.Label != label {
 			t.Fatalf("row %d has a spacer/duplicate instead of %q: %+v", row, label, item)
@@ -201,7 +201,7 @@ func TestWorkspaceSidebarContextMenuSharesResourceDeleteAndFencesLifetime(t *tes
 	var remove ui.ContextMenuItem
 	for _, section := range menu.Sections {
 		for _, item := range section.Items {
-			if item.Label == "Delete workspace…" {
+			if item.Label == "Delete workspace" {
 				remove = item
 			}
 		}
@@ -215,7 +215,7 @@ func TestWorkspaceSidebarContextMenuSharesResourceDeleteAndFencesLifetime(t *tes
 	current := app.buildWorkspaceSidebarContextMenu(tea.Mouse{X: r.X + 2, Y: r.Y + 1})
 	for _, section := range current.Sections {
 		for _, item := range section.Items {
-			if (item.Label == "Delete workspace…" || item.Label == "Open") && !item.Disabled {
+			if (item.Label == "Delete workspace" || item.Label == "Open") && !item.Disabled {
 				t.Fatal("current workspace offered an unsafe resource action")
 			}
 		}

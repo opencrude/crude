@@ -82,7 +82,7 @@ func TestExplorerContextMenuViewsChangesForAPath(t *testing.T) {
 	labels := []string{}
 	for _, item := range section.Items {
 		labels = append(labels, item.Label+"|"+item.Detail)
-		if item.Label == "View Changes" {
+		if item.Label == "Show changes" {
 			view = item
 		}
 	}

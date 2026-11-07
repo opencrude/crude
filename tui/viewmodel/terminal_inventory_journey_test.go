@@ -205,7 +205,7 @@ func TestConnectedDelayedTerminalCreateCannotReopenLocallyClosedInventory(t *tes
 		t.Fatal("stale inventory placement reopened a locally closed terminal")
 	}
 	shell.app.openTerminalPicker()
-	if menu := shell.app.LastContextMenu; menu == nil || len(menu.Sections) != 1 || len(menu.Sections[0].Items) != 1 || menu.Sections[0].Items[0].Label != "New Terminal" {
+	if menu := shell.app.LastContextMenu; menu == nil || len(menu.Sections) != 1 || len(menu.Sections[0].Items) != 1 || menu.Sections[0].Items[0].Label != "New terminal" {
 		t.Fatal("closed terminal remained selectable before removal inventory")
 	}
 	shell.app.closeContextMenu()

@@ -254,9 +254,11 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 			}
 		}
 	} else {
-		rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
+		source, chips := decorateCodeBlocks(msg.Content)
+		rendered, isMarkdown := renderMarkdown(source, ctx.mdRenderer)
 		if isMarkdown {
 			bodyNative = BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens)
+			bodyNative = injectCodeChips(bodyNative, msg.InternalID, chips)
 			bodyLines = make([]string, len(bodyNative))
 			for index, pl := range bodyNative {
 				bodyLines[index] = pl.PlainText()

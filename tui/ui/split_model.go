@@ -108,6 +108,14 @@ func (m *SplitModel) Dir() Direction {
 
 // SetFraction sets the divider as a fraction of the main axis (clamped to
 // 0..1) and clears any absolute first-pane size.
+// Fraction reports the divider position as a fraction of the main axis.
+func (m *SplitModel) Fraction() float64 {
+	if m == nil {
+		return 0.5
+	}
+	return m.fraction
+}
+
 func (m *SplitModel) SetFraction(f float64) {
 	if m == nil {
 		return

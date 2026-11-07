@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/screens/termdock"
@@ -82,9 +81,6 @@ func TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource(t *testing.T) {
 			if !alreadyOpen {
 				one.app.toggleWorkspacePanel(termdock.PanelProblems)
 				one.app.paintShellFrame()
-				one.app.rootHost.Focus("status-overview/list")
-				_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyRight})
-				runAppCommand(t, one.app, cmd)
 				// Enabling in a trusted project starts the whole-project
 				// check that the assembly plan names, without opening any
 				// source. Opening a file then shares that one process.

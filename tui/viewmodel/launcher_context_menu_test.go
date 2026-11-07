@@ -42,7 +42,7 @@ func TestLauncherContextMenuOpensOnWorkspaceRow(t *testing.T) {
 			labels = append(labels, it.Label)
 		}
 	}
-	want := []string{"Open", "Copy path", "Delete workspace…"}
+	want := []string{"Open", "Copy path", "Delete workspace"}
 	if len(labels) != len(want) {
 		t.Fatalf("menu labels=%v want %v", labels, want)
 	}

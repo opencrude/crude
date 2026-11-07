@@ -14,8 +14,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/provider"
+	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/statusoverview"
-	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/control"
@@ -128,10 +128,8 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	if footer := one.app.footerStatusSegments()[0].Text; footer != "Problems: off" {
 		t.Fatalf("footer status = %q", footer)
 	}
-	one.app.toggleWorkspacePanel(termdock.PanelProblems)
-	one.app.paintShellFrame()
-	one.app.rootHost.Focus("status-overview/list")
-	_, cmd = one.app.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	// Open Problems through the footer control, as the user does.
+	_, cmd = one.app.Update(shellfooter.ActionMsg{Action: "problems"})
 	runAppCommand(t, one.app, cmd)
 	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Language servers do not run") || !strings.Contains(paint, "Trust folder") {
 		t.Fatalf("rendered static state hides current reason or human repair:\n%s", paint)

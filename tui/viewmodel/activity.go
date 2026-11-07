@@ -512,6 +512,12 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 			return nil
 		}
 		return m.retryAgentRecovery(payload.AgentID)
+	case chatprojection.ChatCopyCodeActionID:
+		payload, ok := action.Payload.(chatprojection.ChatCopyCodePayload)
+		if ok && payload.Code != "" {
+			m.copyToClipboard(payload.Code)
+		}
+		return nil
 	case chatprojection.ChatToggleActionID:
 		payload, ok := action.Payload.(chatprojection.ChatTogglePayload)
 		if !ok {

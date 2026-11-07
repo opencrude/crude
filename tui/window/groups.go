@@ -207,6 +207,18 @@ func (w *Window) groupNode(group GroupID) *PaneNode {
 	return find(w.paneRoot)
 }
 
+// SelectGroupTab selects a tab inside group without moving keyboard focus.
+// Restoring a saved pane selects its remembered file while another pane keeps
+// focus.
+func (w *Window) SelectGroupTab(group GroupID, id TabID) bool {
+	index := w.IndexOf(id)
+	if index < 0 || w.tabs[index].Group != group {
+		return false
+	}
+	w.groupActive[group] = id
+	return true
+}
+
 func (w *Window) GroupActiveTab(group GroupID) *Tab {
 	w.ensureGroups()
 	index := w.IndexOf(w.groupActive[group])

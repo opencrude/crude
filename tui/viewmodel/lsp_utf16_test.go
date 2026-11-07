@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/editor"
+	"crude/tui/screens/problems"
 	"crude/types"
 	"crude/workspace"
 )
@@ -189,16 +190,10 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 			if node == nil || node.DiagErrors != 2 {
 				t.Fatalf("shell %d canonical diagnostics missing from tree: %+v", i, node)
 			}
-			found, foundFile := false, false
-			for _, item := range shell.app.problemPanelItems() {
-				if item.ID == "problem-file:"+path {
-					foundFile = item.Summary == "2 problems" && !strings.Contains(item.Summary, "partial")
-				}
-				if item.ID == "problem:"+facts.ID+":0" {
-					found = item.PrimaryEnabled && strings.Contains(item.Summary, "Error") && !strings.Contains(item.Summary, "partial")
-				}
-			}
-			if !found || !foundFile {
+			model := shell.app.problemsModel()
+			first, found := problemByRef(model, facts.ID, 0)
+			second, foundSecond := problemByRef(model, facts.ID, 1)
+			if !found || !foundSecond || first.Note != "" || second.Note != "" || first.Severity != problems.Error || second.Severity != problems.Error {
 				t.Fatalf("shell %d Problems lost literal core fact identity or qualified navigation", i)
 			}
 			if previous.ID != "" {

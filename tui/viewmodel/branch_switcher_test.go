@@ -217,7 +217,7 @@ func TestHeaderWorkspacePathClickOpensWorkspaceSwitcher(t *testing.T) {
 			got[item.Label] = item
 		}
 	}
-	for _, want := range []string{"current", "other", "New Workspace…", "Refresh recent workspaces"} {
+	for _, want := range []string{"current", "other", "New workspace", "Refresh recent workspaces"} {
 		if _, ok := got[want]; !ok {
 			t.Fatalf("workspace switcher=%v missing %q", got, want)
 		}

@@ -29,6 +29,7 @@ import (
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
+	"crude/tui/screens/problems"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
@@ -206,13 +207,19 @@ type App struct {
 	// surfaces are deleted; the per-session PanelDeck Hosts survive inside
 	// shellRoot's deckMount adapter. Terminals use a workspace termDock slot,
 	// not the session PanelDeck.
-	mainSurf         *surface.Surface // full-screen shell surface (replaces all layer surfaces)
-	shell            *shellRoot
-	rootHost         *ui.Host
-	terminalBlurred  bool
-	mainPanes        *mainPaneLayout
-	paneFilePicker   *paneFilePickerOwner
-	paneFileOpenSeq  uint64
+	mainSurf        *surface.Surface // full-screen shell surface (replaces all layer surfaces)
+	shell           *shellRoot
+	rootHost        *ui.Host
+	terminalBlurred bool
+	mainPanes       *mainPaneLayout
+	paneFilePicker  *paneFilePickerOwner
+	paneFileOpenSeq uint64
+	// paneRestoreCeiling accepts the pane opens queued by one layout
+	// restoration. A later deliberate open raises paneFileOpenSeq above it
+	// and cancels the rest.
+	paneRestoreCeiling uint64
+	// problemsScreen is the Problems pane; syncWorkspacePanels feeds it.
+	problemsScreen   *problems.Screen
 	liveEditors      map[*editor.Editor]*liveEditorState
 	liveOpenRefs     *liveDocumentRefs
 	editorCommands   []tea.Cmd
@@ -1184,10 +1191,6 @@ func (m *App) registerOverlayHandlers() {
 	oh.RegisterContentHandler(ui.OverlayOperationIssue, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
-	oh.RegisterHoverHandler(ui.OverlayOperationIssue, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
 	oh.RegisterContentHandler(ui.OverlaySettingsPrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		if choice := confirmFrameButtonAt(fw, localX, localY); choice >= 0 {
 			return m.activateSettingsPrompt(choice)
@@ -1224,42 +1227,14 @@ func (m *App) registerOverlayHandlers() {
 	oh.RegisterContentHandler(ui.OverlayFilePicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
-	oh.RegisterHoverHandler(ui.OverlayFilePicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
 	oh.RegisterContentHandler(ui.OverlaySessionPicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
-	})
-	oh.RegisterHoverHandler(ui.OverlaySessionPicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
 	oh.RegisterContentHandler(ui.OverlayComposer, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
-	oh.RegisterHoverHandler(ui.OverlayComposer, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
 	oh.RegisterContentHandler(ui.OverlayTextOverlay, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
-	})
-	oh.RegisterHoverHandler(ui.OverlayTextOverlay, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
-	oh.RegisterHoverHandler(ui.OverlayWorkspaceSettings, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
-	oh.RegisterHoverHandler(ui.OverlayFindInFiles, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
-	})
-	oh.RegisterHoverHandler(ui.OverlayReplaceInFiles, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
 
 	oh.RegisterContentHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
@@ -1267,14 +1242,6 @@ func (m *App) registerOverlayHandlers() {
 	})
 	oh.RegisterContentHandler(ui.OverlaySnippetChoices, func(_ *ui.OverlayHost, fw *wm.FloatingWindow, _, _ int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
-	})
-	oh.RegisterHoverHandler(ui.OverlaySnippetChoices, func(_ *ui.OverlayHost, fw *wm.FloatingWindow, x, y int, button tea.MouseButton) {
-		ox, oy := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: ox + x, Y: oy + y, Button: button})
-	})
-	oh.RegisterHoverHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		x, y := fw.Position()
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
 
 	oh.RegisterContentHandler(ui.OverlayOutline, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {

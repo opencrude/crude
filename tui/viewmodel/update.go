@@ -34,6 +34,7 @@ import (
 	memorybrowser "crude/tui/screens/memorybrowser"
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/operationissue"
+	"crude/tui/screens/problems"
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
@@ -328,6 +329,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case statusoverview.NavigateMsg:
 		return m, m.handleStatusOverviewNavigate(msg)
+	case problems.OpenMsg:
+		m.openProblem(msg)
+		return m, nil
+	case problems.ActionMsg:
+		return m, m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Action: msg.Action})
 	case statusoverview.CopySummaryMsg:
 		m.copyToClipboard(statusSummaryText(msg.Item))
 		return m, nil

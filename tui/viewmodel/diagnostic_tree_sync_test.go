@@ -2,23 +2,19 @@ package viewmodel
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"crude/tui/filetree"
-	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/problems"
 	"crude/types"
 )
 
-func problemRowCounts(items []statusoverview.Item) (errors, warnings int) {
-	for _, item := range items {
-		if !strings.HasPrefix(item.ID, "problem:") {
-			continue
-		}
-		switch {
-		case strings.HasSuffix(item.Summary, "Error"):
+func problemRowCounts(model problems.Model) (errors, warnings int) {
+	for _, problem := range model.Problems {
+		switch problem.Severity {
+		case problems.Error:
 			errors++
-		case strings.HasSuffix(item.Summary, "Warning"):
+		case problems.Warning:
 			warnings++
 		}
 	}
@@ -54,7 +50,7 @@ func TestFileTreeMarkersMatchProblemsPanel(t *testing.T) {
 	service.version++
 	app.drainLSPDiagnostics()
 
-	wantErrors, wantWarnings := problemRowCounts(app.problemPanelItems())
+	wantErrors, wantWarnings := problemRowCounts(app.problemsModel())
 	if wantErrors != 2 || wantWarnings != 1 {
 		t.Fatalf("Problems lists %d errors and %d warnings, want 2 and 1", wantErrors, wantWarnings)
 	}
@@ -70,7 +66,7 @@ func TestFileTreeMarkersMatchProblemsPanel(t *testing.T) {
 	if app.Tree.Model.Root.DiagErrors != 0 {
 		t.Fatal("tree kept its markers after they were switched off")
 	}
-	if errors, _ := problemRowCounts(app.problemPanelItems()); errors != 2 {
+	if errors, _ := problemRowCounts(app.problemsModel()); errors != 2 {
 		t.Fatal("switching the tree markers off removed problems from the panel")
 	}
 }
