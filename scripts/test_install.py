@@ -518,7 +518,10 @@ def main():
     parser.add_argument("--version", "--release-version", dest="version", help="version of that artifact set")
     parser.add_argument("-v", "--verbose", action="store_true", help="list each test")
     args = parser.parse_args()
-    RELEASE_DIR, RELEASE_VERSION = args.release_dir, args.version
+    if (args.release_dir is None) != (args.version is None):
+        parser.error("--release-dir and --version must be given together")
+    RELEASE_DIR = Path(args.release_dir) if args.release_dir else None
+    RELEASE_VERSION = args.version
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstallerTests)
     return 0 if unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(suite).wasSuccessful() else 1
 
