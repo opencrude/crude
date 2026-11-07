@@ -362,7 +362,7 @@ try {
                 # No download happens: the pinned window is already present.
                 Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
                 $lua = [IO.File]::ReadAllText((Join-Path $root 'wezterm.lua'))
-                $program = "default_prog = { " + [char] 39 + (Join-Path $install 'crude.exe') + [char] 39 + " }"
+                $program = "default_prog = { " + [char] 39 + (Join-Path $install 'crude.exe').Replace('\', '\\') + [char] 39 + " }"
                 Assert-True ($lua.Contains($program)) "The window must start the installed program, got: $lua"
                 Assert-True ($lua.Contains('JetBrainsMono Nerd Font')) 'The window must prefer the installed Nerd Font'
                 Assert-True ($lua.Contains('check_for_updates = false')) 'The window must not update itself'
@@ -757,7 +757,7 @@ class VersionFixture {
                 $fixtureState.Fixture = New-Fixture -Tag v2.3.4
                 $held = [IO.File]::Open((Join-Path $install 'crude.exe'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
                 try {
-                    Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'close the Crude shells/cores.+retry'
+                    Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'in use or access is denied, close Crude and run this installer again, or add -Stop'
                     Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'Locked binary must be preserved'
                     Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'LICENSE-MIT'))) 'MIT license v1.2.3' 'Notices must roll back when binary is locked'
                 } finally { $held.Dispose() }
