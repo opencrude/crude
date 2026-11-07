@@ -141,7 +141,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("if: ${{ inputs.mode == 'verified' }}", workflow)
         self.assertIn("inputs.mode == 'instant'", workflow)
         self.assertIn("needs.verify.result == 'skipped'", workflow)
-        self.assertIn("(instant)", workflow)
+        # The title stays the plain version; only the body records the mode.
+        self.assertIn('title="Crude $RELEASE_TAG"', workflow)
+        self.assertNotIn("(instant)", workflow)
         self.assertIn("Instant release.", workflow)
         self.assertIn("deliberately skipped the full verification chain", workflow)
 
