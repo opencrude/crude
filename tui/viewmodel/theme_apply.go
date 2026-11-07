@@ -345,9 +345,9 @@ func (m *App) themeConsumers() []themeConsumer {
 					m.EditorState.Editor.SetTheme(th)
 				}
 				if m.EditorState != nil {
-					for _, tab := range m.EditorState.Tabs {
-						if tab != nil && tab.Editor != nil && tab.Editor != m.EditorState.Editor {
-							tab.Editor.SetTheme(th)
+					for _, view := range m.EditorState.Views {
+						if view.Editor != nil && view.Editor != m.EditorState.Editor {
+							view.Editor.SetTheme(th)
 						}
 					}
 				}

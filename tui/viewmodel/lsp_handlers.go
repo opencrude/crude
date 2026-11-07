@@ -103,7 +103,9 @@ func (m *App) drainLSPDiagnostics() {
 	for _, tab := range m.EditorState.Tabs {
 		if tab != nil && tab.Editor != nil {
 			tab.Editor.SetDiagnosticsVisible(m.ws.LSPMgr().ShowDiagnosticsInEditor())
-			tab.Editor.RefreshDiagnostics()
+			for _, view := range tab.Editor.LinkedViews() {
+				view.RefreshDiagnostics()
+			}
 			m.projectTreeDiagnostic(tab.Editor.FilePath(), m.lspFacts[tab.Editor.FilePath()])
 		}
 	}

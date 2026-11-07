@@ -168,12 +168,21 @@ func TestPaneContextResourceJourney(t *testing.T) {
 			app.focusMainGroup(left)
 			_ = app.View()
 			paneOpenTabMenu(t, app, tab)
-			for _, label := range []string{"Split Left", "Split Right", "Split Above", "Split Down", "Arrange Tab…", "Split Containing Layout…"} {
+			for _, label := range []string{"Split Left", "Split Right", "Split Up", "Split Down", "Arrange Tab…", "Split Containing Layout…"} {
 				menuItem(t, app.LastContextMenu, label)
 			}
 			paneChooseMenu(t, app, "Split Left", false)
-			if app.Win.ActiveTab() != nil || len(app.Win.GroupIDs()) != 4 {
+			// A file split shows the file again; other resources get an empty pane.
+			active := app.Win.ActiveTab()
+			if len(app.Win.GroupIDs()) != 4 || app.Win.GroupOf(tab) != lower {
 				t.Fatal("clicked resource did not split its own pane")
+			}
+			if kind == window.ResourceDocument {
+				if active == nil || active.ID == tab || active.Resource != resource {
+					t.Fatal("file split did not show the same file in the new pane")
+				}
+			} else if active != nil {
+				t.Fatal("split of a non-file tab did not add an empty pane")
 			}
 			paneJourneyKey(app, 'w', tea.ModCtrl)
 			if len(app.Win.GroupIDs()) != 3 || app.Win.GroupOf(tab) != lower {
@@ -250,7 +259,7 @@ func TestPaneContextStaleOwnerNeverFallsThrough(t *testing.T) {
 			app.Win.SwitchTo(app.Win.IndexOf(other))
 			app.handleTabSwitch()
 			beforeTabs, tree := app.Win.Tabs(), paneTopology(app.Win.PaneRoot())
-			paneChooseMenu(t, app, "Move Tab to Right Split", false)
+			paneChooseMenu(t, app, "Move to New Split Right", false)
 			if !reflect.DeepEqual(beforeTabs, app.Win.Tabs()) || !slices.Equal(tree, paneTopology(app.Win.PaneRoot())) {
 				t.Fatal("stale clicked menu acted on current resource/layout")
 			}

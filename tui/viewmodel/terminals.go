@@ -125,7 +125,7 @@ func (m *App) setTermDockHeight(h int) {
 			m.workspacePanelHeights = make(map[string]int)
 		}
 		m.workspacePanelHeights[m.termDock.ActivePanel()] = m.termDockHeight
-		m.toolLayoutVersion++
+		m.viewMemoryVersion++
 	}
 }
 

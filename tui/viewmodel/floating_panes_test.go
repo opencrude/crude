@@ -67,7 +67,7 @@ func TestPaneWindowEditorJourney(t *testing.T) {
 	}
 
 	paneJourneyKey(app, 'X', 0)
-	rightEditor := app.editorForWindowTab(app.Win.Tabs()[app.Win.IndexOf(right)].Title)
+	rightEditor := app.editorForTab(right)
 	if !strings.Contains(rightEditor.Value(), "X") {
 		t.Fatalf("typing did not reach the window's editor: %q", rightEditor.Value())
 	}
@@ -415,7 +415,7 @@ func TestLastTabInWindowLeavesTheLauncher(t *testing.T) {
 	if app.mainAreaEmpty() || !app.tabBarVisible() {
 		t.Fatal("docking did not return the tab to the main area")
 	}
-	if ed := app.editorForWindowTab(app.Win.Tabs()[app.Win.IndexOf(tab)].Title); !strings.Contains(ed.Value(), "Z") {
+	if ed := app.editorForTab(tab); !strings.Contains(ed.Value(), "Z") {
 		t.Fatalf("docking lost the window's edit: %q", ed.Value())
 	}
 	if screen := bufferPlain(capturePaintedShell(t, app)); strings.Contains(screen, "New Session") {

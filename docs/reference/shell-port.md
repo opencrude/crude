@@ -20,7 +20,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `startup.go` | `Startup`, `WorkspaceFolderCreator` | Detached path inspection, bounded folder browsing and discovery, explicit single-child folder creation, and sparse introduction/reminder saves. No workspace attachment is necessary. |
 | `agents.go` | `Agents` | agent inventory replica, turn control, blocking prompts, input admission |
 | `sessions.go` | `Sessions` | session registry replica, create/open, per-session settings |
-| `settings.go` | `Settings`, `ToolLayoutStore` | app/workspace settings, accounts, tool layout |
+| `settings.go` | `Settings` | app/workspace settings, accounts |
 | `files.go` | `Files` | file mutations, project search; carries `Documents()` and `LSPMgr()` accessors |
 | `documents.go` | `DocumentService` | checked snapshot save infrastructure |
 | `live_documents.go`, `live_document_commands.go` | `LiveDocuments`, formatter/receipts/command interfaces | universal connected editor lifecycle, per-open topic, recovery sync, exact-owner commands |
@@ -68,7 +68,7 @@ Attached shells read committed setup state through the same selected core.
   implementations return core-owned service adapters without constructing runtime owners.
 - **Owner tokens.** `App.ws` is compared by interface identity (stale async
   results are fenced by `owner != m.ws`). `Local` returns a pointer adapter, so
-  one `Local(ws)` value is a stable token. `BindMemory()`, `BindToolLayout()` and
+  one `Local(ws)` value is a stable token. `BindMemory()` and
   `WorkspaceDB()` return values pinned to the current workspace database so late
   work queued before `SwitchProject` cannot write into the replacement workspace.
 - **Tests** use `shellport.Local` or connected real Apps over `net.Pipe`; `shellport.Unwrap(ws)` returns the
@@ -193,7 +193,6 @@ Settings loads, previews and persists application and workspace settings.
 
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
-| `BindToolLayout` | 2 | reads | no: returns a bound handle | none (identity token); see ToolLayoutStore |
 | `LoadAppSettings` | 15 | reads | yes | settings.fetch (replica: WorkspaceView.LoadAppSettings) |
 | `AppDefaults` | 3 | reads | yes | settings.fetch (replica: WorkspaceView.AppDefaults) |
 | `LoadWorkspaceOverrides` | 3 | reads | yes | settings.fetch (overrides field) |
@@ -227,14 +226,9 @@ audit and live setup authority are distinct. See
 [project setup](settings.md#project-tool-setup) and
 [tool-store lifetimes](tool-store.md#executable-lifetimes).
 
-### `ToolLayoutStore`
-
-ToolLayoutStore persists rail and panel layout for one workspace database.
-
-| Member | Sites | TUI | RPC-able as-is | coreprotocol |
-|--------|------:|-----|----------------|--------------|
-| `LoadToolLayout` | 1 | reads | yes | workspace.tool_layout |
-| `SaveToolLayout` | 1 | mutates | yes | workspace.tool_layout_save |
+Rail order, sidebar views, panel heights and the other presentation choices
+are not a port: each shell keeps them in its private client profile (see
+[client view memory](main-view-panes.md#client-view-memory)).
 
 ### `Files`
 
@@ -619,7 +613,6 @@ These signatures are local port contracts, not wire payloads. The connected adap
 | `Sessions.EnsureAeronSession` | `session.ensure` returns the workspace's one Aeron (reused, resumed or created); replica materializes it like any root. |
 | `Sessions.BackendSession` | Always unavailable in connected shells. |
 | `Sessions.PrepareMultiAgentToggle` / `PrepareSessionCapabilityToggle` / `PrepareSessionSettingsSave` / `PrepareSessionSettingsReset` / `ApplySessionSettingsResult` | Captured typed settings RPC/result; local owner pointers stay client-side. |
-| `Settings.BindToolLayout` | Attachment-bound RPC service, not a database object. |
 | `Settings.PreparePreferencesSave` | Off-UI typed scoped set/remove edits; awaits durability, last explicit write wins. |
 | `Settings.PrepareAccountModels` / `PrepareDraftAccountModels` | Captured `settings.account.models` request with write-only secret semantics. |
 | `Files.EnsureDocuments` | Client-local timer facade over the core disk-save authority. |

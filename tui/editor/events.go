@@ -120,6 +120,12 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			e.sbCtrl.CancelPointerCapture()
 			e.hSbCtrl.CancelPointerCapture()
 		}
+		if cmd, ok := e.handleCodeLinkClick(msg); ok {
+			e.cursorBlink.MarkActivity()
+			e.ClearHover()
+			return cmd
+		}
+		e.link = nil
 		if msg.Button == tea.MouseLeft && msg.Y >= 0 && msg.Y < e.bodyHeight() {
 			gutter := e.gutterGeometry()
 			line := e.scrollY + msg.Y
@@ -152,6 +158,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.handleMouseClick(msg)
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseMotionMsg:
+		e.updateCodeLink(msg.X, msg.Y, msg.Mod)
 		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		if e.IsScrollbarDragging() {
 			if e.IsHorizontalScrollbarDragging() {

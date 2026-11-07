@@ -101,7 +101,7 @@ func TestLSPCompletionEditRejectsUnsafeWithoutEffects(t *testing.T) {
 			require.Equal(t, revision, e.buf.Revision())
 			require.Equal(t, Position{Line: 1, Col: 2}, e.cursor)
 			require.True(t, e.selecting)
-			require.Empty(t, e.changes)
+			require.Empty(t, e.buf.changes)
 			require.Zero(t, callbacks)
 		})
 	}
@@ -121,7 +121,7 @@ func TestLSPCompletionEditNoopAndReadonly(t *testing.T) {
 	item := model.CompletionItem{TextEdit: &model.LSPTextEdit{EndCol: 5, NewText: "print"}}
 	require.NoError(t, e.ApplyCompletion(item))
 	require.Equal(t, Position{Col: 2}, e.cursor)
-	require.Empty(t, e.changes)
+	require.Empty(t, e.buf.changes)
 	require.Zero(t, callbacks)
 	require.Error(t, e.ApplyCompletion(model.CompletionItem{}))
 	require.Equal(t, "print", e.Value())

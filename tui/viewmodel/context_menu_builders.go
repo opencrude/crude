@@ -142,7 +142,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Inspect change", Disabled: !hasHunk, Action: func() { m.inspectEditorChange(ed, line) }},
 			{Label: "Compare with disk", Action: func() { m.startSourceControlMutation(m.compareEditorWithDisk(ed)) }},
 			{Label: "Compare with saved version", Action: func() { m.runDetachedAsyncCmd(m.openLocalDiff(ed, localDiffSaved)) }},
-			{Label: "Resolve shared changes", Disabled: m.liveEditors[ed] == nil, Action: func() { m.startSourceControlMutation(m.OpenLiveEditorConflict(ed)) }},
+			{Label: "Resolve shared changes", Disabled: m.liveEditors[ed.Primary()] == nil, Action: func() { m.startSourceControlMutation(m.OpenLiveEditorConflict(ed)) }},
 			{Label: "Next change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(1) }},
 			{Label: "Previous change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(-1) }},
 			{Label: "Copy blame commit", Disabled: !hasBlame || blameHash == "" || blame.Uncommitted, Action: func() {

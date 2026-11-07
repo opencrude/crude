@@ -42,9 +42,9 @@ func newSaveTestEditorAt(t *testing.T, app *App, path, content string) *editor.E
 		t.Fatal(err)
 	}
 	t.Cleanup(ed.Close)
-	app.EditorState.Editor, app.EditorState.ActiveView = ed, path
 	app.EditorState.Tabs[path] = NewEditorTab(path, ed)
 	ed.SetOnContentChanged(func(path, text string) { app.onEditorContentChanged(ed, path, text) })
+	app.showDocument(path, app.Win.ActiveGroup(), true)
 	return ed
 }
 
@@ -263,7 +263,7 @@ func TestQuitDoesNotCloseWorkspaceDuringActiveSave(t *testing.T) {
 	ed := newSaveTestEditor(t, app, "base")
 	app.EditorState.ActiveView = ""
 	app.editorSaves = make(map[string]*editorSaveState)
-	app.editorSaves[ed.BufferID()] = &editorSaveState{inFlight: true}
+	app.editorSaves[ed.BufferID()] = &editorSaveState{inFlight: true, cancel: func() {}}
 	quitCalled := false
 	app.OnQuit = func() { quitCalled = true }
 	_, cmd := app.handleQuit()

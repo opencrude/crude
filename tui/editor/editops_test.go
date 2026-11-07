@@ -305,7 +305,7 @@ func TestOutdent_NoIndentNoop(t *testing.T) {
 	e.cursor = Position{Line: 0, Col: 1}
 	press(e, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	assert.Equal(t, "aa", e.Value())
-	assert.Equal(t, 0, len(e.changes))
+	assert.Equal(t, 0, len(e.buf.changes))
 }
 
 func TestOutdentLines_SingleUndoStep(t *testing.T) {
@@ -379,7 +379,7 @@ func TestMoveLines_BoundaryNoop(t *testing.T) {
 	e.cursor = Position{Line: 1, Col: 0}
 	press(e, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt})
 	assert.Equal(t, "aa\nbb", e.Value())
-	assert.Equal(t, 0, len(e.changes))
+	assert.Equal(t, 0, len(e.buf.changes))
 }
 
 func TestMoveLine_SingleUndoStep(t *testing.T) {
@@ -560,7 +560,7 @@ func TestToggleComment_UnknownExtensionNoop(t *testing.T) {
 	e := opsEditor(t, "test.xyz", "foo")
 	press(e, tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
 	assert.Equal(t, "foo", e.Value())
-	assert.Equal(t, 0, len(e.changes))
+	assert.Equal(t, 0, len(e.buf.changes))
 }
 
 func TestToggleComment_CursorShifts(t *testing.T) {

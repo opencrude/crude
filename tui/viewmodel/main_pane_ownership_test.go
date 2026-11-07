@@ -240,8 +240,7 @@ func TestMainPaneOwnershipEmptyPickerKeyboardAsyncAndCancel(t *testing.T) {
 	defer ws.Close()
 	paneJourneySize(app, 160, 40)
 	openEditorTabs(t, app, "existing.go")
-	paneJourneyKey(app, tea.KeyRight, tea.ModCtrl|tea.ModAlt)
-	target := app.Win.ActiveGroup()
+	target := paneJourneyEmptySplit(t, app, ui.Horizontal)
 	_, _ = app.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	if app.FilePicker == nil || !app.FilePicker.IsOpen() {
 		t.Fatal("empty-pane O did not open real picker")
@@ -391,13 +390,12 @@ func TestMainPaneOwnershipKeyboardNewSessionAndCancelledPicker(t *testing.T) {
 	defer ws.Close()
 	paneJourneySize(app, 160, 40)
 	openEditorTabs(t, app, "existing.go")
-	paneJourneyKey(app, 'l', tea.ModCtrl|tea.ModAlt)
-	target := app.Win.ActiveGroup()
+	target := paneJourneyEmptySplit(t, app, ui.Horizontal)
 	paneJourneyKey(app, 'n', 0)
 	if tab := app.Win.ActiveTab(); tab == nil || !app.isAgentTabTitle(tab.Title) || tab.Group != target || app.focusTarget() != FocusInput {
 		t.Fatal("N did not create session in empty pane")
 	}
-	paneJourneyKey(app, 'd', tea.ModCtrl|tea.ModAlt)
+	paneJourneyEmptySplit(t, app, ui.Vertical)
 	paneJourneyKey(app, 'o', 0)
 	runAppCommand(t, app, app.beginDirectoryAsyncLoad(app.FilePicker, app.ws.RootPath()))
 	app.FilePicker.FocusTree()
@@ -439,7 +437,7 @@ func TestMainPaneEmptyButtonsHaveVisibleInk(t *testing.T) {
 			defer ws.Close()
 			paneJourneySize(app, 160, 40)
 			openEditorTabs(t, app, "main.go")
-			paneJourneyKey(app, 'l', tea.ModCtrl|tea.ModAlt)
+			paneJourneyEmptySplit(t, app, ui.Horizontal)
 			app.ApplyThemePreset(preset)
 			app.forceFrame()
 			_ = app.View()
@@ -480,4 +478,17 @@ func TestMainPaneThemeIncludesHiddenEditorsBeforeMove(t *testing.T) {
 	if painted.BG != app.rootHost.Tokens().Color(ui.ColorBg) {
 		t.Fatal("reopened editor paints stale background")
 	}
+}
+
+// paneJourneyEmptySplit adds a focused empty pane beside the focused one, as
+// Split Containing Layout and splitting an empty pane do. (Splitting a file
+// shows the file again instead.)
+func paneJourneyEmptySplit(t *testing.T, app *App, dir ui.Direction) window.GroupID {
+	t.Helper()
+	group := app.splitMainGroup(dir, false, 0)
+	_ = app.View()
+	if group == 0 || app.Win.ActiveGroup() != group || app.Win.ActiveTab() != nil {
+		t.Fatal("empty split did not focus a genuinely empty pane")
+	}
+	return group
 }

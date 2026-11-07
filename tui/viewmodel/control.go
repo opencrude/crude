@@ -127,7 +127,7 @@ func (m *App) inspectShell() shellInspection {
 			if active := m.Win.GroupActiveTab(tab.Group); active != nil {
 				t.Selected = active.ID == tab.ID
 			}
-			if ed := m.editorForWindowTab(tab.Title); ed != nil {
+			if ed := m.editorForTab(tab.ID); ed != nil {
 				t.Path = ed.FilePath()
 				t.Dirty = ed.Modified()
 				t.Revision = ed.Revision()
@@ -334,6 +334,9 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 			return invalid(err)
 		}
 		page, err := m.inspectShellControls(current.Target, in)
+		if errors.Is(err, errControlInventoryChanged) {
+			return m.failShellControl(msg, control.Stale, err.Error())
+		}
 		if err != nil {
 			return invalid(err)
 		}
@@ -1260,7 +1263,7 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 			result.Fault = &control.Fault{Code: control.OperationFailed, Message: "expected one prepared file"}
 		} else {
 			file := completion.files[0]
-			tab := m.Win.TabByTitle(m.editorTabTitle(file.path))
+			tab := m.Win.GroupTabByTitle(completion.group, m.editorTabTitle(file.path))
 			if file.err != nil || tab == nil {
 				result.State = control.Failed
 				result.Fault = &control.Fault{Code: control.OperationFailed, Message: "file was not installed"}

@@ -18,6 +18,7 @@ It holds only cross-cutting rules and a topic map; detailed contracts live here.
 | `reference/` | Durable facts and contracts: catalogs, matrices, baselines, settings model, width rules. |
 | `guides/` | How to do things: authoring components, running the design audit. |
 | `plans/` | Active execution plans, handoffs, and checklists. Remove completed or superseded plans once current architecture/reference documents cover the result. |
+| `issues/` | Dated records of user-reported defects: what was reported, the cause and the fix, linking the current contracts. |
 
 ## Index
 
@@ -179,6 +180,16 @@ documents to read before changing each area.
 - [Tree picker and internal Fastwalk plan](plans/tree-picker-fastwalk-plan.md)
   — approved design replacing picker lists with bounded tree/path search.
 
+### Issues (dated user reports)
+
+- [IDE navigation and splits (2026-11-07)](issues/2026-11-07-ide-navigation-and-splits.md)
+  — Ctrl+click navigation, split showing the same file, pane-local opens,
+  Go Back / Go Forward and linked views.
+- [Each client keeps its own view (2026-11-07)](issues/2026-11-07-client-view-memory.md)
+  — minimized agents, tree and layout choices persist per client profile.
+- [Windows agent commands (2026-11-07)](issues/2026-11-07-windows-agent-commands.md)
+  — command-line `%` meaning, refused quoted line breaks, shell launch costs.
+
 ## Documentation rules
 
 These rules are enforced by `scripts/docs_check.sh` (run in CI, `make
@@ -186,7 +197,8 @@ docs-check`). A docs change that breaks them fails the build.
 
 1. **Categorize by kind, not by team.** New documents go in
    `architecture/`, `reference/`, `guides/`, or `plans/` by what they
-   describe, not by who wrote them.
+   describe, not by who wrote them. A user-reported defect is recorded in
+   `issues/` as `YYYY-MM-DD-<topic>.md`.
 2. **kebab-case filenames.** Lowercase, hyphen-separated, no spaces, no
    `SCREAMING_CASE`, no underscores. The filename should describe the
    document (`terminal-width.md`, not `TERMINAL_WIDTH.md`).

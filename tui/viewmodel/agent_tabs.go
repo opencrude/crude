@@ -39,7 +39,7 @@ func (m *App) addOrchestrator(orchID string, activate bool) {
 			if childID == orchID {
 				continue
 			}
-			if node := m.ws.AgentMgr().Get(childID); node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil {
+			if node := m.ws.AgentMgr().Get(childID); node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil && !m.AgentView.Chosen(childID) {
 				m.MinimizeAgent(childID)
 			}
 			m.ensureAgentProjection(childID)
@@ -65,7 +65,7 @@ func (m *App) addOrchestrator(orchID string, activate bool) {
 			continue
 		}
 		node := m.ws.AgentMgr().Get(childID)
-		if node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil {
+		if node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil && !m.AgentView.Chosen(childID) {
 			m.MinimizeAgent(childID)
 		}
 		m.ensureAgentProjection(childID)

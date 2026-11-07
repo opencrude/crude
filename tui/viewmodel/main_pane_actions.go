@@ -126,7 +126,7 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 	for _, action := range []struct{ label, id string }{
 		{"New Session", "pane.new-session"}, {"Open File", "pane.open-file"},
 		{"Split Left", "pane.split-left"}, {"Split Right", "pane.split-right"},
-		{"Split Above", "pane.split-up"}, {"Split Down", "pane.split-down"},
+		{"Split Up", "pane.split-up"}, {"Split Down", "pane.split-down"},
 		{"Split Containing Layout…", "pane.split-layout"},
 		{"Close Empty Pane", "pane.close"}, {"Merge All Panes", "pane.merge-all"},
 	} {
@@ -212,19 +212,19 @@ func (m *App) closePaneEditorTabs(owner paneMenuOwner, rightOnly bool) {
 		return
 	}
 	tabs := m.Win.GroupTabs(owner.group)
-	var paths []string
+	var ids []window.TabID
 	seen := !rightOnly
 	for _, tab := range tabs {
 		if tab.ID == owner.tab {
 			seen = true
 			continue
 		}
-		if seen && m.isEditorTabTitle(tab.Title) {
-			paths = append(paths, m.editorPathFromTabTitle(tab.Title))
+		if seen && m.editorView(tab.ID) != nil {
+			ids = append(ids, tab.ID)
 		}
 	}
 	m.releaseTabBarFocus()
-	m.closeEditorTabs(paths)
+	m.closeEditorViews(ids)
 	m.syncRootFocus()
 }
 
@@ -256,14 +256,130 @@ func (m *App) focusMainGroup(id window.GroupID) {
 	m.forceFrame()
 }
 
-func (m *App) splitMainGroup(dir ui.Direction, before bool, tab window.TabID) {
+func (m *App) splitMainGroup(dir ui.Direction, before bool, tab window.TabID) window.GroupID {
 	scopes := m.Win.PaneScopes(m.Win.ActiveGroup())
 	if len(scopes) != 0 {
-		m.splitMainPane(scopes[0].ID, dir, before, tab)
+		return m.splitMainPane(scopes[0].ID, dir, before, tab)
+	}
+	return 0
+}
+
+// splitEditor splits the focused pane. A file is shown again in the new pane
+// at the same caret and scroll (one document, two views), as in established
+// editors; any other tab leaves the new pane empty, ready for New Session or
+// Open File.
+func (m *App) splitEditor(dir ui.Direction, before bool) {
+	view := m.editorView(m.EditorState.ActiveTab)
+	if active := m.Win.ActiveTab(); active == nil || view == nil || active.ID != view.Tab {
+		view = nil
+	}
+	target := m.splitMainGroup(dir, before, 0)
+	if target != 0 && view != nil {
+		m.showDocument(view.Path, target, true)
+		m.focusMainGroup(target)
 	}
 }
 
-func (m *App) splitMainPane(node uint64, dir ui.Direction, before bool, tab window.TabID) {
+// openBeside shows a file tab's document in the pane on that side, adding a
+// split when there is none. The source tab stays where it is.
+func (m *App) openBeside(tab window.TabID, dir ui.Direction, before bool) {
+	view := m.editorView(tab)
+	if view == nil {
+		return
+	}
+	target := m.Win.Neighbor(m.Win.GroupOf(tab), dir, before)
+	if target == 0 {
+		m.Win.SwitchTo(m.Win.IndexOf(tab))
+		target = m.splitMainGroup(dir, before, 0)
+	}
+	if target != 0 && m.showDocument(view.Path, target, true) != nil {
+		m.focusMainGroup(target)
+	}
+}
+
+// moveBeside moves a tab into the pane on that side, adding a split when
+// there is none. A file already shown there keeps that view and closes this
+// one, so a pane never holds the same file twice.
+func (m *App) moveBeside(tab window.TabID, dir ui.Direction, before bool) {
+	source := m.Win.GroupOf(tab)
+	target := m.Win.Neighbor(source, dir, before)
+	if target == 0 {
+		m.Win.SwitchTo(m.Win.IndexOf(tab))
+		m.splitMainGroup(dir, before, tab)
+		return
+	}
+	// A file the target already shows keeps that view (Window absorbs the
+	// moved one; releaseAbsorbedViews closes it).
+	if m.Win.MoveTabToGroup(tab, target, 0) {
+		m.focusMainGroup(target)
+		m.syncPaneWindows()
+	}
+}
+
+// splitWithAgent opens an agent beside the focused tab: the agent the user
+// worked with last, else a new session in the new pane.
+func (m *App) splitWithAgent(dir ui.Direction, before bool) tea.Cmd {
+	agentID := m.lastAgentID()
+	target := m.splitMainGroup(dir, before, 0)
+	if target == 0 {
+		return nil
+	}
+	if agentID == "" {
+		return m.launcherNewSession()
+	}
+	m.restoreAgent(agentID)
+	if tab := m.Win.TabByTitle(m.agentTabTitle(agentID)); tab != nil {
+		if m.Win.GroupOf(tab.ID) != target && m.Win.MoveTabToGroup(tab.ID, target, 0) {
+			m.focusMainGroup(target)
+			m.syncPaneWindows()
+		}
+	}
+	return nil
+}
+
+// splitWithFile opens a file beside the focused tab: the file the user edited
+// last, else the file picker for the new pane.
+func (m *App) splitWithFile(dir ui.Direction, before bool) {
+	path := m.lastEditorPath()
+	target := m.splitMainGroup(dir, before, 0)
+	if target == 0 {
+		return
+	}
+	if path == "" || m.showDocument(path, target, true) == nil {
+		m.openPaneFilePicker(target)
+		return
+	}
+	m.focusMainGroup(target)
+}
+
+// lastAgentID is the visible or minimized agent the user focused most
+// recently, or the first agent tab.
+func (m *App) lastAgentID() string {
+	if id := m.lastFocusedAgent; id != "" && m.ws.AgentMgr().Get(id) != nil {
+		return id
+	}
+	for _, tab := range m.Win.Tabs() {
+		if m.isAgentTabTitle(tab.Title) {
+			return m.agentIDFromTabTitle(tab.Title)
+		}
+	}
+	return ""
+}
+
+// lastEditorPath is the open file the user focused most recently.
+func (m *App) lastEditorPath() string {
+	if path := m.lastFocusedEditorPath; path != "" && m.EditorState.Tabs[path] != nil {
+		return path
+	}
+	for _, tab := range m.Win.Tabs() {
+		if v := m.editorView(tab.ID); v != nil {
+			return v.Path
+		}
+	}
+	return ""
+}
+
+func (m *App) splitMainPane(node uint64, dir ui.Direction, before bool, tab window.TabID) window.GroupID {
 	p := window.TabPlacement{Tab: tab, Node: node, Split: true, Direction: dir, Before: before}
 	var root *window.PaneNode
 	var target window.GroupID
@@ -273,13 +389,13 @@ func (m *App) splitMainPane(node uint64, dir ui.Direction, before bool, tab wind
 		root, target = m.Win.PreviewTabPlacement(p)
 	}
 	if target == 0 {
-		return
+		return 0
 	}
 	w, h := paneMinimum(root)
 	bounds := m.ensureMainPanes().Bounds()
 	if w > bounds.W || h > bounds.H {
-		m.Feedback.NotifyInfo("Not enough room for this layout; enlarge the terminal or merge a pane")
-		return
+		m.Feedback.NotifyInfo("There is not enough room for another pane. Make the terminal larger or merge a pane.")
+		return 0
 	}
 	if tab == 0 {
 		target = m.Win.SplitPane(node, dir, before)
@@ -290,6 +406,7 @@ func (m *App) splitMainPane(node uint64, dir ui.Direction, before bool, tab wind
 		m.focusMainGroup(target)
 		m.syncPaneWindows()
 	}
+	return target
 }
 
 func (m *App) cycleMainGroup(delta int, move bool) {
@@ -313,6 +430,13 @@ func (m *App) cycleMainGroup(delta int, move bool) {
 }
 
 func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
+	if id == "nav.back" || id == "nav.forward" {
+		// A diff document keeps Alt+Left/Right for its previous/next file.
+		if m.focusedPopup() != nil || m.focusedDiffDocument() {
+			return nil, false
+		}
+		return m.navigateHistory(id == "nav.back"), true
+	}
 	if !strings.HasPrefix(id, "pane.") {
 		return nil, false
 	}
@@ -321,18 +445,24 @@ func (m *App) handleMainPaneCommand(id string) (tea.Cmd, bool) {
 		return nil, true
 	}
 	switch id {
-	case "pane.split-left", "pane.split-right", "pane.split-up", "pane.split-down",
-		"pane.move-left", "pane.move-right", "pane.move-up", "pane.move-down":
-		dir, before := paneEdge(strings.TrimPrefix(strings.TrimPrefix(id, "pane.split-"), "pane.move-"))
-		tab := window.TabID(0)
-		if strings.HasPrefix(id, "pane.move-") {
-			if active := m.Win.ActiveTab(); active != nil {
-				tab = active.ID
-			} else {
-				return nil, true
-			}
+	case "pane.split-left", "pane.split-right", "pane.split-up", "pane.split-down":
+		m.splitEditor(paneEdge(strings.TrimPrefix(id, "pane.split-")))
+	case "pane.move-left", "pane.move-right", "pane.move-up", "pane.move-down",
+		"pane.open-left", "pane.open-right", "pane.open-up", "pane.open-down":
+		active := m.Win.ActiveTab()
+		if active == nil {
+			return nil, true
 		}
-		m.splitMainGroup(dir, before, tab)
+		dir, before := paneEdge(strings.TrimPrefix(strings.TrimPrefix(id, "pane.move-"), "pane.open-"))
+		if strings.HasPrefix(id, "pane.open-") {
+			m.openBeside(active.ID, dir, before)
+		} else {
+			m.moveBeside(active.ID, dir, before)
+		}
+	case "pane.split-agent-right", "pane.split-agent-down":
+		return m.splitWithAgent(paneEdge(strings.TrimPrefix(id, "pane.split-agent-"))), true
+	case "pane.split-file-right", "pane.split-file-down":
+		m.splitWithFile(paneEdge(strings.TrimPrefix(id, "pane.split-file-")))
 	case "pane.arrange", "pane.split-layout":
 		tab := window.TabID(0)
 		if id == "pane.arrange" {
@@ -801,17 +931,51 @@ func (m *App) paneMenuSection(tab window.TabID) ui.ContextMenuSection {
 	items = append(items, ui.ContextMenuItem{Label: "Open in Window", Detail: "movable, resizable", Action: owner.action(m, func() {
 		m.openTabInWindow(tab)
 	})})
-	for _, a := range []struct{ label, id string }{
-		{"Split Left", "pane.split-left"}, {"Split Right", "pane.split-right"},
-		{"Split Above", "pane.split-up"}, {"Split Down", "pane.split-down"},
-		{"Move Tab to Left Split", "pane.move-left"}, {"Move Tab to Upper Split", "pane.move-up"},
-		{"Move Tab to Right Split", "pane.move-right"}, {"Move Tab to Lower Split", "pane.move-down"},
-		{"Arrange Tab…", "pane.arrange"}, {"Split Containing Layout…", "pane.split-layout"},
-		{"Move Tab to Next Pane", "pane.move-next"}, {"Move Tab to Previous Pane", "pane.move-previous"},
-		{"Merge All Panes", "pane.merge-all"},
-	} {
+	type paneMenuAction struct{ label, detail, id string }
+	var actions []paneMenuAction
+	group := m.Win.GroupOf(tab)
+	file := m.editorView(tab) != nil
+	sides := []struct{ name, edge string }{{"Right", "right"}, {"Left", "left"}, {"Above", "up"}, {"Below", "down"}}
+	// The pane on each side, when there is one: open or move the tab into it.
+	for _, side := range sides {
+		dir, before := paneEdge(side.edge)
+		if m.Win.Neighbor(group, dir, before) == 0 {
+			continue
+		}
+		pane := "Pane " + side.name
+		if side.edge == "right" || side.edge == "left" {
+			pane = side.name + " Pane"
+		}
+		if file {
+			actions = append(actions, paneMenuAction{"Open in " + pane, "same file, its own view", "pane.open-" + side.edge})
+		}
+		actions = append(actions, paneMenuAction{"Move to " + pane, "", "pane.move-" + side.edge})
+	}
+	splitDetail := "new empty pane"
+	if file {
+		splitDetail = "same file, its own view"
+	}
+	actions = append(actions,
+		paneMenuAction{"Split Right", splitDetail, "pane.split-right"}, paneMenuAction{"Split Down", splitDetail, "pane.split-down"},
+		paneMenuAction{"Split Left", splitDetail, "pane.split-left"}, paneMenuAction{"Split Up", splitDetail, "pane.split-up"})
+	if file {
+		actions = append(actions, paneMenuAction{"Split Right with Agent", "last agent, or a new session", "pane.split-agent-right"})
+	} else {
+		actions = append(actions, paneMenuAction{"Split Right with File", "last file, or choose one", "pane.split-file-right"})
+	}
+	for _, side := range sides {
+		dir, before := paneEdge(side.edge)
+		if m.Win.Neighbor(group, dir, before) == 0 {
+			actions = append(actions, paneMenuAction{"Move to New Split " + side.name, "", "pane.move-" + side.edge})
+		}
+	}
+	actions = append(actions,
+		paneMenuAction{"Arrange Tab…", "", "pane.arrange"}, paneMenuAction{"Split Containing Layout…", "", "pane.split-layout"},
+		paneMenuAction{"Move Tab to Next Pane", "", "pane.move-next"}, paneMenuAction{"Move Tab to Previous Pane", "", "pane.move-previous"},
+		paneMenuAction{"Merge All Panes", "", "pane.merge-all"})
+	for _, a := range actions {
 		id := a.id
-		items = append(items, ui.ContextMenuItem{Label: a.label, Action: owner.action(m, func() {
+		items = append(items, ui.ContextMenuItem{Label: a.label, Detail: a.detail, Action: owner.action(m, func() {
 			m.Win.SwitchTo(m.Win.IndexOf(tab))
 			m.handleTabSwitch()
 			cmd, _ := m.handleMainPaneCommand(id)

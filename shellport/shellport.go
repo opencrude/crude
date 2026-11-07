@@ -14,7 +14,6 @@ type Workspace interface {
 	Agents
 	Sessions
 	Settings
-	ToolLayoutStore
 	Files
 	SourceControl
 	History

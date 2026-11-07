@@ -8,9 +8,6 @@ import (
 
 // Settings loads, previews and persists application and workspace settings.
 type Settings interface {
-	// BindToolLayout returns a layout store pinned to the current workspace database so work
-	// queued before a workspace switch can never write into the replacement workspace.
-	BindToolLayout() ToolLayoutStore
 	// LoadAppSettings returns the effective settings for this workspace:
 	// application defaults overlaid with workspace overrides.
 	LoadAppSettings() types.AppSettings
@@ -44,10 +41,4 @@ type Settings interface {
 	// models before Save without activating or persisting that draft. Unchanged
 	// saved accounts use their durable token manager, including refresh.
 	PrepareDraftAccountModels(account provider.Account, baseURL, standardID string) func() ([]types.ModelEntry, error)
-}
-
-// ToolLayoutStore persists rail and panel layout for one workspace database.
-type ToolLayoutStore interface {
-	LoadToolLayout() (workspace.ToolLayout, error)
-	SaveToolLayout(layout workspace.ToolLayout) error
 }

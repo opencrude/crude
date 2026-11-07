@@ -206,6 +206,9 @@ func (e *Editor) startSyntax() {
 	if e.syntaxBuffer == e.buf && e.syntaxRevision == e.buf.Revision() && e.syntaxDocument != nil {
 		return
 	}
+	if e.linkedSyntaxPending() {
+		return // a linked view is already parsing this revision; it shares the result
+	}
 	snapshot := e.buf.snapshotText()
 	lexer := e.chromaLexer
 	path := e.filePath
@@ -258,7 +261,34 @@ func (e *Editor) finishSyntax() {
 	e.syntaxFailed = job.err != nil
 	if job.err != nil {
 		e.syntaxDocument = nil
+		return
 	}
+	e.eachView(func(v *Editor) {
+		if v == e || !v.open || v.Revision() != job.revision || v.canonicalInk != nil ||
+			v.syntaxBuffer == v.buf && v.syntaxRevision == job.revision && v.syntaxDocument != nil {
+			return
+		}
+		if v.syntaxJob != nil {
+			v.syntaxJob.cancel()
+			v.syntaxJob = nil
+		}
+		v.syntaxGeneration++
+		v.chromaLineCache = nil
+		v.syntaxBuffer, v.syntaxRevision = job.buffer, job.revision
+		v.syntaxDocument, v.syntaxFailed = job.document, false
+	})
+}
+
+// linkedSyntaxPending reports whether another view of this document owns a
+// parse of the current revision.
+func (e *Editor) linkedSyntaxPending() bool {
+	pending := false
+	e.eachView(func(v *Editor) {
+		if job := v.syntaxJob; v != e && job != nil && job.buffer == e.buf && job.revision == e.buf.Revision() && job.generation == v.syntaxGeneration {
+			pending = true
+		}
+	})
+	return pending
 }
 
 // SyntaxCommand admits or joins one owned parse and delivers its completion to

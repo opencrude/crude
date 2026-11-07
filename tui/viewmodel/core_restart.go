@@ -122,12 +122,12 @@ func (m *App) coreRestartBlocked() string {
 		if pending, err := m.workspaceSwitchEditorPending(ed); pending || err != nil {
 			return "an editor save, format, edit or history operation is unsettled"
 		}
-		if live := m.liveEditors[ed]; live != nil && live.format {
+		if live := m.liveEditors[ed.Primary()]; live != nil && live.format {
 			return "an editor format is unsettled"
 		}
 	}
 	if m.shellControlPending > 0 || m.terminalBusy || m.projectReplace != nil ||
-		m.gitRemoteCancel != nil || m.gitCommitWriteCancel != nil || m.toolLayoutSaving {
+		m.gitRemoteCancel != nil || m.gitCommitWriteCancel != nil || m.viewMemorySaving {
 		return "an owned shell operation is still in progress"
 	}
 	if state := m.asyncIO.Load(); state != nil {

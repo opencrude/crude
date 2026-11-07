@@ -43,15 +43,15 @@ func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
 		seenEditors[m.EditorState.Editor] = struct{}{}
 		m.EditorState.Editor.InvalidateWidthProfile()
 	}
-	for _, tab := range m.EditorState.Tabs {
-		if tab == nil || tab.Editor == nil {
+	for _, view := range m.EditorState.Views {
+		if view.Editor == nil {
 			continue
 		}
-		if _, seen := seenEditors[tab.Editor]; seen {
+		if _, seen := seenEditors[view.Editor]; seen {
 			continue
 		}
-		seenEditors[tab.Editor] = struct{}{}
-		tab.Editor.InvalidateWidthProfile()
+		seenEditors[view.Editor] = struct{}{}
+		view.Editor.InvalidateWidthProfile()
 	}
 
 	if m.windowManager != nil {

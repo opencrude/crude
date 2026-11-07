@@ -28,7 +28,10 @@ func TestControlExecutionLiveDocumentTopicApplyAndUndo(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = r.Close() })
 	c := controlWireClient(t, r, "execution-topic")
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// One deadline bounds the whole journey: worktree creation, review and
+	// apply run real Git subprocesses, which take over 10 s on a loaded
+	// Windows runner. This is a liveness bound, not a latency assertion.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	var attached coreprotocol.AttachResult
 	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: a.ws.RootPath}, &attached); err != nil {

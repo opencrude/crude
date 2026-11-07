@@ -96,7 +96,7 @@ func TestEditorInlayLiteralUnicodeRenderCaretAndHit(t *testing.T) {
 	)
 	if e.cursor != beforeCursor || e.selAnchor != beforeAnchor || e.selEnd != beforeEnd ||
 		e.Revision() != revision || e.DiskGeneration() != generation || e.Modified() ||
-		e.Value() != source || len(e.changes) != 0 || e.DocumentState().PendingEdits != 0 {
+		e.Value() != source || len(e.buf.changes) != 0 || e.DocumentState().PendingEdits != 0 {
 		t.Fatal("showing labels changed source, selection, caret, history or savepoint")
 	}
 	b := renderTestInlays(e, 60, 8, false)
@@ -339,7 +339,7 @@ func TestEditorInlayRejectsInvalidAnchorsAtomically(t *testing.T) {
 			requireInlayGlyph(t, b, e.gutterWidth(), 0, "O", 1)
 			requireInlayGlyph(t, b, e.gutterWidth()+1, 0, "K", 1)
 			if e.Value() != source || e.Revision() != revision || e.cursor != cursor ||
-				e.selAnchor != anchor || e.selEnd != end || e.Modified() || len(e.changes) != 0 {
+				e.selAnchor != anchor || e.selEnd != end || e.Modified() || len(e.buf.changes) != 0 {
 				t.Fatal("rejected replacement changed source, view, history or savepoint")
 			}
 		})

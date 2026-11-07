@@ -39,10 +39,18 @@ type DocumentProjection struct {
 	historyRequestID string
 	replaying        bool
 	restoreView      *editorViewState
-	suppressed       bool
+	// restoreEditor is the linked view whose edit group restoreView belongs
+	// to; nil means the coordinator's own editor.
+	restoreEditor *Editor
+	suppressed    bool
 }
 
-type documentGroupView struct{ before, after editorViewState }
+// documentGroupView retains the caret of the exact view that made an edit
+// group, so undo restores that view rather than a sibling of the document.
+type documentGroupView struct {
+	before, after editorViewState
+	editor        *Editor
+}
 type documentHistoryAction struct {
 	edit     func()
 	redo     bool
@@ -60,6 +68,7 @@ type DocumentHistoryIntent struct {
 
 func (e *Editor) beginDocumentEditGroup(id string) {
 	if p := e.documentProjection; p != nil {
+		p.editor = e
 		p.beginEditGroup(id)
 	}
 }
@@ -89,7 +98,7 @@ func (p *DocumentProjection) noteEditGroup() {
 			p.viewOrder = p.viewOrder[1:]
 		}
 		p.viewOrder = append(p.viewOrder, id)
-		p.views[id] = documentGroupView{before: p.editGroupBefore}
+		p.views[id] = documentGroupView{before: p.editGroupBefore, editor: p.editor}
 	}
 }
 
@@ -154,6 +163,10 @@ type DocumentState struct {
 func (e *Editor) detachDocument() {
 	e.DismissGhostText()
 	e.CancelSnippet()
+	if e.unlink() {
+		e.releaseLinkedDocument()
+		return
+	}
 	e.diagMu.Lock()
 	e.diagnosticFacts = types.InsightDiagnostics{}
 	e.diagnosticProjectedID = ""
@@ -535,8 +548,12 @@ func (e *Editor) CompleteDocumentHistorySync() {
 	}
 	p.historySync = false
 	if p.restoreView != nil {
-		e.restoreViewState(*p.restoreView)
-		p.restoreView = nil
+		target := e
+		if v := p.restoreEditor; v != nil && v.open && v.documentProjection == p {
+			target = v
+		}
+		target.restoreViewState(*p.restoreView)
+		p.restoreView, p.restoreEditor = nil, nil
 	}
 	e.DrainDocumentUndo()
 }
@@ -684,14 +701,14 @@ func (e *Editor) commitDocumentDelta(c document.Change, remote, pending []docume
 		// restore stale coordinates after a collaborator or formatter changes it.
 		p.views = nil
 		p.viewOrder = nil
-		p.restoreView = nil
+		p.restoreView, p.restoreEditor = nil, nil
 	} else {
 		if view, ok := p.views[c.GroupID]; ok {
 			state := view.before
 			if p.historyRedo {
 				state = view.after
 			}
-			p.restoreView = &state
+			p.restoreView, p.restoreEditor = &state, view.editor
 		}
 	}
 	// Preserve logical view anchors by transforming their byte offsets across
@@ -705,11 +722,16 @@ func (e *Editor) commitDocumentDelta(c document.Change, remote, pending []docume
 		offsets[i] = e.buf.positionToOffset(a)
 	}
 	p.suppressed = true
+	// This editor maps its own anchors below; linked views map theirs per
+	// primitive through the table.
+	previousActor := e.buf.linkActor
+	e.buf.linkActor = e
 	for i := len(remote) - 1; i >= 0; i-- {
 		r := remote[i]
 		_, _ = e.buf.deleteOffsets(r.Start, r.End)
 		_, _ = e.buf.insertAtOffset(r.Start, []byte(r.Text))
 	}
+	e.buf.linkActor = previousActor
 	p.suppressed = false
 	for i, off := range offsets {
 		delta := 0

@@ -87,6 +87,16 @@ func (view View) ID() string {
 	}
 }
 
+// ViewFromID is the inverse of View.ID.
+func ViewFromID(id string) (View, bool) {
+	for view := ViewFiles; view <= ViewRemotes; view++ {
+		if view.ID() == id {
+			return view, true
+		}
+	}
+	return ViewFiles, false
+}
+
 func (v View) Label() string {
 	switch v {
 	case ViewAgents:

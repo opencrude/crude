@@ -22,8 +22,6 @@ const (
 	WorkspaceStartup      = "workspace.startup"
 	WorkspaceOverrides    = "workspace.overrides"
 	WorkspaceOverridesSet = "workspace.overrides_save"
-	ToolLayoutLoad        = "workspace.tool_layout"
-	ToolLayoutSave        = "workspace.tool_layout_save"
 	HistoryUndoScopes     = "history.undo_scopes"
 	GitStagePaths         = "git.stage_paths"
 	GitUnstagePaths       = "git.unstage_paths"
@@ -109,10 +107,6 @@ type StartupResult struct {
 type OverridesResult struct {
 	Overrides     types.WorkspaceOverrides `json:"overrides"`
 	AgentDefaults types.AgentsSettings     `json:"agent_defaults"`
-}
-
-type ToolLayoutRequest struct {
-	Layout workspace.ToolLayout `json:"layout"`
 }
 
 type UndoScopesRequest struct {

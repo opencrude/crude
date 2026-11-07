@@ -12,8 +12,13 @@ import (
 	"crude/clientstate"
 )
 
-// The binding is immutable. Commands retain it rather than consulting mutable
-// App state after a workspace/profile change. The caller owns Store lifetime.
+// composerDraftClient is this shell's private client profile bound to one
+// workspace: composer drafts, editor recovery and view memory all live under
+// it. The profile is the client's lifetime identity (its terminal or an
+// explicit --client-profile) and is held exclusively, so concurrent shells
+// never share it. The binding is immutable. Commands retain it rather than
+// consulting mutable App state after a workspace/profile change. The caller
+// owns Store lifetime.
 type composerDraftClient struct {
 	store       *clientstate.Store
 	attachment  clientstate.Attachment
@@ -47,6 +52,8 @@ func (m *App) ConfigureComposerDrafts(store *clientstate.Store, attachment clien
 	m.composerDraftOwners = nil
 	m.composerHydratedFor = nil
 	m.composerDraftEpoch++
+	// The same private profile carries this client's view memory.
+	m.loadViewMemoryNow()
 	return nil
 }
 

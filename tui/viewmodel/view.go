@@ -490,6 +490,7 @@ func (m *App) configureHeaderScreen() {
 		// the header stays on app + model only.
 		Width:         m.width - frame.Left - frame.Right,
 		LeftSegments:  left,
+		NavSegments:   m.statusHeaderNavSegments(),
 		RightSegments: m.statusHeaderRightSegments(),
 		Connection:    health.brand,
 	}) {

@@ -127,7 +127,7 @@ func (p *mainPaneLayout) view(tab *window.Tab) *mainPaneView {
 		} else {
 			v.editor = shelleditor.NewWithID(p.app.Theme, ui.NewID(base, "editor"))
 		}
-		v.editor.Bind(p.app.editorForWindowTab(tab.Title))
+		v.editor.Bind(p.app.editorForTab(tab.ID))
 	}
 	p.views[tab.ID] = v
 	return v
@@ -373,7 +373,7 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 			g.add(content, body)
 		}
 	case m.isEditorTabTitle(tab.Title):
-		ed := m.editorForWindowTab(tab.Title)
+		ed := m.editorForTab(tab.ID)
 		g.view.editor.Bind(ed)
 		pad := min(m.Theme.Spacing.PadLR, body.W/2)
 		left := pad

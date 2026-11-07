@@ -1,44 +1,20 @@
 package viewmodel
 
 import (
-	"maps"
 	"slices"
-	"time"
-
-	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/activitybar"
 	"crude/tui/ui"
-	"crude/workspace"
 )
-
-type toolLayoutMsg struct {
-	generation, version uint64
-	layout              workspace.ToolLayout
-	err                 error
-}
-type toolLayoutSaveMsg struct{ generation uint64 }
-type toolLayoutSavedMsg struct {
-	generation, version uint64
-	err                 error
-}
-
-func (app *App) loadToolLayoutCmd() tea.Cmd {
-	owner, generation, version := app.ws.BindToolLayout(), app.workspaceSwitchGen.Load(), app.toolLayoutVersion
-	return func() tea.Msg {
-		layout, err := owner.LoadToolLayout()
-		return toolLayoutMsg{generation: generation, version: version, layout: layout, err: err}
-	}
-}
 
 func (app *App) captureToolView() {
 	if app.Tree == nil {
 		return
 	}
 	if app.toolLayout.Views == nil {
-		app.toolLayout.Views = make(map[string]workspace.ToolViewState)
+		app.toolLayout.Views = make(map[string]ToolViewState)
 	}
-	state := workspace.ToolViewState{Width: app.Tree.Width}
+	state := ToolViewState{Width: app.Tree.Width}
 	if app.activityList != nil && app.activityView != activityFiles {
 		list := app.activityList.ViewState()
 		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
@@ -68,7 +44,7 @@ func (app *App) navigationActions(view activitybar.View) ui.ContextMenuSection {
 
 func (app *App) changeNavigation(view activitybar.View, direction int) {
 	if app.toolLayout.Rail == nil {
-		app.toolLayout.Rail = workspace.DefaultToolLayout().Rail
+		app.toolLayout.Rail = DefaultToolLayout().Rail
 	}
 	index := slices.Index(app.toolLayout.Rail, view.ID())
 	if direction == 0 {
@@ -82,38 +58,15 @@ func (app *App) changeNavigation(view activitybar.View, direction int) {
 		app.toolLayout.Rail[index], app.toolLayout.Rail[next] = app.toolLayout.Rail[next], app.toolLayout.Rail[index]
 	}
 	app.activityBar.SetOrder(app.toolLayout.Rail)
-	app.toolLayoutVersion++
-	app.startSourceControlMutation(app.queueToolLayoutSave())
+	app.viewMemoryVersion++
+	app.startSourceControlMutation(app.queueViewMemorySave())
 }
 
 func (app *App) resetToolLayout() {
-	app.toolLayout = workspace.DefaultToolLayout()
+	app.toolLayout = DefaultToolLayout()
 	app.workspacePanelHeights = make(map[string]int)
 	app.termDockHeight = defaultTermDockHeight
 	app.activityBar.SetOrder(app.toolLayout.Rail)
-	app.toolLayoutVersion++
-	app.startSourceControlMutation(app.queueToolLayoutSave())
-}
-
-func (app *App) queueToolLayoutSave() tea.Cmd {
-	if app.toolLayoutSaveQueued {
-		return nil
-	}
-	app.toolLayoutSaveQueued = true
-	generation := app.workspaceSwitchGen.Load()
-	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg { return toolLayoutSaveMsg{generation: generation} })
-}
-
-func (app *App) saveToolLayoutCmd() tea.Cmd {
-	app.captureToolView()
-	layout := app.toolLayout
-	if layout.Rail == nil {
-		layout.Rail = workspace.DefaultToolLayout().Rail
-	}
-	layout.PanelHeights, layout.Views = maps.Clone(app.workspacePanelHeights), maps.Clone(layout.Views)
-	layout.Rail = slices.Clone(layout.Rail)
-	owner := app.ws.BindToolLayout()
-	generation, version := app.workspaceSwitchGen.Load(), app.toolLayoutVersion
-	app.toolLayoutSaving = true
-	return func() tea.Msg { return toolLayoutSavedMsg{generation, version, owner.SaveToolLayout(layout)} }
+	app.viewMemoryVersion++
+	app.startSourceControlMutation(app.queueViewMemorySave())
 }

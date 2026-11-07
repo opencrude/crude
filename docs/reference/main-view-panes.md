@@ -15,15 +15,41 @@ Session persistence does not imply pane-layout persistence.
 |-------|----------------|
 | `tui/window/window.go`, `tui/window/groups.go` | One resource-tab identity, group membership/order, selected tab per group, focused group, recursive `PaneNode` topology |
 | `tui/viewmodel/main_panes.go` | Retained group controls and per-tab views, parent-local geometry, compact presentation, session-family chrome placement |
-| `tui/viewmodel/main_pane_actions.go` | Input policy, group activation, split/move/merge/resize commands, drop targets and preview, owner-bound file picker |
+| `tui/viewmodel/main_pane_actions.go` | Input policy, group activation, split/move/merge/resize commands, open/move beside, drop targets and preview, owner-bound file picker |
+| `tui/viewmodel/editor_views.go`, `tui/editor/linked_view.go` | File views: one document per path, any number of tabs showing it, linked editors that share one buffer |
+| `tui/viewmodel/navigation_history.go` | Go Back / Go Forward places and their restore |
 | `tui/viewmodel/floating_panes.go` | Pane windows: one WM window per floating group, window/group focus agreement, host resolution for focus and geometry |
 | `tui/viewmodel/panel_placement.go` | Workspace surfaces (Git, Problems, Notices, Workspace, Memory, Board) placed in the dock, a main tab or a pane window |
 | `tui/ui/action_registry.go` | Shared shortcut and palette metadata |
 | `ui.Host`, `ui.SplitModel`, `ui.SplitDivider`, `ui.Tabs` | Shared focus/capture, split sizing, divider manipulation, strip navigation/overflow and drag gestures |
 
-Moving a tab moves the existing identity, never copies a file, agent or session
-into a second tab. Opening an already-open resource selects its existing tab;
-the pane-specific Open File route can move that tab into its requesting group.
+Moving a tab moves the existing identity, never copies an agent or session
+into a second tab. Files are different: a file may be shown by any number of
+tabs (views), at most one per pane. Opening a file, from any route (tree,
+palette, search, diagnostics, Go to Definition, Ctrl+click, Back/Forward),
+lands in the pane that asked: that pane's view of the file is selected, or a
+view is added there. A view in another pane is never pulled out of its pane.
+Agents, sessions and other resources keep one tab: opening them selects it.
+
+### File views
+
+`EditorState.Tabs` keeps one entry per open document (by path) whose editor is
+the document's primary view; `EditorState.Views` maps every file tab to its
+view. The first view uses the primary editor; each further view is
+`editor.NewLinkedView` of it. Linked views share the piece table, buffer,
+canonical document projection, undo history, Git baseline, disk watcher,
+syntax parse and width model; each keeps its own caret, selection, scroll,
+search, hover and snippet/ghost interaction. A mutation through any view
+remaps the other views' anchors through the exact byte edits in the same call,
+so all views paint the same text in the same frame with no round trip and no
+second copy of the document. Remote edits arrive once, through the primary.
+
+Closing a view of a file that another tab still shows closes only that view,
+without a prompt: the text, unsaved changes and history stay. Closing the
+primary view hands the primary editor to a sibling tab, which keeps its own
+caret and scroll. Closing the last view uses the dirty-safe close path.
+Bulk closes (Close Other Files in Pane, Close Files to the Right) operate on
+views, so they never close a file another pane still shows.
 Each leaf retains its own selected tab. Selecting a tab focuses its group;
 ordinary tab cycling stays within that group. Group cycling follows recursive
 first-to-second visual order. Removing an empty group collapses its parent and
@@ -123,8 +149,12 @@ editor/chat facts. Workspace status remains workspace-owned.
 
 | Operation | Route |
 |-----------|-------|
-| Split focused group right / down, initially empty | Ctrl+Alt+L / Ctrl+Alt+D |
+| Split focused group right / down | Ctrl+Alt+L / Ctrl+Alt+D (also `Ctrl+\` for right). A file is shown again in the new pane at the same caret and scroll; any other tab gets an empty pane |
 | Arrow aliases for right / down split | Ctrl+Alt+Right / Ctrl+Alt+Down; the OS may intercept these, so letter chords are the displayed defaults |
+| Split with an agent / with a file | **Split Right with Agent** (the last agent, or a new session in the new pane), **Split Right with File** (the last file, or the file picker); palette also offers Down |
+| Open a file in the pane on a side | **Open in Right Pane** (and Left / Above / Below) in the tab menu and palette: the pane's view of the file is selected or added; a new split is made when there is no pane on that side |
+| Move a tab into the pane on a side | **Move to Right Pane** (and Left / Above / Below); when no pane is there, **Move to New Split …**. A file already shown there keeps that view |
+| Go Back / Go Forward | Alt+Left / Alt+Right, the mouse back/forward buttons, and the ← → arrows after the header wordmark (muted when there is no place, so their place stays visible). A focused diff keeps Alt+Left/Right for its previous/next file |
 | Previous / next group | Alt+[ / Alt+] |
 | Previous / next tab in focused group | Ctrl+[ / Ctrl+] |
 | Grow / shrink focused group's containing split | Ctrl+Alt+= / Ctrl+Alt+- |
@@ -306,6 +336,48 @@ ownership are all retained. A stray click must never destroy work in flight.
   menus) still cancels the turn, stops the orchestrator, and drops state.
   `cleanupAgent` remains the destructive path; do not wire it to tab close.
 - Guarded by `tui/viewmodel/agent_minimize_test.go`.
+
+## Client view memory
+
+Each shell remembers **its own** presentation choices for each workspace and
+gets them back when it returns. Another shell on the same workspace never
+reads or changes them, so concurrent users do not disturb each other.
+
+- **Identity.** The client is the private client profile the shell already
+  holds exclusively for drafts and editor recovery: its terminal (tmux pane,
+  Windows Terminal session, SSH TTY or tty) or an explicit `--client-profile`.
+  `clientstate.Acquire` fences each attachment with an epoch, so a stale shell
+  of the same profile cannot write. Remote backends namespace the workspace ID
+  (`DraftWorkspaceID`), so two hosts never share a record.
+- **Contents** (`viewMemory`, `tui/viewmodel/client_view_memory.go`):
+  minimized agents and opened sub-agents (by durable agent ID), the selected
+  agent, folded Agents-list rows, the tree's hidden-files toggle (only when it
+  differs from the setting), sidebar visibility, the active rail destination,
+  and the layout: rail order, per-destination width/filter/selection/offset and
+  panel heights. Workspace inventory and canonical state stay in the workspace;
+  nothing here is written to workspace or session storage.
+- **Restore before inventory.** Startup reads the record before the first
+  frame; a workspace switch reads the destination's record while the
+  attachment is prepared, off Update. `installViewMemory` runs before the
+  replica's first inventory, so an agent adopts its remembered choice the first
+  time it appears. A minimized agent never opens by itself: the first focus goes
+  to the remembered agent, else the first one this client did not minimize,
+  else the workspace home. Defaults (completed review children closed) never
+  override a remembered choice.
+- **One save trigger.** `noteViewMemoryChange` compares cheap marks once per
+  Update (agent-view revision, selection, folds, tree toggle, sidebar, rail
+  destination) plus the layout version, then saves 400 ms later off Update.
+  `viewMemoryStore` serializes writes and drops a version older than the last
+  stored one. The workspace switch stores the old workspace's record before
+  reading the next one; `StopAsyncIO` flushes the latest record before the
+  profile is released.
+- **New clients.** A profile with no record for a workspace starts from a copy
+  of the most recently stored record of any client for that workspace, so a new
+  terminal does not reopen everything; the copy is never written back.
+- **Settings stay explicit.** Changing **Show hidden files** in Settings
+  replaces this client's quick toggle; other settings are not view memory.
+- Guarded by `clientstate/view_memory_test.go` and
+  `tui/viewmodel/client_view_memory_test.go`.
 
 ## New agents surface a tab immediately
 
@@ -501,3 +573,25 @@ wins over prepared disk bytes. See the recorded measurements in
   window; **⌄** hides the dock. The footer pill reveals the surface wherever it
   is placed instead of opening a second copy. A surface is mounted in exactly
   one place.
+
+## Navigation history
+
+Go Back / Go Forward follows VS Code's editor navigation stack. A place is a
+tab, and for a file its caret and first visible line. The shell records the
+previous place on every tab change, on every caret jump of 10 or more lines in
+one file, and before every code navigation (Go to Definition, references,
+Ctrl+click), coalescing repeated visits to one place. Recording is an O(1)
+comparison after each update; it never reads the document. Back and Forward
+restore an open place synchronously (tab, caret, scroll), so they are
+instant; a file closed since then reopens in the pane it was in. Places whose
+tab no longer exists and have no file (a closed agent tab) are skipped.
+Each stack keeps 64 places.
+
+## Code links
+
+Holding Ctrl over a symbol underlines it in the accent color; Ctrl+click goes
+to its definition and Ctrl+Alt+click to its implementations. The click places
+the caret on the symbol and the navigation opens in the clicked pane. No
+chooser opens for a single destination; several destinations open the shared
+chooser; none shows "No definition found." in the status line. Ctrl+click on a
+declaration shows its references, as established editors do.

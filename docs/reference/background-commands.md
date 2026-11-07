@@ -25,6 +25,15 @@
 - Background-job columns are content-sized with terminal-width helpers.
   Optional PID/exit telemetry yields before handles are shortened; elapsed labels
   use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.
+- Windows agent commands run from a temporary `.cmd` file (cmd `/C` strips
+  quotes unpredictably), but keep their command-line meaning:
+  `fileio.windowsBatchScript` keeps `%NAME%` for defined variables (environment,
+  cmd dynamic variables, `set` in the same script, `:~` and `:x=y` forms) and
+  doubles every other `%`, so URLs (`%20`), format strings (`%H`) and loop
+  variables (`%i`) survive the batch parser. A quoted argument that spans a line
+  break is refused before anything runs: cmd.exe would run the remaining lines
+  as separate commands. The tool result tells the model to write the script to
+  a file in `CRUDE_TEMP_DIR`. The environment prompt states the same contract.
 - Noninteractive Windows commands use `CREATE_NO_WINDOW` plus `HideWindow`;
   package managers such as WinGet must never attach to or paint into Crude's host
   console. Stdout/stderr is visible only through the captured tool/job result.

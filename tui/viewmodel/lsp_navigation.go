@@ -14,6 +14,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/navigation"
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/types"
 	"crude/workspace"
@@ -27,6 +28,7 @@ type navigationState struct {
 	source               types.InsightSource
 	selection            codeActionSelection
 	path, kind           string
+	group                window.GroupID // the pane that asked; the target opens there
 	line, col            int
 	revision, generation uint64
 	port                 shellport.Navigation
@@ -37,8 +39,11 @@ type navigationState struct {
 	result               *types.LSPNavigation
 	shown, reading       bool
 	landing              bool
-	selected             int
-	focus                FocusTarget
+	// direct is a Ctrl+click navigation: no chooser opens unless the answer
+	// has several places, so one destination is reached without a popup.
+	direct, popup bool
+	selected      int
+	focus         FocusTarget
 }
 
 type navigationResultMsg struct {
@@ -88,6 +93,32 @@ func navigationTitle(kind string) string {
 }
 
 func (m *App) requestNavigationCmd(kind string) tea.Cmd {
+	return m.startNavigation(kind, false)
+}
+
+// navigateAt runs a Ctrl+click navigation from the clicked view, whose caret
+// the click placed on the symbol. The result opens in that view's pane.
+func (m *App) navigateAt(msg editor.NavigateAtMsg) tea.Cmd {
+	view := m.editorViewOf(msg.Editor)
+	if view == nil || !msg.Editor.IsOpen() {
+		return nil
+	}
+	if m.EditorState.ActiveTab != view.Tab {
+		m.Win.SwitchTo(m.Win.IndexOf(view.Tab))
+		m.handleTabSwitch()
+	}
+	if m.EditorState.Editor != msg.Editor {
+		return nil
+	}
+	m.recordNavigationOrigin()
+	kind := types.LSPNavigationDefinition
+	if msg.Implementation {
+		kind = types.LSPNavigationImplementation
+	}
+	return m.startNavigation(kind, true)
+}
+
+func (m *App) startNavigation(kind string, direct bool) tea.Cmd {
 	m.closeNavigation()
 	m.closeSignatureHelp()
 	m.closeCodeActions()
@@ -107,17 +138,33 @@ func (m *App) requestNavigationCmd(kind string) tea.Cmd {
 	line, col := ed.LSPCursorPosition()
 	s := &navigationState{
 		workspace: m.ws, editor: ed, source: source, selection: currentCodeActionSelection(ed),
-		path: ed.FilePath(), kind: kind, line: line, col: col, revision: ed.Revision(),
+		path: ed.FilePath(), kind: kind, group: m.Win.ActiveGroup(), line: line, col: col, revision: ed.Revision(),
 		generation: generation, port: port, screen: navigation.New(m.Theme), ctx: ctx, cancel: cancel,
 		deadline: time.Now().Add(workspace.ManualLSPRequestTimeout + 5*time.Second), selected: -1,
+		direct: direct,
 	}
 	if m.FocusStack != nil {
 		s.focus = m.FocusStack.Top()
 	}
 	s.screen.SetLoading(kind)
 	m.navigation = s
+	if !direct {
+		m.openNavigationPopup(s)
+	}
+	return func() tea.Msg {
+		request, stop := context.WithTimeout(s.ctx, workspace.ManualLSPRequestTimeout)
+		defer stop()
+		result, err := port.RequestLSPNavigation(request, source, kind, line, col, kind == types.LSPNavigationReferences)
+		return navigationResultMsg{owner: s, result: result, err: err}
+	}
+}
+
+// openNavigationPopup shows the chooser for s at the editor caret.
+func (m *App) openNavigationPopup(s *navigationState) {
+	s.popup = true
+	ed := s.editor
 	w, h := min(104, max(1, m.width-4)), min(28, max(1, m.height-4))
-	frame := ui.NewWindowFrameWidget(m.Theme, "navigation/frame", ui.FramePopover, navigationTitle(kind), s.screen, nil, true, w, h)
+	frame := ui.NewWindowFrameWidget(m.Theme, "navigation/frame", ui.FramePopover, navigationTitle(s.kind), s.screen, nil, true, w, h)
 	frame.Focus(s.screen.DefaultFocus())
 	fw := wm.NewFloatingWindow(string(navigationOverlay), "", frame, w, h, wm.WithDecoration(false),
 		wm.WithMovable(false), wm.WithResizable(false), wm.WithClosable(true), wm.WithFocusable(true),
@@ -129,12 +176,19 @@ func (m *App) requestNavigationCmd(kind string) tea.Cmd {
 			s.cancel()
 		}
 	})
-	return func() tea.Msg {
-		request, stop := context.WithTimeout(s.ctx, workspace.ManualLSPRequestTimeout)
-		defer stop()
-		result, err := port.RequestLSPNavigation(request, source, kind, line, col, kind == types.LSPNavigationReferences)
-		return navigationResultMsg{owner: s, result: result, err: err}
+}
+
+// failNavigation reports a problem: in the chooser when one is open, else in
+// the status line, because a Ctrl+click has no popup to show it.
+func (m *App) failNavigation(s *navigationState, text string) {
+	s.deadline = time.Time{}
+	if !s.popup {
+		m.closeNavigation()
+		m.Feedback.NotifyInfo(text)
+		return
 	}
+	s.screen.SetError(text)
+	m.markNavigationDirty(s)
 }
 
 func (m *App) navigationCurrent(s *navigationState) bool {
@@ -146,6 +200,10 @@ func (m *App) navigationCurrent(s *navigationState) bool {
 	}
 	if m.termDockFocused || m.sessionDeckCapturesInput() || m.FocusStack != nil && m.FocusStack.Top() != s.focus {
 		return false
+	}
+	if !s.popup && !s.landing {
+		// A Ctrl+click is current while the user stays in the clicked view.
+		return m.EditorState.Editor == s.editor && m.focusTarget() == FocusEditor
 	}
 	if s.landing {
 		// Opening a target changes the aggregate active-file status. The source
@@ -211,17 +269,13 @@ func (m *App) handleNavigationResult(msg navigationResultMsg) {
 		return
 	}
 	if msg.err != nil {
-		s.deadline = time.Time{}
 		m.logLSPFailure("navigation", msg.err)
-		s.screen.SetError("Could not search. The language server returned an error. Try again.")
-		m.markNavigationDirty(s)
+		m.failNavigation(s, "Could not search. The language server returned an error. Try again.")
 		return
 	}
 	if msg.result.Kind != s.kind || msg.result.Line != s.line || msg.result.Col != s.col ||
 		msg.result.IncludeDeclaration != (s.kind == types.LSPNavigationReferences) {
-		s.screen.SetError("The answer does not match this search. Search again.")
-		s.deadline = time.Time{}
-		m.markNavigationDirty(s)
+		m.failNavigation(s, "The answer does not match this search. Search again.")
 		return
 	}
 	s.result = &msg.result
@@ -244,10 +298,8 @@ func (m *App) syncNavigation() {
 			return
 		}
 		s.cancel()
-		s.deadline = time.Time{}
 		s.result = nil
-		s.screen.SetError("The language server did not answer in time. It may still be loading the project. Try again in a moment.")
-		m.markNavigationDirty(s)
+		m.failNavigation(s, "The language server did not answer in time. It may still be loading the project. Try again in a moment.")
 		return
 	}
 	if s.result == nil || s.landing {
@@ -271,12 +323,51 @@ func (m *App) syncNavigation() {
 	}
 	s.shown, s.deadline = true, time.Time{}
 	s.screen.SetResult(*s.result)
+	targets := s.result.Targets
+	single := s.kind != types.LSPNavigationReferences && len(targets) == 1 &&
+		targets[0].Path != "" && targets[0].UnavailableReason == "" && !targets[0].External
+	if s.direct && !s.popup {
+		switch {
+		case single && s.kind == types.LSPNavigationDefinition && targets[0].Path == s.path && navigationRangeContains(targets[0].Selection, s.line, s.col):
+			// Ctrl+click on a declaration shows its uses, as established
+			// editors do; going to the place already shown does nothing.
+			m.runDetachedAsyncCmd(m.startNavigation(types.LSPNavigationReferences, true))
+			return
+		case len(targets) == 0:
+			m.closeNavigation()
+			m.Feedback.NotifyInfo(navigationEmptyText(s.kind))
+			return
+		case !single:
+			m.openNavigationPopup(s)
+		}
+	}
 	m.markNavigationDirty(s)
 	// A single in-project destination is the normal direct-jump case. Multiple
 	// and external destinations always need an explicit native chooser action.
-	if s.kind != types.LSPNavigationReferences && len(s.result.Targets) == 1 &&
-		s.result.Targets[0].Path != "" && s.result.Targets[0].UnavailableReason == "" && !s.result.Targets[0].External {
+	if single {
 		m.runDetachedAsyncCmd(m.openNavigationTarget(navigation.OpenMsg{Target: s.screen, Index: 0}))
+	}
+}
+
+// navigationRangeContains reports whether an LSP position is inside r.
+func navigationRangeContains(r types.LSPNavigationRange, line, col int) bool {
+	before := func(a, b types.LSPNavigationPosition) bool {
+		return a.Line < b.Line || a.Line == b.Line && a.Character <= b.Character
+	}
+	at := types.LSPNavigationPosition{Line: line, Character: col}
+	return before(r.Start, at) && before(at, r.End)
+}
+
+func navigationEmptyText(kind string) string {
+	switch kind {
+	case types.LSPNavigationImplementation:
+		return "No implementation found."
+	case types.LSPNavigationReferences:
+		return "No references found."
+	case types.LSPNavigationTypeDefinition:
+		return "No type definition found."
+	default:
+		return "No definition found."
 	}
 }
 
@@ -311,21 +402,26 @@ func (m *App) handleNavigationTarget(msg navigationTargetMsg) tea.Cmd {
 	s.reading, s.deadline = false, time.Time{}
 	if msg.err != nil {
 		m.logLSPFailure("navigation-open", msg.err)
-		s.screen.SetError("Could not open the file. It may have moved or changed. Search again.")
-		m.markNavigationDirty(s)
+		m.failNavigation(s, "Could not open the file. It may have moved or changed. Search again.")
 		return nil
 	}
 	if !reflect.DeepEqual(msg.landing.Boundary, s.result.Boundary) ||
 		!reflect.DeepEqual(msg.landing.Target, s.result.Targets[msg.index]) || len(msg.landing.TextHash) != 64 {
-		s.screen.SetError("That place changed while it was opened. Search again.")
-		m.markNavigationDirty(s)
+		m.failNavigation(s, "That place changed while it was opened. Search again.")
 		return nil
+	}
+	if !s.direct {
+		m.recordNavigationOrigin()
 	}
 	s.landing = true
 	s.deadline = time.Now().Add(10 * time.Second)
 	m.overlayHost.Close(navigationOverlay) // keep the owner until async open settles
 	openCtx, stop := context.WithTimeout(s.ctx, 10*time.Second)
-	cmd := m.openPaneFilesContext(openCtx, []string{msg.landing.Target.Path}, m.Win.ActiveGroup())
+	group := s.group
+	if !m.Win.HasGroup(group) {
+		group = m.Win.ActiveGroup()
+	}
+	cmd := m.openPaneFilesContext(openCtx, []string{msg.landing.Target.Path}, group)
 	if cmd == nil {
 		stop()
 		m.closeNavigation()
@@ -369,7 +465,7 @@ func (m *App) navigationLandingMatches(msg paneFilesOpenedMsg) bool {
 		if !tab.Editor.MatchesInsightSource(source) {
 			return false
 		}
-		if state := m.liveEditors[tab.Editor]; state != nil && state.refs != nil {
+		if state := m.liveEditors[tab.Editor.Primary()]; state != nil && state.refs != nil {
 			return true // An already installed, settled private view wins.
 		}
 	}
@@ -399,4 +495,5 @@ func (m *App) applyNavigationLanding(msg paneFilesOpenedMsg) {
 		return
 	}
 	ed.ScrollToCursor()
+	m.recordNavigationLanding()
 }

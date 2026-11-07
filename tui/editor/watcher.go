@@ -23,7 +23,7 @@ func (e *Editor) DiskChanged() bool {
 
 func (e *Editor) startWatching() {
 	e.stopWatching()
-	if e.filePath == "" {
+	if e.filePath == "" || e.Primary() != e {
 		return
 	}
 	dir := filepath.Dir(e.filePath)

@@ -31,10 +31,12 @@ type GitHunk = textdiff.Hunk
 
 // SetGitAnnotation publishes an immutable HEAD baseline and revision-bound blame.
 // Background refreshes of the same HEAD never replace the live hunk projection.
+// Linked views share the primary's projection.
 func (e *Editor) SetGitAnnotation(sourceRevision uint64, head string, hunks []GitHunk, blame []GitBlameLine, conflicted bool) {
 	if e == nil || e.buf == nil {
 		return
 	}
+	e = e.Primary()
 	e.gitBlame = blame
 	e.gitBlameHunks = append([]GitHunk(nil), hunks...)
 	e.gitConflicted = conflicted
@@ -74,6 +76,7 @@ func (e *Editor) ClearGitAnnotation() {
 // the window without scanning the document or replaying a bounded edit log.
 // Paint, inspection and navigation consume this same truthful projection.
 func (e *Editor) remapGitProjection() {
+	e = e.Primary()
 	if e == nil || !e.gitLoaded || e.gitRevision == e.Revision() {
 		return
 	}
@@ -151,6 +154,7 @@ func (e *Editor) remapGitProjection() {
 }
 
 func (e *Editor) gitKindAt(line int) GitLineKind {
+	e = e.Primary()
 	if e == nil || !e.gitLoaded || line < 0 {
 		return GitLineUnchanged
 	}
@@ -173,6 +177,7 @@ func (e *Editor) gitKindAt(line int) GitLineKind {
 }
 
 func (e *Editor) gitDeletionMarkerAt(line, lineCount int) rune {
+	e = e.Primary()
 	e.remapGitProjection()
 	if !e.gitLoaded {
 		return ' '
@@ -199,6 +204,7 @@ func (e *Editor) GitHunkAtLine(line int) (GitHunk, int, bool) {
 	if e == nil {
 		return GitHunk{}, -1, false
 	}
+	e = e.Primary()
 	e.remapGitProjection()
 	for index, h := range e.gitHunks {
 		end := h.NewStart + len(h.NewLines)
@@ -215,6 +221,7 @@ func (e *Editor) GitHunks() []GitHunk {
 	if e == nil {
 		return nil
 	}
+	e = e.Primary()
 	e.remapGitProjection()
 	return e.gitHunks
 }
@@ -246,6 +253,7 @@ func (e *Editor) BlameAtLine(line int) (GitBlameLine, bool) {
 	if e == nil || line < 0 {
 		return GitBlameLine{}, false
 	}
+	e = e.Primary()
 	if e.gitKindAt(line) != GitLineUnchanged {
 		return GitBlameLine{Line: line + 1, Uncommitted: true}, true
 	}

@@ -143,13 +143,8 @@ func (l *local) Status() StatusService {
 	return l.ws.Status
 }
 
-// BindToolLayout and BindMemory capture only the workspace database, so work
-// queued before a workspace switch keeps writing to the database it started
-// with.
-func (l *local) BindToolLayout() ToolLayoutStore {
-	return &workspace.Workspace{WorkspaceDB: l.ws.WorkspaceDB}
-}
-
+// BindMemory captures only the workspace database, so work queued before a
+// workspace switch keeps writing to the database it started with.
 func (l *local) BindMemory() MemoryStore {
 	return &workspace.Workspace{WorkspaceDB: l.ws.WorkspaceDB}
 }

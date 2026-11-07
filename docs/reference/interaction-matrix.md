@@ -52,13 +52,17 @@ history. Permission, ownership and storage failures remain fail-closed.
 
 Current ownership, lifecycle and limits: [Main View Panes](main-view-panes.md).
 Groups are recursive side-by-side/stacked leaves with independently selected
-tabs. One resource identity moves, never duplicates. Layout is workspace-scoped
+tabs. Agent and session identities move, never duplicate; a file may be shown
+in any number of panes, one view per pane, all editing one document. Layout is workspace-scoped
 in memory for the current process only, not restored after restart; switching
 workspace resets it. Header telemetry follows the focused group.
 
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
-| Split right / down | Ctrl+Alt+L / Ctrl+Alt+D | Creates a focused empty group; Ctrl+Alt+Right/Down aliases may be intercepted by the OS |
+| Split right / down | Ctrl+Alt+L / Ctrl+Alt+D; `Ctrl+\` splits right | A file is shown again in the new pane at the same caret and scroll; other tabs get an empty pane. Ctrl+Alt+Right/Down aliases may be intercepted by the OS |
+| Split with agent / file | Tab menu **Split Right with Agent** / **Split Right with File**; palette also offers Down | The last agent (or a new session) / the last file (or the file picker) opens beside the tab |
+| Open in / move to the pane on a side | Tab menu **Open in Right Pane**, **Move to Right Pane** (and Left, Above, Below); palette | Open adds or selects a view of the file there; Move moves the tab. With no pane on that side, a new split is made |
+| Go Back / Go Forward | Alt+Left / Alt+Right; mouse back / forward buttons; header ← → | Returns to the previous place (tab, caret, scroll) instantly; a focused diff keeps Alt+Left/Right for previous/next file |
 | Previous / next pane | Alt+[ / Alt+] | Visual leaf order; remains available in compact presentation |
 | Grow / shrink pane | Ctrl+Alt+= / Ctrl+Alt+- | Shared split sizing with minimum bounds |
 | New Session in Pane | Group +; Ctrl+Alt+N; Ctrl+T then N/+ | + sits after content-sized tabs, pinned at the trailing edge during overflow |
@@ -201,7 +205,7 @@ window derive from current bytes, not replayed change guesses.
 | Numeric completion fields | Tab / Shift+Tab while a snippet is active | Visit positive numeric stops, then the first surviving final landing; first Shift+Tab never wraps or indents. Accepting a completion with Tab does not also advance its first field. Ordinary typing/paste updates mirrors in the same undo group; Undo/Redo restores bytes without reviving private interaction |
 | Snippet choices | Ctrl+Space on a choice field; Enter/Tab or pointer selects | Native WindowFrame/List; Escape/outside dismisses the picker without discarding text. Escape in the editor then retires snippet interaction before Close Tab; true focus/owner departure retires it too |
 | Smart Home | Home | Toggles first non-blank column and column 0 |
-| Qualified locations | Alt+. definition; Alt+T type definition; Alt+M implementation; Alt+; references; editor Code menu | One source/provider/context-bound family. Single internal definition-family target may jump directly; multiple/external targets and all references use the compact caret-anchored native chooser. Enter or a click opens the chosen location directly. Esc, × or a click outside retires it; no Close-only footer. Manual searches wait up to two minutes for startup and the answer. Missing target versions are never inferred. |
+| Qualified locations | Alt+. definition; Alt+T type definition; Alt+M implementation; Alt+; references; editor Code menu; Ctrl+click definition, Ctrl+Alt+click implementation (Ctrl+hover underlines the symbol; Ctrl+click on a declaration shows references) | Results open in the pane that asked. One source/provider/context-bound family. Single internal definition-family target may jump directly; multiple/external targets and all references use the compact caret-anchored native chooser. Enter or a click opens the chosen location directly. Esc, × or a click outside retires it; no Close-only footer. Manual searches wait up to two minutes for startup and the answer. Missing target versions are never inferred. |
 | Parameter information | Native `(` / `,`; Alt+I; Ctrl+Shift+Space where delivered; editor Code context action | Delimiter edits await their exact canonical acknowledgement and open a passive caret-anchored card; next typing stays in the editor and automatic absence/failure stays quiet. Alt+I/context explicitly requests the full focusable read-only reader with scroll/select/copy. Esc dismisses queued intent/card/reader first; Close/outside dismiss the reader. Source/caret/focus/invocation and pushed context generations fence every reply. No language-specific parser or dynamic-registration support is implied |
 | Diagnostic readers | Editor context menu **Show diagnostics**; pointer hover | Details anchor to the clicked source point even with a retained selection; keyboard context entry uses the mounted caret. Hover remains passive until an explicit click, wheel browses without stealing focus, and the full native reader supports paging/select/copy. Source/fact/selection/owner departure retires stale inspection. Escape/Close/outside closes details without consuming the source or private draft. |
 | Inlay hints | Alt+J inspector; palette Show/Hide/Refresh; editor View menu | Default-Off opt-in read-only labels; label/padding clicks land at source anchors, not provider edits/commands/locations. Enter inspects the original row; detail defaults to Close, Back/Esc cancels the selected reader and returns to list, then Esc closes. Tooltip Resolve is an explicit advertised read. Show/Hide is private to one view and cannot override settings or Trust. |

@@ -298,6 +298,7 @@ func (m *App) toggleAgentFold(itemID string) {
 	if m.agentFolded == nil {
 		m.agentFolded = map[string]bool{}
 	}
+	m.agentFoldRevision++
 	if m.agentFolded[id] {
 		delete(m.agentFolded, id)
 		return
@@ -528,7 +529,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID {
 			m.setSidebarWidth(payload.First)
 			m.captureToolView()
-			m.toolLayoutVersion++
+			m.viewMemoryVersion++
 		}
 		if payload.ID == termdock.DividerID {
 			m.setTermDockHeight((m.height - m.chromeBottomRows()) - payload.First)

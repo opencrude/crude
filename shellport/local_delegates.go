@@ -130,14 +130,6 @@ func (l *local) PrepareDraftAccountModels(account provider.Account, baseURL, sta
 	return l.ws.PrepareDraftAccountModels(account, baseURL, standardID)
 }
 
-func (l *local) LoadToolLayout() (workspace.ToolLayout, error) {
-	return l.ws.LoadToolLayout()
-}
-
-func (l *local) SaveToolLayout(layout workspace.ToolLayout) error {
-	return l.ws.SaveToolLayout(layout)
-}
-
 func (l *local) AdvanceAgentState(now time.Time) workspace.AgentReduction {
 	return l.ws.AdvanceAgentState(now)
 }

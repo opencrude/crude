@@ -1,6 +1,8 @@
 package viewmodel
 
 import (
+	"slices"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
@@ -19,8 +21,12 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 	}
 	applied := replica.ApplyReplicaChanges(msg)
 	var commands []tea.Cmd
-	for i, id := range applied.Attached {
-		activate := applied.Initial && i == 0
+	focus := ""
+	if applied.Initial {
+		focus = m.initialAgentFocus(applied.Attached)
+	}
+	for _, id := range applied.Attached {
+		activate := id == focus
 		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[id])
 		if aeron {
 			// The workspace agent is permanent background inventory. It must
@@ -78,6 +84,25 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 		}
 	}
 	return tea.Batch(commands...)
+}
+
+// initialAgentFocus picks the agent an attaching shell shows first: the one
+// this client last had selected, else the first one it did not minimize.
+// Agents this client minimized never open by themselves; when every agent is
+// minimized the shell stays on the workspace home.
+func (m *App) initialAgentFocus(attached []string) string {
+	candidate := func(id string) bool {
+		return m.ws.AgentMgr().Get(id) != nil && !m.AgentView.IsHidden(id) && !workspace.SessionIsAeron(m.ws.SessionsByAgent()[id])
+	}
+	if remembered := m.rememberedAgent; remembered != "" && slices.Contains(attached, remembered) && candidate(remembered) {
+		return remembered
+	}
+	for _, id := range attached {
+		if candidate(id) {
+			return id
+		}
+	}
+	return ""
 }
 
 // CloseWorkspaceAttachment releases this shell only, including after switching.

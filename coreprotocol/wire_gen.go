@@ -18628,50 +18628,6 @@ func (z *TerminalViewport) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z *ToolLayoutRequest) MarshalMsg(b []byte) (o []byte, err error) {
-	o = msgp.Require(b, z.Msgsize())
-	// array header, size 1
-	o = append(o, 0x91)
-	o, err = z.Layout.MarshalMsg(o)
-	if err != nil {
-		err = msgp.WrapError(err, "Layout")
-		return
-	}
-	return
-}
-
-// UnmarshalMsg implements msgp.Unmarshaler
-func (z *ToolLayoutRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
-	var zb0001 uint32
-	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err)
-		return
-	}
-	if uint64(zb0001)*1 > uint64(len(bts)) {
-		err = msgp.ErrShortBytes
-		return
-	}
-	if zb0001 != 1 {
-		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
-		return
-	}
-	bts, err = z.Layout.UnmarshalMsg(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "Layout")
-		return
-	}
-	o = bts
-	return
-}
-
-// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z *ToolLayoutRequest) Msgsize() (s int) {
-	s = 1 + z.Layout.Msgsize()
-	return
-}
-
-// MarshalMsg implements msgp.Marshaler
 func (z TopicAck) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 2

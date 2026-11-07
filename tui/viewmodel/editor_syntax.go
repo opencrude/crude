@@ -10,10 +10,8 @@ type editorSyntaxSurface interface{ SyntaxEditor() *editor.Editor }
 
 func (m *App) visitSyntaxEditors(visit func(*editor.Editor)) {
 	if m.EditorState != nil {
-		for _, tab := range m.EditorState.Tabs {
-			if tab != nil {
-				visit(tab.Editor)
-			}
+		for _, view := range m.EditorState.Views {
+			visit(view.Editor)
 		}
 		visit(m.EditorState.Editor)
 	}

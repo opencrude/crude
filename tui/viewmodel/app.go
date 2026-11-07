@@ -163,7 +163,13 @@ type App struct {
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
 	// resumes the walk.
-	pendingTabClose     []string
+	pendingTabClose []window.TabID
+	// lastFocusedAgent and lastFocusedEditorPath remember the agent and the
+	// file the user focused most recently, for Split with Agent / with File.
+	lastFocusedAgent      string
+	lastFocusedEditorPath string
+	// navHistory is Go Back / Go Forward (navigation_history.go).
+	navHistory          navigationHistory
 	ChatAreaHeight      int
 	LastInteractionTime time.Time
 	SpinFrame           int
@@ -314,28 +320,37 @@ type App struct {
 	comparisonReflow       bool
 	comparisonReflowCancel context.CancelFunc
 	workspacePanelHeights  map[string]int
-	toolLayout             workspace.ToolLayout
-	toolLayoutVersion      uint64
-	toolLayoutSaveQueued   bool
-	toolLayoutSaving       bool
-	toolLayoutSavedVersion uint64
-	capabilitySnapshot     captypes.Snapshot
-	providerPresets        []roottypes.ProviderPreset
-	asyncIO                atomic.Pointer[appAsyncIOState]
-	asyncIOStopped         atomic.Bool
-	asyncIOStopOnce        sync.Once
-	coreRestart            *coreRestartController
-	treeWatcherLifeMu      sync.Mutex // fences startup admission against UI shutdown
-	treeWatcherStarts      sync.WaitGroup
-	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
-	gitRefreshGen          atomic.Uint64
-	editorGitGen           atomic.Uint64
-	editorGitStale         atomic.Bool
-	editorGitEditAt        time.Time // most recent text change awaiting projection refresh
-	editorGitSince         time.Time // start of the current unrefreshed burst (hold cap)
-	editorGitCancel        context.CancelFunc
-	sourceControlTimeout   time.Duration
-	treeGitRefreshAt       time.Time
+	toolLayout             ToolLayout
+	viewMemoryVersion      uint64
+	viewMemorySaveQueued   bool
+	viewMemorySaving       bool
+	viewMemorySavedVersion uint64
+	// viewMemory persists this client's own presentation choices for the
+	// current workspace; viewMemoryMarked is the last observation of them.
+	viewMemory           *viewMemoryStore
+	viewMemoryMarked     viewMemoryMarks
+	viewMemoryLoadErr    error
+	incomingViewMemory   *viewMemoryArrival
+	treeHiddenChoice     *bool  // this client's tree toggle; nil follows the setting
+	rememberedAgent      string // agent this client last had selected here
+	agentFoldRevision    uint64
+	capabilitySnapshot   captypes.Snapshot
+	providerPresets      []roottypes.ProviderPreset
+	asyncIO              atomic.Pointer[appAsyncIOState]
+	asyncIOStopped       atomic.Bool
+	asyncIOStopOnce      sync.Once
+	coreRestart          *coreRestartController
+	treeWatcherLifeMu    sync.Mutex // fences startup admission against UI shutdown
+	treeWatcherStarts    sync.WaitGroup
+	launcherLoadGen      atomic.Uint64 // generation of the in-flight async launcher load
+	gitRefreshGen        atomic.Uint64
+	editorGitGen         atomic.Uint64
+	editorGitStale       atomic.Bool
+	editorGitEditAt      time.Time // most recent text change awaiting projection refresh
+	editorGitSince       time.Time // start of the current unrefreshed burst (hold cap)
+	editorGitCancel      context.CancelFunc
+	sourceControlTimeout time.Duration
+	treeGitRefreshAt     time.Time
 	// Header Git reconciliation (git_snapshot.go): watcher events arm a
 	// debounced, coalesced silent snapshot read so the header identity follows
 	// the repository without the user opening the Git panel.
@@ -474,6 +489,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 		LSPPopup:            NewLSPPopupState(),
 		editorSettings:      ws.LoadAppSettings().Editor,
 		treeHiddenSetting:   ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault(),
+		toolLayout:          DefaultToolLayout(),
 		editorSaves:         make(map[string]*editorSaveState),
 		headerScreen:        headerScreen,
 		footerScreen:        footerScreen,
@@ -672,7 +688,8 @@ func (m *App) Init() tea.Cmd {
 		}
 	}
 	m.requestWorkspaceAeronEnsure()
-	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
+	m.reportViewMemoryLoadError()
+	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
 }
 
 // openSessionInfo uses the native read-only text reader for a session fact.

@@ -135,27 +135,6 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			defer stop()
 			return response(request, prepared.Run())
 		}, true
-	case coreprotocol.ToolLayoutLoad:
-		store := &workspace.Workspace{WorkspaceDB: ws.WorkspaceDB}
-		return func(context.Context) coreprotocol.Response {
-			layout, err := store.LoadToolLayout()
-			if err != nil {
-				return fault(request, "load_failed", err.Error())
-			}
-			return response(request, coreprotocol.ToolLayoutRequest{Layout: layout})
-		}, true
-	case coreprotocol.ToolLayoutSave:
-		var in coreprotocol.ToolLayoutRequest
-		if err := decodeRequest(request, &in); err != nil {
-			return bad(err)
-		}
-		store := &workspace.Workspace{WorkspaceDB: ws.WorkspaceDB}
-		return func(context.Context) coreprotocol.Response {
-			if err := store.SaveToolLayout(in.Layout); err != nil {
-				return fault(request, "save_failed", err.Error())
-			}
-			return response(request, coreprotocol.BoolResult{OK: true})
-		}, true
 	case coreprotocol.HistoryUndoScopes:
 		var in coreprotocol.UndoScopesRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -231,7 +210,7 @@ func ownerMutation(method string) bool {
 	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
-		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave,
+		coreprotocol.WorkspaceOverridesSet,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
 		return true
 	}
@@ -244,7 +223,7 @@ func ownerOperation(method string) bool {
 	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
-		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryUndoScopes,
+		coreprotocol.HistoryUndoScopes,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true
 	}

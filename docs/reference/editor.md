@@ -402,7 +402,15 @@ Tea's update goroutine (the tab-close hang).
 
 The editor's **Code** menu and contextual keys use one navigation family:
 **Alt+.** definition, **Alt+T** type definition, **Alt+M** implementation and
-**Alt+;** references (including declarations). Definition settings gate the three
+**Alt+;** references (including declarations). The mouse uses the same family:
+holding **Ctrl** over a symbol underlines it in the accent color (a code link,
+`tui/editor/code_link.go`); **Ctrl+click** goes to its definition and
+**Ctrl+Alt+click** to its implementations. The click places the caret on the
+symbol, and the editor only emits `NavigateAtMsg`; the shell asks the language
+server and opens the result in the clicked view's pane. A click opens no
+chooser for one destination, the shared chooser for several, and a status-line
+notice ("No definition found.") for none. Ctrl+click on the declaration itself
+shows its references. Definition settings gate the three
 definition-family operations; References remains separate. Agent `lsp` probes
 use the same raw-response normalization and provenance, including while editor
 LSP is disabled under the existing session and workspace Trust policy.

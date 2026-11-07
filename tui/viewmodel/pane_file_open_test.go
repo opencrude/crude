@@ -71,7 +71,9 @@ func TestPaneFilesOpenRejectsStaleOwners(t *testing.T) {
 	}
 }
 
-func TestPaneFilesOpenPreservesNewerEditorAndMovesIdentity(t *testing.T) {
+// Opening a file that another pane shows adds a view in the requesting pane;
+// the other view stays, and the newer unsaved text is never reloaded.
+func TestPaneFilesOpenPreservesNewerEditorAndAddsAView(t *testing.T) {
 	m, path := paneOpenFixture(t)
 	original := m.Win.ActiveGroup()
 	target := m.Win.SplitGroup(original, ui.Horizontal, false)
@@ -87,8 +89,12 @@ func TestPaneFilesOpenPreservesNewerEditorAndMovesIdentity(t *testing.T) {
 	m.Win.FocusGroup(target)
 	m.handleTabSwitch()
 	m.applyPaneFilesOpened(msg)
-	if m.Win.TabCount() != 1 || m.Win.GroupOf(id) != target || m.EditorState.Tabs[path].Editor != ed || ed.Value() != "unsaved newer text" || ed.CursorCol() != 4 || !ed.Modified() {
-		t.Fatal("completion duplicated or reloaded the newer live editor")
+	if m.Win.GroupOf(id) != original || m.EditorState.Tabs[path].Editor != ed || ed.Value() != "unsaved newer text" || ed.CursorCol() != 4 || !ed.Modified() {
+		t.Fatal("completion moved, replaced or reloaded the newer live editor")
+	}
+	view := m.groupEditorView(target, path)
+	if m.Win.TabCount() != 2 || view == nil || view.Editor.Primary() != ed || view.Editor.Value() != "unsaved newer text" || m.EditorState.Editor != view.Editor {
+		t.Fatal("completion did not show the same document in the requesting pane")
 	}
 }
 

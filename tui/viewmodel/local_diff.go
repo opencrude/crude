@@ -80,8 +80,10 @@ func (m *App) openLocalDiff(ed *editor.Editor, baseline localDiffBaseline) tea.C
 	}
 	resource := window.Resource{Kind: window.ResourceLocalDiff, ID: ed.BufferID() + ":" + string(baseline)}
 	returnTab := window.TabID(0)
-	if tab := m.Win.TabByTitle(m.editorTabTitle(ed.FilePath())); tab != nil {
-		returnTab = tab.ID
+	if v := m.editorViewOf(ed); v != nil {
+		returnTab = v.Tab
+	} else if views := m.documentViews(ed.FilePath()); len(views) > 0 {
+		returnTab = views[0].Tab
 	}
 	tab := m.Win.OpenResource(resource, fmt.Sprintf("%s · %s diff", ed.BaseTitle(), baseline), true)
 	if m.localDiffs == nil {
