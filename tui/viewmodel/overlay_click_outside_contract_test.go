@@ -302,15 +302,9 @@ func setupOverlayDispatchApp(t *testing.T) (*App, int, int) {
 		"agent")
 
 	app.EditorState = NewEditorState()
-	app.EditorState.Editor = ed
 	app.EditorState.Tabs[path] = NewEditorTab(path, ed)
-	title := app.editorTabTitle(path)
-	if app.Win.TabByTitle(title) == nil {
-		app.Win.OpenTab(title, "✎", true)
-	}
-	if winTab := app.Win.TabByTitle(title); winTab != nil {
-		app.Win.SwitchTo(app.Win.IndexOf(winTab.ID))
-		app.handleTabSwitch()
+	if app.showDocument(path, app.Win.ActiveGroup(), true) == nil {
+		t.Fatal("file tab did not open")
 	}
 	layout := app.computeLayout()
 	app.ChatAreaHeight = app.height - layout.ChatAreaTop - 2

@@ -68,6 +68,7 @@ type Editor struct {
 	viewH           int
 	pendingReveal   bool
 	landing         *SearchMatch
+	link            *codeLink // Ctrl+hover underline (code_link.go)
 	landingRevision uint64
 	// scrollModel + sbCtrl are the shared scrollbar chrome (paint + mouse drag).
 	// Kept in sync with scrollY via syncScrollChrome.
@@ -89,14 +90,11 @@ type Editor struct {
 	// The main shell keeps this false: status lives in the top header.
 	statusChrome bool
 
-	changes     []Change
-	changeIndex int
-	maxHistory  int
+	maxHistory int
 
-	// undoGroupSeq/undoGroupDepth/undoGroupID implement undo grouping:
-	// changes recorded between beginUndoGroup and endUndoGroup share one
-	// group ID and undo/redo together as a single step.
-	undoGroupSeq         int
+	// undoGroupDepth/undoGroupID implement undo grouping: changes recorded
+	// between beginUndoGroup and endUndoGroup share one group ID (numbered by
+	// PieceTable.undoGroupSeq) and undo/redo together as a single step.
 	undoGroupDepth       int
 	undoGroupID          int
 	undoGroupStart       int
@@ -211,6 +209,10 @@ type Editor struct {
 	// so this is automatically per-tab.
 	search         *SearchState
 	searchRevision uint64
+
+	// linkAnchors are this view's anchor offsets captured before another
+	// linked view mutates the shared table (linked_view.go).
+	linkAnchors [linkedAnchorCount]int
 }
 
 func (e *Editor) SetPadding(padL int) {
@@ -298,8 +300,8 @@ func (e *Editor) Open(path string) error {
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
 	e.scrollY = 0
-	e.changes = nil
-	e.changeIndex = 0
+	e.buf.changes = nil
+	e.buf.changeIndex = 0
 	e.scrollModel = ui.NewScrollModel()
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.hScrollModel = ui.NewScrollModel()
@@ -333,8 +335,11 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
 	e.scrollY = 0
-	e.changes = nil
-	e.changeIndex = 0
+	if len(e.buf.views) == 0 {
+		// A buffer no view shows starts a fresh history; one that is shown
+		// keeps the document's history.
+		e.buf.changes, e.buf.changeIndex = nil, 0
+	}
 	e.scrollModel = ui.NewScrollModel()
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.hScrollModel = ui.NewScrollModel()
@@ -418,16 +423,19 @@ func (e *Editor) Retarget(path string) error {
 	if err != nil {
 		return err
 	}
-	e.DismissGhostText()
-	e.CancelSnippet()
-	e.stopWatching()
-	e.filePath, e.title = abs, filepath.Base(abs)
+	primary := e.Primary()
+	primary.stopWatching()
 	if e.buffer != nil {
-		e.buffer.Path, e.buffer.Title = abs, e.title
+		e.buffer.Path, e.buffer.Title = abs, filepath.Base(abs)
 		e.buffer.buf.filePath = abs
 	}
-	e.startWatching()
-	e.initChroma()
+	e.eachView(func(v *Editor) {
+		v.DismissGhostText()
+		v.CancelSnippet()
+		v.filePath, v.title = abs, filepath.Base(abs)
+		v.initChroma()
+	})
+	primary.startWatching()
 	return nil
 }
 
@@ -438,8 +446,8 @@ func (e *Editor) ApplyDisk(data []byte) {
 	e.CancelSnippet()
 	e.CancelPointerCapture()
 	e.buffer.ApplyDisk(data)
-	e.changes = nil
-	e.changeIndex = 0
+	e.buf.changes = nil
+	e.buf.changeIndex = 0
 	e.cursor.Line = min(e.cursor.Line, max(0, e.LineCount()-1))
 	e.clampCursorToLine()
 	e.invalidateEditorCaches()
@@ -601,7 +609,12 @@ func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
 
 // SetDiagnostics retains a detached qualified publication. It never associates raw
 // callbacks with whichever text happens to be current when they arrive.
+// SetDiagnostics installs one observed batch in every view of the document.
 func (e *Editor) SetDiagnostics(facts types.InsightDiagnostics) {
+	e.eachView(func(v *Editor) { v.setDiagnostics(facts) })
+}
+
+func (e *Editor) setDiagnostics(facts types.InsightDiagnostics) {
 	e.diagMu.Lock()
 	previous := e.diagnosticFacts.ID
 	e.diagnosticFacts = types.CloneInsightDiagnostics(facts)

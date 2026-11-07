@@ -161,7 +161,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				fg := gutterBg
 				if marker != ' ' {
 					color := e.th.Tree.Colors.GitDeleted
-					if e.gitConflicted {
+					if e.Primary().gitConflicted {
 						color = e.th.Tree.Colors.GitConflicted
 					}
 					fg = e.cellColor(color)
@@ -213,6 +213,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					default:
 						diagFg = infoColor
 					}
+				}
+				if e.link != nil && e.codeLinkAt(lineIdx, sourceCol) {
+					// A Ctrl+hover code link reads as a link: accent ink, plain
+					// underline, replacing a diagnostic's squiggle while shown.
+					sev, diagFg, diagAttr = 1, e.tokens.Color(ui.ColorAccent), cell.AttrUnderline
 				}
 
 				// Determine search highlight for this cell. The

@@ -68,7 +68,19 @@ func TestFooterControlsHavePersistentFillsAndDistinctActiveState(t *testing.T) {
 	buf := app.mainSurf.Buffer()
 	row := rowText(app, y)
 	tokens := ui.NewTokenSet(app.Theme)
+	// Guidance keeps its room (shellfooter's contract); destinations that do
+	// not fit are reachable from More. Every control is in one of the two.
+	overflow := map[string]bool{}
+	for _, segment := range app.footerScreen.Overflow() {
+		overflow[segment.Action] = true
+	}
+	if len(overflow) > 0 && !strings.Contains(row, "More") {
+		t.Fatalf("hidden footer controls have no More entry: %q", row)
+	}
 	for _, segment := range app.footerStatusSegments() {
+		if overflow[segment.Action] {
+			continue
+		}
 		x := strings.Index(row, segment.Text)
 		if x < 0 {
 			t.Fatalf("missing footer control %q in %q", segment.Text, row)

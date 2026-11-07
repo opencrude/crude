@@ -15,10 +15,12 @@ func (e *Editor) RetargetDocumentPath(path string) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return errors.New("canonical document path must be absolute and clean")
 	}
-	e.filePath, e.title = path, filepath.Base(path)
-	e.buffer.Path, e.buffer.Title = path, e.title
+	e.buffer.Path, e.buffer.Title = path, filepath.Base(path)
 	e.buf.filePath = path
 	e.documentProjection.snapshot.Path = path
-	e.initChroma()
+	e.eachView(func(v *Editor) {
+		v.filePath, v.title = path, filepath.Base(path)
+		v.initChroma()
+	})
 	return nil
 }

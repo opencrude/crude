@@ -159,10 +159,9 @@ func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
 		return nil
 	}
 	match.Path = filepath.Clean(path)
+	// A result opens in the pane the user works in, even when another pane
+	// already shows the file.
 	group := m.Win.ActiveGroup()
-	if tab := m.Win.TabByTitle(m.editorTabTitle(match.Path)); tab != nil {
-		group = tab.Group
-	}
 	m.unfocus()
 	cmd := m.openPaneFiles([]string{match.Path}, group)
 	if cmd == nil {

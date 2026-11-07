@@ -171,7 +171,7 @@ func (m *reviewSafetyVisualModel) awaitHistoryTimeline() bool {
 		if v.historyScreen == nil {
 			return fmt.Errorf("Local History timeline not yet mounted")
 		}
-		if strings.Contains(ansi.Strip(v.View().RenderContent()), "Loading local history") {
+		if strings.Contains(ansi.Strip(v.View().RenderContent()), "Loading Local History") {
 			return fmt.Errorf("Local History timeline has not settled")
 		}
 		return featureVisualPaint(v, "Review safety references")

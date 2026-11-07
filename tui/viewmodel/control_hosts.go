@@ -96,6 +96,11 @@ func qualifyControlNode(node control.Node, owner shellControlHost) control.Node 
 	return node
 }
 
+// errControlInventoryChanged is a stale cursor: a mounted control changed
+// between pages (for example a language server became ready). Inspection is
+// read-only, so the caller starts again from the first page.
+var errControlInventoryChanged = errors.New("control inventory changed; inspect again from the first page")
+
 func (m *App) inspectShellControls(target control.Target, req control.PageRequest) (control.Page, error) {
 	if req.Limit < 1 || req.Limit > control.MaxPageLimit {
 		return control.Page{}, errors.New("limit must be 1..128")
@@ -128,7 +133,7 @@ func (m *App) inspectShellControls(target control.Target, req control.PageReques
 			return control.Page{}, errors.New("invalid control cursor")
 		}
 		if next.Stamp != stamp {
-			return control.Page{}, errors.New("control inventory changed")
+			return control.Page{}, errControlInventoryChanged
 		}
 	}
 	page := control.Page{Nodes: []control.Node{}}

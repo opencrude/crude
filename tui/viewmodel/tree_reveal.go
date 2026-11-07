@@ -199,8 +199,8 @@ func (m *App) treeRevealCurrent(intent *treeRevealIntent) bool {
 		m.activityView != activityFiles || m.sidebarScreen != intent.screen || !intent.owner.valid(m) {
 		return false
 	}
-	tab := m.Win.TabByTitle(intent.tabTitle)
-	if tab == nil || tab.ID != intent.owner.tab {
+	tab := m.Win.TabByID(intent.owner.tab)
+	if tab == nil || tab.Title != intent.tabTitle {
 		return false
 	}
 	state := asyncIOStateFor(m)

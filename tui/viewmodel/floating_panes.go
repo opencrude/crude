@@ -150,7 +150,7 @@ func (m *App) openFileInWindow(path string) tea.Cmd {
 		m.Feedback.NotifyError("open " + path + ": " + err.Error())
 		return cmd
 	}
-	if tab := m.Win.ActiveTab(); tab != nil && m.isEditorTabTitle(tab.Title) && m.editorPathFromTabTitle(tab.Title) == path {
+	if tab := m.Win.ActiveTab(); tab != nil && m.editorView(tab.ID) != nil && m.editorView(tab.ID).Path == path {
 		m.openTabInWindow(tab.ID)
 	}
 	return cmd

@@ -19,7 +19,7 @@ func newClientFileTree(m *App) *filetree.FileTreeModel {
 	files, ok := m.ws.(shellport.ClientFiles)
 	if !ok {
 		model := filetree.NewPlaceholderFileTreeModel(m.ws.RootPath())
-		model.SetShowHidden(m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault())
+		model.SetShowHidden(m.treeShowHidden())
 		return model
 	}
 	var model *filetree.FileTreeModel
@@ -27,7 +27,7 @@ func newClientFileTree(m *App) *filetree.FileTreeModel {
 	sequences := make(map[string]uint64)
 	generation := m.workspaceSwitchGen.Load()
 	model = filetree.NewRemoteModel(m.ws.RootPath(), nil)
-	model.SetShowHidden(m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault())
+	model.SetShowHidden(m.treeShowHidden())
 	model.SetDirectoryLoader(func(parent context.Context, path string) tea.Cmd {
 		mu.Lock()
 		sequences[path]++
@@ -47,7 +47,7 @@ func newClientFileTree(m *App) *filetree.FileTreeModel {
 	return model
 }
 
-// A tree toggle is local to the current view. Only a changed preference
+// A tree toggle is this client's remembered choice. Only a changed preference
 // replaces it; unrelated settings publications leave the user's view alone.
 func (m *App) applyTreeHiddenSetting() tea.Cmd {
 	if m == nil || m.ws == nil {
@@ -58,6 +58,7 @@ func (m *App) applyTreeHiddenSetting() tea.Cmd {
 		return nil
 	}
 	m.treeHiddenSetting = show
+	m.treeHiddenChoice = nil
 	if m.sidebarScreen == nil {
 		return nil
 	}

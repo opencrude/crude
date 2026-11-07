@@ -96,6 +96,9 @@ type Window struct {
 	// lastDocked is the docked group that had focus before a floating group
 	// took it; focus and docked tabs return there.
 	lastDocked GroupID
+	// absorbed are document tabs removed because a move or merge brought them
+	// into a pane that already shows the same document (see absorbDuplicate).
+	absorbed []TabID
 
 	hint  string
 	Hover ui.Hover
@@ -145,6 +148,123 @@ func (w *Window) OpenTabWithLayout(title, icon string, closable bool, layout Tab
 		}
 	}
 	return w.appendTab(newTab(title, icon, closable, layout), true)
+}
+
+// AddTab appends a new tab for resource to group, after the group's last tab.
+// Unlike OpenResource it never reuses an existing tab: one document may be
+// shown by any number of tabs (views). Activating selects and focuses it.
+func (w *Window) AddTab(group GroupID, resource Resource, title string, activate bool) *Tab {
+	w.ensureGroups()
+	if w.groupNode(group) == nil {
+		return nil
+	}
+	tab := newTab(title, "", true, TabHorizontal)
+	tab.Resource, tab.Group = resource, group
+	insert := len(w.tabs)
+	for i, existing := range w.tabs {
+		if existing.Group == group {
+			insert = i + 1
+		}
+	}
+	w.tabs = append(w.tabs, Tab{})
+	copy(w.tabs[insert+1:], w.tabs[insert:])
+	w.tabs[insert] = tab
+	if activate || w.groupActive[group] == 0 {
+		w.groupActive[group] = tab.ID
+	}
+	if activate {
+		w.focus(group)
+	}
+	return &w.tabs[insert]
+}
+
+// GroupTabByTitle returns group's tab with title, or nil.
+func (w *Window) GroupTabByTitle(group GroupID, title string) *Tab {
+	for i := range w.tabs {
+		if w.tabs[i].Group == group && w.tabs[i].Title == title {
+			return &w.tabs[i]
+		}
+	}
+	return nil
+}
+
+// TabByID returns the tab with id, or nil.
+func (w *Window) TabByID(id TabID) *Tab {
+	if index := w.IndexOf(id); index >= 0 {
+		return &w.tabs[index]
+	}
+	return nil
+}
+
+// Neighbor returns the docked group adjacent to group in direction (the
+// nearest leaf whose rectangle lies on that side and overlaps group's span),
+// using the topology's own proportions. Zero means there is none.
+func (w *Window) Neighbor(group GroupID, dir ui.Direction, before bool) GroupID {
+	type box struct{ x0, y0, x1, y1 float64 }
+	rects := map[GroupID]box{}
+	var walk func(n *PaneNode, b box)
+	walk = func(n *PaneNode, b box) {
+		if n == nil {
+			return
+		}
+		if n.Split == nil {
+			rects[n.Group] = b
+			return
+		}
+		first, _, _ := n.Split.Resolve(10000)
+		ratio := float64(first) / 10000
+		a, c := b, b
+		if n.Split.Dir() == ui.Horizontal {
+			mid := b.x0 + (b.x1-b.x0)*ratio
+			a.x1, c.x0 = mid, mid
+		} else {
+			mid := b.y0 + (b.y1-b.y0)*ratio
+			a.y1, c.y0 = mid, mid
+		}
+		walk(n.First, a)
+		walk(n.Second, c)
+	}
+	w.ensureGroups()
+	walk(w.paneRoot, box{0, 0, 1, 1})
+	from, ok := rects[group]
+	if !ok {
+		return 0
+	}
+	const eps = 1e-9
+	best, bestGap, bestOverlap := GroupID(0), 2.0, -1.0
+	for _, id := range w.GroupIDs() {
+		if id == group {
+			continue
+		}
+		r := rects[id]
+		var gap, overlap float64
+		if dir == ui.Horizontal {
+			if before && r.x1 <= from.x0+eps {
+				gap = from.x0 - r.x1
+			} else if !before && r.x0 >= from.x1-eps {
+				gap = r.x0 - from.x1
+			} else {
+				continue
+			}
+			overlap = min(r.y1, from.y1) - max(r.y0, from.y0)
+		} else {
+			if before && r.y1 <= from.y0+eps {
+				gap = from.y0 - r.y1
+			} else if !before && r.y0 >= from.y1-eps {
+				gap = r.y0 - from.y1
+			} else {
+				continue
+			}
+			overlap = min(r.x1, from.x1) - max(r.x0, from.x0)
+		}
+		if overlap <= eps {
+			continue
+		}
+		if gap < bestGap-eps || gap < bestGap+eps && overlap > bestOverlap {
+			best, bestGap, bestOverlap = id, gap, overlap
+		}
+	}
+	return best
 }
 
 func (w *Window) appendTab(tab Tab, activate bool) *Tab {

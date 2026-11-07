@@ -550,6 +550,11 @@ func (m *App) ownsClipboardTargetEditor(target *editor.Editor) bool {
 	if m.EditorState.Editor == target {
 		return true
 	}
+	for _, view := range m.EditorState.Views {
+		if view.Editor == target {
+			return true
+		}
+	}
 	for _, tab := range m.EditorState.Tabs {
 		if tab != nil && tab.Editor == target {
 			return true
@@ -827,6 +832,7 @@ func (m *App) stopAsyncIO() {
 	// successful detach merely by closing its projection.
 	retainedEditors := m.retainEditorRecovery(m.FlushLiveEditors())
 	m.flushComposerDraft()
+	m.flushViewMemory()
 	m.resetMemoryBrowser()
 	if m.overlayHost != nil {
 		m.overlayHost.Close(ui.OverlayCapabilityPicker)
@@ -866,6 +872,9 @@ func (m *App) stopAsyncIO() {
 			ed.SetOnContentChanged(nil)
 			ed.SetOnSignatureHelp(nil)
 			ed.Close()
+		}
+		for _, view := range m.EditorState.Views {
+			closeEditor(view.Editor)
 		}
 		for _, tab := range m.EditorState.Tabs {
 			if tab != nil {

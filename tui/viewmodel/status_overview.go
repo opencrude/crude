@@ -27,6 +27,20 @@ import (
 // Status detail lives in the workspace dock; the old modal overview was
 // intentionally removed so there is one retained projection and one focus path.
 
+// statusHeaderNavSegments are Go Back / Go Forward, like an IDE title bar.
+// An arrow with no place to go stays readable in muted ink (not the pale
+// border colour), so its place is always visible; clicking it does nothing.
+func (m *App) statusHeaderNavSegments() []shellheader.Segment {
+	back, forward := ui.ColorMuted, ui.ColorMuted
+	if m.canNavigate(true) {
+		back = ui.ColorFg
+	}
+	if m.canNavigate(false) {
+		forward = ui.ColorFg
+	}
+	return []shellheader.Segment{{Text: "←", Role: back, Action: "nav.back"}, {Text: "→", Role: forward, Action: "nav.forward"}}
+}
+
 func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 	segments := []shellheader.Segment{shellheader.Wordmark(shellheader.ConnectionReady)}
 	if m.Win != nil {
@@ -190,9 +204,6 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 		if blame := m.EditorState.Editor.CursorBlameSummary(); blame != "" {
 			segments = append(segments, shellheader.Segment{Text: blame, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
 		}
-	}
-	if !m.ws.StartTime().IsZero() {
-		segments = append(segments, shellheader.Segment{Text: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted, Action: "workspace", TargetID: "workspace:summary", Priority: 2})
 	}
 	return segments
 }
@@ -889,7 +900,7 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	case strings.HasPrefix(action, "agent:"):
 		m.restoreAgent(strings.TrimPrefix(action, "agent:"))
 	case strings.HasPrefix(action, "editor:"):
-		_, _ = m.openEditorTab(strings.TrimPrefix(action, "editor:"))
+		m.revealEditor(strings.TrimPrefix(action, "editor:"))
 	case strings.HasPrefix(action, "terminal:"):
 		m.focusTerminal(strings.TrimPrefix(action, "terminal:"))
 	case strings.HasPrefix(action, "diagnostic:"):

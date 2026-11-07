@@ -140,6 +140,29 @@ ordinary admission stays blocked, and flush never implicitly saves disk.
 These are deterministic local journey durations, not whole-suite timings or
 native presentation latency. The 180-second ordinary package limit is unchanged.
 
+## Linked editor views of one document (2026-11-07)
+
+Windows amd64, default `GOMAXPROCS=12`, `-benchtime=300x`, one run of
+`BenchmarkLinkedViewTyping` (`tui/editor/linked_view_bench_test.go`). One view
+types and Backspaces while 1, 4 or 8 views show other parts of the same file.
+"Mutation" is the edit and its publication to every view; "paint" also paints
+every view at 120x40, as a frame with all views visible does. No other test ran.
+
+| Workload | 1 view | 4 views | 8 views |
+|---|---|---|---|
+| 200 lines, mutation | 26 µs; 19.5 KB; 25 allocs | 25 µs; 21.3 KB; 62 allocs | 44 µs; 23.5 KB; 109 allocs |
+| 200 lines, paint | 0.43 ms; 186 KB; 1,108 allocs | 1.87 ms; 708 KB; 4,553 allocs | 3.41 ms; 1.36 MB; 8,821 allocs |
+| 20,000 lines, mutation | 1.22 ms; 1.99 MB; 36 allocs | 1.13 ms; 1.99 MB; 73 allocs | 1.18 ms; 1.99 MB; 120 allocs |
+| 20,000 lines, paint | 1.75 ms; 2.90 MB; 1,101 allocs | 3.17 ms; 4.20 MB; 4,533 allocs | 4.68 ms; 4.89 MB; 8,840 allocs |
+
+The document cost of a mutation is paid once: with 20,000 lines eight views
+cost the same time and bytes as one, plus about 12 small allocations per extra
+view for its anchor remap and cache reset. Paint scales with the number of
+visible views only, each one painting its own viewport. The single-view
+allocations match the baseline before linked views (`b03b4fae`: 25 / 36
+allocations, 19.5 KB / 1.99 MB). The 1.99 MB per dense keystroke is the existing
+single-editor PieceTable cache rebuild, not a linked-view cost.
+
 ## Numeric snippet mutation and editor rendering (2026-10-31)
 
 Linux amd64, i7-10750H, `GOMAXPROCS=2`, 200 ms repetitions of

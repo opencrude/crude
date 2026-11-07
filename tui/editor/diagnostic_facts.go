@@ -8,7 +8,12 @@ import (
 )
 
 // SetDiagnosticsVisible is a projection filter, not a mutation of observed facts.
+// It applies to every view of the document.
 func (e *Editor) SetDiagnosticsVisible(visible bool) {
+	e.eachView(func(v *Editor) { v.setDiagnosticsVisible(visible) })
+}
+
+func (e *Editor) setDiagnosticsVisible(visible bool) {
 	e.diagMu.Lock()
 	if e.diagnosticsHidden == !visible {
 		e.diagMu.Unlock()

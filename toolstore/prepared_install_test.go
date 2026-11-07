@@ -331,19 +331,32 @@ func TestPreparedInstallCopiesHardLinksBeforeSealing(t *testing.T) {
 	}
 }
 
+// pinnedFolderRefusesReplacement reports whether the platform refuses to move
+// a folder the store holds open (prepareTree's os.Root on the output folder).
+// Windows does: a preparation cannot replace the output or staging folder at
+// all, so the attempt fails inside Prepare. Elsewhere the move succeeds and the
+// store must detect the replacement afterwards.
+func pinnedFolderRefusesReplacement() bool { return runtime.GOOS == "windows" }
+
 func TestPreparedInstallRejectsReplacedOutputFolder(t *testing.T) {
 	store := newStore(t)
 	req := preparedRequest()
+	var moveErr error
 	req.Prepare = func(_ context.Context, output, _ string) error {
-		if err := os.Rename(output, output+"-old"); err != nil {
-			return err
+		if moveErr = os.Rename(output, output+"-old"); moveErr != nil {
+			return moveErr
 		}
 		if err := os.MkdirAll(filepath.Join(output, "bin"), 0o700); err != nil {
 			return err
 		}
 		return os.WriteFile(filepath.Join(output, "bin", "server"), []byte("replacement"), 0o700)
 	}
-	if _, err := store.Install(t.Context(), req); err == nil || !strings.Contains(err.Error(), "output folder changed") {
+	_, err := store.Install(t.Context(), req)
+	if pinnedFolderRefusesReplacement() {
+		if moveErr == nil || !errors.Is(err, moveErr) {
+			t.Fatalf("the open output folder could be replaced: move=%v install=%v", moveErr, err)
+		}
+	} else if err == nil || !strings.Contains(err.Error(), "output folder changed") {
 		t.Fatalf("replacement output was not rejected: %v", err)
 	}
 	if _, ok := store.Lookup(req.Package, req.Version); ok {
@@ -356,10 +369,11 @@ func TestPreparedInstallRetainsReservationIfStagingIsReplaced(t *testing.T) {
 	store := newStore(t)
 	req := preparedRequest()
 	var staging string
+	var moveErr error
 	req.Prepare = func(_ context.Context, output, _ string) error {
 		staging = filepath.Dir(output)
-		if err := os.Rename(staging, staging+"-moved"); err != nil {
-			return err
+		if moveErr = os.Rename(staging, staging+"-moved"); moveErr != nil {
+			return moveErr
 		}
 		if err := os.Mkdir(staging, 0o700); err != nil {
 			return err
@@ -367,6 +381,27 @@ func TestPreparedInstallRetainsReservationIfStagingIsReplaced(t *testing.T) {
 		return os.WriteFile(filepath.Join(staging, "unrelated"), []byte("keep"), 0o600)
 	}
 	_, err := store.Install(t.Context(), req)
+	if pinnedFolderRefusesReplacement() {
+		// The staging folder cannot move, so the failed preparation is
+		// verified, removed, and a new attempt is admitted.
+		if moveErr == nil || !errors.Is(err, moveErr) {
+			t.Fatalf("the open staging folder could be replaced: move=%v install=%v", moveErr, err)
+		}
+		if _, ok := store.Lookup(req.Package, req.Version); ok {
+			t.Fatal("failed preparation was published")
+		}
+		requireEmptyStaging(t, store)
+		req.Prepare = func(_ context.Context, output, _ string) error {
+			if err := os.MkdirAll(filepath.Join(output, "bin"), 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(output, "bin", "server"), []byte("compiled executable"), 0o700)
+		}
+		if _, err := store.Install(t.Context(), req); err != nil {
+			t.Fatalf("a verified failure blocked the next attempt: %v", err)
+		}
+		return
+	}
 	var uncertain *PreparationUnverifiedError
 	if !errors.As(err, &uncertain) {
 		t.Fatalf("replaced staging was not reported as uncertain: %v", err)

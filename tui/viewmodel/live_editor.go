@@ -398,13 +398,13 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 	}
 	if failure != nil {
 		for _, ed := range targets {
-			m.liveEditorFailure(m.liveEditors[ed], failure)
+			m.liveEditorFailure(m.liveEditors[ed.Primary()], failure)
 		}
 		finish(failure)
 		return nil
 	}
 	for i, ed := range targets {
-		state := m.liveEditors[ed]
+		state := m.liveEditors[ed.Primary()]
 		if failure = ed.CommitDocumentUpdate(plans[i]); failure != nil {
 			m.liveEditorFailure(state, failure)
 			finish(failure)
@@ -447,7 +447,7 @@ func (m *App) liveEditorFailure(state *liveEditorState, err error) {
 }
 
 func (m *App) applyLiveEditorResult(msg liveEditorResult) {
-	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() || m.liveEditors[msg.ed] != msg.state || !msg.ed.IsOpen() {
+	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() || m.liveEditors[msg.ed.Primary()] != msg.state || !msg.ed.IsOpen() {
 		return
 	}
 	ed, state := msg.ed, msg.state

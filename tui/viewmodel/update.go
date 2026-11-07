@@ -106,6 +106,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
 	m.syncNavigation()
+	m.releaseAbsorbedViews()
+	m.syncNavigationHistory()
 	command = tea.Batch(command, m.syncCompletion())
 	command = tea.Batch(command, m.syncInlayHints())
 	m.syncEditorGhost()
@@ -115,12 +117,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg:
 		m.captureToolView()
 		if !reflect.DeepEqual(previousView, m.toolLayout.Views[m.activityView.ID()]) {
-			m.toolLayoutVersion++
+			m.viewMemoryVersion++
 		}
 	}
-	if m.toolLayoutVersion > m.toolLayoutSavedVersion && !m.toolLayoutSaving {
-		command = tea.Batch(command, m.queueToolLayoutSave())
-	}
+	command = tea.Batch(command, m.noteViewMemoryChange())
 	m.updateSettingsWindowTitle()
 	m.showNextOperationIssue()
 	if previousMode == types.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
@@ -369,6 +369,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.OpenRemotes()
 		case "panes":
 			return m, m.openMainPaneMenu()
+		case "nav.back", "nav.forward":
+			return m, m.navigateHistory(msg.Action == "nav.back")
 		case "workspace":
 			m.openTabStats(msg.TargetID)
 		case "activity":
@@ -458,6 +460,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorDiskResultMsg:
 		m.applyEditorDisk(msg)
 		return m, nil
+	case editor.NavigateAtMsg:
+		return m, m.navigateAt(msg)
 	case editor.InspectChangeMsg:
 		if msg.Editor.IsOpen() && msg.Editor.Revision() == msg.Revision {
 			m.inspectEditorChange(msg.Editor, msg.Line)
@@ -508,6 +512,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ws.Logger().Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
 		if m.settingsPromptOnTop() && msg.Button == tea.MouseRight {
 			return m, nil
+		}
+		if m.focusedPopup() == nil {
+			if cmd, ok := m.handleNavigationMouse(msg); ok {
+				return m, cmd
+			}
 		}
 		// The WM close hit is normally handled by dispatchMouseClick, which
 		// cannot return its close command. The settings X must preserve the
@@ -1199,28 +1208,17 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyLauncherCapabilities(msg)
 	case capabilityPickerResultMsg:
 		m.applyCapabilityPickerResult(msg)
-	case toolLayoutMsg:
-		if msg.generation == m.workspaceSwitchGen.Load() && msg.version == m.toolLayoutVersion && msg.err != nil {
-			// A failed load carries no layout; keep the current one rather than
-			// installing an empty rail. Reset navigation rewrites the stored value.
-			m.Feedback.NotifyError("Workspace layout could not be loaded; using the default navigation: " + msg.err.Error())
-		} else if msg.generation == m.workspaceSwitchGen.Load() && msg.version == m.toolLayoutVersion {
-			m.toolLayout = msg.layout
-			m.workspacePanelHeights = msg.layout.PanelHeights
-			m.activityBar.SetOrder(msg.layout.Rail)
-			m.setActivity(m.activityView, false)
-		}
-	case toolLayoutSaveMsg:
+	case viewMemorySaveMsg:
 		if msg.generation == m.workspaceSwitchGen.Load() {
-			m.toolLayoutSaveQueued = false
-			cmds = append(cmds, m.saveToolLayoutCmd())
+			m.viewMemorySaveQueued = false
+			cmds = append(cmds, m.saveViewMemoryCmd())
 		}
-	case toolLayoutSavedMsg:
+	case viewMemorySavedMsg:
 		if msg.generation == m.workspaceSwitchGen.Load() {
-			m.toolLayoutSaving = false
-			m.toolLayoutSavedVersion = msg.version
+			m.viewMemorySaving = false
+			m.viewMemorySavedVersion = msg.version
 			if msg.err != nil {
-				m.Feedback.NotifyError("Layout was not saved: " + msg.err.Error())
+				m.Feedback.NotifyError("Your layout and view choices were not saved: " + msg.err.Error())
 			}
 		}
 	case capabilityPollMsg:
@@ -1792,6 +1790,12 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	if m.isEditorTabTitle(tab.Title) {
 		path := m.editorPathFromTabTitle(tab.Title)
+		// Another view still shows the document: closing this one keeps all
+		// text, history and unsaved edits, so no prompt is needed.
+		if v := m.editorView(tab.ID); v != nil && len(m.documentViews(path)) > 1 {
+			m.closeLinkedView(v)
+			return nil
+		}
 		// If the tab has unsaved edits, prompt before destroying the buffer.
 		// The prompt is the only gate: no mode or missing host may close a
 		// dirty document silently. Otherwise close immediately.
@@ -1826,6 +1830,9 @@ func (m *App) handleTabSwitch() {
 	prevEditorPath := m.EditorState.ActiveView
 	prevEditor := m.EditorState.Editor
 	prevAgentID := m.AgentView.ActiveID()
+	m.releaseAbsorbedViews()
+	m.noteLeavingPlace()
+	defer m.syncNavigationHistory()
 	defer m.bindMainPaneFocus()
 	defer func() {
 		if m.referenceOverlay != nil && m.referenceOverlay.agentID != m.AgentView.ActiveID() {
@@ -1859,7 +1866,7 @@ func (m *App) handleTabSwitch() {
 	defer m.openNextAgentPrompt()
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
-	m.EditorState.ActiveView = ""
+	m.EditorState.ActiveView, m.EditorState.ActiveTab = "", 0
 	m.AgentView.ClearActive()
 
 	activeTab := m.Win.ActiveTab()
@@ -1876,6 +1883,7 @@ func (m *App) handleTabSwitch() {
 
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
+		m.lastFocusedAgent = agentID
 		m.AgentView.SetActive(agentID)
 		m.ActivateSessionByAgent(agentID)
 		m.maybeHydrateComposerDraft()
@@ -1888,29 +1896,23 @@ func (m *App) handleTabSwitch() {
 	}
 
 	if m.isEditorTabTitle(activeTab.Title) {
-		path := m.editorPathFromTabTitle(activeTab.Title)
-		// Look up the tab's pre-loaded Editor. We DO NOT call
-		// editor.Open() here, because that would reload the file from disk
-		// and destroy cursor, scroll, undo, and any unsaved edits.
-		// The Editor was created and loaded once in openEditorTab and
-		// lives in the editorTabs map for the lifetime of the tab.
-		tab, ok := m.EditorState.Tabs[path]
-		if !ok {
-			// Tab entry is missing (shouldn't normally happen, but be
-			// defensive). Re-open to recover.
-			if m.ws.Logger() != nil {
-				m.ws.Logger().Warn("EDITOR", "tab_missing_on_switch", "path", path)
-			}
-			_, err := m.openEditorTab(path)
-			if err != nil && m.ws.Logger() != nil {
-				m.ws.Logger().Error("EDITOR", "reopen_failed", "error", err.Error())
-			}
+		// The view's editor was created once when the view opened and lives
+		// for the lifetime of the tab; switching never reloads the file.
+		view := m.editorView(activeTab.ID)
+		if view == nil {
+			m.closeFindReplaceForTab(prevEditorPath, "")
 			return
 		}
-		m.EditorState.ActiveView = path
-		m.EditorState.Editor = tab.Editor
-		m.closeFindReplaceForTab(prevEditorPath, path)
-		if prevEditorPath != path || prevEditor != tab.Editor {
+		path := view.Path
+		m.lastFocusedEditorPath = path
+		m.EditorState.ActiveView, m.EditorState.ActiveTab = path, view.Tab
+		m.EditorState.Editor = view.Editor
+		if prevEditor != view.Editor {
+			m.closeFindReplaceForTab(prevEditorPath, "")
+		} else {
+			m.closeFindReplaceForTab(prevEditorPath, path)
+		}
+		if prevEditorPath != path || prevEditor != view.Editor {
 			m.markEditorGitStaleNow()
 		}
 		return

@@ -121,13 +121,19 @@ func (l *LocalExec) Execute(ctx context.Context, cmd string, opts ExecOptions) (
 		// execute that instead of passing the string directly to cmd /C.
 		// This avoids cmd's first-and-last-quote-stripping behaviour which
 		// mangles arguments that contain quotes (e.g. curl URLs, python -c
-		// code strings, curl -w format specifiers).
+		// code strings, curl -w format specifiers). windowsBatchScript keeps
+		// the command-line meaning of percent signs and refuses line breaks
+		// inside quotes.
+		script, err := windowsBatchScript(cmd, os.Environ())
+		if err != nil {
+			return "", err
+		}
 		tmp, err := os.CreateTemp("", "crude_*.cmd")
 		if err != nil {
 			return "", fmt.Errorf("prepare windows command: %w", err)
 		}
 		batPath := tmp.Name()
-		if _, err := tmp.WriteString("@echo off\r\n" + cmd + "\r\n"); err != nil {
+		if _, err := tmp.WriteString(script); err != nil {
 			tmp.Close()
 			os.Remove(batPath)
 			return "", fmt.Errorf("prepare windows command: %w", err)

@@ -195,8 +195,8 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	// A real tree constructs its Git resolver and reads the root directory.
 	// Build it off the Bubble Tea goroutine; the placeholder keeps every
 	// projection non-nil while that project-bound I/O is pending.
-	treeModel := newClientFileTree(m)
 	m.treeHiddenSetting = m.ws.LoadAppSettings().UI.ShowHiddenFilesOrDefault()
+	treeModel := newClientFileTree(m)
 	m.Tree = NewTreeState(treeModel, m.Theme.Tree.Config.DefaultWidth)
 	if m.sidebarScreen != nil {
 		m.sidebarScreen.SetModel(treeModel)
@@ -223,9 +223,15 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.capabilitySnapshot = captypes.Snapshot{}
 	m.workspacePanelHeights = nil
 	m.resetWorkspaceNavigation()
-	m.toolLayout = workspace.DefaultToolLayout()
-	m.toolLayoutVersion, m.toolLayoutSavedVersion = 0, 0
-	m.toolLayoutSaving, m.toolLayoutSaveQueued = false, false
+	// This client's own choices for the destination; a switch without a
+	// prepared arrival (a local project switch) starts from the default view.
+	arrival := m.incomingViewMemory
+	m.incomingViewMemory = nil
+	if arrival == nil {
+		arrival = &viewMemoryArrival{}
+	}
+	m.viewMemory, m.viewMemoryLoadErr = arrival.store, arrival.err
+	m.installViewMemory(arrival.memory)
 	// Surfaces moved out of the dock belong to the old project's layout.
 	for id := range m.panelPlacements {
 		m.releasePlacement(id)
@@ -250,7 +256,6 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.gitReadsInFlight = 0
 	m.gitReadsBoundary = m.gitRefreshGen.Load()
 	m.requestGitSnapshot(time.Now())
-	m.runDetachedAsyncCmd(m.loadToolLayoutCmd())
 	m.runDetachedAsyncCmd(m.capabilitySnapshotCmd())
 }
 
@@ -391,6 +396,9 @@ func (m *App) closeWorkspaceEditors() {
 		ed.SetOnContentChanged(nil)
 		ed.SetOnSignatureHelp(nil)
 		ed.Close()
+	}
+	for _, view := range m.EditorState.Views {
+		closeEditor(view.Editor)
 	}
 	for _, tab := range m.EditorState.Tabs {
 		if tab != nil {

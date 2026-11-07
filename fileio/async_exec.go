@@ -387,12 +387,17 @@ func commandEnvironmentWithTemp(existing []string, tempDir string) []string {
 
 func buildCommand(ctx context.Context, command string, cwd string, tempDir string) (*exec.Cmd, func(), error) {
 	if runtime.GOOS == "windows" {
+		environment := commandEnvironmentWithTemp(nil, tempDir)
+		script, err := windowsBatchScript(command, environment)
+		if err != nil {
+			return nil, nil, err
+		}
 		tmp, err := os.CreateTemp(tempDir, "crude_*.cmd")
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
 		}
 		batPath := tmp.Name()
-		if _, err := tmp.WriteString("@echo off\r\n" + command + "\r\n"); err != nil {
+		if _, err := tmp.WriteString(script); err != nil {
 			tmp.Close()
 			os.Remove(batPath)
 			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
@@ -402,7 +407,7 @@ func buildCommand(ctx context.Context, command string, cwd string, tempDir strin
 		if cwd != "" {
 			c.Dir = cwd
 		}
-		c.Env = commandEnvironmentWithTemp(c.Env, tempDir)
+		c.Env = environment
 		return c, func() { _ = os.Remove(batPath) }, nil
 	}
 

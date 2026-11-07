@@ -169,6 +169,7 @@ type remoteWorkspaceReadyMsg struct {
 	draftRevision uint64
 	draftEpoch    uint64
 	intent        *remoteWorkspaceSwitchIntent
+	memory        *viewMemoryArrival
 }
 
 // attachRemoteWorkspace validates and prepares the destination without
@@ -241,6 +242,9 @@ func (m *App) prepareRemoteWorkspaceAttachment(intent *remoteWorkspaceSwitchInte
 		prepare = func(ctx context.Context) (shellport.Workspace, error) { return connection.AttachWorkspace(ctx, root) }
 	}
 	draftRevision, draftEpoch := m.Input.DraftRevision(), m.Input.DraftEpoch()
+	// This client's choices for the workspace it leaves are stored before the
+	// destination's are read; both are captured or bound here, on Update.
+	saveMemory, client := m.viewMemoryWrite(), m.composerDraftClient
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	preparation := &remoteWorkspacePreparation{ctx: ctx, owner: owner, cancel: cancel, released: make(chan struct{}), done: make(chan struct{})}
 	intent.preparation = preparation
@@ -263,6 +267,14 @@ func (m *App) prepareRemoteWorkspaceAttachment(intent *remoteWorkspaceSwitchInte
 		if err == nil {
 			err = flush()
 		}
+		var memory *viewMemoryArrival
+		if err == nil && client != nil {
+			// A failed save of the old view must not block the switch.
+			_ = saveMemory()
+			store := newViewMemoryStore(&composerDraftClient{store: client.store, attachment: client.attachment, workspaceID: draftWorkspaceID(next)})
+			loaded, loadErr := store.load()
+			memory = &viewMemoryArrival{store: store, memory: loaded, err: loadErr}
+		}
 		if err == nil {
 			err = ctx.Err()
 		}
@@ -279,7 +291,7 @@ func (m *App) prepareRemoteWorkspaceAttachment(intent *remoteWorkspaceSwitchInte
 			}
 			next = nil
 		}
-		return remoteWorkspaceReadyMsg{owner: owner, sequence: sequence, next: next, resumeID: resumeID, err: err, draftRevision: draftRevision, draftEpoch: draftEpoch, intent: intent}
+		return remoteWorkspaceReadyMsg{owner: owner, sequence: sequence, next: next, resumeID: resumeID, err: err, draftRevision: draftRevision, draftEpoch: draftEpoch, intent: intent, memory: memory}
 	}
 	var once sync.Once
 	var result remoteWorkspaceReadyMsg
@@ -342,7 +354,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		m.failRemoteWorkspaceSwitch("An editor, pending operation, or composer changed while the destination was opening. Try the switch again.")
 		return m.closeRemoteWorkspaceReady(msg)
 	}
-	connection, ok := msg.next.(shellport.Connection)
+	_, ok := msg.next.(shellport.Connection)
 	_, replica := msg.next.(shellport.Replica)
 	if !ok || !replica || msg.next == msg.owner {
 		m.failRemoteWorkspaceSwitch("Destination did not provide the requested independent attachment.")
@@ -364,12 +376,9 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		m.remotes.current = backendID
 	}
 	if client := m.composerDraftClient; client != nil {
-		id := connection.WorkspaceID()
-		if namespaced, ok := msg.next.(interface{ DraftWorkspaceID() string }); ok {
-			id = namespaced.DraftWorkspaceID()
-		}
-		m.composerDraftClient = &composerDraftClient{store: client.store, attachment: client.attachment, workspaceID: id}
+		m.composerDraftClient = &composerDraftClient{store: client.store, attachment: client.attachment, workspaceID: draftWorkspaceID(msg.next)}
 	}
+	m.incomingViewMemory = msg.memory
 	m.pendingOrchestrators = nil
 	m.pendingFirstInputs = nil
 	m.sessionLifecycleSequence++
@@ -377,6 +386,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	m.ws.SetEventBus(m.eventBus)
 	m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 	m.finishWorkspaceSwitch(state)
+	m.reportViewMemoryLoadError()
 	m.editorSaves = make(map[string]*editorSaveState)
 	m.liveEditors, m.liveOpenRefs, m.editorCommands = nil, nil, nil
 	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
@@ -426,4 +436,16 @@ func closePreparedWorkspace(next, origin, current shellport.Workspace) tea.Cmd {
 		return func() tea.Msg { _ = connection.Close(); return nil }
 	}
 	return nil
+}
+
+// draftWorkspaceID is the client-profile namespace of an attachment: remote
+// backends namespace their IDs so two hosts never share a record.
+func draftWorkspaceID(ws shellport.Workspace) string {
+	if namespaced, ok := ws.(interface{ DraftWorkspaceID() string }); ok {
+		return namespaced.DraftWorkspaceID()
+	}
+	if connection, ok := ws.(shellport.Connection); ok {
+		return connection.WorkspaceID()
+	}
+	return ""
 }

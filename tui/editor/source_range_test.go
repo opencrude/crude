@@ -130,9 +130,10 @@ func TestSourceByteRangeIsPureWithColdAndWarmCaches(t *testing.T) {
 			e := &Editor{buf: NewPieceTable(), cursor: Position{Line: 1, Col: 4},
 				selecting: true, selAnchor: Position{Col: 1}, selEnd: Position{Line: 1, Col: 4},
 				scrollX: 3, scrollY: 1, goalCol: 8, goalSet: true,
-				changes:     []Change{{Type: ActInsert, Text: []byte("history"), Offset: 1, Group: 7}},
-				changeIndex: 1, undoGroupSeq: 7, typingGroup: 7, historyID: 123}
+				typingGroup: 7, historyID: 123}
 			e.buf.ReplaceAll("a😀\r\n\tQ")
+			e.buf.changes = []Change{{Type: ActInsert, Text: []byte("history"), Offset: 1, Group: 7}}
+			e.buf.changeIndex, e.buf.undoGroupSeq = 1, 7
 			if invalid {
 				e.selEnd.Col = 2 // Inside the second line's tab.
 			}
@@ -142,7 +143,7 @@ func TestSourceByteRangeIsPureWithColdAndWarmCaches(t *testing.T) {
 			// Capture query-relevant editor values, not the Editor itself:
 			// Editor owns live watcher/diagnostic mutexes that must not be copied.
 			editorState := func() any {
-				changes := slices.Clone(e.changes)
+				changes := slices.Clone(e.buf.changes)
 				for i := range changes {
 					changes[i].Text = bytes.Clone(changes[i].Text)
 				}
@@ -159,8 +160,8 @@ func TestSourceByteRangeIsPureWithColdAndWarmCaches(t *testing.T) {
 					Shared         *Buffer
 					Projection     *DocumentProjection
 				}{
-					e.captureViewState(), e.goalCol, e.goalSet, changes, e.changeIndex,
-					[5]int{e.undoGroupSeq, e.undoGroupDepth, e.undoGroupID, e.undoGroupStart, e.typingGroup},
+					e.captureViewState(), e.goalCol, e.goalSet, changes, e.buf.changeIndex,
+					[5]int{e.buf.undoGroupSeq, e.undoGroupDepth, e.undoGroupID, e.undoGroupStart, e.typingGroup},
 					e.historyID, e.contentChangePending, e.buf, e.buffer, e.documentProjection,
 				}
 			}

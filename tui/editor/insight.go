@@ -13,7 +13,14 @@ import (
 // InstallDocumentInsight caches an immutable canonical publication on Update.
 // The independent text stream may lag it; projection waits for the exact source.
 // Stale or future insight never changes text, undo, diagnostics or cursor state.
+// Linked views share the publication.
 func (e *Editor) InstallDocumentInsight(view types.DocumentInsight) bool {
+	installed := false
+	e.eachView(func(v *Editor) { installed = v.installDocumentInsight(view) || installed })
+	return installed
+}
+
+func (e *Editor) installDocumentInsight(view types.DocumentInsight) bool {
 	p := e.documentProjection
 	if !e.open || p == nil || view.DocumentID != p.snapshot.ID || view.Generation == "" || view.Version == 0 ||
 		view.Revision < p.snapshot.Revision {

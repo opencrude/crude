@@ -125,7 +125,7 @@ func TestMainPaneJourneyEditorDragPreviewCancelAndCommit(t *testing.T) {
 	}
 }
 
-func TestMainPaneJourneyEmptySplitFocusEditingAndMerge(t *testing.T) {
+func TestMainPaneJourneySplitFocusEditingAndMerge(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
 	paneJourneySize(app, 160, 40)
@@ -139,25 +139,35 @@ func TestMainPaneJourneyEmptySplitFocusEditingAndMerge(t *testing.T) {
 	if edited == saved || !ed.Modified() {
 		t.Fatal("production key routing did not create a dirty editor")
 	}
+	// Splitting a file shows the same document again in the new pane: the
+	// unsaved text, the caret, and one shared history.
 	paneJourneyKey(app, tea.KeyRight, tea.ModCtrl|tea.ModAlt)
-	empty := app.Win.ActiveGroup()
-	if empty == original || app.Win.ActiveTab() != nil || len(app.Win.GroupIDs()) != 2 {
-		t.Fatal("split shortcut did not focus a genuinely empty pane")
+	split := app.Win.ActiveGroup()
+	dup := app.EditorState.Editor
+	if split == original || len(app.Win.GroupIDs()) != 2 || dup == ed || dup.Primary() != ed.Primary() ||
+		dup.Value() != edited || dup.CursorLine() != line || dup.CursorCol() != col {
+		t.Fatal("split shortcut did not show the same file in a new pane")
 	}
-	paneJourneyRequireText(t, app, empty, "New Session")
-	paneJourneyRequireText(t, app, empty, "Open File")
+	paneJourneyRequireText(t, app, split, "xpackage retained_marker.go")
+	paneJourneyKey(app, 'y', 0)
+	if ed.Value() == edited || ed.Value() != dup.Value() {
+		t.Fatal("typing in the split did not edit the shared document")
+	}
+	paneJourneyRequireText(t, app, original, dup.Value()[:3])
+	paneJourneyKey(app, 'z', tea.ModCtrl)
+	if ed.Value() != edited {
+		t.Fatal("undo in the split did not undo the shared document")
+	}
 	paneJourneyKey(app, '[', tea.ModAlt)
 	if app.Win.ActiveGroup() != original || app.EditorState.Editor != ed || app.focusTarget() != FocusEditor {
 		t.Fatal("previous-pane shortcut did not restore original editor focus")
 	}
-	paneJourneyKey(app, 'y', 0)
-	if ed.Value() == edited {
-		t.Fatal("typing after pane focus did not edit original document")
+	// Closing the split's view keeps the document; its pane goes away.
+	app.closeLinkedView(app.editorViewOf(dup))
+	if len(app.Win.GroupIDs()) != 1 || !ed.IsOpen() || ed.Value() != edited || !ed.Modified() {
+		t.Fatal("closing the split view closed or changed the document")
 	}
-	paneJourneyKey(app, 'z', tea.ModCtrl)
-	if ed.Value() != edited {
-		t.Fatal("undo after pane focus did not affect original document")
-	}
+	empty := app.Win.SplitGroup(original, ui.Horizontal, false)
 	tab := app.Win.TabByTitle(app.editorTabTitle(paths[0])).ID
 	if !app.Win.MoveTabToGroup(tab, empty, 0) {
 		t.Fatal("move failed")

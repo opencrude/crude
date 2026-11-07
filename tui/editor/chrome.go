@@ -70,6 +70,7 @@ func (e *Editor) sourceDocumentVisualWidth() int {
 	if e.buf == nil {
 		return 0
 	}
+	e = e.Primary()
 	revision := e.buf.Revision()
 	count := e.buf.LineCount()
 	if e.hWidthRevision != revision {
@@ -121,6 +122,8 @@ func (e *Editor) markDocumentWidthChanged() {
 	if e.buf == nil {
 		return
 	}
+	line := e.cursor.Line
+	e = e.Primary()
 	revision := e.buf.Revision()
 	if len(e.hLineWidths) != e.buf.LineCount() {
 		e.hWidthAllDirty = true
@@ -128,11 +131,12 @@ func (e *Editor) markDocumentWidthChanged() {
 		if e.hWidthDirty == nil {
 			e.hWidthDirty = make(map[int]bool)
 		}
-		e.hWidthDirty[e.cursor.Line] = true
+		e.hWidthDirty[line] = true
 	}
 	e.hWidthRevision = revision
 }
 func (e *Editor) markDocumentWidthAll() {
+	e = e.Primary()
 	e.hWidthAllDirty = true
 	if e.buf != nil {
 		e.hWidthRevision = e.buf.Revision()

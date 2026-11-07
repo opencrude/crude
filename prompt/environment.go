@@ -43,7 +43,7 @@ func stableEnvironment(workDir, tempDir string) string {
 	}
 	platform := ""
 	if runtime.GOOS == "windows" {
-		platform = "Commands run through cmd.exe batch files. Use PowerShell only when its behavior is required. Paths are case-insensitive; do not assume Unix-only commands exist."
+		platform = "Commands are cmd.exe command lines: %VAR% expands only defined variables, any other % is literal, and for loops use %i. A quoted argument cannot contain a line break: write a multi-line script to a file in the temporary directory and run that file. Use PowerShell only when its behavior is required. Paths are case-insensitive; do not assume Unix-only commands exist."
 	}
 	return fmt.Sprintf(`<environment>
 <operating_system>%s</operating_system>

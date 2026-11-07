@@ -77,7 +77,7 @@ func (p *liveConflictPrompt) buttons() {
 // Entry points may invoke it for recovered or parked drafts as well as overlaps.
 func (m *App) OpenLiveEditorConflict(ed *editor.Editor) tea.Cmd {
 	live, ok := m.ws.(shellport.LiveDocuments)
-	state := m.liveEditors[ed]
+	state := m.liveEditors[ed.Primary()]
 	if !ok || ed == nil || state == nil || !ed.IsOpen() || m.overlayHost == nil {
 		return nil
 	}
@@ -108,7 +108,7 @@ func (m *App) OpenLiveEditorConflict(ed *editor.Editor) tea.Cmd {
 	}
 }
 func (m *App) liveConflictFrame(p *liveConflictPrompt) *ui.WindowFrameWidget {
-	if p == nil || p.owner != m.ws || p.generation != m.workspaceSwitchGen.Load() || m.liveEditors[p.ed] != p.state || !p.ed.IsOpen() {
+	if p == nil || p.owner != m.ws || p.generation != m.workspaceSwitchGen.Load() || m.liveEditors[p.ed.Primary()] != p.state || !p.ed.IsOpen() {
 		return nil
 	}
 	fw := m.overlayHost.Window(liveConflictOverlay)

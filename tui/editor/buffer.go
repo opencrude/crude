@@ -41,6 +41,20 @@ type PieceTable struct {
 	// Listeners never mutate recursively or replace mutationObserver.
 	editOwner        *Editor
 	interactionViews map[*Editor]struct{}
+	// views are the linked editors showing this table, primary first; empty
+	// when one editor shows it. linkActor is the view that transforms its own
+	// anchors for the mutation in progress. See linked_view.go.
+	views       []*Editor
+	linkActor   *Editor
+	linkScratch []*Editor
+	// changes and changeIndex are the document's local undo history (for a
+	// document without a canonical projection). Every view undoes and redoes
+	// the same history, as in established editors.
+	changes     []Change
+	changeIndex int
+	// undoGroupSeq numbers undo groups across all views, so two views never
+	// share a group ID.
+	undoGroupSeq int
 }
 
 type bufferLineChange struct {
@@ -108,11 +122,13 @@ func (pt *PieceTable) ReplaceAll(text string) {
 	for _, p := range pt.pieces {
 		size += p.length
 	}
+	linked := pt.captureLinked()
 	pt.original = []byte(text)
 	pt.add = []byte{}
 	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(text)}}
 	pt.revision++
 	pt.invalidateCache()
+	pt.resetLinked(linked)
 	pt.observeMutation(document.Edit{Start: 0, End: size, Text: text})
 }
 
@@ -314,6 +330,7 @@ func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
 	}
 	first, last := changed[0], changed[len(changed)-1]
 	startLine, endLine := lineAt(first.Start), lineAt(last.End)
+	linked := pt.captureLinked()
 	next := make([]piece, 0, len(pt.pieces)+2*len(changed))
 	appendPiece := func(p piece) {
 		if p.length == 0 {
@@ -365,6 +382,7 @@ func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
 		pt.lineChanges[pt.revision%uint64(len(pt.lineChanges))].inline = false
 	}
 	pt.invalidateCache()
+	pt.remapLinked(linked, changed)
 	for i := len(changed) - 1; i >= 0; i-- {
 		pt.observeMutation(changed[i])
 	}

@@ -68,7 +68,7 @@ func (m *App) requestActiveEditorFormat() tea.Cmd {
 		}
 		return nil
 	}
-	if state := m.liveEditors[ed]; state != nil {
+	if state := m.liveEditors[ed.Primary()]; state != nil {
 		if state.busy || state.save || state.formatOnly || state.closeView {
 			if m.Feedback != nil {
 				m.Feedback.NotifyInfo("Wait for the current file operation to finish.")
@@ -274,7 +274,7 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 		m.FindReplace.MatchCount, m.FindReplace.CurrentIdx, m.FindReplace.Error = len(state.Matches), state.CurrentIdx, state.Error
 		m.refreshFindReplacePopup()
 	}
-	if state := m.liveEditors[ed]; state != nil {
+	if state := m.liveEditors[ed.Primary()]; state != nil {
 		state.due = time.Now().Add(time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond)
 		m.markEditorGitDirty(time.Now())
 		return
@@ -319,7 +319,7 @@ func (m *App) requestEditorSave(ed *editor.Editor, reason workspace.DocumentSave
 }
 
 func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.DocumentSaveReason, closeAfter, format bool) tea.Cmd {
-	if state := m.liveEditors[ed]; state != nil {
+	if state := m.liveEditors[ed.Primary()]; state != nil {
 		state.save, state.reason, state.closeAfter = true, reason, closeAfter
 		state.format = format && reason == workspace.DocumentSaveManual && m.editorSettings.FormatOnSave
 		if state.uncertain == nil {

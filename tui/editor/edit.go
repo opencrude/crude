@@ -131,11 +131,11 @@ func (e *Editor) recordChange(c Change) {
 	c.Before = e.captureViewState()
 	c.Before.Cursor = c.CursorBefore
 	c.After = e.captureViewState()
-	if e.changeIndex < len(e.changes) {
-		e.changes = e.changes[:e.changeIndex]
+	if e.buf.changeIndex < len(e.buf.changes) {
+		e.buf.changes = e.buf.changes[:e.buf.changeIndex]
 	}
-	e.changes = append(e.changes, c)
-	e.changeIndex = len(e.changes)
+	e.buf.changes = append(e.buf.changes, c)
+	e.buf.changeIndex = len(e.buf.changes)
 }
 
 // beginUndoGroup starts an undo group: every change recorded before the
@@ -158,8 +158,8 @@ func (e *Editor) replacingSelection(insert func()) {
 func (e *Editor) beginUndoGroup() {
 	e.undoGroupDepth++
 	if e.undoGroupDepth == 1 {
-		e.undoGroupSeq++
-		e.undoGroupID = e.undoGroupSeq
+		e.buf.undoGroupSeq++
+		e.undoGroupID = e.buf.undoGroupSeq
 		e.startUndoGroup()
 	}
 }
@@ -167,7 +167,7 @@ func (e *Editor) beginUndoGroup() {
 func (e *Editor) startUndoGroup() {
 	e.beginGhostEdit()
 	e.undoGroupBefore = e.captureViewState()
-	e.undoGroupStart = e.changeIndex
+	e.undoGroupStart = e.buf.changeIndex
 	e.beginDocumentEditGroup(fmt.Sprintf("editor-%x-%d", e.historyID, e.undoGroupID))
 }
 
@@ -186,9 +186,9 @@ func (e *Editor) endUndoGroup() {
 	if e.undoGroupDepth == 0 {
 		e.finishGhostEdit()
 		after := e.captureViewState()
-		for i := e.undoGroupStart; i < e.changeIndex; i++ {
-			e.changes[i].Before = e.undoGroupBefore
-			e.changes[i].After = after
+		for i := e.undoGroupStart; i < e.buf.changeIndex; i++ {
+			e.buf.changes[i].Before = e.undoGroupBefore
+			e.buf.changes[i].After = after
 		}
 		e.endDocumentEditGroup()
 		e.undoGroupID = 0
@@ -198,14 +198,14 @@ func (e *Editor) endUndoGroup() {
 		}
 		// Prune complete transactions only; a large replacement must never be
 		// cut in half just because it crosses the retained-history bound.
-		if len(e.changes) > e.maxHistory {
-			cut := len(e.changes) - e.maxHistory
-			for cut < len(e.changes) && e.changes[cut].Group == e.changes[cut-1].Group {
+		if len(e.buf.changes) > e.maxHistory {
+			cut := len(e.buf.changes) - e.maxHistory
+			for cut < len(e.buf.changes) && e.buf.changes[cut].Group == e.buf.changes[cut-1].Group {
 				cut++
 			}
-			if cut < len(e.changes) {
-				e.changes = append([]Change(nil), e.changes[cut:]...)
-				e.changeIndex = len(e.changes)
+			if cut < len(e.buf.changes) {
+				e.buf.changes = append([]Change(nil), e.buf.changes[cut:]...)
+				e.buf.changeIndex = len(e.buf.changes)
 			}
 		}
 	}
@@ -232,16 +232,16 @@ func (e *Editor) undo() {
 		e.requestDocumentUndo(false)
 		return
 	}
-	if e.changeIndex <= 0 {
+	if e.buf.changeIndex <= 0 {
 		return
 	}
-	group := e.changes[e.changeIndex-1].Group
-	for e.changeIndex > 0 {
-		c := e.changes[e.changeIndex-1]
+	group := e.buf.changes[e.buf.changeIndex-1].Group
+	for e.buf.changeIndex > 0 {
+		c := e.buf.changes[e.buf.changeIndex-1]
 		if c.Group != group {
 			break
 		}
-		e.changeIndex--
+		e.buf.changeIndex--
 
 		switch c.Type {
 		case ActInsert:
@@ -277,16 +277,16 @@ func (e *Editor) redo() {
 		e.requestDocumentUndo(true)
 		return
 	}
-	if e.changeIndex >= len(e.changes) {
+	if e.buf.changeIndex >= len(e.buf.changes) {
 		return
 	}
-	group := e.changes[e.changeIndex].Group
-	for e.changeIndex < len(e.changes) {
-		c := e.changes[e.changeIndex]
+	group := e.buf.changes[e.buf.changeIndex].Group
+	for e.buf.changeIndex < len(e.buf.changes) {
+		c := e.buf.changes[e.buf.changeIndex]
 		if c.Group != group {
 			break
 		}
-		e.changeIndex++
+		e.buf.changeIndex++
 
 		switch c.Type {
 		case ActInsert:

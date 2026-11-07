@@ -402,7 +402,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Prompt history | `history.list`, `.record`, `.restore`, `.import-attachment`, `.read-media` |
 | Git | snapshot/comparison/annotation, reviewed stage/unstage and hunks, staged commit, commit inspection, checkout and reviewed discard |
 | Memory/Board | search/episodes/inspect, revision-fenced pin/forget/correct; Board snapshot/read acknowledgement |
-| Settings | redacted fetch, session read/save/reset/delegation toggle, account change/models, application preference save; `workspace.overrides`, `.overrides_save`, `.startup`, `.tool_layout`, `.tool_layout_save` |
+| Settings | redacted fetch, session read/save/reset/delegation toggle, account change/models, application preference save; `workspace.overrides`, `.overrides_save`, `.startup`. Presentation layout is client-private, never a core method |
 | Capabilities | runtime/snapshot/action, acquisition preview and exact skill-input preparation |
 | Remote host administration | `remote.access.read`, `remote.pairing.create`, `remote.device.revoke` (authenticated local host only); `remote.ssh.bootstrap` (authenticated SSH authority only) |
 

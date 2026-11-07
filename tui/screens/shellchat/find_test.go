@@ -148,7 +148,7 @@ func TestFindResumesAnUnfinishedPassOnTheNextFrame(t *testing.T) {
 	for i := range rows {
 		rows[i] = findRow(string(rune('A'+i%26))+strings.Repeat("x", i/26), uint64(i+1), "line with needle")
 	}
-	f := chatFind{limit: time.Nanosecond}
+	f := chatFind{limit: time.Nanosecond, clock: steppingClock()}
 	f.setQuery("needle", FindOptions{}, -1)
 	f.observe(rows, 1, false)
 	if !f.pending(len(rows)) || f.total == 0 || f.total >= len(rows) {
@@ -169,7 +169,7 @@ func TestFindRowsChangingMidPassAreRecountedByTheNextPass(t *testing.T) {
 	for i := range rows {
 		rows[i] = findRow(string(rune(i+1)), uint64(i+1), "needle")
 	}
-	f := chatFind{limit: time.Nanosecond}
+	f := chatFind{limit: time.Nanosecond, clock: steppingClock()}
 	f.setQuery("needle", FindOptions{}, -1)
 	f.observe(rows, 1, false)
 	rows[0] = findRow(rows[0].ID, 1000, "needle needle") // behind the cursor
@@ -222,7 +222,7 @@ func TestFindSelectsTheMatchNearestTheAnchorAndPrefersTheEarlierOnATie(t *testin
 
 func TestFindStatusSpeaksOnlyWhileItLacksAPhase(t *testing.T) {
 	rows := []chatprojection.MessageRow{findRow("a", 1, "one hit"), {ID: "b"}}
-	f := chatFind{limit: time.Nanosecond}
+	f := chatFind{limit: time.Nanosecond, clock: steppingClock()}
 	if f.findStatusText() != "" {
 		t.Fatal("no query, no status")
 	}
@@ -508,7 +508,7 @@ func TestFindPendingExpiresWhenTheChatIsNoLongerObserved(t *testing.T) {
 		rows[i] = findRow(string(rune(i+1)), uint64(i+1), "needle")
 	}
 	f := newFindFixture(t, rows, 10)
-	f.s.find.limit = time.Nanosecond
+	f.s.find.limit, f.s.find.clock = time.Nanosecond, steppingClock()
 	f.s.OpenFind()
 	f.s.SetFindQuery("needle", FindOptions{})
 	if !f.s.FindPending() {
@@ -517,5 +517,15 @@ func TestFindPendingExpiresWhenTheChatIsNoLongerObserved(t *testing.T) {
 	f.s.findSeen = time.Now().Add(-2 * time.Second)
 	if f.s.FindPending() {
 		t.Fatal("a chat nobody renders must not keep the shell awake")
+	}
+}
+
+// steppingClock advances one microsecond per reading, so a one-nanosecond
+// budget always expires at the first check, on every platform timer.
+func steppingClock() func() time.Time {
+	t := time.Unix(0, 0)
+	return func() time.Time {
+		t = t.Add(time.Microsecond)
+		return t
 	}
 }

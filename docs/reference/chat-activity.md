@@ -655,7 +655,7 @@ existing aggregate totals.
   the header branch and change segments); it omits zero counts but must not
   collapse to a placeholder when those facts exist.
 - Editor position uses compact `line:column` header geometry in the same muted
-  treatment as blame/uptime. Footer-left is the guidance group: unread Notices,
+  treatment as blame. Footer-left is the guidance group: unread Notices,
   then a small ranked navigation set (find, next tab, focus tree), then Help.
   It must remain focus-aware and must not regress into the old Save/Undo/Redo
   inventory. The shared footer painter reserves the ranked guidance/feedback
@@ -665,8 +665,10 @@ existing aggregate totals.
   supplies the two groups; the component owns their width and hit geometry.
 - Agent header is muted telemetry only: model, `↑` latest reported input tokens
   over that request's runtime context capacity/occupancy, `↓` cumulative agent
-  output, reported cache-hit rate, known estimated cost, and uptime. It never
-  changes `↑` into upload bytes or adds lifecycle/status text. Request age,
+  output, reported cache-hit rate, and known estimated cost. It never
+  changes `↑` into upload bytes or adds lifecycle/status text. Session uptime
+  is not a header fact: it belongs to the Workspace panel, because it is rarely
+  read and costs room that navigation and identity need. Request age,
   serialized payload and lifecycle belong in agent/tab details and Activity;
   existing permission/question/safety surfaces remain authoritative.
   Background context-summary preparation/readiness is explained in agent details,

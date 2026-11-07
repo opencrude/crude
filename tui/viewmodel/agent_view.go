@@ -1,6 +1,10 @@
 package viewmodel
 
-import "crude/workspace"
+import (
+	"slices"
+
+	"crude/workspace"
+)
 
 // AgentViewState is one shell's navigation over a shared inventory. Exact node
 // identities prevent a replacement with the same ID inheriting old tab choices.
@@ -14,14 +18,115 @@ type AgentViewState struct {
 	selected  *workspace.AgentNode
 	hidden    map[*workspace.AgentNode]bool
 	shown     map[*workspace.AgentNode]bool
+	// remembered holds this client's saved choices for agents it has not seen
+	// in this attachment yet, by durable agent ID. A node adopts its choice the
+	// first time the view observes it; until then the choice is kept so it
+	// survives being saved again.
+	remembered map[string]bool // true = minimized, false = opened
+	revision   uint64          // changes whenever a saved choice changes
 }
 
 func NewAgentViewState(inventory *workspace.AgentManager) *AgentViewState {
 	return &AgentViewState{inventory: inventory, hidden: make(map[*workspace.AgentNode]bool), shown: make(map[*workspace.AgentNode]bool)}
 }
 
+// maxRememberedAgents bounds the memory of agents this client no longer sees.
+const maxRememberedAgents = 512
+
+// Remember installs saved choices before inventory arrives.
+func (v *AgentViewState) Remember(minimized, opened []string) {
+	if v == nil {
+		return
+	}
+	v.remembered = make(map[string]bool, len(minimized)+len(opened))
+	for _, id := range opened {
+		v.remembered[id] = false
+	}
+	for _, id := range minimized {
+		v.remembered[id] = true
+	}
+}
+
+// Choices returns the choices to save: live nodes first, then remembered
+// agents this attachment has not seen, in a stable order.
+func (v *AgentViewState) Choices() (minimized, opened []string) {
+	if v == nil {
+		return nil, nil
+	}
+	live := make(map[string]bool)
+	if v.inventory != nil {
+		for _, node := range v.inventory.AllNodes() {
+			if node == nil {
+				continue
+			}
+			v.adopt(node)
+			live[node.ID] = true
+			if v.hidden[node] {
+				minimized = append(minimized, node.ID)
+			} else if node.Parent != nil && v.shown[node] {
+				opened = append(opened, node.ID)
+			}
+		}
+	}
+	ids := make([]string, 0, len(v.remembered))
+	for id := range v.remembered {
+		if !live[id] {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	if extra := len(minimized) + len(opened) + len(ids) - maxRememberedAgents; extra > 0 {
+		ids = ids[min(extra, len(ids)):]
+	}
+	for _, id := range ids {
+		if v.remembered[id] {
+			minimized = append(minimized, id)
+		} else {
+			opened = append(opened, id)
+		}
+	}
+	return minimized, opened
+}
+
+// Chosen reports whether this client already decided the agent's
+// visibility, now or in a remembered attachment. Defaults never override it.
+func (v *AgentViewState) Chosen(id string) bool {
+	if v == nil || v.inventory == nil {
+		return false
+	}
+	node := v.inventory.Get(id)
+	if node == nil {
+		_, remembered := v.remembered[id]
+		return remembered
+	}
+	v.adopt(node)
+	return v.hidden[node] || v.shown[node]
+}
+
+// Revision changes whenever a choice worth saving changes.
+func (v *AgentViewState) Revision() uint64 {
+	if v == nil {
+		return 0
+	}
+	return v.revision
+}
+
+func (v *AgentViewState) adopt(node *workspace.AgentNode) {
+	minimized, ok := v.remembered[node.ID]
+	if !ok {
+		return
+	}
+	delete(v.remembered, node.ID)
+	if minimized {
+		v.hidden[node] = true
+	} else if node.Parent != nil {
+		v.shown[node] = true
+	}
+}
+
 // collapsed reports whether node itself is minimized, ignoring ancestors.
 func (v *AgentViewState) collapsed(node *workspace.AgentNode) bool {
+	v.adopt(node)
 	return v.hidden[node] || node.Parent != nil && !v.shown[node]
 }
 
@@ -70,6 +175,10 @@ func (v *AgentViewState) SetHidden(id string, hidden bool) {
 	}
 	if v.shown == nil {
 		v.shown = make(map[*workspace.AgentNode]bool)
+	}
+	v.adopt(node)
+	if v.collapsed(node) != hidden {
+		v.revision++
 	}
 	if hidden {
 		v.hidden[node] = true

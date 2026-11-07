@@ -197,7 +197,7 @@ func TestEditingJourneyRandomCommandsUndoAllRedoAll(t *testing.T) {
 				press(e, tea.KeyPressMsg{Code: tea.KeyHome}) // explicit navigation ends typing coalescing
 				e.SetCursorPosition(line, rng.Intn(e.lineVisualWidth(line)+1))
 				before := e.Value()
-				beforeHistory := e.changeIndex
+				beforeHistory := e.buf.changeIndex
 				operation := rng.Intn(8)
 				switch operation {
 				case 0:
@@ -220,7 +220,7 @@ func TestEditingJourneyRandomCommandsUndoAllRedoAll(t *testing.T) {
 				if before != e.Value() {
 					states = append(states, e.Value())
 				} else {
-					require.Equal(t, beforeHistory, e.changeIndex, "no-op command %d must not create a history step", operation)
+					require.Equal(t, beforeHistory, e.buf.changeIndex, "no-op command %d must not create a history step", operation)
 				}
 			}
 			for range 3 {

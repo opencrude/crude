@@ -210,7 +210,7 @@ func (m *App) workspaceSwitchEditorPending(ed *editor.Editor) (bool, error) {
 	if ds.Conflict != nil && !errors.Is(ds.Conflict, editor.ErrDocumentPending) {
 		return false, ds.Conflict
 	}
-	if state := m.liveEditors[ed]; state != nil {
+	if state := m.liveEditors[ed.Primary()]; state != nil {
 		if state.uncertain != nil {
 			return false, errors.New("a shared document outcome is uncertain; resolve it before switching")
 		}

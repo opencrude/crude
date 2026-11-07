@@ -50,23 +50,23 @@ func (m *App) installEditorRecovery(ed *editor.Editor, record clientstate.Editor
 		return err
 	}
 	if recovery.HistorySync {
-		if live := m.liveEditors[ed]; live != nil {
+		if live := m.liveEditors[ed.Primary()]; live != nil {
 			live.sync = true
 		}
 	}
 	if recovery.InFlight != nil {
-		if live := m.liveEditors[ed]; live != nil {
+		if live := m.liveEditors[ed.Primary()]; live != nil {
 			live.uncertain = &liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: live, kind: "edit", requestID: recovery.InFlight.RequestID}
 		}
 	}
 	if recovery.CommandRequestID != "" && (recovery.CommandKind == "save" || recovery.CommandKind == "format") {
-		if live := m.liveEditors[ed]; live != nil {
+		if live := m.liveEditors[ed.Primary()]; live != nil {
 			live.uncertain = &liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: live, kind: recovery.CommandKind, requestID: recovery.CommandRequestID}
 		}
 	}
 	if recovery.CommandRequestID != "" && recovery.CommandKind == "undo" {
 		if intent, ok := ed.PendingDocumentUndoIntent(recovery.CommandRedo); ok {
-			if live := m.liveEditors[ed]; live != nil {
+			if live := m.liveEditors[ed.Primary()]; live != nil {
 				live.uncertain = &liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: live, kind: "undo", requestID: recovery.CommandRequestID, undo: &intent}
 			}
 		}

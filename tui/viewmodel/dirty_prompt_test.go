@@ -65,7 +65,7 @@ func TestCloseOthersPromptsInsteadOfDiscardingDirtyBuffer(t *testing.T) {
 	second := newSaveTestEditorAt(t, app, filepath.Join(root, "second.go"), "second")
 	first.InsertRune('x')
 
-	app.closeAllEditorTabsExcept(keep.FilePath())
+	closeOtherFilesInPane(app, keep)
 	if !first.IsOpen() {
 		t.Fatal("Close others destroyed a dirty buffer")
 	}
@@ -100,7 +100,7 @@ func TestCancelClosePromptAbortsBulkClose(t *testing.T) {
 	first.InsertRune('x')
 	second.InsertRune('y')
 
-	app.closeAllEditorTabsExcept(keep.FilePath())
+	closeOtherFilesInPane(app, keep)
 	if app.DirtyPromptPath != first.FilePath() {
 		t.Fatalf("prompt path=%q want %q", app.DirtyPromptPath, first.FilePath())
 	}
@@ -122,15 +122,11 @@ func TestCloseTabsToTheRightPromptsForDirtyBuffer(t *testing.T) {
 	dirty := newSaveTestEditorAt(t, app, filepath.Join(root, "b.go"), "b")
 	clean := newSaveTestEditorAt(t, app, filepath.Join(root, "c.go"), "c")
 	dirty.InsertRune('x')
-	for _, ed := range []*editor.Editor{anchor, dirty, clean} {
-		app.Win.OpenTab(app.editorTabTitle(ed.FilePath()), "✎", true)
-	}
-
 	anchorTab := app.Win.TabByTitle(app.editorTabTitle(anchor.FilePath()))
 	if anchorTab == nil {
 		t.Fatal("anchor tab missing from the strip")
 	}
-	app.closeEditorTabsToRightOf(app.Win.IndexOf(anchorTab.ID))
+	app.closePaneEditorTabs(app.paneOwner(anchorTab.ID, anchorTab.Group), true)
 	if !dirty.IsOpen() {
 		t.Fatal("Close to the right destroyed a dirty buffer")
 	}
@@ -156,7 +152,7 @@ func TestSaveFromDirtyPromptResumesBulkClose(t *testing.T) {
 	clean := newSaveTestEditorAt(t, app, filepath.Join(root, "clean.go"), "clean")
 	dirty.InsertRune('x')
 
-	app.closeAllEditorTabsExcept(keep.FilePath())
+	closeOtherFilesInPane(app, keep)
 	finishSaveCommand(t, app, app.dirtyPromptSave())
 	if dirty.IsOpen() {
 		t.Fatal("saved-and-closed tab stayed open")
@@ -180,7 +176,7 @@ func TestBulkClosePromptsEachDirtyBufferInTurn(t *testing.T) {
 	first.InsertRune('x')
 	second.InsertRune('y')
 
-	app.closeAllEditorTabsExcept(keep.FilePath())
+	closeOtherFilesInPane(app, keep)
 	if app.DirtyPromptPath != first.FilePath() {
 		t.Fatalf("prompt path=%q want %q", app.DirtyPromptPath, first.FilePath())
 	}
@@ -215,7 +211,7 @@ func TestBulkCloseResumesAfterDeferredDiscard(t *testing.T) {
 		t.Fatal("missing save command")
 	}
 
-	app.closeAllEditorTabsExcept(keep.FilePath())
+	closeOtherFilesInPane(app, keep)
 	app.dirtyPromptDiscard()
 	if !dirty.IsOpen() {
 		t.Fatal("tab closed before its owned writer settled")
@@ -231,6 +227,13 @@ func TestBulkCloseResumesAfterDeferredDiscard(t *testing.T) {
 	if !keep.IsOpen() {
 		t.Fatal("bulk close closed the surviving tab")
 	}
+}
+
+// closeOtherFilesInPane runs the tab menu's Close Other Files in Pane for
+// keep's view.
+func closeOtherFilesInPane(app *App, keep *editor.Editor) {
+	v := app.documentViews(keep.FilePath())[0]
+	app.closePaneEditorTabs(app.paneOwner(v.Tab, app.Win.GroupOf(v.Tab)), false)
 }
 
 // Closing a dirty tab must prompt in every mode: a full-screen overlay or a
@@ -262,7 +265,7 @@ func TestWorkspaceTeardownDropsPendingBulkClose(t *testing.T) {
 	dirty := newSaveTestEditorAt(t, app, filepath.Join(root, "dirty.go"), "dirty")
 	later := newSaveTestEditorAt(t, app, filepath.Join(root, "later.go"), "later")
 	dirty.InsertRune('x')
-	app.closeAllEditorTabsExcept(keep.FilePath())
+	closeOtherFilesInPane(app, keep)
 	if len(app.pendingTabClose) == 0 {
 		t.Fatal("bulk close did not queue the remainder")
 	}

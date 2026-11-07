@@ -11,7 +11,6 @@ import (
 
 	"crude/coreprotocol"
 	"crude/provider"
-	"crude/shellport"
 	"crude/types"
 	"crude/workspace"
 )
@@ -284,30 +283,4 @@ func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL,
 	value := draft(account, before, exists)
 	request := coreprotocol.AccountModelsRequest{AccountID: account.ID, Draft: &value}
 	return w.models(request)
-}
-
-// BindToolLayout pins the layout store to this attachment's workspace.
-func (w *Workspace) BindToolLayout() shellport.ToolLayoutStore { return toolLayout{w: w} }
-
-type toolLayout struct{ w *Workspace }
-
-func (t toolLayout) LoadToolLayout() (workspace.ToolLayout, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-	defer cancel()
-	var out coreprotocol.ToolLayoutRequest
-	err := t.w.call(ctx, coreprotocol.ToolLayoutLoad, &coreprotocol.Empty{}, &out)
-	return out.Layout, err
-}
-
-func (t toolLayout) SaveToolLayout(layout workspace.ToolLayout) error {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-	defer cancel()
-	return t.w.call(ctx, coreprotocol.ToolLayoutSave, &coreprotocol.ToolLayoutRequest{Layout: layout}, &coreprotocol.BoolResult{})
-}
-
-func (w *Workspace) LoadToolLayout() (workspace.ToolLayout, error) {
-	return toolLayout{w: w}.LoadToolLayout()
-}
-func (w *Workspace) SaveToolLayout(layout workspace.ToolLayout) error {
-	return toolLayout{w: w}.SaveToolLayout(layout)
 }

@@ -38,6 +38,7 @@ type paneFilesOpenedMsg struct {
 	refs             *liveDocumentRefs
 	diagnosticFacts  *types.InsightDiagnostics
 	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
+	restore          *navLocation          // Go Back/Forward place of a reopened file
 	navigation       *paneNavigation
 	// window opens the landed tab in its own window (Open in window).
 	window bool
@@ -135,7 +136,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 				m.editorCommands = append(m.editorCommands, msg.refs.releaseCmd(file.snapshot.ID))
 				continue
 			}
-			state := m.liveEditors[m.EditorState.Tabs[file.path].Editor]
+			state := m.liveEditors[m.EditorState.Tabs[file.path].Editor.Primary()]
 			if state.refs != nil {
 				// Reopening an already live view must not reinstall an older private
 				// recovery over edits made since that view was first opened.
@@ -149,12 +150,11 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			} else {
 				m.editorCommands = append(m.editorCommands, msg.refs.releaseCmd(file.snapshot.ID))
 			}
-			m.Win.FocusGroup(msg.group)
-			m.activateEditorTab(file.path)
-			if tab := m.Win.TabByTitle(m.editorTabTitle(file.path)); tab != nil {
-				m.Win.MoveTabToGroup(tab.ID, msg.group, 0)
+			// The file opens where it was requested. A view elsewhere stays
+			// where it is; this pane gets its own view of the same document.
+			if m.showDocument(file.path, msg.group, foreground) != nil {
+				opened = true
 			}
-			opened = true
 			continue
 		}
 		// A file opened/edited during preparation is authoritative, including
@@ -175,19 +175,9 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			continue
 		}
 		m.installEditorBuffer(buf)
-		m.Win.FocusGroup(msg.group)
-		title := m.editorTabTitle(buf.Path)
-		if m.Win.TabByTitle(title) == nil {
-			m.Win.OpenTab(title, "✎", true)
+		if m.showDocument(buf.Path, msg.group, foreground) != nil {
+			opened = true
 		}
-		tab := m.Win.TabByTitle(title)
-		m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(tab.ID), m.EditorState.Tabs[buf.Path].Editor.BaseTitle())
-		if msg.landing != nil && tab.Group == msg.group {
-			m.Win.SwitchTo(m.Win.IndexOf(tab.ID))
-		} else {
-			m.Win.MoveTabToGroup(tab.ID, msg.group, 0)
-		}
-		opened = true
 	}
 	if !foreground {
 		// Restore the exact group even if it has no tab; selecting only a tab
@@ -209,7 +199,8 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if msg.navigation != nil {
 		m.applyNavigationLanding(msg)
 	}
-	if p := msg.position; p != nil && m.EditorState.Editor != nil {
+	m.applyNavRestore(msg.restore)
+	if p := msg.position; p != nil && m.EditorState.Editor != nil && m.EditorState.ActiveView == msg.files[len(msg.files)-1].path {
 		ed := m.EditorState.Editor
 		valid := true
 		if f := msg.diagnosticFacts; f != nil && f.FromProjectCheck() {

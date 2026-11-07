@@ -84,9 +84,11 @@ type chatFind struct {
 	gen   uint64
 	text  rowText
 	paint paintCache
-	// limit replaces findBudget when set; tests use it to force a pass to
-	// span several frames.
+	// limit replaces findBudget when set, and clock replaces time.Now; tests
+	// use them to force a pass to span several frames. A real clock cannot:
+	// a coarse system timer may not advance during a short pass.
 	limit time.Duration
+	clock func() time.Time
 }
 
 type findCurrent struct {
@@ -217,7 +219,11 @@ func (f *chatFind) observe(rows []chatprojection.MessageRow, source uint64, chan
 	if budget == 0 {
 		budget = findBudget
 	}
-	deadline := time.Now().Add(budget)
+	now := time.Now
+	if f.clock != nil {
+		now = f.clock
+	}
+	deadline := now().Add(budget)
 	for f.next < len(rows) {
 		i := f.next
 		if f.stamps[i] != rows[i].Version {
@@ -227,7 +233,7 @@ func (f *chatFind) observe(rows []chatprojection.MessageRow, source uint64, chan
 			f.counting++
 		}
 		f.next++
-		if f.next&31 == 0 && time.Now().After(deadline) {
+		if f.next&31 == 0 && now().After(deadline) {
 			break
 		}
 	}

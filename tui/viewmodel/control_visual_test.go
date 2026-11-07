@@ -308,8 +308,14 @@ func (m *controlVisualModel) execute(id string, input any, adjust func(*control.
 
 func (m *controlVisualModel) control(suffix string, op ui.ControlOperation) error {
 	cursor, id := "", ""
-	for {
+	for restarts := 0; ; {
 		result, err := m.execute("shell.controls", control.PageRequest{Limit: 128, Cursor: cursor}, nil)
+		if result.Fault != nil && result.Fault.Code == control.Stale && restarts < 8 {
+			// The inventory changed between pages (a language server became
+			// ready); a read-only walk starts again, as a real client does.
+			cursor, id, restarts = "", "", restarts+1
+			continue
+		}
 		if err != nil {
 			return err
 		}

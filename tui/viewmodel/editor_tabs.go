@@ -11,7 +11,6 @@ import (
 
 	"crude/shellport"
 	"crude/tui/editor"
-	"crude/tui/ui"
 	"crude/tui/window"
 )
 
@@ -30,6 +29,9 @@ func (m *App) editorPathFromTabTitle(title string) string {
 	return title[7:]
 }
 
+// openEditorTab shows path in the focused pane: that pane's view of the file
+// is selected, or a view is added there. A file open elsewhere is not pulled
+// out of its pane; the new view shares its document.
 func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 	if _, connected := m.ws.(shellport.LiveDocuments); connected {
 		if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor.IsOpen() {
@@ -59,8 +61,9 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 	return m.refreshEditorGitCmd(), nil
 }
 
-// installEditorBuffer installs a prepared live buffer without changing selection.
-// Existing views retain their cursor, undo, selection and unsaved text.
+// installEditorBuffer installs a prepared buffer as an open document without
+// showing it; activateEditorTab or showDocument adds its views. Existing
+// views retain their cursor, undo, selection and unsaved text.
 func (m *App) installEditorBuffer(buf *editor.Buffer) {
 	path := buf.Path
 	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor.IsOpen() {
@@ -90,16 +93,10 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 	m.EditorState.Tabs[path] = NewEditorTab(path, ed)
 }
 
+// activateEditorTab focuses path's view in the focused pane, adding one there
+// when the pane does not show the file yet.
 func (m *App) activateEditorTab(path string) {
-	tabTitle := m.editorTabTitle(path)
-	if m.Win.TabByTitle(tabTitle) == nil {
-		m.Win.OpenTab(tabTitle, "✎", true)
-	}
-	if winTab := m.Win.TabByTitle(tabTitle); winTab != nil {
-		m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(winTab.ID), m.EditorState.Tabs[path].Editor.BaseTitle())
-		m.Win.SwitchTo(m.Win.IndexOf(winTab.ID))
-		m.handleTabSwitch()
-	}
+	m.showDocument(path, m.Win.ActiveGroup(), true)
 }
 
 // jumpToDiagnostic opens the file containing the given diagnostic
@@ -269,6 +266,10 @@ func (m *App) closeEditorTab() {
 	}
 	m.releaseTabBarFocus()
 	defer m.syncRootFocus()
+	if v := m.editorView(m.EditorState.ActiveTab); v != nil && len(m.documentViews(v.Path)) > 1 {
+		m.closeLinkedView(v)
+		return
+	}
 	path := m.activeEditorPath()
 
 	// If the tab has unsaved edits, prompt before destroying the
@@ -282,12 +283,12 @@ func (m *App) closeEditorTab() {
 	m.closeEditorTabForce(path)
 }
 
-// closeEditorTabForce unconditionally closes the given editor tab.
-// Used both for the normal close path and after the user confirms a
-// close-with-unsaved-changes prompt.
+// closeEditorTabForce unconditionally closes the document at path and every
+// view of it. Used both for the normal close path and after the user confirms
+// a close-with-unsaved-changes prompt.
 func (m *App) closeEditorTabForce(path string) {
 	if tab := m.EditorState.Tabs[path]; tab != nil {
-		if state := m.liveEditors[tab.Editor]; state != nil {
+		if state := m.liveEditors[tab.Editor.Primary()]; state != nil {
 			ds := tab.Editor.DocumentState()
 			if state.busy || state.uncertain != nil || state.err != nil || ds.PendingEdits > 0 || ds.InFlight || ds.UndoPending || ds.HistoryQueued || state.undo != nil || ds.Conflict != nil {
 				state.closeView = true
@@ -311,23 +312,23 @@ func (m *App) closeEditorTabForce(path string) {
 		delete(m.editorSaves, id)
 	}
 	// Close any popups associated with this editor before closing the tab.
-	m.closeFindReplace()
-	m.closeNavigation()
-	m.closeCompletionPopup()
-	m.closeOutlinePopup()
-	m.clearDiagHoverPopup()
-	m.overlayHost.Close(ui.OverlayDiagContext)
+	m.closeEditorViewPopups()
 
-	tabTitle := m.editorTabTitle(path)
-	if tab := m.Win.TabByTitle(tabTitle); tab != nil {
-		m.Win.CloseTabByID(tab.ID)
+	// Linked views release their share first; the primary closes the document.
+	for _, v := range m.documentViews(path) {
+		m.Win.CloseTabByID(v.Tab)
+		delete(m.EditorState.Views, v.Tab)
+		delete(m.inlayViews, v.Editor)
+		if tab := m.EditorState.Tabs[path]; tab == nil || v.Editor != tab.Editor {
+			v.Editor.Close()
+		}
 	}
 
 	tab, ok := m.EditorState.Tabs[path]
 	if ok {
 		if live, shared := m.ws.(shellport.LiveDocuments); shared {
 			id := tab.Editor.DocumentState().DocumentID
-			state := m.liveEditors[tab.Editor]
+			state := m.liveEditors[tab.Editor.Primary()]
 			delete(m.liveEditors, tab.Editor)
 			if state != nil && state.refs != nil {
 				m.editorCommands = append(m.editorCommands, state.refs.releaseCmd(id))
@@ -391,7 +392,7 @@ func (m *App) syncEditorTabPresentation() {
 		if !ok || !m.isEditorTabTitle(tab.Title) {
 			continue
 		}
-		ed := m.editorForWindowTab(tab.Title)
+		ed := m.editorForTab(tab.ID)
 		if ed == nil {
 			continue
 		}
@@ -408,63 +409,49 @@ func (m *App) syncEditorTabPresentation() {
 	}
 }
 
-// editorForWindowTab resolves the editor behind a strip tab key.
-func (m *App) editorForWindowTab(title string) *editor.Editor {
-	tab := m.EditorState.Tabs[m.editorPathFromTabTitle(title)]
-	if tab == nil {
-		return nil
-	}
-	return tab.Editor
-}
-
-// retitleEditorWindowTab re-keys one strip tab after a retarget. The tab key is
-// the editor path, so leaving it stale would show the old filename, break
-// close/hit lookups, and hide the tab's unsaved state.
+// retitleEditorWindowTab re-keys every view of a retargeted document. The tab
+// key is the editor path, so leaving it stale would show the old filename,
+// break close/hit lookups, and hide the tab's unsaved state.
 func (m *App) retitleEditorWindowTab(oldPath, newPath string, ed *editor.Editor) {
 	if m.Win == nil || ed == nil || oldPath == newPath {
 		return
 	}
-	winTab := m.Win.TabByTitle(m.editorTabTitle(oldPath))
-	if winTab == nil {
-		return
-	}
-	idx := m.Win.IndexOf(winTab.ID)
-	m.Win.SetTabTitleByIndex(idx, m.editorTabTitle(newPath))
-	m.Win.SetTabDisplayTitleByIndex(idx, ed.BaseTitle())
-}
-
-// closeAllEditorTabsExcept closes every editor tab other than path. Dirty
-// buffers are never discarded here: the walk stops at the first dirty tab and
-// opens the unsaved-changes prompt.
-func (m *App) closeAllEditorTabsExcept(path string) {
-	m.releaseTabBarFocus()
-	defer m.syncRootFocus()
-	toClose := []string{}
-	for p := range m.EditorState.Tabs {
-		if p != path {
-			toClose = append(toClose, p)
+	for _, v := range m.documentViews(oldPath) {
+		v.Path = newPath
+		idx := m.Win.IndexOf(v.Tab)
+		m.Win.SetTabTitleByIndex(idx, m.editorTabTitle(newPath))
+		if tab := m.Win.TabByID(v.Tab); tab != nil {
+			tab.Resource.ID = newPath
 		}
+		m.Win.SetTabDisplayTitleByIndex(idx, ed.BaseTitle())
 	}
-	sort.Strings(toClose) // map iteration order would make prompts nondeterministic
-	m.closeEditorTabs(toClose)
+	if m.EditorState.ActiveView == oldPath {
+		m.EditorState.ActiveView = newPath
+	}
 }
 
-// closeEditorTabs closes the given tabs in order. It stops at the first dirty
-// buffer, prompts, and stores the remainder for continuePendingTabClose so a
-// confirmed close resumes the bulk operation instead of losing unsaved work.
-func (m *App) closeEditorTabs(paths []string) {
+// closeEditorViews closes the given editor tabs in order. A view of a
+// document still shown by another tab closes at once; the last view of a
+// dirty document stops the walk, prompts, and stores the remainder for
+// continuePendingTabClose so a confirmed close resumes the bulk operation
+// instead of losing unsaved work.
+func (m *App) closeEditorViews(ids []window.TabID) {
 	m.pendingTabClose = nil
-	for i, path := range paths {
-		tab := m.EditorState.Tabs[path]
-		if tab == nil || tab.Editor == nil {
+	for i, id := range ids {
+		v := m.editorView(id)
+		if v == nil {
 			continue
 		}
-		if tab.Editor.Modified() {
-			m.pendingTabClose = append(m.pendingTabClose, paths[i+1:]...)
-			m.showDirtyClosePrompt(path)
+		if len(m.documentViews(v.Path)) > 1 {
+			m.closeLinkedView(v)
+			continue
+		}
+		if v.Editor.Modified() {
+			m.pendingTabClose = append(m.pendingTabClose, ids[i+1:]...)
+			m.showDirtyClosePrompt(v.Path)
 			return
 		}
-		m.closeEditorTabForce(path)
+		m.closeEditorTabForce(v.Path)
 	}
 }
 
@@ -473,28 +460,12 @@ func (m *App) continuePendingTabClose() {
 	if len(m.pendingTabClose) == 0 {
 		return
 	}
-	paths := m.pendingTabClose
+	ids := m.pendingTabClose
 	m.pendingTabClose = nil
-	m.closeEditorTabs(paths)
+	m.closeEditorViews(ids)
 }
 
 // abortPendingTabClose drops the remainder of a bulk close the user cancelled.
 func (m *App) abortPendingTabClose() {
 	m.pendingTabClose = nil
-}
-
-// closeEditorTabsToRightOf closes every tab whose index is greater
-// than the given window-tab index. Dirty buffers are prompted, not destroyed.
-func (m *App) closeEditorTabsToRightOf(idx int) {
-	m.releaseTabBarFocus()
-	defer m.syncRootFocus()
-	tabs := m.Win.Tabs()
-	toClose := make([]string, 0, len(tabs))
-	for i := len(tabs) - 1; i > idx; i-- {
-		t := tabs[i]
-		if m.isEditorTabTitle(t.Title) {
-			toClose = append(toClose, m.editorPathFromTabTitle(t.Title))
-		}
-	}
-	m.closeEditorTabs(toClose)
 }

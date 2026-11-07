@@ -83,9 +83,9 @@ func (e *Editor) spliceRecordedBatch(edits []document.Edit, cursorBefore Positio
 	for i, edit := range edits {
 		deleted[i] = string(e.buf.cachedBytes[edit.Start:edit.End])
 	}
-	previousOwner := e.buf.editOwner
-	e.buf.editOwner = e
-	defer func() { e.buf.editOwner = previousOwner }()
+	previousOwner, previousActor := e.buf.editOwner, e.buf.linkActor
+	e.buf.editOwner, e.buf.linkActor = e, e
+	defer func() { e.buf.editOwner, e.buf.linkActor = previousOwner, previousActor }()
 	if err := e.buf.applyOffsets(edits); err != nil {
 		return err
 	}

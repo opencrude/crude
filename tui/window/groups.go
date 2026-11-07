@@ -73,6 +73,7 @@ func (w *Window) PreviewSplitPane(node uint64, dir ui.Direction, before bool) (*
 func (w *Window) layoutCopy() *Window {
 	w.ensureGroups()
 	copy := *w
+	copy.absorbed = nil
 	copy.tabs = append([]Tab(nil), w.tabs...)
 	copy.groupActive = make(map[GroupID]TabID, len(w.groupActive))
 	for id, tab := range w.groupActive {
@@ -412,6 +413,16 @@ func (w *Window) MoveTabToGroup(id TabID, target GroupID, beforeTab TabID) bool 
 			}
 		}
 	}
+	if existing := w.documentTab(target, tab); existing != 0 && existing != id {
+		// The pane already shows this document: keep that view, select it.
+		w.absorbed = append(w.absorbed, id)
+		w.groupActive[target] = existing
+		w.focus(target)
+		if source != target {
+			w.RemoveEmptyGroup(source)
+		}
+		return true
+	}
 	tab.Group = target
 	w.tabs = append(w.tabs, Tab{})
 	copy(w.tabs[insert+1:], w.tabs[insert:])
@@ -422,6 +433,29 @@ func (w *Window) MoveTabToGroup(id TabID, target GroupID, beforeTab TabID) bool 
 		w.RemoveEmptyGroup(source)
 	}
 	return true
+}
+
+// documentTab returns the tab in group that shows the same document as tab.
+// A file has at most one view per pane; other resources never match.
+func (w *Window) documentTab(group GroupID, tab Tab) TabID {
+	if tab.Resource.Kind != ResourceDocument || tab.Resource.ID == "" {
+		return 0
+	}
+	for _, existing := range w.tabs {
+		if existing.Group == group && existing.ID != tab.ID && existing.Resource == tab.Resource {
+			return existing.ID
+		}
+	}
+	return 0
+}
+
+// TakeAbsorbedTabs returns and forgets the document tabs a move or merge
+// removed as duplicates. Their owner releases the views; the document stays
+// open in the tab that absorbed them.
+func (w *Window) TakeAbsorbedTabs() []TabID {
+	out := w.absorbed
+	w.absorbed = nil
+	return out
 }
 
 // RemoveEmptyGroup collapses its parent, preserving the sibling subtree and
@@ -496,12 +530,23 @@ func (w *Window) MergeGroup(source, target GroupID) bool {
 	}
 	var moved, retained []Tab
 	for _, tab := range w.tabs {
-		if tab.Group == source {
-			tab.Group = target
-			moved = append(moved, tab)
-		} else {
+		if tab.Group != source {
 			retained = append(retained, tab)
 		}
+	}
+	for _, tab := range w.tabs {
+		if tab.Group != source {
+			continue
+		}
+		if existing := w.documentTab(target, tab); existing != 0 {
+			w.absorbed = append(w.absorbed, tab.ID)
+			if selected == tab.ID {
+				selected = existing
+			}
+			continue
+		}
+		tab.Group = target
+		moved = append(moved, tab)
 	}
 	insert := len(retained)
 	for i, tab := range retained {

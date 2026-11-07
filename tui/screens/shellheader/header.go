@@ -53,7 +53,10 @@ type Projection struct {
 	Width         int
 	LeftSegments  []Segment
 	RightSegments []Segment
-	Connection    ConnectionState
+	// NavSegments are the Go Back / Go Forward arrows, painted right after
+	// the wordmark (the first left segment) like an IDE title bar.
+	NavSegments []Segment
+	Connection  ConnectionState
 }
 
 type Segment struct {
@@ -123,7 +126,8 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 func (s *Screen) SetProjection(p Projection) bool {
 	old := s.proj
 	changed := old.ModelName != p.ModelName || old.YOLO != p.YOLO || old.StartTime != p.StartTime || old.Usage != p.Usage || old.ViewLabel != p.ViewLabel || old.Width != p.Width || old.Connection != p.Connection ||
-		!slices.Equal(old.LeftSegments, p.LeftSegments) || !slices.Equal(old.RightSegments, p.RightSegments)
+		!slices.Equal(old.LeftSegments, p.LeftSegments) || !slices.Equal(old.RightSegments, p.RightSegments) ||
+		!slices.Equal(old.NavSegments, p.NavSegments)
 	if old.Connection != p.Connection {
 		s.tide = ui.TextTideMotion{}
 	}
@@ -223,12 +227,32 @@ func (s *Screen) color(role ui.SemanticColor) cell.Color {
 
 func (s *Screen) paintSegments(buf *surface.CellBuffer, x, y, innerW int) {
 	s.hits = s.hits[:0]
-	leftBudget := min(innerW, max(10, innerW/3))
-	left := fitSegments(s.proj.LeftSegments, leftBudget, "  ")
+	nav := s.proj.NavSegments
+	navW := 0
+	if len(s.proj.LeftSegments) > 0 && len(nav) > 0 {
+		navW = 2 + segmentWidth(nav, " ")
+	}
+	leftBudget := min(innerW, max(10, innerW/3)+navW)
+	left := fitSegments(s.proj.LeftSegments, leftBudget-navW, "  ")
 	leftW := segmentWidth(left, "  ")
+	if len(left) == 0 {
+		navW = 0
+	}
+	leftW += navW
 	right := fitSegments(s.proj.RightSegments, max(0, innerW-leftW-2), " · ")
 	rightW := segmentWidth(right, " · ")
-	s.paintSegmentGroup(buf, x, y, left, "  ", 0)
+	if navW > 0 {
+		// Wordmark, then the arrows, then the rest of the identity.
+		s.paintSegmentGroup(buf, x, y, left[:1], "  ", 0)
+		localX := segmentWidth(left[:1], "  ") + 2
+		s.paintSegmentGroup(buf, x+localX, y, nav, " ", localX)
+		if len(left) > 1 {
+			localX += navW - 2 + 2
+			s.paintSegmentGroup(buf, x+localX, y, left[1:], "  ", localX)
+		}
+	} else {
+		s.paintSegmentGroup(buf, x, y, left, "  ", 0)
+	}
 	rightX := max(leftW+2, innerW-rightW)
 	s.paintSegmentGroup(buf, x+rightX, y, right, " · ", rightX)
 }

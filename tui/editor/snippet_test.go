@@ -76,7 +76,7 @@ func TestSnippetCanonicalSparseGroupsOwnAckAndAtomicPeerPublication(t *testing.T
 	require.NotEmpty(t, completion.GroupID)
 	require.Equal(t, []document.Edit{{Start: 7, End: 9, Text: "word:word"}}, completion.Edits,
 		"completion cannot replace the whole shared document")
-	require.Empty(t, e.changes, "connected views cannot retain a second undo authority")
+	require.Empty(t, e.buf.changes, "connected views cannot retain a second undo authority")
 	require.NoError(t, e.AcceptDocumentReceipt(document.Receipt{
 		DocumentID: initial.ID, RequestID: "completion", Before: 1, Revision: 2, Accepted: true,
 	}))
@@ -245,7 +245,7 @@ func TestSnippetEmptyNoopEscAndRawObserverRetirement(t *testing.T) {
 			item.TextEdit = &types.LSPTextEdit{EndCol: len(initial), NewText: item.InsertText}
 			require.NoError(t, e.ApplyCompletion(item))
 			require.True(t, e.SnippetActive(), "byte-identical insertions still navigate")
-			require.Empty(t, e.changes)
+			require.Empty(t, e.buf.changes)
 			snippetKey(e, tea.KeyEsc, "", 0)
 			require.False(t, e.SnippetActive())
 			require.False(t, e.HasSelection())
@@ -293,7 +293,7 @@ func TestSnippetRejectsMisboundPlansAndJoinedGraphemeEndpointsAtomically(t *test
 		require.Equal(t, before, e.Value())
 		require.Equal(t, revision, e.Revision())
 		require.Equal(t, cursor, e.cursor)
-		require.Empty(t, e.changes)
+		require.Empty(t, e.buf.changes)
 		require.False(t, e.SnippetActive())
 	}
 }

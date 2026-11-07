@@ -542,7 +542,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "file.revealInTree":
 		if m.Tree != nil && m.Tree.Model != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 			if fp := m.EditorState.Editor.FilePath(); fp != "" {
-				if tab := m.Win.TabByTitle(m.editorTabTitle(fp)); tab != nil {
+				if tab := m.Win.TabByID(m.EditorState.ActiveTab); tab != nil {
 					return m.beginUserTreeReveal(fp, m.paneOwner(tab.ID, tab.Group))
 				}
 			}

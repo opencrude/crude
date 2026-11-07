@@ -29,7 +29,7 @@ func (m *App) showDirtyClosePrompt(path string) {
 	}
 	m.DirtyPromptChoice = 2
 	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
-	if m.liveEditors[tab.Editor] != nil {
+	if m.liveEditors[tab.Editor.Primary()] != nil {
 		frame = ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
 			Title: "Shared unsaved changes", Question: "Save to disk or close only this view?",
 			Detail:   "Closing keeps shared unsaved text for other views. Pending edits are published before closing; no shared work is discarded.",
@@ -122,7 +122,7 @@ func (m *App) dirtyPromptCancel() {
 	}
 	path := m.DirtyPromptPath
 	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
-		if state := m.liveEditors[tab.Editor]; state != nil {
+		if state := m.liveEditors[tab.Editor.Primary()]; state != nil {
 			state.closeAfter, state.closeView = false, false
 		}
 		if state := m.editorSaves[tab.Editor.BufferID()]; state != nil {
