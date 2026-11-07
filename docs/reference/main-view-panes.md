@@ -42,6 +42,10 @@ search, hover and snippet/ghost interaction. A mutation through any view
 remaps the other views' anchors through the exact byte edits in the same call,
 so all views paint the same text in the same frame with no round trip and no
 second copy of the document. Remote edits arrive once, through the primary.
+Undo and redo share document history, but restore a saved caret and viewport
+only when the originating view invokes the operation. A gesture in another
+pane never restores an old position into an inactive pane; current anchors
+transform through the actual text edits instead.
 
 Closing a view of a file that another tab still shows closes only that view,
 without a prompt: the text, unsaved changes and history stay. Closing the

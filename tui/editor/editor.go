@@ -34,6 +34,7 @@ type Change struct {
 	// Offsets retain exact source spans, including an inverse inside a newly
 	// combined grapheme. Display positions cannot express such an inverse.
 	Offset        int
+	viewID        uint64
 	Before, After editorViewState
 }
 

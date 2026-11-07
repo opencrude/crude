@@ -37,6 +37,7 @@ type DocumentProjection struct {
 	historySync      bool
 	historyRedo      bool
 	historyRequestID string
+	historyViewID    uint64 // view that invoked the in-flight undo/redo
 	replaying        bool
 	restoreView      *editorViewState
 	// restoreEditor is the linked view whose edit group restoreView belongs
@@ -45,8 +46,8 @@ type DocumentProjection struct {
 	suppressed    bool
 }
 
-// documentGroupView retains the caret of the exact view that made an edit
-// group, so undo restores that view rather than a sibling of the document.
+// documentGroupView retains the edit's originating view and its private caret.
+// Its snapshot is restored only when that same view invokes undo or redo.
 type documentGroupView struct {
 	before, after editorViewState
 	editor        *Editor
@@ -54,6 +55,7 @@ type documentGroupView struct {
 type documentHistoryAction struct {
 	edit     func()
 	redo     bool
+	viewID   uint64
 	evidence DocumentHistoryIntent
 }
 
@@ -504,7 +506,7 @@ func (e *Editor) requestDocumentUndo(redo bool) {
 	if p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending) {
 		return
 	}
-	p.historyQueue = append(p.historyQueue, documentHistoryAction{redo: redo, evidence: DocumentHistoryIntent{Redo: redo}})
+	p.historyQueue = append(p.historyQueue, documentHistoryAction{redo: redo, viewID: e.historyID, evidence: DocumentHistoryIntent{Redo: redo}})
 	e.DrainDocumentUndo()
 	if len(p.historyQueue) > 0 {
 		p.conflict = ErrDocumentPending
@@ -532,6 +534,7 @@ func (e *Editor) DrainDocumentUndo() {
 		}
 		p.historyQueue = p.historyQueue[1:]
 		p.undoPending = true
+		p.historyViewID = action.viewID
 		p.undoSequence++
 		p.conflict = nil
 		p.onUndo(DocumentUndoIntent{p.snapshot.ID, p.owner, p.snapshot.Revision, action.redo, p.undoSequence, p})
@@ -548,13 +551,16 @@ func (e *Editor) CompleteDocumentHistorySync() {
 	}
 	p.historySync = false
 	if p.restoreView != nil {
-		target := e
-		if v := p.restoreEditor; v != nil && v.open && v.documentProjection == p {
-			target = v
+		target := p.restoreEditor
+		// A snapshot from a closed view must never move a surviving sibling.
+		// An undo elsewhere only transforms each pane's current anchors.
+		if target != nil && target.open && target.documentProjection == p &&
+			(p.historyViewID == 0 || target.historyID == p.historyViewID) {
+			target.restoreViewState(*p.restoreView)
 		}
-		target.restoreViewState(*p.restoreView)
 		p.restoreView, p.restoreEditor = nil, nil
 	}
+	p.historyViewID = 0
 	e.DrainDocumentUndo()
 }
 
@@ -567,7 +573,7 @@ func (e *Editor) DeferDocumentUndoUntilSync(intent DocumentUndoIntent) error {
 	if p == nil || intent.Projection != p || !p.undoPending || intent.DocumentID != p.snapshot.ID || intent.Owner != p.owner || intent.ExpectedRevision != p.snapshot.Revision || intent.Sequence != p.undoSequence {
 		return document.ErrRequest
 	}
-	action := documentHistoryAction{redo: intent.Redo, evidence: DocumentHistoryIntent{Redo: intent.Redo}}
+	action := documentHistoryAction{redo: intent.Redo, viewID: p.historyViewID, evidence: DocumentHistoryIntent{Redo: intent.Redo}}
 	p.historyQueue = append([]documentHistoryAction{action}, p.historyQueue...)
 	p.undoPending = false
 	p.historySync = true

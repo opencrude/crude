@@ -52,8 +52,8 @@ func TestLinkedViewsShowEveryEditAndKeepTheirOwnCarets(t *testing.T) {
 }
 
 // All views share one document: one history, one dirty state and one set of
-// pending canonical edits. Undo in any view undoes the last edit and restores
-// the caret of the view that made it.
+// pending canonical edits. Undo in any view undoes the last edit; a view's
+// saved caret is restored only when that view invokes the undo.
 func TestLinkedViewsShareOneDocumentHistory(t *testing.T) {
 	a, _ := projectionEditor(t, "one\ntwo\n")
 	b := a.NewLinkedView()
@@ -208,4 +208,31 @@ func paintedText(e *Editor) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// Local history is document-wide but its stored caret belongs to one view.
+func TestLinkedLocalUndoKeepsIndependentViewPositions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "local.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("abcdef\n", 80)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a := New(theme.DefaultDark())
+	if err := a.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b := a.NewLinkedView()
+	defer b.Close()
+	a.InsertRune('X')
+	a.BreakUndoGroup()
+	a.SetCursorPosition(15, 2)
+	b.SetCursorPosition(50, 2)
+	b.Undo()
+	if a.CursorLine() != 15 || b.CursorLine() != 50 || strings.HasPrefix(a.Value(), "X") {
+		t.Fatalf("undo moved views or missed text: %d %d %q", a.CursorLine(), b.CursorLine(), a.LineText(0))
+	}
+	b.Redo()
+	if a.CursorLine() != 15 || b.CursorLine() != 50 || !strings.HasPrefix(a.Value(), "X") {
+		t.Fatalf("redo moved views or missed text: %d %d %q", a.CursorLine(), b.CursorLine(), a.LineText(0))
+	}
 }

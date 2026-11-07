@@ -128,6 +128,7 @@ func (e *Editor) recordChange(c Change) {
 		return // the core owns connected history; do not retain a competing log
 	}
 	c.Group = e.undoGroupID
+	c.viewID = e.historyID
 	c.Before = e.captureViewState()
 	c.Before.Cursor = c.CursorBefore
 	c.After = e.captureViewState()
@@ -249,7 +250,9 @@ func (e *Editor) undo() {
 		case ActDelete:
 			_, _ = e.buf.insertAtOffset(c.Offset, c.Text)
 		}
-		e.restoreViewState(c.Before)
+		if c.viewID == 0 || c.viewID == e.historyID {
+			e.restoreViewState(c.Before)
+		}
 		if group == 0 {
 			break
 		}
@@ -294,7 +297,9 @@ func (e *Editor) redo() {
 		case ActDelete:
 			_, _ = e.buf.deleteOffsets(c.Offset, c.Offset+len(c.Text))
 		}
-		e.restoreViewState(c.After)
+		if c.viewID == 0 || c.viewID == e.historyID {
+			e.restoreViewState(c.After)
+		}
 		if group == 0 {
 			break
 		}
