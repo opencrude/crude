@@ -416,16 +416,12 @@ func (m *App) activateAgentWindowTab(agentID string) {
 	m.handleTabSwitch()
 }
 
-func (m *App) keepWindowTab(title string) {
-	if title == "" || m.Win == nil {
+func (m *App) keepWindowTab(id window.TabID) {
+	if id == 0 || m.Win == nil {
 		return
 	}
-	tab := m.Win.TabByTitle(title)
-	if tab == nil {
-		return
-	}
-	idx := m.Win.IndexOf(tab.ID)
-	if m.Win.ActiveIndex() != idx {
+	idx := m.Win.IndexOf(id)
+	if idx >= 0 && m.Win.ActiveIndex() != idx {
 		m.Win.SwitchTo(idx)
 	}
 }
@@ -441,9 +437,9 @@ func (m *App) keepWindowTab(title string) {
 func (m *App) syncAgentWindowTabs() {
 	preserveGroup := m.Win.ActiveGroup()
 	var added []window.TabID
-	preserveTitle := ""
+	var preserveTab window.TabID
 	if active := m.Win.ActiveTab(); active != nil {
-		preserveTitle = active.Title
+		preserveTab = active.ID
 	}
 
 	// If no surfaced agents exist, purge agent tabs and return. Minimized
@@ -451,7 +447,7 @@ func (m *App) syncAgentWindowTabs() {
 	if m.AgentView.VisibleCount() == 0 {
 		m.purgeAgentTabs()
 		m.EditorState.TabSnapshotCache = ""
-		m.keepWindowTab(preserveTitle)
+		m.keepWindowTab(preserveTab)
 		m.handleTabSwitch()
 		return
 	}
@@ -547,7 +543,7 @@ func (m *App) syncAgentWindowTabs() {
 		}
 		m.Win.OrderTabsSubset(stable)
 	}
-	m.keepWindowTab(preserveTitle)
+	m.keepWindowTab(preserveTab)
 	m.handleTabSwitch()
 }
 
