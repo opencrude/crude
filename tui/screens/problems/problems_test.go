@@ -3,6 +3,7 @@ package problems
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -131,14 +132,19 @@ func TestEmptyStatesSpeakPlainly(t *testing.T) {
 	}
 }
 
-// A click on a problem goes to it; a click on a file row folds the file.
+// A double-click opens a problem; one click selects it. A file row folds on one click.
 func TestClickOpensProblemAndFoldsFile(t *testing.T) {
 	screen, host := mount(t, 140, 14, fixture())
 	y := listTop + 2 // undefined: helper
 	host.Handle(tea.MouseClickMsg{X: 10, Y: y, Button: tea.MouseLeft})
 	result := host.Handle(tea.MouseReleaseMsg{X: 10, Y: y, Button: tea.MouseLeft})
+	if result.Cmd != nil {
+		t.Fatal("single click opened a problem instead of selecting it")
+	}
+	host.Handle(tea.MouseClickMsg{X: 10, Y: y, Button: tea.MouseLeft})
+	result = host.Handle(tea.MouseReleaseMsg{X: 10, Y: y, Button: tea.MouseLeft})
 	if result.Cmd == nil {
-		t.Fatal("click on a problem did nothing")
+		t.Fatal("double-click did not open the problem")
 	}
 	if msg, ok := result.Cmd().(OpenMsg); !ok || msg.Problem.Message != "undefined: helper" {
 		t.Fatalf("click opened %#v", result.Cmd())
@@ -259,5 +265,30 @@ func TestNarrowStatusTakesItsOwnRow(t *testing.T) {
 	host.Handle(tea.MouseReleaseMsg{X: 10, Y: listTop + 2, Button: tea.MouseLeft})
 	if p, ok := screen.Selected(); !ok || p.Message != "expected declaration" {
 		t.Fatalf("click under the status row selected %+v", p)
+	}
+}
+
+// Only two clicks on the same current problem may navigate. Selection,
+// stale diagnostics and a drag must not trigger navigation.
+func TestProblemDoubleClickRequiresSameCurrentRow(t *testing.T) {
+	screen, host := mount(t, 140, 14, fixture())
+	click := func(y int) ui.EventResult {
+		host.Handle(tea.MouseClickMsg{X: 10, Y: y, Button: tea.MouseLeft})
+		return host.Handle(tea.MouseReleaseMsg{X: 10, Y: y, Button: tea.MouseLeft})
+	}
+	if click(listTop+1).Cmd != nil || click(listTop+2).Cmd != nil {
+		t.Fatal("different rows opened on single clicks")
+	}
+	screen.list.lastClickAt = time.Now().Add(-time.Second)
+	if click(listTop+2).Cmd != nil {
+		t.Fatal("an expired click opened a problem")
+	}
+	if click(listTop+2).Cmd == nil {
+		t.Fatal("double click did not open the selected problem")
+	}
+	for range 2 {
+		if click(listTop+5).Cmd != nil {
+			t.Fatal("out-of-date problem opened")
+		}
 	}
 }

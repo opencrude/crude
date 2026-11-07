@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -558,15 +559,17 @@ func (s *Screen) OpenSelected() tea.Cmd {
 // cursor; a drag or Shift+arrow extends it, and Ctrl+C copies it.
 type list struct {
 	ui.Base
-	owner    *Screen
-	scroll   *ui.ScrollModel
-	top      int // rows above the first problem: the status band
-	cursor   int
-	anchor   int
-	hover    int
-	press    int
-	dragged  bool
-	pressing bool
+	owner        *Screen
+	scroll       *ui.ScrollModel
+	top          int // rows above the first problem: the status band
+	cursor       int
+	anchor       int
+	hover        int
+	press        int
+	dragged      bool
+	pressing     bool
+	lastClickKey string
+	lastClickAt  time.Time
 }
 
 func (l *list) clamp() {
@@ -754,11 +757,21 @@ func (l *list) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{}
 		}
 		l.pressing = false
-		if l.dragged || l.anchor != l.cursor {
+		if l.dragged || l.anchor != l.cursor || y < 0 || y >= l.scroll.Viewport() || l.scroll.Offset()+y != l.press {
+			l.lastClickKey, l.lastClickAt = "", time.Time{}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
-		// A click without a drag acts on its row, like Enter.
-		return l.activate(l.cursor)
+		if l.owner.rows[l.cursor].problem < 0 {
+			l.lastClickKey, l.lastClickAt = "", time.Time{}
+			return l.activate(l.cursor)
+		}
+		key, now := l.rowKey(l.cursor), time.Now()
+		if key != "" && key == l.lastClickKey && now.Sub(l.lastClickAt) <= 500*time.Millisecond {
+			l.lastClickKey, l.lastClickAt = "", time.Time{}
+			return l.activate(l.cursor)
+		}
+		l.lastClickKey, l.lastClickAt = key, now
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	case ui.EventMouseWheel:
 		switch evt.MouseWheel.Button {
 		case tea.MouseWheelUp:

@@ -2,12 +2,11 @@
 
 > Status: Current reference. Main-view layout, interaction, and ownership contract.
 
-Main views can share the content area in recursive tab groups. This is an
-in-memory layout for the current workspace in the current process, not a saved
-split layout: restarting does not restore the tree, group selection or ratios.
-Workspace switching tears down the old main-pane projections and resets the
-window groups; it does not retain a separate warm layout for every visited root.
-Session persistence does not imply pane-layout persistence.
+Main views can share the content area in recursive tab groups. Each client
+remembers its docked editor files and split layout per workspace, and restores
+them on return or restart. Workspace switching replaces the old projections;
+the saved client view is separate from session persistence. Floating windows
+are not restored.
 
 ## Ownership and identity
 

@@ -145,12 +145,13 @@ func TestConnectedWorkspaceSwitchRailDirtyDecisionsRetainCoreAndComposer(t *test
 	})
 	runAppCommand(t, app, confirmWorkspaceSwitchTest(t, app, root))
 	remoteJourneyUntil(t, []remoteJourneyShell{one, two}, func() bool {
-		return app.AgentView.ActiveID() == id && app.Input.Value() == "private composer survives switch and return"
+		return app.EditorState.Tabs[first] != nil && app.EditorState.Tabs[second] != nil &&
+			app.Input.Value() == "private composer survives switch and return"
 	})
 	if info, exists := app.ws.TermMgr().Get(terminal.ID); !exists || !info.Alive || info.PID != terminal.PID {
 		t.Fatal("return did not retain the original core PTY")
 	}
-	reopened := liveTestOpen(t, app, second)
+	reopened := app.EditorState.Tabs[second].Editor
 	if reopened.Value() != "Bsecond" || !reopened.Modified() {
 		t.Fatal("return lost accepted unsaved text")
 	}
@@ -599,5 +600,52 @@ func TestConnectedWorkspaceSwitchFirstTopicAndSwitchBackFence(t *testing.T) {
 	liveTestSync(t, shell.app)
 	if ed.Value() != "Xbase" || ed.DocumentState().Revision != 2 {
 		t.Fatal("switch-back lost edit authority")
+	}
+}
+
+// Returning through the real connected switch must reopen files without a
+// manual open. Each workspace keeps its own selection and tab order.
+func TestConnectedWorkspaceSwitchRestoresOpenFiles(t *testing.T) {
+	rt := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root, target := t.TempDir(), t.TempDir()
+	shell := newRemoteJourneyShell(t, rt, root)
+	app := shell.app
+	store, err := clientstate.Open(filepath.Join(t.TempDir(), "views.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := store.Acquire(t.Context(), "switch-views", clientstate.AcquireOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ConfigureComposerDrafts(store, attachment, app.ws.(shellport.Connection).WorkspaceID()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.StopAsyncIO(); app.composerDraftClient = nil; _ = store.Close() })
+	a := switchTestFile(t, root, "a.txt", "first")
+	b := switchTestFile(t, root, "b.txt", "second")
+	c := switchTestFile(t, target, "c.txt", "third")
+	liveTestOpen(t, app, a)
+	liveTestOpen(t, app, b)
+	runAppCommand(t, app, confirmWorkspaceSwitchTest(t, app, target))
+	if !sameWorkspaceRoot(app.ws.RootPath(), target) {
+		t.Fatal("switch to target failed")
+	}
+	liveTestOpen(t, app, c)
+	runAppCommand(t, app, confirmWorkspaceSwitchTest(t, app, root))
+	if !sameWorkspaceRoot(app.ws.RootPath(), root) {
+		t.Fatal("switch back failed")
+	}
+	runAppCommand(t, app, app.drainLiveEditorCommands())
+	if app.EditorState.Tabs[a] == nil || app.EditorState.Tabs[b] == nil || app.EditorState.ActiveView != b {
+		t.Fatalf("return did not reopen both files and selected tab: tabs=%v active=%q", app.EditorState.Tabs, app.EditorState.ActiveView)
+	}
+	if app.EditorState.Tabs[c] != nil {
+		t.Fatal("other workspace file leaked into this workspace")
+	}
+	runAppCommand(t, app, confirmWorkspaceSwitchTest(t, app, target))
+	runAppCommand(t, app, app.drainLiveEditorCommands())
+	if app.EditorState.Tabs[c] == nil || app.EditorState.Tabs[a] != nil {
+		t.Fatal("target workspace files were not restored independently")
 	}
 }
