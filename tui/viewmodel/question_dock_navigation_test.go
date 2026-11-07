@@ -7,9 +7,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/decision"
+	"crude/tui/screens/problems"
 	"crude/tui/screens/question"
 	"crude/tui/screens/shellterm"
-	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types"
@@ -122,7 +122,7 @@ func TestQuestionDockJourneyWorkspacePanelHideSwitchAndKeys(t *testing.T) {
 	if !app.termDockVisible() || app.termDock.ActivePanel() != termdock.PanelProblems || !app.termDockOwnsKeys() {
 		t.Fatal("footer did not reveal and focus Problems while a question was pending")
 	}
-	r, ok := app.rootHost.ScreenRect(statusoverview.SearchID)
+	r, ok := app.rootHost.ScreenRect(problems.FilterID)
 	if !ok {
 		t.Fatal("Problems search is not mounted")
 	}

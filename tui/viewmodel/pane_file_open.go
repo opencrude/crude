@@ -40,8 +40,15 @@ type paneFilesOpenedMsg struct {
 	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
 	restore          *navLocation          // Go Back/Forward place of a reopened file
 	navigation       *paneNavigation
-	// window opens the landed tab in its own window (Open in window).
+	// window = landed tab in its own window (Open in window).
 	window bool
+	// activePath selects the remembered document after a restored pane opens.
+	activePath string
+	// restoring accepts several pane opens queued by one layout restoration.
+	restoring bool
+	// restoreForeground keeps the remembered active pane focused while other
+	// panes reopen in the background.
+	restoreForeground bool
 }
 
 // openPaneFiles captures ownership on Update, but reads only in the command.
@@ -103,7 +110,14 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if msg.navigation != nil && !m.navigationCurrent(msg.navigation.owner) {
 		return releasePaneDocuments(msg)
 	}
-	if msg.seq != m.paneFileOpenSeq || msg.generation != m.workspaceSwitchGen.Load() || msg.manager != m.BufferMgr ||
+	if msg.restoring {
+		if m.paneFileOpenSeq > m.paneRestoreCeiling {
+			return releasePaneDocuments(msg)
+		}
+	} else if msg.seq != m.paneFileOpenSeq {
+		return releasePaneDocuments(msg)
+	}
+	if msg.generation != m.workspaceSwitchGen.Load() || msg.manager != m.BufferMgr ||
 		msg.win != m.Win || m.Win == nil || !m.Win.HasGroup(msg.group) {
 		return releasePaneDocuments(msg)
 	}
@@ -124,15 +138,22 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		currentTab = tab.ID
 	}
 	foreground := currentGroup == msg.initiated && currentTab == msg.selected
+	if msg.restoring {
+		foreground = msg.restoreForeground
+	}
 	opened := false
 	for _, file := range msg.files {
 		if file.snapshot != nil {
 			if file.err != nil {
-				m.Feedback.NotifyError(fmt.Sprintf("Cannot open document: %v", file.err))
+				if !msg.restoring {
+					m.Feedback.NotifyError(fmt.Sprintf("Cannot open document: %v", file.err))
+				}
 				continue
 			}
 			if err := m.installLiveEditor(*file.snapshot); err != nil {
-				m.Feedback.NotifyError(err.Error())
+				if !msg.restoring {
+					m.Feedback.NotifyError(err.Error())
+				}
 				m.editorCommands = append(m.editorCommands, msg.refs.releaseCmd(file.snapshot.ID))
 				continue
 			}
@@ -165,7 +186,9 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			continue
 		}
 		if buf == nil && file.err != nil {
-			m.Feedback.NotifyError(fmt.Sprintf("Cannot open %s: %v", file.path, file.err))
+			if !msg.restoring {
+				m.Feedback.NotifyError(fmt.Sprintf("Cannot open %s: %v", file.path, file.err))
+			}
 			continue
 		}
 		if buf == nil {
@@ -177,6 +200,17 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		m.installEditorBuffer(buf)
 		if m.showDocument(buf.Path, msg.group, foreground) != nil {
 			opened = true
+		}
+	}
+	if msg.activePath != "" {
+		// A restored pane reopens its last selected document, not simply the
+		// last file in the remembered order.
+		if tab := m.Win.GroupTabByTitle(msg.group, m.editorTabTitle(msg.activePath)); tab != nil {
+			if foreground {
+				m.Win.SwitchTo(m.Win.IndexOf(tab.ID))
+			} else {
+				m.Win.SelectGroupTab(msg.group, tab.ID)
+			}
 		}
 	}
 	if !foreground {

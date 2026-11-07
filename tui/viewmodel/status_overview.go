@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	statusoverview "crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/tui/wm"
 	ttypes "crude/types"
 	"crude/workspace"
 )
@@ -498,6 +496,9 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if m.sessionDeckFocused() {
 		return []ui.HintSegment{ui.ActionSeg("panel.previous"), ui.ActionSeg("panel.next")}
 	}
+	if m.termDockFocused && m.termDock != nil && m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelProblems {
+		return []ui.HintSegment{ui.ChordSeg("Enter", "go to problem"), ui.ChordSeg("Shift+↑/↓", "select"), ui.ChordSeg("Ctrl+C", "copy"), ui.ChordSeg("Tab", "filter")}
+	}
 	if m.gitPanelOpen() && m.termDockFocused {
 		return []ui.HintSegment{ui.ChordSeg("Space", "stage"), ui.ChordSeg("Enter", "review"), ui.ChordSeg("C", "commit message"), ui.ChordSeg("Tab", "next area")}
 	}
@@ -903,17 +904,6 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		m.revealEditor(strings.TrimPrefix(action, "editor:"))
 	case strings.HasPrefix(action, "terminal:"):
 		m.focusTerminal(strings.TrimPrefix(action, "terminal:"))
-	case strings.HasPrefix(action, "diagnostic:"):
-		parts := strings.SplitN(strings.TrimPrefix(action, "diagnostic:"), ":", 3)
-		if len(parts) == 3 {
-			index, err := strconv.Atoi(parts[1])
-			facts, ok := m.ws.LSPMgr().FileDiagnostics(parts[2])
-			if err == nil && ok && facts.ID == parts[0] && index >= 0 && index < len(facts.Diagnostics) {
-				m.jumpToDiagnostic(parts[2], facts.Diagnostics[index])
-			} else {
-				m.Feedback.NotifyInfo("Results changed. Reopen Problems to see the current results.")
-			}
-		}
 	case strings.HasPrefix(action, "session:resume:"):
 		return m.resumeWorkspaceSession(strings.TrimPrefix(action, "session:resume:"))
 	case action == "settings:workspace":
@@ -1010,20 +1000,11 @@ func (m *App) openStatusOverviewMore(item statusoverview.Item) {
 	if len(menuItems) == 0 {
 		return
 	}
-	state := &ui.ContextMenuState{Title: item.Label, Sections: []ui.ContextMenuSection{{Items: menuItems}}}
-	state.Build()
-	frame := ui.BuildContextMenuFrame(m.Theme, state)
-	w, h := ui.ContextMenuPopupWidth(state), ui.ContextMenuPopupHeight(state)
-	x, y := m.clampShellPopupPosition(m.width/2-w/2, m.height/2-h/2, w, h)
-	window := wm.NewFloatingWindow(string(ui.OverlayContextMenu), "", frame, w, h,
-		wm.WithDecoration(false), wm.WithMovable(false), wm.WithResizable(false),
-		wm.WithClosable(false), wm.WithModal(true), wm.WithFocusable(true),
-		wm.WithClickOutside(wm.ClickOutsideCloseRoute),
-	)
-	window.SetPosition(x, y)
-	m.overlayHost.Open(ui.OverlayContextMenu, window, ui.PopoverPolicy(true), func() { m.LastContextMenu = nil })
-	m.LastContextMenu = state
-	m.ContextMenuOpenedAt = time.Now()
+	// One owner builds every context menu, so pointer hover and outside-click
+	// behave the same here as on every other surface.
+	m.openContextMenuState(tea.Mouse{X: m.width / 2, Y: m.height / 2}, &ui.ContextMenuState{
+		Title: item.Label, Sections: []ui.ContextMenuSection{{Items: menuItems}},
+	})
 }
 
 func statusSummaryText(item statusoverview.Item) string {

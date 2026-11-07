@@ -124,14 +124,14 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 	owner := m.paneOwner(0, group)
 	menu := &ui.ContextMenuState{Title: "Pane", Sections: []ui.ContextMenuSection{{}}}
 	for _, action := range []struct{ label, id string }{
-		{"New Session", "pane.new-session"}, {"Open File", "pane.open-file"},
-		{"Split Left", "pane.split-left"}, {"Split Right", "pane.split-right"},
-		{"Split Up", "pane.split-up"}, {"Split Down", "pane.split-down"},
-		{"Split Containing Layout…", "pane.split-layout"},
-		{"Close Empty Pane", "pane.close"}, {"Merge All Panes", "pane.merge-all"},
+		{"New session", "pane.new-session"}, {"Open file", "pane.open-file"},
+		{"Split right", "pane.split-right"}, {"Split down", "pane.split-down"},
+		{"Split left", "pane.split-left"}, {"Split up", "pane.split-up"},
+		{"Split layout", "pane.split-layout"},
+		{"Close empty pane", "pane.close"}, {"Merge all panes", "pane.merge-all"},
 	} {
 		id := action.id
-		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: action.label, Action: owner.action(m, func() {
+		menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: action.label, Detail: m.menuShortcut(ui.ActionID(id)), Action: owner.action(m, func() {
 			m.focusMainGroup(group)
 			cmd, _ := m.handleMainPaneCommand(id)
 			m.runDetachedAsyncCmd(cmd)
@@ -907,82 +907,96 @@ func (m *App) paintPaneDropPreview() {
 	}
 }
 
-func (m *App) paneMenuSection(tab window.TabID) ui.ContextMenuSection {
-	items := []ui.ContextMenuItem{}
+// menuShortcut is the key a menu row shows: the action's own binding from the
+// one shortcut registry, or nothing. A menu row never describes itself.
+func (m *App) menuShortcut(ids ...ui.ActionID) string {
+	if m.actionRegistry == nil {
+		return ""
+	}
+	var keys []string
+	for _, id := range ids {
+		if key := ui.FormatShortcut(m.actionRegistry.HintFor(id)); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return strings.Join(keys, " · ")
+}
+
+// paneMenuSections are the pane rows of a tab menu: Split, Move and Window.
+// Every side is listed in one order (right, down, left, up) and only rows that
+// can act are shown.
+func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	owner := m.paneOwner(tab, m.Win.GroupOf(tab))
-	floating := m.Win.IsFloating(m.Win.GroupOf(tab))
-	if floating {
-		items = append(items, ui.ContextMenuItem{Label: "Move to Main Area", Detail: "dock this tab", Action: owner.action(m, func() {
+	group := m.Win.GroupOf(tab)
+	if m.Win.IsFloating(group) {
+		items := []ui.ContextMenuItem{{Label: "Move to main area", Action: owner.action(m, func() {
 			m.Win.MoveTabToGroup(tab, m.Win.DockedGroup(), 0)
 			m.unfocus()
 			m.handleTabSwitch()
 			m.syncPaneWindows()
 			m.forceFrame()
-		})})
+		})}}
 		// Several windows can be open at once: a window holding more than one
 		// tab can give any of them its own window.
-		if m.Win.GroupTabCount(m.Win.GroupOf(tab)) > 1 {
-			items = append(items, ui.ContextMenuItem{Label: "Open in New Window", Detail: "separate window", Action: owner.action(m, func() {
+		if m.Win.GroupTabCount(group) > 1 {
+			items = append(items, ui.ContextMenuItem{Label: "Open in new window", Action: owner.action(m, func() {
 				m.openTabInWindow(tab)
 			})})
 		}
-		return ui.ContextMenuSection{SectionLabel: "Window", Items: items}
+		return []ui.ContextMenuSection{{SectionLabel: "Window", Items: items}}
 	}
-	items = append(items, ui.ContextMenuItem{Label: "Open in Window", Detail: "movable, resizable", Action: owner.action(m, func() {
-		m.openTabInWindow(tab)
-	})})
-	type paneMenuAction struct{ label, detail, id string }
-	var actions []paneMenuAction
-	group := m.Win.GroupOf(tab)
-	file := m.editorView(tab) != nil
-	sides := []struct{ name, edge string }{{"Right", "right"}, {"Left", "left"}, {"Above", "up"}, {"Below", "down"}}
-	// The pane on each side, when there is one: open or move the tab into it.
-	for _, side := range sides {
-		dir, before := paneEdge(side.edge)
-		if m.Win.Neighbor(group, dir, before) == 0 {
-			continue
-		}
-		pane := "Pane " + side.name
-		if side.edge == "right" || side.edge == "left" {
-			pane = side.name + " Pane"
-		}
-		if file {
-			actions = append(actions, paneMenuAction{"Open in " + pane, "same file, its own view", "pane.open-" + side.edge})
-		}
-		actions = append(actions, paneMenuAction{"Move to " + pane, "", "pane.move-" + side.edge})
-	}
-	splitDetail := "new empty pane"
-	if file {
-		splitDetail = "same file, its own view"
-	}
-	actions = append(actions,
-		paneMenuAction{"Split Right", splitDetail, "pane.split-right"}, paneMenuAction{"Split Down", splitDetail, "pane.split-down"},
-		paneMenuAction{"Split Left", splitDetail, "pane.split-left"}, paneMenuAction{"Split Up", splitDetail, "pane.split-up"})
-	if file {
-		actions = append(actions, paneMenuAction{"Split Right with Agent", "last agent, or a new session", "pane.split-agent-right"})
-	} else {
-		actions = append(actions, paneMenuAction{"Split Right with File", "last file, or choose one", "pane.split-file-right"})
-	}
-	for _, side := range sides {
-		dir, before := paneEdge(side.edge)
-		if m.Win.Neighbor(group, dir, before) == 0 {
-			actions = append(actions, paneMenuAction{"Move to New Split " + side.name, "", "pane.move-" + side.edge})
-		}
-	}
-	actions = append(actions,
-		paneMenuAction{"Arrange Tab…", "", "pane.arrange"}, paneMenuAction{"Split Containing Layout…", "", "pane.split-layout"},
-		paneMenuAction{"Move Tab to Next Pane", "", "pane.move-next"}, paneMenuAction{"Move Tab to Previous Pane", "", "pane.move-previous"},
-		paneMenuAction{"Merge All Panes", "", "pane.merge-all"})
-	for _, a := range actions {
-		id := a.id
-		items = append(items, ui.ContextMenuItem{Label: a.label, Detail: a.detail, Action: owner.action(m, func() {
+	run := func(id string) func() {
+		return owner.action(m, func() {
 			m.Win.SwitchTo(m.Win.IndexOf(tab))
 			m.handleTabSwitch()
 			cmd, _ := m.handleMainPaneCommand(id)
 			m.runDetachedAsyncCmd(cmd)
-		})})
+		})
 	}
-	return ui.ContextMenuSection{SectionLabel: "Panes", Items: items}
+	row := func(label, id string) ui.ContextMenuItem {
+		return ui.ContextMenuItem{Label: label, Detail: m.menuShortcut(ui.ActionID(id)), Action: run(id)}
+	}
+	file := m.editorView(tab) != nil
+	sides := []struct{ edge, phrase string }{{"right", "to the right"}, {"down", "below"}, {"left", "to the left"}, {"up", "above"}}
+	split := []ui.ContextMenuItem{}
+	for _, side := range sides {
+		split = append(split, row("Split "+side.edge, "pane.split-"+side.edge))
+	}
+	if file {
+		split = append(split, row("Split right with agent", "pane.split-agent-right"))
+	} else {
+		split = append(split, row("Split right with file", "pane.split-file-right"))
+	}
+	split = append(split, row("Split layout", "pane.split-layout"))
+	move := []ui.ContextMenuItem{}
+	panes := false
+	for _, side := range sides {
+		dir, before := paneEdge(side.edge)
+		if m.Win.Neighbor(group, dir, before) == 0 {
+			move = append(move, row("Move to new split "+side.edge, "pane.move-"+side.edge))
+			continue
+		}
+		panes = true
+		if file {
+			split = append(split, row("Open in pane "+side.phrase, "pane.open-"+side.edge))
+		}
+		move = append(move, row("Move to pane "+side.phrase, "pane.move-"+side.edge))
+	}
+	if panes {
+		move = append(move, row("Move to next pane", "pane.move-next"), row("Move to previous pane", "pane.move-previous"))
+	}
+	move = append(move, row("Arrange tab", "pane.arrange"))
+	windowItems := []ui.ContextMenuItem{{Label: "Open in window", Detail: m.menuShortcut("tab.window"), Action: owner.action(m, func() {
+		m.openTabInWindow(tab)
+	})}}
+	if panes {
+		windowItems = append(windowItems, row("Merge all panes", "pane.merge-all"))
+	}
+	return []ui.ContextMenuSection{
+		{SectionLabel: "Split", Items: split},
+		{SectionLabel: "Move", Items: move},
+		{SectionLabel: "Window", Items: windowItems},
+	}
 }
 
 func (m *App) paneScopeLabel(n *window.PaneNode, owner window.GroupID) string {
@@ -1022,7 +1036,7 @@ func (m *App) openPaneScopeMenu(owner paneMenuOwner, move bool) {
 	if !owner.valid(m) {
 		return
 	}
-	menu := &ui.ContextMenuState{Title: "Choose layout scope", Sections: []ui.ContextMenuSection{{SectionLabel: "Choose layout scope"}}}
+	menu := &ui.ContextMenuState{Title: "Layout scope", Sections: []ui.ContextMenuSection{{SectionLabel: "Layout scope"}}}
 	var nodes []*window.PaneNode
 	if move {
 		var visit func(*window.PaneNode)
@@ -1059,7 +1073,7 @@ func (m *App) openPaneEdgeMenu(owner paneMenuOwner, node uint64, label string, m
 			}
 		})})
 	}
-	for _, edge := range []struct{ label, edge string }{{"Left", "left"}, {"Right", "right"}, {"Above", "top"}, {"Below", "bottom"}} {
+	for _, edge := range []struct{ label, edge string }{{"left", "left"}, {"right", "right"}, {"up", "top"}, {"down", "bottom"}} {
 		dir, before := paneEdge(edge.edge)
 		tab := window.TabID(0)
 		verb := "Split "

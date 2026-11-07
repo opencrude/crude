@@ -187,6 +187,9 @@ documents to read before changing each area.
   Go Back / Go Forward and linked views.
 - [Each client keeps its own view (2026-11-07)](issues/2026-11-07-client-view-memory.md)
   — minimized agents, tree and layout choices persist per client profile.
+- [Problems, code copy and menus (2026-11-07)](issues/2026-11-07-problems-code-copy-and-menus.md)
+  — pointer-following menus, restored editor panes, clean code copy and an
+  ordered, copyable Problems pane.
 - [Windows agent commands (2026-11-07)](issues/2026-11-07-windows-agent-commands.md)
   — command-line `%` meaning, refused quoted line breaks, shell launch costs.
 

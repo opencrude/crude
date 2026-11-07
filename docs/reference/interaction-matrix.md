@@ -60,8 +60,8 @@ workspace resets it. Header telemetry follows the focused group.
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
 | Split right / down | Ctrl+Alt+L / Ctrl+Alt+D; `Ctrl+\` splits right | A file is shown again in the new pane at the same caret and scroll; other tabs get an empty pane. Ctrl+Alt+Right/Down aliases may be intercepted by the OS |
-| Split with agent / file | Tab menu **Split Right with Agent** / **Split Right with File**; palette also offers Down | The last agent (or a new session) / the last file (or the file picker) opens beside the tab |
-| Open in / move to the pane on a side | Tab menu **Open in Right Pane**, **Move to Right Pane** (and Left, Above, Below); palette | Open adds or selects a view of the file there; Move moves the tab. With no pane on that side, a new split is made |
+| Split with agent / file | Tab menu **Split right with agent** / **Split right with file**; palette also offers Down | The last agent (or a new session) / the last file (or the file picker) opens beside the tab |
+| Open in / move to the pane on a side | Tab menu **Open in pane to the right**, **Move to pane to the right** (and below, to the left, above); palette | Open adds or selects a view of the file there; Move moves the tab. With no pane on that side, a new split is made |
 | Go Back / Go Forward | Alt+Left / Alt+Right; mouse back / forward buttons; header ← → | Returns to the previous place (tab, caret, scroll) instantly; a focused diff keeps Alt+Left/Right for previous/next file |
 | Previous / next pane | Alt+[ / Alt+] | Visual leaf order; remains available in compact presentation |
 | Grow / shrink pane | Ctrl+Alt+= / Ctrl+Alt+- | Shared split sizing with minimum bounds |
@@ -297,15 +297,26 @@ clears old markers. Shells never add a local Git resolver or project watcher.
 | Presentation | `v`, **Split** / **Unified** link | Split needs 100 columns; narrower reverts to unified and keeps the preference |
 | Tabs | Every review is its own main tab: all changes (`[ Review all ]`), one file (Enter / double-click in the panel), a folder or file (Explorer/editor **View Changes**), one commit (History Enter) | Any number stay open, move and split like documents; reopening the same scope or commit activates its tab. A scoped tab offers `[ All changes ]`; Esc returns to the tab it came from |
 
+## Problems pane
+
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| Go to a problem | Click a problem row; Enter or Space | Opens the file at the problem. A row marked **Out of date** does not open: its file changed after the check |
+| Fold a file | Click a file row; Left / Right; Enter | Left on a problem moves to its file row first |
+| Select rows | Drag; Shift+click; Shift+Up/Down/PgUp/PgDn/Home/End; Ctrl+A | A file row stands for all of its problems |
+| Copy | Ctrl+C; right-click **Copy** / **Copy all** | One plain line per problem: `path:line:col  severity  message  (source)` |
+| Filter | Tab moves between list and filter; Down from the filter returns to the list | Matches file, folder, message and source |
+| Language status | Header link at the right edge | Shows how many language servers run, start or stopped with an error, or the state that needs the user and its next step (**Trust folder**, **Start language servers**, **Language settings**) |
+
 ## Pane windows
 
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
-| Open a tab in a window | Tab context menu **Open in Window** | Moves the same tab (editor, agent, surface, review) into a movable, resizable window |
+| Open a tab in a window | Tab context menu **Open in window** | Moves the same tab (editor, agent, surface, review) into a movable, resizable window |
 | Open a file / agent in a window | File tree **Open in window**; Agents panel **Open in window**; **⇱ window** on a Started-agent row | Sub-agents never open by themselves; **⧉ open** opens a main tab |
 | Open a dock surface as tab / window | Dock header **⧉** / **⇱** | The surface leaves the dock; closing its tab returns it there |
 | Focus | Click inside the window; click the main area or sidebar to leave | Keys follow the focused window's editor or composer; popups opened from it keep it focused |
-| Return to the main area | Title **⇲**, window **✕**, tab menu **Move to Main Area** | Tabs are never closed by closing the window; a lone dock surface returns to the dock |
+| Return to the main area | Title **⇲**, window **✕**, tab menu **Move to main area** | Tabs are never closed by closing the window; a lone dock surface returns to the dock |
 
 ## Agents panel
 
@@ -327,8 +338,9 @@ clears old markers. Shells never add a local Git resolver or project watcher.
 | Scrollback | Wheel, Shift+PgUp/PgDn/Home/End | Primary screen only; typing snaps to bottom |
 | Selection / copy | Drag; double-click word; triple-click line | Copy-on-release + Ctrl+Shift+C; Shift bypasses app mouse tracking |
 
-Workspace, Problems, and Notices put search and More/Maximize/Hide on the same
-header row. Memory and Board put their tabs or detail title beside those host
+Workspace and Notices put search and More/Maximize/Hide on the same header
+row. Problems puts its filter, counts and language status on that row (see
+below). Memory and Board put their tabs or detail title beside those host
 controls; browse search and local actions share a row. Narrow panels replace the
 local buttons with a same-row More button; its action list preserves all commands
 and restores the retained search/query on Back or Esc. Extremely constrained

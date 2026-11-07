@@ -29,6 +29,29 @@ type viewMemory struct {
 	ShowHiddenFiles *bool      `json:"show_hidden_files,omitempty"`
 	SidebarHidden   bool       `json:"sidebar_hidden,omitempty"`
 	Activity        string     `json:"activity,omitempty"`
+	// Panes is the editor work this client had open in each docked pane,
+	// in visual left-to-right, top-to-bottom order. PaneLayout restores the
+	// split tree that held them.
+	Panes      []viewMemoryPane    `json:"panes,omitempty"`
+	PaneLayout *viewMemoryPaneNode `json:"pane_layout,omitempty"`
+	ActivePane int                 `json:"active_pane,omitempty"`
+}
+
+// viewMemoryPane is one docked pane's open documents and selected document.
+type viewMemoryPane struct {
+	Files  []string `json:"files,omitempty"`
+	Active string   `json:"active,omitempty"`
+}
+
+// viewMemoryPaneNode is one node of a saved pane tree. A leaf names its pane
+// by index; a split names its axis and the divider fraction.
+type viewMemoryPaneNode struct {
+	Leaf      int                 `json:"leaf,omitempty"`
+	Split     bool                `json:"split,omitempty"`
+	Direction string              `json:"direction,omitempty"`
+	Fraction  float64             `json:"fraction,omitempty"`
+	First     *viewMemoryPaneNode `json:"first,omitempty"`
+	Second    *viewMemoryPaneNode `json:"second,omitempty"`
 }
 
 // ToolViewState is one sidebar destination's geometry and list position.
@@ -118,6 +141,11 @@ func (s *viewMemoryStore) load() (viewMemory, error) {
 	if !validToolLayout(memory.Layout) {
 		return viewMemory{}, errors.New("the saved layout is not valid")
 	}
+	if !validViewPanes(memory) {
+		// Keep the client's other choices; only the unusable pane record is
+		// ignored.
+		memory.Panes, memory.PaneLayout, memory.ActivePane = nil, nil, 0
+	}
 	return memory, nil
 }
 
@@ -149,10 +177,11 @@ type viewMemoryMarks struct {
 	showHidden int8
 	sidebar    bool
 	activity   activitybar.View
+	panes      uint64
 }
 
 func (m *App) viewMemoryMarks() viewMemoryMarks {
-	marks := viewMemoryMarks{agents: m.AgentView.Revision(), selected: m.AgentView.ActiveID(), folds: m.agentFoldRevision, activity: m.activityView}
+	marks := viewMemoryMarks{agents: m.AgentView.Revision(), selected: m.AgentView.ActiveID(), folds: m.agentFoldRevision, activity: m.activityView, panes: m.paneMemoryMark()}
 	if m.treeHiddenChoice != nil {
 		marks.showHidden = 1
 		if *m.treeHiddenChoice {
@@ -208,6 +237,7 @@ func (m *App) installViewMemory(memory viewMemory) {
 	// view's geometry into the layout just installed.
 	m.activityView = view
 	m.setActivity(view, false)
+	m.restoreViewPanes(memory)
 	m.viewMemoryVersion, m.viewMemorySavedVersion = 0, 0
 	m.viewMemorySaveQueued, m.viewMemorySaving = false, false
 	m.viewMemoryMarked = m.viewMemoryMarks()
@@ -269,6 +299,7 @@ func (m *App) captureViewMemory() viewMemory {
 		memory.ShowHiddenFiles = &show
 	}
 	memory.SidebarHidden = m.Tree != nil && !m.Tree.Visible
+	memory.Panes, memory.PaneLayout, memory.ActivePane, _ = m.captureViewPanes()
 	return memory
 }
 

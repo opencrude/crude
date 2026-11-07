@@ -337,7 +337,7 @@ func (m *featureVisualModel) journeyFeature(key, phase int) error {
 				return fmt.Errorf("panel %s not mounted", panel)
 			}
 			if phase == 2 {
-				return featureVisualPaint(v, "Workspace health")
+				return featureVisualPaint(v, "Problems")
 			}
 			if phase == 3 {
 				return featureVisualPaint(v, "Saved feature notice")

@@ -32,20 +32,20 @@ func TestLanguageStatusAcrossSurfaces(t *testing.T) {
 			if footer != tc.footer {
 				t.Fatalf("footer = %q, want %q", footer, tc.footer)
 			}
-			items := app.problemPanelItems()
-			if items[0].Summary != tc.message {
-				t.Fatalf("health = %q", items[0].Summary)
+			status := app.problemsModel().Status
+			if tc.action != types.LanguageActionNone && status.Text != tc.message {
+				t.Fatalf("language status = %q, want %q", status.Text, tc.message)
 			}
-			text := header + " " + footer + " " + items[0].Summary
+			text := header + " " + footer + " " + status.Text
 			for _, word := range []string{"pending", "unverified", "partial", "context unknown", "grant", "admission", "publication", "generation", "hidden", "Static only", "Project execution", "Syntax shared", "0 errors", "0 warnings"} {
 				if strings.Contains(text, word) {
 					t.Fatalf("internal word %q in %q", word, text)
 				}
 			}
-			if tc.action == types.LanguageActionTrustFolder && items[0].PrimaryAction != "language:trust" {
+			if tc.action == types.LanguageActionTrustFolder && status.Action != "language:trust" {
 				t.Fatal("trust action not routed")
 			}
-			if tc.action == types.LanguageActionStartServers && items[0].PrimaryAction != "lsp:start-all" {
+			if tc.action == types.LanguageActionStartServers && status.Action != "lsp:start-all" {
 				t.Fatal("start action not routed")
 			}
 		})

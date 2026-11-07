@@ -35,7 +35,7 @@ func (m *App) applyWorkspaceListing(msg launcherWorkspacesMsg) {
 }
 
 func (m *App) workspaceSidebarItems() []ui.ListItem {
-	items := []ui.ListItem{{ID: sidebarItemNewWorkspace, Icon: "+", Label: "New Workspace…", Command: true}}
+	items := []ui.ListItem{{ID: sidebarItemNewWorkspace, Icon: "+", Label: "New workspace", Command: true}}
 	for _, info := range m.workspaceInfos {
 		if info.ProjectDir == "" {
 			continue
@@ -72,7 +72,7 @@ func (m *App) workspaceNavigationActions() ui.ContextMenuSection {
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	valid := func() bool { return m.ws == owner && generation == m.workspaceSwitchGen.Load() }
 	return ui.ContextMenuSection{SectionLabel: "Workspaces", Items: []ui.ContextMenuItem{
-		{Label: "New Workspace…", Action: func() {
+		{Label: "New workspace", Action: func() {
 			if valid() {
 				m.openFolderPicker()
 			}

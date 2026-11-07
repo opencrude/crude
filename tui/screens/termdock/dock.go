@@ -227,7 +227,7 @@ func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
 	if id == ScreenID || id == TabsID || id == DividerID {
 		return true
 	}
-	if panel := s.activeContent(); panel != nil && panel.ID() == id {
+	if panel := s.activeContent(); panel != nil && (panel.ID() == id || strings.HasPrefix(string(id), string(panel.ID())+"/")) {
 		return true
 	}
 	for _, child := range s.screens {

@@ -136,7 +136,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Git",
 		Items: []ui.ContextMenuItem{
-			{Label: "View Git changes", Disabled: !fileChanged, Action: func() {
+			{Label: "Show Git changes", Disabled: !fileChanged, Action: func() {
 				m.startSourceControlMutation(m.openGitReview(fileScope, fileReveal))
 			}},
 			{Label: "Inspect change", Disabled: !hasHunk, Action: func() { m.inspectEditorChange(ed, line) }},
@@ -158,16 +158,16 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Find", Detail: "Ctrl+F", Action: func() {
 				m.openFindReplace(false)
 			}},
-			{Label: "Find & replace", Detail: "Ctrl+H", Action: func() {
+			{Label: "Find and replace", Detail: "Ctrl+H", Action: func() {
 				m.openFindReplace(true)
 			}},
 			{Label: "Go to line", Detail: "Ctrl+G", Action: func() {
 				m.openGoToLine()
 			}},
-			{Label: "Document outline", Detail: "Alt+O", Disabled: !hasLSP, Action: func() {
+			{Label: "Show document outline", Detail: "Alt+O", Disabled: !hasLSP, Action: func() {
 				m.runDetachedAsyncCmd(m.requestDocumentSymbolsCmd())
 			}},
-			{Label: "Inspect inlay hints", Detail: "Alt+J", Disabled: !hasLSP, Action: func() {
+			{Label: "Show inlay hints", Detail: "Alt+J", Disabled: !hasLSP, Action: func() {
 				m.runDetachedAsyncCmd(m.openInlayInspectorCmd())
 			}},
 		},
@@ -276,8 +276,8 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 			SectionLabel: "Agents",
 			Items: []ui.ContextMenuItem{
 				{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
-				{Label: "Manage sessions…", Action: m.openSessionPicker},
-				{Label: "Cancel active agent", Disabled: activeNode == nil || !m.canCancelAgent(activeNode.ID), Action: func() {
+				{Label: "Manage sessions", Action: m.openSessionPicker},
+				{Label: "Stop current run", Disabled: activeNode == nil || !m.canCancelAgent(activeNode.ID), Action: func() {
 					if node := m.AgentView.ActiveNode(); node != nil {
 						m.cancelAgentTurn(node.ID)
 					}
@@ -307,8 +307,8 @@ func (m *App) buildActivitySettingsContextMenu() *ui.ContextMenuState {
 		Sections: []ui.ContextMenuSection{{
 			SectionLabel: "Settings",
 			Items: []ui.ContextMenuItem{
-				{Label: "Application Settings", Action: m.openApplicationSettings},
-				{Label: "Workspace Settings", Action: m.openWorkspaceSettings},
+				{Label: "Application settings", Action: m.openApplicationSettings},
+				{Label: "Workspace settings", Action: m.openWorkspaceSettings},
 			},
 		}},
 	}
@@ -380,7 +380,7 @@ func (m *App) workspaceResourceMenu(entry launcher.WorkspaceEntry) *ui.ContextMe
 	)
 	st.Title = entry.Name
 	st.Sections = append(st.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{
-		{Label: "Delete workspace…", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
+		{Label: "Delete workspace", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
 			if valid() {
 				m.openWorkspaceDelete(entry)
 			}
@@ -410,22 +410,22 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID])
 		items := []ui.ContextMenuItem{
 			{Label: "Open agent", Action: func() { m.restoreAgent(node.ID) }},
-			{Label: "Open in window", Detail: "movable, resizable", Action: func() {
+			{Label: "Open in window", Action: func() {
 				m.openAgentInWindow(node.ID)
 			}},
-			{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Detail: "from saved work", Action: func() {
+			{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Action: func() {
 				m.runDetachedAsyncCmd(m.retryAgentRecovery(node.ID))
 			}},
-			{Label: "Minimize agent", Disabled: m.AgentView.IsHidden(node.ID), Detail: "keeps running", Action: func() {
+			{Label: "Minimize agent", Disabled: m.AgentView.IsHidden(node.ID), Action: func() {
 				m.minimizeAgent(node.ID)
 			}},
-			{Label: "Cancel agent", Disabled: !m.canCancelAgent(node.ID), Action: func() {
+			{Label: "Stop current run", Disabled: !m.canCancelAgent(node.ID), Action: func() {
 				m.cancelAgentTurn(node.ID)
 			}},
 		}
 		if !aeron {
 			items = append(items,
-				ui.ContextMenuItem{Label: "Terminate agent", Detail: "stops work", Action: func() {
+				ui.ContextMenuItem{Label: "Terminate agent", Action: func() {
 					m.terminateAgent(node.ID)
 				}},
 			)
@@ -440,7 +440,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 		SectionLabel: "Sessions",
 		Items: []ui.ContextMenuItem{
 			{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
-			{Label: "Manage sessions…", Action: m.openSessionPicker},
+			{Label: "Manage sessions", Action: m.openSessionPicker},
 		},
 	})
 	return st
@@ -488,7 +488,7 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					m.runDetachedAsyncCmd(m.openFileInWindow(path))
 				}
 			}},
-			{Label: "Expand / collapse", Disabled: path == "" || !isDir, Action: func() {
+			{Label: "Expand or collapse", Disabled: path == "" || !isDir, Action: func() {
 				if path != "" && isDir {
 					m.Tree.Model.ToggleExpand(path)
 				}
@@ -577,7 +577,7 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if path != "" && m.ws.HistoryService() != nil {
 		target := path
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Local History",
+			SectionLabel: "Local history",
 			Items: []ui.ContextMenuItem{
 				{Label: "Show history for this path", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForPath(target)) }},
 				{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
@@ -625,33 +625,21 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	owner := m.paneOwner(tab.ID, tab.Group)
 
 	st := &ui.ContextMenuState{Title: "Tab"}
-	st.Sections = append(st.Sections, m.paneMenuSection(tab.ID))
+	st.Sections = append(st.Sections, m.paneMenuSections(tab.ID)...)
 
 	// Get tab-specific info.
 	if m.isEditorTabTitle(tab.Title) {
 		path := m.editorPathFromTabTitle(tab.Title)
-		closeDetail := "Ctrl+W · Esc"
-		if m.actionRegistry != nil {
-			var hints []string
-			for _, id := range []ui.ActionID{"file.close", "editor.close"} {
-				if hint := ui.FormatShortcut(m.actionRegistry.HintFor(id)); hint != "" {
-					hints = append(hints, hint)
-				}
-			}
-			if len(hints) > 0 {
-				closeDetail = strings.Join(hints, " · ")
-			}
-		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
 			Items: []ui.ContextMenuItem{
-				{Label: "Close tab", Detail: closeDetail, Action: func() {
+				{Label: "Close tab", Detail: m.menuShortcut("file.close", "editor.close"), Action: func() {
 					m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
 				}},
-				{Label: "Close Other Files in Pane", Action: func() {
+				{Label: "Close other files in pane", Action: func() {
 					m.closePaneEditorTabs(owner, false)
 				}},
-				{Label: "Close Files to the Right", Action: func() {
+				{Label: "Close files to the right", Action: func() {
 					m.closePaneEditorTabs(owner, true)
 				}},
 				{Label: "Copy path", Action: func() {
@@ -671,22 +659,26 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		})
 	} else if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
+		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[agentID])
+		items := []ui.ContextMenuItem{
+			{Label: "Minimize", Action: func() {
+				m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
+			}},
+			{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(agentID), Action: func() {
+				m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID))
+			}},
+			{Label: "Stop current run", Disabled: !m.canCancelAgent(agentID), Action: func() {
+				m.cancelAgentTurn(agentID)
+			}},
+		}
+		if !aeron {
+			items = append(items, ui.ContextMenuItem{Label: "Terminate agent", Action: func() {
+				m.terminateAgent(agentID)
+			}})
+		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
-			Items: []ui.ContextMenuItem{
-				{Label: "Minimize", Detail: "keeps running", Action: func() {
-					m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
-				}},
-				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(agentID), Detail: "from saved work", Action: func() {
-					m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID))
-				}},
-				{Label: "Cancel agent", Disabled: !m.canCancelAgent(agentID), Action: func() {
-					m.cancelAgentTurn(agentID)
-				}},
-				{Label: "Terminate agent", Detail: "stops work", Action: func() {
-					m.terminateAgent(agentID)
-				}},
-			},
+			Items:        items,
 		})
 	}
 	if tab.Resource.Kind == window.ResourcePanel {
@@ -694,9 +686,9 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Panel",
 			Items: []ui.ContextMenuItem{
-				{Label: "Open as window", Action: func() { m.openPanelAsWindow(id) }},
-				{Label: "Move to dock", Action: func() { m.dockPanel(id) }},
-				{Label: "Close tab", Detail: "returns it to the dock", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
+				{Label: "Open in window", Action: func() { m.openPanelAsWindow(id) }},
+				{Label: "Move to main area", Action: func() { m.dockPanel(id) }},
+				{Label: "Close tab", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
 			},
 		})
 	}
@@ -802,7 +794,7 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 		{Label: "Preview in Crude", Action: func() {
 			m.openReferenceOverlay(rr.ID)
 		}},
-		{Label: "Rename…", Action: func() {
+		{Label: "Rename", Action: func() {
 			m.startAttachmentRename(rr.ID, title)
 		}},
 		{Label: "Remove", Action: func() {
@@ -903,7 +895,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Run recovery",
 			Items: []ui.ContextMenuItem{
-				{Label: "Continue run", Detail: "from saved work", Action: func() { m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID)) }},
+				{Label: "Continue run", Action: func() { m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID)) }},
 				{Label: "Copy diagnostic", Action: func() { m.copyToClipboard(status.Detail) }},
 				{Label: "Network settings", Action: m.openNetworkSettings},
 			},
@@ -919,7 +911,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					}
 				}
 			}},
-			{Label: "Copy last assistant", Action: func() {
+			{Label: "Copy last response", Action: func() {
 				ml := m.activeMsgList()
 				if ml != nil {
 					text := ml.LastAssistantText()
@@ -961,8 +953,8 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				}
 				if role == workspace.MessageRoleStatus && canonicalFound && canonical.HistorySafetySnapshot != "" {
 					snapshotID := canonical.HistorySafetySnapshot
-					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
-						{Label: "Undo this restore", Detail: "opens safety preview", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForSnapshot(snapshotID)) }},
+					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local history", Items: []ui.ContextMenuItem{
+						{Label: "Undo this restore", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForSnapshot(snapshotID)) }},
 						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 					}})
 				}
@@ -971,9 +963,9 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					agentID := m.AgentView.ActiveID()
 					active := agentID != "" && m.ws.AgentTurnActive(agentID)
 					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID, agentID); m.runDetachedAsyncCmd(cmd) }
-					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
-						{Label: "Preview this agent's changes", Disabled: active, Detail: map[bool]string{true: "turn active", false: ""}[active], Action: open},
-						{Label: "Revert this agent's files", Disabled: active, Detail: "conversation retained", Action: open},
+					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local history", Items: []ui.ContextMenuItem{
+						{Label: "Preview this agent's changes", Disabled: active, Action: open},
+						{Label: "Revert this agent's files", Disabled: active, Action: open},
 						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 					}})
 				}

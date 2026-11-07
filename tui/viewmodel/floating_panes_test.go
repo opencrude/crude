@@ -166,17 +166,17 @@ func TestPaneWindowTabMenu(t *testing.T) {
 		}
 		return strings.Join(names, ",")
 	}
-	docked := app.paneMenuSection(tab)
-	if !strings.Contains(labels(docked), "Open in Window") {
+	docked := ui.ContextMenuSection{Items: paneMenuItems(app, tab)}
+	if !strings.Contains(labels(docked), "Open in window") {
 		t.Fatalf("docked tab menu: %s", labels(docked))
 	}
-	docked.Items[0].Action()
+	paneMenuItem(t, app, tab, "Open in window").Action()
 	_ = app.View()
 	if !app.Win.IsFloating(app.Win.GroupOf(tab)) {
 		t.Fatal("Open in Window did not float the tab")
 	}
-	floating := app.paneMenuSection(tab)
-	if got := labels(floating); got != "Move to Main Area" {
+	floating := ui.ContextMenuSection{Items: paneMenuItems(app, tab)}
+	if got := labels(floating); got != "Move to main area" {
 		t.Fatalf("window tab menu: %s", got)
 	}
 	floating.Items[0].Action()
@@ -338,10 +338,10 @@ func TestSeveralPaneWindowsAtOnce(t *testing.T) {
 		t.Fatal("could not move the third tab into the second window")
 	}
 	_ = app.View()
-	section := app.paneMenuSection(third)
+	section := ui.ContextMenuSection{Items: paneMenuItems(app, third)}
 	var detach func()
 	for _, item := range section.Items {
-		if item.Label == "Open in New Window" {
+		if item.Label == "Open in new window" {
 			detach = item.Action
 		}
 	}
@@ -356,7 +356,7 @@ func TestSeveralPaneWindowsAtOnce(t *testing.T) {
 	if len(app.mainPanes.windows) != 3 {
 		t.Fatalf("windows open = %d, want 3", len(app.mainPanes.windows))
 	}
-	if section := app.paneMenuSection(tabs[0].ID); len(section.Items) != 1 {
+	if section := (ui.ContextMenuSection{Items: paneMenuItems(app, tabs[0].ID)}); len(section.Items) != 1 {
 		t.Fatalf("a single-tab window offers a redundant new window: %+v", section.Items)
 	}
 }
@@ -471,7 +471,7 @@ func TestPaneWindowPlusOpensAnotherTabInTheWindow(t *testing.T) {
 			labels = append(labels, item.Label)
 		}
 	}
-	if strings.Join(labels, ",") != "New Session,Open File…" {
+	if strings.Join(labels, ",") != "New session,Open file" {
 		t.Fatalf("new-tab menu = %v", labels)
 	}
 	if !app.Win.IsFloating(group) || app.Win.GroupOf(tab) != group {
@@ -492,4 +492,24 @@ func TestPaneWindowPlusOpensAnotherTabInTheWindow(t *testing.T) {
 	if _, mounted := app.screenRectOf(app.mainPanes.groups[group].tabs.TabsControl().ID()); !mounted {
 		t.Fatal("a two-tab window shows no strip")
 	}
+}
+
+// paneMenuItems flattens a tab's pane menu sections in display order.
+func paneMenuItems(app *App, tab window.TabID) []ui.ContextMenuItem {
+	var items []ui.ContextMenuItem
+	for _, section := range app.paneMenuSections(tab) {
+		items = append(items, section.Items...)
+	}
+	return items
+}
+
+func paneMenuItem(t *testing.T, app *App, tab window.TabID, label string) ui.ContextMenuItem {
+	t.Helper()
+	for _, item := range paneMenuItems(app, tab) {
+		if item.Label == label {
+			return item
+		}
+	}
+	t.Fatalf("pane menu has no %q", label)
+	return ui.ContextMenuItem{}
 }

@@ -51,7 +51,7 @@ func TestWorkspaceDeleteMenuPreviewCancelDeleteAndUndo(t *testing.T) {
 	var open func()
 	for _, section := range menu.Sections {
 		for _, item := range section.Items {
-			if item.Label == "Delete workspace…" {
+			if item.Label == "Delete workspace" {
 				open = item.Action
 			}
 		}

@@ -61,6 +61,7 @@ func New(th *theme.Theme) *Screen {
 	s.list = ui.NewList(ListID, ts)
 	s.list.SetDefaultRowBackground(ui.ColorPopupBg)
 	s.list.SetActivateAction(ActionOpen)
+	s.list.SetFollowPointer(true)
 	s.scrollbar = ui.NewScrollbarControl("navigation/scrollbar", s.list.Scroll(), ts)
 	s.text = &reader{ui.NewTextArea(TextID, ts, true)}
 	s.text.SetReadOnly(true)

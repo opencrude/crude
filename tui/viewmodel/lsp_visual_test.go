@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"crude/shellport"
-	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/problems"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types"
@@ -338,29 +338,15 @@ func (m *lspVisualModel) journeyLSP(key, phase int) error {
 			app := v.App
 			app.syncWorkspacePanels()
 			app.View()
-			screen := app.termDock.Panel(termdock.PanelProblems).(*statusoverview.Surface)
 			facts, ok := app.ws.LSPMgr().FileDiagnostics(m.path)
-			if !ok || facts.ID == "" || !screen.Select("problem:"+facts.ID+":0") {
-				return fmt.Errorf("diagnostic row not in Problems projection")
+			if _, listed := problemByRef(app.problemsModel(), facts.ID, 0); !ok || facts.ID == "" || !listed {
+				return fmt.Errorf("diagnostic row not in Problems")
 			}
-			app.rootHost.Focus("status-overview/list")
+			app.rootHost.Focus(problems.ListID)
 			return nil
 		}); err != nil {
 			return err
 		}
-		m.action(func(app *App) tea.Cmd { _, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyRight}); return cmd })
-		m.action(func(app *App) tea.Cmd {
-			app.View()
-			r, ok := app.rootHost.ScreenRect("status-overview/list")
-			if ok {
-				// The full diagnostic details are below the fold at 60x20.
-				// Scroll the actual mounted list, rather than accept its clipped title.
-				for i := 0; i < 30; i++ {
-					app.Update(tea.MouseWheelMsg{X: r.X + 2, Y: r.Y + 1, Button: tea.MouseWheelDown})
-				}
-			}
-			return nil
-		})
 		err = m.await(func(v *controlVisualModel) error { return paint(v, "undefined: missing") })
 		if err == nil {
 			m.pids, err = lspVisualProcesses(m.root, m.executable)

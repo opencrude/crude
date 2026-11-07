@@ -177,7 +177,7 @@ func TestConnectionsRefreshUsesWorkspaceLoadingContract(t *testing.T) {
 func TestConnectionsRailMenuHasOnlyEffectiveNavigation(t *testing.T) {
 	app, _ := remoteSidebarFixture(t, 120, 35)
 	menu := app.buildActivityRailContextMenu(activitybar.ViewRemotes)
-	menuItem(t, menu, "Add connection…")
+	menuItem(t, menu, "Add connection")
 	menuItem(t, menu, "Refresh connections")
 	for _, section := range menu.Sections {
 		for _, item := range section.Items {

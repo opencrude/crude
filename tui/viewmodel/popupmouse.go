@@ -64,9 +64,9 @@ func (m *App) handlePopupContentClick(fw *wm.FloatingWindow, msg tea.MouseClickM
 	}
 }
 
-// handlePopupContentHover updates pre-selection when the mouse moves
-// over a popup. Prefers OverlayHost dispatch; falls back to the legacy
-// switch for popups not yet managed by the host.
+// handlePopupContentHover updates hover when the mouse moves over a popup.
+// A registered hover handler wins (menus move their cursor); every other
+// popup receives the motion through its window content.
 func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY int, button tea.MouseButton) {
 	if fw == nil || !fw.Focusable() {
 		return
@@ -76,15 +76,9 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 		return
 	}
 
-	switch fw.ID {
-	case "filepicker", "workspace-settings", "tab-stats", "find-in-files", "replace-in-files", string(ui.OverlayWorkspaceDelete):
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
-		return
-	}
-	// Pane windows host live surfaces whose controls track hover.
-	if _, pane := paneGroupFromOverlay(ui.OverlayID(fw.ID)); pane {
-		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
-	}
+	// Every other popup gets the motion: its own controls (lists, buttons,
+	// tabs) own their hover state. No popup may stay inert to the pointer.
+	m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
 }
 
 // closePopupWindowByID routes close by popup ID to the OverlayHost.
@@ -242,9 +236,23 @@ func (m *App) hoverContextMenu(localX, localY int) {
 	if !it.Selectable() {
 		return
 	}
+	payload, ok := it.Payload.(ui.ContextMenuPayload)
+	if !ok || payload.FlatIdx < 0 {
+		return
+	}
+	// Hover is authoritative: it writes the state cursor directly instead of
+	// relying on the list selection being in sync. A menu opened while an
+	// earlier cursor was restored must still follow the pointer.
+	changed := false
 	if list.SelectedIndex() != idx {
 		list.SelectIndex(idx)
-		ui.SyncContextMenuCursor(cw, st)
+		changed = true
+	}
+	if st.Cursor != payload.FlatIdx {
+		st.Cursor = payload.FlatIdx
+		changed = true
+	}
+	if changed {
 		fw.MarkContentDirty()
 	}
 }

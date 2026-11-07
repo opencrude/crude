@@ -324,8 +324,9 @@ Tea's update goroutine (the tab-close hang).
   Native Windows/macOS acceptance remains open.
 - A start that fails because the executable is missing reports "`<cmd>` is not
   installed or not on PATH. Install it, then choose Retry." instead of the
-  transport's wrapped errors. The Problems panel's server row offers **Retry**
-  while failed or stopped and **Restart** / **Stop** while running; Retry is
+  transport's wrapped errors. Language settings offer **Retry** while failed or
+  stopped and **Restart** / **Stop** while running; the Problems header counts
+  the servers that stopped with an error and links there. Retry is
   `RestartServer`, which re-resolves the command on the next start, so
   installing the server and choosing Retry is enough.
 - `LSPIntegration.WithServerEnv` supplies explicit launch choices over one

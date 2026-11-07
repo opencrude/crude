@@ -8,7 +8,7 @@ import (
 	"crude/document"
 	"crude/shellport"
 	"crude/tui/editor"
-	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/problems"
 	"crude/types"
 	"crude/workspace"
 )
@@ -99,22 +99,12 @@ func TestQualifiedDiagnosticAllConsumersSharePublication(t *testing.T) {
 	if got := ed.Diagnostics(); len(got) != 1 || got[0].Col != 6 || service.facts[ed.FilePath()].Diagnostics[0].Col != 3 {
 		t.Fatal("UTF-16 projected more than once or cache mutated")
 	}
-	found := false
-	for _, item := range app.problemPanelItems() {
-		if item.ID == "problem:"+facts.ID+":0" {
-			found = true
-			if !item.PrimaryEnabled || !strings.Contains(item.Summary, "Error") {
-				t.Fatalf("exact observation lost qualified action: %+v", item)
-			}
-			for _, line := range item.Lines {
-				if line.Label == "Fact" || line.Label == "Context" {
-					t.Fatal("Problems exposed provenance outside the details reader")
-				}
-			}
-		}
-	}
+	problem, found := problemByRef(app.problemsModel(), facts.ID, 0)
 	if !found {
 		t.Fatal("qualified diagnostic absent from Problems")
+	}
+	if problem.Note != "" || problem.Severity != problems.Error || strings.Contains(problem.Message, "Fact") {
+		t.Fatalf("exact observation lost qualified action: %+v", problem)
 	}
 }
 
@@ -126,21 +116,8 @@ func TestOldPublicationAfterLocalEditStaysStaleInProblems(t *testing.T) {
 	if len(ed.DiagnosticsAt(0, 6)) != 0 || ed.FirstError() != nil {
 		t.Fatal("late old publication authorized draft diagnostic interaction")
 	}
-	found, outdated := false, false
-	for _, item := range app.problemPanelItems() {
-		if item.ID == "problem-file:"+ed.FilePath() {
-			for _, line := range item.Lines {
-				outdated = outdated || line.Value == "Results are for an older version of this file."
-			}
-		}
-		if item.ID == "problem:"+facts.ID+":0" {
-			found = true
-			if item.PrimaryEnabled {
-				t.Fatalf("stale row hidden or actionable: %+v", item)
-			}
-		}
-	}
-	if !found || !outdated || app.lspFacts[ed.FilePath()].Boundary.Source.Revision != 41 {
+	problem, found := problemByRef(app.problemsModel(), facts.ID, 0)
+	if !found || problem.Note != "Out of date" || app.lspFacts[ed.FilePath()].Boundary.Source.Revision != 41 {
 		t.Fatal("stale provenance was dropped or restamped")
 	}
 }
@@ -204,15 +181,13 @@ func TestStopRestartRetainsStaleDiagnosticEvidence(t *testing.T) {
 	if ed.DiagnosticFacts().ID != facts.ID || app.lspFacts[ed.FilePath()].ID != facts.ID || ed.FirstError() != nil {
 		t.Fatal("restart cleared evidence or certified stale source")
 	}
-	for _, item := range app.problemPanelItems() {
-		if item.ID == "problem:"+facts.ID+":0" {
-			if item.PrimaryEnabled {
-				t.Fatal("restart stale row incorrectly navigable")
-			}
-			return
-		}
+	problem, found := problemByRef(app.problemsModel(), facts.ID, 0)
+	if !found {
+		t.Fatal("restart made stale problems undiscoverable")
 	}
-	t.Fatal("restart made stale problems undiscoverable")
+	if problem.Note == "" {
+		t.Fatal("restart stale row incorrectly navigable")
+	}
 }
 
 func TestDiagnosticSettingsFilterDoesNotRewriteFacts(t *testing.T) {
@@ -236,12 +211,9 @@ func TestUnversionedEmptyProblemsAndFooterNeverImplyClean(t *testing.T) {
 	service.facts[ed.FilePath()] = facts
 	service.insights = types.ProjectInsights{ServerReady: true, DiagnosticsUnverified: 1}
 	app.drainLSPDiagnostics()
-	var observed string
-	for _, item := range app.problemPanelItems() {
-		observed += item.Summary + "\n"
-	}
-	if !strings.Contains(observed, "No results yet") || strings.Contains(strings.ToLower(observed), "clean") || strings.Contains(observed, "unverified") {
-		t.Fatalf("unverified empty observation over-certified: %s", observed)
+	if model := app.problemsModel(); model.Checked || len(model.Problems) != 0 ||
+		strings.Contains(strings.ToLower(model.Status.Text), "clean") || strings.Contains(model.Status.Text, "unverified") {
+		t.Fatalf("unverified empty observation over-certified: %+v", model)
 	}
 	if summary := workspaceHealthSummary(types.ProjectInsights{ServerReady: true}); !strings.Contains(summary, "No results yet") || strings.Contains(summary, "clean") {
 		t.Fatal("zero observed units implied complete coverage")
@@ -252,7 +224,7 @@ func TestDiagnosticStatusLinkRequiresFactIdentity(t *testing.T) {
 	app, ed, service, facts := qualifiedDiagnosticApp(t)
 	app.drainLSPDiagnostics()
 	ed.SetCursorPosition(0, 0)
-	app.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Action: "diagnostic:replaced-publication:0:" + ed.FilePath()})
+	app.openProblem(problems.OpenMsg{Problem: problems.Problem{Path: ed.FilePath(), Ref: problemRef{factsID: "replaced-publication", index: 0}}})
 	if ed.CursorCol() != 0 {
 		t.Fatal("stale status link navigated using replacement fact")
 	}
@@ -263,9 +235,8 @@ func TestDiagnosticStatusLinkRequiresFactIdentity(t *testing.T) {
 	}
 }
 
-// A project check reports a file that is not open. Problems lists it with a
-// plain reason, and Go to diagnostic is available because opening the file
-// reads the same disk text.
+// A project check reports a file that is not open. Problems lists it, and Go
+// to problem is available because opening the file reads the same disk text.
 func TestProblemsListsUnopenedFileFromProjectCheck(t *testing.T) {
 	app, _, service, _ := qualifiedDiagnosticApp(t)
 	path := filepath.Join(app.ws.RootPath(), "unopened.txt")
@@ -277,23 +248,11 @@ func TestProblemsListsUnopenedFileFromProjectCheck(t *testing.T) {
 	}}
 	service.version++
 	app.drainLSPDiagnostics()
-	var file, row *statusoverview.Item
-	items := app.problemPanelItems()
-	for i := range items {
-		switch items[i].ID {
-		case "problem-file:" + path:
-			file = &items[i]
-		case "problem:project-fact:0":
-			row = &items[i]
-		}
+	row, ok := problemByRef(app.problemsModel(), "project-fact", 0)
+	if !ok {
+		t.Fatal("Problems does not list the unopened file")
 	}
-	if file == nil || row == nil {
-		t.Fatalf("Problems does not list the unopened file: %+v", items)
-	}
-	if len(file.Lines) != 1 || !strings.Contains(file.Lines[0].Value, "not open") || strings.Contains(file.Lines[0].Value, "cannot be matched") {
-		t.Fatalf("file row reason = %+v", file.Lines)
-	}
-	if !row.PrimaryEnabled || !strings.Contains(row.Summary, "3:5") || row.Label != "undefined: helper" {
+	if row.Note != "" || row.Line != 3 || row.Col != 5 || row.Message != "undefined: helper" {
 		t.Fatalf("diagnostic row = %+v", row)
 	}
 }

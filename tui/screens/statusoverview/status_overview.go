@@ -413,6 +413,32 @@ func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListIte
 	return rows
 }
 
+func (s *Surface) selectedItemText() string {
+	item, ok := s.Selected()
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(item.Label)
+	if item.Summary != "" {
+		b.WriteString("\n")
+		b.WriteString(item.Summary)
+	}
+	for _, line := range item.Lines {
+		if line.Blank {
+			b.WriteString("\n")
+			continue
+		}
+		if line.Label != "" {
+			b.WriteString(line.Label)
+			b.WriteString("  ")
+		}
+		b.WriteString(line.Value)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (s *Surface) toggleSelected(expandOnly, collapseOnly bool) (bool, tea.Cmd) {
 	if row, ok := s.list.list.Selected(); ok {
 		if payload, ok := row.Payload.(statusRow); ok && payload.Action != "" && !expandOnly && !collapseOnly {
@@ -840,7 +866,28 @@ func (l *listControl) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (l *listControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	l.list.Paint(buf, ox+l.Bounds().X, oy+l.Bounds().Y, ctx)
 }
+
+// handleDockedCopy copies the selected row text. Docked panels (Notices,
+// Workspace) have no action bar, so Ctrl+C is their copy path.
+func (l *listControl) handleDockedCopy(_ ui.EventContext, evt ui.Event) (ui.EventResult, bool) {
+	owner := l.owner
+	if !owner.docked || !evt.IsKey() {
+		return ui.EventResult{}, false
+	}
+	if evt.Key.Code != 'c' || !evt.Key.Mod.Contains(tea.ModCtrl) {
+		return ui.EventResult{}, false
+	}
+	text := owner.selectedItemText()
+	if text == "" {
+		return ui.EventResult{Handled: true}, true
+	}
+	return ui.EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(text)}, true
+}
+
 func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if result, handled := l.handleDockedCopy(ctx, evt); handled {
+		return result
+	}
 	if evt.IsKey() {
 		switch evt.Key.Code {
 		case tea.KeyRight:

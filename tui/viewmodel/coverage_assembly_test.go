@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"crude/shellport"
-	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/problems"
 	"crude/types"
 )
 
@@ -20,92 +20,74 @@ func (f *coverageFixture) ProjectInsights() types.ProjectInsights         { retu
 func (f *coverageFixture) Assembly() types.AssemblyPlan                   { return f.plan }
 func (f *coverageFixture) ServerHealthSnapshots() []types.LSPServerHealth { return f.servers }
 
-func coverageItem(t *testing.T, items []statusoverview.Item, id string) statusoverview.Item {
-	t.Helper()
-	for _, item := range items {
-		if item.ID == id {
-			return item
+// problemByRef finds the pane row of one diagnostic in one exact batch.
+func problemByRef(model problems.Model, factsID string, index int) (problems.Problem, bool) {
+	for _, problem := range model.Problems {
+		if ref, ok := problem.Ref.(problemRef); ok && ref.factsID == factsID && ref.index == index {
+			return problem, true
 		}
 	}
-	t.Fatalf("missing item %s", id)
-	return statusoverview.Item{}
+	return problems.Problem{}, false
 }
 
-func coverageText(item statusoverview.Item) string {
-	text := item.Summary
-	for _, line := range item.Lines {
-		text += " " + line.Value
-	}
-	return text
-}
-
-func TestCoveragePanelStatesAndCounts(t *testing.T) {
+// The Problems status says how many language servers work, or, when the user
+// must act, the state and the control that fixes it. It never lists
+// installation detail.
+func TestProblemsStatusCountsServersOrNamesNextStep(t *testing.T) {
 	app, ed, _, facts := qualifiedDiagnosticApp(t)
-	f := &coverageFixture{LSPService: app.ws.LSPMgr(), plan: types.AssemblyPlan{
-		State: types.AssemblyReady, Languages: []types.AssemblyLanguage{
-			{ID: "sample", Name: "Sample", Status: types.ToolReady, Scope: types.CoverageProject, Reason: "Checks the whole project."},
-			{ID: "missing", Name: "Missing", Status: types.ToolMissing, Reason: "Install the server."},
-			{ID: "none", Name: "None", Status: types.ToolNoServer, Reason: "No server is known."},
-		},
-	}}
+	f := &coverageFixture{LSPService: app.ws.LSPMgr()}
 	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: f, root: app.ws.RootPath()}
 	app.lspFacts = map[string]types.InsightDiagnostics{ed.FilePath(): facts}
 	for _, tc := range []struct {
-		name   string
-		status types.LanguageServiceStatus
-		server types.LSPServerHealth
-		want   string
+		name       string
+		status     types.LanguageServiceStatus
+		servers    []types.LSPServerHealth
+		wantAction string
+		wantLabel  string
+		wantText   string
+		attention  bool
 	}{
-		{"restricted", types.LanguageServiceStatus{State: types.LanguageRestricted, Message: "Language servers do not run in restricted mode.", Action: types.LanguageActionTrustFolder, ActionLabel: "Trust folder"}, types.LSPServerHealth{}, "Trust folder"},
-		{"off", types.LanguageServiceStatus{State: types.LanguageOff, Message: "Language servers are off. Turn them on in Language servers settings.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}, types.LSPServerHealth{}, "Open settings"},
-		{"paused", types.LanguageServiceStatus{State: types.LanguageOff, Message: "Language servers are stopped. Start language servers to check files.", Action: types.LanguageActionStartServers, ActionLabel: "Start Language Servers"}, types.LSPServerHealth{}, "Start Language Servers"},
-		{"stopped", types.LanguageServiceStatus{State: types.LanguageIdle}, types.LSPServerHealth{ID: "s", Status: "Stopped", Scope: types.CoverageProject}, "Stopped"},
-		{"starting", types.LanguageServiceStatus{State: types.LanguageStarting}, types.LSPServerHealth{ID: "s", Starting: true, Scope: types.CoverageProject}, "Checking…"},
-		{"failed", types.LanguageServiceStatus{State: types.LanguageFailed}, types.LSPServerHealth{ID: "s", Error: "failed", Scope: types.CoverageProject}, "Language server failed"},
-		{"other running", types.LanguageServiceStatus{State: types.LanguageReady}, types.LSPServerHealth{ID: "other", Connected: true, Scope: types.CoverageProject}, "Running"},
+		{"restricted", types.LanguageServiceStatus{State: types.LanguageRestricted, Message: "Language servers do not run in restricted mode.", Action: types.LanguageActionTrustFolder, ActionLabel: "Trust folder"}, nil, "language:trust", "Trust folder", "Language servers do not run in restricted mode.", true},
+		{"off", types.LanguageServiceStatus{State: types.LanguageOff, Message: "Language servers are off.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}, nil, "language:settings", "Open settings", "Language servers are off.", true},
+		{"paused", types.LanguageServiceStatus{State: types.LanguageOff, Message: "Language servers are stopped.", Action: types.LanguageActionStartServers, ActionLabel: "Start language servers"}, nil, "lsp:start-all", "Start language servers", "Language servers are stopped.", true},
+		{"two running", types.LanguageServiceStatus{State: types.LanguageReady}, []types.LSPServerHealth{{Name: "gopls", Connected: true}, {Name: "pyright", Connected: true}, {Name: "rust", Starting: true}}, "language:settings", "Language settings", "2 language servers running, 1 starting", false},
+		{"one failed", types.LanguageServiceStatus{State: types.LanguageReady}, []types.LSPServerHealth{{Name: "gopls", Connected: true}, {Name: "rust", Error: "exit 1"}}, "language:settings", "Language settings", "1 language server running, 1 stopped with an error", true},
+		{"none", types.LanguageServiceStatus{State: types.LanguageReady}, nil, "language:settings", "Language settings", "No language server is running.", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f.insights = types.ProjectInsights{Language: tc.status, Errors: 1, Warnings: 2}
-			f.servers = nil
-			if tc.server.ID != "" {
-				f.servers = []types.LSPServerHealth{tc.server}
+			f.insights = types.ProjectInsights{Language: tc.status, DiagnosticsObserved: 1}
+			f.servers = tc.servers
+			model := app.problemsModel()
+			status := model.Status
+			if status.Action != tc.wantAction || status.ActionLabel != tc.wantLabel || status.Text != tc.wantText || status.Attention != tc.attention {
+				t.Fatalf("status = %+v, want %q %q %q attention=%v", status, tc.wantAction, tc.wantLabel, tc.wantText, tc.attention)
 			}
-			items := app.problemPanelItems()
-			if got := coverageItem(t, items, "workspace:summary").Summary; got != "1 error, 2 warnings." {
-				t.Fatal(got)
+			if len(model.Problems) != 1 || model.Problems[0].Severity != problems.Error || model.Problems[0].Note != "" {
+				t.Fatalf("problems = %+v", model.Problems)
 			}
-			if got := coverageItem(t, items, "problem-file:"+ed.FilePath()).Summary; got != "1 problem" {
-				t.Fatal(got)
-			}
-			lang := coverageItem(t, items, "language:sample")
-			text := coverageText(lang)
-			if lang.Summary != "Installed" || !strings.Contains(text, "may not be running") || strings.Contains(text, "Checks the whole project") {
-				t.Fatalf("%+v", lang)
-			}
-			if tc.server.ID == "" && !strings.Contains(text, tc.want) {
-				t.Fatal(text)
-			}
-			if tc.server.ID != "" {
-				server := coverageItem(t, items, "lsp:"+tc.server.ID)
-				if server.Summary != tc.want || strings.Contains(coverageText(server), "Checks the whole project") {
-					t.Fatalf("%+v", server)
-				}
-			}
-			if item := coverageItem(t, items, "language:missing"); !item.PrimaryEnabled || item.PrimaryLabel != "Check again" {
-				t.Fatalf("%+v", item)
-			}
-			if item := coverageItem(t, items, "language:none"); item.Summary != "No server" {
-				t.Fatalf("%+v", item)
+			if strings.Contains(status.Text, "gopls") || strings.Contains(status.Text, "Scope") {
+				t.Fatalf("status lists installation detail: %q", status.Text)
 			}
 		})
 	}
-	f.insights = types.ProjectInsights{Errors: 2, Warnings: 1}
-	if got := coverageItem(t, app.problemPanelItems(), "workspace:summary").Summary; got != "2 errors, 1 warning." {
-		t.Fatal(got)
+}
+
+// Every diagnostic reaches the pane with its 1-based position, source and
+// workspace-relative folder.
+func TestProblemsModelCarriesEveryDiagnostic(t *testing.T) {
+	app, ed, _, facts := qualifiedDiagnosticApp(t)
+	path := ed.FilePath()
+	facts.Diagnostics = []types.LSPDiagnostic{
+		{Line: 8, Col: 2, Severity: types.DiagWarning, Message: "late warning", Source: "vet"},
+		{Line: 4, Col: 9, Severity: types.DiagError, Message: "second error", Source: "compiler"},
 	}
-	facts.Diagnostics = append(facts.Diagnostics, facts.Diagnostics[0])
-	app.lspFacts[ed.FilePath()] = facts
-	if got := coverageItem(t, app.problemPanelItems(), "problem-file:"+ed.FilePath()).Summary; got != "2 problems" {
-		t.Fatal(got)
+	app.lspFacts = map[string]types.InsightDiagnostics{path: facts}
+	model := app.problemsModel()
+	if len(model.Problems) != 2 {
+		t.Fatalf("problems = %d, want 2", len(model.Problems))
+	}
+	second, ok := problemByRef(model, facts.ID, 1)
+	if !ok || second.Line != 5 || second.Col != 10 || second.Source != "compiler" || second.Severity != problems.Error || second.Path != path {
+		t.Fatalf("second problem = %+v", second)
 	}
 }
