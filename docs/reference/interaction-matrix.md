@@ -53,9 +53,9 @@ history. Permission, ownership and storage failures remain fail-closed.
 Current ownership, lifecycle and limits: [Main View Panes](main-view-panes.md).
 Groups are recursive side-by-side/stacked leaves with independently selected
 tabs. Agent and session identities move, never duplicate; a file may be shown
-in any number of panes, one view per pane, all editing one document. Layout is workspace-scoped
-in memory for the current process only, not restored after restart; switching
-workspace resets it. Header telemetry follows the focused group.
+in any number of panes, one view per pane, all editing one document. Each client
+remembers docked editor files and split layout per workspace and restores them
+on return or restart. Header telemetry follows the focused group.
 
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
@@ -301,7 +301,7 @@ clears old markers. Shells never add a local Git resolver or project watcher.
 
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
-| Go to a problem | Click a problem row; Enter or Space | Opens the file at the problem. A row marked **Out of date** does not open: its file changed after the check |
+| Go to a problem | Double-click a problem row; Enter or Space | Opens the file at the problem. A row marked **Out of date** does not open: its file changed after the check |
 | Fold a file | Click a file row; Left / Right; Enter | Left on a problem moves to its file row first |
 | Select rows | Drag; Shift+click; Shift+Up/Down/PgUp/PgDn/Home/End; Ctrl+A | A file row stands for all of its problems |
 | Copy | Ctrl+C; right-click **Copy** / **Copy all** | One plain line per problem: `path:line:col  severity  message  (source)` |

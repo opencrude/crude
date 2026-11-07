@@ -385,10 +385,12 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	m.sessionLifecyclePending = false
 	m.ws.SetEventBus(m.eventBus)
 	m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
-	m.finishWorkspaceSwitch(state)
-	m.reportViewMemoryLoadError()
+	// Retire the old attachment's editor state before installing the new view:
+	// finishWorkspaceSwitch queues the destination's remembered file opens.
 	m.editorSaves = make(map[string]*editorSaveState)
 	m.liveEditors, m.liveOpenRefs, m.editorCommands = nil, nil, nil
+	m.finishWorkspaceSwitch(state)
+	m.reportViewMemoryLoadError()
 	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 	m.ws.(shellport.Replica).StartReplica()
 	for _, issue := range m.ws.TakeStartupIssues() {
