@@ -7,6 +7,15 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Diagnostic hover within a span (2026-11-08)
+
+`BenchmarkDiagnosticHoverWithinSpan` moves across one source span with 1,000
+published diagnostics on Windows amd64. Two runs measured 1.44–1.63 µs,
+48 B and 3 allocations per move. The companion `BenchmarkDiagnosticHoverPrevious`
+replays the previous scan-and-copy path, measuring 80–105 µs, 319,393 B and
+16 allocations. This measures editor hit testing, not end-to-end frame latency.
+The cached interval is invalidated when its diagnostic set or publication changes.
+
 ## Chat find (2026-11-06)
 
 Find in chat counts matches in the rows the chat paints (see

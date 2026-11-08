@@ -9,6 +9,7 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestShellChatTextSelectionCopy(t *testing.T) {
@@ -172,5 +173,77 @@ func TestShellChatScrollbarDragScrolls(t *testing.T) {
 	_ = host.Handle(tea.MouseReleaseMsg{X: sbX, Y: 2, Button: tea.MouseLeft})
 	if s.IsScrollbarDragging() {
 		t.Fatal("drag should end on release")
+	}
+}
+
+func TestCollapsedMultilineDisclosureClickAndDrag(t *testing.T) {
+	th := theme.DefaultDark()
+	s := New(th)
+	rows := []chatprojection.MessageRow{{ID: "tool", Lines: []string{"", "long compact title", "continued title", "last title"}, Toggle: true, ToggleLine: 1}}
+	s.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: 40, PadLR: th.Spacing.PadLR, Theme: th}})
+	s.SyncScrollMetrics(4, 4)
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: 40 + th.Spacing.PadLR*2, H: 4})
+	for _, row := range []int{1, 2, 3} {
+		ctx := ui.EventContext{LocalX: th.Spacing.PadLR + 2, LocalY: row}
+		s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: row, Button: tea.MouseLeft}))
+		got := s.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: row, Button: tea.MouseLeft}))
+		if got.Action == nil || got.Action.ID != chatprojection.ChatToggleActionID || got.Action.Payload.(chatprojection.ChatTogglePayload).MessageID != "tool" {
+			t.Fatalf("line %d: %#v", row, got.Action)
+		}
+	}
+	ctx := ui.EventContext{LocalX: th.Spacing.PadLR + 2, LocalY: 0}
+	s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: 0, Button: tea.MouseLeft}))
+	if got := s.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: 0, Button: tea.MouseLeft})); got.Action != nil {
+		t.Fatal("spacer toggled")
+	}
+	ctx.LocalY = 2
+	s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: 2, Button: tea.MouseLeft}))
+	ctx.LocalX += 6
+	s.Handle(ctx, ui.MouseMotionEvent(tea.MouseMotionMsg{X: ctx.LocalX, Y: 2, Button: tea.MouseLeft}))
+	got := s.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: 2, Button: tea.MouseLeft}))
+	if got.Action != nil || got.Cmd == nil {
+		t.Fatal("drag must copy rather than expand")
+	}
+}
+
+// Exercise actual compact plan projection, not only hand-built rows. Both a
+// live and a hydrated plan must expand from the continuation and step lines.
+func TestRenderedCompactPlanEveryLineExpands(t *testing.T) {
+	message := types.ChatMessage{InternalID: "plan", Role: types.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"id":"plan-1","revision":1,"objective":"A deliberately long objective that wraps across several rows of a narrow transcript","status":"active","steps":[{"id":"one","description":"First item","status":"completed"},{"id":"two","description":"Current item with detailed evidence that should be displayed when expanded","status":"in_progress"}]}`}
+	for _, hydrated := range []bool{false, true} {
+		th := theme.DefaultDark()
+		const width = 42
+		r := chatprojection.NewRenderer(th)
+		r.SetSize(width, 30)
+		r.SetChatAreaBounds(0, 30)
+		if hydrated {
+			r.SyncMessages([]types.ChatMessage{message}, 1, 0)
+		} else {
+			r.AppendMessage(message)
+		}
+		rows, _, h := r.ExportMessageRows(width)
+		if len(rows) != 1 || !rows[0].Toggle || len(rows[0].Lines) < 4 {
+			t.Fatalf("compact plan lacks multiline disclosure: %+v", rows)
+		}
+		screen := New(th)
+		screen.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: width - th.Spacing.PadLR*2, PadLR: th.Spacing.PadLR, Theme: th}})
+		screen.SyncScrollMetrics(h, h)
+		screen.Layout(ui.LayoutContext{}, ui.Rect{W: width, H: h})
+		for line := rows[0].ToggleLine; line < len(rows[0].Lines); line++ {
+			ctx := ui.EventContext{LocalX: th.Spacing.PadLR + 4, LocalY: line}
+			screen.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: line, Button: tea.MouseLeft}))
+			result := screen.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: line, Button: tea.MouseLeft}))
+			if result.Action == nil || result.Action.ID != chatprojection.ChatToggleActionID {
+				t.Fatalf("hydrated=%v row %d did not expand: %q", hydrated, line, rows[0].Lines[line])
+			}
+			if result.Action.Payload.(chatprojection.ChatTogglePayload).MessageID != "plan" {
+				t.Fatalf("wrong message: %#v", result.Action.Payload)
+			}
+		}
+		r.ToggleDisclosure("plan")
+		expanded, _, _ := r.ExportMessageRows(width)
+		if !strings.Contains(strings.Join(expanded[0].Lines, "\n"), "evidence that") {
+			t.Fatalf("expanded plan lost full text: %q", expanded[0].Lines)
+		}
 	}
 }

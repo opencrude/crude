@@ -203,6 +203,9 @@ type Editor struct {
 	hoverCol      int
 	hoverScreenX  int
 	hoverScreenY  int
+	// Stable source interval with exactly the same diagnostic set.
+	hoverRangeStart, hoverRangeEnd int
+	hoverRangeValid                bool
 
 	// search is the per-editor find/replace state. Owned by the
 	// Editor (not the tab wrapper) so the renderer can read it
@@ -944,30 +947,35 @@ func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 	var result []LSPDiagnostic
 	lineEnd := -1
 	for _, d := range e.diagnostics {
-		if line < d.Line || line > max(d.Line, d.EndLine) {
-			continue
-		}
-		startCol := d.Col
-		if line > d.Line {
-			startCol = 0
-		}
-		endCol := d.EndCol
-		if line < d.EndLine {
-			endCol = e.lineVisualWidth(line)
-		} else if d.EndLine <= d.Line && endCol <= d.Col {
-			if lineEnd < 0 {
-				lineEnd = e.lineVisualWidth(line)
-			}
-			if lineEnd <= d.Col {
-				lineEnd = d.Col + 1
-			}
-			endCol = lineEnd
-		}
-		if col >= startCol && col < endCol {
+		start, end, ok := e.diagnosticRangeOnLine(d, line, &lineEnd)
+		if ok && col >= start && col < end {
 			result = append(result, d)
 		}
 	}
 	return result
+}
+
+// diagnosticRangeOnLine is the common hit-test interval for mouse and cursor
+// inspection. lineEnd is shared across a scan to avoid repeated width work.
+func (e *Editor) diagnosticRangeOnLine(d LSPDiagnostic, line int, lineEnd *int) (int, int, bool) {
+	if line < d.Line || line > max(d.Line, d.EndLine) {
+		return 0, 0, false
+	}
+	lo, hi := d.Col, d.EndCol
+	if line > d.Line {
+		lo = 0
+	}
+	if line < d.EndLine || d.EndLine <= d.Line && hi <= d.Col {
+		if *lineEnd < 0 {
+			*lineEnd = e.lineVisualWidth(line)
+		}
+		if line < d.EndLine {
+			hi = *lineEnd
+		} else {
+			hi = max(*lineEnd, d.Col+1)
+		}
+	}
+	return lo, hi, hi > lo
 }
 
 // SetHover sets the hover diagnostic state for a tooltip popup.
@@ -978,12 +986,14 @@ func (e *Editor) SetHover(screenX, screenY, line, col int, severity int, msgs []
 	e.hoverCol = col
 	e.hoverSeverity = severity
 	e.hoverMessages = msgs
+	e.hoverRangeValid = false
 }
 
 // ClearHover clears the hover diagnostic state.
 func (e *Editor) ClearHover() {
 	e.hoverMessages = nil
 	e.hoverSeverity = 0
+	e.hoverRangeValid = false
 }
 
 // HoverState returns the current hover diagnostics state.
@@ -1009,20 +1019,56 @@ func (e *Editor) refreshMouseHover(screenX, screenY int) {
 		e.ClearHover()
 		return
 	}
-	diags := e.diagnosticsAt(pos.Line, pos.Col)
-	if len(diags) == 0 {
+	// A diagnostic set is constant between adjacent range endpoints. Keep the
+	// reader and its source anchor while the pointer stays in that interval.
+	e.diagMu.RLock()
+	if e.hoverRangeValid && e.hoverLine == pos.Line && pos.Col >= e.hoverRangeStart && pos.Col < e.hoverRangeEnd && e.diagnosticsCurrent() {
+		if _, _, visible := e.PositionScreenPosition(Position{Line: e.hoverLine, Col: e.hoverCol}, 0, 0); visible {
+			e.diagMu.RUnlock()
+			return
+		}
+	}
+	if !e.diagnosticsCurrent() {
+		e.diagMu.RUnlock()
 		e.ClearHover()
 		return
 	}
-	msgs := make([]string, 0, len(diags))
+	start, end := 0, int(^uint(0)>>1)
+	var msgs []string
 	highestSev := 0
-	for _, d := range diags {
-		msgs = append(msgs, d.Message)
-		if d.Severity > highestSev {
-			highestSev = d.Severity
+	lineEnd := -1
+	for _, d := range e.diagnostics {
+		lo, hi, ok := e.diagnosticRangeOnLine(d, pos.Line, &lineEnd)
+		if !ok {
+			continue
+		}
+		for _, boundary := range [...]int{lo, hi} {
+			if boundary <= pos.Col {
+				start = max(start, boundary)
+			} else {
+				end = min(end, boundary)
+			}
+		}
+		if pos.Col >= lo && pos.Col < hi {
+			msgs = append(msgs, d.Message)
+			if d.Severity > highestSev {
+				highestSev = d.Severity
+			}
 		}
 	}
-	e.SetHover(screenX, screenY, pos.Line, pos.Col, highestSev, msgs)
+	e.diagMu.RUnlock()
+	if len(msgs) == 0 {
+		e.ClearHover()
+		return
+	}
+	anchor := start
+	// A range can begin offscreen after horizontal scrolling. Never invent an
+	// offscreen popover position: use the first visible pointer in that case.
+	if _, _, visible := e.PositionScreenPosition(Position{Line: pos.Line, Col: anchor}, 0, 0); !visible {
+		anchor = pos.Col
+	}
+	e.SetHover(screenX, screenY, pos.Line, anchor, highestSev, msgs)
+	e.hoverRangeStart, e.hoverRangeEnd, e.hoverRangeValid = start, end, true
 }
 
 // refreshCursorHover updates hover diagnostics for the keyboard cursor.

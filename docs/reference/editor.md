@@ -1173,6 +1173,10 @@ browsing without taking typing focus, and an explicit body click enables keyboar
 reading. Page keys, selection and copy use the shared TextArea. Escape and the
 explicit reader's Close/outside actions retire inspection without closing the
 editor or consuming its private draft. Pointer departure retires passive hover.
+While the pointer moves within the same set of overlapping diagnostics, the
+reader remains anchored at that span's first column rather than following the
+pointer. Crossing a diagnostic boundary changes the reader; if the start is
+horizontally offscreen, the first visible pointer position is the anchor.
 With selected text, the first Escape clears that native selection; the next
 Escape closes the reader. The shell does not bypass the shared text control's
 selection/back handling.
