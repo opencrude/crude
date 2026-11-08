@@ -140,7 +140,10 @@ func cohortFiles(root string) ([]string, error) {
 				}
 				return nil
 			}
-			if !cohortSource(entry.Name()) && !promptTemplate(name) || name == cohortOutput {
+			// The path, not the base name: a generated go.sum inside a nested
+			// module is not part of the checked-out source, so it must not
+			// change the cohort from one machine to the next.
+			if !cohortSource(name) && !promptTemplate(name) || name == cohortOutput {
 				return nil
 			}
 			if err := add(name); err != nil {
@@ -189,7 +192,14 @@ func cohortSource(name string) bool {
 	if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || strings.HasSuffix(name, "_test.go") {
 		return false
 	}
-	if name == "go.mod" || name == "go.sum" {
+	if name == "go.mod" || strings.HasSuffix(name, "/go.mod") {
+		return true
+	}
+	// A replacement module's go.sum is a lock file, and vendor trees gitignore
+	// it because Go writes it. Including a generated file would make the cohort
+	// depend on which machine had run a Go command, so only the checkout's own
+	// go.sum is source.
+	if name == "go.sum" {
 		return true
 	}
 	switch filepath.Ext(name) {
