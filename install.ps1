@@ -105,6 +105,14 @@ function Assert-CrudeHttps([Uri] $Uri) {
     }
 }
 
+function Get-CrudeAccept([Uri] $Uri) {
+    # The GitHub API picks the representation from Accept, and a JSON entry
+    # outranks an octet-stream entry with a quality weight below 1, so an asset
+    # URL must ask for bytes alone. A download URL ignores this header.
+    if ($Uri.AbsolutePath -like '*/releases/assets/*') { return 'application/octet-stream' }
+    return 'application/vnd.github+json, application/octet-stream;q=0.9, */*;q=0.8'
+}
+
 function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds = 120) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $limit = $TimeoutSeconds * 1000
@@ -115,7 +123,7 @@ function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $
         $request = [Net.HttpWebRequest] [Net.WebRequest]::Create($Uri)
         $request.Method = 'GET'
         $request.UserAgent = 'Crude-Release-Installer'
-        $request.Accept = 'application/vnd.github+json, application/octet-stream;q=0.9, */*;q=0.8'
+        $request.Accept = Get-CrudeAccept $Uri
         $request.AllowAutoRedirect = $false
         $request.Timeout = [Math]::Min(30000, $remaining)
         $request.ReadWriteTimeout = [Math]::Min(30000, $remaining)
