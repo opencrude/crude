@@ -145,7 +145,9 @@ already installed.
   fills the desktop area, the way an application window opens. It uses
   JetBrainsMono Nerd Font first, hides the tab bar, reports keys precisely, and
   disables the automatic updater and the bell. The terminal does not act on
-  Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns those keys.
+  Ctrl+Shift+C, Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns
+  those keys; Ctrl+Shift+C copies Crude's own selection, which the terminal
+  never sees.
   The launcher passes no arguments, so the window has one job. When Crude exits
   because of an error, the window stays open with the message, so a failure is
   never a window that vanishes. The configuration is rewritten on every run, so

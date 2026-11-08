@@ -334,8 +334,11 @@ return {
     exit_behavior = 'CloseOnCleanExit',
     check_for_updates = false,
     audible_bell = 'Disabled',
-    -- Crude owns these keys, so the terminal must not act on them here.
+    -- Crude owns these keys, so the terminal must not act on them here. That
+    -- includes copy: the terminal's own copy would copy a selection Crude never
+    -- leaves in the terminal, so the key must reach Crude instead.
     keys = {
+        { key = 'c', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
         { key = 'n', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
         { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
         { key = 'w', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
