@@ -297,7 +297,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
                          "enable_kitty_keyboard = true",
                          "check_for_updates = false"):
             self.assertIn(required, config, f"the window configuration needs '{required}'")
-        for owned in ("'n', mods = 'CTRL|SHIFT'", "'t', mods = 'CTRL|SHIFT'", "'w', mods = 'CTRL|SHIFT'"):
+        for owned in ("'c', mods = 'CTRL|SHIFT'", "'n', mods = 'CTRL|SHIFT'", "'t', mods = 'CTRL|SHIFT'", "'w', mods = 'CTRL|SHIFT'"):
             self.assertIn(owned, config, "the terminal must not act on a key Crude owns")
         desktop = (self.home / ".local/share/applications/crude.desktop").read_text()
         self.assertIn(f'Exec="{launcher}"', desktop)
