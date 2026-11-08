@@ -95,7 +95,7 @@ func TestCohortCanonicalCorpus(t *testing.T) {
 		"command/custom.go", "command/run.go", "command/run_linux.go", "command/run_windows.go", "command/wire_gen.go",
 		"coreprotocol/schema_gen.go", "data/embed_windows.go", "data/runtime data.json",
 		"go.mod", "go.sum", "prompt/instructions.go", "prompt/policy.tmpl",
-		"third_party/fork/fork.go", "third_party/fork/fork_windows.go", "third_party/fork/go.mod", "third_party/fork/go.sum", "third_party/fork/impl.s",
+		"third_party/fork/fork.go", "third_party/fork/fork_windows.go", "third_party/fork/go.mod", "third_party/fork/impl.s",
 		"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1", "third_party/pathwalk/walk.go",
 	}
 	if !reflect.DeepEqual(names, want) {
@@ -170,7 +170,7 @@ func TestCohortCanonicalGitCheckout(t *testing.T) {
 func TestCohortSourceChanges(t *testing.T) {
 	for _, name := range []string{
 		"command/run.go", "command/run_windows.go", "command/custom.go", "command/wire_gen.go", "coreprotocol/schema_gen.go",
-		"go.mod", "go.sum", "third_party/fork/fork.go", "third_party/fork/go.mod", "third_party/fork/go.sum", "third_party/fork/impl.s",
+		"go.mod", "go.sum", "third_party/fork/fork.go", "third_party/fork/go.mod", "third_party/fork/impl.s",
 		"data/runtime data.json", "prompt/instructions.go", "prompt/policy.tmpl",
 		"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1",
 	} {
@@ -193,7 +193,7 @@ func TestCohortSourceChanges(t *testing.T) {
 func TestCohortExcludedChanges(t *testing.T) {
 	root := cohortFixture(t, false)
 	before := mustCohort(t, root)
-	for _, name := range []string{"command/run_test.go", "coreprotocol/wire_types_gen_test.go", "third_party/fork/fork_test.go", "buildinfo/cohort_gen.go", "testdata/new.go", "third_party/unused/ignored.go", "dist/new.go", "third_party/libghostty-vt/huge.go", "data/other.json", "docs/policy.tmpl", ".claude/new.go"} {
+	for _, name := range []string{"command/run_test.go", "coreprotocol/wire_types_gen_test.go", "third_party/fork/fork_test.go", "buildinfo/cohort_gen.go", "testdata/new.go", "third_party/unused/ignored.go", "dist/new.go", "third_party/libghostty-vt/huge.go", "data/other.json", "docs/policy.tmpl", ".claude/new.go", "third_party/fork/go.sum"} {
 		putCohortFile(t, root, name, "ignored edit")
 	}
 	if mustCohort(t, root) != before {
